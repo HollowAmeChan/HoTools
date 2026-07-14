@@ -18,6 +18,14 @@ from .names import (
     MC2_SETUP_MESH_CLOTH,
     MC2_SETUP_TYPES,
 )
+from .scheduler import (
+    MC2_DEFAULT_MAX_SIMULATION_COUNT_PER_FRAME,
+    MC2_DEFAULT_SIMULATION_FREQUENCY,
+    MC2_MAX_SIMULATION_COUNT_PER_FRAME,
+    MC2_MAX_SIMULATION_FREQUENCY,
+    MC2_MIN_SIMULATION_COUNT_PER_FRAME,
+    MC2_MIN_SIMULATION_FREQUENCY,
+)
 
 
 # MagicaCloth2/Runtime/Define/SystemDefine.cs
@@ -407,12 +415,39 @@ class MC2SolverSettingsSpec:
     substeps: int = 1
     iterations: int = 4
     time_scale: float = 1.0
+    simulation_frequency: int = MC2_DEFAULT_SIMULATION_FREQUENCY
+    max_simulation_count_per_frame: int = (
+        MC2_DEFAULT_MAX_SIMULATION_COUNT_PER_FRAME
+    )
 
     def __post_init__(self) -> None:
         if not 1 <= self.substeps <= 16:
             raise ValueError("substeps 必须位于 1..16")
         if not 0 <= self.iterations <= 64:
             raise ValueError("iterations 必须位于 0..64")
+        if (
+            isinstance(self.simulation_frequency, bool)
+            or int(self.simulation_frequency) != self.simulation_frequency
+        ):
+            raise ValueError("simulation_frequency must be an integer")
+        if (
+            isinstance(self.max_simulation_count_per_frame, bool)
+            or int(self.max_simulation_count_per_frame)
+            != self.max_simulation_count_per_frame
+        ):
+            raise ValueError("max_simulation_count_per_frame must be an integer")
+        if not (
+            MC2_MIN_SIMULATION_FREQUENCY
+            <= self.simulation_frequency
+            <= MC2_MAX_SIMULATION_FREQUENCY
+        ):
+            raise ValueError("simulation_frequency must be in 30..150")
+        if not (
+            MC2_MIN_SIMULATION_COUNT_PER_FRAME
+            <= self.max_simulation_count_per_frame
+            <= MC2_MAX_SIMULATION_COUNT_PER_FRAME
+        ):
+            raise ValueError("max_simulation_count_per_frame must be in 1..5")
 
     @property
     def signature(self) -> str:
@@ -432,17 +467,46 @@ def make_mc2_solver_settings(
     substeps=1,
     iterations=4,
     time_scale=1.0,
+    simulation_frequency=MC2_DEFAULT_SIMULATION_FREQUENCY,
+    max_simulation_count_per_frame=MC2_DEFAULT_MAX_SIMULATION_COUNT_PER_FRAME,
 ) -> MC2SolverSettingsSpec:
     substeps = int(substeps)
     iterations = int(iterations)
+    if (
+        isinstance(simulation_frequency, bool)
+        or int(simulation_frequency) != simulation_frequency
+    ):
+        raise ValueError("simulation_frequency must be an integer")
+    if (
+        isinstance(max_simulation_count_per_frame, bool)
+        or int(max_simulation_count_per_frame)
+        != max_simulation_count_per_frame
+    ):
+        raise ValueError("max_simulation_count_per_frame must be an integer")
+    simulation_frequency = int(simulation_frequency)
+    max_simulation_count_per_frame = int(max_simulation_count_per_frame)
     if not 1 <= substeps <= 16:
         raise ValueError("substeps 必须位于 1..16")
     if not 0 <= iterations <= 64:
         raise ValueError("iterations 必须位于 0..64")
+    if not (
+        MC2_MIN_SIMULATION_FREQUENCY
+        <= simulation_frequency
+        <= MC2_MAX_SIMULATION_FREQUENCY
+    ):
+        raise ValueError("simulation_frequency must be in 30..150")
+    if not (
+        MC2_MIN_SIMULATION_COUNT_PER_FRAME
+        <= max_simulation_count_per_frame
+        <= MC2_MAX_SIMULATION_COUNT_PER_FRAME
+    ):
+        raise ValueError("max_simulation_count_per_frame must be in 1..5")
     return MC2SolverSettingsSpec(
         substeps=substeps,
         iterations=iterations,
         time_scale=_clamp(time_scale, "time_scale", 0.0, 1.0),
+        simulation_frequency=simulation_frequency,
+        max_simulation_count_per_frame=max_simulation_count_per_frame,
     )
 
 

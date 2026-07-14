@@ -142,6 +142,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     world = None
     auto_world = None
     fixed_world = None
+    scheduler_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -236,12 +237,28 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             1.0,
         )
 
+        main_settings = mc2_parameters.make_mc2_solver_settings(
+            simulation_frequency=60,
+            max_simulation_count_per_frame=3,
+        )
+        half_time_settings = mc2_parameters.make_mc2_solver_settings(
+            simulation_frequency=120,
+            max_simulation_count_per_frame=3,
+        )
+        fixed_settings = mc2_parameters.make_mc2_solver_settings(
+            simulation_frequency=30,
+            max_simulation_count_per_frame=3,
+        )
         world = world_types.PhysicsWorldCache()
         world.generation = 1
         world.frame_context.frame = 1
+        world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(1.0 / 60.0), np.float32(np.inf))
+        )
         _, ready, _ = mc2_solver.step_mc2(
             world,
             [task],
+            settings=main_settings,
             frame_inputs={task.task_id: first_input},
         )
         assert ready is True
@@ -317,6 +334,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [task],
+            settings=main_settings,
             frame_inputs={task.task_id: first_input},
         )
         assert runtime_state.frame_revision == 1
@@ -348,6 +366,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [soft_task],
+            settings=main_settings,
             frame_inputs={soft_task.task_id: first_input},
         )
         assert slot.data["runtime_state"] is runtime_state
@@ -422,6 +441,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [soft_task],
+            settings=main_settings,
             frame_inputs={soft_task.task_id: second_input},
         )
         assert runtime_state.last_reset_reason == "frame_generation_changed"
@@ -477,6 +497,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [soft_task],
+            settings=main_settings,
             frame_inputs={soft_task.task_id: third_input},
             dt=1.0 / 60.0,
         )
@@ -580,6 +601,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [anchor_task],
+            settings=main_settings,
             frame_inputs={anchor_task.task_id: fourth_input},
             dt=1.0 / 60.0,
         )
@@ -639,6 +661,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [anchor_world_limit_task],
+            settings=main_settings,
             frame_inputs={anchor_world_limit_task.task_id: fifth_input},
             dt=1.0 / 60.0,
         )
@@ -730,6 +753,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [smoothing_task],
+            settings=main_settings,
             frame_inputs={smoothing_task.task_id: sixth_input},
             dt=1.0 / 60.0,
         )
@@ -812,6 +836,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             world,
             [time_scale_task],
+            settings=half_time_settings,
             frame_inputs={time_scale_task.task_id: seventh_input},
             dt=1.0 / 120.0,
         )
@@ -841,7 +866,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         np.testing.assert_allclose(
             frame_shift_result.frame_moving_speed,
             45.0,
-            atol=1.0e-6,
+            atol=1.0e-5,
         )
         center_result = slot.data["center_step_result"]
         assert center_result is not None
@@ -887,12 +912,15 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             ),
         )
         world.frame_context.frame = 8
-        world.frame_context.raw_dt = 1.0 / 60.0
+        world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(1.0 / 60.0), np.float32(np.inf))
+        )
         world.frame_context.dt = 0.0
         world.frame_context.time_scale = 0.0
         mc2_solver.step_mc2(
             world,
             [zero_time_task],
+            settings=half_time_settings,
             frame_inputs={zero_time_task.task_id: eighth_input},
             dt=0.0,
         )
@@ -963,12 +991,15 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             ),
         )
         world.frame_context.frame = 9
-        world.frame_context.raw_dt = 1.0 / 60.0
+        world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(1.0 / 60.0), np.float32(np.inf))
+        )
         world.frame_context.dt = 1.0 / 60.0
         world.frame_context.time_scale = 1.0
         mc2_solver.step_mc2(
             world,
             [negative_scale_task],
+            settings=main_settings,
             frame_inputs={negative_scale_task.task_id: negative_scale_input},
             dt=1.0 / 60.0,
         )
@@ -1000,6 +1031,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         _, _, status = mc2_solver.step_mc2(
             world,
             [negative_scale_task],
+            settings=main_settings,
             frame_inputs={negative_scale_task.task_id: negative_scale_input},
             dt=1.0 / 60.0,
         )
@@ -1072,7 +1104,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert auto_negative_candidate.frame == 12
         auto_negative_info = auto_native.inspect()
         assert auto_negative_info["dynamic_revision"] == 3
-        assert auto_negative_info["step_count"] == 2
+        assert auto_negative_info["step_count"] == 3
+        assert auto_negative_info["center_dynamic_revision"] == 2
+        assert auto_negative_info["step_interpolation_revision"] == 1
         assert auto_negative_info["center_negative_scale_teleport_count"] == 1
         auto_negative_result = auto_slot.data["center_negative_scale_result"]
         assert auto_negative_result.active is True
@@ -1186,9 +1220,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         fixed_world = world_types.PhysicsWorldCache()
         fixed_world.generation = 12
         fixed_world.frame_context.frame = 20
+        fixed_world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(0.1), np.float32(np.inf))
+        )
         mc2_solver.step_mc2(
             fixed_world,
             [fixed_task],
+            settings=fixed_settings,
             frame_inputs={fixed_task.task_id: fixed_first_input},
         )
         fixed_rotation = np.asarray(
@@ -1224,6 +1262,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             fixed_world,
             [fixed_task],
+            settings=fixed_settings,
             frame_inputs={fixed_task.task_id: fixed_second_input},
             dt=0.1,
         )
@@ -1232,7 +1271,11 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert fixed_native_info["center_fixed_count"] == 1
         assert fixed_native_info["center_frame_shift_count"] == 1
         assert fixed_native_info["baseline_count"] > 0
-        assert fixed_native_info["baseline_pose_rebuild_count"] == 1
+        assert fixed_native_info["step_count"] == 3
+        assert fixed_native_info["center_dynamic_revision"] == 1
+        assert fixed_native_info["step_interpolation_revision"] == 2
+        assert fixed_native_info["center_step_count"] == 3
+        assert fixed_native_info["baseline_pose_rebuild_count"] == 3
         assert fixed_native_info["animation_pose_ratio"] == 0.25
         fixed_step_positions, _ = fixed_slot.data["native_context"].read_step_basic()
         np.testing.assert_allclose(
@@ -1315,12 +1358,15 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         mc2_solver.step_mc2(
             fixed_world,
             [fixed_animated_task],
+            settings=fixed_settings,
             frame_inputs={fixed_animated_task.task_id: fixed_third_input},
             dt=0.1,
         )
         fixed_hot_info = fixed_slot.data["native_context"].inspect()
-        assert fixed_hot_info["step_count"] == 2
-        assert fixed_hot_info["baseline_pose_rebuild_count"] == 1, fixed_hot_info
+        assert fixed_hot_info["step_count"] == 6
+        assert fixed_hot_info["center_dynamic_revision"] == 2
+        assert fixed_hot_info["step_interpolation_revision"] == 4
+        assert fixed_hot_info["baseline_pose_rebuild_count"] == 3, fixed_hot_info
         assert fixed_hot_info["animation_pose_ratio"] == 1.0
         fixed_step_positions, fixed_step_rotations = fixed_slot.data[
             "native_context"
@@ -1338,6 +1384,113 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             1.0,
             atol=1.0e-6,
         )
+
+        skip_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.0,
+                animation_pose_ratio=0.0,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        skip_settings = mc2_parameters.make_mc2_solver_settings(
+            simulation_frequency=50,
+            max_simulation_count_per_frame=3,
+        )
+        skip_first_input = frame_input.make_mc2_frame_input(
+            task_id=skip_task.task_id,
+            topology_signature=fixed_topology.topology_signature,
+            frame=30,
+            generation=13,
+            world_positions=fixed_first_input.world_positions,
+            world_rotations_xyzw=fixed_first_input.world_rotations_xyzw,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=30,
+                generation=13,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        skip_second_input = frame_input.make_mc2_frame_input(
+            task_id=skip_task.task_id,
+            topology_signature=fixed_topology.topology_signature,
+            frame=31,
+            generation=13,
+            world_positions=fixed_second_input.world_positions,
+            world_rotations_xyzw=fixed_second_input.world_rotations_xyzw,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=31,
+                generation=13,
+                component_identity=component_identity,
+                component_world_position=(10.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(float(value) for value in fixed_rotation),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        scheduler_world = world_types.PhysicsWorldCache()
+        scheduler_world.generation = 13
+        scheduler_world.frame_context.frame = 30
+        mc2_solver.step_mc2(
+            scheduler_world,
+            [skip_task],
+            settings=skip_settings,
+            frame_inputs={skip_task.task_id: skip_first_input},
+        )
+        scheduler_world.frame_context.frame = 31
+        mc2_solver.step_mc2(
+            scheduler_world,
+            [skip_task],
+            settings=skip_settings,
+            frame_inputs={skip_task.task_id: skip_second_input},
+            dt=0.1,
+        )
+        scheduler_slot = scheduler_world.solver_slots[skip_task.task_id]
+        schedule = scheduler_slot.data["frame_schedule"]
+        assert schedule.planned_update_count == 5
+        assert schedule.update_count == 3
+        assert schedule.skip_count == 2
+        np.testing.assert_allclose(schedule.time, 0.0600000024, atol=1.0e-8)
+        scheduler_info = scheduler_slot.data["native_context"].inspect()
+        assert scheduler_info["step_count"] == 3
+        assert scheduler_info["center_dynamic_revision"] == 1
+        assert scheduler_info["step_interpolation_revision"] == 2
+        assert scheduler_info["center_step_count"] == 3
+        assert scheduler_info["center_frame_shift_count"] == 1
+        scheduler_shift = scheduler_slot.data["center_frame_shift_result"]
+        np.testing.assert_allclose(
+            scheduler_shift.frame_component_shift_vector,
+            (4.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            scheduler_shift.frame_component_shift_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(18.0))),
+                0.0,
+                float(np.cos(np.radians(18.0))),
+            ),
+            atol=1.0e-6,
+        )
+        scheduler_step_positions, _ = scheduler_slot.data[
+            "native_context"
+        ].read_step_basic()
+        np.testing.assert_allclose(
+            scheduler_step_positions[0],
+            skip_second_input.world_positions[0],
+            atol=1.0e-6,
+        )
+        assert scheduler_slot.data["result_candidate"].native_step_count == 3
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -1345,6 +1498,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             auto_world.omni_cache_dispose("test_complete")
         if fixed_world is not None:
             fixed_world.omni_cache_dispose("test_complete")
+        if scheduler_world is not None:
+            scheduler_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:

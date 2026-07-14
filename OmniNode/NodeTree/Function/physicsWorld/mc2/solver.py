@@ -58,6 +58,7 @@ def _slot_debug_snapshot(slot) -> dict:
     time_scheduler = slot.data.get("time_scheduler")
     center_step_result = slot.data.get("center_step_result")
     center_frame_shift_result = slot.data.get("center_frame_shift_result")
+    frame_schedule = slot.data.get("frame_schedule")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -90,6 +91,11 @@ def _slot_debug_snapshot(slot) -> dict:
         "time_scheduler": (
             time_scheduler.debug_dict()
             if isinstance(time_scheduler, MC2TimeSchedulerState)
+            else None
+        ),
+        "frame_schedule": (
+            frame_schedule.debug_dict()
+            if hasattr(frame_schedule, "debug_dict")
             else None
         ),
         "center_step_result": (
@@ -170,6 +176,7 @@ def _install_mc2_slot(
             "runtime_state": state,
             "center_state": center_state,
             "time_scheduler": MC2TimeSchedulerState(),
+            "frame_schedule": None,
             "center_step_result": None,
             "center_frame_shift_result": None,
             "declaration": MC2_SOLVER_DECLARATION,
@@ -207,11 +214,11 @@ def _make_slot_center_frame_shift(
     slot,
     frame_input: MC2FrameInputSpec,
     center_pose,
-    dt: float,
+    simulation_delta_time: float,
     *,
     frame_dt: float,
     time_scale: float,
-    substeps: int,
+    skip_count: int,
     negative_scale_transition=None,
 ):
     mesh_static = slot.data.get("mesh_static")
@@ -234,15 +241,16 @@ def _make_slot_center_frame_shift(
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
+    skip_shift_active = int(skip_count) > 0
     in_verified_domain = (
         (
             world_shift_active
             or anchor_shift_active
             or smoothing_active
             or time_scale_active
+            or skip_shift_active
         )
         and 0.0 <= float(time_scale) <= 1.0
-        and int(substeps) == 1
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
             math.isclose(float(value), expected, abs_tol=1.0e-8)
@@ -258,7 +266,7 @@ def _make_slot_center_frame_shift(
     shift_input = center_state.make_frame_shift_input(
         frame_pose,
         center_pose=center_pose,
-        simulation_delta_time=dt,
+        simulation_delta_time=simulation_delta_time,
         frame_delta_time=frame_dt,
         world_inertia=profile.world_inertia,
         anchor_inertia=profile.anchor_inertia,
@@ -267,6 +275,7 @@ def _make_slot_center_frame_shift(
         rotation_speed_limit=profile.rotation_speed_limit,
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
+        skip_count=int(skip_count),
         negative_scale_transition=negative_scale_transition,
     )
     return evaluate_mc2_center_frame_shift(shift_input)
@@ -619,6 +628,10 @@ def step_mc2(
                 center_frame_shift_result = None
                 center_step_input = None
                 center_step_result = None
+                frame_schedule = None
+                time_scheduler = slot.data.get("time_scheduler")
+                if not isinstance(time_scheduler, MC2TimeSchedulerState):
+                    raise RuntimeError("MC2 slot is missing its time scheduler")
                 if center_pose is not None and frame_plan.action != "same_frame":
                     if frame_plan.action == "reset" or not center_state.initialized:
                         center_action = "reset"
@@ -640,35 +653,42 @@ def step_mc2(
                             raise ValueError(
                                 "MC2 Center frame shift requires a positive raw frame dt"
                             )
-                        center_action = (
-                            "step" if effective_time_scale > 0.0 else "pause"
+                        frame_schedule = time_scheduler.plan_frame(
+                            frame_delta_time=frame_dt,
+                            now_time_scale=effective_time_scale,
+                            simulation_delta_time=(
+                                1.0 / float(settings.simulation_frequency)
+                            ),
+                            max_simulation_count_per_frame=(
+                                settings.max_simulation_count_per_frame
+                            ),
                         )
+                        if effective_time_scale <= 0.0:
+                            center_action = "pause"
+                        elif frame_schedule.update_count > 0:
+                            center_action = "step"
+                        else:
+                            center_action = "idle"
                         center_negative_scale_result = (
                             center_state.make_negative_scale_transition(
                                 frame_input.center_frame_pose,
                                 center_pose,
                             )
                         )
-                        center_frame_shift_result = _make_slot_center_frame_shift(
-                            slot,
-                            frame_input,
-                            center_pose,
-                            dt,
-                            frame_dt=frame_dt,
-                            time_scale=effective_time_scale,
-                            substeps=max(
-                                int(world.frame_context.substeps),
-                                int(settings.substeps),
-                            ),
-                            negative_scale_transition=center_negative_scale_result,
-                        )
-                        if center_action == "step":
-                            center_step_input = center_state.make_step_input(
-                                frame_input.center_frame_pose,
+                        if center_action in ("step", "pause"):
+                            center_frame_shift_result = _make_slot_center_frame_shift(
+                                slot,
+                                frame_input,
                                 center_pose,
-                                simulation_delta_time=dt,
-                                frame_interpolation=frame_input.frame_interpolation,
-                                frame_shift=center_frame_shift_result,
+                                (
+                                    frame_schedule.simulation_delta_time
+                                    if center_action == "step"
+                                    else 0.0
+                                ),
+                                frame_dt=frame_dt,
+                                time_scale=effective_time_scale,
+                                skip_count=frame_schedule.skip_count,
+                                negative_scale_transition=center_negative_scale_result,
                             )
                 if (
                     native_context is not None
@@ -679,8 +699,6 @@ def step_mc2(
                     if frame_plan.action == "reset":
                         native_context.reset()
                     else:
-                        if center_step_input is not None:
-                            native_context.update_center_dynamic(center_step_input)
                         if (
                             center_negative_scale_result is not None
                             and center_negative_scale_result.active
@@ -693,11 +711,33 @@ def step_mc2(
                                 center_state.old_component_world_position,
                                 center_frame_shift_result,
                             )
-                        if center_action != "pause":
+                        if center_action == "step":
+                            for update_index in range(frame_schedule.update_count):
+                                frame_interpolation = time_scheduler.advance_step(
+                                    update_index
+                                )
+                                if update_index == 0:
+                                    center_step_input = center_state.make_step_input(
+                                        frame_input.center_frame_pose,
+                                        center_pose,
+                                        simulation_delta_time=(
+                                            frame_schedule.simulation_delta_time
+                                        ),
+                                        frame_interpolation=frame_interpolation,
+                                        frame_shift=center_frame_shift_result,
+                                    )
+                                    native_context.update_center_dynamic(center_step_input)
+                                else:
+                                    native_context.update_step_interpolation(
+                                        frame_interpolation
+                                    )
+                                native_context.step_no_collision(
+                                    frame_schedule.simulation_delta_time
+                                )
+                            center_step_result = native_context.read_center_step()
+                        elif center_pose is None and dt > 0.0:
                             native_context.step_no_collision(dt)
-                            if center_step_input is not None:
-                                center_step_result = native_context.read_center_step()
-                elif center_step_input is not None or center_action == "pause":
+                elif center_action in ("step", "pause"):
                     raise RuntimeError("MC2 Center step requires a live native context")
                 candidate = (
                     slot.data.get("result_candidate")
@@ -720,9 +760,8 @@ def step_mc2(
                             world_rotations_xyzw=native_rotations,
                         )
                 if center_action == "reset":
-                    time_scheduler = slot.data.get("time_scheduler")
-                    if isinstance(time_scheduler, MC2TimeSchedulerState):
-                        time_scheduler.reset()
+                    time_scheduler.reset()
+                    slot.data["frame_schedule"] = None
                     stabilization = float(spec.profile.stabilization_time_after_reset)
                     center_state.reset(
                         frame_input.center_frame_pose,
@@ -748,6 +787,7 @@ def step_mc2(
                     slot.data["center_step_result"] = center_step_result
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
                     slot.data["center_negative_scale_result"] = center_negative_scale_result
+                    slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "pause":
                     if center_frame_shift_result is None:
                         raise RuntimeError("MC2 paused Center frame requires a frame shift")
@@ -761,6 +801,12 @@ def step_mc2(
                     slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
                     slot.data["center_negative_scale_result"] = center_negative_scale_result
+                    slot.data["frame_schedule"] = frame_schedule
+                elif center_action == "idle":
+                    slot.data["center_step_result"] = None
+                    slot.data["center_frame_shift_result"] = None
+                    slot.data["center_negative_scale_result"] = None
+                    slot.data["frame_schedule"] = frame_schedule
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
                     slot.data["particle_buffer"],

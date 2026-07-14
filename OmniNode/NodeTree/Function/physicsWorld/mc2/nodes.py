@@ -189,12 +189,14 @@ def physicsMC2ParticleProfile(
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "子步数", "迭代", "时间缩放",
+        "子步数", "迭代", "时间缩放", "模拟频率", "每帧最大模拟次数",
     ],
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
         "iterations": {"min_value": 0, "max_value": 64},
         "time_scale": {"min_value": 0.0, "max_value": 1.0},
+        "simulation_frequency": {"min_value": 30, "max_value": 150},
+        "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5},
     },
     _OUTPUT_NAME=["MC2模拟设置"],
 )
@@ -202,6 +204,8 @@ def physicsMC2SolverSettings(
     substeps: int = 1,
     iterations: int = 4,
     time_scale: float = 1.0,
+    simulation_frequency: int = 90,
+    max_simulation_count_per_frame: int = 3,
 ) -> typing.Any:
     return make_mc2_solver_settings(**locals())
 

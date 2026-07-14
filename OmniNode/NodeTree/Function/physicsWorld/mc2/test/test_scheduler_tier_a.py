@@ -34,6 +34,9 @@ for package_name, package_path in (
 scheduler = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
 )
+parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
 
 
 FIXTURE = (
@@ -118,7 +121,33 @@ def test_scheduler_rejects_overlapping_frames() -> None:
     )
 
 
+def test_solver_settings_expose_source_scheduler_bounds() -> None:
+    default = parameters.make_mc2_solver_settings()
+    assert default.simulation_frequency == 90
+    assert default.max_simulation_count_per_frame == 3
+    configured = parameters.make_mc2_solver_settings(
+        simulation_frequency=50,
+        max_simulation_count_per_frame=3,
+    )
+    assert configured.debug_dict()["simulation_frequency"] == 50
+    for name, value in (
+        ("simulation_frequency", 29),
+        ("simulation_frequency", 151),
+        ("simulation_frequency", 50.5),
+        ("max_simulation_count_per_frame", 0),
+        ("max_simulation_count_per_frame", 6),
+        ("max_simulation_count_per_frame", True),
+    ):
+        try:
+            parameters.make_mc2_solver_settings(**{name: value})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"MC2 scheduler setting accepted {name}={value!r}")
+
+
 if __name__ == "__main__":
     test_scheduler_matches_fixed_mc2_oracle()
     test_scheduler_rejects_overlapping_frames()
+    test_solver_settings_expose_source_scheduler_bounds()
     print("PASS MC2 scheduler Tier A oracle")
