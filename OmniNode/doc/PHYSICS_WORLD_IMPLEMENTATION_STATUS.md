@@ -6,6 +6,13 @@
 
 MC2专项入口：完成度见`MC2_ACCEPTANCE_MAP.md`，未完成工作顺序见`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
+## 写作边界
+
+- **应该写**：各domain的一页式当前状态、已经成立的系统边界、主要未完成项和Physics World全局优先级。
+- **不应该写**：单个solver的能力明细、数值公式、fixture清单、实施步骤、源码差异、调试过程或逐提交历史。
+- **内容路由**：公共结构规则写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；MC2明细分别写验收总表、执行计划和源码差异记录；OmniNode编译/缓存框架写`../ARCHITECTURE.md`；历史只留Git。
+- **摘要原则**：domain行只回答“处于什么阶段、主要缺什么、去哪里看”，不在表后追加solver专项补充段落。
+
 ## 当前系统边界
 
 ```text

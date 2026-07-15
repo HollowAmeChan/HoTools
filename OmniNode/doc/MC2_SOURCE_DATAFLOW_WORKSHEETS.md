@@ -6,6 +6,13 @@
 
 本文只保存会影响实现正确性的固定源码事实、危险顺序、Blender边界、故意差异和冲突处理。它不维护完成度、当前任务或测试流水；这些分别属于 `MC2_ACCEPTANCE_MAP.md`、`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 和 Git。
 
+## 写作边界
+
+- **应该写**：固定source producer/representation/consumer/lifetime、顺序敏感数值、Blender特化、拒绝域、故意差异及已发现冲突的最终处理结论。
+- **不应该写**：当前完成百分比、下一提交计划、fixture数量流水、某次Blender帧号、临时调试输出、公共Physics World结构或普通实现说明。
+- **内容路由**：完成度与证据摘要写`MC2_ACCEPTANCE_MAP.md`；尚未完成工作的顺序写`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；跨solver结构写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；测试实现放测试文件，历史过程只留Git。
+- **保留门槛**：只有未来维护者可能再次踩到、且会改变语义/支持域/冲突决策的内容才进入本文；普通“已经接线”描述不进入。
+
 ## 使用规则
 
 1. 同时确认 producer、representation、consumer 和 lifetime 后，行为才可登记为 source fact。

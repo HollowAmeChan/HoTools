@@ -6,6 +6,13 @@
 
 本文是新 `physicsWorld.mc2` 的**完成度与验收结论单一事实源**。它按可交付能力切片，不按源码文件或提交记录展开。未完成工作顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码 producer/consumer、边界特化与 oracle 细节见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
+## 写作边界
+
+- **应该写**：每个能力切片的当前结论、支持域、已有证据、剩余差异、是否阻塞V1-R，以及结论变更日期。
+- **不应该写**：实现过程、下一步操作细节、公式/源码逐行语义、踩坑展开、公共Physics World架构或提交历史。
+- **内容路由**：未完成工作的顺序与退出条件写`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；源码事实、特化、故意差异和冲突处理写`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`；跨solver公共规则写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；历史过程只留Git。
+- **更新原则**：只有代码和相应层级证据已经成立，才能更新本文结论；不能把计划、推测或邻近能力写成完成事实。
+
 ## 验收范围
 
 当前目标是 `V1-R`（restricted realtime）：单一 MC2 solver、MeshCloth/BoneCloth/BoneSpring 三种 setup、单 final-proxy Mesh、Bone Line 安全域、外部 Point/Edge collider、单 cloth self collision、实时 Mesh/Bone writeback。

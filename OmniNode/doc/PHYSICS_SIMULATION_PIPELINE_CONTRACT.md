@@ -2,7 +2,14 @@
 
 本文是 OmniNode 物理世界的**权威架构设计文档**。它定义未来刚体、布料、弹簧骨、软体、流体和跨 solver 交互共同遵守的长期结构边界：阶段职责、数据通道、生命周期、声明协议和写回时序。它不是某个 backend 的接入计划，也不是现有节点的用户手册。
 
-文档分工：
+## 写作边界
+
+- **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
+- **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2状态、计划和源码差异分别写对应三份MC2文档；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
+
+## 文档路由
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。

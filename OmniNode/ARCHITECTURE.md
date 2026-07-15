@@ -4,6 +4,13 @@
 
 最重要的设计前提：OmniNode 的默认节点模型是“由函数生成节点”。节点图是给用户和技术美术渐进组合、检查、调参的编辑界面，不是鼓励用户在图上连接复杂逻辑的通用可视化编程环境。复杂业务应优先封装成新的函数节点，因为做节点本身应该足够简单；只有会改变图结构、编译 IR、执行上下文或 runtime cache 语义的特殊能力，才应该做成 GraphNode。
 
+## 写作边界
+
+- **应该写**：OmniNode通用节点模型、编译IR、执行上下文、runtime cache、调试机制、模块装卸和native开发边界。
+- **不应该写**：Physics World专属阶段契约、某个solver完成度、物理公式、MC2源码差异、验收计划或提交流水。
+- **内容路由**：Physics World公共结构写`doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2状态、计划和差异分别写三份MC2专项文档；历史只留Git。
+- **示例原则**：solver示例只能用于说明通用框架机制，不得在本文承担该solver的状态或算法记录。
+
 ## 一句话模型
 
 OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
