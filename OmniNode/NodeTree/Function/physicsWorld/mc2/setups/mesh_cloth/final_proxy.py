@@ -14,6 +14,11 @@ from typing import Iterable
 
 import numpy as np
 
+from ....utils.math3d import (
+    normalize_vector_f64 as _normalize,
+    orientation_xyzw_f64 as _orientation_xyzw,
+    quaternion_conjugate_f64 as _quaternion_inverse_xyzw,
+)
 from ...mesh_baseline import MC2_VERTEX_FIXED
 from ...mesh_baseline import MC2_VERTEX_MOVE
 from ...mesh_baseline import MC2_VERTEX_TRIANGLE
@@ -77,15 +82,6 @@ def _canonical_edge(first: int, second: int) -> tuple[int, int]:
     if first == second:
         raise ValueError("MC2 proxy edge cannot be a self edge")
     return (first, second) if first < second else (second, first)
-
-
-def _normalize(vector: np.ndarray, *, name: str, zero_ok: bool = False) -> np.ndarray:
-    length = float(np.linalg.norm(vector))
-    if length <= 1.0e-12 or not math.isfinite(length):
-        if zero_ok:
-            return np.zeros(3, dtype=np.float64)
-        raise ValueError(f"{name} must be non-zero")
-    return vector / length
 
 
 def _triangle_normal(positions: np.ndarray, triangle: tuple[int, int, int]) -> np.ndarray:
@@ -383,46 +379,6 @@ def _apply_vertex_triangle_normals(
     return normals, tangents
 
 
-def _matrix_to_quaternion_xyzw(matrix: np.ndarray) -> np.ndarray:
-    m00, m01, m02 = (float(value) for value in matrix[0])
-    m10, m11, m12 = (float(value) for value in matrix[1])
-    m20, m21, m22 = (float(value) for value in matrix[2])
-    trace = m00 + m11 + m22
-    if trace > 0.0:
-        scale = math.sqrt(trace + 1.0) * 2.0
-        quat = np.asarray(
-            ((m21 - m12) / scale, (m02 - m20) / scale, (m10 - m01) / scale, 0.25 * scale),
-            dtype=np.float64,
-        )
-    elif m00 > m11 and m00 > m22:
-        scale = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
-        quat = np.asarray(
-            (0.25 * scale, (m01 + m10) / scale, (m02 + m20) / scale, (m21 - m12) / scale),
-            dtype=np.float64,
-        )
-    elif m11 > m22:
-        scale = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
-        quat = np.asarray(
-            ((m01 + m10) / scale, 0.25 * scale, (m12 + m21) / scale, (m02 - m20) / scale),
-            dtype=np.float64,
-        )
-    else:
-        scale = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
-        quat = np.asarray(
-            ((m02 + m20) / scale, (m12 + m21) / scale, 0.25 * scale, (m10 - m01) / scale),
-            dtype=np.float64,
-        )
-    return _normalize(quat, name="bind pose quaternion")
-
-
-def _orientation_xyzw(normal: np.ndarray, tangent: np.ndarray) -> np.ndarray:
-    forward = _normalize(np.asarray(tangent, dtype=np.float64), name="orientation tangent")
-    up = _normalize(np.asarray(normal, dtype=np.float64), name="orientation normal")
-    right = _normalize(np.cross(up, forward), name="orientation right")
-    corrected_up = np.cross(forward, right)
-    return _matrix_to_quaternion_xyzw(np.column_stack((right, corrected_up, forward)))
-
-
 def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float]:
     """MC2 ``MathUtility.ToRotation(normal, tangent)`` in xyzw layout."""
     value = _orientation_xyzw(
@@ -430,13 +386,6 @@ def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float
         np.asarray(tangent, dtype=np.float64),
     )
     return tuple(float(component) for component in value)
-
-
-def _quaternion_inverse_xyzw(quaternion: np.ndarray) -> np.ndarray:
-    return np.asarray(
-        (-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3]),
-        dtype=np.float64,
-    )
 
 
 def _bind_pose(

@@ -240,3 +240,114 @@ def transform_point_matrix_f32(position: np.ndarray, matrix: np.ndarray) -> np.n
 
 def transform_vector_matrix_f32(vector: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return np.asarray(matrix[:3, :3] @ vector, dtype=np.float32)
+
+
+def normalize_vector_f64(
+    vector: np.ndarray,
+    *,
+    name: str,
+    zero_ok: bool = False,
+) -> np.ndarray:
+    length = float(np.linalg.norm(vector))
+    if length <= 1.0e-12 or not math.isfinite(length):
+        if zero_ok:
+            return np.zeros(3, dtype=np.float64)
+        raise ValueError(f"{name} must be non-zero")
+    return vector / length
+
+
+def matrix3_to_quaternion_f64(
+    matrix: np.ndarray,
+    *,
+    name: str,
+) -> np.ndarray:
+    m00, m01, m02 = (float(value) for value in matrix[0])
+    m10, m11, m12 = (float(value) for value in matrix[1])
+    m20, m21, m22 = (float(value) for value in matrix[2])
+    trace = m00 + m11 + m22
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        quaternion = np.asarray(
+            ((m21 - m12) / scale, (m02 - m20) / scale, (m10 - m01) / scale, 0.25 * scale),
+            dtype=np.float64,
+        )
+    elif m00 > m11 and m00 > m22:
+        scale = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
+        quaternion = np.asarray(
+            (0.25 * scale, (m01 + m10) / scale, (m02 + m20) / scale, (m21 - m12) / scale),
+            dtype=np.float64,
+        )
+    elif m11 > m22:
+        scale = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
+        quaternion = np.asarray(
+            ((m01 + m10) / scale, 0.25 * scale, (m12 + m21) / scale, (m02 - m20) / scale),
+            dtype=np.float64,
+        )
+    else:
+        scale = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
+        quaternion = np.asarray(
+            ((m02 + m20) / scale, (m12 + m21) / scale, 0.25 * scale, (m10 - m01) / scale),
+            dtype=np.float64,
+        )
+    return normalize_vector_f64(quaternion, name=name)
+
+
+def orientation_xyzw_f64(
+    normal: np.ndarray,
+    tangent: np.ndarray,
+    *,
+    normal_name="orientation normal",
+    tangent_name="orientation tangent",
+    right_name="orientation right",
+    quaternion_name="bind pose quaternion",
+) -> np.ndarray:
+    forward = normalize_vector_f64(
+        np.asarray(tangent, dtype=np.float64),
+        name=tangent_name,
+    )
+    up = normalize_vector_f64(
+        np.asarray(normal, dtype=np.float64),
+        name=normal_name,
+    )
+    right = normalize_vector_f64(
+        np.cross(up, forward),
+        name=right_name,
+    )
+    corrected_up = np.cross(forward, right)
+    return matrix3_to_quaternion_f64(
+        np.column_stack((right, corrected_up, forward)),
+        name=quaternion_name,
+    )
+
+
+def quaternion_multiply_f64(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    ax, ay, az, aw = (float(value) for value in first)
+    bx, by, bz, bw = (float(value) for value in second)
+    return np.asarray(
+        (
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ),
+        dtype=np.float64,
+    )
+
+
+def quaternion_conjugate_f64(quaternion: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        (-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3]),
+        dtype=np.float64,
+    )
+
+
+def rotate_vector_by_inverse_f64(
+    quaternion: np.ndarray,
+    vector: np.ndarray,
+) -> np.ndarray:
+    pure = np.asarray((vector[0], vector[1], vector[2], 0.0), dtype=np.float64)
+    rotated = quaternion_multiply_f64(
+        quaternion_multiply_f64(quaternion_conjugate_f64(quaternion), pure),
+        quaternion,
+    )
+    return rotated[:3]

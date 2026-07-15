@@ -14,17 +14,19 @@ import math
 
 import numpy as np
 
+from ..utils.math3d import (
+    normalize_vector_f64 as _normalize,
+    orientation_xyzw_f64 as _orientation_xyzw,
+    quaternion_conjugate_f64 as _quaternion_inverse_xyzw,
+    quaternion_multiply_f64 as _quaternion_multiply_xyzw,
+)
 from .mesh_baseline import MC2_BASELINE_INCLUDE_LINE
 from .mesh_baseline import MC2_VERTEX_FIXED
 from .mesh_baseline import MC2_VERTEX_MOVE
 from .mesh_baseline import MC2_VERTEX_TRIANGLE
 from .mesh_baseline import _build_local_pose
-from .mesh_baseline import _quaternion_multiply_xyzw
 from .mesh_baseline import _replace_proxy_attributes
 from .mesh_baseline import _root_and_depth
-from .setups.mesh_cloth.final_proxy import _normalize
-from .setups.mesh_cloth.final_proxy import _orientation_xyzw
-from .setups.mesh_cloth.final_proxy import _quaternion_inverse_xyzw
 from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
 from .static_data import MC2BaselineStaticSpec
 from .static_data import MC2ProxyFinalizerStaticSpec

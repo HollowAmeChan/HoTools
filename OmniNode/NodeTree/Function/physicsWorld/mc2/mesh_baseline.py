@@ -14,6 +14,12 @@ import math
 
 import numpy as np
 
+from ..utils.math3d import (
+    normalize_vector_f64,
+    orientation_xyzw_f64,
+    quaternion_multiply_f64 as _quaternion_multiply_xyzw,
+    rotate_vector_by_inverse_f64 as _rotate_by_inverse,
+)
 from .static_data import (
     MC2BaselineStaticSpec,
     MC2ProxyStaticSpec,
@@ -188,75 +194,18 @@ def _build_baselines(
 
 
 def _normalize(vector: np.ndarray, label: str) -> np.ndarray:
-    length = float(np.linalg.norm(vector))
-    if not math.isfinite(length) or length <= 1.0e-12:
-        raise ValueError(f"{label} must be non-zero")
-    return vector / length
-
-
-def _matrix_to_quaternion_xyzw(matrix: np.ndarray) -> np.ndarray:
-    m00, m01, m02 = (float(value) for value in matrix[0])
-    m10, m11, m12 = (float(value) for value in matrix[1])
-    m20, m21, m22 = (float(value) for value in matrix[2])
-    trace = m00 + m11 + m22
-    if trace > 0.0:
-        scale = math.sqrt(trace + 1.0) * 2.0
-        quat = np.asarray(
-            ((m21 - m12) / scale, (m02 - m20) / scale, (m10 - m01) / scale, 0.25 * scale),
-            dtype=np.float64,
-        )
-    elif m00 > m11 and m00 > m22:
-        scale = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
-        quat = np.asarray(
-            (0.25 * scale, (m01 + m10) / scale, (m02 + m20) / scale, (m21 - m12) / scale),
-            dtype=np.float64,
-        )
-    elif m11 > m22:
-        scale = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
-        quat = np.asarray(
-            ((m01 + m10) / scale, 0.25 * scale, (m12 + m21) / scale, (m02 - m20) / scale),
-            dtype=np.float64,
-        )
-    else:
-        scale = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
-        quat = np.asarray(
-            ((m02 + m20) / scale, (m12 + m21) / scale, 0.25 * scale, (m10 - m01) / scale),
-            dtype=np.float64,
-        )
-    return _normalize(quat, "orientation quaternion")
+    return normalize_vector_f64(vector, name=label)
 
 
 def _orientation_xyzw(normal, tangent, vertex: int) -> np.ndarray:
-    forward = _normalize(np.asarray(tangent, dtype=np.float64), f"local_tangents[{vertex}]")
-    up = _normalize(np.asarray(normal, dtype=np.float64), f"local_normals[{vertex}]")
-    right = _normalize(np.cross(up, forward), f"normal/tangent basis[{vertex}]")
-    corrected_up = np.cross(forward, right)
-    matrix = np.column_stack((right, corrected_up, forward))
-    return _matrix_to_quaternion_xyzw(matrix)
-
-
-def _quaternion_multiply_xyzw(first: np.ndarray, second: np.ndarray) -> np.ndarray:
-    ax, ay, az, aw = (float(value) for value in first)
-    bx, by, bz, bw = (float(value) for value in second)
-    return np.asarray(
-        (
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-            aw * bw - ax * bx - ay * by - az * bz,
-        ),
-        dtype=np.float64,
+    return orientation_xyzw_f64(
+        normal,
+        tangent,
+        tangent_name=f"local_tangents[{vertex}]",
+        normal_name=f"local_normals[{vertex}]",
+        right_name=f"normal/tangent basis[{vertex}]",
+        quaternion_name="orientation quaternion",
     )
-
-
-def _rotate_by_inverse(quaternion: np.ndarray, vector: np.ndarray) -> np.ndarray:
-    conjugate = np.asarray((-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3]))
-    pure = np.asarray((vector[0], vector[1], vector[2], 0.0), dtype=np.float64)
-    rotated = _quaternion_multiply_xyzw(
-        _quaternion_multiply_xyzw(conjugate, pure),
-        quaternion,
-    )
-    return rotated[:3]
 
 
 def _build_local_pose(
