@@ -59,6 +59,7 @@ Cache Read
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
 9. **物理属性由物理世界动态注册**：共享 component 或 solver capability 是字段、默认值、范围、RNA metadata 和 resolver 的单一事实源；`physicsWorld.registry` 按依赖注册/注销 Blender property，外部模块不得定义第二份 PropertyGroup 或 binding。
+10. **通用力场归 Physics World 所有**：风只是未来通用力场的一种类型，不归 MC2 或任何单一 solver 私有；力场的收集、稳定身份、作用域和逐帧求值由公共物理世界组织，solver 只消费声明过的公共快照。
 
 各 solver 对这些支柱的当前覆盖情况见实现状态文档。
 
@@ -183,6 +184,18 @@ ImplicitPhysicsObjectSpec
 - Frame Prepare 可以缓存本帧临时数组，但默认帧末丢弃。
 - 如果某个数组跨帧复用且重建昂贵，应放进 world runtime cache 或 solver slot，并声明 dirty policy。
 - **不应把 Frame Prepare 单独做成节点强加给用户**；用户只应感知 Scope、World Begin、Solver、Writeback、Commit 这几个语义清晰的节点。Frame Prepare 是实现细节，应内聚在 World Begin 或 solver 内部。
+
+### 通用力场（未来兼容区）
+
+通用力场是 Physics World 的未来公共输入域，不是某个 solver 的内置特效。`wind` 只是其中一种 `kind`；后续还可以扩展其他方向场、径向场或程序化场，而不要求各 solver 各自维护一套 Blender 扫描、对象身份和生命周期。
+
+已冻结边界：
+
+- 持久 authoring 数据应先进入 Physics World 管理的隐式对象或正式 spec；逐帧求值结果再由公共 Frame Prepare 整理成普通数值快照。
+- 公共层负责 stable identity、kind、scope、producer、lifetime、变换与参数快照；具体 channel、schema 和采样布局等到通用力场 vertical slice 落地时再冻结，本文当前不提前承诺 ABI。
+- solver 必须在 declaration/capability 中显式声明可消费的力场类型，并只把公共快照转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
+- 力场 authoring/topology/scope 变化与逐帧数值变化必须分开定义 dirty/update 频率，不能把每帧变化误判为 solver topology rebuild。
+- 在通用力场域落地前，solver 中已有的 `wind_*` 等字段只属于未来兼容参数面，不代表存在力场输入、采样、native 消费或已验收数值能力。
 
 ### Solver Prepare
 

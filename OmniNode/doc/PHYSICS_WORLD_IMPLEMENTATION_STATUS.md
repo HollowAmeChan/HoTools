@@ -64,12 +64,15 @@ physicsWorld/
 |---|---|---|---|
 | World core | 可用 | Begin/Commit、scope、collider snapshot、slot/resource/result/exchange、独占/共享/planned channel registry、共享 GN 最终 offset 写回、dispose、debug snapshot | 跨 solver 交互仍需真实业务闭环 |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
+| 通用力场 | 未来兼容区 | 已冻结由Physics World拥有authoring identity/scope/逐帧公共快照，wind只是可扩展力场kind之一；solver不得私有扫描或私有持有live对象 | 尚未冻结channel/schema/采样布局，也未实现任何active力场vertical slice |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、Bone Line/Triangle native output、source-aligned constraint/post顺序、Mesh GN、Bone PoseBone writeback及每帧聚合stats均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone imported-triangle零UV产品路径、wind |
+| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、Bone Line/Triangle native output、source-aligned constraint/post顺序、Mesh GN、Bone PoseBone writeback及每帧聚合stats均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone imported-triangle零UV产品路径、未来通用力场输入适配（含wind） |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；单cloth self primitive/contact/solve/Intersect已闭环，sync/inter-cloth仍未完成。
+
+力场状态补充：wind不再规划为MC2私有输入。现有MC2 `wind_*`字段只为未来兼容保留，当前按零外力处理；待Physics World通用力场vertical slice冻结公共快照后，MC2再通过声明和adapter接入。当前不登记active力场能力，也不提前承诺公共ABI。
 
 MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel；Python slot owner现按固定MC2调度默认启用，raw C gate仅用于隔离不同scope的oracle fixture。py313公式/顺序回归与Blender5.1新建、重建、真实子步solve count通过；独立Tier A Tether substep fixture仍待补齐。
 
