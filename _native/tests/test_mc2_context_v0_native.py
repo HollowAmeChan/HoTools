@@ -731,6 +731,8 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         assert info["self_contact_ready"] is True
         assert info["self_contact_build_count"] == 1
         assert info["self_contact_update_count"] == 0
+        assert info["self_contact_solver_iteration_count"] == 4
+        assert info["self_contact_sum_count"] == 4
         assert info["self_contact_cache_count"] == 1
         assert info["self_contact_enabled_count"] == 1
         candidates = np.empty((1, 3), dtype=np.int32)
@@ -764,12 +766,33 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         np.testing.assert_array_equal(contact_s, [0.0])
         np.testing.assert_array_equal(contact_t, [0.0])
         np.testing.assert_array_equal(contact_normals, [[0.0, -1.0, 0.0]])
+        solved_positions = np.empty_like(positions)
+        solved_rotations = np.empty_like(rotations)
+        hotools_native.mc2_context_v0_read(
+            edge_context, solved_positions, solved_rotations
+        )
+        expected_positions = positions.copy()
+        half_thickness = np.float32(np.float16(0.1))
+        for _ in range(4):
+            projected = np.float32(expected_positions[2, 1] - expected_positions[0, 1])
+            if projected > half_thickness:
+                continue
+            scale = np.float32(np.float32(half_thickness - projected) / np.float32(2.0))
+            fixed_a = np.int32(np.float32(-scale * np.float32(1000000.0)))
+            fixed_b = np.int32(np.float32(scale * np.float32(1000000.0)))
+            expected_positions[0, 1] += np.float32(fixed_a) * np.float32(0.000001)
+            expected_positions[2, 1] += np.float32(fixed_b) * np.float32(0.000001)
+        np.testing.assert_allclose(
+            solved_positions, expected_positions, rtol=0.0, atol=1.0e-7
+        )
         step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
         edge_info = hotools_native.mc2_context_v0_inspect(edge_context)
         assert edge_info["self_candidate_update_count"] == 1
         assert edge_info["self_contact_build_count"] == 1
         assert edge_info["self_contact_update_count"] == 1
         assert edge_info["self_contact_enabled_count"] == 1
+        assert edge_info["self_contact_solver_iteration_count"] == 8
+        assert edge_info["self_contact_sum_count"] == 8
 
         proxy, baseline = static_arrays(4)
         edges = np.array([[0, 1], [1, 2], [2, 0]], dtype=np.int32)
@@ -831,6 +854,8 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         assert info["self_contact_ready"] is True
         assert info["self_contact_cache_count"] == 1
         assert info["self_contact_enabled_count"] == 1
+        assert info["self_contact_solver_iteration_count"] == 4
+        assert info["self_contact_sum_count"] == 4
         candidates = np.empty((1, 3), dtype=np.int32)
         hotools_native.mc2_context_v0_read_self_collision_candidates(
             point_triangle_context, candidates
@@ -855,6 +880,13 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         np.testing.assert_array_equal(contact_s, [1.0])
         np.testing.assert_array_equal(contact_t, [0.0])
         np.testing.assert_array_equal(contact_normals, [[0.0, 0.0, 0.0]])
+        solved_positions = np.empty_like(positions)
+        hotools_native.mc2_context_v0_read(
+            point_triangle_context, solved_positions, solved_rotations
+        )
+        assert solved_positions[3, 2] > positions[3, 2]
+        assert np.all(solved_positions[:3, 2] < positions[:3, 2])
+        assert abs(float(solved_positions[:, 2].sum() - positions[:, 2].sum())) < 5.0e-6
     finally:
         hotools_native.mc2_context_v0_free(edge_context)
         hotools_native.mc2_context_v0_free(point_triangle_context)

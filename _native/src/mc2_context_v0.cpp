@@ -105,6 +105,8 @@ struct Mc2ContextV0 {
     std::int64_t self_candidate_update_count = 0;
     std::int64_t self_contact_build_count = 0;
     std::int64_t self_contact_update_count = 0;
+    std::int64_t self_contact_solver_iteration_count = 0;
+    std::int64_t self_contact_sum_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -2558,6 +2560,156 @@ void update_self_collision_contacts(
     ++context.self_contact_update_count;
 }
 
+void add_wrapped_int32(std::int32_t& destination, std::int32_t value) {
+    const std::uint32_t sum =
+        static_cast<std::uint32_t>(destination) + static_cast<std::uint32_t>(value);
+    std::memcpy(&destination, &sum, sizeof(destination));
+}
+
+void solve_self_collision_contacts(Mc2ContextV0& context) {
+    if (!context.self_contact_ready) return;
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    std::vector<std::int32_t> counts(vertex_count, 0);
+    std::vector<std::int32_t> sums(vertex_count * 3, 0);
+    auto accumulate = [&](std::size_t vertex, Vec3 correction) {
+        ++counts[vertex];
+        const std::array<float, 3> values {correction.x, correction.y, correction.z};
+        for (std::size_t component = 0; component < 3; ++component) {
+            const auto fixed = static_cast<std::int32_t>(values[component] * 1000000.0f);
+            add_wrapped_int32(sums[vertex * 3 + component], fixed);
+        }
+    };
+    auto particle = [&](std::size_t primitive, std::size_t axis) {
+        return static_cast<std::size_t>(context.self_particle_indices[primitive * 3 + axis]);
+    };
+    auto inverse_mass = [&](std::size_t primitive, std::size_t axis) {
+        return context.self_primitive_inverse_masses[primitive * 3 + axis];
+    };
+    auto can_write = [&](std::size_t primitive, std::size_t axis) {
+        const auto blocked = (kSelfFix0 | 0x00000001u) << axis;
+        return (context.self_primitive_flags[primitive] & blocked) == 0u;
+    };
+
+    constexpr int kSolverIterations = 4;
+    for (int iteration = 0; iteration < kSolverIterations; ++iteration) {
+        const auto contact_count = context.self_contact_types.size();
+        for (std::size_t contact = 0; contact < contact_count; ++contact) {
+            if (context.self_contact_enabled[contact] == 0) continue;
+            const auto primitive0 = static_cast<std::size_t>(
+                context.self_contact_primitive_indices[contact * 2]
+            );
+            const auto primitive1 = static_cast<std::size_t>(
+                context.self_contact_primitive_indices[contact * 2 + 1]
+            );
+            const float thickness = context.self_contact_thickness[contact];
+            if (context.self_contact_types[contact] == 0) {
+                const auto a0 = particle(primitive0, 0);
+                const auto a1 = particle(primitive0, 1);
+                const auto b0 = particle(primitive1, 0);
+                const auto b1 = particle(primitive1, 1);
+                const float s = context.self_contact_s[contact];
+                const float t = context.self_contact_t[contact];
+                const Vec3 normal {
+                    context.self_contact_normals[contact * 3],
+                    context.self_contact_normals[contact * 3 + 1],
+                    context.self_contact_normals[contact * 3 + 2],
+                };
+                const Vec3 a = add(
+                    mul(load_vector3(context.state_positions, a0), 1.0f - s),
+                    mul(load_vector3(context.state_positions, a1), s)
+                );
+                const Vec3 b = add(
+                    mul(load_vector3(context.state_positions, b0), 1.0f - t),
+                    mul(load_vector3(context.state_positions, b1), t)
+                );
+                const float projected_length = dot(normal, sub(a, b));
+                if (projected_length > thickness) continue;
+                const float weight_a0 = 1.0f - s;
+                const float weight_a1 = s;
+                const float weight_b0 = 1.0f - t;
+                const float weight_b1 = t;
+                const float inv_a0 = inverse_mass(primitive0, 0);
+                const float inv_a1 = inverse_mass(primitive0, 1);
+                const float inv_b0 = inverse_mass(primitive1, 0);
+                const float inv_b1 = inverse_mass(primitive1, 1);
+                const float denominator =
+                    inv_a0 * weight_a0 * weight_a0 +
+                    inv_a1 * weight_a1 * weight_a1 +
+                    inv_b0 * weight_b0 * weight_b0 +
+                    inv_b1 * weight_b1 * weight_b1;
+                if (denominator == 0.0f) continue;
+                const float scale = (thickness - projected_length) / denominator;
+                const Vec3 correction_a0 = mul(normal, scale * inv_a0 * weight_a0);
+                const Vec3 correction_a1 = mul(normal, scale * inv_a1 * weight_a1);
+                const Vec3 correction_b0 = mul(normal, -scale * inv_b0 * weight_b0);
+                const Vec3 correction_b1 = mul(normal, -scale * inv_b1 * weight_b1);
+                if (can_write(primitive0, 0)) accumulate(a0, correction_a0);
+                if (can_write(primitive0, 1)) accumulate(a1, correction_a1);
+                if (can_write(primitive1, 0)) accumulate(b0, correction_b0);
+                if (can_write(primitive1, 1)) accumulate(b1, correction_b1);
+            } else if (context.self_contact_types[contact] == 1) {
+                const auto point_index = particle(primitive0, 0);
+                const auto b0 = particle(primitive1, 0);
+                const auto b1 = particle(primitive1, 1);
+                const auto b2 = particle(primitive1, 2);
+                const Vec3 position_b0 = load_vector3(context.state_positions, b0);
+                const Vec3 position_b1 = load_vector3(context.state_positions, b1);
+                const Vec3 position_b2 = load_vector3(context.state_positions, b2);
+                const Vec3 point_position = load_vector3(context.state_positions, point_index);
+                const Vec3 triangle_normal = normalize(cross(
+                    sub(position_b1, position_b0),
+                    sub(position_b2, position_b0)
+                ));
+                Vec3 uvw {};
+                closest_point_triangle(
+                    point_position,
+                    position_b0,
+                    position_b1,
+                    position_b2,
+                    uvw
+                );
+                const Vec3 normal = mul(triangle_normal, context.self_contact_s[contact]);
+                const float distance = dot(normal, sub(point_position, position_b0));
+                if (distance >= thickness) continue;
+                const float inv_point = inverse_mass(primitive0, 0);
+                const float inv_b0 = inverse_mass(primitive1, 0);
+                const float inv_b1 = inverse_mass(primitive1, 1);
+                const float inv_b2 = inverse_mass(primitive1, 2);
+                const float denominator =
+                    inv_point +
+                    inv_b0 * uvw.x * uvw.x +
+                    inv_b1 * uvw.y * uvw.y +
+                    inv_b2 * uvw.z * uvw.z;
+                if (denominator == 0.0f) continue;
+                const float scale = (distance - thickness) / denominator;
+                const Vec3 correction = mul(normal, -scale * inv_point);
+                const Vec3 correction_b0 = mul(normal, scale * inv_b0 * uvw.x);
+                const Vec3 correction_b1 = mul(normal, scale * inv_b1 * uvw.y);
+                const Vec3 correction_b2 = mul(normal, scale * inv_b2 * uvw.z);
+                if (can_write(primitive0, 0)) accumulate(point_index, correction);
+                if (can_write(primitive1, 0)) accumulate(b0, correction_b0);
+                if (can_write(primitive1, 1)) accumulate(b1, correction_b1);
+                if (can_write(primitive1, 2)) accumulate(b2, correction_b2);
+            }
+        }
+        for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+            const auto count = counts[vertex];
+            if (count > 0) {
+                for (std::size_t component = 0; component < 3; ++component) {
+                    const float correction =
+                        static_cast<float>(sums[vertex * 3 + component]) /
+                        static_cast<float>(count) * 0.000001f;
+                    context.state_positions[vertex * 3 + component] += correction;
+                }
+            }
+        }
+        std::fill(counts.begin(), counts.end(), 0);
+        std::fill(sums.begin(), sums.end(), 0);
+        ++context.self_contact_solver_iteration_count;
+        ++context.self_contact_sum_count;
+    }
+}
+
 void update_self_collision_primitives_once(
     Mc2ContextV0& context,
     const std::vector<float>& old_positions
@@ -2584,6 +2736,7 @@ void update_self_collision_primitives_once(
         context.self_primitive_frame == context.frame &&
         context.self_primitive_generation == context.generation) {
         update_self_collision_contacts(context, old_positions);
+        solve_self_collision_contacts(context);
         return;
     }
     if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
@@ -2677,6 +2830,7 @@ void update_self_collision_primitives_once(
     if (update_self_collision_grid(context)) {
         update_self_collision_candidates(context);
         build_self_collision_contacts(context, old_positions);
+        solve_self_collision_contacts(context);
     } else {
         clear_self_collision_contacts(context);
     }
@@ -2901,6 +3055,12 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "self_candidate_update_count", context.self_candidate_update_count) ||
         !dict_i64(result, "self_contact_build_count", context.self_contact_build_count) ||
         !dict_i64(result, "self_contact_update_count", context.self_contact_update_count) ||
+        !dict_i64(
+            result,
+            "self_contact_solver_iteration_count",
+            context.self_contact_solver_iteration_count
+        ) ||
+        !dict_i64(result, "self_contact_sum_count", context.self_contact_sum_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(

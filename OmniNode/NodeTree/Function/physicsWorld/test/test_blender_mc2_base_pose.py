@@ -536,6 +536,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_contact_ready"] is True
         assert native_info["self_contact_build_count"] == 1
         assert native_info["self_contact_update_count"] == 0
+        assert native_info["self_contact_solver_iteration_count"] == 4
+        assert native_info["self_contact_sum_count"] == 4
         assert native_info["self_contact_cache_count"] == 0
         assert native_info["self_contact_enabled_count"] == 0
         assert native_info["self_point_grid_count"] > 0
@@ -660,6 +662,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_contact_ready"] is False
         assert native_info["self_contact_build_count"] == 1
         assert native_info["self_contact_update_count"] == 0
+        assert native_info["self_contact_solver_iteration_count"] == 4
+        assert native_info["self_contact_sum_count"] == 4
         assert native_info["self_grid_count"] == 0
         assert native_info["self_max_primitive_size"] == 0.0
         assert native_info["self_grid_size"] == 0.0
