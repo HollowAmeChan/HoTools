@@ -13,6 +13,7 @@ from ..writeback_commands import (
 from .candidate import MC2ResultCandidateV0
 from .names import (
     MC2_SETUP_BONE_CLOTH,
+    MC2_SETUP_BONE_SPRING,
     MC2_SETUP_MESH_CLOTH,
     MC2_SOLVER_ID,
     MC2_STATS_CHANNEL,
@@ -96,8 +97,11 @@ def make_mc2_mesh_result(
 
 
 def _bone_target(spec):
-    if getattr(spec, "setup_type", None) != MC2_SETUP_BONE_CLOTH:
-        raise ValueError("MC2 Bone result requires a bone_cloth task")
+    if getattr(spec, "setup_type", None) not in (
+        MC2_SETUP_BONE_CLOTH,
+        MC2_SETUP_BONE_SPRING,
+    ):
+        raise ValueError("MC2 Bone result requires a Bone task")
     sources = tuple(getattr(spec, "sources", ()) or ())
     if len(sources) != 1:
         raise ValueError("MC2 Bone Line result requires exactly one Armature source")
@@ -128,8 +132,8 @@ def make_mc2_bone_result(
     """Build a public Bone Line envelope and its staged live writeback plan."""
     if not isinstance(candidate, MC2ResultCandidateV0):
         raise TypeError("candidate must be MC2ResultCandidateV0")
-    if candidate.setup_type != MC2_SETUP_BONE_CLOTH:
-        raise ValueError("MC2 public Bone result requires a BoneCloth candidate")
+    if candidate.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+        raise ValueError("MC2 public Bone result requires a Bone candidate")
     if candidate.task_id != getattr(spec, "task_id", None):
         raise ValueError("MC2 public result task identity mismatch")
     if candidate.slot_id != getattr(slot, "slot_id", None):
@@ -187,7 +191,7 @@ def make_mc2_bone_result(
         "armature": armature,
         "bone_count": len(records),
         "batches": ({
-            "source_kind": MC2_SETUP_BONE_CLOTH,
+            "source_kind": candidate.setup_type,
             "source_root": identities[0] if identities else "",
             "records": tuple(records),
             "matrix_bases": matrix_bases,

@@ -136,12 +136,13 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-当前交付是 **Bone Line result envelope 与统一PoseBone writeback闭环**：
+当前交付是 **Bone Line/BoneSpring result 与统一PoseBone writeback闭环**：
 
 1. Bone connection import membership已由8个 Tier A fixture、mode 0..3参数面和不可变host builder闭环，包含119°/121°的严格120°拒绝边界；正缩放Line与triangle override各由3个Tier A fixture闭环到world/local。Line限定域已接Blender rest/static、staged native N0、自动frame snapshot、native post rotation和private candidate。稳定armature/data pointer与bone name现已形成`bone_transform_batch` public envelope，整批world pose先转armature pose再按目标父矩阵生成`matrix_basis`，统一writeback已接通；solver仍不得inline写PoseBone，也不得同时扩张Automatic/Sequential。
 2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；公共 Mesh result transaction、发布失败回滚、统一 GN writeback交接、节点自动 N3 snapshot与写回失败恢复验收均已完成。
 3. Mesh/Bone candidate 与公共 envelope 已分别验证 frame/frame generation/world generation/revision；same-frame不得重复 read/step/revision，只重发同一 revision。Bone live plan仅在公共result transaction成功后替换，发布失败保留上一计划。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；Bone finalizer、baseline与Bone-only rotations必须作为同一 staged bundle原子替换。参数热更新继续保留粒子 history。
+5. BoneSpring强制复用Line topology/static/native/result路径；N2固定覆写已在真实slot验证gravity=0、tether compression=0.8、distance stiffness=0.5并关闭max distance/self collision。BoneCloth与BoneSpring保持不同setup/static/task签名，不共享slot。
 
 Bone mesh-connection当前有明确未决源边界：`ImportBoneType()`写入全零UV，triangle tangent/basis可退化。Automatic/Sequential进入native前必须用独立oracle/产品决策确定拒绝、修复或兼容策略，禁止在fixture里注入合成UV掩盖该事实。
 
@@ -180,7 +181,7 @@ Bone mesh-connection当前有明确未决源边界：`ImportBoneType()`写入全
 
 ### 4. Bone Setup
 
-顺序：Bone Line -> BoneSpring override -> BoneCloth Automatic/Sequential。Bone connection 必须先有“Bone Connection 与代理拓扑”对应 Tier A fixture；不能复用旧逐链 zip 近似。输出只发布稳定 bone identity 的 local transform，由公共 writeback 写 PoseBone。
+顺序：Bone Line -> BoneSpring override已完成；下一步是BoneCloth Automatic/Sequential产品边界。Bone connection 必须先有“Bone Connection 与代理拓扑”对应 Tier A fixture；不能复用旧逐链 zip 近似。输出只发布稳定 bone identity 的 local transform，由公共 writeback 写 PoseBone。
 
 ### 5. 旧路径删除
 

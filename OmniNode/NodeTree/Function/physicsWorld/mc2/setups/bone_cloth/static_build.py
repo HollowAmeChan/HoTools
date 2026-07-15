@@ -1,4 +1,4 @@
-"""BoneCloth Line static assembly for staged MC2 slot registration."""
+"""BoneCloth/BoneSpring Line static assembly for staged MC2 registration."""
 
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
 from ...initial_state import _matrix_from_flat
 from ...initial_state import _quaternion_from_matrix
-from ...names import MC2_SETUP_BONE_CLOTH
+from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from ...topology import _thaw
 
 
 MC2_BONE_STATIC_SCHEMA_VERSION = 1
+MC2_LINE_BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
 
 
 def _signature(value: object) -> str:
@@ -93,7 +94,7 @@ class MC2BoneClothStaticBuildResult:
 
     def debug_dict(self) -> dict:
         return {
-            "setup_type": MC2_SETUP_BONE_CLOTH,
+            "setup_type": self.final_proxy.setup_type,
             "connection_mode": 0,
             "vertex_count": self.final_proxy.vertex_count,
             "edge_count": len(self.final_proxy.edges),
@@ -113,12 +114,13 @@ def bone_cloth_static_input_signature_for_task(
         raise TypeError("task must be MC2TaskSpec")
     if not isinstance(topology, MC2TopologySpec):
         raise TypeError("topology must be MC2TopologySpec")
-    if task.setup_type != MC2_SETUP_BONE_CLOTH or topology.connection_mode != 0:
+    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES or topology.connection_mode != 0:
         return None
     if len(topology.sources) != 1 or not topology.sources[0].resolved:
         raise ValueError("BoneCloth Line static requires one resolved Armature source")
     payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
+        "setup_type": task.setup_type,
         "topology_signature": topology.topology_signature,
         "selection_rule": "parentless_fixed_else_move",
         "normal_alignment_mode": 0,
@@ -137,7 +139,7 @@ def build_mc2_bone_cloth_static_for_task(
         raise TypeError("topology must be MC2TopologySpec")
     if task.task_id != topology.task_id or task.setup_type != topology.setup_type:
         raise ValueError("BoneCloth static task/topology identity mismatch")
-    if task.setup_type != MC2_SETUP_BONE_CLOTH or topology.connection_mode != 0:
+    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES or topology.connection_mode != 0:
         return None
     if topology.bone_connection is None:
         raise ValueError("BoneCloth Line static requires frozen connection topology")
@@ -179,6 +181,7 @@ def build_mc2_bone_cloth_static_for_task(
 
     bone = build_mc2_bone_static(
         task_id=task.task_id,
+        setup_type=task.setup_type,
         vertex_identities=identities,
         local_positions=positions,
         local_normals=normals,

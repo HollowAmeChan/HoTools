@@ -33,6 +33,9 @@ for package_name, package_path in (
 
 
 names = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names")
+parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
 specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
 topology_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
@@ -205,6 +208,43 @@ try:
     assert world.result_streams["bone_transform"][0]["revision"] == 2
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in slot.data
+
+    world.omni_cache_dispose("bone_cloth_complete")
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    world.frame_context.frame = 3
+    world.frame_context.generation = 1
+    world.frame_context.dt = 1.0 / 60.0
+    spring_profile = parameters.make_mc2_particle_profile(
+        gravity=9.0,
+        tether_compression=0.1,
+        distance_stiffness=0.2,
+        max_distance_enabled=True,
+        self_collision_mode=2,
+    )
+    spring_task = specs.make_mc2_task_spec(
+        names.MC2_SETUP_BONE_SPRING,
+        [source],
+        profile=spring_profile,
+    )
+    returned, ready, _status = solver.step_mc2(world, [spring_task])
+    assert returned is world and ready is True
+    spring_slot = world.solver_slots[spring_task.task_id]
+    assert spring_slot.data["bone_static"].final_proxy.setup_type == "bone_spring"
+    assert spring_slot.data["bone_static"].static_signature != static.static_signature
+    runtime = spring_slot.data["effective_parameters"].debug_dict()
+    assert runtime["setup_type"] == "bone_spring"
+    assert runtime["float_values"]["gravity"] == 0.0
+    assert abs(runtime["float_values"]["tether_compression_limit"] - 0.8) < 1.0e-7
+    assert runtime["curve_values"]["distance_stiffness"] == [0.5] * 16
+    assert runtime["int_values"]["use_max_distance"] == 0
+    assert runtime["int_values"]["self_collision_mode"] == 0
+    spring_result = world.result_streams["bone_transform"][0]
+    assert spring_result["setup_type"] == "bone_spring"
+    assert spring_result["bone_count"] == 3
+    assert spring_slot.data["writeback_plan"]["batches"][0]["source_kind"] == "bone_spring"
+    assert writeback.writeback_bone_transforms(world) == 3
+    assert "_writeback_error" not in spring_slot.data
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")
@@ -213,4 +253,4 @@ finally:
     if data.users == 0:
         bpy.data.armatures.remove(data)
 
-print("MC2 BoneCloth Line static slot/native: PASS")
+print("MC2 BoneCloth/BoneSpring Line static/native/writeback: PASS")

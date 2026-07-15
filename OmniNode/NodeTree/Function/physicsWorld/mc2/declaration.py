@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_native_no_collision_public_result",
+    "stage": "mesh_and_bone_line_native_no_collision_public_result",
     "native_strategy": "one_solver_three_setup_adapters_single_native_context",
-    "implementation_status": "mesh_native_public_result_foundation",
+    "implementation_status": "mesh_and_bone_line_native_public_result",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",
@@ -43,7 +43,7 @@ MC2_SOLVER_DECLARATION = {
     ],
     "produces": [
         f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
-        f'planned:world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
+        f'world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
         f'planned:world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
@@ -70,7 +70,7 @@ MC2_SOLVER_DECLARATION = {
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
-        "framework": "sync_topology_auto_mesh_frame_native_context_and_public_result",
+        "framework": "sync_topology_auto_mesh_or_bone_frame_native_context_and_public_result",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
         "native_backend": "single_native_context_no_python_fallback",
@@ -93,7 +93,7 @@ MC2_SOLVER_DECLARATION = {
     "writeback": {
         "owner": "physicsWorld.writeback",
         "target": "shared OBJECT_LOCAL mesh final offset or PoseBone.matrix_basis selected by setup adapter",
-        "composition": "intermediate offset parts stay in world.exchange; publish one final result per Mesh target",
+        "composition": "publish one final GN result per Mesh target or one PoseBone batch per Armature target",
         "solver_inline_writeback": False,
         "update_tag_owner": "writeback.apply",
     },
@@ -101,11 +101,12 @@ MC2_SOLVER_DECLARATION = {
         "result_channels": [],
         "shared_result_channels": [
             GN_ATTRIBUTE_CHANNEL,
+            BONE_TRANSFORM_CHANNEL,
         ],
         "planned_result_channels": [
             MC2_STATS_CHANNEL,
         ],
-        "planned_shared_result_channels": [BONE_TRANSFORM_CHANNEL],
+        "planned_shared_result_channels": [],
         "supports_bake": False,
         "solver_acceptance_blocker": True,
     },

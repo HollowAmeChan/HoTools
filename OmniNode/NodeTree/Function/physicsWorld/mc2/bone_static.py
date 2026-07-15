@@ -1,4 +1,4 @@
-"""Source-aligned BoneCloth ``ConvertProxyMesh`` static bundle.
+"""Source-aligned Bone Line ``ConvertProxyMesh`` static bundle.
 
 The bundle composes the shared finalized proxy, shared finalizer arrays, and
 shared baseline schema with the two Bone-only rotation arrays.  Transform
@@ -27,6 +27,7 @@ from .mesh_baseline import MC2_VERTEX_TRIANGLE
 from .mesh_baseline import _build_local_pose
 from .mesh_baseline import _replace_proxy_attributes
 from .mesh_baseline import _root_and_depth
+from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
 from .static_data import MC2BaselineStaticSpec
 from .static_data import MC2ProxyFinalizerStaticSpec
@@ -208,8 +209,8 @@ class MC2BoneStaticSpec:
     def __post_init__(self) -> None:
         if self.schema_version != MC2_STATIC_SCHEMA_VERSION:
             raise ValueError("unsupported MC2 Bone static schema")
-        if self.proxy.setup_type != "bone_cloth":
-            raise ValueError("Bone static bundle requires a bone_cloth proxy")
+        if self.proxy.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+            raise ValueError("Bone static bundle requires a Bone setup proxy")
         if self.finalizer.proxy_signature != self.proxy.proxy_signature:
             raise ValueError("finalizer must reference the finalized Bone proxy")
         if self.baseline.proxy_signature != self.proxy.proxy_signature:
@@ -248,6 +249,7 @@ class MC2BoneStaticSpec:
 def build_mc2_bone_static(
     *,
     task_id: str,
+    setup_type: str = MC2_SETUP_BONE_CLOTH,
     vertex_identities,
     local_positions,
     local_normals,
@@ -303,7 +305,7 @@ def build_mc2_bone_static(
     )
     raw = build_mc2_final_proxy(
         task_id=task_id,
-        setup_type="bone_cloth",
+        setup_type=setup_type,
         vertex_identities=identities,
         local_positions=_tuple_vectors(positions),
         local_normals=_tuple_vectors(adjusted_normals),
