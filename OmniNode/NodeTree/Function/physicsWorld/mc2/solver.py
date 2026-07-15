@@ -588,6 +588,11 @@ def step_mc2(
                 )
                 _validate_mc2_frame_input(spec, topology, frame_input)
                 frame_inputs[spec.task_id] = frame_input
+            collider_frame = None
+            if frame_input is not None and mesh_static_supported:
+                from .collider_frame import build_mc2_collider_frame
+
+                collider_frame = build_mc2_collider_frame(world, spec.sources[0])
             staged_native_context = None
             staged_native_frame_applied = False
             if rebuild_reason and topology.particle_count > 0:
@@ -604,6 +609,8 @@ def step_mc2(
                         animation_pose_ratio=spec.profile.animation_pose_ratio,
                     )
                     if frame_input is not None:
+                        if collider_frame is not None:
+                            staged_native_context.update_colliders(collider_frame)
                         staged_native_context.update_dynamic(frame_input)
                         staged_native_context.reset()
                         staged_native_context.read()
@@ -621,6 +628,7 @@ def step_mc2(
                     mesh_static,
                     bone_static,
                     static_input_signature,
+                    collider_frame,
                     staged_native_context,
                     staged_native_frame_applied,
                 )
@@ -645,6 +653,7 @@ def step_mc2(
             mesh_static,
             bone_static,
             static_input_signature,
+            collider_frame,
             staged_native_context,
             staged_native_frame_applied,
         ) in prepared:
@@ -785,6 +794,8 @@ def step_mc2(
                     and frame_plan.action != "same_frame"
                     and not staged_native_frame_applied
                 ):
+                    if collider_frame is not None:
+                        native_context.update_colliders(collider_frame)
                     native_context.update_dynamic(frame_input)
                     if frame_plan.action == "reset":
                         native_context.reset()

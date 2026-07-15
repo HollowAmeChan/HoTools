@@ -286,6 +286,59 @@ def test_motion_zero_max_distance_and_source_order():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_collider_upload_is_transactional():
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        types = np.array([0, 1, 2, 3], dtype=np.int32)
+        groups = np.array([1, 2, 1, 1], dtype=np.int32)
+        centers = np.zeros((4, 3), dtype=np.float32)
+        segment_a = np.zeros((4, 3), dtype=np.float32)
+        segment_b = np.zeros((4, 3), dtype=np.float32)
+        radii = np.array([0.5, 0.25, 0.0, 1.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_colliders(
+            context,
+            3,
+            types,
+            groups,
+            centers,
+            segment_a,
+            segment_b,
+            centers.copy(),
+            segment_a.copy(),
+            segment_b.copy(),
+            radii,
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["collider_revision"] == 1
+        assert info["collider_count"] == 4
+        assert info["collided_by_groups"] == 3
+
+        invalid_types = types.copy()
+        invalid_types[2] = 9
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_colliders(
+                context,
+                3,
+                invalid_types,
+                groups,
+                centers,
+                segment_a,
+                segment_b,
+                centers,
+                segment_a,
+                segment_b,
+                radii,
+            ),
+            "type",
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["collider_revision"] == 1
+        assert info["collider_count"] == 4
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_lifecycle_and_transactional_validation():
     baseline = hotools_native.mc2_context_v0_stats().copy()
     first = hotools_native.mc2_context_v0_create(0, 2)
@@ -1038,6 +1091,8 @@ if __name__ == "__main__":
     print("PASS Angle runtime values and source order")
     test_motion_zero_max_distance_and_source_order()
     print("PASS Motion zero MaxDistance and source order")
+    test_collider_upload_is_transactional()
+    print("PASS collider upload transaction")
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
     test_create_free_soak_has_no_live_growth()

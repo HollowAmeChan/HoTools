@@ -72,6 +72,7 @@ struct Mc2ContextV0 {
     std::int64_t bending_static_revision = 0;
     std::int64_t center_static_revision = 0;
     std::int64_t dynamic_revision = 0;
+    std::int64_t collider_revision = 0;
     std::int64_t reset_count = 0;
     std::int64_t step_count = 0;
     std::int64_t distance_solve_count = 0;
@@ -159,6 +160,16 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> bending_quads;
     std::vector<float> bending_rest_angle_or_volume;
     std::vector<std::int8_t> bending_sign_or_volume;
+    std::int32_t collided_by_groups = 0;
+    std::vector<std::int32_t> collider_types;
+    std::vector<std::int32_t> collider_group_bits;
+    std::vector<float> collider_centers;
+    std::vector<float> collider_segment_a;
+    std::vector<float> collider_segment_b;
+    std::vector<float> collider_old_centers;
+    std::vector<float> collider_old_segment_a;
+    std::vector<float> collider_old_segment_b;
+    std::vector<float> collider_radii;
     std::vector<std::int32_t> center_fixed_indices;
     std::vector<float> center_local_position;
     std::vector<float> center_initial_local_gravity_direction;
@@ -243,6 +254,16 @@ void release_resources(Mc2ContextV0& context) {
     context.bending_quads.clear();
     context.bending_rest_angle_or_volume.clear();
     context.bending_sign_or_volume.clear();
+    context.collided_by_groups = 0;
+    context.collider_types.clear();
+    context.collider_group_bits.clear();
+    context.collider_centers.clear();
+    context.collider_segment_a.clear();
+    context.collider_segment_b.clear();
+    context.collider_old_centers.clear();
+    context.collider_old_segment_a.clear();
+    context.collider_old_segment_b.clear();
+    context.collider_radii.clear();
     context.center_fixed_indices.clear();
     context.center_local_position.clear();
     context.center_initial_local_gravity_direction.clear();
@@ -1751,6 +1772,9 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "center_fixed_count", static_cast<std::int64_t>(context.center_fixed_indices.size())) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
+        !dict_i64(result, "collider_revision", context.collider_revision) ||
+        !dict_i64(result, "collider_count", static_cast<std::int64_t>(context.collider_types.size())) ||
+        !dict_i64(result, "collided_by_groups", context.collided_by_groups) ||
         !dict_i64(result, "reset_count", context.reset_count) ||
         !dict_i64(result, "step_count", context.step_count) ||
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
@@ -2801,6 +2825,80 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->bone_output_positions.clear();
     context->bone_output_rotations.clear();
     ++context->dynamic_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_colliders(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 11) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_colliders expects 11 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const long mask = as_long(PyTuple_GET_ITEM(args, 1), "collided_by_groups");
+    if (PyErr_Occurred()) return nullptr;
+    if (mask < 0 || mask > 0xFFFF) {
+        PyErr_SetString(PyExc_ValueError, "collided_by_groups must be in 0..65535");
+        return nullptr;
+    }
+
+    Buffer types, groups, centers, segment_a, segment_b;
+    Buffer old_centers, old_segment_a, old_segment_b, radii;
+    if (!types.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !groups.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
+        !centers.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !segment_a.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !segment_b.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !old_centers.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "collider_old_centers") ||
+        !old_segment_a.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "collider_old_segment_a") ||
+        !old_segment_b.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "collider_old_segment_b") ||
+        !radii.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        return nullptr;
+    }
+    if (!expect_int32_scalar_array(types, "collider_types")) return nullptr;
+    const Py_ssize_t count = types.view.shape[0];
+    if (!expect_int32_scalar_array(groups, "collider_group_bits") || groups.view.shape[0] != count ||
+        !expect_float32(centers, "collider_centers") || !expect_2d(centers, "collider_centers", count, 3) ||
+        !expect_float32(segment_a, "collider_segment_a") || !expect_2d(segment_a, "collider_segment_a", count, 3) ||
+        !expect_float32(segment_b, "collider_segment_b") || !expect_2d(segment_b, "collider_segment_b", count, 3) ||
+        !expect_float32(old_centers, "collider_old_centers") || !expect_2d(old_centers, "collider_old_centers", count, 3) ||
+        !expect_float32(old_segment_a, "collider_old_segment_a") || !expect_2d(old_segment_a, "collider_old_segment_a", count, 3) ||
+        !expect_float32(old_segment_b, "collider_old_segment_b") || !expect_2d(old_segment_b, "collider_old_segment_b", count, 3) ||
+        !expect_float32(radii, "collider_radii") || radii.view.ndim != 1 || radii.view.shape[0] != count ||
+        !finite_floats(centers, "collider_centers") ||
+        !finite_floats(segment_a, "collider_segment_a") ||
+        !finite_floats(segment_b, "collider_segment_b") ||
+        !finite_floats(old_centers, "collider_old_centers") ||
+        !finite_floats(old_segment_a, "collider_old_segment_a") ||
+        !finite_floats(old_segment_b, "collider_old_segment_b") ||
+        !finite_floats(radii, "collider_radii")) {
+        return nullptr;
+    }
+    const auto* type_values = static_cast<const std::int32_t*>(types.view.buf);
+    const auto* group_values = static_cast<const std::int32_t*>(groups.view.buf);
+    for (Py_ssize_t index = 0; index < count; ++index) {
+        if (type_values[index] < 0 || type_values[index] > 3) {
+            PyErr_SetString(PyExc_ValueError, "collider type must be in 0..3");
+            return nullptr;
+        }
+        const auto group = group_values[index];
+        if (group <= 0 || group > 0x8000 || (group & (group - 1)) != 0) {
+            PyErr_SetString(PyExc_ValueError, "collider group bit must be one bit in 1..32768");
+            return nullptr;
+        }
+    }
+
+    context->collided_by_groups = static_cast<std::int32_t>(mask);
+    context->collider_types = copy_values<std::int32_t>(types);
+    context->collider_group_bits = copy_values<std::int32_t>(groups);
+    context->collider_centers = copy_values<float>(centers);
+    context->collider_segment_a = copy_values<float>(segment_a);
+    context->collider_segment_b = copy_values<float>(segment_b);
+    context->collider_old_centers = copy_values<float>(old_centers);
+    context->collider_old_segment_a = copy_values<float>(old_segment_a);
+    context->collider_old_segment_b = copy_values<float>(old_segment_b);
+    context->collider_radii = copy_values<float>(radii);
+    ++context->collider_revision;
     Py_RETURN_NONE;
 }
 

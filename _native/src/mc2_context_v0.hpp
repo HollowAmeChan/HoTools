@@ -20,6 +20,7 @@ PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_update_colliders(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_reset(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read(PyObject*, PyObject* args);

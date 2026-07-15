@@ -19,6 +19,7 @@ from .center_state import (
     MC2CenterStepResult,
     pack_mc2_center_static,
 )
+from .collider_frame import MC2ColliderFrameSpec
 from .distance_static import pack_mc2_distance_static
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
@@ -47,6 +48,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
+    "mc2_context_v0_update_colliders",
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
     "mc2_context_v0_read",
@@ -118,6 +120,7 @@ class MC2NativeContextV0:
         self.distance_signature = ""
         self.bending_signature = ""
         self.center_signature = ""
+        self.collider_signature = ""
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
@@ -180,6 +183,25 @@ class MC2NativeContextV0:
         if type(enabled) is not bool:
             raise TypeError("enabled must be bool")
         self._module.mc2_context_v0_set_tether_enabled(self._handle, enabled)
+
+    def update_colliders(self, spec: MC2ColliderFrameSpec) -> None:
+        if not isinstance(spec, MC2ColliderFrameSpec):
+            raise TypeError("spec must be MC2ColliderFrameSpec")
+        self._ensure_live()
+        self._module.mc2_context_v0_update_colliders(
+            self._handle,
+            spec.collided_by_groups,
+            spec.collider_types,
+            spec.collider_group_bits,
+            spec.collider_centers,
+            spec.collider_segment_a,
+            spec.collider_segment_b,
+            spec.collider_old_centers,
+            spec.collider_old_segment_a,
+            spec.collider_old_segment_b,
+            spec.collider_radii,
+        )
+        self.collider_signature = spec.frame_signature
 
     def _update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
         self._ensure_live()

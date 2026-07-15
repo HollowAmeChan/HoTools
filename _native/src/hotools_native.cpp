@@ -788,6 +788,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_dynamic, a); });
+    m.def("mc2_context_v0_update_colliders",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_colliders, a); });
     m.def("mc2_context_v0_reset",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_reset, a); });
     m.def("mc2_context_v0_step",
