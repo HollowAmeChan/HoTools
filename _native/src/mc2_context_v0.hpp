@@ -29,6 +29,7 @@ PyObject* mc2_context_v0_read(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_self_collision_primitives(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_self_collision_grid(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_self_collision_candidates(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_bone_output(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args);

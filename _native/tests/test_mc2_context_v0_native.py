@@ -728,16 +728,48 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         assert info["self_candidate_ready"] is True
         assert info["self_candidate_update_count"] == 1
         assert info["self_contact_candidate_count"] == 1
-        assert info["self_contact_cache_count"] == 0
+        assert info["self_contact_ready"] is True
+        assert info["self_contact_build_count"] == 1
+        assert info["self_contact_update_count"] == 0
+        assert info["self_contact_cache_count"] == 1
+        assert info["self_contact_enabled_count"] == 1
         candidates = np.empty((1, 3), dtype=np.int32)
         hotools_native.mc2_context_v0_read_self_collision_candidates(
             edge_context, candidates
         )
         np.testing.assert_array_equal(candidates, [[0, 1, 0]])
+        contact_indices = np.empty((1, 2), dtype=np.int32)
+        contact_types = np.empty(1, dtype=np.int32)
+        contact_enabled = np.empty(1, dtype=np.uint8)
+        contact_thickness = np.empty(1, dtype=np.float32)
+        contact_s = np.empty(1, dtype=np.float32)
+        contact_t = np.empty(1, dtype=np.float32)
+        contact_normals = np.empty((1, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_self_collision_contacts(
+            edge_context,
+            contact_indices,
+            contact_types,
+            contact_enabled,
+            contact_thickness,
+            contact_s,
+            contact_t,
+            contact_normals,
+        )
+        np.testing.assert_array_equal(contact_indices, [[0, 1]])
+        np.testing.assert_array_equal(contact_types, [0])
+        np.testing.assert_array_equal(contact_enabled, [1])
+        np.testing.assert_allclose(
+            contact_thickness, [np.float32(np.float16(0.1))], rtol=0.0, atol=0.0
+        )
+        np.testing.assert_array_equal(contact_s, [0.0])
+        np.testing.assert_array_equal(contact_t, [0.0])
+        np.testing.assert_array_equal(contact_normals, [[0.0, -1.0, 0.0]])
         step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
-        assert hotools_native.mc2_context_v0_inspect(edge_context)[
-            "self_candidate_update_count"
-        ] == 1
+        edge_info = hotools_native.mc2_context_v0_inspect(edge_context)
+        assert edge_info["self_candidate_update_count"] == 1
+        assert edge_info["self_contact_build_count"] == 1
+        assert edge_info["self_contact_update_count"] == 1
+        assert edge_info["self_contact_enabled_count"] == 1
 
         proxy, baseline = static_arrays(4)
         edges = np.array([[0, 1], [1, 2], [2, 0]], dtype=np.int32)
@@ -796,12 +828,33 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         info = hotools_native.mc2_context_v0_inspect(point_triangle_context)
         assert info["self_candidate_ready"] is True
         assert info["self_contact_candidate_count"] == 1
-        assert info["self_contact_cache_count"] == 0
+        assert info["self_contact_ready"] is True
+        assert info["self_contact_cache_count"] == 1
+        assert info["self_contact_enabled_count"] == 1
         candidates = np.empty((1, 3), dtype=np.int32)
         hotools_native.mc2_context_v0_read_self_collision_candidates(
             point_triangle_context, candidates
         )
         np.testing.assert_array_equal(candidates, [[3, 7, 1]])
+        hotools_native.mc2_context_v0_read_self_collision_contacts(
+            point_triangle_context,
+            contact_indices,
+            contact_types,
+            contact_enabled,
+            contact_thickness,
+            contact_s,
+            contact_t,
+            contact_normals,
+        )
+        np.testing.assert_array_equal(contact_indices, [[3, 7]])
+        np.testing.assert_array_equal(contact_types, [1])
+        np.testing.assert_array_equal(contact_enabled, [1])
+        np.testing.assert_allclose(
+            contact_thickness, [np.float32(np.float16(0.1))], rtol=0.0, atol=0.0
+        )
+        np.testing.assert_array_equal(contact_s, [1.0])
+        np.testing.assert_array_equal(contact_t, [0.0])
+        np.testing.assert_array_equal(contact_normals, [[0.0, 0.0, 0.0]])
     finally:
         hotools_native.mc2_context_v0_free(edge_context)
         hotools_native.mc2_context_v0_free(point_triangle_context)

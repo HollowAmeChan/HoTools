@@ -103,6 +103,8 @@ struct Mc2ContextV0 {
     std::int64_t self_primitive_update_count = 0;
     std::int64_t self_grid_update_count = 0;
     std::int64_t self_candidate_update_count = 0;
+    std::int64_t self_contact_build_count = 0;
+    std::int64_t self_contact_update_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -129,6 +131,7 @@ struct Mc2ContextV0 {
     bool self_primitive_dynamic_ready = false;
     bool self_grid_dynamic_ready = false;
     bool self_candidate_ready = false;
+    bool self_contact_ready = false;
     bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
@@ -201,6 +204,13 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> self_grid_starts;
     std::vector<std::int32_t> self_grid_counts;
     std::vector<std::int32_t> self_contact_candidates;
+    std::vector<std::int32_t> self_contact_primitive_indices;
+    std::vector<std::int32_t> self_contact_types;
+    std::vector<std::uint8_t> self_contact_enabled;
+    std::vector<float> self_contact_thickness;
+    std::vector<float> self_contact_s;
+    std::vector<float> self_contact_t;
+    std::vector<float> self_contact_normals;
     std::int64_t self_point_primitive_count = 0;
     std::int64_t self_edge_primitive_count = 0;
     std::int64_t self_triangle_primitive_count = 0;
@@ -323,6 +333,13 @@ void release_resources(Mc2ContextV0& context) {
     context.self_grid_starts.clear();
     context.self_grid_counts.clear();
     context.self_contact_candidates.clear();
+    context.self_contact_primitive_indices.clear();
+    context.self_contact_types.clear();
+    context.self_contact_enabled.clear();
+    context.self_contact_thickness.clear();
+    context.self_contact_s.clear();
+    context.self_contact_t.clear();
+    context.self_contact_normals.clear();
     context.self_point_primitive_count = 0;
     context.self_edge_primitive_count = 0;
     context.self_triangle_primitive_count = 0;
@@ -351,6 +368,7 @@ void release_resources(Mc2ContextV0& context) {
     context.self_primitive_dynamic_ready = false;
     context.self_grid_dynamic_ready = false;
     context.self_candidate_ready = false;
+    context.self_contact_ready = false;
     context.self_point_grid_count = 0;
     context.self_edge_grid_count = 0;
     context.self_triangle_grid_count = 0;
@@ -766,6 +784,84 @@ Vec3 normalize(Vec3 value) {
 
 float saturate(float value) {
     return std::max(0.0f, std::min(1.0f, value));
+}
+
+std::uint16_t float_to_half_bits(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::uint32_t sign = (bits >> 16u) & 0x8000u;
+    const std::uint32_t exponent = (bits >> 23u) & 0xffu;
+    const std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) {
+        return static_cast<std::uint16_t>(
+            sign | 0x7c00u | (mantissa != 0u ? 0x0200u : 0u)
+        );
+    }
+    const int half_exponent = static_cast<int>(exponent) - 127 + 15;
+    if (half_exponent >= 31) return static_cast<std::uint16_t>(sign | 0x7c00u);
+    if (half_exponent <= 0) {
+        if (half_exponent < -10) return static_cast<std::uint16_t>(sign);
+        const std::uint32_t full_mantissa = mantissa | 0x800000u;
+        const int shift = 14 - half_exponent;
+        std::uint32_t half_mantissa = full_mantissa >> shift;
+        const std::uint32_t remainder_mask = (std::uint32_t {1} << shift) - 1u;
+        const std::uint32_t remainder = full_mantissa & remainder_mask;
+        const std::uint32_t halfway = std::uint32_t {1} << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (half_mantissa & 1u) != 0u)) {
+            ++half_mantissa;
+        }
+        return static_cast<std::uint16_t>(sign | half_mantissa);
+    }
+    std::uint32_t rounded_mantissa = mantissa >> 13u;
+    const std::uint32_t remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (rounded_mantissa & 1u) != 0u)) {
+        ++rounded_mantissa;
+    }
+    std::uint32_t rounded_exponent = static_cast<std::uint32_t>(half_exponent);
+    if (rounded_mantissa == 0x0400u) {
+        rounded_mantissa = 0;
+        ++rounded_exponent;
+        if (rounded_exponent >= 31u) return static_cast<std::uint16_t>(sign | 0x7c00u);
+    }
+    return static_cast<std::uint16_t>(
+        sign | (rounded_exponent << 10u) | rounded_mantissa
+    );
+}
+
+float half_bits_to_float(std::uint16_t value) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(value & 0x8000u) << 16u;
+    std::uint32_t exponent = (value >> 10u) & 0x1fu;
+    std::uint32_t mantissa = value & 0x03ffu;
+    std::uint32_t bits = 0;
+    if (exponent == 0u) {
+        if (mantissa == 0u) {
+            bits = sign;
+        } else {
+            int normal_exponent = -14;
+            while ((mantissa & 0x0400u) == 0u) {
+                mantissa <<= 1u;
+                --normal_exponent;
+            }
+            mantissa &= 0x03ffu;
+            bits = sign |
+                (static_cast<std::uint32_t>(normal_exponent + 127) << 23u) |
+                (mantissa << 13u);
+        }
+    } else if (exponent == 31u) {
+        bits = sign | 0x7f800000u | (mantissa << 13u);
+    } else {
+        const auto float_exponent = static_cast<std::uint32_t>(
+            static_cast<int>(exponent) - 15 + 127
+        );
+        bits = sign | (float_exponent << 23u) | (mantissa << 13u);
+    }
+    float result = 0.0f;
+    std::memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+float quantize_half(float value) {
+    return half_bits_to_float(float_to_half_bits(value));
 }
 
 std::array<float, 4> quaternion_multiply(
@@ -2153,6 +2249,315 @@ void update_self_collision_candidates(Mc2ContextV0& context) {
     ++context.self_candidate_update_count;
 }
 
+struct SelfContactValue {
+    std::int32_t primitive0 = 0;
+    std::int32_t primitive1 = 0;
+    std::int32_t type = 0;
+    std::uint8_t enabled = 0;
+    float thickness = 0.0f;
+    float s = 0.0f;
+    float t = 0.0f;
+    Vec3 normal {};
+};
+
+float closest_segment_segment(
+    Vec3 p1,
+    Vec3 q1,
+    Vec3 p2,
+    Vec3 q2,
+    float& s,
+    float& t,
+    Vec3& c1,
+    Vec3& c2
+) {
+    const Vec3 d1 = sub(q1, p1);
+    const Vec3 d2 = sub(q2, p2);
+    const Vec3 r = sub(p1, p2);
+    const float a = dot(d1, d1);
+    const float e = dot(d2, d2);
+    const float f = dot(d2, r);
+    if (a <= 1.0e-8f && e <= 1.0e-8f) {
+        s = t = 0.0f;
+        c1 = p1;
+        c2 = p2;
+        return length_squared(sub(c1, c2));
+    }
+    if (a <= 1.0e-8f) {
+        s = 0.0f;
+        t = saturate(f / e);
+    } else {
+        const float c = dot(d1, r);
+        if (e <= 1.0e-8f) {
+            t = 0.0f;
+            s = saturate(-c / a);
+        } else {
+            const float b = dot(d1, d2);
+            const float denominator = a * e - b * b;
+            s = denominator != 0.0f
+                ? saturate((b * f - c * e) / denominator)
+                : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = saturate(-c / a);
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = saturate((b - c) / a);
+            }
+        }
+    }
+    c1 = add(p1, mul(d1, s));
+    c2 = add(p2, mul(d2, t));
+    return length_squared(sub(c1, c2));
+}
+
+Vec3 closest_point_triangle(
+    Vec3 point,
+    Vec3 a,
+    Vec3 b,
+    Vec3 c,
+    Vec3& uvw
+) {
+    uvw = {};
+    const Vec3 ab = sub(b, a);
+    const Vec3 ac = sub(c, a);
+    const Vec3 ap = sub(point, a);
+    const float d1 = dot(ab, ap);
+    const float d2 = dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) {
+        uvw.x = 1.0f;
+        return a;
+    }
+    const Vec3 bp = sub(point, b);
+    const float d3 = dot(ab, bp);
+    const float d4 = dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) {
+        uvw.y = 1.0f;
+        return b;
+    }
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        const float v = d1 / (d1 - d3);
+        uvw = {1.0f - v, v, 0.0f};
+        return add(a, mul(ab, v));
+    }
+    const Vec3 cp = sub(point, c);
+    const float d5 = dot(ab, cp);
+    const float d6 = dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) {
+        uvw.z = 1.0f;
+        return c;
+    }
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        const float w = d2 / (d2 - d6);
+        uvw = {1.0f - w, 0.0f, w};
+        return add(a, mul(ac, w));
+    }
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        const float denominator = (d4 - d3) + (d5 - d6);
+        const float w = (d4 - d3) / denominator;
+        uvw = {0.0f, 1.0f - w, w};
+        return add(b, mul(sub(c, b), w));
+    }
+    const float denominator = 1.0f / (va + vb + vc);
+    const float v = vb * denominator;
+    const float w = vc * denominator;
+    uvw = {1.0f - v - w, v, w};
+    return add(add(a, mul(ab, v)), mul(ac, w));
+}
+
+bool update_self_contact_value(
+    const Mc2ContextV0& context,
+    const std::vector<float>& old_positions,
+    bool first,
+    SelfContactValue& contact
+) {
+    contact.enabled = 0;
+    const auto primitive0 = static_cast<std::size_t>(contact.primitive0);
+    const auto primitive1 = static_cast<std::size_t>(contact.primitive1);
+    const float threshold = contact.thickness * 3.0f;
+    auto particle = [&](std::size_t primitive, std::size_t axis) {
+        return static_cast<std::size_t>(context.self_particle_indices[primitive * 3 + axis]);
+    };
+    if (contact.type == 0) {
+        const auto a0 = particle(primitive0, 0);
+        const auto a1 = particle(primitive0, 1);
+        const auto b0 = particle(primitive1, 0);
+        const auto b1 = particle(primitive1, 1);
+        const Vec3 next_a0 = load_vector3(context.state_positions, a0);
+        const Vec3 next_a1 = load_vector3(context.state_positions, a1);
+        const Vec3 next_b0 = load_vector3(context.state_positions, b0);
+        const Vec3 next_b1 = load_vector3(context.state_positions, b1);
+        const Vec3 old_a0 = load_vector3(old_positions, a0);
+        const Vec3 old_a1 = load_vector3(old_positions, a1);
+        const Vec3 old_b0 = load_vector3(old_positions, b0);
+        const Vec3 old_b1 = load_vector3(old_positions, b1);
+        float s = 0.0f, t = 0.0f;
+        Vec3 closest_a {}, closest_b {};
+        const float closest_length = std::sqrt(closest_segment_segment(
+            old_a0, old_a1, old_b0, old_b1, s, t, closest_a, closest_b
+        ));
+        if (closest_length < 1.0e-9f) return false;
+        const Vec3 normal = mul(sub(closest_a, closest_b), 1.0f / closest_length);
+        const Vec3 displacement_a = add(
+            mul(sub(next_a0, old_a0), 1.0f - s),
+            mul(sub(next_a1, old_a1), s)
+        );
+        const Vec3 displacement_b = add(
+            mul(sub(next_b0, old_b0), 1.0f - t),
+            mul(sub(next_b1, old_b1), t)
+        );
+        const float predicted_length = closest_length +
+            dot(normal, displacement_a) - dot(normal, displacement_b);
+        if (predicted_length > threshold) return false;
+        contact.enabled = 1;
+        contact.s = quantize_half(s);
+        contact.t = quantize_half(t);
+        contact.normal = {
+            quantize_half(normal.x),
+            quantize_half(normal.y),
+            quantize_half(normal.z),
+        };
+        return true;
+    }
+    if (contact.type == 1) {
+        const auto point_index = particle(primitive0, 0);
+        const auto b0 = particle(primitive1, 0);
+        const auto b1 = particle(primitive1, 1);
+        const auto b2 = particle(primitive1, 2);
+        const Vec3 next_point = load_vector3(context.state_positions, point_index);
+        const Vec3 old_point = load_vector3(old_positions, point_index);
+        const Vec3 next_b0 = load_vector3(context.state_positions, b0);
+        const Vec3 next_b1 = load_vector3(context.state_positions, b1);
+        const Vec3 next_b2 = load_vector3(context.state_positions, b2);
+        const Vec3 old_b0 = load_vector3(old_positions, b0);
+        const Vec3 old_b1 = load_vector3(old_positions, b1);
+        const Vec3 old_b2 = load_vector3(old_positions, b2);
+        const Vec3 point_displacement = sub(next_point, old_point);
+        const Vec3 displacement_b0 = sub(next_b0, old_b0);
+        const Vec3 displacement_b1 = sub(next_b1, old_b1);
+        const Vec3 displacement_b2 = sub(next_b2, old_b2);
+        Vec3 uvw {};
+        const Vec3 closest = closest_point_triangle(
+            old_point, old_b0, old_b1, old_b2, uvw
+        );
+        const Vec3 triangle_displacement = add(
+            add(mul(displacement_b0, uvw.x), mul(displacement_b1, uvw.y)),
+            mul(displacement_b2, uvw.z)
+        );
+        const Vec3 closest_vector = sub(closest, old_point);
+        const float closest_length = length(closest_vector);
+        if (closest_length <= kMc2Epsilon) return false;
+        Vec3 normal = mul(closest_vector, 1.0f / closest_length);
+        const float predicted_length = closest_length -
+            dot(normal, point_displacement) + dot(normal, triangle_displacement);
+        if (predicted_length >= threshold) return false;
+        float sign = contact.s;
+        if (first) {
+            const Vec3 triangle_normal = normalize(cross(
+                sub(old_b1, old_b0),
+                sub(old_b2, old_b0)
+            ));
+            normal = normalize(sub(old_point, closest));
+            const float direction = dot(triangle_normal, normal);
+            if (std::abs(direction) < 0.5f) return false;
+            sign = direction > 0.0f ? 1.0f : -1.0f;
+        }
+        contact.s = quantize_half(sign);
+        contact.enabled = 1;
+        return true;
+    }
+    return false;
+}
+
+void clear_self_collision_contacts(Mc2ContextV0& context) {
+    context.self_contact_keys.clear();
+    context.self_contact_primitive_indices.clear();
+    context.self_contact_types.clear();
+    context.self_contact_enabled.clear();
+    context.self_contact_thickness.clear();
+    context.self_contact_s.clear();
+    context.self_contact_t.clear();
+    context.self_contact_normals.clear();
+    context.self_contact_ready = false;
+}
+
+void append_self_contact(Mc2ContextV0& context, const SelfContactValue& contact) {
+    context.self_contact_primitive_indices.push_back(contact.primitive0);
+    context.self_contact_primitive_indices.push_back(contact.primitive1);
+    context.self_contact_types.push_back(contact.type);
+    context.self_contact_enabled.push_back(contact.enabled);
+    context.self_contact_thickness.push_back(contact.thickness);
+    context.self_contact_s.push_back(contact.s);
+    context.self_contact_t.push_back(contact.t);
+    context.self_contact_normals.push_back(contact.normal.x);
+    context.self_contact_normals.push_back(contact.normal.y);
+    context.self_contact_normals.push_back(contact.normal.z);
+    const auto key =
+        (static_cast<std::uint64_t>(contact.type) << 62u) |
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(contact.primitive0)) << 31u) |
+        static_cast<std::uint32_t>(contact.primitive1);
+    context.self_contact_keys.push_back(key);
+}
+
+void build_self_collision_contacts(
+    Mc2ContextV0& context,
+    const std::vector<float>& old_positions
+) {
+    clear_self_collision_contacts(context);
+    const auto candidate_count = context.self_contact_candidates.size() / 3;
+    for (std::size_t candidate = 0; candidate < candidate_count; ++candidate) {
+        const auto primitive0 = context.self_contact_candidates[candidate * 3];
+        const auto primitive1 = context.self_contact_candidates[candidate * 3 + 1];
+        SelfContactValue contact;
+        contact.primitive0 = primitive0;
+        contact.primitive1 = primitive1;
+        contact.type = context.self_contact_candidates[candidate * 3 + 2];
+        contact.thickness = quantize_half(
+            context.self_primitive_thickness[primitive0] +
+            context.self_primitive_thickness[primitive1]
+        );
+        if (update_self_contact_value(context, old_positions, true, contact)) {
+            append_self_contact(context, contact);
+        }
+    }
+    context.self_contact_ready = true;
+    ++context.self_contact_build_count;
+}
+
+void update_self_collision_contacts(
+    Mc2ContextV0& context,
+    const std::vector<float>& old_positions
+) {
+    if (!context.self_contact_ready) return;
+    const auto count = context.self_contact_types.size();
+    for (std::size_t index = 0; index < count; ++index) {
+        SelfContactValue contact;
+        contact.primitive0 = context.self_contact_primitive_indices[index * 2];
+        contact.primitive1 = context.self_contact_primitive_indices[index * 2 + 1];
+        contact.type = context.self_contact_types[index];
+        contact.enabled = context.self_contact_enabled[index];
+        contact.thickness = context.self_contact_thickness[index];
+        contact.s = context.self_contact_s[index];
+        contact.t = context.self_contact_t[index];
+        contact.normal = {
+            context.self_contact_normals[index * 3],
+            context.self_contact_normals[index * 3 + 1],
+            context.self_contact_normals[index * 3 + 2],
+        };
+        update_self_contact_value(context, old_positions, false, contact);
+        context.self_contact_enabled[index] = contact.enabled;
+        context.self_contact_s[index] = contact.s;
+        context.self_contact_t[index] = contact.t;
+        context.self_contact_normals[index * 3] = contact.normal.x;
+        context.self_contact_normals[index * 3 + 1] = contact.normal.y;
+        context.self_contact_normals[index * 3 + 2] = contact.normal.z;
+    }
+    ++context.self_contact_update_count;
+}
+
 void update_self_collision_primitives_once(
     Mc2ContextV0& context,
     const std::vector<float>& old_positions
@@ -2170,6 +2575,7 @@ void update_self_collision_primitives_once(
         context.self_triangle_grid_count = 0;
         context.self_contact_candidates.clear();
         context.self_candidate_ready = false;
+        clear_self_collision_contacts(context);
         context.self_max_primitive_size = 0.0f;
         context.self_grid_size = 0.0f;
         return;
@@ -2177,6 +2583,7 @@ void update_self_collision_primitives_once(
     if (context.self_primitive_dynamic_ready &&
         context.self_primitive_frame == context.frame &&
         context.self_primitive_generation == context.generation) {
+        update_self_collision_contacts(context, old_positions);
         return;
     }
     if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
@@ -2193,6 +2600,7 @@ void update_self_collision_primitives_once(
         context.self_triangle_grid_count = 0;
         context.self_contact_candidates.clear();
         context.self_candidate_ready = false;
+        clear_self_collision_contacts(context);
         context.self_max_primitive_size = 0.0f;
         context.self_grid_size = 0.0f;
         return;
@@ -2266,7 +2674,12 @@ void update_self_collision_primitives_once(
     context.self_primitive_generation = context.generation;
     context.self_primitive_dynamic_ready = true;
     ++context.self_primitive_update_count;
-    if (update_self_collision_grid(context)) update_self_collision_candidates(context);
+    if (update_self_collision_grid(context)) {
+        update_self_collision_candidates(context);
+        build_self_collision_contacts(context, old_positions);
+    } else {
+        clear_self_collision_contacts(context);
+    }
 }
 
 void solve_point_collision_once(Mc2ContextV0& context) {
@@ -2457,6 +2870,15 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             static_cast<std::int64_t>(context.self_contact_candidates.size() / 3)
         ) ||
         !dict_i64(result, "self_contact_cache_count", static_cast<std::int64_t>(context.self_contact_keys.size())) ||
+        !dict_i64(
+            result,
+            "self_contact_enabled_count",
+            static_cast<std::int64_t>(std::count(
+                context.self_contact_enabled.begin(),
+                context.self_contact_enabled.end(),
+                static_cast<std::uint8_t>(1)
+            ))
+        ) ||
         !dict_i64(result, "self_intersect_record_count", static_cast<std::int64_t>(context.self_intersect_records.size() / 5)) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
@@ -2477,6 +2899,8 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||
         !dict_i64(result, "self_grid_update_count", context.self_grid_update_count) ||
         !dict_i64(result, "self_candidate_update_count", context.self_candidate_update_count) ||
+        !dict_i64(result, "self_contact_build_count", context.self_contact_build_count) ||
+        !dict_i64(result, "self_contact_update_count", context.self_contact_update_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -2508,6 +2932,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "self_primitive_dynamic_ready", context.self_primitive_dynamic_ready) ||
         !dict_bool(result, "self_grid_dynamic_ready", context.self_grid_dynamic_ready) ||
         !dict_bool(result, "self_candidate_ready", context.self_candidate_ready) ||
+        !dict_bool(result, "self_contact_ready", context.self_contact_ready) ||
         !dict_float(result, "self_max_primitive_size", context.self_max_primitive_size) ||
         !dict_float(result, "self_grid_size", context.self_grid_size) ||
         !dict_bool(result, "tether_enabled", context.tether_enabled) ||
@@ -3101,6 +3526,7 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_grid_starts.assign(static_cast<std::size_t>(count), 0);
     context->self_grid_counts.assign(static_cast<std::size_t>(count), 0);
     context->self_contact_candidates.clear();
+    clear_self_collision_contacts(*context);
     context->self_point_primitive_count = point_count;
     context->self_edge_primitive_count = edge_count;
     context->self_triangle_primitive_count = triangle_count;
@@ -3765,6 +4191,7 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
     context->self_contact_candidates.clear();
+    clear_self_collision_contacts(*context);
     context->self_primitive_dynamic_ready = false;
     context->self_grid_dynamic_ready = false;
     context->self_candidate_ready = false;
@@ -4089,6 +4516,85 @@ PyObject* mc2_context_v0_read_self_collision_candidates(PyObject*, PyObject* arg
         context->self_contact_candidates.data(),
         context->self_contact_candidates.size() * sizeof(std::int32_t)
     );
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 8) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_self_collision_contacts expects 8 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_contact_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision contacts are not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_contact_types.size());
+    Buffer indices, types, enabled, thickness, s, t, normals;
+    if (!indices.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_indices"
+        ) ||
+        !types.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_types"
+        ) ||
+        !enabled.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_enabled"
+        ) ||
+        !thickness.get(
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_thickness"
+        ) ||
+        !s.get(
+            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_s"
+        ) ||
+        !t.get(
+            PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_t"
+        ) ||
+        !normals.get(
+            PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_normals"
+        )) {
+        return nullptr;
+    }
+    if (!expect_int32(indices, "out_self_contact_indices") ||
+        !expect_2d(indices, "out_self_contact_indices", count, 2) ||
+        !expect_int32(types, "out_self_contact_types") ||
+        !expect_1d_array(types, "out_self_contact_types", count) ||
+        !expect_uint8_scalar_array(enabled, "out_self_contact_enabled") ||
+        !expect_1d_array(enabled, "out_self_contact_enabled", count) ||
+        !expect_float32(thickness, "out_self_contact_thickness") ||
+        !expect_1d_array(thickness, "out_self_contact_thickness", count) ||
+        !expect_float32(s, "out_self_contact_s") ||
+        !expect_1d_array(s, "out_self_contact_s", count) ||
+        !expect_float32(t, "out_self_contact_t") ||
+        !expect_1d_array(t, "out_self_contact_t", count) ||
+        !expect_float32(normals, "out_self_contact_normals") ||
+        !expect_2d(normals, "out_self_contact_normals", count, 3)) {
+        return nullptr;
+    }
+    std::memcpy(indices.view.buf, context->self_contact_primitive_indices.data(),
+                context->self_contact_primitive_indices.size() * sizeof(std::int32_t));
+    std::memcpy(types.view.buf, context->self_contact_types.data(),
+                context->self_contact_types.size() * sizeof(std::int32_t));
+    std::memcpy(enabled.view.buf, context->self_contact_enabled.data(),
+                context->self_contact_enabled.size() * sizeof(std::uint8_t));
+    std::memcpy(thickness.view.buf, context->self_contact_thickness.data(),
+                context->self_contact_thickness.size() * sizeof(float));
+    std::memcpy(s.view.buf, context->self_contact_s.data(),
+                context->self_contact_s.size() * sizeof(float));
+    std::memcpy(t.view.buf, context->self_contact_t.data(),
+                context->self_contact_t.size() * sizeof(float));
+    std::memcpy(normals.view.buf, context->self_contact_normals.data(),
+                context->self_contact_normals.size() * sizeof(float));
     Py_RETURN_NONE;
 }
 
