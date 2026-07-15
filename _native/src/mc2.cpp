@@ -1061,9 +1061,9 @@ void apply_post_step_mc2(Mc2PostStepView& view) {
                     velocity_z *= scale;
                 }
             }
-            view.velocities[offset + 0] = velocity_x;
-            view.velocities[offset + 1] = velocity_y;
-            view.velocities[offset + 2] = velocity_z;
+            view.velocities[offset + 0] = velocity_x * view.velocity_weight;
+            view.velocities[offset + 1] = velocity_y * view.velocity_weight;
+            view.velocities[offset + 2] = velocity_z * view.velocity_weight;
             view.friction[vertex] = contact_friction * kFrictionDampingRate;
         } else {
             view.velocities[offset + 0] = 0.0f;
@@ -3286,6 +3286,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
         post_view.dynamic_friction = view.dynamic_friction;
         post_view.static_friction_speed = view.static_friction_speed;
         post_view.particle_speed_limit = view.particle_speed_limit;
+        post_view.velocity_weight = 1.0f;
         apply_post_step_mc2(post_view);
 
         Mc2CentrifugalView centrifugal_view;

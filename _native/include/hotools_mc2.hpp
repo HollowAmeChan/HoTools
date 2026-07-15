@@ -64,6 +64,7 @@ struct Mc2PostStepView {
     float dynamic_friction = 0.0f;
     float static_friction_speed = 0.0f;
     float particle_speed_limit = -1.0f;
+    float velocity_weight = 1.0f;
 };
 
 struct Mc2CollisionView {

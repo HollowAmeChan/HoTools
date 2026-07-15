@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_and_bone_line_native_no_collision_public_result",
+    "stage": "mesh_point_collision_and_bone_line_native_public_result",
     "native_strategy": "one_solver_three_setup_adapters_single_native_context",
-    "implementation_status": "mesh_and_bone_line_native_public_result",
+    "implementation_status": "mesh_point_collision_and_bone_line_native_public_result",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",

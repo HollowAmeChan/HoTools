@@ -31,6 +31,7 @@ constexpr Py_ssize_t kAngleRestorationCurve = 3;
 constexpr Py_ssize_t kAngleLimitCurve = 4;
 constexpr Py_ssize_t kMaxDistanceCurve = 5;
 constexpr Py_ssize_t kBackstopDistanceCurve = 6;
+constexpr Py_ssize_t kRadiusCurve = 1;
 constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
 constexpr Py_ssize_t kGravityDirection = 1;
@@ -52,11 +53,16 @@ constexpr Py_ssize_t kAngleRestorationGravityFalloff = 29;
 constexpr Py_ssize_t kAngleLimitStiffness = 30;
 constexpr Py_ssize_t kBackstopRadius = 31;
 constexpr Py_ssize_t kMotionStiffness = 32;
+constexpr Py_ssize_t kCollisionDynamicFriction = 33;
+constexpr Py_ssize_t kCollisionStaticFriction = 34;
+constexpr Py_ssize_t kParticleSpeedLimit = 21;
 constexpr Py_ssize_t kNormalAxis = 0;
 constexpr Py_ssize_t kUseAngleRestoration = 4;
 constexpr Py_ssize_t kUseAngleLimit = 5;
 constexpr Py_ssize_t kUseMaxDistance = 6;
 constexpr Py_ssize_t kUseBackstop = 7;
+constexpr Py_ssize_t kCollisionMode = 8;
+constexpr float kFrictionMass = 3.0f;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -82,6 +88,7 @@ struct Mc2ContextV0 {
     std::int64_t tether_solve_count = 0;
     std::int64_t angle_solve_count = 0;
     std::int64_t motion_solve_count = 0;
+    std::int64_t point_collision_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -123,6 +130,10 @@ struct Mc2ContextV0 {
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;
     std::vector<float> velocity_reference_positions;
+    std::vector<float> particle_friction;
+    std::vector<float> particle_static_friction;
+    std::vector<float> particle_collision_normals;
+    std::vector<float> particle_real_velocities;
     std::vector<float> animated_base_positions;
     std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;
@@ -217,6 +228,10 @@ void release_resources(Mc2ContextV0& context) {
     context.state_rotations.clear();
     context.state_velocities.clear();
     context.velocity_reference_positions.clear();
+    context.particle_friction.clear();
+    context.particle_static_friction.clear();
+    context.particle_collision_normals.clear();
+    context.particle_real_velocities.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -661,24 +676,6 @@ bool predict_particles(
     if (!rebuild_baseline_step_pose(context)) return false;
     ++context.particle_prediction_count;
     return true;
-}
-
-void commit_particle_velocities(Mc2ContextV0& context, float dt) {
-    const auto count = static_cast<std::size_t>(context.vertex_count);
-    if (dt <= kMc2Epsilon || context.velocity_reference_positions.size() != count * 3) return;
-    for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        const auto offset = vertex * 3;
-        if (!is_move(context.proxy_attributes[vertex])) continue;
-        context.state_velocities[offset + 0] =
-            (context.state_positions[offset + 0] - context.velocity_reference_positions[offset + 0]) /
-            dt * context.velocity_weight;
-        context.state_velocities[offset + 1] =
-            (context.state_positions[offset + 1] - context.velocity_reference_positions[offset + 1]) /
-            dt * context.velocity_weight;
-        context.state_velocities[offset + 2] =
-            (context.state_positions[offset + 2] - context.velocity_reference_positions[offset + 2]) /
-            dt * context.velocity_weight;
-    }
 }
 
 struct Vec3 {
@@ -1315,7 +1312,9 @@ bool evaluate_center_step(Mc2ContextV0& context, float dt) {
 float bending_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
     if (!is_move(context.proxy_attributes[vertex])) return 0.01f;
     const float depth_offset = 1.0f - context.baseline_depths[vertex];
-    return 1.0f / (1.0f + depth_offset * depth_offset * 5.0f);
+    const float friction = context.particle_friction.size() == static_cast<std::size_t>(context.vertex_count)
+        ? context.particle_friction[vertex] : 0.0f;
+    return 1.0f / (1.0f + friction * kFrictionMass + depth_offset * depth_offset * 5.0f);
 }
 
 bool calc_bending_volume(
@@ -1447,7 +1446,9 @@ void solve_bending_once(Mc2ContextV0& context, float simulation_power_y) {
 float distance_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
     if (!is_move(context.proxy_attributes[vertex])) return kDistanceFixedInverseMass;
     const float depth_delta = 1.0f - context.baseline_depths[vertex];
-    return 1.0f / (1.0f + depth_delta * depth_delta * 5.0f);
+    const float friction = context.particle_friction.size() == static_cast<std::size_t>(context.vertex_count)
+        ? context.particle_friction[vertex] : 0.0f;
+    return 1.0f / (1.0f + friction * kFrictionMass + depth_delta * depth_delta * 5.0f);
 }
 
 void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
@@ -1618,7 +1619,11 @@ void solve_angle_once(Mc2ContextV0& context, float simulation_power_w) {
     std::vector<float> restoration_values(count, 0.0f);
     std::vector<float> limit_values(count, 0.0f);
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        if (is_move(context.proxy_attributes[vertex])) inverse_masses[vertex] = 1.0f;
+        if (is_move(context.proxy_attributes[vertex])) {
+            const float friction = context.particle_friction.size() == count
+                ? context.particle_friction[vertex] : 0.0f;
+            inverse_masses[vertex] = 1.0f / (1.0f + friction * kFrictionMass);
+        }
         const float depth = context.baseline_depths[vertex];
         if (use_restoration) {
             restoration_values[vertex] = std::max(
@@ -1739,6 +1744,75 @@ void solve_motion_once(Mc2ContextV0& context) {
     ++context.motion_solve_count;
 }
 
+void solve_point_collision_once(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.int_values[kCollisionMode] != 1 || context.collider_types.empty() ||
+        context.collided_by_groups == 0 || context.state_positions.size() != count * 3 ||
+        context.proxy_attributes.size() != count || context.baseline_depths.size() != count ||
+        context.particle_friction.size() != count ||
+        context.particle_collision_normals.size() != count * 3) return;
+    std::vector<float> base_positions(count * 3, 0.0f);
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> collision_radii(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto attribute = context.proxy_attributes[vertex];
+        if (is_move(attribute) && (attribute & 0x10u) == 0u) inverse_masses[vertex] = 1.0f;
+        collision_radii[vertex] = std::max(
+            sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
+                context.scale_ratio,
+            0.0001f
+        );
+    }
+    Mc2CollisionView view;
+    view.positions = context.state_positions.data();
+    view.base_positions = base_positions.data();
+    view.inv_masses = inverse_masses.data();
+    view.collision_radii = collision_radii.data();
+    view.collision_normals = context.particle_collision_normals.data();
+    view.friction = context.particle_friction.data();
+    view.collider_types = context.collider_types.data();
+    view.collider_group_bits = context.collider_group_bits.data();
+    view.collider_centers = context.collider_centers.data();
+    view.collider_segment_a = context.collider_segment_a.data();
+    view.collider_segment_b = context.collider_segment_b.data();
+    view.collider_old_centers = context.collider_old_centers.data();
+    view.collider_old_segment_a = context.collider_old_segment_a.data();
+    view.collider_old_segment_b = context.collider_old_segment_b.data();
+    view.collider_radii = context.collider_radii.data();
+    view.vertex_count = context.vertex_count;
+    view.collider_count = static_cast<std::int64_t>(context.collider_types.size());
+    view.collided_by_groups = context.collided_by_groups;
+    project_collisions_mc2(view);
+    ++context.point_collision_solve_count;
+}
+
+void commit_particle_post(Mc2ContextV0& context, float dt, const std::vector<float>& previous_positions) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    std::vector<float> old_positions = previous_positions;
+    std::vector<float> inverse_masses(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (is_move(context.proxy_attributes[vertex])) inverse_masses[vertex] = 1.0f;
+    }
+    Mc2PostStepView view;
+    view.positions = context.state_positions.data();
+    view.old_positions = old_positions.data();
+    view.velocity_positions = context.velocity_reference_positions.data();
+    view.velocities = context.state_velocities.data();
+    view.real_velocities = context.particle_real_velocities.data();
+    view.friction = context.particle_friction.data();
+    view.static_friction = context.particle_static_friction.data();
+    view.collision_normals = context.particle_collision_normals.data();
+    view.inv_masses = inverse_masses.data();
+    view.vertex_count = context.vertex_count;
+    view.step_dt = dt;
+    view.dynamic_friction = context.float_values[kCollisionDynamicFriction];
+    view.static_friction_speed = context.float_values[kCollisionStaticFriction] * context.scale_ratio;
+    view.particle_speed_limit = context.float_values[kParticleSpeedLimit] * context.scale_ratio;
+    view.velocity_weight = context.velocity_weight;
+    apply_post_step_mc2(view);
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -1784,6 +1858,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "tether_solve_count", context.tether_solve_count) ||
         !dict_i64(result, "angle_solve_count", context.angle_solve_count) ||
         !dict_i64(result, "motion_solve_count", context.motion_solve_count) ||
+        !dict_i64(result, "point_collision_solve_count", context.point_collision_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -2922,6 +2997,10 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
         0.0f
     );
     context->velocity_reference_positions = context->dynamic_positions;
+    context->particle_friction.assign(static_cast<std::size_t>(context->vertex_count), 0.0f);
+    context->particle_static_friction.assign(static_cast<std::size_t>(context->vertex_count), 0.0f);
+    context->particle_collision_normals.assign(static_cast<std::size_t>(context->vertex_count) * 3, 0.0f);
+    context->particle_real_velocities.assign(static_cast<std::size_t>(context->vertex_count) * 3, 0.0f);
     context->step_basic_positions = context->dynamic_positions;
     context->step_basic_rotations = context->dynamic_rotations;
     context->center_dynamic_ready = false;
@@ -2986,6 +3065,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         return nullptr;
     }
     if (context->proxy_static_ready) {
+        const auto previous_positions = context->state_positions;
         if (!predict_particles(
                 *context,
                 static_cast<float>(dt),
@@ -2998,9 +3078,10 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_angle_once(*context, static_cast<float>(simulation_power_w));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
+        solve_point_collision_once(*context);
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_motion_once(*context);
-        commit_particle_velocities(*context, static_cast<float>(dt));
+        commit_particle_post(*context, static_cast<float>(dt), previous_positions);
     }
     if (center_step_active) {
         context->center_old_world_position = context->center_now_world_position;

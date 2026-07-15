@@ -930,6 +930,7 @@ NB_MODULE(hotools_native, m) {
             view.dynamic_friction    = dfric;
             view.static_friction_speed = sfs;
             view.particle_speed_limit  = psl;
+            view.velocity_weight       = 1.0f;
             { nb::gil_scoped_release _; hotools::apply_post_step_mc2(view); }
         },
         nb::arg("positions"), nb::arg("old_positions"), nb::arg("velocity_positions"),
