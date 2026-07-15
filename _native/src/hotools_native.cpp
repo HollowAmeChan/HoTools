@@ -1032,6 +1032,7 @@ NB_MODULE(hotools_native, m) {
             view.edge_count          = static_cast<std::int64_t>(edges.shape(0));
             view.collider_count      = static_cast<std::int64_t>(nc);
             view.collided_by_groups  = static_cast<std::int32_t>(cbg);
+            view.move_attribute_mask = 1u << 2u;
             { nb::gil_scoped_release _; hotools::project_edge_collisions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("edges"), nb::arg("attributes"),

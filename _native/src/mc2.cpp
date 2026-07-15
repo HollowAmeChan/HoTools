@@ -1706,8 +1706,8 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
             static_cast<std::int64_t>(v1) >= view.vertex_count || v0 == v1) {
             continue;
         }
-        const bool move0 = (view.attributes[v0] & kMc2AttrMove) != 0;
-        const bool move1 = (view.attributes[v1] & kMc2AttrMove) != 0;
+        const bool move0 = (view.attributes[v0] & view.move_attribute_mask) != 0;
+        const bool move1 = (view.attributes[v1] & view.move_attribute_mask) != 0;
         if (!move0 && !move1) {
             continue;
         }

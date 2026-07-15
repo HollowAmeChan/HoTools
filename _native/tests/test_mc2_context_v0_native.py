@@ -379,6 +379,53 @@ def test_point_collision_projection_and_post():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_edge_collision_projection_and_post():
+    context = hotools_native.mc2_context_v0_create(0, 3)
+    try:
+        proxy, baseline = static_arrays(3)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context, np.zeros((3, 2), dtype=np.int32),
+            np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context, np.empty((0, 4), dtype=np.int32),
+            np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        ints[8] = 2
+        curves[1, :] = 0.18
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, -0.05, 0.0]],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((3, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        centers = np.array([[0.5, -0.1, 0.0]], dtype=np.float32)
+        segments = centers.copy()
+        hotools_native.mc2_context_v0_update_colliders(
+            context, 1,
+            np.array([0], dtype=np.int32), np.array([1], dtype=np.int32),
+            centers, segments, segments, centers.copy(), segments.copy(), segments.copy(),
+            np.array([0.15], dtype=np.float32),
+        )
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0)
+        output = np.empty_like(positions)
+        output_rotations = np.empty_like(rotations)
+        hotools_native.mc2_context_v0_read(context, output, output_rotations)
+        assert np.max(np.linalg.norm(output - positions, axis=1)) > 0.0
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["edge_collision_solve_count"] == 1
+        assert info["point_collision_solve_count"] == 0
+        assert info["distance_solve_count"] == 0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_lifecycle_and_transactional_validation():
     baseline = hotools_native.mc2_context_v0_stats().copy()
     first = hotools_native.mc2_context_v0_create(0, 2)
@@ -1135,6 +1182,8 @@ if __name__ == "__main__":
     print("PASS collider upload transaction")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
+    test_edge_collision_projection_and_post()
+    print("PASS Edge collision projection and post")
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
     test_create_free_soak_has_no_live_growth()

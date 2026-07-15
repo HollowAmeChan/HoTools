@@ -109,6 +109,7 @@ struct Mc2EdgeCollisionView {
     std::int64_t edge_count = 0;
     std::int64_t collider_count = 0;
     std::int32_t collided_by_groups = 0;
+    std::uint8_t move_attribute_mask = 1u << 2u;
 };
 
 struct Mc2SelfCollisionView {

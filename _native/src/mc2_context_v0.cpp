@@ -89,6 +89,7 @@ struct Mc2ContextV0 {
     std::int64_t angle_solve_count = 0;
     std::int64_t motion_solve_count = 0;
     std::int64_t point_collision_solve_count = 0;
+    std::int64_t edge_collision_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -1787,6 +1788,47 @@ void solve_point_collision_once(Mc2ContextV0& context) {
     ++context.point_collision_solve_count;
 }
 
+void solve_edge_collision_once(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.int_values[kCollisionMode] != 2 || context.collider_types.empty() ||
+        context.collided_by_groups == 0 || context.proxy_edges.empty() ||
+        context.state_positions.size() != count * 3 || context.proxy_attributes.size() != count ||
+        context.baseline_depths.size() != count || context.particle_friction.size() != count ||
+        context.particle_collision_normals.size() != count * 3) return;
+    std::vector<float> collision_radii(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        collision_radii[vertex] = std::max(
+            sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
+                context.scale_ratio,
+            0.0001f
+        );
+    }
+    Mc2EdgeCollisionView view;
+    view.positions = context.state_positions.data();
+    view.edges = context.proxy_edges.data();
+    view.attributes = context.proxy_attributes.data();
+    view.collision_radii = collision_radii.data();
+    view.collision_normals = context.particle_collision_normals.data();
+    view.friction = context.particle_friction.data();
+    view.collider_types = context.collider_types.data();
+    view.collider_group_bits = context.collider_group_bits.data();
+    view.collider_centers = context.collider_centers.data();
+    view.collider_segment_a = context.collider_segment_a.data();
+    view.collider_segment_b = context.collider_segment_b.data();
+    view.collider_old_centers = context.collider_old_centers.data();
+    view.collider_old_segment_a = context.collider_old_segment_a.data();
+    view.collider_old_segment_b = context.collider_old_segment_b.data();
+    view.collider_radii = context.collider_radii.data();
+    view.vertex_count = context.vertex_count;
+    view.edge_count = static_cast<std::int64_t>(context.proxy_edges.size() / 2);
+    view.collider_count = static_cast<std::int64_t>(context.collider_types.size());
+    view.collided_by_groups = context.collided_by_groups;
+    view.move_attribute_mask = 0x02u;
+    project_edge_collisions_mc2(view);
+    ++context.edge_collision_solve_count;
+}
+
 void commit_particle_post(Mc2ContextV0& context, float dt, const std::vector<float>& previous_positions) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     std::vector<float> old_positions = previous_positions;
@@ -1859,6 +1901,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "angle_solve_count", context.angle_solve_count) ||
         !dict_i64(result, "motion_solve_count", context.motion_solve_count) ||
         !dict_i64(result, "point_collision_solve_count", context.point_collision_solve_count) ||
+        !dict_i64(result, "edge_collision_solve_count", context.edge_collision_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -3079,6 +3122,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         solve_angle_once(*context, static_cast<float>(simulation_power_w));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
         solve_point_collision_once(*context);
+        solve_edge_collision_once(*context);
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_motion_once(*context);
         commit_particle_post(*context, static_cast<float>(dt), previous_positions);
