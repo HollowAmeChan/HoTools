@@ -887,6 +887,9 @@ NB_MODULE(hotools_native, m) {
             view.velocity_positions = vel.data();
             view.vertex_count       = static_cast<std::int64_t>(vc);
             view.normal_axis        = std::max(0, std::min(5, axis));
+            view.explicit_enable_flags = false;
+            view.max_distance_enabled = false;
+            view.backstop_enabled = false;
             { nb::gil_scoped_release _; hotools::project_motion_constraints_mc2(view); }
         },
         nb::arg("positions"), nb::arg("base_positions"), nb::arg("base_rotations"),

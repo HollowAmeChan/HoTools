@@ -853,14 +853,14 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         return;
     }
 
-    bool use_max_distance = false;
-    bool use_backstop = false;
+    bool use_max_distance = view.explicit_enable_flags && view.max_distance_enabled;
+    bool use_backstop = view.explicit_enable_flags && view.backstop_enabled;
     bool has_stiffness = false;
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
-        if (view.max_distances[vertex] > kMc2Epsilon) {
+        if (!view.explicit_enable_flags && view.max_distances[vertex] > kMc2Epsilon) {
             use_max_distance = true;
         }
-        if (view.backstop_radii[vertex] > kMc2Epsilon) {
+        if (!view.explicit_enable_flags && view.backstop_radii[vertex] > kMc2Epsilon) {
             use_backstop = true;
         }
         if (view.stiffness_values[vertex] > kMc2Epsilon) {
@@ -880,9 +880,11 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         if (stiffness <= kMc2Epsilon) {
             continue;
         }
-        const float limit = view.max_distances[vertex];
+        const float limit = std::max(view.max_distances[vertex], 0.0f);
         const float backstop_radius = std::max(view.backstop_radii[vertex], 0.0f);
-        if (limit <= kMc2Epsilon && backstop_radius <= kMc2Epsilon) {
+        const bool apply_max_distance = use_max_distance &&
+            (view.explicit_enable_flags || limit > kMc2Epsilon);
+        if (!apply_max_distance && (!use_backstop || backstop_radius <= kMc2Epsilon)) {
             continue;
         }
 
@@ -894,7 +896,7 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         float constrained_y = original_y;
         float constrained_z = original_z;
 
-        if (use_max_distance && limit > kMc2Epsilon) {
+        if (apply_max_distance) {
             const float dx = constrained_x - view.base_positions[offset + 0];
             const float dy = constrained_y - view.base_positions[offset + 1];
             const float dz = constrained_z - view.base_positions[offset + 2];
@@ -3246,6 +3248,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             motion_view.velocity_positions = view.velocity_positions;
             motion_view.vertex_count = view.vertex_count;
             motion_view.normal_axis = view.normal_axis;
+            motion_view.explicit_enable_flags = false;
+            motion_view.max_distance_enabled = false;
+            motion_view.backstop_enabled = false;
             project_motion_constraints_mc2(motion_view);
         }
 

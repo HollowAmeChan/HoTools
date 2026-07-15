@@ -219,6 +219,8 @@ Tether源码顺序位于prediction与首次Distance之间，直接消费现有Mo
 
 Angle源码顺序位于首次Distance与Bending之间，直接消费baseline parent/range/data、depth、step-basic position/rotation、next position与velocity-reference。Restoration/Limit由N2 int槽4/5控制，分别采样curve槽3/4；velocity attenuation、gravity falloff、limit stiffness来自float槽28..30。N2的Restoration curve已在`ClothParameters`转换阶段乘0.2，native kernel不得再次缩放；V0现使用该已转换值，继续乘源码`simulationPower.w=(90/frequency)^1.8`，并将`lerp(1-falloff, 1, gravityDot)`等价映射到kernel输入。raw step四参数ABI默认w=1，Python production owner显式传入w。无碰撞域friction为零，因此Move/Fixed inverse mass分别为1/0。py313隔离case对拍独立kernel且证明位置发生修正，Blender5.1 Mesh/Bone生产子步记录solve count；独立Tier A Angle substep fixture仍待生成。
 
+Motion源码顺序位于第二次Distance之后、post之前，Max Distance与Backstop始终相对插值后的animation base position/rotation计算，不能使用Angle/Baseline已经改写的step-basic。V0因此在prediction开始时独立保存animated base缓冲。Motion由N2 int槽6/7控制，depth先平方再采样curve槽5/6，backstop radius与stiffness来自float槽31/32，法线轴来自int槽0；仅Move且未设置`Flag_InvalidMotion(0x08)`的粒子参与。显式Max Distance启用时曲线值0表示锁到base pose，不是关闭；raw公共kernel仍保留逐顶点正值推断兼容。py313零距离case验证gravity prediction后被锁回base且顺序位于post前，Blender5.1 Fixed Mesh记录三个production solve；独立Tier A Motion substep fixture仍待生成。
+
 每个 substep会重新构建 next/velocity-reference/base pose与 step-basic scratch；post step提交 old position、velocity与摩擦；display再使用 committed state与 real velocity。必须区分：
 
 - persistent：old pose、animation history、display、velocity/friction/collision history；

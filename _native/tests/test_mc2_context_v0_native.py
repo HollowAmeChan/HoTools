@@ -244,6 +244,48 @@ def test_angle_runtime_values_and_source_order():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_motion_zero_max_distance_and_source_order():
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        proxy, baseline = static_arrays(1)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((1, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[0] = 1.0
+        floats[1] = 1.0
+        floats[32] = 1.0
+        ints[6] = 1
+        curves[5, :] = 0.0
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.zeros((1, 3), dtype=np.float32)
+        rotations = np.array([[0, 0, 0, 1]], dtype=np.float32)
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+        actual = np.empty_like(positions)
+        actual_rotations = np.empty_like(rotations)
+        hotools_native.mc2_context_v0_read(context, actual, actual_rotations)
+        np.testing.assert_allclose(actual, positions, rtol=0.0, atol=1.0e-7)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["motion_solve_count"] == 1
+        assert info["distance_solve_count"] == 0
+        assert info["bending_solve_count"] == 0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_lifecycle_and_transactional_validation():
     baseline = hotools_native.mc2_context_v0_stats().copy()
     first = hotools_native.mc2_context_v0_create(0, 2)
@@ -994,6 +1036,8 @@ if __name__ == "__main__":
     print("PASS gated Tether source order")
     test_angle_runtime_values_and_source_order()
     print("PASS Angle runtime values and source order")
+    test_motion_zero_max_distance_and_source_order()
+    print("PASS Motion zero MaxDistance and source order")
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
     test_create_free_soak_has_no_live_growth()

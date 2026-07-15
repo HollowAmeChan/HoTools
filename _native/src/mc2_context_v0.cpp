@@ -29,6 +29,8 @@ constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
 constexpr Py_ssize_t kDistanceStiffnessCurve = 2;
 constexpr Py_ssize_t kAngleRestorationCurve = 3;
 constexpr Py_ssize_t kAngleLimitCurve = 4;
+constexpr Py_ssize_t kMaxDistanceCurve = 5;
+constexpr Py_ssize_t kBackstopDistanceCurve = 6;
 constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
 constexpr Py_ssize_t kGravityDirection = 1;
@@ -48,8 +50,13 @@ constexpr Py_ssize_t kTetherStretch = 25;
 constexpr Py_ssize_t kAngleRestorationVelocityAttenuation = 28;
 constexpr Py_ssize_t kAngleRestorationGravityFalloff = 29;
 constexpr Py_ssize_t kAngleLimitStiffness = 30;
+constexpr Py_ssize_t kBackstopRadius = 31;
+constexpr Py_ssize_t kMotionStiffness = 32;
+constexpr Py_ssize_t kNormalAxis = 0;
 constexpr Py_ssize_t kUseAngleRestoration = 4;
 constexpr Py_ssize_t kUseAngleLimit = 5;
+constexpr Py_ssize_t kUseMaxDistance = 6;
+constexpr Py_ssize_t kUseBackstop = 7;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -73,6 +80,7 @@ struct Mc2ContextV0 {
     std::int64_t bending_solve_count = 0;
     std::int64_t tether_solve_count = 0;
     std::int64_t angle_solve_count = 0;
+    std::int64_t motion_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -114,6 +122,8 @@ struct Mc2ContextV0 {
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;
     std::vector<float> velocity_reference_positions;
+    std::vector<float> animated_base_positions;
+    std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;
     std::vector<float> step_basic_rotations;
     std::vector<float> proxy_local_positions;
@@ -196,6 +206,8 @@ void release_resources(Mc2ContextV0& context) {
     context.state_rotations.clear();
     context.state_velocities.clear();
     context.velocity_reference_positions.clear();
+    context.animated_base_positions.clear();
+    context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
     context.step_basic_rotations.clear();
     context.proxy_local_positions.clear();
@@ -517,6 +529,8 @@ bool predict_particles(
         return false;
     }
     context.velocity_reference_positions = context.state_positions;
+    context.animated_base_positions.resize(count * 3);
+    context.animated_base_rotations.resize(count * 4);
     context.step_basic_positions.resize(count * 3);
     context.step_basic_rotations.resize(count * 4);
     const float gravity_scale =
@@ -528,15 +542,22 @@ bool predict_particles(
         const auto offset = vertex * 3;
         const auto rotation_offset = vertex * 4;
         for (std::size_t component = 0; component < 3; ++component) {
-            context.step_basic_positions[offset + component] =
+            context.animated_base_positions[offset + component] =
                 context.old_dynamic_positions[offset + component] *
                     (1.0f - context.frame_interpolation) +
                 context.dynamic_positions[offset + component] * context.frame_interpolation;
+            context.step_basic_positions[offset + component] =
+                context.animated_base_positions[offset + component];
         }
         slerp_xyzw(
             context.old_dynamic_rotations.data() + rotation_offset,
             context.dynamic_rotations.data() + rotation_offset,
             context.frame_interpolation,
+            context.animated_base_rotations.data() + rotation_offset
+        );
+        std::copy_n(
+            context.animated_base_rotations.data() + rotation_offset,
+            4,
             context.step_basic_rotations.data() + rotation_offset
         );
         if (!is_move(context.proxy_attributes[vertex])) {
@@ -1632,6 +1653,71 @@ void solve_angle_once(Mc2ContextV0& context, float simulation_power_w) {
     ++context.angle_solve_count;
 }
 
+void solve_motion_once(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.state_positions.size() != count * 3 ||
+        context.velocity_reference_positions.size() != count * 3 ||
+        context.animated_base_positions.size() != count * 3 ||
+        context.animated_base_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_depths.size() != count) {
+        return;
+    }
+    const bool use_max_distance = context.int_values[kUseMaxDistance] != 0;
+    const bool use_backstop = context.int_values[kUseBackstop] != 0;
+    if (!use_max_distance && !use_backstop) return;
+
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> max_distances(count, 0.0f);
+    std::vector<float> stiffness_values(
+        count,
+        std::max(0.0f, std::min(1.0f, context.float_values[kMotionStiffness]))
+    );
+    std::vector<float> backstop_radii(count, 0.0f);
+    std::vector<float> backstop_distances(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto attribute = context.proxy_attributes[vertex];
+        if (is_move(attribute) && (attribute & 0x08u) == 0u) {
+            inverse_masses[vertex] = 1.0f;
+        }
+        const float depth = context.baseline_depths[vertex];
+        const float motion_depth = depth * depth;
+        if (use_max_distance) {
+            max_distances[vertex] = std::max(
+                0.0f,
+                sample_curve16(context.curve_values, kMaxDistanceCurve, motion_depth)
+            );
+        }
+        if (use_backstop) {
+            backstop_radii[vertex] = std::max(0.0f, context.float_values[kBackstopRadius]);
+            backstop_distances[vertex] = std::max(
+                0.0f,
+                sample_curve16(context.curve_values, kBackstopDistanceCurve, motion_depth)
+            );
+        }
+    }
+
+    Mc2MotionConstraintView view;
+    view.positions = context.state_positions.data();
+    view.base_positions = context.animated_base_positions.data();
+    view.base_rotations = context.animated_base_rotations.data();
+    view.inv_masses = inverse_masses.data();
+    view.max_distances = max_distances.data();
+    view.stiffness_values = stiffness_values.data();
+    view.backstop_radii = backstop_radii.data();
+    view.backstop_distances = backstop_distances.data();
+    view.velocity_positions = context.velocity_reference_positions.data();
+    view.vertex_count = context.vertex_count;
+    view.normal_axis = context.int_values[kNormalAxis];
+    view.explicit_enable_flags = true;
+    view.max_distance_enabled = use_max_distance;
+    view.backstop_enabled = use_backstop;
+    project_motion_constraints_mc2(view);
+    ++context.motion_solve_count;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -1673,6 +1759,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "tether_solve_count", context.tether_solve_count) ||
         !dict_i64(result, "angle_solve_count", context.angle_solve_count) ||
+        !dict_i64(result, "motion_solve_count", context.motion_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -2814,6 +2901,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         solve_angle_once(*context, static_cast<float>(simulation_power_w));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
+        solve_motion_once(*context);
         commit_particle_velocities(*context, static_cast<float>(dt));
     }
     if (center_step_active) {

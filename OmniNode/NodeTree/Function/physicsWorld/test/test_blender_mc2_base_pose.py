@@ -1185,6 +1185,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 movement_inertia_smoothing=0.0,
                 movement_speed_limit=-1.0,
                 rotation_speed_limit=-1.0,
+                max_distance_enabled=True,
+                max_distance=5.0,
+                motion_stiffness=0.5,
             ),
         )
         fixed_topology = mc2_topology.build_mc2_topology_spec(fixed_task)
@@ -1279,6 +1282,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert fixed_native_info["baseline_count"] > 0
         assert fixed_native_info["step_count"] == 3
         assert fixed_native_info["angle_solve_count"] == 3
+        assert fixed_native_info["motion_solve_count"] == 3
         assert fixed_native_info["center_dynamic_revision"] == 1
         assert fixed_native_info["step_interpolation_revision"] == 2
         assert fixed_native_info["center_step_count"] == 3

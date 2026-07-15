@@ -44,6 +44,9 @@ struct Mc2MotionConstraintView {
     float* velocity_positions = nullptr;
     std::int64_t vertex_count = 0;
     int normal_axis = 1;
+    bool explicit_enable_flags = false;
+    bool max_distance_enabled = false;
+    bool backstop_enabled = false;
 };
 
 struct Mc2PostStepView {
