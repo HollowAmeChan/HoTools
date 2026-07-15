@@ -26,6 +26,7 @@ PyObject* mc2_context_v0_update_colliders(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_reset(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_self_collision_primitives(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_bone_output(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args);

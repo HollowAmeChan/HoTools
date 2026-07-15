@@ -374,6 +374,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 movement_inertia_smoothing=0.0,
                 movement_speed_limit=0.1,
                 rotation_speed_limit=90.0,
+                self_collision_mode=2,
+                self_collision_thickness=0.01,
+                cloth_mass=0.25,
             ),
         )
         mc2_solver.step_mc2(
@@ -390,6 +393,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["animation_pose_ratio"] == 0.25
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1
+        assert native_info["self_primitive_dynamic_ready"] is False
+        assert native_info["self_primitive_update_count"] == 0
         np.testing.assert_array_equal(
             particle_buffer.next_positions,
             history_before_parameter_update,
@@ -521,6 +526,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_dynamic_revision"] == 1
         assert native_info["center_step_count"] == 1
         assert native_info["center_frame_shift_count"] == 1
+        assert native_info["self_primitive_dynamic_ready"] is True
+        assert native_info["self_primitive_update_count"] == 1
+        assert native_info["self_max_primitive_size"] > 0.0
+        assert abs(
+            native_info["self_grid_size"]
+            - native_info["self_max_primitive_size"] * 3.0
+        ) < 1.0e-6
         assert native_info["distance_solve_count"] == 2
         assert native_info["angle_solve_count"] == 0
         center_result = slot.data["center_step_result"]
@@ -625,6 +637,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_dynamic_revision"] == 2
         assert native_info["center_step_count"] == 2
         assert native_info["center_frame_shift_count"] == 1
+        assert native_info["self_primitive_dynamic_ready"] is False
+        assert native_info["self_primitive_update_count"] == 1
+        assert native_info["self_max_primitive_size"] == 0.0
+        assert native_info["self_grid_size"] == 0.0
         assert slot.data["center_frame_shift_result"] is None
         assert center_runtime.anchor_identity == "anchor:test"
         np.testing.assert_allclose(

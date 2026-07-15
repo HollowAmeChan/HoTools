@@ -32,6 +32,7 @@ constexpr Py_ssize_t kAngleLimitCurve = 4;
 constexpr Py_ssize_t kMaxDistanceCurve = 5;
 constexpr Py_ssize_t kBackstopDistanceCurve = 6;
 constexpr Py_ssize_t kCollisionLimitDistanceCurve = 7;
+constexpr Py_ssize_t kSelfCollisionThicknessCurve = 8;
 constexpr Py_ssize_t kRadiusCurve = 1;
 constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
@@ -56,6 +57,7 @@ constexpr Py_ssize_t kBackstopRadius = 31;
 constexpr Py_ssize_t kMotionStiffness = 32;
 constexpr Py_ssize_t kCollisionDynamicFriction = 33;
 constexpr Py_ssize_t kCollisionStaticFriction = 34;
+constexpr Py_ssize_t kClothMass = 35;
 constexpr Py_ssize_t kParticleSpeedLimit = 21;
 constexpr Py_ssize_t kNormalAxis = 0;
 constexpr Py_ssize_t kUseAngleRestoration = 4;
@@ -63,6 +65,7 @@ constexpr Py_ssize_t kUseAngleLimit = 5;
 constexpr Py_ssize_t kUseMaxDistance = 6;
 constexpr Py_ssize_t kUseBackstop = 7;
 constexpr Py_ssize_t kCollisionMode = 8;
+constexpr Py_ssize_t kSelfCollisionMode = 9;
 constexpr float kFrictionMass = 3.0f;
 constexpr std::uint32_t kSelfFix0 = 0x04000000u;
 constexpr std::uint32_t kSelfAllFix = 0x20000000u;
@@ -96,6 +99,7 @@ struct Mc2ContextV0 {
     std::int64_t motion_solve_count = 0;
     std::int64_t point_collision_solve_count = 0;
     std::int64_t edge_collision_solve_count = 0;
+    std::int64_t self_primitive_update_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -119,6 +123,7 @@ struct Mc2ContextV0 {
     bool distance_static_ready = false;
     bool bending_static_ready = false;
     bool self_collision_static_ready = false;
+    bool self_primitive_dynamic_ready = false;
     bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
@@ -182,9 +187,17 @@ struct Mc2ContextV0 {
     std::vector<std::uint32_t> self_primitive_flags;
     std::vector<std::int32_t> self_particle_indices;
     std::vector<float> self_primitive_depths;
+    std::vector<float> self_primitive_inverse_masses;
+    std::vector<float> self_primitive_aabb_min;
+    std::vector<float> self_primitive_aabb_max;
+    std::vector<float> self_primitive_thickness;
     std::int64_t self_point_primitive_count = 0;
     std::int64_t self_edge_primitive_count = 0;
     std::int64_t self_triangle_primitive_count = 0;
+    std::int64_t self_primitive_frame = 0;
+    std::int64_t self_primitive_generation = 0;
+    float self_max_primitive_size = 0.0f;
+    float self_grid_size = 0.0f;
     std::vector<std::uint64_t> self_contact_keys;
     std::vector<std::int32_t> self_intersect_records;
     std::int32_t collided_by_groups = 0;
@@ -288,6 +301,10 @@ void release_resources(Mc2ContextV0& context) {
     context.self_primitive_flags.clear();
     context.self_particle_indices.clear();
     context.self_primitive_depths.clear();
+    context.self_primitive_inverse_masses.clear();
+    context.self_primitive_aabb_min.clear();
+    context.self_primitive_aabb_max.clear();
+    context.self_primitive_thickness.clear();
     context.self_point_primitive_count = 0;
     context.self_edge_primitive_count = 0;
     context.self_triangle_primitive_count = 0;
@@ -313,6 +330,9 @@ void release_resources(Mc2ContextV0& context) {
     context.distance_static_ready = false;
     context.bending_static_ready = false;
     context.self_collision_static_ready = false;
+    context.self_primitive_dynamic_ready = false;
+    context.self_max_primitive_size = 0.0f;
+    context.self_grid_size = 0.0f;
     context.tether_enabled = false;
     context.center_static_ready = false;
     context.center_dynamic_ready = false;
@@ -1769,6 +1789,109 @@ void solve_motion_once(Mc2ContextV0& context) {
     ++context.motion_solve_count;
 }
 
+void update_self_collision_primitives_once(
+    Mc2ContextV0& context,
+    const std::vector<float>& old_positions
+) {
+    const auto primitive_count = context.self_primitive_flags.size();
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    if (!context.self_collision_static_ready || primitive_count == 0 ||
+        context.setup_kind == 2 ||
+        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.int_values[kSelfCollisionMode] == 0) {
+        context.self_primitive_dynamic_ready = false;
+        context.self_max_primitive_size = 0.0f;
+        context.self_grid_size = 0.0f;
+        return;
+    }
+    if (context.self_primitive_dynamic_ready &&
+        context.self_primitive_frame == context.frame &&
+        context.self_primitive_generation == context.generation) {
+        return;
+    }
+    if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.curve_values.size() != static_cast<std::size_t>(kCurveRows * kCurveColumns) ||
+        context.state_positions.size() != vertex_count * 3 ||
+        old_positions.size() != vertex_count * 3 ||
+        context.particle_friction.size() != vertex_count ||
+        context.self_particle_indices.size() != primitive_count * 3 ||
+        context.self_primitive_depths.size() != primitive_count) {
+        context.self_primitive_dynamic_ready = false;
+        context.self_max_primitive_size = 0.0f;
+        context.self_grid_size = 0.0f;
+        return;
+    }
+
+    context.self_primitive_inverse_masses.assign(primitive_count * 3, 0.0f);
+    context.self_primitive_aabb_min.assign(primitive_count * 3, 0.0f);
+    context.self_primitive_aabb_max.assign(primitive_count * 3, 0.0f);
+    context.self_primitive_thickness.assign(primitive_count, 0.0f);
+    float edge_max_size = 0.0f;
+    const float cloth_mass = context.float_values[kClothMass];
+    for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
+        const auto flag = context.self_primitive_flags[primitive];
+        if ((flag & kSelfIgnore) != 0u) continue;
+        const auto kind = static_cast<std::size_t>((flag >> 24u) & 0x03u);
+        const auto axis_count = kind + 1;
+        std::array<float, 3> minimum {
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+        };
+        std::array<float, 3> maximum {
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(),
+        };
+        for (std::size_t axis = 0; axis < axis_count; ++axis) {
+            const auto vertex = static_cast<std::size_t>(
+                context.self_particle_indices[primitive * 3 + axis]
+            );
+            const bool fixed = (flag & (kSelfFix0 << axis)) != 0u;
+            float mass = fixed
+                ? 100.0f
+                : 1.0f + context.particle_friction[vertex] * 10.0f;
+            mass += cloth_mass * 50.0f;
+            context.self_primitive_inverse_masses[primitive * 3 + axis] = 1.0f / mass;
+            for (std::size_t component = 0; component < 3; ++component) {
+                const auto offset = vertex * 3 + component;
+                minimum[component] = std::min(
+                    minimum[component],
+                    std::min(context.state_positions[offset], old_positions[offset])
+                );
+                maximum[component] = std::max(
+                    maximum[component],
+                    std::max(context.state_positions[offset], old_positions[offset])
+                );
+            }
+        }
+        const float unexpanded_size = std::max({
+            maximum[0] - minimum[0],
+            maximum[1] - minimum[1],
+            maximum[2] - minimum[2],
+        });
+        if (kind == 1) edge_max_size = std::max(edge_max_size, unexpanded_size);
+        const float thickness = sample_curve16(
+            context.curve_values,
+            kSelfCollisionThicknessCurve,
+            context.self_primitive_depths[primitive]
+        ) * context.scale_ratio;
+        context.self_primitive_thickness[primitive] = thickness;
+        for (std::size_t component = 0; component < 3; ++component) {
+            context.self_primitive_aabb_min[primitive * 3 + component] =
+                minimum[component] - thickness;
+            context.self_primitive_aabb_max[primitive * 3 + component] =
+                maximum[component] + thickness;
+        }
+    }
+    context.self_max_primitive_size = edge_max_size;
+    context.self_grid_size = edge_max_size * 3.0f;
+    context.self_primitive_frame = context.frame;
+    context.self_primitive_generation = context.generation;
+    context.self_primitive_dynamic_ready = true;
+    ++context.self_primitive_update_count;
+}
+
 void solve_point_collision_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     const bool is_spring = context.setup_kind == 2;
@@ -1959,6 +2082,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "motion_solve_count", context.motion_solve_count) ||
         !dict_i64(result, "point_collision_solve_count", context.point_collision_solve_count) ||
         !dict_i64(result, "edge_collision_solve_count", context.edge_collision_solve_count) ||
+        !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -1987,6 +2111,9 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "self_collision_static_ready", context.self_collision_static_ready) ||
+        !dict_bool(result, "self_primitive_dynamic_ready", context.self_primitive_dynamic_ready) ||
+        !dict_float(result, "self_max_primitive_size", context.self_max_primitive_size) ||
+        !dict_float(result, "self_grid_size", context.self_grid_size) ||
         !dict_bool(result, "tether_enabled", context.tether_enabled) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
@@ -2566,12 +2693,19 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_primitive_flags.swap(next_flags);
     context->self_particle_indices.swap(next_indices);
     context->self_primitive_depths.swap(next_depths);
+    context->self_primitive_inverse_masses.assign(static_cast<std::size_t>(count) * 3, 0.0f);
+    context->self_primitive_aabb_min.assign(static_cast<std::size_t>(count) * 3, 0.0f);
+    context->self_primitive_aabb_max.assign(static_cast<std::size_t>(count) * 3, 0.0f);
+    context->self_primitive_thickness.assign(static_cast<std::size_t>(count), 0.0f);
     context->self_point_primitive_count = point_count;
     context->self_edge_primitive_count = edge_count;
     context->self_triangle_primitive_count = triangle_count;
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
     context->self_collision_static_ready = true;
+    context->self_primitive_dynamic_ready = false;
+    context->self_max_primitive_size = 0.0f;
+    context->self_grid_size = 0.0f;
     ++context->self_collision_static_revision;
     Py_RETURN_NONE;
 }
@@ -3221,6 +3355,9 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->bone_output_rotations.clear();
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
+    context->self_primitive_dynamic_ready = false;
+    context->self_max_primitive_size = 0.0f;
+    context->self_grid_size = 0.0f;
     context->initialized = true;
     ++context->reset_count;
     Py_RETURN_NONE;
@@ -3316,6 +3453,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         solve_edge_collision_once(*context);
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_motion_once(*context);
+        update_self_collision_primitives_once(*context, previous_positions);
         commit_particle_post(*context, static_cast<float>(dt), previous_positions);
     }
     if (center_step_active) {
@@ -3357,6 +3495,73 @@ PyObject* mc2_context_v0_read(PyObject*, PyObject* args) {
     std::memcpy(rotations.view.buf,
                 context->state_rotations.data(),
                 context->state_rotations.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_self_collision_primitives(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 5) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_self_collision_primitives expects 5 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_primitive_dynamic_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision primitive dynamics are not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_primitive_flags.size());
+    Buffer inverse_masses, aabb_min, aabb_max, thickness;
+    if (!inverse_masses.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_inverse_masses"
+        ) ||
+        !aabb_min.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_aabb_min"
+        ) ||
+        !aabb_max.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_aabb_max"
+        ) ||
+        !thickness.get(
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_thickness"
+        )) {
+        return nullptr;
+    }
+    if (!expect_float32(inverse_masses, "out_self_inverse_masses") ||
+        !expect_2d(inverse_masses, "out_self_inverse_masses", count, 3) ||
+        !expect_float32(aabb_min, "out_self_aabb_min") ||
+        !expect_2d(aabb_min, "out_self_aabb_min", count, 3) ||
+        !expect_float32(aabb_max, "out_self_aabb_max") ||
+        !expect_2d(aabb_max, "out_self_aabb_max", count, 3) ||
+        !expect_float32(thickness, "out_self_thickness") ||
+        !expect_1d_array(thickness, "out_self_thickness", count)) {
+        return nullptr;
+    }
+    std::memcpy(
+        inverse_masses.view.buf,
+        context->self_primitive_inverse_masses.data(),
+        context->self_primitive_inverse_masses.size() * sizeof(float)
+    );
+    std::memcpy(
+        aabb_min.view.buf,
+        context->self_primitive_aabb_min.data(),
+        context->self_primitive_aabb_min.size() * sizeof(float)
+    );
+    std::memcpy(
+        aabb_max.view.buf,
+        context->self_primitive_aabb_max.data(),
+        context->self_primitive_aabb_max.size() * sizeof(float)
+    );
+    std::memcpy(
+        thickness.view.buf,
+        context->self_primitive_thickness.data(),
+        context->self_primitive_thickness.size() * sizeof(float)
+    );
     Py_RETURN_NONE;
 }
 

@@ -417,6 +417,114 @@ def test_self_collision_static_upload_is_transactional():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_self_collision_primitive_dynamics_follow_first_step_source_order():
+    context = hotools_native.mc2_context_v0_create(0, 3)
+    try:
+        proxy, baseline = static_arrays(3)
+        proxy = list(proxy)
+        proxy[4] = np.array([1, 2, 2], dtype=np.uint8)
+        proxy[6] = np.array([[0, 1, 2]], dtype=np.int32)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        flags = np.array(
+            [
+                0x24000000, 0, 0,
+                0x05000000, 0x01000000,
+                0x06000000,
+            ],
+            dtype=np.uint32,
+        )
+        indices = np.array(
+            [
+                [0, -1, -1], [1, -1, -1], [2, -1, -1],
+                [0, 1, -1], [1, 2, -1],
+                [0, 1, 2],
+            ],
+            dtype=np.int32,
+        )
+        vertex_depths = baseline[7]
+        depths = np.array(
+            [
+                *vertex_depths,
+                (vertex_depths[0] + vertex_depths[1]) / 2.0,
+                (vertex_depths[1] + vertex_depths[2]) / 2.0,
+                (vertex_depths[0] + vertex_depths[1] + vertex_depths[2]) / 3.0,
+            ],
+            dtype=np.float32,
+        )
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            context, flags, indices, depths, 3, 2, 1,
+        )
+        floats, ints, curves = parameters()
+        floats[35] = 0.25
+        ints[9] = 2
+        curves[8] = np.linspace(0.01, 0.025, 16, dtype=np.float32)
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0]],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((3, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 10, 4, positions, rotations, scale_ratio=2.0)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_primitive_dynamic_ready"] is True
+        assert info["self_primitive_update_count"] == 1
+        assert abs(info["self_max_primitive_size"] - 3.0) < 1.0e-6
+        assert abs(info["self_grid_size"] - 9.0) < 1.0e-6
+        inverse_masses = np.empty((6, 3), dtype=np.float32)
+        aabb_min = np.empty((6, 3), dtype=np.float32)
+        aabb_max = np.empty((6, 3), dtype=np.float32)
+        thickness = np.empty(6, dtype=np.float32)
+        hotools_native.mc2_context_v0_read_self_collision_primitives(
+            context, inverse_masses, aabb_min, aabb_max, thickness,
+        )
+        expected_thickness = np.interp(
+            depths, np.linspace(0.0, 1.0, 16), curves[8]
+        ).astype(np.float32) * np.float32(2.0)
+        np.testing.assert_allclose(thickness, expected_thickness, rtol=0.0, atol=1.0e-7)
+        fixed_inverse_mass = np.float32(1.0 / (100.0 + 0.25 * 50.0))
+        move_inverse_mass = np.float32(1.0 / (1.0 + 0.25 * 50.0))
+        expected_inverse_masses = np.zeros((6, 3), dtype=np.float32)
+        for primitive, record in enumerate(indices):
+            for axis, vertex in enumerate(record):
+                if vertex < 0:
+                    continue
+                expected_inverse_masses[primitive, axis] = (
+                    fixed_inverse_mass if vertex == 0 else move_inverse_mass
+                )
+        np.testing.assert_allclose(
+            inverse_masses, expected_inverse_masses, rtol=0.0, atol=1.0e-7
+        )
+        for primitive, record in enumerate(indices):
+            vertices = record[record >= 0]
+            expected_min = positions[vertices].min(axis=0) - expected_thickness[primitive]
+            expected_max = positions[vertices].max(axis=0) + expected_thickness[primitive]
+            np.testing.assert_allclose(aabb_min[primitive], expected_min, rtol=0.0, atol=1.0e-6)
+            np.testing.assert_allclose(aabb_max[primitive], expected_max, rtol=0.0, atol=1.0e-6)
+
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        assert hotools_native.mc2_context_v0_inspect(context)["self_primitive_update_count"] == 1
+        update_dynamic(context, 11, 4, positions, rotations, scale_ratio=2.0)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        assert hotools_native.mc2_context_v0_inspect(context)["self_primitive_update_count"] == 2
+
+        ints[9] = 0
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        update_dynamic(context, 12, 4, positions, rotations, scale_ratio=2.0)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_primitive_dynamic_ready"] is False
+        assert info["self_primitive_update_count"] == 2
+        assert info["self_max_primitive_size"] == 0.0
+        assert info["self_grid_size"] == 0.0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_point_collision_projection_and_post():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -1307,6 +1415,8 @@ if __name__ == "__main__":
     print("PASS collider upload transaction")
     test_self_collision_static_upload_is_transactional()
     print("PASS self-collision static upload transaction")
+    test_self_collision_primitive_dynamics_follow_first_step_source_order()
+    print("PASS self-collision first-step primitive dynamics")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
     test_bone_spring_soft_sphere_limit_and_velocity_reference()
