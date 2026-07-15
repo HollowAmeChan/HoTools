@@ -152,6 +152,10 @@ try:
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
     assert info["bone_vertex_adjacency_count"] == 4
+    slot.data["native_context"].set_tether_enabled(True)
+    assert slot.data["native_context"].inspect()["tether_enabled"] is True
+    slot.data["native_context"].set_tether_enabled(False)
+    assert slot.data["native_context"].inspect()["tether_enabled"] is False
     snapshot = slot.debug_snapshot()
     assert snapshot["mesh_static"] is None
     assert snapshot["bone_static"]["vertex_count"] == 3

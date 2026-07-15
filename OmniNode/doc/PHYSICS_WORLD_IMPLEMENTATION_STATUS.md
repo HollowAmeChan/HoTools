@@ -71,6 +71,8 @@ physicsWorld/
 
 MC2 状态补充：Bone Line与强制Line的BoneSpring已使用稳定 armature/data pointer + bone name 的 public `bone_transform_batch`，整批 parent-local `matrix_basis` plan 由统一 PoseBone writeback 消费；BoneSpring固定N2 override进入同一native slot路径。公共发布失败保留旧 plan，writeback 中途失败恢复整批旧 basis。Automatic/Sequential最终无triangle的Line安全域可运行，含triangle的ImportBoneType零UV域明确拒绝；Bone负/零scale与world shear在snapshot前拒绝且不污染旧slot。negative-scale数值支持与碰撞仍未完成。
 
+MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel，提供默认关闭的显式gate、inspect状态与solve count；py313隔离Tier B和完整native回归通过。独立Tier A substep fixture完成前不由production solver开启。
+
 ## 统一 MC2 决策
 
 MC2 只有一个 solver identity：`mc2`。

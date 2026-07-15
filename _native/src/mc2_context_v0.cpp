@@ -1,5 +1,6 @@
 #include "mc2_context_v0.hpp"
 
+#include "hotools_mc2.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
@@ -40,6 +41,8 @@ constexpr Py_ssize_t kLocalInertia = 16;
 constexpr Py_ssize_t kLocalMovementSpeedLimit = 17;
 constexpr Py_ssize_t kLocalRotationSpeedLimit = 18;
 constexpr Py_ssize_t kDepthInertia = 19;
+constexpr Py_ssize_t kTetherCompression = 24;
+constexpr Py_ssize_t kTetherStretch = 25;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -61,6 +64,7 @@ struct Mc2ContextV0 {
     std::int64_t particle_prediction_count = 0;
     std::int64_t particle_inertia_count = 0;
     std::int64_t bending_solve_count = 0;
+    std::int64_t tether_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -83,6 +87,7 @@ struct Mc2ContextV0 {
     bool bone_static_ready = false;
     bool distance_static_ready = false;
     bool bending_static_ready = false;
+    bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
     bool center_frame_ready = false;
@@ -227,6 +232,7 @@ void release_resources(Mc2ContextV0& context) {
     context.bone_static_ready = false;
     context.distance_static_ready = false;
     context.bending_static_ready = false;
+    context.tether_enabled = false;
     context.center_static_ready = false;
     context.center_dynamic_ready = false;
     context.center_frame_ready = false;
@@ -1496,6 +1502,48 @@ void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
     ++context.distance_solve_count;
 }
 
+void solve_tether_once(Mc2ContextV0& context) {
+    if (!context.tether_enabled) return;
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.state_positions.size() != count * 3 ||
+        context.velocity_reference_positions.size() != count * 3 ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_roots.size() != count ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount)) {
+        return;
+    }
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> rest_lengths(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (!is_move(context.proxy_attributes[vertex])) continue;
+        inverse_masses[vertex] = 1.0f;
+        const auto root = context.baseline_roots[vertex];
+        if (root < 0 || static_cast<std::size_t>(root) >= count) continue;
+        const auto offset = vertex * 3;
+        const auto root_offset = static_cast<std::size_t>(root) * 3;
+        const float dx = context.step_basic_positions[root_offset + 0] -
+            context.step_basic_positions[offset + 0];
+        const float dy = context.step_basic_positions[root_offset + 1] -
+            context.step_basic_positions[offset + 1];
+        const float dz = context.step_basic_positions[root_offset + 2] -
+            context.step_basic_positions[offset + 2];
+        rest_lengths[vertex] = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    Mc2TetherConstraintView view;
+    view.positions = context.state_positions.data();
+    view.inv_masses = inverse_masses.data();
+    view.root_indices = context.baseline_roots.data();
+    view.root_rest_lengths = rest_lengths.data();
+    view.velocity_positions = context.velocity_reference_positions.data();
+    view.vertex_count = context.vertex_count;
+    view.stiffness = 1.0f;
+    view.compression = context.float_values[kTetherCompression];
+    view.stretch = context.float_values[kTetherStretch];
+    project_tether_mc2(view);
+    ++context.tether_solve_count;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -1535,6 +1583,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "particle_prediction_count", context.particle_prediction_count) ||
         !dict_i64(result, "particle_inertia_count", context.particle_inertia_count) ||
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
+        !dict_i64(result, "tether_solve_count", context.tether_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -1562,6 +1611,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         ) ||
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
+        !dict_bool(result, "tether_enabled", context.tether_enabled) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
         !dict_bool(result, "center_frame_ready", context.center_frame_ready) ||
@@ -2610,6 +2660,19 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_set_tether_enabled expects 2 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const int enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 1));
+    if (enabled < 0) return nullptr;
+    context->tether_enabled = enabled != 0;
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 4) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4 arguments");
@@ -2652,6 +2715,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
             PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
             return nullptr;
         }
+        solve_tether_once(*context);
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
         solve_distance_once(*context, static_cast<float>(simulation_power_y));

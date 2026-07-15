@@ -778,6 +778,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_step_interpolation, a); });
     m.def("mc2_context_v0_update_team_options",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_team_options, a); });
+    m.def("mc2_context_v0_set_tether_enabled",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_set_tether_enabled, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_apply_center_negative_scale_teleport",

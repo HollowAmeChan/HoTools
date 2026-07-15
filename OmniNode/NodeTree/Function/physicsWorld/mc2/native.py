@@ -42,6 +42,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_center_dynamic",
     "mc2_context_v0_update_step_interpolation",
     "mc2_context_v0_update_team_options",
+    "mc2_context_v0_set_tether_enabled",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
@@ -166,6 +167,12 @@ class MC2NativeContextV0:
             self._handle,
             animation_pose_ratio,
         )
+
+    def set_tether_enabled(self, enabled: bool) -> None:
+        self._ensure_live()
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be bool")
+        self._module.mc2_context_v0_set_tether_enabled(self._handle, enabled)
 
     def _update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
         self._ensure_live()

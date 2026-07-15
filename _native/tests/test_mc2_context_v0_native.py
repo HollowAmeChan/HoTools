@@ -89,6 +89,74 @@ def expect_error(exception, callback, text):
         raise AssertionError(f"expected {exception.__name__}: {text}")
 
 
+def test_tether_rollout_gate_and_source_order():
+    context = hotools_native.mc2_context_v0_create(0, 2)
+    try:
+        proxy, baseline = static_arrays(2)
+        proxy = list(proxy)
+        proxy[4] = np.array([1, 2], dtype=np.uint8)
+        baseline = list(baseline)
+        baseline[6] = np.array([0, 0], dtype=np.int32)
+        baseline[8][1, 0] = 1.0
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((2, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[0] = 0.35
+        floats[1] = 1.0
+        floats[24] = 0.4
+        floats[25] = 0.03
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array([[0, 0, 0], [1, 0, 0]], dtype=np.float32)
+        rotations = np.zeros((2, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+
+        hotools_native.mc2_context_v0_set_tether_enabled(context, True)
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+        output = np.empty_like(positions)
+        output_rotations = np.empty_like(rotations)
+        hotools_native.mc2_context_v0_read(context, output, output_rotations)
+        np.testing.assert_allclose(
+            output,
+            np.array([[0, 0, 0], [1.03, 0, 0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["tether_enabled"] is True
+        assert info["tether_solve_count"] == 1
+
+        hotools_native.mc2_context_v0_set_tether_enabled(context, False)
+        update_dynamic(context, 2, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+        hotools_native.mc2_context_v0_read(context, output, output_rotations)
+        np.testing.assert_allclose(
+            output,
+            np.array([[0, 0, 0], [1.35, 0, 0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["tether_enabled"] is False
+        assert info["tether_solve_count"] == 1
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_lifecycle_and_transactional_validation():
     baseline = hotools_native.mc2_context_v0_stats().copy()
     first = hotools_native.mc2_context_v0_create(0, 2)
@@ -835,6 +903,8 @@ def test_particle_inertia_matches_tier_a_fixture():
 
 
 if __name__ == "__main__":
+    test_tether_rollout_gate_and_source_order()
+    print("PASS gated Tether source order")
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
     test_create_free_soak_has_no_live_growth()
