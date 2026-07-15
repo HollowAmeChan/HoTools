@@ -31,6 +31,7 @@ constexpr Py_ssize_t kAngleRestorationCurve = 3;
 constexpr Py_ssize_t kAngleLimitCurve = 4;
 constexpr Py_ssize_t kMaxDistanceCurve = 5;
 constexpr Py_ssize_t kBackstopDistanceCurve = 6;
+constexpr Py_ssize_t kCollisionLimitDistanceCurve = 7;
 constexpr Py_ssize_t kRadiusCurve = 1;
 constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
@@ -70,6 +71,7 @@ std::atomic<std::int64_t> g_live {0};
 
 struct Mc2ContextV0 {
     std::int64_t vertex_count = 0;
+    std::int32_t setup_kind = 0;
     std::int64_t parameter_revision = 0;
     std::int64_t proxy_static_revision = 0;
     std::int64_t baseline_static_revision = 0;
@@ -1747,6 +1749,7 @@ void solve_motion_once(Mc2ContextV0& context) {
 
 void solve_point_collision_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
+    const bool is_spring = context.setup_kind == 2;
     if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
         context.int_values[kCollisionMode] != 1 || context.collider_types.empty() ||
         context.collided_by_groups == 0 || context.state_positions.size() != count * 3 ||
@@ -1756,20 +1759,40 @@ void solve_point_collision_once(Mc2ContextV0& context) {
     std::vector<float> base_positions(count * 3, 0.0f);
     std::vector<float> inverse_masses(count, 0.0f);
     std::vector<float> collision_radii(count, 0.0f);
+    std::vector<float> max_lengths(count, 0.0f);
+    if (is_spring) {
+        if (context.animated_base_positions.size() != count * 3) return;
+        base_positions = context.animated_base_positions;
+    }
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         const auto attribute = context.proxy_attributes[vertex];
-        if (is_move(attribute) && (attribute & 0x10u) == 0u) inverse_masses[vertex] = 1.0f;
+        const bool valid = (attribute & 0x03u) != 0u;
+        if ((is_spring ? valid : is_move(attribute)) && (attribute & 0x10u) == 0u) {
+            inverse_masses[vertex] = 1.0f;
+        }
         collision_radii[vertex] = std::max(
             sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
                 context.scale_ratio,
             0.0001f
         );
+        if (is_spring) {
+            max_lengths[vertex] = std::max(
+                sample_curve16(
+                    context.curve_values,
+                    kCollisionLimitDistanceCurve,
+                    context.baseline_depths[vertex]
+                ) * context.scale_ratio,
+                0.0f
+            );
+        }
     }
     Mc2CollisionView view;
     view.positions = context.state_positions.data();
     view.base_positions = base_positions.data();
+    view.velocity_positions = is_spring ? context.velocity_reference_positions.data() : nullptr;
     view.inv_masses = inverse_masses.data();
     view.collision_radii = collision_radii.data();
+    view.max_lengths = is_spring ? max_lengths.data() : nullptr;
     view.collision_normals = context.particle_collision_normals.data();
     view.friction = context.particle_friction.data();
     view.collider_types = context.collider_types.data();
@@ -1784,6 +1807,7 @@ void solve_point_collision_once(Mc2ContextV0& context) {
     view.vertex_count = context.vertex_count;
     view.collider_count = static_cast<std::int64_t>(context.collider_types.size());
     view.collided_by_groups = context.collided_by_groups;
+    view.soft_sphere = is_spring;
     project_collisions_mc2(view);
     ++context.point_collision_solve_count;
 }
@@ -1834,7 +1858,10 @@ void commit_particle_post(Mc2ContextV0& context, float dt, const std::vector<flo
     std::vector<float> old_positions = previous_positions;
     std::vector<float> inverse_masses(count, 0.0f);
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        if (is_move(context.proxy_attributes[vertex])) inverse_masses[vertex] = 1.0f;
+        const auto attribute = context.proxy_attributes[vertex];
+        if (is_move(attribute) || (context.setup_kind == 2 && (attribute & 0x03u) != 0u)) {
+            inverse_masses[vertex] = 1.0f;
+        }
     }
     Mc2PostStepView view;
     view.positions = context.state_positions.data();
@@ -1865,6 +1892,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
     if (!dict_string(result, "schema", "mc2_context_v0") ||
         !dict_i64(result, "schema_version", kSchemaVersion) ||
         !dict_i64(result, "vertex_count", context.vertex_count) ||
+        !dict_i64(result, "setup_kind", context.setup_kind) ||
         !dict_i64(result, "proxy_static_revision", context.proxy_static_revision) ||
         !dict_i64(result, "baseline_static_revision", context.baseline_static_revision) ||
         !dict_i64(result, "bone_static_revision", context.bone_static_revision) ||
@@ -3066,6 +3094,27 @@ PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args) {
     const int enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 1));
     if (enabled < 0) return nullptr;
     context->tether_enabled = enabled != 0;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_set_setup_kind(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_set_setup_kind expects 2 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const long setup_kind = as_long(PyTuple_GET_ITEM(args, 1), "setup_kind");
+    if (PyErr_Occurred()) return nullptr;
+    if (setup_kind < 0 || setup_kind > 2) {
+        PyErr_SetString(PyExc_ValueError, "setup_kind must be in 0..2");
+        return nullptr;
+    }
+    if (context->proxy_static_ready || context->baseline_static_ready || context->initialized) {
+        PyErr_SetString(PyExc_RuntimeError, "setup_kind is immutable after context initialization");
+        return nullptr;
+    }
+    context->setup_kind = static_cast<std::int32_t>(setup_kind);
     Py_RETURN_NONE;
 }
 

@@ -379,6 +379,53 @@ def test_point_collision_projection_and_post():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_bone_spring_soft_sphere_limit_and_velocity_reference():
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        hotools_native.mc2_context_v0_set_setup_kind(context, 2)
+        proxy, baseline = static_arrays(1)
+        proxy = list(proxy)
+        proxy[4] = np.array([1], dtype=np.uint8)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context, np.zeros((1, 2), dtype=np.int32),
+            np.empty(0, dtype=np.int32), np.empty(0, dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context, np.empty((0, 4), dtype=np.int32),
+            np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        ints[8] = 1
+        curves[1, :] = 0.5
+        curves[7, :] = 0.2
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array([[0.1, 0.0, 0.0]], dtype=np.float32)
+        rotations = np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+        centers = np.zeros((1, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_update_colliders(
+            context, 1,
+            np.array([0], dtype=np.int32), np.array([1], dtype=np.int32),
+            centers, centers.copy(), centers.copy(),
+            centers.copy(), centers.copy(), centers.copy(),
+            np.array([1.0], dtype=np.float32),
+        )
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0)
+        output = np.empty_like(positions)
+        output_rotations = np.empty_like(rotations)
+        hotools_native.mc2_context_v0_read(context, output, output_rotations)
+        np.testing.assert_allclose(output[0], (0.232, 0.0, 0.0), atol=1.0e-6)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["setup_kind"] == 2
+        assert info["fixed_count"] == 1
+        assert info["point_collision_solve_count"] == 1
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_edge_collision_projection_and_post():
     context = hotools_native.mc2_context_v0_create(0, 3)
     try:
@@ -1182,6 +1229,8 @@ if __name__ == "__main__":
     print("PASS collider upload transaction")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
+    test_bone_spring_soft_sphere_limit_and_velocity_reference()
+    print("PASS BoneSpring soft sphere limit and velocity reference")
     test_edge_collision_projection_and_post()
     print("PASS Edge collision projection and post")
     test_lifecycle_and_transactional_validation()

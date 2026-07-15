@@ -367,7 +367,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
     assert solver_declarations.validate_solver_declaration(declaration) == []
-    assert declaration["implementation_status"] == "mesh_and_bone_line_native_public_result"
+    assert declaration["implementation_status"] == "mesh_and_bone_collider_native_public_result"
     assert tuple(declaration["setup_types"]) == (
         mc2_names.MC2_SETUP_MESH_CLOTH,
         mc2_names.MC2_SETUP_BONE_CLOTH,
@@ -517,9 +517,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert nonloop_options.connection_mode == 3
     assert nonloop_task.topology_signature != loop_task.topology_signature
     spring_options = mc2_parameters.make_mc2_setup_options(
-        mc2_names.MC2_SETUP_BONE_SPRING, connection_mode=2
+        mc2_names.MC2_SETUP_BONE_SPRING,
+        connection_mode=2,
+        collided_by_groups=3,
     )
     assert spring_options.connection_mode == 0
+    assert spring_options.collided_by_groups == 3
 
     real_mesh = bpy.data.meshes.new("MC2_B2_TopologyMesh")
     real_mesh.from_pydata(

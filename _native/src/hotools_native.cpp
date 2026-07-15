@@ -778,6 +778,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_step_interpolation, a); });
     m.def("mc2_context_v0_update_team_options",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_team_options, a); });
+    m.def("mc2_context_v0_set_setup_kind",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_set_setup_kind, a); });
     m.def("mc2_context_v0_set_tether_enabled",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_set_tether_enabled, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
@@ -964,8 +966,10 @@ NB_MODULE(hotools_native, m) {
             hotools::Mc2CollisionView view;
             view.positions           = pos.data();
             view.base_positions      = bp.data();
+            view.velocity_positions  = nullptr;
             view.inv_masses          = inv.data();
             view.collision_radii     = cr.data();
+            view.max_lengths         = nullptr;
             view.collision_normals   = cn.data();
             view.friction            = fric.data();
             view.collider_types      = ct.data();
@@ -980,6 +984,7 @@ NB_MODULE(hotools_native, m) {
             view.vertex_count        = static_cast<std::int64_t>(vc);
             view.collider_count      = static_cast<std::int64_t>(nc);
             view.collided_by_groups  = static_cast<std::int32_t>(cbg);
+            view.soft_sphere         = false;
             { nb::gil_scoped_release _; hotools::project_collisions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("base_positions"), nb::arg("inv_masses"),

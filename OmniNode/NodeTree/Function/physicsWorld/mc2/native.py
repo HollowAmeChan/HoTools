@@ -43,6 +43,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_center_dynamic",
     "mc2_context_v0_update_step_interpolation",
     "mc2_context_v0_update_team_options",
+    "mc2_context_v0_set_setup_kind",
     "mc2_context_v0_set_tether_enabled",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",
@@ -92,7 +93,7 @@ def is_available() -> bool:
 class MC2NativeContextV0:
     """The slot-owned resource; the capsule never leaves this object."""
 
-    def __init__(self, vertex_count: int, *, module=None) -> None:
+    def __init__(self, vertex_count: int, *, setup_type: str = "mesh_cloth", module=None) -> None:
         vertex_count = int(vertex_count)
         if vertex_count <= 0:
             raise ValueError("MC2 native context vertex_count must be positive")
@@ -106,6 +107,12 @@ class MC2NativeContextV0:
         if self._handle is None:
             raise RuntimeError("mc2_context_v0_create returned None")
         try:
+            setup_kinds = {"mesh_cloth": 0, "bone_cloth": 1, "bone_spring": 2}
+            try:
+                setup_kind = setup_kinds[str(setup_type)]
+            except KeyError as exc:
+                raise ValueError(f"unsupported MC2 setup_type: {setup_type!r}") from exc
+            self._module.mc2_context_v0_set_setup_kind(self._handle, setup_kind)
             # MC2 always schedules Tether; the native gate only isolates scoped fixtures.
             self._module.mc2_context_v0_set_tether_enabled(self._handle, True)
         except Exception:
@@ -113,6 +120,7 @@ class MC2NativeContextV0:
             self._handle = None
             raise
         self.vertex_count = vertex_count
+        self.setup_type = str(setup_type)
         self.parameter_signature = ""
         self.proxy_signature = ""
         self.baseline_signature = ""

@@ -518,6 +518,7 @@ class MC2SetupOptionsSpec:
     connection_mode: int = 0
     rotational_interpolation: float = 0.5
     root_rotation: float = 0.5
+    collided_by_groups: int = 0
 
     def __post_init__(self) -> None:
         if self.setup_type not in MC2_SETUP_TYPES:
@@ -526,6 +527,8 @@ class MC2SetupOptionsSpec:
             raise ValueError("connection_mode 必须是 0、1、2 或 3")
         if self.setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING) and self.connection_mode != 0:
             raise ValueError("MeshCloth/BoneSpring connection_mode 必须是 Line(0)")
+        if self.collided_by_groups < 0 or self.collided_by_groups > 0xFFFF:
+            raise ValueError("collided_by_groups 必须位于 0..65535")
 
     @property
     def signature(self) -> str:
@@ -541,6 +544,7 @@ def make_mc2_setup_options(
     connection_mode=0,
     rotational_interpolation=0.5,
     root_rotation=0.5,
+    collided_by_groups=0,
 ) -> MC2SetupOptionsSpec:
     setup_type = str(setup_type or "").strip().lower()
     if setup_type not in MC2_SETUP_TYPES:
@@ -559,6 +563,7 @@ def make_mc2_setup_options(
         connection_mode=connection_mode,
         rotational_interpolation=_clamp(rotational_interpolation, "rotational_interpolation", 0.0, 1.0),
         root_rotation=_clamp(root_rotation, "root_rotation", 0.0, 1.0),
+        collided_by_groups=max(0, min(0xFFFF, int(collided_by_groups))),
     )
 
 

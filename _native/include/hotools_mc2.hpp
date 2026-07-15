@@ -70,8 +70,10 @@ struct Mc2PostStepView {
 struct Mc2CollisionView {
     float* positions = nullptr;
     const float* base_positions = nullptr;
+    float* velocity_positions = nullptr;
     const float* inv_masses = nullptr;
     const float* collision_radii = nullptr;
+    const float* max_lengths = nullptr;
     float* collision_normals = nullptr;
     float* friction = nullptr;
     const std::int32_t* collider_types = nullptr;
@@ -86,6 +88,7 @@ struct Mc2CollisionView {
     std::int64_t vertex_count = 0;
     std::int64_t collider_count = 0;
     std::int32_t collided_by_groups = 0;
+    bool soft_sphere = false;
 };
 
 struct Mc2EdgeCollisionView {

@@ -1111,6 +1111,9 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         const float fallback_x = origin_x - view.base_positions[offset + 0];
         const float fallback_y = origin_y - view.base_positions[offset + 1];
         const float fallback_z = origin_z - view.base_positions[offset + 2];
+        const bool soft_sphere = view.soft_sphere && view.velocity_positions != nullptr &&
+                                 view.max_lengths != nullptr;
+        const float max_length = soft_sphere ? view.max_lengths[vertex] : 0.0f;
 
         float add_x = 0.0f;
         float add_y = 0.0f;
@@ -1254,6 +1257,9 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 surface_distance =
                     dot3(origin_x - plane_x, origin_y - plane_y, origin_z - plane_z, normal_x, normal_y, normal_z);
             }
+            if (soft_sphere && collider_type == kColliderSphere && max_length > 0.0f) {
+                surface_distance *= 3.0f;
+            }
             if (surface_distance <= friction_range) {
                 const float collider_distance = std::max(surface_distance, 0.0f);
                 const float near_friction = 1.0f - clamp_float(collider_distance / friction_range, 0.0f, 1.0f);
@@ -1268,9 +1274,41 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 continue;
             }
 
-            add_x += -normal_x * surface_distance;
-            add_y += -normal_y * surface_distance;
-            add_z += -normal_z * surface_distance;
+            float correction_x = -normal_x * surface_distance;
+            float correction_y = -normal_y * surface_distance;
+            float correction_z = -normal_z * surface_distance;
+            if (soft_sphere && collider_type == kColliderSphere && max_length > 0.0f) {
+                correction_x /= 3.0f;
+                correction_y /= 3.0f;
+                correction_z /= 3.0f;
+                float projected_x = origin_x + correction_x;
+                float projected_y = origin_y + correction_y;
+                float projected_z = origin_z + correction_z;
+                const float base_dx = projected_x - view.base_positions[offset + 0];
+                const float base_dy = projected_y - view.base_positions[offset + 1];
+                const float base_dz = projected_z - view.base_positions[offset + 2];
+                const float base_length = length3(base_dx, base_dy, base_dz);
+                if (base_length > max_length && base_length > kMc2Epsilon) {
+                    const float scale = max_length / base_length;
+                    projected_x = view.base_positions[offset + 0] + base_dx * scale;
+                    projected_y = view.base_positions[offset + 1] + base_dy * scale;
+                    projected_z = view.base_positions[offset + 2] + base_dz * scale;
+                }
+                const float limited_dx = projected_x - view.base_positions[offset + 0];
+                const float limited_dy = projected_y - view.base_positions[offset + 1];
+                const float limited_dz = projected_z - view.base_positions[offset + 2];
+                const float limited_length = length3(limited_dx, limited_dy, limited_dz);
+                const float rebound = clamp_float(limited_length / hit_radius, 0.0f, 1.0f) * 0.85f;
+                projected_x += (origin_x - projected_x) * rebound;
+                projected_y += (origin_y - projected_y) * rebound;
+                projected_z += (origin_z - projected_z) * rebound;
+                correction_x = projected_x - origin_x;
+                correction_y = projected_y - origin_y;
+                correction_z = projected_z - origin_z;
+            }
+            add_x += correction_x;
+            add_y += correction_y;
+            add_z += correction_z;
             add_normal_x += normal_x;
             add_normal_y += normal_y;
             add_normal_z += normal_z;
@@ -1314,9 +1352,17 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         }
 
         const float blend = std::min(normal_length, 1.0f);
-        view.positions[offset + 0] = origin_x + add_x * inv_add_count * blend;
-        view.positions[offset + 1] = origin_y + add_y * inv_add_count * blend;
-        view.positions[offset + 2] = origin_z + add_z * inv_add_count * blend;
+        const float average_add_x = add_x * inv_add_count;
+        const float average_add_y = add_y * inv_add_count;
+        const float average_add_z = add_z * inv_add_count;
+        view.positions[offset + 0] = origin_x + average_add_x * blend;
+        view.positions[offset + 1] = origin_y + average_add_y * blend;
+        view.positions[offset + 2] = origin_z + average_add_z * blend;
+        if (soft_sphere) {
+            view.velocity_positions[offset + 0] += average_add_x;
+            view.velocity_positions[offset + 1] += average_add_y;
+            view.velocity_positions[offset + 2] += average_add_z;
+        }
         const float inv_normal_length = 1.0f / normal_length;
         view.collision_normals[offset + 0] = add_normal_x * inv_normal_length;
         view.collision_normals[offset + 1] = add_normal_y * inv_normal_length;

@@ -66,10 +66,10 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh native Point/Edge collision + public GN result；Bone Line native public result | 单一solver/三setup、staged native context、source-aligned static/N2/N3/Center/scheduler、Tether→Distance→Angle→Bending→collider→Distance→Motion→post、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域和验收见MC2执行计划 | self collision、BoneSpring soft-collider、Bone negative scale、Bone triangle output、stats |
+| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision、Bone negative scale、Bone triangle output、wind、stats |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
-MC2 状态补充：Bone Line与强制Line的BoneSpring已使用稳定 armature/data pointer + bone name 的 public `bone_transform_batch`，整批 parent-local `matrix_basis` plan 由统一 PoseBone writeback 消费；BoneSpring固定N2 override进入同一native slot路径。公共发布失败保留旧 plan，writeback 中途失败恢复整批旧 basis。Automatic/Sequential最终无triangle的Line安全域可运行，含triangle的ImportBoneType零UV域明确拒绝；Bone负/零scale与world shear在snapshot前拒绝且不污染旧slot。Bone negative-scale数值支持、BoneSpring soft-collider与self collision仍未完成。
+MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；self collision仍未完成。
 
 MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel；Python slot owner现按固定MC2调度默认启用，raw C gate仅用于隔离不同scope的oracle fixture。py313公式/顺序回归与Blender5.1新建、重建、真实子步solve count通过；独立Tier A Tether substep fixture仍待补齐。
 
@@ -77,7 +77,7 @@ MC2 Angle补充：V0已按源码顺序在首次Distance后、Bending前执行Res
 
 MC2 Motion补充：V0已按源码顺序在第二次Distance后、post前执行Max Distance/Backstop，并新增独立animated base子步缓冲，避免误用baseline step-basic。N2 use/curve/float/normal-axis、InvalidMotion与depth²语义已接入，MaxDistance=0显式锁定边界通过；py313 kernel/V0及Blender5.1 Fixed Mesh三子步通过。独立Tier A Motion substep fixture仍待补齐。
 
-MC2 Collider补充：共享World current/previous collider snapshot已有独立不可变MC2帧契约，覆盖四类primitive、组mask、自身排除与moving pose；V0原子上传、Python owner和Mesh production非same-frame更新已接通。Mesh Point/Edge mode现分别消费particle/proxy-edge、radius curve/scale、persistent friction/collision normal/real velocity与friction inverse mass，并按源码顺序在Bending后投影、第二次Distance后经Motion进入post。Edge显式使用源码`Move=0x02`，与旧full-core`0x04` ABI隔离。py313覆盖两种投影/post与完整native回归，Blender5.1覆盖production frame上传和既有Mesh/Bone链。BoneSpring soft-collider和self collision仍未接入。
+MC2 Collider补充：共享World current/previous snapshot覆盖primitive、组mask、自身排除与moving pose；Mesh和Bone production均按非same-frame原子上传。Point/Edge消费radius、persistent friction/normal/real velocity并进入第二次Distance与post。BoneSpring setup-kind允许Fixed参与，强制Sphere-only，消费animated base与limit-distance curve执行clamp/反弹衰减并同步velocity-reference。py313与Blender5.1生产链均已通过；self collision仍未接入。
 
 ## 统一 MC2 决策
 
@@ -86,7 +86,7 @@ MC2 只有一个 solver identity：`mc2`。
 - `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
 - 新路径只提供一套 native context schema/implementation，每个 active slot持有自己的 context；不公开 Python/C++ backend选择，旧 package、旧资产和旧 solver parity不属于实现或验收范围。
-- 当前新 MC2 step 已推进限定的 Mesh Point/Edge collider数值路径：节点从配置的 BasePose自动构建 N3并消费共享World collider snapshot，native readback先生成私有 candidate，再发布共享 `gn_attribute` 公共结果；不调用旧 MC2 package。
+- 当前新MC2 step已推进Mesh/Bone外部collider数值路径：Mesh从BasePose构建N3，Bone从PoseBone frame构建N3；两者消费共享World snapshot并分别发布GN或bone transform结果，不调用旧MC2 package。
 - `gn_attribute` 已登记为 active shared result channel；`mc2_stats`与`bone_transform`仍只登记为 planned channel，不虚报 active 输出。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
 - MeshCloth 的 Blender adapter 永久使用“双对象 + 常驻 GN”：BasePose 只读对象保留骨架/Shape Key 基础变形并移除物理 output，源对象末端 GN 只接收同 vertex identity 的 object-local offset。BlendShape 写回、单对象切换/移动 GN、同一对象读取前后两个 evaluated 阶段均已因 Blender 性能/求值限制排除。

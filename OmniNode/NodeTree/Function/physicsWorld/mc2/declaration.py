@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_collider_collision_and_bone_line_native_public_result",
+    "stage": "mesh_and_bone_collider_native_public_result",
     "native_strategy": "one_solver_three_setup_adapters_single_native_context",
-    "implementation_status": "mesh_collider_collision_and_bone_line_native_public_result",
+    "implementation_status": "mesh_and_bone_collider_native_public_result",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",
@@ -66,7 +66,7 @@ MC2_SOLVER_DECLARATION = {
         "task.config_signature",
         "task.parameter_signature",
         "step.settings.signature",
-        "planned:collider_snapshot.source_key",
+        "collider_snapshot.source_key",
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {

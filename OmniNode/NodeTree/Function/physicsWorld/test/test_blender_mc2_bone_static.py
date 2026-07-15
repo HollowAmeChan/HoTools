@@ -222,6 +222,25 @@ try:
     world.frame_context.frame = 3
     world.frame_context.generation = 1
     world.frame_context.dt = 1.0 / 60.0
+    world.collider_snapshot = {
+        "frame": 3,
+        "colliders": [
+            {
+                "key": "spring-far-sphere",
+                "type": "SPHERE",
+                "primary_group": 1,
+                "center": (100.0, 0.0, 0.0),
+                "radius": 1.0,
+            },
+            {
+                "key": "spring-filtered-plane",
+                "type": "PLANE",
+                "primary_group": 1,
+                "center": (0.0, 0.0, -100.0),
+                "normal": (0.0, 0.0, 1.0),
+            },
+        ],
+    }
     spring_profile = parameters.make_mc2_particle_profile(
         gravity=9.0,
         tether_compression=0.1,
@@ -233,6 +252,10 @@ try:
         names.MC2_SETUP_BONE_SPRING,
         [source],
         profile=spring_profile,
+        setup_options=parameters.make_mc2_setup_options(
+            names.MC2_SETUP_BONE_SPRING,
+            collided_by_groups=1,
+        ),
     )
     returned, ready, _status = solver.step_mc2(world, [spring_task])
     assert returned is world and ready is True
@@ -246,13 +269,24 @@ try:
     assert runtime["curve_values"]["distance_stiffness"] == [0.5] * 16
     assert runtime["int_values"]["use_max_distance"] == 0
     assert runtime["int_values"]["self_collision_mode"] == 0
-    assert spring_slot.data["native_context"].inspect()["tether_enabled"] is True
+    spring_info = spring_slot.data["native_context"].inspect()
+    assert spring_info["setup_kind"] == 2
+    assert spring_info["tether_enabled"] is True
+    assert spring_info["collider_count"] == 1
+    assert spring_info["collided_by_groups"] == 1
     spring_result = world.result_streams["bone_transform"][0]
     assert spring_result["setup_type"] == "bone_spring"
     assert spring_result["bone_count"] == 3
     assert spring_slot.data["writeback_plan"]["batches"][0]["source_kind"] == "bone_spring"
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in spring_slot.data
+
+    world.frame_context.frame = 4
+    world.collider_snapshot["frame"] = 4
+    solver.step_mc2(world, [spring_task])
+    spring_info = spring_slot.data["native_context"].inspect()
+    assert spring_info["point_collision_solve_count"] == 1
+    assert spring_info["collider_revision"] == 2
 
     world.omni_cache_dispose("bone_spring_complete")
     world = world_types.PhysicsWorldCache()

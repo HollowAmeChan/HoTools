@@ -7,7 +7,7 @@ import math
 
 from ..types import PhysicsWorldCache
 from .declaration import MC2_SOLVER_DECLARATION
-from .names import MC2_SLOT_KIND, MC2_SOLVER_ID
+from .names import MC2_SETUP_BONE_SPRING, MC2_SLOT_KIND, MC2_SOLVER_ID
 from .parameters import (
     MC2SolverSettingsSpec,
     make_mc2_solver_settings,
@@ -589,16 +589,32 @@ def step_mc2(
                 _validate_mc2_frame_input(spec, topology, frame_input)
                 frame_inputs[spec.task_id] = frame_input
             collider_frame = None
-            if frame_input is not None and mesh_static_supported:
+            if frame_input is not None and (mesh_static_supported or bone_static_supported):
                 from .collider_frame import build_mc2_collider_frame
 
-                collider_frame = build_mc2_collider_frame(world, spec.sources[0])
+                collider_frame = build_mc2_collider_frame(
+                    world,
+                    spec.sources[0],
+                    collided_by_groups=(
+                        None
+                        if mesh_static_supported
+                        else spec.setup_options.collided_by_groups
+                    ),
+                    allowed_types=(
+                        frozenset(("SPHERE",))
+                        if spec.setup_type == MC2_SETUP_BONE_SPRING
+                        else None
+                    ),
+                )
             staged_native_context = None
             staged_native_frame_applied = False
             if rebuild_reason and topology.particle_count > 0:
                 from .native import MC2NativeContextV0
 
-                staged_native_context = MC2NativeContextV0(topology.particle_count)
+                staged_native_context = MC2NativeContextV0(
+                    topology.particle_count,
+                    setup_type=spec.setup_type,
+                )
                 try:
                     if mesh_static is not None:
                         staged_native_context.update_mesh_static(mesh_static)

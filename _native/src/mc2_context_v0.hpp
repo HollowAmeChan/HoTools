@@ -15,6 +15,7 @@ PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_step_interpolation(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_team_options(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_set_setup_kind(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObject* args);

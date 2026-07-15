@@ -231,11 +231,12 @@ def physicsMC2MeshClothTask(
     bl_label="MC2 BoneCloth任务（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["骨链", "粒子配置", "连接模式", "旋转插值", "根旋转", "启用"],
+    _INPUT_NAME=["骨链", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "connection_mode": {"min_value": 0, "max_value": 3},
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0},
+        "collided_by_groups": {"min_value": 0, "max_value": 65535},
     },
     _OUTPUT_NAME=["MC2任务"],
 )
@@ -245,6 +246,7 @@ def physicsMC2BoneClothTask(
     connection_mode: int = 0,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
+    collided_by_groups: int = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
     return _task(
@@ -255,6 +257,7 @@ def physicsMC2BoneClothTask(
         connection_mode=connection_mode,
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
+        collided_by_groups=collided_by_groups,
     )
 
 
@@ -263,10 +266,11 @@ def physicsMC2BoneClothTask(
     bl_label="MC2 BoneSpring任务（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["骨链", "粒子配置", "旋转插值", "根旋转", "启用"],
+    _INPUT_NAME=["骨链", "粒子配置", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0},
+        "collided_by_groups": {"min_value": 0, "max_value": 65535},
     },
     _OUTPUT_NAME=["MC2任务"],
 )
@@ -275,6 +279,7 @@ def physicsMC2BoneSpringTask(
     profile: typing.Any = None,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
+    collided_by_groups: int = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
     return _task(
@@ -284,6 +289,7 @@ def physicsMC2BoneSpringTask(
         enabled,
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
+        collided_by_groups=collided_by_groups,
     )
 
 

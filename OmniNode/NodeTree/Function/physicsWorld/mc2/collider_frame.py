@@ -81,18 +81,31 @@ class MC2ColliderFrameSpec:
         }
 
 
-def build_mc2_collider_frame(world, source_obj) -> MC2ColliderFrameSpec:
+def _source_owner(source):
+    if isinstance(source, dict):
+        return source.get("armature") or source.get("proxy_obj") or source.get("object")
+    if isinstance(source, tuple) and source:
+        return source[0]
+    return source
+
+
+def build_mc2_collider_frame(
+    world,
+    source_obj,
+    *,
+    collided_by_groups: int | None = None,
+    allowed_types: frozenset[str] | None = None,
+) -> MC2ColliderFrameSpec:
     snapshot = getattr(world, "collider_snapshot", None)
     snapshot = snapshot if isinstance(snapshot, dict) else {}
     previous = getattr(world, "previous_collider_snapshot", None)
     previous = previous.get("colliders", {}) if isinstance(previous, dict) else {}
     previous = previous if isinstance(previous, dict) else {}
-    properties = getattr(source_obj, "hotools_mesh_collision", None)
-    collided_by_groups = max(
-        0,
-        min(0xFFFF, int(getattr(properties, "collided_by_groups", 0) or 0)),
-    )
-    source_pointer = _pointer(source_obj)
+    if collided_by_groups is None:
+        properties = getattr(source_obj, "hotools_mesh_collision", None)
+        collided_by_groups = getattr(properties, "collided_by_groups", 0)
+    collided_by_groups = max(0, min(0xFFFF, int(collided_by_groups or 0)))
+    source_pointer = _pointer(_source_owner(source_obj))
 
     types = []
     group_bits = []
@@ -107,6 +120,8 @@ def build_mc2_collider_frame(world, source_obj) -> MC2ColliderFrameSpec:
         if not isinstance(collider, dict) or _pointer(collider.get("owner")) == source_pointer:
             continue
         collider_type = str(collider.get("type", "SPHERE") or "SPHERE").upper()
+        if allowed_types is not None and collider_type not in allowed_types:
+            continue
         type_code = _TYPE_CODES.get(collider_type)
         center = _vec3(collider.get("center"))
         if type_code is None or center is None:
