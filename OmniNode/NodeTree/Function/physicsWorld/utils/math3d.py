@@ -351,3 +351,125 @@ def rotate_vector_by_inverse_f64(
         quaternion,
     )
     return rotated[:3]
+
+
+IDENTITY_MATRIX4_TUPLE = (
+    (1.0, 0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.0),
+    (0.0, 0.0, 0.0, 1.0),
+)
+
+
+def matrix4_tuple(
+    value,
+    *,
+    finite_message="matrix cannot contain NaN/Inf",
+) -> tuple[tuple[float, ...], ...]:
+    if value is None:
+        return IDENTITY_MATRIX4_TUPLE
+    try:
+        rows = tuple(tuple(float(component) for component in row) for row in value)
+    except (TypeError, ValueError):
+        return IDENTITY_MATRIX4_TUPLE
+    if len(rows) != 4 or any(len(row) != 4 for row in rows):
+        return IDENTITY_MATRIX4_TUPLE
+    if not all(math.isfinite(component) for row in rows for component in row):
+        raise ValueError(finite_message)
+    return rows
+
+
+def matrix4_tuple_from_flat(value) -> tuple[tuple[float, ...], ...]:
+    values = tuple(float(component) for component in (value or ()))
+    if len(values) != 16:
+        return IDENTITY_MATRIX4_TUPLE
+    return tuple(
+        tuple(values[row * 4 + column] for column in range(4))
+        for row in range(4)
+    )
+
+
+def matrix4_tuple_multiply(left, right):
+    return tuple(
+        tuple(
+            sum(left[row][index] * right[index][column] for index in range(4))
+            for column in range(4)
+        )
+        for row in range(4)
+    )
+
+
+def transform_point_matrix4_tuple(matrix, point) -> tuple[float, float, float]:
+    x, y, z = (float(component) for component in point)
+    return (
+        matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z + matrix[0][3],
+        matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z + matrix[1][3],
+        matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z + matrix[2][3],
+    )
+
+
+def dot3_tuple(left, right) -> float:
+    return sum(float(a) * float(b) for a, b in zip(left, right))
+
+
+def cross3_tuple(left, right) -> tuple[float, float, float]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def normalize3_tuple(value) -> tuple[float, float, float]:
+    vector = tuple(float(component) for component in value)
+    length = math.sqrt(dot3_tuple(vector, vector))
+    if length <= 1.0e-8:
+        return (0.0, 1.0, 0.0)
+    return tuple(component / length for component in vector)
+
+
+def transform_direction_matrix4_tuple(
+    matrix,
+    direction,
+) -> tuple[float, float, float]:
+    x, y, z = (float(component) for component in direction)
+    return normalize3_tuple((
+        matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z,
+        matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z,
+        matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z,
+    ))
+
+
+def quaternion_from_axes_xyzw_tuple(
+    right,
+    up,
+    forward,
+) -> tuple[float, float, float, float]:
+    m00, m01, m02 = right[0], up[0], forward[0]
+    m10, m11, m12 = right[1], up[1], forward[1]
+    m20, m21, m22 = right[2], up[2], forward[2]
+    trace = m00 + m11 + m22
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        w, x, y, z = 0.25 * scale, (m21 - m12) / scale, (m02 - m20) / scale, (m10 - m01) / scale
+    elif m00 > m11 and m00 > m22:
+        scale = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
+        w, x, y, z = (m21 - m12) / scale, 0.25 * scale, (m01 + m10) / scale, (m02 + m20) / scale
+    elif m11 > m22:
+        scale = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
+        w, x, y, z = (m02 - m20) / scale, (m01 + m10) / scale, 0.25 * scale, (m12 + m21) / scale
+    else:
+        scale = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
+        w, x, y, z = (m10 - m01) / scale, (m02 + m20) / scale, (m12 + m21) / scale, 0.25 * scale
+    length = math.sqrt(x * x + y * y + z * z + w * w)
+    if length <= 1.0e-8:
+        return IDENTITY_QUATERNION_F32
+    return (x / length, y / length, z / length, w / length)
+
+
+def quaternion_from_matrix4_xyzw_tuple(matrix) -> tuple[float, float, float, float]:
+    right = normalize3_tuple((matrix[0][0], matrix[1][0], matrix[2][0]))
+    up_hint = normalize3_tuple((matrix[0][1], matrix[1][1], matrix[2][1]))
+    forward = normalize3_tuple(cross3_tuple(right, up_hint))
+    up = normalize3_tuple(cross3_tuple(forward, right))
+    return quaternion_from_axes_xyzw_tuple(right, up, forward)

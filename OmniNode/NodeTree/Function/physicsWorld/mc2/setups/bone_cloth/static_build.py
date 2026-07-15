@@ -12,12 +12,14 @@ from ...center_state import MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
 from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
-from ...initial_state import _matrix_from_flat
-from ...initial_state import _quaternion_from_matrix
 from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from ...topology import _thaw
+from ....utils.math3d import (
+    matrix4_tuple_from_flat as _matrix_from_flat,
+    quaternion_from_matrix4_xyzw_tuple as _quaternion_from_matrix,
+)
 
 
 MC2_BONE_STATIC_SCHEMA_VERSION = 2

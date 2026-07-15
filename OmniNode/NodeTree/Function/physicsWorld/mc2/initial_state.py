@@ -5,19 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-import math
+
+from ..utils.math3d import (
+    cross3_tuple as _cross,
+    dot3_tuple as _dot,
+    matrix4_tuple,
+    matrix4_tuple_from_flat as _matrix_from_flat,
+    matrix4_tuple_multiply as _matrix_multiply,
+    normalize3_tuple as _normalize,
+    quaternion_from_axes_xyzw_tuple as _quaternion_from_axes,
+    quaternion_from_matrix4_xyzw_tuple as _quaternion_from_matrix,
+    transform_direction_matrix4_tuple as _transform_direction,
+    transform_point_matrix4_tuple as _transform_point,
+)
 
 from .specs import MC2TaskSpec
 from .topology import MC2TopologySpec, _thaw
-
-
-IDENTITY_QUATERNION = (0.0, 0.0, 0.0, 1.0)
-IDENTITY_MATRIX = (
-    (1.0, 0.0, 0.0, 0.0),
-    (0.0, 1.0, 0.0, 0.0),
-    (0.0, 0.0, 1.0, 0.0),
-    (0.0, 0.0, 0.0, 1.0),
-)
 
 
 def _signature(value: object) -> str:
@@ -31,116 +34,10 @@ def _signature(value: object) -> str:
 
 
 def _matrix4(value) -> tuple[tuple[float, ...], ...]:
-    if value is None:
-        return IDENTITY_MATRIX
-    try:
-        rows = tuple(tuple(float(component) for component in row) for row in value)
-    except (TypeError, ValueError):
-        return IDENTITY_MATRIX
-    if len(rows) != 4 or any(len(row) != 4 for row in rows):
-        return IDENTITY_MATRIX
-    if not all(math.isfinite(component) for row in rows for component in row):
-        raise ValueError("MC2 initial state 矩阵不能包含 NaN/Inf")
-    return rows
-
-
-def _matrix_from_flat(value) -> tuple[tuple[float, ...], ...]:
-    values = tuple(float(component) for component in (value or ()))
-    if len(values) != 16:
-        return IDENTITY_MATRIX
-    return tuple(tuple(values[row * 4 + column] for column in range(4)) for row in range(4))
-
-
-def _matrix_multiply(left, right):
-    return tuple(
-        tuple(
-            sum(left[row][index] * right[index][column] for index in range(4))
-            for column in range(4)
-        )
-        for row in range(4)
+    return matrix4_tuple(
+        value,
+        finite_message="MC2 initial state 矩阵不能包含 NaN/Inf",
     )
-
-
-def _transform_point(matrix, point) -> tuple[float, float, float]:
-    x, y, z = (float(component) for component in point)
-    return (
-        matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z + matrix[0][3],
-        matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z + matrix[1][3],
-        matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z + matrix[2][3],
-    )
-
-
-def _transform_direction(matrix, direction) -> tuple[float, float, float]:
-    x, y, z = (float(component) for component in direction)
-    return _normalize((
-        matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z,
-        matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z,
-        matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z,
-    ))
-
-
-def _dot(left, right) -> float:
-    return sum(float(a) * float(b) for a, b in zip(left, right))
-
-
-def _cross(left, right) -> tuple[float, float, float]:
-    return (
-        left[1] * right[2] - left[2] * right[1],
-        left[2] * right[0] - left[0] * right[2],
-        left[0] * right[1] - left[1] * right[0],
-    )
-
-
-def _normalize(value) -> tuple[float, float, float]:
-    vector = tuple(float(component) for component in value)
-    length = math.sqrt(_dot(vector, vector))
-    if length <= 1.0e-8:
-        return (0.0, 1.0, 0.0)
-    return tuple(component / length for component in vector)
-
-
-def _quaternion_from_axes(right, up, forward) -> tuple[float, float, float, float]:
-    # Rotation matrix columns are the local X/Y/Z axes in world space.
-    m00, m01, m02 = right[0], up[0], forward[0]
-    m10, m11, m12 = right[1], up[1], forward[1]
-    m20, m21, m22 = right[2], up[2], forward[2]
-    trace = m00 + m11 + m22
-    if trace > 0.0:
-        scale = math.sqrt(trace + 1.0) * 2.0
-        w = 0.25 * scale
-        x = (m21 - m12) / scale
-        y = (m02 - m20) / scale
-        z = (m10 - m01) / scale
-    elif m00 > m11 and m00 > m22:
-        scale = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
-        w = (m21 - m12) / scale
-        x = 0.25 * scale
-        y = (m01 + m10) / scale
-        z = (m02 + m20) / scale
-    elif m11 > m22:
-        scale = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
-        w = (m02 - m20) / scale
-        x = (m01 + m10) / scale
-        y = 0.25 * scale
-        z = (m12 + m21) / scale
-    else:
-        scale = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
-        w = (m10 - m01) / scale
-        x = (m02 + m20) / scale
-        y = (m12 + m21) / scale
-        z = 0.25 * scale
-    length = math.sqrt(x * x + y * y + z * z + w * w)
-    if length <= 1.0e-8:
-        return IDENTITY_QUATERNION
-    return (x / length, y / length, z / length, w / length)
-
-
-def _quaternion_from_matrix(matrix) -> tuple[float, float, float, float]:
-    right = _normalize((matrix[0][0], matrix[1][0], matrix[2][0]))
-    up_hint = _normalize((matrix[0][1], matrix[1][1], matrix[2][1]))
-    forward = _normalize(_cross(right, up_hint))
-    up = _normalize(_cross(forward, right))
-    return _quaternion_from_axes(right, up, forward)
 
 
 def _mesh_vertex_quaternion(matrix, normal) -> tuple[float, float, float, float]:
