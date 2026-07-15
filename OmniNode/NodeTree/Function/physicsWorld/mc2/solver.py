@@ -510,7 +510,6 @@ def step_mc2(
             )
             bone_static_supported = (
                 spec.setup_type in ("bone_cloth", "bone_spring")
-                and topology.connection_mode == 0
                 and len(topology.sources) == 1
                 and all(source.resolved for source in topology.sources)
                 and topology.particle_count > 0

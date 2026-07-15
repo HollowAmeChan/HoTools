@@ -9,6 +9,7 @@ import math
 import os
 import sys
 import types
+from types import SimpleNamespace
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
@@ -38,6 +39,9 @@ for package_name, package_path in (
 
 bone_static = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.bone_static"
+)
+static_build = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.static_build"
 )
 
 
@@ -177,9 +181,38 @@ def test_bone_static_pack_is_read_only_and_complete() -> None:
     assert all(not value.flags.writeable for value in packed.values())
 
 
+def test_bone_mesh_connection_zero_uv_domain_gate() -> None:
+    assert static_build.mc2_bone_static_domain_error("bone_cloth", 1, ()) == ""
+    assert static_build.mc2_bone_static_domain_error("bone_cloth", 2, ()) == ""
+    error = static_build.mc2_bone_static_domain_error(
+        "bone_cloth",
+        1,
+        ((0, 1, 2),),
+    )
+    assert "ImportBoneType produces zero UV" in error
+    assert "triangle tangent/basis" in error
+    assert "use Line" in error
+    assert static_build.mc2_bone_static_domain_error(
+        "bone_spring", 1, ()
+    ) == "BoneSpring requires Line connection mode"
+    try:
+        static_build._require_mc2_bone_static_domain(
+            SimpleNamespace(setup_type="bone_cloth"),
+            SimpleNamespace(
+                connection_mode=1,
+                bone_connection=SimpleNamespace(triangles=((0, 1, 2),)),
+            ),
+        )
+    except ValueError as exc:
+        assert str(exc) == error
+    else:
+        raise AssertionError("triangle Bone membership bypassed the zero-UV gate")
+
+
 TESTS = (
     ("MC2 Bone static matches Tier A oracle", test_bone_static_matches_tier_a_oracle),
     ("MC2 Bone static pack is read-only and complete", test_bone_static_pack_is_read_only_and_complete),
+    ("MC2 Bone zero-UV static domain gate", test_bone_mesh_connection_zero_uv_domain_gate),
 )
 
 

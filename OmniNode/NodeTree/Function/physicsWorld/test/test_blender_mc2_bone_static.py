@@ -245,6 +245,31 @@ try:
     assert spring_slot.data["writeback_plan"]["batches"][0]["source_kind"] == "bone_spring"
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in spring_slot.data
+
+    world.omni_cache_dispose("bone_spring_complete")
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    world.frame_context.frame = 4
+    world.frame_context.generation = 1
+    world.frame_context.dt = 1.0 / 60.0
+    automatic_task = specs.make_mc2_task_spec(
+        names.MC2_SETUP_BONE_CLOTH,
+        [source],
+        setup_options=parameters.make_mc2_setup_options(
+            names.MC2_SETUP_BONE_CLOTH,
+            connection_mode=1,
+        ),
+    )
+    returned, ready, _status = solver.step_mc2(world, [automatic_task])
+    assert returned is world and ready is True
+    automatic_slot = world.solver_slots[automatic_task.task_id]
+    automatic_static = automatic_slot.data["bone_static"]
+    assert automatic_static.connection_mode == 1
+    assert automatic_static.final_proxy.triangles == ()
+    assert automatic_static.final_proxy.edges == ((0, 1), (1, 2))
+    assert world.result_streams["bone_transform"][0]["setup_type"] == "bone_cloth"
+    assert writeback.writeback_bone_transforms(world) == 3
+    assert "_writeback_error" not in automatic_slot.data
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")

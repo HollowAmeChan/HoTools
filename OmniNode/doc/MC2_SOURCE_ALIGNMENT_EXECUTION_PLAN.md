@@ -144,7 +144,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 4. static 上传或 rebuild 失败必须保留旧 slot/context；Bone finalizer、baseline与Bone-only rotations必须作为同一 staged bundle原子替换。参数热更新继续保留粒子 history。
 5. BoneSpring强制复用Line topology/static/native/result路径；N2固定覆写已在真实slot验证gravity=0、tether compression=0.8、distance stiffness=0.5并关闭max distance/self collision。BoneCloth与BoneSpring保持不同setup/static/task签名，不共享slot。
 
-Bone mesh-connection当前有明确未决源边界：`ImportBoneType()`写入全零UV，triangle tangent/basis可退化。Automatic/Sequential进入native前必须用独立oracle/产品决策确定拒绝、修复或兼容策略，禁止在fixture里注入合成UV掩盖该事实。
+Bone mesh-connection源边界已决：`ImportBoneType()`写入全零UV，因此Automatic/Sequential仅在最终membership不含triangle时复用Line static/native；一旦含triangle，准备阶段在分配或替换native context前明确拒绝并报告triangle tangent/basis退化。禁止在fixture里注入合成UV掩盖该事实。
 
 退出条件：Bone public envelope的frame/generation/revision、stable identity、parent-local转换、发布失败保留旧plan、writeback执行中途整批恢复旧`matrix_basis`与统一PoseBone writeback均已通过；solver仍不得inline写bpy。
 
@@ -199,6 +199,7 @@ Bone mesh-connection当前有明确未决源边界：`ImportBoneType()`写入全
 | D-06 | Tier A host 为 `tools/mc2_unity_oracle`；废弃 HoClothUnity 与旧 solver均为 Tier C。 |
 | D-07 | Normal/Split 只迁移共同数学语义，不复制 Unity manager/job 调度结构。 |
 | D-08 | Bone connection mode 3 的内部语义必须保留，并由 BoneCloth 节点整数模式 0..3 公开表达；BoneSpring继续强制 Line。 |
+| D-09 | Bone Automatic/Sequential仅支持最终membership无triangle的Line安全域；`ImportBoneType()`零UV遇triangle时明确拒绝，不合成UV、不静默降级。 |
 
 ## 提交与声明规则
 

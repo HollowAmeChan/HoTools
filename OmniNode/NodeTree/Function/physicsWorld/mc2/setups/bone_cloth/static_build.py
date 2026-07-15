@@ -20,8 +20,36 @@ from ...topology import MC2TopologySpec
 from ...topology import _thaw
 
 
-MC2_BONE_STATIC_SCHEMA_VERSION = 1
+MC2_BONE_STATIC_SCHEMA_VERSION = 2
 MC2_LINE_BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
+
+
+def mc2_bone_static_domain_error(
+    setup_type: str,
+    connection_mode: int,
+    triangles,
+) -> str:
+    triangle_count = len(tuple(triangles or ()))
+    if setup_type == MC2_SETUP_BONE_SPRING and int(connection_mode) != 0:
+        return "BoneSpring requires Line connection mode"
+    if triangle_count:
+        return (
+            "MC2 Bone mesh connection is unsupported: ImportBoneType produces zero UV, "
+            f"so {triangle_count} triangle tangent/basis record(s) would degenerate; "
+            "use Line or a connection result containing no triangles"
+        )
+    return ""
+
+
+def _require_mc2_bone_static_domain(task: MC2TaskSpec, topology: MC2TopologySpec) -> None:
+    triangles = topology.bone_connection.triangles if topology.bone_connection else ()
+    error = mc2_bone_static_domain_error(
+        task.setup_type,
+        topology.connection_mode,
+        triangles,
+    )
+    if error:
+        raise ValueError(error)
 
 
 def _signature(value: object) -> str:
@@ -45,6 +73,7 @@ def _rotate_xyzw(quaternion, vector) -> tuple[float, float, float]:
 @dataclass(frozen=True)
 class MC2BoneClothStaticBuildResult:
     topology_signature: str
+    connection_mode: int
     bone: MC2BoneStaticSpec
     distance: MC2DistanceStaticSpec
     center: MC2CenterStaticSpec
@@ -68,6 +97,8 @@ class MC2BoneClothStaticBuildResult:
             raise ValueError("unsupported BoneCloth static build schema")
         if not self.topology_signature:
             raise ValueError("topology_signature cannot be empty")
+        if self.connection_mode not in range(4):
+            raise ValueError("connection_mode must be in 0..3")
         if not isinstance(self.bone, MC2BoneStaticSpec):
             raise TypeError("bone must be MC2BoneStaticSpec")
         if not isinstance(self.distance, MC2DistanceStaticSpec):
@@ -87,6 +118,7 @@ class MC2BoneClothStaticBuildResult:
         return {
             "schema_version": self.schema_version,
             "topology_signature": self.topology_signature,
+            "connection_mode": self.connection_mode,
             "bone_static_signature": self.bone.static_signature,
             "distance_signature": self.distance.distance_signature,
             "center_static_signature": self.center.center_static_signature,
@@ -95,7 +127,7 @@ class MC2BoneClothStaticBuildResult:
     def debug_dict(self) -> dict:
         return {
             "setup_type": self.final_proxy.setup_type,
-            "connection_mode": 0,
+            "connection_mode": self.connection_mode,
             "vertex_count": self.final_proxy.vertex_count,
             "edge_count": len(self.final_proxy.edges),
             "baseline_count": len(self.baseline.baseline_ranges),
@@ -114,14 +146,16 @@ def bone_cloth_static_input_signature_for_task(
         raise TypeError("task must be MC2TaskSpec")
     if not isinstance(topology, MC2TopologySpec):
         raise TypeError("topology must be MC2TopologySpec")
-    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES or topology.connection_mode != 0:
+    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES:
         return None
+    _require_mc2_bone_static_domain(task, topology)
     if len(topology.sources) != 1 or not topology.sources[0].resolved:
         raise ValueError("BoneCloth Line static requires one resolved Armature source")
     payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
         "setup_type": task.setup_type,
         "topology_signature": topology.topology_signature,
+        "connection_mode": topology.connection_mode,
         "selection_rule": "parentless_fixed_else_move",
         "normal_alignment_mode": 0,
         "world_gravity_direction": task.profile.gravity_direction,
@@ -139,12 +173,11 @@ def build_mc2_bone_cloth_static_for_task(
         raise TypeError("topology must be MC2TopologySpec")
     if task.task_id != topology.task_id or task.setup_type != topology.setup_type:
         raise ValueError("BoneCloth static task/topology identity mismatch")
-    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES or topology.connection_mode != 0:
+    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES:
         return None
+    _require_mc2_bone_static_domain(task, topology)
     if topology.bone_connection is None:
         raise ValueError("BoneCloth Line static requires frozen connection topology")
-    if topology.bone_connection.triangles:
-        raise ValueError("BoneCloth Line static cannot contain triangles")
     if len(topology.sources) != 1 or not topology.sources[0].resolved:
         raise ValueError("BoneCloth Line static requires one resolved Armature source")
 
@@ -208,12 +241,14 @@ def build_mc2_bone_cloth_static_for_task(
     signature_payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
         "topology_signature": topology.topology_signature,
+        "connection_mode": topology.connection_mode,
         "bone_static_signature": bone.static_signature,
         "distance_signature": distance.distance_signature,
         "center_static_signature": center.center_static_signature,
     }
     return MC2BoneClothStaticBuildResult(
         topology_signature=topology.topology_signature,
+        connection_mode=topology.connection_mode,
         bone=bone,
         distance=distance,
         center=center,
@@ -225,4 +260,5 @@ __all__ = [
     "MC2BoneClothStaticBuildResult",
     "bone_cloth_static_input_signature_for_task",
     "build_mc2_bone_cloth_static_for_task",
+    "mc2_bone_static_domain_error",
 ]
