@@ -11,11 +11,14 @@ import numpy as np
 
 from ..utils.math3d import (
     normalize_quaternion_f32,
+    quaternion_conjugate_xyzw_tuple as _quaternion_inverse,
     quaternion_conjugate_f32,
     quaternion_matrix_unit_f32,
     quaternion_multiply_f32 as _quaternion_multiply_f32,
+    quaternion_multiply_xyzw_tuple as _quaternion_multiply,
     quaternion_slerp_unit_f32,
     rotate_vector_unit_quaternion_f32 as _rotate_f32,
+    rotate_vector_xyzw_tuple,
     transform_point_matrix_f32,
     transform_vector_matrix_f32,
 )
@@ -65,30 +68,9 @@ def _require_unit_quaternion(values, name: str) -> tuple[float, float, float, fl
     return value
 
 
-def _quaternion_multiply(left, right):
-    lx, ly, lz, lw = left
-    rx, ry, rz, rw = right
-    return (
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    )
-
-
-def _quaternion_inverse(value):
-    x, y, z, w = value
-    return (-x, -y, -z, w)
-
-
 def _rotate(value, vector):
     q = _unit_quaternion(value, "quaternion")
-    vx, vy, vz = vector
-    rotated = _quaternion_multiply(
-        _quaternion_multiply(q, (vx, vy, vz, 0.0)),
-        _quaternion_inverse(q),
-    )
-    return rotated[:3]
+    return rotate_vector_xyzw_tuple(q, vector)
 
 
 def _signature(payload: object) -> str:

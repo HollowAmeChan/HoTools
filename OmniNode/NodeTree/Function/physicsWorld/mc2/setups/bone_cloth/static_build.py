@@ -19,6 +19,7 @@ from ...topology import _thaw
 from ....utils.math3d import (
     matrix4_tuple_from_flat as _matrix_from_flat,
     quaternion_from_matrix4_xyzw_tuple as _quaternion_from_matrix,
+    rotate_vector_unit_xyzw_tuple_fast as _rotate_xyzw,
 )
 
 
@@ -57,19 +58,6 @@ def _require_mc2_bone_static_domain(task: MC2TaskSpec, topology: MC2TopologySpec
 def _signature(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def _rotate_xyzw(quaternion, vector) -> tuple[float, float, float]:
-    qx, qy, qz, qw = (float(value) for value in quaternion)
-    vx, vy, vz = (float(value) for value in vector)
-    tx = 2.0 * (qy * vz - qz * vy)
-    ty = 2.0 * (qz * vx - qx * vz)
-    tz = 2.0 * (qx * vy - qy * vx)
-    return (
-        vx + qw * tx + (qy * tz - qz * ty),
-        vy + qw * ty + (qz * tx - qx * tz),
-        vz + qw * tz + (qx * ty - qy * tx),
-    )
 
 
 @dataclass(frozen=True)

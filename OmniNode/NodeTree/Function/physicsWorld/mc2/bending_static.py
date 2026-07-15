@@ -9,6 +9,10 @@ import math
 
 import numpy as np
 
+from ..utils.math3d import (
+    normalize_vector_squared_f32,
+    transform_points_columns_f32 as _transform_positions,
+)
 from .static_data import MC2ProxyStaticSpec
 
 
@@ -120,11 +124,10 @@ def _opposite_vertex(triangle, edge: tuple[int, int]) -> int:
 
 
 def _normalize(vector: np.ndarray, name: str) -> np.ndarray:
-    length_squared = np.float32(np.dot(vector, vector))
-    if not math.isfinite(float(length_squared)) or length_squared <= np.float32(0.0):
-        raise ValueError(f"{name} is degenerate")
-    length = np.float32(np.sqrt(length_squared))
-    return np.asarray(vector / length, dtype=np.float32)
+    return normalize_vector_squared_f32(
+        vector,
+        error_message=f"{name} is degenerate",
+    )
 
 
 def _angle_and_sign(positions: np.ndarray, quad: tuple[int, int, int, int]):
@@ -146,15 +149,6 @@ def _angle_and_sign(positions: np.ndarray, quad: tuple[int, int, int, int]):
         )
     )
     return angle, (-1 if direction < np.float32(0.0) else 1)
-
-
-def _transform_positions(positions: np.ndarray, columns) -> np.ndarray:
-    matrix = np.asarray(columns, dtype=np.float32).T
-    homogeneous = np.concatenate(
-        (positions, np.ones((positions.shape[0], 1), dtype=np.float32)),
-        axis=1,
-    )
-    return np.asarray((matrix @ homogeneous.T).T[:, :3], dtype=np.float32)
 
 
 def _signed_volume(world_positions: np.ndarray, quad) -> float:

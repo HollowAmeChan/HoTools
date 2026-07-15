@@ -473,3 +473,65 @@ def quaternion_from_matrix4_xyzw_tuple(matrix) -> tuple[float, float, float, flo
     forward = normalize3_tuple(cross3_tuple(right, up_hint))
     up = normalize3_tuple(cross3_tuple(forward, right))
     return quaternion_from_axes_xyzw_tuple(right, up, forward)
+
+
+def quaternion_multiply_xyzw_tuple(left, right):
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return (
+        lw * rx + lx * rw + ly * rz - lz * ry,
+        lw * ry - lx * rz + ly * rw + lz * rx,
+        lw * rz + lx * ry - ly * rx + lz * rw,
+        lw * rw - lx * rx - ly * ry - lz * rz,
+    )
+
+
+def quaternion_conjugate_xyzw_tuple(value):
+    x, y, z, w = value
+    return (-x, -y, -z, w)
+
+
+def rotate_vector_xyzw_tuple(rotation, vector) -> tuple[float, float, float]:
+    vx, vy, vz = vector
+    rotated = quaternion_multiply_xyzw_tuple(
+        quaternion_multiply_xyzw_tuple(rotation, (vx, vy, vz, 0.0)),
+        quaternion_conjugate_xyzw_tuple(rotation),
+    )
+    return rotated[:3]
+
+
+def rotate_vector_unit_xyzw_tuple_fast(
+    quaternion,
+    vector,
+) -> tuple[float, float, float]:
+    qx, qy, qz, qw = (float(value) for value in quaternion)
+    vx, vy, vz = (float(value) for value in vector)
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+    return (
+        vx + qw * tx + (qy * tz - qz * ty),
+        vy + qw * ty + (qz * tx - qx * tz),
+        vz + qw * tz + (qx * ty - qy * tx),
+    )
+
+
+def normalize_vector_squared_f32(
+    vector: np.ndarray,
+    *,
+    error_message="vector is degenerate",
+) -> np.ndarray:
+    length_squared = np.float32(np.dot(vector, vector))
+    if not math.isfinite(float(length_squared)) or length_squared <= np.float32(0.0):
+        raise ValueError(error_message)
+    length = np.float32(np.sqrt(length_squared))
+    return np.asarray(vector / length, dtype=np.float32)
+
+
+def transform_points_columns_f32(positions: np.ndarray, columns) -> np.ndarray:
+    matrix = np.asarray(columns, dtype=np.float32).T
+    homogeneous = np.concatenate(
+        (positions, np.ones((positions.shape[0], 1), dtype=np.float32)),
+        axis=1,
+    )
+    return np.asarray((matrix @ homogeneous.T).T[:, :3], dtype=np.float32)
