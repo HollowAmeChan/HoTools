@@ -685,6 +685,128 @@ def test_self_collision_grid_sort_and_unity_hash():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_self_collision_broadphase_candidates_are_filtered_and_typed():
+    edge_context = hotools_native.mc2_context_v0_create(0, 4)
+    point_triangle_context = hotools_native.mc2_context_v0_create(0, 4)
+    try:
+        proxy, baseline = static_arrays(4)
+        edges = np.array([[0, 1], [2, 3]], dtype=np.int32)
+        proxy = list(proxy)
+        proxy[5] = edges
+        hotools_native.mc2_context_v0_update_proxy_static(edge_context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(edge_context, *baseline)
+        edge_indices = np.column_stack(
+            (edges, np.full(2, -1, dtype=np.int32))
+        )
+        edge_depths = baseline[7][edges].mean(axis=1).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            edge_context,
+            np.full(2, 0x01000000, dtype=np.uint32),
+            edge_indices,
+            edge_depths,
+            0,
+            2,
+            0,
+        )
+        floats, ints, curves = parameters()
+        ints[9] = 2
+        curves[8] = 0.05
+        hotools_native.mc2_context_v0_update_parameters(
+            edge_context, floats, ints, curves
+        )
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+             [0.0, 0.04, 0.0], [1.0, 0.04, 0.0]],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((4, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(edge_context, 30, 6, positions, rotations)
+        hotools_native.mc2_context_v0_reset(edge_context)
+        step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
+        info = hotools_native.mc2_context_v0_inspect(edge_context)
+        assert info["self_candidate_ready"] is True
+        assert info["self_candidate_update_count"] == 1
+        assert info["self_contact_candidate_count"] == 1
+        assert info["self_contact_cache_count"] == 0
+        candidates = np.empty((1, 3), dtype=np.int32)
+        hotools_native.mc2_context_v0_read_self_collision_candidates(
+            edge_context, candidates
+        )
+        np.testing.assert_array_equal(candidates, [[0, 1, 0]])
+        step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
+        assert hotools_native.mc2_context_v0_inspect(edge_context)[
+            "self_candidate_update_count"
+        ] == 1
+
+        proxy, baseline = static_arrays(4)
+        edges = np.array([[0, 1], [1, 2], [2, 0]], dtype=np.int32)
+        triangles = np.array([[0, 1, 2]], dtype=np.int32)
+        proxy = list(proxy)
+        proxy[5] = edges
+        proxy[6] = triangles
+        hotools_native.mc2_context_v0_update_proxy_static(
+            point_triangle_context, *proxy
+        )
+        hotools_native.mc2_context_v0_update_baseline_static(
+            point_triangle_context, *baseline
+        )
+        particle_indices = np.concatenate(
+            (
+                np.column_stack(
+                    (
+                        np.arange(4, dtype=np.int32),
+                        np.full(4, -1, dtype=np.int32),
+                        np.full(4, -1, dtype=np.int32),
+                    )
+                ),
+                np.column_stack((edges, np.full(3, -1, dtype=np.int32))),
+                triangles,
+            ),
+            axis=0,
+        )
+        flags = np.concatenate(
+            (
+                np.zeros(4, dtype=np.uint32),
+                np.full(3, 0x01000000, dtype=np.uint32),
+                np.full(1, 0x02000000, dtype=np.uint32),
+            )
+        )
+        depths = np.concatenate(
+            (
+                baseline[7],
+                baseline[7][edges].mean(axis=1),
+                baseline[7][triangles].mean(axis=1),
+            )
+        ).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            point_triangle_context, flags, particle_indices, depths, 4, 3, 1,
+        )
+        hotools_native.mc2_context_v0_update_parameters(
+            point_triangle_context, floats, ints, curves
+        )
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+             [0.0, 2.0, 0.0], [0.5, 0.5, 0.01]],
+            dtype=np.float32,
+        )
+        update_dynamic(point_triangle_context, 31, 6, positions, rotations)
+        hotools_native.mc2_context_v0_reset(point_triangle_context)
+        step(point_triangle_context, 1.0 / 90.0, simulation_power_z=0.0)
+        info = hotools_native.mc2_context_v0_inspect(point_triangle_context)
+        assert info["self_candidate_ready"] is True
+        assert info["self_contact_candidate_count"] == 1
+        assert info["self_contact_cache_count"] == 0
+        candidates = np.empty((1, 3), dtype=np.int32)
+        hotools_native.mc2_context_v0_read_self_collision_candidates(
+            point_triangle_context, candidates
+        )
+        np.testing.assert_array_equal(candidates, [[3, 7, 1]])
+    finally:
+        hotools_native.mc2_context_v0_free(edge_context)
+        hotools_native.mc2_context_v0_free(point_triangle_context)
+
+
 def test_point_collision_projection_and_post():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -1579,6 +1701,8 @@ if __name__ == "__main__":
     print("PASS self-collision first-step primitive dynamics")
     test_self_collision_grid_sort_and_unity_hash()
     print("PASS self-collision grid sort and Unity hash")
+    test_self_collision_broadphase_candidates_are_filtered_and_typed()
+    print("PASS self-collision broadphase candidates")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
     test_bone_spring_soft_sphere_limit_and_velocity_reference()

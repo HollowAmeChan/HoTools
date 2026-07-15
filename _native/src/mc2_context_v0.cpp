@@ -102,6 +102,7 @@ struct Mc2ContextV0 {
     std::int64_t edge_collision_solve_count = 0;
     std::int64_t self_primitive_update_count = 0;
     std::int64_t self_grid_update_count = 0;
+    std::int64_t self_candidate_update_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -127,6 +128,7 @@ struct Mc2ContextV0 {
     bool self_collision_static_ready = false;
     bool self_primitive_dynamic_ready = false;
     bool self_grid_dynamic_ready = false;
+    bool self_candidate_ready = false;
     bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
@@ -198,6 +200,7 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> self_grid_hashes;
     std::vector<std::int32_t> self_grid_starts;
     std::vector<std::int32_t> self_grid_counts;
+    std::vector<std::int32_t> self_contact_candidates;
     std::int64_t self_point_primitive_count = 0;
     std::int64_t self_edge_primitive_count = 0;
     std::int64_t self_triangle_primitive_count = 0;
@@ -319,6 +322,7 @@ void release_resources(Mc2ContextV0& context) {
     context.self_grid_hashes.clear();
     context.self_grid_starts.clear();
     context.self_grid_counts.clear();
+    context.self_contact_candidates.clear();
     context.self_point_primitive_count = 0;
     context.self_edge_primitive_count = 0;
     context.self_triangle_primitive_count = 0;
@@ -346,6 +350,7 @@ void release_resources(Mc2ContextV0& context) {
     context.self_collision_static_ready = false;
     context.self_primitive_dynamic_ready = false;
     context.self_grid_dynamic_ready = false;
+    context.self_candidate_ready = false;
     context.self_point_grid_count = 0;
     context.self_edge_grid_count = 0;
     context.self_triangle_grid_count = 0;
@@ -1845,6 +1850,8 @@ void reorder_self_primitive_chunk(
 
 bool update_self_collision_grid(Mc2ContextV0& context) {
     const auto primitive_count = context.self_primitive_flags.size();
+    context.self_contact_candidates.clear();
+    context.self_candidate_ready = false;
     context.self_primitive_grids.assign(
         primitive_count * 3,
         kSelfIgnoreGrid
@@ -1961,6 +1968,191 @@ bool update_self_collision_grid(Mc2ContextV0& context) {
     return true;
 }
 
+bool self_primitives_share_particle(
+    const Mc2ContextV0& context,
+    std::size_t left,
+    std::size_t right
+) {
+    const auto left_kind = static_cast<std::size_t>(
+        (context.self_primitive_flags[left] >> 24u) & 0x03u
+    );
+    const auto right_kind = static_cast<std::size_t>(
+        (context.self_primitive_flags[right] >> 24u) & 0x03u
+    );
+    for (std::size_t left_axis = 0; left_axis <= left_kind; ++left_axis) {
+        const auto particle = context.self_particle_indices[left * 3 + left_axis];
+        for (std::size_t right_axis = 0; right_axis <= right_kind; ++right_axis) {
+            if (particle == context.self_particle_indices[right * 3 + right_axis]) return true;
+        }
+    }
+    return false;
+}
+
+bool self_aabbs_overlap(
+    const Mc2ContextV0& context,
+    std::size_t left,
+    std::size_t right
+) {
+    for (std::size_t component = 0; component < 3; ++component) {
+        if (context.self_primitive_aabb_max[left * 3 + component] <
+                context.self_primitive_aabb_min[right * 3 + component] ||
+            context.self_primitive_aabb_min[left * 3 + component] >
+                context.self_primitive_aabb_max[right * 3 + component]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::int64_t self_binary_search_grid_hash(
+    const Mc2ContextV0& context,
+    std::size_t start,
+    std::size_t length,
+    std::int32_t value
+) {
+    std::size_t offset = 0;
+    for (std::size_t remaining = length; remaining != 0; remaining >>= 1) {
+        const auto index = offset + (remaining >> 1);
+        const auto current = context.self_grid_hashes[start + index];
+        if (value == current) return static_cast<std::int64_t>(index);
+        if (value > current) {
+            offset = index + 1;
+            --remaining;
+        }
+    }
+    return -1;
+}
+
+void update_self_collision_candidates(Mc2ContextV0& context) {
+    context.self_contact_candidates.clear();
+    context.self_candidate_ready = false;
+    if (!context.self_grid_dynamic_ready) return;
+
+    struct Candidate {
+        std::int32_t primitive0;
+        std::int32_t primitive1;
+        std::int32_t type;
+    };
+    std::vector<Candidate> candidates;
+    const auto point_start = std::size_t {0};
+    const auto edge_start = static_cast<std::size_t>(context.self_point_primitive_count);
+    const auto triangle_start = static_cast<std::size_t>(
+        context.self_point_primitive_count + context.self_edge_primitive_count
+    );
+
+    auto detect = [&](std::size_t my_start,
+                      std::size_t my_count,
+                      std::size_t target_start,
+                      std::size_t target_count,
+                      std::size_t target_grid_count,
+                      std::int32_t contact_type,
+                      bool duplicate_detection) {
+        if (my_count == 0 || target_count == 0 || target_grid_count == 0) return;
+        for (std::size_t primitive = my_start; primitive < my_start + my_count; ++primitive) {
+            const auto flag = context.self_primitive_flags[primitive];
+            if ((flag & kSelfIgnore) != 0u) continue;
+            std::array<std::int32_t, 3> start_grid {};
+            std::array<std::int32_t, 3> end_grid {};
+            for (std::size_t component = 0; component < 3; ++component) {
+                const float padding = context.self_max_primitive_size * 0.5f;
+                start_grid[component] = static_cast<std::int32_t>(std::floor(
+                    (context.self_primitive_aabb_min[primitive * 3 + component] - padding) /
+                    context.self_grid_size
+                ));
+                end_grid[component] = static_cast<std::int32_t>(std::floor(
+                    (context.self_primitive_aabb_max[primitive * 3 + component] + padding) /
+                    context.self_grid_size
+                ));
+            }
+            for (std::int64_t z = start_grid[2]; z <= end_grid[2]; ++z) {
+                for (std::int64_t y = start_grid[1]; y <= end_grid[1]; ++y) {
+                    for (std::int64_t x = start_grid[0]; x <= end_grid[0]; ++x) {
+                        const auto hash = self_grid_hash(
+                            static_cast<std::int32_t>(x),
+                            static_cast<std::int32_t>(y),
+                            static_cast<std::int32_t>(z)
+                        );
+                        const auto run_index = self_binary_search_grid_hash(
+                            context,
+                            target_start,
+                            target_grid_count,
+                            hash
+                        );
+                        if (run_index < 0) continue;
+                        const auto buffer_index = target_start + static_cast<std::size_t>(run_index);
+                        const auto run_start = static_cast<std::size_t>(
+                            context.self_grid_starts[buffer_index]
+                        );
+                        const auto run_end = run_start + static_cast<std::size_t>(
+                            context.self_grid_counts[buffer_index]
+                        );
+                        if (duplicate_detection && run_end < primitive) continue;
+                        auto target = duplicate_detection
+                            ? std::max(run_start, primitive)
+                            : run_start;
+                        for (; target < run_end; ++target) {
+                            if (duplicate_detection && primitive == target) continue;
+                            const auto target_flag = context.self_primitive_flags[target];
+                            if (!self_aabbs_overlap(context, primitive, target) ||
+                                (target_flag & kSelfIgnore) != 0u ||
+                                ((flag & kSelfAllFix) != 0u &&
+                                 (target_flag & kSelfAllFix) != 0u) ||
+                                self_primitives_share_particle(context, primitive, target)) {
+                                continue;
+                            }
+                            candidates.push_back(Candidate {
+                                static_cast<std::int32_t>(primitive),
+                                static_cast<std::int32_t>(target),
+                                contact_type,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    detect(
+        edge_start,
+        static_cast<std::size_t>(context.self_edge_primitive_count),
+        edge_start,
+        static_cast<std::size_t>(context.self_edge_primitive_count),
+        static_cast<std::size_t>(context.self_edge_grid_count),
+        0,
+        true
+    );
+    detect(
+        point_start,
+        static_cast<std::size_t>(context.self_point_primitive_count),
+        triangle_start,
+        static_cast<std::size_t>(context.self_triangle_primitive_count),
+        static_cast<std::size_t>(context.self_triangle_grid_count),
+        1,
+        false
+    );
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+        if (left.type != right.type) return left.type < right.type;
+        if (left.primitive0 != right.primitive0) return left.primitive0 < right.primitive0;
+        return left.primitive1 < right.primitive1;
+    });
+    candidates.erase(
+        std::unique(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+            return left.type == right.type &&
+                left.primitive0 == right.primitive0 &&
+                left.primitive1 == right.primitive1;
+        }),
+        candidates.end()
+    );
+    context.self_contact_candidates.reserve(candidates.size() * 3);
+    for (const auto& candidate : candidates) {
+        context.self_contact_candidates.push_back(candidate.primitive0);
+        context.self_contact_candidates.push_back(candidate.primitive1);
+        context.self_contact_candidates.push_back(candidate.type);
+    }
+    context.self_candidate_ready = true;
+    ++context.self_candidate_update_count;
+}
+
 void update_self_collision_primitives_once(
     Mc2ContextV0& context,
     const std::vector<float>& old_positions
@@ -1976,6 +2168,8 @@ void update_self_collision_primitives_once(
         context.self_point_grid_count = 0;
         context.self_edge_grid_count = 0;
         context.self_triangle_grid_count = 0;
+        context.self_contact_candidates.clear();
+        context.self_candidate_ready = false;
         context.self_max_primitive_size = 0.0f;
         context.self_grid_size = 0.0f;
         return;
@@ -1997,6 +2191,8 @@ void update_self_collision_primitives_once(
         context.self_point_grid_count = 0;
         context.self_edge_grid_count = 0;
         context.self_triangle_grid_count = 0;
+        context.self_contact_candidates.clear();
+        context.self_candidate_ready = false;
         context.self_max_primitive_size = 0.0f;
         context.self_grid_size = 0.0f;
         return;
@@ -2070,7 +2266,7 @@ void update_self_collision_primitives_once(
     context.self_primitive_generation = context.generation;
     context.self_primitive_dynamic_ready = true;
     ++context.self_primitive_update_count;
-    update_self_collision_grid(context);
+    if (update_self_collision_grid(context)) update_self_collision_candidates(context);
 }
 
 void solve_point_collision_once(Mc2ContextV0& context) {
@@ -2255,6 +2451,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
                 context.self_edge_grid_count +
                 context.self_triangle_grid_count
         ) ||
+        !dict_i64(
+            result,
+            "self_contact_candidate_count",
+            static_cast<std::int64_t>(context.self_contact_candidates.size() / 3)
+        ) ||
         !dict_i64(result, "self_contact_cache_count", static_cast<std::int64_t>(context.self_contact_keys.size())) ||
         !dict_i64(result, "self_intersect_record_count", static_cast<std::int64_t>(context.self_intersect_records.size() / 5)) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
@@ -2275,6 +2476,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "edge_collision_solve_count", context.edge_collision_solve_count) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||
         !dict_i64(result, "self_grid_update_count", context.self_grid_update_count) ||
+        !dict_i64(result, "self_candidate_update_count", context.self_candidate_update_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -2305,6 +2507,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "self_collision_static_ready", context.self_collision_static_ready) ||
         !dict_bool(result, "self_primitive_dynamic_ready", context.self_primitive_dynamic_ready) ||
         !dict_bool(result, "self_grid_dynamic_ready", context.self_grid_dynamic_ready) ||
+        !dict_bool(result, "self_candidate_ready", context.self_candidate_ready) ||
         !dict_float(result, "self_max_primitive_size", context.self_max_primitive_size) ||
         !dict_float(result, "self_grid_size", context.self_grid_size) ||
         !dict_bool(result, "tether_enabled", context.tether_enabled) ||
@@ -2897,6 +3100,7 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_grid_hashes.assign(static_cast<std::size_t>(count), 0);
     context->self_grid_starts.assign(static_cast<std::size_t>(count), 0);
     context->self_grid_counts.assign(static_cast<std::size_t>(count), 0);
+    context->self_contact_candidates.clear();
     context->self_point_primitive_count = point_count;
     context->self_edge_primitive_count = edge_count;
     context->self_triangle_primitive_count = triangle_count;
@@ -2905,6 +3109,7 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_collision_static_ready = true;
     context->self_primitive_dynamic_ready = false;
     context->self_grid_dynamic_ready = false;
+    context->self_candidate_ready = false;
     context->self_point_grid_count = 0;
     context->self_edge_grid_count = 0;
     context->self_triangle_grid_count = 0;
@@ -3559,8 +3764,10 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->bone_output_rotations.clear();
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
+    context->self_contact_candidates.clear();
     context->self_primitive_dynamic_ready = false;
     context->self_grid_dynamic_ready = false;
+    context->self_candidate_ready = false;
     context->self_point_grid_count = 0;
     context->self_edge_grid_count = 0;
     context->self_triangle_grid_count = 0;
@@ -3847,6 +4054,40 @@ PyObject* mc2_context_v0_read_self_collision_grid(PyObject*, PyObject* args) {
         counts.view.buf,
         context->self_grid_counts.data(),
         context->self_grid_counts.size() * sizeof(std::int32_t)
+    );
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_self_collision_candidates(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_self_collision_candidates expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_candidate_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision candidates are not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_contact_candidates.size() / 3);
+    Buffer candidates;
+    if (!candidates.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_candidates"
+        )) {
+        return nullptr;
+    }
+    if (!expect_int32(candidates, "out_self_contact_candidates") ||
+        !expect_2d(candidates, "out_self_contact_candidates", count, 3)) {
+        return nullptr;
+    }
+    std::memcpy(
+        candidates.view.buf,
+        context->self_contact_candidates.data(),
+        context->self_contact_candidates.size() * sizeof(std::int32_t)
     );
     Py_RETURN_NONE;
 }
