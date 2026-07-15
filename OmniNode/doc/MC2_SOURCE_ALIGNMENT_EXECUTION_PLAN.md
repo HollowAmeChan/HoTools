@@ -1,12 +1,12 @@
 # MC2 当前状态与执行计划
 
-更新日期：2026-07-14
+更新日期：2026-07-16
 
-文档状态：**新 `physicsWorld.mc2` 的唯一实施计划与状态入口**。
+文档状态：**新 `physicsWorld.mc2` 的实施细节与执行计划**。总体完成度与验收结论以 `MC2_ACCEPTANCE_MAP.md` 为准。
 
 源码基线：`D:\Unity_Fork\MagicaCloth2`，MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 
-本文回答新路径已经完成什么、Host/Native 边界是什么、当前阻塞在哪里以及下一交付如何推进。字段级源码语义、顺序敏感行为与 oracle 规则见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+本文回答 Host/Native 边界、实现细节与下一交付如何推进。总体完成度、对齐等级与验收阻塞见 `MC2_ACCEPTANCE_MAP.md`；字段级源码语义、顺序敏感行为与 oracle 规则见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 ## 不可变方向
 
@@ -21,9 +21,10 @@
 
 | 文档 | 唯一职责 |
 |---|---|
-| 本文 | 当前完成度、Host/Native 契约、工程禁区、下一交付和已决产品边界。 |
+| `MC2_ACCEPTANCE_MAP.md` | 按能力切片给出当前完成度、对齐等级、证据缺口与 V1-R 验收阻塞；这是总体状态的单一事实源。 |
+| 本文 | Host/Native 契约、实现细节、工程禁区、下一交付和已决产品边界。 |
 | `MC2_SOURCE_DATAFLOW_WORKSHEETS.md` | 固定 MC2 源码中的 producer/consumer、顺序敏感行为、数值陷阱和 oracle 规则。 |
-| `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md` | 整个 Physics World 的跨 solver 摘要；MC2 细节以本文为准。 |
+| `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md` | 整个 Physics World 的跨 solver 摘要；MC2 完成度以验收总表为准。 |
 
 发生冲突时按以下顺序判断：固定 MC2 源码行为、`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 的公共架构、本文的已决边界、当前代码与测试。旧实现和历史文档排在最后。
 
@@ -150,9 +151,9 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 - 互碰不是把另一个 mesh 的顶点展开成 sphere collider。它需要对象所有权、质量、接触汇总和多体调度，必须独立设计。
 - 不复制 Unity TeamManager/job/chunk 结构；只迁移经过 oracle确认的数学状态转移和执行顺序。
 
-## 当前切入点
+## 最近完成切片
 
-当前交付是 **Bone Line/BoneSpring signed component transform闭环**：
+最近完成的交付是 **Bone Line/BoneSpring signed component transform闭环**。当前工作已转入 `MC2_ACCEPTANCE_MAP.md` 所列 `V1-R` 验收阻塞清理：
 
 1. Bone connection import membership已由8个 Tier A fixture、mode 0..3参数面和不可变host builder闭环，包含119°/121°的严格120°拒绝边界；正缩放Line与triangle override各由3个Tier A fixture闭环到world/local。Line限定域已接Blender rest/static、staged native N0、自动frame snapshot、native post rotation和private candidate。稳定armature/data pointer与bone name现已形成`bone_transform_batch` public envelope，整批world pose先转armature pose再按目标父矩阵生成`matrix_basis`，统一writeback已接通；solver仍不得inline写PoseBone，也不得同时扩张Automatic/Sequential。
 2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；公共 Mesh result transaction、发布失败回滚、统一 GN writeback交接、节点自动 N3 snapshot与写回失败恢复验收均已完成。
@@ -165,7 +166,9 @@ Bone mesh-connection源边界已决：`ImportBoneType()`写入全零UV，因此A
 
 退出条件：Bone public envelope的frame/generation/revision、stable identity、parent-local转换、发布失败保留旧plan、writeback执行中途整批恢复旧`matrix_basis`与统一PoseBone writeback均已通过；solver仍不得inline写bpy。
 
-## 后续交付顺序
+## 历史分层交付顺序
+
+以下保留实现阶段的依赖顺序和退出条件，不再表示当前优先级；当前顺序只看 `MC2_ACCEPTANCE_MAP.md` 的阻塞行。
 
 ### 1. N3 Frame Input 与 Reset（已完成生命周期地基）
 
