@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 import types
@@ -254,6 +255,122 @@ def test_bone_static_native_transaction():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_bone_triangle_output_matches_tier_a_fixtures():
+    fixture_directory = (
+        ROOT
+        / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
+        / "test" / "fixtures" / "tier_a"
+    )
+    fixture_paths = sorted(fixture_directory.glob("bone_rotation_triangle_*.json"))
+    assert len(fixture_paths) == 3, fixture_paths
+    for fixture_path in fixture_paths:
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        values = fixture["input"]
+        expected = fixture["expected"]
+        count = len(values["positions"])
+        context = hotools_native.mc2_context_v0_create(0, count)
+        try:
+            hotools_native.mc2_context_v0_set_setup_kind(context, 1)
+            positions = np.asarray(values["positions"], dtype=np.float32)
+            rotations = np.asarray(values["rotations"], dtype=np.float32)
+            triangles = np.asarray(values["triangles"], dtype=np.int32)
+            uvs = np.asarray(values["uvs"], dtype=np.float32)
+            attributes = np.asarray(values["attributes"], dtype=np.uint8)
+            normals = np.zeros((count, 3), dtype=np.float32)
+            normals[:, 1] = 1.0
+            tangents = np.zeros((count, 3), dtype=np.float32)
+            tangents[:, 2] = 1.0
+            hotools_native.mc2_context_v0_update_proxy_static(
+                context,
+                positions,
+                normals,
+                tangents,
+                uvs,
+                attributes,
+                np.empty((0, 2), dtype=np.int32),
+                triangles,
+            )
+
+            identity = np.tile(
+                np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+                (count, 1),
+            )
+            hotools_native.mc2_context_v0_update_baseline_static(
+                context,
+                np.asarray(values["parent_indices"], dtype=np.int32),
+                np.zeros((count, 2), dtype=np.int32),
+                np.empty((0,), dtype=np.int32),
+                np.array([0], dtype=np.uint8),
+                np.array([[0, count]], dtype=np.int32),
+                np.arange(count, dtype=np.int32),
+                np.full(count, -1, dtype=np.int32),
+                np.linspace(0.0, 1.0, count, dtype=np.float32),
+                np.zeros((count, 3), dtype=np.float32),
+                identity,
+            )
+            triangle_ranges = np.zeros((count, 2), dtype=np.int32)
+            triangle_records = []
+            for vertex, records in enumerate(values["vertex_to_triangle_records"]):
+                triangle_ranges[vertex] = (len(triangle_records), len(records))
+                triangle_records.extend(records)
+            triangle_data = np.asarray(triangle_records, dtype=np.int32).reshape(-1, 2)
+            hotools_native.mc2_context_v0_update_bone_static(
+                context,
+                np.zeros((count, 2), dtype=np.int32),
+                np.empty((0,), dtype=np.int32),
+                triangle_ranges,
+                triangle_data,
+                np.zeros((count, 3), dtype=np.float32),
+                identity,
+                np.asarray(values["normal_adjustment_rotations"], dtype=np.float32),
+                np.asarray(values["vertex_to_transform_rotations"], dtype=np.float32),
+            )
+            hotools_native.mc2_context_v0_update_parameters(
+                context,
+                np.zeros(47, dtype=np.float32),
+                np.zeros(11, dtype=np.int32),
+                np.zeros((9, 16), dtype=np.float32),
+            )
+            hotools_native.mc2_context_v0_update_dynamic(
+                context,
+                1,
+                0,
+                positions,
+                rotations,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+            )
+            hotools_native.mc2_context_v0_reset(context)
+            output_positions = np.empty((count, 3), dtype=np.float32)
+            output_rotations = np.empty((count, 4), dtype=np.float32)
+            hotools_native.mc2_context_v0_read_bone_output(
+                context, output_positions, output_rotations
+            )
+            np.testing.assert_allclose(
+                output_positions,
+                expected["world_positions"],
+                rtol=0.0,
+                atol=1.0e-7,
+                err_msg=fixture["case_id"],
+            )
+            np.testing.assert_allclose(
+                output_rotations,
+                expected["world_rotations"],
+                rtol=3.0e-6,
+                atol=8.0e-7,
+                err_msg=fixture["case_id"],
+            )
+            info = hotools_native.mc2_context_v0_inspect(context)
+            assert info["bone_line_output_count"] == 1
+            assert info["bone_triangle_output_count"] == 1
+        finally:
+            hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_bone_static_native_transaction()
+    test_bone_triangle_output_matches_tier_a_fixtures()
     print("MC2 Bone static native: PASS")

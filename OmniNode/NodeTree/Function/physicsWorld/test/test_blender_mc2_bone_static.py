@@ -185,6 +185,7 @@ try:
     assert candidate.world_rotations_xyzw.flags.writeable is False
     step_info = slot.data["native_context"].inspect()
     assert step_info["bone_line_output_count"] == 1
+    assert step_info["bone_triangle_output_count"] == 0
     assert step_info["tether_enabled"] is True
     assert step_info["tether_solve_count"] == 0
     result = world.result_streams["bone_transform"][0]
@@ -214,6 +215,7 @@ try:
     assert second_candidate.revision == 2
     assert second_info["step_count"] == 1
     assert second_info["bone_line_output_count"] == 2
+    assert second_info["bone_triangle_output_count"] == 0
     assert second_info["tether_solve_count"] == 1
     assert second_info["angle_solve_count"] == 1
     solver.step_mc2(world, [task])

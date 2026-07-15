@@ -118,6 +118,7 @@ struct Mc2ContextV0 {
     std::int64_t team_options_revision = 0;
     std::int64_t baseline_pose_rebuild_count = 0;
     std::int64_t bone_line_output_count = 0;
+    std::int64_t bone_triangle_output_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -1044,7 +1045,108 @@ std::array<float, 4> quaternion_slerp(
     return output;
 }
 
-bool build_bone_line_output(Mc2ContextV0& context) {
+bool apply_bone_triangle_output(
+    Mc2ContextV0& context,
+    std::vector<float>& work_rotations
+) {
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    const auto triangle_count = context.proxy_triangles.size() / 3;
+    if (triangle_count == 0) return true;
+    if (context.proxy_uvs.size() != vertex_count * 2 ||
+        context.state_positions.size() != vertex_count * 3 ||
+        work_rotations.size() != vertex_count * 4 ||
+        context.bone_vertex_to_triangle_ranges.size() != vertex_count * 2 ||
+        context.bone_vertex_to_triangle_data.size() % 2 != 0 ||
+        context.bone_normal_adjustment_rotations.size() != vertex_count * 4) {
+        return false;
+    }
+
+    std::vector<Vec3> triangle_normals(triangle_count);
+    std::vector<Vec3> triangle_tangents(triangle_count);
+    for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+        const auto vertex0 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3]);
+        const auto vertex1 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 1]);
+        const auto vertex2 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 2]);
+        const Vec3 position0 = load_vector3(context.state_positions, vertex0);
+        const Vec3 position1 = load_vector3(context.state_positions, vertex1);
+        const Vec3 position2 = load_vector3(context.state_positions, vertex2);
+        const Vec3 edge_ba = sub(position1, position0);
+        const Vec3 edge_ca = sub(position2, position0);
+        const Vec3 triangle_cross = cross(edge_ba, edge_ca);
+        const float normal_length = length(triangle_cross);
+        if (normal_length > kMc2Epsilon) {
+            triangle_normals[triangle] = mul(triangle_cross, 1.0f / normal_length);
+        }
+
+        const float uv_ba_x = context.proxy_uvs[vertex1 * 2] -
+            context.proxy_uvs[vertex0 * 2];
+        const float uv_ba_y = context.proxy_uvs[vertex1 * 2 + 1] -
+            context.proxy_uvs[vertex0 * 2 + 1];
+        const float uv_ca_x = context.proxy_uvs[vertex2 * 2] -
+            context.proxy_uvs[vertex0 * 2];
+        const float uv_ca_y = context.proxy_uvs[vertex2 * 2 + 1] -
+            context.proxy_uvs[vertex0 * 2 + 1];
+        float area = uv_ba_x * uv_ca_y - uv_ba_y * uv_ca_x;
+        if (area == 0.0f) area = 1.0f;
+        const float delta = 1.0f / area;
+        const Vec3 tangent = mul(
+            add(mul(edge_ba, uv_ca_y), mul(edge_ca, -uv_ba_y)),
+            -delta
+        );
+        const float tangent_length = length(tangent);
+        if (tangent_length > 0.0f) {
+            triangle_tangents[triangle] = mul(tangent, 1.0f / tangent_length);
+        }
+    }
+
+    const auto record_count = context.bone_vertex_to_triangle_data.size() / 2;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto start = context.bone_vertex_to_triangle_ranges[vertex * 2];
+        const auto count = context.bone_vertex_to_triangle_ranges[vertex * 2 + 1];
+        if (start < 0 || count < 0 ||
+            static_cast<std::size_t>(start + count) > record_count) {
+            return false;
+        }
+        if (count == 0) continue;
+        Vec3 normal {};
+        Vec3 tangent {};
+        for (std::int32_t offset = 0; offset < count; ++offset) {
+            const auto record = static_cast<std::size_t>(start + offset);
+            const auto flip = context.bone_vertex_to_triangle_data[record * 2];
+            const auto triangle = context.bone_vertex_to_triangle_data[record * 2 + 1];
+            if (triangle < 0 || static_cast<std::size_t>(triangle) >= triangle_count) {
+                return false;
+            }
+            normal = add(
+                normal,
+                mul(triangle_normals[static_cast<std::size_t>(triangle)],
+                    (flip & 0x01) == 0 ? 1.0f : -1.0f)
+            );
+            tangent = add(
+                tangent,
+                mul(triangle_tangents[static_cast<std::size_t>(triangle)],
+                    (flip & 0x02) == 0 ? 1.0f : -1.0f)
+            );
+        }
+        const float normal_length = length(normal);
+        const float tangent_length = length(tangent);
+        if (normal_length <= 1.0e-6f || tangent_length <= 1.0e-6f) continue;
+        normal = mul(normal, 1.0f / normal_length);
+        tangent = mul(tangent, 1.0f / tangent_length);
+        const float alignment = dot(normal, tangent);
+        if (alignment == 1.0f || alignment == -1.0f) continue;
+        const Vec3 binormal = normalize(cross(normal, tangent));
+        auto rotation = quaternion_multiply(
+            quaternion_from_forward_up(binormal, normal),
+            load_quaternion(context.bone_normal_adjustment_rotations, vertex)
+        );
+        store_quaternion(work_rotations, vertex, rotation);
+    }
+    ++context.bone_triangle_output_count;
+    return true;
+}
+
+bool build_bone_output(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (!context.bone_static_ready || !context.parameters_ready || !context.initialized ||
         context.state_positions.size() != count * 3 ||
@@ -1162,6 +1264,8 @@ bool build_bone_line_output(Mc2ContextV0& context) {
             );
         }
     }
+
+    if (!apply_bone_triangle_output(context, work_rotations)) return false;
 
     context.bone_output_positions = context.state_positions;
     context.bone_output_rotations.resize(count * 4);
@@ -3281,6 +3385,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
         !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||
         !dict_i64(result, "bone_line_output_count", context.bone_line_output_count) ||
+        !dict_i64(result, "bone_triangle_output_count", context.bone_triangle_output_count) ||
         !dict_float(result, "animation_pose_ratio", context.animation_pose_ratio) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
@@ -5069,8 +5174,8 @@ PyObject* mc2_context_v0_read_bone_output(PyObject*, PyObject* args) {
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
-    if (!build_bone_line_output(*context)) {
-        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Bone Line output state is incomplete");
+    if (!build_bone_output(*context)) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Bone output state is incomplete");
         return nullptr;
     }
     Buffer positions, rotations;

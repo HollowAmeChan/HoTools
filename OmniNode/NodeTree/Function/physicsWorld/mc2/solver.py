@@ -34,7 +34,7 @@ from .topology import build_mc2_topology_spec
 
 MC2_FRAMEWORK_STATUS = (
     "MC2 context V0 已接入 Center/Move inertia、Gravity、Pin、Distance、Bending 数值 step；"
-    "Mesh 公共结果事务与Bone Line静态注册已接入"
+    "Mesh/Bone 公共结果事务与统一writeback已接入"
 )
 
 

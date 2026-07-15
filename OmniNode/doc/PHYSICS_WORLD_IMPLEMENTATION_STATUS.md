@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone triangle output、wind、stats |
+| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、Bone Line/Triangle native output、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone imported-triangle零UV产品路径、wind、stats |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；单cloth self primitive/contact/solve/Intersect已闭环，sync/inter-cloth仍未完成。
