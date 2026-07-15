@@ -32,7 +32,6 @@ constexpr float kTriangleVolumeScale = 1000.0f;
 
 constexpr int kAngleLimitIteration = 3;
 constexpr float kAngleLimitAttenuation = 0.9f;
-constexpr float kAngleRestorationScale = 0.2f;
 constexpr float kAngleRestorationVelocityAttenuation = 0.8f;
 constexpr float kAngleRestorationGravityFalloff = 0.0f;
 constexpr float kPi = 3.14159265358979323846f;
@@ -2120,11 +2119,15 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
         return;
     }
 
-    bool use_restoration = view.restoration_values != nullptr;
-    bool use_limit = view.limit_values != nullptr;
+    bool use_restoration = view.explicit_enable_flags
+        ? view.restoration_enabled
+        : view.restoration_values != nullptr;
+    bool use_limit = view.explicit_enable_flags
+        ? view.limit_enabled
+        : view.limit_values != nullptr;
     bool has_restoration = false;
     bool has_limit = false;
-    if (use_restoration) {
+    if (use_restoration && !view.explicit_enable_flags) {
         for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
             if (view.restoration_values[vertex] > kMc2Epsilon) {
                 has_restoration = true;
@@ -2132,7 +2135,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
             }
         }
     }
-    if (use_limit) {
+    if (use_limit && !view.explicit_enable_flags) {
         for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
             if (view.limit_values[vertex] > kMc2Epsilon) {
                 has_limit = true;
@@ -2140,8 +2143,10 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
             }
         }
     }
-    use_restoration = use_restoration && has_restoration;
-    use_limit = use_limit && has_limit;
+    if (!view.explicit_enable_flags) {
+        use_restoration = use_restoration && has_restoration;
+        use_limit = use_limit && has_limit;
+    }
     if (!use_restoration && !use_limit) {
         return;
     }
@@ -2420,8 +2425,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     0.0f,
                     1.0f);
                 const float restoration_stiffness =
-                    clamp_float(view.restoration_values[child_index] * kAngleRestorationScale, 0.0f, 1.0f) *
-                    gravity_falloff;
+                    clamp_float(view.restoration_values[child_index], 0.0f, 1.0f) * gravity_falloff;
                 if (restoration_stiffness <= kMc2Epsilon) {
                     continue;
                 }
@@ -3181,6 +3185,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             angle_view.line_count = view.line_count;
             angle_view.baseline_data_count = view.baseline_data_count;
             angle_view.limit_stiffness = view.angle_limit_stiffness;
+            angle_view.explicit_enable_flags = false;
+            angle_view.restoration_enabled = false;
+            angle_view.limit_enabled = false;
             project_angle_constraints_mc2(angle_view);
 
             if (has_triangle_bending) {

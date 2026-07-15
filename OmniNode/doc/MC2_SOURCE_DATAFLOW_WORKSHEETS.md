@@ -217,6 +217,8 @@ native V0 已在该限定域内持久化 velocity：reset清零，world/anchor f
 
 Tether源码顺序位于prediction与首次Distance之间，直接消费现有Move attribute、per-vertex root index、step-basic vertex/root距离、next position与velocity-reference；compression/stretch分别来自N2 float槽24/25，固定width=0.3、compression/stretch stiffness=1、velocity attenuation=0.7。V0已复用原生`project_tether_mc2` kernel；raw C context保留显式gate用于隔离既有Distance→Bending→Distance oracle，而Python slot owner按固定MC2调度默认启用。两粒子Tier B case验证1.35伸长回到1.03和源码顺序，Blender5.1集成覆盖新建、重建与真实子步solve count。独立Tier A Tether substep fixture仍需生成，不能改写既有不同scope的fixture。
 
+Angle源码顺序位于首次Distance与Bending之间，直接消费baseline parent/range/data、depth、step-basic position/rotation、next position与velocity-reference。Restoration/Limit由N2 int槽4/5控制，分别采样curve槽3/4；velocity attenuation、gravity falloff、limit stiffness来自float槽28..30。N2的Restoration curve已在`ClothParameters`转换阶段乘0.2，native kernel不得再次缩放；V0现使用该已转换值，继续乘源码`simulationPower.w=(90/frequency)^1.8`，并将`lerp(1-falloff, 1, gravityDot)`等价映射到kernel输入。raw step四参数ABI默认w=1，Python production owner显式传入w。无碰撞域friction为零，因此Move/Fixed inverse mass分别为1/0。py313隔离case对拍独立kernel且证明位置发生修正，Blender5.1 Mesh/Bone生产子步记录solve count；独立Tier A Angle substep fixture仍待生成。
+
 每个 substep会重新构建 next/velocity-reference/base pose与 step-basic scratch；post step提交 old position、velocity与摩擦；display再使用 committed state与 real velocity。必须区分：
 
 - persistent：old pose、animation history、display、velocity/friction/collision history；

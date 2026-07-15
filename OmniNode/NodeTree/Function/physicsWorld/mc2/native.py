@@ -417,11 +417,13 @@ class MC2NativeContextV0:
             if frequency_ratio > 1.0
             else frequency_ratio
         )
+        simulation_power_w = math.pow(frequency_ratio, 1.8)
         self._module.mc2_context_v0_step(
             self._handle,
             dt,
             simulation_power_y,
             simulation_power_z,
+            simulation_power_w,
         )
         self._center_step_dt = None
 

@@ -207,6 +207,7 @@ try:
     assert second_info["step_count"] == 1
     assert second_info["bone_line_output_count"] == 2
     assert second_info["tether_solve_count"] == 1
+    assert second_info["angle_solve_count"] == 1
     solver.step_mc2(world, [task])
     assert slot.data["result_candidate"] is second_candidate
     assert slot.data["native_context"].inspect()["bone_line_output_count"] == 2

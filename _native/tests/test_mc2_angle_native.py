@@ -13,7 +13,6 @@ import hotools_native  # noqa: E402
 
 
 EPSILON = 0.00000001
-ANGLE_RESTORATION_SCALE = 0.2
 ANGLE_LIMIT_ITERATION = 3
 ANGLE_LIMIT_ATTENUATION = 0.9
 ANGLE_RESTORATION_VELOCITY_ATTENUATION = 0.8
@@ -124,7 +123,7 @@ def project_angle_reference(
     if len(baseline_data) == 0:
         return
 
-    restoration_values = np.clip(restoration_values * ANGLE_RESTORATION_SCALE, 0.0, 1.0)
+    restoration_values = np.clip(restoration_values, 0.0, 1.0)
     use_limit = len(limit_values) == len(positions) and bool(np.any(limit_values > EPSILON))
     use_restoration = bool(np.any(restoration_values > EPSILON))
     if not use_restoration and not use_limit:

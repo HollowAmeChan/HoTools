@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 from pathlib import Path
 import sys
@@ -159,6 +160,8 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     owner.reset()
     owner.step_no_collision(0.2)
     assert len(module.step_calls) == 1
+    assert len(module.step_calls[0]) == 5
+    assert math.isclose(module.step_calls[0][4], math.pow(18.0, 1.8))
     owner.update_center_dynamic(step_input)
 
     try:
@@ -170,6 +173,7 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     assert len(module.step_calls) == 1
     owner.step_no_collision(0.1)
     assert len(module.step_calls) == 2
+    assert math.isclose(module.step_calls[1][4], math.pow(9.0, 1.8))
     owner.update_step_interpolation(0.75)
     assert module.interpolation_args == [(owner._handle, 0.75)]
     owner.step_no_collision(0.1)

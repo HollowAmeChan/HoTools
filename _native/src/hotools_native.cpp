@@ -1136,6 +1136,9 @@ NB_MODULE(hotools_native, m) {
             view.restoration_velocity_attenuation = rva;
             view.restoration_gravity_falloff      = rgf;
             view.limit_stiffness                  = ls;
+            view.explicit_enable_flags            = false;
+            view.restoration_enabled              = false;
+            view.limit_enabled                    = false;
             { nb::gil_scoped_release _; hotools::project_angle_constraints_mc2(view); }
         },
         nb::arg("positions"), nb::arg("inv_masses"), nb::arg("parent_indices"),

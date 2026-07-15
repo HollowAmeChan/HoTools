@@ -73,6 +73,8 @@ MC2 状态补充：Bone Line与强制Line的BoneSpring已使用稳定 armature/d
 
 MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel；Python slot owner现按固定MC2调度默认启用，raw C gate仅用于隔离不同scope的oracle fixture。py313公式/顺序回归与Blender5.1新建、重建、真实子步solve count通过；独立Tier A Tether substep fixture仍待补齐。
 
+MC2 Angle补充：V0已按源码顺序在首次Distance后、Bending前执行Restoration/Limit，复用现有baseline与step-basic数据并消费N2 use/curve/float槽和Center gravity-dot。native kernel已修正已转换Restoration stiffness重复乘0.2的问题；py313独立kernel/V0对拍及Blender5.1 Mesh/Bone生产子步通过。独立Tier A Angle substep fixture仍待补齐。
+
 ## 统一 MC2 决策
 
 MC2 只有一个 solver identity：`mc2`。

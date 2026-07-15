@@ -27,6 +27,8 @@ constexpr float kMc2Epsilon = 0.00000001f;
 constexpr float kDistanceHorizontalStiffness = 0.5f;
 constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
 constexpr Py_ssize_t kDistanceStiffnessCurve = 2;
+constexpr Py_ssize_t kAngleRestorationCurve = 3;
+constexpr Py_ssize_t kAngleLimitCurve = 4;
 constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
 constexpr Py_ssize_t kGravityDirection = 1;
@@ -43,6 +45,11 @@ constexpr Py_ssize_t kLocalRotationSpeedLimit = 18;
 constexpr Py_ssize_t kDepthInertia = 19;
 constexpr Py_ssize_t kTetherCompression = 24;
 constexpr Py_ssize_t kTetherStretch = 25;
+constexpr Py_ssize_t kAngleRestorationVelocityAttenuation = 28;
+constexpr Py_ssize_t kAngleRestorationGravityFalloff = 29;
+constexpr Py_ssize_t kAngleLimitStiffness = 30;
+constexpr Py_ssize_t kUseAngleRestoration = 4;
+constexpr Py_ssize_t kUseAngleLimit = 5;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -65,6 +72,7 @@ struct Mc2ContextV0 {
     std::int64_t particle_inertia_count = 0;
     std::int64_t bending_solve_count = 0;
     std::int64_t tether_solve_count = 0;
+    std::int64_t angle_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -1544,6 +1552,86 @@ void solve_tether_once(Mc2ContextV0& context) {
     ++context.tether_solve_count;
 }
 
+void solve_angle_once(Mc2ContextV0& context, float simulation_power_w) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.state_positions.size() != count * 3 ||
+        context.velocity_reference_positions.size() != count * 3 ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.step_basic_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_parents.size() != count ||
+        context.baseline_depths.size() != count ||
+        context.baseline_ranges.empty() ||
+        context.baseline_ranges.size() % 2 != 0 ||
+        context.baseline_data.empty()) {
+        return;
+    }
+    const bool use_restoration = context.int_values[kUseAngleRestoration] != 0;
+    const bool use_limit = context.int_values[kUseAngleLimit] != 0;
+    if (!use_restoration && !use_limit) return;
+
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> restoration_values(count, 0.0f);
+    std::vector<float> limit_values(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (is_move(context.proxy_attributes[vertex])) inverse_masses[vertex] = 1.0f;
+        const float depth = context.baseline_depths[vertex];
+        if (use_restoration) {
+            restoration_values[vertex] = std::max(
+                0.0f,
+                std::min(1.0f, sample_curve16(
+                    context.curve_values,
+                    kAngleRestorationCurve,
+                    depth
+                ) * simulation_power_w)
+            );
+        }
+        if (use_limit) {
+            limit_values[vertex] = std::max(
+                0.0f,
+                sample_curve16(context.curve_values, kAngleLimitCurve, depth)
+            );
+        }
+    }
+
+    const auto line_count = context.baseline_ranges.size() / 2;
+    std::vector<std::int32_t> baseline_start(line_count, 0);
+    std::vector<std::int32_t> baseline_count(line_count, 0);
+    for (std::size_t line = 0; line < line_count; ++line) {
+        baseline_start[line] = context.baseline_ranges[line * 2];
+        baseline_count[line] = context.baseline_ranges[line * 2 + 1];
+    }
+
+    Mc2AngleConstraintView view;
+    view.positions = context.state_positions.data();
+    view.inv_masses = inverse_masses.data();
+    view.parent_indices = context.baseline_parents.data();
+    view.baseline_start = baseline_start.data();
+    view.baseline_count = baseline_count.data();
+    view.baseline_data = context.baseline_data.data();
+    view.step_basic_positions = context.step_basic_positions.data();
+    view.step_basic_rotations = context.step_basic_rotations.data();
+    view.restoration_values = use_restoration ? restoration_values.data() : nullptr;
+    view.limit_values = use_limit ? limit_values.data() : nullptr;
+    view.velocity_positions = context.velocity_reference_positions.data();
+    view.vertex_count = context.vertex_count;
+    view.line_count = static_cast<std::int64_t>(line_count);
+    view.baseline_data_count = static_cast<std::int64_t>(context.baseline_data.size());
+    view.restoration_velocity_attenuation =
+        context.float_values[kAngleRestorationVelocityAttenuation];
+    view.restoration_gravity_falloff =
+        context.float_values[kAngleRestorationGravityFalloff] *
+        (1.0f - context.center_gravity_dot);
+    view.limit_stiffness = context.float_values[kAngleLimitStiffness];
+    view.explicit_enable_flags = true;
+    view.restoration_enabled = use_restoration;
+    view.limit_enabled = use_limit;
+    project_angle_constraints_mc2(view);
+    ++context.angle_solve_count;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -1584,6 +1672,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "particle_inertia_count", context.particle_inertia_count) ||
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "tether_solve_count", context.tether_solve_count) ||
+        !dict_i64(result, "angle_solve_count", context.angle_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -2674,8 +2763,9 @@ PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 4) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4 arguments");
+    const Py_ssize_t argument_count = PyTuple_GET_SIZE(args);
+    if (argument_count != 4 && argument_count != 5) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4 or 5 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -2689,10 +2779,14 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         PyTuple_GET_ITEM(args, 3),
         "simulation_power_z"
     );
+    const double simulation_power_w = argument_count == 5
+        ? as_double(PyTuple_GET_ITEM(args, 4), "simulation_power_w")
+        : 1.0;
     if (PyErr_Occurred()) return nullptr;
     if (!std::isfinite(dt) || dt < 0.0 ||
         !std::isfinite(simulation_power_y) || simulation_power_y < 0.0 ||
-        !std::isfinite(simulation_power_z) || simulation_power_z < 0.0) {
+        !std::isfinite(simulation_power_z) || simulation_power_z < 0.0 ||
+        !std::isfinite(simulation_power_w) || simulation_power_w < 0.0) {
         PyErr_SetString(PyExc_ValueError, "dt and simulation powers must be finite and non-negative");
         return nullptr;
     }
@@ -2717,6 +2811,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         }
         solve_tether_once(*context);
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
+        solve_angle_once(*context, static_cast<float>(simulation_power_w));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
         solve_distance_once(*context, static_cast<float>(simulation_power_y));
         commit_particle_velocities(*context, static_cast<float>(dt));

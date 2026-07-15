@@ -156,6 +156,9 @@ struct Mc2AngleConstraintView {
     float restoration_velocity_attenuation = 0.0f;
     float restoration_gravity_falloff = 0.0f;
     float limit_stiffness = 0.0f;
+    bool explicit_enable_flags = false;
+    bool restoration_enabled = false;
+    bool limit_enabled = false;
 };
 
 struct Mc2StepBasicPoseView {
