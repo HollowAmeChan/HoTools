@@ -70,9 +70,56 @@ def _armature():
     return obj
 
 
+class _FakeMatrix:
+    def __init__(self, value):
+        self.value = value
+
+    def copy(self):
+        return _FakeMatrix(self.value)
+
+
+class _FakePoseBone:
+    def __init__(self, value, fail_value=None):
+        self._matrix_basis = _FakeMatrix(value)
+        self.fail_value = fail_value
+
+    @property
+    def matrix_basis(self):
+        return self._matrix_basis
+
+    @matrix_basis.setter
+    def matrix_basis(self, value):
+        if self.fail_value is not None and value.value == self.fail_value:
+            raise RuntimeError("injected bone writeback failure")
+        self._matrix_basis = value.copy()
+
+
+class _NoForeachPoseBones:
+    def foreach_get(self, _name, _values):
+        raise TypeError("foreach unavailable")
+
+
+def _test_batch_writeback_rollback():
+    first = _FakePoseBone("old-first")
+    second = _FakePoseBone("old-second", fail_value="new-second")
+    updates = (
+        (first, 0, _FakeMatrix("new-first"), "First"),
+        (second, 1, _FakeMatrix("new-second"), "Second"),
+    )
+    try:
+        writeback._apply_bone_basis_updates(_NoForeachPoseBones(), updates, [0.0] * 32)
+    except RuntimeError as exc:
+        assert "injected bone writeback failure" in str(exc)
+    else:
+        raise AssertionError("batch writeback failure was not propagated")
+    assert first.matrix_basis.value == "old-first"
+    assert second.matrix_basis.value == "old-second"
+
+
 armature = _armature()
 world = None
 try:
+    _test_batch_writeback_rollback()
     source = {"armature": armature, "root_bone": "Root"}
     task = specs.make_mc2_task_spec(names.MC2_SETUP_BONE_CLOTH, [source])
     topology = topology_module.build_mc2_topology_spec(task)

@@ -392,20 +392,7 @@ def _writeback_bone_transform_batch(result, slot, touched_pose_bones) -> tuple[o
                 continue
             updates.append((pose_bone, pose_index, basis_matrix, str(record.get("bone_name") or "")))
 
-    can_foreach_set = False
-    if updates:
-        try:
-            pose_bones.foreach_get("matrix_basis", basis_values)
-            for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
-                _write_matrix_to_foreach_buffer(basis_values, pose_index * 16, basis_matrix)
-            pose_bones.foreach_set("matrix_basis", basis_values)
-            can_foreach_set = True
-        except Exception:
-            can_foreach_set = False
-
-    if not can_foreach_set:
-        for pose_bone, _pose_index, basis_matrix, _bone_name in updates:
-            pose_bone.matrix_basis = basis_matrix
+    _apply_bone_basis_updates(pose_bones, updates, basis_values)
 
     try:
         armature_ptr = int(armature.as_pointer())
@@ -415,6 +402,43 @@ def _writeback_bone_transform_batch(result, slot, touched_pose_bones) -> tuple[o
         if armature_ptr and bone_name:
             touched_pose_bones[(armature_ptr, bone_name)] = (armature, bone_name)
     return armature, len(updates)
+
+
+def _apply_bone_basis_updates(pose_bones, updates, basis_values) -> None:
+    if not updates:
+        return
+    previous = tuple(
+        (pose_bone, pose_bone.matrix_basis.copy())
+        for pose_bone, _pose_index, _basis_matrix, _bone_name in updates
+    )
+    can_foreach_set = False
+    try:
+        pose_bones.foreach_get("matrix_basis", basis_values)
+        for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
+            _write_matrix_to_foreach_buffer(basis_values, pose_index * 16, basis_matrix)
+        pose_bones.foreach_set("matrix_basis", basis_values)
+        can_foreach_set = True
+    except Exception:
+        can_foreach_set = False
+
+    if can_foreach_set:
+        return
+    try:
+        for pose_bone, _pose_index, basis_matrix, _bone_name in updates:
+            pose_bone.matrix_basis = basis_matrix
+    except Exception as write_error:
+        rollback_errors = []
+        for pose_bone, old_basis in previous:
+            try:
+                pose_bone.matrix_basis = old_basis
+            except Exception as rollback_error:
+                rollback_errors.append(str(rollback_error))
+        if rollback_errors:
+            raise RuntimeError(
+                f"bone writeback failed ({write_error}); rollback failed: "
+                + "; ".join(rollback_errors)
+            ) from write_error
+        raise
 
 
 def _write_matrix_to_foreach_buffer(values: list[float], offset: int, matrix) -> None:
