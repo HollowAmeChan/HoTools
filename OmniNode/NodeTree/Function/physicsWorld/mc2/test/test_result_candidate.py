@@ -90,6 +90,16 @@ class _ResultWorld:
         self.result_streams.setdefault(result["channel"], []).append(result)
         return result
 
+    def consume_results(self, channel, solver=None, frame=None, generation=None):
+        items = list(self.result_streams.get(str(channel), ()))
+        if solver is not None:
+            items = [item for item in items if item.get("solver") == solver]
+        if frame is not None:
+            items = [item for item in items if item.get("frame") == frame]
+        if generation is not None:
+            items = [item for item in items if item.get("generation") == generation]
+        return items
+
 
 def _inputs():
     source = _MeshSource(101, 202)
@@ -311,6 +321,13 @@ def test_public_result_transaction_rolls_back_on_publish_failure() -> None:
         "slot_id": "old:mc2",
     }
     world.result_streams["gn_attribute"] = [previous, old_mc2]
+    old_stats = {
+        "channel": "mc2_stats",
+        "solver": "mc2",
+        "frame": 11,
+        "generation": 4,
+    }
+    world.result_streams["mc2_stats"] = [old_stats]
     world.fail_publish = True
     try:
         results_module.publish_mc2_result_transaction(world, (result,))
@@ -318,7 +335,54 @@ def test_public_result_transaction_rolls_back_on_publish_failure() -> None:
         assert "injected publish failure" in str(exc)
     else:
         raise AssertionError("MC2 publish failure was not propagated")
-    assert world.result_streams == {"gn_attribute": [previous, old_mc2]}
+    assert world.result_streams == {
+        "gn_attribute": [previous, old_mc2],
+        "mc2_stats": [old_stats],
+    }
+
+
+def test_stats_result_normalizes_aggregate_and_slot_snapshots() -> None:
+    result = results_module.make_mc2_stats_result(
+        frame=12,
+        generation=4,
+        writeback_result_count=2,
+        slots=(
+            {
+                "slot_id": "mc2:mesh:b",
+                "setup_type": "mesh_cloth",
+                "native_schema": "mc2_context_v0",
+                "native_available": True,
+                "initialized": True,
+                "particle_count": 6,
+                "reset_count": 1,
+                "step_count": 3,
+                "dynamic_revision": 4,
+                "ignored_handle": object(),
+            },
+            {
+                "slot_id": "mc2:bone:a",
+                "setup_type": "bone_spring",
+                "native_available": True,
+                "particle_count": 2,
+                "step_count": 5,
+            },
+        ),
+    )
+    assert result["channel"] == "mc2_stats"
+    assert result["schema"] == "mc2_stats_v0"
+    assert result["mc2_stats_schema"] == 0
+    assert result["slot_count"] == result["native_context_count"] == 2
+    assert result["mesh_cloth_count"] == result["bone_spring_count"] == 1
+    assert result["bone_cloth_count"] == 0
+    assert result["particle_count"] == 8
+    assert result["reset_count"] == 1
+    assert result["step_count"] == 8
+    assert result["writeback_result_count"] == 2
+    assert tuple(item["slot_id"] for item in result["slots"]) == (
+        "mc2:bone:a",
+        "mc2:mesh:b",
+    )
+    assert "ignored_handle" not in result["slots"][1]
 
 
 def test_public_result_transaction_accepts_mesh_and_bone_channels_atomically() -> None:
@@ -342,13 +406,21 @@ def test_public_result_transaction_accepts_mesh_and_bone_channels_atomically() -
         "generation": 4,
         "ready": True,
     }
-    published = results_module.publish_mc2_result_transaction(world, (mesh, bone))
+    stats = results_module.make_mc2_stats_result(
+        frame=12,
+        generation=4,
+        slots=(),
+        writeback_result_count=2,
+    )
+    published = results_module.publish_mc2_result_transaction(world, (mesh, bone, stats))
     assert tuple(result["channel"] for result in published) == (
         "gn_attribute",
         "bone_transform",
+        "mc2_stats",
     )
     assert len(world.result_streams["gn_attribute"]) == 1
     assert len(world.result_streams["bone_transform"]) == 1
+    assert results_module.get_mc2_stats_result(world) is published[2]
 
 
 if __name__ == "__main__":

@@ -21,6 +21,22 @@ from .names import (
 
 
 MC2_PUBLIC_RESULT_SCHEMA_VERSION = 0
+MC2_STATS_SCHEMA = "mc2_stats_v0"
+MC2_STATS_SCHEMA_VERSION = 0
+
+
+_MC2_STATS_SLOT_INT_FIELDS = (
+    "particle_count",
+    "native_frame",
+    "native_generation",
+    "reset_count",
+    "step_count",
+    "parameter_revision",
+    "dynamic_revision",
+    "collider_revision",
+    "self_contact_cache_count",
+    "self_intersect_record_count",
+)
 
 
 def _mesh_target_identity(spec) -> tuple[int, int]:
@@ -229,6 +245,73 @@ def make_mc2_bone_result(
     return result, plan
 
 
+def make_mc2_stats_result(
+    *,
+    frame: int,
+    generation: int,
+    slots: Iterable[dict],
+    writeback_result_count: int,
+) -> dict:
+    """Build one stable, backend-handle-free MC2 frame summary."""
+    normalized_slots = []
+    for item in slots:
+        if not isinstance(item, dict):
+            raise TypeError("MC2 stats slot items must be dicts")
+        slot_id = str(item.get("slot_id") or "")
+        setup_type = str(item.get("setup_type") or "")
+        if not slot_id or setup_type not in (
+            MC2_SETUP_MESH_CLOTH,
+            MC2_SETUP_BONE_CLOTH,
+            MC2_SETUP_BONE_SPRING,
+        ):
+            raise ValueError("MC2 stats slot identity is invalid")
+        slot_result = {
+            "slot_id": slot_id,
+            "setup_type": setup_type,
+            "native_schema": str(item.get("native_schema") or ""),
+            "native_available": bool(item.get("native_available", False)),
+            "initialized": bool(item.get("initialized", False)),
+        }
+        slot_result.update({
+            field: int(item.get(field, 0) or 0)
+            for field in _MC2_STATS_SLOT_INT_FIELDS
+        })
+        normalized_slots.append(slot_result)
+    normalized_slots.sort(key=lambda item: item["slot_id"])
+    slot_results = tuple(normalized_slots)
+    setup_counts = {
+        setup_type: sum(1 for item in slot_results if item["setup_type"] == setup_type)
+        for setup_type in (
+            MC2_SETUP_MESH_CLOTH,
+            MC2_SETUP_BONE_CLOTH,
+            MC2_SETUP_BONE_SPRING,
+        )
+    }
+    return {
+        "channel": MC2_STATS_CHANNEL,
+        "solver": MC2_SOLVER_ID,
+        "schema": MC2_STATS_SCHEMA,
+        "backend": "mc2_context_v0",
+        "mc2_stats_schema": MC2_STATS_SCHEMA_VERSION,
+        "ready": True,
+        "frame": int(frame),
+        "generation": int(generation),
+        "slot_count": len(slot_results),
+        "mesh_cloth_count": setup_counts[MC2_SETUP_MESH_CLOTH],
+        "bone_cloth_count": setup_counts[MC2_SETUP_BONE_CLOTH],
+        "bone_spring_count": setup_counts[MC2_SETUP_BONE_SPRING],
+        "native_context_count": sum(
+            1 for item in slot_results if item["native_available"]
+        ),
+        "initialized_count": sum(1 for item in slot_results if item["initialized"]),
+        "particle_count": sum(item["particle_count"] for item in slot_results),
+        "reset_count": sum(item["reset_count"] for item in slot_results),
+        "step_count": sum(item["step_count"] for item in slot_results),
+        "writeback_result_count": int(writeback_result_count),
+        "slots": slot_results,
+    }
+
+
 def _validated_result_batch(world, results: Iterable[dict]) -> tuple[dict, ...]:
     frame = int(getattr(getattr(world, "frame_context", None), "frame", 0) or 0)
     generation = int(getattr(world, "generation", 0) or 0)
@@ -237,13 +320,18 @@ def _validated_result_batch(world, results: Iterable[dict]) -> tuple[dict, ...]:
     batch = tuple(results)
     slot_ids: set[str] = set()
     target_keys: set[str] = set()
+    stats_count = 0
     for result in batch:
         if not isinstance(result, dict):
             raise TypeError("MC2 public result batch items must be dicts")
         if result.get("solver") != MC2_SOLVER_ID:
             raise ValueError("MC2 public result batch contains another solver")
         channel = result.get("channel")
-        if channel not in (GN_ATTRIBUTE_CHANNEL, BONE_TRANSFORM_CHANNEL):
+        if channel not in (
+            GN_ATTRIBUTE_CHANNEL,
+            BONE_TRANSFORM_CHANNEL,
+            MC2_STATS_CHANNEL,
+        ):
             raise ValueError("MC2 V0 public result batch contains an unsupported channel")
         if result.get("ready") is not True:
             raise ValueError("MC2 public result must be ready")
@@ -251,14 +339,23 @@ def _validated_result_batch(world, results: Iterable[dict]) -> tuple[dict, ...]:
             raise ValueError("MC2 public result batch frame mismatch")
         if int(result.get("generation", -1)) != generation:
             raise ValueError("MC2 public result batch generation mismatch")
-        slot_id = str(result.get("slot_id") or "")
-        target_key = str(result.get("target_key") or "")
-        if not slot_id or slot_id in slot_ids:
-            raise ValueError("MC2 public result batch has duplicate slot identity")
-        if not target_key or target_key in target_keys:
-            raise ValueError("MC2 public result batch has duplicate writeback target")
-        slot_ids.add(slot_id)
-        target_keys.add(target_key)
+        if channel == MC2_STATS_CHANNEL:
+            stats_count += 1
+            if stats_count > 1:
+                raise ValueError("MC2 public result batch has duplicate stats results")
+            if result.get("schema") != MC2_STATS_SCHEMA:
+                raise ValueError("MC2 public stats result schema mismatch")
+            if int(result.get("mc2_stats_schema", -1)) != MC2_STATS_SCHEMA_VERSION:
+                raise ValueError("MC2 public stats result schema mismatch")
+        else:
+            slot_id = str(result.get("slot_id") or "")
+            target_key = str(result.get("target_key") or "")
+            if not slot_id or slot_id in slot_ids:
+                raise ValueError("MC2 public result batch has duplicate slot identity")
+            if not target_key or target_key in target_keys:
+                raise ValueError("MC2 public result batch has duplicate writeback target")
+            slot_ids.add(slot_id)
+            target_keys.add(target_key)
     return batch
 
 
@@ -305,10 +402,44 @@ def iter_mc2_results(world, channel: str | None = None):
     return _iter()
 
 
+def iter_mc2_stats_results(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> list[dict]:
+    consume = getattr(world, "consume_results", None)
+    if not callable(consume):
+        return []
+    return [
+        item
+        for item in consume(
+            MC2_STATS_CHANNEL,
+            solver=MC2_SOLVER_ID,
+            frame=frame,
+            generation=generation,
+        )
+        if isinstance(item, dict) and item.get("channel") == MC2_STATS_CHANNEL
+    ]
+
+
+def get_mc2_stats_result(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> dict | None:
+    items = iter_mc2_stats_results(world, frame=frame, generation=generation)
+    return items[-1] if items else None
+
+
 __all__ = [
     "MC2_PUBLIC_RESULT_SCHEMA_VERSION",
+    "MC2_STATS_SCHEMA",
+    "MC2_STATS_SCHEMA_VERSION",
+    "get_mc2_stats_result",
     "iter_mc2_results",
+    "iter_mc2_stats_results",
     "make_mc2_bone_result",
     "make_mc2_mesh_result",
+    "make_mc2_stats_result",
     "publish_mc2_result_transaction",
 ]

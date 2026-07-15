@@ -130,8 +130,13 @@ _EXPORTS = {
     "MC2_FRAMEWORK_STATUS": ".solver",
     "step_mc2": ".solver",
     "MC2_PUBLIC_RESULT_SCHEMA_VERSION": ".results",
+    "MC2_STATS_SCHEMA": ".results",
+    "MC2_STATS_SCHEMA_VERSION": ".results",
+    "get_mc2_stats_result": ".results",
     "iter_mc2_results": ".results",
+    "iter_mc2_stats_results": ".results",
     "make_mc2_mesh_result": ".results",
+    "make_mc2_stats_result": ".results",
     "publish_mc2_result_transaction": ".results",
 }
 

@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、Bone Line/Triangle native output、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone imported-triangle零UV产品路径、wind、stats |
+| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive/grid、EE/PT half contact、固定4轮fixed-point solve/sum及跨帧分片Intersect反馈、Bone Line/Triangle native output、source-aligned constraint/post顺序、Mesh GN、Bone PoseBone writeback及每帧聚合stats均已闭环；详细数值域见MC2执行计划 | self collision sync/inter-cloth、Bone negative scale、Bone imported-triangle零UV产品路径、wind |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；单cloth self primitive/contact/solve/Intersect已闭环，sync/inter-cloth仍未完成。
@@ -87,7 +87,7 @@ MC2 只有一个 solver identity：`mc2`。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
 - 新路径只提供一套 native context schema/implementation，每个 active slot持有自己的 context；不公开 Python/C++ backend选择，旧 package、旧资产和旧 solver parity不属于实现或验收范围。
 - 当前新MC2 step已推进Mesh/Bone外部collider数值路径：Mesh从BasePose构建N3，Bone从PoseBone frame构建N3；两者消费共享World snapshot并分别发布GN或bone transform结果，不调用旧MC2 package。
-- `gn_attribute` 已登记为 active shared result channel；`mc2_stats`与`bone_transform`仍只登记为 planned channel，不虚报 active 输出。
+- `gn_attribute`与`bone_transform`已登记为 active shared result channel；`mc2_stats`已登记为MC2自有active exclusive channel。三者由同一发布事务替换，失败时恢复旧result streams。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
 - MeshCloth 的 Blender adapter 永久使用“双对象 + 常驻 GN”：BasePose 只读对象保留骨架/Shape Key 基础变形并移除物理 output，源对象末端 GN 只接收同 vertex identity 的 object-local offset。BlendShape 写回、单对象切换/移动 GN、同一对象读取前后两个 evaluated 阶段均已因 Blender 性能/求值限制排除。
 - 新路径只验证新 schema、slot、native context、result stream 与共享 writeback；旧路径可以独立清理，不设置迁移/兼容门槛。

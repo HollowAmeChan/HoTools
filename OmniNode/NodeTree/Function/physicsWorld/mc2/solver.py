@@ -24,6 +24,7 @@ from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .results import (
     make_mc2_bone_result,
     make_mc2_mesh_result,
+    make_mc2_stats_result,
     publish_mc2_result_transaction,
 )
 from .scheduler import MC2TimeSchedulerState
@@ -34,7 +35,7 @@ from .topology import build_mc2_topology_spec
 
 MC2_FRAMEWORK_STATUS = (
     "MC2 context V0 已接入 Center/Move inertia、Gravity、Pin、Distance、Bending 数值 step；"
-    "Mesh/Bone 公共结果事务与统一writeback已接入"
+    "Mesh/Bone/stats 公共结果事务与统一writeback已接入"
 )
 
 
@@ -657,8 +658,9 @@ def step_mc2(
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     public_results: list[dict] = []
+    stats_slots: list[dict] = []
     staged_writeback_plans: dict[str, dict] = {}
-    published_results = ()
+    writeback_result_count = 0
     world.acquire_write(MC2_SOLVER_ID)
     try:
         for (
@@ -1011,9 +1013,45 @@ def step_mc2(
                         )
                         public_results.append(bone_result)
                         staged_writeback_plans[slot.slot_id] = writeback_plan
+            native_context = slot.data.get("native_context")
+            native_info = (
+                native_context.inspect()
+                if native_context is not None and hasattr(native_context, "inspect")
+                else {}
+            )
+            stats_slots.append({
+                "slot_id": slot.slot_id,
+                "setup_type": spec.setup_type,
+                "native_schema": native_info.get("schema", ""),
+                "native_available": (
+                    native_context is not None and not native_info.get("released", False)
+                ),
+                "initialized": native_info.get("initialized", False),
+                "particle_count": topology.particle_count,
+                "native_frame": native_info.get("frame", 0),
+                "native_generation": native_info.get("generation", 0),
+                "reset_count": native_info.get("reset_count", 0),
+                "step_count": native_info.get("step_count", 0),
+                "parameter_revision": native_info.get("parameter_revision", 0),
+                "dynamic_revision": native_info.get("dynamic_revision", 0),
+                "collider_revision": native_info.get("collider_revision", 0),
+                "self_contact_cache_count": native_info.get(
+                    "self_contact_cache_count", 0
+                ),
+                "self_intersect_record_count": native_info.get(
+                    "self_intersect_record_count", 0
+                ),
+            })
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
-            published_results = publish_mc2_result_transaction(world, public_results)
+            writeback_result_count = len(public_results)
+            public_results.append(make_mc2_stats_result(
+                frame=world.frame_context.frame,
+                generation=world.generation,
+                slots=stats_slots,
+                writeback_result_count=writeback_result_count,
+            ))
+            publish_mc2_result_transaction(world, public_results)
             for slot_id, writeback_plan in staged_writeback_plans.items():
                 slot = world.solver_slots.get(slot_id)
                 if slot is not None:
@@ -1028,4 +1066,4 @@ def step_mc2(
         f"新建 {counts['created']}，重建 {counts['rebuilt']}，"
         f"更新 {counts['updated']}，复用 {counts['reused']}，清理 {pruned}）"
     )
-    return world, bool(published_results), status
+    return world, bool(writeback_result_count), status

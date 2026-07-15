@@ -378,14 +378,14 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert declaration["native_strategy"].endswith("single_native_context")
     assert declaration["update_policy"]["framework"] == "sync_topology_auto_mesh_or_bone_frame_native_context_and_public_result"
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
-    assert declaration["export"]["result_channels"] == []
+    assert declaration["export"]["result_channels"] == [
+        mc2_names.MC2_STATS_CHANNEL,
+    ]
     assert declaration["export"]["shared_result_channels"] == [
         world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
     ]
-    assert tuple(declaration["export"]["planned_result_channels"]) == (
-        mc2_names.MC2_STATS_CHANNEL,
-    )
+    assert declaration["export"]["planned_result_channels"] == []
     assert declaration["export"]["planned_shared_result_channels"] == []
 
     task_nodes = (
@@ -853,12 +853,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
 def test_solver_registry_separates_owned_shared_and_planned_result_channels():
     mc2_declaration = solver_registry.resolve_solver_declaration("mc2")
     summary = solver_declarations.solver_declaration_summary(mc2_declaration)
-    assert summary["result_channels"] == []
+    assert summary["result_channels"] == [mc2_names.MC2_STATS_CHANNEL]
     assert summary["shared_result_channels"] == [
         world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
     ]
-    assert summary["planned_result_channels"] == [mc2_names.MC2_STATS_CHANNEL]
+    assert summary["planned_result_channels"] == []
     assert summary["planned_shared_result_channels"] == []
 
     invalid_declaration = solver_registry.resolve_solver_declaration("spring_vrm")
@@ -879,7 +879,8 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
         "spring_vrm",
     }
     assert baseline["shared_result_channels"][world_names.GN_ATTRIBUTE_CHANNEL] == ["mc2"]
-    assert baseline["planned_result_channels"][mc2_names.MC2_STATS_CHANNEL] == ["mc2"]
+    assert baseline["result_channels"][mc2_names.MC2_STATS_CHANNEL] == "mc2"
+    assert mc2_names.MC2_STATS_CHANNEL not in baseline["planned_result_channels"]
     assert world_names.BONE_TRANSFORM_CHANNEL not in baseline["planned_shared_result_channels"]
     assert world_names.GN_ATTRIBUTE_CHANNEL not in baseline["planned_shared_result_channels"]
 

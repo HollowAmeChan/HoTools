@@ -44,7 +44,7 @@ MC2_SOLVER_DECLARATION = {
     "produces": [
         f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
         f'world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
-        f'planned:world.result_streams["{MC2_STATS_CHANNEL}"]',
+        f'world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
         "slot.data.topology",
@@ -98,14 +98,12 @@ MC2_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [],
+        "result_channels": [MC2_STATS_CHANNEL],
         "shared_result_channels": [
             GN_ATTRIBUTE_CHANNEL,
             BONE_TRANSFORM_CHANNEL,
         ],
-        "planned_result_channels": [
-            MC2_STATS_CHANNEL,
-        ],
+        "planned_result_channels": [],
         "planned_shared_result_channels": [],
         "supports_bake": False,
         "solver_acceptance_blocker": True,

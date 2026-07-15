@@ -329,6 +329,20 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert public_results[0]["revision"] == 1
         assert public_results[0]["frame_generation"] == first_input.generation
         assert public_results[0]["local_offsets"].flags.writeable is False
+        stats_results = world.consume_results(
+            "mc2_stats",
+            solver="mc2",
+            frame=1,
+            generation=1,
+        )
+        assert len(stats_results) == 1
+        assert stats_results[0]["mc2_stats_schema"] == 0
+        assert stats_results[0]["slot_count"] == 1
+        assert stats_results[0]["mesh_cloth_count"] == 1
+        assert stats_results[0]["particle_count"] == len(source.data.vertices)
+        assert stats_results[0]["writeback_result_count"] == 1
+        assert stats_results[0]["slots"][0]["slot_id"] == task.task_id
+        assert stats_results[0]["slots"][0]["native_available"] is True
         assert world_writeback.writeback_gn_attributes(world) == 1
         written_offsets = source.data.attributes[world_names.GN_OFFSET_ATTRIBUTE_NAME]
         written_values = np.empty(len(source.data.vertices) * 3, dtype=np.float32)

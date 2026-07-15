@@ -488,6 +488,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 
 - solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
+- MC2 使用自有 `mc2_stats` 独占通道，每次active world调用只发布一个`mc2_stats_v0`聚合结果；逐slot记录只保留稳定identity、setup类型和native计数等普通标量，不得包含context handle或Blender对象。该结果与同帧`gn_attribute`/`bone_transform`写回结果进入同一替换事务，任何一项发布失败都恢复事务前的全部result streams。
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
