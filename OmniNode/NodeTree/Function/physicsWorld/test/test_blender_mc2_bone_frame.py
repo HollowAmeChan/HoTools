@@ -98,6 +98,36 @@ try:
             slot.data["particle_buffer"].next_positions,
             frame_input.world_positions,
         )
+
+    task = specs.make_mc2_task_spec(
+        names.MC2_SETUP_BONE_CLOTH,
+        [{"armature": armature, "root_bone": "Root"}],
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    armature.scale = (-1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+    try:
+        bone_frame.build_mc2_bone_frame_input(task, topology, frame=13, generation=4)
+    except ValueError as exc:
+        assert "does not support negative scale" in str(exc)
+    else:
+        raise AssertionError("negative-scale Bone source produced a frame snapshot")
+
+    armature.scale = (0.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+    try:
+        bone_frame.build_mc2_bone_frame_input(task, topology, frame=13, generation=4)
+    except ValueError as exc:
+        assert "cannot contain zero scale" in str(exc)
+    else:
+        raise AssertionError("zero-scale Bone source produced a frame snapshot")
+
+    armature.scale = (1.5, 0.75, 2.0)
+    bpy.context.view_layer.update()
+    positive_frame = bone_frame.build_mc2_bone_frame_input(
+        task, topology, frame=13, generation=4
+    )
+    assert positive_frame.particle_count == 2
 finally:
     data = armature.data
     bpy.data.objects.remove(armature, do_unlink=True)

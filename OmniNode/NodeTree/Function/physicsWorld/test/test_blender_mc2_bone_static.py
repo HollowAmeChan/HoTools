@@ -270,6 +270,27 @@ try:
     assert world.result_streams["bone_transform"][0]["setup_type"] == "bone_cloth"
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in automatic_slot.data
+
+    old_context = automatic_slot.data["native_context"]
+    old_candidate = automatic_slot.data["result_candidate"]
+    old_plan = automatic_slot.data["writeback_plan"]
+    old_result = world.result_streams["bone_transform"][0]
+    armature.scale = (-1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+    world.frame_context.frame = 5
+    try:
+        solver.step_mc2(world, [automatic_task])
+    except ValueError as exc:
+        assert "does not support negative scale" in str(exc)
+    else:
+        raise AssertionError("negative-scale Bone task reached native step")
+    assert automatic_slot.data["native_context"] is old_context
+    assert automatic_slot.data["result_candidate"] is old_candidate
+    assert automatic_slot.data["writeback_plan"] is old_plan
+    assert world.result_streams["bone_transform"] == [old_result]
+    assert old_context.disposed is False
+    armature.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")

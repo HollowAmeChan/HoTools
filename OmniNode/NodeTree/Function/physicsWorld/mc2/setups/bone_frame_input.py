@@ -11,6 +11,9 @@ from ..specs import MC2TaskSpec
 from ..topology import MC2TopologySpec, _thaw
 
 
+_TRANSFORM_EPSILON = 1.0e-8
+
+
 def _armature_from_source(source):
     if isinstance(source, dict):
         return source.get("armature")
@@ -26,6 +29,37 @@ def _live_armature(value) -> bool:
         and value.data is not None
         and value.pose is not None
     )
+
+
+def _validate_bone_armature_transform(armature) -> None:
+    owner = armature
+    while owner is not None:
+        scale = tuple(float(value) for value in owner.scale)
+        if any(abs(value) <= _TRANSFORM_EPSILON for value in scale):
+            raise ValueError("MC2 Bone source transform chain cannot contain zero scale")
+        if any(value < 0.0 for value in scale):
+            raise ValueError(
+                "MC2 Bone source does not support negative scale on the Armature or its parents"
+            )
+        owner = owner.parent
+
+    linear = np.asarray(
+        [[float(armature.matrix_world[row][column]) for column in range(3)] for row in range(3)],
+        dtype=np.float64,
+    )
+    axis_lengths = np.linalg.norm(linear, axis=0)
+    if np.any(axis_lengths <= _TRANSFORM_EPSILON):
+        raise ValueError("MC2 Bone source world transform cannot contain zero scale")
+    rotation = linear / axis_lengths[np.newaxis, :]
+    if not np.allclose(
+        rotation.T @ rotation,
+        np.eye(3),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    ) or np.linalg.det(rotation) <= 0.0:
+        raise ValueError(
+            "MC2 Bone source world transform must have positive scale and no shear"
+        )
 
 
 def build_mc2_bone_frame_input(
@@ -51,6 +85,7 @@ def build_mc2_bone_frame_input(
         armature = _armature_from_source(task.sources[source_index])
         if not _live_armature(armature):
             raise ValueError("bone frame source armature is unavailable")
+        _validate_bone_armature_transform(armature)
         payload = _thaw(source_topology.payload)
         records = tuple(payload.get("bones") or ())
         if len(records) != source_topology.particle_count:

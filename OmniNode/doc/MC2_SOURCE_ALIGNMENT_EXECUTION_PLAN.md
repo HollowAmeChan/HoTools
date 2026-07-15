@@ -143,6 +143,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 3. Mesh/Bone candidate 与公共 envelope 已分别验证 frame/frame generation/world generation/revision；same-frame不得重复 read/step/revision，只重发同一 revision。Bone live plan仅在公共result transaction成功后替换，发布失败保留上一计划。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；Bone finalizer、baseline与Bone-only rotations必须作为同一 staged bundle原子替换。参数热更新继续保留粒子 history。
 5. BoneSpring强制复用Line topology/static/native/result路径；N2固定覆写已在真实slot验证gravity=0、tether compression=0.8、distance stiffness=0.5并关闭max distance/self collision。BoneCloth与BoneSpring保持不同setup/static/task签名，不共享slot。
+6. Bone frame adapter当前仅接受Armature及父链正非零scale且最终world linear无shear的输入。负/零scale在PoseBone snapshot前明确拒绝；准备失败保留旧context/candidate/plan/result，直至独立Bone negative-scale oracle与ABI完成。
 
 Bone mesh-connection源边界已决：`ImportBoneType()`写入全零UV，因此Automatic/Sequential仅在最终membership不含triangle时复用Line static/native；一旦含triangle，准备阶段在分配或替换native context前明确拒绝并报告triangle tangent/basis退化。禁止在fixture里注入合成UV掩盖该事实。
 
@@ -200,6 +201,7 @@ Bone mesh-connection源边界已决：`ImportBoneType()`写入全零UV，因此A
 | D-07 | Normal/Split 只迁移共同数学语义，不复制 Unity manager/job 调度结构。 |
 | D-08 | Bone connection mode 3 的内部语义必须保留，并由 BoneCloth 节点整数模式 0..3 公开表达；BoneSpring继续强制 Line。 |
 | D-09 | Bone Automatic/Sequential仅支持最终membership无triangle的Line安全域；`ImportBoneType()`零UV遇triangle时明确拒绝，不合成UV、不静默降级。 |
+| D-10 | Bone生产frame仅支持正非零scale且world linear无shear；负/零scale明确拒绝，不用`Matrix.to_quaternion()`吞掉反射手性。 |
 
 ## 提交与声明规则
 
