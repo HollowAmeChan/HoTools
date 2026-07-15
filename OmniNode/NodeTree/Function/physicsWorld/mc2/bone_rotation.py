@@ -5,9 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-import math
-
 import numpy as np
+
+from ..utils.math3d import (
+    look_rotation_f32 as _look_rotation,
+    normalize_quaternion_f32 as _normalize_quaternion,
+    normalize_vector_f32 as _normalize_vector,
+    quaternion_from_to_f32 as _from_to_rotation,
+    quaternion_inverse_f32 as _quaternion_inverse,
+    quaternion_multiply_f32 as _quaternion_multiply,
+    quaternion_slerp_f32 as _slerp,
+    rotate_vector_f32 as _rotate,
+)
 
 
 MC2_VERTEX_FIXED = 0x01
@@ -30,133 +39,8 @@ def _array(values, shape, name: str, dtype=np.float32) -> np.ndarray:
     return result
 
 
-def _normalize_vector(value: np.ndarray) -> np.ndarray:
-    length = np.float32(np.linalg.norm(value))
-    if length <= np.float32(0.0):
-        raise ValueError("cannot normalize a zero vector")
-    return np.asarray(value / length, dtype=np.float32)
-
-
-def _normalize_quaternion(value: np.ndarray) -> np.ndarray:
-    length = np.float32(np.linalg.norm(value))
-    if length <= np.float32(0.0):
-        raise ValueError("cannot normalize a zero quaternion")
-    return np.asarray(value / length, dtype=np.float32)
-
-
-def _quaternion_multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    lx, ly, lz, lw = (np.float32(value) for value in left)
-    rx, ry, rz, rw = (np.float32(value) for value in right)
-    return np.asarray((
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    ), dtype=np.float32)
-
-
-def _quaternion_inverse(value: np.ndarray) -> np.ndarray:
-    result = np.asarray((-value[0], -value[1], -value[2], value[3]), dtype=np.float32)
-    return _normalize_quaternion(result)
-
-
-def _rotate(rotation: np.ndarray, vector: np.ndarray) -> np.ndarray:
-    q = _normalize_quaternion(rotation)
-    pure = np.asarray((vector[0], vector[1], vector[2], 0.0), dtype=np.float32)
-    return _quaternion_multiply(
-        _quaternion_multiply(q, pure), _quaternion_inverse(q)
-    )[:3]
-
-
-def _slerp(first: np.ndarray, second: np.ndarray, ratio) -> np.ndarray:
-    ratio = np.float32(ratio)
-    first = _normalize_quaternion(first)
-    target = _normalize_quaternion(second)
-    dot = np.float32(np.dot(first, target))
-    if dot < np.float32(0.0):
-        target = -target
-        dot = -dot
-    dot = np.clip(dot, np.float32(-1.0), np.float32(1.0))
-    if dot > np.float32(0.9995):
-        return _normalize_quaternion(first + (target - first) * ratio)
-    theta = np.float32(np.arccos(dot))
-    sin_theta = np.float32(np.sin(theta))
-    first_weight = np.float32(np.sin((np.float32(1.0) - ratio) * theta) / sin_theta)
-    second_weight = np.float32(np.sin(ratio * theta) / sin_theta)
-    return _normalize_quaternion(first * first_weight + target * second_weight)
-
-
-def _from_to_rotation(first: np.ndarray, second: np.ndarray, ratio=1.0) -> np.ndarray:
-    first = _normalize_vector(first)
-    second = _normalize_vector(second)
-    cosine = np.clip(np.float32(np.dot(first, second)), np.float32(-1.0), np.float32(1.0))
-    angle = np.float32(np.arccos(cosine))
-    axis = np.asarray(np.cross(first, second), dtype=np.float32)
-    if abs(np.float32(1.0) + cosine) < np.float32(1.0e-6):
-        angle = np.float32(math.pi)
-        if first[0] > first[1] and first[0] > first[2]:
-            axis = np.asarray(np.cross(first, (0.0, 1.0, 0.0)), dtype=np.float32)
-        else:
-            axis = np.asarray(np.cross(first, (1.0, 0.0, 0.0)), dtype=np.float32)
-    elif abs(np.float32(1.0) - cosine) < np.float32(1.0e-6):
-        return np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
-    axis = _normalize_vector(axis)
-    half_angle = np.float32(angle * np.float32(ratio) * np.float32(0.5))
-    sine = np.float32(np.sin(half_angle))
-    return _normalize_quaternion(np.asarray((
-        axis[0] * sine,
-        axis[1] * sine,
-        axis[2] * sine,
-        np.float32(np.cos(half_angle)),
-    ), dtype=np.float32))
-
-
 def _is_zero_distance(value: np.ndarray) -> bool:
     return np.float32(np.linalg.norm(value)) < np.float32(1.0e-8)
-
-
-def _matrix_to_quaternion(matrix: np.ndarray) -> np.ndarray:
-    m00, m01, m02 = matrix[0]
-    m10, m11, m12 = matrix[1]
-    m20, m21, m22 = matrix[2]
-    trace = np.float32(m00 + m11 + m22)
-    if trace > np.float32(0.0):
-        scale = np.float32(np.sqrt(trace + np.float32(1.0)) * np.float32(2.0))
-        result = (m21 - m12, m02 - m20, m10 - m01, np.float32(0.25) * scale)
-        result = (result[0] / scale, result[1] / scale, result[2] / scale, result[3])
-    elif m00 > m11 and m00 > m22:
-        scale = np.float32(np.sqrt(np.float32(1.0) + m00 - m11 - m22) * np.float32(2.0))
-        result = (
-            np.float32(0.25) * scale,
-            (m01 + m10) / scale,
-            (m02 + m20) / scale,
-            (m21 - m12) / scale,
-        )
-    elif m11 > m22:
-        scale = np.float32(np.sqrt(np.float32(1.0) + m11 - m00 - m22) * np.float32(2.0))
-        result = (
-            (m01 + m10) / scale,
-            np.float32(0.25) * scale,
-            (m12 + m21) / scale,
-            (m02 - m20) / scale,
-        )
-    else:
-        scale = np.float32(np.sqrt(np.float32(1.0) + m22 - m00 - m11) * np.float32(2.0))
-        result = (
-            (m02 + m20) / scale,
-            (m12 + m21) / scale,
-            np.float32(0.25) * scale,
-            (m10 - m01) / scale,
-        )
-    return _normalize_quaternion(np.asarray(result, dtype=np.float32))
-
-
-def _look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
-    forward = _normalize_vector(forward)
-    right = _normalize_vector(np.asarray(np.cross(up, forward), dtype=np.float32))
-    corrected_up = np.asarray(np.cross(forward, right), dtype=np.float32)
-    matrix = np.column_stack((right, corrected_up, forward)).astype(np.float32)
-    return _matrix_to_quaternion(matrix)
 
 
 def _triangle_tangent(positions: np.ndarray, uvs: np.ndarray) -> np.ndarray:

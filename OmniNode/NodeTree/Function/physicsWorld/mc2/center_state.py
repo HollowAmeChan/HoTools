@@ -9,6 +9,16 @@ import math
 
 import numpy as np
 
+from ..utils.math3d import (
+    normalize_quaternion_f32,
+    quaternion_conjugate_f32,
+    quaternion_matrix_unit_f32,
+    quaternion_multiply_f32 as _quaternion_multiply_f32,
+    quaternion_slerp_unit_f32,
+    rotate_vector_unit_quaternion_f32 as _rotate_f32,
+    transform_point_matrix_f32,
+    transform_vector_matrix_f32,
+)
 from .mesh_baseline import MC2_VERTEX_MOVE
 from .static_data import MC2ProxyStaticSpec
 from .setups.mesh_cloth.final_proxy import mc2_world_rotation_xyzw
@@ -956,53 +966,27 @@ def _f32_vector(values, width: int, name: str) -> np.ndarray:
 
 
 def _normalize_quaternion_f32(value: np.ndarray) -> np.ndarray:
-    length = _f32(np.linalg.norm(value))
-    if length <= _f32(1.0e-8):
-        raise ValueError("Center quaternion cannot be zero")
-    return np.asarray(value / length, dtype=np.float32)
+    _f32(np.linalg.norm(value))
+    return normalize_quaternion_f32(
+        value,
+        zero_epsilon=1.0e-8,
+        zero_message="Center quaternion cannot be zero",
+    )
 
 
 def _quaternion_slerp_f32(first: np.ndarray, second: np.ndarray, ratio) -> np.ndarray:
     ratio = _f32(ratio)
-    target = second.copy()
-    cosine = _f32(np.dot(first, target))
-    if cosine < 0.0:
-        target = -target
-        cosine = -cosine
-    if cosine > _f32(0.9995):
-        return _normalize_quaternion_f32(first + (target - first) * ratio)
-    angle = _f32(np.arccos(np.clip(cosine, -1.0, 1.0)))
-    sine = _f32(np.sin(angle))
-    first_weight = _f32(np.sin((_f32(1.0) - ratio) * angle) / sine)
-    second_weight = _f32(np.sin(ratio * angle) / sine)
-    return _normalize_quaternion_f32(first * first_weight + target * second_weight)
-
-
-def _quaternion_multiply_f32(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    lx, ly, lz, lw = left
-    rx, ry, rz, rw = right
-    return np.asarray((
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    ), dtype=np.float32)
-
-
-def _rotate_f32(rotation: np.ndarray, vector: np.ndarray) -> np.ndarray:
-    xyz = rotation[:3]
-    twice_cross = _f32(2.0) * np.cross(xyz, vector)
-    return np.asarray(
-        vector + rotation[3] * twice_cross + np.cross(xyz, twice_cross),
-        dtype=np.float32,
+    return quaternion_slerp_unit_f32(
+        first,
+        second,
+        ratio,
+        zero_epsilon=1.0e-8,
+        zero_message="Center quaternion cannot be zero",
     )
 
 
 def _inverse_quaternion_f32(rotation: np.ndarray) -> np.ndarray:
-    return np.asarray(
-        (-rotation[0], -rotation[1], -rotation[2], rotation[3]),
-        dtype=np.float32,
-    )
+    return quaternion_conjugate_f32(rotation)
 
 
 def _shift_position_f32(position, pivot, shift_vector, shift_rotation) -> np.ndarray:
@@ -1020,16 +1004,7 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
 
 
 def _quaternion_matrix_f32(rotation) -> np.ndarray:
-    x, y, z, w = _f32_vector(rotation, 4, "rotation")
-    two = _f32(2.0)
-    return np.asarray(
-        (
-            (1.0 - two * (y * y + z * z), two * (x * y - z * w), two * (x * z + y * w)),
-            (two * (x * y + z * w), 1.0 - two * (x * x + z * z), two * (y * z - x * w)),
-            (two * (x * z - y * w), two * (y * z + x * w), 1.0 - two * (x * x + y * y)),
-        ),
-        dtype=np.float32,
-    )
+    return quaternion_matrix_unit_f32(_f32_vector(rotation, 4, "rotation"))
 
 
 def _trs_matrix_f32(position, rotation, scale) -> np.ndarray:
@@ -1042,16 +1017,16 @@ def _trs_matrix_f32(position, rotation, scale) -> np.ndarray:
 
 
 def _transform_point_matrix_f32(position, matrix: np.ndarray) -> np.ndarray:
-    value = np.empty(4, dtype=np.float32)
-    value[:3] = _f32_vector(position, 3, "position")
-    value[3] = _f32(1.0)
-    return np.asarray(matrix @ value, dtype=np.float32)[:3]
+    return transform_point_matrix_f32(
+        _f32_vector(position, 3, "position"),
+        matrix,
+    )
 
 
 def _transform_vector_matrix_f32(vector, matrix: np.ndarray) -> np.ndarray:
-    return np.asarray(
-        matrix[:3, :3] @ _f32_vector(vector, 3, "vector"),
-        dtype=np.float32,
+    return transform_vector_matrix_f32(
+        _f32_vector(vector, 3, "vector"),
+        matrix,
     )
 
 
