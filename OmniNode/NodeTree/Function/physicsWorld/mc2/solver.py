@@ -574,6 +574,17 @@ def step_mc2(
                 )
                 _validate_mc2_frame_input(spec, topology, frame_input)
                 frame_inputs[spec.task_id] = frame_input
+            elif frame_input is None and automatic_frame_inputs and bone_static_supported:
+                from .setups.bone_frame_input import build_mc2_bone_frame_input
+
+                frame_input = build_mc2_bone_frame_input(
+                    spec,
+                    topology,
+                    frame=int(getattr(world.frame_context, "frame", 0) or 0),
+                    generation=int(world.generation),
+                )
+                _validate_mc2_frame_input(spec, topology, frame_input)
+                frame_inputs[spec.task_id] = frame_input
             staged_native_context = None
             staged_native_frame_applied = False
             if rebuild_reason and topology.particle_count > 0:
@@ -841,7 +852,13 @@ def step_mc2(
                 )
                 if native_context is not None and frame_plan.action != "same_frame":
                     native_positions, native_rotations = native_context.read()
-                    if slot.data.get("mesh_static") is not None:
+                    has_mesh_static = slot.data.get("mesh_static") is not None
+                    has_bone_static = slot.data.get("bone_static") is not None
+                    if has_bone_static:
+                        native_positions, native_rotations = (
+                            native_context.read_bone_output()
+                        )
+                    if has_mesh_static or has_bone_static:
                         candidate_revision = int(
                             slot.data.get("result_candidate_revision", 0)
                         ) + 1

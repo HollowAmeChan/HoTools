@@ -105,6 +105,41 @@ try:
     assert snapshot["mesh_static"] is None
     assert snapshot["bone_static"]["vertex_count"] == 3
     assert snapshot["bone_static"]["static_signature"] == static.static_signature
+
+    world.omni_cache_dispose("static_only_complete")
+    world = world_types.PhysicsWorldCache()
+    world.generation = 1
+    world.frame_context.frame = 1
+    world.frame_context.generation = 1
+    world.frame_context.dt = 1.0 / 60.0
+    returned, ready, _status = solver.step_mc2(world, [task])
+    assert returned is world and ready is False
+    slot = world.solver_slots[task.task_id]
+    candidate = slot.data["result_candidate"]
+    assert candidate is not None
+    assert candidate.setup_type == names.MC2_SETUP_BONE_CLOTH
+    assert candidate.ready is False
+    assert candidate.mesh_object_local_offsets is None
+    assert candidate.world_positions.flags.writeable is False
+    assert candidate.world_rotations_xyzw.flags.writeable is False
+    assert slot.data["native_context"].inspect()["bone_line_output_count"] == 1
+    assert world.result_streams == {}
+
+    armature.pose.bones["Root"].rotation_mode = "XYZ"
+    armature.pose.bones["Root"].rotation_euler.z = 0.2
+    bpy.context.view_layer.update()
+    world.frame_context.frame = 2
+    solver.step_mc2(world, [task])
+    slot = world.solver_slots[task.task_id]
+    second_candidate = slot.data["result_candidate"]
+    second_info = slot.data["native_context"].inspect()
+    assert second_candidate.revision == 2
+    assert second_info["step_count"] == 1
+    assert second_info["bone_line_output_count"] == 2
+    solver.step_mc2(world, [task])
+    assert slot.data["result_candidate"] is second_candidate
+    assert slot.data["native_context"].inspect()["bone_line_output_count"] == 2
+    assert world.result_streams == {}
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")

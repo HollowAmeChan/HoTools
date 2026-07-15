@@ -1,5 +1,7 @@
+import importlib
 import os
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +20,26 @@ sys.path.insert(
 import hotools_native  # noqa: E402
 
 
+NODETREE = ROOT / "OmniNode" / "NodeTree"
+FUNCTION = NODETREE / "Function"
+PHYSICS_WORLD = FUNCTION / "physicsWorld"
+for package_name, package_path in (
+    ("HoTools", ROOT),
+    ("HoTools.OmniNode", ROOT / "OmniNode"),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [str(package_path)]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+bone_rotation = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.bone_rotation"
+)
+
+
 def _expect_error(exception, callback, text):
     try:
         callback()
@@ -29,7 +51,7 @@ def _expect_error(exception, callback, text):
 
 def _proxy():
     count = 3
-    positions = np.array([[0, 0, 0], [0, 1, 0], [0.25, 2, 0]], dtype=np.float32)
+    positions = np.array([[0, 0, 0], [0, 1, 0], [0, 2, 0]], dtype=np.float32)
     normals = np.tile(np.array([[0, 1, 0]], dtype=np.float32), (count, 1))
     tangents = np.tile(np.array([[0, 0, 1]], dtype=np.float32), (count, 1))
     uvs = np.zeros((count, 2), dtype=np.float32)
@@ -48,7 +70,7 @@ def _baseline():
     data = np.array([0, 1, 2], dtype=np.int32)
     roots = np.array([-1, 0, 0], dtype=np.int32)
     depths = np.array([0, 0.5, 1], dtype=np.float32)
-    local_positions = np.array([[0, 0, 0], [0, 1, 0], [0.25, 1, 0]], dtype=np.float32)
+    local_positions = np.array([[0, 0, 0], [0, 1, 0], [0, 1, 0]], dtype=np.float32)
     local_rotations = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (3, 1))
     return (
         parents,
@@ -69,7 +91,7 @@ def _bone():
     vertex_data = np.array([1, 2, 0, 1], dtype=np.int32)
     triangle_ranges = np.zeros((3, 2), dtype=np.int32)
     triangle_data = np.empty((0, 2), dtype=np.int32)
-    bind_positions = np.array([[0, 0, 0], [0, -1, 0], [-0.25, -2, 0]], dtype=np.float32)
+    bind_positions = np.array([[0, 0, 0], [0, -1, 0], [0, -2, 0]], dtype=np.float32)
     identity = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (3, 1))
     return (
         vertex_ranges,
@@ -111,6 +133,111 @@ def test_bone_static_native_transaction():
             "self or duplicate",
         )
         assert hotools_native.mc2_context_v0_inspect(context)["bone_static_revision"] == 1
+
+        distance_ranges = np.array([[0, 1], [1, 2], [3, 1]], dtype=np.int32)
+        distance_targets = np.array([1, 2, 0, 1], dtype=np.int32)
+        distance_rests = np.ones(4, dtype=np.float32)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            distance_ranges,
+            distance_targets,
+            distance_rests,
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats = np.zeros(47, dtype=np.float32)
+        floats[0] = 5.0
+        floats[1] = 1.0
+        floats[6:9] = 1.0
+        ints = np.zeros(11, dtype=np.int32)
+        curves = np.zeros((9, 16), dtype=np.float32)
+        curves[2, :] = 1.0
+        hotools_native.mc2_context_v0_update_parameters(
+            context,
+            floats,
+            ints,
+            curves,
+        )
+        base_positions = _proxy()[0].copy()
+        base_rotations = np.tile(
+            np.array([[0, 0, 0, 1]], dtype=np.float32),
+            (3, 1),
+        )
+        hotools_native.mc2_context_v0_update_dynamic(
+            context,
+            1,
+            0,
+            base_positions,
+            base_rotations,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        )
+        hotools_native.mc2_context_v0_reset(context)
+        hotools_native.mc2_context_v0_step(context, 0.1, 1.0, 1.0)
+        state_positions = np.empty((3, 3), dtype=np.float32)
+        state_rotations = np.empty((3, 4), dtype=np.float32)
+        step_positions = np.empty((3, 3), dtype=np.float32)
+        step_rotations = np.empty((3, 4), dtype=np.float32)
+        output_positions = np.empty((3, 3), dtype=np.float32)
+        output_rotations = np.empty((3, 4), dtype=np.float32)
+        hotools_native.mc2_context_v0_read(
+            context,
+            state_positions,
+            state_rotations,
+        )
+        hotools_native.mc2_context_v0_read_step_basic(
+            context,
+            step_positions,
+            step_rotations,
+        )
+        hotools_native.mc2_context_v0_read_bone_output(
+            context,
+            output_positions,
+            output_rotations,
+        )
+        expected = bone_rotation.evaluate_mc2_bone_line_rotation(
+            attributes=_proxy()[4],
+            positions=state_positions,
+            rotations=state_rotations,
+            base_positions=step_positions,
+            base_rotations=step_rotations,
+            vertex_local_positions=_baseline()[8],
+            vertex_local_rotations=_baseline()[9],
+            vertex_to_transform_rotations=_bone()[7],
+            parent_indices=_baseline()[0],
+            transform_scales=np.ones((3, 3), dtype=np.float32),
+            transform_local_positions=np.zeros((3, 3), dtype=np.float32),
+            transform_local_rotations=base_rotations,
+            child_ranges=_baseline()[1],
+            child_data=_baseline()[2],
+            baseline_data=_baseline()[5],
+            rotational_interpolation=1.0,
+            root_rotation=1.0,
+            animation_pose_ratio=0.0,
+            blend_weight=1.0,
+        )
+        np.testing.assert_allclose(
+            output_positions,
+            np.asarray(expected.world_positions, dtype=np.float32),
+            rtol=2.0e-6,
+            atol=5.0e-7,
+        )
+        np.testing.assert_allclose(
+            output_rotations,
+            np.asarray(expected.world_rotations, dtype=np.float32),
+            rtol=2.0e-6,
+            atol=1.0e-6,
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["bone_output_ready"] is True
+        assert info["bone_line_output_count"] == 1
 
         bad_rotation = list(_bone())
         bad_rotation[7] = np.zeros((3, 4), dtype=np.float32)

@@ -49,6 +49,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
     "mc2_context_v0_read",
+    "mc2_context_v0_read_bone_output",
     "mc2_context_v0_read_step_basic",
     "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
@@ -112,6 +113,8 @@ class MC2NativeContextV0:
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
+        self._bone_out_positions = np.empty((vertex_count, 3), dtype=np.float32)
+        self._bone_out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
         self._step_basic_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._step_basic_rotations = np.empty((vertex_count, 4), dtype=np.float32)
         self._center_frame_dt: float | None = None
@@ -416,6 +419,15 @@ class MC2NativeContextV0:
             self._out_rotations,
         )
         return self._out_positions, self._out_rotations
+
+    def read_bone_output(self) -> tuple[np.ndarray, np.ndarray]:
+        self._ensure_live()
+        self._module.mc2_context_v0_read_bone_output(
+            self._handle,
+            self._bone_out_positions,
+            self._bone_out_rotations,
+        )
+        return self._bone_out_positions, self._bone_out_rotations
 
     def read_step_basic(self) -> tuple[np.ndarray, np.ndarray]:
         self._ensure_live()

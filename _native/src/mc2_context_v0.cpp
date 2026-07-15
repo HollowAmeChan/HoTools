@@ -34,6 +34,8 @@ constexpr Py_ssize_t kBendingStiffness = 27;
 constexpr Py_ssize_t kGravityFalloff = 4;
 constexpr Py_ssize_t kStabilizationTime = 5;
 constexpr Py_ssize_t kBlendWeight = 6;
+constexpr Py_ssize_t kRotationalInterpolation = 7;
+constexpr Py_ssize_t kRootRotation = 8;
 constexpr Py_ssize_t kLocalInertia = 16;
 constexpr Py_ssize_t kLocalMovementSpeedLimit = 17;
 constexpr Py_ssize_t kLocalRotationSpeedLimit = 18;
@@ -66,6 +68,7 @@ struct Mc2ContextV0 {
     std::int64_t center_negative_scale_teleport_count = 0;
     std::int64_t team_options_revision = 0;
     std::int64_t baseline_pose_rebuild_count = 0;
+    std::int64_t bone_line_output_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -125,6 +128,8 @@ struct Mc2ContextV0 {
     std::vector<float> bone_vertex_bind_pose_rotations;
     std::vector<float> bone_normal_adjustment_rotations;
     std::vector<float> bone_vertex_to_transform_rotations;
+    std::vector<float> bone_output_positions;
+    std::vector<float> bone_output_rotations;
     std::vector<std::int32_t> distance_ranges;
     std::vector<std::int32_t> distance_targets;
     std::vector<float> distance_rest_signed;
@@ -205,6 +210,8 @@ void release_resources(Mc2ContextV0& context) {
     context.bone_vertex_bind_pose_rotations.clear();
     context.bone_normal_adjustment_rotations.clear();
     context.bone_vertex_to_transform_rotations.clear();
+    context.bone_output_positions.clear();
+    context.bone_output_rotations.clear();
     context.distance_ranges.clear();
     context.distance_targets.clear();
     context.distance_rest_signed.clear();
@@ -722,6 +729,221 @@ Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value) {
     const Vec3 xyz {rotation[0], rotation[1], rotation[2]};
     const Vec3 twice_cross = mul(cross(xyz, value), 2.0f);
     return add(add(value, mul(twice_cross, rotation[3])), cross(xyz, twice_cross));
+}
+
+std::array<float, 4> quaternion_inverse(std::array<float, 4> value) {
+    normalize_quaternion(value);
+    return {-value[0], -value[1], -value[2], value[3]};
+}
+
+std::array<float, 4> quaternion_from_to(Vec3 first, Vec3 second, float ratio = 1.0f) {
+    const float first_length = length(first);
+    const float second_length = length(second);
+    if (first_length <= kMc2Epsilon || second_length <= kMc2Epsilon) {
+        return {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    first = mul(first, 1.0f / first_length);
+    second = mul(second, 1.0f / second_length);
+    const float cosine = std::max(-1.0f, std::min(1.0f, dot(first, second)));
+    if (std::abs(1.0f - cosine) < 1.0e-6f) {
+        return {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    float angle = std::acos(cosine);
+    Vec3 axis = cross(first, second);
+    if (std::abs(1.0f + cosine) < 1.0e-6f) {
+        angle = static_cast<float>(3.14159265358979323846);
+        axis = first.x > first.y && first.x > first.z
+            ? cross(first, {0.0f, 1.0f, 0.0f})
+            : cross(first, {1.0f, 0.0f, 0.0f});
+    }
+    axis = normalize(axis);
+    if (length_squared(axis) <= kMc2Epsilon) {
+        return {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    const float half_angle = angle * ratio * 0.5f;
+    const float sine = std::sin(half_angle);
+    std::array<float, 4> result {
+        axis.x * sine,
+        axis.y * sine,
+        axis.z * sine,
+        std::cos(half_angle),
+    };
+    normalize_quaternion(result);
+    return result;
+}
+
+std::array<float, 4> load_quaternion(
+    const std::vector<float>& values,
+    std::size_t vertex
+) {
+    const auto offset = vertex * 4;
+    std::array<float, 4> result {
+        values[offset + 0],
+        values[offset + 1],
+        values[offset + 2],
+        values[offset + 3],
+    };
+    normalize_quaternion(result);
+    return result;
+}
+
+void store_quaternion(
+    std::vector<float>& values,
+    std::size_t vertex,
+    std::array<float, 4> rotation
+) {
+    normalize_quaternion(rotation);
+    const auto offset = vertex * 4;
+    for (std::size_t component = 0; component < 4; ++component) {
+        values[offset + component] = rotation[component];
+    }
+}
+
+Vec3 load_vector3(const std::vector<float>& values, std::size_t vertex) {
+    const auto offset = vertex * 3;
+    return {values[offset + 0], values[offset + 1], values[offset + 2]};
+}
+
+std::array<float, 4> quaternion_slerp(
+    const std::array<float, 4>& first,
+    const std::array<float, 4>& second,
+    float ratio
+) {
+    std::array<float, 4> output {};
+    slerp_xyzw(first.data(), second.data(), ratio, output.data());
+    return output;
+}
+
+bool build_bone_line_output(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (!context.bone_static_ready || !context.parameters_ready || !context.initialized ||
+        context.state_positions.size() != count * 3 ||
+        context.state_rotations.size() != count * 4 ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.step_basic_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_child_ranges.size() != count * 2 ||
+        context.baseline_local_positions.size() != count * 3 ||
+        context.baseline_local_rotations.size() != count * 4 ||
+        context.bone_vertex_to_transform_rotations.size() != count * 4 ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount)) {
+        return false;
+    }
+
+    std::vector<float> work_rotations = context.step_basic_rotations;
+    const float average_rate = saturate(context.float_values[kRotationalInterpolation]);
+    const float root_rate = saturate(context.float_values[kRootRotation]);
+    const float animation_ratio = saturate(context.animation_pose_ratio);
+    const float blend = context.center_result_ready
+        ? saturate(context.center_blend_weight)
+        : saturate(context.velocity_weight * context.float_values[kBlendWeight]);
+
+    const auto baseline_count = context.baseline_ranges.size() / 2;
+    if (context.baseline_flags.size() != baseline_count) return false;
+    for (std::size_t baseline = 0; baseline < baseline_count; ++baseline) {
+        if ((context.baseline_flags[baseline] & 0x01u) == 0u) continue;
+        const auto range_start = context.baseline_ranges[baseline * 2];
+        const auto range_length = context.baseline_ranges[baseline * 2 + 1];
+        for (std::int32_t offset = 0; offset < range_length; ++offset) {
+            const auto raw_index = context.baseline_data[range_start + offset];
+            if (raw_index < 0 || raw_index >= context.vertex_count) return false;
+            const auto vertex = static_cast<std::size_t>(raw_index);
+            const auto position = load_vector3(context.state_positions, vertex);
+            auto rotation = load_quaternion(work_rotations, vertex);
+            const auto attribute = context.proxy_attributes[vertex];
+            const auto child_start = context.baseline_child_ranges[vertex * 2];
+            const auto child_count = context.baseline_child_ranges[vertex * 2 + 1];
+            const auto base_position = load_vector3(context.step_basic_positions, vertex);
+            const auto base_rotation = load_quaternion(context.step_basic_rotations, vertex);
+            const auto inverse_base_rotation = quaternion_inverse(base_rotation);
+
+            if (child_count > 0 && (attribute & 0x03u) != 0u) {
+                Vec3 original_sum {};
+                Vec3 current_sum {};
+                for (std::int32_t child_offset = 0; child_offset < child_count; ++child_offset) {
+                    const auto raw_child = context.baseline_child_data[child_start + child_offset];
+                    if (raw_child < 0 || raw_child >= context.vertex_count) return false;
+                    const auto child = static_cast<std::size_t>(raw_child);
+                    const auto child_attribute = context.proxy_attributes[child];
+                    const bool zero_distance = (child_attribute & 0x20u) != 0u;
+                    const auto child_base_position = load_vector3(context.step_basic_positions, child);
+                    const auto child_base_rotation = load_quaternion(context.step_basic_rotations, child);
+                    const auto child_base_local_position = rotate_vector(
+                        inverse_base_rotation,
+                        sub(child_base_position, base_position)
+                    );
+                    const auto child_base_local_rotation = quaternion_multiply(
+                        inverse_base_rotation,
+                        child_base_rotation
+                    );
+                    const auto static_local_position = load_vector3(
+                        context.baseline_local_positions,
+                        child
+                    );
+                    const auto child_local_position = add(
+                        mul(static_local_position, 1.0f - animation_ratio),
+                        mul(child_base_local_position, animation_ratio)
+                    );
+                    const auto static_local_rotation = load_quaternion(
+                        context.baseline_local_rotations,
+                        child
+                    );
+                    const auto child_local_rotation = quaternion_slerp(
+                        static_local_rotation,
+                        child_base_local_rotation,
+                        animation_ratio
+                    );
+                    const auto original_vector = zero_distance
+                        ? Vec3{}
+                        : rotate_vector(rotation, child_local_position);
+                    original_sum = add(original_sum, original_vector);
+                    if (is_move(child_attribute)) {
+                        const auto current_vector = sub(
+                            load_vector3(context.state_positions, child),
+                            position
+                        );
+                        current_sum = add(current_sum, current_vector);
+                        auto child_rotation = quaternion_multiply(
+                            rotation,
+                            child_local_rotation
+                        );
+                        if (!zero_distance) {
+                            child_rotation = quaternion_multiply(
+                                quaternion_from_to(original_vector, current_vector),
+                                child_rotation
+                            );
+                        }
+                        store_quaternion(work_rotations, child, child_rotation);
+                    } else {
+                        current_sum = add(current_sum, original_vector);
+                    }
+                }
+                const float ratio = is_move(attribute) ? average_rate : root_rate;
+                const auto adjustment =
+                    length(original_sum) < kMc2Epsilon || length(current_sum) < kMc2Epsilon
+                    ? std::array<float, 4> {0.0f, 0.0f, 0.0f, 1.0f}
+                    : quaternion_from_to(original_sum, current_sum, ratio);
+                rotation = quaternion_multiply(adjustment, rotation);
+            }
+            store_quaternion(
+                work_rotations,
+                vertex,
+                quaternion_slerp(base_rotation, rotation, blend)
+            );
+        }
+    }
+
+    context.bone_output_positions = context.state_positions;
+    context.bone_output_rotations.resize(count * 4);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        auto world_rotation = quaternion_multiply(
+            load_quaternion(work_rotations, vertex),
+            load_quaternion(context.bone_vertex_to_transform_rotations, vertex)
+        );
+        store_quaternion(context.bone_output_rotations, vertex, world_rotation);
+    }
+    ++context.bone_line_output_count;
+    return true;
 }
 
 bool rebuild_baseline_step_pose(Mc2ContextV0& context) {
@@ -1322,6 +1544,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         ) ||
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
         !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||
+        !dict_i64(result, "bone_line_output_count", context.bone_line_output_count) ||
         !dict_float(result, "animation_pose_ratio", context.animation_pose_ratio) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
@@ -1329,6 +1552,14 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
         !dict_bool(result, "bone_static_ready", context.bone_static_ready) ||
+        !dict_bool(
+            result,
+            "bone_output_ready",
+            context.bone_output_positions.size() ==
+                    static_cast<std::size_t>(context.vertex_count) * 3 &&
+                context.bone_output_rotations.size() ==
+                    static_cast<std::size_t>(context.vertex_count) * 4
+        ) ||
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
@@ -2341,6 +2572,8 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->center_frame_ready = false;
     context->center_result_ready = false;
     context->dynamic_ready = true;
+    context->bone_output_positions.clear();
+    context->bone_output_rotations.clear();
     ++context->dynamic_revision;
     Py_RETURN_NONE;
 }
@@ -2370,6 +2603,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->center_dynamic_ready = false;
     context->center_frame_ready = false;
     context->center_result_ready = false;
+    context->bone_output_positions.clear();
+    context->bone_output_rotations.clear();
     context->initialized = true;
     ++context->reset_count;
     Py_RETURN_NONE;
@@ -2426,6 +2661,8 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         context->center_old_world_position = context->center_now_world_position;
         context->center_old_world_rotation = context->center_now_world_rotation;
     }
+    context->bone_output_positions.clear();
+    context->bone_output_rotations.clear();
     ++context->step_count;
     Py_RETURN_NONE;
 }
@@ -2459,6 +2696,48 @@ PyObject* mc2_context_v0_read(PyObject*, PyObject* args) {
     std::memcpy(rotations.view.buf,
                 context->state_rotations.data(),
                 context->state_rotations.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_bone_output(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_bone_output expects 3 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!build_bone_line_output(*context)) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Bone Line output state is incomplete");
+        return nullptr;
+    }
+    Buffer positions, rotations;
+    if (!positions.get(
+            PyTuple_GET_ITEM(args, 1),
+            PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_bone_positions") ||
+        !rotations.get(
+            PyTuple_GET_ITEM(args, 2),
+            PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_bone_rotations")) {
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "out_bone_positions") ||
+        !expect_2d(positions, "out_bone_positions", count, 3) ||
+        !expect_float32(rotations, "out_bone_rotations") ||
+        !expect_2d(rotations, "out_bone_rotations", count, 4)) {
+        return nullptr;
+    }
+    std::memcpy(
+        positions.view.buf,
+        context->bone_output_positions.data(),
+        context->bone_output_positions.size() * sizeof(float)
+    );
+    std::memcpy(
+        rotations.view.buf,
+        context->bone_output_rotations.data(),
+        context->bone_output_rotations.size() * sizeof(float)
+    );
     Py_RETURN_NONE;
 }
 
