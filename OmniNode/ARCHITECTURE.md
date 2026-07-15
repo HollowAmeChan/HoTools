@@ -323,7 +323,7 @@ cache[cache_key] = result
 return result
 ```
 
-**MC2 Pin 权重的当前边界**：新 `physicsWorld.mc2` 在 Mesh static input signature 中包含最终 Fixed/Move mask、UV 与 topology token；Pin 权重变化会触发 slot static bundle 重建，而不是热修改 native particle state。其它 solver 若对权重采用不同失效策略，必须在自己的 capability/dirty key 中明确声明，不能复用旧 `physicsMC2` 的缓存假设。
+**MC2 Pin 权重契约**：新 `physicsWorld.mc2` 在 Mesh static input signature 中包含最终 Fixed/Move mask、UV 与 topology token；Pin 权重变化会触发 slot static bundle 重建，而不是热修改 native particle state。其它 solver 若对权重采用不同失效策略，必须在自己的 capability/dirty key 中明确声明，不能复用旧 `physicsMC2` 的缓存假设。
 
 ### 7.3 配置真值来源必须唯一
 
@@ -389,8 +389,8 @@ Python 侧职责：
 - setup adapter 负责 Blender authoring/frame snapshot、静态 builder 输入和结果目标映射；它不拥有 solver 时间或第二套粒子状态。
 - `physicsWorld/mc2/solver.py` 负责 slot/context 生命周期、frame policy、native 调用和 result publication，不直接写 Blender。
 - native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 只作待删除的历史参考。
-- MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag都属于slot-owned native context。当前已完成首substep primitive/grid/EE/PT建表、后续contact更新、固定4轮SolverContact/Sum，以及上一帧grid分片检测→final substep复测→下一帧primitive flag反馈。该闭环仅覆盖单cloth self FullMesh；sync/inter-cloth仍需独立ownership和多体调度契约。
-- 详细状态、数据层和实施门槛见 `doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`。
+- MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag都属于slot-owned native context；sync/inter-cloth需要独立ownership和多体调度，不能借外部collider表达。
+- MC2完成度见`doc/MC2_ACCEPTANCE_MAP.md`，当前工作顺序见`doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`doc/MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 C++ 侧职责：
 

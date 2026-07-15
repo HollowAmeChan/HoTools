@@ -1,323 +1,274 @@
-# MC2 源码语义与危险行为参考
+# MC2 源码语义、特化与差异记录
 
-更新日期：2026-07-15
-
-文档状态：**固定 MC2 源码的语义/踩坑参考，不维护项目进度或 HoTools ABI**。当前状态、契约和执行顺序统一见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`。
+更新日期：2026-07-16
 
 源码基线：`D:\Unity_Fork\MagicaCloth2`，MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 
+本文只保存会影响实现正确性的固定源码事实、危险顺序、Blender边界、故意差异和冲突处理。它不维护完成度、当前任务或测试流水；这些分别属于 `MC2_ACCEPTANCE_MAP.md`、`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 和 Git。
+
 ## 使用规则
 
-1. 只有同时确认 producer、consumer、representation 和 lifetime 的行为才可称为 source fact。
-2. HoTools 可以采用不同内存布局，但必须证明消费者语义等价；刻意缩小输入域时登记 intentional deviation。
-3. MC2 的 `HashSet`、`NativeParallelHashSet`、`NativeParallelMultiHashMap` 枚举顺序通常不是公开协议。静态 membership 可 canonicalize，但已证明影响 runtime 数值的 record order必须单独冻结。
-4. source manager direct index只是一次注册的句柄。fixture、task、result和 ABI 使用稳定 identity，不持久化 Unity direct index或 Blender pointer。
-5. 旧 HoTools solver输出属于 Tier C regression，只能帮助定位问题，不能证明 MC2 parity。
+1. 同时确认 producer、representation、consumer 和 lifetime 后，行为才可登记为 source fact。
+2. HoTools可以改变内存布局和调度形态，但必须保持consumer语义；刻意缩小输入域或canonicalize顺序时登记差异。
+3. source的hash/container枚举顺序通常不是协议。只对不影响数值identity的集合排序；已影响runtime的record order必须原样冻结。
+4. Unity manager direct index与native handle都是短生命周期句柄。fixture、task、result和ABI只使用stable identity。
+5. 旧HoTools/HoCloth solver输出是Tier C regression，不是MC2 parity证据。
+6. 文档与实现冲突时，验收表先降级，再扩充oracle；禁止用下游HoTools结果回填expected。
 
-## 1. Bone Connection 与代理拓扑
+## 故意差异登记
 
-权威入口：`RenderSetupData.BoneConnectionMode`、`VirtualMeshInputOutput.cs::ImportBoneType()`、`DataUtility.PackInt2/PackInt3()`。
+| ID | 主题 | 固定源码/Unity形态 | HoTools决策 | 保留原因与验收边界 |
+|---|---|---|---|---|
+| DEV-01 | Mesh输入 | selection crop、merge、reduction、optimization、render mapping | 用户Mesh就是单final proxy，vertex identity一一对应 | Blender产品边界；不宣称通用Selection/Mapping parity |
+| DEV-02 | Packed ABI | 12/20-bit range、`ushort` target、manager direct index | checked `int32` range/index、stable identity | 防静默截断与跨帧句柄泄漏；raw fixture仍验证source上限 |
+| DEV-03 | Hash等价项 | equal-cost/hash枚举顺序不稳定 | baseline equal-cost取最低final-proxy index；self grid同键保留输入顺序 | 只canonicalize非协议顺序；membership、run边界和数值record order不得改变 |
+| DEV-04 | Bone triangle | `ImportBoneType()`产生全零UV，triangle tangent/basis可退化 | Automatic/Sequential最终含triangle时prepare阶段拒绝 | 不合成UV、不静默删triangle；Line安全域单独验收 |
+| DEV-05 | Blender BasePose | Unity renderer/transform直接提供动画proxy | 双对象：只读BasePose + 源对象常驻GN offset | 隔离物理反馈；改拓扑modifier和loop UV seam不在支持域 |
+| DEV-06 | Bone写回 | manager transform index与Unity Transform | stable armature/data identity + bone name，生成parent-local `matrix_basis` plan | result不泄漏manager index；真实写入由公共writeback执行 |
+| DEV-07 | Job调度 | Unity Job/NativeSort/并行queue | C++单context和确定性queue canonicalization | 不复制job形态，只冻结共同数学producer/consumer顺序 |
+| DEV-08 | 力场 | MC2私有Wind对象/manager | wind是未来Physics World通用力场的一种kind | 当前`wind_*`只是兼容参数面，无公共快照时按零外力 |
+| DEV-09 | Signed transform | Unity Transform/TRS语义 | 只接受可分解为proper rotation + signed scale且无shear的域 | Armature自身负缩放可用；负缩放父级、零scale、shear和负PoseBone scale拒绝 |
+| DEV-10 | 旧接口 | HoTools曾暴露`substeps/iterations`与旧full-core ABI | 保留必要节点兼容面，但新V0只消费声明过的scheduler/ABI | 兼容字段不代表能力；旧实现不得成为fallback或oracle |
 
-### 顺序不是逐链拼接
+新增差异必须先回答：source行为是什么、为什么不照搬、支持域缩小到哪里、用什么证据防止差异继续扩散。
 
-`RenderSetupData` 同时维护 authoring root顺序与 stack traversal transform顺序。后登记 root先出栈，child也按后项先出栈；最后一个 render transform不进入粒子顶点。MC2 vertex index不能由 `(root index, chain local index)` 推导。
+## 1. Topology、Attribute 与 Baseline
 
-HoTools 若使用自己的确定性 index，oracle必须先按 transform identity remap，再比较拓扑与结果。
+### Bone Connection
 
-### ConnectionMode 事实
+权威入口：`RenderSetupData.BoneConnectionMode`、`VirtualMeshInputOutput.ImportBoneType()`、`DataUtility.PackInt2/PackInt3()`。
 
-| Mode | 规则 |
-|---|---|
-| Line | 只连接 transform parent-child canonical edge。BoneSpring 强制该模式。 |
-| AutomaticMesh | root 先执行带反转的 nearest-chain 排序，再决定 loop。 |
-| SequentialLoopMesh | 保留 authoring root顺序，只允许相邻 root同层连接，包含首尾。 |
-| SequentialNonLoopMesh | 与 SequentialLoop 相同，但不连接首尾。 |
+- authoring root顺序与stack traversal顺序不同；后登记root、后项child先出栈，最后一个render transform不进入particle vertex。不能用`(root index, chain local index)`推导MC2 vertex index。
+- Line只连接canonical parent-child edge，BoneSpring强制Line。
+- Automatic先做可能反转的nearest-chain排序：第一边接受；后续只有`minDist < lastDist * 1.5`才接受，并更新平均距离；过长时反转已形成root列表后从另一端继续。三个以上root用同阈值判断loop。
+- Sequential保留authoring root顺序，同层相邻root做多对多连接；Loop额外连接首尾，NonLoop不连接。
+- triangle来自同一vertex的link两两组合；零长度、夹角`>=120°`、横跨三个root、无main parent-child edge时拒绝。
+- triangle只按canonical `PackInt3`去重，不保存winding。只有第一次插入时登记两条`triangleEdgeSet`，重复发现不会补第三边，所以可能保留residual line。
+- import topology之后仍需selection/proxy conversion与constraint builders；import line/triangle不是N1 constraint array。
 
-Automatic 不是普通 greedy：第一条边直接接受；后续 `minDist < lastDist * 1.5` 才接受，并以 `(lastDist + minDist) * 0.5` 更新；过长时反转已形成 root列表、清空 `lastDist`，从另一端继续。三个以上 root还用同一阈值判断首尾 loop。
+### Attribute 与 Final Proxy
 
-### 分叉与三角形
+`VertexAttribute` bit：Fixed=`0x01`、Move=`0x02`、InvalidMotion=`0x08`、DisableCollision=`0x10`、ZeroDistance=`0x20`、Triangle=`0x80`。既非Fixed也非Move才是Invalid。
 
-- 同一 root、同一 level可以有多个 vertex；Sequential 会连接相邻 root同层的全部合法候选，不是 `zip`。
-- Automatic 除最近候选外，还加入距离不超过最近距离 1.5 倍的候选。
-- triangle 候选来自一个 vertex 的 link两两组合；零长度 link、夹角不小于 120 度、横跨三个 root、没有任一 main parent-child edge时拒绝。
-- triangle 用 canonical `PackInt3` 去重，不保留 winding；只有 canonical triangle 第一次插入成功时才登记该次中心到两条 link 的 `triangleEdgeSet`，后续重复发现不会补登记第三边。因此最终 `edgeSet - triangleEdgeSet` 可保留 residual line，不等于所有 triangle 三边都被删除。
-- import topology之后仍要经过 selection/proxy conversion与 constraint `CreateData()`；不能把 import lines/triangles直接当 native constraint arrays。
+- Blender triangle来自`loop_triangles`；edge是显式edges与triangle edges的canonical union。
+- Triangle bit由finalization OR进去，Pin输入不能伪造。
+- MC2统一相邻triangle方向并生成normal/tangent、vertex-to-triangle flip records；baseline消费final orientation。
+- 每个vertex最多登记7个相邻triangle；80度surface layer、反向winding与loose line都是需要保留的source边界。
+- line-only可用zero UV。含triangle时要求逐vertex唯一UV；共享vertex的loop UV不一致必须报错并要求split vertex。
 
-启用 Bone Automatic/Sequential 前至少需要：过长边反转、loop/non-loop、分叉多对多、120 度边界、零长度和 residual line Tier A case。
+### Mesh/Bone Baseline
 
-当前已有 8 个 `ImportBoneType()` Tier A fixture，覆盖 Line分叉、Sequential loop/non-loop、Automatic过长边反转、同层分叉、零长度/residual line，以及119°/121°对拍证明 triangle条件严格为 `< 120°`；`bone_connection.py` 已按 transform/particle index生成不可变 root/level/line/triangle membership，并由 `MC2TopologySpec` 持有。mode 3 已进入参数与节点范围。另有 3 个真实 `ImportFrom -> attributes -> ConvertProxyMesh` Bone Line fixture冻结 final proxy、transform baseline、bind pose、normal adjustment与`vertexToTransformRotations`。Bone Line与强制Line的BoneSpring已闭环Blender selection、static/native、public result和PoseBone writeback；mesh-connection退化策略仍未闭环，因此Automatic/Sequential只能声明verified host contract。
+权威入口：`CreateMeshBaseLine()`、`CreateTransformBaseLine()`、`CreateVertexRootAndDepth()`。
 
-### Connection-aware rotation顺序
+- Mesh无Fixed时parent全`-1`，child/baseline为空；从全部Fixed同时传播，Invalid不进入下一层。
+- Move选parent：Fixed候选用距离cost，Move候选用current-parent-grandparent夹角cost。frontier内较早成功的Move可立即成为后续vertex的parent。
+- local position用parent final normal/tangent rotation的逆变换，不是简单相减。baseline root quaternion为identity；不在baseline内的vertex保持zero quaternion。
+- local length `<1e-8` 时回写ZeroDistance，因此baseline build会改变最终proxy signature。
+- Bone baseline起点是“自身非Move且至少一个direct child为Move”的vertex，不一定是登记root；连续Fixed合法。
+- Bone depth按到首个非Move parent的累计几何长度，再除以整个proxy的全局最大累计长度；不能按单链层数归一化。
 
-权威入口：`SimulationCalcDisplayPosition()`、`SimulationPostProxyMeshUpdateLine()`、`SimulationPostProxyMeshUpdateTriangle()`、`SimulationPostProxyMeshUpdateTriangleSum()`、`SimulationPostProxyMeshUpdateWorldTransform()`、`SimulationPostProxyMeshUpdateLocalTransform()`。
+### Connection-aware Bone Rotation
 
-1. display阶段先把模拟前的当前 base position/rotation写入 temp；Line rotation消费该 current base，不是固定 initial pose。
-2. baseline按 raw root-to-child data顺序原地更新 rotation。child先由 parent rotation、local rotation和当前向量偏转求 world rotation，随后该 child作为自身 baseline项继续处理。
-3. parent朝所有 child 的原始/当前平均向量旋转；Fixed/root使用 `rootRotation`，Move使用 `rotationalInterpolation`。最后每个 vertex再从 current base rotation按 `blendWeight` slerp。
-4. `animationPoseRatio` 同时插值 child local position与rotation；ratio 1消费 current base parent-child pose，因此动画改变方向时不能继续使用initial local vector。
-5. Line结果不是最终结果：triangle normal/tangent随后覆盖有triangle记录的 vertex rotation。`vertexToTriangles` packed high bits中bit 0翻转normal、bit 1翻转tangent；累加归一化后用 `LookRotation(cross(normal,tangent), normal)`，再右乘per-vertex normal adjustment。之后才乘 `vertexToTransformRotation`写world transform，最后按parent world pose和parent scale求Move transform local pose。
+顺序固定为：current base写temp → Line baseline root-to-child原地更新 → Triangle normal/tangent覆盖 → TriangleSum → normal adjustment → `vertexToTransformRotation` → world到parent-local。
 
-当前 3 个 `bone_rotation_line_*` Tier A fixture与 `bone_rotation.py` 已冻结正缩放三粒子Line域：全量root/Move旋转、不同root/Move插值加blend、`animationPoseRatio=1` current-base消费，以及world→parent-local输出。另有3个 `bone_rotation_triangle_*` fixture冻结triangle覆盖、normal/tangent flip records、normal adjustment与随后world/local输出。Line Bone static、native上传和PoseBone writeback已对BoneCloth/BoneSpring闭环。Bone frame adapter现允许Armature自身非零负缩放：纯数学层按本地axis sign将world linear分解为proper rotation与signed scale，位置仍消费完整world transform；Center/negative-scale ABI负责baseline反射语义，public candidate再以proper component inverse转换rotation，PoseBone scale保持1。Blender5.1覆盖X轴正→负→正连续帧。负缩放父级、零scale与最终world shear仍明确拒绝；zero-distance/Invalid组合与mesh-connection三角静态仍未闭环。
+- Line child消费parent rotation、local rotation与当前向量偏转；parent朝全部child的原始/当前平均向量旋转。
+- Fixed/root使用`rootRotation`，Move使用`rotationalInterpolation`；最后从current base rotation按`blendWeight` slerp。
+- `animationPoseRatio=1`消费current animated parent-child pose，不是initial local vector。
+- triangle flip record bit0翻normal、bit1翻tangent；聚合后使用`LookRotation(cross(normal,tangent), normal)`再乘normal adjustment。
 
-## 2. Selection、Final Proxy 与 Baseline
+## 2. Substep 数值顺序与 Constraint 陷阱
 
-权威入口：`SelectionData.cs`、`VertexAttribute.cs`、`VirtualMeshProxy.ApplySelectionAttribute()`、`ConvertProxyMesh()`、`CreateMeshBaseLine()`、`CreateTransformBaseLine()`、`CreateVertexRootAndDepth()`。
+生产数学顺序固定为：
 
-### Attribute 与阶段边界
+```text
+Center/frame transform
+  -> prediction + animated baseline
+  -> Tether
+  -> Distance
+  -> Angle
+  -> TriangleBending/Sum
+  -> Point/Edge collider
+  -> Distance (second pass)
+  -> Motion
+  -> Self Collision
+  -> post
+```
 
-`VertexAttribute` 是 byte bit field：Fixed=`0x01`、Move=`0x02`、InvalidMotion=`0x08`、DisableCollision=`0x10`、ZeroDistance=`0x20`、Triangle=`0x80`。既无 Fixed也无 Move才是 Invalid；“不移动”不等于只检查 Fixed。
+### Tether
 
-SelectionData只含 sample positions、attributes、max connection distance和 user-edit标记。parent、root、depth、baseline和 constraint records都在 proxy conversion之后生成，不能合并进 selection spec。
+- 位于prediction与首次Distance之间，消费Move、root/depth、step-basic vertex/root distance、next和velocity-reference。
+- compression/stretch来自N2槽24/25；固定width=0.3、stiffness=1、velocity attenuation=0.7。
+- 不得因没有独立static array而改变调度位置或把它并入Distance。
 
-MC2 通用路径会做 selection crop、merge/reduction/optimization和空间最近邻映射。HoTools 刻意限定为“用户 Mesh 已是 final proxy”，因此 Pin/attribute按 input vertex index直接映射。这个输入域是产品边界，不是通用 SelectionData parity。
+### Distance
 
-### Blender Final Proxy
+权威入口：`DistanceConstraint.CreateData/Register/SolverConstraint`。
 
-- triangle来自 reference Mesh `loop_triangles`；n-gon triangulation不增加 vertex。
-- edge集合是显式 Mesh edges与全部 triangle edges的 canonical union，不能只读 `mesh.edges`。
-- triangle membership在 finalization时 OR `Triangle` bit；Pin输入不能伪造该 bit。
-- MC2 会统一相邻 triangle方向、生成 triangle normal/tangent、vertex-to-triangle flip records，并覆盖 triangle vertex的 final normal/tangent；baseline消费的是 final orientation，不是原始 Blender vertex normal。
-- 每个 vertex最多登记 7 个相邻 triangle；超过上限、80 度 surface layer边界、反向 winding和 loose line都需要 oracle。
-- line-only Mesh可使用 zero UV。含 triangle的 Mesh要求逐顶点唯一 UV；共享一个 Blender vertex的多个 loop UV不一致时必须报错并要求用户 split vertex，禁止取首 loop、平均或自动拆点。
+- source是per-vertex ordered ranges，不是无向pair；每段先vertical后horizontal。horizontal rest用负号编码，`abs(rest)<1e-8`统一写`+0.0`并丢失kind。
+- 普通adjacency排除双方非Move或任一Invalid；shear只排除opposite双方非Move，不重复普通edge的Invalid过滤。
+- shear遍历共享edge的全部triangle pair；要求`abs(normalDot)>=0.9396926`且对角/共享边长度比误差`<=0.3`。
+- zero-distance分支覆盖当前`addPos`而不是累加，随后仍增加分母，所以`nonzero -> zero`与`zero -> nonzero`不同。禁止重排target/kind。
+- packed source上限：每vertex count 4095、start 1048575、target 65535；HoTools在ABI边界显式拒绝溢出。
+- `CONFLICT-01`已核清：旧worksheet曾称persistent velocity/attenuation未闭合；当前V0两次Distance均把`correction * float_values[26]`写入velocity-reference，post直接消费，Tier A `particle_step_constraints_post_001`跨两个子步验证下一步消费已提交velocity。旧结论作废，不得再次作为缺口引用。
 
-### Mesh Baseline
+### Angle
 
-- 无 Fixed时 parent全为 -1、child/baseline为空。
-- 从全部 Fixed同时传播；Invalid不进入下一层。
-- Move选择 parent时，Fixed候选用距离 cost，Move候选用当前-parent-grandparent夹角 cost。
-- frontier不是两阶段统一提交：较早成功的 Move可以立即成为同 frontier后续 vertex的 parent。
-- equal cost的 source结果受 hash枚举影响；HoTools固定最低 final-proxy index作为确定性边界，必须只在 equal-cost case登记偏差。
-- local position使用 parent final normal/tangent构造的 rotation逆变换，不是简单相减。
-- 参与 baseline且无 parent的 root quaternion为 identity；不在 baseline中的 vertex保持 zero quaternion。
-- local length小于 `1e-8` 时 OR `ZeroDistance` 回 final attribute，因此 baseline build会改变最终 proxy signature。
+- 位于首次Distance与Bending之间，消费baseline parent/range/data、depth、step-basic pose、next与velocity-reference。
+- Restoration/Limit由N2 int槽4/5控制，curve槽3/4；velocity attenuation、gravity falloff、limit stiffness来自float槽28..30。
+- Restoration curve在`ClothParameters`转换时已经乘0.2，native不得二次缩放；仍需乘`simulationPower.w=(90/frequency)^1.8`。
 
-当前生产路径在 slot rebuild 的 staged context 中上传 N0 proxy 的 7 组数组与 Mesh baseline 的 10 组数组。native 重新检查 dtype、shape、finite、index 与 dense range 后才原子替换对应数组；任一上传失败不得安装新 context。Distance/Bending N1数组已由同一 staged context持有并在no-collision step中按源码顺序消费。
+### Triangle Bending
 
-### Bone Baseline 与 Depth
+- ordered quad角色为`(opposite0, opposite1, edge.x, edge.y)`，禁止排序四点后写ABI。
+- angle严格`<120°`生成dihedral；`90°..179°`还会紧接生成volume，同一triangle pair可有双record。
+- volume marker=100，world volume乘1000；runtime再消费`scaleRatio * negativeScaleSign`。
+- volume只按sorted four-vertex key去重并保留遍历中的首个未排序role；bending不参与该去重。
+- fixed-point correction按participant count平均，只写Move；每次Sum后全部count/vector scratch无条件清零。
 
-Bone baseline起点不总是登记 root。源码会沿不移动子树寻找“自身不移动且至少一个直接 child为 Move”的 vertex，再只遍历 Move child。连续多个 Fixed是合法输入。
+### Motion 与 Post
 
-每个 Move沿 parent累计几何长度，到第一个非 Move parent为 root；所有 chain共享整个 proxy的最大累计长度做 depth归一化。按单链离散层数分别归一化不等价，零长度边只贡献 0。
+- Motion位于第二次Distance后、post前；Max Distance/Backstop始终相对插值后的animated base pose，不得消费已被baseline改写的step-basic。
+- depth先平方再采样curve槽5/6；只处理Move且无InvalidMotion。显式启用时MaxDistance曲线值0表示锁到base，不是关闭。
+- post提交old position、velocity、dynamic/static friction、collision normal与real velocity；参数热更新不得清这些history。
 
-`MC2ProxyFinalizerStaticSpec` 统一持有 proxy派生的邻接、逐顶点triangle records与bind pose；Mesh和Bone不得各自复制这些数组契约。`MC2BoneStaticSpec` 只组合final proxy、该通用finalizer、transform baseline、`normalAdjustmentRotations`和`vertexToTransformRotations`，并提供单一只读packer。3个Bone Line Tier A fixture覆盖旋转链、连续Fixed前缀与Transform-centered normal adjustment。生产Line限定域现从Blender rest bone snapshot构建parentless Fixed/其余Move selection，staged native context原子上传并持有上述数组、Distance与Center。
+## 3. Center、Scheduler 与 Array Lifetime
 
-正缩放Bone native readback在最终位置step之后，以`state positions/rotations`为工作姿态、最后substep的step-basic pose为current base，先按baseline range与IncludeLine flag执行已冻结的Line rotation；若proxy含triangle，再由当前位置/UV计算triangle normal/tangent，按逐vertex `(flip, triangle)` records聚合并以`LookRotation(binormal, normal) * normalAdjustmentRotation`覆盖工作姿态，最后乘`vertexToTransformRotations`得到world transform rotation。三份Tier A fixture已在raw native覆盖override/flip/normal adjustment。Blender active World自动采样PoseBone frame；连续帧生成只读private candidate，same-frame不重复read或增加revision；Line/BoneSpring candidate已转换为public `bone_transform_batch` parent-local plan并由统一writeback写PoseBone。
-
-公共输出还包含每次active world调用唯一的`mc2_stats_v0`聚合快照。它从各slot的native `inspect()`结果中仅拣选固定schema标量，汇总setup、context、particle、reset、step与writeback result计数；逐slot记录按稳定slot id排序，不复制native handle、live Blender对象或未声明字段。stats与Mesh/Bone公共结果同事务替换，发布异常恢复旧通道快照；它不参与数值oracle，也不把“只有stats”解释为可执行写回。
-
-固定源码的 `ImportBoneType()` 将Bone UV初始化为零；mesh-connection存在triangle时，`TriangleTangent()`因此返回零向量，随后triangle normal/tangent basis可退化。产品策略已冻结：Automatic/Sequential最终membership无triangle时复用Line static/native；含triangle时准备阶段明确拒绝。不得用oracle内合成UV伪装成真实Bone import parity，也不得静默删除triangle。
-
-## 3. Distance Constraint
-
-权威入口：`DistanceConstraint.cs::CreateData()`、`Register()`、`SolverConstraint()`。
-
-### Static 表示
-
-源码输出每 vertex一段有向邻接：packed `uint[N] indexArray`（12-bit count + 20-bit start）、`ushort[D] target`、`float[D] rest`。HoTools ABI展开为 checked `int32[N,2] ranges + int32[D] targets + float32[D] rest_signed`。
-
-必须显式拒绝 source会静默截断的输入：单 vertex记录数超过 4095、start超过 1048575、target超过 65535。
-
-### Build 语义
-
-1. 普通 adjacency两端都不 Move时排除；任一端 Invalid时排除。
-2. parent relation为 vertical，其余为 horizontal。每个 source range先拼 vertical bucket，再拼 horizontal bucket。
-3. shear遍历一条 edge相邻 triangles的全部 pair，不只第一对；共享边退化时跳过。
-4. shear要求 `abs(normalDot) >= 0.9396926` 且对角/共享边长度比误差 `<= 0.3`，用全局 undirected connect set去重。
-5. shear分支只排除 opposite两端都不 Move，没有重复普通 edge的 Invalid过滤。这是危险但真实的 source边界，不能擅自修正。
-6. horizontal rest用负号编码；`abs(rest) < 1e-8` 时无论原类型都写 `+0.0`，原 kind丢失。
-
-### 顺序是数值语义
-
-zero-distance runtime分支把 `addPos` 直接覆盖为 midpoint correction，而不是累加；随后仍增加平均分母。后续 nonzero记录继续在覆盖值上累加。因此同一 range内 `nonzero -> zero` 与 `zero -> nonzero` 会产生不同结果。
-
-结论：
-
-- 不得把 per-vertex records改成无向 pair solver。
-- 不得按 target/kind重排。
-- canonical membership只能诊断 static集合，raw order与 runtime output共同验收顺序。
-- zero-distance不使用 stiffness、mass、scale或 animation pose ratio，也不能新增会改变 kernel分支的 synthetic kind。
-
-当前 7 个 build fixture和 2 个 ordered runtime fixture已覆盖这些边界；`distance_static.py` 是生产 host builder。保序 `ranges/targets/rest_signed` 已上传 native context并再次校验 packed source limits、index、finite与 `+0.0` 编码。连续帧按 raw range order执行一次 projection，zero-rest覆盖顺序由 Tier A case验证；persistent velocity与 attenuation仍未接入，当前不得宣称完整 frame parity。
-
-## 4. Triangle Bending
-
-权威入口：`TriangleBendingConstraint.cs::CreateData()`、`SolverConstraint()`、`SumConstraint()`。
-
-### Static 表示与 role
-
-主数组只有：ordered quad `(opposite0, opposite1, edge.x, edge.y)`、rest angle/volume、marker/sign。quad角色直接进入 runtime，禁止把四点排序后写 ABI。
-
-- 四点都不 Move或任一点 Invalid时排除。
-- dihedral angle严格 `< 120°` 时生成 bending record。
-- `90° <= angle <= 179°` 时紧接着尝试 volume record；同一 triangle pair可连续生成两条记录。
-- dihedral sign为 -1/+1，方向为 0时写 +1；volume marker固定 100。
-- volume用 initial local-to-world后的 world positions计算并乘 1000；runtime再消费 `scaleRatio * negativeScaleSign`。
-- volume只按 sorted four-vertex key全局去重，保留 traversal中第一个未排序 role；bending不参与该去重。
-- `writeBufferCount/writeData/writeIndex` 在固定源码 runtime未被消费，不进入新 ABI。
-
-### Runtime Scratch
-
-correction通过固定点原子累加到 per-particle count/vector scratch；`SumConstraint()` 只给 Move particle按 contribution count平均写回，然后无条件清零所有 scratch。scratch不是 N1 static，也不能跨帧持久化。
-
-当前 13 个 static fixture与 3 个 runtime fixture已冻结阈值、double record、volume first-wins、Fixed/Move writeback、scratch average/clear和 negative scale消费。`bending_static.py` 已按 raw order实现 host builder、完整签名和只读 packer，并接入 Mesh slot static bundle；native context按 ordered role执行 directional dihedral/volume，以`1e6` fixed-point逐记录累加，Move粒子按count平均写回，随后无条件丢弃/清空整组scratch。合法空数组与未上传状态保持分离。
-
-## 5. Center、Particle Reset 与 Array Lifetime
-
-权威入口：`InertiaConstraint.CreateData()`、`TeamManager`、`SimulationPreTeamUpdate()`、`SimulationStepUpdateParticles()`、`SimulationStepPostTeam()`。
-
-### Center 不是一个扁平参数块
-
-`centerFixedList`只保留“至少一个邻点为 Move”或孤立的非 Move vertex；连接全部为非 Move的 fixed不会进入 center。local center是保留项平均值。initial local gravity还依赖 final normal/tangent与 bind rotations。
-
-CenterData至少分为：
+Center数据必须分域：
 
 | 域 | 内容 |
 |---|---|
-| static registration | center identity、fixed list、local center、initial local gravity |
-| frame input | component/anchor/sync pose、scale、通用力场/collider snapshots |
-| persistent | old component/frame/anchor pose、smoothing与 teleport history |
-| frame derived | frame center、movement、negative-scale matrix |
-| substep derived | step/inertia vector与 rotation、angular velocity、scale ratio、gravity falloff |
+| static | center identity、fixed list、local center、initial local gravity |
+| frame input | component/anchor pose、scale、collider/force-field snapshot |
+| persistent | old component/frame/anchor pose、smoothing与teleport history |
+| frame derived | current center、movement、negative-scale matrix |
+| substep derived | inertia vector/rotation、angular velocity、scale ratio、gravity falloff |
 
-anchor identity不是 `ClothParameters` scalar。只有 `anchor_inertia` 而没有 anchor source/pose时，不能声称支持 anchor。
+- `centerFixedList`只保留至少一个邻点为Move或孤立的非Move vertex；local center是保留项平均值。
+- anchor/force field是外部identity+snapshot，不是只有一个scalar即可成立的参数能力。
+- register/allocation只分配range。reset必须使用当前帧world pose写position/rotation history，并清velocity/friction/collision；build-time rest不能替代reset。
+- 每个substep重建next、velocity-reference、base pose与step-basic；post才提交persistent history。
 
-wind identity同样不属于`ClothParameters` scalar。架构上wind将作为Physics World未来通用力场的一种类型：公共层拥有authoring identity、scope与逐帧数值快照，MC2只消费公共快照。当前`wind_*`字段只是未来adapter兼容面；没有公共力场快照时必须按零外力执行，禁止MC2私有扫描Blender场景或从scalar凭空构造wind。
+关键冲突顺序：
 
-### Allocation 不等于 Reset
+1. component scale sign变化先构建`nowCenterTRS * inverse(oldCenterTRS)`，变换Center persistent与particle position/rotation/velocity history。
+2. 再处理anchor/world inertia、movement/rotation limit、time-scale与skip造成的frame shift；shift必须绕正确的old component/transition pivot。
+3. configured Reset优先于negative matrix消费：reset同帧跳过matrix并把全部history归当前animated pose。
+4. configured Keep先消费negative matrix，再围绕transition后的pivot应用100% frame shift；不能与Reset共用顺序。
+5. pause/zero time scale可更新dynamic、frame shift、candidate和Center history，但不伪造native substep。
+6. scheduler先计算planned/update/skip，再按每个step interpolation刷新Fixed/animated pose；一帧只发布最终candidate。
 
-`RegisterProxyMesh()`只分配 manager ranges。真正 reset使用**当前帧 proxy world pose**：position类数组写当前 world position，rotation类写当前 world rotation，velocity/friction/collision history清零。build-time local rest不能替代 current-frame reset。
+数值特化：
 
-固定源码 reset具体写入 `next/old/base/animationOld/velocityReference/display position` 与 `old/base/animationOld rotation`，并清零 simulation/real velocity、dynamic/static friction和 collision normal。HoTools host reset还会预置首个 substep需要的 step-basic pose；slot创建时保持 `initialized=False/reset_count=0`。
+- Move inertia深度为`depthInertia * (1 - depth^2)`；同一frame transform必须同时作用于particle position、rotation、velocity-reference和velocity。
+- movement smoothing权重为`(1 - smoothing)^3 * 0.99 + 0.01`，persistent smoothing velocity只有native step成功后才能提交。
+- teleport检测位于anchor adjustment之后、movement smoothing之前。Keep跳过smoothing并把平移/旋转shift ratio强制为1；Reset清零shift和smoothing velocity。
+- time-scale cancellation在world-inertia shift之后继续消去剩余量；skip count产生的other-shift也属于frame shift，不能折进substep dt。
+- fixed list可生成不同于component pose的current Center。result frame pose必须保留Fixed-derived Center，不能在输出阶段退回component pivot。
 
-固定 `particle_step_gravity_damping_001` Tier A case 直接调用 `SimulationStepUpdateParticles()`，隔离并冻结：animated pose先写 base/step-basic；Move velocity依次应用 velocityWeight、`1-damping*simulationPower.z`、gravity与scale后预测 next；Fixed直接写 base pose；velocity-reference按移动前位置记录；两组 vector、一组 count与一组 float scratch逐粒子清零。该 fixture不包含 inertia、wind、collision或外力，不能外推证明这些能力。
+状态数组必须区分：persistent（old/display/velocity/friction/contact）、working（next/velocity-reference/base）、scratch（step-basic/count/vector）与frame surface（current proxy world pose）。static替换/reset清contact与intersect状态；value参数热更新保留history。
 
-固定 `particle_step_inertia_001` Tier A case 在 gravity/damping/wind/collision/外力均为零的域内隔离 Center 到 Move particle 的消费顺序：`inertiaDepth = depthInertia * (1-depth^2)`；inertia vector/rotation 向完整 step vector/rotation 插值；旧粒子位置绕 `oldWorldPosition` 旋转后平移；同一 offset 加到 velocity-reference；velocity先按 inertia rotation旋转，再乘 velocityWeight并预测 next；animated base pose同时写入 step-basic。该 fixture负责单粒子 prediction 数学；`particle_step_constraints_post_001` 进一步执行两个连续子步并冻结 Center→prediction→Distance→Bending/Sum→第二次Distance→post 的完整no-collision顺序，第二步直接消费第一步提交的persistent velocity。
+## 4. Collider 与 Self Collision
 
-固定 `center_frame_shift_world_inertia_001` Tier A case 直调 `SimulationCalcCenterAndInertiaAndWind()`，在单位正缩放、无 fixed list、无 anchor、无 smoothing/速度限制/teleport/sync/culling/skip/stabilization 的域内隔离 `worldInertia`。component从原点移动到 `(10,0,0)`并绕Y旋转90度，`worldInertia=0.25`产生75%的 frame shift：`frameComponentShiftVector=(7.5,0,0)`、rotation为67.5度；oldFrame/now pose按旧 component pivot同时平移旋转。`center_frame_shift_speed_limit_001` 在同一输入上追加 `10 m/s` movement limit与 `90 deg/s` rotation limit，冻结 shift ratio从0.75提升到0.9、平移为9、旋转为81度且剩余 moving speed为10。`center_state.py` 的公开 Host 求值器直接消费两份 fixture并保留独立 float32 公式交叉检查；persistent 将 shift 后 history送入 Center step，native预步同步变换粒子 position/rotation/velocity-reference/velocity，Blender slot验收同时覆盖 movement/rotation limit。该闭环不能外推到 fixed list、anchor组合、smoothing、time-scale/skip或negative scale。
+### 外部 Collider
 
-固定 `center_frame_shift_anchor_001` Tier A case 关闭 world inertia与其它外部效应，隔离 `anchorInertia=0.25`。old component位于 `(1,0,0)`，anchor从原点移动到 `(0,0,1)`并绕Y旋转90度，anchor记录的 component local point为 `(1,0,0)`；75% anchor cancellation产生约 `(-0.75,0,0)` shift与67.5度旋转，剩余 component moving speed约2.5。`center_frame_shift_anchor_world_limit_001` 在同一几何输入上追加 `worldInertia=0.25`、`0.5 m/s` movement limit与 `90 deg/s` rotation limit，冻结anchor预变换后继续应用world/limit的顺序：最终shift约 `(-0.95,0,0)`、旋转约84.3度、剩余速度0.5。两份 fixture均由独立 float32 公式与公开 Host求值器交叉验收。Host persistent保存old/current anchor pose与anchor-component-local position；anchor identity首次绑定或改变时只提交历史，稳定同一 identity的下一帧才应用shift，并复用现有native粒子frame-shift ABI。Blender第4帧建立anchor history，第5帧验证anchor/world/双限速组合。
+- 帧输入唯一来自Physics World current/previous snapshot；按group mask过滤并排除自身owner。
+- Point radius为`radiusCurve(depth) * scaleRatio`。普通setup只处理Move且非DisableCollision；BoneSpring允许有效Fixed/Move并消费animated base与collision-limit curve。
+- Edge复用proxy edge并按source `Move=0x02`判断；不得沿用旧full-core `0x04`。
+- BoneSpring只接受Sphere；其它primitive不得借普通Point/Edge能力进入soft-sphere路径。
+- BoneSpring Sphere依次执行max-length clamp、按`limitedLength/radius`插值到0.85的反弹衰减、friction距离倍率3；平均push correction还要同步加入velocity-reference。
+- collider阶段产生的friction/normal必须被第二次Distance与post继续消费。
 
-固定 `center_frame_shift_smoothing_001` Tier A case 关闭world inertia与其它外部效应，隔离 `movementInertiaSmoothing=0.5`。初始 smoothing velocity为 `(2,0,0)`，component在0.1秒内从0移动到10；源码比重 `(1-0.5)^3*0.99+0.01=0.13375` 将persistent velocity更新为约15.1075，并产生8.48925的位置cancellation。Host input/result显式携带该速度，只有native step成功后才提交persistent；Blender第6帧从零速度验证8.025 m/s更新、0.86625 shift与0.13375 Center step。当前生产域限定为无fixed list、单位正缩放、无teleport、正time scale `(0,1]`、单substep且stabilization完成；不能外推到这些条件之外。
+### 单 Cloth Self Collision
 
-固定 `center_frame_shift_keep_teleport_001` Tier A case 使用configured Keep模式、5单位平移阈值与180度旋转阈值，component在0.1秒内从原点移动到 `(10,0,0)`并绕Y旋转90度。源码在anchor adjustment之后、movement smoothing之前检测teleport；平移越阈触发Keep后跳过smoothing，并将world translation/rotation shift ratio都强制为1，得到10单位/Y90度shift、零moving direction/speed，同时保留初始smoothing velocity `(2,0,0)`。Host求值器显式返回Keep/Reset flags；独立Blender Keep World验证三native子步只应用一次frame shift并输出变换后的animated pose。
+- primitive注册顺序Point→Edge→Triangle；纯Line只有Edge。kind在flag 24..25，Fix0/1/2为`0x04000000/0x08000000/0x10000000`，AllFix=`0x20000000`，Ignore=`0x40000000`。
+- 首个实际substep更新primitive inverse mass、thickness、swept AABB与grid。grid size是未扩张Edge最大长度的3倍；最大长度接近0时grid/contact/intersect保持空。
+- grid按X→Y→Z与Unity.Mathematics 1.2.6 signed hash组织run；hash碰撞的不同grid保留独立run。
+- broadphase只建唯一Edge-Edge和Point-Triangle候选；执行AABB、Ignore、双方AllFix和共享particle过滤。并行queue顺序不是identity，HoTools按candidate key canonicalize。
+- EE在old pose求`s/t/normal`；old最近距离`<1e-9`时拒绝。PT在old pose求`uvw`，首substep要求point方向与old triangle normal的绝对dot不小于`cos(60°)`并冻结正反面sign。
+- EE预测距离使用`<= thickness + thickness*SCR`，PT使用严格`<`；thickness、插值参数、normal与sign按IEEE binary16量化。
+- 首substep只把enable项加入contact list；同frame后续substep不重建candidate，只更新现有contact，disable项仍留在list。
+- 每substep固定4轮SolverContact→SumContact。correction乘`1e6`后按C# int cast向零截断并int32累加；按调用次数平均后乘`1e-6`还原，每轮清scratch。
+- 新frame首substep前读取上一帧grid，只检测`index % 2 == frame % 2`的Edge→Triangle；整帧final substep后才复测当前位置并把命中写到Edge particle flag，下一帧映射到primitive低3位。
+- static替换/reset必须清contact key、intersect record、particle flag与primitive低3位。
 
-固定 `center_frame_shift_reset_teleport_001` 使用相同运动、阈值与smoothing输入，只将mode改为Reset。源码触发后令team Reset，跳过smoothing，将frame shift置零，把old frame/now/current Center history都替换为当前 `(10,0,0)` / Y90度并清零smoothing velocity；随后particle pre-step把全部粒子history/velocity/contact归到当前动画姿态，再继续本帧scheduler子步。生产solver用staged Center state复用native reset，只有native成功后才提交Host particle/Center reset count与 `configured_teleport` 原因；独立Blender Reset World验证连续frame 51触发第二次reset后仍执行三个native/Center step并发布当前animated pose。该基础生产验收限于单位正缩放、正time scale且update count大于0；Reset与active sign transition的扩展边界见下一fixture。
+self collision是primitive、grid、broadphase、EE/PT narrowphase、half contact、4轮solve/sum、跨帧intersect和cache生命周期的整体。sync/inter-cloth还需要多体ownership、质量汇总和调度，不能把另一张mesh转成sphere列表替代。
 
-固定 `center_frame_shift_reset_negative_scale_x_001` 在同一帧先触发X轴scale-sign transition，再用30度旋转阈值触发configured Reset。源码保留negative-scale teleport标志和矩阵producer，但Reset令 `inertiaShift=false`，particle pre-step优先走完整reset分支，因此negative matrix不消费，所有position/rotation history、display、velocity-reference、velocity、friction与collision normal都归到当前animated pose/零值。Host oracle分别对拍negative transition与Reset Center结果；生产solver仅为mode 1 + active sign transition放宽单位缩放门禁，staged reset跳过native negative-matrix ABI。独立Blender frame 61验证negative count为0、第二次reset与三子步均完成。Keep的不同消费顺序由下一fixture单独冻结。
+## 5. Output 与 Blender 边界
 
-固定 `center_frame_shift_keep_negative_scale_x_001` 使用同一sign transition并改为configured Keep。源码先用Center negative matrix变换particle history，再以负缩放变换后的component position为pivot应用45度Keep frame shift；negative reset已先把Center old/now history归到当前65度frame，因此shift后old/now rotation为110度，frame rotation仍为65度。Host persistent在active transition时显式以current Center构造frame-shift history；solver按negative matrix→frame shift顺序调用native，并使用transition后的pivot。Blender frame 71使用 `world_inertia=0.25`、30Hz与0.1秒正时间执行三子步，验证negative/shift计数各1、scheduler update/skip=`3/0`、Center step三次、单candidate发布及运行帧history提交到当前45度frame。该闭环允许正缩放父级下、最终world linear无shear的单轴sign transition。
-
-固定 `center_frame_shift_time_scale_001` Tier A case 使用 `simulationDeltaTime=0.05`、`frameDeltaTime=0.1`、`nowTimeScale=0.5` 与 `worldInertia=0.75`，冻结time-scale在world shift之后继续消去剩余量的顺序：shift ratio由0.25变为0.625，平移6.25、旋转56.25度，剩余moving speed按time scale归一为75。生产solver使用World与MC2 settings time scale乘积，native step消费缩放后的simulation dt，Center frame shift消费World保存的raw frame dt；Blender第7帧验证0.625 shift、0.375 Center step与45的归一化速度。
-
-固定 `center_frame_shift_zero_time_scale_001` Tier A case 使用 `simulationDeltaTime=0`、`frameDeltaTime=0.1`、`nowTimeScale=0`，冻结暂停帧100%平移/旋转cancellation、零moving direction/speed。生产solver在该帧只update native dynamic、apply frame shift、read candidate并提交paused Center history，不调用native step或生成Center step result；Blender第8帧验证dynamic/candidate revision前进而native/Center step count不变。
-
-固定 `center_frame_shift_skip_count_001` Tier A case 反射执行 `AlwaysTeamUpdatePostJob.Execute()` 与 `SimulationStepTeamUpdate()`，再将同一 `TeamData` 送入 `SimulationCalcCenterAndInertiaAndWind()`：`frameDeltaTime=0.1`、`simulationDeltaTime=0.02`、每帧上限3产生planned/update/skip=`5/3/2`、裁剪后time=`0.0600000024`，三个step interpolation为`0.3333333/0.6666666/0.99999994`。skip consumer得到0.4 other-shift ratio，在 `worldInertia=1` 时平移4、旋转36度、剩余moving speed 60。`scheduler.py` 已以float32状态机对拍六个持久时间字段、计数和step ratios，并由slot持有。native V0验证一次完整Center frame上传后用三个ratio逐步刷新interpolation，Fixed step-basic位置约为3/6/9且每步Center位移约为3；Blender生产solver以50Hz和每帧上限3复现5/3/2、三次step、两次interpolation update及4/36度shift，并只发布最终candidate。
-
-固定 `center_frame_shift_negative_scale_x_001` Tier A case 让component scale从正值切换到 `(-2,1.5,0.75)`，同时直调 `SimulationCalcCenterAndInertiaAndWind()` 与 `SimulationPreTeamUpdate()`，冻结 `negativeScaleDirection/change/sign/triangleSign/quaternionValue`、`nowCenterTRS * inverse(oldCenterTRS)` matrix，以及Center old-component/anchor/smoothing和粒子old/animation-old/display/velocity/real-velocity的矩阵变换。Host按float32 TRS顺序生成component与Center matrix；native V0对现有position/rotation/velocity-reference/velocity history执行同序变换；solver固定在inertia shift前调用。Blender显式第9帧和自动BasePose第12帧验证X轴sign transition、N3 scale ratio/sign、native计数与Center history提交；configured Reset与Keep同帧组合均已有正时间多子步验收，其中Keep frame 71同时设置非默认world inertia。Blender component-transform契约进一步验证正缩放非均匀父级下的X轴负缩放可重建为精确shear-free TRS；父级继承负缩放因轴符号歧义显式拒绝，非均匀父缩放叠加子旋转产生的shear同样拒绝。仍不声称覆盖完整MC2 real/display双history集合。
-
-固定 `center_frame_shift_fixed_center_001` Tier A case 保持component从0移动到10并旋转90度，同时用单个Fixed粒子将current Center frame设为 `(12,2,0)` / 90度。world inertia仍按component产生7.5与67.5度shift，但result frame pose必须保留Fixed-derived Center而非component。Host input现显式区分两套姿态；Blender独立Fixed World使用单Pin顶点验证Center fixed static/native count、component shift和经bind-pose修正的Fixed Center rotation。
-
-native V0 已在该限定域内持久化 velocity/friction/collision state：reset清零，world/anchor frame-shift预步均绕旧component pivot同步变换state position/rotation、velocity-reference与velocity；每个substep按源码执行Tether→Distance→Angle→Bending/Sum→Point/Edge collider→第二次Distance→Motion→Self Collision→post。Distance使用depth与friction inverse mass及animation-pose rest length，post消费collision normal、dynamic/static friction、speed limit和velocityWeight。BoneSpring setup-kind令Point阶段同时接受Fixed，base position取本substep animated base，limit-distance采样curve槽7乘scale ratio；Sphere投影依次执行max-length clamp、按`limitedLength/radius`插值到0.85的反弹衰减、摩擦距离乘3，并将平均push correction同步加入velocity-reference。Team options保留粒子/Center history。通用力场输入与self collision sync/inter-cloth仍未实现；wind等待公共力场域，不得用外部collider能力或MC2私有对象伪装。
-
-Tether源码顺序位于prediction与首次Distance之间，直接消费现有Move attribute、per-vertex root index、step-basic vertex/root距离、next position与velocity-reference；compression/stretch分别来自N2 float槽24/25，固定width=0.3、compression/stretch stiffness=1、velocity attenuation=0.7。V0已复用原生`project_tether_mc2` kernel；raw C context保留显式gate用于隔离既有Distance→Bending→Distance oracle，而Python slot owner按固定MC2调度默认启用。两粒子Tier B case验证1.35伸长回到1.03和源码顺序，Blender5.1集成覆盖新建、重建与真实子步solve count。独立Tier A Tether substep fixture仍需生成，不能改写既有不同scope的fixture。
-
-Angle源码顺序位于首次Distance与Bending之间，直接消费baseline parent/range/data、depth、step-basic position/rotation、next position与velocity-reference。Restoration/Limit由N2 int槽4/5控制，分别采样curve槽3/4；velocity attenuation、gravity falloff、limit stiffness来自float槽28..30。N2的Restoration curve已在`ClothParameters`转换阶段乘0.2，native kernel不得再次缩放；V0现使用该已转换值，继续乘源码`simulationPower.w=(90/frequency)^1.8`，并将`lerp(1-falloff, 1, gravityDot)`等价映射到kernel输入。raw step四参数ABI默认w=1，Python production owner显式传入w。无碰撞域friction为零，因此Move/Fixed inverse mass分别为1/0。py313隔离case对拍独立kernel且证明位置发生修正，Blender5.1 Mesh/Bone生产子步记录solve count；独立Tier A Angle substep fixture仍待生成。
-
-Motion源码顺序位于第二次Distance之后、post之前，Max Distance与Backstop始终相对插值后的animation base position/rotation计算，不能使用Angle/Baseline已经改写的step-basic。V0因此在prediction开始时独立保存animated base缓冲。Motion由N2 int槽6/7控制，depth先平方再采样curve槽5/6，backstop radius与stiffness来自float槽31/32，法线轴来自int槽0；仅Move且未设置`Flag_InvalidMotion(0x08)`的粒子参与。显式Max Distance启用时曲线值0表示锁到base pose，不是关闭；raw公共kernel仍保留逐顶点正值推断兼容。py313零距离case验证gravity prediction后被锁回base且顺序位于post前，Blender5.1 Fixed Mesh记录三个production solve；独立Tier A Motion substep fixture仍待生成。
-
-Collider帧输入由`collider_frame.py`唯一从World current/previous snapshot派生；Mesh使用对象`collided_by_groups`，Bone task使用setup option显式mask，均按owner排除自身。BoneSpring只保留Sphere，防止非源码soft primitive进入native。Point按`radiusCurve(depth) * scaleRatio`生成半径；普通setup仅Move且非`DisableCollision`参与、base为零，BoneSpring则有效Fixed/Move均参与并消费animated base与collision-limit curve。Edge复用proxy edge并显式消费源码`Move=0x02`，不沿用旧full-core`0x04`。friction mass固定为3，本步碰撞friction由第二次Distance与post继续消费。单cloth self collision已有独立primitive/grid/contact/intersect闭环；sync/inter-cloth仍需独立oracle与调度。
-
-每个 substep会重新构建 next/velocity-reference/base pose与 step-basic scratch；post step提交 old position、velocity与摩擦；display再使用 committed state与 real velocity。必须区分：
-
-- persistent：old pose、animation history、display、velocity/friction/collision history；
-- working：next、velocity reference、base position/rotation；
-- scratch：step basic、constraint count/vector/write buffers；
-- frame surface：current proxy world pose。
-
-参数热更新不得清 particle history。首次 registration、用户 reset、时间倒退、static/backend重建可以复用统一 reset transition，但必须保留不同 reason。
-
-## 6. Output 与 Blender 无反馈边界
-
-MC2 core结果首先是 world-space proxy display pose。line output重建 Bone rotations；triangle output由 positions/UV、flip flags与 normal adjustment生成 vertex rotations。Bone随后通过 stable transform mapping转 local pose。
-
-MC2 render mapping会做 bind/weight逆蒙皮，但 HoTools明确不实现该路径。MeshCloth输出固定为：
+Mesh输出是world display pose相对同帧animated base的delta，再转换为source object-local offset：
 
 ```text
 world_delta = display_world - animated_base_world_positions
 object_local_offset = inverse_linear(source.matrix_world) * world_delta
 ```
 
-当前 private candidate 已用同帧只读 source world linear完成该空间转换并保持 `ready=False`。`physicsMC2Step` 会从 source上已配置的 `mc2_base_pose_proxy` 自动读取 active World frame/generation与dt，same-frame复用只读 snapshot；公共层再验证 task/slot与单 Mesh target，发布 `ready=True` 的共享 `gn_attribute` envelope。same-frame只重发同 revision，批次发布失败恢复旧 result streams，真实 Blender 写入仍只由公共 writeback执行。目标 topology不匹配时 writeback记录 slot/diagnostics错误并清零旧 offset，下一有效 result成功写入后清除错误。
+- N0 reference Mesh与N3 evaluated BasePose是不同域；BasePose保留Armature/Shape Key等不改拓扑变形，永久移除物理GN output。
+- 读取已接受物理offset的source evaluated mesh会形成反馈，永久禁止。
+- same-frame snapshot只读；结果只重发同revision，不重复step/read。
+- topology mismatch不截断/填充，清零陈旧offset并记录diagnostics；下一有效结果再恢复。
+- Mesh不产生mapping mesh；Bone不暴露manager index；solver/readback/debug都不直接写Blender。
 
-危险边界：
+Bone position转换使用完整Armature inverse；rotation使用proper component inverse，禁止非均匀/负scale泄入PoseBone `matrix_basis`。PoseBone object-space必须是proper、shear-free且正scale；不满足时在snapshot/writeback前拒绝。
 
-- N0 reference Mesh与N3 evaluated BasePose是两个数据域；骨架可移动顶点，但不能改变 vertex identity/connectivity。
-- BasePose对象保留 Armature/Shape Key等 topology-preserving基础变形，永久移除物理 GN output。
-- 直接读取源对象 evaluated mesh会包含物理 offset并反馈到下一帧，永久禁止。
-- same-frame snapshot必须不可写；consumer不能原地污染 cache。
-- 会增加、删除、重排或重新连接 vertex的 modifier不属于支持输入域。
-- Mesh result不产生 mapping mesh；Bone result不暴露 manager index；PoseBone/GN真实写入都在公共 writeback。
+## 6. Runtime Parameters 与外部身份
 
-## 7. Runtime Parameters
+- 每条curve固定转换为16个float32 sample，位置为`i/15`；禁用curve时全部为基础值。native不消费AnimationCurve key/handle。
+- float32舍入步骤属于语义；不能先用double合并表达式再一次转换。
+- BoneSpring归一化强制gravity=0、tether compression=0.8、distance stiffness=0.5，并关闭max distance/backstop/self/sync collision。
+- checked speed limit关闭时用`-1`；damping与Angle restoration sample包含源码0.2系数，Distance velocity attenuation固定0.3；bending method、self/sync mode、collision ratio等派生值必须显式存在。
+- animation pose ratio属于team dynamic；frequency/max step/time scale属于scheduler；anchor、collider、sync partner、force field属于外部identity/snapshot。
+- value arrays可以hot update；外部引用、primitive topology、proxy/baseline/constraint arrays变化需要registration或context rebuild。
 
-权威入口：`ClothSerializeDataFunction.GetClothParameters()` 与 `CurveSerializeData.ConvertFloatArray()`。
+## 7. MC2 Host/Native 边界特化
 
-- 每条 curve转换为 16 个 runtime float samples；禁用 curve时 16 项都是基础值。native消费 samples，不消费 AnimationCurve key/handle。
-- sample位置固定为 `i / 15`，线性槽顺序对应 `float4x4.c0.xyzw -> c3.xyzw`。value、curve sample与 0.2 系数按 MC2 的逐步 `float32` 运算舍入，不能先用 double合并表达式再转换。
-- BoneSpring在归一化阶段强制 gravity=0、tether compression=0.8、distance stiffness=0.5、关闭 max distance/backstop/self/sync collision，并使用自身 collider/spring规则。
-- checked speed limit关闭时使用 `-1`；damping与 angle restoration samples有 0.2 系数；Distance velocity attenuation固定 0.3。
-- bending method、self mode/sync mode、collision dynamic/static ratio等派生值必须显式存在，不能只保留一个 stiffness scalar。
-- animation pose ratio属于 team dynamic input；`simulation_frequency/max_simulation_count_per_frame/time_scale`属于scheduler block，旧 `substeps/iterations` 只保留HoTools兼容接口且当前V0未消费；这些都不属于纯 `ClothParameters` value block。
-- anchor、collider、sync partner与通用力场都是外部 identity/snapshot。wind zone未来只是通用力场的一种kind；只有对应scalar不代表能力完成。
+固定数据流：
 
-参数热更新仅适用于 value arrays。外部引用、collision primitive topology、proxy/baseline/constraint arrays变化仍可能需要 registration或context rebuild。
+```text
+Blender authoring/frame input
+  -> immutable host snapshots + signatures
+  -> N0/N1 static build
+  -> slot-owned native context
+  -> N2/N3 sync -> reset/step/readback
+  -> Physics World result stream
+  -> public writeback
+```
 
-## 8. Collider 与 Self Collision
+| 层 | 内容 | 生命周期 |
+|---|---|---|
+| H0 identity | task/setup/source/target、ordered Bone root identity | host/session；不进入kernel |
+| H1 authoring | profile、curve authoring、Pin/selection、bone hierarchy、外部identity | host immutable；重建/诊断 |
+| N0 proxy static | final proxy、orientation、UV、attribute、baseline、output mapping | slot static |
+| N1 constraint static | Distance/Bending/Inertia等精确数组 | slot static |
+| N2 runtime parameters | curve samples、scalar/bool/enum、team options、scheduler | hot update |
+| N3 frame input | animated pose、component/anchor/collider snapshot、dt与连续性 | frame |
+| N4 state/scratch | Center/particle history、working arrays、constraint scratch | persistent/substep |
 
-外部Collider与单cloth Self Collision已在受限生产域启用；后者覆盖N0/N1 primitive、grid、contact、solver与跨帧Intersect，不包含sync/inter-cloth。不得直接复用旧full-core扩张能力声明。
+边界不变量：
 
-- FullMesh的注册顺序固定为Point→Edge→Triangle。Point只在proxy含triangle时逐vertex生成，Edge按proxy edge生成，Triangle按proxy triangle生成；纯Line因此只有Edge primitive。
-- primitive kind位于flag 24..25；Fix0/Fix1/Fix2分别为`0x04000000/0x08000000/0x10000000`，AllFix为`0x20000000`，Ignore为`0x40000000`。固定源码particle `Move=0x02`，旧full-core的`0x04` ABI不能混用。
-- 非Move vertex设置对应Fix位，三个参与vertex均非Move时设置AllFix；Invalid vertex设置Ignore。primitive depth取参与particle depth的平均值。
-- Host immutable spec和Mesh/Bone static bundle已按上述顺序生成；native V0原子持有并校验`uint32` flags、`int32[N,3]` indices、`float32` depth和三个分段计数。失败不污染旧revision。
-- self mode启用且不是BoneSpring时，每frame首个实际substep在Motion后/post前更新primitive dynamic：`invMass=1/((fixed ? 100 : 1+friction*10)+clothMass*50)`、thickness为第8行16采样curve按primitive depth线性取值后乘team scale、AABB包围old/current位置后按thickness扩张。Edge未扩张AABB的最大边长决定`maxPrimitiveSize`，grid size固定为其3倍。
-- grid取expanded AABB center除以grid size后逐轴floor；Ignore primitive使用`(1000000,1000000,1000000)`。Point/Edge/Triangle chunk分别按X→Y→Z排序，连续相同grid压成`hash/start/count` run；run再按Unity.Mathematics 1.2.6 `int3.GetHashCode()`的有符号结果排序。不同grid出现hash碰撞时保留独立run。
-- Unity `NativeSort` 对比较结果相等的同grid primitive不提供跨规模稳定顺序；HoTools在同键时保留进入本次排序前的顺序，登记为deterministic canonicalization。grid分组、run边界和broadphase candidate集合不因此改变，后续oracle不得把并行queue顺序当成接触identity。
-- 首substep broadphase只建立两类自身候选：Edge–Edge使用唯一pair，Point–Triangle使用Point为参照元；自身Triangle–Point分支按源码跳过。搜索范围为primitive expanded AABB再外扩`maxPrimitiveSize*0.5`，用目标chunk的hash run二分查找，随后执行AABB overlap、Ignore、双方AllFix及任一particle重合过滤。
-- Unity contact queue并行入队顺序不是identity。HoTools把通过broadphase过滤的`(contactType, primitive0, primitive1)`排序去重后保存为frame候选集；这只canonicalize queue顺序。随后仍以相同candidate逐条执行`UpdateContactInfo`，只有enable项进入首substepcontact list。
-- Edge–Edge narrowphase在old pose求两线段最近点`s/t`和法线，再将双方插值位移投影到该法线；预测距离不大于`thickness + thickness*SCR`时启用。old最近距离小于`1e-9`直接拒绝。
-- Point–Triangle narrowphase在old pose求最近点与uvw，用三角三个顶点位移插值得到接触点位移；预测距离必须严格小于相同阈值。首substep还要求point方向与old triangle normal的绝对dot不小于`cos(60°)`，并把正反面sign固定到contact；后续substep不重算sign。
-- `ContactInfo`的thickness、Edge s/t/normal和Point–Triangle sign按Unity half语义量化为IEEE binary16。首substep候选只有enable项进入contact list；同frame后续substep不重建primitive/AABB/grid/candidate，只原地更新现有contact的enable与参数，disable项仍保留在list。
-- 每个substep固定执行4次`SolverContact -> SumContact`。EE按half s/t/normal投影当前两条边，PT按当前triangle normal、重算uvw及首substep固定的half sign投影；对应Fix位或上一帧Intersect位任一存在时不写该particle。
-- correction乘`1e6`后按C# int cast向零截断并以int32累加；每个particle按本轮参与次数平均，再乘`1e-6`还原并写入next position。即使correction分量为0，只要对应AddFloat3被调用也计数；每轮Sum后count/vector scratch全部清零。
-- Edge最大尺寸不大于epsilon时grid未就绪并保持0个run，不执行除零坐标转换，也不进入contact solve。
-- native context持有slot-owned contact key、intersect record与per-particle intersect flag；static替换和reset会同时清空record/flag并移除primitive低3位。
-- 每个新frame首次step在当前primitive重建前读取上一帧grid，只检测全局primitive index满足`index % 2 == frame % 2`的Edge→Triangle；过滤规则与源码一致，record固定保存Edge两端和Triangle三点particle index。并行queue顺序不属于identity，HoTools按5元组排序去重。
-- final substep之前不得清空或重算particle flag。整帧最后一次step后按当前位置执行源码segment-triangle测试，命中只设置Edge两端；下一帧UpdatePrimitive把particle flag映射到各primitive对应axis的Intersect0/1/2低位。旧raw 4/5参数step兼容路径默认final，生产scheduler显式传递第6个final-substep布尔值。
+1. evaluated pose不进入N0签名；静态mapping不能伪装成动态参数；allocation不等于reset。
+2. 每个active task唯一持有slot与opaque context；context只由slot dispose链释放。
+3. static使用完整staged build后原子替换；失败保留旧context/result。value/scheduler hot update保留history。
+4. same-frame不重复step；reset、倒放、跳帧与generation变化保留不同reason。
+5. ABI只接收连续C-order固定dtype、finite、checked range/index和`xyzw` quaternion。
+6. result/debug不含bpy对象、manager index或native handle；solver不inline writeback。
+7. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
 
-- self collision是 broadphase、PointTriangle、EdgeEdge、Intersect、contact convert/update/cache、分帧与 solver/sum的完整管线，不是单个投影函数。
-- 厚度、质量、摩擦、候选集与 contact生命周期相互影响；增大 thickness可能同时放大重复命中和黏连。
-- MC2 intersect会按固定 divisor分帧；一次性处理全部 intersect不保证稳定等价。
-- inter-cloth需要对象所有权、质量、contact汇总、sync与多体调度；不能把其他 mesh vertex简单转换为 sphere collider。
-- Normal/Split job形态可以不同，但共同数学 producer/consumer顺序必须被记录和验证。
-
-## Oracle 规则
+## 8. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
 |---|---|---|
-| A | 固定 MC2 commit的 Unity runtime/reflection dump | source parity |
-| B | 可完整手算且逐项引用 producer的最小 case | 局部分支/contract shape |
-| C | HoTools当前或旧实现输出 | regression only |
+| A | 固定MC2 commit的Unity runtime/reflection dump | source parity |
+| B | 可完整手算且逐项引用producer的最小case | 局部分支或contract shape |
+| C | HoTools当前/旧实现输出 | regression only |
 
-Tier A host固定为 `tools/mc2_unity_oracle`（Unity 6000.3，外部引用固定 MC2 checkout）。商业源码/binary不进入仓库。废弃 HoClothUnity与旧 solver输出不得升级为 Tier A。
+Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 checkout）；商业源码/binary不入仓库。
 
 比较规则：
 
-1. identity、index、bit、count、parent/root与 marker精确相等。
-2. float默认 abs/rel tolerance `1e-6`；NaN/Inf一律失败。
-3. 只有明确登记的 hash-container输出允许 canonicalize。
-4. Distance保留 per-source ordered range；Bending保留 ordered role quad。
-5. `-0.0` 与 `0.0` 数值可相等，但 Distance zero kind loss必须单独验证。
-6. expected必须来自上游 producer；禁止用下游 HoTools结果回填 expected。
-
-当前可信覆盖除既有static/Center/constraint/output fixture外，已增加共享collider typed pack、Point/Edge V0 production-order、BoneSpring soft-sphere数值case、自碰撞primitive/grid/hash、EE/PT候选与half contact、手算四轮EE fixed-point投影、PT正面方向/质心守恒、后续substep八轮累计计数，以及三帧Intersect record/flag反馈与final-substep门控。Blender5.1同时覆盖单子步和三子步仅一次提交，并覆盖Bone Armature自身X轴负缩放连续帧与无scale泄漏写回。Bone零scale、负缩放父级及shear仍为显式拒绝边界；self-collision sync/inter-cloth尚未接入。
+1. identity、index、bit、count、parent/root、marker精确相等。
+2. float默认abs/rel tolerance `1e-6`；NaN/Inf一律失败。
+3. 只有DEV-03或同等级明确登记的非协议容器顺序允许canonicalize。
+4. Distance保留per-source ordered range；Bending保留ordered role quad。
+5. `-0.0`与`0.0`数值可相等，但Distance zero kind loss单独验证。
+6. fixture必须标明隔离掉的能力，不能从no-collision/no-wind case外推对应能力已完成。
+7. 发现代码、执行计划与本文冲突时：记录冲突→验收表降级→定位source producer/consumer→补最小Tier A→修代码或本文→最后升级验收表。

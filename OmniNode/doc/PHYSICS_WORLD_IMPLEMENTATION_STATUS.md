@@ -1,10 +1,10 @@
 # OmniNode 物理世界当前实现状态
 
-本文记录统一物理世界**当前已经成立的边界、尚未完成的能力和退出门槛**，不记录逐次提交、日期、Phase 流水或临时测试数字。历史过程由 Git 保存。
+更新日期：2026-07-16
 
-架构判断以 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 为唯一权威；OmniNode 编译、执行、缓存和懒求值机制见 `../ARCHITECTURE.md`。solver 自己的功能矩阵、backend 能力和测试说明应放在各 domain 的 `docs/` 或测试目录中。
+本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver专项状态由各自验收表维护；历史过程由Git保存。
 
-MC2 的当前状态、Host/Native 契约和实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；固定源码中的顺序敏感行为、数值陷阱和 oracle 规则见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+MC2专项入口：完成度见`MC2_ACCEPTANCE_MAP.md`，未完成工作顺序见`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 ## 当前系统边界
 
@@ -20,128 +20,72 @@ Cache Read
   -> Cache Write
 ```
 
-- `PhysicsWorldCache` 统一持有 frame context、scope、collider snapshot、implicit object registry、solver slots、exchange、result streams 和 backend resources。
-- solver 是 `physicsWorld/<domain>/` 下可发现的模块，descriptor 声明 nodes、capabilities、declaration、debug draw modes、property registration 和 scope hooks。
-- solver 私有 topology、native context、数组和运行状态只存在于自己的 slot；其它 solver、UI 和 debug 不读取私有 handle。
-- solver step 发布 result/exchange，不直接写 Blender；Object、PoseBone 和 mesh delta 的实际写入归统一 writeback。
-- Cache Delete、runtime cache clear、成功重编译和插件注销都必须释放 world/slot/backend owner。
+- `PhysicsWorldCache`统一持有frame context、scope、collider snapshot、implicit object registry、solver slots、exchange、result streams和backend resources。
+- solver是`physicsWorld/<domain>/`下可发现模块；私有topology、native context和运行状态只存在于自己的slot。
+- solver step发布result/exchange，不直接写Blender；Object、PoseBone和mesh offset由公共writeback应用。
+- Cache Delete、runtime cache clear、成功重编译和插件注销必须释放world/slot/backend owner。
 
 ## 当前目录与所有权
 
 ```text
 physicsWorld/
-  blender.py                 # 物理 RNA/UI 唯一根生命周期
-  blender_registry.py        # domain 注册 journal、依赖和失败回滚
-  registry.py                # component/solver 发现与装卸
-  gn_offset.py               # 单一共享 GN 顶点最终 offset 输出
-  collision/                 # Object/Bone collider 共享 capability
-  spring_vrm/                # VRM SpringBone solver
-  rigid/                     # Rigid/Jolt solver
-  mc2/                       # 一个 MC2 solver，三种 setup
+  blender.py                 # 物理RNA/UI根生命周期
+  blender_registry.py        # domain注册journal、依赖和失败回滚
+  registry.py                # component/solver发现与装卸
+  gn_offset.py               # 共享GN顶点最终offset
+  collision/                 # Object/Bone collider共享capability
+  spring_vrm/                # VRM SpringBone
+  rigid/                     # Rigid/Jolt
+  mc2/                       # 一个solver，三种setup
     setups/
-      mesh_cloth/            # MeshCollision RNA、BasePose、mesh delta adapter
-      bone_cloth/            # 骨链输入与通用 bone_transform 写回契约
-      bone_spring/           # 骨链输入与通用 bone_transform 写回契约
-  ui/                        # Scene UI state、panel、operator、preview
+      mesh_cloth/
+      bone_cloth/
+      bone_spring/
+  ui/
 ```
 
-稳定 Blender 存储路径：
-
-| 路径 | owner |
+| 稳定Blender路径 | owner |
 |---|---|
 | `Bone.hotools_collision` | `physicsWorld.collision` |
 | `Object.hotools_object_collision` | `physicsWorld.collision` |
 | `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` |
-| `Scene.ho_*` 物理 UI 字段 | `physicsWorld.ui` |
+| `Scene.ho_*`物理UI字段 | `physicsWorld.ui` |
 
-`PhysicsTools` 已删除。属性 schema、PropertyGroup class、binding 和注册权全部位于 Physics World；UI 只消费 capability/resolver。`PhysicsWorldCache` 和 solver slot 不跨帧保存 live `PropertyGroup`。
+属性schema、PropertyGroup、binding和注册权只存在于Physics World；UI消费capability/resolver。world cache与solver slot不跨帧保存live PropertyGroup。
 
 ## Domain 状态
 
-| Domain | 当前状态 | 已成立边界 | 主要未完成项 |
+| Domain | 当前状态 | 已成立边界 | 主要未完成项/入口 |
 |---|---|---|---|
-| World core | 可用 | Begin/Commit、scope、collider snapshot、slot/resource/result/exchange、独占/共享/planned channel registry、共享 GN 最终 offset 写回、dispose、debug snapshot | 跨 solver 交互仍需真实业务闭环 |
-| Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
-| 通用力场 | 未来兼容区 | 已冻结由Physics World拥有authoring identity/scope/逐帧公共快照，wind只是可扩展力场kind之一；solver不得私有扫描或私有持有live对象 | 尚未冻结channel/schema/采样布局，也未实现任何active力场vertical slice |
-| SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
-| Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | V1-R 验收收尾 | 单一solver/三setup、staged native context、受限Mesh/Bone生产链、Point/Edge、单cloth self collision、Mesh GN、Bone PoseBone writeback与stats已成形；详细结论见`MC2_ACCEPTANCE_MAP.md` | Tether/Distance/Angle/Motion直接oracle闭环、真实资产、混合soak/性能、旧路径删除与acceptance flag；未来扩展不阻塞V1-R |
-| Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
+| World core | 可用 | Begin/Commit、scope、slot/resource/result/exchange、channel registry、writeback、dispose、debug snapshot | 跨solver交互仍需真实业务闭环 |
+| Collision | 可用 | Object/Bone schema、RNA、group mask、公共snapshot与capability | 继续消除solver私有重复resolver |
+| 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
+| SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
+| Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
+| MC2 | V1-R验收收尾 | 单solver/三setup、受限Mesh/Bone生产链、collider、单cloth self、公共result/writeback与stats | 真实状态和阻塞只看`MC2_ACCEPTANCE_MAP.md` |
+| Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
-MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Armature自身非零负缩放已在父链全正且world linear无shear的域内接入，proper component rotation与signed scale分离，正→负→正连续帧完成native transition且PoseBone scale保持1；零scale、父级继承负缩放与shear仍在snapshot前拒绝。单cloth self primitive/contact/solve/Intersect已闭环，sync/inter-cloth仍未完成。
-
-力场状态补充：wind不再规划为MC2私有输入。现有MC2 `wind_*`字段只为未来兼容保留，当前按零外力处理；待Physics World通用力场vertical slice冻结公共快照后，MC2再通过声明和adapter接入。当前不登记active力场能力，也不提前承诺公共ABI。
-
-MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel；Python slot owner现按固定MC2调度默认启用，raw C gate仅用于隔离不同scope的oracle fixture。py313公式/顺序回归与Blender5.1新建、重建、真实子步solve count通过；独立Tier A Tether substep fixture仍待补齐。
-
-MC2 Angle补充：V0已按源码顺序在首次Distance后、Bending前执行Restoration/Limit，复用现有baseline与step-basic数据并消费N2 use/curve/float槽和Center gravity-dot。native kernel已修正已转换Restoration stiffness重复乘0.2的问题；py313独立kernel/V0对拍及Blender5.1 Mesh/Bone生产子步通过。独立Tier A Angle substep fixture仍待补齐。
-
-MC2 Motion补充：V0已按源码顺序在第二次Distance后、post前执行Max Distance/Backstop，并新增独立animated base子步缓冲，避免误用baseline step-basic。N2 use/curve/float/normal-axis、InvalidMotion与depth²语义已接入，MaxDistance=0显式锁定边界通过；py313 kernel/V0及Blender5.1 Fixed Mesh三子步通过。独立Tier A Motion substep fixture仍待补齐。
-
-MC2 Collider补充：共享World current/previous snapshot覆盖primitive、组mask、自身排除与moving pose；Mesh和Bone production均按非same-frame原子上传。Point/Edge与BoneSpring路径不变。Self Collision首substep已完成primitive/grid、EE/PT候选与old-pose narrowphase，contact half ABI和后续substep更新已落地；每个substep固定4轮SolverContact/Sum使用int32 fixed-point聚合并实际投影粒子。跨帧Intersect按`frame % 2`从上一帧grid建立Edge–Triangle record，只在整帧final substep后复测当前位置并把Edge particle flag反馈给下一帧primitive。py313三帧时序与Blender5.1单/三子步生产链均已通过；当前FullMesh限制转为仅支持单cloth self域，sync/inter-cloth仍未接入。
-
-## 统一 MC2 决策
-
-MC2 只有一个 solver identity：`mc2`。
-
-- `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
-- setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
-- 新路径只提供一套 native context schema/implementation，每个 active slot持有自己的 context；不公开 Python/C++ backend选择，旧 package、旧资产和旧 solver parity不属于实现或验收范围。
-- 当前新MC2 step已推进Mesh/Bone外部collider数值路径：Mesh从BasePose构建N3，Bone从PoseBone frame构建N3；两者消费共享World snapshot并分别发布GN或bone transform结果，不调用旧MC2 package。
-- `gn_attribute`与`bone_transform`已登记为 active shared result channel；`mc2_stats`已登记为MC2自有active exclusive channel。三者由同一发布事务替换，失败时恢复旧result streams。
-- MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
-- MeshCloth 的 Blender adapter 永久使用“双对象 + 常驻 GN”：BasePose 只读对象保留骨架/Shape Key 基础变形并移除物理 output，源对象末端 GN 只接收同 vertex identity 的 object-local offset。BlendShape 写回、单对象切换/移动 GN、同一对象读取前后两个 evaluated 阶段均已因 Blender 性能/求值限制排除。
-- 新路径只验证新 schema、slot、native context、result stream 与共享 writeback；旧路径可以独立清理，不设置迁移/兼容门槛。
-
-## 固定契约
-
-### Solver declaration
-
-每个 solver 必须由 registry 可查询，并声明：
-
-- `solver_id` / `slot_kind`
-- `consumes` / `produces`
-- `persistent_state` / `dirty_keys`
-- `same_frame_policy` / `update_policy`
-- `implicit_objects` / `capabilities`
-- `writeback` / `export`
-
-`writeback.solver_inline_writeback=False` 是硬约束。
-
-### 属性与注册
-
-- capability/schema 是字段、默认值、范围、enum、RNA metadata 和 resolver 的单一事实源。
-- 同一 `(bpy owner, property name)` 只能有一个 binding。
-- `physicsWorld.blender` 始终随 HoTools 注册；物理属性和 UI 不依赖 OmniNode 功能开关。
-- component/solver 按依赖注册、逆序注销；domain 失败只回滚自己的 journal。
-- 稳定 RNA 路径的改名必须是独立、版本化的数据迁移。
-
-### Runtime
-
-- same-frame 默认不重复推进模拟时间；是否只 sync 或重发结果由 solver declaration 明确。
-- 跳帧、倒放、reset、scope/topology 变化的重建语义必须可测试。
-- 持久 authoring 对象进入 `world.implicit_objects`；帧级跨 solver 数据进入 `world.exchange`；写回进入 result stream。
-- debug 只展示 backend 实际消费的 spec 和实际发布的 state，不重新推导另一套物理结果。
+通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
 
 ## 当前优先级
 
-1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 按 `MC2_ACCEPTANCE_MAP.md` 关闭 V1-R 阻塞：先核清 Distance persistent velocity/attenuation，再补 Tether/Angle/Motion 直接 Tier A，随后完成真实资产、混合 soak/性能与旧路径删除。
-3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
-4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
+1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
+2. 按`MC2_ACCEPTANCE_MAP.md`先补Tether/Angle/Motion直接Tier A，再完成真实资产、混合soak/性能与旧路径删除；不横向扩张未来能力。
+3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
+4. 决定Mesh XPBD迁移或删除。
 
-## 验收门槛
+## 公共验收门槛
 
-新增或迁移 solver 至少满足：
+新增或迁移solver至少满足：
 
-- declaration 校验通过，公开通道可被 debug snapshot 观察。
-- 连续帧、same-frame、首帧、跳帧/倒放、reset 和失败回滚有后台测试。
-- Cache Delete、clear runtime cache、重编译和插件注销释放 native/resource owner。
-- solver 不直接写 bpy；result 可被统一 writeback、preview 或 export 消费。
-- schema/RNA/capability 同源，`.blend` 非默认值往返不漂移。
-- backend 能力、Python binding、节点 surface、debug 和 fixture 同步落地。
-- 不为旧路径保留资产 adapter、兼容层或 shadow solver。
+- declaration可查询，公开channel可由debug snapshot观察。
+- 连续帧、same-frame、首帧、跳帧/倒放、reset与失败回滚有后台测试。
+- Cache Delete、clear、重编译和注销释放native/resource owner。
+- solver不直接写bpy；result可被公共writeback、preview或export消费。
+- schema/RNA/capability同源，`.blend`非默认值往返不漂移。
+- backend、Python binding、节点surface、debug和fixture同步落地。
+- 不保留旧路径asset adapter、runtime fallback或shadow solver。
 
-当前状态以代码中的 solver/component descriptor、declaration registry 和自动化测试为准；本文只在边界或未完成项发生变化时更新。
+具体字段和生命周期规则以公共contract与代码中的descriptor/declaration registry为准；本文只在domain边界或主要未完成项变化时更新。

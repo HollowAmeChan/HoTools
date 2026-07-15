@@ -6,8 +6,9 @@
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
-- **`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`（MC2 当前状态与执行计划）**：集中维护 MC2 的当前完成度、Host/Native 契约、工程禁区、阶段门槛和实施顺序；只约束 MC2 domain，不覆盖本文的公共架构。
-- **`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`（MC2 源码语义参考）**：只记录固定源码中的顺序敏感行为、数值陷阱和 oracle 规则，不维护项目状态。
+- **`MC2_ACCEPTANCE_MAP.md`（MC2 验收总表）**：MC2 完成度、对齐结论、证据与 V1-R 阻塞的单一事实源。
+- **`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`（MC2 执行计划）**：只维护当前未完成工作的顺序与退出条件。
+- **`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`（MC2 源码语义与差异）**：只记录固定源码事实、危险顺序、Blender 特化、故意差异和冲突处理。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
 本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。
@@ -97,10 +98,6 @@ Cache Read
 
 - 校验或创建 `PhysicsWorldCache`。
 - 更新 `PhysicsFrameContext`：frame、previous_frame、continuous、same_frame、restart_required、raw_dt、dt、time_scale、substeps、generation。`raw_dt` 是未缩放场景帧时长，`dt = raw_dt * time_scale`；需要在暂停帧移动坐标历史的 solver 不得从零 `dt` 反推帧时长。
-- MC2 component scale符号发生变化时，顺序固定为：构建component/Center TRS delta matrix，变换Center persistent与native粒子history/velocity，再应用world-inertia frame shift，最后执行substep。普通quaternion shift不能替代含非均匀缩放的negative-scale matrix；当前Mesh生产域允许无parent或仅含正缩放祖先、且最终world linear可表示为shear-free TRS的component scale-sign transition。父级继承负缩放存在轴符号歧义，shear不能进入MC2 TRS contract，两者均在adapter边界显式拒绝。
-- MC2 Mesh/Bone substep顺序固定为：Center → prediction/baseline → Tether → Distance → Angle → Bending/Sum → Point或Edge collider → 第二次Distance → Motion → Self Collision → post。外部collider与BoneSpring规则不变。Self Collision在新frame首substep前用上一帧primitive/grid按`frame % 2`建立Edge–Triangle intersect record；首substep随后更新primitive/grid、生成EE/PT候选并构建half contact list，后续substep只更新既有contact。每个substep在post前固定执行4轮SolverContact→fixed-point SumContact并修改next position；仅整帧最后一个substep结束后清空/复测intersect record，命中Edge particle flag供下一帧primitive低位消费。contact/intersect/flag容器归slot-owned native context；单cloth FullMesh进入受限生产域，sync/inter-cloth仍不在该契约内。
-- MC2 Bone最终输出只在最后substep readback时构建，顺序固定为Line rotation → Triangle normal/tangent → per-vertex TriangleSum override → `vertexToTransformRotation` world transform → public parent-local `matrix_basis` plan。raw native triangle数值已有Tier A覆盖；Bone import仍产生全零UV，因此含triangle的Automatic/Sequential产品输入继续在prepare阶段拒绝，不能以合成UV测试扩张生产域。
-- MC2 Bone component transform允许Armature自身非零负缩放，但负缩放父级、零scale与最终world linear shear继续拒绝。adapter必须按Armature本地axis sign把world linear分解为proper component rotation与signed scale；PoseBone object-space linear也必须是proper、shear-free且无负scale。位置使用完整world transform，rotation不得从反射矩阵直接`to_quaternion()`。public Bone candidate冻结proper component rotation，写回时位置与rotation分开转armature pose空间，禁止component scale/reflection泄入PoseBone `matrix_basis`。
 - 计算 object scope key，检测 scope 变化。
 - 构建公共 source / collider snapshot。
 - 清理上一帧异常残留的 write lock。
@@ -502,7 +499,6 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 
 - solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
-- MC2 使用自有 `mc2_stats` 独占通道，每次active world调用只发布一个`mc2_stats_v0`聚合结果；逐slot记录只保留稳定identity、setup类型和native计数等普通标量，不得包含context handle或Blender对象。该结果与同帧`gn_attribute`/`bone_transform`写回结果进入同一替换事务，任何一项发布失败都恢复事务前的全部result streams。
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
@@ -1160,20 +1156,7 @@ world.begin
 
 每个 solver 的第一条迁移都应是这样一条 vertical slice：先打通 slot 生命周期、result stream、writeback、runtime cache dispose 的最小闭环，再逐步补齐 collider、多目标、参数热更新等能力。当前完成度见实现状态文档。
 
-优先预演对象：
-
-```text
-VRM SpringBone:
-  旧实现已有 Python / C++ 双路径，cache、碰撞、PoseBone 写回、multi-armature 都齐全。
-  新迁移只保留 C++ / native 计算路径，Python 只做 spec、slot、buffer、result、writeback glue。
-
-统一 MC2:
-  `physicsWorld.mc2` 已有 slot/host static/BasePose、新 native context、Mesh result/writeback 闭环。
-  source parity按 worksheet/oracle逐能力推进；旧 full-core/context不能作为运行 fallback。
-
-Rigid Jolt:
-  适合验证 backend world resource、dispose 和 object transform writeback。
-```
+具体 solver 的迁移优先级、当前完成度和未完成项只在实现状态或各 solver 验收表维护，本文不保存对象级推进记录。
 
 ## Debug 与性能统计
 

@@ -4,7 +4,7 @@
 
 基线：MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 
-本文是新 `physicsWorld.mc2` 的**完成度与验收结论单一事实源**。它按可交付能力切片，不按源码文件或提交记录展开。实现细节与当前切入点见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码 producer/consumer 与 oracle 细节见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+本文是新 `physicsWorld.mc2` 的**完成度与验收结论单一事实源**。它按可交付能力切片，不按源码文件或提交记录展开。未完成工作顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码 producer/consumer、边界特化与 oracle 细节见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 ## 验收范围
 
@@ -39,9 +39,9 @@
 | S-03 | Bone connection 与 Line static | 限定域对齐 | 8组 Tier A connection + 3组 Line/rotation fixtures + Blender 5.1 | Automatic/Sequential 只接受最终无 triangle membership | 否 |
 | S-04 | BoneCloth Line 与 BoneSpring setup | 限定域对齐 | shared static/native/result 链、N2 override、Blender 5.1 | BoneSpring 固定 Line、Sphere-only；不扩张到 triangle | 否 |
 | S-05 | Bone imported triangle | 拒绝 | 固定源码证明全零 UV 导致 tangent/basis 退化 | 未来若改变产品策略，必须先建立真实 producer/oracle | 否 |
-| N-01 | prediction、Pin、constraint 顺序与 post | 完全对齐 | Tier A 双子步顺序 + native V0 + Blender 5.1 | Distance 待核账项见 N-03 | 否 |
+| N-01 | prediction、Pin、constraint 顺序与 post | 完全对齐 | Tier A 双子步顺序 + native V0 + Blender 5.1 | 无 | 否 |
 | N-02 | Tether | 实现完成/证据缺口 | py313 kernel/顺序 + Blender 5.1 production solve | 补独立 Tier A Tether substep fixture | 是 |
-| N-03 | Distance | 实现完成/证据缺口 | 7组 static、2组 ordered runtime、native 双阶段执行 | 核清并闭合 worksheet 所记 persistent velocity/attenuation 缺口；结论统一后补直接 frame oracle | 是 |
+| N-03 | Distance | 完全对齐 | 7组static、2组ordered runtime、Tier A双子步frame与native双阶段执行 | correction按0.3 attenuation进入velocity-reference，post消费并跨子步提交 | 否 |
 | N-04 | Angle | 实现完成/证据缺口 | py313 kernel/V0 + Blender 5.1 Mesh/Bone solve | 补独立 Tier A Angle substep fixture | 是 |
 | N-05 | Triangle Bending | 完全对齐 | 3组 Tier A runtime + static role/order + native fixed-point sum | 无 | 否 |
 | N-06 | Motion | 实现完成/证据缺口 | py313 kernel/V0 + Blender 5.1 Fixed Mesh | 补独立 Tier A Motion substep fixture | 是 |
@@ -54,7 +54,7 @@
 | O-01 | Mesh result transaction 与 GN writeback | 完全对齐 | candidate/envelope、发布回滚、拓扑失败恢复、Blender 5.1 | 无 | 否 |
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component Blender 5.1 | 与 S-03/S-04 相同的 Line/transform 限定域 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
-| P-01 | V1-R 直接 oracle 闭环 | 产品收尾 | 大部分 static/runtime 已有 Tier A | 关闭 N-02/N-03/N-04/N-06 四项 | 是 |
+| P-01 | V1-R 直接 oracle 闭环 | 产品收尾 | static/runtime主体及Distance frame已有Tier A | 关闭 N-02/N-04/N-06 三项 | 是 |
 | P-02 | 真实生产资产验收 | 产品收尾 | 自动化最小场景已覆盖 Mesh/Bone/collider/self | 固定代表性 MeshCloth、BoneCloth、BoneSpring 资产并记录预期与失败边界 | 是 |
 | P-03 | 稳定性与性能门禁 | 产品收尾 | context 双 ABI soak、dispose 与后台测试已存在 | 增加 V1-R 混合场景长时 soak、重建/清缓存循环与性能基线 | 是 |
 | P-04 | 旧 MC2 路径删除 | 产品收尾 | 新 solver 不调用旧 package | 删除旧节点/package/full-core/context/shadow pipeline；确认无 registry/asset fallback | 是 |
@@ -64,16 +64,15 @@
 
 ## 当前验收结论
 
-`V1-R` 的主体数值与 Blender 生产链已经成形，当前不是继续横向扩功能，而是关闭 **4 个数值证据项 + 2 个产品验收项 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的主体数值与 Blender 生产链已经成形，当前不是继续横向扩功能，而是关闭 **3 个数值证据项 + 2 个产品验收项 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
 1. `N-02/N-04/N-06`：Tether、Angle、Motion 独立 Tier A substep fixture。
-2. `N-03`：Distance persistent velocity/attenuation 的文档与实现核账，并补 frame 级 oracle。
-3. `P-02`：三 setup 代表性真实资产验收。
-4. `P-03`：混合场景 soak、资源循环与性能门禁。
-5. `P-04`：旧 MC2 路径删除。
-6. `P-05`：关闭 declaration acceptance blocker。
+2. `P-02`：三 setup 代表性真实资产验收。
+3. `P-03`：混合场景 soak、资源循环与性能门禁。
+4. `P-04`：旧 MC2 路径删除。
+5. `P-05`：关闭 declaration acceptance blocker。
 
 ## 更新规则
 
