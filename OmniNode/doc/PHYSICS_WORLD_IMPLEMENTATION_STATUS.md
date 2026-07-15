@@ -66,10 +66,10 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision、Bone negative scale、Bone triangle output、wind、stats |
+| MC2 | Mesh/Bone native collider + public result | 单一solver/三setup、staged native context、Point/Edge、BoneSpring soft-sphere、self primitive静态注册、source-aligned constraint/post顺序、Mesh GN与Bone PoseBone writeback均已闭环；详细数值域见MC2执行计划 | self collision contact/solve、Bone negative scale、Bone triangle output、wind、stats |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
-MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；self collision仍未完成。
+MC2 状态补充：Bone Line与强制Line的BoneSpring使用稳定bone identity发布parent-local`matrix_basis` plan；Bone task新增显式碰撞组mask。BoneSpring固定N2 override、Sphere-only快照与soft limit进入同一native slot路径。Bone负/零scale与world shear仍在snapshot前拒绝且不污染旧slot；self primitive已静态注册，动态contact与solve仍未完成。
 
 MC2 Tether补充：V0已按源码顺序接入复用现有root/step-basic数据的native kernel；Python slot owner现按固定MC2调度默认启用，raw C gate仅用于隔离不同scope的oracle fixture。py313公式/顺序回归与Blender5.1新建、重建、真实子步solve count通过；独立Tier A Tether substep fixture仍待补齐。
 
@@ -77,7 +77,7 @@ MC2 Angle补充：V0已按源码顺序在首次Distance后、Bending前执行Res
 
 MC2 Motion补充：V0已按源码顺序在第二次Distance后、post前执行Max Distance/Backstop，并新增独立animated base子步缓冲，避免误用baseline step-basic。N2 use/curve/float/normal-axis、InvalidMotion与depth²语义已接入，MaxDistance=0显式锁定边界通过；py313 kernel/V0及Blender5.1 Fixed Mesh三子步通过。独立Tier A Motion substep fixture仍待补齐。
 
-MC2 Collider补充：共享World current/previous snapshot覆盖primitive、组mask、自身排除与moving pose；Mesh和Bone production均按非same-frame原子上传。Point/Edge消费radius、persistent friction/normal/real velocity并进入第二次Distance与post。BoneSpring setup-kind允许Fixed参与，强制Sphere-only，消费animated base与limit-distance curve执行clamp/反弹衰减并同步velocity-reference。py313与Blender5.1生产链均已通过；self collision仍未接入。
+MC2 Collider补充：共享World current/previous snapshot覆盖primitive、组mask、自身排除与moving pose；Mesh和Bone production均按非same-frame原子上传。Point/Edge消费radius、persistent friction/normal/real velocity并进入第二次Distance与post。BoneSpring setup-kind允许Fixed参与，强制Sphere-only，消费animated base与limit-distance curve执行clamp/反弹衰减并同步velocity-reference。Self Collision已按Point→Edge→Triangle和固定flag ABI注册只读primitive到slot-owned native context，contact/intersect容器当前为空且不参与step。py313与Blender5.1生产链均已通过；broadphase、contact lifecycle、Intersect分帧与solve仍未接入。
 
 ## 统一 MC2 决策
 

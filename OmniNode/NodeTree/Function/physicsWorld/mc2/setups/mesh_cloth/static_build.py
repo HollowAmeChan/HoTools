@@ -20,6 +20,8 @@ from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
 from ...mesh_baseline import build_mc2_mesh_baseline
 from ...names import MC2_SETUP_MESH_CLOTH
+from ...self_collision_static import MC2SelfCollisionStaticSpec
+from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from .final_proxy import MC2MeshFinalProxyBuildResult
@@ -35,6 +37,7 @@ class MC2MeshClothStaticBuildResult:
     distance: MC2DistanceStaticSpec
     bending: MC2BendingStaticSpec | None
     center: MC2CenterStaticSpec
+    self_collision: MC2SelfCollisionStaticSpec
 
     @property
     def final_proxy(self):
@@ -56,6 +59,8 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("bending must be MC2BendingStaticSpec or None")
         if not isinstance(self.center, MC2CenterStaticSpec):
             raise TypeError("center must be MC2CenterStaticSpec")
+        if not isinstance(self.self_collision, MC2SelfCollisionStaticSpec):
+            raise TypeError("self_collision must be MC2SelfCollisionStaticSpec")
         if self.finalizer.proxy.task_id != self.baseline.final_proxy.task_id:
             raise ValueError("finalizer and baseline task_id must match")
         if self.finalizer.proxy.vertex_identities != self.baseline.final_proxy.vertex_identities:
@@ -71,6 +76,8 @@ class MC2MeshClothStaticBuildResult:
             raise ValueError("bending and final proxy signatures must match")
         if self.center.proxy_signature != self.baseline.final_proxy.proxy_signature:
             raise ValueError("center and final proxy signatures must match")
+        if self.self_collision.proxy_signature != self.baseline.final_proxy.proxy_signature:
+            raise ValueError("self collision and final proxy signatures must match")
 
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
@@ -88,6 +95,7 @@ class MC2MeshClothStaticBuildResult:
                 self.bending.record_count if self.bending is not None else 0
             ),
             "center_fixed_count": len(self.center.fixed_indices),
+            "self_collision_primitive_count": self.self_collision.primitive_count,
         }
         if include_signatures:
             result.update(
@@ -101,6 +109,7 @@ class MC2MeshClothStaticBuildResult:
                         else None
                     ),
                     "center_static_signature": self.center.center_static_signature,
+                    "self_collision_static_signature": self.self_collision.static_signature,
                 }
             )
         return result
@@ -249,6 +258,10 @@ def build_mc2_mesh_cloth_static(
         vertex_bind_pose_rotations=finalizer.vertex_bind_pose_rotations,
         world_gravity_direction=world_gravity_direction,
     )
+    self_collision = build_mc2_self_collision_static(
+        baseline.final_proxy,
+        baseline.baseline.depths,
+    )
     return MC2MeshClothStaticBuildResult(
         mesh_topology_signature=actual_mesh_topology_signature,
         finalizer=finalizer,
@@ -256,6 +269,7 @@ def build_mc2_mesh_cloth_static(
         distance=distance,
         bending=bending,
         center=center,
+        self_collision=self_collision,
     )
 
 

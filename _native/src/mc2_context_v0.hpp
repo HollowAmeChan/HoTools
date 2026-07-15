@@ -11,6 +11,7 @@ PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_step_interpolation(PyObject*, PyObject* args);

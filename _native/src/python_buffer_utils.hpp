@@ -60,6 +60,21 @@ inline bool expect_int32(const Buffer& buffer, const char* name) {
     return true;
 }
 
+inline bool expect_uint32(const Buffer& buffer, const char* name) {
+    if (buffer.view.itemsize != 4) {
+        PyErr_Format(PyExc_TypeError, "%s must use uint32 elements", name);
+        return false;
+    }
+    if (buffer.view.format != nullptr) {
+        const char format = buffer.view.format[0];
+        if (format != 'I' && format != 'L') {
+            PyErr_Format(PyExc_TypeError, "%s must use uint32 elements", name);
+            return false;
+        }
+    }
+    return true;
+}
+
 inline bool expect_uint8(const Buffer& buffer, const char* name) {
     if (buffer.view.itemsize != 1) {
         PyErr_Format(PyExc_TypeError, "%s must use uint8 elements", name);
@@ -159,6 +174,17 @@ inline bool expect_root_indices_or_minus_one(const Buffer& buffer, const char* n
 
 inline bool expect_int32_scalar_array(const Buffer& buffer, const char* name) {
     if (!expect_int32(buffer, name)) {
+        return false;
+    }
+    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
+        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
+        return false;
+    }
+    return true;
+}
+
+inline bool expect_uint32_scalar_array(const Buffer& buffer, const char* name) {
+    if (!expect_uint32(buffer, name)) {
         return false;
     }
     if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {

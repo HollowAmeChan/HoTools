@@ -64,6 +64,9 @@ constexpr Py_ssize_t kUseMaxDistance = 6;
 constexpr Py_ssize_t kUseBackstop = 7;
 constexpr Py_ssize_t kCollisionMode = 8;
 constexpr float kFrictionMass = 3.0f;
+constexpr std::uint32_t kSelfFix0 = 0x04000000u;
+constexpr std::uint32_t kSelfAllFix = 0x20000000u;
+constexpr std::uint32_t kSelfIgnore = 0x40000000u;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -79,6 +82,7 @@ struct Mc2ContextV0 {
     std::int64_t distance_static_revision = 0;
     std::int64_t bending_static_revision = 0;
     std::int64_t center_static_revision = 0;
+    std::int64_t self_collision_static_revision = 0;
     std::int64_t dynamic_revision = 0;
     std::int64_t collider_revision = 0;
     std::int64_t reset_count = 0;
@@ -114,6 +118,7 @@ struct Mc2ContextV0 {
     bool bone_static_ready = false;
     bool distance_static_ready = false;
     bool bending_static_ready = false;
+    bool self_collision_static_ready = false;
     bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
@@ -174,6 +179,14 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> bending_quads;
     std::vector<float> bending_rest_angle_or_volume;
     std::vector<std::int8_t> bending_sign_or_volume;
+    std::vector<std::uint32_t> self_primitive_flags;
+    std::vector<std::int32_t> self_particle_indices;
+    std::vector<float> self_primitive_depths;
+    std::int64_t self_point_primitive_count = 0;
+    std::int64_t self_edge_primitive_count = 0;
+    std::int64_t self_triangle_primitive_count = 0;
+    std::vector<std::uint64_t> self_contact_keys;
+    std::vector<std::int32_t> self_intersect_records;
     std::int32_t collided_by_groups = 0;
     std::vector<std::int32_t> collider_types;
     std::vector<std::int32_t> collider_group_bits;
@@ -272,6 +285,14 @@ void release_resources(Mc2ContextV0& context) {
     context.bending_quads.clear();
     context.bending_rest_angle_or_volume.clear();
     context.bending_sign_or_volume.clear();
+    context.self_primitive_flags.clear();
+    context.self_particle_indices.clear();
+    context.self_primitive_depths.clear();
+    context.self_point_primitive_count = 0;
+    context.self_edge_primitive_count = 0;
+    context.self_triangle_primitive_count = 0;
+    context.self_contact_keys.clear();
+    context.self_intersect_records.clear();
     context.collided_by_groups = 0;
     context.collider_types.clear();
     context.collider_group_bits.clear();
@@ -291,6 +312,7 @@ void release_resources(Mc2ContextV0& context) {
     context.bone_static_ready = false;
     context.distance_static_ready = false;
     context.bending_static_ready = false;
+    context.self_collision_static_ready = false;
     context.tether_enabled = false;
     context.center_static_ready = false;
     context.center_dynamic_ready = false;
@@ -1899,6 +1921,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "distance_static_revision", context.distance_static_revision) ||
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
+        !dict_i64(result, "self_collision_static_revision", context.self_collision_static_revision) ||
         !dict_i64(result, "center_dynamic_revision", context.center_dynamic_revision) ||
         !dict_i64(
             result,
@@ -1914,6 +1937,12 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "distance_record_count", static_cast<std::int64_t>(context.distance_targets.size())) ||
         !dict_i64(result, "bending_record_count", static_cast<std::int64_t>(context.bending_rest_angle_or_volume.size())) ||
         !dict_i64(result, "center_fixed_count", static_cast<std::int64_t>(context.center_fixed_indices.size())) ||
+        !dict_i64(result, "self_primitive_count", static_cast<std::int64_t>(context.self_primitive_flags.size())) ||
+        !dict_i64(result, "self_point_primitive_count", context.self_point_primitive_count) ||
+        !dict_i64(result, "self_edge_primitive_count", context.self_edge_primitive_count) ||
+        !dict_i64(result, "self_triangle_primitive_count", context.self_triangle_primitive_count) ||
+        !dict_i64(result, "self_contact_cache_count", static_cast<std::int64_t>(context.self_contact_keys.size())) ||
+        !dict_i64(result, "self_intersect_record_count", static_cast<std::int64_t>(context.self_intersect_records.size() / 5)) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
         !dict_i64(result, "collider_revision", context.collider_revision) ||
@@ -1957,6 +1986,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         ) ||
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
+        !dict_bool(result, "self_collision_static_ready", context.self_collision_static_ready) ||
         !dict_bool(result, "tether_enabled", context.tether_enabled) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
@@ -2433,6 +2463,116 @@ PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
     context->bending_sign_or_volume.swap(next_markers);
     context->bending_static_ready = true;
     ++context->bending_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 7) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_self_collision_static expects 7 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready || !context->baseline_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "proxy and baseline static data must be uploaded first");
+        return nullptr;
+    }
+    Buffer flags, indices, depths;
+    if (!flags.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "self_primitive_flags") ||
+        !indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "self_particle_indices") ||
+        !depths.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "self_primitive_depths")) {
+        return nullptr;
+    }
+    const long point_count = as_long(PyTuple_GET_ITEM(args, 4), "self_point_primitive_count");
+    const long edge_count = as_long(PyTuple_GET_ITEM(args, 5), "self_edge_primitive_count");
+    const long triangle_count = as_long(PyTuple_GET_ITEM(args, 6), "self_triangle_primitive_count");
+    if (PyErr_Occurred()) return nullptr;
+    if (point_count < 0 || edge_count < 0 || triangle_count < 0) {
+        PyErr_SetString(PyExc_ValueError, "self-collision primitive counts cannot be negative");
+        return nullptr;
+    }
+    const Py_ssize_t count = static_cast<Py_ssize_t>(point_count + edge_count + triangle_count);
+    if (!expect_uint32_scalar_array(flags, "self_primitive_flags") ||
+        flags.view.shape[0] != count ||
+        !expect_int32(indices, "self_particle_indices") ||
+        !expect_2d(indices, "self_particle_indices", count, 3) ||
+        !expect_float32(depths, "self_primitive_depths") ||
+        !expect_1d_array(depths, "self_primitive_depths", count) ||
+        !finite_floats(depths, "self_primitive_depths") ||
+        !validate_indices(indices, context->vertex_count, "self_particle_indices", true)) {
+        return nullptr;
+    }
+    const auto expected_edges = static_cast<long>(context->proxy_edges.size() / 2);
+    const auto expected_triangles = static_cast<long>(context->proxy_triangles.size() / 3);
+    const auto expected_points = expected_triangles > 0 ? static_cast<long>(context->vertex_count) : 0L;
+    if (point_count != expected_points || edge_count != expected_edges || triangle_count != expected_triangles) {
+        PyErr_SetString(PyExc_ValueError, "self-collision primitive counts do not match proxy topology");
+        return nullptr;
+    }
+    const auto* flag_values = static_cast<const std::uint32_t*>(flags.view.buf);
+    const auto* index_values = static_cast<const std::int32_t*>(indices.view.buf);
+    const auto* depth_values = static_cast<const float*>(depths.view.buf);
+    for (Py_ssize_t primitive = 0; primitive < count; ++primitive) {
+        const std::uint32_t expected_kind = primitive < point_count
+            ? 0u : (primitive < point_count + edge_count ? 1u : 2u);
+        const auto axis_count = static_cast<Py_ssize_t>(expected_kind + 1u);
+        std::uint32_t expected_flag = expected_kind << 24u;
+        float expected_depth = 0.0f;
+        Py_ssize_t fixed_count = 0;
+        for (Py_ssize_t axis = 0; axis < 3; ++axis) {
+            const auto value = index_values[primitive * 3 + axis];
+            if ((axis < axis_count && value < 0) || (axis >= axis_count && value != -1)) {
+                PyErr_SetString(PyExc_ValueError, "self-collision primitive index arity mismatch");
+                return nullptr;
+            }
+            if (axis >= axis_count) continue;
+            std::int32_t expected_index = 0;
+            if (expected_kind == 0u) {
+                expected_index = static_cast<std::int32_t>(primitive);
+            } else if (expected_kind == 1u) {
+                const auto edge = primitive - point_count;
+                expected_index = context->proxy_edges[edge * 2 + axis];
+            } else {
+                const auto triangle = primitive - point_count - edge_count;
+                expected_index = context->proxy_triangles[triangle * 3 + axis];
+            }
+            if (value != expected_index) {
+                PyErr_SetString(PyExc_ValueError, "self-collision primitive proxy order mismatch");
+                return nullptr;
+            }
+            const auto attribute = context->proxy_attributes[expected_index];
+            if (!is_move(attribute)) {
+                expected_flag |= kSelfFix0 << axis;
+                ++fixed_count;
+            }
+            if ((attribute & 0x03u) == 0u) expected_flag |= kSelfIgnore;
+            expected_depth += context->baseline_depths[expected_index];
+        }
+        if (fixed_count == axis_count) expected_flag |= kSelfAllFix;
+        if (flag_values[primitive] != expected_flag) {
+            PyErr_SetString(PyExc_ValueError, "self-collision primitive flags mismatch");
+            return nullptr;
+        }
+        expected_depth /= static_cast<float>(axis_count);
+        if (depth_values[primitive] < 0.0f || depth_values[primitive] > 1.0f ||
+            std::abs(depth_values[primitive] - expected_depth) > 1.0e-6f) {
+            PyErr_SetString(PyExc_ValueError, "self-collision primitive depth mismatch");
+            return nullptr;
+        }
+    }
+    auto next_flags = copy_values<std::uint32_t>(flags);
+    auto next_indices = copy_values<std::int32_t>(indices);
+    auto next_depths = copy_values<float>(depths);
+    context->self_primitive_flags.swap(next_flags);
+    context->self_particle_indices.swap(next_indices);
+    context->self_primitive_depths.swap(next_depths);
+    context->self_point_primitive_count = point_count;
+    context->self_edge_primitive_count = edge_count;
+    context->self_triangle_primitive_count = triangle_count;
+    context->self_contact_keys.clear();
+    context->self_intersect_records.clear();
+    context->self_collision_static_ready = true;
+    ++context->self_collision_static_revision;
     Py_RETURN_NONE;
 }
 
@@ -3079,6 +3219,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->center_result_ready = false;
     context->bone_output_positions.clear();
     context->bone_output_rotations.clear();
+    context->self_contact_keys.clear();
+    context->self_intersect_records.clear();
     context->initialized = true;
     ++context->reset_count;
     Py_RETURN_NONE;

@@ -770,6 +770,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_distance_static, a); });
     m.def("mc2_context_v0_update_bending_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bending_static, a); });
+    m.def("mc2_context_v0_update_self_collision_static",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_self_collision_static, a); });
     m.def("mc2_context_v0_update_center_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
     m.def("mc2_context_v0_update_center_dynamic",

@@ -339,6 +339,84 @@ def test_collider_upload_is_transactional():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_self_collision_static_upload_is_transactional():
+    context = hotools_native.mc2_context_v0_create(0, 4)
+    try:
+        proxy, baseline = static_arrays(4)
+        proxy = list(proxy)
+        proxy[4] = np.array([1, 2, 0, 2], dtype=np.uint8)
+        proxy[6] = np.array([[0, 1, 2]], dtype=np.int32)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        flags = np.array(
+            [
+                0x24000000, 0, 0x64000000, 0,
+                0x05000000, 0x49000000, 0x45000000, 0x56000000,
+            ],
+            dtype=np.uint32,
+        )
+        indices = np.array(
+            [
+                [0, -1, -1], [1, -1, -1], [2, -1, -1], [3, -1, -1],
+                [0, 1, -1], [1, 2, -1], [2, 3, -1], [0, 1, 2],
+            ],
+            dtype=np.int32,
+        )
+        vertex_depths = baseline[7]
+        depths = np.array(
+            [
+                *vertex_depths,
+                (vertex_depths[0] + vertex_depths[1]) / 2.0,
+                (vertex_depths[1] + vertex_depths[2]) / 2.0,
+                (vertex_depths[2] + vertex_depths[3]) / 2.0,
+                (vertex_depths[0] + vertex_depths[1] + vertex_depths[2]) / 3.0,
+            ],
+            dtype=np.float32,
+        )
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            context, flags, indices, depths, 4, 3, 1,
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_collision_static_ready"] is True
+        assert info["self_collision_static_revision"] == 1
+        assert info["self_primitive_count"] == 8
+        assert info["self_point_primitive_count"] == 4
+        assert info["self_edge_primitive_count"] == 3
+        assert info["self_triangle_primitive_count"] == 1
+        bad_flags = flags.copy()
+        bad_flags[-1] ^= np.uint32(0x04000000)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_self_collision_static(
+                context, bad_flags, indices, depths, 4, 3, 1,
+            ),
+            "flags",
+        )
+        bad_indices = indices.copy()
+        bad_indices[4] = (1, 0, -1)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_self_collision_static(
+                context, flags, bad_indices, depths, 4, 3, 1,
+            ),
+            "proxy order",
+        )
+        bad_depths = depths.copy()
+        bad_depths[-1] += np.float32(0.1)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_self_collision_static(
+                context, flags, indices, bad_depths, 4, 3, 1,
+            ),
+            "depth",
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_collision_static_revision"] == 1
+        assert info["self_primitive_count"] == 8
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_point_collision_projection_and_post():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -1227,6 +1305,8 @@ if __name__ == "__main__":
     print("PASS Motion zero MaxDistance and source order")
     test_collider_upload_is_transactional()
     print("PASS collider upload transaction")
+    test_self_collision_static_upload_is_transactional()
+    print("PASS self-collision static upload transaction")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
     test_bone_spring_soft_sphere_limit_and_velocity_reference()

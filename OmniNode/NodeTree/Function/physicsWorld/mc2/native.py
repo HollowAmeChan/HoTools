@@ -26,6 +26,7 @@ from .runtime_parameters import (
     MC2RuntimeParametersV0,
     pack_mc2_runtime_parameters,
 )
+from .self_collision_static import pack_mc2_self_collision_static
 from .static_data import pack_mc2_baseline_static, pack_mc2_proxy_static
 
 
@@ -40,6 +41,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_distance_static",
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
+    "mc2_context_v0_update_self_collision_static",
     "mc2_context_v0_update_center_dynamic",
     "mc2_context_v0_update_step_interpolation",
     "mc2_context_v0_update_team_options",
@@ -128,6 +130,7 @@ class MC2NativeContextV0:
         self.distance_signature = ""
         self.bending_signature = ""
         self.center_signature = ""
+        self.self_collision_signature = ""
         self.collider_signature = ""
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
@@ -239,6 +242,19 @@ class MC2NativeContextV0:
             baseline["vertex_local_rotations"],
         )
 
+    def _update_self_collision_static(self, spec) -> None:
+        packed = pack_mc2_self_collision_static(spec)
+        self._module.mc2_context_v0_update_self_collision_static(
+            self._handle,
+            packed["primitive_flags"],
+            packed["particle_indices"],
+            packed["primitive_depths"],
+            spec.point_count,
+            spec.edge_count,
+            spec.triangle_count,
+        )
+        self.self_collision_signature = spec.static_signature
+
     def update_mesh_static(self, static) -> None:
         from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
 
@@ -275,6 +291,7 @@ class MC2NativeContextV0:
             center["local_center_position"],
             center["initial_local_gravity_direction"],
         )
+        self._update_self_collision_static(static.self_collision)
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline.baseline_signature
         self.distance_signature = static.distance.distance_signature
@@ -323,6 +340,7 @@ class MC2NativeContextV0:
             center["local_center_position"],
             center["initial_local_gravity_direction"],
         )
+        self._update_self_collision_static(static.self_collision)
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline_signature
         self.bone_static_signature = static.bone.static_signature

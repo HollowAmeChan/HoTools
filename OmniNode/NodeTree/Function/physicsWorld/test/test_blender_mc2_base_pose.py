@@ -279,6 +279,14 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["baseline_static_revision"] == 1
         assert native_info["edge_count"] == 3
         assert native_info["triangle_count"] == 1
+        assert native_info["self_collision_static_ready"] is True
+        assert native_info["self_collision_static_revision"] == 1
+        assert native_info["self_primitive_count"] == 7
+        assert native_info["self_point_primitive_count"] == 3
+        assert native_info["self_edge_primitive_count"] == 3
+        assert native_info["self_triangle_primitive_count"] == 1
+        assert native_info["self_contact_cache_count"] == 0
+        assert native_info["self_intersect_record_count"] == 0
         assert native_info["baseline_count"] == len(
             static.baseline.baseline.baseline_ranges
         )

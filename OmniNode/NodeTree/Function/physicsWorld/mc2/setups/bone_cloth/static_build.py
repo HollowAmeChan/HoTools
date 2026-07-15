@@ -13,6 +13,8 @@ from ...center_state import build_mc2_center_static
 from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
 from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
+from ...self_collision_static import MC2SelfCollisionStaticSpec
+from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from ...topology import _thaw
@@ -23,7 +25,7 @@ from ....utils.math3d import (
 )
 
 
-MC2_BONE_STATIC_SCHEMA_VERSION = 2
+MC2_BONE_STATIC_SCHEMA_VERSION = 3
 MC2_LINE_BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
 
 
@@ -67,6 +69,7 @@ class MC2BoneClothStaticBuildResult:
     bone: MC2BoneStaticSpec
     distance: MC2DistanceStaticSpec
     center: MC2CenterStaticSpec
+    self_collision: MC2SelfCollisionStaticSpec
     static_signature: str
     schema_version: int = MC2_BONE_STATIC_SCHEMA_VERSION
 
@@ -95,12 +98,16 @@ class MC2BoneClothStaticBuildResult:
             raise TypeError("distance must be MC2DistanceStaticSpec")
         if not isinstance(self.center, MC2CenterStaticSpec):
             raise TypeError("center must be MC2CenterStaticSpec")
+        if not isinstance(self.self_collision, MC2SelfCollisionStaticSpec):
+            raise TypeError("self_collision must be MC2SelfCollisionStaticSpec")
         if self.distance.proxy_signature != self.final_proxy.proxy_signature:
             raise ValueError("distance and Bone proxy signatures must match")
         if self.distance.baseline_signature != self.baseline.baseline_signature:
             raise ValueError("distance and Bone baseline signatures must match")
         if self.center.proxy_signature != self.final_proxy.proxy_signature:
             raise ValueError("center and Bone proxy signatures must match")
+        if self.self_collision.proxy_signature != self.final_proxy.proxy_signature:
+            raise ValueError("self collision and Bone proxy signatures must match")
         if self.static_signature != _signature(self.signature_payload()):
             raise ValueError("static_signature does not match BoneCloth static payload")
 
@@ -112,6 +119,7 @@ class MC2BoneClothStaticBuildResult:
             "bone_static_signature": self.bone.static_signature,
             "distance_signature": self.distance.distance_signature,
             "center_static_signature": self.center.center_static_signature,
+            "self_collision_static_signature": self.self_collision.static_signature,
         }
 
     def debug_dict(self) -> dict:
@@ -123,6 +131,7 @@ class MC2BoneClothStaticBuildResult:
             "baseline_count": len(self.baseline.baseline_ranges),
             "distance_record_count": len(self.distance.distance_targets),
             "center_fixed_count": len(self.center.fixed_indices),
+            "self_collision_primitive_count": self.self_collision.primitive_count,
             **self.signature_payload(),
             "static_signature": self.static_signature,
         }
@@ -228,6 +237,10 @@ def build_mc2_bone_cloth_static_for_task(
         vertex_bind_pose_rotations=bone.finalizer.vertex_bind_pose_rotations,
         world_gravity_direction=task.profile.gravity_direction,
     )
+    self_collision = build_mc2_self_collision_static(
+        bone.proxy,
+        bone.baseline.depths,
+    )
     signature_payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
         "topology_signature": topology.topology_signature,
@@ -235,6 +248,7 @@ def build_mc2_bone_cloth_static_for_task(
         "bone_static_signature": bone.static_signature,
         "distance_signature": distance.distance_signature,
         "center_static_signature": center.center_static_signature,
+        "self_collision_static_signature": self_collision.static_signature,
     }
     return MC2BoneClothStaticBuildResult(
         topology_signature=topology.topology_signature,
@@ -242,6 +256,7 @@ def build_mc2_bone_cloth_static_for_task(
         bone=bone,
         distance=distance,
         center=center,
+        self_collision=self_collision,
         static_signature=_signature(signature_payload),
     )
 

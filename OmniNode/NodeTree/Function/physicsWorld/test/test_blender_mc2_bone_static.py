@@ -151,6 +151,14 @@ try:
     assert info["bone_static_ready"] is True
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
+    assert info["self_collision_static_ready"] is True
+    assert info["self_collision_static_revision"] == 1
+    assert info["self_primitive_count"] == 2
+    assert info["self_point_primitive_count"] == 0
+    assert info["self_edge_primitive_count"] == 2
+    assert info["self_triangle_primitive_count"] == 0
+    assert info["self_contact_cache_count"] == 0
+    assert info["self_intersect_record_count"] == 0
     assert info["bone_vertex_adjacency_count"] == 4
     assert info["tether_enabled"] is True
     assert info["tether_solve_count"] == 0
@@ -271,6 +279,13 @@ try:
     assert runtime["int_values"]["self_collision_mode"] == 0
     spring_info = spring_slot.data["native_context"].inspect()
     assert spring_info["setup_kind"] == 2
+    assert spring_info["self_collision_static_ready"] is True
+    assert spring_info["self_primitive_count"] == 2
+    assert spring_info["self_point_primitive_count"] == 0
+    assert spring_info["self_edge_primitive_count"] == 2
+    assert spring_info["self_triangle_primitive_count"] == 0
+    assert spring_info["self_contact_cache_count"] == 0
+    assert spring_info["self_intersect_record_count"] == 0
     assert spring_info["tether_enabled"] is True
     assert spring_info["collider_count"] == 1
     assert spring_info["collided_by_groups"] == 1
