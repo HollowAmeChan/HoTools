@@ -329,6 +329,8 @@ try:
     assert world.result_streams["bone_transform"][0]["setup_type"] == "bone_cloth"
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in automatic_slot.data
+    for pose_bone in armature.pose.bones:
+        assert all(abs(float(value) - 1.0) < 1.0e-5 for value in pose_bone.scale)
 
     old_context = automatic_slot.data["native_context"]
     old_candidate = automatic_slot.data["result_candidate"]
@@ -337,19 +339,45 @@ try:
     armature.scale = (-1.0, 1.0, 1.0)
     bpy.context.view_layer.update()
     world.frame_context.frame = 5
-    try:
-        solver.step_mc2(world, [automatic_task])
-    except ValueError as exc:
-        assert "does not support negative scale" in str(exc)
-    else:
-        raise AssertionError("negative-scale Bone task reached native step")
+    returned, ready, _status = solver.step_mc2(world, [automatic_task])
+    assert returned is world and ready is True
     assert automatic_slot.data["native_context"] is old_context
-    assert automatic_slot.data["result_candidate"] is old_candidate
-    assert automatic_slot.data["writeback_plan"] is old_plan
-    assert world.result_streams["bone_transform"] == [old_result]
+    assert automatic_slot.data["result_candidate"] is not old_candidate
+    assert automatic_slot.data["result_candidate"].revision == old_candidate.revision + 1
+    assert (
+        automatic_slot.data["result_candidate"].bone_component_world_rotation_xyzw
+        is not None
+    )
+    assert automatic_slot.data["writeback_plan"] is not old_plan
+    assert world.result_streams["bone_transform"][0] is not old_result
+    negative_info = old_context.inspect()
+    assert negative_info["center_negative_scale_teleport_count"] == 1
+    assert automatic_slot.data["center_state"].negative_scale_direction == (
+        -1.0,
+        1.0,
+        1.0,
+    )
+    assert writeback.writeback_bone_transforms(world) == 3
+    assert "_writeback_error" not in automatic_slot.data
+    for pose_bone in armature.pose.bones:
+        assert all(abs(float(value) - 1.0) < 1.0e-5 for value in pose_bone.scale)
     assert old_context.disposed is False
+
     armature.scale = (1.0, 1.0, 1.0)
     bpy.context.view_layer.update()
+    world.frame_context.frame = 6
+    returned, ready, _status = solver.step_mc2(world, [automatic_task])
+    assert returned is world and ready is True
+    restored_info = old_context.inspect()
+    assert restored_info["center_negative_scale_teleport_count"] == 2
+    assert automatic_slot.data["center_state"].negative_scale_direction == (
+        1.0,
+        1.0,
+        1.0,
+    )
+    assert writeback.writeback_bone_transforms(world) == 3
+    for pose_bone in armature.pose.bones:
+        assert all(abs(float(value) - 1.0) < 1.0e-5 for value in pose_bone.scale)
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")

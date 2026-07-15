@@ -7,11 +7,11 @@ from dataclasses import dataclass
 import numpy as np
 
 
-MC2_RESULT_CANDIDATE_SCHEMA_VERSION = 0
+MC2_RESULT_CANDIDATE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
-class MC2ResultCandidateV0:
+class MC2ResultCandidateV1:
     task_id: str
     slot_id: str
     setup_type: str
@@ -26,6 +26,9 @@ class MC2ResultCandidateV0:
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
     mesh_object_local_offsets: np.ndarray | None = None
+    bone_component_world_rotation_xyzw: (
+        tuple[float, float, float, float] | None
+    ) = None
     ready: bool = False
     schema_version: int = MC2_RESULT_CANDIDATE_SCHEMA_VERSION
 
@@ -45,6 +48,7 @@ class MC2ResultCandidateV0:
         positions = self.world_positions
         rotations = self.world_rotations_xyzw
         local_offsets = self.mesh_object_local_offsets
+        component_rotation = self.bone_component_world_rotation_xyzw
         if positions.dtype != np.float32 or positions.ndim != 2 or positions.shape[1] != 3:
             raise TypeError("candidate world_positions must be float32[N,3]")
         if rotations.dtype != np.float32 or rotations.shape != (len(positions), 4):
@@ -62,8 +66,23 @@ class MC2ResultCandidateV0:
                 raise TypeError("Mesh candidate local offsets must be float32[N,3]")
             if local_offsets.flags.writeable or not np.isfinite(local_offsets).all():
                 raise ValueError("Mesh candidate local offsets must be finite and read-only")
-        elif local_offsets is not None:
-            raise ValueError("non-Mesh candidate cannot contain Mesh local offsets")
+            if component_rotation is not None:
+                raise ValueError("Mesh candidate cannot contain a Bone component rotation")
+        else:
+            if local_offsets is not None:
+                raise ValueError("non-Mesh candidate cannot contain Mesh local offsets")
+            rotation = np.asarray(component_rotation, dtype=np.float64)
+            if (
+                rotation.shape != (4,)
+                or not np.isfinite(rotation).all()
+                or not np.isclose(
+                    np.linalg.norm(rotation),
+                    1.0,
+                    rtol=1.0e-5,
+                    atol=1.0e-6,
+                )
+            ):
+                raise ValueError("Bone candidate requires a unit component world rotation")
 
     @property
     def particle_count(self) -> int:
@@ -82,6 +101,9 @@ class MC2ResultCandidateV0:
             "ready": self.ready,
             "particle_count": self.particle_count,
             "has_mesh_object_local_offsets": self.mesh_object_local_offsets is not None,
+            "has_bone_component_world_rotation": (
+                self.bone_component_world_rotation_xyzw is not None
+            ),
             "native_reset_count": self.native_reset_count,
             "native_step_count": self.native_step_count,
             "native_dynamic_revision": self.native_dynamic_revision,
@@ -97,7 +119,7 @@ def make_mc2_result_candidate(
     native_info: dict,
     world_positions,
     world_rotations_xyzw,
-) -> MC2ResultCandidateV0:
+) -> MC2ResultCandidateV1:
     if spec.task_id != slot.slot_id or frame_input.task_id != spec.task_id:
         raise ValueError("MC2 result candidate host task identity mismatch")
     positions = np.array(world_positions, dtype=np.float32, order="C", copy=True)
@@ -114,6 +136,7 @@ def make_mc2_result_candidate(
     ):
         raise ValueError("MC2 result candidate native frame identity mismatch")
     local_offsets = None
+    bone_component_rotation = None
     if spec.setup_type == "mesh_cloth":
         linear = frame_input.source_world_linear
         if linear is None:
@@ -122,9 +145,16 @@ def make_mc2_result_candidate(
         world_delta = positions.astype(np.float64) - frame_input.world_positions.astype(np.float64)
         local_offsets = np.asarray(world_delta @ inverse_linear.T, dtype=np.float32, order="C")
         local_offsets.flags.writeable = False
+    else:
+        center_pose = frame_input.center_frame_pose
+        if center_pose is None:
+            raise ValueError("Bone result candidate requires a component frame pose")
+        bone_component_rotation = tuple(
+            float(value) for value in center_pose.component_world_rotation_xyzw
+        )
     positions.flags.writeable = False
     rotations.flags.writeable = False
-    return MC2ResultCandidateV0(
+    return MC2ResultCandidateV1(
         task_id=spec.task_id,
         slot_id=slot.slot_id,
         setup_type=spec.setup_type,
@@ -139,11 +169,12 @@ def make_mc2_result_candidate(
         world_positions=positions,
         world_rotations_xyzw=rotations,
         mesh_object_local_offsets=local_offsets,
+        bone_component_world_rotation_xyzw=bone_component_rotation,
     )
 
 
 __all__ = [
     "MC2_RESULT_CANDIDATE_SCHEMA_VERSION",
-    "MC2ResultCandidateV0",
+    "MC2ResultCandidateV1",
     "make_mc2_result_candidate",
 ]

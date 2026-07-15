@@ -209,20 +209,22 @@ def _install_mc2_slot(
 
 def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
     mesh_static = slot.data.get("mesh_static")
+    bone_static = slot.data.get("bone_static")
+    active_static = mesh_static if mesh_static is not None else bone_static
     frame_pose = frame_input.center_frame_pose
     center_state = slot.data.get("center_state")
-    if mesh_static is None or frame_pose is None:
+    if active_static is None or frame_pose is None:
         return None
     if not isinstance(center_state, MC2CenterPersistentState):
-        raise RuntimeError("Mesh MC2 slot is missing Center persistent state")
-    if center_state.center_static_signature != mesh_static.center.center_static_signature:
-        raise RuntimeError("Mesh MC2 Center static identity changed without slot rebuild")
+        raise RuntimeError("MC2 slot is missing Center persistent state")
+    if center_state.center_static_signature != active_static.center.center_static_signature:
+        raise RuntimeError("MC2 Center static identity changed without slot rebuild")
     return derive_mc2_center_world_pose(
-        mesh_static.center,
+        active_static.center,
         frame_pose,
         world_positions=frame_input.world_positions,
         world_rotations_xyzw=frame_input.world_rotations_xyzw,
-        vertex_bind_pose_rotations=mesh_static.finalizer.vertex_bind_pose_rotations,
+        vertex_bind_pose_rotations=active_static.finalizer.vertex_bind_pose_rotations,
     )
 
 

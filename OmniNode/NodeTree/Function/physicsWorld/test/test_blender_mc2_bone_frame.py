@@ -59,6 +59,7 @@ def _armature():
 
 
 armature = _armature()
+parent = None
 try:
     armature.location = (2.0, -1.0, 0.5)
     armature.pose.bones["Root"].location = (0.25, 0.0, 0.0)
@@ -106,12 +107,19 @@ try:
     topology = topology_module.build_mc2_topology_spec(task)
     armature.scale = (-1.0, 1.0, 1.0)
     bpy.context.view_layer.update()
-    try:
-        bone_frame.build_mc2_bone_frame_input(task, topology, frame=13, generation=4)
-    except ValueError as exc:
-        assert "does not support negative scale" in str(exc)
-    else:
-        raise AssertionError("negative-scale Bone source produced a frame snapshot")
+    negative_frame = bone_frame.build_mc2_bone_frame_input(
+        task, topology, frame=13, generation=4
+    )
+    assert negative_frame.negative_scale_sign == -1.0
+    assert negative_frame.center_frame_pose is not None
+    np.testing.assert_allclose(
+        negative_frame.center_frame_pose.component_world_scale,
+        (-1.0, 1.0, 1.0),
+        atol=1.0e-6,
+    )
+    assert np.allclose(
+        np.linalg.norm(negative_frame.world_rotations_xyzw, axis=1), 1.0
+    )
 
     armature.scale = (0.0, 1.0, 1.0)
     bpy.context.view_layer.update()
@@ -128,7 +136,51 @@ try:
         task, topology, frame=13, generation=4
     )
     assert positive_frame.particle_count == 2
+    np.testing.assert_allclose(
+        positive_frame.center_frame_pose.component_world_scale,
+        (1.5, 0.75, 2.0),
+        atol=1.0e-6,
+    )
+
+    armature.scale = (1.0, 1.0, 1.0)
+    armature.pose.bones["Child"].scale = (-1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+    try:
+        bone_frame.build_mc2_bone_frame_input(task, topology, frame=14, generation=4)
+    except ValueError as exc:
+        assert "PoseBone 'Child'" in str(exc) and "shear-free" in str(exc)
+    else:
+        raise AssertionError("negative PoseBone scale reached Bone frame input")
+    armature.pose.bones["Child"].scale = (1.0, 1.0, 1.0)
+
+    parent = bpy.data.objects.new("MC2_N3_BoneFrameParent", None)
+    bpy.context.scene.collection.objects.link(parent)
+    armature.parent = parent
+    armature.matrix_parent_inverse.identity()
+    armature.scale = (1.0, 1.0, 1.0)
+    parent.scale = (-1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+    try:
+        bone_frame.build_mc2_bone_frame_input(task, topology, frame=14, generation=4)
+    except ValueError as exc:
+        assert "negative scale inherited from a parent" in str(exc)
+    else:
+        raise AssertionError("parent-inherited negative scale reached Bone frame input")
+
+    parent.scale = (2.0, 1.0, 0.5)
+    armature.rotation_mode = "XYZ"
+    armature.rotation_euler.y = 0.5
+    bpy.context.view_layer.update()
+    try:
+        bone_frame.build_mc2_bone_frame_input(task, topology, frame=14, generation=4)
+    except ValueError as exc:
+        assert "shear-free" in str(exc)
+    else:
+        raise AssertionError("sheared Bone component reached frame input")
 finally:
+    if parent is not None:
+        armature.parent = None
+        bpy.data.objects.remove(parent, do_unlink=True)
     data = armature.data
     bpy.data.objects.remove(armature, do_unlink=True)
     if data.users == 0:

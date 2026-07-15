@@ -156,6 +156,7 @@ def test_candidate_copies_readback_and_stays_private() -> None:
     np.testing.assert_array_equal(candidate.world_rotations_xyzw, frame.world_rotations_xyzw)
     assert candidate.world_positions.flags.writeable is False
     assert candidate.world_rotations_xyzw.flags.writeable is False
+    assert candidate.schema_version == 1
     assert candidate.ready is False
     np.testing.assert_array_equal(
         candidate.mesh_object_local_offsets,
@@ -163,6 +164,7 @@ def test_candidate_copies_readback_and_stays_private() -> None:
     )
     assert candidate.mesh_object_local_offsets.flags.writeable is False
     assert candidate.debug_dict()["has_mesh_object_local_offsets"] is True
+    assert candidate.debug_dict()["has_bone_component_world_rotation"] is False
     assert candidate.debug_dict()["native_dynamic_revision"] == 3
 
 

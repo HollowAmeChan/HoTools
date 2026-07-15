@@ -10,7 +10,7 @@ from ..writeback_commands import (
     make_bone_transform_batch_writeback,
     make_gn_offset_writeback,
 )
-from .candidate import MC2ResultCandidateV0
+from .candidate import MC2ResultCandidateV1
 from .names import (
     MC2_SETUP_BONE_CLOTH,
     MC2_SETUP_BONE_SPRING,
@@ -66,13 +66,13 @@ def _mesh_target_identity(spec) -> tuple[int, int]:
 def make_mc2_mesh_result(
     *,
     spec,
-    candidate: MC2ResultCandidateV0,
+    candidate: MC2ResultCandidateV1,
     frame: int,
     world_generation: int,
 ) -> dict:
     """Promote one private readback candidate to a public GN writeback item."""
-    if not isinstance(candidate, MC2ResultCandidateV0):
-        raise TypeError("candidate must be MC2ResultCandidateV0")
+    if not isinstance(candidate, MC2ResultCandidateV1):
+        raise TypeError("candidate must be MC2ResultCandidateV1")
     if candidate.setup_type != MC2_SETUP_MESH_CLOTH:
         raise ValueError("MC2 public Mesh result requires a Mesh candidate")
     if candidate.task_id != getattr(spec, "task_id", None):
@@ -141,13 +141,13 @@ def make_mc2_bone_result(
     *,
     spec,
     slot,
-    candidate: MC2ResultCandidateV0,
+    candidate: MC2ResultCandidateV1,
     frame: int,
     world_generation: int,
 ) -> tuple[dict, dict]:
     """Build a public Bone Line envelope and its staged live writeback plan."""
-    if not isinstance(candidate, MC2ResultCandidateV0):
-        raise TypeError("candidate must be MC2ResultCandidateV0")
+    if not isinstance(candidate, MC2ResultCandidateV1):
+        raise TypeError("candidate must be MC2ResultCandidateV1")
     if candidate.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
         raise ValueError("MC2 public Bone result requires a Bone candidate")
     if candidate.task_id != getattr(spec, "task_id", None):
@@ -173,6 +173,11 @@ def make_mc2_bone_result(
     import mathutils
 
     inverse_armature = armature.matrix_world.inverted()
+    component_xyzw = candidate.bone_component_world_rotation_xyzw
+    if component_xyzw is None:
+        raise ValueError("MC2 Bone result is missing its component rotation snapshot")
+    cx, cy, cz, cw = component_xyzw
+    inverse_component_rotation = mathutils.Quaternion((cw, cx, cy, cz)).inverted()
     target_pose_matrices = {}
     records = []
     for name, position, rotation_xyzw in zip(
@@ -185,9 +190,13 @@ def make_mc2_bone_result(
         if pose_bone is None or pose_index < 0:
             raise ValueError(f"MC2 Bone result target is missing stable bone {name!r}")
         x, y, z, w = (float(value) for value in rotation_xyzw)
-        world_matrix = mathutils.Quaternion((w, x, y, z)).to_matrix().to_4x4()
-        world_matrix.translation = mathutils.Vector(tuple(float(value) for value in position))
-        target_pose_matrices[name] = inverse_armature @ world_matrix
+        pose_rotation = inverse_component_rotation @ mathutils.Quaternion((w, x, y, z))
+        pose_rotation.normalize()
+        pose_matrix = pose_rotation.to_matrix().to_4x4()
+        pose_matrix.translation = inverse_armature @ mathutils.Vector(
+            tuple(float(value) for value in position)
+        )
+        target_pose_matrices[name] = pose_matrix
         records.append({
             "bone_name": name,
             "pose_index": pose_index,

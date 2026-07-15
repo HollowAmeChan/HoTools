@@ -292,6 +292,39 @@ def matrix3_to_quaternion_f64(
     return normalize_vector_f64(quaternion, name=name)
 
 
+def decompose_signed_orthogonal_linear_f64(
+    linear,
+    axis_signs,
+    *,
+    name: str,
+    zero_epsilon: float = 1.0e-8,
+) -> tuple[tuple[float, float, float, float], tuple[float, float, float]]:
+    """Split a shear-free linear transform into proper rotation and signed scale."""
+    matrix = np.asarray(linear, dtype=np.float64)
+    signs = np.asarray(tuple(axis_signs), dtype=np.float64)
+    if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+        raise ValueError(f"{name} must be a finite 3x3 matrix")
+    if signs.shape != (3,) or not np.all(np.isin(signs, (-1.0, 1.0))):
+        raise ValueError(f"{name} axis signs must contain only -1 or 1")
+    lengths = np.linalg.norm(matrix, axis=0)
+    if np.any(lengths <= float(zero_epsilon)):
+        raise ValueError(f"{name} cannot contain zero scale")
+    signed_scale = lengths * signs
+    rotation = matrix / signed_scale[np.newaxis, :]
+    if not np.allclose(
+        rotation.T @ rotation,
+        np.eye(3),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    ) or not np.isclose(np.linalg.det(rotation), 1.0, rtol=1.0e-5, atol=1.0e-6):
+        raise ValueError(f"{name} must be shear-free with the declared axis signs")
+    quaternion = matrix3_to_quaternion_f64(rotation, name=f"{name} rotation")
+    return (
+        tuple(float(value) for value in quaternion),
+        tuple(float(value) for value in signed_scale),
+    )
+
+
 def orientation_xyzw_f64(
     normal: np.ndarray,
     tangent: np.ndarray,
