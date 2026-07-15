@@ -158,10 +158,11 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     assert module.center_args[11:] == (0.8, 0.5, 0.2)
 
     owner.reset()
-    owner.step_no_collision(0.2)
+    owner.step_no_collision(0.2, is_final_substep=False)
     assert len(module.step_calls) == 1
-    assert len(module.step_calls[0]) == 5
+    assert len(module.step_calls[0]) == 6
     assert math.isclose(module.step_calls[0][4], math.pow(18.0, 1.8))
+    assert module.step_calls[0][5] is False
     owner.update_center_dynamic(step_input)
 
     try:
@@ -174,6 +175,7 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     owner.step_no_collision(0.1)
     assert len(module.step_calls) == 2
     assert math.isclose(module.step_calls[1][4], math.pow(9.0, 1.8))
+    assert module.step_calls[1][5] is True
     owner.update_step_interpolation(0.75)
     assert module.interpolation_args == [(owner._handle, 0.75)]
     owner.step_no_collision(0.1)

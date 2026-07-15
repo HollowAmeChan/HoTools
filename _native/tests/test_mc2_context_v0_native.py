@@ -892,6 +892,136 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         hotools_native.mc2_context_v0_free(point_triangle_context)
 
 
+def test_self_collision_intersect_records_commit_only_on_final_substep():
+    context = hotools_native.mc2_context_v0_create(0, 5)
+    try:
+        proxy, baseline = static_arrays(5)
+        proxy = list(proxy)
+        edges = np.array(
+            [[0, 1], [1, 2], [2, 0], [3, 4]],
+            dtype=np.int32,
+        )
+        triangles = np.array([[0, 1, 2]], dtype=np.int32)
+        proxy[5] = edges
+        proxy[6] = triangles
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        particle_indices = np.concatenate(
+            (
+                np.column_stack(
+                    (
+                        np.arange(5, dtype=np.int32),
+                        np.full(5, -1, dtype=np.int32),
+                        np.full(5, -1, dtype=np.int32),
+                    )
+                ),
+                np.column_stack((edges, np.full(4, -1, dtype=np.int32))),
+                triangles,
+            ),
+            axis=0,
+        )
+        primitive_flags = np.concatenate(
+            (
+                np.zeros(5, dtype=np.uint32),
+                np.full(4, 0x01000000, dtype=np.uint32),
+                np.full(1, 0x02000000, dtype=np.uint32),
+            )
+        )
+        depths = np.concatenate(
+            (
+                baseline[7],
+                baseline[7][edges].mean(axis=1),
+                baseline[7][triangles].mean(axis=1),
+            )
+        ).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            context, primitive_flags, particle_indices, depths, 5, 4, 1,
+        )
+        floats, ints, curves = parameters()
+        ints[9] = 2
+        curves[8] = 0.001
+        hotools_native.mc2_context_v0_update_parameters(
+            context, floats, ints, curves
+        )
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.5, 0.5, 1.0],
+                [0.5, 0.5, -1.0],
+            ],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((5, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        first_info = hotools_native.mc2_context_v0_inspect(context)
+        assert first_info["self_intersect_detection_count"] == 1
+        assert first_info["self_intersect_solve_count"] == 1
+        assert first_info["self_intersect_record_count"] == 0
+        assert first_info["self_intersect_particle_count"] == 0
+
+        update_dynamic(context, 2, 0, positions, rotations)
+        hotools_native.mc2_context_v0_step(
+            context, 1.0 / 90.0, 1.0, 0.0, 1.0, False
+        )
+        middle_info = hotools_native.mc2_context_v0_inspect(context)
+        assert middle_info["self_intersect_detection_count"] == 2
+        assert middle_info["self_intersect_solve_count"] == 1
+        assert middle_info["self_intersect_record_count"] == 1
+        records = np.empty((1, 5), dtype=np.int32)
+        particle_flags = np.empty(5, dtype=np.uint8)
+        current_primitive_flags = np.empty(10, dtype=np.uint32)
+        hotools_native.mc2_context_v0_read_self_collision_intersections(
+            context, records, particle_flags, current_primitive_flags
+        )
+        np.testing.assert_array_equal(records, [[3, 4, 0, 1, 2]])
+        np.testing.assert_array_equal(particle_flags, np.zeros(5, dtype=np.uint8))
+
+        hotools_native.mc2_context_v0_step(
+            context, 1.0 / 90.0, 1.0, 0.0, 1.0, True
+        )
+        final_info = hotools_native.mc2_context_v0_inspect(context)
+        assert final_info["self_intersect_detection_count"] == 2
+        assert final_info["self_intersect_solve_count"] == 2
+        assert final_info["self_intersect_particle_count"] == 2
+        hotools_native.mc2_context_v0_read_self_collision_intersections(
+            context, records, particle_flags, current_primitive_flags
+        )
+        np.testing.assert_array_equal(particle_flags, [0, 0, 0, 1, 1])
+
+        update_dynamic(context, 3, 0, positions, rotations)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        third_info = hotools_native.mc2_context_v0_inspect(context)
+        assert third_info["self_intersect_detection_count"] == 3
+        assert third_info["self_intersect_solve_count"] == 3
+        assert third_info["self_intersect_record_count"] == 0
+        assert third_info["self_intersect_particle_count"] == 0
+        records = np.empty((0, 5), dtype=np.int32)
+        hotools_native.mc2_context_v0_read_self_collision_intersections(
+            context, records, particle_flags, current_primitive_flags
+        )
+        sorted_indices = np.empty((10, 3), dtype=np.int32)
+        grids = np.empty((10, 3), dtype=np.int32)
+        hashes = np.empty(10, dtype=np.int32)
+        starts = np.empty(10, dtype=np.int32)
+        counts = np.empty(10, dtype=np.int32)
+        hotools_native.mc2_context_v0_read_self_collision_grid(
+            context, sorted_indices, grids, hashes, starts, counts
+        )
+        crossing_row = np.flatnonzero(
+            np.all(sorted_indices == np.array([3, 4, -1], dtype=np.int32), axis=1)
+        )
+        np.testing.assert_array_equal(crossing_row, [8])
+        assert current_primitive_flags[crossing_row[0]] & 0x7 == 0x3
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_point_collision_projection_and_post():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -1788,6 +1918,8 @@ if __name__ == "__main__":
     print("PASS self-collision grid sort and Unity hash")
     test_self_collision_broadphase_candidates_are_filtered_and_typed()
     print("PASS self-collision broadphase candidates")
+    test_self_collision_intersect_records_commit_only_on_final_substep()
+    print("PASS self-collision cross-frame Intersect")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
     test_bone_spring_soft_sphere_limit_and_velocity_reference()

@@ -70,6 +70,7 @@ constexpr float kFrictionMass = 3.0f;
 constexpr std::uint32_t kSelfFix0 = 0x04000000u;
 constexpr std::uint32_t kSelfAllFix = 0x20000000u;
 constexpr std::uint32_t kSelfIgnore = 0x40000000u;
+constexpr std::uint32_t kSelfIntersectMask = 0x00000007u;
 constexpr std::int32_t kSelfIgnoreGrid = 1000000;
 
 std::atomic<std::int64_t> g_created {0};
@@ -107,6 +108,8 @@ struct Mc2ContextV0 {
     std::int64_t self_contact_update_count = 0;
     std::int64_t self_contact_solver_iteration_count = 0;
     std::int64_t self_contact_sum_count = 0;
+    std::int64_t self_intersect_detection_count = 0;
+    std::int64_t self_intersect_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
@@ -134,6 +137,8 @@ struct Mc2ContextV0 {
     bool self_grid_dynamic_ready = false;
     bool self_candidate_ready = false;
     bool self_contact_ready = false;
+    bool self_intersect_detection_ready = false;
+    bool self_intersect_flags_ready = false;
     bool tether_enabled = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
@@ -225,6 +230,9 @@ struct Mc2ContextV0 {
     float self_grid_size = 0.0f;
     std::vector<std::uint64_t> self_contact_keys;
     std::vector<std::int32_t> self_intersect_records;
+    std::vector<std::uint8_t> self_particle_intersect_flags;
+    std::int64_t self_intersect_detection_frame = 0;
+    std::int64_t self_intersect_detection_generation = 0;
     std::int32_t collided_by_groups = 0;
     std::vector<std::int32_t> collider_types;
     std::vector<std::int32_t> collider_group_bits;
@@ -347,6 +355,7 @@ void release_resources(Mc2ContextV0& context) {
     context.self_triangle_primitive_count = 0;
     context.self_contact_keys.clear();
     context.self_intersect_records.clear();
+    context.self_particle_intersect_flags.clear();
     context.collided_by_groups = 0;
     context.collider_types.clear();
     context.collider_group_bits.clear();
@@ -371,6 +380,8 @@ void release_resources(Mc2ContextV0& context) {
     context.self_grid_dynamic_ready = false;
     context.self_candidate_ready = false;
     context.self_contact_ready = false;
+    context.self_intersect_detection_ready = false;
+    context.self_intersect_flags_ready = false;
     context.self_point_grid_count = 0;
     context.self_edge_grid_count = 0;
     context.self_triangle_grid_count = 0;
@@ -2121,6 +2132,180 @@ std::int64_t self_binary_search_grid_hash(
     return -1;
 }
 
+bool self_collision_intersect_enabled(const Mc2ContextV0& context) {
+    return context.self_collision_static_ready &&
+        context.setup_kind != 2 &&
+        context.int_values.size() == static_cast<std::size_t>(kIntCount) &&
+        context.int_values[kSelfCollisionMode] == 2 &&
+        context.self_edge_primitive_count > 0 &&
+        context.self_triangle_primitive_count > 0;
+}
+
+void detect_self_collision_intersections_once(Mc2ContextV0& context) {
+    if (context.self_intersect_detection_ready &&
+        context.self_intersect_detection_frame == context.frame &&
+        context.self_intersect_detection_generation == context.generation) {
+        return;
+    }
+    context.self_intersect_records.clear();
+    context.self_intersect_detection_ready = false;
+    context.self_intersect_detection_frame = context.frame;
+    context.self_intersect_detection_generation = context.generation;
+    if (!self_collision_intersect_enabled(context)) {
+        context.self_particle_intersect_flags.assign(
+            static_cast<std::size_t>(context.vertex_count),
+            static_cast<std::uint8_t>(0)
+        );
+        context.self_intersect_flags_ready = false;
+        return;
+    }
+
+    context.self_intersect_detection_ready = true;
+    ++context.self_intersect_detection_count;
+    if (!context.self_grid_dynamic_ready ||
+        context.self_max_primitive_size <= kMc2Epsilon ||
+        context.self_grid_size <= kMc2Epsilon) {
+        return;
+    }
+
+    struct IntersectRecord {
+        std::array<std::int32_t, 5> particles {};
+    };
+    std::vector<IntersectRecord> records;
+    const auto edge_start = static_cast<std::size_t>(context.self_point_primitive_count);
+    const auto edge_count = static_cast<std::size_t>(context.self_edge_primitive_count);
+    const auto triangle_start = static_cast<std::size_t>(
+        context.self_point_primitive_count + context.self_edge_primitive_count
+    );
+    const auto triangle_grid_count = static_cast<std::size_t>(
+        context.self_triangle_grid_count
+    );
+    const auto frame_index = static_cast<std::size_t>((context.frame % 2 + 2) % 2);
+    for (std::size_t edge = edge_start; edge < edge_start + edge_count; ++edge) {
+        if ((edge % 2) != frame_index) continue;
+        const auto edge_flag = context.self_primitive_flags[edge];
+        if ((edge_flag & kSelfIgnore) != 0u) continue;
+        std::array<std::int32_t, 3> start_grid {};
+        std::array<std::int32_t, 3> end_grid {};
+        const float padding = context.self_max_primitive_size * 0.5f;
+        for (std::size_t component = 0; component < 3; ++component) {
+            start_grid[component] = static_cast<std::int32_t>(std::floor(
+                (context.self_primitive_aabb_min[edge * 3 + component] - padding) /
+                context.self_grid_size
+            ));
+            end_grid[component] = static_cast<std::int32_t>(std::floor(
+                (context.self_primitive_aabb_max[edge * 3 + component] + padding) /
+                context.self_grid_size
+            ));
+        }
+        for (std::int64_t z = start_grid[2]; z <= end_grid[2]; ++z) {
+            for (std::int64_t y = start_grid[1]; y <= end_grid[1]; ++y) {
+                for (std::int64_t x = start_grid[0]; x <= end_grid[0]; ++x) {
+                    const auto hash = self_grid_hash(
+                        static_cast<std::int32_t>(x),
+                        static_cast<std::int32_t>(y),
+                        static_cast<std::int32_t>(z)
+                    );
+                    const auto run_index = self_binary_search_grid_hash(
+                        context,
+                        triangle_start,
+                        triangle_grid_count,
+                        hash
+                    );
+                    if (run_index < 0) continue;
+                    const auto buffer_index = triangle_start +
+                        static_cast<std::size_t>(run_index);
+                    const auto run_start = static_cast<std::size_t>(
+                        context.self_grid_starts[buffer_index]
+                    );
+                    const auto run_end = run_start + static_cast<std::size_t>(
+                        context.self_grid_counts[buffer_index]
+                    );
+                    for (std::size_t triangle = run_start; triangle < run_end; ++triangle) {
+                        const auto triangle_flag = context.self_primitive_flags[triangle];
+                        if (!self_aabbs_overlap(context, edge, triangle) ||
+                            (triangle_flag & kSelfIgnore) != 0u ||
+                            ((edge_flag & kSelfAllFix) != 0u &&
+                             (triangle_flag & kSelfAllFix) != 0u) ||
+                            self_primitives_share_particle(context, edge, triangle)) {
+                            continue;
+                        }
+                        records.push_back(IntersectRecord {{
+                            context.self_particle_indices[edge * 3],
+                            context.self_particle_indices[edge * 3 + 1],
+                            context.self_particle_indices[triangle * 3],
+                            context.self_particle_indices[triangle * 3 + 1],
+                            context.self_particle_indices[triangle * 3 + 2],
+                        }});
+                    }
+                }
+            }
+        }
+    }
+    std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+        return left.particles < right.particles;
+    });
+    records.erase(
+        std::unique(records.begin(), records.end(), [](const auto& left, const auto& right) {
+            return left.particles == right.particles;
+        }),
+        records.end()
+    );
+    context.self_intersect_records.reserve(records.size() * 5);
+    for (const auto& record : records) {
+        context.self_intersect_records.insert(
+            context.self_intersect_records.end(),
+            record.particles.begin(),
+            record.particles.end()
+        );
+    }
+}
+
+void solve_self_collision_intersections_final(Mc2ContextV0& context) {
+    if (!self_collision_intersect_enabled(context) ||
+        !context.self_intersect_detection_ready) {
+        return;
+    }
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    context.self_particle_intersect_flags.assign(vertex_count, static_cast<std::uint8_t>(0));
+    if (context.state_positions.size() != vertex_count * 3) {
+        context.self_intersect_flags_ready = false;
+        return;
+    }
+    const auto record_count = context.self_intersect_records.size() / 5;
+    for (std::size_t record = 0; record < record_count; ++record) {
+        const auto* particles = context.self_intersect_records.data() + record * 5;
+        Vec3 p = load_vector3(context.state_positions, static_cast<std::size_t>(particles[0]));
+        const Vec3 q = load_vector3(context.state_positions, static_cast<std::size_t>(particles[1]));
+        const Vec3 a = load_vector3(context.state_positions, static_cast<std::size_t>(particles[2]));
+        const Vec3 b = load_vector3(context.state_positions, static_cast<std::size_t>(particles[3]));
+        const Vec3 c = load_vector3(context.state_positions, static_cast<std::size_t>(particles[4]));
+        Vec3 qp = sub(p, q);
+        const Vec3 ac = sub(c, a);
+        const Vec3 ab = sub(b, a);
+        const Vec3 n = cross(ab, ac);
+        float d = dot(qp, n);
+        if (std::abs(d) < kMc2Epsilon) continue;
+        if (d < 0.0f) {
+            p = q;
+            qp = mul(qp, -1.0f);
+            d = -d;
+        }
+        const Vec3 ap = sub(p, a);
+        const float t = dot(ap, n);
+        if (t < 0.0f || t > d) continue;
+        const Vec3 e = cross(qp, ap);
+        const float v = dot(ac, e);
+        if (v < 0.0f || v > d) continue;
+        const float w = -dot(ab, e);
+        if (w < 0.0f || v + w > d) continue;
+        context.self_particle_intersect_flags[static_cast<std::size_t>(particles[0])] = 1;
+        context.self_particle_intersect_flags[static_cast<std::size_t>(particles[1])] = 1;
+    }
+    context.self_intersect_flags_ready = true;
+    ++context.self_intersect_solve_count;
+}
+
 void update_self_collision_candidates(Mc2ContextV0& context) {
     context.self_contact_candidates.clear();
     context.self_candidate_ready = false;
@@ -2766,10 +2951,20 @@ void update_self_collision_primitives_once(
     float edge_max_size = 0.0f;
     const float cloth_mass = context.float_values[kClothMass];
     for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
-        const auto flag = context.self_primitive_flags[primitive];
-        if ((flag & kSelfIgnore) != 0u) continue;
+        auto flag = context.self_primitive_flags[primitive] & ~kSelfIntersectMask;
         const auto kind = static_cast<std::size_t>((flag >> 24u) & 0x03u);
         const auto axis_count = kind + 1;
+        for (std::size_t axis = 0; axis < axis_count; ++axis) {
+            const auto vertex = static_cast<std::size_t>(
+                context.self_particle_indices[primitive * 3 + axis]
+            );
+            if (vertex < context.self_particle_intersect_flags.size() &&
+                context.self_particle_intersect_flags[vertex] != 0) {
+                flag |= 1u << axis;
+            }
+        }
+        context.self_primitive_flags[primitive] = flag;
+        if ((flag & kSelfIgnore) != 0u) continue;
         std::array<float, 3> minimum {
             std::numeric_limits<float>::max(),
             std::numeric_limits<float>::max(),
@@ -3034,6 +3229,15 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             ))
         ) ||
         !dict_i64(result, "self_intersect_record_count", static_cast<std::int64_t>(context.self_intersect_records.size() / 5)) ||
+        !dict_i64(
+            result,
+            "self_intersect_particle_count",
+            static_cast<std::int64_t>(std::count(
+                context.self_particle_intersect_flags.begin(),
+                context.self_particle_intersect_flags.end(),
+                static_cast<std::uint8_t>(1)
+            ))
+        ) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
         !dict_i64(result, "collider_revision", context.collider_revision) ||
@@ -3061,6 +3265,12 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             context.self_contact_solver_iteration_count
         ) ||
         !dict_i64(result, "self_contact_sum_count", context.self_contact_sum_count) ||
+        !dict_i64(
+            result,
+            "self_intersect_detection_count",
+            context.self_intersect_detection_count
+        ) ||
+        !dict_i64(result, "self_intersect_solve_count", context.self_intersect_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(
@@ -3093,6 +3303,12 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "self_grid_dynamic_ready", context.self_grid_dynamic_ready) ||
         !dict_bool(result, "self_candidate_ready", context.self_candidate_ready) ||
         !dict_bool(result, "self_contact_ready", context.self_contact_ready) ||
+        !dict_bool(
+            result,
+            "self_intersect_detection_ready",
+            context.self_intersect_detection_ready
+        ) ||
+        !dict_bool(result, "self_intersect_flags_ready", context.self_intersect_flags_ready) ||
         !dict_float(result, "self_max_primitive_size", context.self_max_primitive_size) ||
         !dict_float(result, "self_grid_size", context.self_grid_size) ||
         !dict_bool(result, "tether_enabled", context.tether_enabled) ||
@@ -3692,6 +3908,12 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_triangle_primitive_count = triangle_count;
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
+    context->self_particle_intersect_flags.assign(
+        static_cast<std::size_t>(context->vertex_count),
+        static_cast<std::uint8_t>(0)
+    );
+    context->self_intersect_detection_ready = false;
+    context->self_intersect_flags_ready = false;
     context->self_collision_static_ready = true;
     context->self_primitive_dynamic_ready = false;
     context->self_grid_dynamic_ready = false;
@@ -4350,6 +4572,15 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->bone_output_rotations.clear();
     context->self_contact_keys.clear();
     context->self_intersect_records.clear();
+    context->self_particle_intersect_flags.assign(
+        static_cast<std::size_t>(context->vertex_count),
+        static_cast<std::uint8_t>(0)
+    );
+    context->self_intersect_detection_ready = false;
+    context->self_intersect_flags_ready = false;
+    for (auto& flag : context->self_primitive_flags) {
+        flag &= ~kSelfIntersectMask;
+    }
     context->self_contact_candidates.clear();
     clear_self_collision_contacts(*context);
     context->self_primitive_dynamic_ready = false;
@@ -4401,8 +4632,8 @@ PyObject* mc2_context_v0_set_setup_kind(PyObject*, PyObject* args) {
 
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
     const Py_ssize_t argument_count = PyTuple_GET_SIZE(args);
-    if (argument_count != 4 && argument_count != 5) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4 or 5 arguments");
+    if (argument_count != 4 && argument_count != 5 && argument_count != 6) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4, 5, or 6 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -4416,9 +4647,14 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         PyTuple_GET_ITEM(args, 3),
         "simulation_power_z"
     );
-    const double simulation_power_w = argument_count == 5
+    const double simulation_power_w = argument_count >= 5
         ? as_double(PyTuple_GET_ITEM(args, 4), "simulation_power_w")
         : 1.0;
+    const int final_substep_value = argument_count == 6
+        ? PyObject_IsTrue(PyTuple_GET_ITEM(args, 5))
+        : 1;
+    if (final_substep_value < 0) return nullptr;
+    const bool is_final_substep = final_substep_value != 0;
     if (PyErr_Occurred()) return nullptr;
     if (!std::isfinite(dt) || dt < 0.0 ||
         !std::isfinite(simulation_power_y) || simulation_power_y < 0.0 ||
@@ -4438,6 +4674,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         return nullptr;
     }
     if (context->proxy_static_ready) {
+        detect_self_collision_intersections_once(*context);
         const auto previous_positions = context->state_positions;
         if (!predict_particles(
                 *context,
@@ -4457,6 +4694,9 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         solve_motion_once(*context);
         update_self_collision_primitives_once(*context, previous_positions);
         commit_particle_post(*context, static_cast<float>(dt), previous_positions);
+        if (is_final_substep) {
+            solve_self_collision_intersections_final(*context);
+        }
     }
     if (center_step_active) {
         context->center_old_world_position = context->center_now_world_position;
@@ -4755,6 +4995,70 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
                 context->self_contact_t.size() * sizeof(float));
     std::memcpy(normals.view.buf, context->self_contact_normals.data(),
                 context->self_contact_normals.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_self_collision_intersections(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_self_collision_intersections expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_intersect_detection_ready && !context->self_intersect_flags_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision intersections are not ready");
+        return nullptr;
+    }
+    const auto record_count = static_cast<Py_ssize_t>(
+        context->self_intersect_records.size() / 5
+    );
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    const auto primitive_count = static_cast<Py_ssize_t>(context->self_primitive_flags.size());
+    Buffer records, particle_flags, primitive_flags;
+    if (!records.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_intersect_records"
+        ) ||
+        !particle_flags.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_particle_intersect_flags"
+        ) ||
+        !primitive_flags.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_primitive_flags"
+        )) {
+        return nullptr;
+    }
+    if (!expect_int32(records, "out_self_intersect_records") ||
+        !expect_2d(records, "out_self_intersect_records", record_count, 5) ||
+        !expect_uint8_scalar_array(particle_flags, "out_self_particle_intersect_flags") ||
+        !expect_1d_array(
+            particle_flags,
+            "out_self_particle_intersect_flags",
+            vertex_count
+        ) ||
+        !expect_uint32_scalar_array(primitive_flags, "out_self_primitive_flags") ||
+        !expect_1d_array(primitive_flags, "out_self_primitive_flags", primitive_count)) {
+        return nullptr;
+    }
+    std::memcpy(
+        records.view.buf,
+        context->self_intersect_records.data(),
+        context->self_intersect_records.size() * sizeof(std::int32_t)
+    );
+    std::memcpy(
+        particle_flags.view.buf,
+        context->self_particle_intersect_flags.data(),
+        context->self_particle_intersect_flags.size() * sizeof(std::uint8_t)
+    );
+    std::memcpy(
+        primitive_flags.view.buf,
+        context->self_primitive_flags.data(),
+        context->self_primitive_flags.size() * sizeof(std::uint32_t)
+    );
     Py_RETURN_NONE;
 }
 

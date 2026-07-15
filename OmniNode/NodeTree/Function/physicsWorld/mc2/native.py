@@ -55,6 +55,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
     "mc2_context_v0_read",
+    "mc2_context_v0_read_self_collision_intersections",
     "mc2_context_v0_read_bone_output",
     "mc2_context_v0_read_step_basic",
     "mc2_context_v0_read_center_step",
@@ -447,7 +448,7 @@ class MC2NativeContextV0:
         self._center_frame_dt = None
         self._center_step_dt = None
 
-    def step_no_collision(self, dt: float) -> None:
+    def step_no_collision(self, dt: float, *, is_final_substep: bool = True) -> None:
         self._ensure_live()
         dt = float(dt)
         if self._center_step_dt is not None and not math.isclose(
@@ -472,6 +473,7 @@ class MC2NativeContextV0:
             simulation_power_y,
             simulation_power_z,
             simulation_power_w,
+            bool(is_final_substep),
         )
         self._center_step_dt = None
 

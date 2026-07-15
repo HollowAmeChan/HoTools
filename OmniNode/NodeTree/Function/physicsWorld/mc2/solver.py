@@ -869,7 +869,10 @@ def step_mc2(
                                         frame_interpolation
                                     )
                                 native_context.step_no_collision(
-                                    frame_schedule.simulation_delta_time
+                                    frame_schedule.simulation_delta_time,
+                                    is_final_substep=(
+                                        update_index == frame_schedule.update_count - 1
+                                    ),
                                 )
                             center_step_result = native_context.read_center_step()
                         elif center_pose is None and dt > 0.0:

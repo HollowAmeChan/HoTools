@@ -540,6 +540,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_contact_sum_count"] == 4
         assert native_info["self_contact_cache_count"] == 0
         assert native_info["self_contact_enabled_count"] == 0
+        assert native_info["self_intersect_detection_count"] == 1
+        assert native_info["self_intersect_solve_count"] == 1
+        assert native_info["self_intersect_detection_ready"] is True
+        assert native_info["self_intersect_flags_ready"] is True
         assert native_info["self_point_grid_count"] > 0
         assert native_info["self_edge_grid_count"] > 0
         assert native_info["self_triangle_grid_count"] > 0
@@ -1460,6 +1464,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 movement_inertia_smoothing=0.0,
                 movement_speed_limit=-1.0,
                 rotation_speed_limit=-1.0,
+                self_collision_mode=2,
             ),
         )
         skip_settings = mc2_parameters.make_mc2_solver_settings(
@@ -1529,6 +1534,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert scheduler_info["step_interpolation_revision"] == 2
         assert scheduler_info["center_step_count"] == 3
         assert scheduler_info["center_frame_shift_count"] == 1
+        assert scheduler_info["self_intersect_detection_count"] == 1
+        assert scheduler_info["self_intersect_solve_count"] == 1
         scheduler_shift = scheduler_slot.data["center_frame_shift_result"]
         np.testing.assert_allclose(
             scheduler_shift.frame_component_shift_vector,

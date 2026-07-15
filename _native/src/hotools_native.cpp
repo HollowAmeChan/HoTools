@@ -808,6 +808,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_candidates, a); });
     m.def("mc2_context_v0_read_self_collision_contacts",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_contacts, a); });
+    m.def("mc2_context_v0_read_self_collision_intersections",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_intersections, a); });
     m.def("mc2_context_v0_read_bone_output",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_bone_output, a); });
     m.def("mc2_context_v0_read_step_basic",
