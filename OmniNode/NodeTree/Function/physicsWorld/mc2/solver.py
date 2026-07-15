@@ -21,7 +21,11 @@ from .center_state import (
 )
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
-from .results import make_mc2_mesh_result, publish_mc2_result_transaction
+from .results import (
+    make_mc2_bone_result,
+    make_mc2_mesh_result,
+    publish_mc2_result_transaction,
+)
 from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
@@ -630,6 +634,7 @@ def step_mc2(
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     public_results: list[dict] = []
+    staged_writeback_plans: dict[str, dict] = {}
     published_results = ()
     world.acquire_write(MC2_SOLVER_ID)
     try:
@@ -967,9 +972,23 @@ def step_mc2(
                                 world_generation=world.generation,
                             )
                         )
+                    elif int(world.generation) > 0 and slot.data.get("bone_static") is not None:
+                        bone_result, writeback_plan = make_mc2_bone_result(
+                            spec=spec,
+                            slot=slot,
+                            candidate=candidate,
+                            frame=frame_input.frame,
+                            world_generation=world.generation,
+                        )
+                        public_results.append(bone_result)
+                        staged_writeback_plans[slot.slot_id] = writeback_plan
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
             published_results = publish_mc2_result_transaction(world, public_results)
+            for slot_id, writeback_plan in staged_writeback_plans.items():
+                slot = world.solver_slots.get(slot_id)
+                if slot is not None:
+                    slot.data["writeback_plan"] = writeback_plan
     finally:
         world.release_write(MC2_SOLVER_ID)
         for context in staged_native_contexts:

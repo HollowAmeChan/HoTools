@@ -42,6 +42,7 @@ static_build = importlib.import_module(
 )
 solver = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver")
 world_types = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.types")
+writeback = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback")
 
 
 def _armature():
@@ -113,7 +114,7 @@ try:
     world.frame_context.generation = 1
     world.frame_context.dt = 1.0 / 60.0
     returned, ready, _status = solver.step_mc2(world, [task])
-    assert returned is world and ready is False
+    assert returned is world and ready is True
     slot = world.solver_slots[task.task_id]
     candidate = slot.data["result_candidate"]
     assert candidate is not None
@@ -123,7 +124,21 @@ try:
     assert candidate.world_positions.flags.writeable is False
     assert candidate.world_rotations_xyzw.flags.writeable is False
     assert slot.data["native_context"].inspect()["bone_line_output_count"] == 1
-    assert world.result_streams == {}
+    result = world.result_streams["bone_transform"][0]
+    assert result["writeback_type"] == "bone_transform_batch"
+    assert result["ready"] is True
+    assert result["task_id"] == task.task_id
+    assert result["bone_count"] == 3
+    assert result["plan_schema"] == "mc2_bone_writeback_plan_v0"
+    assert result["target_key"] == f"{armature.as_pointer()}:{armature.data.as_pointer()}"
+    plan = slot.data["writeback_plan"]
+    assert plan["schema"] == "mc2_bone_writeback_plan_v0"
+    assert plan["armature"] is armature
+    assert tuple(record["bone_name"] for record in plan["batches"][0]["records"]) == (
+        "Root", "Mid", "Tip"
+    )
+    assert writeback.writeback_bone_transforms(world) == 3
+    assert "_writeback_error" not in slot.data
 
     armature.pose.bones["Root"].rotation_mode = "XYZ"
     armature.pose.bones["Root"].rotation_euler.z = 0.2
@@ -139,7 +154,10 @@ try:
     solver.step_mc2(world, [task])
     assert slot.data["result_candidate"] is second_candidate
     assert slot.data["native_context"].inspect()["bone_line_output_count"] == 2
-    assert world.result_streams == {}
+    assert len(world.result_streams["bone_transform"]) == 1
+    assert world.result_streams["bone_transform"][0]["revision"] == 2
+    assert writeback.writeback_bone_transforms(world) == 3
+    assert "_writeback_error" not in slot.data
 finally:
     if world is not None:
         world.omni_cache_dispose("test_cleanup")

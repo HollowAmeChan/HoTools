@@ -321,6 +321,36 @@ def test_public_result_transaction_rolls_back_on_publish_failure() -> None:
     assert world.result_streams == {"gn_attribute": [previous, old_mc2]}
 
 
+def test_public_result_transaction_accepts_mesh_and_bone_channels_atomically() -> None:
+    world = _ResultWorld()
+    mesh = {
+        "channel": "gn_attribute",
+        "solver": "mc2",
+        "slot_id": "mc2:mesh:test",
+        "target_key": "101:202",
+        "frame": 12,
+        "generation": 4,
+        "ready": True,
+    }
+    bone = {
+        "channel": "bone_transform",
+        "writeback_type": "bone_transform_batch",
+        "solver": "mc2",
+        "slot_id": "mc2:bone:test",
+        "target_key": "303:404",
+        "frame": 12,
+        "generation": 4,
+        "ready": True,
+    }
+    published = results_module.publish_mc2_result_transaction(world, (mesh, bone))
+    assert tuple(result["channel"] for result in published) == (
+        "gn_attribute",
+        "bone_transform",
+    )
+    assert len(world.result_streams["gn_attribute"]) == 1
+    assert len(world.result_streams["bone_transform"]) == 1
+
+
 if __name__ == "__main__":
     for name, test in sorted(globals().items()):
         if name.startswith("test_") and callable(test):
