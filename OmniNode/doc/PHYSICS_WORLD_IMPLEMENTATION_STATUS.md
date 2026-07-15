@@ -77,6 +77,8 @@ MC2 Angle补充：V0已按源码顺序在首次Distance后、Bending前执行Res
 
 MC2 Motion补充：V0已按源码顺序在第二次Distance后、post前执行Max Distance/Backstop，并新增独立animated base子步缓冲，避免误用baseline step-basic。N2 use/curve/float/normal-axis、InvalidMotion与depth²语义已接入，MaxDistance=0显式锁定边界通过；py313 kernel/V0及Blender5.1 Fixed Mesh三子步通过。独立Tier A Motion substep fixture仍待补齐。
 
+MC2 Collider补充：共享World current/previous collider snapshot现已有独立不可变MC2帧契约，覆盖四类primitive、组mask、自身排除与moving pose，py313通过。native上传、Point/Edge projection、friction/collision-normal persistent及source-aligned post仍未接入，因此整体仍保持no-collision生产声明。
+
 ## 统一 MC2 决策
 
 MC2 只有一个 solver identity：`mc2`。

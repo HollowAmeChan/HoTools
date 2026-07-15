@@ -221,6 +221,8 @@ Angle源码顺序位于首次Distance与Bending之间，直接消费baseline par
 
 Motion源码顺序位于第二次Distance之后、post之前，Max Distance与Backstop始终相对插值后的animation base position/rotation计算，不能使用Angle/Baseline已经改写的step-basic。V0因此在prediction开始时独立保存animated base缓冲。Motion由N2 int槽6/7控制，depth先平方再采样curve槽5/6，backstop radius与stiffness来自float槽31/32，法线轴来自int槽0；仅Move且未设置`Flag_InvalidMotion(0x08)`的粒子参与。显式Max Distance启用时曲线值0表示锁到base pose，不是关闭；raw公共kernel仍保留逐顶点正值推断兼容。py313零距离case验证gravity prediction后被锁回base且顺序位于post前，Blender5.1 Fixed Mesh记录三个production solve；独立Tier A Motion substep fixture仍待生成。
 
+Collider帧输入现由`collider_frame.py`唯一从`PhysicsWorldCache.collider_snapshot`与`previous_collider_snapshot`派生。契约输出`int32` type/group-bit、current/old center与segment、`float32` radius，全部C-contiguous且只读；Plane归一化normal，Box以axis X/Y和signed half-Z编码，Sphere/Capsule要求正半径。packer按Mesh `collided_by_groups`过滤1..16组并排除source owner，空输入保持稳定typed arrays。该N0只完成host frame contract，尚未声明native collision production；下一步必须上传该spec并连同particle radius、friction、collision normal与post一起验证。
+
 每个 substep会重新构建 next/velocity-reference/base pose与 step-basic scratch；post step提交 old position、velocity与摩擦；display再使用 committed state与 real velocity。必须区分：
 
 - persistent：old pose、animation history、display、velocity/friction/collision history；
