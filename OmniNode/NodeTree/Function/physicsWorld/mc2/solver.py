@@ -30,7 +30,7 @@ from .topology import build_mc2_topology_spec
 
 MC2_FRAMEWORK_STATUS = (
     "MC2 context V0 已接入 Center/Move inertia、Gravity、Pin、Distance、Bending 数值 step；"
-    "Mesh 公共结果事务已接入"
+    "Mesh 公共结果事务与Bone Line静态注册已接入"
 )
 
 
@@ -52,6 +52,7 @@ def _slot_debug_snapshot(slot) -> dict:
     particle_buffer = slot.data.get("particle_buffer")
     spec = slot.data.get("spec")
     mesh_static = slot.data.get("mesh_static")
+    bone_static = slot.data.get("bone_static")
     native_context = slot.data.get("native_context")
     result_candidate = slot.data.get("result_candidate")
     center_state = slot.data.get("center_state")
@@ -68,6 +69,11 @@ def _slot_debug_snapshot(slot) -> dict:
         "mesh_static": (
             mesh_static.debug_dict()
             if hasattr(mesh_static, "debug_dict")
+            else None
+        ),
+        "bone_static": (
+            bone_static.debug_dict()
+            if hasattr(bone_static, "debug_dict")
             else None
         ),
         "static_input_signature": slot.data.get("static_input_signature", ""),
@@ -141,6 +147,7 @@ def _install_mc2_slot(
     initial_state: MC2InitialStateSpec,
     reset_reason: str,
     mesh_static=None,
+    bone_static=None,
     static_input_signature: str | None = None,
     native_context=None,
 ) -> MC2SlotRuntimeState:
@@ -157,9 +164,10 @@ def _install_mc2_slot(
         initialized=False,
     )
     particle_buffer = MC2ParticleBuffer.allocate(initial_state)
+    active_static = mesh_static if mesh_static is not None else bone_static
     center_state = (
-        MC2CenterPersistentState(mesh_static.center.center_static_signature)
-        if mesh_static is not None
+        MC2CenterPersistentState(active_static.center.center_static_signature)
+        if active_static is not None
         else None
     )
     slot.kind = MC2_SLOT_KIND
@@ -172,6 +180,7 @@ def _install_mc2_slot(
             "settings": settings,
             "initial_state": initial_state,
             "mesh_static": mesh_static,
+            "bone_static": bone_static,
             "static_input_signature": static_input_signature,
             "particle_buffer": particle_buffer,
             "native_context": native_context,
@@ -340,6 +349,7 @@ def _sync_mc2_slot(
     effective,
     initial_state,
     mesh_static,
+    bone_static,
     static_input_signature,
     staged_native_context,
 ) -> tuple[str, object]:
@@ -366,6 +376,7 @@ def _sync_mc2_slot(
             settings=settings,
             initial_state=initial_state,
             mesh_static=mesh_static,
+            bone_static=bone_static,
             static_input_signature=static_input_signature,
             reset_reason=rebuild_reason,
             native_context=staged_native_context,
@@ -493,12 +504,28 @@ def step_mc2(
                 and all(source.resolved for source in topology.sources)
                 and topology.particle_count > 0
             )
+            bone_static_supported = (
+                spec.setup_type == "bone_cloth"
+                and topology.connection_mode == 0
+                and len(topology.sources) == 1
+                and all(source.resolved for source in topology.sources)
+                and topology.particle_count > 0
+            )
             if mesh_static_supported:
                 from .setups.mesh_cloth.static_build import (
                     mesh_cloth_static_input_signature_for_task,
                 )
 
                 static_input_signature = mesh_cloth_static_input_signature_for_task(
+                    spec,
+                    topology,
+                )
+            elif bone_static_supported:
+                from .setups.bone_cloth.static_build import (
+                    bone_cloth_static_input_signature_for_task,
+                )
+
+                static_input_signature = bone_cloth_static_input_signature_for_task(
                     spec,
                     topology,
                 )
@@ -514,12 +541,19 @@ def step_mc2(
                 else None
             )
             mesh_static = None
+            bone_static = None
             if rebuild_reason and mesh_static_supported:
                 from .setups.mesh_cloth.static_build import (
                     build_mc2_mesh_cloth_static_for_task,
                 )
 
                 mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
+            elif rebuild_reason and bone_static_supported:
+                from .setups.bone_cloth.static_build import (
+                    build_mc2_bone_cloth_static_for_task,
+                )
+
+                bone_static = build_mc2_bone_cloth_static_for_task(spec, topology)
             if frame_input is None and automatic_frame_inputs and mesh_static_supported:
                 active_mesh_static = mesh_static
                 if active_mesh_static is None:
@@ -549,6 +583,8 @@ def step_mc2(
                 try:
                     if mesh_static is not None:
                         staged_native_context.update_mesh_static(mesh_static)
+                    elif bone_static is not None:
+                        staged_native_context.update_bone_static(bone_static)
                     staged_native_context.update_parameters(
                         effective,
                         animation_pose_ratio=spec.profile.animation_pose_ratio,
@@ -569,6 +605,7 @@ def step_mc2(
                     effective,
                     initial_state,
                     mesh_static,
+                    bone_static,
                     static_input_signature,
                     staged_native_context,
                     staged_native_frame_applied,
@@ -591,6 +628,7 @@ def step_mc2(
             effective,
             initial_state,
             mesh_static,
+            bone_static,
             static_input_signature,
             staged_native_context,
             staged_native_frame_applied,
@@ -603,6 +641,7 @@ def step_mc2(
                 effective,
                 initial_state,
                 mesh_static,
+                bone_static,
                 static_input_signature,
                 staged_native_context,
             )

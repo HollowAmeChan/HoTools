@@ -48,6 +48,7 @@ struct Mc2ContextV0 {
     std::int64_t parameter_revision = 0;
     std::int64_t proxy_static_revision = 0;
     std::int64_t baseline_static_revision = 0;
+    std::int64_t bone_static_revision = 0;
     std::int64_t distance_static_revision = 0;
     std::int64_t bending_static_revision = 0;
     std::int64_t center_static_revision = 0;
@@ -76,6 +77,7 @@ struct Mc2ContextV0 {
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
+    bool bone_static_ready = false;
     bool distance_static_ready = false;
     bool bending_static_ready = false;
     bool center_static_ready = false;
@@ -115,6 +117,14 @@ struct Mc2ContextV0 {
     std::vector<float> baseline_depths;
     std::vector<float> baseline_local_positions;
     std::vector<float> baseline_local_rotations;
+    std::vector<std::int32_t> bone_vertex_to_vertex_ranges;
+    std::vector<std::int32_t> bone_vertex_to_vertex_data;
+    std::vector<std::int32_t> bone_vertex_to_triangle_ranges;
+    std::vector<std::int32_t> bone_vertex_to_triangle_data;
+    std::vector<float> bone_vertex_bind_pose_positions;
+    std::vector<float> bone_vertex_bind_pose_rotations;
+    std::vector<float> bone_normal_adjustment_rotations;
+    std::vector<float> bone_vertex_to_transform_rotations;
     std::vector<std::int32_t> distance_ranges;
     std::vector<std::int32_t> distance_targets;
     std::vector<float> distance_rest_signed;
@@ -187,6 +197,14 @@ void release_resources(Mc2ContextV0& context) {
     context.baseline_depths.clear();
     context.baseline_local_positions.clear();
     context.baseline_local_rotations.clear();
+    context.bone_vertex_to_vertex_ranges.clear();
+    context.bone_vertex_to_vertex_data.clear();
+    context.bone_vertex_to_triangle_ranges.clear();
+    context.bone_vertex_to_triangle_data.clear();
+    context.bone_vertex_bind_pose_positions.clear();
+    context.bone_vertex_bind_pose_rotations.clear();
+    context.bone_normal_adjustment_rotations.clear();
+    context.bone_vertex_to_transform_rotations.clear();
     context.distance_ranges.clear();
     context.distance_targets.clear();
     context.distance_rest_signed.clear();
@@ -199,6 +217,7 @@ void release_resources(Mc2ContextV0& context) {
     context.parameters_ready = false;
     context.proxy_static_ready = false;
     context.baseline_static_ready = false;
+    context.bone_static_ready = false;
     context.distance_static_ready = false;
     context.bending_static_ready = false;
     context.center_static_ready = false;
@@ -298,7 +317,7 @@ std::vector<T> copy_values(const Buffer& buffer) {
     return std::vector<T>(values, values + count);
 }
 
-bool validate_quaternions(const Buffer& rotations) {
+bool validate_quaternions(const Buffer& rotations, const char* name) {
     const auto* values = static_cast<const float*>(rotations.view.buf);
     for (Py_ssize_t row = 0; row < rotations.view.shape[0]; ++row) {
         const float* value = values + row * 4;
@@ -308,7 +327,7 @@ bool validate_quaternions(const Buffer& rotations) {
             static_cast<double>(value[2]) * value[2] +
             static_cast<double>(value[3]) * value[3];
         if (!std::isfinite(length_squared) || std::abs(length_squared - 1.0) > 2.0e-5) {
-            PyErr_SetString(PyExc_ValueError, "world_rotations_xyzw must contain unit quaternions");
+            PyErr_Format(PyExc_ValueError, "%s must contain unit quaternions", name);
             return false;
         }
     }
@@ -1267,6 +1286,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "vertex_count", context.vertex_count) ||
         !dict_i64(result, "proxy_static_revision", context.proxy_static_revision) ||
         !dict_i64(result, "baseline_static_revision", context.baseline_static_revision) ||
+        !dict_i64(result, "bone_static_revision", context.bone_static_revision) ||
         !dict_i64(result, "distance_static_revision", context.distance_static_revision) ||
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
@@ -1279,6 +1299,8 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "edge_count", static_cast<std::int64_t>(context.proxy_edges.size() / 2)) ||
         !dict_i64(result, "triangle_count", static_cast<std::int64_t>(context.proxy_triangles.size() / 3)) ||
         !dict_i64(result, "baseline_count", static_cast<std::int64_t>(context.baseline_ranges.size() / 2)) ||
+        !dict_i64(result, "bone_vertex_adjacency_count", static_cast<std::int64_t>(context.bone_vertex_to_vertex_data.size())) ||
+        !dict_i64(result, "bone_vertex_triangle_record_count", static_cast<std::int64_t>(context.bone_vertex_to_triangle_data.size() / 2)) ||
         !dict_i64(result, "fixed_count", fixed_count) ||
         !dict_i64(result, "distance_record_count", static_cast<std::int64_t>(context.distance_targets.size())) ||
         !dict_i64(result, "bending_record_count", static_cast<std::int64_t>(context.bending_rest_angle_or_volume.size())) ||
@@ -1306,6 +1328,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
+        !dict_bool(result, "bone_static_ready", context.bone_static_ready) ||
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
@@ -1525,6 +1548,156 @@ PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
     context->baseline_local_rotations.swap(next_local_rotations);
     context->baseline_static_ready = true;
     ++context->baseline_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 9) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bone_static expects 9 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready || !context->baseline_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "Bone static requires proxy and baseline static");
+        return nullptr;
+    }
+
+    Buffer vertex_ranges, vertex_data, triangle_ranges, triangle_data;
+    Buffer bind_positions, bind_rotations, adjustment_rotations, transform_rotations;
+    if (!vertex_ranges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "vertex_to_vertex_ranges") ||
+        !vertex_data.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "vertex_to_vertex_data") ||
+        !triangle_ranges.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_ranges") ||
+        !triangle_data.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_data") ||
+        !bind_positions.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "vertex_bind_pose_positions") ||
+        !bind_rotations.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "vertex_bind_pose_rotations") ||
+        !adjustment_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "normal_adjustment_rotations") ||
+        !transform_rotations.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "vertex_to_transform_rotations")) {
+        return nullptr;
+    }
+
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    Py_ssize_t vertex_range_count = 0;
+    Py_ssize_t triangle_range_count = 0;
+    Py_ssize_t triangle_record_count = 0;
+    if (!expect_int32_pair_array(vertex_ranges, "vertex_to_vertex_ranges", &vertex_range_count) ||
+        vertex_range_count != count ||
+        !expect_int32_scalar_array(vertex_data, "vertex_to_vertex_data") ||
+        !expect_int32_pair_array(triangle_ranges, "vertex_to_triangle_ranges", &triangle_range_count) ||
+        triangle_range_count != count ||
+        !expect_int32_pair_array(triangle_data, "vertex_to_triangle_data", &triangle_record_count) ||
+        !expect_float32(bind_positions, "vertex_bind_pose_positions") ||
+        !expect_2d(bind_positions, "vertex_bind_pose_positions", count, 3) ||
+        !expect_float32(bind_rotations, "vertex_bind_pose_rotations") ||
+        !expect_2d(bind_rotations, "vertex_bind_pose_rotations", count, 4) ||
+        !expect_float32(adjustment_rotations, "normal_adjustment_rotations") ||
+        !expect_2d(adjustment_rotations, "normal_adjustment_rotations", count, 4) ||
+        !expect_float32(transform_rotations, "vertex_to_transform_rotations") ||
+        !expect_2d(transform_rotations, "vertex_to_transform_rotations", count, 4) ||
+        !validate_dense_ranges(vertex_ranges, vertex_data.view.shape[0], "vertex_to_vertex_ranges") ||
+        !validate_dense_ranges(triangle_ranges, triangle_record_count, "vertex_to_triangle_ranges") ||
+        !validate_indices(vertex_data, context->vertex_count, "vertex_to_vertex_data") ||
+        !finite_floats(bind_positions, "vertex_bind_pose_positions") ||
+        !finite_floats(bind_rotations, "vertex_bind_pose_rotations") ||
+        !finite_floats(adjustment_rotations, "normal_adjustment_rotations") ||
+        !finite_floats(transform_rotations, "vertex_to_transform_rotations") ||
+        !validate_quaternions(bind_rotations, "vertex_bind_pose_rotations") ||
+        !validate_quaternions(adjustment_rotations, "normal_adjustment_rotations") ||
+        !validate_quaternions(transform_rotations, "vertex_to_transform_rotations")) {
+        return nullptr;
+    }
+
+    const auto* vertex_range_values = static_cast<const std::int32_t*>(vertex_ranges.view.buf);
+    const auto* vertex_data_values = static_cast<const std::int32_t*>(vertex_data.view.buf);
+    std::vector<std::pair<std::int32_t, std::int32_t>> observed_relations;
+    observed_relations.reserve(static_cast<std::size_t>(vertex_data.view.shape[0]));
+    for (Py_ssize_t vertex = 0; vertex < count; ++vertex) {
+        const auto start = vertex_range_values[vertex * 2];
+        const auto length = vertex_range_values[vertex * 2 + 1];
+        std::vector<std::int32_t> seen;
+        seen.reserve(static_cast<std::size_t>(length));
+        for (std::int32_t offset = 0; offset < length; ++offset) {
+            const auto neighbor = vertex_data_values[start + offset];
+            if (neighbor == vertex || std::find(seen.begin(), seen.end(), neighbor) != seen.end()) {
+                PyErr_SetString(PyExc_ValueError, "vertex adjacency cannot contain self or duplicate neighbors");
+                return nullptr;
+            }
+            seen.push_back(neighbor);
+            observed_relations.emplace_back(static_cast<std::int32_t>(vertex), neighbor);
+        }
+    }
+    std::vector<std::pair<std::int32_t, std::int32_t>> expected_relations;
+    expected_relations.reserve(context->proxy_edges.size());
+    for (std::size_t offset = 0; offset < context->proxy_edges.size(); offset += 2) {
+        const auto first = context->proxy_edges[offset];
+        const auto second = context->proxy_edges[offset + 1];
+        expected_relations.emplace_back(first, second);
+        expected_relations.emplace_back(second, first);
+    }
+    std::sort(observed_relations.begin(), observed_relations.end());
+    std::sort(expected_relations.begin(), expected_relations.end());
+    if (observed_relations != expected_relations) {
+        PyErr_SetString(PyExc_ValueError, "vertex adjacency must cover exactly the proxy edges");
+        return nullptr;
+    }
+
+    const auto* triangle_range_values = static_cast<const std::int32_t*>(triangle_ranges.view.buf);
+    const auto* triangle_data_values = static_cast<const std::int32_t*>(triangle_data.view.buf);
+    const auto triangle_count = static_cast<std::int32_t>(context->proxy_triangles.size() / 3);
+    for (Py_ssize_t vertex = 0; vertex < count; ++vertex) {
+        const auto start = triangle_range_values[vertex * 2];
+        const auto length = triangle_range_values[vertex * 2 + 1];
+        if (length > 7) {
+            PyErr_SetString(PyExc_ValueError, "vertex_to_triangle_data supports at most 7 records per vertex");
+            return nullptr;
+        }
+        std::vector<std::int32_t> seen;
+        seen.reserve(static_cast<std::size_t>(length));
+        for (std::int32_t offset = 0; offset < length; ++offset) {
+            const auto* record = triangle_data_values + (start + offset) * 2;
+            const auto flip = record[0];
+            const auto triangle = record[1];
+            if (flip < 0 || flip > 3) {
+                PyErr_SetString(PyExc_ValueError, "vertex-to-triangle flip flag must be in 0..3");
+                return nullptr;
+            }
+            if (triangle < 0 || triangle >= triangle_count) {
+                PyErr_SetString(PyExc_ValueError, "vertex-to-triangle index is out of range");
+                return nullptr;
+            }
+            if (std::find(seen.begin(), seen.end(), triangle) != seen.end()) {
+                PyErr_SetString(PyExc_ValueError, "vertex-to-triangle records cannot repeat a triangle");
+                return nullptr;
+            }
+            seen.push_back(triangle);
+            const auto triangle_offset = static_cast<std::size_t>(triangle) * 3;
+            if (context->proxy_triangles[triangle_offset] != vertex &&
+                context->proxy_triangles[triangle_offset + 1] != vertex &&
+                context->proxy_triangles[triangle_offset + 2] != vertex) {
+                PyErr_SetString(PyExc_ValueError, "vertex-to-triangle record is not incident to its vertex");
+                return nullptr;
+            }
+        }
+    }
+
+    auto next_vertex_ranges = copy_values<std::int32_t>(vertex_ranges);
+    auto next_vertex_data = copy_values<std::int32_t>(vertex_data);
+    auto next_triangle_ranges = copy_values<std::int32_t>(triangle_ranges);
+    auto next_triangle_data = copy_values<std::int32_t>(triangle_data);
+    auto next_bind_positions = copy_values<float>(bind_positions);
+    auto next_bind_rotations = copy_values<float>(bind_rotations);
+    auto next_adjustment_rotations = copy_values<float>(adjustment_rotations);
+    auto next_transform_rotations = copy_values<float>(transform_rotations);
+    context->bone_vertex_to_vertex_ranges.swap(next_vertex_ranges);
+    context->bone_vertex_to_vertex_data.swap(next_vertex_data);
+    context->bone_vertex_to_triangle_ranges.swap(next_triangle_ranges);
+    context->bone_vertex_to_triangle_data.swap(next_triangle_data);
+    context->bone_vertex_bind_pose_positions.swap(next_bind_positions);
+    context->bone_vertex_bind_pose_rotations.swap(next_bind_rotations);
+    context->bone_normal_adjustment_rotations.swap(next_adjustment_rotations);
+    context->bone_vertex_to_transform_rotations.swap(next_transform_rotations);
+    context->bone_static_ready = true;
+    ++context->bone_static_revision;
     Py_RETURN_NONE;
 }
 
@@ -2143,7 +2316,7 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
         !expect_2d(rotations, "world_rotations_xyzw", count, 4) ||
         !finite_floats(positions, "world_positions") ||
         !finite_floats(rotations, "world_rotations_xyzw") ||
-        !validate_quaternions(rotations)) {
+        !validate_quaternions(rotations, "world_rotations_xyzw")) {
         return nullptr;
     }
     auto next_positions = copy_values<float>(positions);

@@ -764,6 +764,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_proxy_static, a); });
     m.def("mc2_context_v0_update_baseline_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_baseline_static, a); });
+    m.def("mc2_context_v0_update_bone_static",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bone_static, a); });
     m.def("mc2_context_v0_update_distance_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_distance_static, a); });
     m.def("mc2_context_v0_update_bending_static",
