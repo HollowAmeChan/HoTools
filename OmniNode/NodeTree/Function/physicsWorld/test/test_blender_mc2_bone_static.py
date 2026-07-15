@@ -152,10 +152,8 @@ try:
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
     assert info["bone_vertex_adjacency_count"] == 4
-    slot.data["native_context"].set_tether_enabled(True)
-    assert slot.data["native_context"].inspect()["tether_enabled"] is True
-    slot.data["native_context"].set_tether_enabled(False)
-    assert slot.data["native_context"].inspect()["tether_enabled"] is False
+    assert info["tether_enabled"] is True
+    assert info["tether_solve_count"] == 0
     snapshot = slot.debug_snapshot()
     assert snapshot["mesh_static"] is None
     assert snapshot["bone_static"]["vertex_count"] == 3
@@ -177,7 +175,10 @@ try:
     assert candidate.mesh_object_local_offsets is None
     assert candidate.world_positions.flags.writeable is False
     assert candidate.world_rotations_xyzw.flags.writeable is False
-    assert slot.data["native_context"].inspect()["bone_line_output_count"] == 1
+    step_info = slot.data["native_context"].inspect()
+    assert step_info["bone_line_output_count"] == 1
+    assert step_info["tether_enabled"] is True
+    assert step_info["tether_solve_count"] == 0
     result = world.result_streams["bone_transform"][0]
     assert result["writeback_type"] == "bone_transform_batch"
     assert result["ready"] is True
@@ -205,6 +206,7 @@ try:
     assert second_candidate.revision == 2
     assert second_info["step_count"] == 1
     assert second_info["bone_line_output_count"] == 2
+    assert second_info["tether_solve_count"] == 1
     solver.step_mc2(world, [task])
     assert slot.data["result_candidate"] is second_candidate
     assert slot.data["native_context"].inspect()["bone_line_output_count"] == 2
@@ -243,6 +245,7 @@ try:
     assert runtime["curve_values"]["distance_stiffness"] == [0.5] * 16
     assert runtime["int_values"]["use_max_distance"] == 0
     assert runtime["int_values"]["self_collision_mode"] == 0
+    assert spring_slot.data["native_context"].inspect()["tether_enabled"] is True
     spring_result = world.result_streams["bone_transform"][0]
     assert spring_result["setup_type"] == "bone_spring"
     assert spring_result["bone_count"] == 3

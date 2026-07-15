@@ -103,6 +103,13 @@ class MC2NativeContextV0:
         )
         if self._handle is None:
             raise RuntimeError("mc2_context_v0_create returned None")
+        try:
+            # MC2 always schedules Tether; the native gate only isolates scoped fixtures.
+            self._module.mc2_context_v0_set_tether_enabled(self._handle, True)
+        except Exception:
+            self._module.mc2_context_v0_free(self._handle)
+            self._handle = None
+            raise
         self.vertex_count = vertex_count
         self.parameter_signature = ""
         self.proxy_signature = ""

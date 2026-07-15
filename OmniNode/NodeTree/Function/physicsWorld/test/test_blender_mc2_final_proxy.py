@@ -201,6 +201,9 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert mesh_static.bending is not None
         assert mesh_static.bending.vertex_count == 4
         assert mesh_static.bending.record_count > 0
+        native_info = slot.data["native_context"].inspect()
+        assert native_info["tether_enabled"] is True
+        assert native_info["tether_solve_count"] == 0
         snapshot = slot.debug_snapshot()["mesh_static"]
         assert snapshot["vertex_count"] == 4
         assert snapshot["distance_record_count"] == len(
@@ -245,6 +248,7 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert "重建 1" in status
         assert second_native is not first_native
         assert first_native.inspect()["released"] is True
+        assert second_native.inspect()["tether_enabled"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert second_input_signature != first_input_signature
@@ -265,6 +269,7 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert "重建 1" in status
         assert latest_native is not second_native
         assert second_native.inspect()["released"] is True
+        assert latest_native.inspect()["tether_enabled"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["static_input_signature"] != second_input_signature
