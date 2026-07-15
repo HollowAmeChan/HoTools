@@ -472,7 +472,12 @@ def test_self_collision_primitive_dynamics_follow_first_step_source_order():
 
         info = hotools_native.mc2_context_v0_inspect(context)
         assert info["self_primitive_dynamic_ready"] is True
+        assert info["self_grid_dynamic_ready"] is True
         assert info["self_primitive_update_count"] == 1
+        assert info["self_grid_update_count"] == 1
+        assert info["self_point_grid_count"] == 1
+        assert info["self_edge_grid_count"] == 1
+        assert info["self_triangle_grid_count"] == 1
         assert abs(info["self_max_primitive_size"] - 3.0) < 1.0e-6
         assert abs(info["self_grid_size"] - 9.0) < 1.0e-6
         inverse_masses = np.empty((6, 3), dtype=np.float32)
@@ -518,9 +523,164 @@ def test_self_collision_primitive_dynamics_follow_first_step_source_order():
         step(context, 1.0 / 90.0, simulation_power_z=0.0)
         info = hotools_native.mc2_context_v0_inspect(context)
         assert info["self_primitive_dynamic_ready"] is False
+        assert info["self_grid_dynamic_ready"] is False
         assert info["self_primitive_update_count"] == 2
+        assert info["self_grid_update_count"] == 2
+        assert info["self_grid_count"] == 0
         assert info["self_max_primitive_size"] == 0.0
         assert info["self_grid_size"] == 0.0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
+def test_self_collision_grid_sort_and_unity_hash():
+    context = hotools_native.mc2_context_v0_create(0, 6)
+    try:
+        proxy, baseline = static_arrays(6)
+        edges = np.array(
+            [[0, 2], [1, 3], [2, 4], [3, 5], [4, 0], [5, 1]],
+            dtype=np.int32,
+        )
+        triangles = np.array([[0, 2, 4], [1, 3, 5]], dtype=np.int32)
+        proxy = list(proxy)
+        proxy[5] = edges
+        proxy[6] = triangles
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        particle_indices = np.concatenate(
+            (
+                np.column_stack(
+                    (
+                        np.arange(6, dtype=np.int32),
+                        np.full(6, -1, dtype=np.int32),
+                        np.full(6, -1, dtype=np.int32),
+                    )
+                ),
+                np.column_stack((edges, np.full(6, -1, dtype=np.int32))),
+                triangles,
+            ),
+            axis=0,
+        )
+        flags = np.concatenate(
+            (
+                np.zeros(6, dtype=np.uint32),
+                np.full(6, 0x01000000, dtype=np.uint32),
+                np.full(2, 0x02000000, dtype=np.uint32),
+            )
+        )
+        vertex_depths = baseline[7]
+        depths = np.concatenate(
+            (
+                vertex_depths,
+                vertex_depths[edges].mean(axis=1),
+                vertex_depths[triangles].mean(axis=1),
+            )
+        ).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            context, flags, particle_indices, depths, 6, 6, 2,
+        )
+        floats, ints, curves = parameters()
+        ints[9] = 2
+        curves[8] = 0.01
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [
+                [10.1, 0.1, 0.0], [0.1, 0.1, 0.0],
+                [11.1, 0.1, 0.0], [1.1, 0.1, 0.0],
+                [10.1, 1.1, 0.0], [0.1, 1.1, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((6, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 20, 5, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_grid_dynamic_ready"] is True
+        assert info["self_grid_update_count"] == 1
+        assert info["self_point_grid_count"] == 2
+        assert info["self_edge_grid_count"] == 2
+        assert info["self_triangle_grid_count"] == 2
+        assert info["self_grid_count"] == 6
+        assert abs(info["self_max_primitive_size"] - 1.0) < 1.0e-6
+        assert abs(info["self_grid_size"] - 3.0) < 1.0e-6
+        sorted_indices = np.empty((14, 3), dtype=np.int32)
+        grids = np.empty((14, 3), dtype=np.int32)
+        hashes = np.empty(14, dtype=np.int32)
+        starts = np.empty(14, dtype=np.int32)
+        counts = np.empty(14, dtype=np.int32)
+        hotools_native.mc2_context_v0_read_self_collision_grid(
+            context, sorted_indices, grids, hashes, starts, counts,
+        )
+        expected_indices = np.array(
+            [
+                [1, -1, -1], [3, -1, -1], [5, -1, -1],
+                [0, -1, -1], [2, -1, -1], [4, -1, -1],
+                [1, 3, -1], [3, 5, -1], [5, 1, -1],
+                [0, 2, -1], [2, 4, -1], [4, 0, -1],
+                [1, 3, 5], [0, 2, 4],
+            ],
+            dtype=np.int32,
+        )
+        np.testing.assert_array_equal(sorted_indices, expected_indices)
+        expected_grids = np.array(
+            [[0, 0, 0]] * 3 + [[3, 0, 0]] * 3
+            + [[0, 0, 0]] * 3 + [[3, 0, 0]] * 3
+            + [[0, 0, 0], [3, 0, 0]],
+            dtype=np.int32,
+        )
+        np.testing.assert_array_equal(grids, expected_grids)
+
+        def unity_int3_hash(grid):
+            value = (
+                (int(grid[0]) & 0xFFFFFFFF) * 0x4C7F6DD1
+                + (int(grid[1]) & 0xFFFFFFFF) * 0x4822A3E9
+                + (int(grid[2]) & 0xFFFFFFFF) * 0xAAC3C25D
+                + 0xD21D0945
+            ) & 0xFFFFFFFF
+            return value if value < 0x80000000 else value - 0x100000000
+
+        for chunk_start, near_start, far_start, run_count in (
+            (0, 0, 3, 3), (6, 6, 9, 3), (12, 12, 13, 1),
+        ):
+            expected_runs = sorted(
+                [
+                    (unity_int3_hash((0, 0, 0)), near_start, run_count),
+                    (unity_int3_hash((3, 0, 0)), far_start, run_count),
+                ]
+            )
+            np.testing.assert_array_equal(
+                hashes[chunk_start : chunk_start + 2],
+                [record[0] for record in expected_runs],
+            )
+            np.testing.assert_array_equal(
+                starts[chunk_start : chunk_start + 2],
+                [record[1] for record in expected_runs],
+            )
+            np.testing.assert_array_equal(
+                counts[chunk_start : chunk_start + 2],
+                [record[2] for record in expected_runs],
+            )
+
+        collapsed = np.zeros_like(positions)
+        update_dynamic(context, 21, 5, collapsed, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["self_primitive_dynamic_ready"] is True
+        assert info["self_grid_dynamic_ready"] is False
+        assert info["self_primitive_update_count"] == 2
+        assert info["self_grid_update_count"] == 1
+        assert info["self_grid_count"] == 0
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_self_collision_grid(
+                context, sorted_indices, grids, hashes, starts, counts,
+            ),
+            "not ready",
+        )
     finally:
         hotools_native.mc2_context_v0_free(context)
 
@@ -1417,6 +1577,8 @@ if __name__ == "__main__":
     print("PASS self-collision static upload transaction")
     test_self_collision_primitive_dynamics_follow_first_step_source_order()
     print("PASS self-collision first-step primitive dynamics")
+    test_self_collision_grid_sort_and_unity_hash()
+    print("PASS self-collision grid sort and Unity hash")
     test_point_collision_projection_and_post()
     print("PASS Point collision projection and post")
     test_bone_spring_soft_sphere_limit_and_velocity_reference()

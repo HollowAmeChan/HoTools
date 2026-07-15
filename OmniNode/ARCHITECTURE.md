@@ -389,7 +389,7 @@ Python 侧职责：
 - setup adapter 负责 Blender authoring/frame snapshot、静态 builder 输入和结果目标映射；它不拥有 solver 时间或第二套粒子状态。
 - `physicsWorld/mc2/solver.py` 负责 slot/context 生命周期、frame policy、native 调用和 result publication，不直接写 Blender。
 - native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 只作待删除的历史参考。
-- MC2 self primitive、contact cache与intersect record都属于slot-owned native context。当前已完成Point→Edge→Triangle静态注册和每frame首substep的primitive dynamic更新；空contact/intersect容器不得被解释为self-collision求解已启用。
+- MC2 self primitive、grid run、contact cache与intersect record都属于slot-owned native context。当前已完成Point→Edge→Triangle静态注册、每frame首substep的primitive dynamic更新及grid排序/run构建；空contact/intersect容器不得被解释为self-collision求解已启用。
 - 详细状态、数据层和实施门槛见 `doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`。
 
 C++ 侧职责：

@@ -527,7 +527,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_step_count"] == 1
         assert native_info["center_frame_shift_count"] == 1
         assert native_info["self_primitive_dynamic_ready"] is True
+        assert native_info["self_grid_dynamic_ready"] is True
         assert native_info["self_primitive_update_count"] == 1
+        assert native_info["self_grid_update_count"] == 1
+        assert native_info["self_point_grid_count"] > 0
+        assert native_info["self_edge_grid_count"] > 0
+        assert native_info["self_triangle_grid_count"] > 0
         assert native_info["self_max_primitive_size"] > 0.0
         assert abs(
             native_info["self_grid_size"]
@@ -638,7 +643,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_step_count"] == 2
         assert native_info["center_frame_shift_count"] == 1
         assert native_info["self_primitive_dynamic_ready"] is False
+        assert native_info["self_grid_dynamic_ready"] is False
         assert native_info["self_primitive_update_count"] == 1
+        assert native_info["self_grid_update_count"] == 1
+        assert native_info["self_grid_count"] == 0
         assert native_info["self_max_primitive_size"] == 0.0
         assert native_info["self_grid_size"] == 0.0
         assert slot.data["center_frame_shift_result"] is None
