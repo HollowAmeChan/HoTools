@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-06/P-07已关闭：最终large Mesh/Bone热帧约5.47/6.06ms，旧CPP约7.03/19.33ms；首构快31.72x/19.20x；180帧混合soak mean/p95/max约2.94/3.56/4.01ms。共享数值实现已归入`mc2_kernels`，关闭`HOTOOLS_ENABLE_LEGACY_MC2`后新V0/static/26项纯MC2仍通过且旧ABI不导出。下一步P-08替代资格总门禁。
+   P-08已放行：8资产/7脚本通过；180帧soak mean/p95/max约2.738/3.110/3.460ms；large Mesh/Bone热帧相对旧CPP快1.30x/3.16x，首构快32.30x/19.24x；OFF独立构建成立。下一步P-09独立删除旧节点/package/context/IO，保留共享`mc2_kernels`与新V0/static/self实现。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

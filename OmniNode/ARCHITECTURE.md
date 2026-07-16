@@ -854,6 +854,8 @@ README.md
 
 MC2共享数值实现由`_native/src/mc2_kernels.cpp/.hpp`持有；文件名和owner不得再依附旧full-core接口。`HOTOOLS_ENABLE_LEGACY_MC2=OFF`是新Physics World的独立构建门禁：旧数组solve、旧context和旧BoneCloth IO不参与编译/导出，新V0 context、static build与self collision仍必须完整可用。
 
+MC2的P-08替代资格总门禁已经放行。P-09删除阶段以“旧Python节点/package、旧native context/IO删除，共享kernel与新V0/static/self保留”为机械边界；不得借删除提交重写新solver语义或引入兼容adapter。
+
 常用构建命令见 `_native/README.md`。核心入口是：
 
 ```powershell

@@ -328,6 +328,8 @@ Blender authoring/frame input
 
 30. P-07所有权边界固定为：`mc2_kernels.cpp/.hpp`持有新旧context都需要的数值kernel，`mc2_context_v0.*`、`mc2_static_build.*`与`mc2_self_collision.cpp`属于新Physics World保留集合；`mc2_context.*`、`mc2_bonecloth_io.cpp`及`hotools_native.cpp`中的旧数组/context/IO binding属于legacy删除集合。`HOTOOLS_ENABLE_LEGACY_MC2=OFF`必须能独立构建`hotools_native`并通过新`_REQUIRED_SYMBOLS`、raw V0/static及纯MC2门禁，不得以保留旧公开ABI来满足链接。默认ON只服务P-08前的旧产品审计，不能成为新runtime依赖。
 
+31. P-08删除准入已成立：产品拓扑、跨物体self、单半径、全隐式debug、all-task transaction、生命周期、性能和独立构建均无开放决策。P-09只能删除第30条legacy集合和旧Python节点/package，不得删除或复制共享kernel，也不得在新runtime增加compat import、fallback ABI或旧节点adapter。删除前后的最后可比benchmark证据固定使用P-08同轮Blender 5.1结果。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

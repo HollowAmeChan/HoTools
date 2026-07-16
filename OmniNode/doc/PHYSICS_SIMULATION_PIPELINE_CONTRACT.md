@@ -1107,6 +1107,8 @@ re_run_and_reset：
 
 MC2的删除前构建边界由`HOTOOLS_ENABLE_LEGACY_MC2`表达：关闭时不得编译或导出旧数组solve、旧context和旧BoneCloth IO，但新Physics World V0、static producer、self collision与共享`mc2_kernels`必须独立构建并通过生产符号门禁。共享kernel的保留不构成旧solver兼容；旧package/context/公开ABI反向成为新runtime或测试依赖才构成违规。
 
+MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后完整门禁通过前不得关闭solver acceptance blocker。
+
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 
 ## 新迁移 solver 的 C++ 单实现策略

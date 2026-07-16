@@ -50,8 +50,8 @@
 | 4 | P-06e | 已完成：Mesh/Bone `config=8`在新staged context内复制不变native static并只重建Center；Python只接收fixed count/signature metadata并组织事务。依赖审计确认topology、geometry与Pin surface真实使全部相关producer失效；UV-only数值不变但当前六类metadata均以Proxy signature作身份链，保守全量重签/重建。 | cold build与clone rebuild metadata一致；Bone `clone=6`、Mesh `clone=5`，两者`center rebuild=1 / owner take=0`。large Mesh config约`5.06ms`；Pin/UV约`20.50/20.50ms`，仍比旧CPP重建`657.63ms`快约`32x`。无变化零静态分配、失败回滚与Pin/UV/Bone rest/topology门禁通过；UV子指纹是非阻塞后续优化。 |
 | 5 | P-06f | 已完成：最终新旧benchmark、180帧混合soak、debug按需、内存/分配和生产可达性审计通过；平行host particle状态链、完整static上传fallback与测试便利ABI已删除。 | large Mesh/Bone热帧约`5.47/6.06ms`，旧CPP约`7.03/19.33ms`；首构快`31.72x/19.20x`。soak mean/p95/max约`2.94/3.56/4.01ms`。Blender raw snapshot保留为任意脚本/编辑变化检测边界，派生与消费均在C++；depsgraph无法区分GN逐帧geometry更新与authoring dirty，禁止不可靠跳读。P-06关闭。 |
 | 6 | P-07 | 已完成：共享数值实现从旧名`mc2.cpp/hotools_mc2.hpp`移交为`mc2_kernels.cpp/.hpp`；旧full-array solve、旧context及旧BoneCloth IO由`HOTOOLS_ENABLE_LEGACY_MC2`统一隔离。 | OFF独立构建只编译新V0 context、static build、self collision与共享kernel；新ABI/static raw测试及26/26纯MC2通过，全部11个旧公开ABI不导出。生产runtime不import旧Python package。旧node/package/context/IO是P-09机械删除候选，共享kernel不是删除候选。P-07关闭。 |
-| 7 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
-| 8 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
+| 7 | P-08 | 已完成：汇总P-01..P-07、K-06/K-07与D-01，并重跑8资产/7脚本、180帧soak和同资产新旧benchmark。 | 无未决产品特化；自动交互、单半径、全隐式debug、all-task step、C++所有权与OFF独立构建全部成立。large Mesh/Bone热帧快`1.30x/3.16x`，首构快`32.30x/19.24x`。明确允许删除。 |
+| 8 | P-09 | 当前步骤：独立提交删除旧MC2节点/package、旧context/BoneCloth IO源文件与legacy binding；保留共享`mc2_kernels`、V0/static/self实现。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
 | 9 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
 
 ## 阶段约束
