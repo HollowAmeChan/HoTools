@@ -357,18 +357,12 @@ def build_mc2_bone_cloth_static_for_task(
         len(snapshots) == len(topology.sources)
         and all(isinstance(item, MC2BoneRawSnapshot) for item in snapshots)
     )
+    if native_context is not None and not use_snapshots:
+        raise RuntimeError("staged Bone static requires the shared raw snapshots")
     records = () if use_snapshots else _flatten_bone_records(topology)
     record_count = sum(len(item.names) for item in snapshots) if use_snapshots else len(records)
     if record_count != topology.particle_count:
         raise ValueError("BoneCloth topology record count mismatch")
-    identities = []
-    positions = []
-    normals = []
-    tangents = []
-    transform_rotations = []
-    parents = []
-    roots = []
-    attributes = []
     if use_snapshots:
         armatures = {
             (item.armature_pointer, item.armature_name)
@@ -376,18 +370,26 @@ def build_mc2_bone_cloth_static_for_task(
         }
         if len(armatures) != 1:
             raise ValueError("BoneCloth task sources must belong to one Armature")
-        source_rows = []
+        identities = []
+        parent_chunks = []
+        position_chunks = []
+        matrix_chunks = []
         offset = 0
         for snapshot in snapshots:
-            for local_index, identity in enumerate(snapshot.names):
-                local_parent = int(snapshot.parents[local_index])
-                source_rows.append((
-                    identity,
-                    -1 if local_parent < 0 else offset + local_parent,
-                    snapshot.head_tail[local_index, :3],
-                    tuple(float(value) for value in snapshot.matrices[local_index]),
-                ))
+            identities.extend(snapshot.names)
+            local_parents = np.ascontiguousarray(snapshot.parents, dtype=np.int32)
+            parent_chunks.append(np.where(local_parents < 0, -1, local_parents + offset))
+            position_chunks.append(
+                np.ascontiguousarray(snapshot.head_tail[:, :3], dtype=np.float64)
+            )
+            matrix_chunks.append(
+                np.ascontiguousarray(snapshot.matrices, dtype=np.float32)
+            )
             offset += len(snapshot.names)
+        identities = tuple(identities)
+        parents = np.concatenate(parent_chunks)
+        positions = np.concatenate(position_chunks, axis=0)
+        matrices = np.concatenate(matrix_chunks, axis=0).reshape((record_count, 16))
     else:
         source_rows = tuple(
             (
@@ -398,10 +400,22 @@ def build_mc2_bone_cloth_static_for_task(
             )
             for record in records
         )
-    matrices = np.ascontiguousarray(
-        tuple(row[3] for row in source_rows),
-        dtype=np.float32,
-    ).reshape((record_count, 16))
+        identities = tuple(row[0] for row in source_rows)
+        parents = np.fromiter(
+            (row[1] for row in source_rows),
+            dtype=np.int32,
+            count=record_count,
+        )
+        positions = np.ascontiguousarray(
+            tuple(row[2] for row in source_rows),
+            dtype=np.float64,
+        ).reshape((record_count, 3))
+        matrices = np.ascontiguousarray(
+            tuple(row[3] for row in source_rows),
+            dtype=np.float32,
+        ).reshape((record_count, 16))
+    if any(not identity for identity in identities):
+        raise ValueError("BoneCloth static bone identity cannot be empty")
     transform_values = np.empty((record_count, 4), dtype=np.float64)
     normal_values = np.empty((record_count, 3), dtype=np.float64)
     tangent_values = np.empty((record_count, 3), dtype=np.float64)
@@ -413,50 +427,34 @@ def build_mc2_bone_cloth_static_for_task(
         normal_values,
         tangent_values,
     )
-    for vertex, (identity, parent, head, _matrix_values) in enumerate(source_rows):
-        if not identity:
-            raise ValueError("BoneCloth static bone identity cannot be empty")
-        identities.append(identity)
-        positions.append(tuple(float(value) for value in head))
-        normals.append(tuple(float(value) for value in normal_values[vertex]))
-        tangents.append(tuple(float(value) for value in tangent_values[vertex]))
-        transform_rotations.append(tuple(float(value) for value in transform_values[vertex]))
-        parents.append(parent)
-        if parent < 0:
-            roots.append(vertex)
-            attributes.append(0x01)
-        else:
-            attributes.append(0x02)
+    roots = np.flatnonzero(parents < 0).astype(np.int32, copy=False)
+    attributes = np.where(parents < 0, 0x01, 0x02).astype(np.uint8, copy=False)
 
     if topology.bone_connection.triangles:
         if topology.connection_model != "hotools_product":
             raise ValueError("Bone triangle UV generation is product-mode only")
-        root_values = topology.bone_connection.root_indices
-        level_values = topology.bone_connection.levels
-        root_count = max(root_values, default=0) + 1
-        max_level = max(level_values, default=0)
-        uvs = tuple(
-            (
-                float(root_values[vertex]) / float(max(root_count - 1, 1)),
-                float(level_values[vertex]) / float(max(max_level, 1)),
-            )
-            for vertex in range(record_count)
-        )
+        root_values = np.asarray(topology.bone_connection.root_indices, dtype=np.float64)
+        level_values = np.asarray(topology.bone_connection.levels, dtype=np.float64)
+        root_count = int(np.max(root_values, initial=0.0)) + 1
+        max_level = float(np.max(level_values, initial=0.0))
+        uvs = np.empty((record_count, 2), dtype=np.float64)
+        uvs[:, 0] = root_values / float(max(root_count - 1, 1))
+        uvs[:, 1] = level_values / float(max(max_level, 1.0))
     else:
-        uvs = ((0.0, 0.0),) * record_count
+        uvs = np.zeros((record_count, 2), dtype=np.float64)
 
     bone = build_mc2_bone_static(
         task_id=task.task_id,
         setup_type=task.setup_type,
         vertex_identities=identities,
         local_positions=positions,
-        local_normals=normals,
-        local_tangents=tangents,
+        local_normals=normal_values,
+        local_tangents=tangent_values,
         uvs=uvs,
         vertex_attributes=attributes,
         parent_indices=parents,
         root_indices=roots,
-        transform_local_rotations=transform_rotations,
+        transform_local_rotations=transform_values,
         lines=topology.bone_connection.lines,
         triangles=topology.bone_connection.triangles,
         native_context=native_context,

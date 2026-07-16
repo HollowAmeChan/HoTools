@@ -316,6 +316,8 @@ Blender authoring/frame input
 
 24. Bone staged路径必须返回`MC2BoneNativeData`并复用Proxy/Finalizer/Baseline native data类型；完整四层immutable spec只属于无context Tier A/oracle。Distance/Center/Self在同次prepare直接消费native arrays，注册完成后只允许`MC2BoneClothStaticMetadata`进入slot。不得为类型兼容重建tuple spec、把owner arrays回读为完整Python树，或让result/debug重新依赖transient native data。
 
+25. Bone production assembly必须直接拼接`MC2BoneRawSnapshot`的positions/matrices/parents并保持rest输出、attributes/roots与产品UV为连续数组；staged入口缺任一raw snapshot必须失败，不得回退冻结payload或`_flatten_bone_records`。逐骨list/tuple assembly、完整spec、packer与`_thaw`只允许出现在显式无context oracle。P-06d据此关闭，后续P-06e不得为重建复用重新引入这些host shadow。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

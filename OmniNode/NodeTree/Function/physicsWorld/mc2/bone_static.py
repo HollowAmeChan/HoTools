@@ -377,35 +377,69 @@ def build_mc2_bone_static(
     staged = native_context is not None
     identities = tuple(str(value) for value in vertex_identities)
     count = len(identities)
-    positions = np.asarray(tuple(local_positions), dtype=np.float64)
-    normals = np.asarray(tuple(local_normals), dtype=np.float64)
-    tangents = np.asarray(tuple(local_tangents), dtype=np.float64)
+    positions = np.ascontiguousarray(local_positions, dtype=np.float64)
+    normals = np.ascontiguousarray(local_normals, dtype=np.float64)
+    tangents = np.ascontiguousarray(local_tangents, dtype=np.float64)
     if positions.shape != (count, 3) or normals.shape != (count, 3) or tangents.shape != (count, 3):
         raise ValueError("Bone static position/normal/tangent arrays must have shape [vertex_count,3]")
     if not np.all(np.isfinite(positions)) or not np.all(np.isfinite(normals)) or not np.all(np.isfinite(tangents)):
         raise ValueError("Bone static vectors cannot contain NaN/Inf")
-    parent_values = tuple(parent_indices)
-    root_values = tuple(root_indices)
-    if any(isinstance(value, bool) or int(value) != value for value in parent_values):
-        raise ValueError("parent_indices must contain exact integers")
-    if any(isinstance(value, bool) or int(value) != value for value in root_values):
-        raise ValueError("root_indices must contain exact integers")
-    parents = tuple(int(value) for value in parent_values)
-    roots = tuple(int(value) for value in root_values)
+    if staged:
+        parent_values = np.asarray(parent_indices)
+        root_values = np.asarray(root_indices)
+        parents = np.ascontiguousarray(parent_values, dtype=np.int32)
+        roots = np.ascontiguousarray(root_values, dtype=np.int32)
+        if (
+            parent_values.dtype == np.bool_
+            or root_values.dtype == np.bool_
+            or parents.ndim != 1
+            or roots.ndim != 1
+            or parent_values.shape != parents.shape
+            or root_values.shape != roots.shape
+            or not np.array_equal(parent_values, parents)
+            or not np.array_equal(root_values, roots)
+        ):
+            raise ValueError("parent_indices and root_indices must contain exact integers")
+    else:
+        parent_values = tuple(parent_indices)
+        root_values = tuple(root_indices)
+        if any(isinstance(value, bool) or int(value) != value for value in parent_values):
+            raise ValueError("parent_indices must contain exact integers")
+        if any(isinstance(value, bool) or int(value) != value for value in root_values):
+            raise ValueError("root_indices must contain exact integers")
+        parents = tuple(int(value) for value in parent_values)
+        roots = tuple(int(value) for value in root_values)
     if len(parents) != count:
         raise ValueError("parent_indices length must match vertex_count")
     _validate_parent_forest(parents)
-    if not roots or len(set(roots)) != len(roots):
+    if len(roots) == 0 or len(set(roots)) != len(roots):
         raise ValueError("root_indices must be non-empty and unique")
     if any(root < 0 or root >= count or parents[root] >= 0 for root in roots):
         raise ValueError("root_indices must reference parentless vertices")
     if set(roots) != {vertex for vertex, parent in enumerate(parents) if parent < 0}:
         raise ValueError("root_indices must cover every parentless vertex")
-    transform_rotations = _unit_quaternion_rows(
-        transform_local_rotations,
-        name="transform_local_rotations",
-        count=count,
-    )
+    if staged:
+        transform_rotations = np.ascontiguousarray(
+            transform_local_rotations,
+            dtype=np.float64,
+        )
+        if transform_rotations.shape != (count, 4) or not np.all(
+            np.isfinite(transform_rotations)
+        ):
+            raise ValueError("transform_local_rotations must have finite shape [vertex_count,4]")
+        lengths_squared = np.einsum(
+            "ij,ij->i",
+            transform_rotations,
+            transform_rotations,
+        )
+        if np.any(np.abs(lengths_squared - 1.0) > 1.0e-4):
+            raise ValueError("transform_local_rotations must contain unit xyzw quaternions")
+    else:
+        transform_rotations = _unit_quaternion_rows(
+            transform_local_rotations,
+            name="transform_local_rotations",
+            count=count,
+        )
 
     adjusted_normals, adjusted_tangents, adjustment_rotations = _normal_adjustment(
         positions,
