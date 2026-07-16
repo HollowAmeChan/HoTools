@@ -95,7 +95,6 @@ _EXPORTS = {
     "build_mc2_bone_static": ".bone_static",
     "pack_mc2_bone_static": ".bone_static",
     "MC2BoneClothStaticBuildResult": ".setups.bone_cloth.static_build",
-    "bone_cloth_static_input_signature_for_task": ".setups.bone_cloth.static_build",
     "build_mc2_bone_cloth_static_for_task": ".setups.bone_cloth.static_build",
     "MC2BaselineStaticSpec": ".static_data",
     "MC2ProxyFinalizerStaticSpec": ".static_data",

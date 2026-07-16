@@ -542,23 +542,7 @@ def step_mc2(
             if mesh_static_supported:
                 static_input_signature = repr(static_contract_key)
             elif bone_static_supported:
-                from .setups.bone_cloth.static_build import (
-                    bone_cloth_static_input_signature_for_task,
-                )
-
-                if (
-                    existing_slot is not None
-                    and existing_slot.data.get("static_contract_key")
-                    == static_contract_key
-                ):
-                    static_input_signature = existing_slot.data.get(
-                        "static_input_signature"
-                    )
-                else:
-                    static_input_signature = bone_cloth_static_input_signature_for_task(
-                        spec,
-                        topology,
-                    )
+                static_input_signature = repr(static_contract_key)
             rebuild_reason = _mc2_slot_rebuild_reason(
                 world,
                 spec,

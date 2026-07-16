@@ -173,31 +173,6 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
     return tuple(flattened)
 
 
-def bone_cloth_static_input_signature_for_task(
-    task: MC2TaskSpec,
-    topology: MC2TopologySpec,
-) -> str | None:
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
-    if not isinstance(topology, MC2TopologySpec):
-        raise TypeError("topology must be MC2TopologySpec")
-    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES:
-        return None
-    _require_mc2_bone_static_domain(task, topology)
-    _flatten_bone_records(topology)
-    payload = {
-        "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
-        "setup_type": task.setup_type,
-        "topology_signature": topology.topology_signature,
-        "connection_mode": topology.connection_mode,
-        "connection_model": topology.connection_model,
-        "selection_rule": "parentless_fixed_else_move",
-        "normal_alignment_mode": 0,
-        "world_gravity_direction": task.profile.gravity_direction,
-    }
-    return _signature(payload)
-
-
 def build_mc2_bone_cloth_static_for_task(
     task: MC2TaskSpec,
     topology: MC2TopologySpec,
@@ -314,7 +289,6 @@ def build_mc2_bone_cloth_static_for_task(
 
 __all__ = [
     "MC2BoneClothStaticBuildResult",
-    "bone_cloth_static_input_signature_for_task",
     "build_mc2_bone_cloth_static_for_task",
     "mc2_bone_static_domain_error",
 ]
