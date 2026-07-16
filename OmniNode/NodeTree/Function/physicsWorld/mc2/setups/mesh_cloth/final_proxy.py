@@ -8,7 +8,7 @@ baseline builder.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 import numpy as np
@@ -35,6 +35,7 @@ class MC2MeshFinalProxyBuildResult:
         | MC2MeshFinalizerNativeData
         | MC2MeshFinalizerNativeMetadata
     )
+    mesh_topology_signature: str = ""
 
     @property
     def vertex_to_vertex_ranges(self):
@@ -82,6 +83,7 @@ class MC2MeshFinalProxyBuildResult:
                 if isinstance(finalizer, MC2MeshFinalizerNativeData)
                 else finalizer
             ),
+            mesh_topology_signature=self.mesh_topology_signature,
         )
 
 
@@ -589,10 +591,12 @@ def build_blender_mesh_final_proxy(
 
     if obj is None or getattr(obj, "type", None) != "MESH" or obj.data is None:
         raise ValueError("MeshCloth final proxy target must be a Mesh object")
-    if expected_mesh_topology_signature:
-        actual = mesh_topology_signature(obj)
-        if actual != expected_mesh_topology_signature:
-            raise ValueError("Mesh topology signature does not match expected token")
+    actual_mesh_topology_signature = mesh_topology_signature(obj)
+    if (
+        expected_mesh_topology_signature
+        and actual_mesh_topology_signature != expected_mesh_topology_signature
+    ):
+        raise ValueError("Mesh topology signature does not match expected token")
     mesh = obj.data
     mesh.update()
     vertex_count = len(mesh.vertices)
@@ -622,18 +626,21 @@ def build_blender_mesh_final_proxy(
     lines = np.empty(len(mesh.edges) * 2, dtype=np.int32)
     mesh.edges.foreach_get("vertices", lines)
     lines = lines.reshape((-1, 2))
-    return build_mc2_final_proxy(
-        task_id=task_id,
-        setup_type="mesh_cloth",
-        vertex_identities=tuple(f"mesh:v{index}" for index in range(vertex_count)),
-        local_positions=positions,
-        local_normals=normals,
-        local_tangents=tangents,
-        uvs=uvs,
-        vertex_attributes=attributes,
-        lines=lines,
-        triangles=triangles,
-        native_context=native_context,
+    return replace(
+        build_mc2_final_proxy(
+            task_id=task_id,
+            setup_type="mesh_cloth",
+            vertex_identities=tuple(f"mesh:v{index}" for index in range(vertex_count)),
+            local_positions=positions,
+            local_normals=normals,
+            local_tangents=tangents,
+            uvs=uvs,
+            vertex_attributes=attributes,
+            lines=lines,
+            triangles=triangles,
+            native_context=native_context,
+        ),
+        mesh_topology_signature=actual_mesh_topology_signature,
     )
 
 

@@ -170,24 +170,19 @@ def build_mc2_mesh_cloth_static(
     world_gravity_direction=(0.0, -1.0, 0.0),
     native_context=None,
 ) -> MC2MeshClothStaticBuildResult:
-    from .base_pose import mesh_topology_signature
-
-    actual_mesh_topology_signature = mesh_topology_signature(obj)
     expected_mesh_topology_signature = str(topology_signature or "")
-    if (
-        expected_mesh_topology_signature
-        and expected_mesh_topology_signature != actual_mesh_topology_signature
-    ):
-        raise ValueError("MeshCloth static build topology token changed before build")
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
     finalizer = build_blender_mesh_final_proxy(
         obj,
         task_id=task_id,
         pin_enabled=pin_enabled,
         pin_vertex_group=pin_vertex_group,
-        expected_mesh_topology_signature=actual_mesh_topology_signature,
+        expected_mesh_topology_signature=expected_mesh_topology_signature,
         native_context=native_context,
     )
+    actual_mesh_topology_signature = finalizer.mesh_topology_signature
+    if not actual_mesh_topology_signature:
+        raise RuntimeError("Mesh final proxy did not return a topology identity token")
     baseline = build_mc2_mesh_baseline(
         finalizer.proxy,
         native_context=native_context,
