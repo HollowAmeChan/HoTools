@@ -330,7 +330,7 @@ cache[cache_key] = result
 return result
 ```
 
-**MC2 Pin 权重契约**：新 `physicsWorld.mc2` 在 Mesh static input signature 中包含最终 Fixed/Move mask、UV 与 topology token；Pin 权重变化会触发 slot static bundle 重建，而不是热修改 native particle state。其它 solver 若对权重采用不同失效策略，必须在自己的 capability/dirty key 中明确声明，不能复用旧 `physicsMC2` 的缓存假设。
+**MC2 静态失效契约**：新 `physicsWorld.mc2` 把 Blender raw snapshot 分为 topology、geometry、surface、config 四类短指纹，并由 slot-owned native context 保存和比较。Pin 权重与UV属于surface，rest坐标属于geometry，连接/父子关系属于topology，影响静态构建的重力方向属于config；变化触发staged slot/context重建，而不是热修改native particle state。其它solver若采用不同失效策略，必须在自己的capability/dirty key中明确声明，不能复用旧`physicsMC2`的缓存假设。
 
 ### 7.3 配置真值来源必须唯一
 

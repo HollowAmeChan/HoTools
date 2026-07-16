@@ -33,6 +33,16 @@ from .static_data import pack_mc2_baseline_static, pack_mc2_proxy_static
 
 MC2_NATIVE_CONTEXT_SCHEMA_VERSION = 0
 MC2_INTERACTION_RESOURCE_KEY = "mc2_interaction_v0"
+MC2_STATIC_CHANGE_TOPOLOGY = 1
+MC2_STATIC_CHANGE_GEOMETRY = 2
+MC2_STATIC_CHANGE_SURFACE = 4
+MC2_STATIC_CHANGE_CONFIG = 8
+MC2_STATIC_CHANGE_SOURCE = (
+    MC2_STATIC_CHANGE_TOPOLOGY
+    | MC2_STATIC_CHANGE_GEOMETRY
+    | MC2_STATIC_CHANGE_SURFACE
+)
+MC2_STATIC_CHANGE_ALL = MC2_STATIC_CHANGE_SOURCE | MC2_STATIC_CHANGE_CONFIG
 _NATIVE_MODULE = None
 _REQUIRED_SYMBOLS = (
     "mc2_interaction_v0_create",
@@ -42,6 +52,8 @@ _REQUIRED_SYMBOLS = (
     "mc2_interaction_v0_free",
     "mc2_context_v0_create",
     "mc2_context_v0_inspect",
+    "mc2_context_v0_classify_static_fingerprint",
+    "mc2_context_v0_update_static_fingerprint",
     "mc2_context_v0_update_proxy_static",
     "mc2_context_v0_update_baseline_static",
     "mc2_context_v0_update_bone_static",
@@ -208,6 +220,24 @@ class MC2NativeContextV0:
         self._module.mc2_context_v0_update_team_options(
             self._handle,
             animation_pose_ratio,
+        )
+
+    def classify_static_fingerprint(self, fingerprint) -> int:
+        self._ensure_live()
+        values = fingerprint.native_values()
+        mask = int(self._module.mc2_context_v0_classify_static_fingerprint(
+            self._handle,
+            *values,
+        ))
+        if mask < 0 or mask & ~MC2_STATIC_CHANGE_ALL:
+            raise RuntimeError(f"native MC2 static change mask is invalid: {mask}")
+        return mask
+
+    def update_static_fingerprint(self, fingerprint) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_update_static_fingerprint(
+            self._handle,
+            *fingerprint.native_values(),
         )
 
     def set_tether_enabled(self, enabled: bool) -> None:
@@ -996,6 +1026,12 @@ class MC2NativeInteractionV0:
 
 
 __all__ = [
+    "MC2_STATIC_CHANGE_ALL",
+    "MC2_STATIC_CHANGE_CONFIG",
+    "MC2_STATIC_CHANGE_GEOMETRY",
+    "MC2_STATIC_CHANGE_SOURCE",
+    "MC2_STATIC_CHANGE_SURFACE",
+    "MC2_STATIC_CHANGE_TOPOLOGY",
     "MC2_INTERACTION_RESOURCE_KEY",
     "MC2_NATIVE_CONTEXT_SCHEMA_VERSION",
     "MC2NativeContextV0",

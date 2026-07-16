@@ -40,6 +40,30 @@ center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorl
 native = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native")
 
 
+class _StaticFingerprint:
+    def __init__(self, topology="1", geometry="2", surface="3", config="4", overall="5"):
+        self.values = tuple(value * 32 for value in (topology, geometry, surface, config, overall))
+
+    def native_values(self):
+        return self.values
+
+
+def test_owner_static_fingerprint_classification() -> None:
+    with native.MC2NativeContextV0(1) as owner:
+        initial = _StaticFingerprint()
+        assert owner.classify_static_fingerprint(initial) == native.MC2_STATIC_CHANGE_ALL
+        owner.update_static_fingerprint(initial)
+        assert owner.classify_static_fingerprint(initial) == 0
+        assert owner.classify_static_fingerprint(_StaticFingerprint(topology="a")) == native.MC2_STATIC_CHANGE_TOPOLOGY
+        assert owner.classify_static_fingerprint(_StaticFingerprint(geometry="b")) == native.MC2_STATIC_CHANGE_GEOMETRY
+        assert owner.classify_static_fingerprint(_StaticFingerprint(surface="c")) == native.MC2_STATIC_CHANGE_SURFACE
+        assert owner.classify_static_fingerprint(_StaticFingerprint(config="d")) == native.MC2_STATIC_CHANGE_CONFIG
+        info = owner.inspect()
+        assert info["static_fingerprint_ready"] is True
+        assert info["static_fingerprint_revision"] == 1
+        assert info["static_overall_fingerprint"] == "5" * 32
+
+
 def test_owner_lifecycle_and_readback() -> None:
     module = native.native_module()
     baseline = module.mc2_context_v0_stats()["live"]
@@ -198,6 +222,8 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
 
 
 if __name__ == "__main__":
+    test_owner_static_fingerprint_classification()
+    print("PASS MC2 context V0 static fingerprint classification")
     test_owner_lifecycle_and_readback()
     print("PASS MC2 context V0 Python owner")
     test_owner_center_step_packing_dt_guard_and_readback()

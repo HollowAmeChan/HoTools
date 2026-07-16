@@ -213,9 +213,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
 
         task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
         topology = mc2_topology.build_mc2_topology_spec(task)
-        static_signature = mc2_static.mesh_cloth_static_input_signature_for_task(
-            task, topology
-        )
+        static_signature = mc2_topology.static_input_fingerprint_for_task(task).overall
         gravity_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
@@ -223,9 +221,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 gravity_direction=(1.0, 0.0, 0.0)
             ),
         )
-        assert mc2_static.mesh_cloth_static_input_signature_for_task(
-            gravity_task, topology
-        ) != static_signature
+        assert (
+            mc2_topology.static_input_fingerprint_for_task(gravity_task).overall
+            != static_signature
+        )
         static = mc2_static.build_mc2_mesh_cloth_static_for_task(task, topology)
         first_input = frame_input.build_mc2_mesh_frame_input(
             first,

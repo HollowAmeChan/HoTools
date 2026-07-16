@@ -770,6 +770,10 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_create(nullptr, a.ptr())); });
     m.def("mc2_context_v0_inspect",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_inspect(nullptr, a.ptr())); });
+    m.def("mc2_context_v0_classify_static_fingerprint",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_classify_static_fingerprint(nullptr, a.ptr())); });
+    m.def("mc2_context_v0_update_static_fingerprint",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_static_fingerprint, a); });
     m.def("mc2_context_v0_update_proxy_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_proxy_static, a); });
     m.def("mc2_context_v0_update_baseline_static",

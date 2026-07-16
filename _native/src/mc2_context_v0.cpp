@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace hotools {
@@ -75,6 +76,11 @@ constexpr std::uint32_t kSelfAllFix = 0x20000000u;
 constexpr std::uint32_t kSelfIgnore = 0x40000000u;
 constexpr std::uint32_t kSelfIntersectMask = 0x00000007u;
 constexpr std::int32_t kSelfIgnoreGrid = 1000000;
+constexpr long kStaticChangeTopology = 1l;
+constexpr long kStaticChangeGeometry = 2l;
+constexpr long kStaticChangeSurface = 4l;
+constexpr long kStaticChangeConfig = 8l;
+constexpr long kStaticChangeAll = 15l;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -119,6 +125,7 @@ struct Mc2ContextV0 {
     std::int64_t center_frame_shift_count = 0;
     std::int64_t center_negative_scale_teleport_count = 0;
     std::int64_t team_options_revision = 0;
+    std::int64_t static_fingerprint_revision = 0;
     std::int64_t baseline_pose_rebuild_count = 0;
     std::int64_t bone_line_output_count = 0;
     std::int64_t bone_triangle_output_count = 0;
@@ -150,7 +157,13 @@ struct Mc2ContextV0 {
     bool center_result_ready = false;
     bool dynamic_ready = false;
     bool initialized = false;
+    bool static_fingerprint_ready = false;
     bool released = false;
+    std::string static_topology_fingerprint;
+    std::string static_geometry_fingerprint;
+    std::string static_surface_fingerprint;
+    std::string static_config_fingerprint;
+    std::string static_overall_fingerprint;
     std::vector<float> float_values;
     std::vector<std::int32_t> int_values;
     std::vector<float> curve_values;
@@ -407,6 +420,12 @@ void release_resources(Mc2ContextV0& context) {
     context.center_fixed_indices.clear();
     context.center_local_position.clear();
     context.center_initial_local_gravity_direction.clear();
+    context.static_topology_fingerprint.clear();
+    context.static_geometry_fingerprint.clear();
+    context.static_surface_fingerprint.clear();
+    context.static_config_fingerprint.clear();
+    context.static_overall_fingerprint.clear();
+    context.static_fingerprint_ready = false;
     context.parameters_ready = false;
     context.proxy_static_ready = false;
     context.baseline_static_ready = false;
@@ -517,6 +536,37 @@ bool dict_string(PyObject* dict, const char* key, const char* value) {
     const int result = PyDict_SetItemString(dict, key, item);
     Py_DECREF(item);
     return result == 0;
+}
+
+bool read_static_fingerprints(
+    PyObject* args,
+    std::array<std::string, 5>& fingerprints
+) {
+    const char* names[] = {"topology", "geometry", "surface", "config", "overall"};
+    for (Py_ssize_t index = 0; index < 5; ++index) {
+        Py_ssize_t size = 0;
+        const char* value = PyUnicode_AsUTF8AndSize(
+            PyTuple_GET_ITEM(args, index + 1),
+            &size
+        );
+        if (value == nullptr) return false;
+        if (size != 32) {
+            PyErr_Format(PyExc_ValueError, "%s fingerprint must be 32 lowercase hex characters", names[index]);
+            return false;
+        }
+        for (Py_ssize_t character = 0; character < size; ++character) {
+            const char current = value[character];
+            if (!((current >= '0' && current <= '9') || (current >= 'a' && current <= 'f'))) {
+                PyErr_Format(PyExc_ValueError, "%s fingerprint must be 32 lowercase hex characters", names[index]);
+                return false;
+            }
+        }
+        fingerprints[static_cast<std::size_t>(index)].assign(
+            value,
+            static_cast<std::size_t>(size)
+        );
+    }
+    return true;
 }
 
 bool finite_floats(const Buffer& buffer, const char* name) {
@@ -3656,6 +3706,13 @@ std::int64_t vector_bytes(const std::vector<T>& values) {
 
 std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     std::int64_t bytes = static_cast<std::int64_t>(sizeof(Mc2ContextV0));
+    bytes += static_cast<std::int64_t>(
+        context.static_topology_fingerprint.size() +
+        context.static_geometry_fingerprint.size() +
+        context.static_surface_fingerprint.size() +
+        context.static_config_fingerprint.size() +
+        context.static_overall_fingerprint.size()
+    );
 #define MC2_ADD_VECTOR_BYTES(name) bytes += vector_bytes(context.name)
     MC2_ADD_VECTOR_BYTES(float_values);
     MC2_ADD_VECTOR_BYTES(int_values);
@@ -3869,6 +3926,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             context.center_negative_scale_teleport_count
         ) ||
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
+        !dict_i64(result, "static_fingerprint_revision", context.static_fingerprint_revision) ||
         !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||
         !dict_i64(result, "bone_line_output_count", context.bone_line_output_count) ||
         !dict_i64(result, "bone_triangle_output_count", context.bone_triangle_output_count) ||
@@ -3917,6 +3975,12 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         ) ||
         !dict_bool(result, "dynamic_ready", context.dynamic_ready) ||
         !dict_bool(result, "initialized", context.initialized) ||
+        !dict_bool(result, "static_fingerprint_ready", context.static_fingerprint_ready) ||
+        !dict_string(result, "static_topology_fingerprint", context.static_topology_fingerprint.c_str()) ||
+        !dict_string(result, "static_geometry_fingerprint", context.static_geometry_fingerprint.c_str()) ||
+        !dict_string(result, "static_surface_fingerprint", context.static_surface_fingerprint.c_str()) ||
+        !dict_string(result, "static_config_fingerprint", context.static_config_fingerprint.c_str()) ||
+        !dict_string(result, "static_overall_fingerprint", context.static_overall_fingerprint.c_str()) ||
         !dict_bool(result, "released", context.released)) {
         Py_DECREF(result);
         return nullptr;
@@ -4389,6 +4453,51 @@ PyObject* mc2_context_v0_inspect(PyObject*, PyObject* args) {
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (context == nullptr) return nullptr;
     return inspect_context(*context);
+}
+
+PyObject* mc2_context_v0_classify_static_fingerprint(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_classify_static_fingerprint expects 6 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    std::array<std::string, 5> fingerprints;
+    if (!read_static_fingerprints(args, fingerprints)) return nullptr;
+    if (!context->static_fingerprint_ready) {
+        return PyLong_FromLong(kStaticChangeAll);
+    }
+    long mask = 0;
+    if (context->static_topology_fingerprint != fingerprints[0]) mask |= kStaticChangeTopology;
+    if (context->static_geometry_fingerprint != fingerprints[1]) mask |= kStaticChangeGeometry;
+    if (context->static_surface_fingerprint != fingerprints[2]) mask |= kStaticChangeSurface;
+    if (context->static_config_fingerprint != fingerprints[3]) mask |= kStaticChangeConfig;
+    return PyLong_FromLong(mask);
+}
+
+PyObject* mc2_context_v0_update_static_fingerprint(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_update_static_fingerprint expects 6 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    std::array<std::string, 5> fingerprints;
+    if (!read_static_fingerprints(args, fingerprints)) return nullptr;
+    context->static_topology_fingerprint = std::move(fingerprints[0]);
+    context->static_geometry_fingerprint = std::move(fingerprints[1]);
+    context->static_surface_fingerprint = std::move(fingerprints[2]);
+    context->static_config_fingerprint = std::move(fingerprints[3]);
+    context->static_overall_fingerprint = std::move(fingerprints[4]);
+    context->static_fingerprint_ready = true;
+    ++context->static_fingerprint_revision;
+    Py_RETURN_NONE;
 }
 
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
@@ -6633,7 +6742,11 @@ struct Mc2StaticFingerprintV0 {
         append(buffer.view.buf, static_cast<std::size_t>(buffer.view.len));
     }
 
-    PyObject* finish() const {
+    void append_text(const char* value) {
+        append(value, std::strlen(value));
+    }
+
+    std::string encoded() const {
         char encoded[33] {};
         std::snprintf(
             encoded,
@@ -6642,26 +6755,46 @@ struct Mc2StaticFingerprintV0 {
             static_cast<unsigned long long>(first),
             static_cast<unsigned long long>(second)
         );
-        return PyUnicode_FromStringAndSize(encoded, 32);
+        return std::string(encoded, 32);
     }
 };
 
+PyObject* static_fingerprint_result(
+    const Mc2StaticFingerprintV0& topology,
+    const Mc2StaticFingerprintV0& geometry,
+    const Mc2StaticFingerprintV0& surface
+) {
+    const std::string topology_value = topology.encoded();
+    const std::string geometry_value = geometry.encoded();
+    const std::string surface_value = surface.encoded();
+    PyObject* result = PyDict_New();
+    if (result == nullptr) return nullptr;
+    if (!dict_string(result, "topology", topology_value.c_str()) ||
+        !dict_string(result, "geometry", geometry_value.c_str()) ||
+        !dict_string(result, "surface", surface_value.c_str())) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    return result;
+}
+
 PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 11) {
+    if (PyTuple_GET_SIZE(args) != 12) {
         PyErr_Format(
             PyExc_TypeError,
-            "mc2_mesh_static_fingerprint_v0 expects 11 arguments, got %zd",
+            "mc2_mesh_static_fingerprint_v0 expects 12 arguments, got %zd",
             PyTuple_GET_SIZE(args)
         );
         return nullptr;
     }
-    Buffer positions, normals, edges, triangles, loop_uvs, pin_weights;
+    Buffer positions, normals, edges, triangles, loop_vertices, loop_uvs, pin_weights;
     if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
         !normals.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "normals") ||
         !edges.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "edges") ||
         !triangles.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "triangles") ||
-        !loop_uvs.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "loop_uvs") ||
-        !pin_weights.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "pin_weights")) {
+        !loop_vertices.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "loop_vertices") ||
+        !loop_uvs.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "loop_uvs") ||
+        !pin_weights.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "pin_weights")) {
         return nullptr;
     }
     if (!expect_float32(positions, "positions") || positions.view.ndim != 1 ||
@@ -6673,8 +6806,10 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
         edges.view.shape[0] % 2 != 0 ||
         !expect_int32(triangles, "triangles") || triangles.view.ndim != 1 ||
         triangles.view.shape[0] % 3 != 0 ||
+        !expect_int32(loop_vertices, "loop_vertices") || loop_vertices.view.ndim != 1 ||
         !expect_float32(loop_uvs, "loop_uvs") || loop_uvs.view.ndim != 1 ||
-        loop_uvs.view.shape[0] % 2 != 0 || !finite_floats(loop_uvs, "loop_uvs") ||
+        loop_uvs.view.shape[0] != loop_vertices.view.shape[0] * 2 ||
+        !finite_floats(loop_uvs, "loop_uvs") ||
         !expect_float32(pin_weights, "pin_weights") || pin_weights.view.ndim != 1 ||
         (pin_weights.view.shape[0] != 0 &&
          pin_weights.view.shape[0] != positions.view.shape[0] / 3) ||
@@ -6682,33 +6817,36 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const auto object_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 6));
-    const auto mesh_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 7));
-    const int pin_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 8));
+    const auto object_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 7));
+    const auto mesh_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 8));
+    const int pin_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 9));
     Py_ssize_t pin_name_size = 0;
     const char* pin_name = PyUnicode_AsUTF8AndSize(
-        PyTuple_GET_ITEM(args, 9),
+        PyTuple_GET_ITEM(args, 10),
         &pin_name_size
     );
-    const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 10));
+    const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 11));
     if (PyErr_Occurred() || pin_enabled < 0 || has_uv_layer < 0 || pin_name == nullptr) {
         return nullptr;
     }
 
-    Mc2StaticFingerprintV0 fingerprint;
-    fingerprint.append("mc2_mesh_static_input_v0", 24);
-    fingerprint.append(&object_pointer, sizeof(object_pointer));
-    fingerprint.append(&mesh_pointer, sizeof(mesh_pointer));
-    fingerprint.append(&pin_enabled, sizeof(pin_enabled));
-    fingerprint.append(&has_uv_layer, sizeof(has_uv_layer));
-    fingerprint.append(pin_name, static_cast<std::size_t>(pin_name_size));
-    fingerprint.append_buffer("positions", positions);
-    fingerprint.append_buffer("normals", normals);
-    fingerprint.append_buffer("edges", edges);
-    fingerprint.append_buffer("triangles", triangles);
-    fingerprint.append_buffer("loop_uvs", loop_uvs);
-    fingerprint.append_buffer("pin_weights", pin_weights);
-    return fingerprint.finish();
+    Mc2StaticFingerprintV0 topology, geometry, surface;
+    topology.append_text("mc2_mesh_topology_v0");
+    topology.append(&object_pointer, sizeof(object_pointer));
+    topology.append(&mesh_pointer, sizeof(mesh_pointer));
+    topology.append_buffer("edges", edges);
+    topology.append_buffer("triangles", triangles);
+    topology.append_buffer("loop_vertices", loop_vertices);
+    geometry.append_text("mc2_mesh_geometry_v0");
+    geometry.append_buffer("positions", positions);
+    geometry.append_buffer("normals", normals);
+    surface.append_text("mc2_mesh_surface_v0");
+    surface.append(&pin_enabled, sizeof(pin_enabled));
+    surface.append(&has_uv_layer, sizeof(has_uv_layer));
+    surface.append(pin_name, static_cast<std::size_t>(pin_name_size));
+    surface.append_buffer("loop_uvs", loop_uvs);
+    surface.append_buffer("pin_weights", pin_weights);
+    return static_fingerprint_result(topology, geometry, surface);
 }
 
 PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args) {
@@ -6756,17 +6894,19 @@ PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args) {
     const int resolved = PyObject_IsTrue(PyTuple_GET_ITEM(args, 7));
     if (PyErr_Occurred() || resolved < 0) return nullptr;
 
-    Mc2StaticFingerprintV0 fingerprint;
-    fingerprint.append("mc2_bone_static_input_v0", 24);
-    fingerprint.append(&armature_pointer, sizeof(armature_pointer));
-    fingerprint.append(&resolved, sizeof(resolved));
+    Mc2StaticFingerprintV0 topology, geometry, surface;
+    topology.append_text("mc2_bone_topology_v0");
+    topology.append(&armature_pointer, sizeof(armature_pointer));
+    topology.append(&resolved, sizeof(resolved));
     for (int index = 0; index < 3; ++index) {
-        fingerprint.append(text_values[index], static_cast<std::size_t>(text_sizes[index]));
+        topology.append(text_values[index], static_cast<std::size_t>(text_sizes[index]));
     }
-    fingerprint.append_buffer("parents", parents);
-    fingerprint.append_buffer("head_tail", head_tail);
-    fingerprint.append_buffer("matrices", matrices);
-    return fingerprint.finish();
+    topology.append_buffer("parents", parents);
+    geometry.append_text("mc2_bone_geometry_v0");
+    geometry.append_buffer("head_tail", head_tail);
+    geometry.append_buffer("matrices", matrices);
+    surface.append_text("mc2_bone_surface_v0");
+    return static_fingerprint_result(topology, geometry, surface);
 }
 
 }  // namespace hotools

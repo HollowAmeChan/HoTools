@@ -42,6 +42,12 @@ final_proxy = importlib.import_module(
 mc2_names = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
 )
+mc2_native = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
+mc2_parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
 mc2_solver = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
 )
@@ -234,23 +240,30 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         slot = world.solver_slots[task.task_id]
         first_static = slot.data["mesh_static"]
         first_native = slot.data["native_context"]
-        first_input_signature = slot.data["static_input_signature"]
+        first_input_signature = slot.data["static_input_fingerprint"].overall
+        assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_ALL
         assert sum(
             bool(value & 0x01) for value in first_static.final_proxy.vertex_attributes
         ) == 1
+
+        mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        assert slot.data["native_context"] is first_native
+        assert slot.data["last_static_change_mask"] == 0
 
         group.add((2,), 1.0, "REPLACE")
         _world, _ready, status = mc2_solver.step_mc2(world, [task])
         slot = world.solver_slots[task.task_id]
         second_static = slot.data["mesh_static"]
         second_native = slot.data["native_context"]
-        second_input_signature = slot.data["static_input_signature"]
+        second_input_signature = slot.data["static_input_fingerprint"].overall
         assert "重建 1" in status
         assert second_native is not first_native
         assert first_native.inspect()["released"] is True
         assert second_native.inspect()["tether_enabled"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
+        assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_SURFACE
         assert second_input_signature != first_input_signature
         assert second_static.distance.distance_signature != first_static.distance.distance_signature
         assert second_static.bending is not None
@@ -272,11 +285,12 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert latest_native.inspect()["tether_enabled"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
-        assert slot.data["static_input_signature"] != second_input_signature
+        assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_SURFACE
+        assert slot.data["static_input_fingerprint"].overall != second_input_signature
         assert slot.data["mesh_static"].bending.bending_signature != second_static.bending.bending_signature
 
         topology_token = slot.data["mesh_static"].mesh_topology_signature
-        previous_signature = slot.data["static_input_signature"]
+        previous_signature = slot.data["static_input_fingerprint"].overall
         previous_native = latest_native
         mesh = obj.data
         mesh.clear_geometry()
@@ -301,8 +315,9 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         latest_native = slot.data["native_context"]
         assert "重建 1" in status
         assert previous_native.inspect()["released"] is True
-        assert slot.data["static_input_signature"] != previous_signature
+        assert slot.data["static_input_fingerprint"].overall != previous_signature
         assert slot.data["mesh_static"].mesh_topology_signature != topology_token
+        assert slot.data["last_static_change_mask"] & mc2_native.MC2_STATIC_CHANGE_TOPOLOGY
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -335,12 +350,42 @@ def test_active_world_mesh_step_requires_configured_base_pose() -> None:
         cleanup_properties()
 
 
+def test_mc2_static_config_change_reuses_topology() -> None:
+    obj = _make_object("MC2_StaticConfigDirty", ((0, 1, 2, 3),))
+    world = world_types.PhysicsWorldCache()
+    try:
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+        mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        first_topology = slot.data["topology"]
+        first_native = slot.data["native_context"]
+
+        changed_task = mc2_specs.make_mc2_task_spec(
+            mc2_names.MC2_SETUP_MESH_CLOTH,
+            [obj],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity_direction=(0.0, -1.0, 0.0),
+            ),
+        )
+        mc2_solver.step_mc2(world, [changed_task])
+        slot = world.solver_slots[task.task_id]
+        assert slot.data["topology"] is first_topology
+        assert slot.data["native_context"] is not first_native
+        assert first_native.inspect()["released"] is True
+        assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
+        assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_CONFIG
+    finally:
+        world.omni_cache_dispose("test_complete")
+        _remove_object(obj)
+
+
 TESTS = (
     ("n-gon final proxy keeps original vertices", test_ngon_proxy_keeps_original_vertices),
     ("vertex group pin uses same indices", test_vertex_group_pin_uses_same_vertex_indices),
     ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
     ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
     ("MC2 slot rebuilds for Pin/UV static changes", test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes),
+    ("MC2 static config reuses topology", test_mc2_static_config_change_reuses_topology),
     ("active MC2 Mesh step requires BasePose", test_active_world_mesh_step_requires_configured_base_pose),
 )
 

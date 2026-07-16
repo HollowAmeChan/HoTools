@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
-| MC2 | V1-R替代资格审计 | 单一公开solver step先同步全部active tasks并按substep批量推进；profile+task映射component，per-task slot/context隔离；Bone链组产品拓扑、同Armature多component原子写回、三setup、外部collider、单/跨cloth self、派生self半径、全隐式中间态debug、生产可达性、公共result/writeback与stats已成立；逐帧orientation/Bone pose/Center已由native自产自用且新旧总体benchmark已建立 | 首帧静态构建、变化重建的producer仍需按P-06分步迁入C++，随后完成文件独立性与替代总门禁；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
+| MC2 | V1-R替代资格审计 | 单一公开solver step先同步全部active tasks并按substep批量推进；profile+task映射component，per-task slot/context隔离；Bone链组产品拓扑、同Armature多component原子写回、三setup、外部collider、单/跨cloth self、派生self半径、全隐式中间态debug、生产可达性、公共result/writeback与stats已成立；逐帧orientation/Bone pose/Center已由native自产自用；静态raw fingerprint与topology/geometry/surface/config变化分类已由slot-owned native context持有 | 首帧Final Proxy/Baseline及后续constraint/Bone static producer仍需按P-06b..P-06f分步迁入C++，随后完成文件独立性与替代总门禁；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。

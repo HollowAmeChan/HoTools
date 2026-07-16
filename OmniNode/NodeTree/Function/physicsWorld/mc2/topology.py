@@ -57,10 +57,61 @@ def _signature(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _mesh_input_digest(source) -> str:
+def _compact_signature(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
+
+
+@dataclass(frozen=True)
+class MC2StaticInputFingerprint:
+    topology: str
+    geometry: str
+    surface: str
+    config: str
+    source: str
+    overall: str
+
+    def __post_init__(self) -> None:
+        for name in ("topology", "geometry", "surface", "config", "source", "overall"):
+            value = getattr(self, name)
+            if len(value) != 32 or any(character not in "0123456789abcdef" for character in value):
+                raise ValueError(f"MC2 {name} fingerprint must be 32 lowercase hex characters")
+
+    def native_values(self) -> tuple[str, str, str, str, str]:
+        return self.topology, self.geometry, self.surface, self.config, self.overall
+
+    def debug_dict(self) -> dict:
+        return {
+            "topology": self.topology,
+            "geometry": self.geometry,
+            "surface": self.surface,
+            "config": self.config,
+            "source": self.source,
+            "overall": self.overall,
+        }
+
+
+def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
+    token = _source_token(source)
+    topology = _compact_signature((kind, "unresolved", token))
+    geometry = _compact_signature((kind, "geometry", "unresolved"))
+    surface = _compact_signature((kind, "surface", "unresolved"))
+    return {
+        "topology": topology,
+        "geometry": geometry,
+        "surface": surface,
+    }
+
+
+def _mesh_input_fingerprint(source) -> dict[str, str]:
     mesh = getattr(source, "data", None)
     if mesh is None:
-        return _signature({"resolved": False, "token": _source_token(source)})
+        return _unresolved_source_fingerprint(source, "mesh")
     mesh.update()
     positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     normals = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
@@ -71,6 +122,8 @@ def _mesh_input_digest(source) -> str:
     mesh.calc_loop_triangles()
     triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
     mesh.loop_triangles.foreach_get("vertices", triangles)
+    loop_vertices = np.empty(len(mesh.loops), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", loop_vertices)
     uv_layer = getattr(getattr(mesh, "uv_layers", None), "active", None)
     if uv_layer is None:
         uvs = np.empty((0,), dtype=np.float32)
@@ -94,11 +147,12 @@ def _mesh_input_digest(source) -> str:
                         break
     from .native import native_module
 
-    return str(native_module().mc2_mesh_static_fingerprint_v0(
+    return dict(native_module().mc2_mesh_static_fingerprint_v0(
         positions,
         normals,
         edges,
         triangles,
+        loop_vertices,
         uvs,
         weights,
         _pointer(source),
@@ -109,22 +163,48 @@ def _mesh_input_digest(source) -> str:
     ))
 
 
-def topology_input_signature_for_task(task: "MC2TaskSpec") -> str:
-    """Fingerprint Blender static inputs without materializing frozen topology."""
+def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
+    """Classify Blender static inputs without materializing frozen topology."""
 
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
-    digest = hashlib.sha256()
-    digest.update(b"mc2_topology_input_v0")
-    digest.update(task.setup_type.encode("ascii"))
-    digest.update(task.topology_signature.encode("ascii"))
+    sources = []
     for source in task.sources:
         if task.setup_type == "mesh_cloth":
-            source_signature = _mesh_input_digest(source)
+            sources.append(_mesh_input_fingerprint(source))
         else:
-            source_signature = _bone_input_digest(source)
-        digest.update(source_signature.encode("ascii"))
-    return digest.hexdigest()
+            sources.append(_bone_input_fingerprint(source))
+    topology = _compact_signature((
+        "mc2_task_topology_v1",
+        task.setup_type,
+        task.topology_signature,
+        tuple(source["topology"] for source in sources),
+    ))
+    geometry = _compact_signature((
+        "mc2_task_geometry_v1",
+        task.setup_type,
+        tuple(source["geometry"] for source in sources),
+    ))
+    surface = _compact_signature((
+        "mc2_task_surface_v1",
+        task.setup_type,
+        tuple(source["surface"] for source in sources),
+    ))
+    config = _compact_signature((
+        "mc2_task_static_config_v1",
+        task.setup_type,
+        tuple(float(value) for value in task.profile.gravity_direction),
+    ))
+    source = _compact_signature(("mc2_task_source_v1", topology, geometry, surface))
+    overall = _compact_signature(("mc2_task_static_v1", source, config))
+    return MC2StaticInputFingerprint(
+        topology=topology,
+        geometry=geometry,
+        surface=surface,
+        config=config,
+        source=source,
+        overall=overall,
+    )
 
 
 def _vector3(value) -> tuple[float, float, float]:
@@ -278,7 +358,7 @@ def _bone_source_selection(source):
     return armature, collection, requested, explicit_chain, names
 
 
-def _bone_input_digest(source) -> str:
+def _bone_input_fingerprint(source) -> dict[str, str]:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
     parents = np.empty(len(names), dtype=np.int32)
@@ -298,7 +378,7 @@ def _bone_input_digest(source) -> str:
     )
     from .native import native_module
 
-    return str(native_module().mc2_bone_static_fingerprint_v0(
+    return dict(native_module().mc2_bone_static_fingerprint_v0(
         parents,
         head_tail.reshape((-1,)),
         matrices.reshape((-1,)),
@@ -515,10 +595,11 @@ def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
 
 
 __all__ = [
+    "MC2StaticInputFingerprint",
     "MC2SourceTopologySpec",
     "MC2TopologySpec",
     "build_mc2_bone_source_topology",
     "build_mc2_mesh_source_topology",
     "build_mc2_topology_spec",
-    "topology_input_signature_for_task",
+    "static_input_fingerprint_for_task",
 ]

@@ -22,7 +22,16 @@ from .center_state import (
 )
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync
 from .interaction_scope import build_mc2_interaction_scope
-from .native import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
+from .native import (
+    MC2_INTERACTION_RESOURCE_KEY,
+    MC2_STATIC_CHANGE_ALL,
+    MC2_STATIC_CHANGE_CONFIG,
+    MC2_STATIC_CHANGE_GEOMETRY,
+    MC2_STATIC_CHANGE_SURFACE,
+    MC2_STATIC_CHANGE_TOPOLOGY,
+    MC2_STATIC_CHANGE_SOURCE,
+    MC2NativeInteractionV0,
+)
 from .results import (
     make_mc2_bone_result,
     make_mc2_mesh_result,
@@ -33,7 +42,7 @@ from .results import (
 from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
 from .state import MC2SlotRuntimeState
-from .topology import build_mc2_topology_spec, topology_input_signature_for_task
+from .topology import build_mc2_topology_spec, static_input_fingerprint_for_task
 
 
 MC2_FRAMEWORK_STATUS = (
@@ -90,7 +99,12 @@ def _slot_debug_snapshot(slot) -> dict:
             if hasattr(bone_static, "debug_dict")
             else None
         ),
-        "static_input_signature": slot.data.get("static_input_signature", ""),
+        "static_input_fingerprint": (
+            slot.data["static_input_fingerprint"].debug_dict()
+            if hasattr(slot.data.get("static_input_fingerprint"), "debug_dict")
+            else None
+        ),
+        "last_static_change_mask": int(slot.data.get("last_static_change_mask", 0)),
         "runtime_state": state.debug_dict() if hasattr(state, "debug_dict") else None,
         "native_context": (
             native_context.inspect()
@@ -156,9 +170,8 @@ def _install_mc2_slot(
     reset_reason: str,
     mesh_static=None,
     bone_static=None,
-    static_input_signature: str | None = None,
-    topology_input_signature: str | None = None,
-    static_contract_key=None,
+    static_input_fingerprint=None,
+    static_change_mask: int = MC2_STATIC_CHANGE_ALL,
     native_context=None,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
@@ -189,9 +202,8 @@ def _install_mc2_slot(
             "settings": settings,
             "mesh_static": mesh_static,
             "bone_static": bone_static,
-            "static_input_signature": static_input_signature,
-            "topology_input_signature": topology_input_signature,
-            "static_contract_key": static_contract_key,
+            "static_input_fingerprint": static_input_fingerprint,
+            "last_static_change_mask": int(static_change_mask),
             "native_context": native_context,
             "runtime_state": state,
             "center_state": center_state,
@@ -327,7 +339,7 @@ def _mc2_slot_rebuild_reason(
     world: PhysicsWorldCache,
     spec,
     topology,
-    static_input_signature: str | None = None,
+    static_change_mask: int = MC2_STATIC_CHANGE_ALL,
 ) -> str:
     slot = world.solver_slots.get(spec.task_id)
     if slot is None:
@@ -346,11 +358,28 @@ def _mc2_slot_rebuild_reason(
         return "slot_kind_changed"
     if slot.world_generation != world.generation:
         return "world_generation_changed"
+    if static_change_mask & MC2_STATIC_CHANGE_TOPOLOGY:
+        return "topology_changed"
+    if static_change_mask:
+        return "static_input_changed"
     if state.topology_signature != topology.topology_signature:
         return "topology_changed"
-    if slot.data.get("static_input_signature") != static_input_signature:
-        return "static_input_changed"
     return ""
+
+
+def _classify_stored_static_fingerprint(previous, current) -> int:
+    if previous is None or not hasattr(previous, "native_values"):
+        return MC2_STATIC_CHANGE_ALL
+    mask = 0
+    if previous.topology != current.topology:
+        mask |= MC2_STATIC_CHANGE_TOPOLOGY
+    if previous.geometry != current.geometry:
+        mask |= MC2_STATIC_CHANGE_GEOMETRY
+    if previous.surface != current.surface:
+        mask |= MC2_STATIC_CHANGE_SURFACE
+    if previous.config != current.config:
+        mask |= MC2_STATIC_CHANGE_CONFIG
+    return mask
 
 
 def _sync_mc2_slot(
@@ -361,16 +390,15 @@ def _sync_mc2_slot(
     effective,
     mesh_static,
     bone_static,
-    static_input_signature,
-    topology_input_signature,
-    static_contract_key,
+    static_input_fingerprint,
+    static_change_mask,
     staged_native_context,
 ) -> tuple[str, object]:
     rebuild_reason = _mc2_slot_rebuild_reason(
         world,
         spec,
         topology,
-        static_input_signature,
+        static_change_mask,
     )
     slot = world.ensure_solver_slot(spec.task_id, MC2_SLOT_KIND)
     previous_state = slot.data.get("runtime_state")
@@ -387,9 +415,8 @@ def _sync_mc2_slot(
             settings=settings,
             mesh_static=mesh_static,
             bone_static=bone_static,
-            static_input_signature=static_input_signature,
-            topology_input_signature=topology_input_signature,
-            static_contract_key=static_contract_key,
+            static_input_fingerprint=static_input_fingerprint,
+            static_change_mask=static_change_mask,
             reset_reason=rebuild_reason,
             native_context=staged_native_context,
         )
@@ -422,8 +449,8 @@ def _sync_mc2_slot(
     slot.data["topology"] = topology
     slot.data["effective_parameters"] = effective
     slot.data["settings"] = settings
-    slot.data["topology_input_signature"] = topology_input_signature
-    slot.data["static_contract_key"] = static_contract_key
+    slot.data["static_input_fingerprint"] = static_input_fingerprint
+    slot.data["last_static_change_mask"] = int(static_change_mask)
     if parameter_changed:
         slot.data["writeback_plan"] = {}
     if parameter_changed or settings_changed or team_options_will_change:
@@ -507,15 +534,32 @@ def step_mc2(
     staged_native_contexts = []
     try:
         for spec in active_specs:
-            topology_input_signature = topology_input_signature_for_task(spec)
+            static_input_fingerprint = static_input_fingerprint_for_task(spec)
             existing_slot = world.solver_slots.get(spec.task_id)
+            existing_native_context = (
+                existing_slot.data.get("native_context")
+                if existing_slot is not None
+                else None
+            )
+            static_change_mask = MC2_STATIC_CHANGE_ALL
+            if (
+                existing_native_context is not None
+                and not bool(getattr(existing_native_context, "disposed", True))
+            ):
+                static_change_mask = existing_native_context.classify_static_fingerprint(
+                    static_input_fingerprint
+                )
+            elif existing_slot is not None:
+                static_change_mask = _classify_stored_static_fingerprint(
+                    existing_slot.data.get("static_input_fingerprint"),
+                    static_input_fingerprint,
+                )
             topology = None
             if (
                 existing_slot is not None
                 and existing_slot.kind == MC2_SLOT_KIND
                 and existing_slot.world_generation == world.generation
-                and existing_slot.data.get("topology_input_signature")
-                == topology_input_signature
+                and not (static_change_mask & MC2_STATIC_CHANGE_SOURCE)
             ):
                 topology = existing_slot.data.get("topology")
             if topology is None:
@@ -524,11 +568,6 @@ def step_mc2(
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
                 _validate_mc2_frame_input(spec, topology, frame_input)
-            static_input_signature = None
-            static_contract_key = (
-                topology_input_signature,
-                tuple(float(value) for value in spec.profile.gravity_direction),
-            )
             mesh_static_supported = (
                 spec.setup_type == "mesh_cloth"
                 and all(source.resolved for source in topology.sources)
@@ -539,15 +578,11 @@ def step_mc2(
                 and all(source.resolved for source in topology.sources)
                 and topology.particle_count > 0
             )
-            if mesh_static_supported:
-                static_input_signature = repr(static_contract_key)
-            elif bone_static_supported:
-                static_input_signature = repr(static_contract_key)
             rebuild_reason = _mc2_slot_rebuild_reason(
                 world,
                 spec,
                 topology,
-                static_input_signature,
+                static_change_mask,
             )
             mesh_static = None
             bone_static = None
@@ -626,6 +661,9 @@ def step_mc2(
                         staged_native_context.update_mesh_static(mesh_static)
                     elif bone_static is not None:
                         staged_native_context.update_bone_static(bone_static)
+                    staged_native_context.update_static_fingerprint(
+                        static_input_fingerprint
+                    )
                     staged_native_context.update_parameters(
                         effective,
                         animation_pose_ratio=spec.profile.animation_pose_ratio,
@@ -648,9 +686,8 @@ def step_mc2(
                     effective,
                     mesh_static,
                     bone_static,
-                    static_input_signature,
-                    topology_input_signature,
-                    static_contract_key,
+                    static_input_fingerprint,
+                    static_change_mask,
                     collider_frame,
                     staged_native_context,
                     staged_native_frame_applied,
@@ -700,9 +737,8 @@ def step_mc2(
             effective,
             mesh_static,
             bone_static,
-            static_input_signature,
-            topology_input_signature,
-            static_contract_key,
+            static_input_fingerprint,
+            static_change_mask,
             collider_frame,
             staged_native_context,
             staged_native_frame_applied,
@@ -715,9 +751,8 @@ def step_mc2(
                 effective,
                 mesh_static,
                 bone_static,
-                static_input_signature,
-                topology_input_signature,
-                static_contract_key,
+                static_input_fingerprint,
+                static_change_mask,
                 staged_native_context,
             )
             if staged_native_context in staged_native_contexts:

@@ -292,6 +292,7 @@ Blender authoring/frame input
 7. result/debug不含bpy对象、manager index或native handle；solver不inline writeback。
 8. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
 9. 大数组派生producer与consumer必须同属native context：Frame orientation、Bone pose rotation和Center不得回到Python；Final Proxy/Baseline/constraint static按P-06分步迁移。Python只传raw Blender snapshot，除公开result与显式debug外不读回native中间态。
+10. 静态dirty分类由slot-owned native context持有`topology=1 / geometry=2 / surface=4 / config=8`四位mask。Mesh raw输入覆盖object/mesh identity、edges、loop triangles、loop→vertex、positions/normals、UV与Pin权重；Bone raw输入覆盖Armature identity、requested/resolved names、parents、head/tail与rest matrix。纯Pose和same-frame为零；gravity direction只置config；旧context没有指纹时必须安全全重建。Python只组合每个task的短摘要并组织staged transaction，不再保存平行的contract key或signature字符串。
 
 ## 9. Oracle 与冲突处理
 
@@ -319,10 +320,10 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 
 | 路径 | 静态生产链 | 逐帧生产链 | 输出 | 异常与释放 |
 |---|---|---|---|---|
-| MeshCloth | 当前为`task -> raw mesh snapshot -> host final proxy/baseline/distance/bending/center/self -> native context`；按P-06迁为native自产自用 | BasePose只上传world positions/component pose；native context内部生产triangle orientation与Center，collider/runtime/scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context与BasePose cache owner |
-| BoneCloth | 当前为`task -> ordered Bone sources -> host product/source connection与Bone static -> native context`；按P-06迁为native自产自用 | 只上传Armature component pose、PoseBone head与raw 3x3 pose matrix；native生产world rotation与Center | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
+| MeshCloth | `task -> raw mesh arrays -> native四类fingerprint/change mask -> host final proxy/baseline/distance/bending/center/self -> native context`；后半段按P-06b起迁为native自产自用 | BasePose只上传world positions/component pose；native context内部生产triangle orientation与Center，collider/runtime/scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context与BasePose cache owner |
+| BoneCloth | `task -> raw Bone rest/hierarchy arrays -> native四类fingerprint/change mask -> host product/source connection与Bone static -> native context`；后半段按P-06b起迁为native自产自用 | 只上传Armature component pose、PoseBone head与raw 3x3 pose matrix；native生产world rotation与Center | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
 | BoneSpring | 与BoneCloth共享Bone Line static链，但setup adapter与归一化参数固定Spring支持域 | 同Bone frame链；只消费Sphere soft collider，关闭self/sync与不支持约束 | stable Bone name -> Bone transform transaction | 非Line、非Sphere或越出归一化支持域在prepare拒绝，不进入native/writeback |
-| World common | `build_task_specs -> topology/signature -> immutable static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
+| World common | `build_task_specs -> native fingerprint/classify -> topology/static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
 
 状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime identity、scheduler、center调度history与native context；particle position/rotation/history只存在于native context，不再有生产`MC2ParticleBuffer` shadow；immutable authoring/raw snapshot没有释放职责，frame snapshot和result candidate只活到本次公开step提交。测试可保留host buffer作为oracle，但生产import必须为零。
 

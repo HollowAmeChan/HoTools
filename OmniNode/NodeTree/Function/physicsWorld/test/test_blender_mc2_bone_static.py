@@ -33,6 +33,9 @@ for package_name, package_path in (
 
 
 names = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names")
+native_flags = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
@@ -214,6 +217,7 @@ try:
     second_candidate = slot.data["result_candidate"]
     second_info = slot.data["native_context"].inspect()
     assert slot.data["native_context"] is context_before_pose_change
+    assert slot.data["last_static_change_mask"] == 0
     assert second_candidate.revision == 2
     assert second_info["step_count"] == 1
     assert second_info["bone_line_output_count"] == 2
@@ -241,7 +245,36 @@ try:
     assert "重建 1" in rebuild_status
     assert rebuilt_slot.data["native_context"] is not context_before_pose_change
     assert context_before_pose_change.inspect()["released"] is True
-    assert rebuilt_slot.data["runtime_state"].allocation_reason == "topology_changed"
+    assert rebuilt_slot.data["runtime_state"].allocation_reason == "static_input_changed"
+    assert rebuilt_slot.data["last_static_change_mask"] == native_flags.MC2_STATIC_CHANGE_GEOMETRY
+
+    geometry_context = rebuilt_slot.data["native_context"]
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    tip = armature.data.edit_bones["Tip"]
+    tip.parent = armature.data.edit_bones["Root"]
+    tip.use_connect = False
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.select_set(False)
+    bpy.context.view_layer.update()
+    world.frame_context.frame = 4
+    solver.step_mc2(world, [task])
+    hierarchy_slot = world.solver_slots[task.task_id]
+    assert hierarchy_slot.data["native_context"] is not geometry_context
+    assert geometry_context.inspect()["released"] is True
+    assert hierarchy_slot.data["runtime_state"].allocation_reason == "topology_changed"
+    assert hierarchy_slot.data["last_static_change_mask"] & native_flags.MC2_STATIC_CHANGE_TOPOLOGY
+
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    tip = armature.data.edit_bones["Tip"]
+    tip.parent = armature.data.edit_bones["Mid"]
+    tip.use_connect = True
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.select_set(False)
+    bpy.context.view_layer.update()
 
     world.omni_cache_dispose("bone_cloth_complete")
     world = world_types.PhysicsWorldCache()

@@ -939,6 +939,8 @@ C++ native context:
 - buffer 校验和多参数调用（当前 35 参数单次调用模型无法避免 per-call overhead）。
 - 大量中间 matrix/vector 解包。
 
+静态输入较大且每帧都必须判脏时，dirty producer应和native consumer共址：Python只提取Blender可连续读取的raw arrays，native context生成并持有分类指纹或revision。分类至少要能区分topology、geometry、surface/authoring与影响静态构建的config；无变化不得重建或分配静态派生数组。Python不得同时保留一套平行JSON签名、contract tuple或派生大数组作为第二真值来源。没有native context的空任务可以比较同样的短摘要，但不得因此重新引入大payload遍历。
+
 ### Native Context 生命周期协议
 
 每个需要 C++ persistent context 的 solver 应遵循以下调用协议，不得合并成单一大函数：
