@@ -324,6 +324,8 @@ Blender authoring/frame input
 
 28. 生产static注册只允许staged builder与named owner capsule路径。`MC2NativeContextV0`不得提供从完整Proxy/Baseline/Mesh bundle二次pack/upload的便利入口；Bone registration前必须已由同次builder完成Proxy/Baseline/Distance/Center/Self注册，缺metadata直接失败。显式oracle可保留纯packer函数验证dtype/content，但不得由context owner或生产solver调用。
 
+29. Blender raw snapshot读取是允许保留的host热点边界：`foreach_get`/UV/Pin/Bone rest读取用于检测任意脚本、编辑模式与数据变化，连续数组随即交给native fingerprint/producer，不得在Python派生solver static。2026-07 depsgraph handler实测中，BasePose/GN正常逐帧求值与真实Mesh geometry/Pin/UV authoring都会产生Object/Mesh geometry update；Bone Pose与rest编辑也都会产生Armature geometry update，因此当前标志无法安全跳过snapshot。任何未来dirty tracker必须先增加能区分authoring与solver/evaluation更新的稳定revision合同，否则不得以性能为由漏检重建。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

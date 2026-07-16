@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-06d/P-06e已关闭：Bone生产静态链使用单一raw snapshot、连续数组、6次owner move与compact metadata；Mesh/Bone config分别复制五/六类native static并Center-only重建。topology/geometry/Pin必须全量生产；UV-onlylarge约20.50ms，仍比旧CPP约657.63ms快约32x。P-06f进行中：已删除`InitialState/ParticleBuffer/frame sync`平行host状态链，以及context完整Mesh static二次上传、Proxy/Baseline pack和Bone metadata fallback；生产static只允许staged owner路径。
+   P-06已关闭：最终large Mesh/Bone热帧约5.47/6.06ms，旧CPP约7.03/19.33ms；首构快31.72x/19.20x；180帧混合soak mean/p95/max约2.94/3.56/4.01ms。平行host particle状态、完整static上传fallback已删除。Blender raw snapshot保留为无法由depsgraph安全替代的authoring检测边界，全部派生/消费归native。下一步P-07文件与ABI独立化。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 
