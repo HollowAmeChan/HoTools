@@ -121,8 +121,10 @@ def build_mc2_self_collision_static(
     *,
     native_context=None,
 ) -> MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata:
-    if not isinstance(proxy, MC2ProxyStaticSpec):
-        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
+        getattr(proxy, "native_owned", False)
+    ):
+        raise TypeError("proxy must be an MC2 proxy static result")
     depths = tuple(float(value) for value in depths)
     if len(depths) != proxy.vertex_count:
         raise ValueError("self-collision depths must match proxy vertices")

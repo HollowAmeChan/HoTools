@@ -266,11 +266,13 @@ def build_mc2_bending_static(
     initial_local_to_world_columns=None,
     native_context=None,
 ) -> MC2BendingStaticSpec | MC2BendingStaticMetadata | None:
-    if not isinstance(proxy, MC2ProxyStaticSpec):
-        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
+        getattr(proxy, "native_owned", False)
+    ):
+        raise TypeError("proxy must be an MC2 proxy static result")
     if proxy.vertex_count > MC2_BENDING_MAX_INDEX + 1:
         raise ValueError("MC2 Bending supports at most 65536 proxy vertices")
-    if not proxy.edges or not proxy.triangles:
+    if len(proxy.edges) == 0 or len(proxy.triangles) == 0:
         return None
 
     columns = _matrix_columns(initial_local_to_world_columns)

@@ -143,8 +143,10 @@ def build_mc2_center_static(
     world_gravity_direction,
     native_context=None,
 ) -> MC2CenterStaticSpec | MC2CenterStaticMetadata:
-    if not isinstance(proxy, MC2ProxyStaticSpec):
-        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
+        getattr(proxy, "native_owned", False)
+    ):
+        raise TypeError("proxy must be an MC2 proxy static result")
     bind_rotations = np.ascontiguousarray(vertex_bind_pose_rotations, dtype=np.float64)
     if bind_rotations.shape != (proxy.vertex_count, 4):
         raise ValueError("vertex bind rotation count mismatch")

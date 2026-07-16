@@ -215,8 +215,10 @@ def build_mc2_mesh_cloth_static(
         baseline.baseline.depths,
         native_context=native_context,
     )
-    stored_finalizer = finalizer.compact_native_finalizer()
     stored_baseline = baseline.compact_native_baseline()
+    stored_finalizer = finalizer.compact_native_finalizer(
+        proxy_metadata=stored_baseline.final_proxy,
+    )
     result = MC2MeshClothStaticBuildResult(
         mesh_topology_signature=actual_mesh_topology_signature,
         finalizer=stored_finalizer,

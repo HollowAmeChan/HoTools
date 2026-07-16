@@ -285,6 +285,17 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_triangle_primitive_count"] == 1
         assert native_info["self_contact_cache_count"] == 0
         assert native_info["self_intersect_record_count"] == 0
+        assert staged_static.final_proxy.native_owned is True
+        assert staged_static.final_proxy.vertex_attributes.dtype == np.uint8
+        assert staged_static.final_proxy.edges.dtype == np.int32
+        assert staged_static.final_proxy.triangles.dtype == np.int32
+        assert staged_static.final_proxy.vertex_attributes.flags.writeable is False
+        assert staged_static.final_proxy.edges.flags.writeable is False
+        assert staged_static.final_proxy.triangles.flags.writeable is False
+        assert not hasattr(staged_static.final_proxy, "local_positions")
+        assert staged_static.finalizer.proxy is staged_static.final_proxy
+        assert staged_static.final_proxy.proxy_signature == static.final_proxy.proxy_signature
+        assert native_owner.proxy_signature == staged_static.final_proxy.proxy_signature
         assert (
             native_info["baseline_count"]
             == staged_static.baseline.baseline.baseline_count

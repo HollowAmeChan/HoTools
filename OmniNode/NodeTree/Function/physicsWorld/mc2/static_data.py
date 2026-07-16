@@ -31,6 +31,38 @@ def _signature(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def mc2_proxy_content_signature(
+    *,
+    task_id: str,
+    setup_type: str,
+    vertex_identities,
+    local_positions,
+    local_normals,
+    local_tangents,
+    uvs,
+    vertex_attributes,
+    edges,
+    triangles,
+) -> str:
+    digest = hashlib.sha256(b"mc2_proxy_static_v1\0")
+    for value in (str(task_id), str(setup_type), *(str(item) for item in vertex_identities)):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "little"))
+        digest.update(encoded)
+    for name, values, dtype in (
+        ("local_positions", local_positions, np.float64),
+        ("local_normals", local_normals, np.float64),
+        ("local_tangents", local_tangents, np.float64),
+        ("uvs", uvs, np.float64),
+        ("vertex_attributes", vertex_attributes, np.uint8),
+        ("edges", edges, np.int32),
+        ("triangles", triangles, np.int32),
+    ):
+        digest.update(name.encode("ascii"))
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
+
+
 def _finite(value: object, name: str) -> float:
     try:
         number = float(value)
@@ -230,9 +262,14 @@ class MC2ProxyStaticSpec:
             raise ValueError("edges must be canonical and sorted")
         if self.triangles != _normalize_triangles(self.triangles, count):
             raise TypeError("triangle records must be immutable tuples")
-        expected = _signature(self.signature_payload())
+        expected = mc2_proxy_content_signature(**self.signature_payload_without_schema())
         if self.proxy_signature != expected:
             raise ValueError("proxy_signature does not match proxy static payload")
+
+    def signature_payload_without_schema(self) -> dict:
+        payload = self.signature_payload()
+        payload.pop("schema_version")
+        return payload
 
     def signature_payload(self) -> dict:
         return {
@@ -300,7 +337,12 @@ def make_mc2_proxy_static_spec(
     for index, attribute in enumerate(payload["vertex_attributes"]):
         if not 0 <= attribute <= 0xFF:
             raise ValueError(f"vertex_attributes[{index}] must fit uint8")
-    return MC2ProxyStaticSpec(**payload, proxy_signature=_signature(payload))
+    signature_payload = dict(payload)
+    signature_payload.pop("schema_version")
+    return MC2ProxyStaticSpec(
+        **payload,
+        proxy_signature=mc2_proxy_content_signature(**signature_payload),
+    )
 
 
 def _unit_quaternions(values, name: str, *, count: int) -> tuple:
@@ -819,6 +861,7 @@ __all__ = [
     "make_mc2_baseline_static_spec",
     "make_mc2_proxy_finalizer_static_spec",
     "make_mc2_proxy_static_spec",
+    "mc2_proxy_content_signature",
     "pack_mc2_baseline_static",
     "pack_mc2_proxy_finalizer_static",
     "pack_mc2_proxy_static",

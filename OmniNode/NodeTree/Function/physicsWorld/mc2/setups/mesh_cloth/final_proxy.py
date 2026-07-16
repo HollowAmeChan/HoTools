@@ -23,6 +23,7 @@ from ...static_data import MC2ProxyStaticSpec
 from ...static_data import MC2ProxyFinalizerStaticSpec
 from ...static_data import make_mc2_proxy_finalizer_static_spec
 from ...static_data import make_mc2_proxy_static_spec
+from ...static_data import mc2_proxy_content_signature
 
 
 UV_SEAM_TOLERANCE = 1.0e-6
@@ -30,7 +31,7 @@ UV_SEAM_TOLERANCE = 1.0e-6
 
 @dataclass(frozen=True)
 class MC2MeshFinalProxyBuildResult:
-    proxy: MC2ProxyStaticSpec
+    proxy: MC2ProxyStaticSpec | MC2MeshProxyNativeData | MC2MeshProxyNativeMetadata
     lines: tuple[tuple[int, int], ...]
     finalizer: (
         MC2ProxyFinalizerStaticSpec
@@ -65,14 +66,109 @@ class MC2MeshFinalProxyBuildResult:
             return bool(value)
         return all(self.finalizer.vertex_to_triangle_records)
 
-    def compact_native_finalizer(self):
+    def compact_native_finalizer(self, *, proxy_metadata=None):
         finalizer = self.finalizer
-        if not isinstance(finalizer, MC2MeshFinalizerNativeData):
+        proxy = self.proxy
+        if not isinstance(finalizer, MC2MeshFinalizerNativeData) and not isinstance(
+            proxy, MC2MeshProxyNativeData
+        ):
             return self
         return MC2MeshFinalProxyBuildResult(
-            proxy=self.proxy,
-            lines=self.lines,
-            finalizer=finalizer.metadata(),
+            proxy=(
+                proxy_metadata
+                if proxy_metadata is not None
+                else proxy.metadata() if isinstance(proxy, MC2MeshProxyNativeData) else proxy
+            ),
+            lines=() if isinstance(proxy, MC2MeshProxyNativeData) else self.lines,
+            finalizer=(
+                finalizer.metadata()
+                if isinstance(finalizer, MC2MeshFinalizerNativeData)
+                else finalizer
+            ),
+        )
+
+
+def _readonly_copy(values, dtype, width: int | None = None) -> np.ndarray:
+    result = np.array(values, dtype=dtype, copy=True, order="C")
+    if width is not None:
+        result = result.reshape((-1, width))
+    result.flags.writeable = False
+    return result
+
+
+@dataclass(frozen=True)
+class MC2MeshProxyNativeMetadata:
+    task_id: str
+    setup_type: str
+    vertex_identities: tuple[str, ...]
+    vertex_attributes: np.ndarray
+    edges: np.ndarray
+    triangles: np.ndarray
+    proxy_signature: str
+    native_owned: bool = True
+
+    @property
+    def vertex_count(self) -> int:
+        return len(self.vertex_identities)
+
+
+@dataclass(frozen=True)
+class MC2MeshProxyNativeData:
+    task_id: str
+    setup_type: str
+    vertex_identities: tuple[str, ...]
+    local_positions: np.ndarray
+    local_normals: np.ndarray
+    local_tangents: np.ndarray
+    uvs: np.ndarray
+    vertex_attributes: np.ndarray
+    edges: np.ndarray
+    triangles: np.ndarray
+    proxy_signature: str
+    native_owned: bool = True
+
+    @property
+    def vertex_count(self) -> int:
+        return len(self.vertex_identities)
+
+    def with_vertex_attributes(self, values) -> MC2MeshProxyNativeData:
+        attributes = np.ascontiguousarray(values, dtype=np.uint8)
+        if attributes.shape != (self.vertex_count,):
+            raise ValueError("vertex_attributes length must match vertex_count")
+        return MC2MeshProxyNativeData(
+            task_id=self.task_id,
+            setup_type=self.setup_type,
+            vertex_identities=self.vertex_identities,
+            local_positions=self.local_positions,
+            local_normals=self.local_normals,
+            local_tangents=self.local_tangents,
+            uvs=self.uvs,
+            vertex_attributes=attributes,
+            edges=self.edges,
+            triangles=self.triangles,
+            proxy_signature=mc2_proxy_content_signature(
+                task_id=self.task_id,
+                setup_type=self.setup_type,
+                vertex_identities=self.vertex_identities,
+                local_positions=self.local_positions,
+                local_normals=self.local_normals,
+                local_tangents=self.local_tangents,
+                uvs=self.uvs,
+                vertex_attributes=attributes,
+                edges=self.edges,
+                triangles=self.triangles,
+            ),
+        )
+
+    def metadata(self) -> MC2MeshProxyNativeMetadata:
+        return MC2MeshProxyNativeMetadata(
+            task_id=self.task_id,
+            setup_type=self.setup_type,
+            vertex_identities=self.vertex_identities,
+            vertex_attributes=_readonly_copy(self.vertex_attributes, np.uint8),
+            edges=_readonly_copy(self.edges, np.int32, 2),
+            triangles=_readonly_copy(self.triangles, np.int32, 3),
+            proxy_signature=self.proxy_signature,
         )
 
 
@@ -232,11 +328,8 @@ def _build_final_proxy_derived(
         return {
             "normals": normals,
             "tangents": tangents,
-            "attributes": tuple(int(value) for value in attribute_values),
-            "edges": tuple(
-                tuple(int(value) for value in edge)
-                for edge in out_edges[:edge_count]
-            ),
+            "attributes": attribute_values,
+            "edges": out_edges[:edge_count],
             "native_finalizer": {
                 "vertex_to_vertex_ranges": out_neighbor_ranges,
                 "vertex_to_vertex_data": out_neighbor_data[:neighbor_count],
@@ -339,18 +432,51 @@ def build_mc2_final_proxy(
     normals = derived["normals"]
     tangents = derived["tangents"]
     attributes = derived["attributes"]
-    proxy = make_mc2_proxy_static_spec(
-        task_id=task_id,
-        setup_type=setup_type,
-        vertex_identities=identities,
-        local_positions=_tuple_vectors(positions),
-        local_normals=_tuple_vectors(normals),
-        local_tangents=_tuple_vectors(tangents),
-        uvs=_tuple_vectors(uv_array),
-        vertex_attributes=attributes,
-        edges=derived["edges"],
-        triangles=final_triangles,
-    )
+    if native_context is None:
+        proxy = make_mc2_proxy_static_spec(
+            task_id=task_id,
+            setup_type=setup_type,
+            vertex_identities=identities,
+            local_positions=_tuple_vectors(positions),
+            local_normals=_tuple_vectors(normals),
+            local_tangents=_tuple_vectors(tangents),
+            uvs=_tuple_vectors(uv_array),
+            vertex_attributes=attributes,
+            edges=derived["edges"],
+            triangles=final_triangles,
+        )
+    else:
+        task_value = str(task_id or "")
+        setup_value = str(setup_type or "").strip().lower()
+        if not task_value:
+            raise ValueError("task_id cannot be empty")
+        if setup_value != "mesh_cloth":
+            raise ValueError("staged Mesh proxy requires mesh_cloth setup_type")
+        triangle_values = np.ascontiguousarray(final_triangles, dtype=np.int32).reshape((-1, 3))
+        proxy = MC2MeshProxyNativeData(
+            task_id=task_value,
+            setup_type=setup_value,
+            vertex_identities=identities,
+            local_positions=positions,
+            local_normals=normals,
+            local_tangents=tangents,
+            uvs=uv_array,
+            vertex_attributes=derived["attributes"],
+            edges=derived["edges"],
+            triangles=triangle_values,
+            proxy_signature=mc2_proxy_content_signature(
+                task_id=task_value,
+                setup_type=setup_value,
+                vertex_identities=identities,
+                local_positions=positions,
+                local_normals=normals,
+                local_tangents=tangents,
+                uvs=uv_array,
+                vertex_attributes=derived["attributes"],
+                edges=derived["edges"],
+                triangles=triangle_values,
+            ),
+        )
     native_finalizer = derived.get("native_finalizer")
     if native_finalizer is None:
         finalizer = make_mc2_proxy_finalizer_static_spec(
@@ -502,6 +628,8 @@ __all__ = [
     "MC2MeshFinalProxyBuildResult",
     "MC2MeshFinalizerNativeData",
     "MC2MeshFinalizerNativeMetadata",
+    "MC2MeshProxyNativeData",
+    "MC2MeshProxyNativeMetadata",
     "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
     "build_mc2_final_proxy",

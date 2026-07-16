@@ -31,7 +31,7 @@ MC2_BASELINE_INCLUDE_LINE = 0x01
 
 @dataclass(frozen=True)
 class MC2MeshBaselineBuildResult:
-    final_proxy: MC2ProxyStaticSpec
+    final_proxy: object
     baseline: MC2BaselineStaticSpec | MC2MeshBaselineNativeData | MC2MeshBaselineMetadata
     tie_break: str = "lowest_vertex_index"
 
@@ -44,11 +44,20 @@ class MC2MeshBaselineBuildResult:
             raise ValueError("unsupported Mesh baseline tie break")
 
     def compact_native_baseline(self):
-        if not isinstance(self.baseline, MC2MeshBaselineNativeData):
+        baseline = self.baseline
+        final_proxy = self.final_proxy
+        proxy_metadata = getattr(final_proxy, "metadata", None)
+        if not isinstance(baseline, MC2MeshBaselineNativeData) and not callable(
+            proxy_metadata
+        ):
             return self
         return MC2MeshBaselineBuildResult(
-            final_proxy=self.final_proxy,
-            baseline=self.baseline.metadata(),
+            final_proxy=proxy_metadata() if callable(proxy_metadata) else final_proxy,
+            baseline=(
+                baseline.metadata()
+                if isinstance(baseline, MC2MeshBaselineNativeData)
+                else baseline
+            ),
             tie_break=self.tie_break,
         )
 
@@ -116,9 +125,14 @@ def _baseline_content_signature(proxy_signature: str, values: dict) -> str:
 
 
 def _replace_proxy_attributes(
-    proxy: MC2ProxyStaticSpec,
+    proxy,
     attributes: tuple[int, ...],
-) -> MC2ProxyStaticSpec:
+) -> object:
+    native_update = getattr(proxy, "with_vertex_attributes", None)
+    if callable(native_update):
+        if np.array_equal(attributes, proxy.vertex_attributes):
+            return proxy
+        return native_update(attributes)
     if attributes == proxy.vertex_attributes:
         return proxy
     return make_mc2_proxy_static_spec(
@@ -263,16 +277,18 @@ def build_mc2_mesh_baseline(
     *,
     native_context=None,
 ) -> MC2MeshBaselineBuildResult:
-    if not isinstance(proxy, MC2ProxyStaticSpec):
-        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
+        getattr(proxy, "native_owned", False)
+    ):
+        raise TypeError("proxy must be an MC2 proxy static result")
     if proxy.setup_type != "mesh_cloth":
         raise ValueError("Mesh baseline builder only accepts mesh_cloth")
 
     derived = _build_native_baseline(proxy, native_context=native_context)
-    final_proxy = _replace_proxy_attributes(
-        proxy,
-        tuple(int(value) for value in derived["attributes"]),
-    )
+    final_attributes = derived["attributes"]
+    if native_context is None:
+        final_attributes = tuple(int(value) for value in final_attributes)
+    final_proxy = _replace_proxy_attributes(proxy, final_attributes)
     if native_context is None:
         baseline = make_mc2_baseline_static_spec(
             proxy_signature=final_proxy.proxy_signature,

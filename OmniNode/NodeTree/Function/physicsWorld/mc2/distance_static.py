@@ -249,8 +249,10 @@ def build_mc2_distance_static(
     vertex_to_vertex_data,
     native_context=None,
 ) -> MC2DistanceStaticSpec | MC2DistanceStaticMetadata:
-    if not isinstance(proxy, MC2ProxyStaticSpec):
-        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
+        getattr(proxy, "native_owned", False)
+    ):
+        raise TypeError("proxy must be an MC2 proxy static result")
     if not isinstance(baseline, MC2BaselineStaticSpec) and not bool(
         getattr(baseline, "native_owned", False)
     ):
