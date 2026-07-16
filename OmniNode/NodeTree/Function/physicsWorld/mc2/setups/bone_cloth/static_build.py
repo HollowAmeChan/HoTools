@@ -19,9 +19,9 @@ from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from ...topology import _thaw
 from ....utils.math3d import (
-    matrix4_tuple_from_flat as _matrix_from_flat,
-    quaternion_from_matrix4_xyzw_tuple as _quaternion_from_matrix,
-    rotate_vector_unit_xyzw_tuple_fast as _rotate_xyzw,
+    matrix4_tuple_from_flat,
+    quaternion_from_matrix4_xyzw_tuple,
+    rotate_vector_unit_xyzw_tuple_fast,
 )
 
 
@@ -229,12 +229,12 @@ def build_mc2_bone_cloth_static_for_task(
         if not identity:
             raise ValueError("BoneCloth static bone identity cannot be empty")
         parent = int(record.get("parent_index", -1))
-        matrix = _matrix_from_flat(record.get("matrix_local"))
-        rotation = _quaternion_from_matrix(matrix)
+        matrix = matrix4_tuple_from_flat(record.get("matrix_local"))
+        rotation = quaternion_from_matrix4_xyzw_tuple(matrix)
         identities.append(identity)
         positions.append(tuple(float(value) for value in record.get("head", (0, 0, 0))))
-        normals.append(_rotate_xyzw(rotation, (0.0, 1.0, 0.0)))
-        tangents.append(_rotate_xyzw(rotation, (0.0, 0.0, 1.0)))
+        normals.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 1.0, 0.0)))
+        tangents.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 0.0, 1.0)))
         transform_rotations.append(rotation)
         parents.append(parent)
         if parent < 0:

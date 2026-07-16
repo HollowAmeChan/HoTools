@@ -7,16 +7,16 @@ import hashlib
 import json
 
 from ..utils.math3d import (
-    cross3_tuple as _cross,
-    dot3_tuple as _dot,
+    cross3_tuple,
+    dot3_tuple,
     matrix4_tuple,
-    matrix4_tuple_from_flat as _matrix_from_flat,
-    matrix4_tuple_multiply as _matrix_multiply,
-    normalize3_tuple as _normalize,
-    quaternion_from_axes_xyzw_tuple as _quaternion_from_axes,
-    quaternion_from_matrix4_xyzw_tuple as _quaternion_from_matrix,
-    transform_direction_matrix4_tuple as _transform_direction,
-    transform_point_matrix4_tuple as _transform_point,
+    matrix4_tuple_from_flat,
+    matrix4_tuple_multiply,
+    normalize3_tuple,
+    quaternion_from_axes_xyzw_tuple,
+    quaternion_from_matrix4_xyzw_tuple,
+    transform_direction_matrix4_tuple,
+    transform_point_matrix4_tuple,
 )
 
 from .specs import MC2TaskSpec
@@ -41,15 +41,15 @@ def _matrix4(value) -> tuple[tuple[float, ...], ...]:
 
 
 def _mesh_vertex_quaternion(matrix, normal) -> tuple[float, float, float, float]:
-    local_up = _normalize(normal)
-    reference = (0.0, 0.0, 1.0) if abs(_dot(local_up, (0.0, 0.0, 1.0))) < 0.95 else (1.0, 0.0, 0.0)
-    local_right = _normalize(_cross(local_up, reference))
-    local_forward = _normalize(_cross(local_right, local_up))
-    world_up = _transform_direction(matrix, local_up)
-    world_right = _transform_direction(matrix, local_right)
-    world_forward = _normalize(_cross(world_right, world_up))
-    world_right = _normalize(_cross(world_up, world_forward))
-    return _quaternion_from_axes(world_right, world_up, world_forward)
+    local_up = normalize3_tuple(normal)
+    reference = (0.0, 0.0, 1.0) if abs(dot3_tuple(local_up, (0.0, 0.0, 1.0))) < 0.95 else (1.0, 0.0, 0.0)
+    local_right = normalize3_tuple(cross3_tuple(local_up, reference))
+    local_forward = normalize3_tuple(cross3_tuple(local_right, local_up))
+    world_up = transform_direction_matrix4_tuple(matrix, local_up)
+    world_right = transform_direction_matrix4_tuple(matrix, local_right)
+    world_forward = normalize3_tuple(cross3_tuple(world_right, world_up))
+    world_right = normalize3_tuple(cross3_tuple(world_up, world_forward))
+    return quaternion_from_axes_xyzw_tuple(world_right, world_up, world_forward)
 
 
 def _source_matrix(source):
@@ -168,7 +168,7 @@ def build_mc2_mesh_initial_state(
         local_positions = payload.get("positions", ())
         local_normals = payload.get("normals", ())
         for local_index, local_position in enumerate(local_positions):
-            positions.append(_transform_point(matrix, local_position))
+            positions.append(transform_point_matrix4_tuple(matrix, local_position))
             normal = local_normals[local_index] if local_index < len(local_normals) else (0.0, 1.0, 0.0)
             rotations.append(_mesh_vertex_quaternion(matrix, normal))
             source_indices.append(source_topology.source_index)
@@ -220,10 +220,10 @@ def build_mc2_bone_initial_state(
         armature_matrix = _source_matrix(source)
         records = payload.get("bones", ())
         for local_index, record in enumerate(records):
-            bone_matrix = _matrix_from_flat(record.get("matrix_local"))
-            world_matrix = _matrix_multiply(armature_matrix, bone_matrix)
-            positions.append(_transform_point(armature_matrix, record.get("head", (0.0, 0.0, 0.0))))
-            rotations.append(_quaternion_from_matrix(world_matrix))
+            bone_matrix = matrix4_tuple_from_flat(record.get("matrix_local"))
+            world_matrix = matrix4_tuple_multiply(armature_matrix, bone_matrix)
+            positions.append(transform_point_matrix4_tuple(armature_matrix, record.get("head", (0.0, 0.0, 0.0))))
+            rotations.append(quaternion_from_matrix4_xyzw_tuple(world_matrix))
             parent_value = record.get("parent_index", -1)
             local_parent = -1 if parent_value is None else int(parent_value)
             parent_indices.append(particle_offset + local_parent if local_parent >= 0 else -1)

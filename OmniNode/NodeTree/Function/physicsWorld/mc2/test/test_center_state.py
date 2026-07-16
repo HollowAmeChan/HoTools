@@ -74,8 +74,9 @@ def _fixture_and_spec():
         fixture = json.load(handle)
     source = fixture["input"]
     count = len(source["positions"])
-    built = final_proxy.build_mc2_mesh_final_proxy(
+    built = final_proxy.build_mc2_final_proxy(
         task_id="mc2:mesh:center",
+        setup_type="mesh_cloth",
         vertex_identities=tuple(f"v{index}" for index in range(count)),
         local_positions=source["positions"],
         local_normals=((0.0, 0.0, 1.0),) * count,

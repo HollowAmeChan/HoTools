@@ -70,7 +70,7 @@
 | P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1七脚本门禁，覆盖八资产/三setup | Mesh、跨物体self、全隐式debug、Bone source Line、BoneCloth产品链、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
 | P-03 | 新链路混合 soak 与绝对性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms；这里只证明新链路稳定且低于自身ceiling，不代表优于旧实现 | 否 |
 | P-04 | 旧产品语义与新实现替代审计 | 完全对齐 | profile+task component、全量prepare/失败原子性、per-task context、HoTools链组产品拓扑、同Armature多component合并写回及Blender 5.1生产fixture | 跨物体self collision与半径模型分别由K-06/K-07决策；隐式可视化由D-01关闭，不再回退产品语义 | 否 |
-| P-05 | 新实现生产可达性、代码与math审计 | 待审计 | 代表性资产和soak证明主链可运行；当前Python模块存在大量参数转发、过细职责和重复/同名math包装候选 | 逐功能区核对真实入口、状态所有权、异常/释放、死代码；在不改变行为前提下合并垃圾转发、文件碎片和重复helper，并证明生产结果不变 | 是 |
+| P-05 | 新实现生产可达性、代码与math审计 | 完全对齐 | 三setup与world common runtime生产矩阵覆盖static/frame/state/error/dispose/result；八资产/三setup Blender生产门禁、混合soak与Tier A证明真实入口；math旧名aliases及无职责Mesh final-proxy包装已删除 | `profile + task`是slot/context component；`bone_rotation.py`明确为测试oracle且不是fallback；保留wrapper均拥有setup、Blender snapshot、cache、校验或事务职责 | 否 |
 | P-06 | 新旧性能对比与C++边界审计 | 待审计 | 新链绝对soak与K-06自动/ListObj-like scope对比已有基线；尚缺旧HoTools同资产总体对照和逐阶段拆分 | 同资产同配置比较构建、逐帧各阶段、debug开销、内存与分配；证明总体不退化且有明确优势，按实测完成剩余Python批量化或C++迁移决定 | 是 |
 | P-07 | 文件与ABI独立化 | 待审计 | 新Physics World Python路径当前未直接import旧package，但旧节点仍注册，旧native ABI及测试仍共存 | 新生产链、测试和构建对待删除package/context/公开ABI零依赖；共享kernel必须转为新owner而非悬挂在旧接口下 | 是 |
 | P-08 | 替代资格总门禁 | 待审计 | P-01..P-03只证明source主体、新资产门禁和新链soak | P-04..P-07、K-06/K-07和D-01全部关闭，并形成“产品语义可替代、交互模型清晰、debug可观测、性能有优势、架构可维护、允许删除”的明确结论 | 是 |
@@ -81,14 +81,13 @@
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型和全隐式中间态debug已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **完整代码/运行链与纯整理、新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
-2. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope与D-01 debug开销作为已冻结输入。
-3. `P-07/P-08`：文件级独立化与替代资格总门禁。
-4. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
+1. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope与D-01 debug开销作为已冻结输入。
+2. `P-07/P-08`：文件级独立化与替代资格总门禁。
+3. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
 
 ## 更新规则
 

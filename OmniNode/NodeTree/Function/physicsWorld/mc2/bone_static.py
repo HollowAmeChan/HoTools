@@ -15,10 +15,10 @@ import math
 import numpy as np
 
 from ..utils.math3d import (
-    normalize_vector_f64 as _normalize,
-    orientation_xyzw_f64 as _orientation_xyzw,
-    quaternion_conjugate_f64 as _quaternion_inverse_xyzw,
-    quaternion_multiply_f64 as _quaternion_multiply_xyzw,
+    normalize_vector_f64,
+    orientation_xyzw_f64,
+    quaternion_conjugate_f64,
+    quaternion_multiply_f64,
 )
 from .mesh_baseline import MC2_BASELINE_INCLUDE_LINE
 from .mesh_baseline import MC2_VERTEX_FIXED
@@ -173,22 +173,22 @@ def _normal_adjustment(
         normal = direction / length
         source_normal = final_normals[vertex]
         tangent = final_tangents[vertex]
-        source_rotation = _orientation_xyzw(source_normal, tangent)
+        source_rotation = orientation_xyzw_f64(source_normal, tangent)
         if float(np.dot(normal, tangent)) < 0.99:
-            binormal = _normalize(np.cross(normal, tangent), name="normal adjustment binormal")
-            tangent = _normalize(np.cross(binormal, normal), name="normal adjustment tangent")
+            binormal = normalize_vector_f64(np.cross(normal, tangent), name="normal adjustment binormal")
+            tangent = normalize_vector_f64(np.cross(binormal, normal), name="normal adjustment tangent")
         else:
-            binormal = _normalize(
+            binormal = normalize_vector_f64(
                 np.cross(source_normal, tangent),
                 name="normal adjustment source binormal",
             )
-            tangent = _normalize(np.cross(binormal, normal), name="normal adjustment tangent")
+            tangent = normalize_vector_f64(np.cross(binormal, normal), name="normal adjustment tangent")
         final_normals[vertex] = normal
         final_tangents[vertex] = tangent
-        adjusted_rotation = _orientation_xyzw(normal, tangent)
-        rotations[vertex] = _normalize(
-            _quaternion_multiply_xyzw(
-                _quaternion_inverse_xyzw(source_rotation),
+        adjusted_rotation = orientation_xyzw_f64(normal, tangent)
+        rotations[vertex] = normalize_vector_f64(
+            quaternion_multiply_f64(
+                quaternion_conjugate_f64(source_rotation),
                 adjusted_rotation,
             ),
             name="normal adjustment rotation",
@@ -360,13 +360,13 @@ def build_mc2_bone_static(
 
     to_transform = []
     for vertex, transform_rotation in enumerate(transform_rotations):
-        vertex_rotation = _orientation_xyzw(
+        vertex_rotation = orientation_xyzw_f64(
             final_proxy.local_normals[vertex],
             final_proxy.local_tangents[vertex],
         )
-        to_transform.append(tuple(float(value) for value in _normalize(
-            _quaternion_multiply_xyzw(
-                _quaternion_inverse_xyzw(vertex_rotation),
+        to_transform.append(tuple(float(value) for value in normalize_vector_f64(
+            quaternion_multiply_f64(
+                quaternion_conjugate_f64(vertex_rotation),
                 np.asarray(transform_rotation, dtype=np.float64),
             ),
             name="vertex-to-transform rotation",

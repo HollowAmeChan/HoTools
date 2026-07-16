@@ -76,8 +76,9 @@ def _assert_vector_rows_close(actual, expected, label: str) -> None:
 
 def _build_from_fixture(fixture):
     payload = fixture["input"]
-    return final_proxy.build_mc2_mesh_final_proxy(
+    return final_proxy.build_mc2_final_proxy(
         task_id=payload["task_id"],
+        setup_type="mesh_cloth",
         vertex_identities=payload["vertex_identities"],
         local_positions=payload["local_positions"],
         local_normals=payload["local_normals"],

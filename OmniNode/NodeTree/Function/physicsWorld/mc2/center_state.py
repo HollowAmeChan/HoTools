@@ -11,13 +11,13 @@ import numpy as np
 
 from ..utils.math3d import (
     normalize_quaternion_f32,
-    quaternion_conjugate_xyzw_tuple as _quaternion_inverse,
+    quaternion_conjugate_xyzw_tuple,
     quaternion_conjugate_f32,
     quaternion_matrix_unit_f32,
-    quaternion_multiply_f32 as _quaternion_multiply_f32,
-    quaternion_multiply_xyzw_tuple as _quaternion_multiply,
+    quaternion_multiply_f32,
+    quaternion_multiply_xyzw_tuple,
     quaternion_slerp_unit_f32,
-    rotate_vector_unit_quaternion_f32 as _rotate_f32,
+    rotate_vector_unit_quaternion_f32,
     rotate_vector_xyzw_tuple,
     transform_point_matrix_f32,
     transform_vector_matrix_f32,
@@ -137,7 +137,7 @@ def build_mc2_center_static(
                 proxy.local_normals[index], proxy.local_tangents[index]
             )
             corrected = _unit_quaternion(
-                _quaternion_multiply(local_rotation, bind_rotations[index]),
+                quaternion_multiply_xyzw_tuple(local_rotation, bind_rotations[index]),
                 "corrected center rotation",
             )
             normal_sum += _rotate(corrected, (0.0, 1.0, 0.0))
@@ -147,7 +147,7 @@ def build_mc2_center_static(
             _normalize3(tangent_sum, "center tangent"),
         )
         gravity = _rotate(
-            _quaternion_inverse(center_rotation),
+            quaternion_conjugate_xyzw_tuple(center_rotation),
             _normalize3(world_gravity_direction, "world_gravity_direction"),
         )
     else:
@@ -286,7 +286,7 @@ def derive_mc2_center_world_pose(
                 tuple(-value for value in tangent),
             )
         corrected = _unit_quaternion(
-            _quaternion_multiply(rotation, bind_rotations[index]),
+            quaternion_multiply_xyzw_tuple(rotation, bind_rotations[index]),
             "corrected Center frame rotation",
         )
         normal_sum += np.asarray(_rotate(corrected, (0.0, 1.0, 0.0)), dtype=np.float32)
@@ -973,7 +973,7 @@ def _inverse_quaternion_f32(rotation: np.ndarray) -> np.ndarray:
 
 def _shift_position_f32(position, pivot, shift_vector, shift_rotation) -> np.ndarray:
     return np.asarray(
-        pivot + _rotate_f32(shift_rotation, position - pivot) + shift_vector,
+        pivot + rotate_vector_unit_quaternion_f32(shift_rotation, position - pivot) + shift_vector,
         dtype=np.float32,
     )
 
@@ -982,7 +982,7 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
     position = _f32_vector(position, 3, "position")
     origin = _f32_vector(origin, 3, "origin")
     rotation = _f32_vector(rotation, 4, "rotation")
-    return _rotate_f32(_inverse_quaternion_f32(rotation), position - origin)
+    return rotate_vector_unit_quaternion_f32(_inverse_quaternion_f32(rotation), position - origin)
 
 
 def _quaternion_matrix_f32(rotation) -> np.ndarray:
@@ -1185,7 +1185,7 @@ def evaluate_mc2_center_frame_shift(
             "anchor_component_local_position",
         )
         anchor_center = np.asarray(
-            anchor_position + _rotate_f32(anchor_rotation, anchor_local),
+            anchor_position + rotate_vector_unit_quaternion_f32(anchor_rotation, anchor_local),
             dtype=np.float32,
         )
         anchor_ratio = _f32(1.0) - _f32(frame.anchor_inertia)
@@ -1194,7 +1194,7 @@ def evaluate_mc2_center_frame_shift(
             dtype=np.float32,
         )
         full_anchor_rotation = _normalize_quaternion_f32(
-            _quaternion_multiply_f32(
+            quaternion_multiply_f32(
                 anchor_rotation,
                 _inverse_quaternion_f32(old_anchor_rotation),
             )
@@ -1206,7 +1206,7 @@ def evaluate_mc2_center_frame_shift(
         )
         adjusted_old_component += anchor_shift_vector
         adjusted_old_component_rotation = _normalize_quaternion_f32(
-            _quaternion_multiply_f32(
+            quaternion_multiply_f32(
                 anchor_shift_rotation,
                 adjusted_old_component_rotation,
             )
@@ -1302,7 +1302,7 @@ def evaluate_mc2_center_frame_shift(
 
     full_shift_vector = np.asarray(component - adjusted_old_component, dtype=np.float32)
     full_shift_rotation = _normalize_quaternion_f32(
-        _quaternion_multiply_f32(
+        quaternion_multiply_f32(
             component_rotation,
             _inverse_quaternion_f32(adjusted_old_component_rotation),
         )
@@ -1406,7 +1406,7 @@ def evaluate_mc2_center_frame_shift(
         rotation_shift_ratio,
     )
     shift_rotation = _normalize_quaternion_f32(
-        _quaternion_multiply_f32(anchor_shift_rotation, world_shift_rotation)
+        quaternion_multiply_f32(anchor_shift_rotation, world_shift_rotation)
     )
     old_frame_position = _f32_vector(
         frame.old_frame_world_position, 3, "old_frame_world_position"
@@ -1431,10 +1431,10 @@ def evaluate_mc2_center_frame_shift(
         shift_rotation,
     )
     shifted_old_rotation = _normalize_quaternion_f32(
-        _quaternion_multiply_f32(shift_rotation, old_frame_rotation)
+        quaternion_multiply_f32(shift_rotation, old_frame_rotation)
     )
     shifted_now_rotation = _normalize_quaternion_f32(
-        _quaternion_multiply_f32(shift_rotation, now_rotation)
+        quaternion_multiply_f32(shift_rotation, now_rotation)
     )
     moving_vector = np.asarray(component - work_old_component, dtype=np.float32)
     moving_length = _f32(np.linalg.norm(moving_vector))
@@ -1495,7 +1495,7 @@ def evaluate_mc2_center_step(
         dtype=np.float32,
     )
     step_rotation = _normalize_quaternion_f32(
-        _quaternion_multiply_f32(now_rotation, inverse_previous)
+        quaternion_multiply_f32(now_rotation, inverse_previous)
     )
     cosine = np.clip(abs(_f32(np.dot(previous_rotation, now_rotation))), 0.0, 1.0)
     step_angle = _f32(2.0) * _f32(np.arccos(cosine))
@@ -1542,7 +1542,7 @@ def evaluate_mc2_center_step(
         initial_local_gravity_direction, 3, "initial_local_gravity_direction"
     )
     initial_gravity[1] *= _f32(step.negative_scale_direction[1])
-    world_falloff = _rotate_f32(now_rotation, initial_gravity)
+    world_falloff = rotate_vector_unit_quaternion_f32(now_rotation, initial_gravity)
     world_gravity = np.asarray(
         (parameter["gravity_direction_x"], parameter["gravity_direction_y"], parameter["gravity_direction_z"]),
         dtype=np.float32,

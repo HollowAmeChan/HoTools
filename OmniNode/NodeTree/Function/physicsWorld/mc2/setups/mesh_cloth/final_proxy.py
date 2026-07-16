@@ -15,9 +15,9 @@ from typing import Iterable
 import numpy as np
 
 from ....utils.math3d import (
-    normalize_vector_f64 as _normalize,
-    orientation_xyzw_f64 as _orientation_xyzw,
-    quaternion_conjugate_f64 as _quaternion_inverse_xyzw,
+    normalize_vector_f64,
+    orientation_xyzw_f64,
+    quaternion_conjugate_f64,
 )
 from ...mesh_baseline import MC2_VERTEX_FIXED
 from ...mesh_baseline import MC2_VERTEX_MOVE
@@ -86,7 +86,7 @@ def _canonical_edge(first: int, second: int) -> tuple[int, int]:
 
 def _triangle_normal(positions: np.ndarray, triangle: tuple[int, int, int]) -> np.ndarray:
     first, second, third = triangle
-    return _normalize(
+    return normalize_vector_f64(
         np.cross(positions[second] - positions[first], positions[third] - positions[first]),
         name="triangle normal",
     )
@@ -116,7 +116,7 @@ def _triangle_tangent(
         )
         / area
     )
-    return _normalize(tangent, name="triangle tangent", zero_ok=True)
+    return normalize_vector_f64(tangent, name="triangle tangent", zero_ok=True)
 
 
 def _flip_triangle(triangle: tuple[int, int, int]) -> tuple[int, int, int]:
@@ -159,7 +159,7 @@ def _two_triangle_open(
     first_normal: np.ndarray,
 ) -> bool:
     second_rest = _remaining_vertex(second, edge)
-    direction = _normalize(
+    direction = normalize_vector_f64(
         positions[second_rest] - positions[edge[0]],
         name="triangle open direction",
     )
@@ -324,7 +324,7 @@ def _organize_vertex_to_triangles(
                     best_normal = base_normal
             final_normal = best_normal
         else:
-            final_normal = _normalize(final_normal, name="final vertex normal")
+            final_normal = normalize_vector_f64(final_normal, name="final vertex normal")
         if float(np.linalg.norm(final_tangent)) < 0.5:
             best_distance = -1.0
             best_tangent = np.zeros(3)
@@ -342,7 +342,7 @@ def _organize_vertex_to_triangles(
                     best_tangent = base_tangent
             final_tangent = best_tangent
         else:
-            final_tangent = _normalize(final_tangent, name="final vertex tangent")
+            final_tangent = normalize_vector_f64(final_tangent, name="final vertex tangent")
         records = []
         for triangle_index in triangle_indices:
             flip = 0
@@ -372,8 +372,8 @@ def _apply_vertex_triangle_normals(
         for flip, triangle_index in records:
             normal += triangle_normals[triangle_index] * (1.0 if not flip & 0x1 else -1.0)
             tangent += triangle_tangents[triangle_index] * (1.0 if not flip & 0x2 else -1.0)
-        normal = _normalize(normal, name=f"local_normals[{vertex}]")
-        binormal = _normalize(np.cross(normal, tangent), name=f"local_tangents[{vertex}]")
+        normal = normalize_vector_f64(normal, name=f"local_normals[{vertex}]")
+        binormal = normalize_vector_f64(np.cross(normal, tangent), name=f"local_tangents[{vertex}]")
         normals[vertex] = normal
         tangents[vertex] = binormal
     return normals, tangents
@@ -381,7 +381,7 @@ def _apply_vertex_triangle_normals(
 
 def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float]:
     """MC2 ``MathUtility.ToRotation(normal, tangent)`` in xyzw layout."""
-    value = _orientation_xyzw(
+    value = orientation_xyzw_f64(
         np.asarray(normal, dtype=np.float64),
         np.asarray(tangent, dtype=np.float64),
     )
@@ -396,7 +396,7 @@ def _bind_pose(
     positions = tuple(tuple(float(value) for value in -row) for row in local_positions)
     rotations = []
     for normal, tangent in zip(local_normals, local_tangents):
-        rotations.append(tuple(float(value) for value in _quaternion_inverse_xyzw(_orientation_xyzw(normal, tangent))))
+        rotations.append(tuple(float(value) for value in quaternion_conjugate_f64(orientation_xyzw_f64(normal, tangent))))
     return positions, tuple(rotations)
 
 
@@ -497,38 +497,12 @@ def build_mc2_final_proxy(
     )
 
 
-def build_mc2_mesh_final_proxy(
-    *,
-    task_id: str,
-    vertex_identities,
-    local_positions,
-    local_normals,
-    local_tangents,
-    uvs,
-    vertex_attributes,
-    lines=(),
-    triangles=(),
-) -> MC2MeshFinalProxyBuildResult:
-    return build_mc2_final_proxy(
-        task_id=task_id,
-        setup_type="mesh_cloth",
-        vertex_identities=vertex_identities,
-        local_positions=local_positions,
-        local_normals=local_normals,
-        local_tangents=local_tangents,
-        uvs=uvs,
-        vertex_attributes=vertex_attributes,
-        lines=lines,
-        triangles=triangles,
-    )
-
-
 def _fallback_tangent(normal: np.ndarray) -> np.ndarray:
     up = np.asarray((0.0, 1.0, 0.0), dtype=np.float64)
     right = np.asarray((1.0, 0.0, 0.0), dtype=np.float64)
     if float(np.dot(normal, up)) < 0.9:
-        return _normalize(np.cross(normal, up), name="generated tangent")
-    return _normalize(np.cross(normal, right), name="generated tangent")
+        return normalize_vector_f64(np.cross(normal, up), name="generated tangent")
+    return normalize_vector_f64(np.cross(normal, right), name="generated tangent")
 
 
 def _vertex_group_weights(obj, group_name: str, vertex_count: int) -> tuple[float, ...]:
@@ -604,7 +578,7 @@ def build_blender_mesh_final_proxy(
     normals = []
     tangents = []
     for vertex in mesh.vertices:
-        normal = _normalize(
+        normal = normalize_vector_f64(
             np.asarray(tuple(float(component) for component in vertex.normal), dtype=np.float64),
             name=f"mesh.vertices[{vertex.index}].normal",
         )
@@ -621,8 +595,9 @@ def build_blender_mesh_final_proxy(
             for weight in weights
         )
     lines = tuple(tuple(int(value) for value in edge.vertices) for edge in mesh.edges)
-    return build_mc2_mesh_final_proxy(
+    return build_mc2_final_proxy(
         task_id=task_id,
+        setup_type="mesh_cloth",
         vertex_identities=tuple(f"mesh:v{index}" for index in range(vertex_count)),
         local_positions=positions,
         local_normals=tuple(normals),
@@ -640,6 +615,5 @@ __all__ = [
     "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
     "build_mc2_final_proxy",
-    "build_mc2_mesh_final_proxy",
     "mc2_world_rotation_xyzw",
 ]

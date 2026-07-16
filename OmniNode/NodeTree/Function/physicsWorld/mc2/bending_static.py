@@ -11,7 +11,7 @@ import numpy as np
 
 from ..utils.math3d import (
     normalize_vector_squared_f32,
-    transform_points_columns_f32 as _transform_positions,
+    transform_points_columns_f32,
 )
 from .static_data import MC2ProxyStaticSpec
 
@@ -291,7 +291,7 @@ def build_mc2_bending_static(
 
     columns = _matrix_columns(initial_local_to_world_columns)
     positions = np.asarray(proxy.local_positions, dtype=np.float32)
-    world_positions = _transform_positions(positions, columns)
+    world_positions = transform_points_columns_f32(positions, columns)
     edge_triangles = _edge_to_triangles(proxy.triangles)
     attributes = proxy.vertex_attributes
     quads = []

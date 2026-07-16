@@ -8,14 +8,14 @@ import json
 import numpy as np
 
 from ..utils.math3d import (
-    look_rotation_f32 as _look_rotation,
-    normalize_quaternion_f32 as _normalize_quaternion,
-    normalize_vector_f32 as _normalize_vector,
-    quaternion_from_to_f32 as _from_to_rotation,
-    quaternion_inverse_f32 as _quaternion_inverse,
-    quaternion_multiply_f32 as _quaternion_multiply,
-    quaternion_slerp_f32 as _slerp,
-    rotate_vector_f32 as _rotate,
+    look_rotation_f32,
+    normalize_quaternion_f32,
+    normalize_vector_f32,
+    quaternion_from_to_f32,
+    quaternion_inverse_f32,
+    quaternion_multiply_f32,
+    quaternion_slerp_f32,
+    rotate_vector_f32,
 )
 
 
@@ -79,8 +79,8 @@ def _write_world_local(
     world_positions = positions.copy()
     world_rotations = np.empty_like(rotations)
     for index in range(count):
-        world_rotations[index] = _normalize_quaternion(
-            _quaternion_multiply(rotations[index], vertex_to_transform[index])
+        world_rotations[index] = normalize_quaternion_f32(
+            quaternion_multiply_f32(rotations[index], vertex_to_transform[index])
         )
     local_positions = initial_local_positions.copy()
     local_rotations = initial_local_rotations.copy()
@@ -88,13 +88,13 @@ def _write_world_local(
         parent = int(parent)
         if parent < 0 or not (int(attributes[index]) & MC2_VERTEX_MOVE):
             continue
-        inverse_parent = _quaternion_inverse(world_rotations[parent])
+        inverse_parent = quaternion_inverse_f32(world_rotations[parent])
         local_positions[index] = (
-            _rotate(inverse_parent, world_positions[index] - world_positions[parent])
+            rotate_vector_f32(inverse_parent, world_positions[index] - world_positions[parent])
             / scales[parent]
         )
-        local_rotations[index] = _normalize_quaternion(
-            _quaternion_multiply(inverse_parent, world_rotations[index])
+        local_rotations[index] = normalize_quaternion_f32(
+            quaternion_multiply_f32(inverse_parent, world_rotations[index])
         )
     return world_positions, world_rotations, local_positions, local_rotations
 
@@ -219,12 +219,12 @@ def evaluate_mc2_bone_line_rotation(
     for index in baseline:
         index = int(index)
         position = work_positions[index]
-        rotation = _normalize_quaternion(work_rotations[index])
+        rotation = normalize_quaternion_f32(work_rotations[index])
         attribute = int(attrs[index])
         child_start, child_count = (int(value) for value in ranges[index])
         base_position = base_positions[index]
-        base_rotation = _normalize_quaternion(base_rotations[index])
-        inverse_base_rotation = _quaternion_inverse(base_rotation)
+        base_rotation = normalize_quaternion_f32(base_rotations[index])
+        inverse_base_rotation = quaternion_inverse_f32(base_rotation)
         if child_count > 0 and attribute & (MC2_VERTEX_FIXED | MC2_VERTEX_MOVE):
             original_sum = np.zeros(3, dtype=np.float32)
             current_sum = np.zeros(3, dtype=np.float32)
@@ -232,20 +232,20 @@ def evaluate_mc2_bone_line_rotation(
                 child = int(children[child_start + child_offset])
                 child_attribute = int(attrs[child])
                 zero_distance = bool(child_attribute & MC2_VERTEX_ZERO_DISTANCE)
-                child_base_local_position = _rotate(
+                child_base_local_position = rotate_vector_f32(
                     inverse_base_rotation,
                     base_positions[child] - base_position,
                 )
-                child_base_local_rotation = _quaternion_multiply(
+                child_base_local_rotation = quaternion_multiply_f32(
                     inverse_base_rotation,
-                    _normalize_quaternion(base_rotations[child]),
+                    normalize_quaternion_f32(base_rotations[child]),
                 )
                 child_local_position = np.asarray(
                     local_positions[child]
                     + (child_base_local_position - local_positions[child]) * animation_ratio,
                     dtype=np.float32,
                 )
-                child_local_rotation = _slerp(
+                child_local_rotation = quaternion_slerp_f32(
                     local_rotations[child],
                     child_base_local_rotation,
                     animation_ratio,
@@ -253,29 +253,29 @@ def evaluate_mc2_bone_line_rotation(
                 original_vector = (
                     np.zeros(3, dtype=np.float32)
                     if zero_distance
-                    else _rotate(rotation, child_local_position)
+                    else rotate_vector_f32(rotation, child_local_position)
                 )
                 original_sum += original_vector
                 if child_attribute & MC2_VERTEX_MOVE:
                     current_vector = work_positions[child] - position
                     current_sum += current_vector
-                    child_rotation = _quaternion_multiply(rotation, child_local_rotation)
+                    child_rotation = quaternion_multiply_f32(rotation, child_local_rotation)
                     if not zero_distance:
-                        child_rotation = _quaternion_multiply(
-                            _from_to_rotation(original_vector, current_vector),
+                        child_rotation = quaternion_multiply_f32(
+                            quaternion_from_to_f32(original_vector, current_vector),
                             child_rotation,
                         )
-                    work_rotations[child] = _normalize_quaternion(child_rotation)
+                    work_rotations[child] = normalize_quaternion_f32(child_rotation)
                 else:
                     current_sum += original_vector
             ratio = average_rate if attribute & MC2_VERTEX_MOVE else root_rate
             adjustment = (
                 np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
                 if _is_zero_distance(original_sum) or _is_zero_distance(current_sum)
-                else _from_to_rotation(original_sum, current_sum, ratio)
+                else quaternion_from_to_f32(original_sum, current_sum, ratio)
             )
-            rotation = _quaternion_multiply(adjustment, rotation)
-        work_rotations[index] = _slerp(base_rotation, rotation, blend)
+            rotation = quaternion_multiply_f32(adjustment, rotation)
+        work_rotations[index] = quaternion_slerp_f32(base_rotation, rotation, blend)
 
     (
         world_positions,
@@ -407,10 +407,10 @@ def evaluate_mc2_bone_triangle_rotation(
         dot = np.float32(np.dot(normal, tangent))
         if dot == np.float32(1.0) or dot == np.float32(-1.0):
             continue
-        binormal = _normalize_vector(np.asarray(np.cross(normal, tangent), dtype=np.float32))
-        work_rotations[vertex] = _normalize_quaternion(
-            _quaternion_multiply(
-                _look_rotation(binormal, normal),
+        binormal = normalize_vector_f32(np.asarray(np.cross(normal, tangent), dtype=np.float32))
+        work_rotations[vertex] = normalize_quaternion_f32(
+            quaternion_multiply_f32(
+                look_rotation_f32(binormal, normal),
                 adjustments[vertex],
             )
         )

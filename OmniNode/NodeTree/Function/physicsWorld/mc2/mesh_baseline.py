@@ -17,8 +17,8 @@ import numpy as np
 from ..utils.math3d import (
     normalize_vector_f64,
     orientation_xyzw_f64,
-    quaternion_multiply_f64 as _quaternion_multiply_xyzw,
-    rotate_vector_by_inverse_f64 as _rotate_by_inverse,
+    quaternion_multiply_f64,
+    rotate_vector_by_inverse_f64,
 )
 from .static_data import (
     MC2BaselineStaticSpec,
@@ -241,7 +241,7 @@ def _build_local_pose(
                 vertex,
             )
             orientations[vertex] = vertex_rotation
-        local_position = _rotate_by_inverse(
+        local_position = rotate_vector_by_inverse_f64(
             parent_rotation,
             positions[vertex] - positions[parent],
         )
@@ -250,7 +250,7 @@ def _build_local_pose(
             dtype=np.float64,
         )
         local_rotation = _normalize(
-            _quaternion_multiply_xyzw(inverse_parent, vertex_rotation),
+            quaternion_multiply_f64(inverse_parent, vertex_rotation),
             f"vertex_local_rotations[{vertex}]",
         )
         local_positions[vertex] = local_position

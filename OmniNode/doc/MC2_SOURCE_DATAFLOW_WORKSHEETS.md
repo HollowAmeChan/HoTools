@@ -310,3 +310,24 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 5. `-0.0`与`0.0`数值可相等，但Distance zero kind loss单独验证。
 6. fixture必须标明隔离掉的能力，不能从no-collision/no-wind case外推对应能力已完成。
 7. 发现代码、执行计划与本文冲突时：记录冲突→验收表降级→定位source producer/consumer→补最小Tier A→修代码或本文→最后升级验收表。
+
+## 10. 生产可达性与 Python 代码边界审计
+
+公开生产入口只有节点侧收集参数后调用一次 `step_mc2`。该调用先把全部 active 输入规范化为 `profile + task` 组合，再为每个组合维护独立 slot/native context；它不是 MC2 的逐 component 公开 step。所有 task 的 topology、static、frame input 和 staged context 必须先只读准备成功，随后才进入统一 substep 推进与一次 Physics World result transaction。
+
+| 路径 | 静态生产链 | 逐帧生产链 | 输出 | 异常与释放 |
+|---|---|---|---|---|
+| MeshCloth | `task -> mesh topology -> final proxy -> baseline/distance/bending/center/self static -> native context` | BasePose/evaluated frame、component pose、collider、runtime curve与scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context、particle buffer与BasePose cache owner |
+| BoneCloth | `task -> ordered Bone sources -> product/source connection -> Bone Line static/distance/center/self -> native context` | Armature component pose、PoseBone animated base、collider与runtime参数同步到独立slot context | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
+| BoneSpring | 与BoneCloth共享Bone Line static链，但setup adapter与归一化参数固定Spring支持域 | 同Bone frame链；只消费Sphere soft collider，关闭self/sync与不支持约束 | stable Bone name -> Bone transform transaction | 非Line、非Sphere或越出归一化支持域在prepare拒绝，不进入native/writeback |
+| World common | `build_task_specs -> topology/signature -> immutable static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
+
+状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime state、particle transaction shadow、scheduler、center history与native context；immutable spec/static没有释放职责；frame snapshot和result candidate只活到本次公开step提交。`MC2ParticleBuffer`保留的原因是frame reset/same-frame/error transaction的host shadow，不是第二份Python数值solver。
+
+生产/参考路径分类：
+
+- `nodes/declaration/capabilities/specs/topology/setups`是authoring、注册、identity与Blender snapshot边界；`solver/state/scheduler/native/interaction_scope/results/debug`是公共runtime；static builder和`parameters/runtime_parameters`是host packing边界。三setup的代表性Blender资产均从这些入口到达真实native与writeback。
+- `bone_rotation.py`是固定MC2 source的host oracle，只由Tier A测试直接调用；生产Bone输出由native `read_bone_output`消费。它不能作为生产fallback，也不能用其测试通过宣称生产能力。
+- `schema/properties/capabilities`分别拥有字段描述、RNA注册和UI/registry声明；setup adapter、BasePose、frame input与delta output分别拥有setup dispatch、缓存身份、evaluated snapshot和GN写回资源。它们虽然较小，但不是可删除的参数转发文件。
+
+P-05纯整理删除了math抽离后仅保留旧私有函数名的import aliases，并删除只固定`setup_type="mesh_cloth"`、没有校验/身份/事务职责的`build_mc2_mesh_final_proxy`包装；内部调用现在直达`math3d`规范函数或`build_mc2_final_proxy`唯一实现。保留的本地math helper负责输入域、float32舍入或稳定错误信息；保留的setup/Blender wrapper必须至少增加task/source解析、cache identity、snapshot、资源生命周期或事务职责。整理不改变参数、默认值、更新频率、支持域、ABI或数值顺序。
