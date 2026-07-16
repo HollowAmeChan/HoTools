@@ -509,17 +509,59 @@ def build_mc2_bone_source_topology(source, source_index: int) -> MC2SourceTopolo
     return _build_source_topology("bone_chain", source, source_index)
 
 
-def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
+def _build_compact_mesh_source_topology(
+    source,
+    source_index: int,
+    fingerprint: MC2StaticInputFingerprint,
+) -> MC2SourceTopologySpec:
+    token = _source_token(source)
+    mesh = getattr(source, "data", None)
+    resolved = mesh is not None and hasattr(mesh, "vertices")
+    particle_count = len(mesh.vertices) if resolved else 0
+    payload = {
+        "resolved": resolved,
+        "name": str(getattr(source, "name_full", getattr(source, "name", "")) or ""),
+        "native_source_fingerprint": fingerprint.source,
+    }
+    return MC2SourceTopologySpec(
+        source_index=source_index,
+        source_kind="mesh",
+        identity_signature=_signature(token),
+        payload_signature=fingerprint.source,
+        particle_count=particle_count,
+        resolved=resolved,
+        payload=_freeze(payload),
+    )
+
+
+def build_mc2_topology_spec(
+    task: MC2TaskSpec,
+    *,
+    static_input_fingerprint: MC2StaticInputFingerprint | None = None,
+) -> MC2TopologySpec:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
     # 局部导入避免 setup adapter 声明与 topology 类型之间形成模块初始化环。
     from .setups import get_mc2_setup_adapter
 
     adapter = get_mc2_setup_adapter(task.setup_type)
-    sources = tuple(
-        adapter.build_source_topology(source, index)
-        for index, source in enumerate(task.sources)
-    )
+    if (
+        task.setup_type == "mesh_cloth"
+        and len(task.sources) == 1
+        and isinstance(static_input_fingerprint, MC2StaticInputFingerprint)
+    ):
+        sources = (
+            _build_compact_mesh_source_topology(
+                task.sources[0],
+                0,
+                static_input_fingerprint,
+            ),
+        )
+    else:
+        sources = tuple(
+            adapter.build_source_topology(source, index)
+            for index, source in enumerate(task.sources)
+        )
     bone_connection = None
     if sources and all(source.source_kind == "bone_chain" for source in sources):
         seen_bones: set[tuple[int, str]] = set()
@@ -577,8 +619,16 @@ def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
         "task_topology_signature": task.topology_signature,
         "connection_mode": task.setup_options.connection_mode,
         "connection_model": task.setup_options.connection_model,
-        "source_payload_signatures": [source.payload_signature for source in sources],
     }
+    if task.setup_type == "mesh_cloth":
+        mesh_fingerprint = static_input_fingerprint
+        if not isinstance(mesh_fingerprint, MC2StaticInputFingerprint):
+            mesh_fingerprint = static_input_fingerprint_for_task(task)
+        signature_payload["mesh_topology_fingerprint"] = mesh_fingerprint.topology
+    else:
+        signature_payload["source_payload_signatures"] = [
+            source.payload_signature for source in sources
+        ]
     if bone_connection is not None:
         signature_payload["bone_connection_signature"] = bone_connection.topology_signature
     return MC2TopologySpec(

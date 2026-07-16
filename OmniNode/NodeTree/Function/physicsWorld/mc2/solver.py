@@ -561,7 +561,10 @@ def step_mc2(
             ):
                 topology = existing_slot.data.get("topology")
             if topology is None:
-                topology = build_mc2_topology_spec(spec)
+                topology = build_mc2_topology_spec(
+                    spec,
+                    static_input_fingerprint=static_input_fingerprint,
+                )
             effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
