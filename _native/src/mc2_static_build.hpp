@@ -36,6 +36,22 @@ void mc2_build_bone_vertex_to_transform_rotations(
     double* vertex_to_transform_rotations
 );
 
+struct Mc2BoneTransformBaselineDerived {
+    std::vector<std::int32_t> child_ranges;
+    std::vector<std::int32_t> child_data;
+    std::vector<std::uint8_t> baseline_flags;
+    std::vector<std::int32_t> baseline_ranges;
+    std::vector<std::int32_t> baseline_data;
+};
+
+Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* root_indices,
+    std::size_t root_count
+);
+
 struct Mc2MeshFinalProxyDerived {
     std::vector<double> local_normals;
     std::vector<double> local_tangents;

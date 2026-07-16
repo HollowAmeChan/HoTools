@@ -20,10 +20,6 @@ from ..utils.math3d import (
     quaternion_conjugate_f64,
     quaternion_multiply_f64,
 )
-from .mesh_baseline import MC2_BASELINE_INCLUDE_LINE
-from .mesh_baseline import MC2_VERTEX_FIXED
-from .mesh_baseline import MC2_VERTEX_MOVE
-from .mesh_baseline import MC2_VERTEX_TRIANGLE
 from .mesh_baseline import _build_native_baseline_pose_depth
 from .mesh_baseline import _replace_proxy_attributes
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
@@ -68,27 +64,6 @@ def _unit_quaternion_rows(values, *, name: str, count: int) -> tuple[tuple[float
     return tuple(rows)
 
 
-def _dense_ranges(records: tuple[tuple[int, ...], ...]) -> tuple[tuple[int, int], ...]:
-    ranges = []
-    cursor = 0
-    for record in records:
-        ranges.append((cursor, len(record)))
-        cursor += len(record)
-    return tuple(ranges)
-
-
-def _flatten(records: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
-    return tuple(value for record in records for value in record)
-
-
-def _source_children(parents: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
-    children = [[] for _ in parents]
-    for vertex, parent in enumerate(parents):
-        if parent >= 0:
-            children[parent].append(vertex)
-    return tuple(tuple(reversed(values)) for values in children)
-
-
 def _validate_parent_forest(parents: tuple[int, ...]) -> None:
     count = len(parents)
     for vertex, parent in enumerate(parents):
@@ -104,44 +79,38 @@ def _validate_parent_forest(parents: tuple[int, ...]) -> None:
             current = parents[current]
 
 
-def _build_transform_baselines(
-    attributes: tuple[int, ...],
-    children: tuple[tuple[int, ...], ...],
-    root_order: tuple[int, ...],
-) -> tuple[tuple[int, ...], tuple[tuple[int, int], ...], tuple[int, ...]]:
-    flags = []
-    ranges = []
-    data = []
-    for transform_root in root_order:
-        root_stack = [transform_root]
-        while root_stack:
-            vertex = root_stack.pop()
-            if not attributes[vertex] & MC2_VERTEX_FIXED:
-                continue
-            if not any(attributes[child] & MC2_VERTEX_MOVE for child in children[vertex]):
-                root_stack.extend(
-                    child
-                    for child in children[vertex]
-                    if attributes[child] & MC2_VERTEX_FIXED
-                )
-                continue
+def _build_native_transform_baseline(attributes, parents, roots) -> dict:
+    count = len(parents)
+    child_ranges = np.empty((count, 2), dtype=np.int32)
+    child_data = np.empty(count, dtype=np.int32)
+    baseline_flags = np.empty(count, dtype=np.uint8)
+    baseline_ranges = np.empty((count, 2), dtype=np.int32)
+    baseline_data = np.empty(count, dtype=np.int32)
+    from .native import native_module
 
-            start = len(data)
-            line_flag = 0
-            stack = [vertex]
-            while stack:
-                current = stack.pop()
-                data.append(current)
-                if not attributes[current] & MC2_VERTEX_TRIANGLE:
-                    line_flag |= MC2_BASELINE_INCLUDE_LINE
-                stack.extend(
-                    child
-                    for child in children[current]
-                    if attributes[child] & MC2_VERTEX_MOVE
-                )
-            flags.append(line_flag)
-            ranges.append((start, len(data) - start))
-    return tuple(flags), tuple(ranges), tuple(data)
+    counts = native_module().mc2_build_bone_transform_baseline_derived_v0(
+        np.ascontiguousarray(attributes, dtype=np.uint8),
+        np.ascontiguousarray(parents, dtype=np.int32),
+        np.ascontiguousarray(roots, dtype=np.int32),
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+    )
+    child_count = int(counts["child_count"])
+    baseline_count = int(counts["baseline_count"])
+    baseline_data_count = int(counts["baseline_data_count"])
+    return {
+        "child_ranges": tuple(tuple(int(value) for value in row) for row in child_ranges),
+        "child_data": tuple(int(value) for value in child_data[:child_count]),
+        "baseline_flags": tuple(int(value) for value in baseline_flags[:baseline_count]),
+        "baseline_ranges": tuple(
+            tuple(int(value) for value in row)
+            for row in baseline_ranges[:baseline_count]
+        ),
+        "baseline_data": tuple(int(value) for value in baseline_data[:baseline_data_count]),
+    }
 
 
 def _normal_adjustment(
@@ -315,14 +284,16 @@ def build_mc2_bone_static(
         triangles=triangles,
     )
 
-    children = _source_children(parents)
-    child_ranges = _dense_ranges(children)
-    child_data = _flatten(children)
-    baseline_flags, baseline_ranges, baseline_data = _build_transform_baselines(
+    transform_baseline = _build_native_transform_baseline(
         raw.proxy.vertex_attributes,
-        children,
+        parents,
         roots,
     )
+    child_ranges = transform_baseline["child_ranges"]
+    child_data = transform_baseline["child_data"]
+    baseline_flags = transform_baseline["baseline_flags"]
+    baseline_ranges = transform_baseline["baseline_ranges"]
+    baseline_data = transform_baseline["baseline_data"]
     pose_depth = _build_native_baseline_pose_depth(
         raw.proxy,
         parents,

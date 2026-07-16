@@ -1004,6 +1004,51 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
         });
+    m.def("mc2_build_bone_transform_baseline_derived_v0",
+        [](cu8_1d vertex_attributes,
+           ci32_1d parent_indices,
+           ci32_1d root_indices,
+           i32_2d out_child_ranges,
+           i32_1d out_child_data,
+           u8_1d out_baseline_flags,
+           i32_2d out_baseline_ranges,
+           i32_1d out_baseline_data) {
+            const auto vertex_count = vertex_attributes.shape(0);
+            check_len(parent_indices.shape(0), vertex_count, "parent_indices");
+            check_cols(out_child_ranges, 2, "out_child_ranges");
+            check_len(out_child_ranges.shape(0), vertex_count, "out_child_ranges");
+            check_len(out_child_data.shape(0), vertex_count, "out_child_data");
+            check_cols(out_baseline_ranges, 2, "out_baseline_ranges");
+            check_len(out_baseline_ranges.shape(0), vertex_count, "out_baseline_ranges");
+            check_len(out_baseline_flags.shape(0), vertex_count, "out_baseline_flags");
+            check_len(out_baseline_data.shape(0), vertex_count, "out_baseline_data");
+            hotools::Mc2BoneTransformBaselineDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_bone_transform_baseline_derived(
+                    vertex_attributes.data(),
+                    parent_indices.data(),
+                    vertex_count,
+                    root_indices.data(),
+                    root_indices.shape(0)
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+            const auto child_count = derived.child_data.size();
+            const auto baseline_count = derived.baseline_flags.size();
+            const auto baseline_data_count = derived.baseline_data.size();
+            std::copy(derived.child_ranges.begin(), derived.child_ranges.end(), out_child_ranges.data());
+            std::copy(derived.child_data.begin(), derived.child_data.end(), out_child_data.data());
+            std::copy(derived.baseline_flags.begin(), derived.baseline_flags.end(), out_baseline_flags.data());
+            std::copy(derived.baseline_ranges.begin(), derived.baseline_ranges.end(), out_baseline_ranges.data());
+            std::copy(derived.baseline_data.begin(), derived.baseline_data.end(), out_baseline_data.data());
+            nb::dict result;
+            result["child_count"] = child_count;
+            result["baseline_count"] = baseline_count;
+            result["baseline_data_count"] = baseline_data_count;
+            return result;
+        });
     m.def("mc2_build_mesh_final_proxy_derived_v0",
         [](cf64_2d positions,
            f64_2d local_normals,

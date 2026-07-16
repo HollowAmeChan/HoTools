@@ -576,6 +576,95 @@ void mc2_build_bone_vertex_to_transform_rotations(
     }
 }
 
+Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* root_indices,
+    std::size_t root_count
+) {
+    if (vertex_attributes == nullptr || parent_indices == nullptr ||
+        (root_count > 0 && root_indices == nullptr)) {
+        throw std::invalid_argument("bone transform baseline buffers cannot be null");
+    }
+    constexpr std::uint8_t kFixed = 0x01u;
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr std::uint8_t kTriangle = 0x80u;
+    constexpr std::uint8_t kIncludeLine = 0x01u;
+    std::vector<std::vector<std::int32_t>> children(vertex_count);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto parent = parent_indices[vertex];
+        if (parent < -1 || parent >= static_cast<std::int32_t>(vertex_count) ||
+            parent == static_cast<std::int32_t>(vertex)) {
+            throw std::invalid_argument("parent_indices contains an invalid bone index");
+        }
+        if (parent >= 0) children[static_cast<std::size_t>(parent)].push_back(
+            static_cast<std::int32_t>(vertex)
+        );
+    }
+    for (auto& values : children) std::reverse(values.begin(), values.end());
+
+    Mc2BoneTransformBaselineDerived result;
+    result.child_ranges.reserve(vertex_count * 2);
+    for (const auto& values : children) {
+        result.child_ranges.push_back(narrow_index(result.child_data.size(), "bone children"));
+        result.child_ranges.push_back(narrow_index(values.size(), "bone children"));
+        result.child_data.insert(result.child_data.end(), values.begin(), values.end());
+    }
+    for (std::size_t root_offset = 0; root_offset < root_count; ++root_offset) {
+        const auto root = root_indices[root_offset];
+        if (root < 0 || root >= static_cast<std::int32_t>(vertex_count) ||
+            parent_indices[root] >= 0) {
+            throw std::invalid_argument("root_indices contains an invalid root");
+        }
+        std::vector<std::int32_t> root_stack {root};
+        while (!root_stack.empty()) {
+            const auto vertex = root_stack.back();
+            root_stack.pop_back();
+            const auto vertex_index = static_cast<std::size_t>(vertex);
+            if ((vertex_attributes[vertex_index] & kFixed) == 0u) continue;
+            const auto& vertex_children = children[vertex_index];
+            const bool has_move_child = std::any_of(
+                vertex_children.begin(), vertex_children.end(),
+                [&](std::int32_t child) {
+                    return (vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u;
+                }
+            );
+            if (!has_move_child) {
+                for (const auto child : vertex_children) {
+                    if ((vertex_attributes[static_cast<std::size_t>(child)] & kFixed) != 0u) {
+                        root_stack.push_back(child);
+                    }
+                }
+                continue;
+            }
+            const auto start = result.baseline_data.size();
+            std::uint8_t line_flag = 0u;
+            std::vector<std::int32_t> stack {vertex};
+            while (!stack.empty()) {
+                const auto current = stack.back();
+                stack.pop_back();
+                const auto current_index = static_cast<std::size_t>(current);
+                result.baseline_data.push_back(current);
+                if ((vertex_attributes[current_index] & kTriangle) == 0u) {
+                    line_flag |= kIncludeLine;
+                }
+                for (const auto child : children[current_index]) {
+                    if ((vertex_attributes[static_cast<std::size_t>(child)] & kMove) != 0u) {
+                        stack.push_back(child);
+                    }
+                }
+            }
+            result.baseline_flags.push_back(line_flag);
+            result.baseline_ranges.push_back(narrow_index(start, "bone baseline"));
+            result.baseline_ranges.push_back(
+                narrow_index(result.baseline_data.size() - start, "bone baseline")
+            );
+        }
+    }
+    return result;
+}
+
 Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* positions,
     const double* local_normals,

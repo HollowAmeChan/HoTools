@@ -85,6 +85,8 @@ Bone生产prepare已建立短生命周期`MC2BoneRawSnapshot`，fingerprint、Li
 
 Bone rest matrix的正交化、transform quaternion、local normal和local tangent已由`mc2_build_bone_rest_frames_v0` bulk kernel唯一生产，finalized orientation到vertex-to-transform rotation也已由`mc2_build_bone_vertex_to_transform_rotations_v0`批量生产；Python逐骨matrix/quaternion/rotate/multiply转发已从生产static builder删除。Tier A、Blender Bone static/product和26/26纯MC2通过。large Bone首建本轮约`100.4ms`，与bulk snapshot后基线同档，这两步为职责迁移而非性能关闭证据。native验证使用`build.bat 313 native`，只增量编译/链接`hotools_native`，无Jolt target且无clean。P-06d剩余Bone registration owner、Distance、Center、Self的staged owner收口。
 
+Bone children ranges/data与transform baseline flags/ranges/data已由`mc2_build_bone_transform_baseline_derived_v0`按source顺序的native DFS唯一生产，Python `_source_children/_dense_ranges/_flatten/_build_transform_baselines`已删除。Tier A fixed-prefix/line-chain/normal-adjustment、product topology和Blender static/rebuild/writeback通过。large Bone首建约`78.8ms`，为旧CPP的`4.34x`；逐帧均值约`6.34ms`，为旧CPP的`3.23x`。P-06d下一步将pose-depth合并到同一Bone producer并产出可直接move的Baseline/registration owner，再收口Distance/Center/Self。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

@@ -308,6 +308,8 @@ Blender authoring/frame input
 
 20. finalized Bone normal/tangent到vertex-to-transform rotation的`conjugate(vertexOrientation) * transformRotation`由`mc2_build_bone_vertex_to_transform_rotations_v0` C++ bulk kernel唯一生产，必须复用同文件的orientation/quaternion实现。Python不得恢复逐vertex orientation、conjugate、multiply和normalize循环。该输出当前仍经最小Bone registration packer上传；P-06d下一步是让registration与Distance/Center/Self的native producer owner直接move进context。
 
+21. Bone children ranges/data与transform baseline flags/ranges/data由`mc2_build_bone_transform_baseline_derived_v0` C++ producer唯一生产。children存储顺序固定为同parent内vertex index降序，DFS stack反向弹出以保持source处理顺序；只有包含Move子点的Fixed节点开始baseline，Line flag仍由非Triangle成员派生。Python不得恢复`_source_children/_dense_ranges/_flatten/_build_transform_baselines`或平行派生树。下一步将pose-depth与该producer合并，让Baseline整组vector以owner capsule直接move进context。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
