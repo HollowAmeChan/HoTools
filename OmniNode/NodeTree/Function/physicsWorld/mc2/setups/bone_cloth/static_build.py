@@ -10,16 +10,24 @@ import numpy as np
 
 from ...bone_static import MC2BoneStaticSpec
 from ...bone_static import build_mc2_bone_static
-from ...center_state import MC2CenterStaticSpec
+from ...center_state import MC2CenterStaticMetadata, MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
-from ...distance_static import MC2DistanceStaticSpec
+from ...distance_static import MC2DistanceStaticMetadata, MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
+from ...mesh_baseline import MC2MeshBaselineMetadata
 from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
-from ...self_collision_static import MC2SelfCollisionStaticSpec
+from ...self_collision_static import (
+    MC2SelfCollisionStaticMetadata,
+    MC2SelfCollisionStaticSpec,
+)
 from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import _thaw
+from ..mesh_cloth.final_proxy import (
+    MC2MeshFinalizerNativeMetadata,
+    MC2MeshProxyNativeMetadata,
+)
 
 
 MC2_BONE_STATIC_SCHEMA_VERSION = 3
@@ -61,6 +69,79 @@ def _signature(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _readonly_array(values, dtype, width: int | None = None) -> np.ndarray:
+    result = np.array(values, dtype=dtype, copy=True, order="C")
+    if width is not None:
+        result = result.reshape((-1, width))
+    result.flags.writeable = False
+    return result
+
+
+@dataclass(frozen=True)
+class MC2BoneClothStaticMetadata:
+    topology_signature: str
+    connection_mode: int
+    connection_model: str
+    final_proxy: MC2MeshProxyNativeMetadata
+    finalizer: MC2MeshFinalizerNativeMetadata
+    baseline: MC2MeshBaselineMetadata
+    distance: MC2DistanceStaticMetadata
+    center: MC2CenterStaticMetadata
+    self_collision: MC2SelfCollisionStaticMetadata
+    bone_static_signature: str
+    static_signature: str
+    schema_version: int = MC2_BONE_STATIC_SCHEMA_VERSION
+    native_owned: bool = True
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_BONE_STATIC_SCHEMA_VERSION:
+            raise ValueError("unsupported BoneCloth static metadata schema")
+        if not self.topology_signature or not self.bone_static_signature:
+            raise ValueError("BoneCloth static metadata signatures cannot be empty")
+        if self.connection_mode not in range(4):
+            raise ValueError("connection_mode must be in 0..3")
+        if self.connection_model not in ("mc2_source", "hotools_product"):
+            raise ValueError("unsupported BoneCloth connection_model")
+        if self.distance.proxy_signature != self.final_proxy.proxy_signature:
+            raise ValueError("distance and Bone proxy signatures must match")
+        if self.distance.baseline_signature != self.baseline.baseline_signature:
+            raise ValueError("distance and Bone baseline signatures must match")
+        if self.center.proxy_signature != self.final_proxy.proxy_signature:
+            raise ValueError("center and Bone proxy signatures must match")
+        if self.self_collision.proxy_signature != self.final_proxy.proxy_signature:
+            raise ValueError("self collision and Bone proxy signatures must match")
+        if self.static_signature != _signature(self.signature_payload()):
+            raise ValueError("static_signature does not match BoneCloth metadata payload")
+
+    def signature_payload(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "topology_signature": self.topology_signature,
+            "connection_mode": self.connection_mode,
+            "connection_model": self.connection_model,
+            "bone_static_signature": self.bone_static_signature,
+            "distance_signature": self.distance.distance_signature,
+            "center_static_signature": self.center.center_static_signature,
+            "self_collision_static_signature": self.self_collision.static_signature,
+        }
+
+    def debug_dict(self) -> dict:
+        return {
+            "setup_type": self.final_proxy.setup_type,
+            "connection_mode": self.connection_mode,
+            "connection_model": self.connection_model,
+            "vertex_count": self.final_proxy.vertex_count,
+            "edge_count": len(self.final_proxy.edges),
+            "baseline_count": self.baseline.baseline_count,
+            "distance_record_count": self.distance.record_count,
+            "center_fixed_count": self.center.fixed_count,
+            "self_collision_primitive_count": self.self_collision.primitive_count,
+            **self.signature_payload(),
+            "static_signature": self.static_signature,
+            "native_owned": True,
+        }
+
+
 @dataclass(frozen=True)
 class MC2BoneClothStaticBuildResult:
     topology_signature: str
@@ -84,6 +165,65 @@ class MC2BoneClothStaticBuildResult:
     @property
     def baseline(self):
         return self.bone.baseline
+
+    def compact_native_static(self) -> MC2BoneClothStaticMetadata:
+        proxy = self.final_proxy
+        finalizer = self.finalizer
+        baseline = self.baseline
+        return MC2BoneClothStaticMetadata(
+            topology_signature=self.topology_signature,
+            connection_mode=self.connection_mode,
+            connection_model=self.connection_model,
+            final_proxy=MC2MeshProxyNativeMetadata(
+                task_id=proxy.task_id,
+                setup_type=proxy.setup_type,
+                vertex_identities=proxy.vertex_identities,
+                vertex_attributes=_readonly_array(proxy.vertex_attributes, np.uint8),
+                edges=_readonly_array(proxy.edges, np.int32, 2),
+                triangles=_readonly_array(proxy.triangles, np.int32, 3),
+                proxy_signature=proxy.proxy_signature,
+            ),
+            finalizer=MC2MeshFinalizerNativeMetadata(
+                proxy_signature=finalizer.proxy_signature,
+                vertex_count=finalizer.vertex_count,
+                neighbor_count=len(finalizer.vertex_to_vertex_data),
+                triangle_record_count=sum(
+                    len(records) for records in finalizer.vertex_to_triangle_records
+                ),
+                every_vertex_has_triangle=all(
+                    bool(records) for records in finalizer.vertex_to_triangle_records
+                ),
+            ),
+            baseline=MC2MeshBaselineMetadata(
+                proxy_signature=baseline.proxy_signature,
+                vertex_count=baseline.vertex_count,
+                baseline_count=len(baseline.baseline_ranges),
+                depths=_readonly_array(baseline.depths, np.float32),
+                baseline_signature=baseline.baseline_signature,
+            ),
+            distance=MC2DistanceStaticMetadata(
+                proxy_signature=self.distance.proxy_signature,
+                baseline_signature=self.distance.baseline_signature,
+                vertex_count=self.distance.vertex_count,
+                record_count=self.distance.record_count,
+                distance_signature=self.distance.distance_signature,
+            ),
+            center=MC2CenterStaticMetadata(
+                task_id=self.center.task_id,
+                proxy_signature=self.center.proxy_signature,
+                fixed_count=self.center.fixed_count,
+                center_static_signature=self.center.center_static_signature,
+            ),
+            self_collision=MC2SelfCollisionStaticMetadata(
+                proxy_signature=self.self_collision.proxy_signature,
+                point_count=self.self_collision.point_count,
+                edge_count=self.self_collision.edge_count,
+                triangle_count=self.self_collision.triangle_count,
+                static_signature=self.self_collision.static_signature,
+            ),
+            bone_static_signature=self.bone.static_signature,
+            static_signature=self.static_signature,
+        )
 
     def __post_init__(self) -> None:
         if self.schema_version != MC2_BONE_STATIC_SCHEMA_VERSION:
@@ -336,6 +476,7 @@ def build_mc2_bone_cloth_static_for_task(
 
 __all__ = [
     "MC2BoneClothStaticBuildResult",
+    "MC2BoneClothStaticMetadata",
     "build_mc2_bone_cloth_static_for_task",
     "mc2_bone_static_domain_error",
 ]

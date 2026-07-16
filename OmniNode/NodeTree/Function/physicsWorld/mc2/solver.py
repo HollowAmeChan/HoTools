@@ -673,6 +673,7 @@ def step_mc2(
                 try:
                     if bone_static is not None:
                         staged_native_context.update_bone_static(bone_static)
+                        bone_static = bone_static.compact_native_static()
                     staged_native_context.update_static_fingerprint(
                         static_input_fingerprint
                     )

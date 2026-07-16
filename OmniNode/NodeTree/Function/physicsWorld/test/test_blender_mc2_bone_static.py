@@ -157,7 +157,8 @@ try:
     assert info["baseline_static_ready"] is True
     assert info["bone_static_ready"] is True
     assert info["owned_static_take_count"] == 1
-    assert slot.data["bone_static"].bone.baseline_native_registration == {}
+    assert slot.data["bone_static"].native_owned is True
+    assert not hasattr(slot.data["bone_static"], "bone")
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
     assert info["self_collision_static_ready"] is True
@@ -380,8 +381,8 @@ try:
     automatic_slot = world.solver_slots[automatic_task.task_id]
     automatic_static = automatic_slot.data["bone_static"]
     assert automatic_static.connection_mode == 1
-    assert automatic_static.final_proxy.triangles == ()
-    assert automatic_static.final_proxy.edges == ((0, 1), (1, 2))
+    assert automatic_static.final_proxy.triangles.tolist() == []
+    assert automatic_static.final_proxy.edges.tolist() == [[0, 1], [1, 2]]
     assert world.result_streams["bone_transform"][0]["setup_type"] == "bone_cloth"
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in automatic_slot.data

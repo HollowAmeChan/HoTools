@@ -165,9 +165,8 @@ def make_mc2_bone_result(
         raise ValueError("MC2 public result world generation mismatch")
 
     bone_static = slot.data.get("bone_static")
-    bone = getattr(bone_static, "bone", None)
     identities = tuple(
-        getattr(getattr(bone, "proxy", None), "vertex_identities", ()) or ()
+        getattr(getattr(bone_static, "final_proxy", None), "vertex_identities", ()) or ()
     )
     if len(identities) != candidate.particle_count:
         raise ValueError("MC2 Bone result identity count mismatch")

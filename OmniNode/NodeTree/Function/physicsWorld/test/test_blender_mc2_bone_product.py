@@ -118,8 +118,8 @@ try:
     slot_a = world.solver_slots[tasks[0].task_id]
     slot_b = world.solver_slots[tasks[1].task_id]
     assert slot_a.data["bone_static"].connection_model == "hotools_product"
-    assert slot_a.data["bone_static"].final_proxy.triangles
-    assert slot_b.data["bone_static"].final_proxy.triangles
+    assert len(slot_a.data["bone_static"].final_proxy.triangles) > 0
+    assert len(slot_b.data["bone_static"].final_proxy.triangles) > 0
     assert slot_a.data["native_context"].inspect()["bone_triangle_output_count"] == 1
     assert slot_b.data["native_context"].inspect()["bone_triangle_output_count"] == 1
     assert writeback.writeback_bone_transforms(world) == 15
