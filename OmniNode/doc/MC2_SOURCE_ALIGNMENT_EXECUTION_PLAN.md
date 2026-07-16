@@ -28,14 +28,15 @@
 
 ## 固定范围
 
-当前目标是 `V1-R` restricted realtime：
+当前目标是 `V1-R` restricted realtime，并在删除旧实现前取得明确的**替代资格**：
 
-- 一个 `mc2` solver，MeshCloth、BoneCloth、BoneSpring 三种 setup，共用一套 native context/step/result 生命周期。
+- 一个公开`mc2` solver step一次收集并处理当前输入中的全部对象/task；MeshCloth、BoneCloth、BoneSpring三种setup共享调度与结果事务，但每个active task独立持有slot/native context。MC2 component在HoTools中的产品映射是“粒子参数profile + task”的组合，不暴露为多个component step。
 - 单 final-proxy Mesh、双对象 BasePose、Bone Line 安全域、外部 Point/Edge collider、单 cloth self collision。
 - Mesh 发布 object-local GN offset；Bone 发布 stable bone identity 的 parent-local transform plan；真实 Blender 写入只由公共 writeback 执行。
 - Python 只拥有 Blender snapshot、immutable spec、slot/context 生命周期、packing、result transaction 和 debug；数值 solver 只有 C++ 一份。
+- 新实现不仅要对齐固定MC2 source，还要覆盖HoTools旧产品实际依赖的语义，证明真实生产链可替代、性能不退化、代码边界可维护，并在文件级不依赖待删除实现。
 
-以下不进入本轮验收：Bake、通用力场、self sync/inter-cloth、Bone imported triangle、MC2 reduction/render mapping。它们保持 inactive/rejected，不能借由邻近能力宣称支持。
+以下不进入本轮验收：Bake、通用力场、Bone imported triangle、MC2 reduction/render mapping。它们保持 inactive/rejected，不能借由邻近能力宣称支持。跨物体self collision已进入替代资格审计，不再作为未来项绕过。
 
 ## 当前执行顺序
 
@@ -43,10 +44,26 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | P-04 | 删除旧 MC2 节点、Python reference、native full-core/context、兼容 cache 与 shadow pipeline。 | registry、节点、import、运行时与资产入口均无 fallback；新测试不加载旧实现。 |
-| 2 | P-05 | 关闭 solver acceptance blocker。 | P-01..P-04 全部关闭，`solver_acceptance_blocker=False`，完整 Python 3.13 与 Blender 5.1 门禁通过。 |
+| 1 | P-04 | 冻结产品语义与特化决策。BoneCloth横向连接明确保留HoTools按骨名/链分组和节点输入组织连接的产品语义，不退回MC2 transform列表的隐式顺序；同时冻结“一次solver step处理全部task、profile+task映射component”的调度模型，并审计链选择、分岔、per-chain参数、写回、MeshCloth与BoneSpring特化。 | 每项产品行为都有owner、输入域、producer/consumer、新承载位置和直接生产证据；多task准备/失败原子性、task状态隔离、统一提交和profile+task identity有生产fixture；BoneCloth规则由产品fixture冻结，viewport显示由D-01关闭。 |
+| 2 | K-06/K-07 | 完成自碰撞产品模型审计。利用一次solver step已持有全部active tasks的边界，比较统一跨task broadphase下的自动互碰与显式`List[Object]`/ListObj partner graph；若全局模型需要可控分区，同时评估复用group/mask。核清普通粒子碰撞半径与self thickness双半径的物理目的、性能和authoring/debug成本。 | 用相同多cloth资产测量pair生成、broadphase、接触数、内存、动态加入/移除和帧耗时后确定scope API；半径模型明确为合并、派生或继续分离，且只有一个可理解的authoring真值来源。 |
+| 3 | D-01 | 建立与SpringBone VRM蓝本同型的全隐式MC2 debug链。debug请求自动发现world内MC2 slots，不要求用户为中间约束接线；按请求在下一推进帧读取backend真实中间态，并由solver-owned renderer按语义层筛选绘制。 | 至少覆盖Bone纵/横连接与分组、Fixed/Move、普通/自碰半径、自碰primitive/grid/candidate/contact/intersection、MaxDistance/Backstop、teleport判定、Center/world/local变换抵消、负缩放、外部碰撞和writeback目标；关闭debug时无逐帧readback。 |
+| 4 | P-05 | 完整审查新实现的实际运行链、代码组织与数学层，并执行不改变行为的纯整理。逐功能区确认生产入口、静态/逐帧路径、状态所有权、异常/重建/释放、死代码和测试专用路径；合并无意义参数转发层、过碎文件、同名math包装和重复buffer/helper。 | 审查矩阵覆盖三setup与公共runtime；不存在“测试可达但生产不可达”的能力；纯整理前后fixture、生产资产和性能结果一致；内部调用直达唯一实现，保留的wrapper都具有真实边界职责。 |
+| 5 | P-06 | 建立新旧同资产、同帧、同参数的性能对比，并据数据审计Python/C++边界；自碰撞同时覆盖单cloth及两种跨物体scope原型。分别测量首次构建、静态重建、逐帧prepare/pack/native sync/step/debug readback/result readback/writeback、内存与分配。 | 代表性小/中/大资产有可重复基线；新实现逐帧性能不得劣于旧实现，目标是有明确优势；跨物体自碰撞API由数据选定；所有热点都有保留Python、批量化或迁入C++的书面决定和验证结果。 |
+| 6 | P-07 | 完成文件级与ABI级独立化。区分可保留的共享数值kernel与必须删除的旧node/package/context/ABI，并把共享代码移交给新owner。 | 新registry、节点、生产runtime、测试和构建不import/加载旧Python package、旧context或旧公开ABI；保留的C++ kernel已归入新命名与所有权，删除候选清单可机械核验。 |
+| 7 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
+| 8 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
+| 9 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
 
-旧路径删除必须是独立、可审查提交；删除前先用import/registry/runtime搜索证明新路径无依赖，删除后重跑完整Python 3.13、代表性资产与混合soak门禁。
+## 阶段约束
+
+1. P-04至P-08期间禁止删除旧实现文件或旧公开入口；旧代码是产品语义、性能和依赖审计的输入。
+2. “固定MC2 source对齐”与“可替代HoTools旧产品”是两种不同结论。Tier A source oracle不能单独关闭产品替代项。
+3. 性能比较必须使用同一资产、同一Blender版本、同一帧序列和等价功能配置；只测新实现的绝对耗时不能证明替代优势。
+4. C++迁移以测量结果为依据。逐帧大数组遍历、打包、转换和数值热点优先；一次性拓扑构建若非瓶颈，可保留在Python以维持清晰边界。
+5. 旧路径删除必须是P-08明确放行后的独立、可审查提交，不能与语义修复、性能优化或架构重构混在一起。
+6. 旧实现中真实可用的产品能力默认必须保留或改进。若决定缩小支持域，必须有明确产品决策、用户可见拒绝行为和迁移说明；不能用“新架构未实现”本身作为拒绝理由。
+7. Debug沿用SpringBone VRM蓝本的隐式请求模型：正常模拟不承担中间态readback，renderer不能根据当前RNA或最终结果反推backend过程；MC2复杂度通过语义层、过滤器和按需buffer表达，不通过新增一组中间态接线节点表达。
+8. P-05代码整理不得夹带数值、参数默认值、更新频率或支持域变化；任何行为变化必须拆回对应能力行单独验收。
 
 ## 交付规则
 

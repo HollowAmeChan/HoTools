@@ -8,7 +8,7 @@
 
 ## 写作边界
 
-- **应该写**：固定source producer/representation/consumer/lifetime、顺序敏感数值、Blender特化、拒绝域、故意差异及已发现冲突的最终处理结论。
+- **应该写**：固定source producer/representation/consumer/lifetime、顺序敏感数值、Blender特化、拒绝域、故意差异，以及已确认会影响替代资格的冲突入口和最终处理结论。
 - **不应该写**：当前完成百分比、下一提交计划、fixture数量流水、某次Blender帧号、临时调试输出、公共Physics World结构或普通实现说明。
 - **内容路由**：完成度与证据摘要写`MC2_ACCEPTANCE_MAP.md`；尚未完成工作的顺序写`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；跨solver结构写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；测试实现放测试文件，历史过程只留Git。
 - **保留门槛**：只有未来维护者可能再次踩到、且会改变语义/支持域/冲突决策的内容才进入本文；普通“已经接线”描述不进入。
@@ -21,6 +21,7 @@
 4. Unity manager direct index与native handle都是短生命周期句柄。fixture、task、result和ABI只使用stable identity。
 5. 旧HoTools/HoCloth solver输出是Tier C regression，不是MC2 parity证据。
 6. 文档与实现冲突时，验收表先降级，再扩充oracle；禁止用下游HoTools结果回填expected。
+7. 固定MC2 source对齐与旧HoTools产品替代是两条证据链。旧实现中的输入解释、identity/排序、业务特化、缓存和写回行为必须单独核账；source oracle不能自动证明这些产品语义已经被保留。
 
 ## 故意差异登记
 
@@ -36,6 +37,8 @@
 | DEV-08 | 力场 | MC2私有Wind对象/manager | wind是未来Physics World通用力场的一种kind | 当前`wind_*`只是兼容参数面，无公共快照时按零外力 |
 | DEV-09 | Signed transform | Unity Transform/TRS语义 | 只接受可分解为proper rotation + signed scale且无shear的域 | Armature自身负缩放可用；负缩放父级、零scale、shear和负PoseBone scale拒绝 |
 | DEV-10 | 旧接口 | HoTools曾暴露`substeps/iterations`与旧full-core ABI | 保留必要节点兼容面，但新V0只消费声明过的scheduler/ABI | 兼容字段不代表能力；旧实现不得成为fallback或oracle |
+| DEV-11 | BoneCloth横向连接 | MC2按transform/root列表、距离或列表相邻关系生成横向membership | HoTools保留按骨名、显式链分组和节点输入组合横向连接的产品语义 | 更适合Blender命名工作流与节点复用；必须冻结名称/分组/顺序和重建规则，并由隐式debug直接显示最终连接 |
+| DEV-12 | Component与step粒度 | MC2按component/team分别拥有manager调度单元 | HoTools只有一个公开MC2 solver step，一次处理全部active tasks；一个MC2 component映射为粒子参数profile与task的组合 | 节点图更简洁并允许跨task统一调度/交互；持久状态仍按task slot/context隔离，不能合并成隐藏全局状态 |
 
 新增差异必须先回答：source行为是什么、为什么不照搬、支持域缩小到哪里、用什么证据防止差异继续扩散。
 
@@ -52,6 +55,7 @@
 - triangle来自同一vertex的link两两组合；零长度、夹角`>=120°`、横跨三个root、无main parent-child edge时拒绝。
 - triangle只按canonical `PackInt3`去重，不保存winding。只有第一次插入时登记两条`triangleEdgeSet`，重复发现不会补第三边，所以可能保留residual line。
 - import topology之后仍需selection/proxy conversion与constraint builders；import line/triangle不是N1 constraint array。
+- 产品差异边界：当前fixture证明新`bone_connection`复现上述固定MC2 source规则，但HoTools产品横向连接以DEV-11为准，不能被source模式静默替代。旧路径的名称匹配、显式链分组、节点输入组合、分岔和per-chain参数必须从producer到topology consumer冻结为新contract；`S-03`必须同时有source fixture、产品fixture和最终连接debug才能关闭。
 
 ### Attribute 与 Final Proxy
 
@@ -198,9 +202,25 @@ Center数据必须分域：
 - 新frame首substep前读取上一帧grid，只检测`index % 2 == frame % 2`的Edge→Triangle；整帧final substep后才复测当前位置并把命中写到Edge particle flag，下一帧映射到primitive低3位。
 - static替换/reset必须清contact key、intersect record、particle flag与primitive低3位。
 
+### 跨物体 Self Collision 与半径冲突
+
+- 当前V0的primitive、grid、candidate、contact与intersect都由单个MC2 slot/context持有；`self_collision_sync_mode`存在于authoring/N2参数，但没有多cloth ownership、partner identity或生产调度consumer，不能据此宣称inter-cloth已实现。
+- 跨物体scope有两个主要候选产品模型：同一world内所有启用self collision的mesh自动加入交互，或由solver/task显式接收`List[Object]`伙伴列表。前者操作简单但pair数量、无关对象耦合和动态加入成本可能更高；后者可控但节点authoring和identity/rebuild更复杂。如果统一global broadphase可行但仍需分区，优先评估复用group/mask，而不是把大量对象引用塞进节点。必须用相同多cloth资产比较pair生成、broadphase、contact、内存与帧耗时后再冻结。
+- DEV-12使solver orchestration在一次调用中已知全部active task identity，但现有self arrays仍分散在per-task context。自动互碰能否更快取决于是否建立一次集中式跨task broadphase；仅在Python层两两调用task context不会自动获得全局模型的性能优势。
+- 普通`radius`当前生成粒子对外部Point/Edge collider的接触半径；`self_collision_thickness`生成self primitive/contact thickness。它们在现有kernel中不是同一consumer，不能直接称为重复参数。
+- 产品authoring已经用“基础数值 × 顶点组”表达Mesh半径，因此继续独立暴露self thickness会形成双半径真值和debug歧义。必须比较三种方案：统一为同一半径场、从普通半径派生self thickness、保留独立self场；用外部collider完全替代self primitive也必须证明能覆盖EE/PT、intersect history和跨cloth接触，不能只因UI更少就替换。
+
 self collision是primitive、grid、broadphase、EE/PT narrowphase、half contact、4轮solve/sum、跨帧intersect和cache生命周期的整体。sync/inter-cloth还需要多体ownership、质量汇总和调度，不能把另一张mesh转成sphere列表替代。
 
-## 5. Output 与 Blender 边界
+## 5. 隐式 Debug 可观测性
+
+- MC2遵循SpringBone VRM蓝本：debug入口只表达请求、scope和显示过滤，自动发现world内匹配slot；不为Bone连接、Backstop、自碰等中间态增加用户接线socket。
+- 请求在下一次真实推进帧由backend捕获，一次性请求消费后清除；continuous模式才持续采样。无请求时不得执行native debug readback、per-item dict展开或viewport几何构建。
+- renderer只消费slot/native debug snapshot和真实result stream，禁止根据当前RNA、最终位置或Blender对象重新推导“看起来合理”的中间态。
+- 当前`mc2/debug.py`仍是`framework_only`；slot摘要包含部分Center/teleport结果，native binding已有self primitive/grid/candidate/contact/intersection读取能力，但Python owner、统一snapshot和viewport renderer尚未闭环。
+- MC2最小语义层：Topology（Bone纵/横连接、链分组、Fixed/Move、final proxy）、Motion（MaxDistance/Backstop及法向轴）、Center/Inertia（teleport阈值/触发原因、world/local变换抵消、负缩放）、Collision（普通半径、外部collider、自碰厚度/primitive/grid/candidate/contact/intersection）和Output（candidate/writeback target）。每个影响空间边界或分支判定的参数必须有绘制、数值overlay或明确的“非空间量”诊断理由。
+
+## 6. Output 与 Blender 边界
 
 Mesh输出是world display pose相对同帧animated base的delta，再转换为source object-local offset：
 
@@ -217,7 +237,7 @@ object_local_offset = inverse_linear(source.matrix_world) * world_delta
 
 Bone position转换使用完整Armature inverse；rotation使用proper component inverse，禁止非均匀/负scale泄入PoseBone `matrix_basis`。PoseBone object-space必须是proper、shear-free且正scale；不满足时在snapshot/writeback前拒绝。
 
-## 6. Runtime Parameters 与外部身份
+## 7. Runtime Parameters 与外部身份
 
 - 每条curve固定转换为16个float32 sample，位置为`i/15`；禁用curve时全部为基础值。native不消费AnimationCurve key/handle。
 - float32舍入步骤属于语义；不能先用double合并表达式再一次转换。
@@ -226,17 +246,19 @@ Bone position转换使用完整Armature inverse；rotation使用proper component
 - animation pose ratio属于team dynamic；frequency/max step/time scale属于scheduler；anchor、collider、sync partner、force field属于外部identity/snapshot。
 - value arrays可以hot update；外部引用、primitive topology、proxy/baseline/constraint arrays变化需要registration或context rebuild。
 
-## 7. MC2 Host/Native 边界特化
+## 8. MC2 Host/Native 边界特化
 
 固定数据流：
 
 ```text
 Blender authoring/frame input
-  -> immutable host snapshots + signatures
+  -> profile + task combinations
+  -> one MC2 solver step: normalize all active tasks
+  -> immutable host snapshots + signatures (prepare all before write)
   -> N0/N1 static build
-  -> slot-owned native context
+  -> per-task slot-owned native context
   -> N2/N3 sync -> reset/step/readback
-  -> Physics World result stream
+  -> one Physics World result transaction
   -> public writeback
 ```
 
@@ -253,14 +275,15 @@ Blender authoring/frame input
 边界不变量：
 
 1. evaluated pose不进入N0签名；静态mapping不能伪装成动态参数；allocation不等于reset。
-2. 每个active task唯一持有slot与opaque context；context只由slot dispose链释放。
-3. static使用完整staged build后原子替换；失败保留旧context/result。value/scheduler hot update保留history。
-4. same-frame不重复step；reset、倒放、跳帧与generation变化保留不同reason。
-5. ABI只接收连续C-order固定dtype、finite、checked range/index和`xyzw` quaternion。
-6. result/debug不含bpy对象、manager index或native handle；solver不inline writeback。
-7. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
+2. 公开MC2 step一次处理全部active tasks；MC2 component identity由profile+task组合表达。每个active task唯一持有slot与opaque context，context只由slot dispose链释放。
+3. 全部task先完成只读prepare；任一task失败时不得进入world写事务。进入写事务后按task同步并统一发布result transaction，不能把每个task伪装成独立solver step。
+4. static使用完整staged build后原子替换；失败保留旧context/result。value/scheduler hot update保留history。
+5. same-frame不重复step；reset、倒放、跳帧与generation变化保留不同reason。
+6. ABI只接收连续C-order固定dtype、finite、checked range/index和`xyzw` quaternion。
+7. result/debug不含bpy对象、manager index或native handle；solver不inline writeback。
+8. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
 
-## 8. Oracle 与冲突处理
+## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
 |---|---|---|

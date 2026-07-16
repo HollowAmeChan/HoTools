@@ -17,7 +17,9 @@
 
 当前目标是 `V1-R`（restricted realtime）：单一 MC2 solver、MeshCloth/BoneCloth/BoneSpring 三种 setup、单 final-proxy Mesh、Bone Line 安全域、外部 Point/Edge collider、单 cloth self collision、实时 Mesh/Bone writeback。
 
-以下不阻塞 `V1-R`：Bake、通用力场、self collision sync/inter-cloth、Bone imported triangle、MC2 reduction/render mapping。它们必须保持明确的未支持状态，不能由现有能力外推为已完成。
+以下不阻塞 `V1-R`：Bake、通用力场、Bone imported triangle、MC2 reduction/render mapping。它们必须保持明确的未支持状态，不能由现有能力外推为已完成。跨物体self collision已进入产品替代范围，由K-06阻塞删除准入。
+
+上述source范围不等于旧HoTools产品替代范围。删除旧实现还必须通过P-04..P-08；旧实现中实际可用但超出当前source restricted范围的能力，只有在明确产品决策、可见拒绝行为和迁移说明成立后，才允许作为故意缩域处理。
 
 ## 状态口径
 
@@ -27,6 +29,7 @@
 | `限定域对齐` | 明确限制输入域后满足“完全对齐”；限制外不宣称支持。 |
 | `实现完成/证据缺口` | 生产链已接通，但缺独立 Tier A 或仍有源码语义待核账。 |
 | `产品收尾` | 数值能力已具备，尚缺真实资产、稳定性、性能或旧路径清理验收。 |
+| `待审计` | 已有实现或局部证据，但尚未完成产品语义、生产可达性、性能或独立性核账，不能据此宣称可替代旧实现。 |
 | `未来扩展` | 不在 `V1-R` 范围，当前必须保持 inactive。 |
 | `拒绝` | 已知输入域不成立，在进入 native 前显式报错。 |
 
@@ -36,14 +39,14 @@
 
 | ID | 能力切片 | 当前结论 | 已有证据 | 剩余差异/退出条件 | 阻塞 V1-R |
 |---|---|---|---|---|---|
-| C-01 | 单 solver / 三 setup / 单 native context | 完全对齐 | declaration、slot/context 双 ABI、staged replace、dispose/soak | 保持无 Python fallback、无隐藏全局 owner | 否 |
+| C-01 | 单solver step / 多task / task-owned context | 完全对齐 | task规整去重、全量只读prepare、一次world写事务、per-task slot/context、staged replace、dispose/soak | MC2 component映射为profile+task组合；一次step处理全部active tasks，各task状态隔离且任一prepare失败不产生半更新 | 否 |
 | C-02 | 帧生命周期、same-frame、reset、失败回滚 | 完全对齐 | py313 lifecycle + Blender 5.1 首帧/连续帧/倒放/重建 | 无 | 否 |
 | C-03 | scheduler、多子步、一次提交 | 完全对齐 | Tier A scheduler + py313 + Blender 5.1 单/三子步 | 无 | 否 |
 | C-04 | N2 参数 ABI 与热更新 | 限定域对齐 | 两组 Tier A 参数 dump、slot 热更新 | wind 与 sync 字段仅兼容占位，不计 active 能力 | 否 |
 | C-05 | Center/Inertia、anchor、teleport、signed component | 限定域对齐 | Tier A Center/step fixtures + py313 + Blender 5.1 | 仅支持已声明的无 shear、非零 scale 域 | 否 |
 | S-01 | Mesh final proxy、UV/Pin、拓扑签名 | 限定域对齐 | Tier A static fixtures + staged native upload + Blender 5.1 | 单 final proxy；UV seam 与拓扑变化按契约拒绝/重建 | 否 |
 | S-02 | Mesh baseline 与双对象 BasePose | 限定域对齐 | Tier A baseline/rotation + py313 + Blender 5.1 GN链 | 每 vertex 属于 triangle；禁止反馈与改拓扑 modifier | 否 |
-| S-03 | Bone connection 与 Line static | 限定域对齐 | 8组 Tier A connection + 3组 Line/rotation fixtures + Blender 5.1 | Automatic/Sequential 只接受最终无 triangle membership | 否 |
+| S-03 | Bone connection 与Line static | 实现完成/证据缺口 | 8组Tier A source connection + 3组Line/rotation fixtures + Blender 5.1 | 固定MC2 source已对齐；HoTools按骨名/链分组和节点输入组织横向连接是必须保留的故意产品差异，尚需冻结规则、接入新生产链并用隐式debug验收 | 是 |
 | S-04 | BoneCloth Line 与 BoneSpring setup | 限定域对齐 | shared static/native/result 链、N2 override、Blender 5.1 | BoneSpring 固定 Line、Sphere-only；不扩张到 triangle | 否 |
 | S-05 | Bone imported triangle | 拒绝 | 固定源码证明全零 UV 导致 tangent/basis 退化 | 未来若改变产品策略，必须先建立真实 producer/oracle | 否 |
 | N-01 | prediction、Pin、constraint 顺序与 post | 完全对齐 | Tier A 双子步顺序 + native V0 + Blender 5.1 | 无 | 否 |
@@ -57,26 +60,38 @@
 | K-03 | Self primitive/grid/hash/broadphase | 限定域对齐 | raw/Tier A static + py313 hash/candidate + Blender 5.1 | 单 cloth FullMesh 域 | 否 |
 | K-04 | Self EE/PT contact、4轮 solve/sum | 限定域对齐 | half contact、手算 fixed-point、后续 substep fixtures | 单 cloth FullMesh 域 | 否 |
 | K-05 | Self 跨帧 Intersect | 限定域对齐 | py313 三帧反馈 + Blender 5.1 final-substep gate | 单 cloth、固定分片调度 | 否 |
-| K-06 | Self sync/inter-cloth | 未来扩展 | 参数只保存、不消费 | 需要多体 ownership、质量汇总、sync 与调度 oracle | 否 |
+| K-06 | 跨物体self collision scope | 待审计 | 单次solver step可见全部active tasks，但当前primitive/contact仍归各task context且只闭环单cloth；sync参数尚无生产consumer | 比较集中式跨task broadphase的自动互碰、显式ListObj partner graph及必要时group/mask分区，冻结pair ownership、动态增删、调度和节点API | 是 |
+| K-07 | 普通碰撞半径与self thickness产品模型 | 待审计 | 普通`radius`当前服务外部collider接触；`self_collision_thickness`服务self primitive/contact，二者consumer不同 | 审计双半径是否必要、是否派生自同一顶点组+数值半径、能否合并或由collider替代；以物理覆盖、性能和debug可读性决定 | 是 |
 | O-01 | Mesh result transaction 与 GN writeback | 完全对齐 | candidate/envelope、发布回滚、拓扑失败恢复、Blender 5.1 | 无 | 否 |
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component Blender 5.1 | 与 S-03/S-04 相同的 Line/transform 限定域 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
+| D-01 | 全隐式中间态debug | 待审计 | 当前`mc2/debug.py`仅`framework_only`；slot有摘要，native已有部分self readback但未形成完整viewport链 | 对齐SpringBone VRM的request-driven next-frame capture；覆盖连接、约束、碰撞/自碰、teleport、变换抵消、Center和writeback，且无请求时零readback | 是 |
 | P-01 | V1-R 直接 oracle 闭环 | 完全对齐 | static/runtime主体及Distance/Tether/Angle/Motion direct runtime均有Tier A | 无 | 否 |
 | P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1四脚本门禁，覆盖五资产/三setup | Mesh、Bone Line、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
-| P-03 | 稳定性与性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms，受版本化ceiling门禁 | 否 |
-| P-04 | 旧 MC2 路径删除 | 产品收尾 | 新 solver 不调用旧 package | 删除旧节点/package/full-core/context/shadow pipeline；确认无 registry/asset fallback | 是 |
-| P-05 | declaration 验收开关 | 产品收尾 | `mc2` 已注册并发布三类结果 | P-01..P-04 全关后将 `solver_acceptance_blocker` 改为 `False` | 是 |
+| P-03 | 新链路混合 soak 与绝对性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms；这里只证明新链路稳定且低于自身ceiling，不代表优于旧实现 | 否 |
+| P-04 | 旧产品语义与新实现替代审计 | 待审计 | 固定MC2 source主体有Tier A；当前生产入口已是一step多task/per-task context | 冻结profile+task component映射、多task原子调度和BoneCloth横向连接，再覆盖三setup、碰撞、参数、cache/reset与写回特化 | 是 |
+| P-05 | 新实现生产可达性、代码与math审计 | 待审计 | 代表性资产和soak证明主链可运行；当前Python模块存在大量参数转发、过细职责和重复/同名math包装候选 | 逐功能区核对真实入口、状态所有权、异常/释放、死代码；在不改变行为前提下合并垃圾转发、文件碎片和重复helper，并证明生产结果不变 | 是 |
+| P-06 | 新旧性能对比与C++边界审计 | 待审计 | 只有新实现绝对耗时baseline | 同资产同配置比较构建、逐帧各阶段、debug开销、内存与分配；加入跨物体self collision两种scope原型，证明不退化且有明确优势，按实测决定Python批量化或C++迁移 | 是 |
+| P-07 | 文件与ABI独立化 | 待审计 | 新Physics World Python路径当前未直接import旧package，但旧节点仍注册，旧native ABI及测试仍共存 | 新生产链、测试和构建对待删除package/context/公开ABI零依赖；共享kernel必须转为新owner而非悬挂在旧接口下 | 是 |
+| P-08 | 替代资格总门禁 | 待审计 | P-01..P-03只证明source主体、新资产门禁和新链soak | P-04..P-07、K-06/K-07和D-01全部关闭，并形成“产品语义可替代、交互模型清晰、debug可观测、性能有优势、架构可维护、允许删除”的明确结论 | 是 |
+| P-09 | 旧 MC2 路径删除 | 产品收尾 | 尚未准入删除 | 仅在P-08放行后独立删除旧节点/package/full-core/context/shadow pipeline；删除后全门禁通过 | 是 |
+| P-10 | declaration 验收开关 | 产品收尾 | `mc2` 已注册并发布三类结果 | P-01..P-09及全部阻塞能力行关闭后将`solver_acceptance_blocker`改为`False` | 是 |
 | X-01 | Bake/export | 未来扩展 | `supports_bake=False` | 独立冻结 bake 时间轴、缓存与导出契约 | 否 |
 | X-02 | 通用力场（含 wind） | 未来扩展 | N2 仅保留兼容字段 | 等待 Physics World 公共力场快照，再接 adapter/native/oracle | 否 |
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle、代表性生产资产及混合稳定性/性能门禁已经闭环。当前只关闭 **旧路径删除 + acceptance flag**。在这两项关闭前，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产及新链路混合soak已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须先完成 **Bone横向连接产品特化、跨物体self collision与半径模型、全隐式debug、完整代码/运行链与纯整理、新旧性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `P-04`：旧 MC2 路径删除。
-2. `P-05`：关闭 declaration acceptance blocker。
+1. `S-03/P-04`：落实BoneCloth名称/链分组横向连接这一故意产品差异，并核清其余旧产品特化。
+2. `K-06/K-07`：决定跨物体self collision scope及统一、派生或分离的半径模型。
+3. `D-01`：完成与SpringBone VRM同型、但分层更丰富的全隐式中间态debug。
+4. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
+5. `P-06`：新旧同场性能、自碰撞scope原型及Python/C++边界决策。
+6. `P-07/P-08`：文件级独立化与替代资格总门禁。
+7. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
 
 ## 更新规则
 

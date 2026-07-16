@@ -393,10 +393,12 @@ Python 侧职责：
 统一 MC2 的 Python 侧分层约定：
 
 - `physicsWorld/mc2/` 只有一个 solver identity；MeshCloth、BoneCloth、BoneSpring 位于 `setups/`，不建立 Python/C++ 平行节点或 backend selector。
+- MC2只有一个公开solver step；一次调用规整并处理全部active tasks。MC2 component不映射为独立节点/step，而映射为粒子参数profile与task的组合；task各自拥有slot/native context，prepare全通过后才进入一次world写事务和统一result transaction。
 - setup adapter 负责 Blender authoring/frame snapshot、静态 builder 输入和结果目标映射；它不拥有 solver 时间或第二套粒子状态。
 - `physicsWorld/mc2/solver.py` 负责 slot/context 生命周期、frame policy、native 调用和 result publication，不直接写 Blender。
-- native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 只作待删除的历史参考。
+- native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 在替代资格门禁关闭前只作产品语义、性能和依赖审计输入，取得准入后再独立删除。
 - MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag都属于slot-owned native context；sync/inter-cloth需要独立ownership和多体调度，不能借外部collider表达。
+- MC2 debug沿用SpringBone VRM的全隐式请求模型：debug入口自动发现world内MC2 slots，后端按请求在下一推进帧产出语义化snapshot，solver renderer负责分层显示；不新增一套供用户连接中间数组的节点图surface。
 - MC2完成度见`doc/MC2_ACCEPTANCE_MAP.md`，当前工作顺序见`doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`doc/MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 C++ 侧职责：
@@ -411,7 +413,9 @@ C++ 侧职责：
 
 已评估并否决。根本障碍：`op.func(*args)` 永远是 Python 回调（GIL 和调用边界不消失）；编译器必须读 Blender `NodeTree`/`Node`/`Socket`/`Link`（全是 RNA，只能 Python 访问）；cache 值是任意 Python 对象（`bpy.types.Object`、numpy、`OmniCacheOwnerDict`）无法进 C++ 容器。把执行器 for 循环搬到 C++ 每帧只省 isinstance 和 list 分配（~50–150µs/100 节点），而函数体本身通常 0.5–10ms，收益比极低、成本极高。
 
-正确分层是固定结论：**Python 管调度和 Blender 边界，C++ 管数值计算热点**（solver kernel、persistent native context、collider/矩阵批量转换）。
+正确分层是固定结论：**Python 管调度和 Blender 边界，C++ 管经测量确认的数值与批处理热点**（solver kernel、persistent native context、collider/矩阵批量转换）。一次性构建不因“能迁移”就进入C++；只有代表性大资产证明它是瓶颈时才调整边界。
+
+Python模块按真实owner和生命周期拆分，不按“每个dataclass/参数阶段一个转发文件”机械拆分。内部wrapper若只做同名参数转发、同名math调用或无附加校验/所有权/缓存语义的re-export，应删除并让调用方直达唯一实现；兼容别名只允许出现在明确的公开边界，并带删除计划。纯整理必须用既有fixture、生产资产和性能baseline证明行为未变，不能顺带改变默认值、更新频率或支持域。
 
 ## 编译流程
 
@@ -845,7 +849,7 @@ README.md
 6. 编译到对应 `HotoolsPackage`。
 7. 用 Blender Python import 验证，再在 Blender 中 smoke test 节点。
 
-统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧实现只允许在删除前作审查/对拍材料；SpringBone 已完成对拍并删除旧 Python runtime 与 35 参数 native ABI。
+统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧实现只允许在删除前作产品语义、生产行为、性能和依赖审计材料，不能作为source oracle；SpringBone 已完成对拍并删除旧 Python runtime 与 35 参数 native ABI。
 
 常用构建命令见 `_native/README.md`。核心入口是：
 

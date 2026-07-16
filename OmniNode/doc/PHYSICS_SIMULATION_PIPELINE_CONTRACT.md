@@ -242,6 +242,8 @@ slot.data["frame_state"]
 - 不直接写 PoseBone、Object transform、mesh attribute。
 - 不直接调用 Cache Write。
 - 不创建不可清理的 native 全局状态。
+- 一个solver step可以一次接收多个规范化task；公开step粒度不要求与对象、component或native context一一对应。具体component到task/spec的映射由domain声明并在专项验收中冻结。
+- 聚合多task时，必须先完成全部只读prepare和校验，再取得world写权限；持久状态仍由稳定task slot/context分别拥有，最后通过一次result transaction发布。任一prepare失败不得留下部分slot更新或部分结果。
 
 当前开发约束：
 
@@ -987,6 +989,9 @@ C++ native context:
 - dispose 必须幂等（多次调用不崩溃）。
 - debug snapshot 只输出数量统计和状态摘要，不直接暴露 C++ 内部对象。
 - solver 自有 debug draw 必须使用 result stream 或 `read_{solver}_debug()` 读回的后端真实快照。不得在 Python 绘制层根据 Blender 当前对象、属性面板或 result matrix 重新推导一套可能与后端不一致的状态。
+- solver可视化debug默认采用SpringBone VRM式隐式请求：debug入口声明world/scope、语义层和过滤条件，自动发现匹配solver slot，不要求用户为每个constraint或中间数组接线。请求在后续真实推进帧捕获；一次性请求消费后清除，只有continuous模式持续readback。
+- 无debug请求时不得执行native中间态readback、per-item对象展开或viewport几何构建。复杂solver通过分层snapshot、按需buffer和renderer registry扩展，不通过常驻全量快照换取实现简单。
+- 每个会改变空间边界、连接membership或重要分支判定的用户参数，必须在solver专项验收中登记可观测方式：直接绘制、数值overlay/diagnostic或明确说明其为何不是空间量。debug coverage属于产品验收，不以“MC2/第三方原版没有可视化”作为豁免。
 - 当某个 domain 的调试语义因类型而显著不同（例如 Fixed/Hinge/Slider/Cone）时，应在 solver 子模块内拆分按类型 renderer registry。renderer 只把“后端实际消费的 spec 快照 + 后端发布的动态 state”转换成纯绘制 primitives；viewport handler 只聚合、着色和提交 GPU batch。未知类型必须显式降级并进入 debug audit，不能套用一个看似成功的通用图形。
 - solver 用户文档应与实现一起放在 solver 子模块的 `docs/` 中，并区分 backend 原生能力、当前 binding 能力和节点已暴露能力；新增约束类型的验收必须同时覆盖 spec/binding、result state、专用 renderer、用户文档和测试。
 
@@ -1078,18 +1083,21 @@ re_run_and_reset：
 
 ## 不兼容收敛策略
 
-当前没有旧资产兼容要求，迁移时优先删除双路径，而不是维护 shadow pipeline：
+当前没有旧资产格式兼容要求，但这不等于可以跳过旧产品行为审计。迁移目标仍是最终收敛为单路径；删除必须晚于替代资格审计，而不是把双路径长期维护成 shadow pipeline：
 
 1. 先确定 world-aware contract：scope、spec、result stream、exchange、writeback 边界。
-2. 对旧实现做删除前审查：列出 direct bpy write、旧 cache owner、scene-wide scan、frame/restart 判断、native handle 生命周期。
+2. 对旧实现建立产品语义清单：除 direct bpy write、旧 cache owner、scene-wide scan、frame/restart 判断和native handle生命周期外，还要登记输入解释、排序/identity、业务特化、错误域和写回行为。
 3. 新 solver 建在 `physicsWorld/<domain>/` 下，直接重写新的 spec / slot / result / writeback 模块。
 4. 直接调整节点 socket、payload 和内部数据结构到新 contract。
 5. 把 prepare、step、result publish、writeback apply 拆成可独立调用 helper。
 6. solver step 只产生 result stream / exchange item，不直接写 bpy。
-7. 下游节点和 debug draw 只读公开 result / exchange，不读 solver slot 私有结构。
+7. 外部下游节点只读公开result/exchange；solver自有debug renderer只能通过声明过的slot debug snapshot读取私有状态，不直接触碰native handle或任意slot字段。
 8. 用后台集成测试锁住同帧、连续帧、跳帧、reset、dispose 行为。
+9. 在同一代表性资产和等价配置上比较旧/新生产链的语义、逐阶段耗时、内存和分配；只有source对拍或新链路绝对耗时不能证明产品替代资格。
+10. 证明新生产入口、测试和构建对待删除package、context和公开ABI零依赖；需要复用的数值kernel必须先转移到新owner。
+11. 语义、生产可达性、性能、架构和独立性门槛全部关闭后，才允许用独立提交删除旧路径并重跑完整门禁。
 
-旧 solver 的 Python 包装层默认不迁移，只能在删除前作为审查材料和数值参考。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
+旧 solver 的 Python 包装层默认不直接迁移，但删除前必须作为产品语义、生产行为、性能和依赖审查材料；它不是source parity oracle。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
 
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 
@@ -1110,6 +1118,8 @@ re_run_and_reset：
 - 数值算法的可读性应通过 C++ 侧拆函数、注释、测试和小型 reference case 解决，不靠维护第二套 Python solver。
 
 这一策略的目标是减少节点数量、减少行为分叉、避免 Python / C++ 实时性不一致，并让调度、跳帧、缓存生命周期都只在世界层表达一次。
+
+C++边界必须由生产链计时和分配数据决定，而不是按语言偏好扩大。逐帧的大数组遍历、list/dict到buffer转换、重复矩阵/碰撞体转换和数值kernel是优先候选；Blender RNA读取、生命周期、spec/identity、result transaction和writeback owner仍归Python。一次性静态构建只有在代表性大资产上被证明为瓶颈时才迁入C++。
 
 ## physicsWorld/utils 抽取计划
 
