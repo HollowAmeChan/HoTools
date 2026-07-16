@@ -105,14 +105,18 @@ def build_mc2_bone_frame_input(
         if component_pose is not None and component_pose != source_component_pose:
             raise ValueError("bone frame sources do not share one component pose")
         component_pose = source_component_pose
-        payload = _thaw(source_topology.payload)
-        records = tuple(payload.get("bones") or ())
-        if len(records) != source_topology.particle_count:
+        names = source_topology.bone_names
+        if not names:
+            payload = _thaw(source_topology.payload)
+            names = tuple(
+                str(record.get("name") or "")
+                for record in payload.get("bones", ())
+            )
+        if len(names) != source_topology.particle_count:
             raise ValueError("bone frame topology record count mismatch")
         pose_bones = armature.pose.bones
         matrix_world = armature.matrix_world
-        for record in records:
-            name = str(record.get("name") or "")
+        for name in names:
             pose_bone = pose_bones.get(name)
             if pose_bone is None:
                 raise ValueError(f"bone frame pose is missing stable bone {name!r}")

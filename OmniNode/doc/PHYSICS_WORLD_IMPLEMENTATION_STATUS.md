@@ -80,6 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
+   P-06d当前已用单一`MC2BoneRawSnapshot`消除Bone fingerprint/topology/static的重复rest读取和生产路径`_thaw`；下一步批量化Armature rest读取并迁移Bone派生static所有权。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

@@ -300,6 +300,8 @@ Blender authoring/frame input
 15. Self primitive registration的Point/Edge/Triangle source顺序、Fix0/1/2、AllFix、Ignore、int3 particle role与平均baseline depth，由`mc2_static_build` C++结果唯一生产；Mesh路径在内容签名完成后，把名称/data pointer/size均匹配的capsule vectors直接move进staged context，slot只保留签名/count metadata。无context的Tier A/Bone兼容入口仍返回完整oracle spec；跨物体membership、半径/厚度采样、grid/contact/intersection由world/native runtime按K-06/K-07合同处理。Python不得恢复`_primitive_flag`、primitive生产循环或move后的ndarray读取。
 16. Center static的Fixed边界筛选（排除Move及完全被非Move邻点包围的内部点）、fixed local中心、bind修正姿态平均与initial local gravity，由`mc2_static_build` C++结果唯一生产。Mesh路径先建立固定dtype内容签名，再把名称/data pointer/size匹配的capsule vectors直接move进staged context，slot只保留fixed count/signature metadata且`center_static_revision`只能增加一次；native/host rotation两类frame input均调用context内同一个Center pose producer。完整`MC2CenterStaticSpec`与packer仅保留无context Tier A oracle和Bone P-06d兼容上传；Python不得恢复邻接筛选或姿态平均数值循环。
 
+17. Bone生产prepare使用短生命周期`MC2BoneRawSnapshot`一次读取names/parents/head-tail/rest matrices，native fingerprint、source/product connection和Bone static必须共享该snapshot。生产`MC2SourceTopologySpec`只保留稳定`bone_names`和轻量Armature身份，不得冻结每骨dict；Bone frame直接消费`bone_names`，不得逐帧`_thaw`。完整payload仅保留给显式oracle/兼容入口。snapshot当前仍由Python逐source读取Blender RNA；P-06d下一步是批量化读取并让Bone派生static在native context内自产自用，不得把snapshot长存到slot。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

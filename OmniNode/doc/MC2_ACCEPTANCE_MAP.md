@@ -79,6 +79,10 @@
 | X-01 | Bake/export | 未来扩展 | `supports_bake=False` | 独立冻结 bake 时间轴、缓存与导出契约 | 否 |
 | X-02 | 通用力场（含 wind） | 未来扩展 | N2 仅保留兼容字段 | 等待 Physics World 公共力场快照，再接 adapter/native/oracle | 否 |
 
+### P-06d 阶段证据
+
+Bone生产prepare已建立短生命周期`MC2BoneRawSnapshot`，fingerprint、Line/product connection和Bone static共享names/parents/head-tail/rest matrices；生产Topology只保留`bone_names`与轻量身份，不再二次读取RNA、冻结每骨dict或在static/frame路径`_thaw`。显式oracle与compact生产topology signature一致；26/26纯MC2与Blender Bone static/product/frame通过。large Bone profile step约`28.9 -> 20.9ms`，frame input约`11.6 -> 4.45ms`；外层build样本本轮为120.5ms，因此P-06d仍未关闭。下一步是批量化Armature rest读取，再将Bone orientation/transform、Distance、Center和Self直接收入native staged context。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

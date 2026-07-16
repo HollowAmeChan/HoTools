@@ -148,6 +148,10 @@ try:
     assert slot.data["mesh_static"] is None
     assert slot.data["bone_static"] is not None
     assert slot.data["result_candidate"] is None
+    production_topology = slot.data["topology"]
+    assert production_topology.topology_signature == topology.topology_signature
+    assert production_topology.sources[0].bone_names == ("Root", "Mid", "Tip")
+    assert all("bones" not in dict(source.payload) for source in production_topology.sources)
     info = slot.data["native_context"].inspect()
     assert info["proxy_static_ready"] is True
     assert info["baseline_static_ready"] is True

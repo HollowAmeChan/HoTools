@@ -16,7 +16,7 @@ from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...self_collision_static import MC2SelfCollisionStaticSpec
 from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
-from ...topology import MC2TopologySpec
+from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import _thaw
 from ....utils.math3d import (
     matrix4_tuple_from_flat,
@@ -176,6 +176,8 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
 def build_mc2_bone_cloth_static_for_task(
     task: MC2TaskSpec,
     topology: MC2TopologySpec,
+    *,
+    raw_snapshots=None,
 ) -> MC2BoneClothStaticBuildResult | None:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -188,8 +190,14 @@ def build_mc2_bone_cloth_static_for_task(
     _require_mc2_bone_static_domain(task, topology)
     if topology.bone_connection is None:
         raise ValueError("BoneCloth Line static requires frozen connection topology")
-    records = _flatten_bone_records(topology)
-    if len(records) != topology.particle_count:
+    snapshots = tuple(raw_snapshots or ())
+    use_snapshots = (
+        len(snapshots) == len(topology.sources)
+        and all(isinstance(item, MC2BoneRawSnapshot) for item in snapshots)
+    )
+    records = () if use_snapshots else _flatten_bone_records(topology)
+    record_count = sum(len(item.names) for item in snapshots) if use_snapshots else len(records)
+    if record_count != topology.particle_count:
         raise ValueError("BoneCloth topology record count mismatch")
     identities = []
     positions = []
@@ -199,15 +207,42 @@ def build_mc2_bone_cloth_static_for_task(
     parents = []
     roots = []
     attributes = []
-    for vertex, record in enumerate(records):
-        identity = str(record.get("name") or "")
+    if use_snapshots:
+        armatures = {
+            (item.armature_pointer, item.armature_name)
+            for item in snapshots
+        }
+        if len(armatures) != 1:
+            raise ValueError("BoneCloth task sources must belong to one Armature")
+        source_rows = []
+        offset = 0
+        for snapshot in snapshots:
+            for local_index, identity in enumerate(snapshot.names):
+                local_parent = int(snapshot.parents[local_index])
+                source_rows.append((
+                    identity,
+                    -1 if local_parent < 0 else offset + local_parent,
+                    snapshot.head_tail[local_index, :3],
+                    tuple(float(value) for value in snapshot.matrices[local_index]),
+                ))
+            offset += len(snapshot.names)
+    else:
+        source_rows = tuple(
+            (
+                str(record.get("name") or ""),
+                int(record.get("parent_index", -1)),
+                record.get("head", (0, 0, 0)),
+                record.get("matrix_local"),
+            )
+            for record in records
+        )
+    for vertex, (identity, parent, head, matrix_values) in enumerate(source_rows):
         if not identity:
             raise ValueError("BoneCloth static bone identity cannot be empty")
-        parent = int(record.get("parent_index", -1))
-        matrix = matrix4_tuple_from_flat(record.get("matrix_local"))
+        matrix = matrix4_tuple_from_flat(matrix_values)
         rotation = quaternion_from_matrix4_xyzw_tuple(matrix)
         identities.append(identity)
-        positions.append(tuple(float(value) for value in record.get("head", (0, 0, 0))))
+        positions.append(tuple(float(value) for value in head))
         normals.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 1.0, 0.0)))
         tangents.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 0.0, 1.0)))
         transform_rotations.append(rotation)
@@ -230,10 +265,10 @@ def build_mc2_bone_cloth_static_for_task(
                 float(root_values[vertex]) / float(max(root_count - 1, 1)),
                 float(level_values[vertex]) / float(max(max_level, 1)),
             )
-            for vertex in range(len(records))
+            for vertex in range(record_count)
         )
     else:
-        uvs = ((0.0, 0.0),) * len(records)
+        uvs = ((0.0, 0.0),) * record_count
 
     bone = build_mc2_bone_static(
         task_id=task.task_id,

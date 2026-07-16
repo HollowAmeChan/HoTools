@@ -532,7 +532,7 @@ def step_mc2(
     staged_native_contexts = []
     try:
         for spec in active_specs:
-            static_input_fingerprint, mesh_raw_snapshots = prepare_static_inputs_for_task(spec)
+            static_input_fingerprint, static_input_snapshots = prepare_static_inputs_for_task(spec)
             existing_slot = world.solver_slots.get(spec.task_id)
             existing_native_context = (
                 existing_slot.data.get("native_context")
@@ -564,6 +564,7 @@ def step_mc2(
                 topology = build_mc2_topology_spec(
                     spec,
                     static_input_fingerprint=static_input_fingerprint,
+                    static_input_snapshots=static_input_snapshots,
                 )
             effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
             frame_input = frame_inputs.get(spec.task_id)
@@ -606,14 +607,18 @@ def step_mc2(
                     spec,
                     topology,
                     native_context=staged_native_context,
-                    raw_snapshot=mesh_raw_snapshots[0] if mesh_raw_snapshots else None,
+                    raw_snapshot=static_input_snapshots[0] if static_input_snapshots else None,
                 )
             elif rebuild_reason and bone_static_supported:
                 from .setups.bone_cloth.static_build import (
                     build_mc2_bone_cloth_static_for_task,
                 )
 
-                bone_static = build_mc2_bone_cloth_static_for_task(spec, topology)
+                bone_static = build_mc2_bone_cloth_static_for_task(
+                    spec,
+                    topology,
+                    raw_snapshots=static_input_snapshots,
+                )
             if frame_input is None and automatic_frame_inputs and mesh_static_supported:
                 active_mesh_static = mesh_static
                 if active_mesh_static is None:

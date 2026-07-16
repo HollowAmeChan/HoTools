@@ -113,6 +113,18 @@ class MC2MeshRawSnapshot:
     has_uv: bool
 
 
+@dataclass(frozen=True)
+class MC2BoneRawSnapshot:
+    armature_pointer: int
+    armature_name: str
+    requested: tuple[str, ...]
+    names: tuple[str, ...]
+    parents: np.ndarray
+    head_tail: np.ndarray
+    matrices: np.ndarray
+    resolved: bool
+
+
 def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
     token = _source_token(source)
     topology = _compact_signature((kind, "unresolved", token))
@@ -209,21 +221,25 @@ def _mesh_input_fingerprint(
 
 def prepare_static_inputs_for_task(
     task: "MC2TaskSpec",
-) -> tuple[MC2StaticInputFingerprint, tuple[MC2MeshRawSnapshot | None, ...]]:
-    """Read each Mesh source once and derive the native static fingerprint."""
+) -> tuple[
+    MC2StaticInputFingerprint,
+    tuple[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...],
+]:
+    """Read each source once and derive the native static fingerprint."""
 
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
     sources = []
-    mesh_snapshots: list[MC2MeshRawSnapshot | None] = []
+    raw_snapshots: list[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None] = []
     for source in task.sources:
         if task.setup_type == "mesh_cloth":
             snapshot = _read_mesh_raw_snapshot(source)
-            mesh_snapshots.append(snapshot)
+            raw_snapshots.append(snapshot)
             sources.append(_mesh_input_fingerprint(source, snapshot))
         else:
-            mesh_snapshots.append(None)
-            sources.append(_bone_input_fingerprint(source))
+            snapshot = _read_bone_raw_snapshot(source)
+            raw_snapshots.append(snapshot)
+            sources.append(_bone_input_fingerprint(source, snapshot))
     topology = _compact_signature((
         "mc2_task_topology_v1",
         task.setup_type,
@@ -255,7 +271,7 @@ def prepare_static_inputs_for_task(
         source=source,
         overall=overall,
     )
-    return fingerprint, tuple(mesh_snapshots)
+    return fingerprint, tuple(raw_snapshots)
 
 
 def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
@@ -415,7 +431,7 @@ def _bone_source_selection(source):
     return armature, collection, requested, explicit_chain, names
 
 
-def _bone_input_fingerprint(source) -> dict[str, str]:
+def _read_bone_raw_snapshot(source) -> MC2BoneRawSnapshot:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
     parents = np.empty(len(names), dtype=np.int32)
@@ -433,17 +449,37 @@ def _bone_input_fingerprint(source) -> dict[str, str]:
         if explicit_chain
         else collection is not None and bool(names)
     )
+    return MC2BoneRawSnapshot(
+        armature_pointer=_pointer(armature),
+        armature_name=str(
+            getattr(armature, "name_full", getattr(armature, "name", "")) or ""
+        ),
+        requested=requested,
+        names=names,
+        parents=parents,
+        head_tail=head_tail,
+        matrices=matrices,
+        resolved=resolved,
+    )
+
+
+def _bone_input_fingerprint(
+    source,
+    snapshot: MC2BoneRawSnapshot | None = None,
+) -> dict[str, str]:
+    if snapshot is None:
+        snapshot = _read_bone_raw_snapshot(source)
     from .native import native_module
 
     return dict(native_module().mc2_bone_static_fingerprint_v0(
-        parents,
-        head_tail.reshape((-1,)),
-        matrices.reshape((-1,)),
-        _pointer(armature),
-        str(getattr(armature, "name_full", getattr(armature, "name", "")) or ""),
-        "\0".join(requested),
-        "\0".join(names),
-        resolved,
+        snapshot.parents,
+        snapshot.head_tail.reshape((-1,)),
+        snapshot.matrices.reshape((-1,)),
+        snapshot.armature_pointer,
+        snapshot.armature_name,
+        "\0".join(snapshot.requested),
+        "\0".join(snapshot.names),
+        snapshot.resolved,
     ))
 
 
@@ -487,6 +523,7 @@ class MC2SourceTopologySpec:
     particle_count: int
     resolved: bool
     payload: tuple
+    bone_names: tuple[str, ...] = ()
 
     def debug_dict(self, *, include_payload: bool = False) -> dict:
         result = {
@@ -544,8 +581,13 @@ def _build_source_topology(source_kind: str, source, source_index: int) -> MC2So
     payload = _mesh_payload(source) if source_kind == "mesh" else _bone_payload(source)
     if source_kind == "mesh":
         particle_count = len(payload["positions"])
+        bone_names = ()
     else:
         particle_count = len(payload["bones"])
+        bone_names = tuple(
+            str(record.get("name") or "")
+            for record in payload["bones"]
+        )
     frozen_payload = _freeze(payload)
     return MC2SourceTopologySpec(
         source_index=source_index,
@@ -555,6 +597,7 @@ def _build_source_topology(source_kind: str, source, source_index: int) -> MC2So
         particle_count=particle_count,
         resolved=bool(payload["resolved"]),
         payload=frozen_payload,
+        bone_names=bone_names,
     )
 
 
@@ -591,10 +634,41 @@ def _build_compact_mesh_source_topology(
     )
 
 
+def _build_compact_bone_source_topology(
+    source,
+    source_index: int,
+    snapshot: MC2BoneRawSnapshot,
+) -> MC2SourceTopologySpec:
+    payload = {
+        "resolved": snapshot.resolved,
+        "armature_name": snapshot.armature_name,
+        "armature_pointer": snapshot.armature_pointer,
+        "requested": snapshot.requested,
+    }
+    return MC2SourceTopologySpec(
+        source_index=source_index,
+        source_kind="bone_chain",
+        identity_signature=_signature(_source_token(source)),
+        payload_signature=_signature((
+            snapshot.armature_pointer,
+            snapshot.armature_name,
+            snapshot.requested,
+            snapshot.names,
+        )),
+        particle_count=len(snapshot.names),
+        resolved=snapshot.resolved,
+        payload=_freeze(payload),
+        bone_names=snapshot.names,
+    )
+
+
 def build_mc2_topology_spec(
     task: MC2TaskSpec,
     *,
     static_input_fingerprint: MC2StaticInputFingerprint | None = None,
+    static_input_snapshots: tuple[
+        MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...
+    ] | None = None,
 ) -> MC2TopologySpec:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
@@ -614,6 +688,18 @@ def build_mc2_topology_spec(
                 static_input_fingerprint,
             ),
         )
+    elif (
+        task.setup_type in ("bone_cloth", "bone_spring")
+        and static_input_snapshots is not None
+        and len(static_input_snapshots) == len(task.sources)
+        and all(isinstance(item, MC2BoneRawSnapshot) for item in static_input_snapshots)
+    ):
+        sources = tuple(
+            _build_compact_bone_source_topology(source, index, snapshot)
+            for index, (source, snapshot) in enumerate(
+                zip(task.sources, static_input_snapshots)
+            )
+        )
     else:
         sources = tuple(
             adapter.build_source_topology(source, index)
@@ -627,7 +713,39 @@ def build_mc2_topology_spec(
         child_indices: list[tuple[int, ...]] = []
         root_indices: list[int] = []
         product_chains: list[tuple[int, ...]] = []
-        for source in sources:
+        compact_bone_snapshots = (
+            tuple(static_input_snapshots)
+            if static_input_snapshots is not None
+            and len(static_input_snapshots) == len(sources)
+            and all(isinstance(item, MC2BoneRawSnapshot) for item in static_input_snapshots)
+            else ()
+        )
+        for source, snapshot in zip(sources, compact_bone_snapshots):
+            source_offset = len(positions)
+            product_chains.append(tuple(
+                source_offset + local_index
+                for local_index in range(len(snapshot.names))
+            ))
+            for local_index, name in enumerate(snapshot.names):
+                key = (snapshot.armature_pointer, name)
+                if key in seen_bones:
+                    raise ValueError(f"MC2 task bone source overlaps: {name!r}")
+                seen_bones.add(key)
+                local_parent = int(snapshot.parents[local_index])
+                if local_parent < 0:
+                    root_indices.append(source_offset + local_index)
+                    parent_indices.append(-1)
+                else:
+                    parent_indices.append(source_offset + local_parent)
+                child_indices.append(tuple(
+                    source_offset + child
+                    for child, parent in enumerate(snapshot.parents)
+                    if int(parent) == local_index
+                ))
+                positions.append(tuple(
+                    float(value) for value in snapshot.head_tail[local_index, :3]
+                ))
+        for source in (() if compact_bone_snapshots else sources):
             payload = _thaw(source.payload)
             armature_pointer = int(payload.get("armature_pointer", 0) or 0)
             records = payload.get("bones", ())
@@ -683,9 +801,10 @@ def build_mc2_topology_spec(
             mesh_fingerprint = static_input_fingerprint_for_task(task)
         signature_payload["mesh_topology_fingerprint"] = mesh_fingerprint.topology
     else:
-        signature_payload["source_payload_signatures"] = [
-            source.payload_signature for source in sources
-        ]
+        bone_fingerprint = static_input_fingerprint
+        if not isinstance(bone_fingerprint, MC2StaticInputFingerprint):
+            bone_fingerprint = static_input_fingerprint_for_task(task)
+        signature_payload["bone_topology_fingerprint"] = bone_fingerprint.topology
     if bone_connection is not None:
         signature_payload["bone_connection_signature"] = bone_connection.topology_signature
     return MC2TopologySpec(
@@ -704,6 +823,7 @@ def build_mc2_topology_spec(
 __all__ = [
     "MC2StaticInputFingerprint",
     "MC2MeshRawSnapshot",
+    "MC2BoneRawSnapshot",
     "MC2SourceTopologySpec",
     "MC2TopologySpec",
     "build_mc2_bone_source_topology",
