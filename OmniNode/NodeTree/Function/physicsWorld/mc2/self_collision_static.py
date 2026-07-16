@@ -125,15 +125,15 @@ def build_mc2_self_collision_static(
         getattr(proxy, "native_owned", False)
     ):
         raise TypeError("proxy must be an MC2 proxy static result")
-    depths = tuple(float(value) for value in depths)
-    if len(depths) != proxy.vertex_count:
+    depth_values = np.ascontiguousarray(depths, dtype=np.float64)
+    if depth_values.shape != (proxy.vertex_count,):
         raise ValueError("self-collision depths must match proxy vertices")
 
     from .native import native_module
 
     derived = native_module().mc2_build_self_collision_derived_v0(
         np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
-        np.ascontiguousarray(depths, dtype=np.float64),
+        depth_values,
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
     )

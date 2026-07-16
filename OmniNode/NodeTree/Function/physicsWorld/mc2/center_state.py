@@ -162,9 +162,6 @@ def build_mc2_center_static(
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(world_gravity_direction, dtype=np.float64),
     )
-    fixed = tuple(int(value) for value in derived["fixed_indices"])
-    center = tuple(float(value) for value in derived["local_center_position"])
-    gravity = tuple(float(value) for value in derived["initial_local_gravity_direction"])
     signature = _center_static_signature(
         task_id=proxy.task_id,
         proxy_signature=proxy.proxy_signature,
@@ -184,9 +181,13 @@ def build_mc2_center_static(
     return MC2CenterStaticSpec(
         task_id=proxy.task_id,
         proxy_signature=proxy.proxy_signature,
-        fixed_indices=fixed,
-        local_center_position=center,
-        initial_local_gravity_direction=gravity,
+        fixed_indices=tuple(int(value) for value in derived["fixed_indices"]),
+        local_center_position=tuple(
+            float(value) for value in derived["local_center_position"]
+        ),
+        initial_local_gravity_direction=tuple(
+            float(value) for value in derived["initial_local_gravity_direction"]
+        ),
         center_static_signature=signature,
     )
 

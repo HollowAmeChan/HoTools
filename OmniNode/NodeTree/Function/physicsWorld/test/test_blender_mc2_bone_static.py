@@ -156,9 +156,12 @@ try:
     assert info["proxy_static_ready"] is True
     assert info["baseline_static_ready"] is True
     assert info["bone_static_ready"] is True
-    assert info["owned_static_take_count"] == 1
+    assert info["owned_static_take_count"] == 4
     assert slot.data["bone_static"].native_owned is True
     assert not hasattr(slot.data["bone_static"], "bone")
+    assert not hasattr(slot.data["bone_static"].distance, "distance_targets")
+    assert not hasattr(slot.data["bone_static"].center, "fixed_indices")
+    assert not hasattr(slot.data["bone_static"].self_collision, "primitive_flags")
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
     assert info["self_collision_static_ready"] is True
