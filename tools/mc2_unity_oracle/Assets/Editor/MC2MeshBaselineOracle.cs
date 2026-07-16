@@ -277,6 +277,15 @@ namespace HoTools.MC2Oracle.Editor
             public float3[] VelocityPositions;
         }
 
+        private sealed class AngleRuntimeDump
+        {
+            public float3[] NextPositions;
+            public float3[] VelocityPositions;
+            public float[] LengthScratchAfter;
+            public float3[] LocalPositionScratchAfter;
+            public float3[] RestorationScratchAfter;
+        }
+
         private sealed class ParticleInertiaStepDump
         {
             public float3[] BasePositions;
@@ -565,6 +574,7 @@ namespace HoTools.MC2Oracle.Editor
             int centerFrameShiftWritten = WriteCenterFrameShiftFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
             int tetherRuntimeWritten = WriteTetherRuntimeFixtures(outputDirectory);
+            int angleRuntimeWritten = WriteAngleRuntimeFixtures(outputDirectory);
             int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
             int boneStaticWritten = WriteBoneStaticFixtures(outputDirectory);
             int boneRotationLineWritten = WriteBoneRotationLineFixtures(outputDirectory);
@@ -583,6 +593,7 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
                 + $"{particleStepWritten} particle-step fixtures, "
                 + $"{tetherRuntimeWritten} tether-runtime fixtures, "
+                + $"{angleRuntimeWritten} angle-runtime fixtures, "
                 + $"{boneConnectionWritten} bone-connection fixtures, "
                 + $"{boneStaticWritten} bone-static fixtures, "
                 + $"{boneRotationLineWritten} bone-rotation-line fixtures, "
@@ -1644,6 +1655,15 @@ namespace HoTools.MC2Oracle.Editor
             TetherRuntimeDump dump = RunTetherRuntimeOracle();
             string path = Path.Combine(outputDirectory, "tether_runtime_001.json");
             File.WriteAllText(path, BuildTetherRuntimeJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
+        }
+
+        private static int WriteAngleRuntimeFixtures(string outputDirectory)
+        {
+            AngleRuntimeDump dump = RunAngleRuntimeOracle();
+            string path = Path.Combine(outputDirectory, "angle_runtime_001.json");
+            File.WriteAllText(path, BuildAngleRuntimeJson(dump), new UTF8Encoding(false));
             Debug.Log($"[MC2 Oracle] wrote {path}");
             return 1;
         }
@@ -3668,6 +3688,144 @@ namespace HoTools.MC2Oracle.Editor
             }
         }
 
+        private static AngleRuntimeDump RunAngleRuntimeOracle()
+        {
+            MethodInfo method = typeof(AngleConstraint).GetMethod(
+                "SolverConstraint",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(AngleConstraint).FullName,
+                    "SolverConstraint"
+                );
+            }
+
+            const int vertexCount = 7;
+            var team = new TeamManager.TeamData
+            {
+                particleChunk = new DataChunk(0, vertexCount),
+                proxyCommonChunk = new DataChunk(0, vertexCount),
+                baseLineChunk = new DataChunk(0, 2),
+                baseLineDataChunk = new DataChunk(0, vertexCount),
+                gravityDot = 0.0f,
+            };
+            var parameters = new ClothParameters
+            {
+                angleConstraint = new AngleConstraint.AngleConstraintParams
+                {
+                    useAngleRestoration = true,
+                    restorationStiffness = new float4x4(
+                        new float4(0.16f), new float4(0.16f),
+                        new float4(0.16f), new float4(0.16f)
+                    ),
+                    restorationVelocityAttenuation = 0.8f,
+                    restorationGravityFalloff = 0.25f,
+                    useAngleLimit = true,
+                    limitCurveData = new float4x4(
+                        new float4(25.0f), new float4(25.0f),
+                        new float4(25.0f), new float4(25.0f)
+                    ),
+                    limitstiffness = 0.9f,
+                },
+            };
+            var attributes = new NativeArray<VertexAttribute>(
+                new[]
+                {
+                    VertexAttribute.Fixed, VertexAttribute.Move,
+                    VertexAttribute.Move, VertexAttribute.Move,
+                    VertexAttribute.Fixed, VertexAttribute.Move,
+                    VertexAttribute.Move,
+                },
+                Allocator.TempJob
+            );
+            var depths = new NativeArray<float>(
+                new[] { 0.0f, 0.2f, 0.4f, 0.6f, 0.0f, 0.5f, 0.8f },
+                Allocator.TempJob
+            );
+            var parents = new NativeArray<int>(
+                new[] { -1, 0, 1, 2, -1, 4, 5 },
+                Allocator.TempJob
+            );
+            var baselineStarts = new NativeArray<ushort>(
+                new ushort[] { 0, 4 }, Allocator.TempJob
+            );
+            var baselineCounts = new NativeArray<ushort>(
+                new ushort[] { 4, 3 }, Allocator.TempJob
+            );
+            var baselineData = new NativeArray<ushort>(
+                new ushort[] { 0, 1, 2, 3, 4, 5, 6 }, Allocator.TempJob
+            );
+            var next = new NativeArray<float3>(
+                P((0, 0, 0), (1.05f, 0.15f, 0), (2.05f, 0.75f, 0.15f),
+                  (3.05f, 1.35f, -0.1f), (0, 1, 0),
+                  (0.95f, 1.15f, 0.2f), (1.8f, 1.35f, 0.55f)),
+                Allocator.TempJob
+            );
+            var velocityPositions = new NativeArray<float3>(next.ToArray(), Allocator.TempJob);
+            var friction = new NativeArray<float>(vertexCount, Allocator.TempJob);
+            var stepBasicPositions = new NativeArray<float3>(
+                P((0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0),
+                  (0, 1, 0), (1, 1, 0), (2, 1, 0)),
+                Allocator.TempJob
+            );
+            var stepBasicRotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, vertexCount).ToArray(),
+                Allocator.TempJob
+            );
+            var lengthScratch = new NativeArray<float>(vertexCount, Allocator.TempJob);
+            var localPositionScratch = new NativeArray<float3>(vertexCount, Allocator.TempJob);
+            var localRotationScratch = new NativeArray<quaternion>(vertexCount, Allocator.TempJob);
+            var rotationScratch = new NativeArray<quaternion>(vertexCount, Allocator.TempJob);
+            var restorationScratch = new NativeArray<float3>(vertexCount, Allocator.TempJob);
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, 2),
+                    new float4(1.0f, 1.0f, 1.0f, 1.25f),
+                    team,
+                    parameters,
+                    attributes,
+                    depths,
+                    parents,
+                    baselineStarts,
+                    baselineCounts,
+                    baselineData,
+                    next,
+                    velocityPositions,
+                    friction,
+                    stepBasicPositions,
+                    stepBasicRotations,
+                    lengthScratch,
+                    localPositionScratch,
+                    localRotationScratch,
+                    rotationScratch,
+                    restorationScratch,
+                };
+                InvokeStatic(method, arguments);
+                return new AngleRuntimeDump
+                {
+                    NextPositions = next.ToArray(),
+                    VelocityPositions = velocityPositions.ToArray(),
+                    LengthScratchAfter = lengthScratch.ToArray(),
+                    LocalPositionScratchAfter = localPositionScratch.ToArray(),
+                    RestorationScratchAfter = restorationScratch.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose(); depths.Dispose(); parents.Dispose();
+                baselineStarts.Dispose(); baselineCounts.Dispose(); baselineData.Dispose();
+                next.Dispose(); velocityPositions.Dispose(); friction.Dispose();
+                stepBasicPositions.Dispose(); stepBasicRotations.Dispose();
+                lengthScratch.Dispose(); localPositionScratch.Dispose();
+                localRotationScratch.Dispose(); rotationScratch.Dispose();
+                restorationScratch.Dispose();
+            }
+        }
+
         private static ParticleInertiaStepDump RunParticleInertiaStepOracle()
         {
             MethodInfo method = typeof(SimulationManager).GetMethod(
@@ -5260,6 +5418,54 @@ namespace HoTools.MC2Oracle.Editor
             text.AppendLine("  \"expected\": {");
             Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
             Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildAngleRuntimeJson(AngleRuntimeDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote("angle_runtime_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text, 2, "source",
+                SourceJson("Runtime/Cloth/Constraints/AngleConstraint.cs::SolverConstraint")
+            );
+            Property(
+                text, 2, "scope",
+                Quote("Direct Angle substep covers two baseline chains, Fixed roots, Restoration plus Limit iteration, gravity falloff, velocity attenuation, and scratch clear.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_power", "[1,1,1,1.25]");
+            Property(text, 4, "attributes", "[1,2,2,2,1,2,2]");
+            Property(text, 4, "depths", "[0,0.2,0.4,0.6,0,0.5,0.8]");
+            Property(text, 4, "parent_indices", "[-1,0,1,2,-1,4,5]");
+            Property(text, 4, "baseline_start", "[0,4]");
+            Property(text, 4, "baseline_count", "[4,3]");
+            Property(text, 4, "baseline_data", "[0,1,2,3,4,5,6]");
+            Property(text, 4, "next_positions", "[[0,0,0],[1.05,0.15,0],[2.05,0.75,0.15],[3.05,1.35,-0.1],[0,1,0],[0.95,1.15,0.2],[1.8,1.35,0.55]]");
+            Property(text, 4, "velocity_positions", "[[0,0,0],[1.05,0.15,0],[2.05,0.75,0.15],[3.05,1.35,-0.1],[0,1,0],[0.95,1.15,0.2],[1.8,1.35,0.55]]");
+            Property(text, 4, "friction", "[0,0,0,0,0,0,0]");
+            Property(text, 4, "step_basic_positions", "[[0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,1,0],[1,1,0],[2,1,0]]");
+            Property(text, 4, "step_basic_rotations_xyzw", "[[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1]]");
+            Property(text, 4, "restoration_stiffness", "0.16");
+            Property(text, 4, "restoration_velocity_attenuation", "0.8");
+            Property(text, 4, "restoration_gravity_falloff", "0.25");
+            Property(text, 4, "gravity_dot", "0");
+            Property(text, 4, "limit_angle_degrees", "25");
+            Property(text, 4, "limit_stiffness", "0.9", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json));
+            Property(text, 4, "length_scratch_after", ArrayJson(dump.LengthScratchAfter, FloatJson));
+            Property(text, 4, "local_position_scratch_after", ArrayJson(dump.LocalPositionScratchAfter, Vector3Json));
+            Property(text, 4, "restoration_scratch_after", ArrayJson(dump.RestorationScratchAfter, Vector3Json), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

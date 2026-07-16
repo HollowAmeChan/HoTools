@@ -49,7 +49,7 @@
 | N-01 | prediction、Pin、constraint 顺序与 post | 完全对齐 | Tier A 双子步顺序 + native V0 + Blender 5.1 | 无 | 否 |
 | N-02 | Tether | 完全对齐 | 直接Tier A runtime + py313 native + Blender 5.1 production solve | stretch/compression、Fixed/missing-root gate与velocity-reference attenuation均闭环 | 否 |
 | N-03 | Distance | 完全对齐 | 7组static、2组ordered runtime、Tier A双子步frame与native双阶段执行 | correction按0.3 attenuation进入velocity-reference，post消费并跨子步提交 | 否 |
-| N-04 | Angle | 实现完成/证据缺口 | py313 kernel/V0 + Blender 5.1 Mesh/Bone solve | 补独立 Tier A Angle substep fixture | 是 |
+| N-04 | Angle | 完全对齐 | 直接Tier A runtime + py313 native/V0 + Blender 5.1 Mesh/Bone solve | 双baseline、Fixed root、Restoration+Limit、falloff/attenuation与scratch clear均闭环 | 否 |
 | N-05 | Triangle Bending | 完全对齐 | 3组 Tier A runtime + static role/order + native fixed-point sum | 无 | 否 |
 | N-06 | Motion | 实现完成/证据缺口 | py313 kernel/V0 + Blender 5.1 Fixed Mesh | 补独立 Tier A Motion substep fixture | 是 |
 | K-01 | 外部 Point/Edge collider | 限定域对齐 | py313 四 primitive/数值 + Blender 5.1 Mesh/Bone | 当前声明域不含完整 Unity collider component lifecycle | 否 |
@@ -61,7 +61,7 @@
 | O-01 | Mesh result transaction 与 GN writeback | 完全对齐 | candidate/envelope、发布回滚、拓扑失败恢复、Blender 5.1 | 无 | 否 |
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component Blender 5.1 | 与 S-03/S-04 相同的 Line/transform 限定域 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
-| P-01 | V1-R 直接 oracle 闭环 | 产品收尾 | static/runtime主体、Distance frame与Tether runtime已有Tier A | 关闭 N-04/N-06 两项 | 是 |
+| P-01 | V1-R 直接 oracle 闭环 | 产品收尾 | static/runtime主体、Distance/Tether/Angle direct runtime已有Tier A | 关闭 N-06 | 是 |
 | P-02 | 真实生产资产验收 | 产品收尾 | 自动化最小场景已覆盖 Mesh/Bone/collider/self | 固定代表性 MeshCloth、BoneCloth、BoneSpring 资产并记录预期与失败边界 | 是 |
 | P-03 | 稳定性与性能门禁 | 产品收尾 | context 双 ABI soak、dispose 与后台测试已存在 | 增加 V1-R 混合场景长时 soak、重建/清缓存循环与性能基线 | 是 |
 | P-04 | 旧 MC2 路径删除 | 产品收尾 | 新 solver 不调用旧 package | 删除旧节点/package/full-core/context/shadow pipeline；确认无 registry/asset fallback | 是 |
@@ -71,11 +71,11 @@
 
 ## 当前验收结论
 
-`V1-R` 的主体数值与 Blender 生产链已经成形，当前不是继续横向扩功能，而是关闭 **2 个数值证据项 + 2 个产品验收项 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的主体数值与 Blender 生产链已经成形，当前不是继续横向扩功能，而是关闭 **1 个数值证据项 + 2 个产品验收项 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `N-04/N-06`：Angle、Motion 独立 Tier A substep fixture。
+1. `N-06`：Motion 独立 Tier A substep fixture。
 2. `P-02`：三 setup 代表性真实资产验收。
 3. `P-03`：混合场景 soak、资源循环与性能门禁。
 4. `P-04`：旧 MC2 路径删除。

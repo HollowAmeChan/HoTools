@@ -67,6 +67,10 @@ directory:
 - `tether_runtime_*.json`: direct reflective call to fixed source
   `TetherConstraint.SolverConstraint()`, freezing compression/stretch
   projection, Fixed/missing-root gates, and velocity-reference attenuation.
+- `angle_runtime_*.json`: direct reflective call to fixed source
+  `AngleConstraint.SolverConstraint()`, freezing Restoration plus Limit across
+  two baseline chains, Fixed roots, gravity falloff, velocity attenuation, and
+  scratch clear.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular

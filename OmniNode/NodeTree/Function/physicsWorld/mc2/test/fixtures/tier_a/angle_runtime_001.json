@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "case_id": "angle_runtime_001",
+  "oracle_tier": "A",
+  "mc2_version": "2.18.1",
+  "mc2_commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/Cloth/Constraints/AngleConstraint.cs::SolverConstraint"]
+  },
+  "scope": "Direct Angle substep covers two baseline chains, Fixed roots, Restoration plus Limit iteration, gravity falloff, velocity attenuation, and scratch clear.",
+  "input": {
+    "simulation_power": [1,1,1,1.25],
+    "attributes": [1,2,2,2,1,2,2],
+    "depths": [0,0.2,0.4,0.6,0,0.5,0.8],
+    "parent_indices": [-1,0,1,2,-1,4,5],
+    "baseline_start": [0,4],
+    "baseline_count": [4,3],
+    "baseline_data": [0,1,2,3,4,5,6],
+    "next_positions": [[0,0,0],[1.05,0.15,0],[2.05,0.75,0.15],[3.05,1.35,-0.1],[0,1,0],[0.95,1.15,0.2],[1.8,1.35,0.55]],
+    "velocity_positions": [[0,0,0],[1.05,0.15,0],[2.05,0.75,0.15],[3.05,1.35,-0.1],[0,1,0],[0.95,1.15,0.2],[1.8,1.35,0.55]],
+    "friction": [0,0,0,0,0,0,0],
+    "step_basic_positions": [[0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,1,0],[1,1,0],[2,1,0]],
+    "step_basic_rotations_xyzw": [[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1],[0,0,0,1]],
+    "restoration_stiffness": 0.16,
+    "restoration_velocity_attenuation": 0.8,
+    "restoration_gravity_falloff": 0.25,
+    "gravity_dot": 0,
+    "limit_angle_degrees": 25,
+    "limit_stiffness": 0.9
+  },
+  "expected": {
+    "next_positions": [[0,0,0],[1.02921617,0.173502252,0.0137805194],[2.09056187,0.6563493,0.0900773853],[3.16371441,1.163457,-0.0428046],[0,1,0],[0.949796259,1.13192677,0.184107646],[1.84314108,1.2869885,0.4431898]],
+    "velocity_positions": [[0,0,0],[1.03411043,0.168904468,0.0110285021],[2.08202624,0.674815,0.101996332],[3.14040446,1.20040119,-0.05413484],[0,1,0],[0.950118661,1.13557959,0.187338024],[1.833623,1.29937911,0.464193344]],
+    "length_scratch_after": [0,0,0,0,0,0,0],
+    "local_position_scratch_after": [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+    "restoration_scratch_after": [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+  }
+}

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,19 @@ sys.path.insert(0, os.environ.get("HOTOOLS_NATIVE_TEST_DIR", str(ROOT / "_Lib" /
 
 import hotools_native  # noqa: E402
 
+
+FIXTURE = (
+    ROOT
+    / "OmniNode"
+    / "NodeTree"
+    / "Function"
+    / "physicsWorld"
+    / "mc2"
+    / "test"
+    / "fixtures"
+    / "tier_a"
+    / "angle_runtime_001.json"
+)
 
 EPSILON = 0.00000001
 ANGLE_LIMIT_ITERATION = 3
@@ -354,8 +368,79 @@ def assert_native_matches_reference():
     np.testing.assert_allclose(actual_velocity_positions, expected_velocity_positions, rtol=1e-5, atol=1e-5)
 
 
+def assert_native_matches_tier_a_oracle():
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["oracle_tier"] == "A"
+    assert fixture["mc2_commit"] == "418f89ff31a45bb4b2336641ad5907a1110eabea"
+    values = fixture["input"]
+    expected = fixture["expected"]
+
+    attributes = np.asarray(values["attributes"], dtype=np.uint8)
+    positions = np.asarray(values["next_positions"], dtype=np.float32)
+    velocity_positions = np.asarray(values["velocity_positions"], dtype=np.float32)
+    depths = np.asarray(values["depths"], dtype=np.float32)
+    inv_masses = np.asarray((attributes & 0x02) != 0, dtype=np.float32)
+    restoration_values = np.full(
+        len(positions),
+        values["restoration_stiffness"] * values["simulation_power"][3],
+        dtype=np.float32,
+    )
+    limit_values = np.full(
+        len(positions), values["limit_angle_degrees"], dtype=np.float32
+    )
+
+    hotools_native.project_angle_constraints_mc2(
+        positions,
+        inv_masses,
+        np.asarray(values["parent_indices"], dtype=np.int32),
+        np.asarray(values["baseline_start"], dtype=np.int32),
+        np.asarray(values["baseline_count"], dtype=np.int32),
+        np.asarray(values["baseline_data"], dtype=np.int32),
+        np.asarray(values["step_basic_positions"], dtype=np.float32),
+        np.asarray(values["step_basic_rotations_xyzw"], dtype=np.float32),
+        restoration_values,
+        limit_values,
+        velocity_positions,
+        values["restoration_velocity_attenuation"],
+        values["restoration_gravity_falloff"],
+        values["limit_stiffness"],
+    )
+
+    np.testing.assert_allclose(
+        positions,
+        np.asarray(expected["next_positions"], dtype=np.float32),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        velocity_positions,
+        np.asarray(expected["velocity_positions"], dtype=np.float32),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        np.asarray(expected["length_scratch_after"], dtype=np.float32),
+        np.zeros(len(depths), dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(expected["local_position_scratch_after"], dtype=np.float32),
+        np.zeros((len(depths), 3), dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(expected["restoration_scratch_after"], dtype=np.float32),
+        np.zeros((len(depths), 3), dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
 def main():
     assert_native_matches_reference()
+    assert_native_matches_tier_a_oracle()
     print("mc2 angle native smoke test passed")
 
 
