@@ -113,6 +113,84 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     np.testing.assert_allclose(np.linalg.norm(bind_rotations, axis=1), 1.0, atol=1.0e-12)
 
 
+def test_mesh_baseline_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 3, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x02), dtype=np.uint8)
+    edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
+    parents = np.empty(3, dtype=np.int32)
+    child_ranges = np.empty((3, 2), dtype=np.int32)
+    child_data = np.empty(3, dtype=np.int32)
+    baseline_flags = np.empty(3, dtype=np.uint8)
+    baseline_ranges = np.empty((3, 2), dtype=np.int32)
+    baseline_data = np.empty(3, dtype=np.int32)
+    roots = np.empty(3, dtype=np.int32)
+    depths = np.empty(3, dtype=np.float64)
+    local_positions = np.empty((3, 3), dtype=np.float64)
+    local_rotations = np.empty((3, 4), dtype=np.float64)
+
+    counts = hotools_native.mc2_build_mesh_baseline_derived_v0(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        edges,
+        parents,
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        roots,
+        depths,
+        local_positions,
+        local_rotations,
+    )
+
+    assert counts == {"child_count": 2, "baseline_count": 1, "baseline_data_count": 3}
+    np.testing.assert_array_equal(parents, (-1, 0, 1))
+    np.testing.assert_array_equal(child_ranges, ((0, 1), (1, 1), (2, 0)))
+    np.testing.assert_array_equal(child_data[:2], (1, 2))
+    np.testing.assert_array_equal(baseline_flags[:1], (0x01,))
+    np.testing.assert_array_equal(baseline_ranges[:1], ((0, 3),))
+    np.testing.assert_array_equal(baseline_data, (0, 1, 2))
+    np.testing.assert_array_equal(roots, (-1, 0, 0))
+    np.testing.assert_allclose(depths, (0.0, 0.5, 1.0), atol=1.0e-12)
+    np.testing.assert_allclose(
+        local_positions,
+        ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, 1.0)),
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(local_rotations, ((0.0, 0.0, 0.0, 1.0),) * 3, atol=1.0e-12)
+
+    shared_attributes = np.asarray((0x01, 0x02, 0x02), dtype=np.uint8)
+    shared_roots = np.empty(3, dtype=np.int32)
+    shared_depths = np.empty(3, dtype=np.float64)
+    shared_positions = np.empty((3, 3), dtype=np.float64)
+    shared_rotations = np.empty((3, 4), dtype=np.float64)
+    hotools_native.mc2_build_baseline_pose_depth_derived_v0(
+        positions,
+        normals,
+        tangents,
+        shared_attributes,
+        parents,
+        baseline_data,
+        shared_roots,
+        shared_depths,
+        shared_positions,
+        shared_rotations,
+    )
+    np.testing.assert_array_equal(shared_attributes, attributes)
+    np.testing.assert_array_equal(shared_roots, roots)
+    np.testing.assert_allclose(shared_depths, depths, atol=1.0e-12)
+    np.testing.assert_allclose(shared_positions, local_positions, atol=1.0e-12)
+    np.testing.assert_allclose(shared_rotations, local_rotations, atol=1.0e-12)
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
@@ -120,3 +198,5 @@ if __name__ == "__main__":
     print("PASS MC2 native triangle direction validation")
     test_mesh_final_proxy_derived_arrays()
     print("PASS MC2 native final proxy derived arrays")
+    test_mesh_baseline_derived_arrays()
+    print("PASS MC2 native baseline derived arrays")

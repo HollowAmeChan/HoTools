@@ -40,6 +40,7 @@ using namespace hotools::py;  // Buffer, expect_*, as_double, as_long（solve_me
 using f32_2d  = nb::ndarray<float,          nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using f32_1d  = nb::ndarray<float,          nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using f64_2d  = nb::ndarray<double,         nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using f64_1d  = nb::ndarray<double,         nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using cf64_2d = nb::ndarray<const double,   nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using i32_2d  = nb::ndarray<int32_t,        nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using i32_1d  = nb::ndarray<int32_t,        nb::ndim<1>, nb::c_contig, nb::device::cpu>;
@@ -976,6 +977,150 @@ NB_MODULE(hotools_native, m) {
             result["neighbor_count"] = neighbor_count;
             result["triangle_record_count"] = triangle_record_count;
             return result;
+        });
+    m.def("mc2_build_mesh_baseline_derived_v0",
+        [](cf64_2d positions,
+           cf64_2d local_normals,
+           cf64_2d local_tangents,
+           u8_1d vertex_attributes,
+           ci32_2d edges,
+           i32_1d out_parents,
+           i32_2d out_child_ranges,
+           i32_1d out_child_data,
+           u8_1d out_baseline_flags,
+           i32_2d out_baseline_ranges,
+           i32_1d out_baseline_data,
+           i32_1d out_roots,
+           f64_1d out_depths,
+           f64_2d out_local_positions,
+           f64_2d out_local_rotations) {
+            const auto vertex_count = positions.shape(0);
+            check_cols(positions, 3, "positions");
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_len(local_normals.shape(0), vertex_count, "local_normals");
+            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_cols(edges, 2, "edges");
+            check_indices_in_range(edges.data(), edges.shape(0) * 2, vertex_count, "edges");
+            check_len(out_parents.shape(0), vertex_count, "out_parents");
+            check_cols(out_child_ranges, 2, "out_child_ranges");
+            check_len(out_child_ranges.shape(0), vertex_count, "out_child_ranges");
+            check_cols(out_baseline_ranges, 2, "out_baseline_ranges");
+            check_len(out_baseline_ranges.shape(0), vertex_count, "out_baseline_ranges");
+            check_len(out_roots.shape(0), vertex_count, "out_roots");
+            check_len(out_depths.shape(0), vertex_count, "out_depths");
+            check_cols(out_local_positions, 3, "out_local_positions");
+            check_len(out_local_positions.shape(0), vertex_count, "out_local_positions");
+            check_cols(out_local_rotations, 4, "out_local_rotations");
+            check_len(out_local_rotations.shape(0), vertex_count, "out_local_rotations");
+            hotools::Mc2MeshBaselineDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_mesh_baseline_derived(
+                    positions.data(),
+                    local_normals.data(),
+                    local_tangents.data(),
+                    vertex_attributes.data(),
+                    vertex_count,
+                    edges.data(),
+                    edges.shape(0)
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            const auto child_count = derived.child_data.size();
+            const auto baseline_count = derived.baseline_flags.size();
+            const auto baseline_data_count = derived.baseline_data.size();
+            if (out_child_data.shape(0) < child_count ||
+                out_baseline_flags.shape(0) < baseline_count ||
+                out_baseline_ranges.shape(0) < baseline_count ||
+                out_baseline_data.shape(0) < baseline_data_count) {
+                throw nb::value_error("MC2 baseline output buffer is too small");
+            }
+            std::copy(derived.vertex_attributes.begin(), derived.vertex_attributes.end(), vertex_attributes.data());
+            std::copy(derived.parent_indices.begin(), derived.parent_indices.end(), out_parents.data());
+            std::copy(derived.child_ranges.begin(), derived.child_ranges.end(), out_child_ranges.data());
+            std::copy(derived.child_data.begin(), derived.child_data.end(), out_child_data.data());
+            std::copy(derived.baseline_flags.begin(), derived.baseline_flags.end(), out_baseline_flags.data());
+            std::copy(derived.baseline_ranges.begin(), derived.baseline_ranges.end(), out_baseline_ranges.data());
+            std::copy(derived.baseline_data.begin(), derived.baseline_data.end(), out_baseline_data.data());
+            std::copy(derived.root_indices.begin(), derived.root_indices.end(), out_roots.data());
+            std::copy(derived.depths.begin(), derived.depths.end(), out_depths.data());
+            std::copy(
+                derived.vertex_local_positions.begin(),
+                derived.vertex_local_positions.end(),
+                out_local_positions.data()
+            );
+            std::copy(
+                derived.vertex_local_rotations.begin(),
+                derived.vertex_local_rotations.end(),
+                out_local_rotations.data()
+            );
+            nb::dict result;
+            result["child_count"] = child_count;
+            result["baseline_count"] = baseline_count;
+            result["baseline_data_count"] = baseline_data_count;
+            return result;
+        });
+    m.def("mc2_build_baseline_pose_depth_derived_v0",
+        [](cf64_2d positions,
+           cf64_2d local_normals,
+           cf64_2d local_tangents,
+           u8_1d vertex_attributes,
+           ci32_1d parent_indices,
+           ci32_1d baseline_data,
+           i32_1d out_roots,
+           f64_1d out_depths,
+           f64_2d out_local_positions,
+           f64_2d out_local_rotations) {
+            const auto vertex_count = positions.shape(0);
+            check_cols(positions, 3, "positions");
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_len(local_normals.shape(0), vertex_count, "local_normals");
+            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_len(parent_indices.shape(0), vertex_count, "parent_indices");
+            check_root_or_minus_one(parent_indices.data(), vertex_count, vertex_count, "parent_indices");
+            check_indices_in_range(
+                baseline_data.data(), baseline_data.shape(0), vertex_count, "baseline_data"
+            );
+            check_len(out_roots.shape(0), vertex_count, "out_roots");
+            check_len(out_depths.shape(0), vertex_count, "out_depths");
+            check_cols(out_local_positions, 3, "out_local_positions");
+            check_len(out_local_positions.shape(0), vertex_count, "out_local_positions");
+            check_cols(out_local_rotations, 4, "out_local_rotations");
+            check_len(out_local_rotations.shape(0), vertex_count, "out_local_rotations");
+            hotools::Mc2BaselinePoseDepthDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_baseline_pose_depth_derived(
+                    positions.data(),
+                    local_normals.data(),
+                    local_tangents.data(),
+                    vertex_attributes.data(),
+                    parent_indices.data(),
+                    vertex_count,
+                    baseline_data.data(),
+                    baseline_data.shape(0)
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            std::copy(derived.vertex_attributes.begin(), derived.vertex_attributes.end(), vertex_attributes.data());
+            std::copy(derived.root_indices.begin(), derived.root_indices.end(), out_roots.data());
+            std::copy(derived.depths.begin(), derived.depths.end(), out_depths.data());
+            std::copy(
+                derived.vertex_local_positions.begin(),
+                derived.vertex_local_positions.end(),
+                out_local_positions.data()
+            );
+            std::copy(
+                derived.vertex_local_rotations.begin(),
+                derived.vertex_local_rotations.end(),
+                out_local_rotations.data()
+            );
         });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",

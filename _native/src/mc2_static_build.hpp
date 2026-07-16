@@ -41,4 +41,47 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     std::size_t line_count
 );
 
+struct Mc2MeshBaselineDerived {
+    std::vector<std::uint8_t> vertex_attributes;
+    std::vector<std::int32_t> parent_indices;
+    std::vector<std::int32_t> child_ranges;
+    std::vector<std::int32_t> child_data;
+    std::vector<std::uint8_t> baseline_flags;
+    std::vector<std::int32_t> baseline_ranges;
+    std::vector<std::int32_t> baseline_data;
+    std::vector<std::int32_t> root_indices;
+    std::vector<double> depths;
+    std::vector<double> vertex_local_positions;
+    std::vector<double> vertex_local_rotations;
+};
+
+struct Mc2BaselinePoseDepthDerived {
+    std::vector<std::uint8_t> vertex_attributes;
+    std::vector<std::int32_t> root_indices;
+    std::vector<double> depths;
+    std::vector<double> vertex_local_positions;
+    std::vector<double> vertex_local_rotations;
+};
+
+Mc2BaselinePoseDepthDerived mc2_build_baseline_pose_depth_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* baseline_data,
+    std::size_t baseline_data_count
+);
+
+Mc2MeshBaselineDerived mc2_build_mesh_baseline_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count
+);
+
 }  // namespace hotools

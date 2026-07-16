@@ -133,6 +133,28 @@ Vec4 orientation_quaternion(const Vec3& normal, const Vec3& tangent) {
     );
 }
 
+Vec4 quaternion_conjugate(const Vec4& value) {
+    return {-value.x, -value.y, -value.z, value.w};
+}
+
+Vec4 quaternion_multiply(const Vec4& first, const Vec4& second) {
+    return {
+        first.w * second.x + first.x * second.w + first.y * second.z - first.z * second.y,
+        first.w * second.y - first.x * second.z + first.y * second.w + first.z * second.x,
+        first.w * second.z + first.x * second.y - first.y * second.x + first.z * second.w,
+        first.w * second.w - first.x * second.x - first.y * second.y - first.z * second.z,
+    };
+}
+
+Vec3 rotate_by_inverse(const Vec4& rotation, const Vec3& value) {
+    const Vec4 pure {value.x, value.y, value.z, 0.0};
+    const Vec4 result = quaternion_multiply(
+        quaternion_multiply(quaternion_conjugate(rotation), pure),
+        rotation
+    );
+    return {result.x, result.y, result.z};
+}
+
 using Triangle = std::array<std::int32_t, 3>;
 using Edge = std::pair<std::int32_t, std::int32_t>;
 
@@ -524,6 +546,271 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
         result.bind_rotations[offset + 2] = -rotation.z;
         result.bind_rotations[offset + 3] = rotation.w;
     }
+    return result;
+}
+
+Mc2BaselinePoseDepthDerived mc2_build_baseline_pose_depth_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* baseline_data,
+    std::size_t baseline_data_count
+) {
+    if (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
+        vertex_attributes == nullptr || parent_indices == nullptr ||
+        (baseline_data_count > 0 && baseline_data == nullptr)) {
+        throw std::invalid_argument("MC2 baseline pose/depth buffers cannot be null");
+    }
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr std::uint8_t kZeroDistance = 0x20u;
+    constexpr double kZeroDistanceEpsilon = 1.0e-8;
+    auto is_move = [](std::uint8_t value) { return (value & kMove) != 0u; };
+    Mc2BaselinePoseDepthDerived result;
+    result.vertex_attributes.assign(vertex_attributes, vertex_attributes + vertex_count);
+    result.root_indices.assign(vertex_count, -1);
+    result.depths.assign(vertex_count, 0.0);
+    result.vertex_local_positions.assign(vertex_count * 3, 0.0);
+    result.vertex_local_rotations.assign(vertex_count * 4, 0.0);
+    std::vector<Vec4> orientations(vertex_count);
+    std::vector<bool> orientation_ready(vertex_count, false);
+    auto get_orientation = [&](std::size_t vertex) {
+        if (!orientation_ready[vertex]) {
+            orientations[vertex] = orientation_quaternion(
+                load_vec3(local_normals, vertex),
+                load_vec3(local_tangents, vertex)
+            );
+            orientation_ready[vertex] = true;
+        }
+        return orientations[vertex];
+    };
+    for (std::size_t data_index = 0; data_index < baseline_data_count; ++data_index) {
+        const auto vertex_value = baseline_data[data_index];
+        if (vertex_value < 0 || static_cast<std::size_t>(vertex_value) >= vertex_count) {
+            throw std::invalid_argument("baseline_data contains an out-of-range vertex index");
+        }
+        const auto vertex = static_cast<std::size_t>(vertex_value);
+        const auto parent_value = parent_indices[vertex];
+        if (parent_value < 0) {
+            result.vertex_local_rotations[vertex * 4 + 3] = 1.0;
+            continue;
+        }
+        if (static_cast<std::size_t>(parent_value) >= vertex_count) {
+            throw std::invalid_argument("parent_indices contains an out-of-range vertex index");
+        }
+        const auto parent = static_cast<std::size_t>(parent_value);
+        const Vec4 parent_rotation = get_orientation(parent);
+        const Vec4 vertex_rotation = get_orientation(vertex);
+        const Vec3 local_position = rotate_by_inverse(
+            parent_rotation,
+            subtract(load_vec3(positions, vertex), load_vec3(positions, parent))
+        );
+        store_vec3(result.vertex_local_positions, vertex, local_position);
+        const Vec4 local_rotation = normalize(
+            quaternion_multiply(quaternion_conjugate(parent_rotation), vertex_rotation),
+            "vertex local rotation"
+        );
+        const auto offset = vertex * 4;
+        result.vertex_local_rotations[offset] = local_rotation.x;
+        result.vertex_local_rotations[offset + 1] = local_rotation.y;
+        result.vertex_local_rotations[offset + 2] = local_rotation.z;
+        result.vertex_local_rotations[offset + 3] = local_rotation.w;
+        if (length(local_position) < kZeroDistanceEpsilon) {
+            result.vertex_attributes[vertex] |= kZeroDistance;
+        }
+    }
+    std::vector<double> lengths(vertex_count, 0.0);
+    double max_length = 0.0;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (!is_move(result.vertex_attributes[vertex])) continue;
+        auto current = vertex;
+        auto parent_value = parent_indices[current];
+        std::size_t guard = 0;
+        while (parent_value >= 0) {
+            if (static_cast<std::size_t>(parent_value) >= vertex_count || ++guard > vertex_count) {
+                throw std::invalid_argument("parent_indices contains an invalid chain");
+            }
+            const auto parent = static_cast<std::size_t>(parent_value);
+            lengths[vertex] += length(
+                subtract(load_vec3(positions, current), load_vec3(positions, parent))
+            );
+            result.root_indices[vertex] = parent_value;
+            if (!is_move(result.vertex_attributes[parent])) break;
+            current = parent;
+            parent_value = parent_indices[current];
+        }
+        max_length = std::max(max_length, lengths[vertex]);
+    }
+    if (max_length > kZeroDistanceEpsilon) {
+        for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+            result.depths[vertex] = std::clamp(lengths[vertex] / max_length, 0.0, 1.0);
+        }
+    }
+    return result;
+}
+
+Mc2MeshBaselineDerived mc2_build_mesh_baseline_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count
+) {
+    if (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
+        vertex_attributes == nullptr || (edge_count > 0 && edges == nullptr)) {
+        throw std::invalid_argument("MC2 baseline derived buffers cannot be null");
+    }
+    constexpr std::uint8_t kFixed = 0x01u;
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr std::uint8_t kTriangle = 0x80u;
+    constexpr std::uint8_t kIncludeLine = 0x01u;
+    auto is_fixed = [](std::uint8_t value) { return (value & kFixed) != 0u; };
+    auto is_move = [](std::uint8_t value) { return (value & kMove) != 0u; };
+    auto is_invalid = [](std::uint8_t value) {
+        return (value & static_cast<std::uint8_t>(kFixed | kMove)) == 0u;
+    };
+
+    Mc2MeshBaselineDerived result;
+    result.vertex_attributes.assign(vertex_attributes, vertex_attributes + vertex_count);
+    result.parent_indices.assign(vertex_count, -1);
+    std::vector<std::vector<std::int32_t>> adjacency(vertex_count);
+    for (std::size_t index = 0; index < edge_count; ++index) {
+        const std::int32_t first = edges[index * 2];
+        const std::int32_t second = edges[index * 2 + 1];
+        if (first < 0 || second < 0 ||
+            static_cast<std::size_t>(first) >= vertex_count ||
+            static_cast<std::size_t>(second) >= vertex_count || first == second) {
+            throw std::invalid_argument("baseline edges contains an invalid vertex index");
+        }
+        adjacency[static_cast<std::size_t>(first)].push_back(second);
+        adjacency[static_cast<std::size_t>(second)].push_back(first);
+    }
+    for (auto& neighbors : adjacency) {
+        std::sort(neighbors.begin(), neighbors.end());
+        neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+    }
+
+    std::vector<std::vector<std::int32_t>> children(vertex_count);
+    std::vector<std::int32_t> marks(vertex_count, 0);
+    std::vector<std::pair<std::int32_t, double>> frontier;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (is_fixed(result.vertex_attributes[vertex])) {
+            frontier.emplace_back(static_cast<std::int32_t>(vertex), 0.0);
+        }
+    }
+    while (!frontier.empty()) {
+        for (const auto& [vertex_value, frontier_distance] : frontier) {
+            static_cast<void>(frontier_distance);
+            const auto vertex = static_cast<std::size_t>(vertex_value);
+            if (!is_move(result.vertex_attributes[vertex])) continue;
+            std::int32_t best_parent = -1;
+            double best_cost = -1.0;
+            for (const auto target_value : adjacency[vertex]) {
+                const auto target = static_cast<std::size_t>(target_value);
+                if (marks[target] == 0) continue;
+                double cost = 0.0;
+                if (!is_move(result.vertex_attributes[target])) {
+                    cost = length(subtract(load_vec3(positions, vertex), load_vec3(positions, target)));
+                } else {
+                    const std::int32_t grandparent_value = result.parent_indices[target];
+                    if (grandparent_value < 0) continue;
+                    const auto grandparent = static_cast<std::size_t>(grandparent_value);
+                    const Vec3 first = subtract(load_vec3(positions, target), load_vec3(positions, vertex));
+                    const Vec3 second = subtract(load_vec3(positions, grandparent), load_vec3(positions, target));
+                    const double denominator = length(first) * length(second);
+                    if (!(denominator > 0.0)) continue;
+                    cost = std::acos(std::clamp(dot(first, second) / denominator, -1.0, 1.0));
+                }
+                if (best_parent < 0 || cost < best_cost) {
+                    best_parent = target_value;
+                    best_cost = cost;
+                }
+            }
+            if (best_parent >= 0) {
+                result.parent_indices[vertex] = best_parent;
+                marks[vertex] = 1;
+            }
+        }
+        for (const auto& [vertex_value, frontier_distance] : frontier) {
+            static_cast<void>(frontier_distance);
+            const auto vertex = static_cast<std::size_t>(vertex_value);
+            marks[vertex] = 2;
+            const auto parent = result.parent_indices[vertex];
+            if (parent >= 0) {
+                children[static_cast<std::size_t>(parent)].push_back(vertex_value);
+            }
+        }
+        std::map<std::int32_t, double> candidate_distances;
+        for (const auto& [vertex_value, frontier_distance] : frontier) {
+            static_cast<void>(frontier_distance);
+            const auto vertex = static_cast<std::size_t>(vertex_value);
+            for (const auto target_value : adjacency[vertex]) {
+                const auto target = static_cast<std::size_t>(target_value);
+                if (is_invalid(result.vertex_attributes[target]) || marks[target] != 0) continue;
+                const double distance = length(
+                    subtract(load_vec3(positions, vertex), load_vec3(positions, target))
+                );
+                const auto found = candidate_distances.find(target_value);
+                if (found == candidate_distances.end() || distance < found->second) {
+                    candidate_distances[target_value] = distance;
+                }
+            }
+        }
+        frontier.assign(candidate_distances.begin(), candidate_distances.end());
+        std::sort(frontier.begin(), frontier.end(), [](const auto& left, const auto& right) {
+            if (left.second != right.second) return left.second < right.second;
+            return left.first < right.first;
+        });
+    }
+
+    result.child_ranges.reserve(vertex_count * 2);
+    for (auto& values : children) {
+        std::sort(values.begin(), values.end());
+        result.child_ranges.push_back(narrow_index(result.child_data.size(), "child data"));
+        result.child_ranges.push_back(narrow_index(values.size(), "child data"));
+        result.child_data.insert(result.child_data.end(), values.begin(), values.end());
+    }
+
+    for (std::size_t root = 0; root < vertex_count; ++root) {
+        if (!is_fixed(result.vertex_attributes[root]) || children[root].empty()) continue;
+        const auto start = result.baseline_data.size();
+        std::uint8_t line_flag = 0;
+        std::vector<std::int32_t> stack {static_cast<std::int32_t>(root)};
+        while (!stack.empty()) {
+            const std::int32_t vertex_value = stack.back();
+            stack.pop_back();
+            const auto vertex = static_cast<std::size_t>(vertex_value);
+            result.baseline_data.push_back(vertex_value);
+            if ((result.vertex_attributes[vertex] & kTriangle) == 0u) line_flag |= kIncludeLine;
+            const auto& values = children[vertex];
+            stack.insert(stack.end(), values.rbegin(), values.rend());
+        }
+        result.baseline_flags.push_back(line_flag);
+        result.baseline_ranges.push_back(narrow_index(start, "baseline data"));
+        result.baseline_ranges.push_back(
+            narrow_index(result.baseline_data.size() - start, "baseline data")
+        );
+    }
+
+    auto pose_depth = mc2_build_baseline_pose_depth_derived(
+        positions,
+        local_normals,
+        local_tangents,
+        result.vertex_attributes.data(),
+        result.parent_indices.data(),
+        vertex_count,
+        result.baseline_data.data(),
+        result.baseline_data.size()
+    );
+    result.vertex_attributes = std::move(pose_depth.vertex_attributes);
+    result.root_indices = std::move(pose_depth.root_indices);
+    result.depths = std::move(pose_depth.depths);
+    result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
+    result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
     return result;
 }
 

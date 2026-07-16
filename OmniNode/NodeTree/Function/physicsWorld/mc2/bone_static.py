@@ -24,9 +24,8 @@ from .mesh_baseline import MC2_BASELINE_INCLUDE_LINE
 from .mesh_baseline import MC2_VERTEX_FIXED
 from .mesh_baseline import MC2_VERTEX_MOVE
 from .mesh_baseline import MC2_VERTEX_TRIANGLE
-from .mesh_baseline import _build_local_pose
+from .mesh_baseline import _build_native_baseline_pose_depth
 from .mesh_baseline import _replace_proxy_attributes
-from .mesh_baseline import _root_and_depth
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
 from .static_data import MC2BaselineStaticSpec
@@ -324,11 +323,14 @@ def build_mc2_bone_static(
         children,
         roots,
     )
-    local_pose_positions, local_pose_rotations, final_attributes = _build_local_pose(
+    pose_depth = _build_native_baseline_pose_depth(
         raw.proxy,
         parents,
         baseline_data,
     )
+    final_attributes = pose_depth["attributes"]
+    local_pose_positions = pose_depth["local_positions"]
+    local_pose_rotations = pose_depth["local_rotations"]
     final_proxy = _replace_proxy_attributes(raw.proxy, final_attributes)
     finalizer = make_mc2_proxy_finalizer_static_spec(
         proxy=final_proxy,
@@ -337,11 +339,6 @@ def build_mc2_bone_static(
         vertex_to_triangle_records=raw.finalizer.vertex_to_triangle_records,
         vertex_bind_pose_positions=raw.finalizer.vertex_bind_pose_positions,
         vertex_bind_pose_rotations=raw.finalizer.vertex_bind_pose_rotations,
-    )
-    roots_by_vertex, depths = _root_and_depth(
-        positions,
-        final_attributes,
-        parents,
     )
     baseline = make_mc2_baseline_static_spec(
         proxy_signature=final_proxy.proxy_signature,
@@ -352,8 +349,8 @@ def build_mc2_bone_static(
         baseline_flags=baseline_flags,
         baseline_ranges=baseline_ranges,
         baseline_data=baseline_data,
-        root_indices=roots_by_vertex,
-        depths=depths,
+        root_indices=pose_depth["roots"],
+        depths=pose_depth["depths"],
         vertex_local_positions=local_pose_positions,
         vertex_local_rotations=local_pose_rotations,
     )

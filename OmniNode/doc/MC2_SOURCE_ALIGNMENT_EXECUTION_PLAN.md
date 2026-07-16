@@ -44,7 +44,7 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | P-06b | 迁移首次构建的Final Proxy与Baseline。先迁Mesh triangle方向、adjacency、bind orientation、Fixed/Move与baseline/root/depth/local pose，再迁Bone共用的final-proxy/baseline部分；producer与consumer同在native staged context内。 | Tier A/static fixture逐数组等价；首次构建小/中/大profile下降；生产ABI不把派生Final Proxy/Baseline大数组回传Python再传回C++。Python实现只可作为明确test oracle保留，生产import为零；同提交清理旧packer/转发/重复校验。 |
+| 1 | P-06b | 收口首次构建的Final Proxy与Baseline所有权：让native staged context直接接管现有C++派生结构，连接Mesh与Bone共用消费端，删除预分配readback、immutable tuple重打包及仅为过渡ABI存在的host转发。 | Tier A/static fixture逐数组等价；首次构建小/中/大profile下降；生产ABI不把派生Final Proxy/Baseline大数组回传Python再传回C++。Python实现只可作为明确test oracle保留，生产import为零；同提交清理旧packer/转发/重复校验。 |
 | 2 | P-06c | 迁移Mesh约束静态构建：Distance、Bending、Center与Self primitive registration直接消费native Final Proxy/Baseline。 | 对应Tier A、Blender static dirty、self与debug门禁通过；native内部签名可检查；Python不再生产或pack这些数组。逐项迁移、逐项提交，每项完成后审查并删除死代码。 |
 | 3 | P-06d | 迁移BoneCloth/BoneSpring专属静态构建：Line/product connection消费、Bone orientation/transform mapping、Distance、Center与Self直接进入native staged context。 | source Line与HoTools横向连接产品fixture、同Armature多component、BoneSpring拒绝域和writeback全部通过；不产生第二套Python派生静态树；每个producer迁移后立即清理对应builder/packer/adapter转发。 |
 | 4 | P-06e | 收口变化重建。C++根据change mask复用不变输入并在新staged context内完成完整静态生产；Python只组织事务、失败回滚与slot原子替换，不复制native static。 | Pin/UV/拓扑/Bone rest变化的重建结果与首次构建一致；失败保留旧context/result；无变化帧零静态分配。重建profile、分配和内存有小/中/大基线，旧host shadow与临时兼容ABI全部删除。 |

@@ -91,6 +91,8 @@ _REQUIRED_SYMBOLS = (
     "mc2_bone_static_fingerprint_v0",
     "mc2_optimize_triangle_direction_v0",
     "mc2_build_mesh_final_proxy_derived_v0",
+    "mc2_build_mesh_baseline_derived_v0",
+    "mc2_build_baseline_pose_depth_derived_v0",
 )
 
 
