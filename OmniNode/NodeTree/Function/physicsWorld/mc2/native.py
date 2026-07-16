@@ -341,7 +341,7 @@ class MC2NativeContextV0:
 
     def update_baseline_derived(
         self,
-        derived: dict,
+        derived,
         *,
         finalize_attributes: bool = True,
     ) -> None:
@@ -351,6 +351,23 @@ class MC2NativeContextV0:
                 self._handle,
                 derived["attributes"],
             )
+        registration = getattr(derived, "native_registration", None)
+        if isinstance(registration, dict):
+            self._module.mc2_context_v0_update_baseline_static(
+                self._handle,
+                registration["parents"],
+                registration["child_ranges"],
+                registration["child_data"],
+                registration["baseline_flags"],
+                registration["baseline_ranges"],
+                registration["baseline_data"],
+                registration["roots"],
+                registration["depths"],
+                registration["local_positions"],
+                registration["local_rotations"],
+                *registration["owners"],
+            )
+            return
         self._module.mc2_context_v0_update_baseline_static(
             self._handle,
             derived["parents"],

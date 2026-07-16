@@ -4681,8 +4681,10 @@ PyObject* mc2_context_v0_finalize_proxy_attributes(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 11) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_baseline_static expects 11 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 21;
+    if (argument_count != 11 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_baseline_static expects 11 or 21 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -4740,16 +4742,77 @@ PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
             return nullptr;
         }
     }
-    auto next_parents = copy_values<std::int32_t>(parents);
-    auto next_child_ranges = copy_values<std::int32_t>(child_ranges);
-    auto next_child_data = copy_values<std::int32_t>(child_data);
-    auto next_flags = copy_values<std::uint8_t>(flags);
-    auto next_ranges = copy_values<std::int32_t>(ranges);
-    auto next_data = copy_values<std::int32_t>(data);
-    auto next_roots = copy_values<std::int32_t>(roots);
-    auto next_depths = copy_values<float>(depths);
-    auto next_local_positions = copy_values<float>(local_positions);
-    auto next_local_rotations = copy_values<float>(local_rotations);
+    std::vector<std::int32_t> next_parents;
+    std::vector<std::int32_t> next_child_ranges;
+    std::vector<std::int32_t> next_child_data;
+    std::vector<std::uint8_t> next_flags;
+    std::vector<std::int32_t> next_ranges;
+    std::vector<std::int32_t> next_data;
+    std::vector<std::int32_t> next_roots;
+    std::vector<float> next_depths;
+    std::vector<float> next_local_positions;
+    std::vector<float> next_local_rotations;
+    if (take_owned) {
+        auto* owned_parents = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 11), "hotools_native.mc2.baseline_parents.v0", parents
+        );
+        auto* owned_child_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 12), "hotools_native.mc2.baseline_child_ranges.v0", child_ranges
+        );
+        auto* owned_child_data = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 13), "hotools_native.mc2.baseline_child_data.v0", child_data
+        );
+        auto* owned_flags = validated_owned_values<std::uint8_t>(
+            PyTuple_GET_ITEM(args, 14), "hotools_native.mc2.baseline_flags.v0", flags
+        );
+        auto* owned_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 15), "hotools_native.mc2.baseline_ranges.v0", ranges
+        );
+        auto* owned_data = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 16), "hotools_native.mc2.baseline_data.v0", data
+        );
+        auto* owned_roots = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 17), "hotools_native.mc2.baseline_roots.v0", roots
+        );
+        auto* owned_depths = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 18), "hotools_native.mc2.baseline_depths.v0", depths
+        );
+        auto* owned_local_positions = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 19), "hotools_native.mc2.baseline_local_positions.v0", local_positions
+        );
+        auto* owned_local_rotations = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 20), "hotools_native.mc2.baseline_local_rotations.v0", local_rotations
+        );
+        if (owned_parents == nullptr || owned_child_ranges == nullptr ||
+            owned_child_data == nullptr || owned_flags == nullptr ||
+            owned_ranges == nullptr || owned_data == nullptr ||
+            owned_roots == nullptr || owned_depths == nullptr ||
+            owned_local_positions == nullptr || owned_local_rotations == nullptr) {
+            return nullptr;
+        }
+        next_parents = std::move(*owned_parents);
+        next_child_ranges = std::move(*owned_child_ranges);
+        next_child_data = std::move(*owned_child_data);
+        next_flags = std::move(*owned_flags);
+        next_ranges = std::move(*owned_ranges);
+        next_data = std::move(*owned_data);
+        next_roots = std::move(*owned_roots);
+        next_depths = std::move(*owned_depths);
+        next_local_positions = std::move(*owned_local_positions);
+        next_local_rotations = std::move(*owned_local_rotations);
+        ++context->owned_static_take_count;
+    } else {
+        next_parents = copy_values<std::int32_t>(parents);
+        next_child_ranges = copy_values<std::int32_t>(child_ranges);
+        next_child_data = copy_values<std::int32_t>(child_data);
+        next_flags = copy_values<std::uint8_t>(flags);
+        next_ranges = copy_values<std::int32_t>(ranges);
+        next_data = copy_values<std::int32_t>(data);
+        next_roots = copy_values<std::int32_t>(roots);
+        next_depths = copy_values<float>(depths);
+        next_local_positions = copy_values<float>(local_positions);
+        next_local_rotations = copy_values<float>(local_rotations);
+    }
     context->baseline_parents.swap(next_parents);
     context->baseline_child_ranges.swap(next_child_ranges);
     context->baseline_child_data.swap(next_child_data);

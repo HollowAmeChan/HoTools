@@ -87,6 +87,7 @@ class MC2MeshBaselineNativeData:
     vertex_local_positions: np.ndarray
     vertex_local_rotations: np.ndarray
     baseline_signature: str
+    native_registration: dict | None = None
     native_owned: bool = True
 
     @property
@@ -180,6 +181,7 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec, *, native_context=None) ->
         depths,
         local_positions,
         local_rotations,
+        native_context is not None,
     )
     child_count = int(counts["child_count"])
     baseline_count = int(counts["baseline_count"])
@@ -197,6 +199,30 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec, *, native_context=None) ->
             "depths": depths,
             "local_positions": local_positions,
             "local_rotations": local_rotations,
+            "native_registration": {
+                "parents": counts["baseline_parents"],
+                "child_ranges": counts["baseline_child_ranges"],
+                "child_data": counts["baseline_child_data"],
+                "baseline_flags": counts["baseline_flags"],
+                "baseline_ranges": counts["baseline_ranges"],
+                "baseline_data": counts["baseline_data"],
+                "roots": counts["baseline_roots"],
+                "depths": counts["baseline_depths"],
+                "local_positions": counts["baseline_local_positions"],
+                "local_rotations": counts["baseline_local_rotations"],
+                "owners": (
+                    counts["_baseline_parents_owner"],
+                    counts["_baseline_child_ranges_owner"],
+                    counts["_baseline_child_data_owner"],
+                    counts["_baseline_flags_owner"],
+                    counts["_baseline_ranges_owner"],
+                    counts["_baseline_data_owner"],
+                    counts["_baseline_roots_owner"],
+                    counts["_baseline_depths_owner"],
+                    counts["_baseline_local_positions_owner"],
+                    counts["_baseline_local_rotations_owner"],
+                ),
+            },
         }
     return {
         "attributes": tuple(int(value) for value in attributes),
@@ -307,6 +333,7 @@ def build_mc2_mesh_baseline(
             baseline_signature=_baseline_content_signature(
                 final_proxy.proxy_signature, derived
             ),
+            native_registration=derived["native_registration"],
         )
     return MC2MeshBaselineBuildResult(final_proxy=final_proxy, baseline=baseline)
 

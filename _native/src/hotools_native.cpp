@@ -1125,7 +1125,8 @@ NB_MODULE(hotools_native, m) {
            i32_1d out_roots,
            f64_1d out_depths,
            f64_2d out_local_positions,
-           f64_2d out_local_rotations) {
+           f64_2d out_local_rotations,
+           bool produce_owned) {
             const auto vertex_count = positions.shape(0);
             check_cols(positions, 3, "positions");
             check_cols(local_normals, 3, "local_normals");
@@ -1193,8 +1194,78 @@ NB_MODULE(hotools_native, m) {
             result["child_count"] = child_count;
             result["baseline_count"] = baseline_count;
             result["baseline_data_count"] = baseline_data_count;
+            if (produce_owned) {
+                result["baseline_parents"] = owned_array_1d(
+                    std::move(derived.parent_indices),
+                    &result, "_baseline_parents_owner",
+                    "hotools_native.mc2.baseline_parents.v0"
+                );
+                result["baseline_child_ranges"] = owned_array_2d(
+                    std::move(derived.child_ranges), vertex_count, 2,
+                    &result, "_baseline_child_ranges_owner",
+                    "hotools_native.mc2.baseline_child_ranges.v0"
+                );
+                result["baseline_child_data"] = owned_array_1d(
+                    std::move(derived.child_data),
+                    &result, "_baseline_child_data_owner",
+                    "hotools_native.mc2.baseline_child_data.v0"
+                );
+                result["baseline_flags"] = owned_array_1d(
+                    std::move(derived.baseline_flags),
+                    &result, "_baseline_flags_owner",
+                    "hotools_native.mc2.baseline_flags.v0"
+                );
+                result["baseline_ranges"] = owned_array_2d(
+                    std::move(derived.baseline_ranges), baseline_count, 2,
+                    &result, "_baseline_ranges_owner",
+                    "hotools_native.mc2.baseline_ranges.v0"
+                );
+                result["baseline_data"] = owned_array_1d(
+                    std::move(derived.baseline_data),
+                    &result, "_baseline_data_owner",
+                    "hotools_native.mc2.baseline_data.v0"
+                );
+                result["baseline_roots"] = owned_array_1d(
+                    std::move(derived.root_indices),
+                    &result, "_baseline_roots_owner",
+                    "hotools_native.mc2.baseline_roots.v0"
+                );
+                result["baseline_depths"] = owned_array_1d(
+                    float_vector(derived.depths.data(), vertex_count),
+                    &result, "_baseline_depths_owner",
+                    "hotools_native.mc2.baseline_depths.v0"
+                );
+                result["baseline_local_positions"] = owned_array_2d(
+                    float_vector(derived.vertex_local_positions.data(), vertex_count * 3),
+                    vertex_count, 3,
+                    &result, "_baseline_local_positions_owner",
+                    "hotools_native.mc2.baseline_local_positions.v0"
+                );
+                result["baseline_local_rotations"] = owned_array_2d(
+                    float_vector(derived.vertex_local_rotations.data(), vertex_count * 4),
+                    vertex_count, 4,
+                    &result, "_baseline_local_rotations_owner",
+                    "hotools_native.mc2.baseline_local_rotations.v0"
+                );
+            }
             return result;
-        });
+        },
+        nb::arg("positions"),
+        nb::arg("local_normals"),
+        nb::arg("local_tangents"),
+        nb::arg("vertex_attributes"),
+        nb::arg("edges"),
+        nb::arg("out_parents"),
+        nb::arg("out_child_ranges"),
+        nb::arg("out_child_data"),
+        nb::arg("out_baseline_flags"),
+        nb::arg("out_baseline_ranges"),
+        nb::arg("out_baseline_data"),
+        nb::arg("out_roots"),
+        nb::arg("out_depths"),
+        nb::arg("out_local_positions"),
+        nb::arg("out_local_rotations"),
+        nb::arg("produce_owned") = false);
     m.def("mc2_build_baseline_pose_depth_derived_v0",
         [](cf64_2d positions,
            cf64_2d local_normals,

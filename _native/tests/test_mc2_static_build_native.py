@@ -281,6 +281,98 @@ def test_mesh_baseline_derived_arrays() -> None:
     np.testing.assert_allclose(shared_rotations, local_rotations, atol=1.0e-12)
 
 
+def test_mesh_baseline_owned_context_transfer() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 3, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x02), dtype=np.uint8)
+    edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
+    parents = np.empty(3, dtype=np.int32)
+    child_ranges = np.empty((3, 2), dtype=np.int32)
+    child_data = np.empty(3, dtype=np.int32)
+    baseline_flags = np.empty(3, dtype=np.uint8)
+    baseline_ranges = np.empty((3, 2), dtype=np.int32)
+    baseline_data = np.empty(3, dtype=np.int32)
+    roots = np.empty(3, dtype=np.int32)
+    depths = np.empty(3, dtype=np.float64)
+    local_positions = np.empty((3, 3), dtype=np.float64)
+    local_rotations = np.empty((3, 4), dtype=np.float64)
+    owned = hotools_native.mc2_build_mesh_baseline_derived_v0(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        edges,
+        parents,
+        child_ranges,
+        child_data,
+        baseline_flags,
+        baseline_ranges,
+        baseline_data,
+        roots,
+        depths,
+        local_positions,
+        local_rotations,
+        True,
+    )
+    baseline_arrays = (
+        owned["baseline_parents"],
+        owned["baseline_child_ranges"],
+        owned["baseline_child_data"],
+        owned["baseline_flags"],
+        owned["baseline_ranges"],
+        owned["baseline_data"],
+        owned["baseline_roots"],
+        owned["baseline_depths"],
+        owned["baseline_local_positions"],
+        owned["baseline_local_rotations"],
+    )
+    baseline_owners = (
+        owned["_baseline_parents_owner"],
+        owned["_baseline_child_ranges_owner"],
+        owned["_baseline_child_data_owner"],
+        owned["_baseline_flags_owner"],
+        owned["_baseline_ranges_owner"],
+        owned["_baseline_data_owner"],
+        owned["_baseline_roots_owner"],
+        owned["_baseline_depths_owner"],
+        owned["_baseline_local_positions_owner"],
+        owned["_baseline_local_rotations_owner"],
+    )
+    context = hotools_native.mc2_context_v0_create(0, 3)
+    try:
+        hotools_native.mc2_context_v0_update_proxy_static(
+            context,
+            positions.astype(np.float32),
+            normals.astype(np.float32),
+            tangents.astype(np.float32),
+            np.zeros((3, 2), dtype=np.float32),
+            attributes,
+            edges,
+            np.empty((0, 3), dtype=np.int32),
+        )
+        hotools_native.mc2_context_v0_update_baseline_static(
+            context, *baseline_arrays, *baseline_owners
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["baseline_static_ready"] is True
+        assert info["baseline_static_revision"] == 1
+        assert info["owned_static_take_count"] == 1
+        try:
+            hotools_native.mc2_context_v0_update_baseline_static(
+                context, *baseline_arrays, *baseline_owners
+            )
+        except ValueError as exc:
+            assert "owner does not match" in str(exc)
+        else:
+            raise AssertionError("consumed baseline owner was accepted twice")
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_distance_derived_arrays_and_owner() -> None:
     positions = np.asarray(
         (
@@ -466,6 +558,8 @@ if __name__ == "__main__":
     print("PASS MC2 native final proxy owned context transfer")
     test_mesh_baseline_derived_arrays()
     print("PASS MC2 native baseline derived arrays")
+    test_mesh_baseline_owned_context_transfer()
+    print("PASS MC2 native baseline owned context transfer")
     test_distance_derived_arrays_and_owner()
     print("PASS MC2 native Distance derived arrays")
     test_bending_derived_arrays()
