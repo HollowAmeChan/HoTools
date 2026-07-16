@@ -93,6 +93,8 @@ Bone native注册成功后，生产slot现已把完整`MC2BoneClothStaticBuildRe
 
 Bone staged初始化现已拆为`Proxy/Baseline -> Distance/Center/Self -> Bone registration`：Proxy/Baseline就绪后，Distance、Center与Self producer直接把9组受限owner vectors move进同一context，不再构造或通过packer上传完整constraint spec；`owned_static_take_count=4`固定Baseline及三类constraint各一次真实接管，生产metadata没有`distance_targets/fixed_indices/primitive_flags`。Center staged分支也不再先tuple化native输出，Self depth不再tuple往返。26/26纯MC2、Blender Bone static/product/frame/全隐式debug通过；large Bone首建约`65.89ms`，为旧CPP的`5.18x`，热帧约`6.11ms`，为旧CPP的`3.25x`。P-06d剩余主边界为Bone registration的8组数组仍由Python最小packer构造后上传。
 
+Bone Final Proxy producer现按owner mode直接产出Proxy 7组vectors与Finalizer registration 6组vectors，Bone rotation producer再产出adjustment/vertex-to-transform 2组vectors；context分别一次接管Proxy和Bone registration，使`owned_static_take_count=6`。Python `update_bone_static`已删除缺owner时的packer/copy fallback，缺任何Proxy/Baseline/Bone owner直接失败；完整`pack_mc2_bone_registration_static`只保留Tier A/oracle。native使用`build.bat 313 native`增量编译，仅构建`hotools_native`且无clean/Jolt target。raw native Bone ABI、26/26纯MC2、Blender Mesh BasePose/Bone static/product/全隐式debug通过。large Bone首建约`65.12ms`，为旧CPP的`5.25x`；热帧本轮约`6.60ms`，仍为旧CPP的`2.95x`。P-06d仍未关闭：同次prepare还构造完整Proxy/Finalizer/Baseline/Bone tuple spec作为transient，下一步应建立staged Bone native data并删除这棵生产派生树，而非继续增加转发。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

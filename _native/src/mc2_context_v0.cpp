@@ -4829,8 +4829,13 @@ PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 9) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bone_static expects 9 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 17;
+    if (argument_count != 9 && !take_owned) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_update_bone_static expects 9 or 17 arguments"
+        );
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -4957,14 +4962,80 @@ PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
         }
     }
 
-    auto next_vertex_ranges = copy_values<std::int32_t>(vertex_ranges);
-    auto next_vertex_data = copy_values<std::int32_t>(vertex_data);
-    auto next_triangle_ranges = copy_values<std::int32_t>(triangle_ranges);
-    auto next_triangle_data = copy_values<std::int32_t>(triangle_data);
-    auto next_bind_positions = copy_values<float>(bind_positions);
-    auto next_bind_rotations = copy_values<float>(bind_rotations);
-    auto next_adjustment_rotations = copy_values<float>(adjustment_rotations);
-    auto next_transform_rotations = copy_values<float>(transform_rotations);
+    std::vector<std::int32_t> next_vertex_ranges;
+    std::vector<std::int32_t> next_vertex_data;
+    std::vector<std::int32_t> next_triangle_ranges;
+    std::vector<std::int32_t> next_triangle_data;
+    std::vector<float> next_bind_positions;
+    std::vector<float> next_bind_rotations;
+    std::vector<float> next_adjustment_rotations;
+    std::vector<float> next_transform_rotations;
+    if (take_owned) {
+        auto* owned_vertex_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 9),
+            "hotools_native.mc2.bone_vertex_ranges.v0",
+            vertex_ranges
+        );
+        auto* owned_vertex_data = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 10),
+            "hotools_native.mc2.bone_vertex_data.v0",
+            vertex_data
+        );
+        auto* owned_triangle_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 11),
+            "hotools_native.mc2.bone_triangle_ranges.v0",
+            triangle_ranges
+        );
+        auto* owned_triangle_data = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 12),
+            "hotools_native.mc2.bone_triangle_data.v0",
+            triangle_data
+        );
+        auto* owned_bind_positions = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 13),
+            "hotools_native.mc2.bone_bind_positions.v0",
+            bind_positions
+        );
+        auto* owned_bind_rotations = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 14),
+            "hotools_native.mc2.bone_bind_rotations.v0",
+            bind_rotations
+        );
+        auto* owned_adjustment_rotations = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 15),
+            "hotools_native.mc2.bone_adjustment_rotations.v0",
+            adjustment_rotations
+        );
+        auto* owned_transform_rotations = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 16),
+            "hotools_native.mc2.bone_transform_rotations.v0",
+            transform_rotations
+        );
+        if (owned_vertex_ranges == nullptr || owned_vertex_data == nullptr ||
+            owned_triangle_ranges == nullptr || owned_triangle_data == nullptr ||
+            owned_bind_positions == nullptr || owned_bind_rotations == nullptr ||
+            owned_adjustment_rotations == nullptr || owned_transform_rotations == nullptr) {
+            return nullptr;
+        }
+        next_vertex_ranges = std::move(*owned_vertex_ranges);
+        next_vertex_data = std::move(*owned_vertex_data);
+        next_triangle_ranges = std::move(*owned_triangle_ranges);
+        next_triangle_data = std::move(*owned_triangle_data);
+        next_bind_positions = std::move(*owned_bind_positions);
+        next_bind_rotations = std::move(*owned_bind_rotations);
+        next_adjustment_rotations = std::move(*owned_adjustment_rotations);
+        next_transform_rotations = std::move(*owned_transform_rotations);
+        ++context->owned_static_take_count;
+    } else {
+        next_vertex_ranges = copy_values<std::int32_t>(vertex_ranges);
+        next_vertex_data = copy_values<std::int32_t>(vertex_data);
+        next_triangle_ranges = copy_values<std::int32_t>(triangle_ranges);
+        next_triangle_data = copy_values<std::int32_t>(triangle_data);
+        next_bind_positions = copy_values<float>(bind_positions);
+        next_bind_rotations = copy_values<float>(bind_rotations);
+        next_adjustment_rotations = copy_values<float>(adjustment_rotations);
+        next_transform_rotations = copy_values<float>(transform_rotations);
+    }
     context->bone_vertex_to_vertex_ranges.swap(next_vertex_ranges);
     context->bone_vertex_to_vertex_data.swap(next_vertex_data);
     context->bone_vertex_to_triangle_ranges.swap(next_triangle_ranges);

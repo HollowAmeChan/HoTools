@@ -1004,6 +1004,47 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
         });
+    m.def("mc2_build_bone_registration_rotations_v0",
+        [](cf64_2d local_normals,
+           cf64_2d local_tangents,
+           cf64_2d transform_rotations,
+           cf64_2d adjustment_rotations,
+           f64_2d vertex_to_transform_rotations) {
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_cols(transform_rotations, 4, "transform_rotations");
+            check_cols(adjustment_rotations, 4, "adjustment_rotations");
+            check_cols(vertex_to_transform_rotations, 4, "vertex_to_transform_rotations");
+            const auto vertex_count = local_normals.shape(0);
+            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
+            check_len(transform_rotations.shape(0), vertex_count, "transform_rotations");
+            check_len(adjustment_rotations.shape(0), vertex_count, "adjustment_rotations");
+            check_len(vertex_to_transform_rotations.shape(0), vertex_count, "vertex_to_transform_rotations");
+            try {
+                nb::gil_scoped_release release;
+                hotools::mc2_build_bone_vertex_to_transform_rotations(
+                    local_normals.data(),
+                    local_tangents.data(),
+                    transform_rotations.data(),
+                    vertex_count,
+                    vertex_to_transform_rotations.data()
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+            nb::dict result;
+            result["normal_adjustment_rotations"] = owned_array_2d(
+                float_vector(adjustment_rotations.data(), vertex_count * 4),
+                vertex_count, 4, &result, "_bone_adjustment_rotations_owner",
+                "hotools_native.mc2.bone_adjustment_rotations.v0"
+            );
+            result["vertex_to_transform_rotations"] = owned_array_2d(
+                float_vector(vertex_to_transform_rotations.data(), vertex_count * 4),
+                vertex_count, 4, &result, "_bone_transform_rotations_owner",
+                "hotools_native.mc2.bone_transform_rotations.v0"
+            );
+            return result;
+        });
     m.def("mc2_build_bone_transform_baseline_derived_v0",
         [](cf64_2d positions,
            cf64_2d local_normals,
@@ -1153,7 +1194,7 @@ NB_MODULE(hotools_native, m) {
            i32_2d out_triangle_data,
            f64_2d out_bind_positions,
            f64_2d out_bind_rotations,
-           bool produce_owned) {
+           std::int32_t owner_mode) {
             const auto vertex_count = positions.shape(0);
             const auto triangle_count = triangles.shape(0);
             check_cols(positions, 3, "positions");
@@ -1237,7 +1278,7 @@ NB_MODULE(hotools_native, m) {
             result["edge_count"] = edge_count;
             result["neighbor_count"] = neighbor_count;
             result["triangle_record_count"] = triangle_record_count;
-            if (produce_owned) {
+            if (owner_mode != 0) {
                 result["proxy_local_positions"] = owned_array_2d(
                     float_vector(positions.data(), vertex_count * 3), vertex_count, 3,
                     &result, "_proxy_positions_owner",
@@ -1275,21 +1316,56 @@ NB_MODULE(hotools_native, m) {
                     &result, "_proxy_triangles_owner",
                     "hotools_native.mc2.proxy_triangles.v0"
                 );
-                result["frame_triangle_ranges"] = owned_array_2d(
-                    std::move(derived.vertex_to_triangle_ranges), vertex_count, 2,
-                    &result, "_frame_triangle_ranges_owner",
-                    "hotools_native.mc2.frame_triangle_ranges.v0"
-                );
-                result["frame_triangle_records"] = owned_array_2d(
-                    std::move(derived.vertex_to_triangle_data), triangle_record_count, 2,
-                    &result, "_frame_triangle_records_owner",
-                    "hotools_native.mc2.frame_triangle_records.v0"
-                );
-                result["frame_bind_rotations"] = owned_array_2d(
-                    float_vector(derived.bind_rotations.data(), vertex_count * 4), vertex_count, 4,
-                    &result, "_frame_bind_rotations_owner",
-                    "hotools_native.mc2.frame_bind_rotations.v0"
-                );
+                if (owner_mode == 1) {
+                    result["frame_triangle_ranges"] = owned_array_2d(
+                        std::move(derived.vertex_to_triangle_ranges), vertex_count, 2,
+                        &result, "_frame_triangle_ranges_owner",
+                        "hotools_native.mc2.frame_triangle_ranges.v0"
+                    );
+                    result["frame_triangle_records"] = owned_array_2d(
+                        std::move(derived.vertex_to_triangle_data), triangle_record_count, 2,
+                        &result, "_frame_triangle_records_owner",
+                        "hotools_native.mc2.frame_triangle_records.v0"
+                    );
+                    result["frame_bind_rotations"] = owned_array_2d(
+                        float_vector(derived.bind_rotations.data(), vertex_count * 4), vertex_count, 4,
+                        &result, "_frame_bind_rotations_owner",
+                        "hotools_native.mc2.frame_bind_rotations.v0"
+                    );
+                } else if (owner_mode == 2) {
+                    result["bone_vertex_ranges"] = owned_array_2d(
+                        std::move(derived.vertex_to_vertex_ranges), vertex_count, 2,
+                        &result, "_bone_vertex_ranges_owner",
+                        "hotools_native.mc2.bone_vertex_ranges.v0"
+                    );
+                    result["bone_vertex_data"] = owned_array_1d(
+                        std::move(derived.vertex_to_vertex_data),
+                        &result, "_bone_vertex_data_owner",
+                        "hotools_native.mc2.bone_vertex_data.v0"
+                    );
+                    result["bone_triangle_ranges"] = owned_array_2d(
+                        std::move(derived.vertex_to_triangle_ranges), vertex_count, 2,
+                        &result, "_bone_triangle_ranges_owner",
+                        "hotools_native.mc2.bone_triangle_ranges.v0"
+                    );
+                    result["bone_triangle_data"] = owned_array_2d(
+                        std::move(derived.vertex_to_triangle_data), triangle_record_count, 2,
+                        &result, "_bone_triangle_data_owner",
+                        "hotools_native.mc2.bone_triangle_data.v0"
+                    );
+                    result["bone_bind_positions"] = owned_array_2d(
+                        float_vector(derived.bind_positions.data(), vertex_count * 3), vertex_count, 3,
+                        &result, "_bone_bind_positions_owner",
+                        "hotools_native.mc2.bone_bind_positions.v0"
+                    );
+                    result["bone_bind_rotations"] = owned_array_2d(
+                        float_vector(derived.bind_rotations.data(), vertex_count * 4), vertex_count, 4,
+                        &result, "_bone_bind_rotations_owner",
+                        "hotools_native.mc2.bone_bind_rotations.v0"
+                    );
+                } else {
+                    throw nb::value_error("owner_mode must be 0, 1, or 2");
+                }
             }
             return result;
         },
@@ -1308,7 +1384,7 @@ NB_MODULE(hotools_native, m) {
         nb::arg("out_triangle_data"),
         nb::arg("out_bind_positions"),
         nb::arg("out_bind_rotations"),
-        nb::arg("produce_owned") = false);
+        nb::arg("owner_mode") = 0);
     m.def("mc2_build_mesh_baseline_derived_v0",
         [](cf64_2d positions,
            cf64_2d local_normals,

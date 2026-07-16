@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-06d当前已用单一`MC2BoneRawSnapshot`和同task同Armature `foreach_get`消除重复rest读取/冻结树，rest frame、vertex-to-transform、children/baseline/pose-depth已迁入C++ bulk producer；Baseline/Distance/Center/Self共4次直接move，native注册后完整Bone tuple bundle压缩为仅含identity/debug/count/signature的metadata，large Bone首建约65.89ms、热帧约6.11ms。下一步迁移Bone registration剩余8组数组并清理最小packer。
+   P-06d当前已用单一`MC2BoneRawSnapshot`和同task同Armature `foreach_get`消除重复rest读取/冻结树，rest/finalizer/baseline/constraint派生已进入C++；Proxy/Baseline/Distance/Center/Self/Bone registration共6次直接move，生产packer fallback已删除，slot仅保留identity/debug/count/signature metadata。large Bone首建约65.12ms、热帧约6.60ms。下一步用staged Bone native data消除同次prepare的完整tuple transient。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

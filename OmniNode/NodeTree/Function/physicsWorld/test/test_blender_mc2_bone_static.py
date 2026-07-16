@@ -156,7 +156,7 @@ try:
     assert info["proxy_static_ready"] is True
     assert info["baseline_static_ready"] is True
     assert info["bone_static_ready"] is True
-    assert info["owned_static_take_count"] == 4
+    assert info["owned_static_take_count"] == 6
     assert slot.data["bone_static"].native_owned is True
     assert not hasattr(slot.data["bone_static"], "bone")
     assert not hasattr(slot.data["bone_static"].distance, "distance_targets")

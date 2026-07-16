@@ -11,7 +11,6 @@ import sys
 import numpy as np
 
 from .bending_static import pack_mc2_bending_static
-from .bone_static import pack_mc2_bone_registration_static
 from .center_state import (
     MC2CenterStaticMetadata,
     MC2CenterFrameShiftResult,
@@ -322,18 +321,21 @@ class MC2NativeContextV0:
         if bone.proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native Bone static vertex count mismatch")
         baseline_registration = bone.baseline_native_registration
-        if isinstance(baseline_registration, dict) and baseline_registration:
-            self.update_proxy_static(bone.proxy)
-            self.update_baseline_derived({
-                "attributes": np.asarray(
-                    bone.proxy.vertex_attributes,
-                    dtype=np.uint8,
-                ),
-                "native_registration": baseline_registration,
-            })
-            baseline_registration.clear()
-        else:
-            self.update_proxy_and_baseline(bone.proxy, bone.baseline)
+        proxy_registration = bone.proxy_native_registration
+        if not isinstance(proxy_registration, dict) or not proxy_registration:
+            raise TypeError("staged Bone proxy native registration is missing")
+        if not isinstance(baseline_registration, dict) or not baseline_registration:
+            raise TypeError("staged Bone baseline native registration is missing")
+        self.update_proxy_derived(bone.proxy, proxy_registration)
+        proxy_registration.clear()
+        self.update_baseline_derived({
+            "attributes": np.asarray(
+                bone.proxy.vertex_attributes,
+                dtype=np.uint8,
+            ),
+            "native_registration": baseline_registration,
+        })
+        baseline_registration.clear()
         self.proxy_signature = bone.proxy.proxy_signature
         self.baseline_signature = bone.baseline.baseline_signature
 
@@ -350,27 +352,35 @@ class MC2NativeContextV0:
             frame_registration, dict
         ):
             raise TypeError("staged proxy/finalizer native registration is missing")
-        proxy_registration["attributes"][:] = np.asarray(
-            proxy.vertex_attributes,
-            dtype=np.uint8,
-        )
-        self._module.mc2_context_v0_update_proxy_static(
-            self._handle,
-            proxy_registration["positions"],
-            proxy_registration["normals"],
-            proxy_registration["tangents"],
-            proxy_registration["uvs"],
-            proxy_registration["attributes"],
-            proxy_registration["edges"],
-            proxy_registration["triangles"],
-            *proxy_registration["owners"],
-        )
+        self.update_proxy_derived(proxy, proxy_registration)
+        proxy_registration.clear()
         self._module.mc2_context_v0_update_frame_producer_static(
             self._handle,
             frame_registration["triangle_ranges"],
             frame_registration["triangle_records"],
             frame_registration["bind_rotations"],
             *frame_registration["owners"],
+        )
+        frame_registration.clear()
+
+    def update_proxy_derived(self, proxy, registration: dict) -> None:
+        self._ensure_live()
+        if not isinstance(registration, dict) or not registration:
+            raise TypeError("staged proxy native registration is missing")
+        registration["attributes"][:] = np.asarray(
+            proxy.vertex_attributes,
+            dtype=np.uint8,
+        )
+        self._module.mc2_context_v0_update_proxy_static(
+            self._handle,
+            registration["positions"],
+            registration["normals"],
+            registration["tangents"],
+            registration["uvs"],
+            registration["attributes"],
+            registration["edges"],
+            registration["triangles"],
+            *registration["owners"],
         )
 
     def update_baseline_derived(
@@ -611,18 +621,22 @@ class MC2NativeContextV0:
             or self.baseline_signature != static.baseline.baseline_signature
         ):
             self.initialize_bone_proxy_baseline(static.bone)
-        packed = pack_mc2_bone_registration_static(static.bone)
+        registration = static.bone.bone_native_registration
+        if not isinstance(registration, dict) or not registration:
+            raise TypeError("staged Bone registration owners are missing")
         self._module.mc2_context_v0_update_bone_static(
             self._handle,
-            packed["vertex_to_vertex_ranges"],
-            packed["vertex_to_vertex_data"],
-            packed["vertex_to_triangle_ranges"],
-            packed["vertex_to_triangle_data"],
-            packed["vertex_bind_pose_positions"],
-            packed["vertex_bind_pose_rotations"],
-            packed["normal_adjustment_rotations"],
-            packed["vertex_to_transform_rotations"],
+            registration["vertex_to_vertex_ranges"],
+            registration["vertex_to_vertex_data"],
+            registration["vertex_to_triangle_ranges"],
+            registration["vertex_to_triangle_data"],
+            registration["vertex_bind_pose_positions"],
+            registration["vertex_bind_pose_rotations"],
+            registration["normal_adjustment_rotations"],
+            registration["vertex_to_transform_rotations"],
+            *registration["owners"],
         )
+        registration.clear()
         if not isinstance(static.distance, MC2DistanceStaticMetadata):
             distance = pack_mc2_distance_static(static.distance)
             self._module.mc2_context_v0_update_distance_static(

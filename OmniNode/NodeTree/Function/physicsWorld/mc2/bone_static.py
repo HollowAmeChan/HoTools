@@ -221,6 +221,16 @@ class MC2BoneStaticSpec:
         repr=False,
         compare=False,
     )
+    proxy_native_registration: dict | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    bone_native_registration: dict | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     schema_version: int = MC2_STATIC_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -332,6 +342,7 @@ def build_mc2_bone_static(
         vertex_attributes=vertex_attributes,
         lines=lines,
         triangles=triangles,
+        native_owner_kind="bone" if native_context is not None else "",
     )
 
     transform_baseline = _build_native_transform_baseline(
@@ -375,12 +386,37 @@ def build_mc2_bone_static(
     to_transform_values = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
 
-    native_module().mc2_build_bone_vertex_to_transform_rotations_v0(
+    rotation_arguments = (
         np.ascontiguousarray(final_proxy.local_normals, dtype=np.float64),
         np.ascontiguousarray(final_proxy.local_tangents, dtype=np.float64),
         np.ascontiguousarray(transform_rotations, dtype=np.float64),
-        to_transform_values,
     )
+    if native_context is None:
+        native_module().mc2_build_bone_vertex_to_transform_rotations_v0(
+            *rotation_arguments,
+            to_transform_values,
+        )
+        bone_native_registration = None
+    else:
+        rotation_registration = native_module().mc2_build_bone_registration_rotations_v0(
+            *rotation_arguments,
+            np.ascontiguousarray(adjustment_rotations, dtype=np.float64),
+            to_transform_values,
+        )
+        bone_native_registration = dict(raw.native_bone_registration or {})
+        bone_native_registration.update({
+            "normal_adjustment_rotations": rotation_registration[
+                "normal_adjustment_rotations"
+            ],
+            "vertex_to_transform_rotations": rotation_registration[
+                "vertex_to_transform_rotations"
+            ],
+            "owners": (
+                *bone_native_registration.get("owners", ()),
+                rotation_registration["_bone_adjustment_rotations_owner"],
+                rotation_registration["_bone_transform_rotations_owner"],
+            ),
+        })
     to_transform = _tuple_vectors(to_transform_values)
 
     payload = {
@@ -399,6 +435,8 @@ def build_mc2_bone_static(
         vertex_to_transform_rotations=to_transform,
         static_signature=_signature(payload),
         baseline_native_registration=transform_baseline.get("native_registration"),
+        proxy_native_registration=raw.native_proxy_registration,
+        bone_native_registration=bone_native_registration,
     )
 
 

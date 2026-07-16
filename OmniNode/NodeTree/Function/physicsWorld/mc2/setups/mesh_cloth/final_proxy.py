@@ -36,6 +36,8 @@ class MC2MeshFinalProxyBuildResult:
         | MC2MeshFinalizerNativeMetadata
     )
     mesh_topology_signature: str = ""
+    native_proxy_registration: dict | None = None
+    native_bone_registration: dict | None = None
 
     @property
     def vertex_to_vertex_ranges(self):
@@ -269,6 +271,7 @@ def _build_final_proxy_derived(
     triangle_normals: list[np.ndarray],
     lines: tuple[tuple[int, int], ...],
     native_context=None,
+    native_owner_kind: str = "",
 ):
     if any(not 0 <= value <= 0xFF for value in attributes):
         raise ValueError("vertex_attributes must fit uint8")
@@ -312,7 +315,7 @@ def _build_final_proxy_derived(
         out_triangle_data,
         bind_positions,
         bind_rotations,
-        native_context is not None,
+        1 if native_context is not None else 2 if native_owner_kind == "bone" else 0,
     )
     edge_count = int(counts["edge_count"])
     neighbor_count = int(counts["neighbor_count"])
@@ -361,6 +364,43 @@ def _build_final_proxy_derived(
                 },
             },
         }
+    bone_registration = None
+    proxy_registration = None
+    if native_owner_kind == "bone":
+        proxy_registration = {
+            "positions": counts["proxy_local_positions"],
+            "normals": counts["proxy_local_normals"],
+            "tangents": counts["proxy_local_tangents"],
+            "uvs": counts["proxy_uvs"],
+            "attributes": counts["proxy_attributes"],
+            "edges": counts["proxy_edges"],
+            "triangles": counts["proxy_triangles"],
+            "owners": (
+                counts["_proxy_positions_owner"],
+                counts["_proxy_normals_owner"],
+                counts["_proxy_tangents_owner"],
+                counts["_proxy_uvs_owner"],
+                counts["_proxy_attributes_owner"],
+                counts["_proxy_edges_owner"],
+                counts["_proxy_triangles_owner"],
+            ),
+        }
+        bone_registration = {
+            "vertex_to_vertex_ranges": counts["bone_vertex_ranges"],
+            "vertex_to_vertex_data": counts["bone_vertex_data"],
+            "vertex_to_triangle_ranges": counts["bone_triangle_ranges"],
+            "vertex_to_triangle_data": counts["bone_triangle_data"],
+            "vertex_bind_pose_positions": counts["bone_bind_positions"],
+            "vertex_bind_pose_rotations": counts["bone_bind_rotations"],
+            "owners": (
+                counts["_bone_vertex_ranges_owner"],
+                counts["_bone_vertex_data_owner"],
+                counts["_bone_triangle_ranges_owner"],
+                counts["_bone_triangle_data_owner"],
+                counts["_bone_bind_positions_owner"],
+                counts["_bone_bind_rotations_owner"],
+            ),
+        }
     vertex_to_triangle_records = tuple(
         tuple(
             tuple(int(value) for value in record)
@@ -386,6 +426,8 @@ def _build_final_proxy_derived(
         "vertex_to_triangle_records": vertex_to_triangle_records,
         "bind_positions": _tuple_vectors(bind_positions),
         "bind_rotations": _tuple_vectors(bind_rotations),
+        "native_proxy_registration": proxy_registration,
+        "native_bone_registration": bone_registration,
     }
 
 
@@ -433,6 +475,7 @@ def build_mc2_final_proxy(
     lines=(),
     triangles=(),
     native_context=None,
+    native_owner_kind: str = "",
 ) -> MC2MeshFinalProxyBuildResult:
     identities = tuple(str(value) for value in vertex_identities)
     vertex_count = len(identities)
@@ -479,6 +522,7 @@ def build_mc2_final_proxy(
         triangle_normals,
         line_records,
         native_context=native_context,
+        native_owner_kind=native_owner_kind,
     )
     normals = derived["normals"]
     tangents = derived["tangents"]
@@ -559,6 +603,8 @@ def build_mc2_final_proxy(
             else tuple(_canonical_edge(first, second) for first, second in line_records)
         ),
         finalizer=finalizer,
+        native_proxy_registration=derived.get("native_proxy_registration"),
+        native_bone_registration=derived.get("native_bone_registration"),
     )
 
 
