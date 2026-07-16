@@ -1,5 +1,6 @@
-import sys
+import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,19 @@ sys.path.insert(0, os.environ.get("HOTOOLS_NATIVE_TEST_DIR", str(ROOT / "_Lib" /
 
 import hotools_native  # noqa: E402
 
+
+FIXTURE = (
+    ROOT
+    / "OmniNode"
+    / "NodeTree"
+    / "Function"
+    / "physicsWorld"
+    / "mc2"
+    / "test"
+    / "fixtures"
+    / "tier_a"
+    / "motion_runtime_001.json"
+)
 
 EPSILON = 0.00000001
 MOTION_VELOCITY_ATTENUATION = 0.95
@@ -163,8 +177,97 @@ def assert_native_matches_reference():
     np.testing.assert_allclose(actual_velocity_positions, expected_velocity_positions, rtol=1e-6, atol=1e-6)
 
 
+def sample_curve16(samples, depth):
+    time = np.float32(np.clip(np.float32(depth), 0.0, 1.0))
+    scaled = np.float32(time * np.float32(15.0))
+    index = min(int(scaled), 15)
+    interval = np.float32(1.0 / 15.0)
+    local_time = np.float32(time - np.float32(index) * interval)
+    ratio = np.float32(local_time / interval)
+    next_index = min(index + 1, 15)
+    return np.float32(
+        np.float32(samples[index]) * np.float32(1.0 - ratio)
+        + np.float32(samples[next_index]) * ratio
+    )
+
+
+def assert_native_matches_tier_a_oracle():
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["oracle_tier"] == "A"
+    assert fixture["mc2_commit"] == "418f89ff31a45bb4b2336641ad5907a1110eabea"
+    values = fixture["input"]
+    expected = fixture["expected"]
+
+    attributes = np.asarray(values["attributes"], dtype=np.uint8)
+    depths = np.asarray(values["depths"], dtype=np.float32)
+    motion_depths = np.asarray(depths * depths, dtype=np.float32)
+    max_samples = np.asarray(values["max_distance_samples"], dtype=np.float32)
+    backstop_samples = np.asarray(
+        values["backstop_distance_samples"], dtype=np.float32
+    )
+    max_distances = np.asarray(
+        [sample_curve16(max_samples, depth) for depth in motion_depths],
+        dtype=np.float32,
+    )
+    backstop_distances = np.asarray(
+        [sample_curve16(backstop_samples, depth) for depth in motion_depths],
+        dtype=np.float32,
+    )
+    inv_masses = np.asarray(
+        ((attributes & 0x02) != 0) & ((attributes & 0x08) == 0),
+        dtype=np.float32,
+    )
+    stiffness_values = np.full(
+        len(depths), values["stiffness"], dtype=np.float32
+    )
+    backstop_radii = np.full(
+        len(depths), values["backstop_radius"], dtype=np.float32
+    )
+    positions = np.asarray(values["next_positions"], dtype=np.float32)
+    velocity_positions = np.asarray(values["velocity_positions"], dtype=np.float32)
+
+    hotools_native.project_motion_constraints_mc2(
+        positions,
+        np.asarray(values["base_positions"], dtype=np.float32),
+        np.asarray(values["base_rotations_xyzw"], dtype=np.float32),
+        inv_masses,
+        max_distances,
+        stiffness_values,
+        backstop_radii,
+        backstop_distances,
+        velocity_positions,
+        values["normal_axis"],
+    )
+
+    np.testing.assert_allclose(
+        positions,
+        np.asarray(expected["next_positions"], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        velocity_positions,
+        np.asarray(expected["velocity_positions"], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(expected["friction_after"], dtype=np.float32),
+        np.asarray(values["friction"], dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(expected["collision_normals_after"], dtype=np.float32),
+        np.asarray(values["collision_normals"], dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
 def main():
     assert_native_matches_reference()
+    assert_native_matches_tier_a_oracle()
     print("mc2 motion native smoke test passed")
 
 

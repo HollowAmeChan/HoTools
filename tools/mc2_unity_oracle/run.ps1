@@ -173,6 +173,14 @@ if ($AngleRuntimeFixtureCount -ne 1) {
     throw "Unity oracle produced $AngleRuntimeFixtureCount angle-runtime fixtures instead of 1. See $LogPath"
 }
 
+$MotionRuntimeFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "motion_runtime_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($MotionRuntimeFixtureCount -ne 1) {
+    throw "Unity oracle produced $MotionRuntimeFixtureCount motion-runtime fixtures instead of 1. See $LogPath"
+}
+
 $BoneConnectionFixtureCount = @(
     Get-ChildItem -LiteralPath $OutputDirectory -Filter "bone_connection_*.json" -File |
         Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
@@ -205,4 +213,4 @@ if ($BoneRotationTriangleFixtureCount -ne 3) {
     throw "Unity oracle produced $BoneRotationTriangleFixtureCount bone-rotation-triangle fixtures instead of 3. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $TetherRuntimeFixtureCount tether runtime, $AngleRuntimeFixtureCount angle runtime, $BoneConnectionFixtureCount bone connection, $BoneStaticFixtureCount bone static, $BoneRotationLineFixtureCount bone rotation line, $BoneRotationTriangleFixtureCount bone rotation triangle)"
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $TetherRuntimeFixtureCount tether runtime, $AngleRuntimeFixtureCount angle runtime, $MotionRuntimeFixtureCount motion runtime, $BoneConnectionFixtureCount bone connection, $BoneStaticFixtureCount bone static, $BoneRotationLineFixtureCount bone rotation line, $BoneRotationTriangleFixtureCount bone rotation triangle)"

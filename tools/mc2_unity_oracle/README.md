@@ -71,6 +71,10 @@ directory:
   `AngleConstraint.SolverConstraint()`, freezing Restoration plus Limit across
   two baseline chains, Fixed roots, gravity falloff, velocity attenuation, and
   scratch clear.
+- `motion_runtime_*.json`: direct reflective call to fixed source
+  `MotionConstraint.SolverConstraint()`, freezing MaxDistance, Backstop,
+  depth-squared curve sampling, rotated normal axis, Fixed/InvalidMotion gates,
+  stiffness, and velocity-reference attenuation.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular
