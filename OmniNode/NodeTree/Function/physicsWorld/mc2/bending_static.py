@@ -284,8 +284,7 @@ def build_mc2_bending_static(
         np.ascontiguousarray(columns, dtype=np.float32),
     )
     if native_context is not None:
-        native_context.update_bending_derived(derived)
-        return MC2BendingStaticMetadata(
+        metadata = MC2BendingStaticMetadata(
             proxy_signature=proxy.proxy_signature,
             vertex_count=proxy.vertex_count,
             initial_local_to_world_columns=columns,
@@ -299,6 +298,8 @@ def build_mc2_bending_static(
                 bending_sign_or_volume=derived["bending_sign_or_volume"],
             ),
         )
+        native_context.update_bending_derived(derived)
+        return metadata
 
     return make_mc2_bending_static_spec(
         proxy_signature=proxy.proxy_signature,

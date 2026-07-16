@@ -135,8 +135,6 @@ def build_mc2_self_collision_static(
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
     )
-    if native_context is not None:
-        native_context.update_self_collision_derived(derived)
     packed_flags = derived["primitive_flags"]
     packed_indices = derived["particle_indices"]
     packed_depths = derived["primitive_depths"]
@@ -149,13 +147,15 @@ def build_mc2_self_collision_static(
     digest.update(np.asarray((point_count, edge_count, triangle_count), dtype=np.int64).tobytes())
     static_signature = digest.hexdigest()
     if native_context is not None:
-        return MC2SelfCollisionStaticMetadata(
+        metadata = MC2SelfCollisionStaticMetadata(
             proxy_signature=proxy.proxy_signature,
             point_count=point_count,
             edge_count=edge_count,
             triangle_count=triangle_count,
             static_signature=static_signature,
         )
+        native_context.update_self_collision_derived(derived)
+        return metadata
     return MC2SelfCollisionStaticSpec(
         proxy_signature=proxy.proxy_signature,
         primitive_flags=tuple(int(value) for value in packed_flags),

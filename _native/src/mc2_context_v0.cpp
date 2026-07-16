@@ -97,6 +97,7 @@ struct Mc2ContextV0 {
     std::int64_t bending_static_revision = 0;
     std::int64_t center_static_revision = 0;
     std::int64_t self_collision_static_revision = 0;
+    std::int64_t owned_static_take_count = 0;
     std::int64_t dynamic_revision = 0;
     std::int64_t collider_revision = 0;
     std::int64_t reset_count = 0;
@@ -600,6 +601,31 @@ std::vector<T> copy_values(const Buffer& buffer) {
     );
     const auto* values = static_cast<const T*>(buffer.view.buf);
     return std::vector<T>(values, values + count);
+}
+
+template <typename T>
+std::vector<T>* validated_owned_values(
+    PyObject* capsule,
+    const char* capsule_name,
+    const Buffer& buffer
+) {
+    if (!PyCapsule_IsValid(capsule, capsule_name)) {
+        PyErr_SetString(PyExc_ValueError, "MC2 static owner capsule is invalid");
+        return nullptr;
+    }
+    auto* values = static_cast<std::vector<T>*>(
+        PyCapsule_GetPointer(capsule, capsule_name)
+    );
+    if (values == nullptr) return nullptr;
+    const auto count = static_cast<std::size_t>(
+        buffer.view.len / static_cast<Py_ssize_t>(sizeof(T))
+    );
+    if (values->size() != count ||
+        (count > 0 && values->data() != buffer.view.buf)) {
+        PyErr_SetString(PyExc_ValueError, "MC2 static owner does not match its array");
+        return nullptr;
+    }
+    return values;
 }
 
 bool validate_quaternions(const Buffer& rotations, const char* name) {
@@ -3826,6 +3852,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
         !dict_i64(result, "self_collision_static_revision", context.self_collision_static_revision) ||
+        !dict_i64(result, "owned_static_take_count", context.owned_static_take_count) ||
         !dict_i64(result, "center_dynamic_revision", context.center_dynamic_revision) ||
         !dict_i64(
             result,
@@ -4906,8 +4933,10 @@ PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args)
 }
 
 PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 4) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_distance_static expects 4 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 7;
+    if (argument_count != 4 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_distance_static expects 4 or 7 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -4949,9 +4978,29 @@ PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args) {
             return nullptr;
         }
     }
-    auto next_ranges = copy_values<std::int32_t>(ranges);
-    auto next_targets = copy_values<std::int32_t>(targets);
-    auto next_rests = copy_values<float>(rests);
+    std::vector<std::int32_t> next_ranges;
+    std::vector<std::int32_t> next_targets;
+    std::vector<float> next_rests;
+    if (take_owned) {
+        auto* owned_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 4), "hotools_native.mc2.distance_ranges.v0", ranges
+        );
+        auto* owned_targets = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 5), "hotools_native.mc2.distance_targets.v0", targets
+        );
+        auto* owned_rests = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 6), "hotools_native.mc2.distance_rests.v0", rests
+        );
+        if (owned_ranges == nullptr || owned_targets == nullptr || owned_rests == nullptr) return nullptr;
+        next_ranges = std::move(*owned_ranges);
+        next_targets = std::move(*owned_targets);
+        next_rests = std::move(*owned_rests);
+        ++context->owned_static_take_count;
+    } else {
+        next_ranges = copy_values<std::int32_t>(ranges);
+        next_targets = copy_values<std::int32_t>(targets);
+        next_rests = copy_values<float>(rests);
+    }
     context->distance_ranges.swap(next_ranges);
     context->distance_targets.swap(next_targets);
     context->distance_rest_signed.swap(next_rests);
@@ -4961,8 +5010,10 @@ PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 4) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bending_static expects 4 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 7;
+    if (argument_count != 4 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bending_static expects 4 or 7 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -5002,9 +5053,29 @@ PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
             return nullptr;
         }
     }
-    auto next_quads = copy_values<std::int32_t>(quads);
-    auto next_rests = copy_values<float>(rests);
-    auto next_markers = copy_values<std::int8_t>(markers);
+    std::vector<std::int32_t> next_quads;
+    std::vector<float> next_rests;
+    std::vector<std::int8_t> next_markers;
+    if (take_owned) {
+        auto* owned_quads = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 4), "hotools_native.mc2.bending_quads.v0", quads
+        );
+        auto* owned_rests = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 5), "hotools_native.mc2.bending_rests.v0", rests
+        );
+        auto* owned_markers = validated_owned_values<std::int8_t>(
+            PyTuple_GET_ITEM(args, 6), "hotools_native.mc2.bending_markers.v0", markers
+        );
+        if (owned_quads == nullptr || owned_rests == nullptr || owned_markers == nullptr) return nullptr;
+        next_quads = std::move(*owned_quads);
+        next_rests = std::move(*owned_rests);
+        next_markers = std::move(*owned_markers);
+        ++context->owned_static_take_count;
+    } else {
+        next_quads = copy_values<std::int32_t>(quads);
+        next_rests = copy_values<float>(rests);
+        next_markers = copy_values<std::int8_t>(markers);
+    }
     context->bending_quads.swap(next_quads);
     context->bending_rest_angle_or_volume.swap(next_rests);
     context->bending_sign_or_volume.swap(next_markers);
@@ -5014,8 +5085,10 @@ PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 7) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_self_collision_static expects 7 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 10;
+    if (argument_count != 7 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_self_collision_static expects 7 or 10 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -5107,9 +5180,29 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
             return nullptr;
         }
     }
-    auto next_flags = copy_values<std::uint32_t>(flags);
-    auto next_indices = copy_values<std::int32_t>(indices);
-    auto next_depths = copy_values<float>(depths);
+    std::vector<std::uint32_t> next_flags;
+    std::vector<std::int32_t> next_indices;
+    std::vector<float> next_depths;
+    if (take_owned) {
+        auto* owned_flags = validated_owned_values<std::uint32_t>(
+            PyTuple_GET_ITEM(args, 7), "hotools_native.mc2.self_flags.v0", flags
+        );
+        auto* owned_indices = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 8), "hotools_native.mc2.self_indices.v0", indices
+        );
+        auto* owned_depths = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 9), "hotools_native.mc2.self_depths.v0", depths
+        );
+        if (owned_flags == nullptr || owned_indices == nullptr || owned_depths == nullptr) return nullptr;
+        next_flags = std::move(*owned_flags);
+        next_indices = std::move(*owned_indices);
+        next_depths = std::move(*owned_depths);
+        ++context->owned_static_take_count;
+    } else {
+        next_flags = copy_values<std::uint32_t>(flags);
+        next_indices = copy_values<std::int32_t>(indices);
+        next_depths = copy_values<float>(depths);
+    }
     context->self_primitive_flags.swap(next_flags);
     context->self_particle_indices.swap(next_indices);
     context->self_primitive_depths.swap(next_depths);

@@ -369,25 +369,43 @@ class MC2NativeContextV0:
 
     def update_distance_derived(self, derived: dict) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_update_distance_static(
+        arguments = (
             self._handle,
             derived["distance_ranges"],
             derived["distance_targets"],
             derived["distance_rest_signed"],
         )
+        owners = (
+            derived.get("_distance_ranges_owner"),
+            derived.get("_distance_targets_owner"),
+            derived.get("_distance_rests_owner"),
+        )
+        self._module.mc2_context_v0_update_distance_static(
+            *arguments,
+            *(owners if all(value is not None for value in owners) else ()),
+        )
 
     def update_bending_derived(self, derived: dict) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_update_bending_static(
+        arguments = (
             self._handle,
             derived["bending_quads"],
             derived["bending_rest_angle_or_volume"],
             derived["bending_sign_or_volume"],
         )
+        owners = (
+            derived.get("_bending_quads_owner"),
+            derived.get("_bending_rests_owner"),
+            derived.get("_bending_markers_owner"),
+        )
+        self._module.mc2_context_v0_update_bending_static(
+            *arguments,
+            *(owners if all(value is not None for value in owners) else ()),
+        )
 
     def update_self_collision_derived(self, derived: dict) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_update_self_collision_static(
+        arguments = (
             self._handle,
             derived["primitive_flags"],
             derived["particle_indices"],
@@ -395,6 +413,15 @@ class MC2NativeContextV0:
             int(derived["point_count"]),
             int(derived["edge_count"]),
             int(derived["triangle_count"]),
+        )
+        owners = (
+            derived.get("_self_flags_owner"),
+            derived.get("_self_indices_owner"),
+            derived.get("_self_depths_owner"),
+        )
+        self._module.mc2_context_v0_update_self_collision_static(
+            *arguments,
+            *(owners if all(value is not None for value in owners) else ()),
         )
 
     def update_center_derived(self, derived: dict) -> None:

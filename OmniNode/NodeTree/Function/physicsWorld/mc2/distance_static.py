@@ -271,8 +271,7 @@ def build_mc2_distance_static(
         np.ascontiguousarray(vertex_to_vertex_data, dtype=np.int32),
     )
     if native_context is not None:
-        native_context.update_distance_derived(derived)
-        return MC2DistanceStaticMetadata(
+        metadata = MC2DistanceStaticMetadata(
             proxy_signature=proxy.proxy_signature,
             baseline_signature=baseline.baseline_signature,
             vertex_count=proxy.vertex_count,
@@ -286,6 +285,8 @@ def build_mc2_distance_static(
                 distance_rest_signed=derived["distance_rest_signed"],
             ),
         )
+        native_context.update_distance_derived(derived)
+        return metadata
 
     return make_mc2_distance_static_spec(
         proxy_signature=proxy.proxy_signature,

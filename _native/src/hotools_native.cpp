@@ -96,11 +96,21 @@ inline void check_root_or_minus_one(const int32_t* data, size_t n, size_t vc, co
 }
 
 template<typename T>
-nb::ndarray<nb::numpy, T> owned_array_1d(std::vector<T>&& values) {
+nb::ndarray<nb::numpy, T> owned_array_1d(
+    std::vector<T>&& values,
+    nb::dict* result = nullptr,
+    const char* owner_key = nullptr,
+    const char* capsule_name = nullptr
+) {
     auto* owner_data = new std::vector<T>(std::move(values));
-    nb::capsule owner(owner_data, [](void* pointer) noexcept {
-        delete static_cast<std::vector<T>*>(pointer);
-    });
+    nb::capsule owner = capsule_name
+        ? nb::capsule(owner_data, capsule_name, [](void* pointer) noexcept {
+            delete static_cast<std::vector<T>*>(pointer);
+        })
+        : nb::capsule(owner_data, [](void* pointer) noexcept {
+            delete static_cast<std::vector<T>*>(pointer);
+        });
+    if (result != nullptr && owner_key != nullptr) (*result)[owner_key] = owner;
     return nb::ndarray<nb::numpy, T>(
         owner_data->data(), {owner_data->size()}, owner
     );
@@ -110,15 +120,23 @@ template<typename T>
 nb::ndarray<nb::numpy, T> owned_array_2d(
     std::vector<T>&& values,
     std::size_t rows,
-    std::size_t columns
+    std::size_t columns,
+    nb::dict* result = nullptr,
+    const char* owner_key = nullptr,
+    const char* capsule_name = nullptr
 ) {
     if (rows * columns != values.size()) {
         throw nb::value_error("owned ndarray shape does not match storage");
     }
     auto* owner_data = new std::vector<T>(std::move(values));
-    nb::capsule owner(owner_data, [](void* pointer) noexcept {
-        delete static_cast<std::vector<T>*>(pointer);
-    });
+    nb::capsule owner = capsule_name
+        ? nb::capsule(owner_data, capsule_name, [](void* pointer) noexcept {
+            delete static_cast<std::vector<T>*>(pointer);
+        })
+        : nb::capsule(owner_data, [](void* pointer) noexcept {
+            delete static_cast<std::vector<T>*>(pointer);
+        });
+    if (result != nullptr && owner_key != nullptr) (*result)[owner_key] = owner;
     return nb::ndarray<nb::numpy, T>(
         owner_data->data(), {rows, columns}, owner
     );
@@ -1201,10 +1219,18 @@ NB_MODULE(hotools_native, m) {
             }
             nb::dict result;
             result["distance_ranges"] = owned_array_2d(
-                std::move(derived.ranges), vertex_count, 2
+                std::move(derived.ranges), vertex_count, 2,
+                &result, "_distance_ranges_owner",
+                "hotools_native.mc2.distance_ranges.v0"
             );
-            result["distance_targets"] = owned_array_1d(std::move(derived.targets));
-            result["distance_rest_signed"] = owned_array_1d(std::move(derived.rest_signed));
+            result["distance_targets"] = owned_array_1d(
+                std::move(derived.targets), &result, "_distance_targets_owner",
+                "hotools_native.mc2.distance_targets.v0"
+            );
+            result["distance_rest_signed"] = owned_array_1d(
+                std::move(derived.rest_signed), &result, "_distance_rests_owner",
+                "hotools_native.mc2.distance_rests.v0"
+            );
             return result;
         });
     m.def("mc2_build_bending_derived_v0",
@@ -1243,13 +1269,19 @@ NB_MODULE(hotools_native, m) {
             const auto record_count = derived.rest_angle_or_volume.size();
             nb::dict result;
             result["bending_quads"] = owned_array_2d(
-                std::move(derived.quads), record_count, 4
+                std::move(derived.quads), record_count, 4,
+                &result, "_bending_quads_owner",
+                "hotools_native.mc2.bending_quads.v0"
             );
             result["bending_rest_angle_or_volume"] = owned_array_1d(
-                std::move(derived.rest_angle_or_volume)
+                std::move(derived.rest_angle_or_volume),
+                &result, "_bending_rests_owner",
+                "hotools_native.mc2.bending_rests.v0"
             );
             result["bending_sign_or_volume"] = owned_array_1d(
-                std::move(derived.sign_or_volume)
+                std::move(derived.sign_or_volume),
+                &result, "_bending_markers_owner",
+                "hotools_native.mc2.bending_markers.v0"
             );
             return result;
         });
@@ -1284,13 +1316,19 @@ NB_MODULE(hotools_native, m) {
             const auto primitive_count = derived.primitive_flags.size();
             nb::dict result;
             result["primitive_flags"] = owned_array_1d(
-                std::move(derived.primitive_flags)
+                std::move(derived.primitive_flags),
+                &result, "_self_flags_owner",
+                "hotools_native.mc2.self_flags.v0"
             );
             result["particle_indices"] = owned_array_2d(
-                std::move(derived.particle_indices), primitive_count, 3
+                std::move(derived.particle_indices), primitive_count, 3,
+                &result, "_self_indices_owner",
+                "hotools_native.mc2.self_indices.v0"
             );
             result["primitive_depths"] = owned_array_1d(
-                std::move(derived.primitive_depths)
+                std::move(derived.primitive_depths),
+                &result, "_self_depths_owner",
+                "hotools_native.mc2.self_depths.v0"
             );
             result["point_count"] = derived.point_count;
             result["edge_count"] = derived.edge_count;
