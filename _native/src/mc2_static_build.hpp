@@ -14,6 +14,12 @@ void mc2_optimize_triangle_direction(
     double* triangle_normals
 );
 
+void mc2_normalize_mesh_normals_and_fallback_tangents(
+    double* local_normals,
+    std::size_t vertex_count,
+    double* local_tangents
+);
+
 struct Mc2MeshFinalProxyDerived {
     std::vector<double> local_normals;
     std::vector<double> local_tangents;

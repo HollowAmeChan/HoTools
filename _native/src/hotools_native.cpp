@@ -938,6 +938,22 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
         });
+    m.def("mc2_build_mesh_fallback_tangents_v0",
+        [](f64_2d local_normals, f64_2d local_tangents) {
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_len(local_tangents.shape(0), local_normals.shape(0), "local_tangents");
+            try {
+                nb::gil_scoped_release release;
+                hotools::mc2_normalize_mesh_normals_and_fallback_tangents(
+                    local_normals.data(),
+                    local_normals.shape(0),
+                    local_tangents.data()
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+        });
     m.def("mc2_build_mesh_final_proxy_derived_v0",
         [](cf64_2d positions,
            f64_2d local_normals,

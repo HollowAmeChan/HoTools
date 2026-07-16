@@ -468,6 +468,32 @@ void mc2_optimize_triangle_direction(
     }
 }
 
+void mc2_normalize_mesh_normals_and_fallback_tangents(
+    double* local_normals,
+    std::size_t vertex_count,
+    double* local_tangents
+) {
+    if (local_normals == nullptr || local_tangents == nullptr) {
+        throw std::invalid_argument("mesh normal/tangent buffers cannot be null");
+    }
+    const Vec3 up {0.0, 1.0, 0.0};
+    const Vec3 right {1.0, 0.0, 0.0};
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const Vec3 normal = normalize(load_vec3(local_normals, vertex), "mesh vertex normal");
+        const Vec3 tangent = normalize(
+            dot(normal, up) < 0.9 ? cross(normal, up) : cross(normal, right),
+            "mesh fallback tangent"
+        );
+        const auto offset = vertex * 3;
+        local_normals[offset] = normal.x;
+        local_normals[offset + 1] = normal.y;
+        local_normals[offset + 2] = normal.z;
+        local_tangents[offset] = tangent.x;
+        local_tangents[offset + 1] = tangent.y;
+        local_tangents[offset + 2] = tangent.z;
+    }
+}
+
 Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* positions,
     const double* local_normals,

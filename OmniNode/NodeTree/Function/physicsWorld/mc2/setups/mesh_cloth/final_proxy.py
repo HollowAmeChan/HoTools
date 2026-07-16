@@ -13,10 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-from ....utils.math3d import (
-    normalize_vector_f64,
-    orientation_xyzw_f64,
-)
+from ....utils.math3d import orientation_xyzw_f64
 from ...mesh_baseline import MC2_VERTEX_FIXED
 from ...mesh_baseline import MC2_VERTEX_MOVE
 from ...static_data import MC2ProxyStaticSpec
@@ -211,7 +208,7 @@ class MC2MeshFinalizerNativeData:
 
 
 def _array(values, *, width: int, name: str) -> np.ndarray:
-    array = np.asarray(tuple(values), dtype=np.float64)
+    array = np.asarray(values, dtype=np.float64)
     if array.ndim != 2 or array.shape[1] != width:
         raise ValueError(f"{name} must have shape [N,{width}]")
     if not np.all(np.isfinite(array)):
@@ -221,7 +218,7 @@ def _array(values, *, width: int, name: str) -> np.ndarray:
 
 def _int_records(values, *, width: int, name: str) -> tuple[tuple[int, ...], ...]:
     records = []
-    for index, value in enumerate(values or ()):
+    for index, value in enumerate(() if values is None else values):
         record = tuple(int(item) for item in value)
         if len(record) != width:
             raise ValueError(f"{name}[{index}] must contain {width} indices")
@@ -526,14 +523,6 @@ def build_mc2_final_proxy(
     )
 
 
-def _fallback_tangent(normal: np.ndarray) -> np.ndarray:
-    up = np.asarray((0.0, 1.0, 0.0), dtype=np.float64)
-    right = np.asarray((1.0, 0.0, 0.0), dtype=np.float64)
-    if float(np.dot(normal, up)) < 0.9:
-        return normalize_vector_f64(np.cross(normal, up), name="generated tangent")
-    return normalize_vector_f64(np.cross(normal, right), name="generated tangent")
-
-
 def _vertex_group_weights(obj, group_name: str, vertex_count: int) -> tuple[float, ...]:
     group = obj.vertex_groups.get(group_name)
     if group is None:
@@ -609,16 +598,17 @@ def build_blender_mesh_final_proxy(
     vertex_count = len(mesh.vertices)
     triangles = _mesh_triangles(mesh)
     uvs = _mesh_uvs(mesh, triangles, uv_layer_name=uv_layer_name)
-    positions = tuple(tuple(float(component) for component in vertex.co) for vertex in mesh.vertices)
-    normals = []
-    tangents = []
-    for vertex in mesh.vertices:
-        normal = normalize_vector_f64(
-            np.asarray(tuple(float(component) for component in vertex.normal), dtype=np.float64),
-            name=f"mesh.vertices[{vertex.index}].normal",
-        )
-        normals.append(tuple(float(value) for value in normal))
-        tangents.append(tuple(float(value) for value in _fallback_tangent(normal)))
+    positions = np.empty(vertex_count * 3, dtype=np.float64)
+    normals = np.empty(vertex_count * 3, dtype=np.float64)
+    tangents = np.empty(vertex_count * 3, dtype=np.float64)
+    mesh.vertices.foreach_get("co", positions)
+    mesh.vertices.foreach_get("normal", normals)
+    positions = positions.reshape((-1, 3))
+    normals = normals.reshape((-1, 3))
+    tangents = tangents.reshape((-1, 3))
+    from ...native import native_module
+
+    native_module().mc2_build_mesh_fallback_tangents_v0(normals, tangents)
     if not pin_enabled:
         attributes = tuple(MC2_VERTEX_MOVE for _ in range(vertex_count))
     elif not pin_vertex_group:
@@ -629,14 +619,16 @@ def build_blender_mesh_final_proxy(
             MC2_VERTEX_FIXED if weight > 0.0 else MC2_VERTEX_MOVE
             for weight in weights
         )
-    lines = tuple(tuple(int(value) for value in edge.vertices) for edge in mesh.edges)
+    lines = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", lines)
+    lines = lines.reshape((-1, 2))
     return build_mc2_final_proxy(
         task_id=task_id,
         setup_type="mesh_cloth",
         vertex_identities=tuple(f"mesh:v{index}" for index in range(vertex_count)),
         local_positions=positions,
-        local_normals=tuple(normals),
-        local_tangents=tuple(tangents),
+        local_normals=normals,
+        local_tangents=tangents,
         uvs=uvs,
         vertex_attributes=attributes,
         lines=lines,
