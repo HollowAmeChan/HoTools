@@ -306,6 +306,8 @@ Blender authoring/frame input
 
 19. Bone rest matrix到transform quaternion/local normal/local tangent的正交化与旋转由`mc2_build_bone_rest_frames_v0` C++ bulk kernel唯一生产；Python static builder只组织identities/parents/heads并消费连续输出，不得恢复逐骨`matrix4_tuple_from_flat -> quaternion_from_matrix -> rotate_vector`转发。该kernel复用`mc2_static_build.cpp`现有`matrix_to_quaternion/normalize/rotate`语义，不得建立第二套四元数阈值。native小步验证固定使用`_native\build.bat 313 native`：该target不clean，且Jolt为`EXCLUDE_FROM_ALL`不参与编译。
 
+20. finalized Bone normal/tangent到vertex-to-transform rotation的`conjugate(vertexOrientation) * transformRotation`由`mc2_build_bone_vertex_to_transform_rotations_v0` C++ bulk kernel唯一生产，必须复用同文件的orientation/quaternion实现。Python不得恢复逐vertex orientation、conjugate、multiply和normalize循环。该输出当前仍经最小Bone registration packer上传；P-06d下一步是让registration与Distance/Center/Self的native producer owner直接move进context。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

@@ -979,6 +979,31 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
         });
+    m.def("mc2_build_bone_vertex_to_transform_rotations_v0",
+        [](cf64_2d local_normals,
+           cf64_2d local_tangents,
+           cf64_2d transform_rotations,
+           f64_2d vertex_to_transform_rotations) {
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_cols(transform_rotations, 4, "transform_rotations");
+            check_cols(vertex_to_transform_rotations, 4, "vertex_to_transform_rotations");
+            check_len(local_tangents.shape(0), local_normals.shape(0), "local_tangents");
+            check_len(transform_rotations.shape(0), local_normals.shape(0), "transform_rotations");
+            check_len(vertex_to_transform_rotations.shape(0), local_normals.shape(0), "vertex_to_transform_rotations");
+            try {
+                nb::gil_scoped_release release;
+                hotools::mc2_build_bone_vertex_to_transform_rotations(
+                    local_normals.data(),
+                    local_tangents.data(),
+                    transform_rotations.data(),
+                    local_normals.shape(0),
+                    vertex_to_transform_rotations.data()
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+        });
     m.def("mc2_build_mesh_final_proxy_derived_v0",
         [](cf64_2d positions,
            f64_2d local_normals,

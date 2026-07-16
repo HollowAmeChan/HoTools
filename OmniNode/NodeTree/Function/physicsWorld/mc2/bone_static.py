@@ -355,19 +355,16 @@ def build_mc2_bone_static(
         vertex_local_rotations=local_pose_rotations,
     )
 
-    to_transform = []
-    for vertex, transform_rotation in enumerate(transform_rotations):
-        vertex_rotation = orientation_xyzw_f64(
-            final_proxy.local_normals[vertex],
-            final_proxy.local_tangents[vertex],
-        )
-        to_transform.append(tuple(float(value) for value in normalize_vector_f64(
-            quaternion_multiply_f64(
-                quaternion_conjugate_f64(vertex_rotation),
-                np.asarray(transform_rotation, dtype=np.float64),
-            ),
-            name="vertex-to-transform rotation",
-        )))
+    to_transform_values = np.empty((count, 4), dtype=np.float64)
+    from .native import native_module
+
+    native_module().mc2_build_bone_vertex_to_transform_rotations_v0(
+        np.ascontiguousarray(final_proxy.local_normals, dtype=np.float64),
+        np.ascontiguousarray(final_proxy.local_tangents, dtype=np.float64),
+        np.ascontiguousarray(transform_rotations, dtype=np.float64),
+        to_transform_values,
+    )
+    to_transform = _tuple_vectors(to_transform_values)
 
     payload = {
         "schema_version": MC2_STATIC_SCHEMA_VERSION,
@@ -375,14 +372,14 @@ def build_mc2_bone_static(
         "finalizer_signature": finalizer.finalizer_signature,
         "baseline_signature": baseline.baseline_signature,
         "normal_adjustment_rotations": adjustment_rotations,
-        "vertex_to_transform_rotations": tuple(to_transform),
+        "vertex_to_transform_rotations": to_transform,
     }
     return MC2BoneStaticSpec(
         proxy=final_proxy,
         finalizer=finalizer,
         baseline=baseline,
         normal_adjustment_rotations=adjustment_rotations,
-        vertex_to_transform_rotations=tuple(to_transform),
+        vertex_to_transform_rotations=to_transform,
         static_signature=_signature(payload),
     )
 

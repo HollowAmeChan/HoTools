@@ -28,6 +28,14 @@ void mc2_build_bone_rest_frames(
     double* local_tangents
 );
 
+void mc2_build_bone_vertex_to_transform_rotations(
+    const double* local_normals,
+    const double* local_tangents,
+    const double* transform_rotations,
+    std::size_t vertex_count,
+    double* vertex_to_transform_rotations
+);
+
 struct Mc2MeshFinalProxyDerived {
     std::vector<double> local_normals;
     std::vector<double> local_tangents;

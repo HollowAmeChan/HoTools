@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-06d当前已用单一`MC2BoneRawSnapshot`消除Bone fingerprint/topology/static的重复rest读取和生产路径`_thaw`，以同task同Armature的`foreach_get`批量读取取代逐source逐骨属性访问，并将rest quaternion/normal/tangent迁入C++ bulk kernel；下一步收口Bone派生static staged owner。
+   P-06d当前已用单一`MC2BoneRawSnapshot`消除Bone fingerprint/topology/static的重复rest读取和生产路径`_thaw`，以同task同Armature的`foreach_get`批量读取取代逐source逐骨属性访问，并将rest quaternion/normal/tangent与vertex-to-transform rotation迁入C++ bulk kernel；下一步收口Bone派生static staged owner。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

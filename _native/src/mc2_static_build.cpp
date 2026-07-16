@@ -539,6 +539,43 @@ void mc2_build_bone_rest_frames(
     }
 }
 
+void mc2_build_bone_vertex_to_transform_rotations(
+    const double* local_normals,
+    const double* local_tangents,
+    const double* transform_rotations,
+    std::size_t vertex_count,
+    double* vertex_to_transform_rotations
+) {
+    if (local_normals == nullptr || local_tangents == nullptr ||
+        transform_rotations == nullptr || vertex_to_transform_rotations == nullptr) {
+        throw std::invalid_argument("bone transform rotation buffers cannot be null");
+    }
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const Vec4 vertex_rotation = orientation_quaternion(
+            load_vec3(local_normals, vertex),
+            load_vec3(local_tangents, vertex)
+        );
+        const auto offset = vertex * 4;
+        const Vec4 transform_rotation = normalize(
+            Vec4 {
+                transform_rotations[offset],
+                transform_rotations[offset + 1],
+                transform_rotations[offset + 2],
+                transform_rotations[offset + 3],
+            },
+            "bone transform rotation"
+        );
+        const Vec4 result = normalize(
+            quaternion_multiply(quaternion_conjugate(vertex_rotation), transform_rotation),
+            "vertex-to-transform rotation"
+        );
+        vertex_to_transform_rotations[offset] = result.x;
+        vertex_to_transform_rotations[offset + 1] = result.y;
+        vertex_to_transform_rotations[offset + 2] = result.z;
+        vertex_to_transform_rotations[offset + 3] = result.w;
+    }
+}
+
 Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* positions,
     const double* local_normals,

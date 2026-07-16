@@ -83,7 +83,7 @@
 
 Bone生产prepare已建立短生命周期`MC2BoneRawSnapshot`，fingerprint、Line/product connection和Bone static共享names/parents/head-tail/rest matrices；同一task内的相同Armature只遍历一次name/parent，并用Blender `foreach_get`一次读取head/tail/matrix后按source稳定骨名切片。`matrix_local`的Blender列主序展平在snapshot边界固定转置，显式oracle与compact生产signature一致。生产Topology只保留`bone_names`与轻量身份，不再二次读取RNA、冻结每骨dict或在static/frame路径`_thaw`。26/26纯MC2与Blender Bone static/product/frame通过。large Bone外层首建约`99.0ms`，profile step约`12.1ms`，snapshot约`2.04ms`，frame input约`2.85ms`，逐帧均值约`6.50ms`且为旧CPP的`3.10x`；Python分配峰值约531KB，slot常驻NumPy仍约43KB。P-06d仍未关闭；下一步将Bone orientation/transform、Distance、Center和Self直接收入native staged context。
 
-Bone rest matrix的正交化、transform quaternion、local normal和local tangent已由`mc2_build_bone_rest_frames_v0` bulk kernel唯一生产，Python逐骨`matrix4/quaternion/rotate`转发已从生产static builder删除；Tier A、Blender Bone static/product和26/26纯MC2通过。large Bone首建本轮约`100.4ms`，与bulk snapshot后基线同档，本步为职责迁移而非性能关闭证据。native验证使用`build.bat 313 native`，只增量编译/链接`hotools_native`，无Jolt target且无clean。P-06d剩余vertex-to-transform、Distance、Center、Self的staged owner收口。
+Bone rest matrix的正交化、transform quaternion、local normal和local tangent已由`mc2_build_bone_rest_frames_v0` bulk kernel唯一生产，finalized orientation到vertex-to-transform rotation也已由`mc2_build_bone_vertex_to_transform_rotations_v0`批量生产；Python逐骨matrix/quaternion/rotate/multiply转发已从生产static builder删除。Tier A、Blender Bone static/product和26/26纯MC2通过。large Bone首建本轮约`100.4ms`，与bulk snapshot后基线同档，这两步为职责迁移而非性能关闭证据。native验证使用`build.bat 313 native`，只增量编译/链接`hotools_native`，无Jolt target且无clean。P-06d剩余Bone registration owner、Distance、Center、Self的staged owner收口。
 
 ## 当前验收结论
 
