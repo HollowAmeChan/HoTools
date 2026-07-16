@@ -291,10 +291,11 @@ set(USE_AVX  OFF CACHE BOOL "" FORCE)
 `physicsWorld/rigid/nodes.py` 原来有 `from ..solver import step_rigid_bodies`（双点），
 应为 `from .solver import step_rigid_bodies`（单点），因为 `solver.py` 就在 `rigid/` 目录下。
 
-### build.bat 只编译 hotools_native
+### build.bat 选择性编译模块
 
-`build.bat` 调用的解决方案 `hotools_native.sln` 包含全部 target，但因为路径问题在某些
-shell 环境下无输出。直接用 PowerShell + MSBuild 更可靠（见上方重编流程）。
+`build.bat [all|311|313] [all|native|jolt]` 会把模块名传给 CMake `--target`。
+MC2 日常开发使用 `build.bat 313 native`，不会链接或重写 `hotools_jolt`；Jolt 单独验证使用
+`build.bat 313 jolt`。需要诊断底层 VS 工程时仍可直接使用 PowerShell + MSBuild（见上方重编流程）。
 
 ### cmake 不重新生成 vcxproj
 

@@ -41,6 +41,15 @@ build.bat 311
 
 :: 只编译 Blender 5.x / py313
 build.bat 313
+
+:: 只编译 hotools_native（py311 + py313）
+build.bat native
+
+:: MC2 日常开发：只编译 py313 的 hotools_native
+build.bat 313 native
+
+:: 只编译 py313 的 hotools_jolt
+build.bat 313 jolt
 ```
 
 ### 产物路径
