@@ -43,11 +43,10 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | P-03 | 建立 V1-R 混合场景稳定性与性能门禁。 | 长时多帧、static rebuild、参数热更新、reset、清缓存、dispose 循环无泄漏/陈旧结果；记录可重复性能基线。 |
-| 2 | P-04 | 删除旧 MC2 节点、Python reference、native full-core/context、兼容 cache 与 shadow pipeline。 | registry、节点、import、运行时与资产入口均无 fallback；新测试不加载旧实现。 |
-| 3 | P-05 | 关闭 solver acceptance blocker。 | P-01..P-04 全部关闭，`solver_acceptance_blocker=False`，完整 Python 3.13 与 Blender 5.1 门禁通过。 |
+| 1 | P-04 | 删除旧 MC2 节点、Python reference、native full-core/context、兼容 cache 与 shadow pipeline。 | registry、节点、import、运行时与资产入口均无 fallback；新测试不加载旧实现。 |
+| 2 | P-05 | 关闭 solver acceptance blocker。 | P-01..P-04 全部关闭，`solver_acceptance_blocker=False`，完整 Python 3.13 与 Blender 5.1 门禁通过。 |
 
-不得在第 1 项尚未形成事实前提前删除可用于定位的旧代码；也不得让旧代码成为新测试 oracle 或运行 fallback。删除提交必须独立、可审查。
+旧路径删除必须是独立、可审查提交；删除前先用import/registry/runtime搜索证明新路径无依赖，删除后重跑完整Python 3.13、代表性资产与混合soak门禁。
 
 ## 交付规则
 

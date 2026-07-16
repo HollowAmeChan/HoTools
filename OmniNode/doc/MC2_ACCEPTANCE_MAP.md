@@ -63,7 +63,7 @@
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
 | P-01 | V1-R 直接 oracle 闭环 | 完全对齐 | static/runtime主体及Distance/Tether/Angle/Motion direct runtime均有Tier A | 无 | 否 |
 | P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1四脚本门禁，覆盖五资产/三setup | Mesh、Bone Line、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
-| P-03 | 稳定性与性能门禁 | 产品收尾 | context 双 ABI soak、dispose 与后台测试已存在 | 增加 V1-R 混合场景长时 soak、重建/清缓存循环与性能基线 | 是 |
+| P-03 | 稳定性与性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms，受版本化ceiling门禁 | 否 |
 | P-04 | 旧 MC2 路径删除 | 产品收尾 | 新 solver 不调用旧 package | 删除旧节点/package/full-core/context/shadow pipeline；确认无 registry/asset fallback | 是 |
 | P-05 | declaration 验收开关 | 产品收尾 | `mc2` 已注册并发布三类结果 | P-01..P-04 全关后将 `solver_acceptance_blocker` 改为 `False` | 是 |
 | X-01 | Bake/export | 未来扩展 | `supports_bake=False` | 独立冻结 bake 时间轴、缓存与导出契约 | 否 |
@@ -71,13 +71,12 @@
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle和代表性生产资产已经闭环。当前不再横向扩功能，而是关闭 **稳定性/性能门禁 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产及混合稳定性/性能门禁已经闭环。当前只关闭 **旧路径删除 + acceptance flag**。在这两项关闭前，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `P-03`：混合场景 soak、资源循环与性能门禁。
-2. `P-04`：旧 MC2 路径删除。
-3. `P-05`：关闭 declaration acceptance blocker。
+1. `P-04`：旧 MC2 路径删除。
+2. `P-05`：关闭 declaration acceptance blocker。
 
 ## 更新规则
 
