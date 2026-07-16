@@ -269,8 +269,11 @@ def build_mc2_mesh_frame_input(
     topology_signature = str(topology_signature or "")
     if not topology_signature:
         raise ValueError("Mesh frame input requires the task topology signature")
-    records = tuple(finalizer.vertex_to_triangle_records)
-    if len(records) != snapshot.vertex_count or any(not value for value in records):
+    coverage = getattr(finalizer, "every_vertex_has_triangle", None)
+    if coverage is None:
+        records = tuple(finalizer.vertex_to_triangle_records)
+        coverage = len(records) == snapshot.vertex_count and all(records)
+    if not coverage:
         raise ValueError("N3 Mesh frame orientation currently requires every vertex to belong to a triangle")
 
     return make_mc2_frame_input(

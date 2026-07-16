@@ -207,6 +207,9 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert mesh_static.bending is not None
         assert mesh_static.bending.vertex_count == 4
         assert mesh_static.bending.record_count > 0
+        assert mesh_static.finalizer.finalizer.native_owned is True
+        assert mesh_static.finalizer.finalizer.every_vertex_has_triangle is True
+        assert not hasattr(mesh_static.finalizer.finalizer, "vertex_to_vertex_data")
         native_info = slot.data["native_context"].inspect()
         assert native_info["tether_enabled"] is True
         assert native_info["tether_solve_count"] == 0
