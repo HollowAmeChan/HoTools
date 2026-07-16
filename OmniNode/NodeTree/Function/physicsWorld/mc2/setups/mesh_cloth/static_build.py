@@ -14,6 +14,7 @@ from ...bending_static import MC2BendingStaticSpec
 from ...bending_static import build_mc2_bending_static
 from ...center_state import MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
+from ...distance_static import MC2DistanceStaticMetadata
 from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
@@ -33,7 +34,7 @@ class MC2MeshClothStaticBuildResult:
     mesh_topology_signature: str
     finalizer: MC2MeshFinalProxyBuildResult
     baseline: MC2MeshBaselineBuildResult
-    distance: MC2DistanceStaticSpec
+    distance: MC2DistanceStaticSpec | MC2DistanceStaticMetadata
     bending: MC2BendingStaticSpec | MC2BendingStaticMetadata | None
     center: MC2CenterStaticSpec
     self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
@@ -49,8 +50,11 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("finalizer must be MC2MeshFinalProxyBuildResult")
         if not isinstance(self.baseline, MC2MeshBaselineBuildResult):
             raise TypeError("baseline must be MC2MeshBaselineBuildResult")
-        if not isinstance(self.distance, MC2DistanceStaticSpec):
-            raise TypeError("distance must be MC2DistanceStaticSpec")
+        if not isinstance(
+            self.distance,
+            (MC2DistanceStaticSpec, MC2DistanceStaticMetadata),
+        ):
+            raise TypeError("distance must be an MC2 Distance static result")
         if self.bending is not None and not isinstance(
             self.bending,
             (MC2BendingStaticSpec, MC2BendingStaticMetadata),
@@ -92,7 +96,7 @@ class MC2MeshClothStaticBuildResult:
             "fixed_count": sum(
                 1 for value in self.final_proxy.vertex_attributes if value & 0x01
             ),
-            "distance_record_count": len(self.distance.distance_targets),
+            "distance_record_count": self.distance.record_count,
             "bending_record_count": (
                 self.bending.record_count if self.bending is not None else 0
             ),

@@ -293,9 +293,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_static_ready"] is True
         assert native_info["center_static_revision"] == 1
         assert native_info["center_fixed_count"] == len(static.center.fixed_indices)
-        assert native_info["distance_record_count"] == len(
-            static.distance.distance_targets
-        )
+        assert native_info["distance_record_count"] == static.distance.record_count
         assert native_info["bending_record_count"] == (
             static.bending.record_count if static.bending is not None else 0
         )

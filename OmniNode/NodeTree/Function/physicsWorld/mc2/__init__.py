@@ -113,6 +113,7 @@ _EXPORTS = {
     "make_mc2_bending_static_spec": ".bending_static",
     "pack_mc2_bending_static": ".bending_static",
     "MC2DistanceStaticSpec": ".distance_static",
+    "MC2DistanceStaticMetadata": ".distance_static",
     "build_mc2_distance_static": ".distance_static",
     "make_mc2_distance_static_spec": ".distance_static",
     "pack_mc2_distance_static": ".distance_static",

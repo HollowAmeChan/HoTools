@@ -203,7 +203,7 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert mesh_static.final_proxy.vertex_count == 4
         assert len(mesh_static.final_proxy.triangles) == 2
         assert mesh_static.distance.vertex_count == 4
-        assert len(mesh_static.distance.distance_targets) > 0
+        assert mesh_static.distance.record_count > 0
         assert mesh_static.bending is not None
         assert mesh_static.bending.vertex_count == 4
         assert mesh_static.bending.record_count > 0
@@ -212,9 +212,7 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert native_info["tether_solve_count"] == 0
         snapshot = slot.debug_snapshot()["mesh_static"]
         assert snapshot["vertex_count"] == 4
-        assert snapshot["distance_record_count"] == len(
-            mesh_static.distance.distance_targets
-        )
+        assert snapshot["distance_record_count"] == mesh_static.distance.record_count
         assert snapshot["distance_signature"] == mesh_static.distance.distance_signature
         assert snapshot["bending_record_count"] == mesh_static.bending.record_count
         assert snapshot["bending_signature"] == mesh_static.bending.bending_signature

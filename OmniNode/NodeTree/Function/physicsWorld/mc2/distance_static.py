@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 import math
 
 import numpy as np
@@ -18,14 +17,27 @@ MC2_DISTANCE_MAX_RANGE_START = 0xFFFFF
 MC2_DISTANCE_MAX_TARGET = 0xFFFF
 
 
-def _signature(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+def _content_signature(
+    *,
+    proxy_signature,
+    baseline_signature,
+    vertex_count,
+    distance_ranges,
+    distance_targets,
+    distance_rest_signed,
+) -> str:
+    record_count = np.asarray(distance_targets).size
+    digest = hashlib.sha256(b"mc2_distance_static_v1\0")
+    digest.update(str(proxy_signature or "").encode("ascii"))
+    digest.update(str(baseline_signature or "").encode("ascii"))
+    digest.update(np.asarray((vertex_count, record_count), dtype=np.int64).tobytes())
+    for values, dtype in (
+        (distance_ranges, np.int32),
+        (distance_targets, np.int32),
+        (distance_rest_signed, np.float32),
+    ):
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
 
 
 def _readonly_array(values, dtype, shape: tuple[int, ...]) -> np.ndarray:
@@ -117,8 +129,19 @@ class MC2DistanceStaticSpec:
                 raise ValueError(f"distance_rest_signed[{index}] cannot be NaN/Inf")
             if rest == 0.0 and math.copysign(1.0, rest) < 0.0:
                 raise ValueError("Distance zero rest must use source +0.0 encoding")
-        if self.distance_signature != _signature(self.signature_payload()):
+        if self.distance_signature != _content_signature(
+            proxy_signature=self.proxy_signature,
+            baseline_signature=self.baseline_signature,
+            vertex_count=self.vertex_count,
+            distance_ranges=self.distance_ranges,
+            distance_targets=self.distance_targets,
+            distance_rest_signed=self.distance_rest_signed,
+        ):
             raise ValueError("distance_signature does not match Distance static payload")
+
+    @property
+    def record_count(self) -> int:
+        return len(self.distance_targets)
 
     def signature_payload(self) -> dict:
         return {
@@ -135,12 +158,43 @@ class MC2DistanceStaticSpec:
         result = {
             "schema_version": self.schema_version,
             "vertex_count": self.vertex_count,
-            "record_count": len(self.distance_targets),
+            "record_count": self.record_count,
             "distance_signature": self.distance_signature,
         }
         if include_arrays:
             result.update(self.signature_payload())
         return result
+
+
+@dataclass(frozen=True)
+class MC2DistanceStaticMetadata:
+    proxy_signature: str
+    baseline_signature: str
+    vertex_count: int
+    record_count: int
+    distance_signature: str
+    schema_version: int = MC2_DISTANCE_STATIC_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_DISTANCE_STATIC_SCHEMA_VERSION:
+            raise ValueError("unsupported MC2 Distance static schema")
+        if not self.proxy_signature or not self.baseline_signature or not self.distance_signature:
+            raise ValueError("Distance signatures cannot be empty")
+        if not 0 < self.vertex_count <= MC2_DISTANCE_MAX_TARGET + 1:
+            raise ValueError("vertex_count exceeds MC2 ushort target domain")
+        if self.record_count < 0:
+            raise ValueError("Distance record_count cannot be negative")
+
+    def debug_dict(self, *, include_arrays: bool = False) -> dict:
+        if include_arrays:
+            raise ValueError("native-owned Distance metadata has no host arrays")
+        return {
+            "schema_version": self.schema_version,
+            "vertex_count": self.vertex_count,
+            "record_count": self.record_count,
+            "distance_signature": self.distance_signature,
+            "native_owned": True,
+        }
 
 
 def make_mc2_distance_static_spec(
@@ -176,7 +230,14 @@ def make_mc2_distance_static_spec(
     }
     return MC2DistanceStaticSpec(
         **payload,
-        distance_signature=_signature(payload),
+        distance_signature=_content_signature(
+            proxy_signature=payload["proxy_signature"],
+            baseline_signature=payload["baseline_signature"],
+            vertex_count=payload["vertex_count"],
+            distance_ranges=payload["distance_ranges"],
+            distance_targets=payload["distance_targets"],
+            distance_rest_signed=payload["distance_rest_signed"],
+        ),
     )
 
 
@@ -187,7 +248,7 @@ def build_mc2_distance_static(
     vertex_to_vertex_ranges,
     vertex_to_vertex_data,
     native_context=None,
-) -> MC2DistanceStaticSpec:
+) -> MC2DistanceStaticSpec | MC2DistanceStaticMetadata:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
     if not isinstance(baseline, MC2BaselineStaticSpec):
@@ -211,6 +272,20 @@ def build_mc2_distance_static(
     )
     if native_context is not None:
         native_context.update_distance_derived(derived)
+        return MC2DistanceStaticMetadata(
+            proxy_signature=proxy.proxy_signature,
+            baseline_signature=baseline.baseline_signature,
+            vertex_count=proxy.vertex_count,
+            record_count=len(derived["distance_targets"]),
+            distance_signature=_content_signature(
+                proxy_signature=proxy.proxy_signature,
+                baseline_signature=baseline.baseline_signature,
+                vertex_count=proxy.vertex_count,
+                distance_ranges=derived["distance_ranges"],
+                distance_targets=derived["distance_targets"],
+                distance_rest_signed=derived["distance_rest_signed"],
+            ),
+        )
 
     return make_mc2_distance_static_spec(
         proxy_signature=proxy.proxy_signature,
@@ -246,6 +321,7 @@ def pack_mc2_distance_static(spec: MC2DistanceStaticSpec) -> dict[str, np.ndarra
 
 __all__ = [
     "MC2_DISTANCE_STATIC_SCHEMA_VERSION",
+    "MC2DistanceStaticMetadata",
     "MC2DistanceStaticSpec",
     "build_mc2_distance_static",
     "make_mc2_distance_static_spec",
