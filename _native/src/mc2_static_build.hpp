@@ -42,9 +42,17 @@ struct Mc2BoneTransformBaselineDerived {
     std::vector<std::uint8_t> baseline_flags;
     std::vector<std::int32_t> baseline_ranges;
     std::vector<std::int32_t> baseline_data;
+    std::vector<std::uint8_t> vertex_attributes;
+    std::vector<std::int32_t> root_indices;
+    std::vector<double> depths;
+    std::vector<double> vertex_local_positions;
+    std::vector<double> vertex_local_rotations;
 };
 
 Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
     const std::uint8_t* vertex_attributes,
     const std::int32_t* parent_indices,
     std::size_t vertex_count,

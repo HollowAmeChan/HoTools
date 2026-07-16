@@ -279,10 +279,9 @@ class MC2NativeContextV0:
         )
         self.collider_signature = spec.frame_signature
 
-    def update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
+    def update_proxy_static(self, proxy_spec) -> None:
         self._ensure_live()
         proxy = pack_mc2_proxy_static(proxy_spec)
-        baseline = pack_mc2_baseline_static(baseline_spec)
         self._module.mc2_context_v0_update_proxy_static(
             self._handle,
             proxy["local_positions"],
@@ -293,6 +292,10 @@ class MC2NativeContextV0:
             proxy["edges"],
             proxy["triangles"],
         )
+
+    def update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
+        self.update_proxy_static(proxy_spec)
+        baseline = pack_mc2_baseline_static(baseline_spec)
         self._module.mc2_context_v0_update_baseline_static(
             self._handle,
             baseline["parent_indices"],
@@ -355,7 +358,11 @@ class MC2NativeContextV0:
                 self._handle,
                 derived["attributes"],
             )
-        registration = getattr(derived, "native_registration", None)
+        registration = (
+            derived.get("native_registration")
+            if isinstance(derived, dict)
+            else getattr(derived, "native_registration", None)
+        )
         if isinstance(registration, dict):
             self._module.mc2_context_v0_update_baseline_static(
                 self._handle,
@@ -572,7 +579,19 @@ class MC2NativeContextV0:
             raise TypeError("static must be MC2BoneClothStaticBuildResult")
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native Bone static vertex count mismatch")
-        self.update_proxy_and_baseline(static.final_proxy, static.baseline)
+        baseline_registration = static.bone.baseline_native_registration
+        if isinstance(baseline_registration, dict) and baseline_registration:
+            self.update_proxy_static(static.final_proxy)
+            self.update_baseline_derived({
+                "attributes": np.asarray(
+                    static.final_proxy.vertex_attributes,
+                    dtype=np.uint8,
+                ),
+                "native_registration": baseline_registration,
+            })
+            baseline_registration.clear()
+        else:
+            self.update_proxy_and_baseline(static.final_proxy, static.baseline)
         packed = pack_mc2_bone_registration_static(static.bone)
         self._module.mc2_context_v0_update_bone_static(
             self._handle,

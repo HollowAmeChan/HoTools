@@ -577,13 +577,17 @@ void mc2_build_bone_vertex_to_transform_rotations(
 }
 
 Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
     const std::uint8_t* vertex_attributes,
     const std::int32_t* parent_indices,
     std::size_t vertex_count,
     const std::int32_t* root_indices,
     std::size_t root_count
 ) {
-    if (vertex_attributes == nullptr || parent_indices == nullptr ||
+    if (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
+        vertex_attributes == nullptr || parent_indices == nullptr ||
         (root_count > 0 && root_indices == nullptr)) {
         throw std::invalid_argument("bone transform baseline buffers cannot be null");
     }
@@ -662,6 +666,21 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
             );
         }
     }
+    auto pose_depth = mc2_build_baseline_pose_depth_derived(
+        positions,
+        local_normals,
+        local_tangents,
+        vertex_attributes,
+        parent_indices,
+        vertex_count,
+        result.baseline_data.data(),
+        result.baseline_data.size()
+    );
+    result.vertex_attributes = std::move(pose_depth.vertex_attributes);
+    result.root_indices = std::move(pose_depth.root_indices);
+    result.depths = std::move(pose_depth.depths);
+    result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
+    result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
     return result;
 }
 

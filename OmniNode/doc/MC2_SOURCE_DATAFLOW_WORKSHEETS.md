@@ -310,6 +310,8 @@ Blender authoring/frame input
 
 21. Bone children ranges/data与transform baseline flags/ranges/data由`mc2_build_bone_transform_baseline_derived_v0` C++ producer唯一生产。children存储顺序固定为同parent内vertex index降序，DFS stack反向弹出以保持source处理顺序；只有包含Move子点的Fixed节点开始baseline，Line flag仍由非Triangle成员派生。Python不得恢复`_source_children/_dense_ranges/_flatten/_build_transform_baselines`或平行派生树。下一步将pose-depth与该producer合并，让Baseline整组vector以owner capsule直接move进context。
 
+22. Bone transform-baseline producer同次产出final attributes/root/depth/local pose，不得恢复第二次`_build_native_baseline_pose_depth`调用。生产路径以与Mesh Baseline完全相同的10个capsule name/dtype/shape合同返回owner，Proxy注册后由`update_baseline_derived`直接move进context；每个context只能消费一次，消费后registration必须清空。完整Bone tuple spec目前仍作为Distance/Center/Self与debug过渡输入；在这些consumer改为同批native transient前不得误称slot shadow已清零。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

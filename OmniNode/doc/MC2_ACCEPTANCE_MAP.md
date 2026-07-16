@@ -87,6 +87,8 @@ Bone rest matrix的正交化、transform quaternion、local normal和local tange
 
 Bone children ranges/data与transform baseline flags/ranges/data已由`mc2_build_bone_transform_baseline_derived_v0`按source顺序的native DFS唯一生产，Python `_source_children/_dense_ranges/_flatten/_build_transform_baselines`已删除。Tier A fixed-prefix/line-chain/normal-adjustment、product topology和Blender static/rebuild/writeback通过。large Bone首建约`78.8ms`，为旧CPP的`4.34x`；逐帧均值约`6.34ms`，为旧CPP的`3.23x`。P-06d下一步将pose-depth合并到同一Bone producer并产出可直接move的Baseline/registration owner，再收口Distance/Center/Self。
 
+Bone pose-depth已合并进同一transform-baseline producer，一次产出final attributes/root/depth/local pose与children/baseline数组；生产路径返回10个受限命名owner capsules，Proxy注册后Baseline vectors直接move进context。`owned_static_take_count=1`且消费后slot registration为空由Blender static/rebuild固定。large Bone首建约`75.9ms`，为旧CPP的`4.59x`。当前slot仍保留完整Bone tuple spec，因此P-06d下一步先压缩Proxy/Finalizer/Baseline/Bone metadata，再让Distance/Center/Self同批消费transient native arrays。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

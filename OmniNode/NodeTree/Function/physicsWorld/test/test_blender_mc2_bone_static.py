@@ -156,6 +156,8 @@ try:
     assert info["proxy_static_ready"] is True
     assert info["baseline_static_ready"] is True
     assert info["bone_static_ready"] is True
+    assert info["owned_static_take_count"] == 1
+    assert slot.data["bone_static"].bone.baseline_native_registration == {}
     assert info["distance_static_ready"] is True
     assert info["center_static_ready"] is True
     assert info["self_collision_static_ready"] is True

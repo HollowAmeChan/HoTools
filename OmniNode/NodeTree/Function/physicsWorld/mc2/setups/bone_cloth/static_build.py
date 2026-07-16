@@ -175,6 +175,7 @@ def build_mc2_bone_cloth_static_for_task(
     topology: MC2TopologySpec,
     *,
     raw_snapshots=None,
+    native_context=None,
 ) -> MC2BoneClothStaticBuildResult | None:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -294,6 +295,7 @@ def build_mc2_bone_cloth_static_for_task(
         transform_local_rotations=transform_rotations,
         lines=topology.bone_connection.lines,
         triangles=topology.bone_connection.triangles,
+        native_context=native_context,
     )
     distance = build_mc2_distance_static(
         bone.proxy,

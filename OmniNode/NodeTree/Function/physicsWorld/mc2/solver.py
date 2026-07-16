@@ -618,6 +618,7 @@ def step_mc2(
                     spec,
                     topology,
                     raw_snapshots=static_input_snapshots,
+                    native_context=staged_native_context,
                 )
             if frame_input is None and automatic_frame_inputs and mesh_static_supported:
                 active_mesh_static = mesh_static

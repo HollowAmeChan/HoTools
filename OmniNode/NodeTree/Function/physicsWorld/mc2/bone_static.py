@@ -7,7 +7,7 @@ selection and Blender pose extraction remain outside this pure data layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -20,7 +20,6 @@ from ..utils.math3d import (
     quaternion_conjugate_f64,
     quaternion_multiply_f64,
 )
-from .mesh_baseline import _build_native_baseline_pose_depth
 from .mesh_baseline import _replace_proxy_attributes
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
@@ -79,17 +78,25 @@ def _validate_parent_forest(parents: tuple[int, ...]) -> None:
             current = parents[current]
 
 
-def _build_native_transform_baseline(attributes, parents, roots) -> dict:
+def _build_native_transform_baseline(proxy, parents, roots, *, produce_owned=False) -> dict:
     count = len(parents)
     child_ranges = np.empty((count, 2), dtype=np.int32)
     child_data = np.empty(count, dtype=np.int32)
     baseline_flags = np.empty(count, dtype=np.uint8)
     baseline_ranges = np.empty((count, 2), dtype=np.int32)
     baseline_data = np.empty(count, dtype=np.int32)
+    final_attributes = np.empty(count, dtype=np.uint8)
+    pose_roots = np.empty(count, dtype=np.int32)
+    depths = np.empty(count, dtype=np.float64)
+    local_positions = np.empty((count, 3), dtype=np.float64)
+    local_rotations = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
 
     counts = native_module().mc2_build_bone_transform_baseline_derived_v0(
-        np.ascontiguousarray(attributes, dtype=np.uint8),
+        np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
         np.ascontiguousarray(parents, dtype=np.int32),
         np.ascontiguousarray(roots, dtype=np.int32),
         child_ranges,
@@ -97,11 +104,17 @@ def _build_native_transform_baseline(attributes, parents, roots) -> dict:
         baseline_flags,
         baseline_ranges,
         baseline_data,
+        final_attributes,
+        pose_roots,
+        depths,
+        local_positions,
+        local_rotations,
+        bool(produce_owned),
     )
     child_count = int(counts["child_count"])
     baseline_count = int(counts["baseline_count"])
     baseline_data_count = int(counts["baseline_data_count"])
-    return {
+    result = {
         "child_ranges": tuple(tuple(int(value) for value in row) for row in child_ranges),
         "child_data": tuple(int(value) for value in child_data[:child_count]),
         "baseline_flags": tuple(int(value) for value in baseline_flags[:baseline_count]),
@@ -110,7 +123,38 @@ def _build_native_transform_baseline(attributes, parents, roots) -> dict:
             for row in baseline_ranges[:baseline_count]
         ),
         "baseline_data": tuple(int(value) for value in baseline_data[:baseline_data_count]),
+        "attributes": tuple(int(value) for value in final_attributes),
+        "roots": tuple(int(value) for value in pose_roots),
+        "depths": tuple(float(value) for value in depths),
+        "local_positions": _tuple_vectors(local_positions),
+        "local_rotations": _tuple_vectors(local_rotations),
     }
+    if produce_owned:
+        result["native_registration"] = {
+            "parents": counts["baseline_parents"],
+            "child_ranges": counts["baseline_child_ranges"],
+            "child_data": counts["baseline_child_data"],
+            "baseline_flags": counts["baseline_flags"],
+            "baseline_ranges": counts["baseline_ranges"],
+            "baseline_data": counts["baseline_data"],
+            "roots": counts["baseline_roots"],
+            "depths": counts["baseline_depths"],
+            "local_positions": counts["baseline_local_positions"],
+            "local_rotations": counts["baseline_local_rotations"],
+            "owners": (
+                counts["_baseline_parents_owner"],
+                counts["_baseline_child_ranges_owner"],
+                counts["_baseline_child_data_owner"],
+                counts["_baseline_flags_owner"],
+                counts["_baseline_ranges_owner"],
+                counts["_baseline_data_owner"],
+                counts["_baseline_roots_owner"],
+                counts["_baseline_depths_owner"],
+                counts["_baseline_local_positions_owner"],
+                counts["_baseline_local_rotations_owner"],
+            ),
+        }
+    return result
 
 
 def _normal_adjustment(
@@ -172,6 +216,11 @@ class MC2BoneStaticSpec:
     normal_adjustment_rotations: tuple[tuple[float, float, float, float], ...]
     vertex_to_transform_rotations: tuple[tuple[float, float, float, float], ...]
     static_signature: str
+    baseline_native_registration: dict | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     schema_version: int = MC2_STATIC_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -231,6 +280,7 @@ def build_mc2_bone_static(
     triangles=(),
     normal_alignment_mode: int = MC2_NORMAL_ALIGNMENT_NONE,
     normal_adjustment_center=(0.0, 0.0, 0.0),
+    native_context=None,
 ) -> MC2BoneStaticSpec:
     identities = tuple(str(value) for value in vertex_identities)
     count = len(identities)
@@ -285,23 +335,19 @@ def build_mc2_bone_static(
     )
 
     transform_baseline = _build_native_transform_baseline(
-        raw.proxy.vertex_attributes,
+        raw.proxy,
         parents,
         roots,
+        produce_owned=native_context is not None,
     )
     child_ranges = transform_baseline["child_ranges"]
     child_data = transform_baseline["child_data"]
     baseline_flags = transform_baseline["baseline_flags"]
     baseline_ranges = transform_baseline["baseline_ranges"]
     baseline_data = transform_baseline["baseline_data"]
-    pose_depth = _build_native_baseline_pose_depth(
-        raw.proxy,
-        parents,
-        baseline_data,
-    )
-    final_attributes = pose_depth["attributes"]
-    local_pose_positions = pose_depth["local_positions"]
-    local_pose_rotations = pose_depth["local_rotations"]
+    final_attributes = transform_baseline["attributes"]
+    local_pose_positions = transform_baseline["local_positions"]
+    local_pose_rotations = transform_baseline["local_rotations"]
     final_proxy = _replace_proxy_attributes(raw.proxy, final_attributes)
     finalizer = make_mc2_proxy_finalizer_static_spec(
         proxy=final_proxy,
@@ -320,8 +366,8 @@ def build_mc2_bone_static(
         baseline_flags=baseline_flags,
         baseline_ranges=baseline_ranges,
         baseline_data=baseline_data,
-        root_indices=pose_depth["roots"],
-        depths=pose_depth["depths"],
+        root_indices=transform_baseline["roots"],
+        depths=transform_baseline["depths"],
         vertex_local_positions=local_pose_positions,
         vertex_local_rotations=local_pose_rotations,
     )
@@ -352,6 +398,7 @@ def build_mc2_bone_static(
         normal_adjustment_rotations=adjustment_rotations,
         vertex_to_transform_rotations=to_transform,
         static_signature=_signature(payload),
+        baseline_native_registration=transform_baseline.get("native_registration"),
     )
 
 
