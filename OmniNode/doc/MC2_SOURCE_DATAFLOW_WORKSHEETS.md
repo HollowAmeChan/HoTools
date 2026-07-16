@@ -322,6 +322,8 @@ Blender authoring/frame input
 
 27. P-06e change matrix固定为：`topology`改变邻接/primitive/identity，全部static producer失效；`geometry`改变Proxy orientation/rest、Baseline、Distance/Bending/Center及Bone registration，全部数值producer失效；Mesh Pin `surface`改变Fixed/Move attributes并传播到Baseline/Distance/Bending/Center/Self；Bone surface恒定；`config`只改变Center。Mesh UV-only不改变数值约束，但当前Proxy/Finalizer/Baseline/Distance/Bending/Center/Self metadata通过Proxy signature形成完整身份链，因此保持全量重签/重建，除非未来新增独立UV子指纹及native重签合同。large UV-only约`20.50ms`，与Pin约`20.50ms`相同且仍比旧CPP重建快约`32x`，不阻塞替代。
 
+28. 生产static注册只允许staged builder与named owner capsule路径。`MC2NativeContextV0`不得提供从完整Proxy/Baseline/Mesh bundle二次pack/upload的便利入口；Bone registration前必须已由同次builder完成Proxy/Baseline/Distance/Center/Self注册，缺metadata直接失败。显式oracle可保留纯packer函数验证dtype/content，但不得由context owner或生产solver调用。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

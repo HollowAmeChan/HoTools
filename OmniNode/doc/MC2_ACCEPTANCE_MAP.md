@@ -109,6 +109,8 @@ P-06e已关闭：依赖矩阵确认topology改变邻接/primitive/identity，geo
 
 P-06f代码边界清理第一项完成：调用图确认`MC2InitialStateSpec`、`MC2ParticleBuffer`、`sync_mc2_frame_input`及setup `initial_state_builder`已不被生产solver使用，且与native context重复持有完整particle history。该平行状态链、lazy exports、declaration/capability伪字段与过时测试已删除；`MC2FrameInputSpec`、只读`plan_mc2_frame_sync`和轻量`MC2SlotRuntimeState`保留。26/26纯MC2及Blender Mesh/Bone static/BasePose/product/全隐式debug通过。
 
+P-06f代码边界清理第二项完成：`MC2NativeContextV0.update_mesh_static`、Proxy/Baseline完整spec上传、Mesh frame spec repack与Bone Distance/Center/Self fallback已删除。交互测试及self radius/scope benchmark改为与生产相同的“先建staged context、builder直接owner-move”路径；Bone registration现在缺任何staged metadata立即失败。生产`native.py`除小型runtime parameter block外不再import static packer。Blender交互、自碰半径、scope与Bone static门禁通过。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

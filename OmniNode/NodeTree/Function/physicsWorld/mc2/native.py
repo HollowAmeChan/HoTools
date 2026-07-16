@@ -10,7 +10,6 @@ import sys
 
 import numpy as np
 
-from .bending_static import pack_mc2_bending_static
 from .center_state import (
     MC2CenterStaticMetadata,
     MC2CenterFrameShiftResult,
@@ -18,10 +17,9 @@ from .center_state import (
     MC2CenterWorldPoseSpec,
     MC2CenterStepInputSpec,
     MC2CenterStepResult,
-    pack_mc2_center_static,
 )
 from .collider_frame import MC2ColliderFrameSpec
-from .distance_static import MC2DistanceStaticMetadata, pack_mc2_distance_static
+from .distance_static import MC2DistanceStaticMetadata
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
     MC2RuntimeParametersV0,
@@ -29,9 +27,7 @@ from .runtime_parameters import (
 )
 from .self_collision_static import (
     MC2SelfCollisionStaticMetadata,
-    pack_mc2_self_collision_static,
 )
-from .static_data import pack_mc2_baseline_static, pack_mc2_proxy_static
 
 
 MC2_NATIVE_CONTEXT_SCHEMA_VERSION = 0
@@ -335,37 +331,6 @@ class MC2NativeContextV0:
         )
         self.collider_signature = spec.frame_signature
 
-    def update_proxy_static(self, proxy_spec) -> None:
-        self._ensure_live()
-        proxy = pack_mc2_proxy_static(proxy_spec)
-        self._module.mc2_context_v0_update_proxy_static(
-            self._handle,
-            proxy["local_positions"],
-            proxy["local_normals"],
-            proxy["local_tangents"],
-            proxy["uvs"],
-            proxy["vertex_attributes"],
-            proxy["edges"],
-            proxy["triangles"],
-        )
-
-    def update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
-        self.update_proxy_static(proxy_spec)
-        baseline = pack_mc2_baseline_static(baseline_spec)
-        self._module.mc2_context_v0_update_baseline_static(
-            self._handle,
-            baseline["parent_indices"],
-            baseline["child_ranges"],
-            baseline["child_data"],
-            baseline["baseline_flags"],
-            baseline["baseline_ranges"],
-            baseline["baseline_data"],
-            baseline["root_indices"],
-            baseline["depths"],
-            baseline["vertex_local_positions"],
-            baseline["vertex_local_rotations"],
-        )
-
     def initialize_bone_proxy_baseline(self, bone) -> None:
         from .bone_static import MC2BoneNativeData, MC2BoneStaticSpec
 
@@ -483,19 +448,6 @@ class MC2NativeContextV0:
             np.ascontiguousarray(derived["local_rotations"], dtype=np.float32),
         )
 
-    def _update_self_collision_static(self, spec) -> None:
-        packed = pack_mc2_self_collision_static(spec)
-        self._module.mc2_context_v0_update_self_collision_static(
-            self._handle,
-            packed["primitive_flags"],
-            packed["particle_indices"],
-            packed["primitive_depths"],
-            spec.point_count,
-            spec.edge_count,
-            spec.triangle_count,
-        )
-        self.self_collision_signature = spec.static_signature
-
     def update_distance_derived(self, derived: dict) -> None:
         self._ensure_live()
         arguments = (
@@ -571,52 +523,6 @@ class MC2NativeContextV0:
             *(owners if all(value is not None for value in owners) else ()),
         )
 
-    def _update_mesh_frame_producer_from_spec(self, static) -> None:
-        records = tuple(static.finalizer.vertex_to_triangle_records)
-        ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
-        packed_records = []
-        cursor = 0
-        for vertex, vertex_records in enumerate(records):
-            ranges[vertex] = (cursor, len(vertex_records))
-            packed_records.extend(vertex_records)
-            cursor += len(vertex_records)
-        self._module.mc2_context_v0_update_frame_producer_static(
-            self._handle,
-            ranges,
-            np.ascontiguousarray(packed_records, dtype=np.int32).reshape((-1, 2)),
-            np.ascontiguousarray(
-                static.finalizer.vertex_bind_pose_rotations,
-                dtype=np.float32,
-            ),
-        )
-
-    def _finish_mesh_static(
-        self,
-        static,
-        *,
-        center_ready: bool = False,
-        self_collision_ready: bool = False,
-    ) -> None:
-        if not center_ready:
-            center = pack_mc2_center_static(static.center)
-            self._module.mc2_context_v0_update_center_static(
-                self._handle,
-                center["fixed_indices"],
-                center["local_center_position"],
-                center["initial_local_gravity_direction"],
-            )
-        if self_collision_ready:
-            self.self_collision_signature = static.self_collision.static_signature
-        else:
-            self._update_self_collision_static(static.self_collision)
-        self.proxy_signature = static.final_proxy.proxy_signature
-        self.baseline_signature = static.baseline.baseline.baseline_signature
-        self.distance_signature = static.distance.distance_signature
-        self.bending_signature = (
-            static.bending.bending_signature if static.bending is not None else "empty"
-        )
-        self.center_signature = static.center.center_static_signature
-
     def initialize_mesh_static_from_builders(self, static) -> None:
         from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
 
@@ -624,43 +530,14 @@ class MC2NativeContextV0:
             raise TypeError("static must be MC2MeshClothStaticBuildResult")
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native static vertex count mismatch")
-        self._finish_mesh_static(
-            static,
-            center_ready=True,
-            self_collision_ready=True,
+        self.proxy_signature = static.final_proxy.proxy_signature
+        self.baseline_signature = static.baseline.baseline.baseline_signature
+        self.distance_signature = static.distance.distance_signature
+        self.bending_signature = (
+            static.bending.bending_signature if static.bending is not None else "empty"
         )
-
-    def update_mesh_static(self, static) -> None:
-        from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
-
-        if not isinstance(static, MC2MeshClothStaticBuildResult):
-            raise TypeError("static must be MC2MeshClothStaticBuildResult")
-        if static.final_proxy.vertex_count != self.vertex_count:
-            raise ValueError("MC2 native static vertex count mismatch")
-        self.update_proxy_and_baseline(static.final_proxy, static.baseline.baseline)
-        self._update_mesh_frame_producer_from_spec(static)
-        distance = pack_mc2_distance_static(static.distance)
-        self._module.mc2_context_v0_update_distance_static(
-            self._handle,
-            distance["distance_ranges"],
-            distance["distance_targets"],
-            distance["distance_rest_signed"],
-        )
-        if static.bending is None:
-            bending = {
-                "bending_quads": np.empty((0, 4), dtype=np.int32),
-                "bending_rest_angle_or_volume": np.empty((0,), dtype=np.float32),
-                "bending_sign_or_volume": np.empty((0,), dtype=np.int8),
-            }
-        else:
-            bending = pack_mc2_bending_static(static.bending)
-        self._module.mc2_context_v0_update_bending_static(
-            self._handle,
-            bending["bending_quads"],
-            bending["bending_rest_angle_or_volume"],
-            bending["bending_sign_or_volume"],
-        )
-        self._finish_mesh_static(static)
+        self.center_signature = static.center.center_static_signature
+        self.self_collision_signature = static.self_collision.static_signature
 
     def update_bone_static(self, static) -> None:
         from .setups.bone_cloth.static_build import MC2BoneClothStaticBuildResult
@@ -673,7 +550,13 @@ class MC2NativeContextV0:
             self.proxy_signature != static.final_proxy.proxy_signature
             or self.baseline_signature != static.baseline.baseline_signature
         ):
-            self.initialize_bone_proxy_baseline(static.bone)
+            raise RuntimeError("Bone Proxy/Baseline must be staged before registration")
+        if not isinstance(static.distance, MC2DistanceStaticMetadata):
+            raise TypeError("staged Bone Distance metadata is required")
+        if not isinstance(static.center, MC2CenterStaticMetadata):
+            raise TypeError("staged Bone Center metadata is required")
+        if not isinstance(static.self_collision, MC2SelfCollisionStaticMetadata):
+            raise TypeError("staged Bone self-collision metadata is required")
         registration = static.bone.bone_native_registration
         if not isinstance(registration, dict) or not registration:
             raise TypeError("staged Bone registration owners are missing")
@@ -690,30 +573,12 @@ class MC2NativeContextV0:
             *registration["owners"],
         )
         registration.clear()
-        if not isinstance(static.distance, MC2DistanceStaticMetadata):
-            distance = pack_mc2_distance_static(static.distance)
-            self._module.mc2_context_v0_update_distance_static(
-                self._handle,
-                distance["distance_ranges"],
-                distance["distance_targets"],
-                distance["distance_rest_signed"],
-            )
         self._module.mc2_context_v0_update_bending_static(
             self._handle,
             np.empty((0, 4), dtype=np.int32),
             np.empty((0,), dtype=np.float32),
             np.empty((0,), dtype=np.int8),
         )
-        if not isinstance(static.center, MC2CenterStaticMetadata):
-            center = pack_mc2_center_static(static.center)
-            self._module.mc2_context_v0_update_center_static(
-                self._handle,
-                center["fixed_indices"],
-                center["local_center_position"],
-                center["initial_local_gravity_direction"],
-            )
-        if not isinstance(static.self_collision, MC2SelfCollisionStaticMetadata):
-            self._update_self_collision_static(static.self_collision)
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline_signature
         self.bone_static_signature = static.bone.static_signature

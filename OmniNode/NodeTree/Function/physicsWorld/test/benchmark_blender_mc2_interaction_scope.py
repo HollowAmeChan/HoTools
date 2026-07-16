@@ -100,12 +100,13 @@ def _bundle(obj):
         ),
     )
     topology = topology_module.build_mc2_topology_spec(task)
-    static = static_build.build_mc2_mesh_cloth_static_for_task(task, topology)
     positions = np.asarray([tuple(vertex.co) for vertex in obj.data.vertices], dtype=np.float32)
     rotations = np.zeros((len(positions), 4), dtype=np.float32)
     rotations[:, 3] = 1.0
     context = native_module.MC2NativeContextV0(len(positions))
-    context.update_mesh_static(static)
+    static_build.build_mc2_mesh_cloth_static_for_task(
+        task, topology, native_context=context
+    )
     context.update_parameters(
         runtime_parameters.make_mc2_runtime_parameters(profile, task.setup_options)
     )
