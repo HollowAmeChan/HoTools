@@ -108,6 +108,7 @@ _EXPORTS = {
     "MC2SlotRuntimeState": ".state",
     "MC2ParticleBuffer": ".state",
     "MC2BendingStaticSpec": ".bending_static",
+    "MC2BendingStaticMetadata": ".bending_static",
     "build_mc2_bending_static": ".bending_static",
     "make_mc2_bending_static_spec": ".bending_static",
     "pack_mc2_bending_static": ".bending_static",

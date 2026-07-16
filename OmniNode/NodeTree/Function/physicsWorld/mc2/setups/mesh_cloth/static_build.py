@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ...bending_static import MC2BendingStaticMetadata
 from ...bending_static import MC2BendingStaticSpec
 from ...bending_static import build_mc2_bending_static
 from ...center_state import MC2CenterStaticSpec
@@ -33,7 +34,7 @@ class MC2MeshClothStaticBuildResult:
     finalizer: MC2MeshFinalProxyBuildResult
     baseline: MC2MeshBaselineBuildResult
     distance: MC2DistanceStaticSpec
-    bending: MC2BendingStaticSpec | None
+    bending: MC2BendingStaticSpec | MC2BendingStaticMetadata | None
     center: MC2CenterStaticSpec
     self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
 
@@ -52,9 +53,9 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("distance must be MC2DistanceStaticSpec")
         if self.bending is not None and not isinstance(
             self.bending,
-            MC2BendingStaticSpec,
+            (MC2BendingStaticSpec, MC2BendingStaticMetadata),
         ):
-            raise TypeError("bending must be MC2BendingStaticSpec or None")
+            raise TypeError("bending must be an MC2 Bending static result or None")
         if not isinstance(self.center, MC2CenterStaticSpec):
             raise TypeError("center must be MC2CenterStaticSpec")
         if not isinstance(

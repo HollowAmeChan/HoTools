@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 import math
 
 import numpy as np
@@ -24,14 +23,29 @@ _IDENTITY_COLUMNS = (
 )
 
 
-def _signature(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
+def _content_signature(
+    *,
+    proxy_signature,
+    vertex_count,
+    initial_local_to_world_columns,
+    bending_quads,
+    bending_rest_angle_or_volume,
+    bending_sign_or_volume,
+) -> str:
+    digest = hashlib.sha256(b"mc2_bending_static_v1\0")
+    digest.update(str(proxy_signature or "").encode("ascii"))
+    digest.update(np.asarray((vertex_count,), dtype=np.int64).tobytes())
+    digest.update(
+        np.asarray((np.asarray(bending_rest_angle_or_volume).size,), dtype=np.int64).tobytes()
     )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    for values, dtype in (
+        (initial_local_to_world_columns, np.float32),
+        (bending_quads, np.int32),
+        (bending_rest_angle_or_volume, np.float32),
+        (bending_sign_or_volume, np.int8),
+    ):
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
 
 
 def _exact_int(value, name: str) -> int:
@@ -128,7 +142,14 @@ class MC2BendingStaticSpec:
                 raise ValueError(f"bending_rest_angle_or_volume[{index}] must be finite")
         if any(value not in (-1, 1, MC2_VOLUME_MARKER) for value in self.bending_sign_or_volume):
             raise ValueError("bending_sign_or_volume only accepts -1, 1, or 100")
-        if self.bending_signature != _signature(self.signature_payload()):
+        if self.bending_signature != _content_signature(
+            proxy_signature=self.proxy_signature,
+            vertex_count=self.vertex_count,
+            initial_local_to_world_columns=self.initial_local_to_world_columns,
+            bending_quads=self.bending_quads,
+            bending_rest_angle_or_volume=self.bending_rest_angle_or_volume,
+            bending_sign_or_volume=self.bending_sign_or_volume,
+        ):
             raise ValueError("bending_signature does not match Bending static payload")
 
     @property
@@ -156,6 +177,41 @@ class MC2BendingStaticSpec:
         if include_arrays:
             result.update(self.signature_payload())
         return result
+
+
+@dataclass(frozen=True)
+class MC2BendingStaticMetadata:
+    proxy_signature: str
+    vertex_count: int
+    initial_local_to_world_columns: tuple[tuple[float, float, float, float], ...]
+    record_count: int
+    bending_signature: str
+    schema_version: int = MC2_BENDING_STATIC_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_BENDING_STATIC_SCHEMA_VERSION:
+            raise ValueError("unsupported MC2 Bending static schema")
+        if not self.proxy_signature or not self.bending_signature:
+            raise ValueError("Bending signatures cannot be empty")
+        if not 0 < self.vertex_count <= MC2_BENDING_MAX_INDEX + 1:
+            raise ValueError("vertex_count exceeds MC2 ushort domain")
+        if self.record_count < 0:
+            raise ValueError("Bending record_count cannot be negative")
+        if self.initial_local_to_world_columns != _matrix_columns(
+            self.initial_local_to_world_columns
+        ):
+            raise TypeError("initial transform must be immutable float32 columns")
+
+    def debug_dict(self, *, include_arrays: bool = False) -> dict:
+        if include_arrays:
+            raise ValueError("native-owned Bending metadata has no host arrays")
+        return {
+            "schema_version": self.schema_version,
+            "vertex_count": self.vertex_count,
+            "record_count": self.record_count,
+            "bending_signature": self.bending_signature,
+            "native_owned": True,
+        }
 
 
 def make_mc2_bending_static_spec(
@@ -193,7 +249,14 @@ def make_mc2_bending_static_spec(
     }
     return MC2BendingStaticSpec(
         **payload,
-        bending_signature=_signature(payload),
+        bending_signature=_content_signature(
+            proxy_signature=payload["proxy_signature"],
+            vertex_count=payload["vertex_count"],
+            initial_local_to_world_columns=payload["initial_local_to_world_columns"],
+            bending_quads=payload["bending_quads"],
+            bending_rest_angle_or_volume=payload["bending_rest_angle_or_volume"],
+            bending_sign_or_volume=payload["bending_sign_or_volume"],
+        ),
     )
 
 
@@ -202,7 +265,7 @@ def build_mc2_bending_static(
     *,
     initial_local_to_world_columns=None,
     native_context=None,
-) -> MC2BendingStaticSpec | None:
+) -> MC2BendingStaticSpec | MC2BendingStaticMetadata | None:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
     if proxy.vertex_count > MC2_BENDING_MAX_INDEX + 1:
@@ -222,6 +285,20 @@ def build_mc2_bending_static(
     )
     if native_context is not None:
         native_context.update_bending_derived(derived)
+        return MC2BendingStaticMetadata(
+            proxy_signature=proxy.proxy_signature,
+            vertex_count=proxy.vertex_count,
+            initial_local_to_world_columns=columns,
+            record_count=len(derived["bending_rest_angle_or_volume"]),
+            bending_signature=_content_signature(
+                proxy_signature=proxy.proxy_signature,
+                vertex_count=proxy.vertex_count,
+                initial_local_to_world_columns=columns,
+                bending_quads=derived["bending_quads"],
+                bending_rest_angle_or_volume=derived["bending_rest_angle_or_volume"],
+                bending_sign_or_volume=derived["bending_sign_or_volume"],
+            ),
+        )
 
     return make_mc2_bending_static_spec(
         proxy_signature=proxy.proxy_signature,
@@ -254,6 +331,7 @@ def pack_mc2_bending_static(spec: MC2BendingStaticSpec) -> dict[str, np.ndarray]
 
 __all__ = [
     "MC2_BENDING_STATIC_SCHEMA_VERSION",
+    "MC2BendingStaticMetadata",
     "MC2BendingStaticSpec",
     "build_mc2_bending_static",
     "make_mc2_bending_static_spec",

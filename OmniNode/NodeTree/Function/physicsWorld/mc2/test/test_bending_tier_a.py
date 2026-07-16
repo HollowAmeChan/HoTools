@@ -100,7 +100,7 @@ def _decode_pack64(value):
     ]
 
 
-def _build(fixture):
+def _build(fixture, *, native_context=None):
     payload = fixture["input"]
     count = len(payload["local_positions"])
     proxy = static_data.make_mc2_proxy_static_spec(
@@ -118,6 +118,7 @@ def _build(fixture):
     return bending_static.build_mc2_bending_static(
         proxy,
         initial_local_to_world_columns=payload["init_local_to_world_columns"],
+        native_context=native_context,
     )
 
 
@@ -289,6 +290,30 @@ def test_bending_signature_preserves_role_order_and_initial_transform() -> None:
     assert first.bending_signature != scaled.bending_signature
 
 
+def test_staged_bending_keeps_only_native_owned_metadata() -> None:
+    fixture = _fixtures()["bending_fold_100_double_001"]
+    full = _build(fixture)
+
+    class StagedContext:
+        record_count = -1
+
+        def update_bending_derived(self, derived):
+            self.record_count = len(derived["bending_rest_angle_or_volume"])
+
+    context = StagedContext()
+    staged = _build(fixture, native_context=context)
+    assert isinstance(staged, bending_static.MC2BendingStaticMetadata)
+    assert staged.bending_signature == full.bending_signature
+    assert staged.record_count == context.record_count == 2
+    assert not hasattr(staged, "bending_quads")
+    try:
+        bending_static.pack_mc2_bending_static(staged)
+    except TypeError as exc:
+        assert "MC2BendingStaticSpec" in str(exc)
+    else:
+        raise AssertionError("native-owned Bending metadata was accepted by the host packer")
+
+
 def test_bending_spec_quantizes_and_rejects_invalid_records() -> None:
     first = bending_static.make_mc2_bending_static_spec(
         proxy_signature="proxy",
@@ -366,6 +391,7 @@ TESTS = (
     ("Bending volume first-wins role", test_bending_volume_dedup_keeps_first_raw_role),
     ("Tier A ordered Bending host parity", test_bending_tier_a_fixtures_match_ordered_host_builder),
     ("Bending signature preserves role and transform", test_bending_signature_preserves_role_order_and_initial_transform),
+    ("Bending staged metadata ownership", test_staged_bending_keeps_only_native_owned_metadata),
     ("Bending spec validation", test_bending_spec_quantizes_and_rejects_invalid_records),
     ("Bending fixed-point sum and clear", test_bending_runtime_fixed_point_sum_and_clear),
     ("Bending scale and negative sign", test_bending_runtime_scale_and_negative_sign_are_consumed),
