@@ -304,6 +304,8 @@ Blender authoring/frame input
 
 18. Bone生产`update_bone_static`的Python打包边界只允许构造native Bone注册真正消费的8组数组：adjoining vertex/triangle ranges+data、bind position/rotation、normal adjustment rotation和vertex-to-transform rotation。Proxy/Baseline已在前置注册完成，不得再通过完整`pack_mc2_bone_static`重复打包；完整packer只保留给Tier A/oracle。下一步把这8组数组改为native producer owner直接move进context。
 
+19. Bone rest matrix到transform quaternion/local normal/local tangent的正交化与旋转由`mc2_build_bone_rest_frames_v0` C++ bulk kernel唯一生产；Python static builder只组织identities/parents/heads并消费连续输出，不得恢复逐骨`matrix4_tuple_from_flat -> quaternion_from_matrix -> rotate_vector`转发。该kernel复用`mc2_static_build.cpp`现有`matrix_to_quaternion/normalize/rotate`语义，不得建立第二套四元数阈值。native小步验证固定使用`_native\build.bat 313 native`：该target不clean，且Jolt为`EXCLUDE_FROM_ALL`不参与编译。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

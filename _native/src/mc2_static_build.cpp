@@ -494,6 +494,51 @@ void mc2_normalize_mesh_normals_and_fallback_tangents(
     }
 }
 
+void mc2_build_bone_rest_frames(
+    const float* row_major_matrices,
+    std::size_t vertex_count,
+    double* transform_rotations,
+    double* local_normals,
+    double* local_tangents
+) {
+    if (row_major_matrices == nullptr || transform_rotations == nullptr ||
+        local_normals == nullptr || local_tangents == nullptr) {
+        throw std::invalid_argument("bone rest frame buffers cannot be null");
+    }
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const float* matrix = row_major_matrices + vertex * 16;
+        const Vec3 right = normalize(
+            Vec3 {matrix[0], matrix[4], matrix[8]},
+            "bone rest right axis"
+        );
+        const Vec3 up_hint = normalize(
+            Vec3 {matrix[1], matrix[5], matrix[9]},
+            "bone rest up axis"
+        );
+        const Vec3 forward = normalize(cross(right, up_hint), "bone rest forward axis");
+        const Vec3 up = normalize(cross(forward, right), "bone rest corrected up axis");
+        const Vec4 rotation = matrix_to_quaternion(
+            right.x, up.x, forward.x,
+            right.y, up.y, forward.y,
+            right.z, up.z, forward.z
+        );
+        const Vec3 normal = rotate(rotation, {0.0, 1.0, 0.0});
+        const Vec3 tangent = rotate(rotation, {0.0, 0.0, 1.0});
+        const auto rotation_offset = vertex * 4;
+        transform_rotations[rotation_offset] = rotation.x;
+        transform_rotations[rotation_offset + 1] = rotation.y;
+        transform_rotations[rotation_offset + 2] = rotation.z;
+        transform_rotations[rotation_offset + 3] = rotation.w;
+        const auto vector_offset = vertex * 3;
+        local_normals[vector_offset] = normal.x;
+        local_normals[vector_offset + 1] = normal.y;
+        local_normals[vector_offset + 2] = normal.z;
+        local_tangents[vector_offset] = tangent.x;
+        local_tangents[vector_offset + 1] = tangent.y;
+        local_tangents[vector_offset + 2] = tangent.z;
+    }
+}
+
 Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* positions,
     const double* local_normals,

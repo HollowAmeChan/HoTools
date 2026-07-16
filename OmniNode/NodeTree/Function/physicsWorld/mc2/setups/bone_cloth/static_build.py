@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import hashlib
 import json
 
+import numpy as np
+
 from ...bone_static import MC2BoneStaticSpec
 from ...bone_static import build_mc2_bone_static
 from ...center_state import MC2CenterStaticSpec
@@ -18,11 +20,6 @@ from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import _thaw
-from ....utils.math3d import (
-    matrix4_tuple_from_flat,
-    quaternion_from_matrix4_xyzw_tuple,
-    rotate_vector_unit_xyzw_tuple_fast,
-)
 
 
 MC2_BONE_STATIC_SCHEMA_VERSION = 3
@@ -236,16 +233,29 @@ def build_mc2_bone_cloth_static_for_task(
             )
             for record in records
         )
-    for vertex, (identity, parent, head, matrix_values) in enumerate(source_rows):
+    matrices = np.ascontiguousarray(
+        tuple(row[3] for row in source_rows),
+        dtype=np.float32,
+    ).reshape((record_count, 16))
+    transform_values = np.empty((record_count, 4), dtype=np.float64)
+    normal_values = np.empty((record_count, 3), dtype=np.float64)
+    tangent_values = np.empty((record_count, 3), dtype=np.float64)
+    from ...native import native_module
+
+    native_module().mc2_build_bone_rest_frames_v0(
+        matrices,
+        transform_values,
+        normal_values,
+        tangent_values,
+    )
+    for vertex, (identity, parent, head, _matrix_values) in enumerate(source_rows):
         if not identity:
             raise ValueError("BoneCloth static bone identity cannot be empty")
-        matrix = matrix4_tuple_from_flat(matrix_values)
-        rotation = quaternion_from_matrix4_xyzw_tuple(matrix)
         identities.append(identity)
         positions.append(tuple(float(value) for value in head))
-        normals.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 1.0, 0.0)))
-        tangents.append(rotate_vector_unit_xyzw_tuple_fast(rotation, (0.0, 0.0, 1.0)))
-        transform_rotations.append(rotation)
+        normals.append(tuple(float(value) for value in normal_values[vertex]))
+        tangents.append(tuple(float(value) for value in tangent_values[vertex]))
+        transform_rotations.append(tuple(float(value) for value in transform_values[vertex]))
         parents.append(parent)
         if parent < 0:
             roots.append(vertex)

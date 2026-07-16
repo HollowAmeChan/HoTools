@@ -954,6 +954,31 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
         });
+    m.def("mc2_build_bone_rest_frames_v0",
+        [](cf32_2d matrices,
+           f64_2d transform_rotations,
+           f64_2d local_normals,
+           f64_2d local_tangents) {
+            check_cols(matrices, 16, "matrices");
+            check_cols(transform_rotations, 4, "transform_rotations");
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_len(transform_rotations.shape(0), matrices.shape(0), "transform_rotations");
+            check_len(local_normals.shape(0), matrices.shape(0), "local_normals");
+            check_len(local_tangents.shape(0), matrices.shape(0), "local_tangents");
+            try {
+                nb::gil_scoped_release release;
+                hotools::mc2_build_bone_rest_frames(
+                    matrices.data(),
+                    matrices.shape(0),
+                    transform_rotations.data(),
+                    local_normals.data(),
+                    local_tangents.data()
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+        });
     m.def("mc2_build_mesh_final_proxy_derived_v0",
         [](cf64_2d positions,
            f64_2d local_normals,

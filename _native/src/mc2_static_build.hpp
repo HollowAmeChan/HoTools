@@ -20,6 +20,14 @@ void mc2_normalize_mesh_normals_and_fallback_tangents(
     double* local_tangents
 );
 
+void mc2_build_bone_rest_frames(
+    const float* row_major_matrices,
+    std::size_t vertex_count,
+    double* transform_rotations,
+    double* local_normals,
+    double* local_tangents
+);
+
 struct Mc2MeshFinalProxyDerived {
     std::vector<double> local_normals;
     std::vector<double> local_tangents;
