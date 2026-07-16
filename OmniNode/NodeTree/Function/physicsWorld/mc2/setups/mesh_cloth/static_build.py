@@ -154,6 +154,7 @@ def build_mc2_mesh_cloth_static(
     task_id: str,
     topology_signature: str | None = None,
     world_gravity_direction=(0.0, -1.0, 0.0),
+    native_context=None,
 ) -> MC2MeshClothStaticBuildResult:
     from .base_pose import mesh_topology_signature
 
@@ -173,15 +174,22 @@ def build_mc2_mesh_cloth_static(
         expected_mesh_topology_signature=actual_mesh_topology_signature,
     )
     baseline = build_mc2_mesh_baseline(finalizer.proxy)
+    if native_context is not None:
+        native_context.update_proxy_and_baseline(
+            baseline.final_proxy,
+            baseline.baseline,
+        )
     distance = build_mc2_distance_static(
         baseline.final_proxy,
         baseline.baseline,
         vertex_to_vertex_ranges=finalizer.vertex_to_vertex_ranges,
         vertex_to_vertex_data=finalizer.vertex_to_vertex_data,
+        native_context=native_context,
     )
     bending = build_mc2_bending_static(
         baseline.final_proxy,
         initial_local_to_world_columns=_matrix_world_columns(obj),
+        native_context=native_context,
     )
     center = build_mc2_center_static(
         baseline.final_proxy,
@@ -192,7 +200,7 @@ def build_mc2_mesh_cloth_static(
         baseline.final_proxy,
         baseline.baseline.depths,
     )
-    return MC2MeshClothStaticBuildResult(
+    result = MC2MeshClothStaticBuildResult(
         mesh_topology_signature=actual_mesh_topology_signature,
         finalizer=finalizer,
         baseline=baseline,
@@ -201,11 +209,16 @@ def build_mc2_mesh_cloth_static(
         center=center,
         self_collision=self_collision,
     )
+    if native_context is not None:
+        native_context.initialize_mesh_static_from_builders(result)
+    return result
 
 
 def build_mc2_mesh_cloth_static_for_task(
     task: MC2TaskSpec,
     topology: MC2TopologySpec,
+    *,
+    native_context=None,
 ) -> MC2MeshClothStaticBuildResult | None:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -225,6 +238,7 @@ def build_mc2_mesh_cloth_static_for_task(
         task_id=task.task_id,
         topology_signature=None,
         world_gravity_direction=task.profile.gravity_direction,
+        native_context=native_context,
     )
 
 

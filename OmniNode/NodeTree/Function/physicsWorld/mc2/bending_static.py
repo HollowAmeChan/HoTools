@@ -201,6 +201,7 @@ def build_mc2_bending_static(
     proxy: MC2ProxyStaticSpec,
     *,
     initial_local_to_world_columns=None,
+    native_context=None,
 ) -> MC2BendingStaticSpec | None:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
@@ -219,6 +220,8 @@ def build_mc2_bending_static(
         np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
         np.ascontiguousarray(columns, dtype=np.float32),
     )
+    if native_context is not None:
+        native_context.update_bending_derived(derived)
 
     return make_mc2_bending_static_spec(
         proxy_signature=proxy.proxy_signature,

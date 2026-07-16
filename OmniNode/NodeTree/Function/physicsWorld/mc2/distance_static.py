@@ -186,6 +186,7 @@ def build_mc2_distance_static(
     *,
     vertex_to_vertex_ranges,
     vertex_to_vertex_data,
+    native_context=None,
 ) -> MC2DistanceStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
@@ -208,6 +209,8 @@ def build_mc2_distance_static(
         np.ascontiguousarray(vertex_to_vertex_ranges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(vertex_to_vertex_data, dtype=np.int32),
     )
+    if native_context is not None:
+        native_context.update_distance_derived(derived)
 
     return make_mc2_distance_static_spec(
         proxy_signature=proxy.proxy_signature,

@@ -271,7 +271,7 @@ class MC2NativeContextV0:
         )
         self.collider_signature = spec.frame_signature
 
-    def _update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
+    def update_proxy_and_baseline(self, proxy_spec, baseline_spec) -> None:
         self._ensure_live()
         proxy = pack_mc2_proxy_static(proxy_spec)
         baseline = pack_mc2_baseline_static(baseline_spec)
@@ -312,14 +312,25 @@ class MC2NativeContextV0:
         )
         self.self_collision_signature = spec.static_signature
 
-    def update_mesh_static(self, static) -> None:
-        from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
+    def update_distance_derived(self, derived: dict) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_update_distance_static(
+            self._handle,
+            derived["distance_ranges"],
+            derived["distance_targets"],
+            derived["distance_rest_signed"],
+        )
 
-        if not isinstance(static, MC2MeshClothStaticBuildResult):
-            raise TypeError("static must be MC2MeshClothStaticBuildResult")
-        if static.final_proxy.vertex_count != self.vertex_count:
-            raise ValueError("MC2 native static vertex count mismatch")
-        self._update_proxy_and_baseline(static.final_proxy, static.baseline.baseline)
+    def update_bending_derived(self, derived: dict) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_update_bending_static(
+            self._handle,
+            derived["bending_quads"],
+            derived["bending_rest_angle_or_volume"],
+            derived["bending_sign_or_volume"],
+        )
+
+    def _finish_mesh_static(self, static) -> None:
         records = tuple(static.finalizer.vertex_to_triangle_records)
         ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
         packed_records = []
@@ -337,6 +348,39 @@ class MC2NativeContextV0:
                 dtype=np.float32,
             ),
         )
+        center = pack_mc2_center_static(static.center)
+        self._module.mc2_context_v0_update_center_static(
+            self._handle,
+            center["fixed_indices"],
+            center["local_center_position"],
+            center["initial_local_gravity_direction"],
+        )
+        self._update_self_collision_static(static.self_collision)
+        self.proxy_signature = static.final_proxy.proxy_signature
+        self.baseline_signature = static.baseline.baseline.baseline_signature
+        self.distance_signature = static.distance.distance_signature
+        self.bending_signature = (
+            static.bending.bending_signature if static.bending is not None else "empty"
+        )
+        self.center_signature = static.center.center_static_signature
+
+    def initialize_mesh_static_from_builders(self, static) -> None:
+        from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
+
+        if not isinstance(static, MC2MeshClothStaticBuildResult):
+            raise TypeError("static must be MC2MeshClothStaticBuildResult")
+        if static.final_proxy.vertex_count != self.vertex_count:
+            raise ValueError("MC2 native static vertex count mismatch")
+        self._finish_mesh_static(static)
+
+    def update_mesh_static(self, static) -> None:
+        from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
+
+        if not isinstance(static, MC2MeshClothStaticBuildResult):
+            raise TypeError("static must be MC2MeshClothStaticBuildResult")
+        if static.final_proxy.vertex_count != self.vertex_count:
+            raise ValueError("MC2 native static vertex count mismatch")
+        self.update_proxy_and_baseline(static.final_proxy, static.baseline.baseline)
         distance = pack_mc2_distance_static(static.distance)
         self._module.mc2_context_v0_update_distance_static(
             self._handle,
@@ -358,21 +402,7 @@ class MC2NativeContextV0:
             bending["bending_rest_angle_or_volume"],
             bending["bending_sign_or_volume"],
         )
-        center = pack_mc2_center_static(static.center)
-        self._module.mc2_context_v0_update_center_static(
-            self._handle,
-            center["fixed_indices"],
-            center["local_center_position"],
-            center["initial_local_gravity_direction"],
-        )
-        self._update_self_collision_static(static.self_collision)
-        self.proxy_signature = static.final_proxy.proxy_signature
-        self.baseline_signature = static.baseline.baseline.baseline_signature
-        self.distance_signature = static.distance.distance_signature
-        self.bending_signature = (
-            static.bending.bending_signature if static.bending is not None else "empty"
-        )
-        self.center_signature = static.center.center_static_signature
+        self._finish_mesh_static(static)
 
     def update_bone_static(self, static) -> None:
         from .setups.bone_cloth.static_build import MC2BoneClothStaticBuildResult
@@ -381,7 +411,7 @@ class MC2NativeContextV0:
             raise TypeError("static must be MC2BoneClothStaticBuildResult")
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native Bone static vertex count mismatch")
-        self._update_proxy_and_baseline(static.final_proxy, static.baseline)
+        self.update_proxy_and_baseline(static.final_proxy, static.baseline)
         packed = pack_mc2_bone_static(static.bone)
         self._module.mc2_context_v0_update_bone_static(
             self._handle,

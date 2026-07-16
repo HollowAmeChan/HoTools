@@ -586,12 +586,26 @@ def step_mc2(
             )
             mesh_static = None
             bone_static = None
+            staged_native_context = None
+            staged_native_frame_applied = False
+            if rebuild_reason and topology.particle_count > 0:
+                from .native import MC2NativeContextV0
+
+                staged_native_context = MC2NativeContextV0(
+                    topology.particle_count,
+                    setup_type=spec.setup_type,
+                )
+                staged_native_contexts.append(staged_native_context)
             if rebuild_reason and mesh_static_supported:
                 from .setups.mesh_cloth.static_build import (
                     build_mc2_mesh_cloth_static_for_task,
                 )
 
-                mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
+                mesh_static = build_mc2_mesh_cloth_static_for_task(
+                    spec,
+                    topology,
+                    native_context=staged_native_context,
+                )
             elif rebuild_reason and bone_static_supported:
                 from .setups.bone_cloth.static_build import (
                     build_mc2_bone_cloth_static_for_task,
@@ -647,19 +661,9 @@ def step_mc2(
                         else None
                     ),
                 )
-            staged_native_context = None
-            staged_native_frame_applied = False
-            if rebuild_reason and topology.particle_count > 0:
-                from .native import MC2NativeContextV0
-
-                staged_native_context = MC2NativeContextV0(
-                    topology.particle_count,
-                    setup_type=spec.setup_type,
-                )
+            if staged_native_context is not None:
                 try:
-                    if mesh_static is not None:
-                        staged_native_context.update_mesh_static(mesh_static)
-                    elif bone_static is not None:
+                    if bone_static is not None:
                         staged_native_context.update_bone_static(bone_static)
                     staged_native_context.update_static_fingerprint(
                         static_input_fingerprint
@@ -676,9 +680,9 @@ def step_mc2(
                         staged_native_context.read()
                         staged_native_frame_applied = True
                 except Exception:
+                    staged_native_contexts.remove(staged_native_context)
                     staged_native_context.dispose()
                     raise
-                staged_native_contexts.append(staged_native_context)
             prepared_items.append(
                 (
                     spec,

@@ -287,7 +287,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             static.baseline.baseline.baseline_ranges
         )
         assert native_info["distance_static_ready"] is True
+        assert native_info["distance_static_revision"] == 1
         assert native_info["bending_static_ready"] is True
+        assert native_info["bending_static_revision"] == 1
         assert native_info["center_static_ready"] is True
         assert native_info["center_static_revision"] == 1
         assert native_info["center_fixed_count"] == len(static.center.fixed_indices)
