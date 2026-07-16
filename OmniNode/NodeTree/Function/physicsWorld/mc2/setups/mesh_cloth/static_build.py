@@ -18,6 +18,7 @@ from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
 from ...mesh_baseline import build_mc2_mesh_baseline
 from ...names import MC2_SETUP_MESH_CLOTH
+from ...self_collision_static import MC2SelfCollisionStaticMetadata
 from ...self_collision_static import MC2SelfCollisionStaticSpec
 from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
@@ -34,7 +35,7 @@ class MC2MeshClothStaticBuildResult:
     distance: MC2DistanceStaticSpec
     bending: MC2BendingStaticSpec | None
     center: MC2CenterStaticSpec
-    self_collision: MC2SelfCollisionStaticSpec
+    self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
 
     @property
     def final_proxy(self):
@@ -56,8 +57,11 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("bending must be MC2BendingStaticSpec or None")
         if not isinstance(self.center, MC2CenterStaticSpec):
             raise TypeError("center must be MC2CenterStaticSpec")
-        if not isinstance(self.self_collision, MC2SelfCollisionStaticSpec):
-            raise TypeError("self_collision must be MC2SelfCollisionStaticSpec")
+        if not isinstance(
+            self.self_collision,
+            (MC2SelfCollisionStaticSpec, MC2SelfCollisionStaticMetadata),
+        ):
+            raise TypeError("self_collision must be an MC2 self-collision static result")
         if self.finalizer.proxy.task_id != self.baseline.final_proxy.task_id:
             raise ValueError("finalizer and baseline task_id must match")
         if self.finalizer.proxy.vertex_identities != self.baseline.final_proxy.vertex_identities:
