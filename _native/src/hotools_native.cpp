@@ -8,6 +8,7 @@
 #include "hotools_property_curve.hpp"
 #include "mc2_context.hpp"
 #include "mc2_context_v0.hpp"
+#include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -37,6 +39,9 @@ using namespace hotools::py;  // Buffer, expect_*, as_double, as_long（solve_me
 // ---------------------------------------------------------------------------
 using f32_2d  = nb::ndarray<float,          nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using f32_1d  = nb::ndarray<float,          nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using f64_2d  = nb::ndarray<double,         nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using cf64_2d = nb::ndarray<const double,   nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using i32_2d  = nb::ndarray<int32_t,        nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cf32_2d = nb::ndarray<const float,    nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cf32_1d = nb::ndarray<const float,    nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using ci32_2d = nb::ndarray<const int32_t,  nb::ndim<2>, nb::c_contig, nb::device::cpu>;
@@ -844,6 +849,31 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v0(nullptr, a.ptr())); });
     m.def("mc2_bone_static_fingerprint_v0",
         [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v0(nullptr, a.ptr())); });
+    m.def("mc2_optimize_triangle_direction_v0",
+        [](cf64_2d positions, i32_2d triangles, f64_2d triangle_normals) {
+            check_cols(positions, 3, "positions");
+            check_cols(triangles, 3, "triangles");
+            check_cols(triangle_normals, 3, "triangle_normals");
+            check_len(triangle_normals.shape(0), triangles.shape(0), "triangle_normals");
+            check_indices_in_range(
+                triangles.data(),
+                triangles.shape(0) * 3,
+                positions.shape(0),
+                "triangles"
+            );
+            try {
+                nb::gil_scoped_release release;
+                hotools::mc2_optimize_triangle_direction(
+                    positions.data(),
+                    positions.shape(0),
+                    triangles.data(),
+                    triangles.shape(0),
+                    triangle_normals.data()
+                );
+            } catch (const std::invalid_argument& error) {
+                throw nb::value_error(error.what());
+            }
+        });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,

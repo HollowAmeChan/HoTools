@@ -89,6 +89,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_stats",
     "mc2_mesh_static_fingerprint_v0",
     "mc2_bone_static_fingerprint_v0",
+    "mc2_optimize_triangle_direction_v0",
 )
 
 

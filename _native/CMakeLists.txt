@@ -113,6 +113,7 @@ nanobind_add_module(hotools_native
     src/hotools_native.cpp
     src/mc2_context.cpp
     src/mc2_context_v0.cpp
+    src/mc2_static_build.cpp
     src/mc2.cpp
     src/mc2_bonecloth_io.cpp
     src/mc2_self_collision.cpp

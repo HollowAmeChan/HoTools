@@ -9,7 +9,6 @@ baseline builder.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 from typing import Iterable
 
 import numpy as np
@@ -28,7 +27,6 @@ from ...static_data import make_mc2_proxy_finalizer_static_spec
 from ...static_data import make_mc2_proxy_static_spec
 
 
-SAME_SURFACE_ANGLE_DEGREES = 80.0
 UV_SEAM_TOLERANCE = 1.0e-6
 
 
@@ -84,14 +82,6 @@ def _canonical_edge(first: int, second: int) -> tuple[int, int]:
     return (first, second) if first < second else (second, first)
 
 
-def _triangle_normal(positions: np.ndarray, triangle: tuple[int, int, int]) -> np.ndarray:
-    first, second, third = triangle
-    return normalize_vector_f64(
-        np.cross(positions[second] - positions[first], positions[third] - positions[first]),
-        name="triangle normal",
-    )
-
-
 def _triangle_tangent(
     positions: np.ndarray,
     uvs: np.ndarray,
@@ -119,53 +109,6 @@ def _triangle_tangent(
     return normalize_vector_f64(tangent, name="triangle tangent", zero_ok=True)
 
 
-def _flip_triangle(triangle: tuple[int, int, int]) -> tuple[int, int, int]:
-    return (triangle[0], triangle[2], triangle[1])
-
-
-def _remaining_vertex(triangle: tuple[int, int, int], edge: tuple[int, int]) -> int:
-    for value in triangle:
-        if value != edge[0] and value != edge[1]:
-            return value
-    raise ValueError("triangle does not contain a remaining vertex for edge")
-
-
-def _angle(first: np.ndarray, second: np.ndarray) -> float:
-    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-    if denominator <= 1.0e-12:
-        raise ValueError("triangle angle vector must be non-zero")
-    cosine = float(np.dot(first, second)) / denominator
-    return math.acos(max(-1.0, min(1.0, cosine)))
-
-
-def _two_triangle_angle(
-    positions: np.ndarray,
-    first: tuple[int, int, int],
-    second: tuple[int, int, int],
-    edge: tuple[int, int],
-) -> float:
-    first_rest = _remaining_vertex(first, edge)
-    second_rest = _remaining_vertex(second, edge)
-    va = positions[edge[1]] - positions[edge[0]]
-    vb = positions[first_rest] - positions[edge[0]]
-    vc = positions[second_rest] - positions[edge[0]]
-    return math.degrees(_angle(np.cross(va, vb), np.cross(vc, va)))
-
-
-def _two_triangle_open(
-    positions: np.ndarray,
-    second: tuple[int, int, int],
-    edge: tuple[int, int],
-    first_normal: np.ndarray,
-) -> bool:
-    second_rest = _remaining_vertex(second, edge)
-    direction = normalize_vector_f64(
-        positions[second_rest] - positions[edge[0]],
-        name="triangle open direction",
-    )
-    return float(np.dot(first_normal, direction)) <= 0.0
-
-
 def _triangle_edges(triangle: tuple[int, int, int]) -> tuple[tuple[int, int], ...]:
     return (
         _canonical_edge(triangle[0], triangle[1]),
@@ -174,68 +117,25 @@ def _triangle_edges(triangle: tuple[int, int, int]) -> tuple[tuple[int, int], ..
     )
 
 
-def _edge_to_triangles(triangles: tuple[tuple[int, int, int], ...]) -> dict[tuple[int, int], list[int]]:
-    result: dict[tuple[int, int], list[int]] = {}
-    for index, triangle in enumerate(triangles):
-        for edge in _triangle_edges(triangle):
-            values = result.setdefault(edge, [])
-            if index not in values:
-                values.append(index)
-    return result
-
-
 def _optimize_triangle_direction(
     positions: np.ndarray,
     triangles: tuple[tuple[int, int, int], ...],
 ) -> tuple[tuple[tuple[int, int, int], ...], list[np.ndarray]]:
     if not triangles:
         return triangles, []
-    final_triangles = [tuple(triangle) for triangle in triangles]
-    normals = [_triangle_normal(positions, triangle) for triangle in final_triangles]
-    edge_to_triangles = _edge_to_triangles(tuple(final_triangles))
-    used: set[int] = set()
-    start = 0
-    while start < len(final_triangles):
-        if start in used:
-            start += 1
-            continue
-        used.add(start)
-        queue = [start]
-        layer = []
-        open_count = 0
-        close_count = 0
-        while queue:
-            tindex = queue.pop(0)
-            normal = normals[tindex]
-            triangle = final_triangles[tindex]
-            layer.append(tindex)
-            for edge in _triangle_edges(triangle):
-                for other_index in edge_to_triangles.get(edge, ()):
-                    if other_index in used:
-                        continue
-                    other = final_triangles[other_index]
-                    other_normal = normals[other_index]
-                    if (
-                        _two_triangle_angle(positions, triangle, other, edge)
-                        > SAME_SURFACE_ANGLE_DEGREES
-                    ):
-                        continue
-                    if float(np.dot(normal, other_normal)) < 0.0:
-                        other = _flip_triangle(other)
-                        final_triangles[other_index] = other
-                        other_normal = -other_normal
-                        normals[other_index] = other_normal
-                    if _two_triangle_open(positions, other, edge, normal):
-                        open_count += 1
-                    else:
-                        close_count += 1
-                    used.add(other_index)
-                    queue.append(other_index)
-        if close_count > open_count:
-            for tindex in layer:
-                final_triangles[tindex] = _flip_triangle(final_triangles[tindex])
-                normals[tindex] = -normals[tindex]
-    return tuple(final_triangles), normals
+    final_triangles = np.ascontiguousarray(triangles, dtype=np.int32)
+    normals = np.empty((len(triangles), 3), dtype=np.float64)
+    from ...native import native_module
+
+    native_module().mc2_optimize_triangle_direction_v0(
+        np.ascontiguousarray(positions, dtype=np.float64),
+        final_triangles,
+        normals,
+    )
+    return (
+        tuple(tuple(int(value) for value in triangle) for triangle in final_triangles),
+        [normals[index] for index in range(len(normals))],
+    )
 
 
 def _edge_union(
@@ -616,7 +516,6 @@ def build_blender_mesh_final_proxy(
 
 __all__ = [
     "MC2MeshFinalProxyBuildResult",
-    "SAME_SURFACE_ANGLE_DEGREES",
     "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
     "build_mc2_final_proxy",

@@ -293,6 +293,7 @@ Blender authoring/frame input
 8. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
 9. 大数组派生producer与consumer必须同属native context：Frame orientation、Bone pose rotation和Center不得回到Python；Final Proxy/Baseline/constraint static按P-06分步迁移。Python只传raw Blender snapshot，除公开result与显式debug外不读回native中间态。
 10. 静态dirty分类由slot-owned native context持有`topology=1 / geometry=2 / surface=4 / config=8`四位mask。Mesh raw输入覆盖object/mesh identity、edges、loop triangles、loop→vertex、positions/normals、UV与Pin权重；Bone raw输入覆盖Armature identity、requested/resolved names、parents、head/tail与rest matrix。纯Pose和same-frame为零；gravity direction只置config；旧context没有指纹时必须安全全重建。Python只组合每个task的短摘要并组织staged transaction，不再保存平行的contract key或signature字符串。
+11. Mesh Final Proxy triangle-direction的连通层、同面80°阈值、相邻triangle翻转、open/close计数与整层翻转由`mc2_static_build` C++ kernel唯一生产；当前host Final Proxy通过原地triangle和预分配normal buffer消费该kernel，P-06b后续将同一kernel改由staged context内部直接调用。Python不得恢复同名数值实现或第二份阈值常量。
 
 ## 9. Oracle 与冲突处理
 
