@@ -278,7 +278,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["triangle_count"] == 1
         assert native_info["self_collision_static_ready"] is True
         assert native_info["self_collision_static_revision"] == 1
-        assert native_info["owned_static_take_count"] == 4
+        assert native_info["owned_static_take_count"] == 6
         assert native_info["self_primitive_count"] == 7
         assert native_info["self_point_primitive_count"] == 3
         assert native_info["self_edge_primitive_count"] == 3

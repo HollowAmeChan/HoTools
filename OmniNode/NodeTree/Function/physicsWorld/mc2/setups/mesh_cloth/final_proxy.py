@@ -125,6 +125,7 @@ class MC2MeshProxyNativeData:
     edges: np.ndarray
     triangles: np.ndarray
     proxy_signature: str
+    native_registration: dict | None = None
     native_owned: bool = True
 
     @property
@@ -158,6 +159,7 @@ class MC2MeshProxyNativeData:
                 edges=self.edges,
                 triangles=self.triangles,
             ),
+            native_registration=self.native_registration,
         )
 
     def metadata(self) -> MC2MeshProxyNativeMetadata:
@@ -192,6 +194,7 @@ class MC2MeshFinalizerNativeData:
     vertex_to_triangle_data: np.ndarray
     vertex_bind_pose_positions: np.ndarray
     vertex_bind_pose_rotations: np.ndarray
+    native_frame_registration: dict | None = None
 
     @property
     def every_vertex_has_triangle(self) -> bool:
@@ -306,30 +309,36 @@ def _build_final_proxy_derived(
         out_triangle_data,
         bind_positions,
         bind_rotations,
+        native_context is not None,
     )
     edge_count = int(counts["edge_count"])
     neighbor_count = int(counts["neighbor_count"])
     triangle_record_count = int(counts["triangle_record_count"])
     triangle_data = out_triangle_data[:triangle_record_count]
     if native_context is not None:
-        native_context.update_proxy_finalizer_derived(
-            positions=positions,
-            normals=normals,
-            tangents=tangents,
-            uvs=uvs,
-            attributes=attribute_values,
-            edges=out_edges[:edge_count],
-            triangles=triangle_values,
-            triangle_ranges=out_triangle_ranges,
-            triangle_records=triangle_data,
-            bind_rotations=bind_rotations,
-        )
-    if native_context is not None:
         return {
             "normals": normals,
             "tangents": tangents,
             "attributes": attribute_values,
             "edges": out_edges[:edge_count],
+            "native_registration": {
+                "positions": counts["proxy_local_positions"],
+                "normals": counts["proxy_local_normals"],
+                "tangents": counts["proxy_local_tangents"],
+                "uvs": counts["proxy_uvs"],
+                "attributes": counts["proxy_attributes"],
+                "edges": counts["proxy_edges"],
+                "triangles": counts["proxy_triangles"],
+                "owners": (
+                    counts["_proxy_positions_owner"],
+                    counts["_proxy_normals_owner"],
+                    counts["_proxy_tangents_owner"],
+                    counts["_proxy_uvs_owner"],
+                    counts["_proxy_attributes_owner"],
+                    counts["_proxy_edges_owner"],
+                    counts["_proxy_triangles_owner"],
+                ),
+            },
             "native_finalizer": {
                 "vertex_to_vertex_ranges": out_neighbor_ranges,
                 "vertex_to_vertex_data": out_neighbor_data[:neighbor_count],
@@ -337,6 +346,16 @@ def _build_final_proxy_derived(
                 "vertex_to_triangle_data": triangle_data,
                 "bind_positions": bind_positions,
                 "bind_rotations": bind_rotations,
+                "native_frame_registration": {
+                    "triangle_ranges": counts["frame_triangle_ranges"],
+                    "triangle_records": counts["frame_triangle_records"],
+                    "bind_rotations": counts["frame_bind_rotations"],
+                    "owners": (
+                        counts["_frame_triangle_ranges_owner"],
+                        counts["_frame_triangle_records_owner"],
+                        counts["_frame_bind_rotations_owner"],
+                    ),
+                },
             },
         }
     vertex_to_triangle_records = tuple(
@@ -476,6 +495,7 @@ def build_mc2_final_proxy(
                 edges=derived["edges"],
                 triangles=triangle_values,
             ),
+            native_registration=derived["native_registration"],
         )
     native_finalizer = derived.get("native_finalizer")
     if native_finalizer is None:
@@ -497,6 +517,7 @@ def build_mc2_final_proxy(
             vertex_to_triangle_data=native_finalizer["vertex_to_triangle_data"],
             vertex_bind_pose_positions=native_finalizer["bind_positions"],
             vertex_bind_pose_rotations=native_finalizer["bind_rotations"],
+            native_frame_registration=native_finalizer["native_frame_registration"],
         )
     return MC2MeshFinalProxyBuildResult(
         proxy=proxy,

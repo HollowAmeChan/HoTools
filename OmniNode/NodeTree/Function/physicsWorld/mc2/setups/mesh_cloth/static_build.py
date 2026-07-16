@@ -192,6 +192,28 @@ def build_mc2_mesh_cloth_static(
         finalizer.proxy,
         native_context=native_context,
     )
+    if native_context is not None:
+        native_context.update_proxy_finalizer_derived(
+            proxy=baseline.final_proxy,
+            finalizer=finalizer.finalizer,
+        )
+        baseline_data = baseline.baseline
+        native_context.update_baseline_derived(
+            {
+                "attributes": baseline.final_proxy.vertex_attributes,
+                "parents": baseline_data.parent_indices,
+                "child_ranges": baseline_data.child_ranges,
+                "child_data": baseline_data.child_data,
+                "baseline_flags": baseline_data.baseline_flags,
+                "baseline_ranges": baseline_data.baseline_ranges,
+                "baseline_data": baseline_data.baseline_data,
+                "roots": baseline_data.root_indices,
+                "depths": baseline_data.depths,
+                "local_positions": baseline_data.vertex_local_positions,
+                "local_rotations": baseline_data.vertex_local_rotations,
+            },
+            finalize_attributes=False,
+        )
     distance = build_mc2_distance_static(
         baseline.final_proxy,
         baseline.baseline,

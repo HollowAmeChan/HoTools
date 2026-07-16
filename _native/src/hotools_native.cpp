@@ -142,6 +142,14 @@ nb::ndarray<nb::numpy, T> owned_array_2d(
     );
 }
 
+std::vector<float> float_vector(const double* values, std::size_t count) {
+    std::vector<float> result(count);
+    std::transform(values, values + count, result.begin(), [](double value) {
+        return static_cast<float>(value);
+    });
+    return result;
+}
+
 PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     enum SolveArg {
         APositions = 0,
@@ -945,7 +953,8 @@ NB_MODULE(hotools_native, m) {
            i32_2d out_triangle_ranges,
            i32_2d out_triangle_data,
            f64_2d out_bind_positions,
-           f64_2d out_bind_rotations) {
+           f64_2d out_bind_rotations,
+           bool produce_owned) {
             const auto vertex_count = positions.shape(0);
             const auto triangle_count = triangles.shape(0);
             check_cols(positions, 3, "positions");
@@ -1029,8 +1038,78 @@ NB_MODULE(hotools_native, m) {
             result["edge_count"] = edge_count;
             result["neighbor_count"] = neighbor_count;
             result["triangle_record_count"] = triangle_record_count;
+            if (produce_owned) {
+                result["proxy_local_positions"] = owned_array_2d(
+                    float_vector(positions.data(), vertex_count * 3), vertex_count, 3,
+                    &result, "_proxy_positions_owner",
+                    "hotools_native.mc2.proxy_positions.v0"
+                );
+                result["proxy_local_normals"] = owned_array_2d(
+                    float_vector(derived.local_normals.data(), vertex_count * 3), vertex_count, 3,
+                    &result, "_proxy_normals_owner",
+                    "hotools_native.mc2.proxy_normals.v0"
+                );
+                result["proxy_local_tangents"] = owned_array_2d(
+                    float_vector(derived.local_tangents.data(), vertex_count * 3), vertex_count, 3,
+                    &result, "_proxy_tangents_owner",
+                    "hotools_native.mc2.proxy_tangents.v0"
+                );
+                result["proxy_uvs"] = owned_array_2d(
+                    float_vector(uvs.data(), vertex_count * 2), vertex_count, 2,
+                    &result, "_proxy_uvs_owner",
+                    "hotools_native.mc2.proxy_uvs.v0"
+                );
+                result["proxy_attributes"] = owned_array_1d(
+                    std::move(derived.vertex_attributes),
+                    &result, "_proxy_attributes_owner",
+                    "hotools_native.mc2.proxy_attributes.v0"
+                );
+                result["proxy_edges"] = owned_array_2d(
+                    std::move(derived.edges), edge_count, 2,
+                    &result, "_proxy_edges_owner",
+                    "hotools_native.mc2.proxy_edges.v0"
+                );
+                result["proxy_triangles"] = owned_array_2d(
+                    std::vector<std::int32_t>(
+                        triangles.data(), triangles.data() + triangle_count * 3
+                    ), triangle_count, 3,
+                    &result, "_proxy_triangles_owner",
+                    "hotools_native.mc2.proxy_triangles.v0"
+                );
+                result["frame_triangle_ranges"] = owned_array_2d(
+                    std::move(derived.vertex_to_triangle_ranges), vertex_count, 2,
+                    &result, "_frame_triangle_ranges_owner",
+                    "hotools_native.mc2.frame_triangle_ranges.v0"
+                );
+                result["frame_triangle_records"] = owned_array_2d(
+                    std::move(derived.vertex_to_triangle_data), triangle_record_count, 2,
+                    &result, "_frame_triangle_records_owner",
+                    "hotools_native.mc2.frame_triangle_records.v0"
+                );
+                result["frame_bind_rotations"] = owned_array_2d(
+                    float_vector(derived.bind_rotations.data(), vertex_count * 4), vertex_count, 4,
+                    &result, "_frame_bind_rotations_owner",
+                    "hotools_native.mc2.frame_bind_rotations.v0"
+                );
+            }
             return result;
-        });
+        },
+        nb::arg("positions"),
+        nb::arg("local_normals"),
+        nb::arg("local_tangents"),
+        nb::arg("uvs"),
+        nb::arg("vertex_attributes"),
+        nb::arg("triangles"),
+        nb::arg("triangle_normals"),
+        nb::arg("lines"),
+        nb::arg("out_edges"),
+        nb::arg("out_neighbor_ranges"),
+        nb::arg("out_neighbor_data"),
+        nb::arg("out_triangle_ranges"),
+        nb::arg("out_triangle_data"),
+        nb::arg("out_bind_positions"),
+        nb::arg("out_bind_rotations"),
+        nb::arg("produce_owned") = false);
     m.def("mc2_build_mesh_baseline_derived_v0",
         [](cf64_2d positions,
            cf64_2d local_normals,

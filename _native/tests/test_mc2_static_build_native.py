@@ -114,6 +114,95 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     np.testing.assert_allclose(np.linalg.norm(bind_rotations, axis=1), 1.0, atol=1.0e-12)
 
 
+def test_mesh_final_proxy_owned_context_transfer() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 4, dtype=np.float64)
+    uvs = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64)
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
+    lines = np.empty((0, 2), dtype=np.int32)
+    out_edges = np.empty((6, 2), dtype=np.int32)
+    neighbor_ranges = np.empty((4, 2), dtype=np.int32)
+    neighbor_data = np.empty(12, dtype=np.int32)
+    triangle_ranges = np.empty((4, 2), dtype=np.int32)
+    triangle_data = np.empty((6, 2), dtype=np.int32)
+    bind_positions = np.empty((4, 3), dtype=np.float64)
+    bind_rotations = np.empty((4, 4), dtype=np.float64)
+    owned = hotools_native.mc2_build_mesh_final_proxy_derived_v0(
+        positions,
+        normals,
+        tangents,
+        uvs,
+        attributes,
+        triangles,
+        triangle_normals,
+        lines,
+        out_edges,
+        neighbor_ranges,
+        neighbor_data,
+        triangle_ranges,
+        triangle_data,
+        bind_positions,
+        bind_rotations,
+        True,
+    )
+    proxy_arrays = (
+        owned["proxy_local_positions"],
+        owned["proxy_local_normals"],
+        owned["proxy_local_tangents"],
+        owned["proxy_uvs"],
+        owned["proxy_attributes"],
+        owned["proxy_edges"],
+        owned["proxy_triangles"],
+    )
+    proxy_owners = (
+        owned["_proxy_positions_owner"],
+        owned["_proxy_normals_owner"],
+        owned["_proxy_tangents_owner"],
+        owned["_proxy_uvs_owner"],
+        owned["_proxy_attributes_owner"],
+        owned["_proxy_edges_owner"],
+        owned["_proxy_triangles_owner"],
+    )
+    frame_arrays = (
+        owned["frame_triangle_ranges"],
+        owned["frame_triangle_records"],
+        owned["frame_bind_rotations"],
+    )
+    frame_owners = (
+        owned["_frame_triangle_ranges_owner"],
+        owned["_frame_triangle_records_owner"],
+        owned["_frame_bind_rotations_owner"],
+    )
+    context = hotools_native.mc2_context_v0_create(0, 4)
+    try:
+        hotools_native.mc2_context_v0_update_proxy_static(
+            context, *proxy_arrays, *proxy_owners
+        )
+        hotools_native.mc2_context_v0_update_frame_producer_static(
+            context, *frame_arrays, *frame_owners
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["proxy_static_ready"] is True
+        assert info["proxy_static_revision"] == 1
+        assert info["owned_static_take_count"] == 2
+        try:
+            hotools_native.mc2_context_v0_update_proxy_static(
+                context, *proxy_arrays, *proxy_owners
+            )
+        except ValueError as exc:
+            assert "owner does not match" in str(exc)
+        else:
+            raise AssertionError("consumed proxy owner was accepted twice")
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_mesh_baseline_derived_arrays() -> None:
     positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
@@ -373,6 +462,8 @@ if __name__ == "__main__":
     print("PASS MC2 native triangle direction validation")
     test_mesh_final_proxy_derived_arrays()
     print("PASS MC2 native final proxy derived arrays")
+    test_mesh_final_proxy_owned_context_transfer()
+    print("PASS MC2 native final proxy owned context transfer")
     test_mesh_baseline_derived_arrays()
     print("PASS MC2 native baseline derived arrays")
     test_distance_derived_arrays_and_owner()

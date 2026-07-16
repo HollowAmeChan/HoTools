@@ -4528,8 +4528,10 @@ PyObject* mc2_context_v0_update_static_fingerprint(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 8) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_proxy_static expects 8 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 15;
+    if (argument_count != 8 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_proxy_static expects 8 or 15 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -4582,13 +4584,58 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
             return nullptr;
         }
     }
-    auto next_positions = copy_values<float>(positions);
-    auto next_normals = copy_values<float>(normals);
-    auto next_tangents = copy_values<float>(tangents);
-    auto next_uvs = copy_values<float>(uvs);
-    auto next_attributes = copy_values<std::uint8_t>(attributes);
-    auto next_edges = copy_values<std::int32_t>(edges);
-    auto next_triangles = copy_values<std::int32_t>(triangles);
+    std::vector<float> next_positions;
+    std::vector<float> next_normals;
+    std::vector<float> next_tangents;
+    std::vector<float> next_uvs;
+    std::vector<std::uint8_t> next_attributes;
+    std::vector<std::int32_t> next_edges;
+    std::vector<std::int32_t> next_triangles;
+    if (take_owned) {
+        auto* owned_positions = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 8), "hotools_native.mc2.proxy_positions.v0", positions
+        );
+        auto* owned_normals = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 9), "hotools_native.mc2.proxy_normals.v0", normals
+        );
+        auto* owned_tangents = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 10), "hotools_native.mc2.proxy_tangents.v0", tangents
+        );
+        auto* owned_uvs = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 11), "hotools_native.mc2.proxy_uvs.v0", uvs
+        );
+        auto* owned_attributes = validated_owned_values<std::uint8_t>(
+            PyTuple_GET_ITEM(args, 12), "hotools_native.mc2.proxy_attributes.v0", attributes
+        );
+        auto* owned_edges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 13), "hotools_native.mc2.proxy_edges.v0", edges
+        );
+        auto* owned_triangles = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 14), "hotools_native.mc2.proxy_triangles.v0", triangles
+        );
+        if (owned_positions == nullptr || owned_normals == nullptr ||
+            owned_tangents == nullptr || owned_uvs == nullptr ||
+            owned_attributes == nullptr || owned_edges == nullptr ||
+            owned_triangles == nullptr) {
+            return nullptr;
+        }
+        next_positions = std::move(*owned_positions);
+        next_normals = std::move(*owned_normals);
+        next_tangents = std::move(*owned_tangents);
+        next_uvs = std::move(*owned_uvs);
+        next_attributes = std::move(*owned_attributes);
+        next_edges = std::move(*owned_edges);
+        next_triangles = std::move(*owned_triangles);
+        ++context->owned_static_take_count;
+    } else {
+        next_positions = copy_values<float>(positions);
+        next_normals = copy_values<float>(normals);
+        next_tangents = copy_values<float>(tangents);
+        next_uvs = copy_values<float>(uvs);
+        next_attributes = copy_values<std::uint8_t>(attributes);
+        next_edges = copy_values<std::int32_t>(edges);
+        next_triangles = copy_values<std::int32_t>(triangles);
+    }
     context->proxy_local_positions.swap(next_positions);
     context->proxy_local_normals.swap(next_normals);
     context->proxy_local_tangents.swap(next_tangents);
@@ -4869,10 +4916,12 @@ PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 4) {
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 7;
+    if (argument_count != 4 && !take_owned) {
         PyErr_SetString(
             PyExc_TypeError,
-            "mc2_context_v0_update_frame_producer_static expects 4 arguments"
+            "mc2_context_v0_update_frame_producer_static expects 4 or 7 arguments"
         );
         return nullptr;
     }
@@ -4919,9 +4968,41 @@ PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args)
             }
         }
     }
-    context->bone_vertex_to_triangle_ranges = copy_values<std::int32_t>(ranges);
-    context->bone_vertex_to_triangle_data = copy_values<std::int32_t>(data);
-    context->bone_vertex_bind_pose_rotations = copy_values<float>(bind_rotations);
+    std::vector<std::int32_t> next_ranges;
+    std::vector<std::int32_t> next_data;
+    std::vector<float> next_bind_rotations;
+    if (take_owned) {
+        auto* owned_ranges = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 4),
+            "hotools_native.mc2.frame_triangle_ranges.v0",
+            ranges
+        );
+        auto* owned_data = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 5),
+            "hotools_native.mc2.frame_triangle_records.v0",
+            data
+        );
+        auto* owned_bind_rotations = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 6),
+            "hotools_native.mc2.frame_bind_rotations.v0",
+            bind_rotations
+        );
+        if (owned_ranges == nullptr || owned_data == nullptr ||
+            owned_bind_rotations == nullptr) {
+            return nullptr;
+        }
+        next_ranges = std::move(*owned_ranges);
+        next_data = std::move(*owned_data);
+        next_bind_rotations = std::move(*owned_bind_rotations);
+        ++context->owned_static_take_count;
+    } else {
+        next_ranges = copy_values<std::int32_t>(ranges);
+        next_data = copy_values<std::int32_t>(data);
+        next_bind_rotations = copy_values<float>(bind_rotations);
+    }
+    context->bone_vertex_to_triangle_ranges.swap(next_ranges);
+    context->bone_vertex_to_triangle_data.swap(next_data);
+    context->bone_vertex_bind_pose_rotations.swap(next_bind_rotations);
     context->bone_normal_adjustment_rotations.assign(
         static_cast<std::size_t>(context->vertex_count) * 4,
         0.0f

@@ -185,20 +185,6 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec, *, native_context=None) ->
     baseline_count = int(counts["baseline_count"])
     baseline_data_count = int(counts["baseline_data_count"])
     if native_context is not None:
-        native_context.update_baseline_derived({
-            "attributes": attributes,
-            "parents": parents,
-            "child_ranges": child_ranges,
-            "child_data": child_data[:child_count],
-            "baseline_flags": baseline_flags[:baseline_count],
-            "baseline_ranges": baseline_ranges[:baseline_count],
-            "baseline_data": baseline_data[:baseline_data_count],
-            "roots": roots,
-            "depths": depths,
-            "local_positions": local_positions,
-            "local_rotations": local_rotations,
-        })
-    if native_context is not None:
         return {
             "attributes": attributes,
             "parents": parents,

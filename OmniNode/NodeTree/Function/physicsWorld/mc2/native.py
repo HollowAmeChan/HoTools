@@ -306,41 +306,51 @@ class MC2NativeContextV0:
     def update_proxy_finalizer_derived(
         self,
         *,
-        positions,
-        normals,
-        tangents,
-        uvs,
-        attributes,
-        edges,
-        triangles,
-        triangle_ranges,
-        triangle_records,
-        bind_rotations,
+        proxy,
+        finalizer,
     ) -> None:
         self._ensure_live()
+        proxy_registration = getattr(proxy, "native_registration", None)
+        frame_registration = getattr(finalizer, "native_frame_registration", None)
+        if not isinstance(proxy_registration, dict) or not isinstance(
+            frame_registration, dict
+        ):
+            raise TypeError("staged proxy/finalizer native registration is missing")
+        proxy_registration["attributes"][:] = np.asarray(
+            proxy.vertex_attributes,
+            dtype=np.uint8,
+        )
         self._module.mc2_context_v0_update_proxy_static(
             self._handle,
-            np.ascontiguousarray(positions, dtype=np.float32),
-            np.ascontiguousarray(normals, dtype=np.float32),
-            np.ascontiguousarray(tangents, dtype=np.float32),
-            np.ascontiguousarray(uvs, dtype=np.float32),
-            np.ascontiguousarray(attributes, dtype=np.uint8),
-            np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2)),
-            np.ascontiguousarray(triangles, dtype=np.int32).reshape((-1, 3)),
+            proxy_registration["positions"],
+            proxy_registration["normals"],
+            proxy_registration["tangents"],
+            proxy_registration["uvs"],
+            proxy_registration["attributes"],
+            proxy_registration["edges"],
+            proxy_registration["triangles"],
+            *proxy_registration["owners"],
         )
         self._module.mc2_context_v0_update_frame_producer_static(
             self._handle,
-            np.ascontiguousarray(triangle_ranges, dtype=np.int32).reshape((-1, 2)),
-            np.ascontiguousarray(triangle_records, dtype=np.int32).reshape((-1, 2)),
-            np.ascontiguousarray(bind_rotations, dtype=np.float32).reshape((-1, 4)),
+            frame_registration["triangle_ranges"],
+            frame_registration["triangle_records"],
+            frame_registration["bind_rotations"],
+            *frame_registration["owners"],
         )
 
-    def update_baseline_derived(self, derived: dict) -> None:
+    def update_baseline_derived(
+        self,
+        derived: dict,
+        *,
+        finalize_attributes: bool = True,
+    ) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_finalize_proxy_attributes(
-            self._handle,
-            derived["attributes"],
-        )
+        if finalize_attributes:
+            self._module.mc2_context_v0_finalize_proxy_attributes(
+                self._handle,
+                derived["attributes"],
+            )
         self._module.mc2_context_v0_update_baseline_static(
             self._handle,
             derived["parents"],
