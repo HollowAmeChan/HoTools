@@ -314,10 +314,10 @@ class MC2NativeContextV0:
         )
 
     def initialize_bone_proxy_baseline(self, bone) -> None:
-        from .bone_static import MC2BoneStaticSpec
+        from .bone_static import MC2BoneNativeData, MC2BoneStaticSpec
 
-        if not isinstance(bone, MC2BoneStaticSpec):
-            raise TypeError("bone must be MC2BoneStaticSpec")
+        if not isinstance(bone, (MC2BoneStaticSpec, MC2BoneNativeData)):
+            raise TypeError("bone must be MC2 Bone static data")
         if bone.proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native Bone static vertex count mismatch")
         baseline_registration = bone.baseline_native_registration

@@ -97,6 +97,8 @@ Bone Final Proxy producer现按owner mode直接产出Proxy 7组vectors与Finaliz
 
 Finalizer、Baseline与Bone static签名已从`json.dumps`完整tuple payload改为固定标签、稳定字段顺序、固定dtype连续字节的流式SHA-256；Mesh staged/no-context与Bone显式/生产共用同一签名函数，旧JSON签名树和私有重复helper已删除。26/26纯MC2、Blender Mesh BasePose/Bone static/product通过。large Bone首建约`59.27ms`，为旧CPP的`5.81x`；热帧约`6.12ms`，为旧CPP的`3.16x`。这一步解除staged ndarray载体必须重建tuple树才能维持signature一致的阻塞；P-06d下一步删除生产完整spec构造。
 
+Bone staged构建现返回`MC2BoneNativeData`，内部直接复用`MC2MeshProxyNativeData`、`MC2MeshFinalizerNativeData`与`MC2MeshBaselineNativeData`连续数组；完整`MC2ProxyStaticSpec/MC2ProxyFinalizerStaticSpec/MC2BaselineStaticSpec/MC2BoneStaticSpec`仅在无context Tier A/oracle构造。Finalizer/Baseline/Bone签名直接消费这些arrays，constraint producer同次消费后context接管owner，slot再压缩为metadata，不再建立生产immutable派生树。26/26纯MC2、Blender Bone static/product/frame/全隐式debug通过。large Bone首建约`21.05ms`，为旧CPP的`16.17x`；热帧约`6.25ms`，为旧CPP的`3.10x`。P-06d剩余清理项是static assembly的transform/UV/position小型list/tuple转发与生产可达性复查。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

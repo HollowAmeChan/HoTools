@@ -8,7 +8,7 @@ import json
 
 import numpy as np
 
-from ...bone_static import MC2BoneStaticSpec
+from ...bone_static import MC2BoneNativeData, MC2BoneStaticSpec
 from ...bone_static import build_mc2_bone_static
 from ...center_state import MC2CenterStaticMetadata, MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
@@ -25,6 +25,7 @@ from ...specs import MC2TaskSpec
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import _thaw
 from ..mesh_cloth.final_proxy import (
+    MC2MeshFinalizerNativeData,
     MC2MeshFinalizerNativeMetadata,
     MC2MeshProxyNativeMetadata,
 )
@@ -147,7 +148,7 @@ class MC2BoneClothStaticBuildResult:
     topology_signature: str
     connection_mode: int
     connection_model: str
-    bone: MC2BoneStaticSpec
+    bone: MC2BoneStaticSpec | MC2BoneNativeData
     distance: MC2DistanceStaticSpec | MC2DistanceStaticMetadata
     center: MC2CenterStaticSpec | MC2CenterStaticMetadata
     self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
@@ -187,11 +188,19 @@ class MC2BoneClothStaticBuildResult:
                 proxy_signature=finalizer.proxy_signature,
                 vertex_count=finalizer.vertex_count,
                 neighbor_count=len(finalizer.vertex_to_vertex_data),
-                triangle_record_count=sum(
-                    len(records) for records in finalizer.vertex_to_triangle_records
+                triangle_record_count=(
+                    len(finalizer.vertex_to_triangle_data)
+                    if isinstance(finalizer, MC2MeshFinalizerNativeData)
+                    else sum(
+                        len(records) for records in finalizer.vertex_to_triangle_records
+                    )
                 ),
-                every_vertex_has_triangle=all(
-                    bool(records) for records in finalizer.vertex_to_triangle_records
+                every_vertex_has_triangle=(
+                    finalizer.every_vertex_has_triangle
+                    if isinstance(finalizer, MC2MeshFinalizerNativeData)
+                    else all(
+                        bool(records) for records in finalizer.vertex_to_triangle_records
+                    )
                 ),
             ),
             baseline=MC2MeshBaselineMetadata(
@@ -246,8 +255,8 @@ class MC2BoneClothStaticBuildResult:
             raise ValueError("connection_mode must be in 0..3")
         if self.connection_model not in ("mc2_source", "hotools_product"):
             raise ValueError("unsupported BoneCloth connection_model")
-        if not isinstance(self.bone, MC2BoneStaticSpec):
-            raise TypeError("bone must be MC2BoneStaticSpec")
+        if not isinstance(self.bone, (MC2BoneStaticSpec, MC2BoneNativeData)):
+            raise TypeError("bone must be MC2 Bone static data")
         if not isinstance(self.distance, (MC2DistanceStaticSpec, MC2DistanceStaticMetadata)):
             raise TypeError("distance must be MC2 Distance static data")
         if not isinstance(self.center, (MC2CenterStaticSpec, MC2CenterStaticMetadata)):

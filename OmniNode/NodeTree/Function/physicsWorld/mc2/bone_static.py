@@ -7,7 +7,7 @@ selection and Blender pose extraction remain outside this pure data layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import math
 
@@ -19,13 +19,19 @@ from ..utils.math3d import (
     quaternion_conjugate_f64,
     quaternion_multiply_f64,
 )
-from .mesh_baseline import _replace_proxy_attributes
+from .mesh_baseline import MC2MeshBaselineNativeData, _replace_proxy_attributes
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
-from .setups.mesh_cloth.final_proxy import build_mc2_final_proxy
+from .setups.mesh_cloth.final_proxy import (
+    MC2MeshFinalizerNativeData,
+    MC2MeshProxyNativeData,
+    build_mc2_final_proxy,
+)
 from .static_data import MC2BaselineStaticSpec
 from .static_data import MC2ProxyFinalizerStaticSpec
 from .static_data import MC2ProxyStaticSpec
 from .static_data import MC2_STATIC_SCHEMA_VERSION
+from .static_data import mc2_baseline_content_signature
+from .static_data import mc2_proxy_finalizer_content_signature
 from .static_data import make_mc2_baseline_static_spec
 from .static_data import make_mc2_proxy_finalizer_static_spec
 from .static_data import pack_mc2_baseline_static
@@ -128,22 +134,20 @@ def _build_native_transform_baseline(proxy, parents, roots, *, produce_owned=Fal
     child_count = int(counts["child_count"])
     baseline_count = int(counts["baseline_count"])
     baseline_data_count = int(counts["baseline_data_count"])
-    result = {
-        "child_ranges": tuple(tuple(int(value) for value in row) for row in child_ranges),
-        "child_data": tuple(int(value) for value in child_data[:child_count]),
-        "baseline_flags": tuple(int(value) for value in baseline_flags[:baseline_count]),
-        "baseline_ranges": tuple(
-            tuple(int(value) for value in row)
-            for row in baseline_ranges[:baseline_count]
-        ),
-        "baseline_data": tuple(int(value) for value in baseline_data[:baseline_data_count]),
-        "attributes": tuple(int(value) for value in final_attributes),
-        "roots": tuple(int(value) for value in pose_roots),
-        "depths": tuple(float(value) for value in depths),
-        "local_positions": _tuple_vectors(local_positions),
-        "local_rotations": _tuple_vectors(local_rotations),
-    }
     if produce_owned:
+        result = {
+            "parents": np.ascontiguousarray(parents, dtype=np.int32),
+            "child_ranges": child_ranges,
+            "child_data": child_data[:child_count],
+            "baseline_flags": baseline_flags[:baseline_count],
+            "baseline_ranges": baseline_ranges[:baseline_count],
+            "baseline_data": baseline_data[:baseline_data_count],
+            "attributes": final_attributes,
+            "roots": pose_roots,
+            "depths": depths,
+            "local_positions": local_positions,
+            "local_rotations": local_rotations,
+        }
         result["native_registration"] = {
             "parents": counts["baseline_parents"],
             "child_ranges": counts["baseline_child_ranges"],
@@ -168,7 +172,22 @@ def _build_native_transform_baseline(proxy, parents, roots, *, produce_owned=Fal
                 counts["_baseline_local_rotations_owner"],
             ),
         }
-    return result
+        return result
+    return {
+        "child_ranges": tuple(tuple(int(value) for value in row) for row in child_ranges),
+        "child_data": tuple(int(value) for value in child_data[:child_count]),
+        "baseline_flags": tuple(int(value) for value in baseline_flags[:baseline_count]),
+        "baseline_ranges": tuple(
+            tuple(int(value) for value in row)
+            for row in baseline_ranges[:baseline_count]
+        ),
+        "baseline_data": tuple(int(value) for value in baseline_data[:baseline_data_count]),
+        "attributes": tuple(int(value) for value in final_attributes),
+        "roots": tuple(int(value) for value in pose_roots),
+        "depths": tuple(float(value) for value in depths),
+        "local_positions": _tuple_vectors(local_positions),
+        "local_rotations": _tuple_vectors(local_rotations),
+    }
 
 
 def _normal_adjustment(
@@ -178,13 +197,18 @@ def _normal_adjustment(
     *,
     mode: int,
     center,
-) -> tuple[np.ndarray, np.ndarray, tuple[tuple[float, ...], ...]]:
+    return_arrays: bool = False,
+):
     count = len(positions)
     final_normals = np.array(normals, dtype=np.float64, copy=True)
     final_tangents = np.array(tangents, dtype=np.float64, copy=True)
     rotations = np.tile(np.asarray((0.0, 0.0, 0.0, 1.0)), (count, 1))
     if mode == MC2_NORMAL_ALIGNMENT_NONE:
-        return final_normals, final_tangents, _tuple_vectors(rotations)
+        return (
+            final_normals,
+            final_tangents,
+            rotations if return_arrays else _tuple_vectors(rotations),
+        )
     if mode != MC2_NORMAL_ALIGNMENT_TRANSFORM:
         raise ValueError("Bone static builder currently supports normal alignment None or Transform")
     center_value = np.asarray(tuple(center), dtype=np.float64)
@@ -219,7 +243,11 @@ def _normal_adjustment(
             ),
             name="normal adjustment rotation",
         )
-    return final_normals, final_tangents, _tuple_vectors(rotations)
+    return (
+        final_normals,
+        final_tangents,
+        rotations if return_arrays else _tuple_vectors(rotations),
+    )
 
 
 @dataclass(frozen=True)
@@ -293,6 +321,40 @@ class MC2BoneStaticSpec:
         }
 
 
+@dataclass(frozen=True)
+class MC2BoneNativeData:
+    proxy: MC2MeshProxyNativeData
+    finalizer: MC2MeshFinalizerNativeData
+    baseline: MC2MeshBaselineNativeData
+    normal_adjustment_rotations: np.ndarray
+    vertex_to_transform_rotations: np.ndarray
+    static_signature: str
+    baseline_native_registration: dict
+    proxy_native_registration: dict
+    bone_native_registration: dict
+    schema_version: int = MC2_STATIC_SCHEMA_VERSION
+    native_owned: bool = True
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_STATIC_SCHEMA_VERSION:
+            raise ValueError("unsupported MC2 Bone native data schema")
+        if self.proxy.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+            raise ValueError("Bone native data requires a Bone setup proxy")
+        if self.finalizer.proxy_signature != self.proxy.proxy_signature:
+            raise ValueError("Bone native finalizer signature mismatch")
+        if self.baseline.proxy_signature != self.proxy.proxy_signature:
+            raise ValueError("Bone native baseline signature mismatch")
+        expected = mc2_bone_static_content_signature(
+            proxy_signature=self.proxy.proxy_signature,
+            finalizer_signature=self.finalizer.finalizer_signature,
+            baseline_signature=self.baseline.baseline_signature,
+            normal_adjustment_rotations=self.normal_adjustment_rotations,
+            vertex_to_transform_rotations=self.vertex_to_transform_rotations,
+        )
+        if self.static_signature != expected:
+            raise ValueError("Bone native static signature mismatch")
+
+
 def build_mc2_bone_static(
     *,
     task_id: str,
@@ -311,7 +373,8 @@ def build_mc2_bone_static(
     normal_alignment_mode: int = MC2_NORMAL_ALIGNMENT_NONE,
     normal_adjustment_center=(0.0, 0.0, 0.0),
     native_context=None,
-) -> MC2BoneStaticSpec:
+) -> MC2BoneStaticSpec | MC2BoneNativeData:
+    staged = native_context is not None
     identities = tuple(str(value) for value in vertex_identities)
     count = len(identities)
     positions = np.asarray(tuple(local_positions), dtype=np.float64)
@@ -350,19 +413,20 @@ def build_mc2_bone_static(
         tangents,
         mode=int(normal_alignment_mode),
         center=normal_adjustment_center,
+        return_arrays=staged,
     )
     raw = build_mc2_final_proxy(
         task_id=task_id,
         setup_type=setup_type,
         vertex_identities=identities,
-        local_positions=_tuple_vectors(positions),
-        local_normals=_tuple_vectors(adjusted_normals),
-        local_tangents=_tuple_vectors(adjusted_tangents),
+        local_positions=positions if staged else _tuple_vectors(positions),
+        local_normals=adjusted_normals if staged else _tuple_vectors(adjusted_normals),
+        local_tangents=adjusted_tangents if staged else _tuple_vectors(adjusted_tangents),
         uvs=uvs,
         vertex_attributes=vertex_attributes,
         lines=lines,
         triangles=triangles,
-        native_owner_kind="bone" if native_context is not None else "",
+        native_owner_kind="bone" if staged else "",
     )
 
     transform_baseline = _build_native_transform_baseline(
@@ -380,28 +444,73 @@ def build_mc2_bone_static(
     local_pose_positions = transform_baseline["local_positions"]
     local_pose_rotations = transform_baseline["local_rotations"]
     final_proxy = _replace_proxy_attributes(raw.proxy, final_attributes)
-    finalizer = make_mc2_proxy_finalizer_static_spec(
-        proxy=final_proxy,
-        vertex_to_vertex_ranges=raw.finalizer.vertex_to_vertex_ranges,
-        vertex_to_vertex_data=raw.finalizer.vertex_to_vertex_data,
-        vertex_to_triangle_records=raw.finalizer.vertex_to_triangle_records,
-        vertex_bind_pose_positions=raw.finalizer.vertex_bind_pose_positions,
-        vertex_bind_pose_rotations=raw.finalizer.vertex_bind_pose_rotations,
-    )
-    baseline = make_mc2_baseline_static_spec(
-        proxy_signature=final_proxy.proxy_signature,
-        vertex_count=count,
-        parent_indices=parents,
-        child_ranges=child_ranges,
-        child_data=child_data,
-        baseline_flags=baseline_flags,
-        baseline_ranges=baseline_ranges,
-        baseline_data=baseline_data,
-        root_indices=transform_baseline["roots"],
-        depths=transform_baseline["depths"],
-        vertex_local_positions=local_pose_positions,
-        vertex_local_rotations=local_pose_rotations,
-    )
+    if staged:
+        finalizer = replace(
+            raw.finalizer,
+            proxy_signature=final_proxy.proxy_signature,
+            finalizer_signature=mc2_proxy_finalizer_content_signature(
+                proxy_signature=final_proxy.proxy_signature,
+                vertex_count=count,
+                vertex_to_vertex_ranges=raw.finalizer.vertex_to_vertex_ranges,
+                vertex_to_vertex_data=raw.finalizer.vertex_to_vertex_data,
+                vertex_to_triangle_ranges=raw.finalizer.vertex_to_triangle_ranges,
+                vertex_to_triangle_data=raw.finalizer.vertex_to_triangle_data,
+                vertex_bind_pose_positions=raw.finalizer.vertex_bind_pose_positions,
+                vertex_bind_pose_rotations=raw.finalizer.vertex_bind_pose_rotations,
+            ),
+        )
+        baseline = MC2MeshBaselineNativeData(
+            proxy_signature=final_proxy.proxy_signature,
+            vertex_count=count,
+            parent_indices=transform_baseline["parents"],
+            child_ranges=child_ranges,
+            child_data=child_data,
+            baseline_flags=baseline_flags,
+            baseline_ranges=baseline_ranges,
+            baseline_data=baseline_data,
+            root_indices=transform_baseline["roots"],
+            depths=transform_baseline["depths"],
+            vertex_local_positions=local_pose_positions,
+            vertex_local_rotations=local_pose_rotations,
+            baseline_signature=mc2_baseline_content_signature(
+                proxy_signature=final_proxy.proxy_signature,
+                vertex_count=count,
+                parent_indices=transform_baseline["parents"],
+                child_ranges=child_ranges,
+                child_data=child_data,
+                baseline_flags=baseline_flags,
+                baseline_ranges=baseline_ranges,
+                baseline_data=baseline_data,
+                root_indices=transform_baseline["roots"],
+                depths=transform_baseline["depths"],
+                vertex_local_positions=local_pose_positions,
+                vertex_local_rotations=local_pose_rotations,
+            ),
+            native_registration=transform_baseline["native_registration"],
+        )
+    else:
+        finalizer = make_mc2_proxy_finalizer_static_spec(
+            proxy=final_proxy,
+            vertex_to_vertex_ranges=raw.finalizer.vertex_to_vertex_ranges,
+            vertex_to_vertex_data=raw.finalizer.vertex_to_vertex_data,
+            vertex_to_triangle_records=raw.finalizer.vertex_to_triangle_records,
+            vertex_bind_pose_positions=raw.finalizer.vertex_bind_pose_positions,
+            vertex_bind_pose_rotations=raw.finalizer.vertex_bind_pose_rotations,
+        )
+        baseline = make_mc2_baseline_static_spec(
+            proxy_signature=final_proxy.proxy_signature,
+            vertex_count=count,
+            parent_indices=parents,
+            child_ranges=child_ranges,
+            child_data=child_data,
+            baseline_flags=baseline_flags,
+            baseline_ranges=baseline_ranges,
+            baseline_data=baseline_data,
+            root_indices=transform_baseline["roots"],
+            depths=transform_baseline["depths"],
+            vertex_local_positions=local_pose_positions,
+            vertex_local_rotations=local_pose_rotations,
+        )
 
     to_transform_values = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
@@ -437,7 +546,7 @@ def build_mc2_bone_static(
                 rotation_registration["_bone_transform_rotations_owner"],
             ),
         })
-    to_transform = _tuple_vectors(to_transform_values)
+    to_transform = to_transform_values if staged else _tuple_vectors(to_transform_values)
 
     payload = {
         "schema_version": MC2_STATIC_SCHEMA_VERSION,
@@ -447,19 +556,32 @@ def build_mc2_bone_static(
         "normal_adjustment_rotations": adjustment_rotations,
         "vertex_to_transform_rotations": to_transform,
     }
+    static_signature = mc2_bone_static_content_signature(
+        proxy_signature=payload["proxy_signature"],
+        finalizer_signature=payload["finalizer_signature"],
+        baseline_signature=payload["baseline_signature"],
+        normal_adjustment_rotations=payload["normal_adjustment_rotations"],
+        vertex_to_transform_rotations=payload["vertex_to_transform_rotations"],
+    )
+    if staged:
+        return MC2BoneNativeData(
+            proxy=final_proxy,
+            finalizer=finalizer,
+            baseline=baseline,
+            normal_adjustment_rotations=adjustment_rotations,
+            vertex_to_transform_rotations=to_transform,
+            static_signature=static_signature,
+            baseline_native_registration=transform_baseline["native_registration"],
+            proxy_native_registration=raw.native_proxy_registration,
+            bone_native_registration=bone_native_registration,
+        )
     return MC2BoneStaticSpec(
         proxy=final_proxy,
         finalizer=finalizer,
         baseline=baseline,
         normal_adjustment_rotations=adjustment_rotations,
         vertex_to_transform_rotations=to_transform,
-        static_signature=mc2_bone_static_content_signature(
-            proxy_signature=payload["proxy_signature"],
-            finalizer_signature=payload["finalizer_signature"],
-            baseline_signature=payload["baseline_signature"],
-            normal_adjustment_rotations=payload["normal_adjustment_rotations"],
-            vertex_to_transform_rotations=payload["vertex_to_transform_rotations"],
-        ),
+        static_signature=static_signature,
         baseline_native_registration=transform_baseline.get("native_registration"),
         proxy_native_registration=raw.native_proxy_registration,
         bone_native_registration=bone_native_registration,
@@ -494,6 +616,7 @@ def pack_mc2_bone_registration_static(
 
 
 __all__ = [
+    "MC2BoneNativeData",
     "MC2BoneStaticSpec",
     "MC2_NORMAL_ALIGNMENT_NONE",
     "MC2_NORMAL_ALIGNMENT_TRANSFORM",

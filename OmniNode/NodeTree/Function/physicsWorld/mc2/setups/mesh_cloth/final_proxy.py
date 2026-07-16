@@ -21,6 +21,7 @@ from ...static_data import MC2ProxyFinalizerStaticSpec
 from ...static_data import make_mc2_proxy_finalizer_static_spec
 from ...static_data import make_mc2_proxy_static_spec
 from ...static_data import mc2_proxy_content_signature
+from ...static_data import mc2_proxy_finalizer_content_signature
 
 
 UV_SEAM_TOLERANCE = 1.0e-6
@@ -195,7 +196,9 @@ class MC2MeshFinalizerNativeData:
     vertex_to_triangle_data: np.ndarray
     vertex_bind_pose_positions: np.ndarray
     vertex_bind_pose_rotations: np.ndarray
+    finalizer_signature: str = ""
     native_frame_registration: dict | None = None
+    native_bone_registration: dict | None = None
 
     @property
     def every_vertex_has_triangle(self) -> bool:
@@ -401,6 +404,22 @@ def _build_final_proxy_derived(
                 counts["_bone_bind_rotations_owner"],
             ),
         }
+        return {
+            "normals": normals,
+            "tangents": tangents,
+            "attributes": attribute_values,
+            "edges": out_edges[:edge_count],
+            "native_registration": proxy_registration,
+            "native_finalizer": {
+                "vertex_to_vertex_ranges": out_neighbor_ranges,
+                "vertex_to_vertex_data": out_neighbor_data[:neighbor_count],
+                "vertex_to_triangle_ranges": out_triangle_ranges,
+                "vertex_to_triangle_data": triangle_data,
+                "bind_positions": bind_positions,
+                "bind_rotations": bind_rotations,
+                "native_bone_registration": bone_registration,
+            },
+        }
     vertex_to_triangle_records = tuple(
         tuple(
             tuple(int(value) for value in record)
@@ -477,6 +496,9 @@ def build_mc2_final_proxy(
     native_context=None,
     native_owner_kind: str = "",
 ) -> MC2MeshFinalProxyBuildResult:
+    if native_owner_kind not in ("", "bone"):
+        raise ValueError("native_owner_kind must be empty or bone")
+    staged = native_context is not None or native_owner_kind == "bone"
     identities = tuple(str(value) for value in vertex_identities)
     vertex_count = len(identities)
     positions = _array(local_positions, width=3, name="local_positions")
@@ -488,7 +510,7 @@ def build_mc2_final_proxy(
     attributes = [int(value) for value in vertex_attributes]
     if len(attributes) != vertex_count:
         raise ValueError("vertex_attributes length must match vertex_count")
-    if native_context is None:
+    if not staged:
         line_records = _int_records(lines, width=2, name="lines")
         triangle_records = _int_records(triangles, width=3, name="triangles")
         _validate_indices(vertex_count, line_records, "lines")
@@ -510,7 +532,7 @@ def build_mc2_final_proxy(
     final_triangles, triangle_normals = _optimize_triangle_direction(
         positions,
         triangle_records,
-        keep_arrays=native_context is not None,
+        keep_arrays=staged,
     )
     derived = _build_final_proxy_derived(
         positions,
@@ -527,7 +549,7 @@ def build_mc2_final_proxy(
     normals = derived["normals"]
     tangents = derived["tangents"]
     attributes = derived["attributes"]
-    if native_context is None:
+    if not staged:
         proxy = make_mc2_proxy_static_spec(
             task_id=task_id,
             setup_type=setup_type,
@@ -545,8 +567,8 @@ def build_mc2_final_proxy(
         setup_value = str(setup_type or "").strip().lower()
         if not task_value:
             raise ValueError("task_id cannot be empty")
-        if setup_value != "mesh_cloth":
-            raise ValueError("staged Mesh proxy requires mesh_cloth setup_type")
+        if setup_value not in ("mesh_cloth", "bone_cloth", "bone_spring"):
+            raise ValueError("staged proxy requires an MC2 cloth setup_type")
         triangle_values = np.ascontiguousarray(final_triangles, dtype=np.int32).reshape((-1, 3))
         proxy = MC2MeshProxyNativeData(
             task_id=task_value,
@@ -593,18 +615,29 @@ def build_mc2_final_proxy(
             vertex_to_triangle_data=native_finalizer["vertex_to_triangle_data"],
             vertex_bind_pose_positions=native_finalizer["bind_positions"],
             vertex_bind_pose_rotations=native_finalizer["bind_rotations"],
-            native_frame_registration=native_finalizer["native_frame_registration"],
+            finalizer_signature=mc2_proxy_finalizer_content_signature(
+                proxy_signature=proxy.proxy_signature,
+                vertex_count=proxy.vertex_count,
+                vertex_to_vertex_ranges=native_finalizer["vertex_to_vertex_ranges"],
+                vertex_to_vertex_data=native_finalizer["vertex_to_vertex_data"],
+                vertex_to_triangle_ranges=native_finalizer["vertex_to_triangle_ranges"],
+                vertex_to_triangle_data=native_finalizer["vertex_to_triangle_data"],
+                vertex_bind_pose_positions=native_finalizer["bind_positions"],
+                vertex_bind_pose_rotations=native_finalizer["bind_rotations"],
+            ),
+            native_frame_registration=native_finalizer.get("native_frame_registration"),
+            native_bone_registration=native_finalizer.get("native_bone_registration"),
         )
     return MC2MeshFinalProxyBuildResult(
         proxy=proxy,
         lines=(
             ()
-            if native_context is not None
+            if staged
             else tuple(_canonical_edge(first, second) for first, second in line_records)
         ),
         finalizer=finalizer,
-        native_proxy_registration=derived.get("native_proxy_registration"),
-        native_bone_registration=derived.get("native_bone_registration"),
+        native_proxy_registration=getattr(proxy, "native_registration", None),
+        native_bone_registration=getattr(finalizer, "native_bone_registration", None),
     )
 
 

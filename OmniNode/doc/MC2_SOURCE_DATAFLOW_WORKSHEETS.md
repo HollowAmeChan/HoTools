@@ -314,6 +314,8 @@ Blender authoring/frame input
 
 23. Finalizer、Baseline与Bone static内容签名必须使用`mc2_proxy_finalizer_static_v2`、`mc2_baseline_static_v2`、`mc2_bone_static_v4`固定标签与固定dtype连续字节流；显式spec和staged native data必须调用同一函数。不得恢复`json.dumps`、逐element字符串拼接、仅生产侧私有哈希或为签名重建tuple/list树。签名算法变化会自然触发slot/cache重建，不得把旧token误当跨schema持久合同。
 
+24. Bone staged路径必须返回`MC2BoneNativeData`并复用Proxy/Finalizer/Baseline native data类型；完整四层immutable spec只属于无context Tier A/oracle。Distance/Center/Self在同次prepare直接消费native arrays，注册完成后只允许`MC2BoneClothStaticMetadata`进入slot。不得为类型兼容重建tuple spec、把owner arrays回读为完整Python树，或让result/debug重新依赖transient native data。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
@@ -341,7 +343,7 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 | 路径 | 静态生产链 | 逐帧生产链 | 输出 | 异常与释放 |
 |---|---|---|---|---|
 | MeshCloth | `task -> single raw mesh snapshot -> native四类fingerprint/change mask -> native Final Proxy/Baseline/Distance/Bending/Center/Self producer -> staged native context`；Proxy/frame/Baseline/Distance/Bending/Center/Self均已move，Finalizer/Baseline/Final Proxy仅在同次构建保留transient，生产slot只留必要metadata；fingerprint、Proxy与BasePose token共享snapshot，生产Topology无完整冻结树，P-06b/P-06c已关闭 | BasePose只上传world positions/component pose；native context内部生产triangle orientation与Center，collider/runtime/scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context与BasePose cache owner |
-| BoneCloth | `task -> single Bone raw snapshot -> native四类fingerprint/change mask -> host product/source connection -> native rest/finalizer/baseline/constraint producers -> staged context`；Proxy/Baseline/Distance/Center/Self/Bone registration共6次直接move，完整bundle注册后压缩为metadata；P-06d剩余同次prepare的完整tuple transient | 只上传Armature component pose、PoseBone head与raw 3x3 pose matrix；native生产world rotation与Center | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
+| BoneCloth | `task -> single Bone raw snapshot -> native四类fingerprint/change mask -> host product/source connection -> MC2BoneNativeData -> native constraint producers -> staged context`；Proxy/Baseline/Distance/Center/Self/Bone registration共6次直接move，生产完整spec树已删除，注册后压缩为metadata | 只上传Armature component pose、PoseBone head与raw 3x3 pose matrix；native生产world rotation与Center | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
 | BoneSpring | 与BoneCloth共享Bone Line static链，但setup adapter与归一化参数固定Spring支持域 | 同Bone frame链；只消费Sphere soft collider，关闭self/sync与不支持约束 | stable Bone name -> Bone transform transaction | 非Line、非Sphere或越出归一化支持域在prepare拒绝，不进入native/writeback |
 | World common | `build_task_specs -> native fingerprint/classify -> topology/static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
 
