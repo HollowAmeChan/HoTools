@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import bpy
-from mathutils import Quaternion
 import numpy as np
 
 from ...utils.math3d import decompose_signed_orthogonal_linear_f64
@@ -81,16 +80,20 @@ def build_mc2_bone_frame_input(
         raise ValueError("bone frame task/topology identity mismatch")
 
     positions = []
-    rotations = []
+    pose_matrices = []
     component_pose = None
+    component_poses = {}
     for source_topology in topology.sources:
         source_index = int(source_topology.source_index)
         armature = _armature_from_source(task.sources[source_index])
         if not _live_armature(armature):
             raise ValueError("bone frame source armature is unavailable")
-        component_position, component_rotation_xyzw, component_scale = (
-            _bone_armature_component_pose(armature)
-        )
+        armature_key = int(armature.as_pointer())
+        component_values = component_poses.get(armature_key)
+        if component_values is None:
+            component_values = _bone_armature_component_pose(armature)
+            component_poses[armature_key] = component_values
+        component_position, component_rotation_xyzw, component_scale = component_values
         source_component_pose = MC2CenterFramePoseSpec(
             frame=int(frame),
             generation=int(generation),
@@ -108,34 +111,20 @@ def build_mc2_bone_frame_input(
             raise ValueError("bone frame topology record count mismatch")
         pose_bones = armature.pose.bones
         matrix_world = armature.matrix_world
-        cx, cy, cz, cw = component_rotation_xyzw
-        component_rotation = Quaternion((cw, cx, cy, cz))
         for record in records:
             name = str(record.get("name") or "")
             pose_bone = pose_bones.get(name)
             if pose_bone is None:
                 raise ValueError(f"bone frame pose is missing stable bone {name!r}")
             head = matrix_world @ pose_bone.head
-            pose_linear = np.asarray(
+            pose_matrices.append(np.asarray(
                 [
                     [float(pose_bone.matrix[row][column]) for column in range(3)]
                     for row in range(3)
                 ],
-                dtype=np.float64,
-            )
-            pose_rotation_xyzw, _pose_scale = decompose_signed_orthogonal_linear_f64(
-                pose_linear,
-                (1.0, 1.0, 1.0),
-                name=f"MC2 PoseBone {name!r} object-space transform",
-                zero_epsilon=_TRANSFORM_EPSILON,
-            )
-            px, py, pz, pw = pose_rotation_xyzw
-            rotation = component_rotation @ Quaternion((pw, px, py, pz))
-            rotation.normalize()
+                dtype=np.float32,
+            ))
             positions.append((float(head.x), float(head.y), float(head.z)))
-            rotations.append(
-                (float(rotation.x), float(rotation.y), float(rotation.z), float(rotation.w))
-            )
 
     if len(positions) != topology.particle_count:
         raise ValueError("bone frame particle count mismatch")
@@ -145,7 +134,8 @@ def build_mc2_bone_frame_input(
         frame=frame,
         generation=generation,
         world_positions=np.asarray(positions, dtype=np.float32),
-        world_rotations_xyzw=np.asarray(rotations, dtype=np.float32),
+        world_rotations_xyzw=None,
+        raw_pose_matrices=np.asarray(pose_matrices, dtype=np.float32),
         center_frame_pose=component_pose,
         negative_scale_sign=(
             -1.0

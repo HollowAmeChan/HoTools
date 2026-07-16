@@ -1112,13 +1112,15 @@ std::array<float, 4> quaternion_slerp(
 
 bool apply_bone_triangle_output(
     Mc2ContextV0& context,
-    std::vector<float>& work_rotations
+    const std::vector<float>& positions,
+    std::vector<float>& work_rotations,
+    bool count_bone_output = true
 ) {
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
     const auto triangle_count = context.proxy_triangles.size() / 3;
     if (triangle_count == 0) return true;
     if (context.proxy_uvs.size() != vertex_count * 2 ||
-        context.state_positions.size() != vertex_count * 3 ||
+        positions.size() != vertex_count * 3 ||
         work_rotations.size() != vertex_count * 4 ||
         context.bone_vertex_to_triangle_ranges.size() != vertex_count * 2 ||
         context.bone_vertex_to_triangle_data.size() % 2 != 0 ||
@@ -1132,9 +1134,9 @@ bool apply_bone_triangle_output(
         const auto vertex0 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3]);
         const auto vertex1 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 1]);
         const auto vertex2 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 2]);
-        const Vec3 position0 = load_vector3(context.state_positions, vertex0);
-        const Vec3 position1 = load_vector3(context.state_positions, vertex1);
-        const Vec3 position2 = load_vector3(context.state_positions, vertex2);
+        const Vec3 position0 = load_vector3(positions, vertex0);
+        const Vec3 position1 = load_vector3(positions, vertex1);
+        const Vec3 position2 = load_vector3(positions, vertex2);
         const Vec3 edge_ba = sub(position1, position0);
         const Vec3 edge_ca = sub(position2, position0);
         const Vec3 triangle_cross = cross(edge_ba, edge_ca);
@@ -1207,7 +1209,7 @@ bool apply_bone_triangle_output(
         );
         store_quaternion(work_rotations, vertex, rotation);
     }
-    ++context.bone_triangle_output_count;
+    if (count_bone_output) ++context.bone_triangle_output_count;
     return true;
 }
 
@@ -1330,7 +1332,7 @@ bool build_bone_output(Mc2ContextV0& context) {
         }
     }
 
-    if (!apply_bone_triangle_output(context, work_rotations)) return false;
+    if (!apply_bone_triangle_output(context, context.state_positions, work_rotations)) return false;
 
     context.bone_output_positions = context.state_positions;
     context.bone_output_rotations.resize(count * 4);
@@ -3646,6 +3648,107 @@ void finish_interaction_intersections(Mc2InteractionV0& interaction) {
     }
 }
 
+template <typename T>
+std::int64_t vector_bytes(const std::vector<T>& values) {
+    return static_cast<std::int64_t>(values.size() * sizeof(T));
+}
+
+std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
+    std::int64_t bytes = static_cast<std::int64_t>(sizeof(Mc2ContextV0));
+#define MC2_ADD_VECTOR_BYTES(name) bytes += vector_bytes(context.name)
+    MC2_ADD_VECTOR_BYTES(float_values);
+    MC2_ADD_VECTOR_BYTES(int_values);
+    MC2_ADD_VECTOR_BYTES(curve_values);
+    MC2_ADD_VECTOR_BYTES(dynamic_positions);
+    MC2_ADD_VECTOR_BYTES(dynamic_rotations);
+    MC2_ADD_VECTOR_BYTES(old_dynamic_positions);
+    MC2_ADD_VECTOR_BYTES(old_dynamic_rotations);
+    MC2_ADD_VECTOR_BYTES(state_positions);
+    MC2_ADD_VECTOR_BYTES(state_rotations);
+    MC2_ADD_VECTOR_BYTES(state_velocities);
+    MC2_ADD_VECTOR_BYTES(velocity_reference_positions);
+    MC2_ADD_VECTOR_BYTES(particle_friction);
+    MC2_ADD_VECTOR_BYTES(particle_static_friction);
+    MC2_ADD_VECTOR_BYTES(particle_collision_normals);
+    MC2_ADD_VECTOR_BYTES(particle_real_velocities);
+    MC2_ADD_VECTOR_BYTES(animated_base_positions);
+    MC2_ADD_VECTOR_BYTES(animated_base_rotations);
+    MC2_ADD_VECTOR_BYTES(step_basic_positions);
+    MC2_ADD_VECTOR_BYTES(step_basic_rotations);
+    MC2_ADD_VECTOR_BYTES(proxy_local_positions);
+    MC2_ADD_VECTOR_BYTES(proxy_local_normals);
+    MC2_ADD_VECTOR_BYTES(proxy_local_tangents);
+    MC2_ADD_VECTOR_BYTES(proxy_uvs);
+    MC2_ADD_VECTOR_BYTES(proxy_attributes);
+    MC2_ADD_VECTOR_BYTES(proxy_edges);
+    MC2_ADD_VECTOR_BYTES(proxy_triangles);
+    MC2_ADD_VECTOR_BYTES(baseline_parents);
+    MC2_ADD_VECTOR_BYTES(baseline_child_ranges);
+    MC2_ADD_VECTOR_BYTES(baseline_child_data);
+    MC2_ADD_VECTOR_BYTES(baseline_flags);
+    MC2_ADD_VECTOR_BYTES(baseline_ranges);
+    MC2_ADD_VECTOR_BYTES(baseline_data);
+    MC2_ADD_VECTOR_BYTES(baseline_roots);
+    MC2_ADD_VECTOR_BYTES(baseline_depths);
+    MC2_ADD_VECTOR_BYTES(baseline_local_positions);
+    MC2_ADD_VECTOR_BYTES(baseline_local_rotations);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_to_vertex_ranges);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_to_vertex_data);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_to_triangle_ranges);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_to_triangle_data);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_bind_pose_positions);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_bind_pose_rotations);
+    MC2_ADD_VECTOR_BYTES(bone_normal_adjustment_rotations);
+    MC2_ADD_VECTOR_BYTES(bone_vertex_to_transform_rotations);
+    MC2_ADD_VECTOR_BYTES(bone_output_positions);
+    MC2_ADD_VECTOR_BYTES(bone_output_rotations);
+    MC2_ADD_VECTOR_BYTES(distance_ranges);
+    MC2_ADD_VECTOR_BYTES(distance_targets);
+    MC2_ADD_VECTOR_BYTES(distance_rest_signed);
+    MC2_ADD_VECTOR_BYTES(bending_quads);
+    MC2_ADD_VECTOR_BYTES(bending_rest_angle_or_volume);
+    MC2_ADD_VECTOR_BYTES(bending_sign_or_volume);
+    MC2_ADD_VECTOR_BYTES(self_primitive_flags);
+    MC2_ADD_VECTOR_BYTES(self_particle_indices);
+    MC2_ADD_VECTOR_BYTES(self_primitive_depths);
+    MC2_ADD_VECTOR_BYTES(self_primitive_inverse_masses);
+    MC2_ADD_VECTOR_BYTES(self_primitive_aabb_min);
+    MC2_ADD_VECTOR_BYTES(self_primitive_aabb_max);
+    MC2_ADD_VECTOR_BYTES(self_primitive_thickness);
+    MC2_ADD_VECTOR_BYTES(self_primitive_owner_indices);
+    MC2_ADD_VECTOR_BYTES(self_owner_primary_group_bits);
+    MC2_ADD_VECTOR_BYTES(self_owner_collided_by_groups);
+    MC2_ADD_VECTOR_BYTES(self_primitive_grids);
+    MC2_ADD_VECTOR_BYTES(self_grid_hashes);
+    MC2_ADD_VECTOR_BYTES(self_grid_starts);
+    MC2_ADD_VECTOR_BYTES(self_grid_counts);
+    MC2_ADD_VECTOR_BYTES(self_contact_candidates);
+    MC2_ADD_VECTOR_BYTES(self_contact_primitive_indices);
+    MC2_ADD_VECTOR_BYTES(self_contact_types);
+    MC2_ADD_VECTOR_BYTES(self_contact_enabled);
+    MC2_ADD_VECTOR_BYTES(self_contact_thickness);
+    MC2_ADD_VECTOR_BYTES(self_contact_s);
+    MC2_ADD_VECTOR_BYTES(self_contact_t);
+    MC2_ADD_VECTOR_BYTES(self_contact_normals);
+    MC2_ADD_VECTOR_BYTES(self_contact_keys);
+    MC2_ADD_VECTOR_BYTES(self_intersect_records);
+    MC2_ADD_VECTOR_BYTES(self_particle_intersect_flags);
+    MC2_ADD_VECTOR_BYTES(collider_types);
+    MC2_ADD_VECTOR_BYTES(collider_group_bits);
+    MC2_ADD_VECTOR_BYTES(collider_centers);
+    MC2_ADD_VECTOR_BYTES(collider_segment_a);
+    MC2_ADD_VECTOR_BYTES(collider_segment_b);
+    MC2_ADD_VECTOR_BYTES(collider_old_centers);
+    MC2_ADD_VECTOR_BYTES(collider_old_segment_a);
+    MC2_ADD_VECTOR_BYTES(collider_old_segment_b);
+    MC2_ADD_VECTOR_BYTES(collider_radii);
+    MC2_ADD_VECTOR_BYTES(center_fixed_indices);
+    MC2_ADD_VECTOR_BYTES(center_local_position);
+    MC2_ADD_VECTOR_BYTES(center_initial_local_gravity_direction);
+#undef MC2_ADD_VECTOR_BYTES
+    return bytes;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -3656,6 +3759,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
     if (!dict_string(result, "schema", "mc2_context_v0") ||
         !dict_i64(result, "schema_version", kSchemaVersion) ||
         !dict_i64(result, "vertex_count", context.vertex_count) ||
+        !dict_i64(result, "estimated_bytes", estimate_context_bytes(context)) ||
         !dict_i64(result, "setup_kind", context.setup_kind) ||
         !dict_i64(result, "proxy_static_revision", context.proxy_static_revision) ||
         !dict_i64(result, "baseline_static_revision", context.baseline_static_revision) ||
@@ -4595,6 +4699,70 @@ PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_update_frame_producer_static expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "frame producer static requires proxy static");
+        return nullptr;
+    }
+    Buffer ranges, data, bind_rotations;
+    if (!ranges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_ranges") ||
+        !data.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_data") ||
+        !bind_rotations.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "vertex_bind_pose_rotations")) {
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    Py_ssize_t range_count = 0;
+    Py_ssize_t record_count = 0;
+    if (!expect_int32_pair_array(ranges, "vertex_to_triangle_ranges", &range_count) ||
+        range_count != count ||
+        !expect_int32_pair_array(data, "vertex_to_triangle_data", &record_count) ||
+        !validate_dense_ranges(ranges, record_count, "vertex_to_triangle_ranges") ||
+        !expect_float32(bind_rotations, "vertex_bind_pose_rotations") ||
+        !expect_2d(bind_rotations, "vertex_bind_pose_rotations", count, 4) ||
+        !finite_floats(bind_rotations, "vertex_bind_pose_rotations") ||
+        !validate_quaternions(bind_rotations, "vertex_bind_pose_rotations")) {
+        return nullptr;
+    }
+    const auto* range_values = static_cast<const std::int32_t*>(ranges.view.buf);
+    const auto* data_values = static_cast<const std::int32_t*>(data.view.buf);
+    const auto triangle_count = static_cast<std::int32_t>(context->proxy_triangles.size() / 3);
+    for (Py_ssize_t vertex = 0; vertex < count; ++vertex) {
+        const auto start = range_values[vertex * 2];
+        const auto length = range_values[vertex * 2 + 1];
+        if (length <= 0 || length > 7) {
+            PyErr_SetString(PyExc_ValueError, "frame producer requires 1..7 triangle records per vertex");
+            return nullptr;
+        }
+        for (std::int32_t offset = 0; offset < length; ++offset) {
+            const auto* record = data_values + (start + offset) * 2;
+            if (record[0] < 0 || record[0] > 3 || record[1] < 0 || record[1] >= triangle_count) {
+                PyErr_SetString(PyExc_ValueError, "frame producer triangle record is invalid");
+                return nullptr;
+            }
+        }
+    }
+    context->bone_vertex_to_triangle_ranges = copy_values<std::int32_t>(ranges);
+    context->bone_vertex_to_triangle_data = copy_values<std::int32_t>(data);
+    context->bone_vertex_bind_pose_rotations = copy_values<float>(bind_rotations);
+    context->bone_normal_adjustment_rotations.assign(
+        static_cast<std::size_t>(context->vertex_count) * 4,
+        0.0f
+    );
+    for (std::size_t vertex = 0; vertex < static_cast<std::size_t>(context->vertex_count); ++vertex) {
+        context->bone_normal_adjustment_rotations[vertex * 4 + 3] = 1.0f;
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 4) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_distance_static expects 4 arguments");
@@ -5301,6 +5469,318 @@ PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args) {
     context->parameters_ready = true;
     ++context->parameter_revision;
     Py_RETURN_NONE;
+}
+
+void commit_dynamic_values(
+    Mc2ContextV0& context,
+    long frame,
+    long generation,
+    std::vector<float>&& positions,
+    std::vector<float>&& rotations,
+    float velocity_weight,
+    float gravity_ratio,
+    float scale_ratio,
+    float negative_scale_sign,
+    float frame_interpolation
+) {
+    if (context.dynamic_ready) {
+        context.old_dynamic_positions = context.dynamic_positions;
+        context.old_dynamic_rotations = context.dynamic_rotations;
+    } else {
+        context.old_dynamic_positions = positions;
+        context.old_dynamic_rotations = rotations;
+    }
+    context.dynamic_positions = std::move(positions);
+    context.dynamic_rotations = std::move(rotations);
+    context.frame = frame;
+    context.generation = generation;
+    context.velocity_weight = velocity_weight;
+    context.gravity_ratio = gravity_ratio;
+    context.scale_ratio = scale_ratio;
+    context.negative_scale_sign = negative_scale_sign;
+    context.frame_interpolation = frame_interpolation;
+    context.center_dynamic_ready = false;
+    context.center_frame_ready = false;
+    context.center_result_ready = false;
+    context.dynamic_ready = true;
+    context.bone_output_positions.clear();
+    context.bone_output_rotations.clear();
+    ++context.dynamic_revision;
+}
+
+PyObject* build_raw_center_pose(
+    Mc2ContextV0& context,
+    const float* component_position,
+    const float* component_rotation,
+    const float* component_scale
+) {
+    Vec3 position {
+        component_position[0], component_position[1], component_position[2]
+    };
+    std::array<float, 4> rotation {
+        component_rotation[0], component_rotation[1],
+        component_rotation[2], component_rotation[3]
+    };
+    const bool has_negative_scale =
+        component_scale[0] < 0.0f || component_scale[1] < 0.0f || component_scale[2] < 0.0f;
+    if (!context.center_fixed_indices.empty()) {
+        if (context.bone_vertex_bind_pose_rotations.size() !=
+            static_cast<std::size_t>(context.vertex_count) * 4) {
+            PyErr_SetString(PyExc_RuntimeError, "raw Center producer has no bind rotations");
+            return nullptr;
+        }
+        position = {};
+        Vec3 normal_sum {};
+        Vec3 tangent_sum {};
+        for (const auto raw_index : context.center_fixed_indices) {
+            if (raw_index < 0 || raw_index >= context.vertex_count) {
+                PyErr_SetString(PyExc_RuntimeError, "raw Center fixed index is invalid");
+                return nullptr;
+            }
+            const auto index = static_cast<std::size_t>(raw_index);
+            position = add(position, load_vector3(context.dynamic_positions, index));
+            auto frame_rotation = load_quaternion(context.dynamic_rotations, index);
+            if (has_negative_scale) {
+                const Vec3 normal = rotate_vector(frame_rotation, {0.0f, 1.0f, 0.0f});
+                const Vec3 tangent = rotate_vector(frame_rotation, {0.0f, 0.0f, 1.0f});
+                frame_rotation = quaternion_from_forward_up(
+                    mul(tangent, -1.0f), mul(normal, -1.0f)
+                );
+            }
+            auto corrected = quaternion_multiply(
+                frame_rotation,
+                load_quaternion(context.bone_vertex_bind_pose_rotations, index)
+            );
+            normalize_quaternion(corrected);
+            normal_sum = add(normal_sum, rotate_vector(corrected, {0.0f, 1.0f, 0.0f}));
+            tangent_sum = add(tangent_sum, rotate_vector(corrected, {0.0f, 0.0f, 1.0f}));
+        }
+        position = mul(
+            position,
+            1.0f / static_cast<float>(context.center_fixed_indices.size())
+        );
+        if (component_scale[0] < 0.0f || component_scale[2] < 0.0f) {
+            normal_sum = mul(normal_sum, -1.0f);
+        }
+        if (component_scale[0] < 0.0f || component_scale[1] < 0.0f) {
+            tangent_sum = mul(tangent_sum, -1.0f);
+        }
+        if (length(normal_sum) <= kMc2Epsilon || length(tangent_sum) <= kMc2Epsilon) {
+            PyErr_SetString(PyExc_ValueError, "raw Center orientation is degenerate");
+            return nullptr;
+        }
+        rotation = quaternion_from_forward_up(tangent_sum, normal_sum);
+    }
+    return Py_BuildValue(
+        "(ffffffffff)",
+        position.x, position.y, position.z,
+        rotation[0], rotation[1], rotation[2], rotation[3],
+        component_scale[0], component_scale[1], component_scale[2]
+    );
+}
+
+bool parse_raw_dynamic_scalars(
+    PyObject* args,
+    int first_scalar,
+    float& velocity_weight,
+    float& gravity_ratio,
+    float& scale_ratio,
+    float& negative_scale_sign,
+    float& frame_interpolation
+) {
+    const double velocity = as_double(PyTuple_GET_ITEM(args, first_scalar), "velocity_weight");
+    const double gravity = as_double(PyTuple_GET_ITEM(args, first_scalar + 1), "gravity_ratio");
+    const double scale = as_double(PyTuple_GET_ITEM(args, first_scalar + 2), "scale_ratio");
+    const double negative = as_double(PyTuple_GET_ITEM(args, first_scalar + 3), "negative_scale_sign");
+    const double interpolation = as_double(PyTuple_GET_ITEM(args, first_scalar + 4), "frame_interpolation");
+    if (PyErr_Occurred()) return false;
+    if (!std::isfinite(velocity) || velocity < 0.0 || velocity > 1.0 ||
+        !std::isfinite(gravity) || gravity < 0.0 || gravity > 1.0 ||
+        !std::isfinite(scale) || scale <= 0.0 ||
+        (negative != -1.0 && negative != 1.0) ||
+        !std::isfinite(interpolation) || interpolation < 0.0 || interpolation > 1.0) {
+        PyErr_SetString(PyExc_ValueError, "MC2 raw dynamic scalar is out of range");
+        return false;
+    }
+    velocity_weight = static_cast<float>(velocity);
+    gravity_ratio = static_cast<float>(gravity);
+    scale_ratio = static_cast<float>(scale);
+    negative_scale_sign = static_cast<float>(negative);
+    frame_interpolation = static_cast<float>(interpolation);
+    return true;
+}
+
+bool validate_component_pose(
+    Buffer& position,
+    Buffer& rotation,
+    Buffer& scale
+) {
+    if (!expect_float32(position, "component_position") ||
+        !expect_1d_array(position, "component_position", 3) ||
+        !expect_float32(rotation, "component_rotation_xyzw") ||
+        !expect_1d_array(rotation, "component_rotation_xyzw", 4) ||
+        !expect_float32(scale, "component_scale") ||
+        !expect_1d_array(scale, "component_scale", 3) ||
+        !finite_floats(position, "component_position") ||
+        !finite_floats(rotation, "component_rotation_xyzw") ||
+        !finite_floats(scale, "component_scale")) {
+        return false;
+    }
+    const auto* rotation_values = static_cast<const float*>(rotation.view.buf);
+    const double rotation_length_squared =
+        static_cast<double>(rotation_values[0]) * rotation_values[0] +
+        static_cast<double>(rotation_values[1]) * rotation_values[1] +
+        static_cast<double>(rotation_values[2]) * rotation_values[2] +
+        static_cast<double>(rotation_values[3]) * rotation_values[3];
+    if (!std::isfinite(rotation_length_squared) ||
+        std::abs(rotation_length_squared - 1.0) > 2.0e-5) {
+        PyErr_SetString(PyExc_ValueError, "component_rotation_xyzw must be a unit quaternion");
+        return false;
+    }
+    const auto* scale_values = static_cast<const float*>(scale.view.buf);
+    if (std::abs(scale_values[0]) <= kMc2Epsilon ||
+        std::abs(scale_values[1]) <= kMc2Epsilon ||
+        std::abs(scale_values[2]) <= kMc2Epsilon) {
+        PyErr_SetString(PyExc_ValueError, "component_scale cannot contain zero");
+        return false;
+    }
+    return true;
+}
+
+PyObject* mc2_context_v0_update_mesh_dynamic_raw(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 12) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_mesh_dynamic_raw expects 12 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->parameters_ready || !context->proxy_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "raw Mesh dynamic requires parameters and proxy static");
+        return nullptr;
+    }
+    const long frame = as_long(PyTuple_GET_ITEM(args, 1), "frame");
+    const long generation = as_long(PyTuple_GET_ITEM(args, 2), "generation");
+    if (PyErr_Occurred()) return nullptr;
+    Buffer positions, component_position, component_rotation, component_scale;
+    if (!positions.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "world_positions") ||
+        !component_position.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "component_position") ||
+        !component_rotation.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "component_rotation_xyzw") ||
+        !component_scale.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "component_scale")) {
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "world_positions") ||
+        !expect_2d(positions, "world_positions", count, 3) ||
+        !finite_floats(positions, "world_positions") ||
+        !validate_component_pose(component_position, component_rotation, component_scale)) {
+        return nullptr;
+    }
+    float velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation;
+    if (!parse_raw_dynamic_scalars(
+        args, 4, velocity_weight, gravity_ratio, scale_ratio,
+        negative_scale_sign, frame_interpolation
+    )) return nullptr;
+    auto next_positions = copy_values<float>(positions);
+    std::vector<float> next_rotations(static_cast<std::size_t>(context->vertex_count) * 4, 0.0f);
+    for (std::size_t vertex = 0; vertex < static_cast<std::size_t>(context->vertex_count); ++vertex) {
+        next_rotations[vertex * 4 + 3] = 1.0f;
+    }
+    if (!apply_bone_triangle_output(*context, next_positions, next_rotations, false)) {
+        PyErr_SetString(PyExc_RuntimeError, "raw Mesh frame orientation producer failed");
+        return nullptr;
+    }
+    commit_dynamic_values(
+        *context, frame, generation, std::move(next_positions), std::move(next_rotations),
+        velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation
+    );
+    return build_raw_center_pose(
+        *context,
+        static_cast<const float*>(component_position.view.buf),
+        static_cast<const float*>(component_rotation.view.buf),
+        static_cast<const float*>(component_scale.view.buf)
+    );
+}
+
+PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 13) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bone_dynamic_raw expects 13 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->parameters_ready || !context->bone_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "raw Bone dynamic requires parameters and Bone static");
+        return nullptr;
+    }
+    const long frame = as_long(PyTuple_GET_ITEM(args, 1), "frame");
+    const long generation = as_long(PyTuple_GET_ITEM(args, 2), "generation");
+    if (PyErr_Occurred()) return nullptr;
+    Buffer positions, matrices, component_position, component_rotation, component_scale;
+    if (!positions.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "world_positions") ||
+        !matrices.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "pose_matrices") ||
+        !component_position.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "component_position") ||
+        !component_rotation.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "component_rotation_xyzw") ||
+        !component_scale.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "component_scale")) {
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "world_positions") ||
+        !expect_2d(positions, "world_positions", count, 3) ||
+        !expect_float32(matrices, "pose_matrices") || matrices.view.ndim != 3 ||
+        matrices.view.shape[0] != count || matrices.view.shape[1] != 3 || matrices.view.shape[2] != 3 ||
+        !finite_floats(positions, "world_positions") ||
+        !finite_floats(matrices, "pose_matrices") ||
+        !validate_component_pose(component_position, component_rotation, component_scale)) {
+        return nullptr;
+    }
+    float velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation;
+    if (!parse_raw_dynamic_scalars(
+        args, 5, velocity_weight, gravity_ratio, scale_ratio,
+        negative_scale_sign, frame_interpolation
+    )) return nullptr;
+    auto next_positions = copy_values<float>(positions);
+    std::vector<float> next_rotations(static_cast<std::size_t>(context->vertex_count) * 4);
+    const auto* matrix_values = static_cast<const float*>(matrices.view.buf);
+    const auto* component_rotation_values = static_cast<const float*>(component_rotation.view.buf);
+    const std::array<float, 4> component_quaternion {
+        component_rotation_values[0], component_rotation_values[1],
+        component_rotation_values[2], component_rotation_values[3]
+    };
+    for (std::size_t vertex = 0; vertex < static_cast<std::size_t>(context->vertex_count); ++vertex) {
+        const float* matrix = matrix_values + vertex * 9;
+        Vec3 x {matrix[0], matrix[3], matrix[6]};
+        Vec3 y {matrix[1], matrix[4], matrix[7]};
+        Vec3 z {matrix[2], matrix[5], matrix[8]};
+        const float x_length = length(x), y_length = length(y), z_length = length(z);
+        if (x_length <= kMc2Epsilon || y_length <= kMc2Epsilon || z_length <= kMc2Epsilon) {
+            PyErr_SetString(PyExc_ValueError, "raw Bone pose matrix contains zero scale");
+            return nullptr;
+        }
+        x = mul(x, 1.0f / x_length);
+        y = mul(y, 1.0f / y_length);
+        z = mul(z, 1.0f / z_length);
+        const float determinant = dot(cross(x, y), z);
+        if (std::abs(dot(x, y)) > 1.0e-4f || std::abs(dot(x, z)) > 1.0e-4f ||
+            std::abs(dot(y, z)) > 1.0e-4f || std::abs(determinant - 1.0f) > 1.0e-4f) {
+            PyErr_SetString(PyExc_ValueError, "raw Bone pose matrix must be proper and shear-free");
+            return nullptr;
+        }
+        auto rotation = quaternion_multiply(
+            component_quaternion,
+            quaternion_from_forward_up(z, y)
+        );
+        store_quaternion(next_rotations, vertex, rotation);
+    }
+    commit_dynamic_values(
+        *context, frame, generation, std::move(next_positions), std::move(next_rotations),
+        velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation
+    );
+    return build_raw_center_pose(
+        *context,
+        static_cast<const float*>(component_position.view.buf),
+        component_rotation_values,
+        static_cast<const float*>(component_scale.view.buf)
+    );
 }
 
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {

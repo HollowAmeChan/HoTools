@@ -15,6 +15,7 @@ from .bone_static import pack_mc2_bone_static
 from .center_state import (
     MC2CenterFrameShiftResult,
     MC2NegativeScaleTransitionResult,
+    MC2CenterWorldPoseSpec,
     MC2CenterStepInputSpec,
     MC2CenterStepResult,
     pack_mc2_center_static,
@@ -44,6 +45,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_proxy_static",
     "mc2_context_v0_update_baseline_static",
     "mc2_context_v0_update_bone_static",
+    "mc2_context_v0_update_frame_producer_static",
     "mc2_context_v0_update_distance_static",
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
@@ -57,6 +59,8 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
+    "mc2_context_v0_update_mesh_dynamic_raw",
+    "mc2_context_v0_update_bone_dynamic_raw",
     "mc2_context_v0_update_colliders",
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
@@ -160,6 +164,7 @@ class MC2NativeContextV0:
         self._center_inertia_rotation = np.empty(4, dtype=np.float32)
         self._center_rotation_axis = np.empty(3, dtype=np.float32)
         self._debug_draw_snapshot = None
+        self._derived_center_pose_values = None
         self.debug_capture_count = 0
         self.debug_readback_count = 0
 
@@ -277,6 +282,23 @@ class MC2NativeContextV0:
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native static vertex count mismatch")
         self._update_proxy_and_baseline(static.final_proxy, static.baseline.baseline)
+        records = tuple(static.finalizer.vertex_to_triangle_records)
+        ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
+        packed_records = []
+        cursor = 0
+        for vertex, vertex_records in enumerate(records):
+            ranges[vertex] = (cursor, len(vertex_records))
+            packed_records.extend(vertex_records)
+            cursor += len(vertex_records)
+        self._module.mc2_context_v0_update_frame_producer_static(
+            self._handle,
+            ranges,
+            np.ascontiguousarray(packed_records, dtype=np.int32).reshape((-1, 2)),
+            np.ascontiguousarray(
+                static.finalizer.vertex_bind_pose_rotations,
+                dtype=np.float32,
+            ),
+        )
         distance = pack_mc2_distance_static(static.distance)
         self._module.mc2_context_v0_update_distance_static(
             self._handle,
@@ -368,21 +390,87 @@ class MC2NativeContextV0:
         if frame_input.particle_count != self.vertex_count:
             raise ValueError("MC2 native frame particle count mismatch")
         self._ensure_live()
-        self._module.mc2_context_v0_update_dynamic(
-            self._handle,
-            frame_input.frame,
-            frame_input.generation,
-            frame_input.world_positions,
-            frame_input.world_rotations_xyzw,
-            frame_input.velocity_weight,
-            frame_input.gravity_ratio,
-            frame_input.scale_ratio,
-            frame_input.negative_scale_sign,
-            frame_input.frame_interpolation,
-        )
+        producer_kind = frame_input.native_producer_kind
+        if producer_kind == "host":
+            self._module.mc2_context_v0_update_dynamic(
+                self._handle,
+                frame_input.frame,
+                frame_input.generation,
+                frame_input.world_positions,
+                frame_input.world_rotations_xyzw,
+                frame_input.velocity_weight,
+                frame_input.gravity_ratio,
+                frame_input.scale_ratio,
+                frame_input.negative_scale_sign,
+                frame_input.frame_interpolation,
+            )
+            self._derived_center_pose_values = None
+        else:
+            frame_pose = frame_input.center_frame_pose
+            if frame_pose is None:
+                raise ValueError("native-produced MC2 frame requires a component pose")
+            component_position = np.ascontiguousarray(
+                frame_pose.component_world_position,
+                dtype=np.float32,
+            )
+            component_rotation = np.ascontiguousarray(
+                frame_pose.component_world_rotation_xyzw,
+                dtype=np.float32,
+            )
+            component_scale = np.ascontiguousarray(
+                frame_pose.component_world_scale,
+                dtype=np.float32,
+            )
+            common = (
+                self._handle,
+                frame_input.frame,
+                frame_input.generation,
+                frame_input.world_positions,
+            )
+            scalars = (
+                frame_input.velocity_weight,
+                frame_input.gravity_ratio,
+                frame_input.scale_ratio,
+                frame_input.negative_scale_sign,
+                frame_input.frame_interpolation,
+            )
+            if producer_kind == "mesh":
+                values = self._module.mc2_context_v0_update_mesh_dynamic_raw(
+                    *common,
+                    *scalars,
+                    component_position,
+                    component_rotation,
+                    component_scale,
+                )
+            elif producer_kind == "bone":
+                values = self._module.mc2_context_v0_update_bone_dynamic_raw(
+                    *common,
+                    frame_input.raw_pose_matrices,
+                    *scalars,
+                    component_position,
+                    component_rotation,
+                    component_scale,
+                )
+            else:
+                raise RuntimeError(f"unknown MC2 frame producer kind: {producer_kind!r}")
+            self._derived_center_pose_values = tuple(float(value) for value in values)
         self.last_frame = (frame_input.frame, frame_input.generation)
         self._center_frame_dt = None
         self._center_step_dt = None
+
+    def derived_center_pose(self) -> MC2CenterWorldPoseSpec:
+        values = self._derived_center_pose_values
+        if values is None or len(values) != 10:
+            raise RuntimeError("native MC2 frame has no derived Center pose")
+        scale = tuple(values[7:10])
+        return MC2CenterWorldPoseSpec(
+            position=tuple(values[0:3]),
+            rotation_xyzw=tuple(values[3:7]),
+            scale=scale,
+            negative_scale_direction=tuple(
+                -1.0 if value < 0.0 else 1.0 for value in scale
+            ),
+        )
 
     def update_center_dynamic(self, step: MC2CenterStepInputSpec) -> None:
         if not isinstance(step, MC2CenterStepInputSpec):

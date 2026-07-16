@@ -241,20 +241,27 @@ def derive_mc2_center_world_pose(
         raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
     positions = np.asarray(world_positions, dtype=np.float32)
     rotations = np.asarray(world_rotations_xyzw, dtype=np.float32)
-    bind_rotations = tuple(
-        _require_unit_quaternion(value, f"vertex_bind_pose_rotations[{index}]")
-        for index, value in enumerate(vertex_bind_pose_rotations)
-    )
+    bind_rotations = np.asarray(vertex_bind_pose_rotations, dtype=np.float32)
     if positions.ndim != 2 or positions.shape[1] != 3:
         raise ValueError("world_positions must have shape [N,3]")
     if rotations.shape != (len(positions), 4):
         raise ValueError("world_rotations_xyzw must have shape [N,4]")
-    if len(bind_rotations) != len(positions):
+    if bind_rotations.shape != (len(positions), 4):
         raise ValueError("Center bind rotation count mismatch")
-    if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
+    if (
+        not np.isfinite(positions).all()
+        or not np.isfinite(rotations).all()
+        or not np.isfinite(bind_rotations).all()
+    ):
         raise ValueError("Center frame arrays cannot contain NaN/Inf")
-    for index, rotation in enumerate(rotations):
-        _require_unit_quaternion(rotation, f"world_rotations_xyzw[{index}]")
+    rotation_lengths = np.linalg.norm(rotations, axis=1)
+    invalid = np.flatnonzero(~np.isclose(rotation_lengths, 1.0, rtol=1.0e-5, atol=1.0e-6))
+    if len(invalid):
+        raise ValueError(f"world_rotations_xyzw[{int(invalid[0])}] must be a unit quaternion")
+    bind_lengths = np.linalg.norm(bind_rotations, axis=1)
+    invalid = np.flatnonzero(~np.isclose(bind_lengths, 1.0, rtol=1.0e-5, atol=1.0e-6))
+    if len(invalid):
+        raise ValueError(f"vertex_bind_pose_rotations[{int(invalid[0])}] must be a unit quaternion")
 
     scale = tuple(float(value) for value in frame_pose.component_world_scale)
     negative_direction = tuple(-1.0 if value < 0.0 else 1.0 for value in scale)

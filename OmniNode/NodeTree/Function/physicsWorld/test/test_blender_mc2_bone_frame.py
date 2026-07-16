@@ -77,9 +77,12 @@ try:
             task, topology, frame=12, generation=4
         )
         assert frame_input.particle_count == 2
+        assert frame_input.native_producer_kind == "bone"
         assert frame_input.world_positions.flags.writeable is False
         assert frame_input.world_rotations_xyzw.flags.writeable is False
-        assert np.allclose(np.linalg.norm(frame_input.world_rotations_xyzw, axis=1), 1.0)
+        assert frame_input.world_rotations_xyzw.shape == (0, 4)
+        assert frame_input.raw_pose_matrices.shape == (2, 3, 3)
+        assert frame_input.raw_pose_matrices.flags.writeable is False
         expected_root = armature.matrix_world @ armature.pose.bones["Root"].head
         np.testing.assert_allclose(
             frame_input.world_positions[0],
@@ -96,7 +99,7 @@ try:
         assert slot.data["runtime_state"].initialized is True
         assert slot.data["runtime_state"].last_reset_reason == "first_valid_pose"
         np.testing.assert_array_equal(
-            slot.data["particle_buffer"].next_positions,
+            slot.data["native_context"].read()[0],
             frame_input.world_positions,
         )
 
@@ -117,9 +120,8 @@ try:
         (-1.0, 1.0, 1.0),
         atol=1.0e-6,
     )
-    assert np.allclose(
-        np.linalg.norm(negative_frame.world_rotations_xyzw, axis=1), 1.0
-    )
+    assert negative_frame.native_producer_kind == "bone"
+    assert negative_frame.raw_pose_matrices.shape == (2, 3, 3)
 
     armature.scale = (0.0, 1.0, 1.0)
     bpy.context.view_layer.update()
@@ -145,12 +147,23 @@ try:
     armature.scale = (1.0, 1.0, 1.0)
     armature.pose.bones["Child"].scale = (-1.0, 1.0, 1.0)
     bpy.context.view_layer.update()
+    invalid_pose_frame = bone_frame.build_mc2_bone_frame_input(
+        task, topology, frame=14, generation=4
+    )
+    invalid_world = world_types.PhysicsWorldCache()
     try:
-        bone_frame.build_mc2_bone_frame_input(task, topology, frame=14, generation=4)
-    except ValueError as exc:
-        assert "PoseBone 'Child'" in str(exc) and "shear-free" in str(exc)
-    else:
-        raise AssertionError("negative PoseBone scale reached Bone frame input")
+        try:
+            solver.step_mc2(
+                invalid_world,
+                [task],
+                frame_inputs={task.task_id: invalid_pose_frame},
+            )
+        except ValueError as exc:
+            assert "proper and shear-free" in str(exc)
+        else:
+            raise AssertionError("negative PoseBone scale reached the native frame producer")
+    finally:
+        invalid_world.omni_cache_dispose("test")
     armature.pose.bones["Child"].scale = (1.0, 1.0, 1.0)
 
     parent = bpy.data.objects.new("MC2_N3_BoneFrameParent", None)

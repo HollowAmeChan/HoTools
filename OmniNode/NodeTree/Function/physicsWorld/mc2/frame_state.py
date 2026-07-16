@@ -30,6 +30,7 @@ class MC2FrameInputSpec:
     generation: int
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
+    raw_pose_matrices: np.ndarray | None = None
     source_world_linear: np.ndarray | None = None
     center_frame_pose: MC2CenterFramePoseSpec | None = None
     velocity_weight: float = 1.0
@@ -48,8 +49,22 @@ class MC2FrameInputSpec:
             raise TypeError("MC2 frame arrays must be float32")
         if positions.ndim != 2 or positions.shape[1] != 3:
             raise ValueError("world_positions must have shape [N,3]")
-        if rotations.shape != (len(positions), 4):
-            raise ValueError("world_rotations_xyzw must have shape [N,4]")
+        raw_pose_matrices = self.raw_pose_matrices
+        if rotations.shape not in ((len(positions), 4), (0, 4)):
+            raise ValueError("world_rotations_xyzw must have shape [N,4] or [0,4]")
+        if len(rotations) == 0 and raw_pose_matrices is None:
+            if self.source_world_linear is None:
+                raise ValueError("native-produced Mesh frame requires source_world_linear")
+        if raw_pose_matrices is not None:
+            if (
+                raw_pose_matrices.dtype != np.float32
+                or raw_pose_matrices.shape != (len(positions), 3, 3)
+                or raw_pose_matrices.flags.writeable
+                or not np.isfinite(raw_pose_matrices).all()
+            ):
+                raise ValueError("raw_pose_matrices must be finite read-only float32[N,3,3]")
+            if len(rotations) != 0:
+                raise ValueError("raw Bone frame cannot also contain host-produced rotations")
         if positions.flags.writeable or rotations.flags.writeable:
             raise ValueError("MC2 frame arrays must be read-only")
         if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
@@ -90,6 +105,14 @@ class MC2FrameInputSpec:
     def particle_count(self) -> int:
         return int(len(self.world_positions))
 
+    @property
+    def native_producer_kind(self) -> str:
+        if self.raw_pose_matrices is not None:
+            return "bone"
+        if len(self.world_rotations_xyzw) == 0:
+            return "mesh"
+        return "host"
+
 
 def make_mc2_frame_input(
     *,
@@ -99,6 +122,7 @@ def make_mc2_frame_input(
     generation: object,
     world_positions,
     world_rotations_xyzw,
+    raw_pose_matrices=None,
     source_world_linear=None,
     center_frame_pose=None,
     velocity_weight: object = 1.0,
@@ -113,7 +137,16 @@ def make_mc2_frame_input(
         frame=int(frame),
         generation=int(generation),
         world_positions=_readonly(world_positions, 3, "world_positions"),
-        world_rotations_xyzw=_readonly(world_rotations_xyzw, 4, "world_rotations_xyzw"),
+        world_rotations_xyzw=(
+            _readonly(world_rotations_xyzw, 4, "world_rotations_xyzw")
+            if world_rotations_xyzw is not None
+            else _readonly((), 4, "world_rotations_xyzw")
+        ),
+        raw_pose_matrices=(
+            _readonly(raw_pose_matrices, 3, "raw_pose_matrices").reshape((-1, 3, 3))
+            if raw_pose_matrices is not None
+            else None
+        ),
         source_world_linear=(
             _readonly(source_world_linear, 3, "source_world_linear")
             if source_world_linear is not None

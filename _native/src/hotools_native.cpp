@@ -776,6 +776,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_baseline_static, a); });
     m.def("mc2_context_v0_update_bone_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bone_static, a); });
+    m.def("mc2_context_v0_update_frame_producer_static",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_frame_producer_static, a); });
     m.def("mc2_context_v0_update_distance_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_distance_static, a); });
     m.def("mc2_context_v0_update_bending_static",
@@ -802,6 +804,10 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_dynamic, a); });
+    m.def("mc2_context_v0_update_mesh_dynamic_raw",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_mesh_dynamic_raw(nullptr, a.ptr())); });
+    m.def("mc2_context_v0_update_bone_dynamic_raw",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_bone_dynamic_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_colliders",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_colliders, a); });
     m.def("mc2_context_v0_reset",

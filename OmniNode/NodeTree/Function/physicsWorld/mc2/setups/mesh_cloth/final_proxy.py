@@ -529,22 +529,27 @@ def _mesh_uvs(mesh, triangles: tuple[tuple[int, int, int], ...], *, uv_layer_nam
         uv_layer = mesh.uv_layers.active
     if uv_layer is None:
         raise ValueError("MeshCloth triangle proxy requires a UV layer")
-    values: list[tuple[float, float] | None] = [None] * vertex_count
-    for polygon in mesh.polygons:
-        for loop_index in polygon.loop_indices:
-            vertex_index = int(mesh.loops[loop_index].vertex_index)
-            uv = tuple(float(value) for value in uv_layer.data[loop_index].uv)
-            current = values[vertex_index]
-            if current is None:
-                values[vertex_index] = uv
-            elif (
-                abs(current[0] - uv[0]) > UV_SEAM_TOLERANCE
-                or abs(current[1] - uv[1]) > UV_SEAM_TOLERANCE
-            ):
-                raise ValueError(
-                    f"Blender vertex {vertex_index} has multiple loop UVs; split the proxy vertex"
-                )
-    return tuple(value if value is not None else (0.0, 0.0) for value in values)
+    loop_count = len(mesh.loops)
+    loop_vertices = np.empty(loop_count, dtype=np.int32)
+    loop_uvs = np.empty(loop_count * 2, dtype=np.float32)
+    mesh.loops.foreach_get("vertex_index", loop_vertices)
+    uv_layer.data.foreach_get("uv", loop_uvs)
+    loop_uvs = loop_uvs.reshape((-1, 2))
+
+    minimum = np.full((vertex_count, 2), np.inf, dtype=np.float32)
+    maximum = np.full((vertex_count, 2), -np.inf, dtype=np.float32)
+    np.minimum.at(minimum, loop_vertices, loop_uvs)
+    np.maximum.at(maximum, loop_vertices, loop_uvs)
+    invalid = np.flatnonzero(np.any(maximum - minimum > UV_SEAM_TOLERANCE, axis=1))
+    if len(invalid):
+        raise ValueError(
+            f"Blender vertex {int(invalid[0])} has multiple loop UVs; split the proxy vertex"
+        )
+
+    values = np.zeros((vertex_count, 2), dtype=np.float32)
+    vertices, first_indices = np.unique(loop_vertices, return_index=True)
+    values[vertices] = loop_uvs[first_indices]
+    return tuple(tuple(float(value) for value in row) for row in values)
 
 
 def _mesh_triangles(mesh) -> tuple[tuple[int, int, int], ...]:

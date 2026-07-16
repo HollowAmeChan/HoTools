@@ -20,8 +20,7 @@ from .center_state import (
     derive_mc2_center_world_pose,
     evaluate_mc2_center_frame_shift,
 )
-from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
-from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
+from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync
 from .interaction_scope import build_mc2_interaction_scope
 from .native import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
 from .results import (
@@ -33,8 +32,8 @@ from .results import (
 )
 from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
-from .state import MC2ParticleBuffer, MC2SlotRuntimeState
-from .topology import build_mc2_topology_spec
+from .state import MC2SlotRuntimeState
+from .topology import build_mc2_topology_spec, topology_input_signature_for_task
 
 
 MC2_FRAMEWORK_STATUS = (
@@ -57,9 +56,6 @@ def _dispose_mc2_slot(slot, reason: str) -> None:
     native_context = slot.data.get("native_context")
     if native_context is not None and hasattr(native_context, "dispose"):
         native_context.dispose()
-    particle_buffer = slot.data.get("particle_buffer")
-    if isinstance(particle_buffer, MC2ParticleBuffer):
-        particle_buffer.dispose()
     state = slot.data.get("runtime_state")
     if isinstance(state, MC2SlotRuntimeState):
         state.dispose(reason)
@@ -68,7 +64,6 @@ def _dispose_mc2_slot(slot, reason: str) -> None:
 def _slot_debug_snapshot(slot) -> dict:
     topology = slot.data.get("topology")
     state = slot.data.get("runtime_state")
-    particle_buffer = slot.data.get("particle_buffer")
     spec = slot.data.get("spec")
     mesh_static = slot.data.get("mesh_static")
     bone_static = slot.data.get("bone_static")
@@ -97,11 +92,6 @@ def _slot_debug_snapshot(slot) -> dict:
         ),
         "static_input_signature": slot.data.get("static_input_signature", ""),
         "runtime_state": state.debug_dict() if hasattr(state, "debug_dict") else None,
-        "particle_buffer": (
-            particle_buffer.debug_dict()
-            if hasattr(particle_buffer, "debug_dict")
-            else None
-        ),
         "native_context": (
             native_context.inspect()
             if native_context is not None and hasattr(native_context, "inspect")
@@ -163,11 +153,12 @@ def _install_mc2_slot(
     topology,
     effective_parameters,
     settings: MC2SolverSettingsSpec,
-    initial_state: MC2InitialStateSpec,
     reset_reason: str,
     mesh_static=None,
     bone_static=None,
     static_input_signature: str | None = None,
+    topology_input_signature: str | None = None,
+    static_contract_key=None,
     native_context=None,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
@@ -182,7 +173,6 @@ def _install_mc2_slot(
         last_reset_reason="allocation_pending",
         initialized=False,
     )
-    particle_buffer = MC2ParticleBuffer.allocate(initial_state)
     active_static = mesh_static if mesh_static is not None else bone_static
     center_state = (
         MC2CenterPersistentState(active_static.center.center_static_signature)
@@ -197,11 +187,11 @@ def _install_mc2_slot(
             "topology": topology,
             "effective_parameters": effective_parameters,
             "settings": settings,
-            "initial_state": initial_state,
             "mesh_static": mesh_static,
             "bone_static": bone_static,
             "static_input_signature": static_input_signature,
-            "particle_buffer": particle_buffer,
+            "topology_input_signature": topology_input_signature,
+            "static_contract_key": static_contract_key,
             "native_context": native_context,
             "runtime_state": state,
             "center_state": center_state,
@@ -233,6 +223,11 @@ def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
         raise RuntimeError("MC2 slot is missing Center persistent state")
     if center_state.center_static_signature != active_static.center.center_static_signature:
         raise RuntimeError("MC2 Center static identity changed without slot rebuild")
+    if frame_input.native_producer_kind != "host":
+        native_context = slot.data.get("native_context")
+        if native_context is None:
+            raise RuntimeError("native-produced MC2 frame has no live context")
+        return native_context.derived_center_pose()
     return derive_mc2_center_world_pose(
         active_static.center,
         frame_pose,
@@ -340,10 +335,6 @@ def _mc2_slot_rebuild_reason(
     state = slot.data.get("runtime_state")
     if not isinstance(state, MC2SlotRuntimeState):
         return "runtime_state_missing"
-    if not isinstance(slot.data.get("particle_buffer"), MC2ParticleBuffer):
-        return "particle_buffer_missing"
-    if not isinstance(slot.data.get("initial_state"), MC2InitialStateSpec):
-        return "initial_state_missing"
     if not isinstance(slot.data.get("time_scheduler"), MC2TimeSchedulerState):
         return "time_scheduler_missing"
     native_context = slot.data.get("native_context")
@@ -368,10 +359,11 @@ def _sync_mc2_slot(
     settings: MC2SolverSettingsSpec,
     topology,
     effective,
-    initial_state,
     mesh_static,
     bone_static,
     static_input_signature,
+    topology_input_signature,
+    static_contract_key,
     staged_native_context,
 ) -> tuple[str, object]:
     rebuild_reason = _mc2_slot_rebuild_reason(
@@ -384,8 +376,6 @@ def _sync_mc2_slot(
     previous_state = slot.data.get("runtime_state")
 
     if rebuild_reason:
-        if not isinstance(initial_state, MC2InitialStateSpec):
-            raise RuntimeError("MC2 slot 重建缺少 MC2InitialStateSpec")
         if slot.data:
             slot.dispose(rebuild_reason)
         _install_mc2_slot(
@@ -395,10 +385,11 @@ def _sync_mc2_slot(
             topology=topology,
             effective_parameters=effective,
             settings=settings,
-            initial_state=initial_state,
             mesh_static=mesh_static,
             bone_static=bone_static,
             static_input_signature=static_input_signature,
+            topology_input_signature=topology_input_signature,
+            static_contract_key=static_contract_key,
             reset_reason=rebuild_reason,
             native_context=staged_native_context,
         )
@@ -431,6 +422,8 @@ def _sync_mc2_slot(
     slot.data["topology"] = topology
     slot.data["effective_parameters"] = effective
     slot.data["settings"] = settings
+    slot.data["topology_input_signature"] = topology_input_signature
+    slot.data["static_contract_key"] = static_contract_key
     if parameter_changed:
         slot.data["writeback_plan"] = {}
     if parameter_changed or settings_changed or team_options_will_change:
@@ -514,12 +507,31 @@ def step_mc2(
     staged_native_contexts = []
     try:
         for spec in active_specs:
-            topology = build_mc2_topology_spec(spec)
+            topology_input_signature = topology_input_signature_for_task(
+                spec,
+                cache=getattr(world, "runtime_caches", None),
+            )
+            existing_slot = world.solver_slots.get(spec.task_id)
+            topology = None
+            if (
+                existing_slot is not None
+                and existing_slot.kind == MC2_SLOT_KIND
+                and existing_slot.world_generation == world.generation
+                and existing_slot.data.get("topology_input_signature")
+                == topology_input_signature
+            ):
+                topology = existing_slot.data.get("topology")
+            if topology is None:
+                topology = build_mc2_topology_spec(spec)
             effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
                 _validate_mc2_frame_input(spec, topology, frame_input)
             static_input_signature = None
+            static_contract_key = (
+                topology_input_signature,
+                tuple(float(value) for value in spec.profile.gravity_direction),
+            )
             mesh_static_supported = (
                 spec.setup_type == "mesh_cloth"
                 and all(source.resolved for source in topology.sources)
@@ -531,33 +543,30 @@ def step_mc2(
                 and topology.particle_count > 0
             )
             if mesh_static_supported:
-                from .setups.mesh_cloth.static_build import (
-                    mesh_cloth_static_input_signature_for_task,
-                )
-
-                static_input_signature = mesh_cloth_static_input_signature_for_task(
-                    spec,
-                    topology,
-                )
+                static_input_signature = repr(static_contract_key)
             elif bone_static_supported:
                 from .setups.bone_cloth.static_build import (
                     bone_cloth_static_input_signature_for_task,
                 )
 
-                static_input_signature = bone_cloth_static_input_signature_for_task(
-                    spec,
-                    topology,
-                )
+                if (
+                    existing_slot is not None
+                    and existing_slot.data.get("static_contract_key")
+                    == static_contract_key
+                ):
+                    static_input_signature = existing_slot.data.get(
+                        "static_input_signature"
+                    )
+                else:
+                    static_input_signature = bone_cloth_static_input_signature_for_task(
+                        spec,
+                        topology,
+                    )
             rebuild_reason = _mc2_slot_rebuild_reason(
                 world,
                 spec,
                 topology,
                 static_input_signature,
-            )
-            initial_state = (
-                build_mc2_initial_state(spec, topology)
-                if rebuild_reason
-                else None
             )
             mesh_static = None
             bone_static = None
@@ -656,10 +665,11 @@ def step_mc2(
                     spec,
                     topology,
                     effective,
-                    initial_state,
                     mesh_static,
                     bone_static,
                     static_input_signature,
+                    topology_input_signature,
+                    static_contract_key,
                     collider_frame,
                     staged_native_context,
                     staged_native_frame_applied,
@@ -673,7 +683,7 @@ def step_mc2(
     bone_targets: dict[tuple[int, int], set[str]] = {}
     for item in prepared:
         spec = item[0]
-        bone_static = item[5]
+        bone_static = item[4]
         if bone_static is None:
             existing_slot = world.solver_slots.get(spec.task_id)
             if existing_slot is not None:
@@ -707,10 +717,11 @@ def step_mc2(
             spec,
             topology,
             effective,
-            initial_state,
             mesh_static,
             bone_static,
             static_input_signature,
+            topology_input_signature,
+            static_contract_key,
             collider_frame,
             staged_native_context,
             staged_native_frame_applied,
@@ -721,10 +732,11 @@ def step_mc2(
                 settings,
                 topology,
                 effective,
-                initial_state,
                 mesh_static,
                 bone_static,
                 static_input_signature,
+                topology_input_signature,
+                static_contract_key,
                 staged_native_context,
             )
             if staged_native_context in staged_native_contexts:
@@ -763,27 +775,38 @@ def step_mc2(
                 user_reset=bool(user_reset),
             )
             center_state = slot.data.get("center_state")
-            center_pose = _derive_slot_center_pose(slot, frame_input)
-            if center_pose is not None and isinstance(
+            frame_pose = frame_input.center_frame_pose
+            if frame_pose is not None and isinstance(
                 center_state, MC2CenterPersistentState
             ):
+                component_scale = tuple(frame_pose.component_world_scale)
                 initial_scale = (
                     center_state.initial_scale
                     if center_state.initialized
-                    else center_pose.scale
+                    else component_scale
                 )
                 frame_input = replace(
                     frame_input,
                     scale_ratio=max(
-                        math.sqrt(sum(value * value for value in center_pose.scale))
+                        math.sqrt(sum(value * value for value in component_scale))
                         / math.sqrt(sum(value * value for value in initial_scale)),
                         1.0e-6,
                     ),
                     negative_scale_sign=(
-                        -1.0 if any(value < 0.0 for value in center_pose.scale) else 1.0
+                        -1.0 if any(value < 0.0 for value in component_scale) else 1.0
                     ),
                 )
                 item["frame_input"] = frame_input
+            if (
+                native_context is not None
+                and frame_plan.action != "same_frame"
+                and not item["staged_native_frame_applied"]
+            ):
+                collider_frame = item["collider_frame"]
+                if collider_frame is not None:
+                    native_context.update_colliders(collider_frame)
+                native_context.update_dynamic(frame_input)
+            center_pose = _derive_slot_center_pose(slot, frame_input)
             center_action = None
             center_negative_scale_result = None
             center_frame_shift_result = None
@@ -873,10 +896,6 @@ def step_mc2(
                 and frame_plan.action != "same_frame"
                 and not item["staged_native_frame_applied"]
             ):
-                collider_frame = item["collider_frame"]
-                if collider_frame is not None:
-                    native_context.update_colliders(collider_frame)
-                native_context.update_dynamic(frame_input)
                 if frame_plan.action == "reset" or configured_reset_teleport:
                     native_context.reset()
                 else:
@@ -1116,20 +1135,17 @@ def step_mc2(
                     slot.data["center_negative_scale_result"] = None
                     slot.data["frame_schedule"] = frame_schedule
                 if configured_reset_teleport:
-                    slot.data["particle_buffer"].reset_from_frame(frame_input)
                     runtime_state.mark_frame_reset(
                         frame_input,
                         "configured_teleport",
                     )
-                else:
-                    frame_result = sync_mc2_frame_input(
-                        runtime_state,
-                        slot.data["particle_buffer"],
+                elif frame_plan.action == "reset":
+                    runtime_state.mark_frame_reset(
                         frame_input,
-                        user_reset=bool(user_reset),
+                        frame_plan.reset_reason,
                     )
-                    if frame_result != frame_plan:
-                        raise RuntimeError("MC2 frame plan changed during commit")
+                elif frame_plan.action == "updated":
+                    runtime_state.mark_frame_update(frame_input)
                 if candidate is not None:
                     slot.data["result_candidate"] = candidate
                     slot.data["result_candidate_revision"] = candidate.revision

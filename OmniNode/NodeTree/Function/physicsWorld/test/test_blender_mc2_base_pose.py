@@ -232,15 +232,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             static,
             topology_signature=topology.topology_signature,
         )
-        assert first_input.world_rotations_xyzw.shape == (3, 4)
+        assert first_input.native_producer_kind == "mesh"
+        assert first_input.world_rotations_xyzw.shape == (0, 4)
         assert first_input.world_rotations_xyzw.flags.writeable is False
+        assert first_input.source_world_linear.shape == (3, 3)
         assert first_input.center_frame_pose is not None
         assert first_input.center_frame_pose.frame == first_input.frame
         assert first_input.center_frame_pose.component_identity == f"object:{source.as_pointer()}"
-        assert np.allclose(
-            np.linalg.norm(first_input.world_rotations_xyzw, axis=1),
-            1.0,
-        )
 
         main_settings = mc2_parameters.make_mc2_solver_settings(
             simulation_frequency=60,
@@ -269,7 +267,6 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert ready is True
         slot = world.solver_slots[task.task_id]
         runtime_state = slot.data["runtime_state"]
-        particle_buffer = slot.data["particle_buffer"]
         center_runtime = slot.data["center_state"]
         native_owner = slot.data["native_context"]
         native_info = native_owner.inspect()
@@ -353,9 +350,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert snapshot["result_candidate"]["ready"] is False
         assert runtime_state.initialized is True
         assert runtime_state.last_reset_reason == "first_valid_pose"
-        assert runtime_state.reset_count == particle_buffer.reset_count == 1
+        assert runtime_state.reset_count == 1
         np.testing.assert_array_equal(
-            particle_buffer.next_positions,
+            native_owner.read()[0],
             first.animated_base_world_positions,
         )
         mc2_solver.step_mc2(
@@ -376,7 +373,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert len(same_frame_results) == 1
         assert same_frame_results[0]["revision"] == 1
 
-        history_before_parameter_update = particle_buffer.next_positions.copy()
+        history_before_parameter_update = native_owner.read()[0].copy()
         soft_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
@@ -410,7 +407,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_primitive_dynamic_ready"] is False
         assert native_info["self_primitive_update_count"] == 0
         np.testing.assert_array_equal(
-            particle_buffer.next_positions,
+            native_owner.read()[0],
             history_before_parameter_update,
         )
         assert slot.data["result_candidate"] is candidate
@@ -477,7 +474,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             frame_inputs={soft_task.task_id: second_input},
         )
         assert runtime_state.last_reset_reason == "frame_generation_changed"
-        assert runtime_state.reset_count == particle_buffer.reset_count == 2
+        assert runtime_state.reset_count == 2
         native_info = native_owner.inspect()
         assert native_info["dynamic_revision"] == 2
         assert native_info["reset_count"] == 2
@@ -496,7 +493,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert second_results[0]["revision"] == 2
         assert second_results[0]["frame_generation"] == second_input.generation
         np.testing.assert_array_equal(
-            particle_buffer.next_positions,
+            native_owner.read()[0],
             second.animated_base_world_positions,
         )
         third_input = frame_input.make_mc2_frame_input(
@@ -1815,9 +1812,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             atol=1.0e-6,
         )
         reset_runtime_state = reset_slot.data["runtime_state"]
-        reset_particle_buffer = reset_slot.data["particle_buffer"]
         assert reset_runtime_state.last_reset_reason == "configured_teleport"
-        assert reset_runtime_state.reset_count == reset_particle_buffer.reset_count == 2
+        assert reset_runtime_state.reset_count == 2
         reset_candidate = reset_slot.data["result_candidate"]
         np.testing.assert_allclose(
             reset_candidate.world_positions,
