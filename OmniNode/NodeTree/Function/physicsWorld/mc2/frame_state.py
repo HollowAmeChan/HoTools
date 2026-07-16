@@ -209,31 +209,10 @@ def plan_mc2_frame_sync(runtime_state, frame_input, *, user_reset=False):
     return MC2FrameSyncResult(action, reset_reason, frame_input.frame, frame_input.generation)
 
 
-def sync_mc2_frame_input(runtime_state, particle_buffer, frame_input, *, user_reset=False):
-    """Commit a previously valid frame transition to host particle state."""
-    from .state import MC2ParticleBuffer
-
-    if not isinstance(particle_buffer, MC2ParticleBuffer):
-        raise TypeError("particle_buffer must be MC2ParticleBuffer")
-    if particle_buffer.disposed:
-        raise RuntimeError("cannot sync a disposed MC2 slot")
-    result = plan_mc2_frame_sync(runtime_state, frame_input, user_reset=user_reset)
-    if result.action == "same_frame":
-        return result
-    if result.action == "reset":
-        particle_buffer.reset_from_frame(frame_input)
-        runtime_state.mark_frame_reset(frame_input, result.reset_reason)
-    else:
-        particle_buffer.update_base_pose(frame_input)
-        runtime_state.mark_frame_update(frame_input)
-    return result
-
-
 __all__ = [
     "MC2_FRAME_SCHEMA_VERSION",
     "MC2FrameInputSpec",
     "MC2FrameSyncResult",
     "make_mc2_frame_input",
     "plan_mc2_frame_sync",
-    "sync_mc2_frame_input",
 ]

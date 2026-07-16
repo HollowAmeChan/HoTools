@@ -33,7 +33,6 @@ for package_name, package_path in (
 
 frame_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state")
 center_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
-initial_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.initial_state")
 state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state")
 final_proxy = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.final_proxy"
@@ -42,23 +41,6 @@ final_proxy = importlib.import_module(
 FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a", "frame_reset_pose_001.json"
 )
-
-
-def _initial(count=2):
-    return initial_state.MC2InitialStateSpec(
-        task_id="mc2:mesh:test",
-        setup_type="mesh_cloth",
-        topology_signature="topology",
-        particle_count=count,
-        rest_positions=((9.0, 9.0, 9.0),) * count,
-        rest_rotations=((0.0, 0.0, 0.0, 1.0),) * count,
-        parent_indices=(-1,) * count,
-        depths=(0.0,) * count,
-        fixed_mask=(False,) * count,
-        source_indices=(0,) * count,
-        source_local_indices=tuple(range(count)),
-        initial_state_signature="initial",
-    )
 
 
 def _runtime(count=2):
@@ -82,15 +64,6 @@ def _frame(frame, generation=7, offset=0.0):
         world_positions=((offset, 0.0, 0.0), (1.0 + offset, 0.0, 0.0)),
         world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),) * 2,
     )
-
-
-def test_allocation_does_not_pretend_rest_pose_was_reset() -> None:
-    buffer = state.MC2ParticleBuffer.allocate(_initial())
-    runtime = _runtime()
-    assert buffer.reset_count == runtime.reset_count == 0
-    assert runtime.initialized is False
-    assert runtime.last_reset_reason == "allocation_pending"
-    assert not np.any(buffer.next_positions)
 
 
 def test_frame_interpolation_is_checked_at_the_host_boundary() -> None:
@@ -152,36 +125,22 @@ def test_center_frame_pose_identity_must_match_particle_frame_identity() -> None
         raise AssertionError("mismatched Center frame identity was accepted")
 
 
-def test_first_pose_resets_all_history_and_clears_contact_state() -> None:
-    buffer = state.MC2ParticleBuffer.allocate(_initial())
+def test_first_pose_plans_native_reset() -> None:
     runtime = _runtime()
-    buffer.velocities.fill(4.0)
-    buffer.friction.fill(1.0)
-    result = frame_state.sync_mc2_frame_input(runtime, buffer, _frame(10, offset=2.0))
+    result = frame_state.plan_mc2_frame_sync(runtime, _frame(10, offset=2.0))
     assert result.action == "reset" and result.reset_reason == "first_valid_pose"
-    assert runtime.initialized and runtime.reset_count == buffer.reset_count == 1
-    for name in (
-        "next_positions", "old_positions", "base_positions", "old_frame_positions",
-        "velocity_positions", "display_positions", "step_basic_positions",
-    ):
-        np.testing.assert_array_equal(getattr(buffer, name), _frame(10, offset=2.0).world_positions)
-    assert not np.any(buffer.velocities)
-    assert not np.any(buffer.friction)
+    assert runtime.initialized is False and runtime.reset_count == 0
 
 
 def test_same_frame_is_idempotent_and_continuous_frame_preserves_history() -> None:
-    buffer = state.MC2ParticleBuffer.allocate(_initial())
     runtime = _runtime()
     first = _frame(3, offset=1.0)
-    frame_state.sync_mc2_frame_input(runtime, buffer, first)
-    before = buffer.next_positions.copy()
-    same = frame_state.sync_mc2_frame_input(runtime, buffer, first)
+    runtime.mark_frame_reset(first, "first_valid_pose")
+    same = frame_state.plan_mc2_frame_sync(runtime, first)
     assert same.action == "same_frame" and runtime.frame_revision == 1
-    continuous = frame_state.sync_mc2_frame_input(runtime, buffer, _frame(4, offset=2.0))
+    continuous = frame_state.plan_mc2_frame_sync(runtime, _frame(4, offset=2.0))
     assert continuous.action == "updated" and continuous.reset_reason == ""
-    np.testing.assert_array_equal(buffer.next_positions, before)
-    np.testing.assert_array_equal(buffer.base_positions, _frame(4, offset=2.0).world_positions)
-    assert runtime.reset_count == 1 and runtime.frame_revision == 2
+    assert runtime.reset_count == 1 and runtime.frame_revision == 1
 
 
 def test_discontinuities_and_user_request_have_stable_reset_reasons() -> None:
@@ -192,14 +151,13 @@ def test_discontinuities_and_user_request_have_stable_reset_reasons() -> None:
         (_frame(4), True, "user_reset"),
     )
     for next_frame, user_reset, reason in cases:
-        buffer = state.MC2ParticleBuffer.allocate(_initial())
         runtime = _runtime()
-        frame_state.sync_mc2_frame_input(runtime, buffer, _frame(3))
-        result = frame_state.sync_mc2_frame_input(
-            runtime, buffer, next_frame, user_reset=user_reset
+        runtime.mark_frame_reset(_frame(3), "first_valid_pose")
+        result = frame_state.plan_mc2_frame_sync(
+            runtime, next_frame, user_reset=user_reset
         )
         assert result.action == "reset" and result.reset_reason == reason
-        assert runtime.last_reset_reason == reason
+        assert runtime.last_reset_reason == "first_valid_pose"
 
 
 def test_tier_a_world_rotation_and_reset_arrays_match_mc2() -> None:
@@ -228,28 +186,9 @@ def test_tier_a_world_rotation_and_reset_arrays_match_mc2() -> None:
         world_positions=expected["world_positions"],
         world_rotations_xyzw=rotations,
     )
-    buffer = state.MC2ParticleBuffer.allocate(_initial())
     runtime = _runtime()
-    frame_state.sync_mc2_frame_input(runtime, buffer, frame)
-    mappings = {
-        "next_positions": "next_positions",
-        "old_positions": "old_positions",
-        "base_positions": "base_positions",
-        "old_frame_positions": "animation_old_positions",
-        "velocity_positions": "velocity_reference_positions",
-        "display_positions": "display_positions",
-        "velocities": "velocities",
-        "real_velocities": "real_velocities",
-        "friction": "friction",
-        "static_friction": "static_friction",
-        "collision_normals": "collision_normals",
-    }
-    for field, expected_field in mappings.items():
-        np.testing.assert_array_equal(
-            getattr(buffer, field), np.asarray(expected[expected_field], dtype=np.float32)
-        )
-    for field in ("old_rotations", "base_rotations", "old_frame_rotations"):
-        np.testing.assert_array_equal(getattr(buffer, field), frame.world_rotations_xyzw)
+    result = frame_state.plan_mc2_frame_sync(runtime, frame)
+    assert result.action == "reset" and result.reset_reason == "first_valid_pose"
 
 
 if __name__ == "__main__":

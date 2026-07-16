@@ -353,7 +353,7 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 | BoneSpring | 与BoneCloth共享Bone Line static链，但setup adapter与归一化参数固定Spring支持域 | 同Bone frame链；只消费Sphere soft collider，关闭self/sync与不支持约束 | stable Bone name -> Bone transform transaction | 非Line、非Sphere或越出归一化支持域在prepare拒绝，不进入native/writeback |
 | World common | `build_task_specs -> native fingerprint/classify -> topology/static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
 
-状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime identity、scheduler、center调度history与native context；particle position/rotation/history只存在于native context，不再有生产`MC2ParticleBuffer` shadow；immutable authoring/raw snapshot没有释放职责，frame snapshot和result candidate只活到本次公开step提交。测试可保留host buffer作为oracle，但生产import必须为零。
+状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime identity、scheduler、center调度history与native context；particle position/rotation/history只存在于native context。早期`MC2InitialStateSpec -> MC2ParticleBuffer -> sync_mc2_frame_input`平行host状态链及setup `initial_state_builder`已整体删除，测试也不再维护第二份数组oracle；immutable authoring/raw snapshot没有释放职责，frame snapshot和result candidate只活到本次公开step提交。
 
 生产/参考路径分类：
 

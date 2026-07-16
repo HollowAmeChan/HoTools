@@ -3,7 +3,6 @@
 from ....names import BONE_TRANSFORM_CHANNEL
 from ...names import MC2_SETUP_BONE_CLOTH
 from ...topology import build_mc2_bone_source_topology
-from ...initial_state import build_mc2_bone_initial_state
 from ..contracts import MC2SetupAdapterContract
 
 
@@ -12,7 +11,6 @@ MC2_BONE_CLOTH_SETUP_ADAPTER = MC2SetupAdapterContract(
     source_kind="bone_chain",
     writeback_channel=BONE_TRANSFORM_CHANNEL,
     topology_builder=build_mc2_bone_source_topology,
-    initial_state_builder=build_mc2_bone_initial_state,
 )
 
 

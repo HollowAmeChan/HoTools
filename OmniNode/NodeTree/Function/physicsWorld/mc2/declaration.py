@@ -48,8 +48,6 @@ MC2_SOLVER_DECLARATION = {
     ],
     "persistent_state": [
         "slot.data.topology",
-        "slot.data.initial_state",
-        "slot.data.particle_buffer",
         "slot.data.effective_parameters",
         "slot.data.runtime_state",
         "slot.data.writeback_plan",
@@ -87,7 +85,7 @@ MC2_SOLVER_DECLARATION = {
         "planned": ["mc2.mesh_cloth", "mc2.bone_cloth", "mc2.bone_spring"],
         "producer_nodes": [],
         "planned_producer_nodes": [],
-        "update_policy": "topology_and_particle_buffer_only",
+        "update_policy": "topology_and_native_context_only",
         "conflict_policy": "future stable_id last writer wins",
     },
     "writeback": {

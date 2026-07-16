@@ -107,6 +107,8 @@ P-06e config分类已闭环：同一native API现支持Mesh/Bone，Mesh复制Pro
 
 P-06e已关闭：依赖矩阵确认topology改变邻接/primitive/identity，geometry改变全部rest/orientation/constraint输入，Pin改变Fixed/Move并传播到全部相关producer，均不能复用完整static类别；Bone surface恒定。UV-only数值约束不变，但七类metadata通过Proxy signature保持身份一致性，现阶段保守全量重签/重建；large实测约`20.50ms`，与Pin `20.50ms`相同，仍比旧CPP `657.63ms`快约`32x`。新增UV子指纹/重签ABI属于非阻塞优化，不作为旧solver删除门槛。下一阶段P-06f总体性能与生产边界审计。
 
+P-06f代码边界清理第一项完成：调用图确认`MC2InitialStateSpec`、`MC2ParticleBuffer`、`sync_mc2_frame_input`及setup `initial_state_builder`已不被生产solver使用，且与native context重复持有完整particle history。该平行状态链、lazy exports、declaration/capability伪字段与过时测试已删除；`MC2FrameInputSpec`、只读`plan_mc2_frame_sync`和轻量`MC2SlotRuntimeState`保留。26/26纯MC2及Blender Mesh/Bone static/BasePose/product/全隐式debug通过。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
