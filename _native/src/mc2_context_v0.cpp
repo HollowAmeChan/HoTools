@@ -4552,12 +4552,9 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
         PyErr_SetString(PyExc_ValueError, "config static clone context shape mismatch");
         return nullptr;
     }
-    if (source->setup_kind != 1 && source->setup_kind != 2) {
-        PyErr_SetString(PyExc_ValueError, "config static clone currently requires Bone setup");
-        return nullptr;
-    }
     if (!source->proxy_static_ready || !source->baseline_static_ready ||
-        !source->bone_static_ready || !source->distance_static_ready ||
+        (source->setup_kind != 0 && !source->bone_static_ready) ||
+        !source->distance_static_ready ||
         !source->bending_static_ready || !source->center_static_ready ||
         !source->self_collision_static_ready) {
         PyErr_SetString(PyExc_RuntimeError, "source context static is incomplete");
@@ -4709,19 +4706,19 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
 
     target->proxy_static_ready = true;
     target->baseline_static_ready = true;
-    target->bone_static_ready = true;
+    target->bone_static_ready = source->bone_static_ready;
     target->distance_static_ready = true;
     target->bending_static_ready = true;
     target->self_collision_static_ready = true;
     target->center_static_ready = true;
     target->proxy_static_revision = 1;
     target->baseline_static_revision = 1;
-    target->bone_static_revision = 1;
+    target->bone_static_revision = source->bone_static_ready ? 1 : 0;
     target->distance_static_revision = 1;
     target->bending_static_revision = 1;
     target->self_collision_static_revision = 1;
     target->center_static_revision = 1;
-    target->static_clone_count = 6;
+    target->static_clone_count = source->setup_kind == 0 ? 5 : 6;
     target->center_static_rebuild_count = 1;
 
     PyObject* result = PyDict_New();

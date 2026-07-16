@@ -460,6 +460,30 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
                 world, task, settings, previous + 1, previous
             )
         )
+        previous += 1
+        config_task = mc2_specs.make_mc2_task_spec(
+            mc2_names.MC2_SETUP_MESH_CLOTH,
+            [obj],
+            profile=replace(_profile(), gravity_direction=(0.0, -1.0, 0.0)),
+        )
+        assert config_task.task_id == task.task_id
+        context_before_config = world.solver_slots[task.task_id].data["native_context"]
+        step_ms, write_ms = _new_mesh_step(
+            world, config_task, settings, previous + 1, previous
+        )
+        config_rebuild_ms = step_ms + write_ms
+        config_slot = world.solver_slots[task.task_id]
+        assert config_slot.data["native_context"] is not context_before_config
+        assert context_before_config.inspect()["released"] is True
+        assert (
+            config_slot.data["last_static_change_mask"]
+            == mc2_native_flags.MC2_STATIC_CHANGE_CONFIG
+        )
+        config_native_info = config_slot.data["native_context"].inspect()
+        assert config_native_info["static_clone_count"] == 5
+        assert config_native_info["center_static_rebuild_count"] == 1
+        assert config_native_info["owned_static_take_count"] == 0
+        task = config_task
         slot = world.solver_slots[task.task_id]
         native_info = slot.data["native_context"].inspect()
         return {
@@ -469,7 +493,8 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
             "particles": case["grid"] ** 2,
             "build_ms": build_ms,
             "rebuild_ms": rebuild_ms,
-            "config_rebuild_ms": None,
+            "config_rebuild_ms": config_rebuild_ms,
+            "config_static_clone_count": config_native_info["static_clone_count"],
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": debug_capture_ms,

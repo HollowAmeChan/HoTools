@@ -125,6 +125,19 @@ class MC2MeshClothStaticBuildResult:
             )
         return result
 
+    def with_center(self, center: MC2CenterStaticMetadata):
+        if not isinstance(center, MC2CenterStaticMetadata):
+            raise TypeError("center must be MC2CenterStaticMetadata")
+        return MC2MeshClothStaticBuildResult(
+            mesh_topology_signature=self.mesh_topology_signature,
+            finalizer=self.finalizer,
+            baseline=self.baseline,
+            distance=self.distance,
+            bending=self.bending,
+            center=center,
+            self_collision=self.self_collision,
+        )
+
 
 def _matrix_world_columns(obj) -> tuple[tuple[float, float, float, float], ...]:
     matrix = getattr(obj, "matrix_world", None)

@@ -103,6 +103,8 @@ P-06d已关闭：Bone static assembly直接拼接snapshot的positions/matrices/p
 
 P-06e第一子项已完成：Bone `config=8`不再运行完整static builder。新staged context从旧context复制Proxy/Baseline/Bone/Distance/Bending/Self六类static，在native内只重建Center并生成与现有oracle完全一致的SHA-256；Python只接收fixed count/signature metadata。Blender cold/incremental Center及整体static signature一致，计数固定为`static_clone_count=6 / center_static_rebuild_count=1 / owned_static_take_count=0`。small/medium/large config重建约`1.75/2.99/6.20ms`，相对进入基线`2.09/5.14/12.24ms`；P-06e仍需Mesh config及geometry/surface/topology复用矩阵。
 
+P-06e config分类已闭环：同一native API现支持Mesh/Bone，Mesh复制Proxy/Baseline/Distance/Bending/Self五类static并复用frame producer bind rotations重建Center；cold/incremental `debug_dict`一致，计数固定为`clone=5 / center rebuild=1 / owner take=0`。small/medium/large Mesh config约`1.57/2.56/5.08ms`，large相对同轮surface全量重建`20.96ms`快约`4.12x`。下一子项是geometry/surface/topology受影响producer矩阵。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

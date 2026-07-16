@@ -375,6 +375,20 @@ def test_mc2_static_config_change_reuses_topology() -> None:
         assert first_native.inspect()["released"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_CONFIG
+        config_info = slot.data["native_context"].inspect()
+        assert config_info["static_clone_count"] == 5
+        assert config_info["center_static_rebuild_count"] == 1
+        assert config_info["owned_static_take_count"] == 0
+
+        cold_world = world_types.PhysicsWorldCache()
+        try:
+            mc2_solver.step_mc2(cold_world, [changed_task])
+            cold_static = cold_world.solver_slots[task.task_id].data["mesh_static"]
+            incremental_static = slot.data["mesh_static"]
+            assert incremental_static.center == cold_static.center
+            assert incremental_static.debug_dict() == cold_static.debug_dict()
+        finally:
+            cold_world.omni_cache_dispose("config_cold_compare")
     finally:
         world.omni_cache_dispose("test_complete")
         _remove_object(obj)

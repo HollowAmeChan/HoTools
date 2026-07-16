@@ -601,6 +601,26 @@ def step_mc2(
                 staged_native_contexts.append(staged_native_context)
             if (
                 rebuild_reason
+                and mesh_static_supported
+                and static_change_mask == MC2_STATIC_CHANGE_CONFIG
+                and staged_native_context is not None
+                and existing_native_context is not None
+                and existing_slot is not None
+            ):
+                from .setups.mesh_cloth.static_build import (
+                    MC2MeshClothStaticBuildResult,
+                )
+
+                existing_mesh_static = existing_slot.data.get("mesh_static")
+                if isinstance(existing_mesh_static, MC2MeshClothStaticBuildResult):
+                    mesh_static = staged_native_context.clone_mesh_config_static(
+                        existing_native_context,
+                        existing_mesh_static,
+                        spec.profile.gravity_direction,
+                    )
+                    staged_static_cloned = True
+            if (
+                rebuild_reason
                 and bone_static_supported
                 and static_change_mask == MC2_STATIC_CHANGE_CONFIG
                 and staged_native_context is not None
@@ -619,7 +639,7 @@ def step_mc2(
                         spec.profile.gravity_direction,
                     )
                     staged_static_cloned = True
-            if rebuild_reason and mesh_static_supported:
+            if rebuild_reason and mesh_static_supported and not staged_static_cloned:
                 from .setups.mesh_cloth.static_build import (
                     build_mc2_mesh_cloth_static_for_task,
                 )
