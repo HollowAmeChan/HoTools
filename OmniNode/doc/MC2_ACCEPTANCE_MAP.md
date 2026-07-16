@@ -62,7 +62,7 @@
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component Blender 5.1 | 与 S-03/S-04 相同的 Line/transform 限定域 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
 | P-01 | V1-R 直接 oracle 闭环 | 完全对齐 | static/runtime主体及Distance/Tether/Angle/Motion direct runtime均有Tier A | 无 | 否 |
-| P-02 | 真实生产资产验收 | 产品收尾 | 自动化最小场景已覆盖 Mesh/Bone/collider/self | 固定代表性 MeshCloth、BoneCloth、BoneSpring 资产并记录预期与失败边界 | 是 |
+| P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1四脚本门禁，覆盖五资产/三setup | Mesh、Bone Line、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
 | P-03 | 稳定性与性能门禁 | 产品收尾 | context 双 ABI soak、dispose 与后台测试已存在 | 增加 V1-R 混合场景长时 soak、重建/清缓存循环与性能基线 | 是 |
 | P-04 | 旧 MC2 路径删除 | 产品收尾 | 新 solver 不调用旧 package | 删除旧节点/package/full-core/context/shadow pipeline；确认无 registry/asset fallback | 是 |
 | P-05 | declaration 验收开关 | 产品收尾 | `mc2` 已注册并发布三类结果 | P-01..P-04 全关后将 `solver_acceptance_blocker` 改为 `False` | 是 |
@@ -71,14 +71,13 @@
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle已经闭环。当前不再横向扩功能，而是关闭 **2 个产品验收项 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle和代表性生产资产已经闭环。当前不再横向扩功能，而是关闭 **稳定性/性能门禁 + 旧路径删除 + acceptance flag**。在这些项目关闭前，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `P-02`：三 setup 代表性真实资产验收。
-2. `P-03`：混合场景 soak、资源循环与性能门禁。
-3. `P-04`：旧 MC2 路径删除。
-4. `P-05`：关闭 declaration acceptance blocker。
+1. `P-03`：混合场景 soak、资源循环与性能门禁。
+2. `P-04`：旧 MC2 路径删除。
+3. `P-05`：关闭 declaration acceptance blocker。
 
 ## 更新规则
 
