@@ -4574,6 +4574,38 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_finalize_proxy_attributes(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_finalize_proxy_attributes expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "proxy attributes require proxy static");
+        return nullptr;
+    }
+    Buffer attributes;
+    if (!attributes.get(
+            PyTuple_GET_ITEM(args, 1),
+            PyBUF_FORMAT | PyBUF_ND,
+            "vertex_attributes"
+        ) ||
+        !expect_uint8(attributes, "vertex_attributes") ||
+        !expect_1d_array(
+            attributes,
+            "vertex_attributes",
+            static_cast<Py_ssize_t>(context->vertex_count)
+        )) {
+        return nullptr;
+    }
+    context->proxy_attributes = copy_values<std::uint8_t>(attributes);
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 11) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_baseline_static expects 11 arguments");

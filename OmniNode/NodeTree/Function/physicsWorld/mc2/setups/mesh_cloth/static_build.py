@@ -172,13 +172,12 @@ def build_mc2_mesh_cloth_static(
         pin_enabled=pin_enabled,
         pin_vertex_group=pin_vertex_group,
         expected_mesh_topology_signature=actual_mesh_topology_signature,
+        native_context=native_context,
     )
-    baseline = build_mc2_mesh_baseline(finalizer.proxy)
-    if native_context is not None:
-        native_context.update_proxy_and_baseline(
-            baseline.final_proxy,
-            baseline.baseline,
-        )
+    baseline = build_mc2_mesh_baseline(
+        finalizer.proxy,
+        native_context=native_context,
+    )
     distance = build_mc2_distance_static(
         baseline.final_proxy,
         baseline.baseline,

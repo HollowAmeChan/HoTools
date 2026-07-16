@@ -55,6 +55,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_classify_static_fingerprint",
     "mc2_context_v0_update_static_fingerprint",
     "mc2_context_v0_update_proxy_static",
+    "mc2_context_v0_finalize_proxy_attributes",
     "mc2_context_v0_update_baseline_static",
     "mc2_context_v0_update_bone_static",
     "mc2_context_v0_update_frame_producer_static",
@@ -299,6 +300,58 @@ class MC2NativeContextV0:
             baseline["vertex_local_rotations"],
         )
 
+    def update_proxy_finalizer_derived(
+        self,
+        *,
+        positions,
+        normals,
+        tangents,
+        uvs,
+        attributes,
+        edges,
+        triangles,
+        triangle_ranges,
+        triangle_records,
+        bind_rotations,
+    ) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_update_proxy_static(
+            self._handle,
+            np.ascontiguousarray(positions, dtype=np.float32),
+            np.ascontiguousarray(normals, dtype=np.float32),
+            np.ascontiguousarray(tangents, dtype=np.float32),
+            np.ascontiguousarray(uvs, dtype=np.float32),
+            np.ascontiguousarray(attributes, dtype=np.uint8),
+            np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2)),
+            np.ascontiguousarray(triangles, dtype=np.int32).reshape((-1, 3)),
+        )
+        self._module.mc2_context_v0_update_frame_producer_static(
+            self._handle,
+            np.ascontiguousarray(triangle_ranges, dtype=np.int32).reshape((-1, 2)),
+            np.ascontiguousarray(triangle_records, dtype=np.int32).reshape((-1, 2)),
+            np.ascontiguousarray(bind_rotations, dtype=np.float32).reshape((-1, 4)),
+        )
+
+    def update_baseline_derived(self, derived: dict) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_finalize_proxy_attributes(
+            self._handle,
+            derived["attributes"],
+        )
+        self._module.mc2_context_v0_update_baseline_static(
+            self._handle,
+            derived["parents"],
+            derived["child_ranges"],
+            derived["child_data"],
+            derived["baseline_flags"],
+            derived["baseline_ranges"],
+            derived["baseline_data"],
+            derived["roots"],
+            np.ascontiguousarray(derived["depths"], dtype=np.float32),
+            np.ascontiguousarray(derived["local_positions"], dtype=np.float32),
+            np.ascontiguousarray(derived["local_rotations"], dtype=np.float32),
+        )
+
     def _update_self_collision_static(self, spec) -> None:
         packed = pack_mc2_self_collision_static(spec)
         self._module.mc2_context_v0_update_self_collision_static(
@@ -330,7 +383,7 @@ class MC2NativeContextV0:
             derived["bending_sign_or_volume"],
         )
 
-    def _finish_mesh_static(self, static) -> None:
+    def _update_mesh_frame_producer_from_spec(self, static) -> None:
         records = tuple(static.finalizer.vertex_to_triangle_records)
         ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
         packed_records = []
@@ -348,6 +401,8 @@ class MC2NativeContextV0:
                 dtype=np.float32,
             ),
         )
+
+    def _finish_mesh_static(self, static) -> None:
         center = pack_mc2_center_static(static.center)
         self._module.mc2_context_v0_update_center_static(
             self._handle,
@@ -381,6 +436,7 @@ class MC2NativeContextV0:
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native static vertex count mismatch")
         self.update_proxy_and_baseline(static.final_proxy, static.baseline.baseline)
+        self._update_mesh_frame_producer_from_spec(static)
         distance = pack_mc2_distance_static(static.distance)
         self._module.mc2_context_v0_update_distance_static(
             self._handle,

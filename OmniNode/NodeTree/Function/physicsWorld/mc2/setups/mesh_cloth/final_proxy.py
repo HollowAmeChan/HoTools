@@ -110,6 +110,7 @@ def _build_final_proxy_derived(
     triangles: tuple[tuple[int, int, int], ...],
     triangle_normals: list[np.ndarray],
     lines: tuple[tuple[int, int], ...],
+    native_context=None,
 ):
     if any(not 0 <= value <= 0xFF for value in attributes):
         raise ValueError("vertex_attributes must fit uint8")
@@ -158,6 +159,19 @@ def _build_final_proxy_derived(
     neighbor_count = int(counts["neighbor_count"])
     triangle_record_count = int(counts["triangle_record_count"])
     triangle_data = out_triangle_data[:triangle_record_count]
+    if native_context is not None:
+        native_context.update_proxy_finalizer_derived(
+            positions=positions,
+            normals=normals,
+            tangents=tangents,
+            uvs=uvs,
+            attributes=attribute_values,
+            edges=out_edges[:edge_count],
+            triangles=triangle_values,
+            triangle_ranges=out_triangle_ranges,
+            triangle_records=triangle_data,
+            bind_rotations=bind_rotations,
+        )
     vertex_to_triangle_records = tuple(
         tuple(
             tuple(int(value) for value in record)
@@ -218,6 +232,7 @@ def build_mc2_final_proxy(
     vertex_attributes,
     lines=(),
     triangles=(),
+    native_context=None,
 ) -> MC2MeshFinalProxyBuildResult:
     identities = tuple(str(value) for value in vertex_identities)
     vertex_count = len(identities)
@@ -245,6 +260,7 @@ def build_mc2_final_proxy(
         final_triangles,
         triangle_normals,
         line_records,
+        native_context=native_context,
     )
     normals = derived["normals"]
     tangents = derived["tangents"]
@@ -344,6 +360,7 @@ def build_blender_mesh_final_proxy(
     pin_vertex_group: str = "",
     uv_layer_name: str | None = None,
     expected_mesh_topology_signature: str | None = None,
+    native_context=None,
 ) -> MC2MeshFinalProxyBuildResult:
     from .base_pose import mesh_topology_signature
 
@@ -390,6 +407,7 @@ def build_blender_mesh_final_proxy(
         vertex_attributes=attributes,
         lines=lines,
         triangles=triangles,
+        native_context=native_context,
     )
 
 

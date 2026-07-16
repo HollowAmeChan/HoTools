@@ -63,7 +63,7 @@ def _replace_proxy_attributes(
     )
 
 
-def _build_native_baseline(proxy: MC2ProxyStaticSpec) -> dict:
+def _build_native_baseline(proxy: MC2ProxyStaticSpec, *, native_context=None) -> dict:
     count = proxy.vertex_count
     attributes = np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8)
     parents = np.empty(count, dtype=np.int32)
@@ -98,6 +98,20 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec) -> dict:
     child_count = int(counts["child_count"])
     baseline_count = int(counts["baseline_count"])
     baseline_data_count = int(counts["baseline_data_count"])
+    if native_context is not None:
+        native_context.update_baseline_derived({
+            "attributes": attributes,
+            "parents": parents,
+            "child_ranges": child_ranges,
+            "child_data": child_data[:child_count],
+            "baseline_flags": baseline_flags[:baseline_count],
+            "baseline_ranges": baseline_ranges[:baseline_count],
+            "baseline_data": baseline_data[:baseline_data_count],
+            "roots": roots,
+            "depths": depths,
+            "local_positions": local_positions,
+            "local_rotations": local_rotations,
+        })
     return {
         "attributes": tuple(int(value) for value in attributes),
         "parents": tuple(int(value) for value in parents),
@@ -158,13 +172,17 @@ def _build_native_baseline_pose_depth(
     }
 
 
-def build_mc2_mesh_baseline(proxy: MC2ProxyStaticSpec) -> MC2MeshBaselineBuildResult:
+def build_mc2_mesh_baseline(
+    proxy: MC2ProxyStaticSpec,
+    *,
+    native_context=None,
+) -> MC2MeshBaselineBuildResult:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
     if proxy.setup_type != "mesh_cloth":
         raise ValueError("Mesh baseline builder only accepts mesh_cloth")
 
-    derived = _build_native_baseline(proxy)
+    derived = _build_native_baseline(proxy, native_context=native_context)
     final_proxy = _replace_proxy_attributes(proxy, derived["attributes"])
     baseline = make_mc2_baseline_static_spec(
         proxy_signature=final_proxy.proxy_signature,
