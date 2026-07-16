@@ -5244,8 +5244,10 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
 }
 
 PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 4) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_center_static expects 4 arguments");
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    const bool take_owned = argument_count == 7;
+    if (argument_count != 4 && !take_owned) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_center_static expects 4 or 7 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -5308,9 +5310,29 @@ PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args) {
         PyErr_SetString(PyExc_ValueError, "center_initial_local_gravity_direction must be unit length");
         return nullptr;
     }
-    auto next_fixed = copy_values<std::int32_t>(fixed_indices);
-    auto next_center = copy_values<float>(local_center);
-    auto next_gravity = copy_values<float>(local_gravity);
+    std::vector<std::int32_t> next_fixed;
+    std::vector<float> next_center;
+    std::vector<float> next_gravity;
+    if (take_owned) {
+        auto* owned_fixed = validated_owned_values<std::int32_t>(
+            PyTuple_GET_ITEM(args, 4), "hotools_native.mc2.center_fixed.v0", fixed_indices
+        );
+        auto* owned_center = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 5), "hotools_native.mc2.center_position.v0", local_center
+        );
+        auto* owned_gravity = validated_owned_values<float>(
+            PyTuple_GET_ITEM(args, 6), "hotools_native.mc2.center_gravity.v0", local_gravity
+        );
+        if (owned_fixed == nullptr || owned_center == nullptr || owned_gravity == nullptr) return nullptr;
+        next_fixed = std::move(*owned_fixed);
+        next_center = std::move(*owned_center);
+        next_gravity = std::move(*owned_gravity);
+        ++context->owned_static_take_count;
+    } else {
+        next_fixed = copy_values<std::int32_t>(fixed_indices);
+        next_center = copy_values<float>(local_center);
+        next_gravity = copy_values<float>(local_gravity);
+    }
     context->center_fixed_indices.swap(next_fixed);
     context->center_local_position.swap(next_center);
     context->center_initial_local_gravity_direction.swap(next_gravity);
@@ -6091,6 +6113,50 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->bone_output_rotations.clear();
     ++context->dynamic_revision;
     Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_derive_center_pose_raw(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_derive_center_pose_raw expects 4 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->center_static_ready || !context->dynamic_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "raw Center pose requires static and dynamic data");
+        return nullptr;
+    }
+    Buffer position, rotation, scale;
+    if (!position.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "component_position") ||
+        !rotation.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "component_rotation") ||
+        !scale.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "component_scale")) {
+        return nullptr;
+    }
+    if (!expect_float32(position, "component_position") ||
+        !expect_1d_array(position, "component_position", 3) ||
+        !finite_floats(position, "component_position") ||
+        !expect_float32(rotation, "component_rotation") ||
+        !expect_2d(rotation, "component_rotation", 1, 4) ||
+        !finite_floats(rotation, "component_rotation") ||
+        !validate_quaternions(rotation, "component_rotation") ||
+        !expect_float32(scale, "component_scale") ||
+        !expect_1d_array(scale, "component_scale", 3) ||
+        !finite_floats(scale, "component_scale")) {
+        return nullptr;
+    }
+    const auto* scale_values = static_cast<const float*>(scale.view.buf);
+    if (std::abs(scale_values[0]) <= kMc2Epsilon ||
+        std::abs(scale_values[1]) <= kMc2Epsilon ||
+        std::abs(scale_values[2]) <= kMc2Epsilon) {
+        PyErr_SetString(PyExc_ValueError, "component_scale cannot contain zero");
+        return nullptr;
+    }
+    return build_raw_center_pose(
+        *context,
+        static_cast<const float*>(position.view.buf),
+        static_cast<const float*>(rotation.view.buf),
+        scale_values
+    );
 }
 
 PyObject* mc2_context_v0_update_colliders(PyObject*, PyObject* args) {

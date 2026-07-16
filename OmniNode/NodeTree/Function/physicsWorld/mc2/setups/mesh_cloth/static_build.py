@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from ...bending_static import MC2BendingStaticMetadata
 from ...bending_static import MC2BendingStaticSpec
 from ...bending_static import build_mc2_bending_static
+from ...center_state import MC2CenterStaticMetadata
 from ...center_state import MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
 from ...distance_static import MC2DistanceStaticMetadata
@@ -36,7 +37,7 @@ class MC2MeshClothStaticBuildResult:
     baseline: MC2MeshBaselineBuildResult
     distance: MC2DistanceStaticSpec | MC2DistanceStaticMetadata
     bending: MC2BendingStaticSpec | MC2BendingStaticMetadata | None
-    center: MC2CenterStaticSpec
+    center: MC2CenterStaticSpec | MC2CenterStaticMetadata
     self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
 
     @property
@@ -60,8 +61,8 @@ class MC2MeshClothStaticBuildResult:
             (MC2BendingStaticSpec, MC2BendingStaticMetadata),
         ):
             raise TypeError("bending must be an MC2 Bending static result or None")
-        if not isinstance(self.center, MC2CenterStaticSpec):
-            raise TypeError("center must be MC2CenterStaticSpec")
+        if not isinstance(self.center, (MC2CenterStaticSpec, MC2CenterStaticMetadata)):
+            raise TypeError("center must be an MC2 Center static result")
         if not isinstance(
             self.self_collision,
             (MC2SelfCollisionStaticSpec, MC2SelfCollisionStaticMetadata),
@@ -100,7 +101,7 @@ class MC2MeshClothStaticBuildResult:
             "bending_record_count": (
                 self.bending.record_count if self.bending is not None else 0
             ),
-            "center_fixed_count": len(self.center.fixed_indices),
+            "center_fixed_count": self.center.fixed_count,
             "self_collision_primitive_count": self.self_collision.primitive_count,
         }
         if include_signatures:

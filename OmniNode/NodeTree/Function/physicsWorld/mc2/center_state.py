@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 import math
 
 import numpy as np
@@ -72,9 +71,24 @@ def _rotate(value, vector):
     return rotate_vector_xyzw_tuple(q, vector)
 
 
-def _signature(payload: object) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
-    return hashlib.sha256(encoded).hexdigest()
+def _center_static_signature(
+    *,
+    task_id,
+    proxy_signature,
+    fixed_indices,
+    local_center_position,
+    initial_local_gravity_direction,
+) -> str:
+    digest = hashlib.sha256(b"mc2_center_static_v0\0")
+    digest.update(str(task_id or "").encode("ascii"))
+    digest.update(str(proxy_signature or "").encode("ascii"))
+    for values, dtype in (
+        (fixed_indices, np.int32),
+        (local_center_position, np.float32),
+        (initial_local_gravity_direction, np.float32),
+    ):
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -87,6 +101,10 @@ class MC2CenterStaticSpec:
     center_static_signature: str
     schema_version: int = 0
 
+    @property
+    def fixed_count(self) -> int:
+        return len(self.fixed_indices)
+
     def debug_dict(self) -> dict:
         return {
             "fixed_indices": self.fixed_indices,
@@ -96,13 +114,35 @@ class MC2CenterStaticSpec:
         }
 
 
+@dataclass(frozen=True)
+class MC2CenterStaticMetadata:
+    task_id: str
+    proxy_signature: str
+    fixed_count: int
+    center_static_signature: str
+    schema_version: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.task_id or not self.proxy_signature or not self.center_static_signature:
+            raise ValueError("Center static metadata requires stable signatures")
+        if self.fixed_count < 0:
+            raise ValueError("Center fixed_count cannot be negative")
+
+    def debug_dict(self) -> dict:
+        return {
+            "fixed_count": self.fixed_count,
+            "center_static_signature": self.center_static_signature,
+            "native_owned": True,
+        }
+
+
 def build_mc2_center_static(
     proxy: MC2ProxyStaticSpec,
     *,
     vertex_bind_pose_rotations,
     world_gravity_direction,
     native_context=None,
-) -> MC2CenterStaticSpec:
+) -> MC2CenterStaticSpec | MC2CenterStaticMetadata:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
     bind_rotations = np.ascontiguousarray(vertex_bind_pose_rotations, dtype=np.float64)
@@ -120,27 +160,32 @@ def build_mc2_center_static(
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(world_gravity_direction, dtype=np.float64),
     )
-    if native_context is not None:
-        native_context.update_center_derived(derived)
     fixed = tuple(int(value) for value in derived["fixed_indices"])
     center = tuple(float(value) for value in derived["local_center_position"])
     gravity = tuple(float(value) for value in derived["initial_local_gravity_direction"])
-
-    payload = {
-        "schema_version": 0,
-        "task_id": proxy.task_id,
-        "proxy_signature": proxy.proxy_signature,
-        "fixed_indices": fixed,
-        "local_center_position": center,
-        "initial_local_gravity_direction": gravity,
-    }
+    signature = _center_static_signature(
+        task_id=proxy.task_id,
+        proxy_signature=proxy.proxy_signature,
+        fixed_indices=derived["fixed_indices"],
+        local_center_position=derived["local_center_position"],
+        initial_local_gravity_direction=derived["initial_local_gravity_direction"],
+    )
+    if native_context is not None:
+        metadata = MC2CenterStaticMetadata(
+            task_id=proxy.task_id,
+            proxy_signature=proxy.proxy_signature,
+            fixed_count=len(derived["fixed_indices"]),
+            center_static_signature=signature,
+        )
+        native_context.update_center_derived(derived)
+        return metadata
     return MC2CenterStaticSpec(
         task_id=proxy.task_id,
         proxy_signature=proxy.proxy_signature,
         fixed_indices=fixed,
         local_center_position=center,
         initial_local_gravity_direction=gravity,
-        center_static_signature=_signature(payload),
+        center_static_signature=signature,
     )
 
 
@@ -1574,6 +1619,7 @@ def evaluate_mc2_center_step(
 
 
 __all__ = [
+    "MC2CenterStaticMetadata",
     "MC2CenterFramePoseSpec",
     "MC2CenterFrameShiftInputSpec",
     "MC2CenterFrameShiftResult",

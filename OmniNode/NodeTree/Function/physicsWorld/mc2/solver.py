@@ -235,10 +235,8 @@ def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
         raise RuntimeError("MC2 slot is missing Center persistent state")
     if center_state.center_static_signature != active_static.center.center_static_signature:
         raise RuntimeError("MC2 Center static identity changed without slot rebuild")
-    if frame_input.native_producer_kind != "host":
-        native_context = slot.data.get("native_context")
-        if native_context is None:
-            raise RuntimeError("native-produced MC2 frame has no live context")
+    native_context = slot.data.get("native_context")
+    if native_context is not None:
         return native_context.derived_center_pose()
     return derive_mc2_center_world_pose(
         active_static.center,

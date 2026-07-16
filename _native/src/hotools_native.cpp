@@ -867,6 +867,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_dynamic, a); });
+    m.def("mc2_context_v0_derive_center_pose_raw",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_derive_center_pose_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_mesh_dynamic_raw",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_mesh_dynamic_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_bone_dynamic_raw",
@@ -1373,12 +1375,20 @@ NB_MODULE(hotools_native, m) {
                 throw nb::value_error(error.what());
             }
             nb::dict result;
-            result["fixed_indices"] = owned_array_1d(std::move(derived.fixed_indices));
+            result["fixed_indices"] = owned_array_1d(
+                std::move(derived.fixed_indices),
+                &result, "_center_fixed_owner",
+                "hotools_native.mc2.center_fixed.v0"
+            );
             result["local_center_position"] = owned_array_1d(
-                std::move(derived.local_center_position)
+                std::move(derived.local_center_position),
+                &result, "_center_position_owner",
+                "hotools_native.mc2.center_position.v0"
             );
             result["initial_local_gravity_direction"] = owned_array_1d(
-                std::move(derived.initial_local_gravity_direction)
+                std::move(derived.initial_local_gravity_direction),
+                &result, "_center_gravity_owner",
+                "hotools_native.mc2.center_gravity.v0"
             );
             return result;
         });

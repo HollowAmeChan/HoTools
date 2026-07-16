@@ -72,6 +72,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
+    "mc2_context_v0_derive_center_pose_raw",
     "mc2_context_v0_update_mesh_dynamic_raw",
     "mc2_context_v0_update_bone_dynamic_raw",
     "mc2_context_v0_update_colliders",
@@ -426,11 +427,20 @@ class MC2NativeContextV0:
 
     def update_center_derived(self, derived: dict) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_update_center_static(
+        arguments = (
             self._handle,
             derived["fixed_indices"],
             derived["local_center_position"],
             derived["initial_local_gravity_direction"],
+        )
+        owners = (
+            derived.get("_center_fixed_owner"),
+            derived.get("_center_position_owner"),
+            derived.get("_center_gravity_owner"),
+        )
+        self._module.mc2_context_v0_update_center_static(
+            *arguments,
+            *(owners if all(value is not None for value in owners) else ()),
         )
 
     def _update_mesh_frame_producer_from_spec(self, static) -> None:
@@ -592,7 +602,19 @@ class MC2NativeContextV0:
                 frame_input.negative_scale_sign,
                 frame_input.frame_interpolation,
             )
-            self._derived_center_pose_values = None
+            frame_pose = frame_input.center_frame_pose
+            if frame_pose is None:
+                self._derived_center_pose_values = None
+            else:
+                values = self._module.mc2_context_v0_derive_center_pose_raw(
+                    self._handle,
+                    np.ascontiguousarray(frame_pose.component_world_position, dtype=np.float32),
+                    np.ascontiguousarray(
+                        (frame_pose.component_world_rotation_xyzw,), dtype=np.float32
+                    ),
+                    np.ascontiguousarray(frame_pose.component_world_scale, dtype=np.float32),
+                )
+                self._derived_center_pose_values = tuple(float(value) for value in values)
         else:
             frame_pose = frame_input.center_frame_pose
             if frame_pose is None:

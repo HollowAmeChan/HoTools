@@ -277,7 +277,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["triangle_count"] == 1
         assert native_info["self_collision_static_ready"] is True
         assert native_info["self_collision_static_revision"] == 1
-        assert native_info["owned_static_take_count"] == 3
+        assert native_info["owned_static_take_count"] == 4
         assert native_info["self_primitive_count"] == 7
         assert native_info["self_point_primitive_count"] == 3
         assert native_info["self_edge_primitive_count"] == 3
@@ -293,7 +293,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["bending_static_revision"] == 1
         assert native_info["center_static_ready"] is True
         assert native_info["center_static_revision"] == 1
-        assert native_info["center_fixed_count"] == len(static.center.fixed_indices)
+        assert native_info["center_fixed_count"] == static.center.fixed_count
         assert native_info["distance_record_count"] == static.distance.record_count
         assert native_info["bending_record_count"] == (
             static.bending.record_count if static.bending is not None else 0
@@ -1368,8 +1368,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         fixed_shift = fixed_slot.data["center_frame_shift_result"]
         assert fixed_shift is not None
+        fixed_center_oracle = mc2_center.build_mc2_center_static(
+            fixed_static.final_proxy,
+            vertex_bind_pose_rotations=fixed_static.finalizer.vertex_bind_pose_rotations,
+            world_gravity_direction=fixed_task.profile.gravity_direction,
+        )
         fixed_center_pose = mc2_center.derive_mc2_center_world_pose(
-            fixed_static.center,
+            fixed_center_oracle,
             fixed_second_input.center_frame_pose,
             world_positions=fixed_second_input.world_positions,
             world_rotations_xyzw=fixed_second_input.world_rotations_xyzw,

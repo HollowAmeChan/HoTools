@@ -81,6 +81,7 @@ _EXPORTS = {
     "MC2CenterFrameShiftResult": ".center_state",
     "MC2CenterPersistentState": ".center_state",
     "MC2CenterStaticSpec": ".center_state",
+    "MC2CenterStaticMetadata": ".center_state",
     "build_mc2_center_static": ".center_state",
     "evaluate_mc2_center_frame_shift": ".center_state",
     "pack_mc2_center_static": ".center_state",
