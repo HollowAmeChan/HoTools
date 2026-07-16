@@ -318,6 +318,8 @@ Blender authoring/frame input
 
 25. Bone production assembly必须直接拼接`MC2BoneRawSnapshot`的positions/matrices/parents并保持rest输出、attributes/roots与产品UV为连续数组；staged入口缺任一raw snapshot必须失败，不得回退冻结payload或`_flatten_bone_records`。逐骨list/tuple assembly、完整spec、packer与`_thaw`只允许出现在显式无context oracle。P-06d据此关闭，后续P-06e不得为重建复用重新引入这些host shadow。
 
+26. P-06e重建复用必须发生在native context之间：旧context保持只读，新staged context按change mask复制不变static并只运行受影响producer，全部成功后由Python原子替换slot；失败释放staged context并保留旧context/result。`config=8`当前只代表gravity direction并只允许重建Center；不得把native static回读为Python spec或为了复用恢复host shadow。进入基线中large Bone完整rest重建约`18.97ms`，config全量重建约`12.24ms`。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

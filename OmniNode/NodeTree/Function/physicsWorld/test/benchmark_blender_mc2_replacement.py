@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import cProfile
+from dataclasses import replace
 import json
 import math
 import os
@@ -81,6 +82,9 @@ mc2_specs = importlib.import_module(
 )
 mc2_debug = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
+mc2_native_flags = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
 )
 mc2_base_pose = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.base_pose"
@@ -388,6 +392,7 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
                 "particles": case["grid"] ** 2,
                 "build_ms": build_ms,
                 "rebuild_ms": rebuild_ms,
+                "config_rebuild_ms": None,
                 "hot": _summary(timings[2:]),
                 "write_mean_ms": None,
                 "debug_capture_ms": None,
@@ -464,6 +469,7 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
             "particles": case["grid"] ** 2,
             "build_ms": build_ms,
             "rebuild_ms": rebuild_ms,
+            "config_rebuild_ms": None,
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": debug_capture_ms,
@@ -602,6 +608,7 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
                 "particles": case["chains"] * case["chain_length"],
                 "build_ms": build_ms,
                 "rebuild_ms": None,
+                "config_rebuild_ms": None,
                 "hot": _summary(timings[2:]),
                 "write_mean_ms": None,
                 "debug_capture_ms": None,
@@ -651,6 +658,49 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
                 world, task, settings, case["frames"] + 3, previous
             )
         )
+        previous = case["frames"] + 3
+
+        context_before_geometry = world.solver_slots[task.task_id].data["native_context"]
+        bpy.context.view_layer.objects.active = armature
+        armature.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        armature.data.edit_bones[chains[-1][-1]].tail.z += 0.125
+        bpy.ops.object.mode_set(mode="OBJECT")
+        armature.select_set(False)
+        bpy.context.view_layer.update()
+        step_ms, write_ms = _new_bone_step(
+            world, task, settings, previous + 1, previous
+        )
+        rebuild_ms = step_ms + write_ms
+        previous += 1
+        geometry_slot = world.solver_slots[task.task_id]
+        assert geometry_slot.data["native_context"] is not context_before_geometry
+        assert context_before_geometry.inspect()["released"] is True
+        assert (
+            geometry_slot.data["last_static_change_mask"]
+            == mc2_native_flags.MC2_STATIC_CHANGE_GEOMETRY
+        )
+
+        config_task = mc2_nodes.physicsMC2BoneClothTask(
+            [(armature, "Parent")],
+            profile=replace(_profile(), gravity_direction=(0.0, -1.0, 0.0)),
+            connection_mode=1,
+        )[0]
+        assert config_task.task_id == task.task_id
+        context_before_config = geometry_slot.data["native_context"]
+        step_ms, write_ms = _new_bone_step(
+            world, config_task, settings, previous + 1, previous
+        )
+        config_rebuild_ms = step_ms + write_ms
+        previous += 1
+        config_slot = world.solver_slots[task.task_id]
+        assert config_slot.data["native_context"] is not context_before_config
+        assert context_before_config.inspect()["released"] is True
+        assert (
+            config_slot.data["last_static_change_mask"]
+            == mc2_native_flags.MC2_STATIC_CHANGE_CONFIG
+        )
+        task = config_task
         slot = world.solver_slots[task.task_id]
         native_info = slot.data["native_context"].inspect()
         return {
@@ -659,7 +709,8 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
             "case": case["name"],
             "particles": case["chains"] * case["chain_length"],
             "build_ms": build_ms,
-            "rebuild_ms": None,
+            "rebuild_ms": rebuild_ms,
+            "config_rebuild_ms": config_rebuild_ms,
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": None,
