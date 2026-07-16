@@ -18,6 +18,7 @@ namespace {
 using namespace py;
 
 constexpr const char* kCapsuleName = "hotools_native.MC2ContextV0";
+constexpr const char* kInteractionCapsuleName = "hotools_native.MC2InteractionV0";
 constexpr long kSchemaVersion = 0;
 constexpr Py_ssize_t kFloatCount = 47;
 constexpr Py_ssize_t kIntCount = 11;
@@ -66,6 +67,7 @@ constexpr Py_ssize_t kUseMaxDistance = 6;
 constexpr Py_ssize_t kUseBackstop = 7;
 constexpr Py_ssize_t kCollisionMode = 8;
 constexpr Py_ssize_t kSelfCollisionMode = 9;
+constexpr Py_ssize_t kSelfCollisionSyncMode = 10;
 constexpr float kFrictionMass = 3.0f;
 constexpr std::uint32_t kSelfFix0 = 0x04000000u;
 constexpr std::uint32_t kSelfAllFix = 0x20000000u;
@@ -207,6 +209,9 @@ struct Mc2ContextV0 {
     std::vector<float> self_primitive_aabb_min;
     std::vector<float> self_primitive_aabb_max;
     std::vector<float> self_primitive_thickness;
+    std::vector<std::int32_t> self_primitive_owner_indices;
+    std::vector<std::int32_t> self_owner_primary_group_bits;
+    std::vector<std::int32_t> self_owner_collided_by_groups;
     std::vector<std::int32_t> self_primitive_grids;
     std::vector<std::int32_t> self_grid_hashes;
     std::vector<std::int32_t> self_grid_starts;
@@ -272,8 +277,36 @@ struct Mc2ContextV0 {
     float center_blend_weight = 1.0f;
 };
 
+struct Mc2InteractionParticipantV0 {
+    Mc2ContextV0* context = nullptr;
+    std::int32_t primary_group_bit = 0;
+    std::int32_t collided_by_groups = 0;
+    std::size_t vertex_offset = 0;
+    std::size_t step_index = 0;
+};
+
+struct Mc2InteractionV0 {
+    Mc2ContextV0 aggregate;
+    std::vector<Mc2InteractionParticipantV0> participants;
+    std::vector<std::uintptr_t> scope_identity;
+    std::vector<float> old_positions;
+    std::int64_t scope_revision = 0;
+    std::int64_t step_count = 0;
+    std::int64_t pair_count = 0;
+    std::int64_t candidate_count = 0;
+    std::int64_t contact_count = 0;
+    std::int64_t intersect_record_count = 0;
+    bool released = false;
+};
+
 Mc2ContextV0* context_from(PyObject* object) {
     return static_cast<Mc2ContextV0*>(PyCapsule_GetPointer(object, kCapsuleName));
+}
+
+Mc2InteractionV0* interaction_from(PyObject* object) {
+    return static_cast<Mc2InteractionV0*>(
+        PyCapsule_GetPointer(object, kInteractionCapsuleName)
+    );
 }
 
 void release_resources(Mc2ContextV0& context) {
@@ -339,6 +372,9 @@ void release_resources(Mc2ContextV0& context) {
     context.self_primitive_aabb_min.clear();
     context.self_primitive_aabb_max.clear();
     context.self_primitive_thickness.clear();
+    context.self_primitive_owner_indices.clear();
+    context.self_owner_primary_group_bits.clear();
+    context.self_owner_collided_by_groups.clear();
     context.self_primitive_grids.clear();
     context.self_grid_hashes.clear();
     context.self_grid_starts.clear();
@@ -416,6 +452,35 @@ bool ensure_live(Mc2ContextV0* context) {
     }
     if (context->released) {
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 context has been released");
+        return false;
+    }
+    return true;
+}
+
+void release_interaction(Mc2InteractionV0& interaction) {
+    if (interaction.released) return;
+    interaction.participants.clear();
+    interaction.scope_identity.clear();
+    interaction.old_positions.clear();
+    interaction.aggregate = Mc2ContextV0 {};
+    interaction.aggregate.released = true;
+    interaction.released = true;
+}
+
+void destroy_interaction(PyObject* capsule) {
+    auto* interaction = interaction_from(capsule);
+    if (interaction == nullptr) {
+        PyErr_Clear();
+        return;
+    }
+    release_interaction(*interaction);
+    delete interaction;
+}
+
+bool ensure_live(Mc2InteractionV0* interaction) {
+    if (interaction == nullptr) return false;
+    if (interaction->released) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 interaction V0 has been released");
         return false;
     }
     return true;
@@ -2061,6 +2126,34 @@ void reorder_self_primitive_chunk(
     );
 }
 
+bool self_owner_pair_allowed(
+    const Mc2ContextV0& context,
+    std::size_t primitive0,
+    std::size_t primitive1
+) {
+    if (context.self_primitive_owner_indices.empty()) return true;
+    if (primitive0 >= context.self_primitive_owner_indices.size() ||
+        primitive1 >= context.self_primitive_owner_indices.size()) {
+        return false;
+    }
+    const auto owner0 = context.self_primitive_owner_indices[primitive0];
+    const auto owner1 = context.self_primitive_owner_indices[primitive1];
+    if (owner0 < 0 || owner1 < 0 || owner0 == owner1) return false;
+    const auto owner_count = context.self_owner_primary_group_bits.size();
+    if (static_cast<std::size_t>(owner0) >= owner_count ||
+        static_cast<std::size_t>(owner1) >= owner_count ||
+        context.self_owner_collided_by_groups.size() != owner_count) {
+        return false;
+    }
+    const auto mask0 = context.self_owner_collided_by_groups[owner0];
+    const auto mask1 = context.self_owner_collided_by_groups[owner1];
+    const bool allows0 = mask0 == 0 ||
+        (mask0 & context.self_owner_primary_group_bits[owner1]) != 0;
+    const bool allows1 = mask1 == 0 ||
+        (mask1 & context.self_owner_primary_group_bits[owner0]) != 0;
+    return allows0 && allows1;
+}
+
 bool update_self_collision_grid(Mc2ContextV0& context) {
     const auto primitive_count = context.self_primitive_flags.size();
     context.self_contact_candidates.clear();
@@ -2134,6 +2227,15 @@ bool update_self_collision_grid(Mc2ContextV0& context) {
         reorder_self_primitive_chunk(context.self_primitive_aabb_min, start, count, 3, order);
         reorder_self_primitive_chunk(context.self_primitive_aabb_max, start, count, 3, order);
         reorder_self_primitive_chunk(context.self_primitive_thickness, start, count, 1, order);
+        if (context.self_primitive_owner_indices.size() == primitive_count) {
+            reorder_self_primitive_chunk(
+                context.self_primitive_owner_indices,
+                start,
+                count,
+                1,
+                order
+            );
+        }
         reorder_self_primitive_chunk(context.self_primitive_grids, start, count, 3, order);
 
         struct GridRun {
@@ -2327,7 +2429,8 @@ void detect_self_collision_intersections_once(Mc2ContextV0& context) {
                     );
                     for (std::size_t triangle = run_start; triangle < run_end; ++triangle) {
                         const auto triangle_flag = context.self_primitive_flags[triangle];
-                        if (!self_aabbs_overlap(context, edge, triangle) ||
+                        if (!self_owner_pair_allowed(context, edge, triangle) ||
+                            !self_aabbs_overlap(context, edge, triangle) ||
                             (triangle_flag & kSelfIgnore) != 0u ||
                             ((edge_flag & kSelfAllFix) != 0u &&
                              (triangle_flag & kSelfAllFix) != 0u) ||
@@ -2480,7 +2583,8 @@ void update_self_collision_candidates(Mc2ContextV0& context) {
                         for (; target < run_end; ++target) {
                             if (duplicate_detection && primitive == target) continue;
                             const auto target_flag = context.self_primitive_flags[target];
-                            if (!self_aabbs_overlap(context, primitive, target) ||
+                            if (!self_owner_pair_allowed(context, primitive, target) ||
+                                !self_aabbs_overlap(context, primitive, target) ||
                                 (target_flag & kSelfIgnore) != 0u ||
                                 ((flag & kSelfAllFix) != 0u &&
                                  (target_flag & kSelfAllFix) != 0u) ||
@@ -3005,10 +3109,15 @@ void update_self_collision_primitives_once(
 ) {
     const auto primitive_count = context.self_primitive_flags.size();
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    const bool has_self_parameters =
+        context.int_values.size() == static_cast<std::size_t>(kIntCount);
+    const bool internal_self_enabled = has_self_parameters &&
+        context.int_values[kSelfCollisionMode] != 0;
+    const bool interaction_enabled = has_self_parameters &&
+        context.int_values[kSelfCollisionSyncMode] != 0;
     if (!context.self_collision_static_ready || primitive_count == 0 ||
         context.setup_kind == 2 ||
-        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
-        context.int_values[kSelfCollisionMode] == 0) {
+        (!internal_self_enabled && !interaction_enabled)) {
         context.self_primitive_dynamic_ready = false;
         context.self_grid_dynamic_ready = false;
         context.self_point_grid_count = 0;
@@ -3024,8 +3133,10 @@ void update_self_collision_primitives_once(
     if (context.self_primitive_dynamic_ready &&
         context.self_primitive_frame == context.frame &&
         context.self_primitive_generation == context.generation) {
-        update_self_collision_contacts(context, old_positions);
-        solve_self_collision_contacts(context);
+        if (internal_self_enabled) {
+            update_self_collision_contacts(context, old_positions);
+            solve_self_collision_contacts(context);
+        }
         return;
     }
     if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
@@ -3126,7 +3237,7 @@ void update_self_collision_primitives_once(
     context.self_primitive_generation = context.generation;
     context.self_primitive_dynamic_ready = true;
     ++context.self_primitive_update_count;
-    if (update_self_collision_grid(context)) {
+    if (update_self_collision_grid(context) && internal_self_enabled) {
         update_self_collision_candidates(context);
         build_self_collision_contacts(context, old_positions);
         solve_self_collision_contacts(context);
@@ -3268,6 +3379,271 @@ void commit_particle_post(Mc2ContextV0& context, float dt, const std::vector<flo
     view.particle_speed_limit = context.float_values[kParticleSpeedLimit] * context.scale_ratio;
     view.velocity_weight = context.velocity_weight;
     apply_post_step_mc2(view);
+}
+
+struct Mc2ContextStepStateV0 {
+    Mc2ContextV0* context = nullptr;
+    std::vector<float> previous_positions;
+    bool center_step_active = false;
+};
+
+bool begin_mc2_context_step(
+    Mc2ContextV0& context,
+    float dt,
+    float simulation_power_y,
+    float simulation_power_z,
+    float simulation_power_w,
+    Mc2ContextStepStateV0& state
+) {
+    state.context = &context;
+    state.center_step_active = context.center_dynamic_ready;
+    if (state.center_step_active && !evaluate_center_step(context, dt)) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
+        return false;
+    }
+    if (!context.proxy_static_ready) return true;
+    detect_self_collision_intersections_once(context);
+    state.previous_positions = context.state_positions;
+    if (!predict_particles(context, dt, simulation_power_z, state.center_step_active)) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
+        return false;
+    }
+    solve_tether_once(context);
+    solve_distance_once(context, simulation_power_y);
+    solve_angle_once(context, simulation_power_w);
+    solve_bending_once(context, simulation_power_y);
+    solve_point_collision_once(context);
+    solve_edge_collision_once(context);
+    solve_distance_once(context, simulation_power_y);
+    solve_motion_once(context);
+    update_self_collision_primitives_once(context, state.previous_positions);
+    return true;
+}
+
+void finish_mc2_context_step(
+    Mc2ContextStepStateV0& state,
+    float dt,
+    bool is_final_substep
+) {
+    auto& context = *state.context;
+    if (context.proxy_static_ready) {
+        commit_particle_post(context, dt, state.previous_positions);
+        if (is_final_substep) solve_self_collision_intersections_final(context);
+    }
+    if (state.center_step_active) {
+        context.center_old_world_position = context.center_now_world_position;
+        context.center_old_world_rotation = context.center_now_world_rotation;
+    }
+    context.bone_output_positions.clear();
+    context.bone_output_rotations.clear();
+    ++context.step_count;
+}
+
+void clear_interaction_scope_state(Mc2InteractionV0& interaction) {
+    interaction.aggregate = Mc2ContextV0 {};
+    interaction.participants.clear();
+    interaction.old_positions.clear();
+    interaction.pair_count = 0;
+    interaction.candidate_count = 0;
+    interaction.contact_count = 0;
+    interaction.intersect_record_count = 0;
+}
+
+bool interaction_scope_matches(
+    Mc2InteractionV0& interaction,
+    const std::vector<std::uintptr_t>& identity
+) {
+    if (interaction.scope_identity == identity) return true;
+    clear_interaction_scope_state(interaction);
+    interaction.scope_identity = identity;
+    ++interaction.scope_revision;
+    return false;
+}
+
+void append_interaction_primitives(
+    Mc2InteractionV0& interaction,
+    std::size_t kind
+) {
+    auto& aggregate = interaction.aggregate;
+    for (std::size_t owner = 0; owner < interaction.participants.size(); ++owner) {
+        const auto& participant = interaction.participants[owner];
+        const auto& context = *participant.context;
+        const std::array<std::size_t, 3> starts {
+            0,
+            static_cast<std::size_t>(context.self_point_primitive_count),
+            static_cast<std::size_t>(
+                context.self_point_primitive_count + context.self_edge_primitive_count
+            ),
+        };
+        const std::array<std::size_t, 3> counts {
+            static_cast<std::size_t>(context.self_point_primitive_count),
+            static_cast<std::size_t>(context.self_edge_primitive_count),
+            static_cast<std::size_t>(context.self_triangle_primitive_count),
+        };
+        const auto start = starts[kind];
+        const auto count = counts[kind];
+        for (std::size_t local = 0; local < count; ++local) {
+            const auto primitive = start + local;
+            aggregate.self_primitive_flags.push_back(
+                context.self_primitive_flags[primitive]
+            );
+            aggregate.self_primitive_depths.push_back(
+                context.self_primitive_depths[primitive]
+            );
+            aggregate.self_primitive_thickness.push_back(
+                context.self_primitive_thickness[primitive]
+            );
+            aggregate.self_primitive_owner_indices.push_back(
+                static_cast<std::int32_t>(owner)
+            );
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                const auto particle = context.self_particle_indices[primitive * 3 + axis];
+                aggregate.self_particle_indices.push_back(
+                    static_cast<std::int32_t>(participant.vertex_offset) + particle
+                );
+                aggregate.self_primitive_inverse_masses.push_back(
+                    context.self_primitive_inverse_masses[primitive * 3 + axis]
+                );
+                aggregate.self_primitive_aabb_min.push_back(
+                    context.self_primitive_aabb_min[primitive * 3 + axis]
+                );
+                aggregate.self_primitive_aabb_max.push_back(
+                    context.self_primitive_aabb_max[primitive * 3 + axis]
+                );
+            }
+        }
+    }
+}
+
+bool build_and_solve_interaction(
+    Mc2InteractionV0& interaction,
+    const std::vector<Mc2ContextStepStateV0>& states
+) {
+    auto& aggregate = interaction.aggregate;
+    aggregate.self_primitive_flags.clear();
+    aggregate.self_particle_indices.clear();
+    aggregate.self_primitive_depths.clear();
+    aggregate.self_primitive_inverse_masses.clear();
+    aggregate.self_primitive_aabb_min.clear();
+    aggregate.self_primitive_aabb_max.clear();
+    aggregate.self_primitive_thickness.clear();
+    aggregate.self_primitive_owner_indices.clear();
+    aggregate.self_owner_primary_group_bits.clear();
+    aggregate.self_owner_collided_by_groups.clear();
+    aggregate.state_positions.clear();
+    interaction.old_positions.clear();
+    aggregate.vertex_count = 0;
+    aggregate.self_max_primitive_size = 0.0f;
+
+    std::size_t vertex_offset = 0;
+    for (auto& participant : interaction.participants) {
+        participant.vertex_offset = vertex_offset;
+        auto& context = *participant.context;
+        const auto& previous_positions = states[participant.step_index].previous_positions;
+        aggregate.state_positions.insert(
+            aggregate.state_positions.end(),
+            context.state_positions.begin(),
+            context.state_positions.end()
+        );
+        interaction.old_positions.insert(
+            interaction.old_positions.end(),
+            previous_positions.begin(),
+            previous_positions.end()
+        );
+        aggregate.self_owner_primary_group_bits.push_back(
+            participant.primary_group_bit
+        );
+        aggregate.self_owner_collided_by_groups.push_back(
+            participant.collided_by_groups
+        );
+        aggregate.self_max_primitive_size = std::max(
+            aggregate.self_max_primitive_size,
+            context.self_max_primitive_size
+        );
+        vertex_offset += static_cast<std::size_t>(context.vertex_count);
+    }
+    aggregate.vertex_count = static_cast<std::int64_t>(vertex_offset);
+    aggregate.self_point_primitive_count = 0;
+    aggregate.self_edge_primitive_count = 0;
+    aggregate.self_triangle_primitive_count = 0;
+    for (const auto& participant : interaction.participants) {
+        aggregate.self_point_primitive_count +=
+            participant.context->self_point_primitive_count;
+        aggregate.self_edge_primitive_count +=
+            participant.context->self_edge_primitive_count;
+        aggregate.self_triangle_primitive_count +=
+            participant.context->self_triangle_primitive_count;
+    }
+    append_interaction_primitives(interaction, 0);
+    append_interaction_primitives(interaction, 1);
+    append_interaction_primitives(interaction, 2);
+    aggregate.self_grid_size = aggregate.self_max_primitive_size * 3.0f;
+    aggregate.self_collision_static_ready = true;
+    aggregate.self_primitive_dynamic_ready = true;
+    aggregate.setup_kind = 0;
+    aggregate.int_values.assign(static_cast<std::size_t>(kIntCount), 0);
+    aggregate.int_values[kSelfCollisionMode] = 2;
+    if (!interaction.participants.empty()) {
+        aggregate.frame = interaction.participants.front().context->frame;
+        aggregate.generation = interaction.participants.front().context->generation;
+    }
+    if (!update_self_collision_grid(aggregate)) {
+        clear_self_collision_contacts(aggregate);
+        interaction.candidate_count = 0;
+        interaction.contact_count = 0;
+        return false;
+    }
+    update_self_collision_candidates(aggregate);
+    build_self_collision_contacts(aggregate, interaction.old_positions);
+    solve_self_collision_contacts(aggregate);
+    interaction.candidate_count = static_cast<std::int64_t>(
+        aggregate.self_contact_candidates.size() / 3
+    );
+    interaction.contact_count = static_cast<std::int64_t>(
+        aggregate.self_contact_types.size()
+    );
+    for (const auto& participant : interaction.participants) {
+        auto& context = *participant.context;
+        const auto offset = participant.vertex_offset * 3;
+        std::copy_n(
+            aggregate.state_positions.data() + offset,
+            context.state_positions.size(),
+            context.state_positions.data()
+        );
+    }
+    return true;
+}
+
+void finish_interaction_intersections(Mc2InteractionV0& interaction) {
+    auto& aggregate = interaction.aggregate;
+    if (interaction.participants.empty()) return;
+    aggregate.state_positions.clear();
+    for (const auto& participant : interaction.participants) {
+        const auto& positions = participant.context->state_positions;
+        aggregate.state_positions.insert(
+            aggregate.state_positions.end(), positions.begin(), positions.end()
+        );
+    }
+    solve_self_collision_intersections_final(aggregate);
+    interaction.intersect_record_count = static_cast<std::int64_t>(
+        aggregate.self_intersect_records.size() / 5
+    );
+    if (!aggregate.self_intersect_flags_ready) return;
+    for (const auto& participant : interaction.participants) {
+        auto& context = *participant.context;
+        const auto count = static_cast<std::size_t>(context.vertex_count);
+        if (context.self_particle_intersect_flags.size() != count) {
+            context.self_particle_intersect_flags.assign(count, 0);
+        }
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            context.self_particle_intersect_flags[vertex] = static_cast<std::uint8_t>(
+                context.self_particle_intersect_flags[vertex] != 0 ||
+                aggregate.self_particle_intersect_flags[
+                    participant.vertex_offset + vertex
+                ] != 0
+            );
+        }
+    }
 }
 
 PyObject* inspect_context(const Mc2ContextV0& context) {
@@ -3439,6 +3815,307 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
 }
 
 }  // namespace
+
+PyObject* mc2_interaction_v0_create(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_create expects 1 argument");
+        return nullptr;
+    }
+    const long schema = as_long(PyTuple_GET_ITEM(args, 0), "schema_version");
+    if (PyErr_Occurred()) return nullptr;
+    if (schema != kSchemaVersion) {
+        PyErr_SetString(PyExc_ValueError, "unsupported MC2 interaction schema version");
+        return nullptr;
+    }
+    auto* interaction = new Mc2InteractionV0();
+    PyObject* capsule = PyCapsule_New(
+        interaction,
+        kInteractionCapsuleName,
+        destroy_interaction
+    );
+    if (capsule == nullptr) {
+        delete interaction;
+        return nullptr;
+    }
+    return capsule;
+}
+
+PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_inspect expects 1 argument");
+        return nullptr;
+    }
+    auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(interaction)) return nullptr;
+    const auto& aggregate = interaction->aggregate;
+    const std::int64_t estimated_bytes = static_cast<std::int64_t>(
+        aggregate.state_positions.size() * sizeof(float) +
+        interaction->old_positions.size() * sizeof(float) +
+        aggregate.self_primitive_flags.size() * sizeof(std::uint32_t) +
+        aggregate.self_particle_indices.size() * sizeof(std::int32_t) +
+        aggregate.self_primitive_depths.size() * sizeof(float) +
+        aggregate.self_primitive_inverse_masses.size() * sizeof(float) +
+        aggregate.self_primitive_aabb_min.size() * sizeof(float) +
+        aggregate.self_primitive_aabb_max.size() * sizeof(float) +
+        aggregate.self_primitive_thickness.size() * sizeof(float) +
+        aggregate.self_primitive_owner_indices.size() * sizeof(std::int32_t) +
+        aggregate.self_primitive_grids.size() * sizeof(std::int32_t) +
+        aggregate.self_grid_hashes.size() * sizeof(std::int32_t) +
+        aggregate.self_grid_starts.size() * sizeof(std::int32_t) +
+        aggregate.self_grid_counts.size() * sizeof(std::int32_t) +
+        aggregate.self_contact_candidates.size() * sizeof(std::int32_t) +
+        aggregate.self_contact_primitive_indices.size() * sizeof(std::int32_t) +
+        aggregate.self_contact_types.size() * sizeof(std::int32_t) +
+        aggregate.self_contact_enabled.size() * sizeof(std::uint8_t) +
+        aggregate.self_contact_thickness.size() * sizeof(float) +
+        aggregate.self_contact_s.size() * sizeof(float) +
+        aggregate.self_contact_t.size() * sizeof(float) +
+        aggregate.self_contact_normals.size() * sizeof(float) +
+        aggregate.self_intersect_records.size() * sizeof(std::int32_t) +
+        aggregate.self_particle_intersect_flags.size() * sizeof(std::uint8_t)
+    );
+    PyObject* result = PyDict_New();
+    if (result == nullptr) return nullptr;
+    if (!dict_string(result, "schema", "mc2_interaction_v0") ||
+        !dict_i64(result, "schema_version", kSchemaVersion) ||
+        !dict_i64(result, "scope_revision", interaction->scope_revision) ||
+        !dict_i64(result, "step_count", interaction->step_count) ||
+        !dict_i64(
+            result,
+            "participant_count",
+            static_cast<std::int64_t>(interaction->participants.size())
+        ) ||
+        !dict_i64(result, "pair_count", interaction->pair_count) ||
+        !dict_i64(result, "vertex_count", interaction->aggregate.vertex_count) ||
+        !dict_i64(
+            result,
+            "primitive_count",
+            static_cast<std::int64_t>(
+                interaction->aggregate.self_primitive_flags.size()
+            )
+        ) ||
+        !dict_i64(result, "candidate_count", interaction->candidate_count) ||
+        !dict_i64(result, "contact_count", interaction->contact_count) ||
+        !dict_i64(
+            result,
+            "grid_count",
+            aggregate.self_point_grid_count +
+                aggregate.self_edge_grid_count +
+                aggregate.self_triangle_grid_count
+        ) ||
+        !dict_i64(result, "estimated_bytes", estimated_bytes) ||
+        !dict_i64(
+            result,
+            "intersect_record_count",
+            interaction->intersect_record_count
+        ) ||
+        !dict_bool(result, "released", interaction->released)) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    return result;
+}
+
+PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 9) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_step_group expects 9 arguments");
+        return nullptr;
+    }
+    auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(interaction)) return nullptr;
+    PyObject* context_sequence = PySequence_Fast(
+        PyTuple_GET_ITEM(args, 1), "contexts must be a sequence"
+    );
+    PyObject* group_sequence = PySequence_Fast(
+        PyTuple_GET_ITEM(args, 2), "primary_group_bits must be a sequence"
+    );
+    PyObject* mask_sequence = PySequence_Fast(
+        PyTuple_GET_ITEM(args, 3), "collided_by_groups must be a sequence"
+    );
+    if (context_sequence == nullptr || group_sequence == nullptr || mask_sequence == nullptr) {
+        Py_XDECREF(context_sequence);
+        Py_XDECREF(group_sequence);
+        Py_XDECREF(mask_sequence);
+        return nullptr;
+    }
+    const auto count = PySequence_Fast_GET_SIZE(context_sequence);
+    if (PySequence_Fast_GET_SIZE(group_sequence) != count ||
+        PySequence_Fast_GET_SIZE(mask_sequence) != count) {
+        Py_DECREF(context_sequence);
+        Py_DECREF(group_sequence);
+        Py_DECREF(mask_sequence);
+        PyErr_SetString(PyExc_ValueError, "interaction metadata length mismatch");
+        return nullptr;
+    }
+    const double dt = as_double(PyTuple_GET_ITEM(args, 4), "dt");
+    const double simulation_power_y = as_double(
+        PyTuple_GET_ITEM(args, 5), "simulation_power_y"
+    );
+    const double simulation_power_z = as_double(
+        PyTuple_GET_ITEM(args, 6), "simulation_power_z"
+    );
+    const double simulation_power_w = as_double(
+        PyTuple_GET_ITEM(args, 7), "simulation_power_w"
+    );
+    const int final_substep_value = PyObject_IsTrue(PyTuple_GET_ITEM(args, 8));
+    if (PyErr_Occurred() || final_substep_value < 0 ||
+        !std::isfinite(dt) || dt < 0.0 ||
+        !std::isfinite(simulation_power_y) || simulation_power_y < 0.0 ||
+        !std::isfinite(simulation_power_z) || simulation_power_z < 0.0 ||
+        !std::isfinite(simulation_power_w) || simulation_power_w < 0.0) {
+        Py_DECREF(context_sequence);
+        Py_DECREF(group_sequence);
+        Py_DECREF(mask_sequence);
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "dt and simulation powers must be finite and non-negative"
+            );
+        }
+        return nullptr;
+    }
+    if (dt <= kMc2Epsilon) {
+        Py_DECREF(context_sequence);
+        Py_DECREF(group_sequence);
+        Py_DECREF(mask_sequence);
+        Py_RETURN_NONE;
+    }
+
+    std::vector<Mc2ContextV0*> contexts;
+    std::vector<std::int32_t> primary_group_bits;
+    std::vector<std::int32_t> collided_by_groups;
+    std::vector<std::uintptr_t> scope_identity;
+    contexts.reserve(static_cast<std::size_t>(count));
+    primary_group_bits.reserve(static_cast<std::size_t>(count));
+    collided_by_groups.reserve(static_cast<std::size_t>(count));
+    for (Py_ssize_t index = 0; index < count; ++index) {
+        auto* context = context_from(PySequence_Fast_GET_ITEM(context_sequence, index));
+        if (!ensure_live(context)) {
+            Py_DECREF(context_sequence);
+            Py_DECREF(group_sequence);
+            Py_DECREF(mask_sequence);
+            return nullptr;
+        }
+        if (!context->parameters_ready || !context->dynamic_ready || !context->initialized) {
+            Py_DECREF(context_sequence);
+            Py_DECREF(group_sequence);
+            Py_DECREF(mask_sequence);
+            PyErr_SetString(PyExc_RuntimeError, "MC2 V0 context is not ready to step");
+            return nullptr;
+        }
+        const long group_bit = as_long(
+            PySequence_Fast_GET_ITEM(group_sequence, index),
+            "primary_group_bit"
+        );
+        const long mask = as_long(
+            PySequence_Fast_GET_ITEM(mask_sequence, index),
+            "collided_by_groups"
+        );
+        if (PyErr_Occurred() || group_bit <= 0 || group_bit > 0x8000 ||
+            (group_bit & (group_bit - 1)) != 0 || mask < 0 || mask > 0xFFFF) {
+            Py_DECREF(context_sequence);
+            Py_DECREF(group_sequence);
+            Py_DECREF(mask_sequence);
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_ValueError, "invalid MC2 interaction group metadata");
+            }
+            return nullptr;
+        }
+        contexts.push_back(context);
+        primary_group_bits.push_back(static_cast<std::int32_t>(group_bit));
+        collided_by_groups.push_back(static_cast<std::int32_t>(mask));
+        const bool interactive = context->setup_kind == 0 &&
+            context->int_values.size() == static_cast<std::size_t>(kIntCount) &&
+            context->int_values[kSelfCollisionSyncMode] != 0;
+        if (interactive) {
+            scope_identity.push_back(reinterpret_cast<std::uintptr_t>(context));
+            scope_identity.push_back(static_cast<std::uintptr_t>(group_bit));
+            scope_identity.push_back(static_cast<std::uintptr_t>(mask));
+        }
+    }
+    Py_DECREF(context_sequence);
+    Py_DECREF(group_sequence);
+    Py_DECREF(mask_sequence);
+
+    const bool same_scope = interaction_scope_matches(*interaction, scope_identity);
+    if (same_scope && !interaction->participants.empty() &&
+        interaction->aggregate.self_grid_dynamic_ready) {
+        interaction->aggregate.frame = interaction->participants.front().context->frame;
+        interaction->aggregate.generation =
+            interaction->participants.front().context->generation;
+        detect_self_collision_intersections_once(interaction->aggregate);
+    }
+
+    std::vector<Mc2ContextStepStateV0> states(contexts.size());
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+        if (!begin_mc2_context_step(
+                *contexts[index],
+                static_cast<float>(dt),
+                static_cast<float>(simulation_power_y),
+                static_cast<float>(simulation_power_z),
+                static_cast<float>(simulation_power_w),
+                states[index])) {
+            return nullptr;
+        }
+    }
+
+    interaction->participants.clear();
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+        auto* context = contexts[index];
+        const bool interactive = context->setup_kind == 0 &&
+            context->int_values.size() == static_cast<std::size_t>(kIntCount) &&
+            context->int_values[kSelfCollisionSyncMode] != 0 &&
+            context->self_primitive_dynamic_ready;
+        if (!interactive) continue;
+        interaction->participants.push_back(Mc2InteractionParticipantV0 {
+            context,
+            primary_group_bits[index],
+            collided_by_groups[index],
+            0,
+            index,
+        });
+    }
+    interaction->pair_count = 0;
+    for (std::size_t left = 0; left < interaction->participants.size(); ++left) {
+        for (std::size_t right = left + 1; right < interaction->participants.size(); ++right) {
+            const auto& a = interaction->participants[left];
+            const auto& b = interaction->participants[right];
+            const bool allows_a = a.collided_by_groups == 0 ||
+                (a.collided_by_groups & b.primary_group_bit) != 0;
+            const bool allows_b = b.collided_by_groups == 0 ||
+                (b.collided_by_groups & a.primary_group_bit) != 0;
+            if (allows_a && allows_b) ++interaction->pair_count;
+        }
+    }
+    if (interaction->participants.size() >= 2) {
+        build_and_solve_interaction(*interaction, states);
+    } else {
+        interaction->candidate_count = 0;
+        interaction->contact_count = 0;
+        interaction->intersect_record_count = 0;
+    }
+
+    const bool is_final_substep = final_substep_value != 0;
+    for (auto& state : states) {
+        finish_mc2_context_step(state, static_cast<float>(dt), is_final_substep);
+    }
+    if (is_final_substep && interaction->participants.size() >= 2) {
+        finish_interaction_intersections(*interaction);
+    }
+    ++interaction->step_count;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_interaction_v0_free(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_free expects 1 argument");
+        return nullptr;
+    }
+    auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
+    if (interaction == nullptr) return nullptr;
+    release_interaction(*interaction);
+    Py_RETURN_NONE;
+}
 
 PyObject* mc2_context_v0_create(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 2) {
@@ -4773,43 +5450,17 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         return nullptr;
     }
     if (dt <= kMc2Epsilon) Py_RETURN_NONE;
-    const bool center_step_active = context->center_dynamic_ready;
-    if (center_step_active && !evaluate_center_step(*context, static_cast<float>(dt))) {
-        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
+    Mc2ContextStepStateV0 state;
+    if (!begin_mc2_context_step(
+            *context,
+            static_cast<float>(dt),
+            static_cast<float>(simulation_power_y),
+            static_cast<float>(simulation_power_z),
+            static_cast<float>(simulation_power_w),
+            state)) {
         return nullptr;
     }
-    if (context->proxy_static_ready) {
-        detect_self_collision_intersections_once(*context);
-        const auto previous_positions = context->state_positions;
-        if (!predict_particles(
-                *context,
-                static_cast<float>(dt),
-                static_cast<float>(simulation_power_z),
-                center_step_active)) {
-            PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
-            return nullptr;
-        }
-        solve_tether_once(*context);
-        solve_distance_once(*context, static_cast<float>(simulation_power_y));
-        solve_angle_once(*context, static_cast<float>(simulation_power_w));
-        solve_bending_once(*context, static_cast<float>(simulation_power_y));
-        solve_point_collision_once(*context);
-        solve_edge_collision_once(*context);
-        solve_distance_once(*context, static_cast<float>(simulation_power_y));
-        solve_motion_once(*context);
-        update_self_collision_primitives_once(*context, previous_positions);
-        commit_particle_post(*context, static_cast<float>(dt), previous_positions);
-        if (is_final_substep) {
-            solve_self_collision_intersections_final(*context);
-        }
-    }
-    if (center_step_active) {
-        context->center_old_world_position = context->center_now_world_position;
-        context->center_old_world_rotation = context->center_now_world_rotation;
-    }
-    context->bone_output_positions.clear();
-    context->bone_output_rotations.clear();
-    ++context->step_count;
+    finish_mc2_context_step(state, static_cast<float>(dt), is_final_substep);
     Py_RETURN_NONE;
 }
 

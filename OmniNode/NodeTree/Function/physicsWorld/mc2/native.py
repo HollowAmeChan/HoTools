@@ -31,8 +31,13 @@ from .static_data import pack_mc2_baseline_static, pack_mc2_proxy_static
 
 
 MC2_NATIVE_CONTEXT_SCHEMA_VERSION = 0
+MC2_INTERACTION_RESOURCE_KEY = "mc2_interaction_v0"
 _NATIVE_MODULE = None
 _REQUIRED_SYMBOLS = (
+    "mc2_interaction_v0_create",
+    "mc2_interaction_v0_inspect",
+    "mc2_interaction_v0_step_group",
+    "mc2_interaction_v0_free",
     "mc2_context_v0_create",
     "mc2_context_v0_inspect",
     "mc2_context_v0_update_proxy_static",
@@ -579,9 +584,108 @@ class MC2NativeContextV0:
             raise RuntimeError("MC2 native context owner has been disposed")
 
 
+class MC2NativeInteractionV0:
+    """World-owned coordinator for lockstep MC2 context interaction."""
+
+    def __init__(self, *, module=None) -> None:
+        self._module = native_module() if module is None else module
+        if not all(hasattr(self._module, name) for name in _REQUIRED_SYMBOLS):
+            raise RuntimeError("hotools_native is missing MC2 interaction V0 symbols")
+        self._handle = self._module.mc2_interaction_v0_create(
+            MC2_NATIVE_CONTEXT_SCHEMA_VERSION
+        )
+        if self._handle is None:
+            raise RuntimeError("mc2_interaction_v0_create returned None")
+
+    @property
+    def disposed(self) -> bool:
+        return self._handle is None
+
+    def step_group(
+        self,
+        contexts,
+        primary_group_bits,
+        collided_by_groups,
+        dt: float,
+        *,
+        is_final_substep: bool = True,
+    ) -> None:
+        self._ensure_live()
+        contexts = tuple(contexts)
+        primary_group_bits = tuple(int(value) for value in primary_group_bits)
+        collided_by_groups = tuple(int(value) for value in collided_by_groups)
+        if len(primary_group_bits) != len(contexts) or len(collided_by_groups) != len(contexts):
+            raise ValueError("MC2 interaction metadata length mismatch")
+        for context in contexts:
+            if not isinstance(context, MC2NativeContextV0):
+                raise TypeError("contexts must contain MC2NativeContextV0 values")
+            context._ensure_live()
+        dt = float(dt)
+        for context in contexts:
+            if context._center_step_dt is not None and not math.isclose(
+                dt,
+                context._center_step_dt,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            ):
+                raise ValueError(
+                    "Center step simulation_delta_time does not match native group step dt"
+                )
+        frequency_ratio = 90.0 * dt
+        simulation_power_z = (
+            math.pow(frequency_ratio, 0.3)
+            if frequency_ratio > 1.0
+            else frequency_ratio
+        )
+        simulation_power_y = (
+            math.sqrt(frequency_ratio)
+            if frequency_ratio > 1.0
+            else frequency_ratio
+        )
+        simulation_power_w = math.pow(frequency_ratio, 1.8)
+        self._module.mc2_interaction_v0_step_group(
+            self._handle,
+            tuple(context._handle for context in contexts),
+            primary_group_bits,
+            collided_by_groups,
+            dt,
+            simulation_power_y,
+            simulation_power_z,
+            simulation_power_w,
+            bool(is_final_substep),
+        )
+        for context in contexts:
+            context._center_step_dt = None
+
+    def inspect(self) -> dict:
+        if self._handle is None:
+            return {
+                "schema": "mc2_interaction_v0",
+                "schema_version": MC2_NATIVE_CONTEXT_SCHEMA_VERSION,
+                "released": True,
+            }
+        return dict(self._module.mc2_interaction_v0_inspect(self._handle))
+
+    def dispose(self) -> None:
+        if self._handle is not None:
+            try:
+                self._module.mc2_interaction_v0_free(self._handle)
+            finally:
+                self._handle = None
+
+    def omni_cache_dispose(self, _reason: str = "") -> None:
+        self.dispose()
+
+    def _ensure_live(self) -> None:
+        if self._handle is None:
+            raise RuntimeError("MC2 native interaction owner has been disposed")
+
+
 __all__ = [
+    "MC2_INTERACTION_RESOURCE_KEY",
     "MC2_NATIVE_CONTEXT_SCHEMA_VERSION",
     "MC2NativeContextV0",
+    "MC2NativeInteractionV0",
     "is_available",
     "native_module",
 ]

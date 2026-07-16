@@ -756,6 +756,14 @@ NB_MODULE(hotools_native, m) {
             Py_DECREF(r);
         }, nb::arg("handle"), "Release MC2 MeshCloth native context resources.");
     // ---- New Physics World MC2 context V0 (isolated from the legacy full-core context) ----
+    m.def("mc2_interaction_v0_create",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_interaction_v0_create(nullptr, a.ptr())); });
+    m.def("mc2_interaction_v0_inspect",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_interaction_v0_inspect(nullptr, a.ptr())); });
+    m.def("mc2_interaction_v0_step_group",
+        [](nb::args a) { call_legacy(hotools::mc2_interaction_v0_step_group, a); });
+    m.def("mc2_interaction_v0_free",
+        [](nb::args a) { call_legacy(hotools::mc2_interaction_v0_free, a); });
     m.def("mc2_context_v0_create",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_create(nullptr, a.ptr())); });
     m.def("mc2_context_v0_inspect",

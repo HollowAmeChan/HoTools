@@ -208,11 +208,13 @@ Center数据必须分域：
 
 ### 跨物体 Self Collision 与半径冲突
 
-- 当前V0的primitive、grid、candidate、contact与intersect都由单个MC2 slot/context持有；`self_collision_sync_mode`存在于authoring/N2参数，但没有多cloth ownership、partner identity或生产调度consumer，不能据此宣称inter-cloth已实现。
-- 跨物体scope有两个主要候选产品模型：同一world内所有启用self collision的mesh自动加入交互，或由solver/task显式接收`List[Object]`伙伴列表。前者操作简单但pair数量、无关对象耦合和动态加入成本可能更高；后者可控但节点authoring和identity/rebuild更复杂。如果统一global broadphase可行但仍需分区，优先评估复用group/mask，而不是把大量对象引用塞进节点。必须用相同多cloth资产比较pair生成、broadphase、contact、内存与帧耗时后再冻结。
-- DEV-12使solver orchestration在一次调用中已知全部active task identity，但现有self arrays仍分散在per-task context。自动互碰能否更快取决于是否建立一次集中式跨task broadphase；仅在Python层两两调用task context不会自动获得全局模型的性能优势。
-- 普通`radius`当前生成粒子对外部Point/Edge collider的接触半径；`self_collision_thickness`生成self primitive/contact thickness。它们在现有kernel中不是同一consumer，不能直接称为重复参数。
-- 产品authoring已经用“基础数值 × 顶点组”表达Mesh半径，因此继续独立暴露self thickness会形成双半径真值和debug歧义。必须比较三种方案：统一为同一半径场、从普通半径派生self thickness、保留独立self场；用外部collider完全替代self primitive也必须证明能覆盖EE/PT、intersect history和跨cloth接触，不能只因UI更少就替换。
+- 产品scope冻结为MeshCloth profile上的“跨物体自碰撞”开关：开启的active task自动加入同一world交互，不暴露`List[Object]`/ListObj socket。零group mask表示自动允许全部；非零mask复用公共1..16碰撞组并要求双方互相允许，因此仍可做可控分区。
+- solver先同步全部task slot/context，再按相同substep dt/final gate锁步推进。每个task仍独占持久particle/self状态；world-owned `MC2InteractionV0`只在Motion之后、Post之前按owner拼接动态primitive，执行一次跨task grid/broadphase、EE/PT contact、4轮solve/sum和跨帧intersect，再把位置与intersect flag散回原context。相同owner永远由本地self阶段处理，聚合层不重复求解。
+- scope identity由排序后的task identity、primary group和mask组成；动态加入、移除或分区变化清聚合contact/intersect history并增加scope revision，不销毁未变化的task context。只有sync开关开启、内部self关闭的Mesh仍更新primitive，但不构建本地contact。
+- 四个10×10 cloth、400 vertices/2092 primitives基准中，自动全互碰与显式all-pairs图均为6 pairs、峰值14607 candidates/14223 contacts、约194096 bytes聚合buffer；自动mean 0.675ms/p95 0.858ms，ListObj-like all-pairs mean 0.685ms/p95 0.875ms并额外消耗约0.0045ms Python identity resolver。两者物理pair相同，ListObj没有数值或性能收益；稀疏图已由group/mask表达。4→3→4动态scope revision为1→2→3，实测重建帧约3.11/2.17/3.05ms。
+- source模式继续保留独立`self_collision_thickness`以维持固定MC2 oracle；HoTools公开Mesh产品只有`radius × 顶点组`一个authoring真值，自碰厚度固定派生为`radius * 0.25`，公开Particle Profile不再暴露第二厚度/曲线输入。
+- 18×18双层grid、3606 primitives基准中，source thickness 0.005与`radius 0.02 * 0.25`候选/接触完全相同（4932/3776），多次运行mean约1.1..1.3ms；直接把0.02 radius当self thickness会增至187385 candidates、146893 contacts和约24.1..24.3ms。因此不能直接合并为同数值半径。
+- 外部collider只消费普通particle radius，不能覆盖self的Edge-Edge、Point-Triangle和跨帧intersection；不得用“把其它cloth转碰撞体”替代world self interaction。debug必须把普通半径与派生self envelope并列显示并标注固定比例，但不制造第二authoring字段。
 
 self collision是primitive、grid、broadphase、EE/PT narrowphase、half contact、4轮solve/sum、跨帧intersect和cache生命周期的整体。sync/inter-cloth还需要多体ownership、质量汇总和调度，不能把另一张mesh转成sphere列表替代。
 

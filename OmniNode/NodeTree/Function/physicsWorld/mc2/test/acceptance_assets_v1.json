@@ -120,6 +120,29 @@
       ]
     },
     {
+      "id": "mesh_cloth_world_self_interaction",
+      "setup_types": ["mesh_cloth"],
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_interaction_v0.py",
+      "production_surface": [
+        "one public solver step synchronizes every active task",
+        "profile plus task component identity with per-task native context",
+        "world-owned lockstep interaction broadphase/contact/intersection",
+        "automatic switch scope with shared group-mask partition"
+      ],
+      "expected": [
+        "cross-owner EE/PT contacts are solved before task Post",
+        "cross-frame intersection history reaches source task contexts",
+        "dynamic remove and restore rebuild only interaction scope",
+        "production step publishes one result per task after group stepping"
+      ],
+      "rejection_boundaries": [
+        "sync-disabled Mesh tasks do not participate",
+        "non-mutual group masks reject the pair",
+        "BoneCloth and BoneSpring never enter Mesh world interaction",
+        "no ListObj or explicit partner socket is accepted"
+      ]
+    },
+    {
       "id": "component_transform_rejections",
       "setup_types": ["mesh_cloth", "bone_cloth", "bone_spring"],
       "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_component_transform.py",

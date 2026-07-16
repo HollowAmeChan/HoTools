@@ -4,6 +4,11 @@
 
 namespace hotools {
 
+PyObject* mc2_interaction_v0_create(PyObject*, PyObject* args);
+PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args);
+PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args);
+PyObject* mc2_interaction_v0_free(PyObject*, PyObject* args);
+
 PyObject* mc2_context_v0_create(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_inspect(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args);

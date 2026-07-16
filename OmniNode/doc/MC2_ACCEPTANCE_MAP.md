@@ -60,18 +60,18 @@
 | K-03 | Self primitive/grid/hash/broadphase | 限定域对齐 | raw/Tier A static + py313 hash/candidate + Blender 5.1 | 单 cloth FullMesh 域 | 否 |
 | K-04 | Self EE/PT contact、4轮 solve/sum | 限定域对齐 | half contact、手算 fixed-point、后续 substep fixtures | 单 cloth FullMesh 域 | 否 |
 | K-05 | Self 跨帧 Intersect | 限定域对齐 | py313 三帧反馈 + Blender 5.1 final-substep gate | 单 cloth、固定分片调度 | 否 |
-| K-06 | 跨物体self collision scope | 待审计 | 单次solver step可见全部active tasks，但当前primitive/contact仍归各task context且只闭环单cloth；sync参数尚无生产consumer | 比较集中式跨task broadphase的自动互碰、显式ListObj partner graph及必要时group/mask分区，冻结pair ownership、动态增删、调度和节点API | 是 |
-| K-07 | 普通碰撞半径与self thickness产品模型 | 待审计 | 普通`radius`当前服务外部collider接触；`self_collision_thickness`服务self primitive/contact，二者consumer不同 | 审计双半径是否必要、是否派生自同一顶点组+数值半径、能否合并或由collider替代；以物理覆盖、性能和debug可读性决定 | 是 |
+| K-06 | 跨物体self collision scope | 完全对齐 | 单一solver step先同步全部active task slot，再由world-owned interaction context锁步执行跨owner grid/broadphase、EE/PT、4轮solve与跨帧intersect；Blender raw/生产验收覆盖自动scope、group/mask、动态增删和dispose | 产品节点只暴露开关；零mask自动全互碰，非零mask双方握手分区，不暴露ListObj。4 cloth自动与显式all-pairs有相同14607峰值candidate/14223 contact，自动mean 0.675ms且无Python partner resolver | 否 |
+| K-07 | 普通碰撞半径与self thickness产品模型 | 完全对齐 | source模式保留独立thickness oracle；公开Mesh产品移除第二厚度/曲线输入，固定从唯一`radius × 顶点组`派生`radius * 0.25` | 3606 primitive双层grid中派生0.005与source候选/接触完全相同且约1.1..1.3ms；直接复用0.02 radius约24.1..24.3ms。外部collider不能覆盖EE/PT/intersect，因此不替代self primitive | 否 |
 | O-01 | Mesh result transaction 与 GN writeback | 完全对齐 | candidate/envelope、发布回滚、拓扑失败恢复、Blender 5.1 | 无 | 否 |
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component及同Armature多component合并 Blender 5.1 | component骨名必须不重叠；同目标按全部target pose重算parent-local plan并一次写回 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
 | D-01 | 全隐式中间态debug | 待审计 | 当前`mc2/debug.py`仅`framework_only`；slot有摘要，native已有部分self readback但未形成完整viewport链 | 对齐SpringBone VRM的request-driven next-frame capture；覆盖连接、约束、碰撞/自碰、teleport、变换抵消、Center和writeback，且无请求时零readback | 是 |
 | P-01 | V1-R 直接 oracle 闭环 | 完全对齐 | static/runtime主体及Distance/Tether/Angle/Motion direct runtime均有Tier A | 无 | 否 |
-| P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1五脚本门禁，覆盖六资产/三setup | Mesh、Bone source Line、BoneCloth产品链、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
+| P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1六脚本门禁，覆盖七资产/三setup | Mesh、跨物体self、Bone source Line、BoneCloth产品链、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
 | P-03 | 新链路混合 soak 与绝对性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms；这里只证明新链路稳定且低于自身ceiling，不代表优于旧实现 | 否 |
 | P-04 | 旧产品语义与新实现替代审计 | 完全对齐 | profile+task component、全量prepare/失败原子性、per-task context、HoTools链组产品拓扑、同Armature多component合并写回及Blender 5.1生产fixture | 跨物体self collision与半径模型分别由K-06/K-07决策；隐式可视化由D-01关闭，不再回退产品语义 | 否 |
 | P-05 | 新实现生产可达性、代码与math审计 | 待审计 | 代表性资产和soak证明主链可运行；当前Python模块存在大量参数转发、过细职责和重复/同名math包装候选 | 逐功能区核对真实入口、状态所有权、异常/释放、死代码；在不改变行为前提下合并垃圾转发、文件碎片和重复helper，并证明生产结果不变 | 是 |
-| P-06 | 新旧性能对比与C++边界审计 | 待审计 | 只有新实现绝对耗时baseline | 同资产同配置比较构建、逐帧各阶段、debug开销、内存与分配；加入跨物体self collision两种scope原型，证明不退化且有明确优势，按实测决定Python批量化或C++迁移 | 是 |
+| P-06 | 新旧性能对比与C++边界审计 | 待审计 | 新链绝对soak与K-06自动/ListObj-like scope对比已有基线；尚缺旧HoTools同资产总体对照和逐阶段拆分 | 同资产同配置比较构建、逐帧各阶段、debug开销、内存与分配；证明总体不退化且有明确优势，按实测完成剩余Python批量化或C++迁移决定 | 是 |
 | P-07 | 文件与ABI独立化 | 待审计 | 新Physics World Python路径当前未直接import旧package，但旧节点仍注册，旧native ABI及测试仍共存 | 新生产链、测试和构建对待删除package/context/公开ABI零依赖；共享kernel必须转为新owner而非悬挂在旧接口下 | 是 |
 | P-08 | 替代资格总门禁 | 待审计 | P-01..P-03只证明source主体、新资产门禁和新链soak | P-04..P-07、K-06/K-07和D-01全部关闭，并形成“产品语义可替代、交互模型清晰、debug可观测、性能有优势、架构可维护、允许删除”的明确结论 | 是 |
 | P-09 | 旧 MC2 路径删除 | 产品收尾 | 尚未准入删除 | 仅在P-08放行后独立删除旧节点/package/full-core/context/shadow pipeline；删除后全门禁通过 | 是 |
@@ -81,16 +81,15 @@
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak及BoneCloth产品语义已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **跨物体self collision与半径模型、全隐式debug、完整代码/运行链与纯整理、新旧性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision和单一半径authoring模型已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **全隐式debug、完整代码/运行链与纯整理、新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `K-06/K-07`：决定跨物体self collision scope及统一、派生或分离的半径模型。
-2. `D-01`：完成与SpringBone VRM同型、但分层更丰富的全隐式中间态debug。
-3. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
-4. `P-06`：新旧同场性能、自碰撞scope原型及Python/C++边界决策。
-5. `P-07/P-08`：文件级独立化与替代资格总门禁。
-6. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
+1. `D-01`：完成与SpringBone VRM同型、但分层更丰富的全隐式中间态debug。
+2. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
+3. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope原型结果作为已冻结输入。
+4. `P-07/P-08`：文件级独立化与替代资格总门禁。
+5. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
 
 ## 更新规则
 

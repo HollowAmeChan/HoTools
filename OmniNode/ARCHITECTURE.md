@@ -393,11 +393,12 @@ Python 侧职责：
 统一 MC2 的 Python 侧分层约定：
 
 - `physicsWorld/mc2/` 只有一个 solver identity；MeshCloth、BoneCloth、BoneSpring 位于 `setups/`，不建立 Python/C++ 平行节点或 backend selector。
-- MC2只有一个公开solver step；一次调用规整并处理全部active tasks。MC2 component不映射为独立节点/step，而映射为粒子参数profile与task的组合；task各自拥有slot/native context，prepare全通过后才进入一次world写事务和统一result transaction。
+- MC2只有一个公开solver step；一次调用规整全部active tasks、先同步所有slot，再按substep批量推进，最后统一readback/result transaction。MC2 component不映射为独立节点/step，而映射为粒子参数profile与task的组合；task各自拥有slot/native context，prepare全通过后才进入world写事务。
 - setup adapter 负责 Blender authoring/frame snapshot、静态 builder 输入和结果目标映射；它不拥有 solver 时间或第二套粒子状态。
 - `physicsWorld/mc2/solver.py` 负责 slot/context 生命周期、frame policy、native 调用和 result publication，不直接写 Blender。
 - native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 在替代资格门禁关闭前只作产品语义、性能和依赖审计输入，取得准入后再独立删除。
-- MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag都属于slot-owned native context；sync/inter-cloth需要独立ownership和多体调度，不能借外部collider表达。
+- 单task MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag属于slot-owned native context；跨物体阶段由`world.backend_resources["mc2_interaction_v0"]`持有临时聚合buffer、owner/group过滤和跨帧intersection history。它只协调开启产品开关的Mesh task，在Motion与Post之间运行并散回，不接管task persistent state，也不能借外部collider表达。
+- HoTools Mesh产品只公开一个`radius × 顶点组`半径真值；外部碰撞消费普通radius，self envelope固定派生为`radius * 0.25`。source oracle可在低层setup继续使用独立thickness，但不得重新暴露为产品节点输入。
 - MC2 debug沿用SpringBone VRM的全隐式请求模型：debug入口自动发现world内MC2 slots，后端按请求在下一推进帧产出语义化snapshot，solver renderer负责分层显示；不新增一套供用户连接中间数组的节点图surface。
 - MC2完成度见`doc/MC2_ACCEPTANCE_MAP.md`，当前工作顺序见`doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`doc/MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
