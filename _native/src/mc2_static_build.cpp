@@ -31,6 +31,12 @@ struct Vec4 {
     double w = 1.0;
 };
 
+struct FloatVec3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
 Vec3 subtract(const Vec3& left, const Vec3& right) {
     return {left.x - right.x, left.y - right.y, left.z - right.z};
 }
@@ -86,6 +92,78 @@ void store_vec3(std::vector<double>& values, std::size_t index, const Vec3& valu
     values[offset] = value.x;
     values[offset + 1] = value.y;
     values[offset + 2] = value.z;
+}
+
+FloatVec3 load_float_position(const double* positions, std::size_t index) {
+    const auto offset = index * 3;
+    return {
+        static_cast<float>(positions[offset]),
+        static_cast<float>(positions[offset + 1]),
+        static_cast<float>(positions[offset + 2]),
+    };
+}
+
+FloatVec3 subtract(const FloatVec3& left, const FloatVec3& right) {
+    return {left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
+FloatVec3 cross(const FloatVec3& left, const FloatVec3& right) {
+    return {
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x,
+    };
+}
+
+float dot(const FloatVec3& left, const FloatVec3& right) {
+    return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+float length(const FloatVec3& value) {
+    return std::sqrt(dot(value, value));
+}
+
+std::uint64_t directed_key(std::int32_t first, std::int32_t second) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(first)) << 32u) |
+        static_cast<std::uint32_t>(second);
+}
+
+std::uint64_t canonical_key(std::int32_t first, std::int32_t second) {
+    return first < second ? directed_key(first, second) : directed_key(second, first);
+}
+
+std::int32_t opposite_vertex(
+    const std::int32_t* triangles,
+    std::size_t triangle_index,
+    std::int32_t edge_first,
+    std::int32_t edge_second
+) {
+    const auto offset = triangle_index * 3;
+    for (std::size_t component = 0; component < 3; ++component) {
+        const auto vertex = triangles[offset + component];
+        if (vertex != edge_first && vertex != edge_second) return vertex;
+    }
+    throw std::invalid_argument("triangle has no opposite vertex for edge");
+}
+
+FloatVec3 triangle_normal(
+    const std::vector<FloatVec3>& positions,
+    const std::int32_t* triangles,
+    std::size_t triangle_index,
+    std::int32_t edge_first,
+    std::int32_t edge_second
+) {
+    constexpr float kDistanceEpsilon = 1.0e-8f;
+    const auto opposite = opposite_vertex(
+        triangles, triangle_index, edge_first, edge_second
+    );
+    const auto normal = cross(
+        subtract(positions[static_cast<std::size_t>(edge_second)], positions[static_cast<std::size_t>(edge_first)]),
+        subtract(positions[static_cast<std::size_t>(opposite)], positions[static_cast<std::size_t>(edge_first)])
+    );
+    const float magnitude = length(normal);
+    if (magnitude < kDistanceEpsilon) return {};
+    return {normal.x / magnitude, normal.y / magnitude, normal.z / magnitude};
 }
 
 Vec4 normalize(const Vec4& value, const char* name) {
@@ -811,6 +889,198 @@ Mc2MeshBaselineDerived mc2_build_mesh_baseline_derived(
     result.depths = std::move(pose_depth.depths);
     result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
     result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
+    return result;
+}
+
+Mc2DistanceDerived mc2_build_distance_derived(
+    const double* positions,
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const std::int32_t* adjacency_ranges,
+    const std::int32_t* adjacency_data,
+    std::size_t adjacency_data_count
+) {
+    if (positions == nullptr || vertex_attributes == nullptr || parent_indices == nullptr ||
+        adjacency_ranges == nullptr || (edge_count > 0 && edges == nullptr) ||
+        (triangle_count > 0 && triangles == nullptr) ||
+        (adjacency_data_count > 0 && adjacency_data == nullptr)) {
+        throw std::invalid_argument("MC2 Distance derived buffers cannot be null");
+    }
+    constexpr std::uint8_t kFixed = 0x01u;
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr float kDistanceEpsilon = 1.0e-8f;
+    constexpr float kShearNormalDot = 0.9396926f;
+    constexpr float kShearLengthRatio = 0.3f;
+    constexpr std::int32_t kMaxRangeCount = 0xFFF;
+    constexpr std::int32_t kMaxRangeStart = 0xFFFFF;
+    constexpr std::size_t kMaxTarget = 0xFFFFu;
+    if (vertex_count == 0 || vertex_count > kMaxTarget + 1) {
+        throw std::invalid_argument("MC2 Distance vertex count exceeds source target domain");
+    }
+    auto is_move = [](std::uint8_t value) { return (value & kMove) != 0u; };
+    auto is_invalid = [](std::uint8_t value) {
+        return (value & static_cast<std::uint8_t>(kFixed | kMove)) == 0u;
+    };
+
+    std::vector<FloatVec3> float_positions(vertex_count);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        float_positions[vertex] = load_float_position(positions, vertex);
+    }
+    std::set<std::uint64_t> edge_set;
+    for (std::size_t index = 0; index < edge_count; ++index) {
+        edge_set.insert(canonical_key(edges[index * 2], edges[index * 2 + 1]));
+    }
+    std::set<std::uint64_t> directed;
+    std::size_t cursor = 0;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto start = adjacency_ranges[vertex * 2];
+        const auto count = adjacency_ranges[vertex * 2 + 1];
+        if (start < 0 || count < 0 || static_cast<std::size_t>(start) != cursor ||
+            count > kMaxRangeCount || start > kMaxRangeStart ||
+            cursor + static_cast<std::size_t>(count) > adjacency_data_count) {
+            throw std::invalid_argument("vertex adjacency ranges are invalid");
+        }
+        std::set<std::int32_t> local_targets;
+        for (std::int32_t offset = 0; offset < count; ++offset) {
+            const auto target = adjacency_data[cursor + static_cast<std::size_t>(offset)];
+            if (target < 0 || static_cast<std::size_t>(target) >= vertex_count ||
+                static_cast<std::size_t>(target) > kMaxTarget ||
+                target == static_cast<std::int32_t>(vertex) ||
+                edge_set.find(canonical_key(static_cast<std::int32_t>(vertex), target)) == edge_set.end() ||
+                !local_targets.insert(target).second) {
+                throw std::invalid_argument("vertex adjacency data is invalid");
+            }
+            directed.insert(directed_key(static_cast<std::int32_t>(vertex), target));
+        }
+        cursor += static_cast<std::size_t>(count);
+    }
+    if (cursor != adjacency_data_count) {
+        throw std::invalid_argument("vertex adjacency ranges do not cover all data");
+    }
+    for (const auto value : directed) {
+        const auto source = static_cast<std::int32_t>(value >> 32u);
+        const auto target = static_cast<std::int32_t>(value & 0xFFFFFFFFu);
+        if (directed.find(directed_key(target, source)) == directed.end()) {
+            throw std::invalid_argument("vertex adjacency must be bidirectional");
+        }
+    }
+
+    std::vector<std::vector<std::int32_t>> vertical(vertex_count);
+    std::vector<std::vector<std::int32_t>> ordinary_horizontal(vertex_count);
+    std::vector<std::vector<std::int32_t>> shear_insertions(vertex_count);
+    std::set<std::uint64_t> connected;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto start = static_cast<std::size_t>(adjacency_ranges[vertex * 2]);
+        const auto count = static_cast<std::size_t>(adjacency_ranges[vertex * 2 + 1]);
+        const auto attribute = vertex_attributes[vertex];
+        const auto parent = parent_indices[vertex];
+        for (std::size_t offset = 0; offset < count; ++offset) {
+            const auto target = adjacency_data[start + offset];
+            const auto target_index = static_cast<std::size_t>(target);
+            const auto target_attribute = vertex_attributes[target_index];
+            if ((!is_move(attribute) && !is_move(target_attribute)) ||
+                is_invalid(attribute) || is_invalid(target_attribute)) {
+                continue;
+            }
+            if (target == parent || static_cast<std::int32_t>(vertex) == parent_indices[target_index]) {
+                vertical[vertex].push_back(target);
+            } else {
+                ordinary_horizontal[vertex].push_back(target);
+            }
+            connected.insert(canonical_key(static_cast<std::int32_t>(vertex), target));
+        }
+    }
+
+    std::map<std::uint64_t, std::vector<std::size_t>> edge_triangles;
+    for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+        const auto offset = triangle * 3;
+        const auto first = triangles[offset];
+        const auto second = triangles[offset + 1];
+        const auto third = triangles[offset + 2];
+        edge_triangles[canonical_key(first, second)].push_back(triangle);
+        edge_triangles[canonical_key(second, third)].push_back(triangle);
+        edge_triangles[canonical_key(third, first)].push_back(triangle);
+    }
+    for (std::size_t edge_index = 0; edge_index < edge_count; ++edge_index) {
+        const auto edge_first = edges[edge_index * 2];
+        const auto edge_second = edges[edge_index * 2 + 1];
+        const auto found = edge_triangles.find(canonical_key(edge_first, edge_second));
+        if (found == edge_triangles.end() || found->second.size() < 2) continue;
+        const float shared_length = length(subtract(
+            float_positions[static_cast<std::size_t>(edge_first)],
+            float_positions[static_cast<std::size_t>(edge_second)]
+        ));
+        if (shared_length < kDistanceEpsilon) continue;
+        const auto& triangle_indices = found->second;
+        for (std::size_t first_offset = 0; first_offset + 1 < triangle_indices.size(); ++first_offset) {
+            const auto first_triangle = triangle_indices[first_offset];
+            const auto first_opposite = opposite_vertex(
+                triangles, first_triangle, edge_first, edge_second
+            );
+            const auto first_normal = triangle_normal(
+                float_positions, triangles, first_triangle, edge_first, edge_second
+            );
+            for (std::size_t second_offset = first_offset + 1;
+                 second_offset < triangle_indices.size(); ++second_offset) {
+                const auto second_triangle = triangle_indices[second_offset];
+                const auto second_opposite = opposite_vertex(
+                    triangles, second_triangle, edge_first, edge_second
+                );
+                if (!is_move(vertex_attributes[static_cast<std::size_t>(first_opposite)]) &&
+                    !is_move(vertex_attributes[static_cast<std::size_t>(second_opposite)])) {
+                    continue;
+                }
+                const auto second_normal = triangle_normal(
+                    float_positions, triangles, second_triangle, edge_first, edge_second
+                );
+                if (std::fabs(dot(first_normal, second_normal)) < kShearNormalDot) continue;
+                const float opposite_length = length(subtract(
+                    float_positions[static_cast<std::size_t>(first_opposite)],
+                    float_positions[static_cast<std::size_t>(second_opposite)]
+                ));
+                if (std::fabs(opposite_length / shared_length - 1.0f) > kShearLengthRatio) continue;
+                const auto candidate = canonical_key(first_opposite, second_opposite);
+                if (!connected.insert(candidate).second) continue;
+                shear_insertions[static_cast<std::size_t>(first_opposite)].push_back(second_opposite);
+                shear_insertions[static_cast<std::size_t>(second_opposite)].push_back(first_opposite);
+            }
+        }
+    }
+
+    Mc2DistanceDerived result;
+    result.ranges.reserve(vertex_count * 2);
+    result.targets.reserve(adjacency_data_count + edge_count * 2);
+    result.rest_signed.reserve(adjacency_data_count + edge_count * 2);
+    auto append_record = [&](std::size_t vertex, std::int32_t target, bool horizontal) {
+        const float distance = length(subtract(
+            float_positions[vertex], float_positions[static_cast<std::size_t>(target)]
+        ));
+        result.targets.push_back(target);
+        result.rest_signed.push_back(
+            distance < kDistanceEpsilon ? 0.0f : (horizontal ? -distance : distance)
+        );
+    };
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto start = result.targets.size();
+        for (const auto target : vertical[vertex]) append_record(vertex, target, false);
+        for (auto iterator = shear_insertions[vertex].rbegin();
+             iterator != shear_insertions[vertex].rend(); ++iterator) {
+            append_record(vertex, *iterator, true);
+        }
+        for (const auto target : ordinary_horizontal[vertex]) append_record(vertex, target, true);
+        const auto count = result.targets.size() - start;
+        if (start > static_cast<std::size_t>(kMaxRangeStart) ||
+            count > static_cast<std::size_t>(kMaxRangeCount)) {
+            throw std::invalid_argument("Distance range exceeds MC2 packed source limits");
+        }
+        result.ranges.push_back(static_cast<std::int32_t>(start));
+        result.ranges.push_back(static_cast<std::int32_t>(count));
+    }
     return result;
 }
 

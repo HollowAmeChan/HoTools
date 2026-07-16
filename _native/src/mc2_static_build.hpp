@@ -84,4 +84,24 @@ Mc2MeshBaselineDerived mc2_build_mesh_baseline_derived(
     std::size_t edge_count
 );
 
+struct Mc2DistanceDerived {
+    std::vector<std::int32_t> ranges;
+    std::vector<std::int32_t> targets;
+    std::vector<float> rest_signed;
+};
+
+Mc2DistanceDerived mc2_build_distance_derived(
+    const double* positions,
+    const std::uint8_t* vertex_attributes,
+    const std::int32_t* parent_indices,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const std::int32_t* adjacency_ranges,
+    const std::int32_t* adjacency_data,
+    std::size_t adjacency_data_count
+);
+
 }  // namespace hotools

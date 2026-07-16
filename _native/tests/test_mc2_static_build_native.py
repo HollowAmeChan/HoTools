@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 import sys
@@ -191,6 +192,55 @@ def test_mesh_baseline_derived_arrays() -> None:
     np.testing.assert_allclose(shared_rotations, local_rotations, atol=1.0e-12)
 
 
+def test_distance_derived_arrays_and_owner() -> None:
+    positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    parents = np.asarray((-1,) * 4, dtype=np.int32)
+    edges = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (2, 3)), dtype=np.int32)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    adjacency_ranges = np.asarray(((0, 3), (3, 2), (5, 3), (8, 2)), dtype=np.int32)
+    adjacency_data = np.asarray((3, 2, 1, 2, 0, 3, 1, 0, 2, 0), dtype=np.int32)
+
+    derived = hotools_native.mc2_build_distance_derived_v0(
+        positions,
+        attributes,
+        parents,
+        edges,
+        triangles,
+        adjacency_ranges,
+        adjacency_data,
+    )
+    ranges = derived["distance_ranges"]
+    targets = derived["distance_targets"]
+    rests = derived["distance_rest_signed"]
+    del derived
+    gc.collect()
+
+    assert ranges.dtype == np.int32 and ranges.shape == (4, 2)
+    assert targets.dtype == np.int32 and targets.shape == (12,)
+    assert rests.dtype == np.float32 and rests.shape == (12,)
+    np.testing.assert_array_equal(ranges, ((0, 3), (3, 3), (6, 3), (9, 3)))
+    np.testing.assert_array_equal(targets, (3, 2, 1, 3, 2, 0, 3, 1, 0, 1, 2, 0))
+    np.testing.assert_allclose(
+        rests,
+        (
+            -1.0, -np.sqrt(2.0), -1.0,
+            -np.sqrt(2.0), -1.0, -1.0,
+            -1.0, -1.0, -np.sqrt(2.0),
+            -np.sqrt(2.0), -1.0, -1.0,
+        ),
+        atol=1.0e-6,
+    )
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
@@ -200,3 +250,5 @@ if __name__ == "__main__":
     print("PASS MC2 native final proxy derived arrays")
     test_mesh_baseline_derived_arrays()
     print("PASS MC2 native baseline derived arrays")
+    test_distance_derived_arrays_and_owner()
+    print("PASS MC2 native Distance derived arrays")

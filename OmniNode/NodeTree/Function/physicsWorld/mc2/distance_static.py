@@ -13,11 +13,6 @@ from .static_data import MC2BaselineStaticSpec, MC2ProxyStaticSpec
 
 
 MC2_DISTANCE_STATIC_SCHEMA_VERSION = 1
-MC2_VERTEX_FIXED = 0x01
-MC2_VERTEX_MOVE = 0x02
-MC2_DISTANCE_EPSILON = np.float32(1.0e-8)
-MC2_SHEAR_NORMAL_DOT = np.float32(0.9396926)
-MC2_SHEAR_LENGTH_RATIO = np.float32(0.3)
 MC2_DISTANCE_MAX_RANGE_COUNT = 0xFFF
 MC2_DISTANCE_MAX_RANGE_START = 0xFFFFF
 MC2_DISTANCE_MAX_TARGET = 0xFFFF
@@ -64,107 +59,6 @@ def _float32(value, name: str) -> float:
     if not math.isfinite(result):
         raise ValueError(f"{name} cannot become NaN/Inf after float32 conversion")
     return 0.0 if result == 0.0 else result
-
-
-def _is_move(attribute: int) -> bool:
-    return bool(attribute & MC2_VERTEX_MOVE)
-
-
-def _is_invalid(attribute: int) -> bool:
-    return not bool(attribute & (MC2_VERTEX_FIXED | MC2_VERTEX_MOVE))
-
-
-def _canonical_edge(first: int, second: int) -> tuple[int, int]:
-    return (first, second) if first < second else (second, first)
-
-
-def _validate_ordered_adjacency(
-    proxy: MC2ProxyStaticSpec,
-    ranges,
-    data,
-) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
-    try:
-        frozen_ranges = tuple(
-            tuple(_exact_int(value, f"vertex_to_vertex_ranges[{index}]") for value in record)
-            for index, record in enumerate(ranges)
-        )
-        frozen_data = tuple(
-            _exact_int(value, f"vertex_to_vertex_data[{index}]")
-            for index, value in enumerate(data)
-        )
-    except (TypeError, ValueError) as exc:
-        raise TypeError("vertex adjacency must contain exact integers") from exc
-    if len(frozen_ranges) != proxy.vertex_count:
-        raise ValueError("vertex_to_vertex_ranges length must equal vertex_count")
-    edge_set = set(proxy.edges)
-    cursor = 0
-    directed = set()
-    for vertex, record in enumerate(frozen_ranges):
-        if len(record) != 2:
-            raise ValueError(f"vertex_to_vertex_ranges[{vertex}] must contain 2 values")
-        start, count = record
-        if start != cursor or count < 0:
-            raise ValueError("vertex_to_vertex_ranges must form dense non-negative ranges")
-        if count > MC2_DISTANCE_MAX_RANGE_COUNT:
-            raise ValueError("vertex adjacency count exceeds MC2 12-bit source limit")
-        if start > MC2_DISTANCE_MAX_RANGE_START:
-            raise ValueError("vertex adjacency start exceeds MC2 20-bit source limit")
-        targets = frozen_data[start:start + count]
-        if len(targets) != count:
-            raise ValueError("vertex_to_vertex_ranges exceed vertex_to_vertex_data")
-        if len(set(targets)) != count:
-            raise ValueError(f"vertex {vertex} adjacency contains duplicate targets")
-        for target in targets:
-            if not 0 <= target < proxy.vertex_count:
-                raise ValueError(f"vertex adjacency target {target} is out of range")
-            if target > MC2_DISTANCE_MAX_TARGET:
-                raise ValueError("vertex adjacency target exceeds MC2 ushort source limit")
-            if target == vertex:
-                raise ValueError("vertex adjacency cannot contain self edges")
-            if _canonical_edge(vertex, target) not in edge_set:
-                raise ValueError("vertex adjacency contains an edge absent from final proxy")
-            directed.add((vertex, target))
-        cursor += count
-    if cursor != len(frozen_data):
-        raise ValueError("vertex adjacency ranges do not cover all data")
-    if any((target, source) not in directed for source, target in directed):
-        raise ValueError("final proxy vertex adjacency must be bidirectional")
-    return frozen_ranges, frozen_data
-
-
-def _triangle_edges(triangle: tuple[int, int, int]):
-    return (
-        _canonical_edge(triangle[0], triangle[1]),
-        _canonical_edge(triangle[1], triangle[2]),
-        _canonical_edge(triangle[2], triangle[0]),
-    )
-
-
-def _edge_to_triangles(triangles):
-    result: dict[tuple[int, int], list[int]] = {}
-    for triangle_index, triangle in enumerate(triangles):
-        for edge in _triangle_edges(triangle):
-            result.setdefault(edge, []).append(triangle_index)
-    return result
-
-
-def _opposite_vertex(triangle, edge: tuple[int, int]) -> int:
-    for vertex in triangle:
-        if vertex not in edge:
-            return vertex
-    raise ValueError("triangle has no opposite vertex for edge")
-
-
-def _triangle_normal(positions: np.ndarray, triangle, edge: tuple[int, int]) -> np.ndarray:
-    opposite = _opposite_vertex(triangle, edge)
-    normal = np.cross(
-        positions[edge[1]] - positions[edge[0]],
-        positions[opposite] - positions[edge[0]],
-    ).astype(np.float32)
-    length = np.float32(np.linalg.norm(normal))
-    if length < MC2_DISTANCE_EPSILON:
-        return np.zeros(3, dtype=np.float32)
-    return (normal / length).astype(np.float32)
 
 
 @dataclass(frozen=True)
@@ -303,96 +197,25 @@ def build_mc2_distance_static(
         raise ValueError("baseline vertex_count must equal proxy vertex_count")
     if proxy.vertex_count > MC2_DISTANCE_MAX_TARGET + 1:
         raise ValueError("MC2 Distance supports at most 65536 proxy vertices")
-    parents = baseline.parent_indices
-    adjacency_ranges, adjacency_data = _validate_ordered_adjacency(
-        proxy,
-        vertex_to_vertex_ranges,
-        vertex_to_vertex_data,
+    from .native import native_module
+
+    derived = native_module().mc2_build_distance_derived_v0(
+        np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
+        np.ascontiguousarray(baseline.parent_indices, dtype=np.int32),
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
+        np.ascontiguousarray(vertex_to_vertex_ranges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(vertex_to_vertex_data, dtype=np.int32),
     )
-    attributes = proxy.vertex_attributes
-    vertical = [[] for _ in range(proxy.vertex_count)]
-    ordinary_horizontal = [[] for _ in range(proxy.vertex_count)]
-    shear_insertions = [[] for _ in range(proxy.vertex_count)]
-    connected: set[tuple[int, int]] = set()
-
-    for vertex, (start, count) in enumerate(adjacency_ranges):
-        attribute = attributes[vertex]
-        parent = parents[vertex]
-        for target in adjacency_data[start:start + count]:
-            target_attribute = attributes[target]
-            if not _is_move(attribute) and not _is_move(target_attribute):
-                continue
-            if _is_invalid(attribute) or _is_invalid(target_attribute):
-                continue
-            if target == parent or vertex == parents[target]:
-                vertical[vertex].append(target)
-            else:
-                ordinary_horizontal[vertex].append(target)
-            connected.add(_canonical_edge(vertex, target))
-
-    positions = np.asarray(proxy.local_positions, dtype=np.float32)
-    edge_triangles = _edge_to_triangles(proxy.triangles)
-    for edge in proxy.edges:
-        triangle_indices = edge_triangles.get(edge, ())
-        if len(triangle_indices) < 2:
-            continue
-        shared_length = np.float32(np.linalg.norm(positions[edge[0]] - positions[edge[1]]))
-        if shared_length < MC2_DISTANCE_EPSILON:
-            continue
-        for first_offset, first_index in enumerate(triangle_indices[:-1]):
-            first_triangle = proxy.triangles[first_index]
-            first_opposite = _opposite_vertex(first_triangle, edge)
-            first_normal = _triangle_normal(positions, first_triangle, edge)
-            for second_index in triangle_indices[first_offset + 1:]:
-                second_triangle = proxy.triangles[second_index]
-                second_opposite = _opposite_vertex(second_triangle, edge)
-                if (
-                    not _is_move(attributes[first_opposite])
-                    and not _is_move(attributes[second_opposite])
-                ):
-                    continue
-                second_normal = _triangle_normal(positions, second_triangle, edge)
-                normal_dot = np.float32(abs(np.dot(first_normal, second_normal)))
-                if normal_dot < MC2_SHEAR_NORMAL_DOT:
-                    continue
-                opposite_length = np.float32(
-                    np.linalg.norm(positions[first_opposite] - positions[second_opposite])
-                )
-                ratio = np.float32(abs(opposite_length / shared_length - np.float32(1.0)))
-                if ratio > MC2_SHEAR_LENGTH_RATIO:
-                    continue
-                candidate = _canonical_edge(first_opposite, second_opposite)
-                if candidate in connected:
-                    continue
-                connected.add(candidate)
-                shear_insertions[first_opposite].append(second_opposite)
-                shear_insertions[second_opposite].append(first_opposite)
-
-    ranges = []
-    targets = []
-    rests = []
-    for vertex in range(proxy.vertex_count):
-        start = len(targets)
-        ordered_vertical = vertical[vertex]
-        ordered_horizontal = list(reversed(shear_insertions[vertex]))
-        ordered_horizontal.extend(ordinary_horizontal[vertex])
-        for target in ordered_vertical:
-            distance = np.float32(np.linalg.norm(positions[vertex] - positions[target]))
-            targets.append(target)
-            rests.append(0.0 if distance < MC2_DISTANCE_EPSILON else float(distance))
-        for target in ordered_horizontal:
-            distance = np.float32(np.linalg.norm(positions[vertex] - positions[target]))
-            targets.append(target)
-            rests.append(0.0 if distance < MC2_DISTANCE_EPSILON else -float(distance))
-        ranges.append((start, len(targets) - start))
 
     return make_mc2_distance_static_spec(
         proxy_signature=proxy.proxy_signature,
         baseline_signature=baseline.baseline_signature,
         vertex_count=proxy.vertex_count,
-        distance_ranges=ranges,
-        distance_targets=targets,
-        distance_rest_signed=rests,
+        distance_ranges=derived["distance_ranges"],
+        distance_targets=derived["distance_targets"],
+        distance_rest_signed=derived["distance_rest_signed"],
     )
 
 

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 PyObject* spring_vrm_create_context(PyObject*, PyObject*);
@@ -91,6 +92,35 @@ inline void check_root_or_minus_one(const int32_t* data, size_t n, size_t vc, co
     for (size_t i = 0; i < n; ++i)
         if (data[i] < -1 || (data[i] >= 0 && static_cast<size_t>(data[i]) >= vc))
             throw nb::value_error((std::string(name) + " 包含越界 root 索引").c_str());
+}
+
+template<typename T>
+nb::ndarray<nb::numpy, T> owned_array_1d(std::vector<T>&& values) {
+    auto* owner_data = new std::vector<T>(std::move(values));
+    nb::capsule owner(owner_data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    return nb::ndarray<nb::numpy, T>(
+        owner_data->data(), {owner_data->size()}, owner
+    );
+}
+
+template<typename T>
+nb::ndarray<nb::numpy, T> owned_array_2d(
+    std::vector<T>&& values,
+    std::size_t rows,
+    std::size_t columns
+) {
+    if (rows * columns != values.size()) {
+        throw nb::value_error("owned ndarray shape does not match storage");
+    }
+    auto* owner_data = new std::vector<T>(std::move(values));
+    nb::capsule owner(owner_data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    return nb::ndarray<nb::numpy, T>(
+        owner_data->data(), {rows, columns}, owner
+    );
 }
 
 PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
@@ -1123,6 +1153,57 @@ NB_MODULE(hotools_native, m) {
             );
         });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
+    m.def("mc2_build_distance_derived_v0",
+        [](cf64_2d positions,
+           cu8_1d vertex_attributes,
+           ci32_1d parent_indices,
+           ci32_2d edges,
+           ci32_2d triangles,
+           ci32_2d adjacency_ranges,
+           ci32_1d adjacency_data) {
+            const auto vertex_count = positions.shape(0);
+            check_cols(positions, 3, "positions");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_len(parent_indices.shape(0), vertex_count, "parent_indices");
+            check_root_or_minus_one(parent_indices.data(), vertex_count, vertex_count, "parent_indices");
+            check_cols(edges, 2, "edges");
+            check_indices_in_range(edges.data(), edges.shape(0) * 2, vertex_count, "edges");
+            check_cols(triangles, 3, "triangles");
+            check_indices_in_range(
+                triangles.data(), triangles.shape(0) * 3, vertex_count, "triangles"
+            );
+            check_cols(adjacency_ranges, 2, "adjacency_ranges");
+            check_len(adjacency_ranges.shape(0), vertex_count, "adjacency_ranges");
+            check_indices_in_range(
+                adjacency_data.data(), adjacency_data.shape(0), vertex_count, "adjacency_data"
+            );
+            hotools::Mc2DistanceDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_distance_derived(
+                    positions.data(),
+                    vertex_attributes.data(),
+                    parent_indices.data(),
+                    vertex_count,
+                    edges.data(),
+                    edges.shape(0),
+                    triangles.data(),
+                    triangles.shape(0),
+                    adjacency_ranges.data(),
+                    adjacency_data.data(),
+                    adjacency_data.shape(0)
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            nb::dict result;
+            result["distance_ranges"] = owned_array_2d(
+                std::move(derived.ranges), vertex_count, 2
+            );
+            result["distance_targets"] = owned_array_1d(std::move(derived.targets));
+            result["distance_rest_signed"] = owned_array_1d(std::move(derived.rest_signed));
+            return result;
+        });
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,
            ci32_1d nbrs, cf32_1d rest, cf32_1d stiff, f32_2d vel, float attn) {
