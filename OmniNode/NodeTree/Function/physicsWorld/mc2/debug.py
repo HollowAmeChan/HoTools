@@ -172,7 +172,9 @@ def _motion_payload(slot, native_snapshot) -> dict:
     effective = slot.data.get("effective_parameters")
     static = _active_static(slot)
     baseline = _baseline_for_static(static)
-    depths = tuple(getattr(baseline, "depths", ()) or ())
+    depths = getattr(baseline, "depths", ())
+    if depths is None:
+        depths = ()
     floats, ints, curves = _curve_maps(effective)
     return {
         "step_basic_positions": native_snapshot.get("step_basic_positions"),
@@ -196,7 +198,9 @@ def _collision_payload(item, native_snapshot) -> dict:
     effective = slot.data.get("effective_parameters")
     static = _active_static(slot)
     baseline = _baseline_for_static(static)
-    depths = tuple(getattr(baseline, "depths", ()) or ())
+    depths = getattr(baseline, "depths", ())
+    if depths is None:
+        depths = ()
     _floats, ints, curves = _curve_maps(effective)
     native = native_snapshot.get("native") or {}
     scale_ratio = float(native.get("scale_ratio", 1.0) or 1.0)

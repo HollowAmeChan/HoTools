@@ -265,6 +265,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         assert ready is True
         slot = world.solver_slots[task.task_id]
+        staged_static = slot.data["mesh_static"]
         runtime_state = slot.data["runtime_state"]
         center_runtime = slot.data["center_state"]
         native_owner = slot.data["native_context"]
@@ -284,9 +285,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["self_triangle_primitive_count"] == 1
         assert native_info["self_contact_cache_count"] == 0
         assert native_info["self_intersect_record_count"] == 0
-        assert native_info["baseline_count"] == len(
-            static.baseline.baseline.baseline_ranges
+        assert (
+            native_info["baseline_count"]
+            == staged_static.baseline.baseline.baseline_count
         )
+        assert staged_static.baseline.baseline.native_owned is True
+        assert staged_static.baseline.baseline.depths.dtype == np.float32
+        assert not hasattr(staged_static.baseline.baseline, "parent_indices")
         assert native_info["distance_static_ready"] is True
         assert native_info["distance_static_revision"] == 1
         assert native_info["bending_static_ready"] is True

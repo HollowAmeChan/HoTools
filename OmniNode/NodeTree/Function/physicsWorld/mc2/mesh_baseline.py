@@ -10,6 +10,7 @@ break. No Blender data or evaluated frame pose enters this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 
 import numpy as np
 
@@ -31,7 +32,7 @@ MC2_BASELINE_INCLUDE_LINE = 0x01
 @dataclass(frozen=True)
 class MC2MeshBaselineBuildResult:
     final_proxy: MC2ProxyStaticSpec
-    baseline: MC2BaselineStaticSpec
+    baseline: MC2BaselineStaticSpec | MC2MeshBaselineNativeData | MC2MeshBaselineMetadata
     tie_break: str = "lowest_vertex_index"
 
     def __post_init__(self) -> None:
@@ -41,6 +42,77 @@ class MC2MeshBaselineBuildResult:
             raise ValueError("baseline must reference the finalized proxy signature")
         if self.tie_break != "lowest_vertex_index":
             raise ValueError("unsupported Mesh baseline tie break")
+
+    def compact_native_baseline(self):
+        if not isinstance(self.baseline, MC2MeshBaselineNativeData):
+            return self
+        return MC2MeshBaselineBuildResult(
+            final_proxy=self.final_proxy,
+            baseline=self.baseline.metadata(),
+            tie_break=self.tie_break,
+        )
+
+
+@dataclass(frozen=True)
+class MC2MeshBaselineMetadata:
+    proxy_signature: str
+    vertex_count: int
+    baseline_count: int
+    depths: np.ndarray
+    baseline_signature: str
+    native_owned: bool = True
+
+
+@dataclass(frozen=True)
+class MC2MeshBaselineNativeData:
+    proxy_signature: str
+    vertex_count: int
+    parent_indices: np.ndarray
+    child_ranges: np.ndarray
+    child_data: np.ndarray
+    baseline_flags: np.ndarray
+    baseline_ranges: np.ndarray
+    baseline_data: np.ndarray
+    root_indices: np.ndarray
+    depths: np.ndarray
+    vertex_local_positions: np.ndarray
+    vertex_local_rotations: np.ndarray
+    baseline_signature: str
+    native_owned: bool = True
+
+    @property
+    def baseline_count(self) -> int:
+        return len(self.baseline_ranges)
+
+    def metadata(self) -> MC2MeshBaselineMetadata:
+        depths = np.ascontiguousarray(self.depths, dtype=np.float32)
+        depths.setflags(write=False)
+        return MC2MeshBaselineMetadata(
+            proxy_signature=self.proxy_signature,
+            vertex_count=self.vertex_count,
+            baseline_count=self.baseline_count,
+            depths=depths,
+            baseline_signature=self.baseline_signature,
+        )
+
+
+def _baseline_content_signature(proxy_signature: str, values: dict) -> str:
+    digest = hashlib.sha256(b"mc2_mesh_baseline_native_v0\0")
+    digest.update(proxy_signature.encode("ascii"))
+    for name, dtype in (
+        ("parents", np.int32),
+        ("child_ranges", np.int32),
+        ("child_data", np.int32),
+        ("baseline_flags", np.uint8),
+        ("baseline_ranges", np.int32),
+        ("baseline_data", np.int32),
+        ("roots", np.int32),
+        ("depths", np.float64),
+        ("local_positions", np.float64),
+        ("local_rotations", np.float64),
+    ):
+        digest.update(np.ascontiguousarray(values[name], dtype=dtype).tobytes())
+    return digest.hexdigest()
 
 
 def _replace_proxy_attributes(
@@ -112,6 +184,20 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec, *, native_context=None) ->
             "local_positions": local_positions,
             "local_rotations": local_rotations,
         })
+    if native_context is not None:
+        return {
+            "attributes": attributes,
+            "parents": parents,
+            "child_ranges": child_ranges,
+            "child_data": child_data[:child_count],
+            "baseline_flags": baseline_flags[:baseline_count],
+            "baseline_ranges": baseline_ranges[:baseline_count],
+            "baseline_data": baseline_data[:baseline_data_count],
+            "roots": roots,
+            "depths": depths,
+            "local_positions": local_positions,
+            "local_rotations": local_rotations,
+        }
     return {
         "attributes": tuple(int(value) for value in attributes),
         "parents": tuple(int(value) for value in parents),
@@ -183,21 +269,43 @@ def build_mc2_mesh_baseline(
         raise ValueError("Mesh baseline builder only accepts mesh_cloth")
 
     derived = _build_native_baseline(proxy, native_context=native_context)
-    final_proxy = _replace_proxy_attributes(proxy, derived["attributes"])
-    baseline = make_mc2_baseline_static_spec(
-        proxy_signature=final_proxy.proxy_signature,
-        vertex_count=final_proxy.vertex_count,
-        parent_indices=derived["parents"],
-        child_ranges=derived["child_ranges"],
-        child_data=derived["child_data"],
-        baseline_flags=derived["baseline_flags"],
-        baseline_ranges=derived["baseline_ranges"],
-        baseline_data=derived["baseline_data"],
-        root_indices=derived["roots"],
-        depths=derived["depths"],
-        vertex_local_positions=derived["local_positions"],
-        vertex_local_rotations=derived["local_rotations"],
+    final_proxy = _replace_proxy_attributes(
+        proxy,
+        tuple(int(value) for value in derived["attributes"]),
     )
+    if native_context is None:
+        baseline = make_mc2_baseline_static_spec(
+            proxy_signature=final_proxy.proxy_signature,
+            vertex_count=final_proxy.vertex_count,
+            parent_indices=derived["parents"],
+            child_ranges=derived["child_ranges"],
+            child_data=derived["child_data"],
+            baseline_flags=derived["baseline_flags"],
+            baseline_ranges=derived["baseline_ranges"],
+            baseline_data=derived["baseline_data"],
+            root_indices=derived["roots"],
+            depths=derived["depths"],
+            vertex_local_positions=derived["local_positions"],
+            vertex_local_rotations=derived["local_rotations"],
+        )
+    else:
+        baseline = MC2MeshBaselineNativeData(
+            proxy_signature=final_proxy.proxy_signature,
+            vertex_count=final_proxy.vertex_count,
+            parent_indices=derived["parents"],
+            child_ranges=derived["child_ranges"],
+            child_data=derived["child_data"],
+            baseline_flags=derived["baseline_flags"],
+            baseline_ranges=derived["baseline_ranges"],
+            baseline_data=derived["baseline_data"],
+            root_indices=derived["roots"],
+            depths=derived["depths"],
+            vertex_local_positions=derived["local_positions"],
+            vertex_local_rotations=derived["local_rotations"],
+            baseline_signature=_baseline_content_signature(
+                final_proxy.proxy_signature, derived
+            ),
+        )
     return MC2MeshBaselineBuildResult(final_proxy=final_proxy, baseline=baseline)
 
 
@@ -208,5 +316,7 @@ __all__ = [
     "MC2_VERTEX_TRIANGLE",
     "MC2_VERTEX_ZERO_DISTANCE",
     "MC2MeshBaselineBuildResult",
+    "MC2MeshBaselineMetadata",
+    "MC2MeshBaselineNativeData",
     "build_mc2_mesh_baseline",
 ]

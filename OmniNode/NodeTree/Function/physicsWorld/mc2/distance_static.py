@@ -251,8 +251,10 @@ def build_mc2_distance_static(
 ) -> MC2DistanceStaticSpec | MC2DistanceStaticMetadata:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
-    if not isinstance(baseline, MC2BaselineStaticSpec):
-        raise TypeError("baseline must be MC2BaselineStaticSpec")
+    if not isinstance(baseline, MC2BaselineStaticSpec) and not bool(
+        getattr(baseline, "native_owned", False)
+    ):
+        raise TypeError("baseline must be an MC2 baseline static result")
     if baseline.proxy_signature != proxy.proxy_signature:
         raise ValueError("baseline must be derived from the provided final proxy")
     if baseline.vertex_count != proxy.vertex_count:

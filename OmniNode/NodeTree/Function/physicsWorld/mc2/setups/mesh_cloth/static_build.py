@@ -93,7 +93,11 @@ class MC2MeshClothStaticBuildResult:
             "vertex_count": self.final_proxy.vertex_count,
             "edge_count": len(self.final_proxy.edges),
             "triangle_count": len(self.final_proxy.triangles),
-            "baseline_count": len(self.baseline.baseline.baseline_ranges),
+            "baseline_count": (
+                self.baseline.baseline.baseline_count
+                if hasattr(self.baseline.baseline, "baseline_count")
+                else len(self.baseline.baseline.baseline_ranges)
+            ),
             "fixed_count": sum(
                 1 for value in self.final_proxy.vertex_attributes if value & 0x01
             ),
@@ -212,10 +216,11 @@ def build_mc2_mesh_cloth_static(
         native_context=native_context,
     )
     stored_finalizer = finalizer.compact_native_finalizer()
+    stored_baseline = baseline.compact_native_baseline()
     result = MC2MeshClothStaticBuildResult(
         mesh_topology_signature=actual_mesh_topology_signature,
         finalizer=stored_finalizer,
-        baseline=baseline,
+        baseline=stored_baseline,
         distance=distance,
         bending=bending,
         center=center,
