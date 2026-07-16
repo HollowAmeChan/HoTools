@@ -57,6 +57,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_inspect",
     "mc2_context_v0_classify_static_fingerprint",
     "mc2_context_v0_update_static_fingerprint",
+    "mc2_context_v0_clone_config_static",
     "mc2_context_v0_update_proxy_static",
     "mc2_context_v0_finalize_proxy_attributes",
     "mc2_context_v0_update_baseline_static",
@@ -256,6 +257,40 @@ class MC2NativeContextV0:
             self._handle,
             *fingerprint.native_values(),
         )
+
+    def clone_bone_config_static(self, source, static, gravity_direction):
+        from .setups.bone_cloth.static_build import MC2BoneClothStaticMetadata
+
+        if not isinstance(source, MC2NativeContextV0):
+            raise TypeError("source must be MC2NativeContextV0")
+        if source.disposed:
+            raise RuntimeError("source MC2 native context has been disposed")
+        if not isinstance(static, MC2BoneClothStaticMetadata):
+            raise TypeError("static must be compact Bone static metadata")
+        if source.vertex_count != self.vertex_count or source.setup_type != self.setup_type:
+            raise ValueError("MC2 config clone context mismatch")
+        self._ensure_live()
+        result = self._module.mc2_context_v0_clone_config_static(
+            self._handle,
+            source._handle,
+            np.ascontiguousarray(gravity_direction, dtype=np.float32),
+            static.center.task_id,
+            static.final_proxy.proxy_signature,
+        )
+        center = MC2CenterStaticMetadata(
+            task_id=static.center.task_id,
+            proxy_signature=static.center.proxy_signature,
+            fixed_count=int(result["fixed_count"]),
+            center_static_signature=str(result["center_static_signature"]),
+        )
+        self.proxy_signature = source.proxy_signature
+        self.baseline_signature = source.baseline_signature
+        self.bone_static_signature = source.bone_static_signature
+        self.distance_signature = source.distance_signature
+        self.bending_signature = source.bending_signature
+        self.center_signature = center.center_static_signature
+        self.self_collision_signature = source.self_collision_signature
+        return static.with_center(center)
 
     def set_tether_enabled(self, enabled: bool) -> None:
         self._ensure_live()

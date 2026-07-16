@@ -14,6 +14,7 @@ PyObject* mc2_context_v0_create(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_inspect(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_classify_static_fingerprint(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_static_fingerprint(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_finalize_proxy_attributes(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args);

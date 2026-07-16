@@ -590,6 +590,7 @@ def step_mc2(
             bone_static = None
             staged_native_context = None
             staged_native_frame_applied = False
+            staged_static_cloned = False
             if rebuild_reason and topology.particle_count > 0:
                 from .native import MC2NativeContextV0
 
@@ -598,6 +599,26 @@ def step_mc2(
                     setup_type=spec.setup_type,
                 )
                 staged_native_contexts.append(staged_native_context)
+            if (
+                rebuild_reason
+                and bone_static_supported
+                and static_change_mask == MC2_STATIC_CHANGE_CONFIG
+                and staged_native_context is not None
+                and existing_native_context is not None
+                and existing_slot is not None
+            ):
+                from .setups.bone_cloth.static_build import (
+                    MC2BoneClothStaticMetadata,
+                )
+
+                existing_bone_static = existing_slot.data.get("bone_static")
+                if isinstance(existing_bone_static, MC2BoneClothStaticMetadata):
+                    bone_static = staged_native_context.clone_bone_config_static(
+                        existing_native_context,
+                        existing_bone_static,
+                        spec.profile.gravity_direction,
+                    )
+                    staged_static_cloned = True
             if rebuild_reason and mesh_static_supported:
                 from .setups.mesh_cloth.static_build import (
                     build_mc2_mesh_cloth_static_for_task,
@@ -609,7 +630,7 @@ def step_mc2(
                     native_context=staged_native_context,
                     raw_snapshot=static_input_snapshots[0] if static_input_snapshots else None,
                 )
-            elif rebuild_reason and bone_static_supported:
+            elif rebuild_reason and bone_static_supported and not staged_static_cloned:
                 from .setups.bone_cloth.static_build import (
                     build_mc2_bone_cloth_static_for_task,
                 )
@@ -671,7 +692,7 @@ def step_mc2(
                 )
             if staged_native_context is not None:
                 try:
-                    if bone_static is not None:
+                    if bone_static is not None and not staged_static_cloned:
                         staged_native_context.update_bone_static(bone_static)
                         bone_static = bone_static.compact_native_static()
                     staged_native_context.update_static_fingerprint(

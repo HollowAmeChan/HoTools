@@ -700,6 +700,10 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
             config_slot.data["last_static_change_mask"]
             == mc2_native_flags.MC2_STATIC_CHANGE_CONFIG
         )
+        config_native_info = config_slot.data["native_context"].inspect()
+        assert config_native_info["static_clone_count"] == 6
+        assert config_native_info["center_static_rebuild_count"] == 1
+        assert config_native_info["owned_static_take_count"] == 0
         task = config_task
         slot = world.solver_slots[task.task_id]
         native_info = slot.data["native_context"].inspect()
@@ -711,6 +715,7 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
             "build_ms": build_ms,
             "rebuild_ms": rebuild_ms,
             "config_rebuild_ms": config_rebuild_ms,
+            "config_static_clone_count": config_native_info["static_clone_count"],
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": None,

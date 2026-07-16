@@ -101,6 +101,8 @@ Bone staged构建现返回`MC2BoneNativeData`，内部直接复用`MC2MeshProxyN
 
 P-06d已关闭：Bone static assembly直接拼接snapshot的positions/matrices/parents，rest kernel输出直接进入native data，Fixed/Move、roots与产品UV保持数组，不再逐骨append transform/normal/tangent tuple；staged入口强制要求共享raw snapshots，缺失即失败，不能落入`_flatten_bone_records`或完整spec分支。生产可达性搜索确认完整spec构造、packer与冻结payload仅属于无context oracle。26/26纯MC2、Blender Bone static/product/frame通过；large Bone首建约`18.06ms`，为旧CPP的`18.97x`；热帧约`6.15ms`，为旧CPP的`3.14x`。下一阶段进入P-06e变化重建收口。
 
+P-06e第一子项已完成：Bone `config=8`不再运行完整static builder。新staged context从旧context复制Proxy/Baseline/Bone/Distance/Bending/Self六类static，在native内只重建Center并生成与现有oracle完全一致的SHA-256；Python只接收fixed count/signature metadata。Blender cold/incremental Center及整体static signature一致，计数固定为`static_clone_count=6 / center_static_rebuild_count=1 / owned_static_take_count=0`。small/medium/large config重建约`1.75/2.99/6.20ms`，相对进入基线`2.09/5.14/12.24ms`；P-06e仍需Mesh config及geometry/surface/topology复用矩阵。
+
 ## 当前验收结论
 
 `V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。

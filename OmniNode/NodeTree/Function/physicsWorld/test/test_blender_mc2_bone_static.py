@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import os
 import sys
@@ -275,6 +276,36 @@ try:
     assert geometry_context.inspect()["released"] is True
     assert hierarchy_slot.data["runtime_state"].allocation_reason == "topology_changed"
     assert hierarchy_slot.data["last_static_change_mask"] & native_flags.MC2_STATIC_CHANGE_TOPOLOGY
+
+    config_task = specs.make_mc2_task_spec(
+        names.MC2_SETUP_BONE_CLOTH,
+        [source],
+        profile=replace(task.profile, gravity_direction=(0.0, -1.0, 0.0)),
+    )
+    assert config_task.task_id == task.task_id
+    hierarchy_context = hierarchy_slot.data["native_context"]
+    world.frame_context.frame = 5
+    solver.step_mc2(world, [config_task])
+    config_slot = world.solver_slots[task.task_id]
+    config_info = config_slot.data["native_context"].inspect()
+    assert config_slot.data["native_context"] is not hierarchy_context
+    assert hierarchy_context.inspect()["released"] is True
+    assert config_slot.data["last_static_change_mask"] == native_flags.MC2_STATIC_CHANGE_CONFIG
+    assert config_info["static_clone_count"] == 6
+    assert config_info["center_static_rebuild_count"] == 1
+    assert config_info["owned_static_take_count"] == 0
+
+    cold_world = world_types.PhysicsWorldCache()
+    cold_world.generation = 1
+    cold_world.frame_context.frame = 5
+    cold_world.frame_context.generation = 1
+    cold_world.frame_context.dt = 1.0 / 60.0
+    solver.step_mc2(cold_world, [config_task])
+    cold_static = cold_world.solver_slots[config_task.task_id].data["bone_static"]
+    incremental_static = config_slot.data["bone_static"]
+    assert incremental_static.center == cold_static.center
+    assert incremental_static.static_signature == cold_static.static_signature
+    cold_world.omni_cache_dispose("bone_config_cold_compare")
 
     bpy.context.view_layer.objects.active = armature
     armature.select_set(True)

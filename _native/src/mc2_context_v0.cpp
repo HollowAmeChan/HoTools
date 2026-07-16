@@ -1,6 +1,7 @@
 #include "mc2_context_v0.hpp"
 
 #include "hotools_mc2.hpp"
+#include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
@@ -98,6 +99,8 @@ struct Mc2ContextV0 {
     std::int64_t center_static_revision = 0;
     std::int64_t self_collision_static_revision = 0;
     std::int64_t owned_static_take_count = 0;
+    std::int64_t static_clone_count = 0;
+    std::int64_t center_static_rebuild_count = 0;
     std::int64_t dynamic_revision = 0;
     std::int64_t collider_revision = 0;
     std::int64_t reset_count = 0;
@@ -3853,6 +3856,8 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
         !dict_i64(result, "self_collision_static_revision", context.self_collision_static_revision) ||
         !dict_i64(result, "owned_static_take_count", context.owned_static_take_count) ||
+        !dict_i64(result, "static_clone_count", context.static_clone_count) ||
+        !dict_i64(result, "center_static_rebuild_count", context.center_static_rebuild_count) ||
         !dict_i64(result, "center_dynamic_revision", context.center_dynamic_revision) ||
         !dict_i64(
             result,
@@ -4525,6 +4530,214 @@ PyObject* mc2_context_v0_update_static_fingerprint(PyObject*, PyObject* args) {
     context->static_fingerprint_ready = true;
     ++context->static_fingerprint_revision;
     Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 5) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_clone_config_static expects 5 arguments"
+        );
+        return nullptr;
+    }
+    auto* target = context_from(PyTuple_GET_ITEM(args, 0));
+    auto* source = context_from(PyTuple_GET_ITEM(args, 1));
+    if (!ensure_live(target) || !ensure_live(source)) return nullptr;
+    if (target == source) {
+        PyErr_SetString(PyExc_ValueError, "config static clone requires distinct contexts");
+        return nullptr;
+    }
+    if (target->vertex_count != source->vertex_count ||
+        target->setup_kind != source->setup_kind) {
+        PyErr_SetString(PyExc_ValueError, "config static clone context shape mismatch");
+        return nullptr;
+    }
+    if (source->setup_kind != 1 && source->setup_kind != 2) {
+        PyErr_SetString(PyExc_ValueError, "config static clone currently requires Bone setup");
+        return nullptr;
+    }
+    if (!source->proxy_static_ready || !source->baseline_static_ready ||
+        !source->bone_static_ready || !source->distance_static_ready ||
+        !source->bending_static_ready || !source->center_static_ready ||
+        !source->self_collision_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "source context static is incomplete");
+        return nullptr;
+    }
+    if (target->proxy_static_ready || target->baseline_static_ready ||
+        target->bone_static_ready || target->distance_static_ready ||
+        target->bending_static_ready || target->center_static_ready ||
+        target->self_collision_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "target context static is not empty");
+        return nullptr;
+    }
+
+    Buffer gravity;
+    if (!gravity.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "gravity_direction") ||
+        !expect_float32(gravity, "gravity_direction") ||
+        !expect_1d_array(gravity, "gravity_direction", 3) ||
+        !finite_floats(gravity, "gravity_direction")) {
+        return nullptr;
+    }
+    Py_ssize_t task_id_size = 0;
+    Py_ssize_t proxy_signature_size = 0;
+    const char* task_id = PyUnicode_AsUTF8AndSize(
+        PyTuple_GET_ITEM(args, 3), &task_id_size
+    );
+    const char* proxy_signature = PyUnicode_AsUTF8AndSize(
+        PyTuple_GET_ITEM(args, 4), &proxy_signature_size
+    );
+    if (task_id == nullptr || proxy_signature == nullptr) return nullptr;
+    const auto is_ascii = [](const char* value, Py_ssize_t size) {
+        return std::all_of(value, value + size, [](char item) {
+            return static_cast<unsigned char>(item) < 0x80u;
+        });
+    };
+    if (!is_ascii(task_id, task_id_size) ||
+        !is_ascii(proxy_signature, proxy_signature_size)) {
+        PyErr_SetString(PyExc_ValueError, "Center signature identities must be ASCII");
+        return nullptr;
+    }
+
+    target->proxy_local_positions = source->proxy_local_positions;
+    target->proxy_local_normals = source->proxy_local_normals;
+    target->proxy_local_tangents = source->proxy_local_tangents;
+    target->proxy_uvs = source->proxy_uvs;
+    target->proxy_attributes = source->proxy_attributes;
+    target->proxy_edges = source->proxy_edges;
+    target->proxy_triangles = source->proxy_triangles;
+    target->baseline_parents = source->baseline_parents;
+    target->baseline_child_ranges = source->baseline_child_ranges;
+    target->baseline_child_data = source->baseline_child_data;
+    target->baseline_flags = source->baseline_flags;
+    target->baseline_ranges = source->baseline_ranges;
+    target->baseline_data = source->baseline_data;
+    target->baseline_roots = source->baseline_roots;
+    target->baseline_depths = source->baseline_depths;
+    target->baseline_local_positions = source->baseline_local_positions;
+    target->baseline_local_rotations = source->baseline_local_rotations;
+    target->bone_vertex_to_vertex_ranges = source->bone_vertex_to_vertex_ranges;
+    target->bone_vertex_to_vertex_data = source->bone_vertex_to_vertex_data;
+    target->bone_vertex_to_triangle_ranges = source->bone_vertex_to_triangle_ranges;
+    target->bone_vertex_to_triangle_data = source->bone_vertex_to_triangle_data;
+    target->bone_vertex_bind_pose_positions = source->bone_vertex_bind_pose_positions;
+    target->bone_vertex_bind_pose_rotations = source->bone_vertex_bind_pose_rotations;
+    target->bone_normal_adjustment_rotations = source->bone_normal_adjustment_rotations;
+    target->bone_vertex_to_transform_rotations = source->bone_vertex_to_transform_rotations;
+    target->distance_ranges = source->distance_ranges;
+    target->distance_targets = source->distance_targets;
+    target->distance_rest_signed = source->distance_rest_signed;
+    target->bending_quads = source->bending_quads;
+    target->bending_rest_angle_or_volume = source->bending_rest_angle_or_volume;
+    target->bending_sign_or_volume = source->bending_sign_or_volume;
+    target->self_primitive_flags = source->self_primitive_flags;
+    target->self_particle_indices = source->self_particle_indices;
+    target->self_primitive_depths = source->self_primitive_depths;
+    target->self_point_primitive_count = source->self_point_primitive_count;
+    target->self_edge_primitive_count = source->self_edge_primitive_count;
+    target->self_triangle_primitive_count = source->self_triangle_primitive_count;
+
+    Mc2CenterStaticDerived center;
+    try {
+        const auto to_double = [](const std::vector<float>& values) {
+            return std::vector<double>(values.begin(), values.end());
+        };
+        const auto positions = to_double(target->proxy_local_positions);
+        const auto normals = to_double(target->proxy_local_normals);
+        const auto tangents = to_double(target->proxy_local_tangents);
+        const auto bind_rotations = to_double(target->bone_vertex_bind_pose_rotations);
+        const auto* gravity_values = static_cast<const float*>(gravity.view.buf);
+        const double gravity_f64[3] = {
+            gravity_values[0], gravity_values[1], gravity_values[2],
+        };
+        center = mc2_build_center_static_derived(
+            positions.data(),
+            normals.data(),
+            tangents.data(),
+            target->proxy_attributes.data(),
+            bind_rotations.data(),
+            static_cast<std::size_t>(target->vertex_count),
+            target->proxy_edges.data(),
+            target->proxy_edges.size() / 2,
+            gravity_f64
+        );
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_ValueError, error.what());
+        return nullptr;
+    }
+    target->center_fixed_indices = std::move(center.fixed_indices);
+    target->center_local_position = std::move(center.local_center_position);
+    target->center_initial_local_gravity_direction = std::move(
+        center.initial_local_gravity_direction
+    );
+
+    std::vector<std::uint8_t> signature_payload;
+    const char prefix[] = "mc2_center_static_v0\0";
+    const auto append_bytes = [&](const void* data, std::size_t size) {
+        const auto* begin = static_cast<const std::uint8_t*>(data);
+        signature_payload.insert(signature_payload.end(), begin, begin + size);
+    };
+    append_bytes(prefix, sizeof(prefix) - 1);
+    append_bytes(task_id, static_cast<std::size_t>(task_id_size));
+    append_bytes(proxy_signature, static_cast<std::size_t>(proxy_signature_size));
+    append_bytes(
+        target->center_fixed_indices.data(),
+        target->center_fixed_indices.size() * sizeof(std::int32_t)
+    );
+    append_bytes(
+        target->center_local_position.data(),
+        target->center_local_position.size() * sizeof(float)
+    );
+    append_bytes(
+        target->center_initial_local_gravity_direction.data(),
+        target->center_initial_local_gravity_direction.size() * sizeof(float)
+    );
+    PyObject* hashlib = PyImport_ImportModule("hashlib");
+    if (hashlib == nullptr) return nullptr;
+    PyObject* payload = PyBytes_FromStringAndSize(
+        reinterpret_cast<const char*>(signature_payload.data()),
+        static_cast<Py_ssize_t>(signature_payload.size())
+    );
+    PyObject* digest = payload == nullptr
+        ? nullptr
+        : PyObject_CallMethod(hashlib, "sha256", "O", payload);
+    Py_XDECREF(payload);
+    Py_DECREF(hashlib);
+    if (digest == nullptr) return nullptr;
+    PyObject* signature = PyObject_CallMethod(digest, "hexdigest", nullptr);
+    Py_DECREF(digest);
+    if (signature == nullptr) return nullptr;
+
+    target->proxy_static_ready = true;
+    target->baseline_static_ready = true;
+    target->bone_static_ready = true;
+    target->distance_static_ready = true;
+    target->bending_static_ready = true;
+    target->self_collision_static_ready = true;
+    target->center_static_ready = true;
+    target->proxy_static_revision = 1;
+    target->baseline_static_revision = 1;
+    target->bone_static_revision = 1;
+    target->distance_static_revision = 1;
+    target->bending_static_revision = 1;
+    target->self_collision_static_revision = 1;
+    target->center_static_revision = 1;
+    target->static_clone_count = 6;
+    target->center_static_rebuild_count = 1;
+
+    PyObject* result = PyDict_New();
+    if (result == nullptr ||
+        !dict_i64(
+            result,
+            "fixed_count",
+            static_cast<std::int64_t>(target->center_fixed_indices.size())
+        ) ||
+        PyDict_SetItemString(result, "center_static_signature", signature) < 0) {
+        Py_XDECREF(result);
+        Py_DECREF(signature);
+        return nullptr;
+    }
+    Py_DECREF(signature);
+    return result;
 }
 
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {

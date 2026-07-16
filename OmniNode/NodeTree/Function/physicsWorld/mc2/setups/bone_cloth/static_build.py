@@ -142,6 +142,34 @@ class MC2BoneClothStaticMetadata:
             "native_owned": True,
         }
 
+    def with_center(self, center: MC2CenterStaticMetadata):
+        if not isinstance(center, MC2CenterStaticMetadata):
+            raise TypeError("center must be MC2CenterStaticMetadata")
+        payload = {
+            "schema_version": self.schema_version,
+            "topology_signature": self.topology_signature,
+            "connection_mode": self.connection_mode,
+            "connection_model": self.connection_model,
+            "bone_static_signature": self.bone_static_signature,
+            "distance_signature": self.distance.distance_signature,
+            "center_static_signature": center.center_static_signature,
+            "self_collision_static_signature": self.self_collision.static_signature,
+        }
+        return MC2BoneClothStaticMetadata(
+            topology_signature=self.topology_signature,
+            connection_mode=self.connection_mode,
+            connection_model=self.connection_model,
+            final_proxy=self.final_proxy,
+            finalizer=self.finalizer,
+            baseline=self.baseline,
+            distance=self.distance,
+            center=center,
+            self_collision=self.self_collision,
+            bone_static_signature=self.bone_static_signature,
+            static_signature=_signature(payload),
+            schema_version=self.schema_version,
+        )
+
 
 @dataclass(frozen=True)
 class MC2BoneClothStaticBuildResult:
