@@ -64,6 +64,9 @@ directory:
   with Center inertia, prediction, Distance, Bending/Sum, the second Distance
   pass, particle post, and Team post so the second step consumes committed
   velocity from the first.
+- `tether_runtime_*.json`: direct reflective call to fixed source
+  `TetherConstraint.SolverConstraint()`, freezing compression/stretch
+  projection, Fixed/missing-root gates, and velocity-reference attenuation.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular

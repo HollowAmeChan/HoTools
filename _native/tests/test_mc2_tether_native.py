@@ -1,5 +1,6 @@
-import sys
+import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,19 @@ sys.path.insert(0, os.environ.get("HOTOOLS_NATIVE_TEST_DIR", str(ROOT / "_Lib" /
 
 import hotools_native  # noqa: E402
 
+
+FIXTURE = (
+    ROOT
+    / "OmniNode"
+    / "NodeTree"
+    / "Function"
+    / "physicsWorld"
+    / "mc2"
+    / "test"
+    / "fixtures"
+    / "tier_a"
+    / "tether_runtime_001.json"
+)
 
 EPSILON = 0.00000001
 TETHER_STIFFNESS_WIDTH = 0.3
@@ -122,8 +136,54 @@ def assert_native_matches_reference():
     np.testing.assert_allclose(actual_velocity_positions, expected_velocity_positions, rtol=1e-6, atol=1e-6)
 
 
+def assert_native_matches_tier_a_oracle():
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["oracle_tier"] == "A"
+    assert fixture["mc2_commit"] == "418f89ff31a45bb4b2336641ad5907a1110eabea"
+    values = fixture["input"]
+    expected = fixture["expected"]
+
+    attributes = np.asarray(values["attributes"], dtype=np.uint8)
+    positions = np.asarray(values["next_positions"], dtype=np.float32)
+    velocity_positions = np.asarray(values["velocity_positions"], dtype=np.float32)
+    root_indices = np.asarray(values["root_indices"], dtype=np.int32)
+    step_basic_positions = np.asarray(values["step_basic_positions"], dtype=np.float32)
+    inv_masses = np.asarray((attributes & 0x02) != 0, dtype=np.float32)
+    root_rest_lengths = np.zeros(len(positions), dtype=np.float32)
+    for vertex, root in enumerate(root_indices):
+        if root >= 0:
+            root_rest_lengths[vertex] = np.linalg.norm(
+                step_basic_positions[root] - step_basic_positions[vertex]
+            )
+
+    hotools_native.project_tether_mc2(
+        positions,
+        inv_masses,
+        root_indices,
+        root_rest_lengths,
+        velocity_positions,
+        1.0,
+        values["compression_limit"],
+        values["stretch_limit"],
+    )
+
+    np.testing.assert_allclose(
+        positions,
+        np.asarray(expected["next_positions"], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        velocity_positions,
+        np.asarray(expected["velocity_positions"], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
 def main():
     assert_native_matches_reference()
+    assert_native_matches_tier_a_oracle()
     print("mc2 tether native smoke test passed")
 
 

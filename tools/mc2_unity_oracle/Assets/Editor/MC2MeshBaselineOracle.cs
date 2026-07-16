@@ -271,6 +271,12 @@ namespace HoTools.MC2Oracle.Editor
             public float[] TempFloats;
         }
 
+        private sealed class TetherRuntimeDump
+        {
+            public float3[] NextPositions;
+            public float3[] VelocityPositions;
+        }
+
         private sealed class ParticleInertiaStepDump
         {
             public float3[] BasePositions;
@@ -558,6 +564,7 @@ namespace HoTools.MC2Oracle.Editor
             int centerStepWritten = WriteCenterStepFixtures(outputDirectory);
             int centerFrameShiftWritten = WriteCenterFrameShiftFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
+            int tetherRuntimeWritten = WriteTetherRuntimeFixtures(outputDirectory);
             int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
             int boneStaticWritten = WriteBoneStaticFixtures(outputDirectory);
             int boneRotationLineWritten = WriteBoneRotationLineFixtures(outputDirectory);
@@ -575,6 +582,7 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerStepWritten} center-step fixtures, "
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
                 + $"{particleStepWritten} particle-step fixtures, "
+                + $"{tetherRuntimeWritten} tether-runtime fixtures, "
                 + $"{boneConnectionWritten} bone-connection fixtures, "
                 + $"{boneStaticWritten} bone-static fixtures, "
                 + $"{boneRotationLineWritten} bone-rotation-line fixtures, "
@@ -1629,6 +1637,15 @@ namespace HoTools.MC2Oracle.Editor
             File.WriteAllText(path, BuildParticleFrameJson(frameDump), new UTF8Encoding(false));
             Debug.Log($"[MC2 Oracle] wrote {path}");
             return 5;
+        }
+
+        private static int WriteTetherRuntimeFixtures(string outputDirectory)
+        {
+            TetherRuntimeDump dump = RunTetherRuntimeOracle();
+            string path = Path.Combine(outputDirectory, "tether_runtime_001.json");
+            File.WriteAllText(path, BuildTetherRuntimeJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
         }
 
         private static BaselineStepPoseDump RunBaselineStepPoseOracle(
@@ -3549,6 +3566,108 @@ namespace HoTools.MC2Oracle.Editor
             }
         }
 
+        private static TetherRuntimeDump RunTetherRuntimeOracle()
+        {
+            MethodInfo method = typeof(TetherConstraint).GetMethod(
+                "SolverConstraint",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(TetherConstraint).FullName,
+                    "SolverConstraint"
+                );
+            }
+
+            const int vertexCount = 5;
+            var team = new TeamManager.TeamData
+            {
+                particleChunk = new DataChunk(0, vertexCount),
+                proxyCommonChunk = new DataChunk(0, vertexCount),
+            };
+            var parameters = new ClothParameters
+            {
+                tetherConstraint = new TetherConstraint.TetherConstraintParams
+                {
+                    compressionLimit = 0.4f,
+                    stretchLimit = 0.03f,
+                },
+            };
+            var center = new InertiaConstraint.CenterData();
+            var attributes = new NativeArray<VertexAttribute>(
+                new[]
+                {
+                    VertexAttribute.Fixed,
+                    VertexAttribute.Move,
+                    VertexAttribute.Move,
+                    VertexAttribute.Fixed,
+                    VertexAttribute.Move,
+                },
+                Allocator.TempJob
+            );
+            var depths = new NativeArray<float>(
+                new[] { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f },
+                Allocator.TempJob
+            );
+            var roots = new NativeArray<int>(
+                new[] { -1, 0, 0, 0, -1 },
+                Allocator.TempJob
+            );
+            var next = new NativeArray<float3>(
+                P((0, 0, 0), (1.35f, 0, 0), (0.25f, 0, 0),
+                  (0.5f, 0.5f, 0), (1, 1, 0)),
+                Allocator.TempJob
+            );
+            var velocityPositions = new NativeArray<float3>(
+                P((0, 0, 0), (1.35f, 0, 0), (0.25f, 0, 0),
+                  (0.5f, 0.5f, 0), (1, 1, 0)),
+                Allocator.TempJob
+            );
+            var friction = new NativeArray<float>(
+                new[] { 0.0f, 0.2f, 0.8f, 0.4f, 1.0f },
+                Allocator.TempJob
+            );
+            var stepBasicPositions = new NativeArray<float3>(
+                P((0, 0, 0), (1, 0, 0), (1, 0, 0),
+                  (0.5f, 0.5f, 0), (1, 1, 0)),
+                Allocator.TempJob
+            );
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, vertexCount),
+                    team,
+                    parameters,
+                    center,
+                    attributes,
+                    depths,
+                    roots,
+                    next,
+                    velocityPositions,
+                    friction,
+                    stepBasicPositions,
+                };
+                InvokeStatic(method, arguments);
+                return new TetherRuntimeDump
+                {
+                    NextPositions = next.ToArray(),
+                    VelocityPositions = velocityPositions.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose();
+                depths.Dispose();
+                roots.Dispose();
+                next.Dispose();
+                velocityPositions.Dispose();
+                friction.Dispose();
+                stepBasicPositions.Dispose();
+            }
+        }
+
         private static ParticleInertiaStepDump RunParticleInertiaStepOracle()
         {
             MethodInfo method = typeof(SimulationManager).GetMethod(
@@ -5101,6 +5220,46 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "temp_vector_b", ArrayJson(dump.TempVectorB, Vector3Json));
             Property(text, 4, "temp_counts", NumberArray(dump.TempCounts));
             Property(text, 4, "temp_floats", ArrayJson(dump.TempFloats, FloatJson), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildTetherRuntimeJson(TetherRuntimeDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote("tether_runtime_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Cloth/Constraints/TetherConstraint.cs::SolverConstraint")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Direct Tether substep covers stretch, compression, Fixed, and missing-root branches while freezing velocity-reference attenuation.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "attributes", "[1,2,2,1,2]");
+            Property(text, 4, "depths", "[0,0.25,0.5,0.75,1]");
+            Property(text, 4, "root_indices", "[-1,0,0,0,-1]");
+            Property(text, 4, "next_positions", "[[0,0,0],[1.35,0,0],[0.25,0,0],[0.5,0.5,0],[1,1,0]]");
+            Property(text, 4, "velocity_positions", "[[0,0,0],[1.35,0,0],[0.25,0,0],[0.5,0.5,0],[1,1,0]]");
+            Property(text, 4, "friction", "[0,0.2,0.8,0.4,1]");
+            Property(text, 4, "step_basic_positions", "[[0,0,0],[1,0,0],[1,0,0],[0.5,0.5,0],[1,1,0]]");
+            Property(text, 4, "compression_limit", "0.4");
+            Property(text, 4, "stretch_limit", "0.03", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

@@ -43,7 +43,7 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | N-02/N-04/N-06 | 分别生成 Tether、Angle、Motion 独立 Tier A substep fixture，不修改不同 scope 的旧 fixture。 | 三项均以固定 source producer输入直接对拍 native consumer；py313 与 Blender 5.1 回归保持通过。 |
+| 1 | N-04/N-06 | 分别生成 Angle、Motion 独立 Tier A substep fixture，不修改不同 scope 的旧 fixture。 | 两项均以固定 source producer输入直接对拍 native consumer；py313 与 Blender 5.1 回归保持通过。 |
 | 2 | P-02 | 建立 MeshCloth、BoneCloth Line、BoneSpring 三类代表性 Blender 资产。 | 固定输入、支持域、预期结果和拒绝边界；后台可重复执行并输出稳定诊断。 |
 | 3 | P-03 | 建立 V1-R 混合场景稳定性与性能门禁。 | 长时多帧、static rebuild、参数热更新、reset、清缓存、dispose 循环无泄漏/陈旧结果；记录可重复性能基线。 |
 | 4 | P-04 | 删除旧 MC2 节点、Python reference、native full-core/context、兼容 cache 与 shadow pipeline。 | registry、节点、import、运行时与资产入口均无 fallback；新测试不加载旧实现。 |

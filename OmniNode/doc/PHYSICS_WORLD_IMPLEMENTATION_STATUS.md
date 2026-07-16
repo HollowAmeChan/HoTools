@@ -79,7 +79,7 @@ physicsWorld/
 ## 当前优先级
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-2. 按`MC2_ACCEPTANCE_MAP.md`先补Tether/Angle/Motion直接Tier A，再完成真实资产、混合soak/性能与旧路径删除；不横向扩张未来能力。
+2. 按`MC2_ACCEPTANCE_MAP.md`先补Angle/Motion直接Tier A，再完成真实资产、混合soak/性能与旧路径删除；不横向扩张未来能力。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 
