@@ -166,6 +166,23 @@ FloatVec3 triangle_normal(
     return {normal.x / magnitude, normal.y / magnitude, normal.z / magnitude};
 }
 
+FloatVec3 normalize_float(const FloatVec3& value, const char* name) {
+    const float length_squared = dot(value, value);
+    if (!(length_squared > 0.0f) || !std::isfinite(length_squared)) {
+        throw std::invalid_argument(std::string(name) + " is degenerate");
+    }
+    const float magnitude = std::sqrt(length_squared);
+    return {value.x / magnitude, value.y / magnitude, value.z / magnitude};
+}
+
+FloatVec3 transform_point_columns(const float* columns, const FloatVec3& point) {
+    return {
+        columns[0] * point.x + columns[4] * point.y + columns[8] * point.z + columns[12],
+        columns[1] * point.x + columns[5] * point.y + columns[9] * point.z + columns[13],
+        columns[2] * point.x + columns[6] * point.y + columns[10] * point.z + columns[14],
+    };
+}
+
 Vec4 normalize(const Vec4& value, const char* name) {
     const double magnitude = std::sqrt(
         value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w
@@ -1080,6 +1097,132 @@ Mc2DistanceDerived mc2_build_distance_derived(
         }
         result.ranges.push_back(static_cast<std::int32_t>(start));
         result.ranges.push_back(static_cast<std::int32_t>(count));
+    }
+    return result;
+}
+
+Mc2BendingDerived mc2_build_bending_derived(
+    const float* positions,
+    const std::uint8_t* vertex_attributes,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const float* initial_local_to_world_columns
+) {
+    if (positions == nullptr || vertex_attributes == nullptr ||
+        initial_local_to_world_columns == nullptr ||
+        (edge_count > 0 && edges == nullptr) ||
+        (triangle_count > 0 && triangles == nullptr)) {
+        throw std::invalid_argument("MC2 Bending derived buffers cannot be null");
+    }
+    constexpr std::uint8_t kFixed = 0x01u;
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr double kRadiansToDegreesDouble = 57.2957795130823208768;
+    constexpr double kMaxBendingDegrees = 120.0;
+    constexpr double kMinVolumeDegrees = 90.0;
+    constexpr double kMaxVolumeDegrees = 179.0;
+    constexpr std::int8_t kVolumeMarker = 100;
+    auto is_move = [](std::uint8_t value) { return (value & kMove) != 0u; };
+    auto is_invalid = [](std::uint8_t value) {
+        return (value & static_cast<std::uint8_t>(kFixed | kMove)) == 0u;
+    };
+
+    std::vector<FloatVec3> local_positions(vertex_count);
+    std::vector<FloatVec3> world_positions(vertex_count);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto offset = vertex * 3;
+        local_positions[vertex] = {
+            positions[offset], positions[offset + 1], positions[offset + 2]
+        };
+        world_positions[vertex] = transform_point_columns(
+            initial_local_to_world_columns, local_positions[vertex]
+        );
+    }
+    std::map<std::uint64_t, std::vector<std::size_t>> edge_triangles;
+    for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+        const auto offset = triangle * 3;
+        const auto first = triangles[offset];
+        const auto second = triangles[offset + 1];
+        const auto third = triangles[offset + 2];
+        edge_triangles[canonical_key(first, second)].push_back(triangle);
+        edge_triangles[canonical_key(second, third)].push_back(triangle);
+        edge_triangles[canonical_key(third, first)].push_back(triangle);
+    }
+
+    Mc2BendingDerived result;
+    std::set<std::array<std::int32_t, 4>> volume_keys;
+    auto append_record = [&](const std::array<std::int32_t, 4>& quad, float rest, std::int8_t marker) {
+        result.quads.insert(result.quads.end(), quad.begin(), quad.end());
+        result.rest_angle_or_volume.push_back(rest);
+        result.sign_or_volume.push_back(marker);
+    };
+    for (std::size_t edge_index = 0; edge_index < edge_count; ++edge_index) {
+        const auto edge_first = edges[edge_index * 2];
+        const auto edge_second = edges[edge_index * 2 + 1];
+        const auto found = edge_triangles.find(canonical_key(edge_first, edge_second));
+        if (found == edge_triangles.end() || found->second.size() < 2) continue;
+        const auto& triangle_indices = found->second;
+        for (std::size_t first_reverse = 0; first_reverse + 1 < triangle_indices.size(); ++first_reverse) {
+            const auto first_triangle = triangle_indices[triangle_indices.size() - 1 - first_reverse];
+            const auto first_opposite = opposite_vertex(
+                triangles, first_triangle, edge_first, edge_second
+            );
+            for (std::size_t second_reverse = first_reverse + 1;
+                 second_reverse < triangle_indices.size(); ++second_reverse) {
+                const auto second_triangle = triangle_indices[triangle_indices.size() - 1 - second_reverse];
+                const auto second_opposite = opposite_vertex(
+                    triangles, second_triangle, edge_first, edge_second
+                );
+                const std::array<std::int32_t, 4> quad {
+                    first_opposite, second_opposite, edge_first, edge_second
+                };
+                bool any_move = false;
+                bool any_invalid = false;
+                for (const auto vertex : quad) {
+                    const auto attribute = vertex_attributes[static_cast<std::size_t>(vertex)];
+                    any_move = any_move || is_move(attribute);
+                    any_invalid = any_invalid || is_invalid(attribute);
+                }
+                if (!any_move || any_invalid) continue;
+
+                const auto& p0 = local_positions[static_cast<std::size_t>(quad[0])];
+                const auto& p1 = local_positions[static_cast<std::size_t>(quad[1])];
+                const auto& p2 = local_positions[static_cast<std::size_t>(quad[2])];
+                const auto& p3 = local_positions[static_cast<std::size_t>(quad[3])];
+                const auto normal0 = normalize_float(
+                    cross(subtract(p2, p0), subtract(p3, p0)),
+                    "TriangleBending first triangle"
+                );
+                const auto normal1 = normalize_float(
+                    cross(subtract(p3, p1), subtract(p2, p1)),
+                    "TriangleBending second triangle"
+                );
+                const float cosine = std::clamp(dot(normal0, normal1), -1.0f, 1.0f);
+                const float angle = std::acos(cosine);
+                const float direction = dot(cross(normal0, normal1), subtract(p3, p2));
+                const auto sign = static_cast<std::int8_t>(direction < 0.0f ? -1 : 1);
+                const double angle_degrees = static_cast<double>(std::fabs(angle)) * kRadiansToDegreesDouble;
+                if (angle_degrees < kMaxBendingDegrees) append_record(quad, angle, sign);
+
+                auto volume_key = quad;
+                std::sort(volume_key.begin(), volume_key.end());
+                if (angle_degrees >= kMinVolumeDegrees && angle_degrees <= kMaxVolumeDegrees &&
+                    volume_keys.insert(volume_key).second) {
+                    const auto& w0 = world_positions[static_cast<std::size_t>(quad[0])];
+                    const auto& w1 = world_positions[static_cast<std::size_t>(quad[1])];
+                    const auto& w2 = world_positions[static_cast<std::size_t>(quad[2])];
+                    const auto& w3 = world_positions[static_cast<std::size_t>(quad[3])];
+                    const float six_volume = dot(
+                        cross(subtract(w1, w0), subtract(w2, w0)),
+                        subtract(w3, w0)
+                    );
+                    const float volume = (six_volume / 6.0f) * 1000.0f;
+                    append_record(quad, volume, kVolumeMarker);
+                }
+            }
+        }
     }
     return result;
 }

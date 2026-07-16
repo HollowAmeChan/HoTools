@@ -241,6 +241,32 @@ def test_distance_derived_arrays_and_owner() -> None:
     )
 
 
+def test_bending_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        dtype=np.float32,
+    )
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    edges = np.asarray(((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32)
+    triangles = np.asarray(((0, 2, 3), (1, 3, 2)), dtype=np.int32)
+    columns = np.eye(4, dtype=np.float32).T.copy()
+
+    derived = hotools_native.mc2_build_bending_derived_v0(
+        positions,
+        attributes,
+        edges,
+        triangles,
+        columns,
+    )
+
+    assert derived["bending_quads"].dtype == np.int32
+    assert derived["bending_rest_angle_or_volume"].dtype == np.float32
+    assert derived["bending_sign_or_volume"].dtype == np.int8
+    np.testing.assert_array_equal(derived["bending_quads"], ((1, 0, 2, 3),))
+    np.testing.assert_allclose(derived["bending_rest_angle_or_volume"], (0.0,), atol=1.0e-7)
+    np.testing.assert_array_equal(derived["bending_sign_or_volume"], (1,))
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
@@ -252,3 +278,5 @@ if __name__ == "__main__":
     print("PASS MC2 native baseline derived arrays")
     test_distance_derived_arrays_and_owner()
     print("PASS MC2 native Distance derived arrays")
+    test_bending_derived_arrays()
+    print("PASS MC2 native Bending derived arrays")

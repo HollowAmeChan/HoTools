@@ -94,6 +94,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_build_mesh_baseline_derived_v0",
     "mc2_build_baseline_pose_depth_derived_v0",
     "mc2_build_distance_derived_v0",
+    "mc2_build_bending_derived_v0",
 )
 
 

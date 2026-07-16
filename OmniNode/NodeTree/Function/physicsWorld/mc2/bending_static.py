@@ -9,18 +9,11 @@ import math
 
 import numpy as np
 
-from ..utils.math3d import (
-    normalize_vector_squared_f32,
-    transform_points_columns_f32,
-)
 from .static_data import MC2ProxyStaticSpec
 
 
 MC2_BENDING_STATIC_SCHEMA_VERSION = 1
 MC2_BENDING_MAX_INDEX = 0xFFFF
-MC2_BENDING_MAX_ANGLE_DEGREES = 120.0
-MC2_VOLUME_MIN_ANGLE_DEGREES = 90.0
-MC2_VOLUME_MAX_ANGLE_DEGREES = 179.0
 MC2_VOLUME_MARKER = 100
 
 _IDENTITY_COLUMNS = (
@@ -87,79 +80,6 @@ def _readonly_array(values, dtype, shape: tuple[int, ...]) -> np.ndarray:
     array = np.ascontiguousarray(values, dtype=dtype).reshape(shape)
     array.flags.writeable = False
     return array
-
-
-def _is_move(attribute: int) -> bool:
-    return bool(attribute & 0x02)
-
-
-def _is_invalid(attribute: int) -> bool:
-    return not bool(attribute & 0x03)
-
-
-def _triangle_edges(triangle: tuple[int, int, int]):
-    def edge(first: int, second: int):
-        return (first, second) if first < second else (second, first)
-
-    return (
-        edge(triangle[0], triangle[1]),
-        edge(triangle[1], triangle[2]),
-        edge(triangle[2], triangle[0]),
-    )
-
-
-def _edge_to_triangles(triangles) -> dict[tuple[int, int], list[int]]:
-    result: dict[tuple[int, int], list[int]] = {}
-    for triangle_index, triangle in enumerate(triangles):
-        for edge in _triangle_edges(triangle):
-            result.setdefault(edge, []).append(triangle_index)
-    return result
-
-
-def _opposite_vertex(triangle, edge: tuple[int, int]) -> int:
-    for vertex in triangle:
-        if vertex not in edge:
-            return vertex
-    raise ValueError("triangle has no opposite vertex for edge")
-
-
-def _normalize(vector: np.ndarray, name: str) -> np.ndarray:
-    return normalize_vector_squared_f32(
-        vector,
-        error_message=f"{name} is degenerate",
-    )
-
-
-def _angle_and_sign(positions: np.ndarray, quad: tuple[int, int, int, int]):
-    p0, p1, p2, p3 = (positions[index] for index in quad)
-    normal0 = _normalize(
-        np.cross(p2 - p0, p3 - p0).astype(np.float32),
-        "TriangleBending first triangle",
-    )
-    normal1 = _normalize(
-        np.cross(p3 - p1, p2 - p1).astype(np.float32),
-        "TriangleBending second triangle",
-    )
-    cosine = np.float32(np.clip(np.dot(normal0, normal1), -1.0, 1.0))
-    angle = np.float32(np.arccos(cosine))
-    direction = np.float32(
-        np.dot(
-            np.cross(normal0, normal1).astype(np.float32),
-            p3 - p2,
-        )
-    )
-    return angle, (-1 if direction < np.float32(0.0) else 1)
-
-
-def _signed_volume(world_positions: np.ndarray, quad) -> float:
-    p0, p1, p2, p3 = (world_positions[index] for index in quad)
-    cross = np.cross(p1 - p0, p2 - p0).astype(np.float32)
-    six_volume = np.float32(np.dot(cross, p3 - p0))
-    return float(
-        np.float32(
-            np.float32(six_volume / np.float32(6.0)) * np.float32(1000.0)
-        )
-    )
 
 
 @dataclass(frozen=True)
@@ -290,58 +210,23 @@ def build_mc2_bending_static(
         return None
 
     columns = _matrix_columns(initial_local_to_world_columns)
-    positions = np.asarray(proxy.local_positions, dtype=np.float32)
-    world_positions = transform_points_columns_f32(positions, columns)
-    edge_triangles = _edge_to_triangles(proxy.triangles)
-    attributes = proxy.vertex_attributes
-    quads = []
-    rests = []
-    markers = []
-    volume_keys: set[tuple[int, int, int, int]] = set()
+    from .native import native_module
 
-    for edge in proxy.edges:
-        # NativeParallelMultiHashMap returns the latest insertion first for the
-        # fixed source baseline used by the Tier A raw-order fixtures.
-        triangle_indices = tuple(reversed(edge_triangles.get(edge, ())))
-        for first_offset, first_index in enumerate(triangle_indices[:-1]):
-            first_triangle = proxy.triangles[first_index]
-            first_opposite = _opposite_vertex(first_triangle, edge)
-            for second_index in triangle_indices[first_offset + 1:]:
-                second_triangle = proxy.triangles[second_index]
-                second_opposite = _opposite_vertex(second_triangle, edge)
-                quad = (first_opposite, second_opposite, edge[0], edge[1])
-                quad_attributes = tuple(attributes[index] for index in quad)
-                if not any(_is_move(value) for value in quad_attributes):
-                    continue
-                if any(_is_invalid(value) for value in quad_attributes):
-                    continue
-
-                angle, sign = _angle_and_sign(positions, quad)
-                angle_degrees = math.degrees(float(abs(angle)))
-                if angle_degrees < MC2_BENDING_MAX_ANGLE_DEGREES:
-                    quads.append(quad)
-                    rests.append(float(angle))
-                    markers.append(sign)
-
-                volume_key = tuple(sorted(quad))
-                if (
-                    MC2_VOLUME_MIN_ANGLE_DEGREES
-                    <= angle_degrees
-                    <= MC2_VOLUME_MAX_ANGLE_DEGREES
-                    and volume_key not in volume_keys
-                ):
-                    volume_keys.add(volume_key)
-                    quads.append(quad)
-                    rests.append(_signed_volume(world_positions, quad))
-                    markers.append(MC2_VOLUME_MARKER)
+    derived = native_module().mc2_build_bending_derived_v0(
+        np.ascontiguousarray(proxy.local_positions, dtype=np.float32),
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
+        np.ascontiguousarray(columns, dtype=np.float32),
+    )
 
     return make_mc2_bending_static_spec(
         proxy_signature=proxy.proxy_signature,
         vertex_count=proxy.vertex_count,
         initial_local_to_world_columns=columns,
-        bending_quads=quads,
-        bending_rest_angle_or_volume=rests,
-        bending_sign_or_volume=markers,
+        bending_quads=derived["bending_quads"],
+        bending_rest_angle_or_volume=derived["bending_rest_angle_or_volume"],
+        bending_sign_or_volume=derived["bending_sign_or_volume"],
     )
 
 

@@ -104,4 +104,21 @@ Mc2DistanceDerived mc2_build_distance_derived(
     std::size_t adjacency_data_count
 );
 
+struct Mc2BendingDerived {
+    std::vector<std::int32_t> quads;
+    std::vector<float> rest_angle_or_volume;
+    std::vector<std::int8_t> sign_or_volume;
+};
+
+Mc2BendingDerived mc2_build_bending_derived(
+    const float* positions,
+    const std::uint8_t* vertex_attributes,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const float* initial_local_to_world_columns
+);
+
 }  // namespace hotools

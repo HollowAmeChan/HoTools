@@ -1204,6 +1204,52 @@ NB_MODULE(hotools_native, m) {
             result["distance_rest_signed"] = owned_array_1d(std::move(derived.rest_signed));
             return result;
         });
+    m.def("mc2_build_bending_derived_v0",
+        [](cf32_2d positions,
+           cu8_1d vertex_attributes,
+           ci32_2d edges,
+           ci32_2d triangles,
+           cf32_2d initial_local_to_world_columns) {
+            const auto vertex_count = positions.shape(0);
+            check_cols(positions, 3, "positions");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_cols(edges, 2, "edges");
+            check_indices_in_range(edges.data(), edges.shape(0) * 2, vertex_count, "edges");
+            check_cols(triangles, 3, "triangles");
+            check_indices_in_range(
+                triangles.data(), triangles.shape(0) * 3, vertex_count, "triangles"
+            );
+            check_len(initial_local_to_world_columns.shape(0), 4, "initial_local_to_world_columns");
+            check_cols(initial_local_to_world_columns, 4, "initial_local_to_world_columns");
+            hotools::Mc2BendingDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_bending_derived(
+                    positions.data(),
+                    vertex_attributes.data(),
+                    vertex_count,
+                    edges.data(),
+                    edges.shape(0),
+                    triangles.data(),
+                    triangles.shape(0),
+                    initial_local_to_world_columns.data()
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            const auto record_count = derived.rest_angle_or_volume.size();
+            nb::dict result;
+            result["bending_quads"] = owned_array_2d(
+                std::move(derived.quads), record_count, 4
+            );
+            result["bending_rest_angle_or_volume"] = owned_array_1d(
+                std::move(derived.rest_angle_or_volume)
+            );
+            result["bending_sign_or_volume"] = owned_array_1d(
+                std::move(derived.sign_or_volume)
+            );
+            return result;
+        });
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,
            ci32_1d nbrs, cf32_1d rest, cf32_1d stiff, f32_2d vel, float attn) {
