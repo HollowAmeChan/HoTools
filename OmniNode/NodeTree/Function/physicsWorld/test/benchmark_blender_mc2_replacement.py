@@ -393,6 +393,7 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
                 "build_ms": build_ms,
                 "rebuild_ms": rebuild_ms,
                 "config_rebuild_ms": None,
+                "uv_rebuild_ms": None,
                 "hot": _summary(timings[2:]),
                 "write_mean_ms": None,
                 "debug_capture_ms": None,
@@ -484,6 +485,18 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
         assert config_native_info["center_static_rebuild_count"] == 1
         assert config_native_info["owned_static_take_count"] == 0
         task = config_task
+        previous += 1
+        for uv in obj.data.uv_layers.active.data:
+            uv.uv.x += 0.001
+        step_ms, write_ms = _new_mesh_step(
+            world, task, settings, previous + 1, previous
+        )
+        uv_rebuild_ms = step_ms + write_ms
+        uv_slot = world.solver_slots[task.task_id]
+        assert (
+            uv_slot.data["last_static_change_mask"]
+            == mc2_native_flags.MC2_STATIC_CHANGE_SURFACE
+        )
         slot = world.solver_slots[task.task_id]
         native_info = slot.data["native_context"].inspect()
         return {
@@ -495,6 +508,7 @@ def _benchmark_mesh(case: dict, backend: str) -> dict:
             "rebuild_ms": rebuild_ms,
             "config_rebuild_ms": config_rebuild_ms,
             "config_static_clone_count": config_native_info["static_clone_count"],
+            "uv_rebuild_ms": uv_rebuild_ms,
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": debug_capture_ms,
@@ -634,6 +648,7 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
                 "build_ms": build_ms,
                 "rebuild_ms": None,
                 "config_rebuild_ms": None,
+                "uv_rebuild_ms": None,
                 "hot": _summary(timings[2:]),
                 "write_mean_ms": None,
                 "debug_capture_ms": None,
@@ -741,6 +756,7 @@ def _benchmark_bone(case: dict, backend: str) -> dict:
             "rebuild_ms": rebuild_ms,
             "config_rebuild_ms": config_rebuild_ms,
             "config_static_clone_count": config_native_info["static_clone_count"],
+            "uv_rebuild_ms": None,
             "hot": _summary(timings[2:]),
             "write_mean_ms": statistics.fmean(writes[2:]),
             "debug_capture_ms": None,

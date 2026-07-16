@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-06d已关闭：单一`MC2BoneRawSnapshot`与同task同Armature `foreach_get`消除重复rest读取/冻结树，production assembly与rest/finalizer/baseline/constraint派生保持连续数组；Proxy/Baseline/Distance/Center/Self/Bone registration共6次直接move，完整spec/packer仅oracle可达，slot仅保留metadata。large Bone首建约18.06ms、热帧约6.15ms。P-06e的Mesh/Bone config分类已完成：五/六类native static复制、Center-only重建、零owner上传，cold/incremental metadata一致；large Mesh/Bone config约5.08/6.12ms。下一步处理geometry/surface/topology复用矩阵。
+   P-06d/P-06e已关闭：Bone生产静态链使用单一raw snapshot、连续数组、6次owner move与compact metadata；Mesh/Bone config分别复制五/六类native static并Center-only重建，零owner上传且cold/incremental metadata一致。依赖矩阵确认topology/geometry/Pin必须全量生产；UV-only因完整Proxy身份签名链保持全量重签/重建，large约20.50ms，仍比旧CPP约657.63ms快约32x，不阻塞替代。下一步执行P-06f总体性能与生产边界审计。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

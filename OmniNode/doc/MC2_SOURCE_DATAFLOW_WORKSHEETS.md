@@ -320,6 +320,8 @@ Blender authoring/frame input
 
 26. P-06e重建复用必须发生在native context之间：旧context保持只读，新staged context按change mask复制不变static并只运行受影响producer，全部成功后由Python原子替换slot；失败释放staged context并保留旧context/result。`config=8`当前只代表gravity direction并只允许重建Center；不得把native static回读为Python spec或为了复用恢复host shadow。Mesh/Bone config已实现：分别复制五/六类不变static，Center在native重算并内部生成与cold oracle一致的SHA-256，只返回fixed count/signature metadata；两者owner上传均为零。large Mesh config约`5.08ms`，同轮surface全量重建约`20.96ms`。
 
+27. P-06e change matrix固定为：`topology`改变邻接/primitive/identity，全部static producer失效；`geometry`改变Proxy orientation/rest、Baseline、Distance/Bending/Center及Bone registration，全部数值producer失效；Mesh Pin `surface`改变Fixed/Move attributes并传播到Baseline/Distance/Bending/Center/Self；Bone surface恒定；`config`只改变Center。Mesh UV-only不改变数值约束，但当前Proxy/Finalizer/Baseline/Distance/Bending/Center/Self metadata通过Proxy signature形成完整身份链，因此保持全量重签/重建，除非未来新增独立UV子指纹及native重签合同。large UV-only约`20.50ms`，与Pin约`20.50ms`相同且仍比旧CPP重建快约`32x`，不阻塞替代。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
