@@ -22,7 +22,6 @@ from ..utils.math3d import (
     transform_point_matrix_f32,
     transform_vector_matrix_f32,
 )
-from .mesh_baseline import MC2_VERTEX_MOVE
 from .static_data import MC2ProxyStaticSpec
 from .setups.mesh_cloth.final_proxy import mc2_world_rotation_xyzw
 
@@ -102,57 +101,30 @@ def build_mc2_center_static(
     *,
     vertex_bind_pose_rotations,
     world_gravity_direction,
+    native_context=None,
 ) -> MC2CenterStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
-    bind_rotations = tuple(
-        _unit_quaternion(value, f"vertex_bind_pose_rotations[{index}]")
-        for index, value in enumerate(vertex_bind_pose_rotations)
-    )
-    if len(bind_rotations) != proxy.vertex_count:
+    bind_rotations = np.ascontiguousarray(vertex_bind_pose_rotations, dtype=np.float64)
+    if bind_rotations.shape != (proxy.vertex_count, 4):
         raise ValueError("vertex bind rotation count mismatch")
 
-    neighbors = [set() for _ in range(proxy.vertex_count)]
-    for first, second in proxy.edges:
-        neighbors[first].add(second)
-        neighbors[second].add(first)
-    fixed = []
-    for index, attribute in enumerate(proxy.vertex_attributes):
-        if attribute & MC2_VERTEX_MOVE:
-            continue
-        adjacent = neighbors[index]
-        if adjacent and all(not (proxy.vertex_attributes[item] & MC2_VERTEX_MOVE) for item in adjacent):
-            continue
-        fixed.append(index)
+    from .native import native_module
 
-    if fixed:
-        center = tuple(
-            sum(proxy.local_positions[index][axis] for index in fixed) / len(fixed)
-            for axis in range(3)
-        )
-        normal_sum = np.zeros(3, dtype=np.float64)
-        tangent_sum = np.zeros(3, dtype=np.float64)
-        for index in fixed:
-            local_rotation = mc2_world_rotation_xyzw(
-                proxy.local_normals[index], proxy.local_tangents[index]
-            )
-            corrected = _unit_quaternion(
-                quaternion_multiply_xyzw_tuple(local_rotation, bind_rotations[index]),
-                "corrected center rotation",
-            )
-            normal_sum += _rotate(corrected, (0.0, 1.0, 0.0))
-            tangent_sum += _rotate(corrected, (0.0, 0.0, 1.0))
-        center_rotation = mc2_world_rotation_xyzw(
-            _normalize3(normal_sum, "center normal"),
-            _normalize3(tangent_sum, "center tangent"),
-        )
-        gravity = _rotate(
-            quaternion_conjugate_xyzw_tuple(center_rotation),
-            _normalize3(world_gravity_direction, "world_gravity_direction"),
-        )
-    else:
-        center = (0.0, 0.0, 0.0)
-        gravity = (0.0, -1.0, 0.0)
+    derived = native_module().mc2_build_center_static_derived_v0(
+        np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
+        np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
+        bind_rotations,
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(world_gravity_direction, dtype=np.float64),
+    )
+    if native_context is not None:
+        native_context.update_center_derived(derived)
+    fixed = tuple(int(value) for value in derived["fixed_indices"])
+    center = tuple(float(value) for value in derived["local_center_position"])
+    gravity = tuple(float(value) for value in derived["initial_local_gravity_direction"])
 
     payload = {
         "schema_version": 0,
@@ -165,9 +137,9 @@ def build_mc2_center_static(
     return MC2CenterStaticSpec(
         task_id=proxy.task_id,
         proxy_signature=proxy.proxy_signature,
-        fixed_indices=tuple(fixed),
-        local_center_position=tuple(float(value) for value in center),
-        initial_local_gravity_direction=tuple(float(value) for value in gravity),
+        fixed_indices=fixed,
+        local_center_position=center,
+        initial_local_gravity_direction=gravity,
         center_static_signature=_signature(payload),
     )
 

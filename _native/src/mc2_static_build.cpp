@@ -250,6 +250,15 @@ Vec3 rotate_by_inverse(const Vec4& rotation, const Vec3& value) {
     return {result.x, result.y, result.z};
 }
 
+Vec3 rotate(const Vec4& rotation, const Vec3& value) {
+    const Vec4 pure {value.x, value.y, value.z, 0.0};
+    const Vec4 result = quaternion_multiply(
+        quaternion_multiply(rotation, pure),
+        quaternion_conjugate(rotation)
+    );
+    return {result.x, result.y, result.z};
+}
+
 using Triangle = std::array<std::int32_t, 3>;
 using Edge = std::pair<std::int32_t, std::int32_t>;
 
@@ -1302,6 +1311,114 @@ Mc2SelfCollisionDerived mc2_build_self_collision_derived(
             3
         );
     }
+    return result;
+}
+
+Mc2CenterStaticDerived mc2_build_center_static_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    const double* bind_rotations,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const double* world_gravity_direction
+) {
+    if ((vertex_count > 0 &&
+         (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
+          vertex_attributes == nullptr || bind_rotations == nullptr)) ||
+        (edge_count > 0 && edges == nullptr) || world_gravity_direction == nullptr) {
+        throw std::invalid_argument("MC2 Center static derived buffers cannot be null");
+    }
+    constexpr std::uint8_t kMove = 0x02u;
+    auto is_move = [](std::uint8_t value) { return (value & kMove) != 0u; };
+
+    std::vector<Vec4> normalized_bind_rotations(vertex_count);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto offset = vertex * 4;
+        normalized_bind_rotations[vertex] = normalize(
+            Vec4 {
+                bind_rotations[offset],
+                bind_rotations[offset + 1],
+                bind_rotations[offset + 2],
+                bind_rotations[offset + 3],
+            },
+            "vertex bind pose rotation"
+        );
+    }
+
+    std::vector<std::vector<std::int32_t>> neighbors(vertex_count);
+    for (std::size_t edge = 0; edge < edge_count; ++edge) {
+        const auto first = edges[edge * 2];
+        const auto second = edges[edge * 2 + 1];
+        neighbors[static_cast<std::size_t>(first)].push_back(second);
+        neighbors[static_cast<std::size_t>(second)].push_back(first);
+    }
+
+    Mc2CenterStaticDerived result;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (is_move(vertex_attributes[vertex])) continue;
+        const auto& adjacent = neighbors[vertex];
+        const bool surrounded_by_non_move = !adjacent.empty() && std::all_of(
+            adjacent.begin(), adjacent.end(), [&](std::int32_t neighbor) {
+                return !is_move(vertex_attributes[static_cast<std::size_t>(neighbor)]);
+            }
+        );
+        if (!surrounded_by_non_move) {
+            result.fixed_indices.push_back(static_cast<std::int32_t>(vertex));
+        }
+    }
+
+    result.local_center_position.assign(3, 0.0f);
+    result.initial_local_gravity_direction.assign(3, 0.0f);
+    if (result.fixed_indices.empty()) {
+        result.initial_local_gravity_direction[1] = -1.0f;
+        return result;
+    }
+
+    Vec3 center;
+    Vec3 normal_sum;
+    Vec3 tangent_sum;
+    for (const auto fixed_value : result.fixed_indices) {
+        const auto fixed = static_cast<std::size_t>(fixed_value);
+        center = add(center, load_vec3(positions, fixed));
+        const Vec4 local_rotation = orientation_quaternion(
+            load_vec3(local_normals, fixed), load_vec3(local_tangents, fixed)
+        );
+        const Vec4 corrected = normalize(
+            quaternion_multiply(local_rotation, normalized_bind_rotations[fixed]),
+            "corrected center rotation"
+        );
+        normal_sum = add(normal_sum, rotate(corrected, {0.0, 1.0, 0.0}));
+        tangent_sum = add(tangent_sum, rotate(corrected, {0.0, 0.0, 1.0}));
+    }
+    center = scale(center, 1.0 / static_cast<double>(result.fixed_indices.size()));
+    const Vec4 center_rotation = orientation_quaternion(
+        normalize(normal_sum, "center normal"),
+        normalize(tangent_sum, "center tangent")
+    );
+    const Vec3 gravity = rotate_by_inverse(
+        center_rotation,
+        normalize(
+            Vec3 {
+                world_gravity_direction[0],
+                world_gravity_direction[1],
+                world_gravity_direction[2],
+            },
+            "world_gravity_direction"
+        )
+    );
+    result.local_center_position = {
+        static_cast<float>(center.x),
+        static_cast<float>(center.y),
+        static_cast<float>(center.z),
+    };
+    result.initial_local_gravity_direction = {
+        static_cast<float>(gravity.x),
+        static_cast<float>(gravity.y),
+        static_cast<float>(gravity.z),
+    };
     return result;
 }
 

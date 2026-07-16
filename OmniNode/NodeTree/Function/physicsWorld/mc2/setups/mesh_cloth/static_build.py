@@ -194,6 +194,7 @@ def build_mc2_mesh_cloth_static(
         baseline.final_proxy,
         vertex_bind_pose_rotations=finalizer.vertex_bind_pose_rotations,
         world_gravity_direction=world_gravity_direction,
+        native_context=native_context,
     )
     self_collision = build_mc2_self_collision_static(
         baseline.final_proxy,

@@ -140,4 +140,22 @@ Mc2SelfCollisionDerived mc2_build_self_collision_derived(
     std::size_t triangle_count
 );
 
+struct Mc2CenterStaticDerived {
+    std::vector<std::int32_t> fixed_indices;
+    std::vector<float> local_center_position;
+    std::vector<float> initial_local_gravity_direction;
+};
+
+Mc2CenterStaticDerived mc2_build_center_static_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const std::uint8_t* vertex_attributes,
+    const double* bind_rotations,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const double* world_gravity_direction
+);
+
 }  // namespace hotools

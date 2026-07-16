@@ -1297,6 +1297,53 @@ NB_MODULE(hotools_native, m) {
             result["triangle_count"] = derived.triangle_count;
             return result;
         });
+    m.def("mc2_build_center_static_derived_v0",
+        [](cf64_2d positions,
+           cf64_2d local_normals,
+           cf64_2d local_tangents,
+           cu8_1d vertex_attributes,
+           cf64_2d bind_rotations,
+           ci32_2d edges,
+           cf64_1d world_gravity_direction) {
+            const auto vertex_count = positions.shape(0);
+            check_cols(positions, 3, "positions");
+            check_cols(local_normals, 3, "local_normals");
+            check_len(local_normals.shape(0), vertex_count, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_cols(bind_rotations, 4, "bind_rotations");
+            check_len(bind_rotations.shape(0), vertex_count, "bind_rotations");
+            check_cols(edges, 2, "edges");
+            check_indices_in_range(edges.data(), edges.shape(0) * 2, vertex_count, "edges");
+            check_len(world_gravity_direction.shape(0), 3, "world_gravity_direction");
+            hotools::Mc2CenterStaticDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_center_static_derived(
+                    positions.data(),
+                    local_normals.data(),
+                    local_tangents.data(),
+                    vertex_attributes.data(),
+                    bind_rotations.data(),
+                    vertex_count,
+                    edges.data(),
+                    edges.shape(0),
+                    world_gravity_direction.data()
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            nb::dict result;
+            result["fixed_indices"] = owned_array_1d(std::move(derived.fixed_indices));
+            result["local_center_position"] = owned_array_1d(
+                std::move(derived.local_center_position)
+            );
+            result["initial_local_gravity_direction"] = owned_array_1d(
+                std::move(derived.initial_local_gravity_direction)
+            );
+            return result;
+        });
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,
            ci32_1d nbrs, cf32_1d rest, cf32_1d stiff, f32_2d vel, float attn) {

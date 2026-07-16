@@ -314,6 +314,58 @@ def test_self_collision_derived_arrays() -> None:
     )
 
 
+def test_center_static_derived_arrays_and_owner() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 1.0, 0.0),) * 4, dtype=np.float64)
+    tangents = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    attributes = np.asarray((0x01, 0x02, 0x01, 0x01), dtype=np.uint8)
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    edges = np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32)
+    gravity = np.asarray((0.436435759, -0.8728715, 0.21821788), dtype=np.float64)
+
+    derived = hotools_native.mc2_build_center_static_derived_v0(
+        positions,
+        normals,
+        tangents,
+        attributes,
+        bind_rotations,
+        edges,
+        gravity,
+    )
+    fixed = derived["fixed_indices"]
+    center = derived["local_center_position"]
+    local_gravity = derived["initial_local_gravity_direction"]
+    del derived
+    gc.collect()
+
+    assert fixed.dtype == np.int32
+    assert center.dtype == np.float32
+    assert local_gravity.dtype == np.float32
+    np.testing.assert_array_equal(fixed, (0, 2, 3))
+    np.testing.assert_allclose(center, (0.0, 2.0 / 3.0, 1.0), atol=1.0e-7)
+    np.testing.assert_allclose(local_gravity, gravity, atol=1.0e-7)
+
+    invalid_bind_rotations = bind_rotations.copy()
+    invalid_bind_rotations[1] = 0.0
+    try:
+        hotools_native.mc2_build_center_static_derived_v0(
+            positions,
+            normals,
+            tangents,
+            attributes,
+            invalid_bind_rotations,
+            edges,
+            gravity,
+        )
+    except ValueError as exc:
+        assert "vertex bind pose rotation" in str(exc)
+    else:
+        raise AssertionError("invalid non-fixed bind rotation was accepted")
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
@@ -329,3 +381,5 @@ if __name__ == "__main__":
     print("PASS MC2 native Bending derived arrays")
     test_self_collision_derived_arrays()
     print("PASS MC2 native self-collision derived arrays")
+    test_center_static_derived_arrays_and_owner()
+    print("PASS MC2 native Center static derived arrays")
