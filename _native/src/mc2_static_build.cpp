@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -20,6 +22,13 @@ struct Vec3 {
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
+};
+
+struct Vec4 {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double w = 1.0;
 };
 
 Vec3 subtract(const Vec3& left, const Vec3& right) {
@@ -54,9 +63,74 @@ Vec3 negate(const Vec3& value) {
     return {-value.x, -value.y, -value.z};
 }
 
+Vec3 add(const Vec3& left, const Vec3& right) {
+    return {left.x + right.x, left.y + right.y, left.z + right.z};
+}
+
+Vec3 scale(const Vec3& value, double factor) {
+    return {value.x * factor, value.y * factor, value.z * factor};
+}
+
 Vec3 load_position(const double* positions, std::int32_t index) {
     const auto offset = static_cast<std::size_t>(index) * 3;
     return {positions[offset], positions[offset + 1], positions[offset + 2]};
+}
+
+Vec3 load_vec3(const double* values, std::size_t index) {
+    const auto offset = index * 3;
+    return {values[offset], values[offset + 1], values[offset + 2]};
+}
+
+void store_vec3(std::vector<double>& values, std::size_t index, const Vec3& value) {
+    const auto offset = index * 3;
+    values[offset] = value.x;
+    values[offset + 1] = value.y;
+    values[offset + 2] = value.z;
+}
+
+Vec4 normalize(const Vec4& value, const char* name) {
+    const double magnitude = std::sqrt(
+        value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w
+    );
+    if (!(magnitude > kZeroEpsilon) || !std::isfinite(magnitude)) {
+        throw std::invalid_argument(std::string(name) + " must be non-zero");
+    }
+    return {value.x / magnitude, value.y / magnitude, value.z / magnitude, value.w / magnitude};
+}
+
+Vec4 matrix_to_quaternion(
+    double m00, double m01, double m02,
+    double m10, double m11, double m12,
+    double m20, double m21, double m22
+) {
+    Vec4 quaternion;
+    const double trace = m00 + m11 + m22;
+    if (trace > 0.0) {
+        const double value = std::sqrt(trace + 1.0) * 2.0;
+        quaternion = {(m21 - m12) / value, (m02 - m20) / value, (m10 - m01) / value, 0.25 * value};
+    } else if (m00 > m11 && m00 > m22) {
+        const double value = std::sqrt(1.0 + m00 - m11 - m22) * 2.0;
+        quaternion = {0.25 * value, (m01 + m10) / value, (m02 + m20) / value, (m21 - m12) / value};
+    } else if (m11 > m22) {
+        const double value = std::sqrt(1.0 + m11 - m00 - m22) * 2.0;
+        quaternion = {(m01 + m10) / value, 0.25 * value, (m12 + m21) / value, (m02 - m20) / value};
+    } else {
+        const double value = std::sqrt(1.0 + m22 - m00 - m11) * 2.0;
+        quaternion = {(m02 + m20) / value, (m12 + m21) / value, 0.25 * value, (m10 - m01) / value};
+    }
+    return normalize(quaternion, "bind pose quaternion");
+}
+
+Vec4 orientation_quaternion(const Vec3& normal, const Vec3& tangent) {
+    const Vec3 forward = normalize(tangent, "orientation tangent");
+    const Vec3 up = normalize(normal, "orientation normal");
+    const Vec3 right = normalize(cross(up, forward), "orientation right");
+    const Vec3 corrected_up = cross(forward, right);
+    return matrix_to_quaternion(
+        right.x, corrected_up.x, forward.x,
+        right.y, corrected_up.y, forward.y,
+        right.z, corrected_up.z, forward.z
+    );
 }
 
 using Triangle = std::array<std::int32_t, 3>;
@@ -131,6 +205,46 @@ bool two_triangle_open(
         "triangle open direction"
     );
     return dot(first_normal, direction) <= 0.0;
+}
+
+Vec3 triangle_tangent(
+    const double* positions,
+    const double* uvs,
+    const Triangle& triangle
+) {
+    const Vec3 first = load_position(positions, triangle[0]);
+    const Vec3 dist_ba = subtract(load_position(positions, triangle[1]), first);
+    const Vec3 dist_ca = subtract(load_position(positions, triangle[2]), first);
+    const auto first_uv = static_cast<std::size_t>(triangle[0]) * 2;
+    const auto second_uv = static_cast<std::size_t>(triangle[1]) * 2;
+    const auto third_uv = static_cast<std::size_t>(triangle[2]) * 2;
+    const double uv_ba_x = uvs[second_uv] - uvs[first_uv];
+    const double uv_ba_y = uvs[second_uv + 1] - uvs[first_uv + 1];
+    const double uv_ca_x = uvs[third_uv] - uvs[first_uv];
+    const double uv_ca_y = uvs[third_uv + 1] - uvs[first_uv + 1];
+    double area = uv_ba_x * uv_ca_y - uv_ba_y * uv_ca_x;
+    if (area == 0.0) area = 1.0;
+    const Vec3 tangent = scale(
+        {
+            dist_ba.x * uv_ca_y - dist_ca.x * uv_ba_y,
+            dist_ba.y * uv_ca_y - dist_ca.y * uv_ba_y,
+            dist_ba.z * uv_ca_y - dist_ca.z * uv_ba_y,
+        },
+        -1.0 / area
+    );
+    const double magnitude = length(tangent);
+    if (!(magnitude > kZeroEpsilon)) return {};
+    if (!std::isfinite(magnitude)) {
+        throw std::invalid_argument("triangle tangent must be finite");
+    }
+    return scale(tangent, 1.0 / magnitude);
+}
+
+std::int32_t narrow_index(std::size_t value, const char* name) {
+    if (value > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+        throw std::overflow_error(std::string(name) + " exceeds int32");
+    }
+    return static_cast<std::int32_t>(value);
 }
 
 }  // namespace
@@ -226,6 +340,191 @@ void mc2_optimize_triangle_direction(
         triangle_normals[index * 3 + 1] = normals[index].y;
         triangle_normals[index * 3 + 2] = normals[index].z;
     }
+}
+
+Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
+    const double* positions,
+    const double* local_normals,
+    const double* local_tangents,
+    const double* uvs,
+    const std::uint8_t* vertex_attributes,
+    std::size_t vertex_count,
+    const std::int32_t* triangles,
+    const double* triangle_normals,
+    std::size_t triangle_count,
+    const std::int32_t* lines,
+    std::size_t line_count
+) {
+    if (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
+        uvs == nullptr || vertex_attributes == nullptr ||
+        (triangle_count > 0 && (triangles == nullptr || triangle_normals == nullptr)) ||
+        (line_count > 0 && lines == nullptr)) {
+        throw std::invalid_argument("MC2 final proxy derived buffers cannot be null");
+    }
+    Mc2MeshFinalProxyDerived result;
+    result.local_normals.assign(local_normals, local_normals + vertex_count * 3);
+    result.local_tangents.assign(local_tangents, local_tangents + vertex_count * 3);
+    result.vertex_attributes.assign(vertex_attributes, vertex_attributes + vertex_count);
+
+    std::vector<Triangle> triangle_values(triangle_count);
+    std::vector<Vec3> normal_values(triangle_count);
+    std::vector<Vec3> tangent_values(triangle_count);
+    std::vector<std::vector<std::size_t>> vertex_triangles(vertex_count);
+    std::set<Edge> edge_values;
+    std::vector<std::vector<std::int32_t>> adjacency(vertex_count);
+    auto add_neighbor = [&adjacency](std::int32_t vertex, std::int32_t neighbor) {
+        auto& values = adjacency[static_cast<std::size_t>(vertex)];
+        if (std::find(values.begin(), values.end(), neighbor) == values.end()) {
+            values.push_back(neighbor);
+        }
+    };
+
+    for (std::size_t index = 0; index < triangle_count; ++index) {
+        const Triangle triangle {
+            triangles[index * 3], triangles[index * 3 + 1], triangles[index * 3 + 2],
+        };
+        for (const auto vertex : triangle) {
+            if (vertex < 0 || static_cast<std::size_t>(vertex) >= vertex_count) {
+                throw std::invalid_argument("triangles contains an out-of-range vertex index");
+            }
+            auto& records = vertex_triangles[static_cast<std::size_t>(vertex)];
+            if (records.size() < 7) records.push_back(index);
+        }
+        triangle_values[index] = triangle;
+        normal_values[index] = load_vec3(triangle_normals, index);
+        tangent_values[index] = triangle_tangent(positions, uvs, triangle);
+        for (const auto& edge : triangle_edges(triangle)) edge_values.insert(edge);
+        add_neighbor(triangle[0], triangle[1]);
+        add_neighbor(triangle[0], triangle[2]);
+        add_neighbor(triangle[1], triangle[0]);
+        add_neighbor(triangle[1], triangle[2]);
+        add_neighbor(triangle[2], triangle[0]);
+        add_neighbor(triangle[2], triangle[1]);
+    }
+    for (std::size_t index = 0; index < line_count; ++index) {
+        const std::int32_t first = lines[index * 2];
+        const std::int32_t second = lines[index * 2 + 1];
+        if (first < 0 || second < 0 ||
+            static_cast<std::size_t>(first) >= vertex_count ||
+            static_cast<std::size_t>(second) >= vertex_count) {
+            throw std::invalid_argument("lines contains an out-of-range vertex index");
+        }
+        edge_values.insert(canonical_edge(first, second));
+        add_neighbor(first, second);
+        add_neighbor(second, first);
+    }
+
+    result.edges.reserve(edge_values.size() * 2);
+    for (const auto& edge : edge_values) {
+        result.edges.push_back(edge.first);
+        result.edges.push_back(edge.second);
+    }
+    result.vertex_to_vertex_ranges.reserve(vertex_count * 2);
+    for (const auto& values : adjacency) {
+        result.vertex_to_vertex_ranges.push_back(
+            narrow_index(result.vertex_to_vertex_data.size(), "vertex adjacency")
+        );
+        result.vertex_to_vertex_ranges.push_back(narrow_index(values.size(), "vertex adjacency"));
+        result.vertex_to_vertex_data.insert(
+            result.vertex_to_vertex_data.end(),
+            values.rbegin(),
+            values.rend()
+        );
+    }
+
+    result.vertex_to_triangle_ranges.reserve(vertex_count * 2);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto& records = vertex_triangles[vertex];
+        result.vertex_to_triangle_ranges.push_back(
+            narrow_index(result.vertex_to_triangle_data.size() / 2, "vertex triangle records")
+        );
+        result.vertex_to_triangle_ranges.push_back(
+            narrow_index(records.size(), "vertex triangle records")
+        );
+        if (records.empty()) continue;
+        result.vertex_attributes[vertex] |= static_cast<std::uint8_t>(0x80u);
+        Vec3 final_normal;
+        Vec3 final_tangent;
+        for (const auto triangle_index : records) {
+            final_normal = add(final_normal, normal_values[triangle_index]);
+            final_tangent = add(final_tangent, tangent_values[triangle_index]);
+        }
+        auto choose_direction = [&records](
+            const std::vector<Vec3>& values,
+            Vec3 sum,
+            const char* name
+        ) {
+            if (length(sum) >= 0.5) return normalize(sum, name);
+            double best_distance = -1.0;
+            Vec3 best;
+            for (const auto base_index : records) {
+                Vec3 candidate;
+                const Vec3 base = values[base_index];
+                for (const auto other_index : records) {
+                    if (other_index == base_index) continue;
+                    const Vec3 other = values[other_index];
+                    candidate = add(candidate, scale(other, dot(base, other) >= 0.0 ? 1.0 : -1.0));
+                }
+                const double distance = dot(candidate, candidate);
+                if (distance > best_distance) {
+                    best_distance = distance;
+                    best = base;
+                }
+            }
+            return best;
+        };
+        final_normal = choose_direction(normal_values, final_normal, "final vertex normal");
+        final_tangent = choose_direction(tangent_values, final_tangent, "final vertex tangent");
+        for (const auto triangle_index : records) {
+            std::int32_t flip = 0;
+            if (dot(final_normal, normal_values[triangle_index]) < 0.0) flip |= 0x1;
+            if (dot(final_tangent, tangent_values[triangle_index]) < 0.0) flip |= 0x2;
+            result.vertex_to_triangle_data.push_back(flip);
+            result.vertex_to_triangle_data.push_back(
+                narrow_index(triangle_index, "triangle index")
+            );
+        }
+
+        Vec3 output_normal;
+        Vec3 output_tangent;
+        const auto record_start = static_cast<std::size_t>(
+            result.vertex_to_triangle_ranges[vertex * 2]
+        );
+        for (std::size_t record_offset = 0; record_offset < records.size(); ++record_offset) {
+            const auto triangle_index = records[record_offset];
+            const auto data_offset = (record_start + record_offset) * 2;
+            const auto flip = result.vertex_to_triangle_data[data_offset];
+            output_normal = add(
+                output_normal,
+                scale(normal_values[triangle_index], (flip & 0x1) == 0 ? 1.0 : -1.0)
+            );
+            output_tangent = add(
+                output_tangent,
+                scale(tangent_values[triangle_index], (flip & 0x2) == 0 ? 1.0 : -1.0)
+            );
+        }
+        output_normal = normalize(output_normal, "local normal");
+        output_tangent = normalize(cross(output_normal, output_tangent), "local tangent");
+        store_vec3(result.local_normals, vertex, output_normal);
+        store_vec3(result.local_tangents, vertex, output_tangent);
+    }
+
+    result.bind_positions.resize(vertex_count * 3);
+    result.bind_rotations.resize(vertex_count * 4);
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const Vec3 position = load_vec3(positions, vertex);
+        store_vec3(result.bind_positions, vertex, negate(position));
+        const Vec4 rotation = orientation_quaternion(
+            load_vec3(result.local_normals.data(), vertex),
+            load_vec3(result.local_tangents.data(), vertex)
+        );
+        const auto offset = vertex * 4;
+        result.bind_rotations[offset] = -rotation.x;
+        result.bind_rotations[offset + 1] = -rotation.y;
+        result.bind_rotations[offset + 2] = -rotation.z;
+        result.bind_rotations[offset + 3] = rotation.w;
+    }
+    return result;
 }
 
 }  // namespace hotools

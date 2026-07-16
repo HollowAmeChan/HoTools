@@ -16,11 +16,9 @@ import numpy as np
 from ....utils.math3d import (
     normalize_vector_f64,
     orientation_xyzw_f64,
-    quaternion_conjugate_f64,
 )
 from ...mesh_baseline import MC2_VERTEX_FIXED
 from ...mesh_baseline import MC2_VERTEX_MOVE
-from ...mesh_baseline import MC2_VERTEX_TRIANGLE
 from ...static_data import MC2ProxyStaticSpec
 from ...static_data import MC2ProxyFinalizerStaticSpec
 from ...static_data import make_mc2_proxy_finalizer_static_spec
@@ -82,41 +80,6 @@ def _canonical_edge(first: int, second: int) -> tuple[int, int]:
     return (first, second) if first < second else (second, first)
 
 
-def _triangle_tangent(
-    positions: np.ndarray,
-    uvs: np.ndarray,
-    triangle: tuple[int, int, int],
-) -> np.ndarray:
-    first, second, third = triangle
-    dist_ba = positions[second] - positions[first]
-    dist_ca = positions[third] - positions[first]
-    uv_ba = uvs[second] - uvs[first]
-    uv_ca = uvs[third] - uvs[first]
-    area = float(uv_ba[0] * uv_ca[1] - uv_ba[1] * uv_ca[0])
-    if area == 0.0:
-        area = 1.0
-    tangent = -(
-        np.asarray(
-            (
-                dist_ba[0] * uv_ca[1] + dist_ca[0] * -uv_ba[1],
-                dist_ba[1] * uv_ca[1] + dist_ca[1] * -uv_ba[1],
-                dist_ba[2] * uv_ca[1] + dist_ca[2] * -uv_ba[1],
-            ),
-            dtype=np.float64,
-        )
-        / area
-    )
-    return normalize_vector_f64(tangent, name="triangle tangent", zero_ok=True)
-
-
-def _triangle_edges(triangle: tuple[int, int, int]) -> tuple[tuple[int, int], ...]:
-    return (
-        _canonical_edge(triangle[0], triangle[1]),
-        _canonical_edge(triangle[1], triangle[2]),
-        _canonical_edge(triangle[2], triangle[0]),
-    )
-
-
 def _optimize_triangle_direction(
     positions: np.ndarray,
     triangles: tuple[tuple[int, int, int], ...],
@@ -138,145 +101,89 @@ def _optimize_triangle_direction(
     )
 
 
-def _edge_union(
-    triangles: tuple[tuple[int, int, int], ...],
-    lines: tuple[tuple[int, int], ...],
-) -> tuple[tuple[int, int], ...]:
-    edges = set()
-    for triangle in triangles:
-        edges.update(_triangle_edges(triangle))
-    for first, second in lines:
-        edges.add(_canonical_edge(first, second))
-    return tuple(sorted(edges))
-
-
-def _vertex_to_vertex(
-    vertex_count: int,
-    triangles: tuple[tuple[int, int, int], ...],
-    lines: tuple[tuple[int, int], ...],
-) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
-    adjacency = [[] for _ in range(vertex_count)]
-
-    def unique_add(vertex: int, neighbor: int) -> None:
-        values = adjacency[vertex]
-        if neighbor not in values:
-            values.append(neighbor)
-
-    for first, second, third in triangles:
-        unique_add(first, second)
-        unique_add(first, third)
-        unique_add(second, first)
-        unique_add(second, third)
-        unique_add(third, first)
-        unique_add(third, second)
-    for first, second in lines:
-        unique_add(first, second)
-        unique_add(second, first)
-    ranges = []
-    data = []
-    for values in adjacency:
-        start = len(data)
-        data.extend(reversed(values))
-        ranges.append((start, len(data) - start))
-    return tuple(ranges), tuple(data)
-
-
-def _create_vertex_to_triangles(
-    vertex_count: int,
-    triangles: tuple[tuple[int, int, int], ...],
-) -> list[list[int]]:
-    records = [[] for _ in range(vertex_count)]
-    for triangle_index, triangle in enumerate(triangles):
-        for vertex in triangle:
-            if len(records[vertex]) < 7:
-                records[vertex].append(triangle_index)
-    return records
-
-
-def _organize_vertex_to_triangles(
+def _build_final_proxy_derived(
+    positions: np.ndarray,
+    normals: np.ndarray,
+    tangents: np.ndarray,
+    uvs: np.ndarray,
     attributes: list[int],
+    triangles: tuple[tuple[int, int, int], ...],
     triangle_normals: list[np.ndarray],
-    triangle_tangents: list[np.ndarray],
-    vertex_to_triangles: list[list[int]],
-) -> tuple[tuple[tuple[int, int], ...], ...]:
-    result = []
-    for vertex, triangle_indices in enumerate(vertex_to_triangles):
-        if not triangle_indices:
-            result.append(tuple())
-            continue
-        attributes[vertex] |= MC2_VERTEX_TRIANGLE
-        final_normal = sum((triangle_normals[index] for index in triangle_indices), start=np.zeros(3))
-        final_tangent = sum((triangle_tangents[index] for index in triangle_indices), start=np.zeros(3))
-        if float(np.linalg.norm(final_normal)) < 0.5:
-            best_distance = -1.0
-            best_normal = np.zeros(3)
-            for base_index in triangle_indices:
-                candidate = np.zeros(3)
-                base_normal = triangle_normals[base_index]
-                for other_index in triangle_indices:
-                    if other_index == base_index:
-                        continue
-                    other = triangle_normals[other_index]
-                    candidate += other if float(np.dot(base_normal, other)) >= 0.0 else -other
-                distance = float(np.dot(candidate, candidate))
-                if distance > best_distance:
-                    best_distance = distance
-                    best_normal = base_normal
-            final_normal = best_normal
-        else:
-            final_normal = normalize_vector_f64(final_normal, name="final vertex normal")
-        if float(np.linalg.norm(final_tangent)) < 0.5:
-            best_distance = -1.0
-            best_tangent = np.zeros(3)
-            for base_index in triangle_indices:
-                candidate = np.zeros(3)
-                base_tangent = triangle_tangents[base_index]
-                for other_index in triangle_indices:
-                    if other_index == base_index:
-                        continue
-                    other = triangle_tangents[other_index]
-                    candidate += other if float(np.dot(base_tangent, other)) >= 0.0 else -other
-                distance = float(np.dot(candidate, candidate))
-                if distance > best_distance:
-                    best_distance = distance
-                    best_tangent = base_tangent
-            final_tangent = best_tangent
-        else:
-            final_tangent = normalize_vector_f64(final_tangent, name="final vertex tangent")
-        records = []
-        for triangle_index in triangle_indices:
-            flip = 0
-            if float(np.dot(final_normal, triangle_normals[triangle_index])) < 0.0:
-                flip |= 0x1
-            if float(np.dot(final_tangent, triangle_tangents[triangle_index])) < 0.0:
-                flip |= 0x2
-            records.append((flip, triangle_index))
-        result.append(tuple(records))
-    return tuple(result)
+    lines: tuple[tuple[int, int], ...],
+):
+    if any(not 0 <= value <= 0xFF for value in attributes):
+        raise ValueError("vertex_attributes must fit uint8")
+    vertex_count = len(positions)
+    triangle_count = len(triangles)
+    line_count = len(lines)
+    normals = np.ascontiguousarray(normals, dtype=np.float64)
+    tangents = np.ascontiguousarray(tangents, dtype=np.float64)
+    attribute_values = np.ascontiguousarray(attributes, dtype=np.uint8)
+    triangle_values = np.ascontiguousarray(triangles, dtype=np.int32).reshape((-1, 3))
+    triangle_normal_values = np.ascontiguousarray(
+        triangle_normals,
+        dtype=np.float64,
+    ).reshape((-1, 3))
+    line_values = np.ascontiguousarray(lines, dtype=np.int32).reshape((-1, 2))
+    out_edges = np.empty((triangle_count * 3 + line_count, 2), dtype=np.int32)
+    out_neighbor_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    out_neighbor_data = np.empty(triangle_count * 6 + line_count * 2, dtype=np.int32)
+    out_triangle_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    out_triangle_data = np.empty(
+        (min(triangle_count * 3, vertex_count * 7), 2),
+        dtype=np.int32,
+    )
+    bind_positions = np.empty((vertex_count, 3), dtype=np.float64)
+    bind_rotations = np.empty((vertex_count, 4), dtype=np.float64)
+    from ...native import native_module
 
-
-def _apply_vertex_triangle_normals(
-    local_normals: np.ndarray,
-    local_tangents: np.ndarray,
-    triangle_normals: list[np.ndarray],
-    triangle_tangents: list[np.ndarray],
-    vertex_to_triangle_records: tuple[tuple[tuple[int, int], ...], ...],
-) -> tuple[np.ndarray, np.ndarray]:
-    normals = np.array(local_normals, dtype=np.float64, copy=True)
-    tangents = np.array(local_tangents, dtype=np.float64, copy=True)
-    for vertex, records in enumerate(vertex_to_triangle_records):
-        if not records:
-            continue
-        normal = np.zeros(3)
-        tangent = np.zeros(3)
-        for flip, triangle_index in records:
-            normal += triangle_normals[triangle_index] * (1.0 if not flip & 0x1 else -1.0)
-            tangent += triangle_tangents[triangle_index] * (1.0 if not flip & 0x2 else -1.0)
-        normal = normalize_vector_f64(normal, name=f"local_normals[{vertex}]")
-        binormal = normalize_vector_f64(np.cross(normal, tangent), name=f"local_tangents[{vertex}]")
-        normals[vertex] = normal
-        tangents[vertex] = binormal
-    return normals, tangents
+    counts = native_module().mc2_build_mesh_final_proxy_derived_v0(
+        np.ascontiguousarray(positions, dtype=np.float64),
+        normals,
+        tangents,
+        np.ascontiguousarray(uvs, dtype=np.float64),
+        attribute_values,
+        triangle_values,
+        triangle_normal_values,
+        line_values,
+        out_edges,
+        out_neighbor_ranges,
+        out_neighbor_data,
+        out_triangle_ranges,
+        out_triangle_data,
+        bind_positions,
+        bind_rotations,
+    )
+    edge_count = int(counts["edge_count"])
+    neighbor_count = int(counts["neighbor_count"])
+    triangle_record_count = int(counts["triangle_record_count"])
+    triangle_data = out_triangle_data[:triangle_record_count]
+    vertex_to_triangle_records = tuple(
+        tuple(
+            tuple(int(value) for value in record)
+            for record in triangle_data[start:start + count]
+        )
+        for start, count in out_triangle_ranges
+    )
+    return {
+        "normals": normals,
+        "tangents": tangents,
+        "attributes": tuple(int(value) for value in attribute_values),
+        "edges": tuple(
+            tuple(int(value) for value in edge)
+            for edge in out_edges[:edge_count]
+        ),
+        "vertex_to_vertex_ranges": tuple(
+            tuple(int(value) for value in record)
+            for record in out_neighbor_ranges
+        ),
+        "vertex_to_vertex_data": tuple(
+            int(value) for value in out_neighbor_data[:neighbor_count]
+        ),
+        "vertex_to_triangle_records": vertex_to_triangle_records,
+        "bind_positions": _tuple_vectors(bind_positions),
+        "bind_rotations": _tuple_vectors(bind_rotations),
+    }
 
 
 def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float]:
@@ -286,18 +193,6 @@ def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float
         np.asarray(tangent, dtype=np.float64),
     )
     return tuple(float(component) for component in value)
-
-
-def _bind_pose(
-    local_positions: np.ndarray,
-    local_normals: np.ndarray,
-    local_tangents: np.ndarray,
-) -> tuple[tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float, float], ...]]:
-    positions = tuple(tuple(float(value) for value in -row) for row in local_positions)
-    rotations = []
-    for normal, tangent in zip(local_normals, local_tangents):
-        rotations.append(tuple(float(value) for value in quaternion_conjugate_f64(orientation_xyzw_f64(normal, tangent))))
-    return positions, tuple(rotations)
 
 
 def _tuple_vectors(values: np.ndarray) -> tuple[tuple[float, ...], ...]:
@@ -341,35 +236,19 @@ def build_mc2_final_proxy(
     _validate_indices(vertex_count, triangle_records, "triangles")
 
     final_triangles, triangle_normals = _optimize_triangle_direction(positions, triangle_records)
-    edges = _edge_union(final_triangles, line_records)
-    vertex_to_vertex_ranges, vertex_to_vertex_data = _vertex_to_vertex(
-        vertex_count,
+    derived = _build_final_proxy_derived(
+        positions,
+        normals,
+        tangents,
+        uv_array,
+        attributes,
         final_triangles,
+        triangle_normals,
         line_records,
     )
-    if final_triangles:
-        triangle_tangents = [
-            _triangle_tangent(positions, uv_array, triangle)
-            for triangle in final_triangles
-        ]
-        raw_vertex_to_triangles = _create_vertex_to_triangles(vertex_count, final_triangles)
-        vertex_to_triangle_records = _organize_vertex_to_triangles(
-            attributes,
-            triangle_normals,
-            triangle_tangents,
-            raw_vertex_to_triangles,
-        )
-        normals, tangents = _apply_vertex_triangle_normals(
-            normals,
-            tangents,
-            triangle_normals,
-            triangle_tangents,
-            vertex_to_triangle_records,
-        )
-    else:
-        vertex_to_triangle_records = tuple(tuple() for _ in range(vertex_count))
-
-    bind_positions, bind_rotations = _bind_pose(positions, normals, tangents)
+    normals = derived["normals"]
+    tangents = derived["tangents"]
+    attributes = derived["attributes"]
     proxy = make_mc2_proxy_static_spec(
         task_id=task_id,
         setup_type=setup_type,
@@ -378,17 +257,17 @@ def build_mc2_final_proxy(
         local_normals=_tuple_vectors(normals),
         local_tangents=_tuple_vectors(tangents),
         uvs=_tuple_vectors(uv_array),
-        vertex_attributes=tuple(attributes),
-        edges=edges,
+        vertex_attributes=attributes,
+        edges=derived["edges"],
         triangles=final_triangles,
     )
     finalizer = make_mc2_proxy_finalizer_static_spec(
         proxy=proxy,
-        vertex_to_vertex_ranges=vertex_to_vertex_ranges,
-        vertex_to_vertex_data=vertex_to_vertex_data,
-        vertex_to_triangle_records=vertex_to_triangle_records,
-        vertex_bind_pose_positions=bind_positions,
-        vertex_bind_pose_rotations=bind_rotations,
+        vertex_to_vertex_ranges=derived["vertex_to_vertex_ranges"],
+        vertex_to_vertex_data=derived["vertex_to_vertex_data"],
+        vertex_to_triangle_records=derived["vertex_to_triangle_records"],
+        vertex_bind_pose_positions=derived["bind_positions"],
+        vertex_bind_pose_rotations=derived["bind_rotations"],
     )
     return MC2MeshFinalProxyBuildResult(
         proxy=proxy,

@@ -60,8 +60,63 @@ def test_triangle_direction_rejects_degenerate_input() -> None:
         raise AssertionError("degenerate triangle was accepted")
 
 
+def test_mesh_final_proxy_derived_arrays() -> None:
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * 4, dtype=np.float64)
+    uvs = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64)
+    attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
+    triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
+    lines = np.empty((0, 2), dtype=np.int32)
+    out_edges = np.empty((6, 2), dtype=np.int32)
+    neighbor_ranges = np.empty((4, 2), dtype=np.int32)
+    neighbor_data = np.empty(12, dtype=np.int32)
+    triangle_ranges = np.empty((4, 2), dtype=np.int32)
+    triangle_data = np.empty((6, 2), dtype=np.int32)
+    bind_positions = np.empty((4, 3), dtype=np.float64)
+    bind_rotations = np.empty((4, 4), dtype=np.float64)
+
+    counts = hotools_native.mc2_build_mesh_final_proxy_derived_v0(
+        positions,
+        normals,
+        tangents,
+        uvs,
+        attributes,
+        triangles,
+        triangle_normals,
+        lines,
+        out_edges,
+        neighbor_ranges,
+        neighbor_data,
+        triangle_ranges,
+        triangle_data,
+        bind_positions,
+        bind_rotations,
+    )
+
+    assert counts == {"edge_count": 5, "neighbor_count": 10, "triangle_record_count": 6}
+    np.testing.assert_array_equal(
+        out_edges[:5],
+        ((0, 1), (0, 2), (0, 3), (1, 2), (2, 3)),
+    )
+    np.testing.assert_array_equal(neighbor_ranges, ((0, 3), (3, 2), (5, 3), (8, 2)))
+    np.testing.assert_array_equal(neighbor_data[:10], (3, 2, 1, 2, 0, 3, 1, 0, 2, 0))
+    np.testing.assert_array_equal(triangle_ranges, ((0, 2), (2, 1), (3, 2), (5, 1)))
+    assert np.all(attributes & np.uint8(0x80))
+    np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0),) * 4, atol=1.0e-12)
+    np.testing.assert_allclose(tangents, ((0.0, -1.0, 0.0),) * 4, atol=1.0e-12)
+    np.testing.assert_allclose(bind_positions, -positions, atol=1.0e-12)
+    np.testing.assert_allclose(np.linalg.norm(bind_rotations, axis=1), 1.0, atol=1.0e-12)
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
     test_triangle_direction_rejects_degenerate_input()
     print("PASS MC2 native triangle direction validation")
+    test_mesh_final_proxy_derived_arrays()
+    print("PASS MC2 native final proxy derived arrays")

@@ -42,6 +42,8 @@ using f32_1d  = nb::ndarray<float,          nb::ndim<1>, nb::c_contig, nb::devic
 using f64_2d  = nb::ndarray<double,         nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cf64_2d = nb::ndarray<const double,   nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using i32_2d  = nb::ndarray<int32_t,        nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using i32_1d  = nb::ndarray<int32_t,        nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using u8_1d   = nb::ndarray<uint8_t,        nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using cf32_2d = nb::ndarray<const float,    nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cf32_1d = nb::ndarray<const float,    nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using ci32_2d = nb::ndarray<const int32_t,  nb::ndim<2>, nb::c_contig, nb::device::cpu>;
@@ -873,6 +875,107 @@ NB_MODULE(hotools_native, m) {
             } catch (const std::invalid_argument& error) {
                 throw nb::value_error(error.what());
             }
+        });
+    m.def("mc2_build_mesh_final_proxy_derived_v0",
+        [](cf64_2d positions,
+           f64_2d local_normals,
+           f64_2d local_tangents,
+           cf64_2d uvs,
+           u8_1d vertex_attributes,
+           ci32_2d triangles,
+           cf64_2d triangle_normals,
+           ci32_2d lines,
+           i32_2d out_edges,
+           i32_2d out_neighbor_ranges,
+           i32_1d out_neighbor_data,
+           i32_2d out_triangle_ranges,
+           i32_2d out_triangle_data,
+           f64_2d out_bind_positions,
+           f64_2d out_bind_rotations) {
+            const auto vertex_count = positions.shape(0);
+            const auto triangle_count = triangles.shape(0);
+            check_cols(positions, 3, "positions");
+            check_cols(local_normals, 3, "local_normals");
+            check_cols(local_tangents, 3, "local_tangents");
+            check_cols(uvs, 2, "uvs");
+            check_len(local_normals.shape(0), vertex_count, "local_normals");
+            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
+            check_len(uvs.shape(0), vertex_count, "uvs");
+            check_len(vertex_attributes.shape(0), vertex_count, "vertex_attributes");
+            check_cols(triangles, 3, "triangles");
+            check_cols(triangle_normals, 3, "triangle_normals");
+            check_len(triangle_normals.shape(0), triangle_count, "triangle_normals");
+            check_cols(lines, 2, "lines");
+            check_indices_in_range(triangles.data(), triangle_count * 3, vertex_count, "triangles");
+            check_indices_in_range(lines.data(), lines.shape(0) * 2, vertex_count, "lines");
+            check_cols(out_edges, 2, "out_edges");
+            check_cols(out_neighbor_ranges, 2, "out_neighbor_ranges");
+            check_len(out_neighbor_ranges.shape(0), vertex_count, "out_neighbor_ranges");
+            check_cols(out_triangle_ranges, 2, "out_triangle_ranges");
+            check_len(out_triangle_ranges.shape(0), vertex_count, "out_triangle_ranges");
+            check_cols(out_triangle_data, 2, "out_triangle_data");
+            check_cols(out_bind_positions, 3, "out_bind_positions");
+            check_len(out_bind_positions.shape(0), vertex_count, "out_bind_positions");
+            check_cols(out_bind_rotations, 4, "out_bind_rotations");
+            check_len(out_bind_rotations.shape(0), vertex_count, "out_bind_rotations");
+            hotools::Mc2MeshFinalProxyDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_mesh_final_proxy_derived(
+                    positions.data(),
+                    local_normals.data(),
+                    local_tangents.data(),
+                    uvs.data(),
+                    vertex_attributes.data(),
+                    vertex_count,
+                    triangles.data(),
+                    triangle_normals.data(),
+                    triangle_count,
+                    lines.data(),
+                    lines.shape(0)
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            const auto edge_count = derived.edges.size() / 2;
+            const auto neighbor_count = derived.vertex_to_vertex_data.size();
+            const auto triangle_record_count = derived.vertex_to_triangle_data.size() / 2;
+            if (out_edges.shape(0) < edge_count ||
+                out_neighbor_data.shape(0) < neighbor_count ||
+                out_triangle_data.shape(0) < triangle_record_count) {
+                throw nb::value_error("MC2 final proxy output buffer is too small");
+            }
+            std::copy(derived.local_normals.begin(), derived.local_normals.end(), local_normals.data());
+            std::copy(derived.local_tangents.begin(), derived.local_tangents.end(), local_tangents.data());
+            std::copy(derived.vertex_attributes.begin(), derived.vertex_attributes.end(), vertex_attributes.data());
+            std::copy(derived.edges.begin(), derived.edges.end(), out_edges.data());
+            std::copy(
+                derived.vertex_to_vertex_ranges.begin(),
+                derived.vertex_to_vertex_ranges.end(),
+                out_neighbor_ranges.data()
+            );
+            std::copy(
+                derived.vertex_to_vertex_data.begin(),
+                derived.vertex_to_vertex_data.end(),
+                out_neighbor_data.data()
+            );
+            std::copy(
+                derived.vertex_to_triangle_ranges.begin(),
+                derived.vertex_to_triangle_ranges.end(),
+                out_triangle_ranges.data()
+            );
+            std::copy(
+                derived.vertex_to_triangle_data.begin(),
+                derived.vertex_to_triangle_data.end(),
+                out_triangle_data.data()
+            );
+            std::copy(derived.bind_positions.begin(), derived.bind_positions.end(), out_bind_positions.data());
+            std::copy(derived.bind_rotations.begin(), derived.bind_rotations.end(), out_bind_rotations.data());
+            nb::dict result;
+            result["edge_count"] = edge_count;
+            result["neighbor_count"] = neighbor_count;
+            result["triangle_record_count"] = triangle_record_count;
+            return result;
         });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",
