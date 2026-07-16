@@ -1105,6 +1105,8 @@ re_run_and_reset：
 
 旧 solver 的 Python 包装层默认不直接迁移，但删除前必须作为产品语义、生产行为、性能和依赖审查材料；它不是source parity oracle。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
 
+MC2的删除前构建边界由`HOTOOLS_ENABLE_LEGACY_MC2`表达：关闭时不得编译或导出旧数组solve、旧context和旧BoneCloth IO，但新Physics World V0、static producer、self collision与共享`mc2_kernels`必须独立构建并通过生产符号门禁。共享kernel的保留不构成旧solver兼容；旧package/context/公开ABI反向成为新runtime或测试依赖才构成违规。
+
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 
 ## 新迁移 solver 的 C++ 单实现策略

@@ -1,6 +1,6 @@
 #include "mc2_context_v0.hpp"
 
-#include "hotools_mc2.hpp"
+#include "mc2_kernels.hpp"
 #include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
 

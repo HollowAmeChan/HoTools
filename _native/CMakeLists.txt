@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.24)
 
 project(hotools_native LANGUAGES CXX)
 
+option(
+    HOTOOLS_ENABLE_LEGACY_MC2
+    "Build the legacy MC2 array, context, and BoneCloth IO ABI"
+    ON
+)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -111,22 +117,34 @@ endif()
 nanobind_add_module(hotools_native
     NB_STATIC
     src/hotools_native.cpp
-    src/mc2_context.cpp
     src/mc2_context_v0.cpp
     src/mc2_static_build.cpp
-    src/mc2.cpp
-    src/mc2_bonecloth_io.cpp
+    src/mc2_kernels.cpp
     src/mc2_self_collision.cpp
     src/spring_bone_vrm.cpp
     src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp
 )
 
+if(HOTOOLS_ENABLE_LEGACY_MC2)
+    target_sources(
+        hotools_native
+        PRIVATE
+            src/mc2_context.cpp
+            src/mc2_bonecloth_io.cpp
+    )
+endif()
+
 target_include_directories(hotools_native PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/include"
 )
 
-target_compile_definitions(hotools_native PRIVATE PY_SSIZE_T_CLEAN)
+target_compile_definitions(
+    hotools_native
+    PRIVATE
+        PY_SSIZE_T_CLEAN
+        HOTOOLS_ENABLE_LEGACY_MC2=$<BOOL:${HOTOOLS_ENABLE_LEGACY_MC2}>
+)
 
 if(MSVC)
     target_compile_options(hotools_native PRIVATE /W4 /permissive- /utf-8)

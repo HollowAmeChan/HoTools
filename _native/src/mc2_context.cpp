@@ -1,6 +1,6 @@
 #include "mc2_context.hpp"
 
-#include "hotools_mc2.hpp"
+#include "mc2_kernels.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>

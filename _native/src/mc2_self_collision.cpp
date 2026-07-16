@@ -1,4 +1,4 @@
-#include "hotools_mc2.hpp"
+#include "mc2_kernels.hpp"
 
 #include <algorithm>
 #include <cmath>

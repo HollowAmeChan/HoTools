@@ -3,10 +3,14 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 
-#include "hotools_mc2.hpp"
+#include "mc2_kernels.hpp"
+#if HOTOOLS_ENABLE_LEGACY_MC2
 #include "hotools_mc2_bonecloth_io.hpp"
+#endif
 #include "hotools_property_curve.hpp"
+#if HOTOOLS_ENABLE_LEGACY_MC2
 #include "mc2_context.hpp"
+#endif
 #include "mc2_context_v0.hpp"
 #include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
@@ -150,6 +154,7 @@ std::vector<float> float_vector(const double* values, std::size_t count) {
     return result;
 }
 
+#if HOTOOLS_ENABLE_LEGACY_MC2
 PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     enum SolveArg {
         APositions = 0,
@@ -707,6 +712,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     { nb::gil_scoped_release _; hotools::solve_meshcloth_mc2(view); }
     Py_RETURN_NONE;
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // BoneCloth IO 绑定：solve_mc2_bonecloth_io
@@ -784,6 +790,7 @@ NB_MODULE(hotools_native, m) {
         "Copy SpringBone context debug/state arrays into pre-allocated output buffers.");
 
     // ---- MC2 上下文管理 ----
+#if HOTOOLS_ENABLE_LEGACY_MC2
     m.def("create_meshcloth_mc2_context",
         [](long vc, long dc, long bc, long crc) {
             return steal_or_throw(hotools::create_meshcloth_mc2_context_object(vc, dc, bc, crc));
@@ -820,6 +827,7 @@ NB_MODULE(hotools_native, m) {
             if (!r) throw nb::python_error();
             Py_DECREF(r);
         }, nb::arg("handle"), "Release MC2 MeshCloth native context resources.");
+#endif
     // ---- New Physics World MC2 context V0 (isolated from the legacy full-core context) ----
     m.def("mc2_interaction_v0_create",
         [](nb::args a) { return steal_or_throw(hotools::mc2_interaction_v0_create(nullptr, a.ptr())); });
@@ -2345,6 +2353,7 @@ NB_MODULE(hotools_native, m) {
         nb::arg("display_positions"), nb::arg("frame_dt"), nb::arg("max_distance_ratio"),
         "Calculate MC2 display future prediction in-place.");
     // ---- MC2 网格布料大函数 ----
+#if HOTOOLS_ENABLE_LEGACY_MC2
     m.def("solve_meshcloth_mc2",
         [](nb::args a) { call_legacy(solve_meshcloth_mc2, a); },
         "Solve one MC2 MeshCloth array frame in-place.");
@@ -2407,4 +2416,5 @@ NB_MODULE(hotools_native, m) {
         nb::arg("rotational_interpolation"), nb::arg("blend_weight"),
         nb::arg("anime_ratio"), nb::arg("root_rotation"),
         "Compute MC2 BoneCloth chain-propagated world rotations in-place.");
+#endif
 }

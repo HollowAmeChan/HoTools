@@ -72,7 +72,7 @@
 | P-04 | 旧产品语义与新实现替代审计 | 完全对齐 | profile+task component、全量prepare/失败原子性、per-task context、HoTools链组产品拓扑、同Armature多component合并写回及Blender 5.1生产fixture | 跨物体self collision与半径模型分别由K-06/K-07决策；隐式可视化由D-01关闭，不再回退产品语义 | 否 |
 | P-05 | 新实现生产可达性、代码与math审计 | 完全对齐 | 三setup与world common runtime生产矩阵覆盖static/frame/state/error/dispose/result；八资产/三setup Blender生产门禁、混合soak与Tier A证明真实入口；math旧名aliases及无职责Mesh final-proxy包装已删除 | `profile + task`是slot/context component；`bone_rotation.py`明确为测试oracle且不是fallback；保留wrapper均拥有setup、Blender snapshot、cache、校验或事务职责 | 否 |
 | P-06 | 新旧性能对比与C++边界审计 | 待审计 | 同资产小/中/大benchmark已覆盖旧CPP full-core与新Physics World的构建、真实重建、逐帧、debug、host内存和Python分配；逐帧Mesh/Bone保持快于旧CPP。Frame orientation、Bone pose rotation、Center已由native context自产自用；静态raw数组由C++生成并分类`1/2/4/8` change mask，旧JSON签名与重复key已删除。P-06b/P-06c已把Mesh六类静态派生迁入C++ static-build结果；Bone共用pose/depth与Distance消费相同kernel，旧Python数值producer、阈值与私有函数转发已删除。staged context已前移到只读prepare；Proxy、frame producer、Baseline、Distance、Bending、Center、Self通过受限命名capsule在完整dtype/shape/index/pointer/size校验后直接move vector进context，生产slot只保留必要metadata；ZeroDistance最终attribute在Proxy move前一次写入owner vector，不再先复制后补写。Finalizer、Baseline与Final Proxy的staged大数组只在同次构建内作为ndarray transient消费，结束后分别压缩为coverage/count、count/signature/debug-depth，以及identity/attributes/edges/triangles metadata；生产slot不再构造完整immutable Proxy/Baseline/Finalizer spec，Mesh static注册复制边界已清零。solver prepare现在创建短生命周期`MC2MeshRawSnapshot`，fingerprint、Final Proxy与BasePose兼容拓扑token共享同一批`co/normal/edge/triangle/polygon loop/loop UV/Pin` arrays；token改为固定端序的数组流式SHA-256，旧缓存只在BasePose实际拓扑匹配时原地迁移。normal规范化与fallback tangent由C++同批生产，staged line/triangle/方向记录保持ndarray到底，不再tuple往返。生产Topology不冻结完整payload，而使用同一native topology fingerprint生成compact metadata；完整树仅保留显式oracle入口，显式frame与生产signature保持一致。Proxy的no-context/staged签名统一使用固定dtype流式内容哈希。`owned_static_take_count=7`、各static revision=1及无local pose shadow由Blender BasePose固定；native负向测试固定Proxy/Baseline owner均不可重复消费。大Mesh首构约23.9ms、重建约20.4ms，最新为旧CPP的26.84x；host slot NumPy约471KB、同次prepare Python峰值约461KB。Bone P-06d已把raw snapshot、rest/finalizer/baseline/constraint producers、6次owner move、流式签名与`MC2BoneNativeData`闭环，大Bone首构约18.06ms、热帧约6.15ms；raw ABI/context、26/26纯MC2、Blender Final Proxy/BasePose/Bone static/product/frame/全隐式debug/180帧soak及跨物体Self交互通过。P-06e进入基线：small/medium/large Bone rest重建约`3.03/8.03/18.97ms`，仅gravity direction变化仍因全量重建耗时约`2.09/5.14/12.24ms` | P-06b/P-06c/P-06d已关闭。P-06e先让config在新staged context内只重建Center并复用其余native static，再覆盖geometry/surface/topology复用矩阵；之后按P-06f完成总体审计 | 是 |
-| P-07 | 文件与ABI独立化 | 待审计 | 新Physics World Python路径当前未直接import旧package，但旧节点仍注册，旧native ABI及测试仍共存 | 新生产链、测试和构建对待删除package/context/公开ABI零依赖；共享kernel必须转为新owner而非悬挂在旧接口下 | 是 |
+| P-07 | 文件与ABI独立化 | 完全对齐 | 共享数值代码已归入`mc2_kernels.cpp/.hpp`；`HOTOOLS_ENABLE_LEGACY_MC2=OFF`可排除旧full-array solve、旧context和旧BoneCloth IO；OFF模块通过raw V0/static及26/26纯MC2，且不导出全部11个旧ABI | P-09删除旧node/package、`mc2_context.*`、`mc2_bonecloth_io.cpp`及legacy binding块；保留新context仍消费的共享kernel/static/self文件 | 否 |
 | P-08 | 替代资格总门禁 | 待审计 | P-01..P-03只证明source主体、新资产门禁和新链soak | P-04..P-07、K-06/K-07和D-01全部关闭，并形成“产品语义可替代、交互模型清晰、debug可观测、性能有优势、架构可维护、允许删除”的明确结论 | 是 |
 | P-09 | 旧 MC2 路径删除 | 产品收尾 | 尚未准入删除 | 仅在P-08放行后独立删除旧节点/package/full-core/context/shadow pipeline；删除后全门禁通过 | 是 |
 | P-10 | declaration 验收开关 | 产品收尾 | `mc2` 已注册并发布三类结果 | P-01..P-09及全部阻塞能力行关闭后将`solver_acceptance_blocker`改为`False` | 是 |
@@ -113,15 +113,16 @@ P-06f代码边界清理第二项完成：`MC2NativeContextV0.update_mesh_static`
 
 P-06最终结论（取代上方汇总表中P-06的“待审计”历史状态）：P-06a..P-06f全部关闭。最终large Mesh/Bone热帧约`5.47/6.06ms`，旧CPP约`7.03/19.33ms`；首构约`20.16/18.01ms`，分别快`31.72x/19.20x`；Mesh Pin/UV重建约`20.64/20.31ms`，Bone rest约`18.43ms`，Mesh/Bone config约`5.00/6.25ms`。180帧三setup混合soak mean/p95/max约`2.94/3.56/4.01ms`，2次hot update/rebuild/reset/same-frame与6次context释放通过。生产对旧Python package零依赖、无host particle shadow、无完整static pack fallback；Blender raw snapshot是必须的authoring检测边界，其派生和消费均归native。下一阶段P-07文件/ABI独立化。
 
+P-07已关闭：旧文件名`mc2.cpp/hotools_mc2.hpp`已改为新owner名`mc2_kernels.cpp/.hpp`；旧数组solve、旧context与旧BoneCloth IO统一受`HOTOOLS_ENABLE_LEGACY_MC2`控制。`OFF`独立模块仍具备全部新`_REQUIRED_SYMBOLS`，raw V0/static及26/26纯MC2通过，且不导出`create_meshcloth_mc2_context`、两类旧context solve、旧数组solve或旧BoneCloth IO。P-09删除候选与必须保留的共享kernel边界已可机械核验，下一阶段进入P-08替代资格总门禁。
+
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug和新实现生产可达性/代码边界已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型、全隐式中间态debug、总体性能、C++边界和文件/ABI独立性已经闭环。当前必须执行 **P-08替代资格总门禁** 并形成明确的“允许删除”结论；在P-08放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope与D-01 debug开销作为已冻结输入。
-2. `P-07/P-08`：文件级独立化与替代资格总门禁。
-3. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
+1. `P-08`：汇总P-01..P-07、K-06/K-07和D-01证据，执行替代资格总门禁。
+2. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
 
 ## 更新规则
 
