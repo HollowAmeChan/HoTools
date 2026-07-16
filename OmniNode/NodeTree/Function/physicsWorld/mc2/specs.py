@@ -159,6 +159,7 @@ class MC2TaskSpec:
             "source_signature": signature,
             "ordered_source_signature": _ordered_source_identity(self.sources),
             "connection_mode": self.setup_options.connection_mode,
+            "connection_model": self.setup_options.connection_model,
         })
         expected_config = _spec_signature(self.setup_options.debug_dict())
         # Scheduler settings在 step绑定，不属于 ClothParameters ABI。
@@ -221,6 +222,7 @@ def make_mc2_task_spec(
         "source_signature": source_signature,
         "ordered_source_signature": _ordered_source_identity(normalized_sources),
         "connection_mode": setup_options.connection_mode,
+        "connection_model": setup_options.connection_model,
     })
     config_signature = _spec_signature(setup_options.debug_dict())
     parameter_signature = make_mc2_runtime_parameters(

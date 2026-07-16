@@ -119,12 +119,17 @@ def _bone_target(spec):
     ):
         raise ValueError("MC2 Bone result requires a Bone task")
     sources = tuple(getattr(spec, "sources", ()) or ())
-    if len(sources) != 1:
-        raise ValueError("MC2 Bone Line result requires exactly one Armature source")
-    source = sources[0]
-    armature = source.get("armature") if isinstance(source, dict) else None
-    if armature is None and isinstance(source, tuple) and len(source) == 2:
-        armature = source[0]
+    if not sources:
+        raise ValueError("MC2 Bone result requires at least one Armature source")
+    armatures = []
+    for source in sources:
+        armature = source.get("armature") if isinstance(source, dict) else None
+        if armature is None and isinstance(source, tuple) and len(source) == 2:
+            armature = source[0]
+        armatures.append(armature)
+    armature = armatures[0]
+    if any(value is not armature for value in armatures[1:]):
+        raise ValueError("MC2 Bone result sources must share one Armature object")
     if getattr(armature, "type", None) != "ARMATURE":
         raise ValueError("MC2 Bone result target is not an Armature object")
     try:
@@ -252,6 +257,102 @@ def make_mc2_bone_result(
         "target_key": f"{armature_ptr}:{armature_data_ptr}",
     })
     return result, plan
+
+
+def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
+    """Merge disjoint Bone components that publish to the same Armature target."""
+
+    grouped: dict[str, list[tuple[dict, dict]]] = {}
+    for result, plan in entries:
+        if not isinstance(result, dict) or not isinstance(plan, dict):
+            raise TypeError("MC2 Bone result entries must contain result/plan dicts")
+        target_key = str(result.get("target_key") or "")
+        slot_id = str(result.get("slot_id") or "")
+        if not target_key or not slot_id:
+            raise ValueError("MC2 Bone result entry is missing target or slot identity")
+        grouped.setdefault(target_key, []).append((result, plan))
+
+    merged_results = []
+    staged_plans: dict[str, dict] = {}
+    for target_key in sorted(grouped):
+        target_entries = sorted(
+            grouped[target_key],
+            key=lambda item: str(item[0].get("slot_id") or ""),
+        )
+        for result, plan in target_entries:
+            staged_plans[str(result["slot_id"])] = plan
+        if len(target_entries) == 1:
+            merged_results.append(target_entries[0][0])
+            continue
+
+        primary_result, primary_plan = target_entries[0]
+        armature = primary_plan.get("armature")
+        global_target_pose_matrices = {}
+        source_batches = []
+        task_ids = []
+        topology_signatures = []
+        revisions = []
+        for result, plan in target_entries:
+            if plan.get("armature") is not armature:
+                raise ValueError("MC2 Bone target group does not share one Armature object")
+            task_ids.append(str(result.get("task_id") or result.get("slot_id") or ""))
+            topology_signatures.append(str(result.get("topology_signature") or ""))
+            revisions.append(int(result.get("revision", 0) or 0))
+            for batch in plan.get("batches") or ():
+                records = tuple(batch.get("records") or ())
+                target_matrices = tuple(batch.get("target_pose_matrices") or ())
+                if len(records) != len(target_matrices):
+                    raise ValueError("MC2 Bone writeback batch target count mismatch")
+                for record, target_matrix in zip(records, target_matrices):
+                    bone_name = str(record.get("bone_name") or "")
+                    if not bone_name or bone_name in global_target_pose_matrices:
+                        raise ValueError(
+                            f"MC2 Bone components overlap on target bone {bone_name!r}"
+                        )
+                    global_target_pose_matrices[bone_name] = target_matrix
+                source_batches.append(batch)
+
+        merged_batches = []
+        for batch in source_batches:
+            records = tuple(batch.get("records") or ())
+            target_matrices = tuple(batch.get("target_pose_matrices") or ())
+            matrix_bases = tuple(
+                matrix_basis_from_pose_matrix(
+                    record["pose_bone"],
+                    target_matrix,
+                    global_target_pose_matrices,
+                )
+                for record, target_matrix in zip(records, target_matrices)
+            )
+            merged_batch = dict(batch)
+            merged_batch["records"] = records
+            merged_batch["matrix_bases"] = matrix_bases
+            merged_batch["target_pose_matrices"] = target_matrices
+            merged_batches.append(merged_batch)
+
+        merged_plan = {
+            "schema": primary_plan.get("schema", "mc2_bone_writeback_plan_v0"),
+            "armature": armature,
+            "bone_count": len(global_target_pose_matrices),
+            "component_count": len(target_entries),
+            "task_ids": tuple(task_ids),
+            "batches": tuple(merged_batches),
+        }
+        primary_slot_id = str(primary_result["slot_id"])
+        staged_plans[primary_slot_id] = merged_plan
+        merged_result = dict(primary_result)
+        merged_result.update({
+            "target_key": target_key,
+            "bone_count": merged_plan["bone_count"],
+            "component_count": len(target_entries),
+            "task_ids": tuple(task_ids),
+            "topology_signatures": tuple(topology_signatures),
+            "revisions": tuple(revisions),
+            "revision": max(revisions, default=0),
+        })
+        merged_results.append(merged_result)
+
+    return tuple(merged_results), staged_plans
 
 
 def make_mc2_stats_result(
@@ -450,5 +551,6 @@ __all__ = [
     "make_mc2_bone_result",
     "make_mc2_mesh_result",
     "make_mc2_stats_result",
+    "merge_mc2_bone_results",
     "publish_mc2_result_transaction",
 ]

@@ -516,6 +516,7 @@ class MC2SetupOptionsSpec:
 
     setup_type: str
     connection_mode: int = 0
+    connection_model: str = "mc2_source"
     rotational_interpolation: float = 0.5
     root_rotation: float = 0.5
     collided_by_groups: int = 0
@@ -523,8 +524,11 @@ class MC2SetupOptionsSpec:
     def __post_init__(self) -> None:
         if self.setup_type not in MC2_SETUP_TYPES:
             raise ValueError(f"未知 MC2 setup_type: {self.setup_type!r}")
-        if self.connection_mode not in (0, 1, 2, 3):
-            raise ValueError("connection_mode 必须是 0、1、2 或 3")
+        if self.connection_model not in ("mc2_source", "hotools_product"):
+            raise ValueError("connection_model 必须是 mc2_source 或 hotools_product")
+        allowed_modes = (0, 1, 2) if self.connection_model == "hotools_product" else (0, 1, 2, 3)
+        if self.connection_mode not in allowed_modes:
+            raise ValueError(f"connection_mode 必须位于 {allowed_modes}")
         if self.setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING) and self.connection_mode != 0:
             raise ValueError("MeshCloth/BoneSpring connection_mode 必须是 Line(0)")
         if self.collided_by_groups < 0 or self.collided_by_groups > 0xFFFF:
@@ -542,6 +546,7 @@ def make_mc2_setup_options(
     setup_type: object,
     *,
     connection_mode=0,
+    connection_model="mc2_source",
     rotational_interpolation=0.5,
     root_rotation=0.5,
     collided_by_groups=0,
@@ -550,17 +555,20 @@ def make_mc2_setup_options(
     if setup_type not in MC2_SETUP_TYPES:
         raise ValueError(f"未知 MC2 setup_type: {setup_type!r}")
     connection_mode = int(connection_mode)
-    if connection_mode not in (0, 1, 2, 3):
-        raise ValueError(
-            "connection_mode 必须是 0(Line)、1(AutomaticMesh)、"
-            "2(SequentialLoopMesh) 或 3(SequentialNonLoopMesh)"
-        )
+    connection_model = str(connection_model or "mc2_source").strip().lower()
+    if connection_model not in ("mc2_source", "hotools_product"):
+        raise ValueError("connection_model 必须是 mc2_source 或 hotools_product")
+    allowed_modes = (0, 1, 2) if connection_model == "hotools_product" else (0, 1, 2, 3)
+    if connection_mode not in allowed_modes:
+        raise ValueError(f"connection_mode 必须位于 {allowed_modes}")
     if setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING):
         # Unity MeshCloth 不消费该字段；BoneSpring 强制 Line。
         connection_mode = 0
+        connection_model = "mc2_source"
     return MC2SetupOptionsSpec(
         setup_type=setup_type,
         connection_mode=connection_mode,
+        connection_model=connection_model,
         rotational_interpolation=_clamp(rotational_interpolation, "rotational_interpolation", 0.0, 1.0),
         root_rotation=_clamp(root_rotation, "root_rotation", 0.0, 1.0),
         collided_by_groups=max(0, min(0xFFFF, int(collided_by_groups))),

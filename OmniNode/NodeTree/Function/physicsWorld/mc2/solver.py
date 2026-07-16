@@ -25,6 +25,7 @@ from .results import (
     make_mc2_bone_result,
     make_mc2_mesh_result,
     make_mc2_stats_result,
+    merge_mc2_bone_results,
     publish_mc2_result_transaction,
 )
 from .scheduler import MC2TimeSchedulerState
@@ -513,7 +514,6 @@ def step_mc2(
             )
             bone_static_supported = (
                 spec.setup_type in ("bone_cloth", "bone_spring")
-                and len(topology.sources) == 1
                 and all(source.resolved for source in topology.sources)
                 and topology.particle_count > 0
             )
@@ -657,11 +657,35 @@ def step_mc2(
             context.dispose()
         raise
     prepared = tuple(prepared_items)
+    bone_targets: dict[tuple[int, int], set[str]] = {}
+    for item in prepared:
+        spec = item[0]
+        bone_static = item[5]
+        if bone_static is None:
+            existing_slot = world.solver_slots.get(spec.task_id)
+            if existing_slot is not None:
+                bone_static = existing_slot.data.get("bone_static")
+        if bone_static is None:
+            continue
+        first_source = spec.sources[0]
+        armature = first_source.get("armature") if isinstance(first_source, dict) else None
+        if armature is None and isinstance(first_source, tuple) and len(first_source) == 2:
+            armature = first_source[0]
+        target_key = (int(armature.as_pointer()), int(armature.data.as_pointer()))
+        identities = set(bone_static.final_proxy.vertex_identities)
+        overlap = bone_targets.setdefault(target_key, set()).intersection(identities)
+        if overlap:
+            for context in staged_native_contexts:
+                context.dispose()
+            raise ValueError(
+                f"MC2 Bone components overlap on target bones: {sorted(overlap)!r}"
+            )
+        bone_targets[target_key].update(identities)
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     public_results: list[dict] = []
     stats_slots: list[dict] = []
-    staged_writeback_plans: dict[str, dict] = {}
+    bone_result_entries: list[tuple[dict, dict]] = []
     writeback_result_count = 0
     world.acquire_write(MC2_SOLVER_ID)
     try:
@@ -1013,8 +1037,7 @@ def step_mc2(
                             frame=frame_input.frame,
                             world_generation=world.generation,
                         )
-                        public_results.append(bone_result)
-                        staged_writeback_plans[slot.slot_id] = writeback_plan
+                        bone_result_entries.append((bone_result, writeback_plan))
             native_context = slot.data.get("native_context")
             native_info = (
                 native_context.inspect()
@@ -1046,6 +1069,10 @@ def step_mc2(
             })
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
+            bone_results, staged_writeback_plans = merge_mc2_bone_results(
+                bone_result_entries
+            )
+            public_results.extend(bone_results)
             writeback_result_count = len(public_results)
             public_results.append(make_mc2_stats_result(
                 frame=world.frame_context.frame,

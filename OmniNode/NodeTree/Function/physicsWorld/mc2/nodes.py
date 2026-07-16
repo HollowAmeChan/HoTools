@@ -36,6 +36,102 @@ def _task(setup_type: str, sources, profile, enabled: bool, **setup_values):
     ]
 
 
+def _flatten_values(values) -> list:
+    pending = list(values) if isinstance(values, list) else [values]
+    result = []
+    while pending:
+        value = pending.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            pending[0:0] = value
+            continue
+        result.append(value)
+    return result
+
+
+def _bone_chain_names(root_bone) -> list[str]:
+    names = []
+    current = root_bone
+    guard = 0
+    while current is not None and guard < 4096:
+        names.append(str(getattr(current, "name", "") or ""))
+        children = list(getattr(current, "children", ()) or ())
+        current = children[0] if children else None
+        guard += 1
+    return [name for name in names if name]
+
+
+def _expand_hotools_bone_sources(values) -> list[dict]:
+    chains = []
+    for value in _flatten_values(values):
+        if isinstance(value, dict) and value.get("armature") is not None:
+            armature = value.get("armature")
+            explicit = [str(name) for name in (value.get("bones") or ()) if str(name)]
+            if explicit:
+                chains.append({
+                    "armature": armature,
+                    "root_bone": str(value.get("root_bone") or explicit[0]),
+                    "bones": explicit,
+                })
+                continue
+            parent_name = str(value.get("bone") or value.get("root_bone") or "").strip()
+        elif isinstance(value, tuple) and len(value) == 2:
+            armature, parent_name = value
+            parent_name = str(parent_name or "").strip()
+        else:
+            raise TypeError("BoneCloth product source must be a Bone socket or explicit chain")
+
+        pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+        parent = pose_bones.get(parent_name) if pose_bones is not None else None
+        if parent is None:
+            raise ValueError(f"BoneCloth parent bone not found: {parent_name!r}")
+        children = list(getattr(parent, "children", ()) or ())
+        if not children:
+            raise ValueError(f"BoneCloth parent bone has no child chains: {parent_name!r}")
+        for child in children:
+            names = _bone_chain_names(child)
+            if names:
+                chains.append({
+                    "armature": armature,
+                    "root_bone": names[0],
+                    "bones": names,
+                })
+    return chains
+
+
+def _owner_key(source: dict) -> tuple[int, int]:
+    armature = source["armature"]
+    pointer = getattr(armature, "as_pointer", None)
+    data = getattr(armature, "data", None)
+    data_pointer = getattr(data, "as_pointer", None)
+    owner_id = int(pointer()) if callable(pointer) else id(armature)
+    data_id = int(data_pointer()) if callable(data_pointer) else id(data)
+    return owner_id, data_id
+
+
+def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
+    if profile is None:
+        profile = make_mc2_particle_profile()
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for source in _expand_hotools_bone_sources(sources):
+        grouped.setdefault(_owner_key(source), []).append(source)
+    return [
+        make_mc2_task_spec(
+            MC2_SETUP_BONE_CLOTH,
+            group,
+            profile=profile,
+            setup_options=make_mc2_setup_options(
+                MC2_SETUP_BONE_CLOTH,
+                connection_model="hotools_product",
+                **setup_values,
+            ),
+            enabled=enabled,
+        )
+        for group in grouped.values()
+    ]
+
+
 @omni(
     enable=True,
     bl_label="MC2粒子配置",
@@ -233,7 +329,7 @@ def physicsMC2MeshClothTask(
     is_output_node=False,
     _INPUT_NAME=["骨链", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
-        "connection_mode": {"min_value": 0, "max_value": 3},
+        "connection_mode": {"min_value": 0, "max_value": 2},
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0},
         "collided_by_groups": {"min_value": 0, "max_value": 65535},
@@ -243,14 +339,13 @@ def physicsMC2MeshClothTask(
 def physicsMC2BoneClothTask(
     sources: list[typing.Any],
     profile: typing.Any = None,
-    connection_mode: int = 0,
+    connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: int = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
-    return _task(
-        MC2_SETUP_BONE_CLOTH,
+    return _hotools_bone_tasks(
         sources,
         profile,
         enabled,

@@ -7,7 +7,11 @@ import hashlib
 import json
 import math
 
-from .bone_connection import MC2BoneConnectionSpec, build_mc2_bone_connection
+from .bone_connection import (
+    MC2BoneConnectionSpec,
+    build_hotools_bone_connection,
+    build_mc2_bone_connection,
+)
 from .specs import MC2TaskSpec, _source_token
 
 
@@ -258,6 +262,7 @@ class MC2TopologySpec:
     setup_type: str
     task_topology_signature: str
     connection_mode: int
+    connection_model: str
     sources: tuple[MC2SourceTopologySpec, ...]
     particle_count: int
     topology_signature: str
@@ -270,6 +275,7 @@ class MC2TopologySpec:
             "setup_type": self.setup_type,
             "task_topology_signature": self.task_topology_signature,
             "connection_mode": self.connection_mode,
+            "connection_model": self.connection_model,
             "source_count": len(self.sources),
             "particle_count": self.particle_count,
             "topology_signature": self.topology_signature,
@@ -332,11 +338,16 @@ def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
         parent_indices: list[int] = []
         child_indices: list[tuple[int, ...]] = []
         root_indices: list[int] = []
+        product_chains: list[tuple[int, ...]] = []
         for source in sources:
             payload = _thaw(source.payload)
             armature_pointer = int(payload.get("armature_pointer", 0) or 0)
             records = payload.get("bones", ())
             source_offset = len(positions)
+            product_chains.append(tuple(
+                source_offset + local_index
+                for local_index in range(len(records))
+            ))
             for local_index, record in enumerate(records):
                 key = (armature_pointer, str(record.get("name") or ""))
                 if key in seen_bones:
@@ -356,18 +367,27 @@ def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
                 ))
                 positions.append(tuple(float(value) for value in record["head"]))
         if positions and all(source.resolved for source in sources):
-            bone_connection = build_mc2_bone_connection(
-                positions,
-                parent_indices,
-                root_indices,
-                task.setup_options.connection_mode,
-                child_indices=child_indices,
-            )
+            if task.setup_options.connection_model == "hotools_product":
+                bone_connection = build_hotools_bone_connection(
+                    positions,
+                    parent_indices,
+                    product_chains,
+                    task.setup_options.connection_mode,
+                )
+            else:
+                bone_connection = build_mc2_bone_connection(
+                    positions,
+                    parent_indices,
+                    root_indices,
+                    task.setup_options.connection_mode,
+                    child_indices=child_indices,
+                )
     signature_payload = {
         "schema_version": 1,
         "setup_type": task.setup_type,
         "task_topology_signature": task.topology_signature,
         "connection_mode": task.setup_options.connection_mode,
+        "connection_model": task.setup_options.connection_model,
         "source_payload_signatures": [source.payload_signature for source in sources],
     }
     if bone_connection is not None:
@@ -377,6 +397,7 @@ def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
         setup_type=task.setup_type,
         task_topology_signature=task.topology_signature,
         connection_mode=task.setup_options.connection_mode,
+        connection_model=task.setup_options.connection_model,
         sources=sources,
         particle_count=sum(source.particle_count for source in sources),
         topology_signature=_signature(signature_payload),

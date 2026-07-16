@@ -18,6 +18,14 @@ MC2_BONE_CONNECTION_MODES = (
     MC2_BONE_CONNECTION_SEQUENTIAL_LOOP,
     MC2_BONE_CONNECTION_SEQUENTIAL_NON_LOOP,
 )
+HOTOOLS_BONE_CONNECTION_LINE = 0
+HOTOOLS_BONE_CONNECTION_SEQUENTIAL = 1
+HOTOOLS_BONE_CONNECTION_SEQUENTIAL_LOOP = 2
+HOTOOLS_BONE_CONNECTION_MODES = (
+    HOTOOLS_BONE_CONNECTION_LINE,
+    HOTOOLS_BONE_CONNECTION_SEQUENTIAL,
+    HOTOOLS_BONE_CONNECTION_SEQUENTIAL_LOOP,
+)
 
 
 def _signature(value: object) -> str:
@@ -82,6 +90,7 @@ class MC2BoneConnectionSpec:
     lines: tuple[tuple[int, int], ...]
     triangles: tuple[tuple[int, int, int], ...]
     topology_signature: str
+    connection_model: str = "mc2_source"
     schema_version: int = 1
 
     def debug_dict(self, *, include_arrays: bool = False) -> dict:
@@ -92,6 +101,7 @@ class MC2BoneConnectionSpec:
             "line_count": len(self.lines),
             "triangle_count": len(self.triangles),
             "topology_signature": self.topology_signature,
+            "connection_model": self.connection_model,
             "schema_version": self.schema_version,
         }
         if include_arrays:
@@ -336,12 +346,159 @@ def build_mc2_bone_connection(
     )
 
 
+def build_hotools_bone_connection(
+    positions,
+    parent_indices,
+    chains,
+    connection_mode: int,
+) -> MC2BoneConnectionSpec:
+    """Build HoTools' ordered-chain BoneCloth product topology.
+
+    A task is one lateral group. Chain order is the node multi-input order and
+    vertices at the same chain-local depth are connected pairwise.
+    """
+
+    connection_mode = int(connection_mode)
+    if connection_mode not in HOTOOLS_BONE_CONNECTION_MODES:
+        raise ValueError("HoTools Bone connection_mode must be in 0..2")
+    position_values = tuple(
+        tuple(float(component) for component in value)
+        for value in positions
+    )
+    parents = tuple(int(value) for value in parent_indices)
+    count = len(position_values)
+    if len(parents) != count:
+        raise ValueError("HoTools Bone parent_indices length mismatch")
+    if any(
+        len(value) != 3
+        or not all(math.isfinite(component) for component in value)
+        for value in position_values
+    ):
+        raise ValueError("HoTools Bone positions must be finite float3 values")
+    if any(parent < -1 or parent >= count for parent in parents):
+        raise ValueError("HoTools Bone parent index out of range")
+
+    chain_values = tuple(tuple(int(vertex) for vertex in chain) for chain in chains)
+    if not chain_values or any(not chain for chain in chain_values):
+        raise ValueError("HoTools Bone chains must be non-empty")
+    flattened = tuple(vertex for chain in chain_values for vertex in chain)
+    if len(flattened) != count or set(flattened) != set(range(count)):
+        raise ValueError("HoTools Bone chains must cover every particle exactly once")
+    for chain in chain_values:
+        if parents[chain[0]] >= 0:
+            raise ValueError("HoTools Bone chain head must be parentless in the task")
+        for depth, vertex in enumerate(chain[1:], start=1):
+            if parents[vertex] != chain[depth - 1]:
+                raise ValueError("HoTools Bone chain order must follow parent relations")
+
+    roots = tuple(chain[0] for chain in chain_values)
+    levels = [-1] * count
+    vertex_roots = [-1] * count
+    main_edges: set[tuple[int, int]] = set()
+    for chain_index, chain in enumerate(chain_values):
+        for depth, vertex in enumerate(chain):
+            levels[vertex] = depth
+            vertex_roots[vertex] = chain_index
+            if depth:
+                main_edges.add(_edge(chain[depth - 1], vertex))
+
+    lateral_edges: set[tuple[int, int]] = set()
+
+    def connect(left, right) -> None:
+        for depth in range(min(len(left), len(right))):
+            lateral_edges.add(_edge(left[depth], right[depth]))
+
+    if connection_mode != HOTOOLS_BONE_CONNECTION_LINE:
+        for chain_index in range(len(chain_values) - 1):
+            connect(chain_values[chain_index], chain_values[chain_index + 1])
+        if (
+            connection_mode == HOTOOLS_BONE_CONNECTION_SEQUENTIAL_LOOP
+            and len(chain_values) >= 3
+        ):
+            connect(chain_values[-1], chain_values[0])
+
+    edges = main_edges | lateral_edges
+    adjacency: list[list[int]] = [[] for _ in range(count)]
+    for left, right in edges:
+        adjacency[left].append(right)
+        adjacency[right].append(left)
+
+    triangles: set[tuple[int, int, int]] = set()
+    if lateral_edges:
+        for vertex, neighbors in enumerate(adjacency):
+            ordered_neighbors = sorted(neighbors)
+            position = position_values[vertex]
+            for left_offset, left in enumerate(ordered_neighbors[:-1]):
+                for right in ordered_neighbors[left_offset + 1:]:
+                    if not (
+                        _edge(vertex, left) in main_edges
+                        or _edge(vertex, right) in main_edges
+                    ):
+                        continue
+                    roots_in_triangle = {
+                        vertex_roots[vertex],
+                        vertex_roots[left],
+                        vertex_roots[right],
+                    }
+                    if len(roots_in_triangle) == 3:
+                        continue
+                    left_vector = tuple(
+                        position_values[left][axis] - position[axis]
+                        for axis in range(3)
+                    )
+                    right_vector = tuple(
+                        position_values[right][axis] - position[axis]
+                        for axis in range(3)
+                    )
+                    left_length = _length_squared(left_vector)
+                    right_length = _length_squared(right_vector)
+                    if left_length <= 1.0e-12 or right_length <= 1.0e-12:
+                        continue
+                    cosine = sum(
+                        left_value * right_value
+                        for left_value, right_value in zip(left_vector, right_vector)
+                    ) / math.sqrt(left_length * right_length)
+                    angle = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+                    if angle < 120.0:
+                        triangles.add(_triangle(vertex, left, right))
+
+    payload = {
+        "schema_version": 1,
+        "connection_model": "hotools_product",
+        "connection_mode": connection_mode,
+        "particle_count": count,
+        "root_order": roots,
+        "source_vertex_order": flattened,
+        "root_indices": vertex_roots,
+        "levels": levels,
+        "lines": tuple(sorted(edges)),
+        "triangles": tuple(sorted(triangles)),
+    }
+    return MC2BoneConnectionSpec(
+        connection_mode=connection_mode,
+        particle_count=count,
+        root_order=roots,
+        source_vertex_order=flattened,
+        root_indices=tuple(vertex_roots),
+        levels=tuple(levels),
+        lines=payload["lines"],
+        triangles=payload["triangles"],
+        topology_signature=_signature(payload),
+        connection_model="hotools_product",
+    )
+
+
 __all__ = [
+    "HOTOOLS_BONE_CONNECTION_LINE",
+    "HOTOOLS_BONE_CONNECTION_MODES",
+    "HOTOOLS_BONE_CONNECTION_SEQUENTIAL",
+    "HOTOOLS_BONE_CONNECTION_SEQUENTIAL_LOOP",
     "MC2_BONE_CONNECTION_AUTOMATIC",
     "MC2_BONE_CONNECTION_LINE",
     "MC2_BONE_CONNECTION_MODES",
     "MC2_BONE_CONNECTION_SEQUENTIAL_LOOP",
     "MC2_BONE_CONNECTION_SEQUENTIAL_NON_LOOP",
     "MC2BoneConnectionSpec",
+    "build_hotools_bone_connection",
     "build_mc2_bone_connection",
 ]

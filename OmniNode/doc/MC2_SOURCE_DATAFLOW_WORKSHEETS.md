@@ -37,7 +37,7 @@
 | DEV-08 | 力场 | MC2私有Wind对象/manager | wind是未来Physics World通用力场的一种kind | 当前`wind_*`只是兼容参数面，无公共快照时按零外力 |
 | DEV-09 | Signed transform | Unity Transform/TRS语义 | 只接受可分解为proper rotation + signed scale且无shear的域 | Armature自身负缩放可用；负缩放父级、零scale、shear和负PoseBone scale拒绝 |
 | DEV-10 | 旧接口 | HoTools曾暴露`substeps/iterations`与旧full-core ABI | 保留必要节点兼容面，但新V0只消费声明过的scheduler/ABI | 兼容字段不代表能力；旧实现不得成为fallback或oracle |
-| DEV-11 | BoneCloth横向连接 | MC2按transform/root列表、距离或列表相邻关系生成横向membership | HoTools保留按骨名、显式链分组和节点输入组合横向连接的产品语义 | 更适合Blender命名工作流与节点复用；必须冻结名称/分组/顺序和重建规则，并由隐式debug直接显示最终连接 |
+| DEV-11 | BoneCloth横向连接 | MC2按transform/root列表、距离或列表相邻关系生成横向membership | HoTools保留按骨名、显式链分组和节点输入组合横向连接的产品语义 | 一个链参数节点对应一个profile+task横向组；同Armature多组保持独立context并合并为一次原子写回，最终连接仍必须由隐式debug直接显示 |
 | DEV-12 | Component与step粒度 | MC2按component/team分别拥有manager调度单元 | HoTools只有一个公开MC2 solver step，一次处理全部active tasks；一个MC2 component映射为粒子参数profile与task的组合 | 节点图更简洁并允许跨task统一调度/交互；持久状态仍按task slot/context隔离，不能合并成隐藏全局状态 |
 
 新增差异必须先回答：source行为是什么、为什么不照搬、支持域缩小到哪里、用什么证据防止差异继续扩散。
@@ -55,7 +55,11 @@
 - triangle来自同一vertex的link两两组合；零长度、夹角`>=120°`、横跨三个root、无main parent-child edge时拒绝。
 - triangle只按canonical `PackInt3`去重，不保存winding。只有第一次插入时登记两条`triangleEdgeSet`，重复发现不会补第三边，所以可能保留residual line。
 - import topology之后仍需selection/proxy conversion与constraint builders；import line/triangle不是N1 constraint array。
-- 产品差异边界：当前fixture证明新`bone_connection`复现上述固定MC2 source规则，但HoTools产品横向连接以DEV-11为准，不能被source模式静默替代。旧路径的名称匹配、显式链分组、节点输入组合、分岔和per-chain参数必须从producer到topology consumer冻结为新contract；`S-03`必须同时有source fixture、产品fixture和最终连接debug才能关闭。
+- 产品模式的Bone socket输入表示共用父骨；共用父骨不进入模拟，其direct children按Blender集合顺序成为各链链首。链内遇到分岔只跟随`children[0]`；需要其它分支时必须显式拆成另一输入组。显式`bones`列表则按给定名称顺序冻结链。
+- 产品连接模式固定为0=仅纵向、1=按task链顺序连接相邻链、2=在模式1基础上首尾成环；只连接相同chain-local depth，短链不补点。task链顺序、连接模型和mode都进入拓扑签名，不能按空间距离重排。
+- 一个Bone链参数节点/公开BoneCloth task调用对应一个`profile+task` component和一个横向组；同一Armature上的多个component不互建横向边、各自持有slot/context，但公开Bone写回按Armature合成一个原子batch。骨名重叠的component在world写事务前拒绝；跨Armature输入拆成多个task。
+- 固定MC2 source的imported Bone triangle仍遵循DEV-04并拒绝；`hotools_product`横向拓扑产生的triangle属于故意产品模型，以chain index/depth生成稳定UV后进入Bone static/native。两种connection model必须保持独立签名和拒绝域。
+- 产品差异边界：source fixture证明`mc2_source`规则，产品fixture冻结上述名称、分组、顺序、分岔、profile+task identity、多task失败原子性和合并写回；最终连接的viewport可见性由D-01单独关闭。
 
 ### Attribute 与 Final Proxy
 

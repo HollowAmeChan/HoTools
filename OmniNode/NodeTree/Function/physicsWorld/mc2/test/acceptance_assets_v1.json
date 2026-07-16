@@ -55,6 +55,29 @@
       ]
     },
     {
+      "id": "bone_cloth_hotools_product_groups",
+      "setup_types": ["bone_cloth"],
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_product.py",
+      "production_surface": [
+        "Bone socket common-parent chain expansion",
+        "ordered-chain lateral edges and product triangles",
+        "one solver step with per-task native contexts",
+        "same-Armature multi-component atomic writeback"
+      ],
+      "expected": [
+        "node input order remains topology-authoritative",
+        "multiple Armatures split into independent tasks",
+        "different profile+task groups on one Armature merge into one writeback target",
+        "a later task preparation failure preserves prior world state and public results"
+      ],
+      "rejection_boundaries": [
+        "internal chain forks beyond children[0] require another explicit group",
+        "component bone-name overlap",
+        "multiple Armatures inside one task",
+        "zero component scale"
+      ]
+    },
+    {
       "id": "bone_spring_line_soft_sphere",
       "setup_types": ["bone_spring"],
       "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_static.py",
