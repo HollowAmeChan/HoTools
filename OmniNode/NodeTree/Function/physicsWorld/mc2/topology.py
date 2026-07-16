@@ -125,6 +125,15 @@ class MC2BoneRawSnapshot:
     resolved: bool
 
 
+@dataclass(frozen=True)
+class _MC2ArmatureRestSnapshot:
+    names: tuple[str, ...]
+    name_to_index: dict[str, int]
+    parent_names: tuple[str, ...]
+    head_tail: np.ndarray
+    matrices: np.ndarray
+
+
 def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
     token = _source_token(source)
     topology = _compact_signature((kind, "unresolved", token))
@@ -231,13 +240,14 @@ def prepare_static_inputs_for_task(
         raise TypeError("task 必须是 MC2TaskSpec")
     sources = []
     raw_snapshots: list[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None] = []
+    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
     for source in task.sources:
         if task.setup_type == "mesh_cloth":
             snapshot = _read_mesh_raw_snapshot(source)
             raw_snapshots.append(snapshot)
             sources.append(_mesh_input_fingerprint(source, snapshot))
         else:
-            snapshot = _read_bone_raw_snapshot(source)
+            snapshot = _read_bone_raw_snapshot(source, armature_rest_snapshots)
             raw_snapshots.append(snapshot)
             sources.append(_bone_input_fingerprint(source, snapshot))
     topology = _compact_signature((
@@ -431,26 +441,75 @@ def _bone_source_selection(source):
     return armature, collection, requested, explicit_chain, names
 
 
-def _read_bone_raw_snapshot(source) -> MC2BoneRawSnapshot:
+def _read_armature_rest_snapshot(collection) -> _MC2ArmatureRestSnapshot:
+    bones = tuple(collection or ())
+    names = tuple(str(getattr(bone, "name", "") or "") for bone in bones)
+    name_to_index = {name: index for index, name in enumerate(names)}
+    parent_names = tuple(
+        str(getattr(getattr(bone, "parent", None), "name", "") or "")
+        for bone in bones
+    )
+    heads = np.empty((len(bones), 3), dtype=np.float32)
+    tails = np.empty((len(bones), 3), dtype=np.float32)
+    matrices = np.empty((len(bones), 16), dtype=np.float32)
+    foreach_get = getattr(collection, "foreach_get", None)
+    used_bulk = False
+    if callable(foreach_get):
+        try:
+            foreach_get("head_local", heads.reshape((-1,)))
+            foreach_get("tail_local", tails.reshape((-1,)))
+            foreach_get("matrix_local", matrices.reshape((-1,)))
+            matrices[:] = (
+                matrices.reshape((-1, 4, 4))
+                .transpose((0, 2, 1))
+                .reshape((-1, 16))
+            )
+            used_bulk = True
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+    if not used_bulk:
+        for index, bone in enumerate(bones):
+            heads[index] = _vector3(getattr(bone, "head_local", None))
+            tails[index] = _vector3(getattr(bone, "tail_local", None))
+            matrices[index] = _matrix16(getattr(bone, "matrix_local", None))
+    return _MC2ArmatureRestSnapshot(
+        names=names,
+        name_to_index=name_to_index,
+        parent_names=parent_names,
+        head_tail=np.concatenate((heads, tails), axis=1),
+        matrices=matrices,
+    )
+
+
+def _read_bone_raw_snapshot(
+    source,
+    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
+) -> MC2BoneRawSnapshot:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
+    armature_pointer = _pointer(armature)
+    cache = armature_rest_snapshots if armature_rest_snapshots is not None else {}
+    rest = cache.get(armature_pointer)
+    if rest is None:
+        rest = _read_armature_rest_snapshot(collection)
+        cache[armature_pointer] = rest
+    selected_indices = np.asarray(
+        tuple(rest.name_to_index[name] for name in names),
+        dtype=np.int32,
+    )
     parents = np.empty(len(names), dtype=np.int32)
-    head_tail = np.empty((len(names), 6), dtype=np.float32)
-    matrices = np.empty((len(names), 16), dtype=np.float32)
     for index, name in enumerate(names):
-        bone = _collection_get(collection, name) if collection is not None else None
-        parent_name = str(getattr(getattr(bone, "parent", None), "name", "") or "")
+        parent_name = rest.parent_names[int(selected_indices[index])]
         parents[index] = name_to_index.get(parent_name, -1)
-        head_tail[index, :3] = _vector3(getattr(bone, "head_local", None))
-        head_tail[index, 3:] = _vector3(getattr(bone, "tail_local", None))
-        matrices[index] = _matrix16(getattr(bone, "matrix_local", None))
+    head_tail = np.ascontiguousarray(rest.head_tail[selected_indices])
+    matrices = np.ascontiguousarray(rest.matrices[selected_indices])
     resolved = (
         collection is not None and len(names) == len(requested)
         if explicit_chain
         else collection is not None and bool(names)
     )
     return MC2BoneRawSnapshot(
-        armature_pointer=_pointer(armature),
+        armature_pointer=armature_pointer,
         armature_name=str(
             getattr(armature, "name_full", getattr(armature, "name", "")) or ""
         ),

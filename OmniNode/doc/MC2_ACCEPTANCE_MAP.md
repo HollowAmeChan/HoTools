@@ -81,7 +81,7 @@
 
 ### P-06d 阶段证据
 
-Bone生产prepare已建立短生命周期`MC2BoneRawSnapshot`，fingerprint、Line/product connection和Bone static共享names/parents/head-tail/rest matrices；生产Topology只保留`bone_names`与轻量身份，不再二次读取RNA、冻结每骨dict或在static/frame路径`_thaw`。显式oracle与compact生产topology signature一致；26/26纯MC2与Blender Bone static/product/frame通过。large Bone profile step约`28.9 -> 20.9ms`，frame input约`11.6 -> 4.45ms`；外层build样本本轮为120.5ms，因此P-06d仍未关闭。下一步是批量化Armature rest读取，再将Bone orientation/transform、Distance、Center和Self直接收入native staged context。
+Bone生产prepare已建立短生命周期`MC2BoneRawSnapshot`，fingerprint、Line/product connection和Bone static共享names/parents/head-tail/rest matrices；同一task内的相同Armature只遍历一次name/parent，并用Blender `foreach_get`一次读取head/tail/matrix后按source稳定骨名切片。`matrix_local`的Blender列主序展平在snapshot边界固定转置，显式oracle与compact生产signature一致。生产Topology只保留`bone_names`与轻量身份，不再二次读取RNA、冻结每骨dict或在static/frame路径`_thaw`。26/26纯MC2与Blender Bone static/product/frame通过。large Bone外层首建约`99.0ms`，profile step约`12.1ms`，snapshot约`2.04ms`，frame input约`2.85ms`，逐帧均值约`6.50ms`且为旧CPP的`3.10x`；Python分配峰值约531KB，slot常驻NumPy仍约43KB。P-06d仍未关闭；下一步将Bone orientation/transform、Distance、Center和Self直接收入native staged context。
 
 ## 当前验收结论
 
