@@ -198,6 +198,7 @@ def build_mc2_mesh_cloth_static(
     self_collision = build_mc2_self_collision_static(
         baseline.final_proxy,
         baseline.baseline.depths,
+        native_context=native_context,
     )
     result = MC2MeshClothStaticBuildResult(
         mesh_topology_signature=actual_mesh_topology_signature,

@@ -1227,4 +1227,82 @@ Mc2BendingDerived mc2_build_bending_derived(
     return result;
 }
 
+Mc2SelfCollisionDerived mc2_build_self_collision_derived(
+    const std::uint8_t* vertex_attributes,
+    const double* vertex_depths,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count
+) {
+    if (vertex_attributes == nullptr || vertex_depths == nullptr ||
+        (edge_count > 0 && edges == nullptr) ||
+        (triangle_count > 0 && triangles == nullptr)) {
+        throw std::invalid_argument("MC2 self-collision derived buffers cannot be null");
+    }
+    constexpr std::uint32_t kFix0 = 0x04000000u;
+    constexpr std::uint32_t kFix1 = 0x08000000u;
+    constexpr std::uint32_t kFix2 = 0x10000000u;
+    constexpr std::uint32_t kAllFix = 0x20000000u;
+    constexpr std::uint32_t kIgnore = 0x40000000u;
+    constexpr std::uint8_t kMove = 0x02u;
+    constexpr std::uint8_t kValid = 0x03u;
+    constexpr std::array<std::uint32_t, 3> kFixFlags {kFix0, kFix1, kFix2};
+
+    Mc2SelfCollisionDerived result;
+    result.point_count = triangle_count > 0 ? vertex_count : 0;
+    result.edge_count = edge_count;
+    result.triangle_count = triangle_count;
+    const auto primitive_count = result.point_count + edge_count + triangle_count;
+    result.primitive_flags.reserve(primitive_count);
+    result.particle_indices.reserve(primitive_count * 3);
+    result.primitive_depths.reserve(primitive_count);
+    auto append_primitive = [&](std::uint32_t kind,
+                                const std::array<std::int32_t, 3>& vertices,
+                                std::size_t role_count) {
+        std::uint32_t flag = kind << 24u;
+        std::size_t fixed_count = 0;
+        double depth_sum = 0.0;
+        bool ignored = false;
+        for (std::size_t role = 0; role < role_count; ++role) {
+            const auto vertex = static_cast<std::size_t>(vertices[role]);
+            const auto attribute = vertex_attributes[vertex];
+            if ((attribute & kMove) == 0u) {
+                flag |= kFixFlags[role];
+                ++fixed_count;
+            }
+            ignored = ignored || (attribute & kValid) == 0u;
+            depth_sum += vertex_depths[vertex];
+        }
+        if (fixed_count == role_count) flag |= kAllFix;
+        if (ignored) flag |= kIgnore;
+        result.primitive_flags.push_back(flag);
+        result.particle_indices.insert(
+            result.particle_indices.end(), vertices.begin(), vertices.end()
+        );
+        result.primitive_depths.push_back(
+            static_cast<float>(depth_sum / static_cast<double>(role_count))
+        );
+    };
+    for (std::size_t vertex = 0; vertex < result.point_count; ++vertex) {
+        append_primitive(0u, {static_cast<std::int32_t>(vertex), -1, -1}, 1);
+    }
+    for (std::size_t edge = 0; edge < edge_count; ++edge) {
+        append_primitive(1u, {edges[edge * 2], edges[edge * 2 + 1], -1}, 2);
+    }
+    for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
+        append_primitive(
+            2u,
+            {
+                triangles[triangle * 3],
+                triangles[triangle * 3 + 1],
+                triangles[triangle * 3 + 2],
+            },
+            3
+        );
+    }
+    return result;
+}
+
 }  // namespace hotools

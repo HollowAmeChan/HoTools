@@ -121,4 +121,23 @@ Mc2BendingDerived mc2_build_bending_derived(
     const float* initial_local_to_world_columns
 );
 
+struct Mc2SelfCollisionDerived {
+    std::vector<std::uint32_t> primitive_flags;
+    std::vector<std::int32_t> particle_indices;
+    std::vector<float> primitive_depths;
+    std::size_t point_count = 0;
+    std::size_t edge_count = 0;
+    std::size_t triangle_count = 0;
+};
+
+Mc2SelfCollisionDerived mc2_build_self_collision_derived(
+    const std::uint8_t* vertex_attributes,
+    const double* vertex_depths,
+    std::size_t vertex_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count
+);
+
 }  // namespace hotools

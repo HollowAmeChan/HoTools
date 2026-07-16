@@ -1,12 +1,30 @@
 import os
 import sys
+import types
 
 import numpy as np
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(MC2_ROOT))
+PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
+FUNCTION = os.path.dirname(PHYSICS_WORLD)
+NODETREE = os.path.dirname(FUNCTION)
+OMNINODE = os.path.dirname(NODETREE)
+HOTOOLS = os.path.dirname(OMNINODE)
 
-from mc2.self_collision_static import (
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2", MC2_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.self_collision_static import (
     FLAG_ALL_FIX,
     FLAG_FIX0,
     FLAG_FIX1,
@@ -14,7 +32,9 @@ from mc2.self_collision_static import (
     build_mc2_self_collision_static,
     pack_mc2_self_collision_static,
 )
-from mc2.static_data import make_mc2_proxy_static_spec
+from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.static_data import (
+    make_mc2_proxy_static_spec,
+)
 
 
 def test_source_ordered_primitive_flags_indices_and_depths():

@@ -96,6 +96,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_build_baseline_pose_depth_derived_v0",
     "mc2_build_distance_derived_v0",
     "mc2_build_bending_derived_v0",
+    "mc2_build_self_collision_derived_v0",
 )
 
 
@@ -383,6 +384,18 @@ class MC2NativeContextV0:
             derived["bending_sign_or_volume"],
         )
 
+    def update_self_collision_derived(self, derived: dict) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_update_self_collision_static(
+            self._handle,
+            derived["primitive_flags"],
+            derived["particle_indices"],
+            derived["primitive_depths"],
+            int(derived["point_count"]),
+            int(derived["edge_count"]),
+            int(derived["triangle_count"]),
+        )
+
     def _update_mesh_frame_producer_from_spec(self, static) -> None:
         records = tuple(static.finalizer.vertex_to_triangle_records)
         ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
@@ -402,7 +415,7 @@ class MC2NativeContextV0:
             ),
         )
 
-    def _finish_mesh_static(self, static) -> None:
+    def _finish_mesh_static(self, static, *, self_collision_ready: bool = False) -> None:
         center = pack_mc2_center_static(static.center)
         self._module.mc2_context_v0_update_center_static(
             self._handle,
@@ -410,7 +423,10 @@ class MC2NativeContextV0:
             center["local_center_position"],
             center["initial_local_gravity_direction"],
         )
-        self._update_self_collision_static(static.self_collision)
+        if self_collision_ready:
+            self.self_collision_signature = static.self_collision.static_signature
+        else:
+            self._update_self_collision_static(static.self_collision)
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline.baseline_signature
         self.distance_signature = static.distance.distance_signature
@@ -426,7 +442,7 @@ class MC2NativeContextV0:
             raise TypeError("static must be MC2MeshClothStaticBuildResult")
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native static vertex count mismatch")
-        self._finish_mesh_static(static)
+        self._finish_mesh_static(static, self_collision_ready=True)
 
     def update_mesh_static(self, static) -> None:
         from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult

@@ -20,25 +20,6 @@ FLAG_ALL_FIX = 0x20000000
 FLAG_IGNORE = 0x40000000
 
 
-def _primitive_flag(kind: int, vertices: tuple[int, ...], attributes) -> int:
-    flag = int(kind) << 24
-    fix_flags = (FLAG_FIX0, FLAG_FIX1, FLAG_FIX2)
-    fixed_count = 0
-    ignored = False
-    for axis, vertex in enumerate(vertices):
-        attribute = int(attributes[vertex])
-        if attribute & 0x02 == 0:
-            flag |= fix_flags[axis]
-            fixed_count += 1
-        if attribute & 0x03 == 0:
-            ignored = True
-    if fixed_count == len(vertices):
-        flag |= FLAG_ALL_FIX
-    if ignored:
-        flag |= FLAG_IGNORE
-    return flag
-
-
 @dataclass(frozen=True)
 class MC2SelfCollisionStaticSpec:
     proxy_signature: str
@@ -106,6 +87,8 @@ def pack_mc2_self_collision_static(spec: MC2SelfCollisionStaticSpec) -> dict[str
 def build_mc2_self_collision_static(
     proxy: MC2ProxyStaticSpec,
     depths,
+    *,
+    native_context=None,
 ) -> MC2SelfCollisionStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec):
         raise TypeError("proxy must be MC2ProxyStaticSpec")
@@ -113,41 +96,34 @@ def build_mc2_self_collision_static(
     if len(depths) != proxy.vertex_count:
         raise ValueError("self-collision depths must match proxy vertices")
 
-    flags = []
-    indices = []
-    primitive_depths = []
-    point_count = proxy.vertex_count if proxy.triangles else 0
-    for vertex in range(point_count):
-        vertices = (vertex,)
-        flags.append(_primitive_flag(KIND_POINT, vertices, proxy.vertex_attributes))
-        indices.append((vertex, -1, -1))
-        primitive_depths.append(depths[vertex])
-    for edge in proxy.edges:
-        vertices = tuple(int(value) for value in edge)
-        flags.append(_primitive_flag(KIND_EDGE, vertices, proxy.vertex_attributes))
-        indices.append((vertices[0], vertices[1], -1))
-        primitive_depths.append(sum(depths[value] for value in vertices) / 2.0)
-    for triangle in proxy.triangles:
-        vertices = tuple(int(value) for value in triangle)
-        flags.append(_primitive_flag(KIND_TRIANGLE, vertices, proxy.vertex_attributes))
-        indices.append(vertices)
-        primitive_depths.append(sum(depths[value] for value in vertices) / 3.0)
+    from .native import native_module
 
-    packed_flags = _readonly(flags, np.uint32, (len(flags),))
-    packed_indices = _readonly(indices, np.int32, (len(flags), 3))
-    packed_depths = _readonly(primitive_depths, np.float32, (len(flags),))
+    derived = native_module().mc2_build_self_collision_derived_v0(
+        np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
+        np.ascontiguousarray(depths, dtype=np.float64),
+        np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
+    )
+    if native_context is not None:
+        native_context.update_self_collision_derived(derived)
+    packed_flags = derived["primitive_flags"]
+    packed_indices = derived["particle_indices"]
+    packed_depths = derived["primitive_depths"]
+    point_count = int(derived["point_count"])
+    edge_count = int(derived["edge_count"])
+    triangle_count = int(derived["triangle_count"])
     digest = hashlib.sha256(proxy.proxy_signature.encode("ascii"))
     for value in (packed_flags, packed_indices, packed_depths):
         digest.update(value.tobytes())
-    digest.update(np.asarray((point_count, len(proxy.edges), len(proxy.triangles)), dtype=np.int64).tobytes())
+    digest.update(np.asarray((point_count, edge_count, triangle_count), dtype=np.int64).tobytes())
     return MC2SelfCollisionStaticSpec(
         proxy_signature=proxy.proxy_signature,
         primitive_flags=tuple(int(value) for value in packed_flags),
         particle_indices=tuple(tuple(int(axis) for axis in value) for value in packed_indices),
         primitive_depths=tuple(float(value) for value in packed_depths),
         point_count=point_count,
-        edge_count=len(proxy.edges),
-        triangle_count=len(proxy.triangles),
+        edge_count=edge_count,
+        triangle_count=triangle_count,
         static_signature=digest.hexdigest(),
     )
 

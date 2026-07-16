@@ -267,6 +267,53 @@ def test_bending_derived_arrays() -> None:
     np.testing.assert_array_equal(derived["bending_sign_or_volume"], (1,))
 
 
+def test_self_collision_derived_arrays() -> None:
+    attributes = np.asarray((0x01, 0x02, 0x00, 0x82), dtype=np.uint8)
+    depths = np.asarray((0.0, 0.25, 0.5, 1.0), dtype=np.float64)
+    edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
+    triangles = np.asarray(((0, 1, 3),), dtype=np.int32)
+
+    derived = hotools_native.mc2_build_self_collision_derived_v0(
+        attributes,
+        depths,
+        edges,
+        triangles,
+    )
+
+    assert derived["point_count"] == 4
+    assert derived["edge_count"] == 2
+    assert derived["triangle_count"] == 1
+    np.testing.assert_array_equal(
+        derived["primitive_flags"],
+        (
+            0x24000000,
+            0,
+            0x64000000,
+            0,
+            0x05000000,
+            0x49000000,
+            0x06000000,
+        ),
+    )
+    np.testing.assert_array_equal(
+        derived["particle_indices"],
+        (
+            (0, -1, -1),
+            (1, -1, -1),
+            (2, -1, -1),
+            (3, -1, -1),
+            (0, 1, -1),
+            (1, 2, -1),
+            (0, 1, 3),
+        ),
+    )
+    np.testing.assert_allclose(
+        derived["primitive_depths"],
+        (0.0, 0.25, 0.5, 1.0, 0.125, 0.375, 1.25 / 3.0),
+        atol=1.0e-7,
+    )
+
+
 if __name__ == "__main__":
     test_triangle_direction_unifies_connected_surface()
     print("PASS MC2 native triangle direction")
@@ -280,3 +327,5 @@ if __name__ == "__main__":
     print("PASS MC2 native Distance derived arrays")
     test_bending_derived_arrays()
     print("PASS MC2 native Bending derived arrays")
+    test_self_collision_derived_arrays()
+    print("PASS MC2 native self-collision derived arrays")

@@ -43,6 +43,7 @@ using f32_1d  = nb::ndarray<float,          nb::ndim<1>, nb::c_contig, nb::devic
 using f64_2d  = nb::ndarray<double,         nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using f64_1d  = nb::ndarray<double,         nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using cf64_2d = nb::ndarray<const double,   nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using cf64_1d = nb::ndarray<const double,   nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using i32_2d  = nb::ndarray<int32_t,        nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using i32_1d  = nb::ndarray<int32_t,        nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using u8_1d   = nb::ndarray<uint8_t,        nb::ndim<1>, nb::c_contig, nb::device::cpu>;
@@ -1250,6 +1251,50 @@ NB_MODULE(hotools_native, m) {
             result["bending_sign_or_volume"] = owned_array_1d(
                 std::move(derived.sign_or_volume)
             );
+            return result;
+        });
+    m.def("mc2_build_self_collision_derived_v0",
+        [](cu8_1d vertex_attributes,
+           cf64_1d vertex_depths,
+           ci32_2d edges,
+           ci32_2d triangles) {
+            const auto vertex_count = vertex_attributes.shape(0);
+            check_len(vertex_depths.shape(0), vertex_count, "vertex_depths");
+            check_cols(edges, 2, "edges");
+            check_indices_in_range(edges.data(), edges.shape(0) * 2, vertex_count, "edges");
+            check_cols(triangles, 3, "triangles");
+            check_indices_in_range(
+                triangles.data(), triangles.shape(0) * 3, vertex_count, "triangles"
+            );
+            hotools::Mc2SelfCollisionDerived derived;
+            try {
+                nb::gil_scoped_release release;
+                derived = hotools::mc2_build_self_collision_derived(
+                    vertex_attributes.data(),
+                    vertex_depths.data(),
+                    vertex_count,
+                    edges.data(),
+                    edges.shape(0),
+                    triangles.data(),
+                    triangles.shape(0)
+                );
+            } catch (const std::exception& error) {
+                throw nb::value_error(error.what());
+            }
+            const auto primitive_count = derived.primitive_flags.size();
+            nb::dict result;
+            result["primitive_flags"] = owned_array_1d(
+                std::move(derived.primitive_flags)
+            );
+            result["particle_indices"] = owned_array_2d(
+                std::move(derived.particle_indices), primitive_count, 3
+            );
+            result["primitive_depths"] = owned_array_1d(
+                std::move(derived.primitive_depths)
+            );
+            result["point_count"] = derived.point_count;
+            result["edge_count"] = derived.edge_count;
+            result["triangle_count"] = derived.triangle_count;
             return result;
         });
     m.def("project_neighbor_constraints_mc2",
