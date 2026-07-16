@@ -31,6 +31,7 @@ from .scheduler import (
 # MagicaCloth2/Runtime/Define/SystemDefine.cs
 MC2_TETHER_STRETCH_LIMIT = 0.03
 MC2_DISTANCE_VELOCITY_ATTENUATION = 0.3
+MC2_SELF_COLLISION_RADIUS_RATIO = 0.25
 MC2_BONE_SPRING_DISTANCE_STIFFNESS = 0.5
 MC2_BONE_SPRING_TETHER_COMPRESSION = 0.8
 MC2_BONE_SPRING_COLLISION_FRICTION = 0.5
@@ -517,6 +518,7 @@ class MC2SetupOptionsSpec:
     setup_type: str
     connection_mode: int = 0
     connection_model: str = "mc2_source"
+    self_collision_radius_model: str = "source_separate"
     rotational_interpolation: float = 0.5
     root_rotation: float = 0.5
     collided_by_groups: int = 0
@@ -526,6 +528,15 @@ class MC2SetupOptionsSpec:
             raise ValueError(f"未知 MC2 setup_type: {self.setup_type!r}")
         if self.connection_model not in ("mc2_source", "hotools_product"):
             raise ValueError("connection_model 必须是 mc2_source 或 hotools_product")
+        if self.self_collision_radius_model not in ("source_separate", "derived_radius"):
+            raise ValueError(
+                "self_collision_radius_model 必须是 source_separate 或 derived_radius"
+            )
+        if (
+            self.self_collision_radius_model == "derived_radius"
+            and self.setup_type != MC2_SETUP_MESH_CLOTH
+        ):
+            raise ValueError("derived_radius self collision model is MeshCloth-only")
         allowed_modes = (0, 1, 2) if self.connection_model == "hotools_product" else (0, 1, 2, 3)
         if self.connection_mode not in allowed_modes:
             raise ValueError(f"connection_mode 必须位于 {allowed_modes}")
@@ -547,6 +558,7 @@ def make_mc2_setup_options(
     *,
     connection_mode=0,
     connection_model="mc2_source",
+    self_collision_radius_model="source_separate",
     rotational_interpolation=0.5,
     root_rotation=0.5,
     collided_by_groups=0,
@@ -561,6 +573,15 @@ def make_mc2_setup_options(
     allowed_modes = (0, 1, 2) if connection_model == "hotools_product" else (0, 1, 2, 3)
     if connection_mode not in allowed_modes:
         raise ValueError(f"connection_mode 必须位于 {allowed_modes}")
+    self_collision_radius_model = str(
+        self_collision_radius_model or "source_separate"
+    ).strip().lower()
+    if self_collision_radius_model not in ("source_separate", "derived_radius"):
+        raise ValueError(
+            "self_collision_radius_model 必须是 source_separate 或 derived_radius"
+        )
+    if self_collision_radius_model == "derived_radius" and setup_type != MC2_SETUP_MESH_CLOTH:
+        raise ValueError("derived_radius self collision model is MeshCloth-only")
     if setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING):
         # Unity MeshCloth 不消费该字段；BoneSpring 强制 Line。
         connection_mode = 0
@@ -569,6 +590,7 @@ def make_mc2_setup_options(
         setup_type=setup_type,
         connection_mode=connection_mode,
         connection_model=connection_model,
+        self_collision_radius_model=self_collision_radius_model,
         rotational_interpolation=_clamp(rotational_interpolation, "rotational_interpolation", 0.0, 1.0),
         root_rotation=_clamp(root_rotation, "root_rotation", 0.0, 1.0),
         collided_by_groups=max(0, min(0xFFFF, int(collided_by_groups))),
@@ -679,7 +701,13 @@ def make_mc2_effective_parameters(
         "self_collision": {
             "mode": 0 if is_spring else profile.self_collision_mode,
             "sync_mode": 0 if is_spring else profile.self_collision_sync_mode,
-            "thickness": curve(profile.self_collision_thickness),
+            "thickness": curve(
+                profile.radius,
+                MC2_SELF_COLLISION_RADIUS_RATIO,
+            ) if setup_options.self_collision_radius_model == "derived_radius" else curve(
+                profile.self_collision_thickness
+            ),
+            "radius_model": setup_options.self_collision_radius_model,
             "cloth_mass": profile.cloth_mass,
         },
         "wind": {

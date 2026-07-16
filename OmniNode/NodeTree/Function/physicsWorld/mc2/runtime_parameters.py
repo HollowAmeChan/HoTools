@@ -21,6 +21,7 @@ from .parameters import (
     MC2_BONE_SPRING_DISTANCE_STIFFNESS,
     MC2_BONE_SPRING_TETHER_COMPRESSION,
     MC2_DISTANCE_VELOCITY_ATTENUATION,
+    MC2_SELF_COLLISION_RADIUS_RATIO,
     MC2_TETHER_STRETCH_LIMIT,
     MC2CurveSpec,
     MC2ParticleProfileSpec,
@@ -255,7 +256,11 @@ def make_mc2_runtime_parameters(
         "max_distance": (profile.max_distance, 1.0),
         "backstop_distance": (profile.backstop_distance, 1.0),
         "collision_limit_distance": (profile.collision_limit_distance if is_spring else zero_curve, 1.0),
-        "self_collision_thickness": (profile.self_collision_thickness, 1.0),
+        "self_collision_thickness": (
+            (profile.radius, MC2_SELF_COLLISION_RADIUS_RATIO)
+            if setup_options.self_collision_radius_model == "derived_radius"
+            else (profile.self_collision_thickness, 1.0)
+        ),
     }
 
     floats = tuple(_float32(float_map[name]) for name in MC2_RUNTIME_FLOAT_FIELDS)

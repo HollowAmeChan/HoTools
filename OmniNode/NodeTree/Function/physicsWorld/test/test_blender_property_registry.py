@@ -93,6 +93,9 @@ mc2_specs = importlib.import_module(
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
+mc2_runtime_parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"
+)
 mc2_solver = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
 )
@@ -396,6 +399,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     for task_node in task_nodes:
         assert "backend" not in inspect.signature(task_node).parameters
         assert all("后端" not in name for name in task_node.__meta["_INPUT_NAME"])
+    particle_inputs = mc2_nodes.physicsMC2ParticleProfile.__meta["_INPUT_NAME"]
+    assert "跨物体自碰撞" in particle_inputs
+    assert "自碰撞厚度" not in particle_inputs
+    assert "self_collision_thickness" not in inspect.signature(
+        mc2_nodes.physicsMC2ParticleProfile
+    ).parameters
 
     class _FakeData:
         def __init__(self, pointer):
@@ -420,6 +429,22 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     mesh_sources = [mesh]
     cloth_sources = [{"armature": armature, "root_bone": "ClothRoot"}]
     spring_sources = [{"armature": armature, "bones": ("SpringA", "SpringB")}]
+    product_profile = mc2_nodes.physicsMC2ParticleProfile(
+        radius=0.04,
+        self_collision_mode=2,
+        self_collision_interaction=True,
+    )
+    assert product_profile.self_collision_sync_mode == 2
+    product_task = mc2_nodes.physicsMC2MeshClothTask([mesh], product_profile)[0]
+    assert product_task.setup_options.self_collision_radius_model == "derived_radius"
+    product_runtime = mc2_runtime_parameters.make_mc2_runtime_parameters(
+        product_profile,
+        product_task.setup_options,
+    ).debug_dict()
+    assert all(
+        abs(value - 0.01) < 1.0e-7
+        for value in product_runtime["curve_values"]["self_collision_thickness"]
+    )
 
     tasks = tuple(
         mc2_specs.make_mc2_task_spec(setup_type, sources)

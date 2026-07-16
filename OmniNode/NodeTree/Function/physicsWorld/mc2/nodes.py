@@ -148,7 +148,7 @@ def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
         "角度限制", "限制角度", "限制角度曲线", "限制刚度",
         "最大距离", "最大距离值", "最大距离曲线", "Backstop", "Backstop半径",
         "Backstop距离", "Backstop曲线", "Motion刚度", "碰撞模式", "碰撞摩擦",
-        "BoneSpring碰撞限制", "碰撞限制曲线", "自碰撞模式", "自碰撞厚度", "自碰撞曲线", "布料质量",
+        "BoneSpring碰撞限制", "碰撞限制曲线", "自碰撞模式", "跨物体自碰撞", "布料质量",
         "Spring启用", "Spring强度", "Spring距离", "Spring法线限制", "Spring噪声",
         "风影响", "风频率", "风湍流", "风噪声混合", "风同步", "风深度权重", "移动风",
     ],
@@ -191,7 +191,6 @@ def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
         "collision_friction": {"min_value": 0.0, "max_value": 0.5},
         "collision_limit_distance": {"min_value": 0.0, "max_value": 1.0},
         "self_collision_mode": {"min_value": 0, "max_value": 2},
-        "self_collision_thickness": {"min_value": 0.001, "max_value": 0.05},
         "cloth_mass": {"min_value": 0.0, "max_value": 1.0},
         "spring_power": {"min_value": 0.001, "max_value": 1.0},
         "spring_limit_distance": {"min_value": 0.0},
@@ -260,8 +259,7 @@ def physicsMC2ParticleProfile(
     collision_limit_distance: float = 0.05,
     collision_limit_curve: _OmniFloatCurve = None,
     self_collision_mode: int = 0,
-    self_collision_thickness: float = 0.005,
-    self_collision_curve: _OmniFloatCurve = None,
+    self_collision_interaction: bool = False,
     cloth_mass: float = 0.0,
     spring_enabled: bool = True,
     spring_power: float = 0.04,
@@ -276,7 +274,11 @@ def physicsMC2ParticleProfile(
     wind_depth_weight: float = 0.0,
     moving_wind: float = 0.0,
 ) -> typing.Any:
-    return make_mc2_particle_profile(**locals())
+    values = locals()
+    values["self_collision_sync_mode"] = 2 if values.pop(
+        "self_collision_interaction"
+    ) else 0
+    return make_mc2_particle_profile(**values)
 
 
 @omni(
@@ -319,7 +321,13 @@ def physicsMC2MeshClothTask(
     profile: typing.Any = None,
     enabled: bool = True,
 ) -> list[typing.Any]:
-    return _task(MC2_SETUP_MESH_CLOTH, sources, profile, enabled)
+    return _task(
+        MC2_SETUP_MESH_CLOTH,
+        sources,
+        profile,
+        enabled,
+        self_collision_radius_model="derived_radius",
+    )
 
 
 @omni(
