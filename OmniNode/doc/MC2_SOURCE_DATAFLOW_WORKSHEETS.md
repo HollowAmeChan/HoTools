@@ -302,6 +302,8 @@ Blender authoring/frame input
 
 17. Bone生产prepare使用短生命周期`MC2BoneRawSnapshot`一次读取names/parents/head-tail/rest matrices，native fingerprint、source/product connection和Bone static必须共享该snapshot。同一task内相同Armature只允许遍历一次name/parent，head/tail/matrix使用Blender `foreach_get`整体读取后按source骨名切片；`matrix_local`的列主序展平必须在snapshot边界转成现有row-major合同。生产`MC2SourceTopologySpec`只保留稳定`bone_names`和轻量Armature身份，不得冻结每骨dict；Bone frame直接消费`bone_names`，不得逐帧`_thaw`。完整payload仅保留给显式oracle/兼容入口。P-06d下一步让Bone派生static在native context内自产自用，不得把snapshot或整Armature临时数组长存到slot。
 
+18. Bone生产`update_bone_static`的Python打包边界只允许构造native Bone注册真正消费的8组数组：adjoining vertex/triangle ranges+data、bind position/rotation、normal adjustment rotation和vertex-to-transform rotation。Proxy/Baseline已在前置注册完成，不得再通过完整`pack_mc2_bone_static`重复打包；完整packer只保留给Tier A/oracle。下一步把这8组数组改为native producer owner直接move进context。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

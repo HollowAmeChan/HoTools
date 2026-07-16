@@ -11,7 +11,7 @@ import sys
 import numpy as np
 
 from .bending_static import pack_mc2_bending_static
-from .bone_static import pack_mc2_bone_static
+from .bone_static import pack_mc2_bone_registration_static
 from .center_state import (
     MC2CenterFrameShiftResult,
     MC2NegativeScaleTransitionResult,
@@ -570,7 +570,7 @@ class MC2NativeContextV0:
         if static.final_proxy.vertex_count != self.vertex_count:
             raise ValueError("MC2 native Bone static vertex count mismatch")
         self.update_proxy_and_baseline(static.final_proxy, static.baseline)
-        packed = pack_mc2_bone_static(static.bone)
+        packed = pack_mc2_bone_registration_static(static.bone)
         self._module.mc2_context_v0_update_bone_static(
             self._handle,
             packed["vertex_to_vertex_ranges"],

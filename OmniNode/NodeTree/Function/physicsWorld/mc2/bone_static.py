@@ -392,8 +392,17 @@ def pack_mc2_bone_static(spec: MC2BoneStaticSpec) -> dict[str, np.ndarray]:
         raise TypeError("spec must be MC2BoneStaticSpec")
     packed = {}
     packed.update(pack_mc2_proxy_static(spec.proxy))
-    packed.update(pack_mc2_proxy_finalizer_static(spec.finalizer))
     packed.update(pack_mc2_baseline_static(spec.baseline))
+    packed.update(pack_mc2_bone_registration_static(spec))
+    return packed
+
+
+def pack_mc2_bone_registration_static(
+    spec: MC2BoneStaticSpec,
+) -> dict[str, np.ndarray]:
+    if not isinstance(spec, MC2BoneStaticSpec):
+        raise TypeError("spec must be MC2BoneStaticSpec")
+    packed = pack_mc2_proxy_finalizer_static(spec.finalizer)
     count = spec.proxy.vertex_count
     for name, values in (
         ("normal_adjustment_rotations", spec.normal_adjustment_rotations),
@@ -410,5 +419,6 @@ __all__ = [
     "MC2_NORMAL_ALIGNMENT_NONE",
     "MC2_NORMAL_ALIGNMENT_TRANSFORM",
     "build_mc2_bone_static",
+    "pack_mc2_bone_registration_static",
     "pack_mc2_bone_static",
 ]

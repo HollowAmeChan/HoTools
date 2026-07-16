@@ -168,6 +168,17 @@ def test_bone_static_pack_is_read_only_and_complete() -> None:
     _fixture_name, fixture = next(_fixtures())
     result = _build(fixture)
     packed = bone_static.pack_mc2_bone_static(result)
+    registration = bone_static.pack_mc2_bone_registration_static(result)
+    assert set(registration) == {
+        "vertex_to_vertex_ranges",
+        "vertex_to_vertex_data",
+        "vertex_to_triangle_ranges",
+        "vertex_to_triangle_data",
+        "vertex_bind_pose_positions",
+        "vertex_bind_pose_rotations",
+        "normal_adjustment_rotations",
+        "vertex_to_transform_rotations",
+    }
     assert {
         "local_positions",
         "vertex_to_vertex_ranges",
