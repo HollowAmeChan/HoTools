@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -6607,6 +6608,98 @@ PyObject* mc2_context_v0_stats(PyObject*, PyObject* args) {
         return nullptr;
     }
     return result;
+}
+
+PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 11) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "mc2_mesh_static_fingerprint_v0 expects 11 arguments, got %zd",
+            PyTuple_GET_SIZE(args)
+        );
+        return nullptr;
+    }
+    Buffer positions, normals, edges, triangles, loop_uvs, pin_weights;
+    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !normals.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "normals") ||
+        !edges.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "edges") ||
+        !triangles.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "triangles") ||
+        !loop_uvs.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "loop_uvs") ||
+        !pin_weights.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "pin_weights")) {
+        return nullptr;
+    }
+    if (!expect_float32(positions, "positions") || positions.view.ndim != 1 ||
+        positions.view.shape[0] % 3 != 0 || !finite_floats(positions, "positions") ||
+        !expect_float32(normals, "normals") || normals.view.ndim != 1 ||
+        normals.view.shape[0] != positions.view.shape[0] ||
+        !finite_floats(normals, "normals") ||
+        !expect_int32(edges, "edges") || edges.view.ndim != 1 ||
+        edges.view.shape[0] % 2 != 0 ||
+        !expect_int32(triangles, "triangles") || triangles.view.ndim != 1 ||
+        triangles.view.shape[0] % 3 != 0 ||
+        !expect_float32(loop_uvs, "loop_uvs") || loop_uvs.view.ndim != 1 ||
+        loop_uvs.view.shape[0] % 2 != 0 || !finite_floats(loop_uvs, "loop_uvs") ||
+        !expect_float32(pin_weights, "pin_weights") || pin_weights.view.ndim != 1 ||
+        (pin_weights.view.shape[0] != 0 &&
+         pin_weights.view.shape[0] != positions.view.shape[0] / 3) ||
+        !finite_floats(pin_weights, "pin_weights")) {
+        return nullptr;
+    }
+
+    const auto object_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 6));
+    const auto mesh_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 7));
+    const int pin_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 8));
+    Py_ssize_t pin_name_size = 0;
+    const char* pin_name = PyUnicode_AsUTF8AndSize(
+        PyTuple_GET_ITEM(args, 9),
+        &pin_name_size
+    );
+    const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 10));
+    if (PyErr_Occurred() || pin_enabled < 0 || has_uv_layer < 0 || pin_name == nullptr) {
+        return nullptr;
+    }
+
+    std::uint64_t first = 1469598103934665603ull;
+    std::uint64_t second = 1099511628211ull;
+    auto append = [&](const void* raw_data, std::size_t size) {
+        const auto* data = static_cast<const std::uint8_t*>(raw_data);
+        for (std::size_t index = 0; index < size; ++index) {
+            first ^= static_cast<std::uint64_t>(data[index]);
+            first *= 1099511628211ull;
+            second ^= static_cast<std::uint64_t>(data[index] + 0x9du);
+            second *= 14029467366897019727ull;
+        }
+        first ^= static_cast<std::uint64_t>(size);
+        first *= 1099511628211ull;
+        second ^= static_cast<std::uint64_t>(size << 1u);
+        second *= 14029467366897019727ull;
+    };
+    auto append_buffer = [&](const char* label, const Buffer& buffer) {
+        append(label, std::strlen(label));
+        append(buffer.view.buf, static_cast<std::size_t>(buffer.view.len));
+    };
+    append("mc2_mesh_static_input_v0", 24);
+    append(&object_pointer, sizeof(object_pointer));
+    append(&mesh_pointer, sizeof(mesh_pointer));
+    append(&pin_enabled, sizeof(pin_enabled));
+    append(&has_uv_layer, sizeof(has_uv_layer));
+    append(pin_name, static_cast<std::size_t>(pin_name_size));
+    append_buffer("positions", positions);
+    append_buffer("normals", normals);
+    append_buffer("edges", edges);
+    append_buffer("triangles", triangles);
+    append_buffer("loop_uvs", loop_uvs);
+    append_buffer("pin_weights", pin_weights);
+
+    char encoded[33] {};
+    std::snprintf(
+        encoded,
+        sizeof(encoded),
+        "%016llx%016llx",
+        static_cast<unsigned long long>(first),
+        static_cast<unsigned long long>(second)
+    );
+    return PyUnicode_FromStringAndSize(encoded, 32);
 }
 
 }  // namespace hotools

@@ -57,24 +57,11 @@ def _signature(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _digest_array(digest, label: str, values: np.ndarray) -> None:
-    array = np.ascontiguousarray(values)
-    digest.update(label.encode("ascii"))
-    digest.update(str(array.dtype).encode("ascii"))
-    digest.update(np.asarray(array.shape, dtype=np.int64).tobytes())
-    digest.update(array.tobytes())
-
-
 def _mesh_input_digest(source) -> str:
     mesh = getattr(source, "data", None)
     if mesh is None:
         return _signature({"resolved": False, "token": _source_token(source)})
     mesh.update()
-    digest = hashlib.sha256()
-    digest.update(b"mc2_mesh_topology_input_v0")
-    digest.update(str(_pointer(source)).encode("ascii"))
-    digest.update(str(_pointer(mesh)).encode("ascii"))
-
     positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     normals = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     edges = np.empty(len(mesh.edges) * 2, dtype=np.int32)
@@ -84,24 +71,17 @@ def _mesh_input_digest(source) -> str:
     mesh.calc_loop_triangles()
     triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
     mesh.loop_triangles.foreach_get("vertices", triangles)
-    _digest_array(digest, "positions", positions)
-    _digest_array(digest, "normals", normals)
-    _digest_array(digest, "edges", edges)
-    _digest_array(digest, "triangles", triangles)
-
     uv_layer = getattr(getattr(mesh, "uv_layers", None), "active", None)
     if uv_layer is None:
-        digest.update(b"uv:none")
+        uvs = np.empty((0,), dtype=np.float32)
     else:
         uvs = np.empty(len(uv_layer.data) * 2, dtype=np.float32)
         uv_layer.data.foreach_get("uv", uvs)
-        _digest_array(digest, "loop_uvs", uvs)
 
     properties = getattr(source, "hotools_mesh_collision", None)
     pin_enabled = bool(getattr(properties, "pin_enabled", False))
     pin_name = str(getattr(properties, "pin_vertex_group", "") or "")
-    digest.update(b"pin:1" if pin_enabled else b"pin:0")
-    digest.update(pin_name.encode("utf-8"))
+    weights = np.empty((0,), dtype=np.float32)
     if pin_enabled and pin_name:
         group = source.vertex_groups.get(pin_name)
         group_index = int(group.index) if group is not None else -1
@@ -112,16 +92,28 @@ def _mesh_input_digest(source) -> str:
                     if int(assignment.group) == group_index:
                         weights[vertex.index] = float(assignment.weight)
                         break
-        _digest_array(digest, "pin_weights", weights)
-    return digest.hexdigest()
+    from .native import native_module
+
+    return str(native_module().mc2_mesh_static_fingerprint_v0(
+        positions,
+        normals,
+        edges,
+        triangles,
+        uvs,
+        weights,
+        _pointer(source),
+        _pointer(mesh),
+        pin_enabled,
+        pin_name,
+        uv_layer is not None,
+    ))
 
 
-def topology_input_signature_for_task(task: "MC2TaskSpec", *, cache=None) -> str:
+def topology_input_signature_for_task(task: "MC2TaskSpec") -> str:
     """Fingerprint Blender static inputs without materializing frozen topology."""
 
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
-    cache_key = ("mc2_topology_input_v0", task.task_id)
     digest = hashlib.sha256()
     digest.update(b"mc2_topology_input_v0")
     digest.update(task.setup_type.encode("ascii"))
@@ -132,10 +124,7 @@ def topology_input_signature_for_task(task: "MC2TaskSpec", *, cache=None) -> str
         else:
             source_signature = _signature(_bone_payload(source))
         digest.update(source_signature.encode("ascii"))
-    result = digest.hexdigest()
-    if isinstance(cache, dict):
-        cache[cache_key] = result
-    return result
+    return digest.hexdigest()
 
 
 def _vector3(value) -> tuple[float, float, float]:

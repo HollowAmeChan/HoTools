@@ -507,10 +507,7 @@ def step_mc2(
     staged_native_contexts = []
     try:
         for spec in active_specs:
-            topology_input_signature = topology_input_signature_for_task(
-                spec,
-                cache=getattr(world, "runtime_caches", None),
-            )
+            topology_input_signature = topology_input_signature_for_task(spec)
             existing_slot = world.solver_slots.get(spec.task_id)
             topology = None
             if (

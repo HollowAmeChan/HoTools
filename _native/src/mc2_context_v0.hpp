@@ -45,5 +45,6 @@ PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_free(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_stats(PyObject*, PyObject* args);
+PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args);
 
 }  // namespace hotools
