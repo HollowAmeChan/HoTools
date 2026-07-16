@@ -236,9 +236,11 @@ def _canonical_edge(first: int, second: int) -> tuple[int, int]:
 
 def _optimize_triangle_direction(
     positions: np.ndarray,
-    triangles: tuple[tuple[int, int, int], ...],
-) -> tuple[tuple[tuple[int, int, int], ...], list[np.ndarray]]:
-    if not triangles:
+    triangles,
+    *,
+    keep_arrays: bool = False,
+):
+    if len(triangles) == 0:
         return triangles, []
     final_triangles = np.ascontiguousarray(triangles, dtype=np.int32)
     normals = np.empty((len(triangles), 3), dtype=np.float64)
@@ -249,6 +251,8 @@ def _optimize_triangle_direction(
         final_triangles,
         normals,
     )
+    if keep_arrays:
+        return final_triangles, normals
     return (
         tuple(tuple(int(value) for value in triangle) for triangle in final_triangles),
         [normals[index] for index in range(len(normals))],
@@ -405,6 +409,17 @@ def _validate_indices(vertex_count: int, records: Iterable[tuple[int, ...]], nam
                 raise ValueError(f"{name}[{record_index}] index {value} is out of range")
 
 
+def _native_int_records(values, *, width: int, vertex_count: int, name: str) -> np.ndarray:
+    records = np.ascontiguousarray(values, dtype=np.int32)
+    if records.size == 0:
+        return records.reshape((0, width))
+    if records.ndim != 2 or records.shape[1] != width:
+        raise ValueError(f"{name} must have shape [N,{width}]")
+    if np.any(records < 0) or np.any(records >= vertex_count):
+        raise ValueError(f"{name} contains an out-of-range vertex index")
+    return records
+
+
 def build_mc2_final_proxy(
     *,
     task_id: str,
@@ -430,12 +445,30 @@ def build_mc2_final_proxy(
     attributes = [int(value) for value in vertex_attributes]
     if len(attributes) != vertex_count:
         raise ValueError("vertex_attributes length must match vertex_count")
-    line_records = _int_records(lines, width=2, name="lines")
-    triangle_records = _int_records(triangles, width=3, name="triangles")
-    _validate_indices(vertex_count, line_records, "lines")
-    _validate_indices(vertex_count, triangle_records, "triangles")
+    if native_context is None:
+        line_records = _int_records(lines, width=2, name="lines")
+        triangle_records = _int_records(triangles, width=3, name="triangles")
+        _validate_indices(vertex_count, line_records, "lines")
+        _validate_indices(vertex_count, triangle_records, "triangles")
+    else:
+        line_records = _native_int_records(
+            lines,
+            width=2,
+            vertex_count=vertex_count,
+            name="lines",
+        )
+        triangle_records = _native_int_records(
+            triangles,
+            width=3,
+            vertex_count=vertex_count,
+            name="triangles",
+        )
 
-    final_triangles, triangle_normals = _optimize_triangle_direction(positions, triangle_records)
+    final_triangles, triangle_normals = _optimize_triangle_direction(
+        positions,
+        triangle_records,
+        keep_arrays=native_context is not None,
+    )
     derived = _build_final_proxy_derived(
         positions,
         normals,
@@ -520,7 +553,11 @@ def build_mc2_final_proxy(
         )
     return MC2MeshFinalProxyBuildResult(
         proxy=proxy,
-        lines=tuple(_canonical_edge(first, second) for first, second in line_records),
+        lines=(
+            ()
+            if native_context is not None
+            else tuple(_canonical_edge(first, second) for first, second in line_records)
+        ),
         finalizer=finalizer,
     )
 
@@ -538,23 +575,31 @@ def _vertex_group_weights(obj, group_name: str, vertex_count: int) -> tuple[floa
     return tuple(weights)
 
 
-def _mesh_uvs(mesh, triangles: tuple[tuple[int, int, int], ...], *, uv_layer_name: str | None) -> tuple[tuple[float, float], ...]:
+def _mesh_uvs(
+    mesh,
+    triangles,
+    *,
+    uv_layer_name: str | None,
+    raw_snapshot=None,
+) -> tuple[tuple[float, float], ...]:
     vertex_count = len(mesh.vertices)
-    if not triangles:
+    if len(triangles) == 0:
         return tuple((0.0, 0.0) for _ in range(vertex_count))
-    uv_layer = None
-    if uv_layer_name:
-        uv_layer = mesh.uv_layers.get(uv_layer_name)
+    if raw_snapshot is not None:
+        if not bool(raw_snapshot.has_uv):
+            raise ValueError("MeshCloth triangle proxy requires a UV layer")
+        loop_vertices = raw_snapshot.loop_vertices
+        loop_uvs = raw_snapshot.loop_uvs
     else:
-        uv_layer = mesh.uv_layers.active
-    if uv_layer is None:
-        raise ValueError("MeshCloth triangle proxy requires a UV layer")
-    loop_count = len(mesh.loops)
-    loop_vertices = np.empty(loop_count, dtype=np.int32)
-    loop_uvs = np.empty(loop_count * 2, dtype=np.float32)
-    mesh.loops.foreach_get("vertex_index", loop_vertices)
-    uv_layer.data.foreach_get("uv", loop_uvs)
-    loop_uvs = loop_uvs.reshape((-1, 2))
+        uv_layer = mesh.uv_layers.get(uv_layer_name) if uv_layer_name else mesh.uv_layers.active
+        if uv_layer is None:
+            raise ValueError("MeshCloth triangle proxy requires a UV layer")
+        loop_count = len(mesh.loops)
+        loop_vertices = np.empty(loop_count, dtype=np.int32)
+        loop_uvs = np.empty(loop_count * 2, dtype=np.float32)
+        mesh.loops.foreach_get("vertex_index", loop_vertices)
+        uv_layer.data.foreach_get("uv", loop_uvs)
+        loop_uvs = loop_uvs.reshape((-1, 2))
 
     minimum = np.full((vertex_count, 2), np.inf, dtype=np.float32)
     maximum = np.full((vertex_count, 2), -np.inf, dtype=np.float32)
@@ -586,6 +631,7 @@ def build_blender_mesh_final_proxy(
     uv_layer_name: str | None = None,
     expected_mesh_topology_signature: str | None = None,
     native_context=None,
+    raw_snapshot=None,
 ) -> MC2MeshFinalProxyBuildResult:
     from .base_pose import mesh_topology_signature
 
@@ -598,15 +644,34 @@ def build_blender_mesh_final_proxy(
     ):
         raise ValueError("Mesh topology signature does not match expected token")
     mesh = obj.data
+    if raw_snapshot is not None and (
+        int(getattr(raw_snapshot, "source_pointer", 0)) != int(obj.as_pointer())
+        or int(getattr(raw_snapshot, "mesh_pointer", 0)) != int(mesh.as_pointer())
+    ):
+        raise ValueError("Mesh raw snapshot identity does not match the proxy object")
     mesh.update()
     vertex_count = len(mesh.vertices)
-    triangles = _mesh_triangles(mesh)
-    uvs = _mesh_uvs(mesh, triangles, uv_layer_name=uv_layer_name)
-    positions = np.empty(vertex_count * 3, dtype=np.float64)
-    normals = np.empty(vertex_count * 3, dtype=np.float64)
+    triangles = raw_snapshot.triangles if raw_snapshot is not None else _mesh_triangles(mesh)
+    uvs = _mesh_uvs(
+        mesh,
+        triangles,
+        uv_layer_name=uv_layer_name,
+        raw_snapshot=raw_snapshot,
+    )
+    positions = (
+        np.ascontiguousarray(raw_snapshot.positions, dtype=np.float64)
+        if raw_snapshot is not None
+        else np.empty(vertex_count * 3, dtype=np.float64)
+    )
+    normals = (
+        np.ascontiguousarray(raw_snapshot.normals, dtype=np.float64)
+        if raw_snapshot is not None
+        else np.empty(vertex_count * 3, dtype=np.float64)
+    )
     tangents = np.empty(vertex_count * 3, dtype=np.float64)
-    mesh.vertices.foreach_get("co", positions)
-    mesh.vertices.foreach_get("normal", normals)
+    if raw_snapshot is None:
+        mesh.vertices.foreach_get("co", positions)
+        mesh.vertices.foreach_get("normal", normals)
     positions = positions.reshape((-1, 3))
     normals = normals.reshape((-1, 3))
     tangents = tangents.reshape((-1, 3))
@@ -618,14 +683,21 @@ def build_blender_mesh_final_proxy(
     elif not pin_vertex_group:
         attributes = tuple(MC2_VERTEX_FIXED for _ in range(vertex_count))
     else:
-        weights = _vertex_group_weights(obj, pin_vertex_group, vertex_count)
+        weights = (
+            tuple(float(value) for value in raw_snapshot.pin_weights)
+            if raw_snapshot is not None
+            else _vertex_group_weights(obj, pin_vertex_group, vertex_count)
+        )
         attributes = tuple(
             MC2_VERTEX_FIXED if weight > 0.0 else MC2_VERTEX_MOVE
             for weight in weights
         )
-    lines = np.empty(len(mesh.edges) * 2, dtype=np.int32)
-    mesh.edges.foreach_get("vertices", lines)
-    lines = lines.reshape((-1, 2))
+    if raw_snapshot is not None:
+        lines = raw_snapshot.edges
+    else:
+        lines = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+        mesh.edges.foreach_get("vertices", lines)
+        lines = lines.reshape((-1, 2))
     return replace(
         build_mc2_final_proxy(
             task_id=task_id,

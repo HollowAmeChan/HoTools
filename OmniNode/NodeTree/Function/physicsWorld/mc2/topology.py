@@ -96,6 +96,22 @@ class MC2StaticInputFingerprint:
         }
 
 
+@dataclass(frozen=True)
+class MC2MeshRawSnapshot:
+    source_pointer: int
+    mesh_pointer: int
+    positions: np.ndarray
+    normals: np.ndarray
+    edges: np.ndarray
+    triangles: np.ndarray
+    loop_vertices: np.ndarray
+    loop_uvs: np.ndarray
+    pin_weights: np.ndarray
+    pin_enabled: bool
+    pin_name: str
+    has_uv: bool
+
+
 def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
     token = _source_token(source)
     topology = _compact_signature((kind, "unresolved", token))
@@ -108,10 +124,10 @@ def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
     }
 
 
-def _mesh_input_fingerprint(source) -> dict[str, str]:
+def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
     mesh = getattr(source, "data", None)
     if mesh is None:
-        return _unresolved_source_fingerprint(source, "mesh")
+        return None
     mesh.update()
     positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     normals = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
@@ -145,34 +161,64 @@ def _mesh_input_fingerprint(source) -> dict[str, str]:
                     if int(assignment.group) == group_index:
                         weights[vertex.index] = float(assignment.weight)
                         break
+    return MC2MeshRawSnapshot(
+        source_pointer=_pointer(source),
+        mesh_pointer=_pointer(mesh),
+        positions=positions.reshape((-1, 3)),
+        normals=normals.reshape((-1, 3)),
+        edges=edges.reshape((-1, 2)),
+        triangles=triangles.reshape((-1, 3)),
+        loop_vertices=loop_vertices,
+        loop_uvs=uvs.reshape((-1, 2)),
+        pin_weights=weights,
+        pin_enabled=pin_enabled,
+        pin_name=pin_name,
+        has_uv=uv_layer is not None,
+    )
+
+
+def _mesh_input_fingerprint(
+    source,
+    snapshot: MC2MeshRawSnapshot | None = None,
+) -> dict[str, str]:
+    if snapshot is None:
+        snapshot = _read_mesh_raw_snapshot(source)
+    if snapshot is None:
+        return _unresolved_source_fingerprint(source, "mesh")
     from .native import native_module
 
     return dict(native_module().mc2_mesh_static_fingerprint_v0(
-        positions,
-        normals,
-        edges,
-        triangles,
-        loop_vertices,
-        uvs,
-        weights,
-        _pointer(source),
-        _pointer(mesh),
-        pin_enabled,
-        pin_name,
-        uv_layer is not None,
+        snapshot.positions.reshape((-1,)),
+        snapshot.normals.reshape((-1,)),
+        snapshot.edges.reshape((-1,)),
+        snapshot.triangles.reshape((-1,)),
+        snapshot.loop_vertices,
+        snapshot.loop_uvs.reshape((-1,)),
+        snapshot.pin_weights,
+        snapshot.source_pointer,
+        snapshot.mesh_pointer,
+        snapshot.pin_enabled,
+        snapshot.pin_name,
+        snapshot.has_uv,
     ))
 
 
-def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
-    """Classify Blender static inputs without materializing frozen topology."""
+def prepare_static_inputs_for_task(
+    task: "MC2TaskSpec",
+) -> tuple[MC2StaticInputFingerprint, tuple[MC2MeshRawSnapshot | None, ...]]:
+    """Read each Mesh source once and derive the native static fingerprint."""
 
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
     sources = []
+    mesh_snapshots: list[MC2MeshRawSnapshot | None] = []
     for source in task.sources:
         if task.setup_type == "mesh_cloth":
-            sources.append(_mesh_input_fingerprint(source))
+            snapshot = _read_mesh_raw_snapshot(source)
+            mesh_snapshots.append(snapshot)
+            sources.append(_mesh_input_fingerprint(source, snapshot))
         else:
+            mesh_snapshots.append(None)
             sources.append(_bone_input_fingerprint(source))
     topology = _compact_signature((
         "mc2_task_topology_v1",
@@ -197,7 +243,7 @@ def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFing
     ))
     source = _compact_signature(("mc2_task_source_v1", topology, geometry, surface))
     overall = _compact_signature(("mc2_task_static_v1", source, config))
-    return MC2StaticInputFingerprint(
+    fingerprint = MC2StaticInputFingerprint(
         topology=topology,
         geometry=geometry,
         surface=surface,
@@ -205,6 +251,13 @@ def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFing
         source=source,
         overall=overall,
     )
+    return fingerprint, tuple(mesh_snapshots)
+
+
+def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
+    """Classify Blender static inputs without materializing frozen topology."""
+
+    return prepare_static_inputs_for_task(task)[0]
 
 
 def _vector3(value) -> tuple[float, float, float]:
@@ -646,10 +699,12 @@ def build_mc2_topology_spec(
 
 __all__ = [
     "MC2StaticInputFingerprint",
+    "MC2MeshRawSnapshot",
     "MC2SourceTopologySpec",
     "MC2TopologySpec",
     "build_mc2_bone_source_topology",
     "build_mc2_mesh_source_topology",
     "build_mc2_topology_spec",
+    "prepare_static_inputs_for_task",
     "static_input_fingerprint_for_task",
 ]

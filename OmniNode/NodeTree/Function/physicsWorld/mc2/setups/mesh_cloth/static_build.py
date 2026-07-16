@@ -169,6 +169,7 @@ def build_mc2_mesh_cloth_static(
     topology_signature: str | None = None,
     world_gravity_direction=(0.0, -1.0, 0.0),
     native_context=None,
+    raw_snapshot=None,
 ) -> MC2MeshClothStaticBuildResult:
     expected_mesh_topology_signature = str(topology_signature or "")
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
@@ -179,6 +180,7 @@ def build_mc2_mesh_cloth_static(
         pin_vertex_group=pin_vertex_group,
         expected_mesh_topology_signature=expected_mesh_topology_signature,
         native_context=native_context,
+        raw_snapshot=raw_snapshot,
     )
     actual_mesh_topology_signature = finalizer.mesh_topology_signature
     if not actual_mesh_topology_signature:
@@ -243,6 +245,7 @@ def build_mc2_mesh_cloth_static_for_task(
     topology: MC2TopologySpec,
     *,
     native_context=None,
+    raw_snapshot=None,
 ) -> MC2MeshClothStaticBuildResult | None:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -263,6 +266,7 @@ def build_mc2_mesh_cloth_static_for_task(
         topology_signature=None,
         world_gravity_direction=task.profile.gravity_direction,
         native_context=native_context,
+        raw_snapshot=raw_snapshot,
     )
 
 

@@ -42,7 +42,7 @@ from .results import (
 from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
 from .state import MC2SlotRuntimeState
-from .topology import build_mc2_topology_spec, static_input_fingerprint_for_task
+from .topology import build_mc2_topology_spec, prepare_static_inputs_for_task
 
 
 MC2_FRAMEWORK_STATUS = (
@@ -532,7 +532,7 @@ def step_mc2(
     staged_native_contexts = []
     try:
         for spec in active_specs:
-            static_input_fingerprint = static_input_fingerprint_for_task(spec)
+            static_input_fingerprint, mesh_raw_snapshots = prepare_static_inputs_for_task(spec)
             existing_slot = world.solver_slots.get(spec.task_id)
             existing_native_context = (
                 existing_slot.data.get("native_context")
@@ -606,6 +606,7 @@ def step_mc2(
                     spec,
                     topology,
                     native_context=staged_native_context,
+                    raw_snapshot=mesh_raw_snapshots[0] if mesh_raw_snapshots else None,
                 )
             elif rebuild_reason and bone_static_supported:
                 from .setups.bone_cloth.static_build import (
