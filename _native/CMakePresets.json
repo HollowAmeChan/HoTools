@@ -26,6 +26,46 @@
         "HOTOOLS_PYTHON_EXECUTABLE": "D:/Blender/blender-5.1.0-windows-x64/5.1/python/bin/python.exe",
         "HOTOOLS_RUNTIME_DIR": "${sourceDir}/../_Lib/py313/HotoolsPackage"
       }
+    },
+    {
+      "name": "vs2022-py311-native",
+      "displayName": "VS 2022 x64 / Python 3.11 / hotools_native only",
+      "inherits": "vs2022-py311",
+      "binaryDir": "${sourceDir}/build/vs2022-py311-native",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "ON",
+        "HOTOOLS_BUILD_JOLT": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-py311-jolt",
+      "displayName": "VS 2022 x64 / Python 3.11 / hotools_jolt only",
+      "inherits": "vs2022-py311",
+      "binaryDir": "${sourceDir}/build/vs2022-py311-jolt",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "OFF",
+        "HOTOOLS_BUILD_JOLT": "ON"
+      }
+    },
+    {
+      "name": "vs2022-py313-native",
+      "displayName": "VS 2022 x64 / Python 3.13 / hotools_native only",
+      "inherits": "vs2022-py313",
+      "binaryDir": "${sourceDir}/build/vs2022-py313-native",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "ON",
+        "HOTOOLS_BUILD_JOLT": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-py313-jolt",
+      "displayName": "VS 2022 x64 / Python 3.13 / hotools_jolt only",
+      "inherits": "vs2022-py313",
+      "binaryDir": "${sourceDir}/build/vs2022-py313-jolt",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "OFF",
+        "HOTOOLS_BUILD_JOLT": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -37,6 +77,26 @@
     {
       "name": "vs2022-py313-release",
       "configurePreset": "vs2022-py313",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py311-native-release",
+      "configurePreset": "vs2022-py311-native",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py311-jolt-release",
+      "configurePreset": "vs2022-py311-jolt",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-native-release",
+      "configurePreset": "vs2022-py313-native",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-jolt-release",
+      "configurePreset": "vs2022-py313-jolt",
       "configuration": "Release"
     }
   ]

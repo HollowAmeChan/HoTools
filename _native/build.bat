@@ -5,29 +5,36 @@ rem ============================================================================
 rem HoTools native build helper
 rem
 rem Usage:
-rem   build.bat          Build py311 and py313
-rem   build.bat all      Build py311 and py313
-rem   build.bat 311      Build Blender 4.5 / Python 3.11
+rem   build.bat          Build hotools_native for py311 and py313
+rem   build.bat all      Build both modules for py311 and py313
+rem   build.bat 311      Build hotools_native for Blender 4.5 / Python 3.11
 rem   build.bat py311    Build Blender 4.5 / Python 3.11
-rem   build.bat 313      Build Blender 5.x / Python 3.13
+rem   build.bat 313      Build hotools_native for Blender 5.x / Python 3.13
 rem   build.bat py313    Build Blender 5.x / Python 3.13
 rem   build.bat native   Build hotools_native for py311 and py313
 rem   build.bat 313 native  Build only hotools_native for Python 3.13
 rem   build.bat 313 jolt    Build only hotools_jolt for Python 3.13
+rem   build.bat 313 all     Build both modules for Python 3.13
 rem
 rem Optional override:
 rem   set CMAKE_EXE=C:\path\to\cmake.exe
 rem ============================================================================
 
 for %%I in ("%~dp0.") do set "SOURCE_DIR=%%~fI"
-set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311"
-set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313"
-
 set "TARGET=%~1"
 set "MODULE=%~2"
 set "USAGE_EXIT=2"
-if not defined TARGET set "TARGET=all"
-if not defined MODULE set "MODULE=all"
+if not defined TARGET (
+    set "TARGET=all"
+    set "MODULE=native"
+)
+if not defined MODULE (
+    if /I "%TARGET%"=="all" (
+        set "MODULE=all"
+    ) else (
+        set "MODULE=native"
+    )
+)
 if /I "%TARGET%"=="native" (
     set "TARGET=all"
     set "MODULE=native"
@@ -65,6 +72,29 @@ if /I "%MODULE%"=="native" set "CMAKE_TARGET=hotools_native"
 if /I "%MODULE%"=="jolt" set "CMAKE_TARGET=hotools_jolt"
 if not defined CMAKE_TARGET if /I not "%MODULE%"=="all" goto usage
 
+set "CONFIG_PRESET_311=vs2022-py311"
+set "BUILD_PRESET_311=vs2022-py311-release"
+set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311"
+set "CONFIG_PRESET_313=vs2022-py313"
+set "BUILD_PRESET_313=vs2022-py313-release"
+set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313"
+if /I "%MODULE%"=="native" (
+    set "CONFIG_PRESET_311=vs2022-py311-native"
+    set "BUILD_PRESET_311=vs2022-py311-native-release"
+    set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311-native"
+    set "CONFIG_PRESET_313=vs2022-py313-native"
+    set "BUILD_PRESET_313=vs2022-py313-native-release"
+    set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-native"
+)
+if /I "%MODULE%"=="jolt" (
+    set "CONFIG_PRESET_311=vs2022-py311-jolt"
+    set "BUILD_PRESET_311=vs2022-py311-jolt-release"
+    set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311-jolt"
+    set "CONFIG_PRESET_313=vs2022-py313-jolt"
+    set "BUILD_PRESET_313=vs2022-py313-jolt-release"
+    set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-jolt"
+)
+
 pushd "%SOURCE_DIR%" >nul
 if errorlevel 1 (
     echo [ERROR] Failed to enter source directory: %SOURCE_DIR%
@@ -84,20 +114,20 @@ echo ========================================
 echo.
 
 if /I "%TARGET%"=="311" (
-    call :build_one "vs2022-py311" "vs2022-py311-release" "py311" "%BUILD_DIR_311%" "%CMAKE_TARGET%"
+    call :build_one "%CONFIG_PRESET_311%" "%BUILD_PRESET_311%" "py311" "%BUILD_DIR_311%" "%CMAKE_TARGET%"
     if errorlevel 1 goto fail
     goto success
 )
 
 if /I "%TARGET%"=="313" (
-    call :build_one "vs2022-py313" "vs2022-py313-release" "py313" "%BUILD_DIR_313%" "%CMAKE_TARGET%"
+    call :build_one "%CONFIG_PRESET_313%" "%BUILD_PRESET_313%" "py313" "%BUILD_DIR_313%" "%CMAKE_TARGET%"
     if errorlevel 1 goto fail
     goto success
 )
 
-call :build_one "vs2022-py311" "vs2022-py311-release" "py311" "%BUILD_DIR_311%" "%CMAKE_TARGET%"
+call :build_one "%CONFIG_PRESET_311%" "%BUILD_PRESET_311%" "py311" "%BUILD_DIR_311%" "%CMAKE_TARGET%"
 if errorlevel 1 goto fail
-call :build_one "vs2022-py313" "vs2022-py313-release" "py313" "%BUILD_DIR_313%" "%CMAKE_TARGET%"
+call :build_one "%CONFIG_PRESET_313%" "%BUILD_PRESET_313%" "py313" "%BUILD_DIR_313%" "%CMAKE_TARGET%"
 if errorlevel 1 goto fail
 goto success
 
@@ -191,14 +221,15 @@ exit /b 1
 
 :usage
 echo Usage:
-echo   build.bat          Build py311 and py313
-echo   build.bat all      Build py311 and py313
-echo   build.bat 311      Build Blender 4.5 / Python 3.11
+echo   build.bat          Build hotools_native for py311 and py313
+echo   build.bat all      Build both modules for py311 and py313
+echo   build.bat 311      Build hotools_native for Blender 4.5 / Python 3.11
 echo   build.bat py311    Build Blender 4.5 / Python 3.11
-echo   build.bat 313      Build Blender 5.x / Python 3.13
+echo   build.bat 313      Build hotools_native for Blender 5.x / Python 3.13
 echo   build.bat py313    Build Blender 5.x / Python 3.13
 echo   build.bat native       Build only hotools_native for py311 and py313
 echo   build.bat jolt         Build only hotools_jolt for py311 and py313
 echo   build.bat 313 native   Build only hotools_native for Python 3.13
 echo   build.bat 313 jolt     Build only hotools_jolt for Python 3.13
+echo   build.bat 313 all      Build both modules for Python 3.13
 exit /b %USAGE_EXIT%

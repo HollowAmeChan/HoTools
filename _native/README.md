@@ -30,27 +30,33 @@ C++ 侧只处理数组、上下文、约束求解和碰撞内核，不直接碰 
 
 ### 快速编译（推荐）
 
-双击或在 `_native/` 下运行 `build.bat`，**默认同时发布两个版本**：
+双击或在 `_native/` 下运行 `build.bat`。默认构建
+`hotools_native`，不会配置、生成或编译 Jolt 工程：
 
 ```bat
-:: 编译 py311 + py313（默认）
+:: 编译 hotools_native 的 py311 + py313（默认）
 build.bat
 
-:: 只编译 Blender 4.5 / py311
+:: 显式编译两个Python版本的全部模块
+build.bat all
+
+:: 只编译 hotools_native 的 Blender 4.5 / py311
 build.bat 311
 
-:: 只编译 Blender 5.x / py313
+:: MC2 日常开发：只增量编译 py313 的 hotools_native
 build.bat 313
-
-:: 只编译 hotools_native（py311 + py313）
-build.bat native
-
-:: MC2 日常开发：只编译 py313 的 hotools_native
-build.bat 313 native
 
 :: 只编译 py313 的 hotools_jolt
 build.bat 313 jolt
+
+:: 显式构建 py313 的两个模块
+build.bat 313 all
 ```
+
+`native`、`jolt` 和组合模式使用独立的 CMake build 目录。重复执行同一
+命令会复用对应的 `CMakeCache.txt` 和对象文件，不执行 clean；切换模块也
+不会改写另一模块的 cache。显式的 `build.bat 313 native` 与
+`build.bat 313` 等价。
 
 ### 产物路径
 
@@ -69,11 +75,15 @@ cmake 通过 VS2022 内置的可执行文件调用（见上方路径表），用
 $cmake = 'D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $src   = '..\_native'   # 在 _native/ 同级目录时调整相对路径
 
-& $cmake --preset vs2022-py311 -S $src
-& $cmake --preset vs2022-py313 -S $src
+& $cmake --preset vs2022-py311-native -S $src
+& $cmake --preset vs2022-py313-native -S $src
 ```
 
 之后直接用 `build.bat` 编译即可，无需重复 configure。
+
+只有需要 Jolt 时才配置对应的 `vs2022-py311-jolt` 或
+`vs2022-py313-jolt` preset；`vs2022-py311/313` 保留给显式
+`all` 组合构建。
 
 ### 依赖获取策略
 
@@ -99,8 +109,12 @@ _native/
 ├── extern/         # git submodule（nanobind / JoltPhysics，可选）
 ├── .fetch-cache/   # FetchContent 源码缓存（不进 git）
 ├── build/
-│   ├── vs2022-py311/   # Blender 4.5 构建目录
-│   └── vs2022-py313/   # Blender 5.x 构建目录
+│   ├── vs2022-py311-native/  # Blender 4.5 hotools_native
+│   ├── vs2022-py311-jolt/    # Blender 4.5 hotools_jolt
+│   ├── vs2022-py313-native/  # Blender 5.x hotools_native
+│   ├── vs2022-py313-jolt/    # Blender 5.x hotools_jolt
+│   ├── vs2022-py311/         # 显式 all 组合构建
+│   └── vs2022-py313/         # 显式 all 组合构建
 ├── CMakeLists.txt
 ├── CMakePresets.json
 └── build.bat

@@ -2,11 +2,17 @@ cmake_minimum_required(VERSION 3.24)
 
 project(hotools_native LANGUAGES CXX)
 
+option(HOTOOLS_BUILD_NATIVE "Build the hotools_native extension" ON)
+option(HOTOOLS_BUILD_JOLT "Build the hotools_jolt extension" ON)
 option(
     HOTOOLS_ENABLE_LEGACY_MC2
     "Build the legacy MC2 array, context, and BoneCloth IO ABI"
     ON
 )
+
+if(NOT HOTOOLS_BUILD_NATIVE AND NOT HOTOOLS_BUILD_JOLT)
+    message(FATAL_ERROR "At least one of HOTOOLS_BUILD_NATIVE or HOTOOLS_BUILD_JOLT must be ON")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,42 +84,45 @@ endif()
 # ---------------------------------------------------------------------------
 # JoltPhysics：本地 extern/ 优先，无则 FetchContent
 # ---------------------------------------------------------------------------
-set(_jolt_local "${CMAKE_CURRENT_LIST_DIR}/extern/JoltPhysics")
-set(BUILD_SHARED_LIBS              OFF CACHE BOOL "" FORCE)
-set(GENERATE_DEBUG_SYMBOLS         OFF CACHE BOOL "" FORCE)
-set(OVERRIDE_CXX_FLAGS             OFF CACHE BOOL "" FORCE)
-# Python 扩展必须用 /MD（动态CRT）；告诉 Jolt 不要用 /MT（静态CRT）
-set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
-# Python 调用栈不保证 32 字节对齐，禁用 AVX/AVX2 避免 vmovaps 崩溃
-set(USE_AVX2  OFF CACHE BOOL "" FORCE)
-set(USE_AVX   OFF CACHE BOOL "" FORCE)
-# Blender 进程中 tbbmalloc_proxy 干扰 MSVCP140 的 std::mutex 初始化。
-# Jolt Profiler（JPH_PROFILE_ENABLED）和 DebugRenderer（JPH_DEBUG_RENDERER）
-# 均包含 std::mutex 成员，PhysicsSystem::Init() 首次锁该 mutex 时
-# 触发 Mtx_trylock → Thrd_yield → EXCEPTION_ACCESS_VIOLATION。
-# Jolt 的实际选项名为 PROFILER_IN_DEBUG_AND_RELEASE / DEBUG_RENDERER_IN_DEBUG_AND_RELEASE。
-set(PROFILER_IN_DEBUG_AND_RELEASE    OFF CACHE BOOL "" FORCE)
-set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+if(HOTOOLS_BUILD_JOLT)
+    set(_jolt_local "${CMAKE_CURRENT_LIST_DIR}/extern/JoltPhysics")
+    set(BUILD_SHARED_LIBS              OFF CACHE BOOL "" FORCE)
+    set(GENERATE_DEBUG_SYMBOLS         OFF CACHE BOOL "" FORCE)
+    set(OVERRIDE_CXX_FLAGS             OFF CACHE BOOL "" FORCE)
+    # Python 扩展必须用 /MD（动态CRT）；告诉 Jolt 不要用 /MT（静态CRT）
+    set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+    # Python 调用栈不保证 32 字节对齐，禁用 AVX/AVX2 避免 vmovaps 崩溃
+    set(USE_AVX2  OFF CACHE BOOL "" FORCE)
+    set(USE_AVX   OFF CACHE BOOL "" FORCE)
+    # Blender 进程中 tbbmalloc_proxy 干扰 MSVCP140 的 std::mutex 初始化。
+    # Jolt Profiler（JPH_PROFILE_ENABLED）和 DebugRenderer（JPH_DEBUG_RENDERER）
+    # 均包含 std::mutex 成员，PhysicsSystem::Init() 首次锁该 mutex 时
+    # 触发 Mtx_trylock → Thrd_yield → EXCEPTION_ACCESS_VIOLATION。
+    # Jolt 的实际选项名为 PROFILER_IN_DEBUG_AND_RELEASE / DEBUG_RENDERER_IN_DEBUG_AND_RELEASE。
+    set(PROFILER_IN_DEBUG_AND_RELEASE    OFF CACHE BOOL "" FORCE)
+    set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
 
-if(EXISTS "${_jolt_local}/Build/CMakeLists.txt")
-    message(STATUS "[HoTools] JoltPhysics: 使用本地 extern/JoltPhysics")
-    add_subdirectory("${_jolt_local}/Build" JoltPhysics EXCLUDE_FROM_ALL)
-else()
-    message(STATUS "[HoTools] JoltPhysics: 从 GitHub 拉取（FetchContent，缓存到 .fetch-cache/）")
-    set(HOTOOLS_JOLT_VERSION "5.2.0" CACHE STRING "JoltPhysics version tag")
-    FetchContent_Declare(
-        JoltPhysics
-        GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
-        GIT_TAG        v${HOTOOLS_JOLT_VERSION}
-        GIT_SHALLOW    TRUE
-        SOURCE_SUBDIR  Build
-    )
-    FetchContent_MakeAvailable(JoltPhysics)
+    if(EXISTS "${_jolt_local}/Build/CMakeLists.txt")
+        message(STATUS "[HoTools] JoltPhysics: 使用本地 extern/JoltPhysics")
+        add_subdirectory("${_jolt_local}/Build" JoltPhysics EXCLUDE_FROM_ALL)
+    else()
+        message(STATUS "[HoTools] JoltPhysics: 从 GitHub 拉取（FetchContent，缓存到 .fetch-cache/）")
+        set(HOTOOLS_JOLT_VERSION "5.2.0" CACHE STRING "JoltPhysics version tag")
+        FetchContent_Declare(
+            JoltPhysics
+            GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+            GIT_TAG        v${HOTOOLS_JOLT_VERSION}
+            GIT_SHALLOW    TRUE
+            SOURCE_SUBDIR  Build
+        )
+        FetchContent_MakeAvailable(JoltPhysics)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # hotools_native CPython API module
 # ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_NATIVE)
 nanobind_add_module(hotools_native
     NB_STATIC
     src/hotools_native.cpp
@@ -167,10 +176,12 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/lib"
     )
 endforeach()
+endif()
 
 # ---------------------------------------------------------------------------
 # hotools_jolt（nanobind 模块）
 # ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_JOLT)
 nanobind_add_module(hotools_jolt
     NB_STATIC
     src/jolt_rigid.cpp
@@ -203,3 +214,4 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/lib"
     )
 endforeach()
+endif()
