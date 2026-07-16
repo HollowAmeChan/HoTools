@@ -1,6 +1,6 @@
 # MC2 源码语义、特化与差异记录
 
-更新日期：2026-07-16
+更新日期：2026-07-17
 
 源码基线：`D:\Unity_Fork\MagicaCloth2`，MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 

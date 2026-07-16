@@ -1,6 +1,6 @@
 # OmniNode 物理世界当前实现状态
 
-更新日期：2026-07-16
+更新日期：2026-07-17
 
 本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver专项状态由各自验收表维护；历史过程由Git保存。
 

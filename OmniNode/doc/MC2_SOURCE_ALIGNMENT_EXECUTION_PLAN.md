@@ -1,6 +1,6 @@
 # MC2 实施与验收执行计划
 
-更新日期：2026-07-16
+更新日期：2026-07-17
 
 源码基线：`D:\Unity_Fork\MagicaCloth2`，MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 
@@ -44,15 +44,8 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | P-06b | 已完成：Final Proxy/Baseline staged生产slot均已删除完整immutable spec，Proxy/frame/Baseline vectors由staged context直接接管，Mesh static注册复制边界已清零。solver prepare的单一`MC2MeshRawSnapshot`供fingerprint/Final Proxy/BasePose拓扑token共享，fallback tangent已进入C++，生产Topology已compact，staged triangle/line保持ndarray；固定端序数组token已取代逐element JSON签名，旧BasePose token仅在实际拓扑匹配后迁移。 | Tier A/static fixture逐数组等价且no-context/staged Proxy signature一致；Blender Final Proxy/BasePose通过；大Mesh首构约23.9ms、重建约20.4ms，旧CPP首构约642.1ms，新路径约26.84x。生产ABI不把派生Final Proxy/Baseline大数组回传Python再传回C++。 |
-| 2 | P-06c | 收口Mesh约束静态所有权：六类数值producer已进入C++；Proxy/frame/Baseline/Distance/Bending/Center/Self已全部直接move；Finalizer、Baseline与Final Proxy staged路径只在同次构建持有ndarray transient并压缩为必要metadata。约束静态owner阶段完成，后续工作转入raw Blender snapshot与变化重建。 | 对应Tier A、Blender static dirty、self与全隐式debug门禁通过；`owned_static_take_count=7`固定七次真实move，owner名称/data pointer/size错配及重复消费均拒绝；生产slot无Finalizer adjacency/bind、Baseline parent/child/local-pose或Proxy local pose/surface shadow。逐项迁移、逐项提交，每项完成后审查并删除死代码。 |
-| 3 | P-06d | 已完成：单一`MC2BoneRawSnapshot`供fingerprint、Line/product connection和Bone static共享；production assembly与rest/finalizer/baseline/constraint派生保持连续数组。Proxy/Baseline/Distance/Center/Self/Bone registration共6次直接move；`MC2BoneNativeData`取代四层完整spec树，staged入口缺snapshot直接失败，slot只留metadata。 | 显式oracle与生产compact topology/static signature一致；`owned_static_take_count=6`；生产可达性搜索只在无context oracle发现完整spec/packer/`_flatten_bone_records`；raw native Bone ABI、26/26纯MC2、Blender Mesh BasePose/Bone static/product/frame/全隐式debug通过。large Bone首建约`18.06ms`，为旧CPP的`18.97x`；热帧约`6.15ms`，为旧CPP的`3.14x`。 |
-| 4 | P-06e | 已完成：Mesh/Bone `config=8`在新staged context内复制不变native static并只重建Center；Python只接收fixed count/signature metadata并组织事务。依赖审计确认topology、geometry与Pin surface真实使全部相关producer失效；UV-only数值不变但当前六类metadata均以Proxy signature作身份链，保守全量重签/重建。 | cold build与clone rebuild metadata一致；Bone `clone=6`、Mesh `clone=5`，两者`center rebuild=1 / owner take=0`。large Mesh config约`5.06ms`；Pin/UV约`20.50/20.50ms`，仍比旧CPP重建`657.63ms`快约`32x`。无变化零静态分配、失败回滚与Pin/UV/Bone rest/topology门禁通过；UV子指纹是非阻塞后续优化。 |
-| 5 | P-06f | 已完成：最终新旧benchmark、180帧混合soak、debug按需、内存/分配和生产可达性审计通过；平行host particle状态链、完整static上传fallback与测试便利ABI已删除。 | large Mesh/Bone热帧约`5.47/6.06ms`，旧CPP约`7.03/19.33ms`；首构快`31.72x/19.20x`。soak mean/p95/max约`2.94/3.56/4.01ms`。Blender raw snapshot保留为任意脚本/编辑变化检测边界，派生与消费均在C++；depsgraph无法区分GN逐帧geometry更新与authoring dirty，禁止不可靠跳读。P-06关闭。 |
-| 6 | P-07 | 已完成：共享数值实现从旧名`mc2.cpp/hotools_mc2.hpp`移交为`mc2_kernels.cpp/.hpp`；旧full-array solve、旧context及旧BoneCloth IO由`HOTOOLS_ENABLE_LEGACY_MC2`统一隔离。 | OFF独立构建只编译新V0 context、static build、self collision与共享kernel；新ABI/static raw测试及26/26纯MC2通过，全部11个旧公开ABI不导出。生产runtime不import旧Python package。旧node/package/context/IO是P-09机械删除候选，共享kernel不是删除候选。P-07关闭。 |
-| 7 | P-08 | 已完成：汇总P-01..P-07、K-06/K-07与D-01，并重跑8资产/7脚本、180帧soak和同资产新旧benchmark。 | 无未决产品特化；自动交互、单半径、全隐式debug、all-task step、C++所有权与OFF独立构建全部成立。large Mesh/Bone热帧快`1.30x/3.16x`，首构快`32.30x/19.24x`。明确允许删除。 |
-| 8 | P-09 | 当前步骤：独立提交删除旧MC2节点/package、旧context/BoneCloth IO源文件与legacy binding；保留共享`mc2_kernels`、V0/static/self实现。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
-| 9 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
+| 1 | P-09 | 独立提交删除旧MC2节点/package、旧context/BoneCloth IO源文件与legacy binding；保留共享`mc2_kernels`、V0/static/self实现。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
+| 2 | P-10 | P-09关闭后，将MC2 declaration的`solver_acceptance_blocker`改为`False`。 | P-01..P-09及全部阻塞能力行关闭，完整发布门禁通过。 |
 
 ## 阶段约束
 
