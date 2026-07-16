@@ -3723,6 +3723,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "collider_revision", context.collider_revision) ||
         !dict_i64(result, "collider_count", static_cast<std::int64_t>(context.collider_types.size())) ||
         !dict_i64(result, "collided_by_groups", context.collided_by_groups) ||
+        !dict_float(result, "velocity_weight", context.velocity_weight) ||
+        !dict_float(result, "gravity_ratio", context.gravity_ratio) ||
+        !dict_float(result, "scale_ratio", context.scale_ratio) ||
+        !dict_float(result, "negative_scale_sign", context.negative_scale_sign) ||
+        !dict_float(result, "frame_interpolation", context.frame_interpolation) ||
         !dict_i64(result, "reset_count", context.reset_count) ||
         !dict_i64(result, "step_count", context.step_count) ||
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
@@ -3889,6 +3894,21 @@ PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args) {
         !dict_i64(result, "vertex_count", interaction->aggregate.vertex_count) ||
         !dict_i64(
             result,
+            "point_primitive_count",
+            aggregate.self_point_primitive_count
+        ) ||
+        !dict_i64(
+            result,
+            "edge_primitive_count",
+            aggregate.self_edge_primitive_count
+        ) ||
+        !dict_i64(
+            result,
+            "triangle_primitive_count",
+            aggregate.self_triangle_primitive_count
+        ) ||
+        !dict_i64(
+            result,
             "primitive_count",
             static_cast<std::int64_t>(
                 interaction->aggregate.self_primitive_flags.size()
@@ -3904,6 +3924,8 @@ PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args) {
                 aggregate.self_triangle_grid_count
         ) ||
         !dict_i64(result, "estimated_bytes", estimated_bytes) ||
+        !dict_float(result, "max_primitive_size", aggregate.self_max_primitive_size) ||
+        !dict_float(result, "grid_size", aggregate.self_grid_size) ||
         !dict_i64(
             result,
             "intersect_record_count",
@@ -4103,6 +4125,115 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
         finish_interaction_intersections(*interaction);
     }
     ++interaction->step_count;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_interaction_v0_read_debug(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 18) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_read_debug expects 18 arguments");
+        return nullptr;
+    }
+    auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(interaction)) return nullptr;
+    auto& aggregate = interaction->aggregate;
+    if (!aggregate.self_primitive_dynamic_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 interaction debug state is not ready");
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(aggregate.vertex_count);
+    const auto primitive_count = static_cast<Py_ssize_t>(
+        aggregate.self_primitive_flags.size()
+    );
+    const auto candidate_count = static_cast<Py_ssize_t>(
+        aggregate.self_contact_candidates.size() / 3
+    );
+    const auto contact_count = static_cast<Py_ssize_t>(
+        aggregate.self_contact_types.size()
+    );
+    const auto intersect_count = static_cast<Py_ssize_t>(
+        aggregate.self_intersect_records.size() / 5
+    );
+    Buffer positions, particle_indices, owner_indices, aabb_min, aabb_max, thickness;
+    Buffer grids, hashes, starts, counts, candidates, contact_indices, contact_types;
+    Buffer contact_enabled, contact_normals, intersect_records, particle_flags;
+    Buffer* buffers[] = {
+        &positions, &particle_indices, &owner_indices, &aabb_min, &aabb_max,
+        &thickness, &grids, &hashes, &starts, &counts, &candidates,
+        &contact_indices, &contact_types, &contact_enabled, &contact_normals,
+        &intersect_records, &particle_flags,
+    };
+    const char* names[] = {
+        "out_positions", "out_particle_indices", "out_owner_indices",
+        "out_aabb_min", "out_aabb_max", "out_thickness", "out_grids",
+        "out_hashes", "out_starts", "out_counts", "out_candidates",
+        "out_contact_indices", "out_contact_types", "out_contact_enabled",
+        "out_contact_normals", "out_intersect_records", "out_particle_flags",
+    };
+    for (std::size_t index = 0; index < 17; ++index) {
+        if (!buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index])) {
+            return nullptr;
+        }
+    }
+    if (!expect_float32(positions, names[0]) ||
+        !expect_2d(positions, names[0], vertex_count, 3) ||
+        !expect_int32(particle_indices, names[1]) ||
+        !expect_2d(particle_indices, names[1], primitive_count, 3) ||
+        !expect_int32(owner_indices, names[2]) ||
+        !expect_1d_array(owner_indices, names[2], primitive_count) ||
+        !expect_float32(aabb_min, names[3]) ||
+        !expect_2d(aabb_min, names[3], primitive_count, 3) ||
+        !expect_float32(aabb_max, names[4]) ||
+        !expect_2d(aabb_max, names[4], primitive_count, 3) ||
+        !expect_float32(thickness, names[5]) ||
+        !expect_1d_array(thickness, names[5], primitive_count) ||
+        !expect_int32(grids, names[6]) ||
+        !expect_2d(grids, names[6], primitive_count, 3) ||
+        !expect_int32(hashes, names[7]) ||
+        !expect_1d_array(hashes, names[7], primitive_count) ||
+        !expect_int32(starts, names[8]) ||
+        !expect_1d_array(starts, names[8], primitive_count) ||
+        !expect_int32(counts, names[9]) ||
+        !expect_1d_array(counts, names[9], primitive_count) ||
+        !expect_int32(candidates, names[10]) ||
+        !expect_2d(candidates, names[10], candidate_count, 3) ||
+        !expect_int32(contact_indices, names[11]) ||
+        !expect_2d(contact_indices, names[11], contact_count, 2) ||
+        !expect_int32(contact_types, names[12]) ||
+        !expect_1d_array(contact_types, names[12], contact_count) ||
+        !expect_uint8_scalar_array(contact_enabled, names[13]) ||
+        !expect_1d_array(contact_enabled, names[13], contact_count) ||
+        !expect_float32(contact_normals, names[14]) ||
+        !expect_2d(contact_normals, names[14], contact_count, 3) ||
+        !expect_int32(intersect_records, names[15]) ||
+        !expect_2d(intersect_records, names[15], intersect_count, 5) ||
+        !expect_uint8_scalar_array(particle_flags, names[16]) ||
+        !expect_1d_array(particle_flags, names[16], vertex_count)) {
+        return nullptr;
+    }
+    auto copy = [](Buffer& output, const auto& source) {
+        if (source.empty()) return;
+        std::memcpy(output.view.buf, source.data(), source.size() * sizeof(source[0]));
+    };
+    copy(positions, aggregate.state_positions);
+    copy(particle_indices, aggregate.self_particle_indices);
+    copy(owner_indices, aggregate.self_primitive_owner_indices);
+    copy(aabb_min, aggregate.self_primitive_aabb_min);
+    copy(aabb_max, aggregate.self_primitive_aabb_max);
+    copy(thickness, aggregate.self_primitive_thickness);
+    copy(grids, aggregate.self_primitive_grids);
+    copy(hashes, aggregate.self_grid_hashes);
+    copy(starts, aggregate.self_grid_starts);
+    copy(counts, aggregate.self_grid_counts);
+    copy(candidates, aggregate.self_contact_candidates);
+    copy(contact_indices, aggregate.self_contact_primitive_indices);
+    copy(contact_types, aggregate.self_contact_types);
+    copy(contact_enabled, aggregate.self_contact_enabled);
+    copy(contact_normals, aggregate.self_contact_normals);
+    copy(intersect_records, aggregate.self_intersect_records);
+    copy(particle_flags, aggregate.self_particle_intersect_flags);
     Py_RETURN_NONE;
 }
 

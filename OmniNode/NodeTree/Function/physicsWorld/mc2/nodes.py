@@ -8,6 +8,7 @@ from ....FunctionNodeCore import omni
 from ....OmniNodeSocketMapping import _OmniFloatCurve
 from ... import _Color
 from ..types import PhysicsWorldCache
+from .debug_draw import update_mc2_debug_draw_store
 from .names import (
     MC2_SETUP_BONE_CLOTH,
     MC2_SETUP_BONE_SPRING,
@@ -412,3 +413,57 @@ def physicsMC2Step(
     enabled: bool = True,
 ) -> tuple[PhysicsWorldCache, bool, str]:
     return step_mc2(world, mc2_tasks, settings=settings, enabled=enabled)
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="MC2可视化调试",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "物理世界", "拓扑连接", "Fixed/Move", "Motion约束", "Center/Teleport",
+        "外部碰撞", "粒子半径", "自碰Primitive", "自碰Grid", "自碰Candidate",
+        "自碰Contact", "最终输出", "任务筛选", "最大显示项",
+    ],
+    input_init={
+        "max_items": {"min_value": 1, "max_value": 100000},
+    },
+    _OUTPUT_NAME=["物理世界"],
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsMC2DebugDraw(
+    world: PhysicsWorldCache,
+    show_topology: bool = True,
+    show_attributes: bool = True,
+    show_motion: bool = True,
+    show_center: bool = True,
+    show_collision: bool = True,
+    show_radii: bool = True,
+    show_self_primitives: bool = False,
+    show_self_grid: bool = False,
+    show_self_candidates: bool = False,
+    show_self_contacts: bool = True,
+    show_output: bool = True,
+    task_filter: str = "",
+    max_items: int = 2000,
+) -> PhysicsWorldCache:
+    update_mc2_debug_draw_store(
+        str(id(world)),
+        world,
+        True,
+        show_topology=show_topology,
+        show_attributes=show_attributes,
+        show_motion=show_motion,
+        show_center=show_center,
+        show_collision=show_collision,
+        show_radii=show_radii,
+        show_self_primitives=show_self_primitives,
+        show_self_grid=show_self_grid,
+        show_self_candidates=show_self_candidates,
+        show_self_contacts=show_self_contacts,
+        show_output=show_output,
+        task_filter=task_filter,
+        max_items=max_items,
+    )
+    return world

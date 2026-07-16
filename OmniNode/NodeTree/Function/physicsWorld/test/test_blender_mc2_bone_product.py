@@ -37,6 +37,7 @@ parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
 solver = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver")
+debug = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug")
 topology_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
 )
@@ -130,6 +131,7 @@ try:
         channel: tuple(id(item) for item in items)
         for channel, items in world.result_streams.items()
     }
+    assert debug.request_mc2_debug_capture(world) == 2
 
     rig_b.scale = (0.0, 1.0, 1.0)
     bpy.context.view_layer.update()
@@ -155,6 +157,15 @@ try:
     assert returned is world and ready is True
     assert slot_a.data["native_context"] is first_context
     assert slot_a.data["result_candidate"].revision == first_candidate.revision + 1
+    product_debug = slot_a.data["_debug_draw_snapshot"]["topology"]
+    assert len(product_debug["longitudinal_edges"]) > 0
+    assert len(product_debug["lateral_edges"]) > 0
+    assert product_debug["chain_indices"].flags.writeable is False
+    product_output = slot_a.data["_debug_draw_snapshot"]["output"]
+    assert product_output["writeback_target_kind"] == "bone"
+    assert set(product_output["writeback_targets"]) == set(
+        slot_a.data["bone_static"].final_proxy.vertex_identities
+    )
     assert writeback.writeback_bone_transforms(world) == 15
 
     world.omni_cache_dispose("bone_product_multi_armature_complete")

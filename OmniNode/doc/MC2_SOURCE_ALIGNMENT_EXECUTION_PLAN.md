@@ -44,13 +44,12 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | D-01 | 建立与SpringBone VRM蓝本同型的全隐式MC2 debug链。debug请求自动发现world内MC2 slots，不要求用户为中间约束接线；按请求在下一推进帧读取backend真实中间态，并由solver-owned renderer按语义层筛选绘制。 | 至少覆盖Bone纵/横连接与分组、Fixed/Move、普通/自碰半径、自碰primitive/grid/candidate/contact/intersection、MaxDistance/Backstop、teleport判定、Center/world/local变换抵消、负缩放、外部碰撞和writeback目标；关闭debug时无逐帧readback。 |
-| 2 | P-05 | 完整审查新实现的实际运行链、代码组织与数学层，并执行不改变行为的纯整理。逐功能区确认生产入口、静态/逐帧路径、状态所有权、异常/重建/释放、死代码和测试专用路径；合并无意义参数转发层、过碎文件、同名math包装和重复buffer/helper。 | 审查矩阵覆盖三setup与公共runtime；不存在“测试可达但生产不可达”的能力；纯整理前后fixture、生产资产和性能结果一致；内部调用直达唯一实现，保留的wrapper都具有真实边界职责。 |
-| 3 | P-06 | 建立新旧同资产、同帧、同参数的性能对比，并据数据审计Python/C++边界；K-06已冻结的单cloth/自动跨物体scope基准作为输入，不再重开ListObj产品决策。分别测量首次构建、静态重建、逐帧prepare/pack/native sync/step/debug readback/result readback/writeback、内存与分配。 | 代表性小/中/大资产有可重复基线；新实现逐帧性能不得劣于旧实现，目标是有明确优势；所有热点都有保留Python、批量化或迁入C++的书面决定和验证结果。 |
-| 4 | P-07 | 完成文件级与ABI级独立化。区分可保留的共享数值kernel与必须删除的旧node/package/context/ABI，并把共享代码移交给新owner。 | 新registry、节点、生产runtime、测试和构建不import/加载旧Python package、旧context或旧公开ABI；保留的C++ kernel已归入新命名与所有权，删除候选清单可机械核验。 |
-| 5 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
-| 6 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
-| 7 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
+| 1 | P-05 | 完整审查新实现的实际运行链、代码组织与数学层，并执行不改变行为的纯整理。逐功能区确认生产入口、静态/逐帧路径、状态所有权、异常/重建/释放、死代码和测试专用路径；合并无意义参数转发层、过碎文件、同名math包装和重复buffer/helper。 | 审查矩阵覆盖三setup与公共runtime；不存在“测试可达但生产不可达”的能力；纯整理前后fixture、生产资产和性能结果一致；内部调用直达唯一实现，保留的wrapper都具有真实边界职责。 |
+| 2 | P-06 | 建立新旧同资产、同帧、同参数的性能对比，并据数据审计Python/C++边界；K-06已冻结的单cloth/自动跨物体scope基准和D-01按需debug基准作为输入，不再重开ListObj产品决策。分别测量首次构建、静态重建、逐帧prepare/pack/native sync/step/debug readback/result readback/writeback、内存与分配。 | 代表性小/中/大资产有可重复基线；新实现逐帧性能不得劣于旧实现，目标是有明确优势；所有热点都有保留Python、批量化或迁入C++的书面决定和验证结果。 |
+| 3 | P-07 | 完成文件级与ABI级独立化。区分可保留的共享数值kernel与必须删除的旧node/package/context/ABI，并把共享代码移交给新owner。 | 新registry、节点、生产runtime、测试和构建不import/加载旧Python package、旧context或旧公开ABI；保留的C++ kernel已归入新命名与所有权，删除候选清单可机械核验。 |
+| 4 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
+| 5 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
+| 6 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
 
 ## 阶段约束
 

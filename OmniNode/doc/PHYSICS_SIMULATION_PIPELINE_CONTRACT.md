@@ -511,6 +511,9 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
+- 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器；backend在下一次真实推进后冻结快照。same-frame、reset-only和无推进调用不得伪造新快照。
+- 未登记请求时禁止执行中间态native readback和逐项viewport几何展开。持续显示由`always_run`调试节点逐帧重新登记一次性请求表达，不把调试成本永久塞进solver主循环。
+- renderer只消费冻结的只读数组/普通值与真实result stream，禁止读取当前RNA或从最终输出反推约束、碰撞、teleport等backend过程；world dispose必须清除对应draw store。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
 - 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。空间查询必须在 domain adapter 内把 backend handle 转成 stable slot id 后再发布，例如 rigid/Jolt 的 `rigid_query_result`。
 

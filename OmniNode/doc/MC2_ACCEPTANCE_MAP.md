@@ -65,9 +65,9 @@
 | O-01 | Mesh result transaction 与 GN writeback | 完全对齐 | candidate/envelope、发布回滚、拓扑失败恢复、Blender 5.1 | 无 | 否 |
 | O-02 | Bone result transaction 与 PoseBone writeback | 限定域对齐 | stable identity、parent-local plan、批次回滚、signed component及同Armature多component合并 Blender 5.1 | component骨名必须不重叠；同目标按全部target pose重算parent-local plan并一次写回 | 否 |
 | O-03 | `mc2_stats_v0` | 完全对齐 | schema、聚合、稳定排序、事务回滚 | stats 不得替代真实 writeback ready 语义 | 否 |
-| D-01 | 全隐式中间态debug | 待审计 | 当前`mc2/debug.py`仅`framework_only`；slot有摘要，native已有部分self readback但未形成完整viewport链 | 对齐SpringBone VRM的request-driven next-frame capture；覆盖连接、约束、碰撞/自碰、teleport、变换抵消、Center和writeback，且无请求时零readback | 是 |
+| D-01 | 全隐式中间态debug | 完全对齐 | `physicsMC2DebugDraw`自动发现world内MC2 slots；请求仅在下一真实native advance冻结slot/context与world interaction中间态，renderer只消费只读快照；Blender 5.1验收覆盖零readback、same-frame保留请求、Bone纵横连接、Motion、Keep Teleport、负缩放、外部碰撞、自碰全阶段、RNA隔离和dispose | 语义层覆盖Topology/Fixed-Move/Motion/Center/Collision/Self/Output；无中间态socket，无请求时`debug_readback_count=0` | 否 |
 | P-01 | V1-R 直接 oracle 闭环 | 完全对齐 | static/runtime主体及Distance/Tether/Angle/Motion direct runtime均有Tier A | 无 | 否 |
-| P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1六脚本门禁，覆盖七资产/三setup | Mesh、跨物体self、Bone source Line、BoneCloth产品链、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
+| P-02 | 真实生产资产验收 | 完全对齐 | V1-R结构化manifest + Blender 5.1七脚本门禁，覆盖八资产/三setup | Mesh、跨物体self、全隐式debug、Bone source Line、BoneCloth产品链、BoneSpring soft sphere及final-proxy/component拒绝域均可重复执行 | 否 |
 | P-03 | 新链路混合 soak 与绝对性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms；这里只证明新链路稳定且低于自身ceiling，不代表优于旧实现 | 否 |
 | P-04 | 旧产品语义与新实现替代审计 | 完全对齐 | profile+task component、全量prepare/失败原子性、per-task context、HoTools链组产品拓扑、同Armature多component合并写回及Blender 5.1生产fixture | 跨物体self collision与半径模型分别由K-06/K-07决策；隐式可视化由D-01关闭，不再回退产品语义 | 否 |
 | P-05 | 新实现生产可达性、代码与math审计 | 待审计 | 代表性资产和soak证明主链可运行；当前Python模块存在大量参数转发、过细职责和重复/同名math包装候选 | 逐功能区核对真实入口、状态所有权、异常/释放、死代码；在不改变行为前提下合并垃圾转发、文件碎片和重复helper，并证明生产结果不变 | 是 |
@@ -81,15 +81,14 @@
 
 ## 当前验收结论
 
-`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision和单一半径authoring模型已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **全隐式debug、完整代码/运行链与纯整理、新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
+`V1-R` 的直接数值oracle、代表性生产资产、新链路混合soak、BoneCloth产品语义、跨物体self collision、单一半径authoring模型和全隐式中间态debug已经闭环，但这些证据尚不足以证明新实现可以替代旧HoTools产品。当前必须继续完成 **完整代码/运行链与纯整理、新旧总体性能、C++边界和文件独立性审计**；在替代资格总门禁放行前不得删除旧实现，`solver_acceptance_blocker=True` 保持正确。
 
 当前开放阻塞：
 
-1. `D-01`：完成与SpringBone VRM同型、但分层更丰富的全隐式中间态debug。
-2. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
-3. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope原型结果作为已冻结输入。
-4. `P-07/P-08`：文件级独立化与替代资格总门禁。
-5. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
+1. `P-05`：完整生产可达性审计与不改变行为的Python转发/math/文件整理。
+2. `P-06`：新旧同场总体性能及剩余Python/C++边界决策；K-06 scope与D-01 debug开销作为已冻结输入。
+3. `P-07/P-08`：文件级独立化与替代资格总门禁。
+4. `P-09/P-10`：获得准入后删除旧实现并关闭acceptance blocker。
 
 ## 更新规则
 

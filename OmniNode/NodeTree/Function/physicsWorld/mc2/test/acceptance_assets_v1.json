@@ -159,6 +159,29 @@
         "zero scale",
         "non-representable world-linear shear"
       ]
+    },
+    {
+      "id": "implicit_debug_capture",
+      "setup_types": ["mesh_cloth", "bone_cloth"],
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_debug_draw.py",
+      "production_surface": [
+        "always-run implicit debug node and automatic world slot discovery",
+        "request-driven next-advance native context and interaction readback",
+        "semantic viewport layers from frozen slot snapshots",
+        "world-owned draw store lifecycle"
+      ],
+      "expected": [
+        "debug disabled performs zero native debug readback",
+        "same-frame evaluation preserves a pending request",
+        "the next true native advance freezes topology, motion, Center, collision, self and output state",
+        "renderer output is unchanged by current RNA mutation and world dispose removes it"
+      ],
+      "rejection_boundaries": [
+        "no intermediate-state wiring sockets",
+        "no current RNA or final-result inference",
+        "no capture on reset-only or same-frame evaluations",
+        "draw item caps cannot alter solver state"
+      ]
     }
   ]
 }

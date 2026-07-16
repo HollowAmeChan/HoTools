@@ -223,7 +223,9 @@ self collision是primitive、grid、broadphase、EE/PT narrowphase、half contac
 - MC2遵循SpringBone VRM蓝本：debug入口只表达请求、scope和显示过滤，自动发现world内匹配slot；不为Bone连接、Backstop、自碰等中间态增加用户接线socket。
 - 请求在下一次真实推进帧由backend捕获，一次性请求消费后清除；continuous模式才持续采样。无请求时不得执行native debug readback、per-item dict展开或viewport几何构建。
 - renderer只消费slot/native debug snapshot和真实result stream，禁止根据当前RNA、最终位置或Blender对象重新推导“看起来合理”的中间态。
-- 当前`mc2/debug.py`仍是`framework_only`；slot摘要包含部分Center/teleport结果，native binding已有self primitive/grid/candidate/contact/intersection读取能力，但Python owner、统一snapshot和viewport renderer尚未闭环。
+- `physicsMC2DebugDraw`是唯一公开MC2调试入口：`always_run`节点自动发现world内匹配slot，只写一次性请求和语义过滤器；下一真实native advance冻结per-task context与world interaction状态，同帧、reset-only和无substep调用不消费请求。
+- 冻结快照按Topology、Motion、Center、Collision、Self和Output分层。Topology直接保存Bone纵/横边、链组、Fixed/Move和final proxy；Center保存frame sync、step、frame shift、Keep/Reset Teleport、world/local抵消矩阵与negative-scale transition；Collision同时保存外部packed collider、普通radius和派生self thickness；Self保存primitive/grid/candidate/contact/intersection；Output保存native位置与writeback plan摘要。
+- viewport renderer只消费上述只读数组和普通值，不读当前RNA、不从最终result反推过程。请求关闭时不调用任何debug read ABI；连续显示由节点每次执行重新请求下一推进帧，world dispose同步清除draw store。
 - MC2最小语义层：Topology（Bone纵/横连接、链分组、Fixed/Move、final proxy）、Motion（MaxDistance/Backstop及法向轴）、Center/Inertia（teleport阈值/触发原因、world/local变换抵消、负缩放）、Collision（普通半径、外部collider、自碰厚度/primitive/grid/candidate/contact/intersection）和Output（candidate/writeback target）。每个影响空间边界或分支判定的参数必须有绘制、数值overlay或明确的“非空间量”诊断理由。
 
 ## 6. Output 与 Blender 边界

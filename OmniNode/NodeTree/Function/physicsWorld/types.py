@@ -601,6 +601,7 @@ class PhysicsWorldCache:
         for module_name, function_name in (
             (".rigid.debug_draw", "clear_rigid_debug_draw_store"),
             (".spring_vrm.debug_draw", "clear_spring_vrm_debug_draw_store"),
+            (".mc2.debug_draw", "clear_mc2_debug_draw_store"),
         ):
             try:
                 from importlib import import_module

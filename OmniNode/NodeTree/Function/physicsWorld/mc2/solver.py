@@ -7,6 +7,7 @@ import math
 
 from ..types import PhysicsWorldCache
 from .declaration import MC2_SOLVER_DECLARATION
+from .debug import capture_requested_mc2_debug
 from .names import MC2_SETUP_BONE_SPRING, MC2_SLOT_KIND, MC2_SOLVER_ID
 from .parameters import (
     MC2SolverSettingsSpec,
@@ -980,6 +981,16 @@ def step_mc2(
                     collided_by_groups.append(
                         participant.collided_by_groups if participant is not None else 0
                     )
+                interaction.set_debug_scope((
+                    {
+                        "task_id": str(item["spec"].task_id),
+                        "slot_id": str(item["slot"].slot_id),
+                        "vertex_count": int(item["native_context"].vertex_count),
+                        "primary_group_bit": int(primary_group_bits[index]),
+                        "collided_by_groups": int(collided_by_groups[index]),
+                    }
+                    for index, (item, _local_update_index) in enumerate(batch)
+                ))
                 interaction.step_group(
                     contexts,
                     primary_group_bits,
@@ -1168,7 +1179,10 @@ def step_mc2(
                 "self_intersect_record_count": native_info.get(
                     "self_intersect_record_count", 0
                 ),
+                "debug_capture_count": native_info.get("debug_capture_count", 0),
+                "debug_readback_count": native_info.get("debug_readback_count", 0),
             })
+        capture_requested_mc2_debug(world, runtime_items, interaction)
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
             bone_results, staged_writeback_plans = merge_mc2_bone_results(
