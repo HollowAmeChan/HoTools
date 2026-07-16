@@ -44,11 +44,16 @@
 
 | 顺序 | 对应项 | 工作 | 退出条件 |
 |---|---|---|---|
-| 1 | P-06 | 建立新旧同资产、同帧、同参数的性能对比，并据数据审计Python/C++边界；K-06已冻结的单cloth/自动跨物体scope基准和D-01按需debug基准作为输入，不再重开ListObj产品决策。分别测量首次构建、静态重建、逐帧prepare/pack/native sync/step/debug readback/result readback/writeback、内存与分配。 | 代表性小/中/大资产有可重复基线；新实现逐帧性能不得劣于旧实现，目标是有明确优势；所有热点都有保留Python、批量化或迁入C++的书面决定和验证结果。 |
-| 2 | P-07 | 完成文件级与ABI级独立化。区分可保留的共享数值kernel与必须删除的旧node/package/context/ABI，并把共享代码移交给新owner。 | 新registry、节点、生产runtime、测试和构建不import/加载旧Python package、旧context或旧公开ABI；保留的C++ kernel已归入新命名与所有权，删除候选清单可机械核验。 |
-| 3 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
-| 4 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
-| 5 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
+| 1 | P-06a | 冻结静态原始输入快照与变化分类。Python只从Blender提取连续positions/normals/UV/edge/triangle/attribute、Bone rest/hierarchy与稳定identity；C++生成并持有fingerprint，区分无变化、参数变化、静态变化和拓扑变化。 | Mesh Pin/UV/geometry与Bone hierarchy/rest变化均有dirty回归；same-frame与纯Pose变化不触发静态重建；生产路径不再构造JSON/嵌套Python payload来做逐帧fingerprint。完成后删除被替代的Python签名producer、cache转发和无职责wrapper并独立提交。 |
+| 2 | P-06b | 迁移首次构建的Final Proxy与Baseline。先迁Mesh triangle方向、adjacency、bind orientation、Fixed/Move与baseline/root/depth/local pose，再迁Bone共用的final-proxy/baseline部分；producer与consumer同在native staged context内。 | Tier A/static fixture逐数组等价；首次构建小/中/大profile下降；生产ABI不把派生Final Proxy/Baseline大数组回传Python再传回C++。Python实现只可作为明确test oracle保留，生产import为零；同提交清理旧packer/转发/重复校验。 |
+| 3 | P-06c | 迁移Mesh约束静态构建：Distance、Bending、Center与Self primitive registration直接消费native Final Proxy/Baseline。 | 对应Tier A、Blender static dirty、self与debug门禁通过；native内部签名可检查；Python不再生产或pack这些数组。逐项迁移、逐项提交，每项完成后审查并删除死代码。 |
+| 4 | P-06d | 迁移BoneCloth/BoneSpring专属静态构建：Line/product connection消费、Bone orientation/transform mapping、Distance、Center与Self直接进入native staged context。 | source Line与HoTools横向连接产品fixture、同Armature多component、BoneSpring拒绝域和writeback全部通过；不产生第二套Python派生静态树；每个producer迁移后立即清理对应builder/packer/adapter转发。 |
+| 5 | P-06e | 收口变化重建。C++根据change mask复用不变输入并在新staged context内完成完整静态生产；Python只组织事务、失败回滚与slot原子替换，不复制native static。 | Pin/UV/拓扑/Bone rest变化的重建结果与首次构建一致；失败保留旧context/result；无变化帧零静态分配。重建profile、分配和内存有小/中/大基线，旧host shadow与临时兼容ABI全部删除。 |
+| 6 | P-06f | 关闭总体性能与边界审计。复跑同资产同配置新旧benchmark、debug按需成本、混合soak、内存/分配和生产可达性搜索。 | Mesh/Bone逐帧均不劣于旧CPP full-core并有明确优势；首次构建与变化重建的剩余差异有实测结论；所有热点都有最终owner，仓库搜索不存在生产Python派生静态、双份数组或仅转发函数，P-06才可关闭。 |
+| 7 | P-07 | 完成文件级与ABI级独立化。区分可保留的共享数值kernel与必须删除的旧node/package/context/ABI，并把共享代码移交给新owner。 | 新registry、节点、生产runtime、测试和构建不import/加载旧Python package、旧context或旧公开ABI；保留的C++ kernel已归入新命名与所有权，删除候选清单可机械核验。 |
+| 8 | P-08 | 执行替代资格总门禁。使用代表性真实资产复验产品语义、数值、生命周期、debug、性能、错误域和用户工作流。 | P-04..P-07及K-06/K-07/D-01全部关闭；不存在未决的必须保留旧特化；新实现相对旧实现至少具备产品灵活性、可观测性、架构可维护性和实测性能优势，形成明确的“允许删除”结论。 |
+| 9 | P-09 | 独立提交删除旧MC2实现与旧入口。 | 删除后完整Python 3.13、Blender 5.1、Tier A、代表性资产、debug、混合soak和性能门禁通过；仓库搜索无遗留入口或fallback。 |
+| 10 | P-10 | 关闭solver acceptance blocker。 | P-01..P-09及全部阻塞能力行关闭，`solver_acceptance_blocker=False`，完整发布门禁通过。 |
 
 ## 阶段约束
 
@@ -60,6 +65,8 @@
 6. 旧实现中真实可用的产品能力默认必须保留或改进。若决定缩小支持域，必须有明确产品决策、用户可见拒绝行为和迁移说明；不能用“新架构未实现”本身作为拒绝理由。
 7. Debug沿用SpringBone VRM蓝本的隐式请求模型：正常模拟不承担中间态readback，renderer不能根据当前RNA或最终结果反推backend过程；MC2复杂度通过语义层、过滤器和按需buffer表达，不通过新增一组中间态接线节点表达。
 8. P-05代码整理不得夹带数值、参数默认值、更新频率或支持域变化；任何行为变化必须拆回对应能力行单独验收。
+9. P-06a..P-06e每一步都必须遵循“先固定oracle与profile、再增加native producer、切换生产consumer、删除Python producer/packer/转发、复验、独立提交”的顺序；不得等全部迁移结束后才集中清垃圾。
+10. native内部自产自用的数据不得为了沿用旧Python spec而回读到host；允许跨边界的逐顶点大数组只有Blender原始输入、公开结果和显式请求的debug快照。
 
 ## 交付规则
 

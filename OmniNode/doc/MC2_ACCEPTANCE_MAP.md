@@ -71,7 +71,7 @@
 | P-03 | 新链路混合 soak 与绝对性能门禁 | 完全对齐 | Blender 5.1三setup混合180帧：2次hot update/rebuild/reset/same-frame、6 context释放 | 170样本mean 4.44ms、p95 5.02ms、max 6.43ms；这里只证明新链路稳定且低于自身ceiling，不代表优于旧实现 | 否 |
 | P-04 | 旧产品语义与新实现替代审计 | 完全对齐 | profile+task component、全量prepare/失败原子性、per-task context、HoTools链组产品拓扑、同Armature多component合并写回及Blender 5.1生产fixture | 跨物体self collision与半径模型分别由K-06/K-07决策；隐式可视化由D-01关闭，不再回退产品语义 | 否 |
 | P-05 | 新实现生产可达性、代码与math审计 | 完全对齐 | 三setup与world common runtime生产矩阵覆盖static/frame/state/error/dispose/result；八资产/三setup Blender生产门禁、混合soak与Tier A证明真实入口；math旧名aliases及无职责Mesh final-proxy包装已删除 | `profile + task`是slot/context component；`bone_rotation.py`明确为测试oracle且不是fallback；保留wrapper均拥有setup、Blender snapshot、cache、校验或事务职责 | 否 |
-| P-06 | 新旧性能对比与C++边界审计 | 待审计 | 新链绝对soak与K-06自动/ListObj-like scope对比已有基线；尚缺旧HoTools同资产总体对照和逐阶段拆分 | 同资产同配置比较构建、逐帧各阶段、debug开销、内存与分配；证明总体不退化且有明确优势，按实测完成剩余Python批量化或C++迁移决定 | 是 |
+| P-06 | 新旧性能对比与C++边界审计 | 待审计 | 同资产小/中/大benchmark已覆盖旧CPP full-core与新Physics World的构建、真实重建、逐帧、debug、host内存和Python分配；逐帧Mesh约1.26..1.74x、Bone约1.57..1.74x。Frame orientation、Bone pose rotation、Center已改为native context自产自用，生产host particle shadow已删除 | 首次构建/变化重建仍慢于旧实现，剩余热点集中在静态fingerprint、Final Proxy/Baseline、Distance/Bending/Bone static的Python生产。按执行计划P-06a..P-06f逐项迁入native并在每步删除旧producer/packer/转发后，才允许关闭 | 是 |
 | P-07 | 文件与ABI独立化 | 待审计 | 新Physics World Python路径当前未直接import旧package，但旧节点仍注册，旧native ABI及测试仍共存 | 新生产链、测试和构建对待删除package/context/公开ABI零依赖；共享kernel必须转为新owner而非悬挂在旧接口下 | 是 |
 | P-08 | 替代资格总门禁 | 待审计 | P-01..P-03只证明source主体、新资产门禁和新链soak | P-04..P-07、K-06/K-07和D-01全部关闭，并形成“产品语义可替代、交互模型清晰、debug可观测、性能有优势、架构可维护、允许删除”的明确结论 | 是 |
 | P-09 | 旧 MC2 路径删除 | 产品收尾 | 尚未准入删除 | 仅在P-08放行后独立删除旧节点/package/full-core/context/shadow pipeline；删除后全门禁通过 | 是 |

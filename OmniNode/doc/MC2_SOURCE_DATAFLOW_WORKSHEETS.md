@@ -262,10 +262,10 @@ Bone position转换使用完整Armature inverse；rotation使用proper component
 Blender authoring/frame input
   -> profile + task combinations
   -> one MC2 solver step: normalize all active tasks
-  -> immutable host snapshots + signatures (prepare all before write)
-  -> N0/N1 static build
+  -> raw immutable Blender snapshots (prepare all before write)
+  -> native fingerprint + N0/N1 producers
   -> per-task slot-owned native context
-  -> N2/N3 sync -> reset/step/readback
+  -> N2/raw N3 sync -> native frame-derived production -> reset/step/readback
   -> one Physics World result transaction
   -> public writeback
 ```
@@ -274,7 +274,8 @@ Blender authoring/frame input
 |---|---|---|
 | H0 identity | task/setup/source/target、ordered Bone root identity | host/session；不进入kernel |
 | H1 authoring | profile、curve authoring、Pin/selection、bone hierarchy、外部identity | host immutable；重建/诊断 |
-| N0 proxy static | final proxy、orientation、UV、attribute、baseline、output mapping | slot static |
+| H2 raw snapshot | Blender连续positions/normals/UV/index/attribute、Bone rest/pose matrix、component pose | prepare/frame；不保存派生solver数组 |
+| N0 proxy static | fingerprint、final proxy、orientation、UV、attribute、baseline、output mapping | native context static |
 | N1 constraint static | Distance/Bending/Inertia等精确数组 | slot static |
 | N2 runtime parameters | curve samples、scalar/bool/enum、team options、scheduler | hot update |
 | N3 frame input | animated pose、component/anchor/collider snapshot、dt与连续性 | frame |
@@ -290,6 +291,7 @@ Blender authoring/frame input
 6. ABI只接收连续C-order固定dtype、finite、checked range/index和`xyzw` quaternion。
 7. result/debug不含bpy对象、manager index或native handle；solver不inline writeback。
 8. create失败不破坏旧slot；free幂等；发布/writeback失败恢复上一完整事务。
+9. 大数组派生producer与consumer必须同属native context：Frame orientation、Bone pose rotation和Center不得回到Python；Final Proxy/Baseline/constraint static按P-06分步迁移。Python只传raw Blender snapshot，除公开result与显式debug外不读回native中间态。
 
 ## 9. Oracle 与冲突处理
 
@@ -317,12 +319,12 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 
 | 路径 | 静态生产链 | 逐帧生产链 | 输出 | 异常与释放 |
 |---|---|---|---|---|
-| MeshCloth | `task -> mesh topology -> final proxy -> baseline/distance/bending/center/self static -> native context` | BasePose/evaluated frame、component pose、collider、runtime curve与scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context、particle buffer与BasePose cache owner |
-| BoneCloth | `task -> ordered Bone sources -> product/source connection -> Bone Line static/distance/center/self -> native context` | Armature component pose、PoseBone animated base、collider与runtime参数同步到独立slot context | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
+| MeshCloth | 当前为`task -> raw mesh snapshot -> host final proxy/baseline/distance/bending/center/self -> native context`；按P-06迁为native自产自用 | BasePose只上传world positions/component pose；native context内部生产triangle orientation与Center，collider/runtime/scheduler同步到slot context | stable Mesh vertex identity -> GN delta result | prepare失败保留旧slot/result；重建先staging后替换；slot prune/world dispose释放context与BasePose cache owner |
+| BoneCloth | 当前为`task -> ordered Bone sources -> host product/source connection与Bone static -> native context`；按P-06迁为native自产自用 | 只上传Armature component pose、PoseBone head与raw 3x3 pose matrix；native生产world rotation与Center | stable Bone name -> 同Armature合并后的parent-local原子writeback plan | 跨Armature拆task；同Armature骨名重叠在发布前拒绝；任一component失败则整批不发布，slot/world释放context |
 | BoneSpring | 与BoneCloth共享Bone Line static链，但setup adapter与归一化参数固定Spring支持域 | 同Bone frame链；只消费Sphere soft collider，关闭self/sync与不支持约束 | stable Bone name -> Bone transform transaction | 非Line、非Sphere或越出归一化支持域在prepare拒绝，不进入native/writeback |
 | World common | `build_task_specs -> topology/signature -> immutable static -> per-task slot/context`；world唯一持有interaction context | 全task frame sync后按scheduler substep批量推进；跨物体self由world interaction context锁步；debug仅在下一真实advance按请求冻结 | Mesh/Bone/stats先形成candidate，再由公共transaction发布 | staged create/update/read任一步失败都dispose新资源并保留旧事务；stale slot、Cache Delete、clear、重编译和unregister沿owner链幂等释放 |
 
-状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime state、particle transaction shadow、scheduler、center history与native context；immutable spec/static没有释放职责；frame snapshot和result candidate只活到本次公开step提交。`MC2ParticleBuffer`保留的原因是frame reset/same-frame/error transaction的host shadow，不是第二份Python数值solver。
+状态所有权固定如下：world拥有跨task interaction和发布事务；slot拥有单个`profile + task`的runtime identity、scheduler、center调度history与native context；particle position/rotation/history只存在于native context，不再有生产`MC2ParticleBuffer` shadow；immutable authoring/raw snapshot没有释放职责，frame snapshot和result candidate只活到本次公开step提交。测试可保留host buffer作为oracle，但生产import必须为零。
 
 生产/参考路径分类：
 
