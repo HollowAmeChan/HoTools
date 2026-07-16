@@ -204,6 +204,7 @@ try:
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in slot.data
 
+    context_before_pose_change = slot.data["native_context"]
     armature.pose.bones["Root"].rotation_mode = "XYZ"
     armature.pose.bones["Root"].rotation_euler.z = 0.2
     bpy.context.view_layer.update()
@@ -212,6 +213,7 @@ try:
     slot = world.solver_slots[task.task_id]
     second_candidate = slot.data["result_candidate"]
     second_info = slot.data["native_context"].inspect()
+    assert slot.data["native_context"] is context_before_pose_change
     assert second_candidate.revision == 2
     assert second_info["step_count"] == 1
     assert second_info["bone_line_output_count"] == 2
@@ -225,6 +227,21 @@ try:
     assert world.result_streams["bone_transform"][0]["revision"] == 2
     assert writeback.writeback_bone_transforms(world) == 3
     assert "_writeback_error" not in slot.data
+
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    armature.data.edit_bones["Tip"].tail.z += 0.125
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.select_set(False)
+    bpy.context.view_layer.update()
+    world.frame_context.frame = 3
+    _returned, _ready, rebuild_status = solver.step_mc2(world, [task])
+    rebuilt_slot = world.solver_slots[task.task_id]
+    assert "重建 1" in rebuild_status
+    assert rebuilt_slot.data["native_context"] is not context_before_pose_change
+    assert context_before_pose_change.inspect()["released"] is True
+    assert rebuilt_slot.data["runtime_state"].allocation_reason == "topology_changed"
 
     world.omni_cache_dispose("bone_cloth_complete")
     world = world_types.PhysicsWorldCache()

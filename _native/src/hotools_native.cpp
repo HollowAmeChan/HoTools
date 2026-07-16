@@ -838,6 +838,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_stats(nullptr, a.ptr())); });
     m.def("mc2_mesh_static_fingerprint_v0",
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v0(nullptr, a.ptr())); });
+    m.def("mc2_bone_static_fingerprint_v0",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v0(nullptr, a.ptr())); });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,

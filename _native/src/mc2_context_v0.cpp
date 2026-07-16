@@ -6610,6 +6610,42 @@ PyObject* mc2_context_v0_stats(PyObject*, PyObject* args) {
     return result;
 }
 
+struct Mc2StaticFingerprintV0 {
+    std::uint64_t first = 1469598103934665603ull;
+    std::uint64_t second = 1099511628211ull;
+
+    void append(const void* raw_data, std::size_t size) {
+        const auto* data = static_cast<const std::uint8_t*>(raw_data);
+        for (std::size_t index = 0; index < size; ++index) {
+            first ^= static_cast<std::uint64_t>(data[index]);
+            first *= 1099511628211ull;
+            second ^= static_cast<std::uint64_t>(data[index] + 0x9du);
+            second *= 14029467366897019727ull;
+        }
+        first ^= static_cast<std::uint64_t>(size);
+        first *= 1099511628211ull;
+        second ^= static_cast<std::uint64_t>(size << 1u);
+        second *= 14029467366897019727ull;
+    }
+
+    void append_buffer(const char* label, const Buffer& buffer) {
+        append(label, std::strlen(label));
+        append(buffer.view.buf, static_cast<std::size_t>(buffer.view.len));
+    }
+
+    PyObject* finish() const {
+        char encoded[33] {};
+        std::snprintf(
+            encoded,
+            sizeof(encoded),
+            "%016llx%016llx",
+            static_cast<unsigned long long>(first),
+            static_cast<unsigned long long>(second)
+        );
+        return PyUnicode_FromStringAndSize(encoded, 32);
+    }
+};
+
 PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 11) {
         PyErr_Format(
@@ -6659,47 +6695,78 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    std::uint64_t first = 1469598103934665603ull;
-    std::uint64_t second = 1099511628211ull;
-    auto append = [&](const void* raw_data, std::size_t size) {
-        const auto* data = static_cast<const std::uint8_t*>(raw_data);
-        for (std::size_t index = 0; index < size; ++index) {
-            first ^= static_cast<std::uint64_t>(data[index]);
-            first *= 1099511628211ull;
-            second ^= static_cast<std::uint64_t>(data[index] + 0x9du);
-            second *= 14029467366897019727ull;
-        }
-        first ^= static_cast<std::uint64_t>(size);
-        first *= 1099511628211ull;
-        second ^= static_cast<std::uint64_t>(size << 1u);
-        second *= 14029467366897019727ull;
-    };
-    auto append_buffer = [&](const char* label, const Buffer& buffer) {
-        append(label, std::strlen(label));
-        append(buffer.view.buf, static_cast<std::size_t>(buffer.view.len));
-    };
-    append("mc2_mesh_static_input_v0", 24);
-    append(&object_pointer, sizeof(object_pointer));
-    append(&mesh_pointer, sizeof(mesh_pointer));
-    append(&pin_enabled, sizeof(pin_enabled));
-    append(&has_uv_layer, sizeof(has_uv_layer));
-    append(pin_name, static_cast<std::size_t>(pin_name_size));
-    append_buffer("positions", positions);
-    append_buffer("normals", normals);
-    append_buffer("edges", edges);
-    append_buffer("triangles", triangles);
-    append_buffer("loop_uvs", loop_uvs);
-    append_buffer("pin_weights", pin_weights);
+    Mc2StaticFingerprintV0 fingerprint;
+    fingerprint.append("mc2_mesh_static_input_v0", 24);
+    fingerprint.append(&object_pointer, sizeof(object_pointer));
+    fingerprint.append(&mesh_pointer, sizeof(mesh_pointer));
+    fingerprint.append(&pin_enabled, sizeof(pin_enabled));
+    fingerprint.append(&has_uv_layer, sizeof(has_uv_layer));
+    fingerprint.append(pin_name, static_cast<std::size_t>(pin_name_size));
+    fingerprint.append_buffer("positions", positions);
+    fingerprint.append_buffer("normals", normals);
+    fingerprint.append_buffer("edges", edges);
+    fingerprint.append_buffer("triangles", triangles);
+    fingerprint.append_buffer("loop_uvs", loop_uvs);
+    fingerprint.append_buffer("pin_weights", pin_weights);
+    return fingerprint.finish();
+}
 
-    char encoded[33] {};
-    std::snprintf(
-        encoded,
-        sizeof(encoded),
-        "%016llx%016llx",
-        static_cast<unsigned long long>(first),
-        static_cast<unsigned long long>(second)
-    );
-    return PyUnicode_FromStringAndSize(encoded, 32);
+PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 8) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "mc2_bone_static_fingerprint_v0 expects 8 arguments, got %zd",
+            PyTuple_GET_SIZE(args)
+        );
+        return nullptr;
+    }
+    Buffer parents, head_tail, matrices;
+    if (!parents.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "parents") ||
+        !head_tail.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "head_tail") ||
+        !matrices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "matrices")) {
+        return nullptr;
+    }
+    if (!expect_int32(parents, "parents") || parents.view.ndim != 1 ||
+        !expect_float32(head_tail, "head_tail") || head_tail.view.ndim != 1 ||
+        head_tail.view.shape[0] != parents.view.shape[0] * 6 ||
+        !finite_floats(head_tail, "head_tail") ||
+        !expect_float32(matrices, "matrices") || matrices.view.ndim != 1 ||
+        matrices.view.shape[0] != parents.view.shape[0] * 16 ||
+        !finite_floats(matrices, "matrices")) {
+        return nullptr;
+    }
+    const auto* parent_values = static_cast<const std::int32_t*>(parents.view.buf);
+    for (Py_ssize_t index = 0; index < parents.view.shape[0]; ++index) {
+        if (parent_values[index] < -1 || parent_values[index] >= parents.view.shape[0]) {
+            PyErr_SetString(PyExc_ValueError, "parents contains an invalid bone index");
+            return nullptr;
+        }
+    }
+
+    const auto armature_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 3));
+    const char* text_values[3] {};
+    Py_ssize_t text_sizes[3] {};
+    for (int index = 0; index < 3; ++index) {
+        text_values[index] = PyUnicode_AsUTF8AndSize(
+            PyTuple_GET_ITEM(args, 4 + index),
+            &text_sizes[index]
+        );
+        if (text_values[index] == nullptr) return nullptr;
+    }
+    const int resolved = PyObject_IsTrue(PyTuple_GET_ITEM(args, 7));
+    if (PyErr_Occurred() || resolved < 0) return nullptr;
+
+    Mc2StaticFingerprintV0 fingerprint;
+    fingerprint.append("mc2_bone_static_input_v0", 24);
+    fingerprint.append(&armature_pointer, sizeof(armature_pointer));
+    fingerprint.append(&resolved, sizeof(resolved));
+    for (int index = 0; index < 3; ++index) {
+        fingerprint.append(text_values[index], static_cast<std::size_t>(text_sizes[index]));
+    }
+    fingerprint.append_buffer("parents", parents);
+    fingerprint.append_buffer("head_tail", head_tail);
+    fingerprint.append_buffer("matrices", matrices);
+    return fingerprint.finish();
 }
 
 }  // namespace hotools

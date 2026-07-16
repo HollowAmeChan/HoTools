@@ -122,7 +122,7 @@ def topology_input_signature_for_task(task: "MC2TaskSpec") -> str:
         if task.setup_type == "mesh_cloth":
             source_signature = _mesh_input_digest(source)
         else:
-            source_signature = _signature(_bone_payload(source))
+            source_signature = _bone_input_digest(source)
         digest.update(source_signature.encode("ascii"))
     return digest.hexdigest()
 
@@ -250,7 +250,7 @@ def _collect_bone_names(collection, requested: tuple[str, ...]) -> tuple[str, ..
     return tuple(ordered)
 
 
-def _bone_payload(source) -> dict:
+def _bone_source_selection(source):
     if isinstance(source, tuple) and len(source) == 2:
         armature = source[0]
         requested = (str(source[1] or ""),)
@@ -275,6 +275,43 @@ def _bone_payload(source) -> dict:
     else:
         names = _collect_bone_names(collection, requested)
 
+    return armature, collection, requested, explicit_chain, names
+
+
+def _bone_input_digest(source) -> str:
+    armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
+    name_to_index = {name: index for index, name in enumerate(names)}
+    parents = np.empty(len(names), dtype=np.int32)
+    head_tail = np.empty((len(names), 6), dtype=np.float32)
+    matrices = np.empty((len(names), 16), dtype=np.float32)
+    for index, name in enumerate(names):
+        bone = _collection_get(collection, name) if collection is not None else None
+        parent_name = str(getattr(getattr(bone, "parent", None), "name", "") or "")
+        parents[index] = name_to_index.get(parent_name, -1)
+        head_tail[index, :3] = _vector3(getattr(bone, "head_local", None))
+        head_tail[index, 3:] = _vector3(getattr(bone, "tail_local", None))
+        matrices[index] = _matrix16(getattr(bone, "matrix_local", None))
+    resolved = (
+        collection is not None and len(names) == len(requested)
+        if explicit_chain
+        else collection is not None and bool(names)
+    )
+    from .native import native_module
+
+    return str(native_module().mc2_bone_static_fingerprint_v0(
+        parents,
+        head_tail.reshape((-1,)),
+        matrices.reshape((-1,)),
+        _pointer(armature),
+        str(getattr(armature, "name_full", getattr(armature, "name", "")) or ""),
+        "\0".join(requested),
+        "\0".join(names),
+        resolved,
+    ))
+
+
+def _bone_payload(source) -> dict:
+    armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
     records = []
     for name in names:
