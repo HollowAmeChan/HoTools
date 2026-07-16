@@ -104,6 +104,7 @@ class MC2MeshRawSnapshot:
     normals: np.ndarray
     edges: np.ndarray
     triangles: np.ndarray
+    polygon_loop_totals: np.ndarray
     loop_vertices: np.ndarray
     loop_uvs: np.ndarray
     pin_weights: np.ndarray
@@ -138,6 +139,8 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
     mesh.calc_loop_triangles()
     triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
     mesh.loop_triangles.foreach_get("vertices", triangles)
+    polygon_loop_totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", polygon_loop_totals)
     loop_vertices = np.empty(len(mesh.loops), dtype=np.int32)
     mesh.loops.foreach_get("vertex_index", loop_vertices)
     uv_layer = getattr(getattr(mesh, "uv_layers", None), "active", None)
@@ -168,6 +171,7 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
         normals=normals.reshape((-1, 3)),
         edges=edges.reshape((-1, 2)),
         triangles=triangles.reshape((-1, 3)),
+        polygon_loop_totals=polygon_loop_totals,
         loop_vertices=loop_vertices,
         loop_uvs=uvs.reshape((-1, 2)),
         pin_weights=weights,

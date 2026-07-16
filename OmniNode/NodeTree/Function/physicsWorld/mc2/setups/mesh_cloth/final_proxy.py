@@ -633,11 +633,21 @@ def build_blender_mesh_final_proxy(
     native_context=None,
     raw_snapshot=None,
 ) -> MC2MeshFinalProxyBuildResult:
-    from .base_pose import mesh_topology_signature
+    from .base_pose import mesh_topology_signature, mesh_topology_signature_from_arrays
 
     if obj is None or getattr(obj, "type", None) != "MESH" or obj.data is None:
         raise ValueError("MeshCloth final proxy target must be a Mesh object")
-    actual_mesh_topology_signature = mesh_topology_signature(obj)
+    actual_mesh_topology_signature = (
+        mesh_topology_signature_from_arrays(
+            len(raw_snapshot.positions),
+            raw_snapshot.edges,
+            raw_snapshot.polygon_loop_totals,
+            raw_snapshot.loop_vertices,
+            raw_snapshot.triangles,
+        )
+        if raw_snapshot is not None
+        else mesh_topology_signature(obj)
+    )
     if (
         expected_mesh_topology_signature
         and actual_mesh_topology_signature != expected_mesh_topology_signature

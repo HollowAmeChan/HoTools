@@ -167,6 +167,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert base_obj.data.attributes.get(world_names.GN_OFFSET_ATTRIBUTE_NAME) is None
         assert base_obj[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] == topology_signature
 
+        base_obj[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] = "legacy-topology-token"
+        base_pose.validate_base_pose_proxy(source, base_obj, topology_signature)
+        assert base_obj[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] == topology_signature
+
         armature_obj.pose.bones["BasePoseBone"].location = (0.5, 0.0, 0.0)
         depsgraph = _update_depsgraph()
         cache = {}

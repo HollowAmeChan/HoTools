@@ -12,9 +12,9 @@ frame_input.py 负责，其余步骤由新 physicsWorld.mc2 slot/native 路径�
 """
 
 import hashlib
-import json
 
 import bpy
+import numpy as np
 
 from ....gn_offset import remove_gn_offset_output
 from .delta_output import PhysicsDeltaOutputSpec
@@ -76,35 +76,54 @@ def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
     return (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
 
 
+def mesh_topology_signature_from_arrays(
+    vertex_count: int,
+    edges,
+    polygon_loop_totals,
+    loop_vertices,
+    triangles,
+) -> str:
+    canonical_edges = np.asarray(edges, dtype="<i4").reshape((-1, 2)).copy()
+    canonical_edges.sort(axis=1)
+    if len(canonical_edges):
+        order = np.lexsort((canonical_edges[:, 1], canonical_edges[:, 0]))
+        canonical_edges = np.ascontiguousarray(canonical_edges[order])
+
+    arrays = (
+        canonical_edges,
+        np.asarray(polygon_loop_totals, dtype="<i4").reshape((-1,)),
+        np.asarray(loop_vertices, dtype="<i4").reshape((-1,)),
+        np.asarray(triangles, dtype="<i4").reshape((-1, 3)),
+    )
+    digest = hashlib.sha256(b"mc2_mesh_topology_v1\0")
+    digest.update(np.asarray((int(vertex_count),), dtype="<i8").tobytes())
+    for values in arrays:
+        contiguous = np.ascontiguousarray(values, dtype="<i4")
+        digest.update(np.asarray(contiguous.shape, dtype="<i8").tobytes())
+        digest.update(contiguous.tobytes())
+    return digest.hexdigest()
+
+
 def mesh_topology_signature(obj: bpy.types.Object) -> str:
     if not _is_live_mesh_object(obj):
         raise ValueError("拓扑签名目标必须是Mesh")
     mesh = obj.data
-    edges = []
-    for edge in mesh.edges:
-        first, second = (int(value) for value in edge.vertices)
-        edges.append((first, second) if first < second else (second, first))
-    edges.sort()
-    polygons = tuple(
-        tuple(int(value) for value in polygon.vertices)
-        for polygon in mesh.polygons
+    mesh.calc_loop_triangles()
+    edges = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+    polygon_loop_totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    loop_vertices = np.empty(len(mesh.loops), dtype=np.int32)
+    triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", edges)
+    mesh.polygons.foreach_get("loop_total", polygon_loop_totals)
+    mesh.loops.foreach_get("vertex_index", loop_vertices)
+    mesh.loop_triangles.foreach_get("vertices", triangles)
+    return mesh_topology_signature_from_arrays(
+        len(mesh.vertices),
+        edges,
+        polygon_loop_totals,
+        loop_vertices,
+        triangles,
     )
-    try:
-        mesh.calc_loop_triangles()
-    except Exception:
-        pass
-    triangles = tuple(
-        tuple(int(value) for value in triangle.vertices)
-        for triangle in mesh.loop_triangles
-    )
-    payload = {
-        "vertex_count": len(mesh.vertices),
-        "edges": edges,
-        "polygons": polygons,
-        "triangles": triangles,
-    }
-    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(encoded.encode("ascii")).hexdigest()
 
 
 def validate_base_pose_proxy(
@@ -130,7 +149,10 @@ def validate_base_pose_proxy(
     if expected:
         stored = str(base_obj.get(CACHE_TOPOLOGY_SIGNATURE_KEY, "") or "")
         if stored != expected:
-            raise ValueError("BasePose只读对象的Mesh拓扑签名与预期不一致")
+            actual = mesh_topology_signature(base_obj)
+            if actual != expected:
+                raise ValueError("BasePose只读对象的Mesh拓扑签名与预期不一致")
+            base_obj[CACHE_TOPOLOGY_SIGNATURE_KEY] = expected
 
 
 def ensure_cache_collection(scene: bpy.types.Scene = None) -> bpy.types.Collection:
