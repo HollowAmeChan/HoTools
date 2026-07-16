@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
-import json
 import math
 
 import numpy as np
@@ -39,9 +38,24 @@ MC2_NORMAL_ALIGNMENT_TRANSFORM = 2
 MC2_NORMAL_ADJUSTMENT_EPSILON = 1.0e-6
 
 
-def _signature(value: object) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+def mc2_bone_static_content_signature(
+    *,
+    proxy_signature,
+    finalizer_signature,
+    baseline_signature,
+    normal_adjustment_rotations,
+    vertex_to_transform_rotations,
+) -> str:
+    digest = hashlib.sha256(b"mc2_bone_static_v4\0")
+    for value in (proxy_signature, finalizer_signature, baseline_signature):
+        digest.update(str(value or "").encode("ascii"))
+    digest.update(
+        np.ascontiguousarray(normal_adjustment_rotations, dtype=np.float64).tobytes()
+    )
+    digest.update(
+        np.ascontiguousarray(vertex_to_transform_rotations, dtype=np.float64).tobytes()
+    )
+    return digest.hexdigest()
 
 
 def _tuple_vectors(values: np.ndarray) -> tuple[tuple[float, ...], ...]:
@@ -259,7 +273,13 @@ class MC2BoneStaticSpec:
             count=self.proxy.vertex_count,
         ):
             raise TypeError("vertex_to_transform_rotations must contain immutable tuples")
-        if self.static_signature != _signature(self.signature_payload()):
+        if self.static_signature != mc2_bone_static_content_signature(
+            proxy_signature=self.proxy.proxy_signature,
+            finalizer_signature=self.finalizer.finalizer_signature,
+            baseline_signature=self.baseline.baseline_signature,
+            normal_adjustment_rotations=self.normal_adjustment_rotations,
+            vertex_to_transform_rotations=self.vertex_to_transform_rotations,
+        ):
             raise ValueError("static_signature does not match Bone static payload")
 
     def signature_payload(self) -> dict:
@@ -433,7 +453,13 @@ def build_mc2_bone_static(
         baseline=baseline,
         normal_adjustment_rotations=adjustment_rotations,
         vertex_to_transform_rotations=to_transform,
-        static_signature=_signature(payload),
+        static_signature=mc2_bone_static_content_signature(
+            proxy_signature=payload["proxy_signature"],
+            finalizer_signature=payload["finalizer_signature"],
+            baseline_signature=payload["baseline_signature"],
+            normal_adjustment_rotations=payload["normal_adjustment_rotations"],
+            vertex_to_transform_rotations=payload["vertex_to_transform_rotations"],
+        ),
         baseline_native_registration=transform_baseline.get("native_registration"),
         proxy_native_registration=raw.native_proxy_registration,
         bone_native_registration=bone_native_registration,
@@ -474,4 +500,5 @@ __all__ = [
     "build_mc2_bone_static",
     "pack_mc2_bone_registration_static",
     "pack_mc2_bone_static",
+    "mc2_bone_static_content_signature",
 ]

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 import math
 
 import numpy as np
@@ -19,16 +18,6 @@ from .names import MC2_SETUP_TYPES
 
 
 MC2_STATIC_SCHEMA_VERSION = 1
-
-
-def _signature(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def mc2_proxy_content_signature(
@@ -63,6 +52,68 @@ def mc2_proxy_content_signature(
     return digest.hexdigest()
 
 
+def mc2_proxy_finalizer_content_signature(
+    *,
+    proxy_signature,
+    vertex_count,
+    vertex_to_vertex_ranges,
+    vertex_to_vertex_data,
+    vertex_to_triangle_ranges,
+    vertex_to_triangle_data,
+    vertex_bind_pose_positions,
+    vertex_bind_pose_rotations,
+) -> str:
+    digest = hashlib.sha256(b"mc2_proxy_finalizer_static_v2\0")
+    digest.update(str(proxy_signature or "").encode("ascii"))
+    digest.update(int(vertex_count).to_bytes(8, "little", signed=False))
+    for name, values, dtype in (
+        ("vertex_to_vertex_ranges", vertex_to_vertex_ranges, np.int32),
+        ("vertex_to_vertex_data", vertex_to_vertex_data, np.int32),
+        ("vertex_to_triangle_ranges", vertex_to_triangle_ranges, np.int32),
+        ("vertex_to_triangle_data", vertex_to_triangle_data, np.int32),
+        ("vertex_bind_pose_positions", vertex_bind_pose_positions, np.float64),
+        ("vertex_bind_pose_rotations", vertex_bind_pose_rotations, np.float64),
+    ):
+        digest.update(name.encode("ascii"))
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
+
+
+def mc2_baseline_content_signature(
+    *,
+    proxy_signature,
+    vertex_count,
+    parent_indices,
+    child_ranges,
+    child_data,
+    baseline_flags,
+    baseline_ranges,
+    baseline_data,
+    root_indices,
+    depths,
+    vertex_local_positions,
+    vertex_local_rotations,
+) -> str:
+    digest = hashlib.sha256(b"mc2_baseline_static_v2\0")
+    digest.update(str(proxy_signature or "").encode("ascii"))
+    digest.update(int(vertex_count).to_bytes(8, "little", signed=False))
+    for name, values, dtype in (
+        ("parent_indices", parent_indices, np.int32),
+        ("child_ranges", child_ranges, np.int32),
+        ("child_data", child_data, np.int32),
+        ("baseline_flags", baseline_flags, np.uint8),
+        ("baseline_ranges", baseline_ranges, np.int32),
+        ("baseline_data", baseline_data, np.int32),
+        ("root_indices", root_indices, np.int32),
+        ("depths", depths, np.float64),
+        ("vertex_local_positions", vertex_local_positions, np.float64),
+        ("vertex_local_rotations", vertex_local_rotations, np.float64),
+    ):
+        digest.update(name.encode("ascii"))
+        digest.update(np.ascontiguousarray(values, dtype=dtype).tobytes())
+    return digest.hexdigest()
+
+
 def _finite(value: object, name: str) -> float:
     try:
         number = float(value)
@@ -75,6 +126,16 @@ def _finite(value: object, name: str) -> float:
 
 def _values_or_empty(values):
     return () if values is None else values
+
+
+def _dense_triangle_records(rows) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
+    ranges = []
+    data = []
+    for row in rows:
+        ranges.append((len(data) // 2, len(row)))
+        for first, second in row:
+            data.extend((int(first), int(second)))
+    return tuple(ranges), tuple(data)
 
 
 def _vectors(values, width: int, name: str, *, count: int | None = None) -> tuple:
@@ -421,7 +482,19 @@ class MC2ProxyFinalizerStaticSpec:
             count=self.vertex_count,
         ):
             raise TypeError("vertex bind pose rotations must be immutable tuples")
-        expected = _signature(self.signature_payload())
+        triangle_ranges, triangle_data = _dense_triangle_records(
+            self.vertex_to_triangle_records
+        )
+        expected = mc2_proxy_finalizer_content_signature(
+            proxy_signature=self.proxy_signature,
+            vertex_count=self.vertex_count,
+            vertex_to_vertex_ranges=self.vertex_to_vertex_ranges,
+            vertex_to_vertex_data=self.vertex_to_vertex_data,
+            vertex_to_triangle_ranges=triangle_ranges,
+            vertex_to_triangle_data=triangle_data,
+            vertex_bind_pose_positions=self.vertex_bind_pose_positions,
+            vertex_bind_pose_rotations=self.vertex_bind_pose_rotations,
+        )
         if self.finalizer_signature != expected:
             raise ValueError("finalizer_signature does not match proxy finalizer payload")
 
@@ -525,9 +598,19 @@ def make_mc2_proxy_finalizer_static_spec(
             count=count,
         ),
     }
+    triangle_ranges, triangle_data = _dense_triangle_records(payload["vertex_to_triangle_records"])
     return MC2ProxyFinalizerStaticSpec(
         **payload,
-        finalizer_signature=_signature(payload),
+        finalizer_signature=mc2_proxy_finalizer_content_signature(
+            proxy_signature=payload["proxy_signature"],
+            vertex_count=payload["vertex_count"],
+            vertex_to_vertex_ranges=payload["vertex_to_vertex_ranges"],
+            vertex_to_vertex_data=payload["vertex_to_vertex_data"],
+            vertex_to_triangle_ranges=triangle_ranges,
+            vertex_to_triangle_data=triangle_data,
+            vertex_bind_pose_positions=payload["vertex_bind_pose_positions"],
+            vertex_bind_pose_rotations=payload["vertex_bind_pose_rotations"],
+        ),
     )
 
 
@@ -568,7 +651,20 @@ class MC2BaselineStaticSpec:
         if any(not isinstance(values, tuple) for values in tuple_fields):
             raise TypeError("MC2 baseline static arrays must be immutable tuples")
         _validate_baseline_contract(self)
-        expected = _signature(self.signature_payload())
+        expected = mc2_baseline_content_signature(
+            proxy_signature=self.proxy_signature,
+            vertex_count=self.vertex_count,
+            parent_indices=self.parent_indices,
+            child_ranges=self.child_ranges,
+            child_data=self.child_data,
+            baseline_flags=self.baseline_flags,
+            baseline_ranges=self.baseline_ranges,
+            baseline_data=self.baseline_data,
+            root_indices=self.root_indices,
+            depths=self.depths,
+            vertex_local_positions=self.vertex_local_positions,
+            vertex_local_rotations=self.vertex_local_rotations,
+        )
         if self.baseline_signature != expected:
             raise ValueError("baseline_signature does not match baseline static payload")
 
@@ -768,7 +864,23 @@ def make_mc2_baseline_static_spec(
     }
     if not payload["proxy_signature"]:
         raise ValueError("proxy_signature cannot be empty")
-    return MC2BaselineStaticSpec(**payload, baseline_signature=_signature(payload))
+    return MC2BaselineStaticSpec(
+        **payload,
+        baseline_signature=mc2_baseline_content_signature(
+            proxy_signature=payload["proxy_signature"],
+            vertex_count=payload["vertex_count"],
+            parent_indices=payload["parent_indices"],
+            child_ranges=payload["child_ranges"],
+            child_data=payload["child_data"],
+            baseline_flags=payload["baseline_flags"],
+            baseline_ranges=payload["baseline_ranges"],
+            baseline_data=payload["baseline_data"],
+            root_indices=payload["root_indices"],
+            depths=payload["depths"],
+            vertex_local_positions=payload["vertex_local_positions"],
+            vertex_local_rotations=payload["vertex_local_rotations"],
+        ),
+    )
 
 
 def pack_mc2_proxy_static(spec: MC2ProxyStaticSpec) -> dict[str, np.ndarray]:
@@ -861,7 +973,9 @@ __all__ = [
     "make_mc2_baseline_static_spec",
     "make_mc2_proxy_finalizer_static_spec",
     "make_mc2_proxy_static_spec",
+    "mc2_baseline_content_signature",
     "mc2_proxy_content_signature",
+    "mc2_proxy_finalizer_content_signature",
     "pack_mc2_baseline_static",
     "pack_mc2_proxy_finalizer_static",
     "pack_mc2_proxy_static",

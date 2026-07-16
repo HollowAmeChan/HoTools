@@ -10,7 +10,6 @@ break. No Blender data or evaluated frame pose enters this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 
 import numpy as np
 
@@ -19,6 +18,7 @@ from .static_data import (
     MC2ProxyStaticSpec,
     make_mc2_baseline_static_spec,
     make_mc2_proxy_static_spec,
+    mc2_baseline_content_signature,
 )
 
 
@@ -107,22 +107,20 @@ class MC2MeshBaselineNativeData:
 
 
 def _baseline_content_signature(proxy_signature: str, values: dict) -> str:
-    digest = hashlib.sha256(b"mc2_mesh_baseline_native_v0\0")
-    digest.update(proxy_signature.encode("ascii"))
-    for name, dtype in (
-        ("parents", np.int32),
-        ("child_ranges", np.int32),
-        ("child_data", np.int32),
-        ("baseline_flags", np.uint8),
-        ("baseline_ranges", np.int32),
-        ("baseline_data", np.int32),
-        ("roots", np.int32),
-        ("depths", np.float64),
-        ("local_positions", np.float64),
-        ("local_rotations", np.float64),
-    ):
-        digest.update(np.ascontiguousarray(values[name], dtype=dtype).tobytes())
-    return digest.hexdigest()
+    return mc2_baseline_content_signature(
+        proxy_signature=proxy_signature,
+        vertex_count=len(values["parents"]),
+        parent_indices=values["parents"],
+        child_ranges=values["child_ranges"],
+        child_data=values["child_data"],
+        baseline_flags=values["baseline_flags"],
+        baseline_ranges=values["baseline_ranges"],
+        baseline_data=values["baseline_data"],
+        root_indices=values["roots"],
+        depths=values["depths"],
+        vertex_local_positions=values["local_positions"],
+        vertex_local_rotations=values["local_rotations"],
+    )
 
 
 def _replace_proxy_attributes(

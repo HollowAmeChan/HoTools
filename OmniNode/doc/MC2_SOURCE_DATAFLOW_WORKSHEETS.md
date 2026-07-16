@@ -312,6 +312,8 @@ Blender authoring/frame input
 
 22. Bone transform-baseline producer同次产出final attributes/root/depth/local pose，不得恢复第二次`_build_native_baseline_pose_depth`调用。生产注册顺序固定为Proxy owner、Baseline owner、Distance/Center/Self owner、Bone registration owner，`owned_static_take_count`固定为6。完整Bone tuple bundle当前只允许活到本次`update_bone_static`完成，随后压缩成`MC2BoneClothStaticMetadata`；slot只保留stable identities、Proxy attributes/edges/triangles、debug depths、count/signature与connection product metadata。结果写回必须直接消费`final_proxy.vertex_identities`。P-06d下一步必须用staged Bone native data消除同次prepare的完整tuple派生树，不得把owner已move误称为host transient已清零。
 
+23. Finalizer、Baseline与Bone static内容签名必须使用`mc2_proxy_finalizer_static_v2`、`mc2_baseline_static_v2`、`mc2_bone_static_v4`固定标签与固定dtype连续字节流；显式spec和staged native data必须调用同一函数。不得恢复`json.dumps`、逐element字符串拼接、仅生产侧私有哈希或为签名重建tuple/list树。签名算法变化会自然触发slot/cache重建，不得把旧token误当跨schema持久合同。
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |
