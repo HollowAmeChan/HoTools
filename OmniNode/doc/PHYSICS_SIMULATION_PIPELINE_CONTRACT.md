@@ -117,6 +117,50 @@ Cache Read
 - 不提交 runtime cache。
 - 不直接导入或点名具体 solver 域。需要从 scope 派生 solver spec 时，只能通过 `physicsWorld/registry.py` 调用已装载 solver module 声明的 hook；solver declaration 汇总也由 registry descriptor 提供，公共层只保留兼容导出。
 
+### 统一时间合同
+
+Physics World 是节点图内唯一的基础时间生产者。Blender 输出设置决定未缩放的真实帧时长：
+
+```text
+scene_fps = Scene.render.fps / Scene.render.fps_base
+frame_context.raw_dt = 1 / scene_fps
+frame_context.dt = frame_context.raw_dt * frame_context.time_scale
+```
+
+`raw_dt` 和 `dt` 的单位都是秒。`fps_base` 必须参与计算，因此 29.97/59.94 等非整数输出帧率不能退化为整数 fps。场景帧率无效或不可读取时由 Physics World 明确报错或采用公共层定义的降级；solver 不得各自选择 fallback。
+
+所有 solver 共同遵守：
+
+- `frame_context.raw_dt` 是 Blender 当前输出设置对应的未缩放帧时长，只有 Physics World Begin 可以从 Scene 生产它。
+- `frame_context.dt` 是应用世界级 `time_scale` 后的统一基础步长。Rigid、SpringBone、MC2 和未来 solver 都必须从同一个 world owner 消费该值，不得自行读取 `Scene.render`、重新计算 fps，或用固定 `1/24`、`1/30`、`1/60` 替代有效 world 时间。
+- solver 可以保留局部 `time_scale` 作为产品调参，但它只能是统一基础时间之上的乘数：`solver_dt = frame_context.dt * solver_time_scale`。默认值必须为 1；局部倍率不得反向改写 `frame_context`，也不得成为第二个场景时间源。
+- 固定频率 scheduler、substeps、iterations 和 catch-up 上限只决定怎样离散、累计或限制 `solver_dt`，不改变时间来源。它们不得隐式假设 Blender 是 60 fps。
+- `frame_context.time_scale == 0` 或 `frame_context.dt == 0` 表示统一暂停。solver 可以同步参数、拓扑、动画输入、命令和只读结果，但不得推进数值时间；不能以 fallback dt 偷跑一步。
+- `same_frame=True` 时不得再次累计时间或再次执行 backend step。重复求值只能复用/重发同帧结果，或消费明确允许的同帧命令。
+- 跳帧、倒放、reset 或 scope restart 走 `restart_required` 冷启动合同，不把帧号差乘进 `dt` 追赶历史。需要 catch-up 的 realtime scheduler 只能消费自己已经从连续 world 帧累计的时间。
+- 需要在暂停帧观察动画坐标变化的 solver，可以用 `raw_dt` 维护输入历史或 debug 判定，但必须显式标明该数据不代表数值解算推进；不能从零 `dt` 反推一个私有帧时长。
+
+允许的从属关系：
+
+```text
+Blender render fps/fps_base
+  -> Physics World raw_dt
+  -> world time_scale
+  -> Physics World dt
+  -> optional solver-local time_scale
+  -> scheduler/substeps/native step
+```
+
+禁止的平行关系：
+
+```text
+Solver -> Scene.render fps
+Solver -> hard-coded fallback dt
+Solver-local time_scale -> rewrite world dt
+```
+
+时间合同的最低验收矩阵必须覆盖 24、30、60、`fps_base != 1`、世界倍率 0/非1、局部倍率 0/非1、same-frame 和 restart；测试应比较各 solver 实际提交给 backend/scheduler 的累计秒数，而不只检查 UI socket 值。
+
 ### Physics Entity / Spec Build
 
 职责：

@@ -66,11 +66,11 @@ physicsWorld/
 
 | Domain | 当前状态 | 已成立边界 | 主要未完成项/入口 |
 |---|---|---|---|
-| World core | 可用 | Begin/Commit、scope、slot/resource/result/exchange、channel registry、writeback、dispose、debug snapshot | 跨solver交互仍需真实业务闭环 |
+| World core | 可用 | Begin按Blender `fps/fps_base`统一生产raw_dt/dt；Begin/Commit、scope、slot/resource/result/exchange、channel registry、writeback、dispose、debug snapshot | 统一时间验收矩阵仍需覆盖全部solver；跨solver交互仍需真实业务闭环 |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、公共snapshot与capability | 继续消除solver私有重复resolver |
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
-| Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
+| Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
 | MC2 | 维护态总门禁已关闭 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark均已关闭；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立 | `solver_acceptance_blocker=False`；按`MC2_BLUEPRINT.md`维护和扩展，不恢复旧路径 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
