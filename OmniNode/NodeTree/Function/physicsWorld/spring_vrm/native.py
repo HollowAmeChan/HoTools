@@ -1007,9 +1007,9 @@ def _scope_allows_bone_collider(world, armature) -> bool:
         if not isinstance(item, tuple) or len(item) != 2 or item[0] != "flags":
             continue
         flags = item[1]
-        if isinstance(flags, tuple) and len(flags) >= 6:
+        if isinstance(flags, tuple) and len(flags) >= 5:
             include_bone_collision = bool(flags[1])
-            include_hidden = bool(flags[5])
+            include_hidden = bool(flags[4])
         break
     if not include_bone_collision:
         return False
