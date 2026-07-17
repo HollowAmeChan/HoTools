@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import types
+import unicodedata
 from dataclasses import replace
 
 import bpy
@@ -484,12 +485,26 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         mc2_nodes.physicsMC2Step,
         mc2_nodes.physicsMC2DebugDraw,
     )
+    oversized_tooltips = []
     for public_node in public_mc2_nodes:
         settings = function_node_core.CheckMetaInfo(public_node)[5]
-        assert all(
-            settings[identifier].get("description")
-            for identifier in inspect.signature(public_node).parameters
-        ), public_node.__name__
+        for identifier in inspect.signature(public_node).parameters:
+            description = settings[identifier].get("description")
+            assert description, (public_node.__name__, identifier)
+            byte_length = len(description.encode("utf-8"))
+            if byte_length > 60:
+                oversized_tooltips.append(
+                    (public_node.__name__, identifier, byte_length, description)
+                )
+            for line in description.splitlines():
+                display_width = sum(
+                    2 if unicodedata.east_asian_width(character) in "WFA" else 1
+                    for character in line
+                )
+                assert display_width <= 56, (
+                    public_node.__name__, identifier, display_width, line
+                )
+    assert not oversized_tooltips, oversized_tooltips
     source_socket_contracts = (
         (
             mc2_nodes.physicsMC2MeshClothTask,
@@ -597,11 +612,11 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
             assert settings[identifier].get("description"), (
                 profile_node.__name__, identifier
             )
-        assert "0=+X" in settings["normal_axis"]["description"]
-        assert "1=Reset" in settings["teleport_mode"]["description"]
+        assert "0:+X" in settings["normal_axis"]["description"]
+        assert "1:Reset" in settings["teleport_mode"]["description"]
     for profile_node in cloth_profile_nodes:
         settings = function_node_core.CheckMetaInfo(profile_node)[5]
-        assert "1=Point" in settings["collision_mode"]["description"]
+        assert "1:Point" in settings["collision_mode"]["description"]
 
     for task_node in (
         mc2_nodes.physicsMC2BoneClothTask,

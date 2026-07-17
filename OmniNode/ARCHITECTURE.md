@@ -1032,6 +1032,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 维护重点：
 
 - 普通函数节点应保持“输入参数 -> 返回值”的模型，复杂逻辑也应尽量在函数内部或 helper 中收敛。
+- `input_init.description` 写入 Blender `NodeSocket.description` 后最多保留 64 个 UTF-8 字节；公开 socket 描述必须控制在 60 字节以内。枚举优先写短值映射，需要分行时使用显式换行，不得依赖 tooltip 自动换行。
 - 需要临时跨帧状态时，暴露 `_OmniCache` 输入/输出，并要求用户接 cache 读写/删除节点；函数内部不得保存隐藏跨帧状态。
 - 需要 C++ 加速时，优先新增平行节点，不要让原 Python 蓝本丢失。
 
