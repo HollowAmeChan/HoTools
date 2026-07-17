@@ -67,7 +67,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.frame_state", "make_mc2_frame_input"),
     ("mc2.interaction_scope", "_mesh_collision_properties"),
     ("mc2.mesh_baseline", "baseline_count"),
-    ("mc2.nodes", "physicsMC2SolverSettings"),
     ("mc2.nodes", "physicsMC2MeshClothTask"),
     ("mc2.nodes", "physicsMC2BoneClothTask"),
     ("mc2.nodes", "physicsMC2BoneSpringTask"),
@@ -97,7 +96,9 @@ ALLOWED_FORWARDERS = {
 
 FORBIDDEN_PRODUCT_FUNCTIONS = {
     ("mc2.interaction_scope", "explicit_partner_pairs"),
+    ("mc2.nodes", "physicsMC2SolverSettings"),
 }
+FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
 FORBIDDEN_MESH_RNA_FIELDS = {
     "enabled",
     "radius",
@@ -280,6 +281,19 @@ def _python_facts() -> dict:
                     forwarders.append({"module": module_name, **fact})
             elif isinstance(node, ast.ClassDef):
                 classes.append({"name": node.name, "line": node.lineno})
+                if node.name == "MC2SolverSettingsSpec":
+                    for field in node.body:
+                        if (
+                            not isinstance(field, ast.AnnAssign)
+                            or not isinstance(field.target, ast.Name)
+                        ):
+                            continue
+                        if field.target.id in FORBIDDEN_SOLVER_SETTING_FIELDS:
+                            product_boundary_violations.append({
+                                "module": module_name,
+                                "line": field.lineno,
+                                "name": field.target.id,
+                            })
                 if node.name.endswith("State"):
                     for field in node.body:
                         if not isinstance(field, ast.AnnAssign) or not isinstance(field.target, ast.Name):

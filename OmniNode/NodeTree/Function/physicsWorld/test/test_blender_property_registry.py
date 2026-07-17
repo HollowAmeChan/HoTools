@@ -335,7 +335,6 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         node.__meta["bl_label"]
         for node in (
             mc2_nodes.physicsMC2ParticleProfile,
-            mc2_nodes.physicsMC2SolverSettings,
             mc2_nodes.physicsMC2MeshClothTask,
             mc2_nodes.physicsMC2BoneClothTask,
             mc2_nodes.physicsMC2BoneSpringTask,
@@ -343,7 +342,6 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         )
     ) == (
         "MC2粒子配置",
-        "MC2模拟设置",
         "MC2 MeshCloth任务（框架）",
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
@@ -356,8 +354,24 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         "MC2可视化调试",
         "MC2 MeshCloth任务（框架）",
         "MC2粒子配置",
-        "MC2模拟设置",
         "MC2模拟步（框架）",
+    )
+    assert not hasattr(mc2_nodes, "physicsMC2SolverSettings")
+    assert tuple(inspect.signature(mc2_nodes.physicsMC2Step).parameters) == (
+        "world",
+        "mc2_tasks",
+        "time_scale",
+        "simulation_frequency",
+        "max_simulation_count_per_frame",
+        "enabled",
+    )
+    assert tuple(mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"]) == (
+        "物理世界",
+        "MC2任务",
+        "时间缩放",
+        "模拟频率",
+        "每帧最大模拟次数",
+        "启用",
     )
 
     declaration = solver_registry.resolve_solver_declaration("mc2")
@@ -787,9 +801,15 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert physics_world.solver_slots[soft_task.task_id].data["spec"] is soft_task
     assert physics_world.solver_slots[soft_task.task_id].data["native_context"] is mesh_native_context
 
-    stepped_settings = mc2_parameters.make_mc2_solver_settings(substeps=2)
-    _, _, status = mc2_solver.step_mc2(
-        physics_world, updated_tasks, settings=stepped_settings
+    stepped_settings = mc2_parameters.make_mc2_solver_settings(time_scale=0.5)
+    _, _, status = mc2_nodes.physicsMC2Step(
+        physics_world,
+        updated_tasks,
+        time_scale=stepped_settings.time_scale,
+        simulation_frequency=stepped_settings.simulation_frequency,
+        max_simulation_count_per_frame=(
+            stepped_settings.max_simulation_count_per_frame
+        ),
     )
     assert "更新 3" in status
     assert all(
@@ -840,15 +860,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         spring_enabled=True,
         spring_power=0.07,
     )
-    settings = mc2_parameters.make_mc2_solver_settings(substeps=2, iterations=6)
     mesh_effective = mc2_parameters.make_mc2_effective_parameters(
         source_profile,
-        settings,
         mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_MESH_CLOTH),
     ).debug_dict()
     spring_effective = mc2_parameters.make_mc2_effective_parameters(
         source_profile,
-        settings,
         mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_BONE_SPRING),
     ).debug_dict()
     assert mesh_effective["gravity"] == 9.8

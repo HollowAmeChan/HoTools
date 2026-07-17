@@ -123,6 +123,11 @@ def test_scheduler_rejects_overlapping_frames() -> None:
 
 def test_solver_settings_expose_source_scheduler_bounds() -> None:
     default = parameters.make_mc2_solver_settings()
+    assert tuple(default.debug_dict()) == (
+        "time_scale",
+        "simulation_frequency",
+        "max_simulation_count_per_frame",
+    )
     assert default.simulation_frequency == 90
     assert default.max_simulation_count_per_frame == 3
     configured = parameters.make_mc2_solver_settings(

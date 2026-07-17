@@ -224,10 +224,10 @@ def main():
         props.pin_enabled = True
         props.pin_vertex_group = "MC2Pin"
 
-        settings = parameters.make_mc2_solver_settings(
-            simulation_frequency=60,
-            max_simulation_count_per_frame=3,
-        )
+        step_settings = {
+            "simulation_frequency": 60,
+            "max_simulation_count_per_frame": 3,
+        }
         for cycle in range(int(scenario["cycles"])):
             pin_group.remove((0, 1, 2, 3))
             pin_group.add((0,), 1.0, "REPLACE")
@@ -280,7 +280,7 @@ def main():
                 }
                 started = time.perf_counter()
                 returned, ready, status = nodes.physicsMC2Step(
-                    world, tasks, settings=settings
+                    world, tasks, **step_settings
                 )
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 assert returned is world and ready is True, status
@@ -329,7 +329,9 @@ def main():
                         for task_id, slot in world.solver_slots.items()
                     }
                     _set_frame_context(world, frame, frame, cycle + 1)
-                    _, same_ready, _ = nodes.physicsMC2Step(world, tasks, settings=settings)
+                    _, same_ready, _ = nodes.physicsMC2Step(
+                        world, tasks, **step_settings
+                    )
                     assert same_ready is True
                     for task_id, slot in world.solver_slots.items():
                         candidate, step_count = before[task_id]

@@ -1,8 +1,8 @@
 """MC2 的纯参数规格与 Unity ClothParameters 归一化边界。
 
-本模块不接触 bpy、PhysicsWorld slot、旧 MC2 runtime 或写回设施。节点层产生
-``MC2ParticleProfileSpec`` / ``MC2SolverSettingsSpec``，solver 在真正计算前只消费
-``MC2EffectiveParametersSpec``。
+本模块不接触 bpy、PhysicsWorld slot、旧 MC2 runtime 或写回设施。粒子节点产生
+``MC2ParticleProfileSpec``；模拟步在被懒求值时规范化 ``MC2SolverSettingsSpec``；
+Tier A effective parameter oracle只组合profile与setup。
 """
 
 from __future__ import annotations
@@ -411,10 +411,8 @@ def make_mc2_particle_profile(
 
 @dataclass(frozen=True)
 class MC2SolverSettingsSpec:
-    """一次 MC2 step 共享的运算调度；物理参数全部留在 per-task profile。"""
+    """一次 MC2 step 共享的源码调度；物理参数全部留在 per-task profile。"""
 
-    substeps: int = 1
-    iterations: int = 4
     time_scale: float = 1.0
     simulation_frequency: int = MC2_DEFAULT_SIMULATION_FREQUENCY
     max_simulation_count_per_frame: int = (
@@ -422,10 +420,12 @@ class MC2SolverSettingsSpec:
     )
 
     def __post_init__(self) -> None:
-        if not 1 <= self.substeps <= 16:
-            raise ValueError("substeps 必须位于 1..16")
-        if not 0 <= self.iterations <= 64:
-            raise ValueError("iterations 必须位于 0..64")
+        if (
+            isinstance(self.time_scale, bool)
+            or not math.isfinite(float(self.time_scale))
+            or not 0.0 <= float(self.time_scale) <= 1.0
+        ):
+            raise ValueError("time_scale must be finite and in 0..1")
         if (
             isinstance(self.simulation_frequency, bool)
             or int(self.simulation_frequency) != self.simulation_frequency
@@ -465,14 +465,10 @@ def _speed_limit(value: object, name: str, maximum: float) -> float:
 
 def make_mc2_solver_settings(
     *,
-    substeps=1,
-    iterations=4,
     time_scale=1.0,
     simulation_frequency=MC2_DEFAULT_SIMULATION_FREQUENCY,
     max_simulation_count_per_frame=MC2_DEFAULT_MAX_SIMULATION_COUNT_PER_FRAME,
 ) -> MC2SolverSettingsSpec:
-    substeps = int(substeps)
-    iterations = int(iterations)
     if (
         isinstance(simulation_frequency, bool)
         or int(simulation_frequency) != simulation_frequency
@@ -486,10 +482,6 @@ def make_mc2_solver_settings(
         raise ValueError("max_simulation_count_per_frame must be an integer")
     simulation_frequency = int(simulation_frequency)
     max_simulation_count_per_frame = int(max_simulation_count_per_frame)
-    if not 1 <= substeps <= 16:
-        raise ValueError("substeps 必须位于 1..16")
-    if not 0 <= iterations <= 64:
-        raise ValueError("iterations 必须位于 0..64")
     if not (
         MC2_MIN_SIMULATION_FREQUENCY
         <= simulation_frequency
@@ -503,8 +495,6 @@ def make_mc2_solver_settings(
     ):
         raise ValueError("max_simulation_count_per_frame must be in 1..5")
     return MC2SolverSettingsSpec(
-        substeps=substeps,
-        iterations=iterations,
         time_scale=_clamp(time_scale, "time_scale", 0.0, 1.0),
         simulation_frequency=simulation_frequency,
         max_simulation_count_per_frame=max_simulation_count_per_frame,
@@ -603,7 +593,6 @@ class MC2EffectiveParametersSpec:
 
     setup_type: str
     profile_signature: str
-    settings_signature: str
     setup_options_signature: str
     payload: tuple
     parameter_signature: str
@@ -614,13 +603,10 @@ class MC2EffectiveParametersSpec:
 
 def make_mc2_effective_parameters(
     profile: MC2ParticleProfileSpec,
-    settings: MC2SolverSettingsSpec,
     setup_options: MC2SetupOptionsSpec,
 ) -> MC2EffectiveParametersSpec:
     if not isinstance(profile, MC2ParticleProfileSpec):
         raise TypeError("profile 必须是 MC2ParticleProfileSpec")
-    if not isinstance(settings, MC2SolverSettingsSpec):
-        raise TypeError("settings 必须是 MC2SolverSettingsSpec")
     if not isinstance(setup_options, MC2SetupOptionsSpec):
         raise TypeError("setup_options 必须是 MC2SetupOptionsSpec")
     setup_type = setup_options.setup_type
@@ -730,7 +716,6 @@ def make_mc2_effective_parameters(
     return MC2EffectiveParametersSpec(
         setup_type=setup_type,
         profile_signature=profile.signature,
-        settings_signature=settings.signature,
         setup_options_signature=setup_options.signature,
         payload=frozen,
         parameter_signature=_signature(payload),

@@ -286,33 +286,6 @@ def physicsMC2ParticleProfile(
 
 @omni(
     enable=True,
-    bl_label="MC2模拟设置",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=[
-        "子步数", "迭代", "时间缩放", "模拟频率", "每帧最大模拟次数",
-    ],
-    input_init={
-        "substeps": {"min_value": 1, "max_value": 16},
-        "iterations": {"min_value": 0, "max_value": 64},
-        "time_scale": {"min_value": 0.0, "max_value": 1.0},
-        "simulation_frequency": {"min_value": 30, "max_value": 150},
-        "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5},
-    },
-    _OUTPUT_NAME=["MC2模拟设置"],
-)
-def physicsMC2SolverSettings(
-    substeps: int = 1,
-    iterations: int = 4,
-    time_scale: float = 1.0,
-    simulation_frequency: int = 90,
-    max_simulation_count_per_frame: int = 3,
-) -> typing.Any:
-    return make_mc2_solver_settings(**locals())
-
-
-@omni(
-    enable=True,
     bl_label="MC2 MeshCloth任务（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -404,16 +377,31 @@ def physicsMC2BoneSpringTask(
     bl_label="MC2模拟步（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "MC2任务", "模拟设置", "启用"],
+    _INPUT_NAME=[
+        "物理世界", "MC2任务", "时间缩放", "模拟频率",
+        "每帧最大模拟次数", "启用",
+    ],
+    input_init={
+        "time_scale": {"min_value": 0.0, "max_value": 1.0},
+        "simulation_frequency": {"min_value": 30, "max_value": 150},
+        "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5},
+    },
     _OUTPUT_NAME=["物理世界", "就绪", "状态"],
     mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsMC2Step(
     world: PhysicsWorldCache,
     mc2_tasks: list[typing.Any],
-    settings: typing.Any = None,
+    time_scale: float = 1.0,
+    simulation_frequency: int = 90,
+    max_simulation_count_per_frame: int = 3,
     enabled: bool = True,
 ) -> tuple[PhysicsWorldCache, bool, str]:
+    settings = make_mc2_solver_settings(
+        time_scale=time_scale,
+        simulation_frequency=simulation_frequency,
+        max_simulation_count_per_frame=max_simulation_count_per_frame,
+    )
     return step_mc2(world, mc2_tasks, settings=settings, enabled=enabled)
 
 

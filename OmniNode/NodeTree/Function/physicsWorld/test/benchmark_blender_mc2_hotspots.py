@@ -268,21 +268,17 @@ def _profile():
     )
 
 
-def _settings():
-    return parameters.make_mc2_solver_settings(
-        substeps=1,
-        iterations=4,
-        simulation_frequency=60,
-        max_simulation_count_per_frame=1,
-    )
-
-
 def _run_step(recorder, world, tasks, frame, previous, domain) -> dict:
     bpy.context.scene.frame_set(frame)
     _set_world_frame(world, frame, previous)
     before = recorder.snapshot()
     started = time.perf_counter_ns()
-    _, ready, status = nodes.physicsMC2Step(world, tasks, settings=_settings())
+    _, ready, status = nodes.physicsMC2Step(
+        world,
+        tasks,
+        simulation_frequency=60,
+        max_simulation_count_per_frame=1,
+    )
     solver_ms = (time.perf_counter_ns() - started) / 1.0e6
     assert ready, status
     write_started = time.perf_counter_ns()

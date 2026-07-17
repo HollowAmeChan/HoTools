@@ -74,6 +74,6 @@ MC2_UPDATE_FREQUENCY_TABLE = {
     "enabled": "frame",
     "profile": "parameter_signature",
     "setup_options": "topology_or_parameter_signature",
-    "solver_parameters": "step_settings_signature",
+    "step_scheduler_settings": "step_settings_signature",
     "collider_snapshot": "lazy_by_source_key",
 }

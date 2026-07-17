@@ -26,7 +26,6 @@ MC2_SOLVER_DECLARATION = {
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",
-        "MC2模拟设置",
         "MC2 MeshCloth任务（框架）",
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
@@ -38,7 +37,7 @@ MC2_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
         "list[MC2TaskSpec] containing three setup types",
-        "MC2SolverSettingsSpec",
+        "MC2 step time_scale/simulation_frequency/max_simulation_count_per_frame",
         "configured Mesh mc2_base_pose_proxy frame snapshot",
     ],
     "produces": [
@@ -63,7 +62,7 @@ MC2_SOLVER_DECLARATION = {
         "task.topology_signature",
         "task.config_signature",
         "task.parameter_signature",
-        "step.settings.signature",
+        "step.scheduler_settings_signature",
         "collider_snapshot.source_key",
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
