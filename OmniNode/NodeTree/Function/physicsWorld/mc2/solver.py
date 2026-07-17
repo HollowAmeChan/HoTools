@@ -69,6 +69,32 @@ def _dispose_mc2_slot(slot, reason: str) -> None:
         state.dispose(reason)
 
 
+def _invalidate_mc2_runtime_after_failure(
+    world: PhysicsWorldCache,
+    reason: str,
+) -> None:
+    stale_ids = [
+        slot_id
+        for slot_id, slot in world.solver_slots.items()
+        if slot.kind == MC2_SLOT_KIND
+    ]
+    for slot_id in stale_ids:
+        slot = world.solver_slots.pop(slot_id, None)
+        if slot is not None:
+            slot.dispose(reason)
+
+    interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
+    if isinstance(interaction, MC2NativeInteractionV0):
+        world.backend_resources.pop(MC2_INTERACTION_RESOURCE_KEY, None)
+        try:
+            interaction.dispose()
+        except Exception:
+            pass
+
+    world.clear_results(solver=MC2_SOLVER_ID)
+    world.replace_required = True
+
+
 def _slot_debug_snapshot(slot) -> dict:
     topology = slot.data.get("topology")
     state = slot.data.get("runtime_state")
@@ -782,6 +808,7 @@ def step_mc2(
     bone_result_entries: list[tuple[dict, dict]] = []
     writeback_result_count = 0
     world.acquire_write(MC2_SOLVER_ID)
+    mutation_started = False
     try:
         runtime_items = []
         for (
@@ -796,6 +823,7 @@ def step_mc2(
             staged_native_context,
             staged_native_frame_applied,
         ) in prepared:
+            mutation_started = True
             action, slot = _sync_mc2_slot(
                 world,
                 spec,
@@ -1268,6 +1296,7 @@ def step_mc2(
                 "debug_readback_count": native_info.get("debug_readback_count", 0),
             })
         capture_requested_mc2_debug(world, runtime_items, interaction)
+        mutation_started = True
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
             bone_results, staged_writeback_plans = merge_mc2_bone_results(
@@ -1286,6 +1315,13 @@ def step_mc2(
                 slot = world.solver_slots.get(slot_id)
                 if slot is not None:
                     slot.data["writeback_plan"] = writeback_plan
+    except Exception:
+        if mutation_started:
+            _invalidate_mc2_runtime_after_failure(
+                world,
+                "mc2_step_failed_after_native_mutation",
+            )
+        raise
     finally:
         world.release_write(MC2_SOLVER_ID)
         for context in staged_native_contexts:

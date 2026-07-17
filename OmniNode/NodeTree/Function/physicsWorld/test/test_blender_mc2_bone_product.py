@@ -168,6 +168,37 @@ try:
     )
     assert writeback.writeback_bone_transforms(world) == 15
 
+    native_contexts = tuple(
+        world.solver_slots[task.task_id].data["native_context"]
+        for task in tasks
+    )
+    interaction = world.backend_resources[solver.MC2_INTERACTION_RESOURCE_KEY]
+    world.publish_result(channel="foreign_test", solver="rigid", marker="keep")
+    original_step_group = solver.MC2NativeInteractionV0.step_group
+
+    def _step_group_then_fail(self, *args, **kwargs):
+        original_step_group(self, *args, **kwargs)
+        raise RuntimeError("injected failure after native group step")
+
+    solver.MC2NativeInteractionV0.step_group = _step_group_then_fail
+    world.frame_context.frame = 3
+    try:
+        solver.step_mc2(world, tasks)
+    except RuntimeError as exc:
+        assert "after native group step" in str(exc)
+    else:
+        raise AssertionError("post-mutation failure must abort the MC2 step")
+    finally:
+        solver.MC2NativeInteractionV0.step_group = original_step_group
+
+    assert not any(slot.kind == "mc2" for slot in world.solver_slots.values())
+    assert all(context.disposed for context in native_contexts)
+    assert interaction.disposed is True
+    assert solver.MC2_INTERACTION_RESOURCE_KEY not in world.backend_resources
+    assert world.consume_results(solver="mc2") == []
+    assert len(world.consume_results(channel="foreign_test", solver="rigid")) == 1
+    assert world.replace_required is True
+
     world.omni_cache_dispose("bone_product_multi_armature_complete")
     world = world_types.PhysicsWorldCache()
     world.generation = 1

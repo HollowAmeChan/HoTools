@@ -149,10 +149,12 @@ Task identity覆盖setup、source/target身份和产品拓扑。Profile参数、
 1. 规范化、去重并验证全部active tasks。
 2. 为每个task读取短生命周期raw snapshot，计算fingerprint并完成全部只读prepare。
 3. 任一prepare失败时释放本轮staged context，不进入world写事务，不改变旧slot/result。
-4. 进入一次world写事务，原子安装或替换per-task slot/context。
+4. 进入一次world写事务，顺序安装或替换已经完整staged的per-task slot/context；此处不声称native状态可回滚。
 5. 同步全部frame/collider/Center输入，再由world interaction context按substep批量推进。
 6. readback形成私有candidate；全部公共result和writeback plan验证成功后一次发布。
-7. 发布失败恢复上一完整result streams；stale slot在成功路径prune并幂等dispose。
+7. 公共发布失败恢复进入发布前的result streams；stale slot只在成功路径prune并幂等dispose。
+
+只读prepare失败保持旧slot/context/result不变。进入native mutation后若任一同步、group step、readback、结果合并或发布抛错，则不伪装成可回滚：统一销毁全部MC2 slot与world interaction，清除本帧MC2结果并设置`replace_required=True`，下次调用从完整重建开始；其他solver的slot和result不受影响。
 
 同帧重复执行不推进native，不增加candidate revision，只复用当前完整结果。倒放、跳帧、world generation变化、用户reset和首次有效pose保持不同reset reason。
 
