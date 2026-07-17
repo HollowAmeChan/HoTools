@@ -324,7 +324,7 @@ def test_mesh_cloth_rna_and_capability_share_one_schema():
         assert field["explicit_property"] == f"Object.hotools_mesh_collision.{declaration['name']}"
 
 
-def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
+def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert solver_registry.builtin_solver_domains().count("mc2") == 1
     assert "mesh_cloth" not in solver_registry.builtin_solver_domains()
     assert solver_registry.builtin_component_domains() == ("collision", "mc2")
@@ -334,27 +334,33 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert tuple(
         node.__meta["bl_label"]
         for node in (
-            mc2_nodes.physicsMC2ParticleProfile,
+            mc2_nodes.physicsMC2MeshClothProfile,
+            mc2_nodes.physicsMC2BoneClothProfile,
+            mc2_nodes.physicsMC2BoneSpringProfile,
             mc2_nodes.physicsMC2MeshClothTask,
             mc2_nodes.physicsMC2BoneClothTask,
             mc2_nodes.physicsMC2BoneSpringTask,
             mc2_nodes.physicsMC2Step,
         )
     ) == (
-        "MC2粒子配置",
-        "MC2 MeshCloth任务（框架）",
-        "MC2 BoneCloth任务（框架）",
-        "MC2 BoneSpring任务（框架）",
-        "MC2模拟步（框架）",
+        "MC2 MeshCloth粒子配置",
+        "MC2 BoneCloth粒子配置",
+        "MC2 BoneSpring粒子配置",
+        "MC2 MeshCloth任务",
+        "MC2 BoneCloth任务",
+        "MC2 BoneSpring任务",
+        "MC2模拟步",
     )
     generated_node_classes = function_node_core.loadRegisterFuncNodes(mc2_nodes)
     assert tuple(node.bl_label for node in generated_node_classes) == (
-        "MC2 BoneCloth任务（框架）",
-        "MC2 BoneSpring任务（框架）",
+        "MC2 BoneCloth粒子配置",
+        "MC2 BoneCloth任务",
+        "MC2 BoneSpring粒子配置",
+        "MC2 BoneSpring任务",
         "MC2可视化调试",
-        "MC2 MeshCloth任务（框架）",
-        "MC2粒子配置",
-        "MC2模拟步（框架）",
+        "MC2 MeshCloth粒子配置",
+        "MC2 MeshCloth任务",
+        "MC2模拟步",
     )
     assert not hasattr(mc2_nodes, "physicsMC2SolverSettings")
     assert tuple(inspect.signature(mc2_nodes.physicsMC2Step).parameters) == (
@@ -406,6 +412,20 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     for task_node in task_nodes:
         assert "backend" not in inspect.signature(task_node).parameters
         assert all("后端" not in name for name in task_node.__meta["_INPUT_NAME"])
+    public_mc2_nodes = (
+        mc2_nodes.physicsMC2MeshClothProfile,
+        mc2_nodes.physicsMC2BoneClothProfile,
+        mc2_nodes.physicsMC2BoneSpringProfile,
+        *task_nodes,
+        mc2_nodes.physicsMC2Step,
+        mc2_nodes.physicsMC2DebugDraw,
+    )
+    for public_node in public_mc2_nodes:
+        settings = function_node_core.CheckMetaInfo(public_node)[5]
+        assert all(
+            settings[identifier].get("description")
+            for identifier in inspect.signature(public_node).parameters
+        ), public_node.__name__
     source_socket_contracts = (
         (
             mc2_nodes.physicsMC2MeshClothTask,
@@ -438,14 +458,43 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
             "use_multi_input": True,
         }
         assert multi[identifier] is True
-    particle_inputs = mc2_nodes.physicsMC2ParticleProfile.__meta["_INPUT_NAME"]
-    assert "跨物体自碰撞" in particle_inputs
-    assert "自碰撞厚度" not in particle_inputs
-    assert "self_collision_thickness" not in inspect.signature(
-        mc2_nodes.physicsMC2ParticleProfile
-    ).parameters
+    profile_nodes = (
+        mc2_nodes.physicsMC2MeshClothProfile,
+        mc2_nodes.physicsMC2BoneClothProfile,
+        mc2_nodes.physicsMC2BoneSpringProfile,
+    )
+    cloth_profile_nodes = profile_nodes[:2]
+    assert all(
+        tuple(inspect.signature(node).parameters) == mc2_nodes._CLOTH_PROFILE_FIELDS
+        for node in cloth_profile_nodes
+    )
+    assert tuple(
+        inspect.signature(mc2_nodes.physicsMC2BoneSpringProfile).parameters
+    ) == mc2_nodes._SPRING_PROFILE_FIELDS
+    for profile_node in cloth_profile_nodes:
+        parameters = set(inspect.signature(profile_node).parameters)
+        assert "self_collision_enabled" in parameters
+        assert "self_collision_interaction" in parameters
+        assert "self_collision_mode" not in parameters
+        assert "self_collision_thickness" not in parameters
+        assert "spring_enabled" not in parameters
+        assert "spring_power" not in parameters
+        assert "collision_limit_distance" not in parameters
+        assert "wind_influence" not in parameters
+        assert "moving_wind" not in parameters
+    spring_parameters = set(
+        inspect.signature(mc2_nodes.physicsMC2BoneSpringProfile).parameters
+    )
+    assert {"collision_limit_distance"} <= spring_parameters
+    assert not {
+        "gravity", "tether_compression", "distance_stiffness",
+        "max_distance_enabled", "backstop_enabled", "collision_mode",
+        "self_collision_enabled", "self_collision_interaction", "cloth_mass",
+        "spring_enabled", "spring_power", "spring_limit_distance",
+        "spring_normal_limit_ratio", "spring_noise", "wind_influence", "moving_wind",
+    } & spring_parameters
+    assert not hasattr(mc2_nodes, "physicsMC2ParticleProfile")
 
-    profile_parameters = set(inspect.signature(mc2_nodes.physicsMC2ParticleProfile).parameters)
     presets = tuple(mc2_presets.MC2_PARTICLE_PRESETS)
     assert tuple(preset["name"] for preset in presets) == (
         "MC2 Accessory",
@@ -460,15 +509,46 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         "MC2 HardSpring",
         "MC2 Tail",
     )
-    assert mc2_nodes.physicsMC2ParticleProfile.__meta["omni_presets"] == presets
-    for preset in presets:
-        values = preset["values"]
-        assert set(values) <= profile_parameters
-        assert "self_collision_thickness" not in values
-        assert "self_collision_curve" not in values
-        profile = mc2_nodes.physicsMC2ParticleProfile(**values)
-        assert profile.radius.value >= 0.001
-        assert profile.self_collision_thickness.value == 0.005
+    for profile_node in profile_nodes:
+        profile_parameters = set(inspect.signature(profile_node).parameters)
+        node_presets = tuple(profile_node.__meta["omni_presets"])
+        assert tuple(item["name"] for item in node_presets) == tuple(
+            item["name"] for item in presets
+        )
+        for preset in node_presets:
+            values = preset["values"]
+            assert set(values) <= profile_parameters
+            assert "self_collision_thickness" not in values
+            assert "self_collision_curve" not in values
+            profile = profile_node(**values)
+            assert isinstance(profile, mc2_parameters.MC2ParticleProfileSpec)
+            assert profile.radius.value >= 0.001
+            assert profile.self_collision_thickness.value == 0.005
+
+    for profile_node in profile_nodes:
+        _node, _inputs, _outputs, _defaults, _multi, settings = (
+            function_node_core.CheckMetaInfo(profile_node)
+        )
+        for identifier in inspect.signature(profile_node).parameters:
+            assert settings[identifier].get("description"), (
+                profile_node.__name__, identifier
+            )
+        assert "0=+X" in settings["normal_axis"]["description"]
+        assert "1=Reset" in settings["teleport_mode"]["description"]
+    for profile_node in cloth_profile_nodes:
+        settings = function_node_core.CheckMetaInfo(profile_node)[5]
+        assert "1=Point" in settings["collision_mode"]["description"]
+
+    for task_node in (
+        mc2_nodes.physicsMC2BoneClothTask,
+        mc2_nodes.physicsMC2BoneSpringTask,
+    ):
+        _node, inputs, _outputs, _defaults, _multi, settings = (
+            function_node_core.CheckMetaInfo(task_node)
+        )
+        assert inputs["collided_by_groups"]["type"] == "OmniNodeSocketBitMask"
+        assert settings["collided_by_groups"]["mask_length"] == 16
+        assert settings["collided_by_groups"]["description"]
 
     class _FakeData:
         def __init__(self, pointer):
@@ -494,9 +574,9 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     mesh_sources = [mesh]
     cloth_sources = [{"armature": armature, "root_bone": "ClothRoot"}]
     spring_sources = [{"armature": armature, "bones": ("SpringA", "SpringB")}]
-    product_profile = mc2_nodes.physicsMC2ParticleProfile(
+    product_profile = mc2_nodes.physicsMC2MeshClothProfile(
         radius=0.04,
-        self_collision_mode=2,
+        self_collision_enabled=True,
         self_collision_interaction=True,
     )
     assert product_profile.self_collision_sync_mode == 2
@@ -516,6 +596,31 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         abs(value - 0.01) < 1.0e-7
         for value in product_runtime["curve_values"]["self_collision_thickness"]
     )
+    bone_cloth_profile = mc2_nodes.physicsMC2BoneClothProfile(
+        gravity=3.0,
+        self_collision_enabled=True,
+    )
+    bone_spring_profile = mc2_nodes.physicsMC2BoneSpringProfile(
+        collision_limit_distance=0.08,
+    )
+    assert type(product_profile) is type(bone_cloth_profile) is type(bone_spring_profile)
+    assert product_profile.spring_enabled is False
+    assert bone_cloth_profile.spring_enabled is False
+    assert bone_spring_profile.spring_enabled is False
+    cloth_runtime = mc2_runtime_parameters.make_mc2_runtime_parameters(
+        bone_cloth_profile,
+        mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_BONE_CLOTH),
+    ).debug_dict()
+    spring_runtime = mc2_runtime_parameters.make_mc2_runtime_parameters(
+        bone_spring_profile,
+        mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_BONE_SPRING),
+    ).debug_dict()
+    assert cloth_runtime["float_values"]["gravity"] == 3.0
+    assert cloth_runtime["float_values"]["spring_power"] == 0.0
+    assert cloth_runtime["int_values"]["self_collision_mode"] == 2
+    assert spring_runtime["float_values"]["gravity"] == 0.0
+    assert spring_runtime["float_values"]["spring_power"] == 0.0
+    assert spring_runtime["int_values"]["self_collision_mode"] == 0
 
     tasks = tuple(
         mc2_specs.make_mc2_task_spec(setup_type, sources)
@@ -1381,7 +1486,7 @@ TESTS = (
     ("components own shared and adapter capabilities", test_components_own_shared_and_solver_adapter_capabilities),
     ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
     ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
-    ("one MC2 solver owns three safe framework setup types", test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step),
+    ("one MC2 solver owns three public setup types", test_mc2_is_one_solver_with_three_setup_types_and_public_step),
     ("solver registry separates owned/shared/planned result channels", test_solver_registry_separates_owned_shared_and_planned_result_channels),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),

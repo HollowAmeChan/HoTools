@@ -28,7 +28,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 - Point/Edge外部碰撞、单物体和跨物体self collision。
 - Center/Inertia、Tether、Distance、Angle、Triangle Bending、Motion/Backstop和post。
 - 全隐式debug请求与native真实中间态快照。
-- 官方MC2粒子预设到公共profile socket的转换。
+- 官方MC2粒子预设到三个setup-specific profile节点真实输入的裁剪转换。
 
 旧MC2节点package、旧数组solve、旧context/IO ABI、旧BoneCloth IO和兼容构建选项已经物理删除。不得恢复别名、fallback backend、shadow solver或旧节点adapter。
 
@@ -67,6 +67,24 @@ profile + task combination
 同一个模拟步必须处理全部active MC2对象。MC2不沿用source侧“每component分别执行solver”的调度模型；这里的component对应`粒子参数profile + task`组合，组合产生task identity、slot和context，但不产生独立world step。
 
 ## 产品决策
+
+### 按setup裁剪的粒子配置
+
+公开authoring不再使用一个同时显示全部字段的“MC2粒子配置”节点，而是三个setup视图：
+
+| 节点 | 显示字段 | 隐藏/固定字段 | 统一输出 |
+|---|---|---|---|
+| `MC2 MeshCloth粒子配置` | cloth重力、惯性、约束、普通碰撞、自碰撞 | Spring/wind字段隐藏且`spring_enabled=False`；BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 BoneCloth粒子配置` | 与cloth runtime一致的重力、惯性、约束、普通碰撞、自碰撞 | Spring/wind字段隐藏且`spring_enabled=False`；BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 BoneSpring粒子配置` | 惯性、Teleport、半径/阻尼、角度约束、soft-collision limit | gravity、tether/distance、max-distance、backstop、普通碰撞模式/摩擦、自碰撞及未被native消费的Spring/wind字段隐藏 | `MC2ParticleProfileSpec` |
+
+三个节点只是同一immutable profile构造器的产品视图，不创建三套solver DTO、runtime ABI或native参数结构。Task按`setup_type`继续通过唯一`make_mc2_runtime_parameters()`入口完成float32采样和源码固定值归一化。三个产品节点和task空配置默认都显式写入`spring_enabled=False`；当前native未读取`spring_power/spring_limit_distance/spring_normal_limit_ratio/spring_noise`，这些内部兼容字段在真实kernel落地前不得作为产品旋钮公开。
+
+公开cloth节点把自碰撞表达为bool，内部稳定转换成MC2 `self_collision_mode=0/2`，不允许int滑块产生无效模式1。官方JSON预设在每个节点上按实际输入字段裁剪后应用，不能向用户报告一批本setup不存在的“缺失项”。
+
+所有非显然的int/枚举输入必须在OmniNode `input_init.description`中写出完整数值映射；模式范围、tooltip和参数校验必须一致。碰撞group mask使用`_OmniBitMask` socket，不退回普通0..65535整数输入。
+
+四个已验收执行节点使用正式名称`MC2 MeshCloth任务`、`MC2 BoneCloth任务`、`MC2 BoneSpring任务`和`MC2模拟步`；维护态产品节点不得继续带“（框架）”后缀。
 
 ### MeshCloth对象输入
 
@@ -321,8 +339,8 @@ Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。R
 | `names.py` | solver/setup/channel稳定标识 |
 | `capabilities.py` | 能力与更新频率声明 |
 | `declaration.py` | 可查询solver公共合同、dirty keys、结果和legacy policy |
-| `nodes.py` | 产品节点surface与profile/task组装 |
-| `presets.py` | 官方JSON预设到公共profile socket转换 |
+| `nodes.py` | 三种setup-specific profile authoring视图、产品节点surface与task组装 |
+| `presets.py` | 官方JSON预设到统一profile词汇转换；节点侧按真实输入裁剪 |
 | `parameters.py` | profile/setup/settings/effective参数合同 |
 | `specs.py` | task/source identity与task list规范化 |
 | `runtime_parameters.py` | profile到固定native N2 ABI采样/打包 |

@@ -96,6 +96,7 @@ ALLOWED_FORWARDERS = {
 
 FORBIDDEN_PRODUCT_FUNCTIONS = {
     ("mc2.interaction_scope", "explicit_partner_pairs"),
+    ("mc2.nodes", "physicsMC2ParticleProfile"),
     ("mc2.nodes", "physicsMC2SolverSettings"),
 }
 FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
@@ -103,6 +104,36 @@ TASK_SOURCE_SOCKET_CONTRACTS = {
     "physicsMC2MeshClothTask": ("mesh_objects", "list[bpy.types.Object]"),
     "physicsMC2BoneClothTask": ("control_bones", "list[_OmniBone]"),
     "physicsMC2BoneSpringTask": ("root_bones", "list[_OmniBone]"),
+}
+PROFILE_NODE_PARAMETER_CONTRACTS = {
+    "physicsMC2MeshClothProfile": {
+        "required": {"gravity", "collision_mode", "self_collision_enabled"},
+        "forbidden": {
+            "spring_enabled", "spring_power", "collision_limit_distance",
+            "wind_influence", "moving_wind",
+        },
+    },
+    "physicsMC2BoneClothProfile": {
+        "required": {"gravity", "collision_mode", "self_collision_enabled"},
+        "forbidden": {
+            "spring_enabled", "spring_power", "collision_limit_distance",
+            "wind_influence", "moving_wind",
+        },
+    },
+    "physicsMC2BoneSpringProfile": {
+        "required": {"collision_limit_distance"},
+        "forbidden": {
+            "gravity", "collision_mode", "self_collision_enabled",
+            "self_collision_interaction", "max_distance_enabled", "backstop_enabled",
+            "spring_enabled", "spring_power", "spring_limit_distance",
+            "spring_normal_limit_ratio", "spring_noise",
+            "wind_influence", "moving_wind",
+        },
+    },
+}
+TASK_BITMASK_CONTRACTS = {
+    "physicsMC2BoneClothTask": "collided_by_groups",
+    "physicsMC2BoneSpringTask": "collided_by_groups",
 }
 FORBIDDEN_MESH_RNA_FIELDS = {
     "enabled",
@@ -236,6 +267,7 @@ def _python_facts() -> dict:
     raw_readback_calls = []
     persistent_array_fields = []
     product_boundary_violations = []
+    seen_profile_nodes = set()
     for path in _production_python_files():
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -301,6 +333,39 @@ def _python_facts() -> dict:
                             "module": module_name,
                             "line": node.lineno,
                             "name": f"{fact['name']}.{parameter_name}:{actual or 'missing'}",
+                        })
+                profile_contract = PROFILE_NODE_PARAMETER_CONTRACTS.get(fact["name"])
+                if module_name == "mc2.nodes" and profile_contract is not None:
+                    seen_profile_nodes.add(fact["name"])
+                    parameter_names = {item.arg for item in node.args.args}
+                    for name in sorted(profile_contract["required"] - parameter_names):
+                        product_boundary_violations.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "name": f"{fact['name']}.missing:{name}",
+                        })
+                    for name in sorted(profile_contract["forbidden"] & parameter_names):
+                        product_boundary_violations.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "name": f"{fact['name']}.forbidden:{name}",
+                        })
+                bitmask_parameter = TASK_BITMASK_CONTRACTS.get(fact["name"])
+                if module_name == "mc2.nodes" and bitmask_parameter is not None:
+                    parameter = next(
+                        (item for item in node.args.args if item.arg == bitmask_parameter),
+                        None,
+                    )
+                    actual = (
+                        ast.unparse(parameter.annotation)
+                        if parameter is not None and parameter.annotation is not None
+                        else ""
+                    )
+                    if actual != "_OmniBitMask":
+                        product_boundary_violations.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "name": f"{fact['name']}.{bitmask_parameter}:{actual or 'missing'}",
                         })
             elif isinstance(node, ast.ClassDef):
                 classes.append({"name": node.name, "line": node.lineno})
@@ -368,6 +433,12 @@ def _python_facts() -> dict:
                             "line": node.lineno,
                             "name": name,
                         })
+    for name in sorted(set(PROFILE_NODE_PARAMETER_CONTRACTS) - seen_profile_nodes):
+        product_boundary_violations.append({
+            "module": "mc2.nodes",
+            "line": 0,
+            "name": f"missing_profile_node:{name}",
+        })
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),

@@ -6,7 +6,7 @@ import bpy
 import mathutils
 
 from ....FunctionNodeCore import omni
-from ....OmniNodeSocketMapping import _OmniBone, _OmniFloatCurve
+from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
 from ... import _Color
 from ..types import PhysicsWorldCache
 from .debug_draw import update_mc2_debug_draw_store
@@ -27,7 +27,7 @@ from .specs import make_mc2_task_spec
 
 def _mesh_cloth_tasks(mesh_objects, profile, enabled: bool):
     if profile is None:
-        profile = make_mc2_particle_profile()
+        profile = make_mc2_particle_profile(spring_enabled=False)
     sources = _flatten_values(mesh_objects)
     for source in sources:
         if getattr(source, "type", None) != "MESH":
@@ -123,7 +123,7 @@ def _owner_key(source: dict) -> tuple[int, int]:
 
 def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
     if profile is None:
-        profile = make_mc2_particle_profile()
+        profile = make_mc2_particle_profile(spring_enabled=False)
     grouped: dict[tuple[int, int], list[dict]] = {}
     for source in _expand_hotools_bone_sources(control_bones):
         grouped.setdefault(_owner_key(source), []).append(source)
@@ -145,7 +145,7 @@ def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
 
 def _bone_spring_tasks(root_bones, profile, enabled: bool, **setup_values):
     if profile is None:
-        profile = make_mc2_particle_profile()
+        profile = make_mc2_particle_profile(spring_enabled=False)
     grouped: dict[tuple[int, int], list[dict]] = {}
     for source in _flatten_values(root_bones):
         if not isinstance(source, dict) or source.get("armature") is None:
@@ -169,83 +169,152 @@ def _bone_spring_tasks(root_bones, profile, enabled: bool, **setup_values):
     ]
 
 
-@omni(
-    enable=True,
-    bl_label="MC2粒子配置",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=[
-        "混合权重", "重力", "重力强度", "重力衰减", "重置稳定时间", "法线轴",
-        "动画姿态比例", "Anchor惯性", "World惯性", "惯性平滑", "World移动限速",
-        "World旋转限速", "Local惯性", "Local移动限速", "Local旋转限速", "深度惯性",
-        "离心力", "粒子限速", "Teleport模式", "Teleport距离", "Teleport旋转",
-        "阻尼", "阻尼曲线", "粒子半径", "半径曲线",
-        "Tether压缩", "距离刚度", "距离刚度曲线", "弯曲刚度",
-        "角度恢复", "角度恢复刚度", "角度恢复曲线", "恢复速度衰减", "恢复重力衰减",
-        "角度限制", "限制角度", "限制角度曲线", "限制刚度",
-        "最大距离", "最大距离值", "最大距离曲线", "Backstop", "Backstop半径",
-        "Backstop距离", "Backstop曲线", "Motion刚度", "碰撞模式", "碰撞摩擦",
-        "BoneSpring碰撞限制", "碰撞限制曲线", "自碰撞模式", "跨物体自碰撞", "布料质量",
-        "Spring启用", "Spring强度", "Spring距离", "Spring法线限制", "Spring噪声",
-        "风影响", "风频率", "风湍流", "风噪声混合", "风同步", "风深度权重", "移动风",
-    ],
-    input_init={
-        "blend_weight": {"min_value": 0.0, "max_value": 1.0},
-        "gravity": {"min_value": 0.0, "max_value": 20.0},
-        "gravity_falloff": {"min_value": 0.0, "max_value": 1.0},
-        "stabilization_time_after_reset": {"min_value": 0.0, "max_value": 1.0},
-        "normal_axis": {"min_value": 0, "max_value": 5},
-        "animation_pose_ratio": {"min_value": 0.0, "max_value": 1.0},
-        "anchor_inertia": {"min_value": 0.0, "max_value": 1.0},
-        "world_inertia": {"min_value": 0.0, "max_value": 1.0},
-        "movement_inertia_smoothing": {"min_value": 0.0, "max_value": 1.0},
-        "movement_speed_limit": {"min_value": -1.0, "max_value": 10.0},
-        "rotation_speed_limit": {"min_value": -1.0, "max_value": 1440.0},
-        "local_inertia": {"min_value": 0.0, "max_value": 1.0},
-        "local_movement_speed_limit": {"min_value": -1.0, "max_value": 10.0},
-        "local_rotation_speed_limit": {"min_value": -1.0, "max_value": 1440.0},
-        "depth_inertia": {"min_value": 0.0, "max_value": 1.0},
-        "centrifugal_acceleration": {"min_value": 0.0, "max_value": 1.0},
-        "particle_speed_limit": {"min_value": -1.0, "max_value": 10.0},
-        "teleport_mode": {"min_value": 0, "max_value": 2},
-        "teleport_distance": {"min_value": 0.0},
-        "teleport_rotation": {"min_value": 0.0},
-        "damping": {"min_value": 0.0, "max_value": 1.0},
-        "radius": {"min_value": 0.001, "max_value": 1.0},
-        "tether_compression": {"min_value": 0.0, "max_value": 1.0},
-        "distance_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "bending_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "angle_restoration_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "angle_restoration_velocity_attenuation": {"min_value": 0.0, "max_value": 1.0},
-        "angle_restoration_gravity_falloff": {"min_value": 0.0, "max_value": 1.0},
-        "angle_limit": {"min_value": 0.0, "max_value": 180.0},
-        "angle_limit_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "max_distance": {"min_value": 0.0, "max_value": 5.0},
-        "backstop_radius": {"min_value": 0.0, "max_value": 10.0},
-        "backstop_distance": {"min_value": 0.0, "max_value": 1.0},
-        "motion_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "collision_mode": {"min_value": 0, "max_value": 2},
-        "collision_friction": {"min_value": 0.0, "max_value": 0.5},
-        "collision_limit_distance": {"min_value": 0.0, "max_value": 1.0},
-        "self_collision_mode": {"min_value": 0, "max_value": 2},
-        "cloth_mass": {"min_value": 0.0, "max_value": 1.0},
-        "spring_power": {"min_value": 0.001, "max_value": 1.0},
-        "spring_limit_distance": {"min_value": 0.0},
-        "spring_normal_limit_ratio": {"min_value": 0.0, "max_value": 1.0},
-        "spring_noise": {"min_value": 0.0, "max_value": 1.0},
-        "wind_influence": {"min_value": 0.0, "max_value": 2.0},
-        "wind_frequency": {"min_value": 0.0, "max_value": 2.0},
-        "wind_turbulence": {"min_value": 0.0, "max_value": 2.0},
-        "wind_blend": {"min_value": 0.0, "max_value": 1.0},
-        "wind_synchronization": {"min_value": 0.0, "max_value": 1.0},
-        "wind_depth_weight": {"min_value": 0.0, "max_value": 1.0},
-        "moving_wind": {"min_value": 0.0, "max_value": 10.0},
-    },
-    omni_presets=MC2_PARTICLE_PRESETS,
-    _OUTPUT_NAME=["MC2粒子配置"],
-    omni_description="三种 MC2 setup 共用的一套粒子/约束模型；setup 只在规范化时覆盖少量规则。",
-)
-def physicsMC2ParticleProfile(
+def _profile_input(description: str, **settings) -> dict:
+    return {"description": description, **settings}
+
+
+_PROFILE_LABELS = {
+    "blend_weight": "混合权重", "gravity_direction": "重力方向", "gravity": "重力强度",
+    "gravity_falloff": "重力衰减", "stabilization_time_after_reset": "重置稳定时间",
+    "normal_axis": "法线轴", "animation_pose_ratio": "动画姿态比例",
+    "anchor_inertia": "Anchor惯性", "world_inertia": "World惯性",
+    "movement_inertia_smoothing": "惯性平滑", "movement_speed_limit": "World移动限速",
+    "rotation_speed_limit": "World旋转限速", "local_inertia": "Local惯性",
+    "local_movement_speed_limit": "Local移动限速", "local_rotation_speed_limit": "Local旋转限速",
+    "depth_inertia": "深度惯性", "centrifugal_acceleration": "离心力",
+    "particle_speed_limit": "粒子限速", "teleport_mode": "Teleport模式",
+    "teleport_distance": "Teleport距离", "teleport_rotation": "Teleport旋转",
+    "damping": "阻尼", "damping_curve": "阻尼曲线", "radius": "粒子半径",
+    "radius_curve": "半径曲线", "tether_compression": "Tether压缩",
+    "distance_stiffness": "距离刚度", "distance_stiffness_curve": "距离刚度曲线",
+    "bending_stiffness": "弯曲刚度", "angle_restoration_enabled": "角度恢复",
+    "angle_restoration_stiffness": "角度恢复刚度", "angle_restoration_curve": "角度恢复曲线",
+    "angle_restoration_velocity_attenuation": "恢复速度衰减",
+    "angle_restoration_gravity_falloff": "恢复重力衰减", "angle_limit_enabled": "角度限制",
+    "angle_limit": "限制角度", "angle_limit_curve": "限制角度曲线",
+    "angle_limit_stiffness": "限制刚度", "max_distance_enabled": "最大距离",
+    "max_distance": "最大距离值", "max_distance_curve": "最大距离曲线",
+    "backstop_enabled": "Backstop", "backstop_radius": "Backstop半径",
+    "backstop_distance": "Backstop距离", "backstop_distance_curve": "Backstop曲线",
+    "motion_stiffness": "Motion刚度", "collision_mode": "碰撞模式",
+    "collision_friction": "碰撞摩擦", "collision_limit_distance": "碰撞限制距离",
+    "collision_limit_curve": "碰撞限制曲线", "self_collision_enabled": "自碰撞",
+    "self_collision_interaction": "跨物体自碰撞", "cloth_mass": "布料质量",
+}
+
+_PROFILE_INPUT_INIT = {
+    "blend_weight": _profile_input("物理结果与动画姿态的整体混合比例。0=仅动画，1=完整物理。", min_value=0.0, max_value=1.0),
+    "gravity_direction": _profile_input("世界空间重力方向；仅MeshCloth/BoneCloth消费。"),
+    "gravity": _profile_input("重力加速度强度；BoneSpring强制为0。", min_value=0.0, max_value=20.0),
+    "gravity_falloff": _profile_input("沿粒子深度衰减重力的比例。", min_value=0.0, max_value=1.0),
+    "stabilization_time_after_reset": _profile_input("Reset/Teleport后恢复到完整模拟权重所需的秒数。", min_value=0.0, max_value=1.0),
+    "normal_axis": _profile_input("粒子局部法线轴：0=+X，1=+Y，2=+Z，3=-X，4=-Y，5=-Z。", min_value=0, max_value=5),
+    "animation_pose_ratio": _profile_input("约束参考姿态中动画姿态所占比例。", min_value=0.0, max_value=1.0),
+    "anchor_inertia": _profile_input("Anchor坐标变化保留到粒子运动中的比例。", min_value=0.0, max_value=1.0),
+    "world_inertia": _profile_input("世界空间移动/旋转惯性比例。", min_value=0.0, max_value=1.0),
+    "movement_inertia_smoothing": _profile_input("世界移动惯性的平滑比例。", min_value=0.0, max_value=1.0),
+    "movement_speed_limit": _profile_input("世界移动速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
+    "rotation_speed_limit": _profile_input("世界旋转速度上限（度/秒）；负值禁用。", min_value=-1.0, max_value=1440.0),
+    "local_inertia": _profile_input("局部空间移动/旋转惯性比例。", min_value=0.0, max_value=1.0),
+    "local_movement_speed_limit": _profile_input("局部移动速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
+    "local_rotation_speed_limit": _profile_input("局部旋转速度上限（度/秒）；负值禁用。", min_value=-1.0, max_value=1440.0),
+    "depth_inertia": _profile_input("按粒子深度增加的惯性比例。", min_value=0.0, max_value=1.0),
+    "centrifugal_acceleration": _profile_input("由组件旋转产生的离心加速度比例。", min_value=0.0, max_value=1.0),
+    "particle_speed_limit": _profile_input("粒子速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
+    "teleport_mode": _profile_input("Teleport处理：0=None，1=Reset（重置模拟），2=Keep（保留模拟状态）。", min_value=0, max_value=2),
+    "teleport_distance": _profile_input("触发Teleport判定的组件位移阈值。", min_value=0.0),
+    "teleport_rotation": _profile_input("触发Teleport判定的组件旋转阈值（度）。", min_value=0.0),
+    "damping": _profile_input("粒子速度阻尼基础值。", min_value=0.0, max_value=1.0),
+    "damping_curve": _profile_input("按粒子深度乘到阻尼基础值上的曲线。"),
+    "radius": _profile_input("粒子碰撞半径基础值。", min_value=0.001, max_value=1.0),
+    "radius_curve": _profile_input("按粒子深度乘到半径基础值上的曲线。"),
+    "tether_compression": _profile_input("Tether允许压缩的比例；BoneSpring使用源码固定值。", min_value=0.0, max_value=1.0),
+    "distance_stiffness": _profile_input("相邻粒子距离约束刚度；BoneSpring使用源码固定值。", min_value=0.0, max_value=1.0),
+    "distance_stiffness_curve": _profile_input("按粒子深度乘到距离刚度上的曲线。"),
+    "bending_stiffness": _profile_input("三角/链弯曲约束刚度；0关闭。", min_value=0.0, max_value=1.0),
+    "angle_restoration_enabled": _profile_input("启用粒子角度恢复约束。"),
+    "angle_restoration_stiffness": _profile_input("角度恢复刚度基础值。", min_value=0.0, max_value=1.0),
+    "angle_restoration_curve": _profile_input("按粒子深度乘到角度恢复刚度上的曲线。"),
+    "angle_restoration_velocity_attenuation": _profile_input("角度恢复时保留速度的比例。", min_value=0.0, max_value=1.0),
+    "angle_restoration_gravity_falloff": _profile_input("角度恢复受重力影响的衰减比例。", min_value=0.0, max_value=1.0),
+    "angle_limit_enabled": _profile_input("启用相邻粒子的最大弯折角限制。"),
+    "angle_limit": _profile_input("允许的最大弯折角（度）。", min_value=0.0, max_value=180.0),
+    "angle_limit_curve": _profile_input("按粒子深度乘到限制角度上的曲线。"),
+    "angle_limit_stiffness": _profile_input("超过限制角度后的修正刚度。", min_value=0.0, max_value=1.0),
+    "max_distance_enabled": _profile_input("启用粒子相对动画姿态的最大移动距离；BoneSpring强制关闭。"),
+    "max_distance": _profile_input("粒子相对动画姿态允许移动的最大距离。", min_value=0.0, max_value=5.0),
+    "max_distance_curve": _profile_input("按粒子深度乘到最大距离上的曲线。"),
+    "backstop_enabled": _profile_input("启用动画姿态法线方向的Backstop限制；BoneSpring强制关闭。"),
+    "backstop_radius": _profile_input("Backstop球半径。", min_value=0.0, max_value=10.0),
+    "backstop_distance": _profile_input("Backstop球心相对动画姿态的法线距离。", min_value=0.0, max_value=1.0),
+    "backstop_distance_curve": _profile_input("按粒子深度乘到Backstop距离上的曲线。"),
+    "motion_stiffness": _profile_input("Motion/动画姿态限制的修正刚度。", min_value=0.0, max_value=1.0),
+    "collision_mode": _profile_input("外部碰撞模式：0=None，1=Point，2=Edge。BoneSpring固定为Point。", min_value=0, max_value=2),
+    "collision_friction": _profile_input("外部碰撞摩擦系数；BoneSpring使用源码固定值。", min_value=0.0, max_value=0.5),
+    "collision_limit_distance": _profile_input("BoneSpring soft-sphere碰撞限制距离。", min_value=0.0, max_value=1.0),
+    "collision_limit_curve": _profile_input("按粒子深度乘到BoneSpring碰撞限制距离上的曲线。"),
+    "self_collision_enabled": _profile_input("启用FullMesh自碰撞；内部转换为MC2模式2。"),
+    "self_collision_interaction": _profile_input("允许本task与world中其他已启用自碰撞的MC2 task交互。"),
+    "cloth_mass": _profile_input("跨布料自碰撞时用于质量比例的参数。", min_value=0.0, max_value=1.0),
+}
+
+_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
+    "collision_limit_distance", "collision_limit_curve",
+})
+_SPRING_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
+    "gravity_direction", "gravity", "gravity_falloff", "tether_compression",
+    "distance_stiffness", "distance_stiffness_curve", "max_distance_enabled", "max_distance",
+    "max_distance_curve", "backstop_enabled", "backstop_radius", "backstop_distance",
+    "backstop_distance_curve", "collision_mode", "collision_friction", "self_collision_enabled",
+    "self_collision_interaction", "cloth_mass",
+})
+
+
+def _profile_presets(fields: tuple[str, ...]) -> tuple[dict, ...]:
+    result = []
+    for preset in MC2_PARTICLE_PRESETS:
+        source = preset["values"]
+        values = {}
+        for name in fields:
+            if name == "self_collision_enabled":
+                values[name] = int(source.get("self_collision_mode", 0)) == 2
+            elif name in source:
+                values[name] = source[name]
+        result.append({**preset, "values": values})
+    return tuple(result)
+
+
+def _profile_meta(fields: tuple[str, ...], *, label: str, description: str) -> dict:
+    return {
+        "enable": True,
+        "bl_label": label,
+        "base_color": _Color.colorCat["Operator"],
+        "is_output_node": False,
+        "_INPUT_NAME": [_PROFILE_LABELS[name] for name in fields],
+        "input_init": {name: _PROFILE_INPUT_INIT[name] for name in fields},
+        "omni_presets": _profile_presets(fields),
+        "_OUTPUT_NAME": ["MC2粒子配置"],
+        "omni_description": description,
+    }
+
+
+def _make_profile(values: dict, setup_type: str):
+    values = dict(values)
+    if "self_collision_enabled" in values:
+        values["self_collision_mode"] = 2 if values.pop("self_collision_enabled") else 0
+    values["self_collision_sync_mode"] = 2 if values.pop(
+        "self_collision_interaction", False
+    ) else 0
+    values["spring_enabled"] = False
+    return make_mc2_particle_profile(**values)
+
+
+@omni(**_profile_meta(
+    _CLOTH_PROFILE_FIELDS,
+    label="MC2 MeshCloth粒子配置",
+    description="只显示MeshCloth实际可调字段；输出统一MC2ParticleProfileSpec。Spring字段不进入本节点。",
+))
+def physicsMC2MeshClothProfile(
     blend_weight: float = 1.0,
     gravity_direction: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity: float = 5.0,
@@ -294,37 +363,133 @@ def physicsMC2ParticleProfile(
     motion_stiffness: float = 1.0,
     collision_mode: int = 1,
     collision_friction: float = 0.05,
-    collision_limit_distance: float = 0.05,
-    collision_limit_curve: _OmniFloatCurve = None,
-    self_collision_mode: int = 0,
+    self_collision_enabled: bool = False,
     self_collision_interaction: bool = False,
     cloth_mass: float = 0.0,
-    spring_enabled: bool = True,
-    spring_power: float = 0.04,
-    spring_limit_distance: float = 0.1,
-    spring_normal_limit_ratio: float = 1.0,
-    spring_noise: float = 0.0,
-    wind_influence: float = 1.0,
-    wind_frequency: float = 1.0,
-    wind_turbulence: float = 1.0,
-    wind_blend: float = 0.7,
-    wind_synchronization: float = 0.7,
-    wind_depth_weight: float = 0.0,
-    moving_wind: float = 0.0,
 ) -> typing.Any:
-    values = locals()
-    values["self_collision_sync_mode"] = 2 if values.pop(
-        "self_collision_interaction"
-    ) else 0
-    return make_mc2_particle_profile(**values)
+    profile_values = dict(locals())
+    return _make_profile(profile_values, MC2_SETUP_MESH_CLOTH)
+
+
+@omni(**_profile_meta(
+    _CLOTH_PROFILE_FIELDS,
+    label="MC2 BoneCloth粒子配置",
+    description="只显示BoneCloth实际可调字段；输出统一MC2ParticleProfileSpec。Spring字段不进入本节点。",
+))
+def physicsMC2BoneClothProfile(
+    blend_weight: float = 1.0,
+    gravity_direction: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    gravity: float = 5.0,
+    gravity_falloff: float = 0.0,
+    stabilization_time_after_reset: float = 0.1,
+    normal_axis: int = 1,
+    animation_pose_ratio: float = 0.0,
+    anchor_inertia: float = 0.0,
+    world_inertia: float = 1.0,
+    movement_inertia_smoothing: float = 0.4,
+    movement_speed_limit: float = 5.0,
+    rotation_speed_limit: float = 720.0,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    centrifugal_acceleration: float = 0.0,
+    particle_speed_limit: float = 4.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 0.5,
+    teleport_rotation: float = 90.0,
+    damping: float = 0.05,
+    damping_curve: _OmniFloatCurve = None,
+    radius: float = 0.02,
+    radius_curve: _OmniFloatCurve = None,
+    tether_compression: float = 0.4,
+    distance_stiffness: float = 1.0,
+    distance_stiffness_curve: _OmniFloatCurve = None,
+    bending_stiffness: float = 1.0,
+    angle_restoration_enabled: bool = True,
+    angle_restoration_stiffness: float = 0.2,
+    angle_restoration_curve: _OmniFloatCurve = None,
+    angle_restoration_velocity_attenuation: float = 0.8,
+    angle_restoration_gravity_falloff: float = 0.0,
+    angle_limit_enabled: bool = False,
+    angle_limit: float = 60.0,
+    angle_limit_curve: _OmniFloatCurve = None,
+    angle_limit_stiffness: float = 1.0,
+    max_distance_enabled: bool = False,
+    max_distance: float = 0.3,
+    max_distance_curve: _OmniFloatCurve = None,
+    backstop_enabled: bool = False,
+    backstop_radius: float = 10.0,
+    backstop_distance: float = 0.0,
+    backstop_distance_curve: _OmniFloatCurve = None,
+    motion_stiffness: float = 1.0,
+    collision_mode: int = 1,
+    collision_friction: float = 0.05,
+    self_collision_enabled: bool = False,
+    self_collision_interaction: bool = False,
+    cloth_mass: float = 0.0,
+) -> typing.Any:
+    profile_values = dict(locals())
+    return _make_profile(profile_values, MC2_SETUP_BONE_CLOTH)
+
+
+@omni(**_profile_meta(
+    _SPRING_PROFILE_FIELDS,
+    label="MC2 BoneSpring粒子配置",
+    description="只显示BoneSpring实际消费的字段；源码固定/关闭的cloth字段以及当前native未消费的Spring/wind兼容字段不公开。输出统一MC2ParticleProfileSpec。",
+))
+def physicsMC2BoneSpringProfile(
+    blend_weight: float = 1.0,
+    stabilization_time_after_reset: float = 0.1,
+    normal_axis: int = 1,
+    animation_pose_ratio: float = 0.0,
+    anchor_inertia: float = 0.0,
+    world_inertia: float = 1.0,
+    movement_inertia_smoothing: float = 0.4,
+    movement_speed_limit: float = 5.0,
+    rotation_speed_limit: float = 720.0,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    centrifugal_acceleration: float = 0.0,
+    particle_speed_limit: float = 4.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 0.5,
+    teleport_rotation: float = 90.0,
+    damping: float = 0.05,
+    damping_curve: _OmniFloatCurve = None,
+    radius: float = 0.02,
+    radius_curve: _OmniFloatCurve = None,
+    bending_stiffness: float = 1.0,
+    angle_restoration_enabled: bool = True,
+    angle_restoration_stiffness: float = 0.2,
+    angle_restoration_curve: _OmniFloatCurve = None,
+    angle_restoration_velocity_attenuation: float = 0.8,
+    angle_restoration_gravity_falloff: float = 0.0,
+    angle_limit_enabled: bool = False,
+    angle_limit: float = 60.0,
+    angle_limit_curve: _OmniFloatCurve = None,
+    angle_limit_stiffness: float = 1.0,
+    motion_stiffness: float = 1.0,
+    collision_limit_distance: float = 0.05,
+    collision_limit_curve: _OmniFloatCurve = None,
+) -> typing.Any:
+    profile_values = dict(locals())
+    return _make_profile(profile_values, MC2_SETUP_BONE_SPRING)
 
 
 @omni(
     enable=True,
-    bl_label="MC2 MeshCloth任务（框架）",
+    bl_label="MC2 MeshCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["代理网格", "粒子配置", "启用"],
+    input_init={
+        "mesh_objects": {"description": "参与MeshCloth的Mesh Object列表；每个对象生成一个独立task。"},
+        "profile": {"description": "连接MC2 MeshCloth粒子配置；留空时使用统一profile默认值。"},
+        "enabled": {"description": "关闭时保留task声明但不参与当前MC2模拟步。"},
+    },
     _OUTPUT_NAME=["MC2任务"],
 )
 def physicsMC2MeshClothTask(
@@ -341,15 +506,22 @@ def physicsMC2MeshClothTask(
 
 @omni(
     enable=True,
-    bl_label="MC2 BoneCloth任务（框架）",
+    bl_label="MC2 BoneCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["中控骨", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
-        "connection_mode": {"min_value": 0, "max_value": 2},
-        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
-        "root_rotation": {"min_value": 0.0, "max_value": 1.0},
-        "collided_by_groups": {"min_value": 0, "max_value": 65535},
+        "control_bones": {"description": "每根中控骨的直接子骨分别展开为模拟链；中控骨自身不进入粒子。"},
+        "profile": {"description": "连接MC2 BoneCloth粒子配置；留空时使用统一profile默认值。"},
+        "connection_mode": {
+            "min_value": 0,
+            "max_value": 2,
+            "description": "HoTools横向连接：0=Line（仅纵向），1=Sequential（相邻链横连），2=SequentialLoop（首尾闭环）。",
+        },
+        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "粒子方向写回骨骼旋转时的插值比例。"},
+        "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "模拟链根部旋转参与写回的比例。"},
+        "collided_by_groups": {"mask_length": 16, "description": "允许哪些外部碰撞主组碰撞本BoneCloth；0表示不按该mask额外筛选。"},
+        "enabled": {"description": "关闭时保留task声明但不参与当前MC2模拟步。"},
     },
     _OUTPUT_NAME=["MC2任务"],
 )
@@ -359,7 +531,7 @@ def physicsMC2BoneClothTask(
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
-    collided_by_groups: int = 0,
+    collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
     return _hotools_bone_tasks(
@@ -375,14 +547,17 @@ def physicsMC2BoneClothTask(
 
 @omni(
     enable=True,
-    bl_label="MC2 BoneSpring任务（框架）",
+    bl_label="MC2 BoneSpring任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["根骨", "粒子配置", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
-        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
-        "root_rotation": {"min_value": 0.0, "max_value": 1.0},
-        "collided_by_groups": {"min_value": 0, "max_value": 65535},
+        "root_bones": {"description": "每根输入骨骼作为BoneSpring root，并递归收集其后代。"},
+        "profile": {"description": "连接MC2 BoneSpring粒子配置；留空时使用统一profile默认值。"},
+        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "粒子方向写回骨骼旋转时的插值比例。"},
+        "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "模拟链根部旋转参与写回的比例。"},
+        "collided_by_groups": {"mask_length": 16, "description": "允许哪些外部碰撞主组碰撞本BoneSpring；0表示不按该mask额外筛选。"},
+        "enabled": {"description": "关闭时保留task声明但不参与当前MC2模拟步。"},
     },
     _OUTPUT_NAME=["MC2任务"],
 )
@@ -391,7 +566,7 @@ def physicsMC2BoneSpringTask(
     profile: typing.Any = None,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
-    collided_by_groups: int = 0,
+    collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
     return _bone_spring_tasks(
@@ -406,7 +581,7 @@ def physicsMC2BoneSpringTask(
 
 @omni(
     enable=True,
-    bl_label="MC2模拟步（框架）",
+    bl_label="MC2模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
@@ -414,9 +589,12 @@ def physicsMC2BoneSpringTask(
         "每帧最大模拟次数", "启用",
     ],
     input_init={
-        "time_scale": {"min_value": 0.0, "max_value": 1.0},
-        "simulation_frequency": {"min_value": 30, "max_value": 150},
-        "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5},
+        "world": {"description": "Physics World Begin输出的统一world owner与frame_context时间源。"},
+        "mc2_tasks": {"description": "全部MeshCloth/BoneCloth/BoneSpring task；本节点一次统一处理。"},
+        "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "MC2局部时间倍率；乘在Physics World统一dt之上，不改写world时间。"},
+        "simulation_frequency": {"min_value": 30, "max_value": 150, "description": "MC2固定步调度频率（Hz），不是Blender场景帧率。"},
+        "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5, "description": "单个Blender帧允许执行的MC2固定步上限；超出部分按源码scheduler跳过。"},
+        "enabled": {"description": "关闭整个MC2模拟步，不推进任何MC2 task。"},
     },
     _OUTPUT_NAME=["物理世界", "就绪", "状态"],
     mute_passthrough={"_OUTPUT0": "world"},
@@ -449,7 +627,20 @@ def physicsMC2Step(
         "自碰Contact", "最终输出", "任务筛选", "最大显示项",
     ],
     input_init={
-        "max_items": {"min_value": 1, "max_value": 100000},
+        "world": {"description": "包含MC2 slot和隐式debug快照的Physics World。"},
+        "show_topology": {"description": "显示真实纵向/横向拓扑连接。"},
+        "show_attributes": {"description": "显示Fixed/Move等粒子属性。"},
+        "show_motion": {"description": "显示Motion、MaxDistance与Backstop约束。"},
+        "show_center": {"description": "显示Center、Teleport判定和世界变换抵消中间态。"},
+        "show_collision": {"description": "显示实际上传到MC2的外部碰撞体。"},
+        "show_radii": {"description": "显示普通粒子半径。"},
+        "show_self_primitives": {"description": "显示自碰撞Point/Edge/Triangle primitive。"},
+        "show_self_grid": {"description": "显示自碰撞空间grid。"},
+        "show_self_candidates": {"description": "显示自碰撞broadphase候选对。"},
+        "show_self_contacts": {"description": "显示自碰撞窄相contact。"},
+        "show_output": {"description": "显示最终解算粒子/写回输出。"},
+        "task_filter": {"description": "按task id子串筛选；留空显示全部active task。"},
+        "max_items": {"min_value": 1, "max_value": 100000, "description": "每类debug primitive允许显示的最大项目数。"},
     },
     _OUTPUT_NAME=["物理世界"],
     mute_passthrough={"_OUTPUT0": "world"},

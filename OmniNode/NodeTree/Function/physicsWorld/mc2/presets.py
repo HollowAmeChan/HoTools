@@ -1,9 +1,10 @@
 """Official MagicaCloth2 presets adapted to the Physics World particle profile.
 
 The JSON files in ``presets`` are copied without modification from
-``MagicaCloth2/Runtime/Res/Preset``. This module only translates source fields
-that the public ``physicsMC2ParticleProfile`` node can author. In particular,
-the source self-collision thickness is not exposed as a second radius.
+``MagicaCloth2/Runtime/Res/Preset``. This module translates source fields into
+the unified profile vocabulary; each public setup-specific profile node filters
+that vocabulary to its authored inputs. The source self-collision thickness is
+not exposed as a second radius.
 """
 
 from __future__ import annotations
