@@ -111,7 +111,7 @@ mc2_setups = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups"
 )
 mc2_state = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
 mc2_topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"

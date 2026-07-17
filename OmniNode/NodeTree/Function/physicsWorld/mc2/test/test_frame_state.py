@@ -33,7 +33,6 @@ for package_name, package_path in (
 
 frame_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state")
 center_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
-state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state")
 final_proxy = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.final_proxy"
 )
@@ -44,7 +43,7 @@ FIXTURE_PATH = os.path.join(
 
 
 def _runtime(count=2):
-    return state.MC2SlotRuntimeState(
+    return frame_state.MC2SlotRuntimeState(
         task_id="mc2:mesh:test",
         topology_signature="topology",
         config_signature="config",

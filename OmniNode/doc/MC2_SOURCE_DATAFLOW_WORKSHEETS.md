@@ -340,6 +340,8 @@ Blender authoring/frame input
 
 36. P-12第四批将未发布的`MC2ResultCandidateV1`及其构造校验并入`results.py`，删除没有独立生命周期的`candidate.py`；candidate仍是`ready=False`的事务内部阶段，数组copy/read-only、schema、native identity校验及Mesh/Bone promotion顺序不变。生产模块由46回到45，审计仍为0依赖环/0 private import/0 legacy命中；`26/26`纯MC2、Blender 4.5 Mesh `7/7`及Bone多task原子step/writeback通过。
 
+37. P-12第五批将仅保存slot frame continuity/reset/lifecycle计数的`state.py`并入`frame_state.py`，删除两个互相引用的碎片；`collider_frame.py`经消费者审计后保留，因为它独立拥有World collider snapshot的owner排除、group/type过滤、shape规范化、previous-frame配对和连续数组签名，不是纯DTO。P-12收口时生产44个模块、约16.6k行、0依赖环、0 private import、0 lazy re-export桶、0 legacy命中；`26/26`纯MC2与Blender 4.5属性/节点/存储合同`9/9`通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -360,12 +362,11 @@ Blender authoring/frame input
 | `specs.py` | task identity、source identity与task list规范化 | 保留；`_source_token`改为公开共享identity合同 |
 | `runtime_parameters.py` | profile到固定native参数ABI采样/打包 | 保留；消除对`parameters._thaw`的private访问 |
 | `scheduler.py` | 单次all-task step共享的固定步长调度 | 保留 |
-| `state.py` | slot轻量host生命周期计数，不持有particle shadow | 保留；若只剩solver消费者再并入slot runtime owner |
-| `solver.py` | all-task prepare/sync/step/result原子事务 | 保留为唯一orchestrator；P-12拆出可独立迁移的static prepare/rebuild owner，不复制状态 |
+| `solver.py` | all-task prepare/sync/step/result原子事务 | 保留为唯一orchestrator；static prepare/rebuild热点按P-13直接迁入C++ owner，不再增加Python中间层 |
 | `native.py` | `hotools_native`路径定位、进程级加载缓存与MC2符号资格校验 | 只保留loader/qualification；不import DTO、context host或solver |
 | `native_context.py` | slot context与world interaction的Python handle生命周期、ABI调用与按需readback | 唯一context host；依赖producer DTO但producer只反向依赖`native.py` loader，不形成环 |
-| `frame_state.py` | particle frame、连续性和reset只读合同 | 与`collider_frame.py`同属frame DTO，P-12评估合并以减少碎片 |
-| `collider_frame.py` | shared World collider连续数组合同/adapter | 不持有collision算法；与frame DTO合并后仍由collision snapshot生产 |
+| `frame_state.py` | particle frame合同、slot continuity/lifecycle计数与frame transition plan | 已合并原`state.py`；不持有particle history或native handle |
+| `collider_frame.py` | shared World collider snapshot过滤、shape规范化、previous-frame配对与连续数组合同 | 保留独立adapter owner；不持有collision solve算法 |
 | `interaction_scope.py` | 自动跨物体self交互task-pair ownership | 保留独立产品策略，不引入ListObject兼容路径 |
 | `results.py` | 私有candidate、公共result envelope、Bone/Mesh promotion、事务发布和stats读取 | 唯一result owner；不向外发布`ready=False`的candidate |
 | `debug.py` | 隐式debug请求、按需native capture与冻结快照 | 保留，不import bpy renderer |

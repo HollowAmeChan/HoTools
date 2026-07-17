@@ -19,7 +19,7 @@ from .center_state import (
     derive_mc2_center_world_pose,
     evaluate_mc2_center_frame_shift,
 )
-from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync
+from .frame_state import MC2FrameInputSpec, MC2SlotRuntimeState, plan_mc2_frame_sync
 from .interaction_scope import build_mc2_interaction_scope
 from .native_context import (
     MC2_INTERACTION_RESOURCE_KEY,
@@ -41,7 +41,6 @@ from .results import (
 )
 from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
-from .state import MC2SlotRuntimeState
 from .topology import build_mc2_topology_spec, prepare_static_inputs_for_task
 
 

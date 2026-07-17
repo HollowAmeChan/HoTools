@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
-| MC2 | P-12 Python职责重组 | P-09/P-10删除与基线、P-11逐文件职责/依赖/证据审计已关闭；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方粒子预设、公共result/writeback及C++热点所有权成立 | 按审计表逐步清理Python barrel/private/重复helper和依赖环，再重组C++ binding/context，完成单一蓝本与热点基线；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
+| MC2 | P-13 C++原子化与文件重组 | P-09/P-10删除与基线、P-11事实审计、P-12 Python重组已关闭；生产Python import DAG无环，三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方粒子预设及C++热点所有权成立 | 重组C++ binding/context职责并保持native中间态自产自用，再完成依赖终审、单一蓝本与热点基线；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -80,7 +80,7 @@ physicsWorld/
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 2. 按`MC2_ACCEPTANCE_MAP.md`完成MC2删除后工程收尾。
-   P-08已放行，P-09/P-10删除与基线、P-11事实审计已关闭。当前从P-12开始按冻结职责表逐项重组Python，再完成C++ binding/context原子边界、单一MC2蓝本和热点性能基线；全部关闭前保持acceptance blocker。
+   P-08已放行，P-09/P-10删除与基线、P-11事实审计、P-12 Python重组已关闭。当前执行P-13 C++ binding/context原子边界，再完成依赖终审、单一MC2蓝本和热点性能基线；全部关闭前保持acceptance blocker。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 
