@@ -20,6 +20,7 @@ MC2_ROOT = REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "
 NATIVE_ROOT = REPO_ROOT / "_native" / "src"
 NATIVE_FILES = (
     "hotools_native.cpp",
+    "mc2_bindings.cpp",
     "mc2_context_v0.cpp",
     "mc2_kernels.cpp",
     "mc2_static_build.cpp",
@@ -196,7 +197,9 @@ def _python_facts() -> dict:
 def _cpp_facts() -> dict:
     files = {}
     include_pattern = re.compile(r'^#include\s+"([^"]+)"', re.MULTILINE)
-    binding_pattern = re.compile(r'\bm\.def\("([^"]+)"')
+    binding_pattern = re.compile(
+        r'\b[A-Za-z_][A-Za-z0-9_]*\.def\s*\(\s*"([^"]+)"'
+    )
     pyobject_pattern = re.compile(r'^PyObject\*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(', re.MULTILINE)
     for filename in NATIVE_FILES:
         path = NATIVE_ROOT / filename

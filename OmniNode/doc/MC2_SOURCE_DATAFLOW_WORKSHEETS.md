@@ -342,6 +342,8 @@ Blender authoring/frame input
 
 37. P-12第五批将仅保存slot frame continuity/reset/lifecycle计数的`state.py`并入`frame_state.py`，删除两个互相引用的碎片；`collider_frame.py`经消费者审计后保留，因为它独立拥有World collider snapshot的owner排除、group/type过滤、shape规范化、previous-frame配对和连续数组签名，不是纯DTO。P-12收口时生产44个模块、约16.6k行、0依赖环、0 private import、0 lazy re-export桶、0 legacy命中；`26/26`纯MC2与Blender 4.5属性/节点/存储合同`9/9`通过。
 
+38. P-13第一批将MC2 nanobind注册从通用module shell抽出到`mc2_bindings.cpp/.hpp`；`hotools_native.cpp`只保留module初始化、PropertyCurve 8个binding、SpringBone 7个binding和单一`bind_mc2` 调用，MC2 74个binding的顺序、名称、lambda和参数校验原样保留。`build.bat 311 native`仅增量生成`hotools_native.cp311-win_amd64.pyd`，无Jolt target；3.11全量native回归`26/26`，其中MC2 raw/native `18/18`。审计现统计6个相关C++单元约14.8k行：module shell 168行/15 bindings，MC2 binding owner 1670行/74 bindings，context仍7538行/50个Python入口。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -399,7 +401,8 @@ Blender authoring/frame input
 
 | C++文件 | 当前事实 | P-13目标 |
 |---|---|---|
-| `hotools_native.cpp` | 通用module shell约1.7k行，混合PropertyCurve、SpringBone和89个binding，包含MC2 typed kernel adapter | 抽出`mc2_bindings.cpp/.hpp`的单一`bind_mc2`入口；module shell不再知道MC2参数细节 |
+| `hotools_native.cpp` | 168行通用module shell；只注册PropertyCurve/SpringBone 15个binding并调用`bind_mc2` | 已收口；不得恢复MC2参数细节或context状态 |
+| `mc2_bindings.cpp/.hpp` | 1670行，唯一注册MC2 74个nanobind ABI，持有typed adapter的边界校验/转换 | 保留单一`bind_mc2`入口；不持有context状态或数值kernel |
 | `mc2_context_v0.cpp/.hpp` | 约7.5k行；前半持有context/interaction状态与helper，后半集中interaction、lifecycle、static、frame/step、debug/readback、fingerprint共50个Python入口 | 建立内部context state合同后按lifecycle/static/frame-step/interaction-debug拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
 | `mc2_kernels.cpp/.hpp` | 约2.9k行，持有particle/inertia/distance/angle/collision/post数值kernel | 以热点与共同数据依赖决定是否拆分；不为缩短文件盲拆，不持有Python ABI/context |
 | `mc2_static_build.cpp/.hpp` | 约1.6k行，唯一生产Proxy/Baseline/Bone/Distance/Bending/Center/Self owner vectors | 保留唯一static producer；继续context内自产自用，不回读host完整spec |
@@ -413,8 +416,8 @@ Blender authoring/frame input
 | BoneCloth横向连接是HoTools产品特化 | `bone_connection.build_hotools_bone_connection`、Bone setup options | product connection Tier A与Bone product资产 |
 | 跨物体self为自动world scope，半径单一派生 | `interaction_scope`、`runtime_parameters`、native interaction/self | interaction scope纯测试、interaction V0资产、debug资产 |
 | debug全隐式且按需readback | `debug`、`debug_draw`、native debug buffers | debug draw代表资产、soak无常态capture |
-| 公共结果与写回事务不泄漏candidate | `candidate/results/solver`、Mesh/Bone writeback adapter | result candidate纯测试、representative assets |
-| native context/interaction唯一生命周期owner | `native`、`solver`、PhysicsWorld slot/resource | raw owner 18/18、property lifecycle、180帧释放6个context |
+| 公共结果与写回事务不泄漏candidate | `results/solver`、Mesh/Bone writeback adapter | result candidate纯测试、representative assets |
+| native context/interaction唯一生命周期owner | `native_context`、`solver`、PhysicsWorld slot/resource | raw owner 18/18、property lifecycle、180帧释放6个context |
 | 官方MC2预设只写新粒子profile真实socket | `presets`、`nodes.physicsMC2ParticleProfile` | Blender property registry 11预设逐一构造 |
 
 ## 9. Oracle 与冲突处理

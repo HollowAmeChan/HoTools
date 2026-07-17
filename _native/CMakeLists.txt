@@ -120,6 +120,7 @@ if(HOTOOLS_BUILD_NATIVE)
 nanobind_add_module(hotools_native
     NB_STATIC
     src/hotools_native.cpp
+    src/mc2_bindings.cpp
     src/mc2_context_v0.cpp
     src/mc2_static_build.cpp
     src/mc2_kernels.cpp
