@@ -26,7 +26,7 @@ from .parameters import (
     MC2CurveSpec,
     MC2ParticleProfileSpec,
     MC2SetupOptionsSpec,
-    _thaw,
+    thaw_mc2_value,
 )
 
 
@@ -106,7 +106,7 @@ def sample_mc2_curve16(
         return (value,) * MC2_CURVE_SAMPLE_COUNT
 
     positions = tuple(index / 15.0 for index in range(MC2_CURVE_SAMPLE_COUNT))
-    payload = _thaw(curve.curve_payload)
+    payload = thaw_mc2_value(curve.curve_payload)
     sampler = curve_sampler or _default_curve_sampler
     multipliers = tuple(sampler(payload, positions))
     if len(multipliers) != MC2_CURVE_SAMPLE_COUNT:

@@ -18,8 +18,6 @@ import numpy as np
 
 from ....gn_offset import remove_gn_offset_output
 from .delta_output import PhysicsDeltaOutputSpec
-from .delta_output import ensure_delta_attribute as _ensure_delta_attribute
-from .delta_output import ensure_delta_modifier as _ensure_delta_modifier
 from .delta_output import ensure_delta_output as _ensure_delta_output
 from .delta_output import remove_delta_output as _remove_delta_output_by_spec
 
@@ -180,15 +178,6 @@ def move_to_cache_collection(obj: bpy.types.Object, scene: bpy.types.Scene = Non
     if not any(item == obj for item in collection.objects):
         collection.objects.link(obj)
     _unlink_from_other_collections(obj, collection)
-
-
-def ensure_delta_modifier(obj: bpy.types.Object) -> bpy.types.Modifier:
-    # 这个修改器必须位于 Armature/基础变形之后；运行时只写 mc2_delta 顶点属性。
-    return _ensure_delta_modifier(obj, MC2_DELTA_SPEC)
-
-
-def ensure_delta_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
-    return _ensure_delta_attribute(obj, MC2_DELTA_SPEC)
 
 
 def ensure_delta_output(obj: bpy.types.Object) -> None:

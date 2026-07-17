@@ -10,7 +10,7 @@ from ..center_state import MC2CenterFramePoseSpec
 from ..frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from ..names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ..specs import MC2TaskSpec
-from ..topology import MC2TopologySpec, _thaw
+from ..topology import MC2TopologySpec, thaw_mc2_topology_payload
 
 
 _TRANSFORM_EPSILON = 1.0e-8
@@ -107,7 +107,7 @@ def build_mc2_bone_frame_input(
         component_pose = source_component_pose
         names = source_topology.bone_names
         if not names:
-            payload = _thaw(source_topology.payload)
+            payload = thaw_mc2_topology_payload(source_topology.payload)
             names = tuple(
                 str(record.get("name") or "")
                 for record in payload.get("bones", ())

@@ -19,7 +19,7 @@ from ..utils.math3d import (
     quaternion_conjugate_f64,
     quaternion_multiply_f64,
 )
-from .mesh_baseline import MC2MeshBaselineNativeData, _replace_proxy_attributes
+from .mesh_baseline import MC2MeshBaselineNativeData, replace_mc2_proxy_attributes
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .setups.mesh_cloth.final_proxy import (
     MC2MeshFinalizerNativeData,
@@ -477,7 +477,7 @@ def build_mc2_bone_static(
     final_attributes = transform_baseline["attributes"]
     local_pose_positions = transform_baseline["local_positions"]
     local_pose_rotations = transform_baseline["local_rotations"]
-    final_proxy = _replace_proxy_attributes(raw.proxy, final_attributes)
+    final_proxy = replace_mc2_proxy_attributes(raw.proxy, final_attributes)
     if staged:
         finalizer = replace(
             raw.finalizer,

@@ -23,7 +23,7 @@ from ...self_collision_static import (
 from ...self_collision_static import build_mc2_self_collision_static
 from ...specs import MC2TaskSpec
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
-from ...topology import _thaw
+from ...topology import thaw_mc2_topology_payload
 from ..mesh_cloth.final_proxy import (
     MC2MeshFinalizerNativeData,
     MC2MeshFinalizerNativeMetadata,
@@ -339,7 +339,7 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
     armatures = set()
     flattened = []
     for source in topology.sources:
-        payload = _thaw(source.payload)
+        payload = thaw_mc2_topology_payload(source.payload)
         armatures.add((
             int(payload.get("armature_pointer", 0) or 0),
             str(payload.get("armature_name") or ""),

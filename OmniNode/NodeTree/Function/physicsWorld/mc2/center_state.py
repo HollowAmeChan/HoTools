@@ -994,10 +994,6 @@ def _quaternion_slerp_f32(first: np.ndarray, second: np.ndarray, ratio) -> np.nd
     )
 
 
-def _inverse_quaternion_f32(rotation: np.ndarray) -> np.ndarray:
-    return quaternion_conjugate_f32(rotation)
-
-
 def _shift_position_f32(position, pivot, shift_vector, shift_rotation) -> np.ndarray:
     return np.asarray(
         pivot + rotate_vector_unit_quaternion_f32(shift_rotation, position - pivot) + shift_vector,
@@ -1009,7 +1005,7 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
     position = _f32_vector(position, 3, "position")
     origin = _f32_vector(origin, 3, "origin")
     rotation = _f32_vector(rotation, 4, "rotation")
-    return rotate_vector_unit_quaternion_f32(_inverse_quaternion_f32(rotation), position - origin)
+    return rotate_vector_unit_quaternion_f32(quaternion_conjugate_f32(rotation), position - origin)
 
 
 def _quaternion_matrix_f32(rotation) -> np.ndarray:
@@ -1223,7 +1219,7 @@ def evaluate_mc2_center_frame_shift(
         full_anchor_rotation = _normalize_quaternion_f32(
             quaternion_multiply_f32(
                 anchor_rotation,
-                _inverse_quaternion_f32(old_anchor_rotation),
+                quaternion_conjugate_f32(old_anchor_rotation),
             )
         )
         anchor_shift_rotation = _quaternion_slerp_f32(
@@ -1331,7 +1327,7 @@ def evaluate_mc2_center_frame_shift(
     full_shift_rotation = _normalize_quaternion_f32(
         quaternion_multiply_f32(
             component_rotation,
-            _inverse_quaternion_f32(adjusted_old_component_rotation),
+            quaternion_conjugate_f32(adjusted_old_component_rotation),
         )
     )
     move_shift_ratio = (

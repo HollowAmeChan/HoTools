@@ -56,7 +56,7 @@ def _pointer_token(value) -> dict | None:
     }
 
 
-def _source_token(source) -> dict:
+def mc2_source_token(source) -> dict:
     pointer_token = _pointer_token(source)
     if pointer_token is not None:
         return pointer_token
@@ -99,7 +99,7 @@ def _source_token(source) -> dict:
 def _source_identity(sources: tuple[object, ...]) -> str:
     if not sources:
         raise ValueError("MC2 task 至少需要一个 source")
-    tokens = [_source_token(source) for source in sources]
+    tokens = [mc2_source_token(source) for source in sources]
     encoded_tokens = [
         json.dumps(token, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         for token in tokens
@@ -113,7 +113,7 @@ def _source_identity(sources: tuple[object, ...]) -> str:
 
 def _ordered_source_identity(sources: tuple[object, ...]) -> str:
     """拓扑签名保留输入顺序；BoneCloth 的顺序/成环连接依赖 root list 顺序。"""
-    tokens = [_source_token(source) for source in sources]
+    tokens = [mc2_source_token(source) for source in sources]
     canonical = json.dumps(tokens, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

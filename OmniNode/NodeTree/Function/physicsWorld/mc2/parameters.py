@@ -87,11 +87,11 @@ def _freeze(value: object):
     raise TypeError(f"MC2 曲线包含不可序列化值: {type(value).__name__}")
 
 
-def _thaw(value):
+def thaw_mc2_value(value):
     if isinstance(value, tuple):
         if all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in value):
-            return {key: _thaw(item) for key, item in value}
-        return [_thaw(item) for item in value]
+            return {key: thaw_mc2_value(item) for key, item in value}
+        return [thaw_mc2_value(item) for item in value]
     return value
 
 
@@ -130,7 +130,7 @@ class MC2CurveSpec:
         return {
             "value": self.value,
             "use_curve": self.use_curve,
-            "curve": _thaw(self.curve_payload),
+            "curve": thaw_mc2_value(self.curve_payload),
         }
 
 
@@ -609,7 +609,7 @@ class MC2EffectiveParametersSpec:
     parameter_signature: str
 
     def debug_dict(self) -> dict:
-        return _thaw(self.payload)
+        return thaw_mc2_value(self.payload)
 
 
 def make_mc2_effective_parameters(
@@ -748,4 +748,5 @@ __all__ = [
     "make_mc2_particle_profile",
     "make_mc2_setup_options",
     "make_mc2_solver_settings",
+    "thaw_mc2_value",
 ]

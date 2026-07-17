@@ -332,6 +332,8 @@ Blender authoring/frame input
 
 32. P-09/P-10已关闭：旧Python Mesh/Bone package、旧native context/IO、11个legacy ABI及只服务旧路径的测试/benchmark已删除。官方11份MC2预设JSON迁入`physicsWorld/mc2/presets`并直接挂到`physicsMC2ParticleProfile`；转换器只写公共profile真实socket，`radius`映射源粒子半径，不写`self_collision_thickness`或第二套曲线。删除后`18/18` native/raw、`26/26`纯MC2、Blender 4.5属性契约`9/9`、Blender 5.1代表资产`8/7`及180帧soak通过；当前切入P-11逐文件职责与依赖审计。
 
+33. P-12第一批纯整理已删除根package 106项和Mesh setup 11项无仓库消费者的lazy re-export，删除BasePose两个无人调用的固定spec转发，并把5个真实跨模块helper改为公开且带域名的合同名称；Center的纯`inverse quaternion`改名转发已改为直接调用共享`math3d`。生产代码由约16.8k降到约16.6k行，private import与re-export桶均为0，单调用函数由59降到56；依赖强连通分量仍为1，下一批只处理DTO/adapter反向边。`26/26`纯MC2与Blender 4.5属性/节点/生命周期`9/9`通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。

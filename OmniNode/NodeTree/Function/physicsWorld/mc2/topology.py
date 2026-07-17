@@ -14,7 +14,7 @@ from .bone_connection import (
     build_hotools_bone_connection,
     build_mc2_bone_connection,
 )
-from .specs import MC2TaskSpec, _source_token
+from .specs import MC2TaskSpec, mc2_source_token
 
 
 def _freeze(value):
@@ -34,7 +34,7 @@ def _freeze(value):
     raise TypeError(f"MC2 topology 包含不可冻结值: {type(value).__name__}")
 
 
-def _thaw(value):
+def thaw_mc2_topology_payload(value):
     if isinstance(value, tuple):
         if all(
             isinstance(item, tuple)
@@ -42,8 +42,8 @@ def _thaw(value):
             and isinstance(item[0], str)
             for item in value
         ):
-            return {key: _thaw(item) for key, item in value}
-        return [_thaw(item) for item in value]
+            return {key: thaw_mc2_topology_payload(item) for key, item in value}
+        return [thaw_mc2_topology_payload(item) for item in value]
     return value
 
 
@@ -135,7 +135,7 @@ class _MC2ArmatureRestSnapshot:
 
 
 def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
-    token = _source_token(source)
+    token = mc2_source_token(source)
     topology = _compact_signature((kind, "unresolved", token))
     geometry = _compact_signature((kind, "geometry", "unresolved"))
     surface = _compact_signature((kind, "surface", "unresolved"))
@@ -602,7 +602,7 @@ class MC2SourceTopologySpec:
             "resolved": self.resolved,
         }
         if include_payload:
-            result["payload"] = _thaw(self.payload)
+            result["payload"] = thaw_mc2_topology_payload(self.payload)
         return result
 
 
@@ -643,7 +643,7 @@ class MC2TopologySpec:
 
 
 def _build_source_topology(source_kind: str, source, source_index: int) -> MC2SourceTopologySpec:
-    token = _source_token(source)
+    token = mc2_source_token(source)
     identity_signature = _signature(token)
     payload = _mesh_payload(source) if source_kind == "mesh" else _bone_payload(source)
     if source_kind == "mesh":
@@ -681,7 +681,7 @@ def _build_compact_mesh_source_topology(
     source_index: int,
     fingerprint: MC2StaticInputFingerprint,
 ) -> MC2SourceTopologySpec:
-    token = _source_token(source)
+    token = mc2_source_token(source)
     mesh = getattr(source, "data", None)
     resolved = mesh is not None and hasattr(mesh, "vertices")
     particle_count = len(mesh.vertices) if resolved else 0
@@ -715,7 +715,7 @@ def _build_compact_bone_source_topology(
     return MC2SourceTopologySpec(
         source_index=source_index,
         source_kind="bone_chain",
-        identity_signature=_signature(_source_token(source)),
+        identity_signature=_signature(mc2_source_token(source)),
         payload_signature=_signature((
             snapshot.armature_pointer,
             snapshot.armature_name,
@@ -821,7 +821,7 @@ def build_mc2_topology_spec(
                     float(value) for value in snapshot.head_tail[local_index, :3]
                 ))
         for source in (() if compact_bone_snapshots else sources):
-            payload = _thaw(source.payload)
+            payload = thaw_mc2_topology_payload(source.payload)
             armature_pointer = int(payload.get("armature_pointer", 0) or 0)
             records = payload.get("bones", ())
             source_offset = len(positions)
@@ -906,4 +906,5 @@ __all__ = [
     "build_mc2_topology_spec",
     "prepare_static_inputs_for_task",
     "static_input_fingerprint_for_task",
+    "thaw_mc2_topology_payload",
 ]

@@ -123,7 +123,7 @@ def _baseline_content_signature(proxy_signature: str, values: dict) -> str:
     )
 
 
-def _replace_proxy_attributes(
+def replace_mc2_proxy_attributes(
     proxy,
     attributes: tuple[int, ...],
 ) -> object:
@@ -298,7 +298,7 @@ def build_mc2_mesh_baseline(
     final_attributes = derived["attributes"]
     if native_context is None:
         final_attributes = tuple(int(value) for value in final_attributes)
-    final_proxy = _replace_proxy_attributes(proxy, final_attributes)
+    final_proxy = replace_mc2_proxy_attributes(proxy, final_attributes)
     if native_context is None:
         baseline = make_mc2_baseline_static_spec(
             proxy_signature=final_proxy.proxy_signature,
@@ -346,4 +346,5 @@ __all__ = [
     "MC2MeshBaselineMetadata",
     "MC2MeshBaselineNativeData",
     "build_mc2_mesh_baseline",
+    "replace_mc2_proxy_attributes",
 ]
