@@ -5,7 +5,7 @@
 
 #include "mc2_bindings.hpp"
 #include "mc2_kernels.hpp"
-#include "mc2_context_v0.hpp"
+#include "mc2_api.hpp"
 #include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
 

@@ -21,7 +21,7 @@ NATIVE_ROOT = REPO_ROOT / "_native" / "src"
 NATIVE_FILES = (
     "hotools_native.cpp",
     "mc2_bindings.cpp",
-    "mc2_context_v0.cpp",
+    "mc2_context_core.cpp",
     "mc2_context_frame_step.cpp",
     "mc2_context_interaction.cpp",
     "mc2_context_readback.cpp",

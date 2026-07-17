@@ -358,6 +358,8 @@ Blender authoring/frame input
 
 45. P-13第八批将Center dynamic/参数、raw Mesh/Bone frame producer、collider upload、reset/setup flags与per-context step整体移入`mc2_context_frame_step.cpp`。共享`Vec3`类型与已有vector/quaternion/matrix helper签名进入internal合同，数学实现仍只在core一份；无Python粒子history或frame repack回路。context主单元由4892降到3852行/7个Python返回入口，frame-step为1051行/16个入口。3.11 native-only增量构建无Jolt，全量native `26/26`及Blender 4.5 Mesh `7/7`、Bone frame、负缩放component、跨物体interaction通过。
 
+46. P-13最终批次将实现文件`mc2_context_v0.cpp`改名为`mc2_context_core.cpp`，并将跨translation-unit公开声明改名为`mc2_api.hpp`；`v0`继续只存在于公开符号和state类型中表示schema版本，不再作为实现文件的迁移标签。core是context生命周期、inspect/fingerprint分类与共享数值编排helper的唯一owner；static、frame-step、interaction和readback单元只消费同一internal state/helper合同。Python 3.11 native-only增量构建只输出`hotools_native.cp311-win_amd64.pyd`且无Jolt，native `26/26`及Blender 4.5 Mesh `7/7`、Bone frame、负缩放component、跨物体interaction 5项通过，P-13关闭。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -413,13 +415,14 @@ Blender authoring/frame input
 | `setups/mesh_cloth/properties.py` | schema到Blender PropertyGroup注册 | 保留，只消费schema |
 | `setups/mesh_cloth/capabilities.py` | schema到component capability映射 | 保留，与properties共享schema而不互相import |
 
-| C++文件 | 当前事实 | P-13目标 |
+| C++文件 | 当前事实 | 维护边界 |
 |---|---|---|
 | `hotools_native.cpp` | 168行通用module shell；只注册PropertyCurve/SpringBone 15个binding并调用`bind_mc2` | 已收口；不得恢复MC2参数细节或context状态 |
 | `mc2_bindings.cpp/.hpp` | 1670行，唯一注册MC2 74个nanobind ABI，持有typed adapter的边界校验/转换 | 保留单一`bind_mc2`入口；不持有context状态或数值kernel |
 | `mc2_context_internal.hpp` | `Mc2ContextV0`、interaction participant/aggregate的唯一内部数据布局 | 只定state，不定义ABI/helper/数值行为；不对binding或Python公开 |
 | `mc2_context_helpers.hpp` | 跨context单元最小helper声明，依赖纯state与Python buffer边界 | 只公开真实跨单元消费者，禁止变成无分层的全量internal API |
-| `mc2_context_v0.cpp/.hpp` | 3852行；持有context lifecycle/inspect/fingerprint classification 7个Python返回入口与被其他context单元共享的数值编排helper | 完成无迁移含义的文件命名与最终helper消费审计；ABI的`v0`是schema版本，不在纯重组中改名 |
+| `mc2_api.hpp` | MC2 context/interaction/fingerprint公开C ABI的唯一声明表 | 只声明稳定ABI；`v0`表示schema版本，不表示旧实现或兼容层 |
+| `mc2_context_core.cpp` | 3852行；持有context lifecycle/inspect/fingerprint classification 6个公开入口、1个内部inspect构造器与跨context单元共享的数值编排helper | 保留唯一core/lifecycle owner；不得复制state、数值helper或引入Python host shadow |
 | `mc2_context_frame_step.cpp` | 1051行，Center/parameter/frame/collider/reset及per-context step 16个ABI | 已收口；只修改唯一context dynamic state，不与static owner或readback混合 |
 | `mc2_context_interaction.cpp` | 444行，world-owned interaction的create/inspect/step-group/debug/free 5个ABI | 已收口；通过共享step/self helper消费per-slot context，不复制数值state |
 | `mc2_context_readback.cpp` | 522行，唯一持有结果及隐式debug中间态的9个按需readback ABI | 已收口；只读state或构建Bone输出缓存，不执行step/static update |
