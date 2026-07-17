@@ -334,6 +334,8 @@ Blender authoring/frame input
 
 33. P-12第一批纯整理已删除根package 106项和Mesh setup 11项无仓库消费者的lazy re-export，删除BasePose两个无人调用的固定spec转发，并把5个真实跨模块helper改为公开且带域名的合同名称；Center的纯`inverse quaternion`改名转发已改为直接调用共享`math3d`。生产代码由约16.8k降到约16.6k行，private import与re-export桶均为0，单调用函数由59降到56；依赖强连通分量仍为1，下一批只处理DTO/adapter反向边。`26/26`纯MC2与Blender 4.5属性/节点/生命周期`9/9`通过。
 
+34. P-12第二批将setup adapter从持有`topology.py`函数对象改为持有稳定builder标识，并由topology owner本地解析；现有`debug_dict()["topology_builder"]`值和非法setup拒绝行为不变。setup注册不再反向import topology，该依赖环已消失；全局审计剩下的唯一强连通分量只由native boundary与其DTO producer构成。Python 3.11下`26/26`纯MC2通过，Blender 4.5下属性/节点合同`9/9`及注册/注销生命周期通过；后续以该组合为主门禁，3.13/5.1保留为兼容与soak补充。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。

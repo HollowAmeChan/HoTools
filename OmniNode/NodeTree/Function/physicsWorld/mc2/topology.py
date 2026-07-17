@@ -739,10 +739,22 @@ def build_mc2_topology_spec(
 ) -> MC2TopologySpec:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
-    # 局部导入避免 setup adapter 声明与 topology 类型之间形成模块初始化环。
     from .setups import get_mc2_setup_adapter
 
     adapter = get_mc2_setup_adapter(task.setup_type)
+    source_topology_builders = {
+        "build_mc2_mesh_source_topology": build_mc2_mesh_source_topology,
+        "build_mc2_bone_source_topology": build_mc2_bone_source_topology,
+    }
+    try:
+        source_topology_builder = source_topology_builders[
+            adapter.topology_builder_name
+        ]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"MC2 setup adapter has unknown topology builder: "
+            f"{adapter.topology_builder_name!r}"
+        ) from exc
     if (
         task.setup_type == "mesh_cloth"
         and len(task.sources) == 1
@@ -769,7 +781,7 @@ def build_mc2_topology_spec(
         )
     else:
         sources = tuple(
-            adapter.build_source_topology(source, index)
+            source_topology_builder(source, index)
             for index, source in enumerate(task.sources)
         )
     bone_connection = None

@@ -90,7 +90,7 @@ P-09/P-10已按验收表关闭，P-11事实审计已产出；当前执行项为P
 2. 改变完成度、支持域或阻塞状态时，同提交更新 `MC2_ACCEPTANCE_MAP.md`；纯实现细节不在本文追加“已完成”段落。
 3. 新发现的源码陷阱、Blender特化、故意差异或冲突规则写入 worksheet，并给出稳定ID或明确标题。
 4. source-aligned声明必须有固定producer/consumer、输入域和Tier A；Tier B/C只能证明局部分支或回归。
-5. 测试环境固定为 Python 3.13 和 Blender 5.1 `--background --factory-startup`；不使用 Blender 4.5 作为MC2验收环境。
+5. 主验收环境固定为 Python 3.11 native 与 Blender 4.5 `--background --factory-startup`；Python 3.13 native 与 Blender 5.1 继续作为ABI兼容、代表资产和长帧soak补充门禁。
 6. 风险较高的native改动同时验证raw ABI、Python host和Blender生产链；文档-only变更至少执行`git diff --check`。
 7. P-11与P-14的审计结论必须来自可重复脚本/搜索/测试，不接受仅凭文件名或人工浏览宣称“干净”。
 8. P-15合并前旧三文档继续履行当前职责；合并提交必须原子更新所有文档路由，不能留下两个权威入口。

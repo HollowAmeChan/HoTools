@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -11,17 +10,14 @@ class MC2SetupAdapterContract:
     setup_type: str
     source_kind: str
     writeback_channel: str
-    topology_builder: Callable = field(repr=False, compare=False)
+    topology_builder_name: str
     implementation_status: str = "native_context_framework"
-
-    def build_source_topology(self, source, source_index: int):
-        return self.topology_builder(source, int(source_index))
 
     def debug_dict(self) -> dict:
         return {
             "setup_type": self.setup_type,
             "source_kind": self.source_kind,
             "writeback_channel": self.writeback_channel,
-            "topology_builder": getattr(self.topology_builder, "__name__", ""),
+            "topology_builder": self.topology_builder_name,
             "implementation_status": self.implementation_status,
         }
