@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
-| MC2 | P-16 热点性能与维护态总门禁 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审和单一`MC2_BLUEPRINT.md`均已关闭；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立 | 增加分阶段热点benchmark，固定环境/资产/粗粒度ceiling，复核蓝本事实后解除`solver_acceptance_blocker` |
+| MC2 | 维护态总门禁已关闭 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark均已关闭；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立 | `solver_acceptance_blocker=False`；按`MC2_BLUEPRINT.md`维护和扩展，不恢复旧路径 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -79,8 +79,7 @@ physicsWorld/
 ## 当前优先级
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-2. 按`MC2_BLUEPRINT.md`完成MC2维护态总门禁。
-   旧实现删除、职责重组、洁净度终审和单一蓝本均已关闭。当前只剩分阶段热点性能基线与事实总复核；关闭前保持acceptance blocker。
+2. MC2已进入维护态；按`MC2_BLUEPRINT.md`保持职责、事务、debug和热点ceiling，不再维护迁移计划。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

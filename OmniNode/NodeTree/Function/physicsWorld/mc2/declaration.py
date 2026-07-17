@@ -104,7 +104,7 @@ MC2_SOLVER_DECLARATION = {
         "planned_result_channels": [],
         "planned_shared_result_channels": [],
         "supports_bake": False,
-        "solver_acceptance_blocker": True,
+        "solver_acceptance_blocker": False,
     },
     "legacy_policy": "removed_no_compatibility_fallback",
 }

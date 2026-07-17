@@ -32,6 +32,8 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 旧MC2节点package、旧数组solve、旧context/IO ABI、旧BoneCloth IO和兼容构建选项已经物理删除。不得恢复别名、fallback backend、shadow solver或旧节点adapter。
 
+产品、正确性、生命周期、洁净度、文档和热点性能门禁均已关闭，`solver_acceptance_blocker=False`。MC2当前进入维护态；未来扩展不重新打开已删除路径。
+
 当前公开范围是restricted realtime。Bake/export、通用力场、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
 
 ## 一句话数据流
@@ -393,7 +395,30 @@ Python 3.11 + Blender 4.5是主门禁。Python 3.13 + Blender 5.1用于ABI兼容
 - benchmark必须分开raw snapshot/fingerprint、static cold/change、frame prepare、all-task group step、result/writeback和debug request。
 - 比较必须固定Blender版本、资产、帧序列、warmup和功能配置；绝对毫秒不能跨机器当合同。
 
-替代期同机事实显示large Mesh/Bone热帧约`5.47/6.06ms`，首构约`20.16/18.01ms`；这些数字说明架构没有因C++边界重组退化，不是跨机器硬阈值。维护态热点基线由专用benchmark脚本与粗粒度ceiling维护。
+维护态热点脚本：
+
+- `physicsWorld/test/benchmark_blender_mc2_hotspots.py`
+- `physicsWorld/test/benchmark_blender_mc2_interaction_scope.py`
+- `physicsWorld/test/benchmark_blender_mc2_self_radius.py`
+
+主脚本在Blender 4.5.0 / Python 3.11.11中构造small/medium/large Mesh与Bone固定资产，分段测量raw snapshot、topology/fingerprint、static build/clone、frame prepare、all-task group step、result build/publish、writeback和debug capture。每个场景覆盖cold、hot、config、Mesh Pin surface/Bone rest geometry change及Python分配峰值，并断言所有阶段真实命中。
+
+粗粒度ceiling只用于发现数量级回退：
+
+| Case | cold | hot P95 | static change | debug | Python allocation peak |
+|---|---:|---:|---:|---:|---:|
+| small | 40ms | 12ms | 40ms | 30ms | 4MB |
+| medium | 80ms | 20ms | 80ms | 50ms | 8MB |
+| large | 160ms | 40ms | 160ms | 100ms | 16MB |
+
+2026-07-17同进程连续两轮均通过。第二轮large结果：
+
+| Domain | cold | hot mean/P95 | config | surface/geometry change | debug | allocation peak |
+|---|---:|---:|---:|---:|---:|---:|
+| Mesh 1600粒子 | 19.87ms | 4.79/5.26ms | 4.27ms | 19.41ms | 5.34ms | 464KB |
+| Bone 384粒子 | 18.24ms | 6.40/7.04ms | 6.21ms | 19.01ms | 6.87ms | 531KB |
+
+large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group step约0.60ms；Bone frame prepare约2.07ms、result build约1.60ms、raw snapshot约1.18ms、writeback约0.73ms。说明当前优化优先级在Blender snapshot/frame/result适配，不在native group step。数字不作为跨机器绝对目标；重新基线必须使用同一环境、fixture和脚本。
 
 ## 验收与自动审计
 
@@ -413,9 +438,12 @@ Python 3.11 + Blender 4.5是主门禁。Python 3.13 + Blender 5.1用于ABI兼容
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh `7/7`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
+| Blender 4.5维护态soak | 180帧；mean/P95/max `2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 
 维护时按风险选择分层，但native owner、binding或state变化必须同时跑Python 3.11 native和对应Blender 4.5生产链。
+
+当前没有MC2发布阻断项。
 
 ## 明确不支持与不得恢复
 
