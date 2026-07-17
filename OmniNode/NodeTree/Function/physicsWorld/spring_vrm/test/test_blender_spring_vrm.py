@@ -307,12 +307,19 @@ def _make_branch_armature(name: str = "PW_SpringVRM_Branch"):
     root = arm_data.edit_bones.new("root")
     root.head = (0.0, 0.0, 0.0)
     root.tail = (0.0, 0.0, 1.0)
+
+    fork = arm_data.edit_bones.new("fork")
+    fork.parent = root
+    fork.use_connect = True
+    fork.head = root.tail
+    fork.tail = (0.0, 0.0, 2.0)
+
     for x, name_suffix in ((-0.5, "left"), (0.5, "right")):
         child = arm_data.edit_bones.new(name_suffix)
-        child.parent = root
-        child.use_connect = True
-        child.head = root.tail
-        child.tail = (x, 0.0, 2.0)
+        child.parent = fork
+        child.use_connect = False
+        child.head = fork.tail
+        child.tail = (x, 0.0, 3.0)
 
     bpy.ops.object.mode_set(mode="OBJECT")
     bpy.context.view_layer.update()
@@ -938,21 +945,41 @@ def test_spring_vrm_rejects_duplicate_roots_and_overlapping_bones():
         _delete_object(armature)
 
 
-def test_spring_vrm_branch_chain_reaches_native_context():
+def test_spring_vrm_branch_chain_follows_shared_parent():
     armature = _make_branch_armature()
     try:
-        world, _frame, _collider_count, _restart = _world_for_frame(
-            _OmniCache(), armature, 86, reset=True,
-        )
-        properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
-        assert properties[0]["bones"] == ["root", "left", "right"]
-        world, _count, _dirty, _version = physicsSpringVRMChainRegister(world, properties)
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
-        assert write_count == 2
-        _slot, _contexts, context = _spring_chain_context(world)
-        assert [record["bone_name"] for record in context._records] == ["left", "right"]
-        assert tuple(int(value) for value in context._static["parent_indices"]) == (-1, -1)
-        assert tuple(int(value) for value in context._static["use_connect"]) == (1, 1)
+        cache = _OmniCache()
+        for frame, reset in ((86, True), (87, False)):
+            world, _frame, _collider_count, restart = _world_for_frame(
+                cache, armature, frame, reset=reset,
+            )
+            properties = physicsSpringVRMChainProperties(
+                [_bone_value(armature, "root")],
+                stiffness_force=0.0,
+                drag_force=0.0,
+                gravity_dir=(1.0, 0.0, 0.0),
+                gravity_power=9.8,
+            )
+            assert properties[0]["bones"] == ["root", "fork", "left", "right"]
+            world, _count, _dirty, _version = physicsSpringVRMChainRegister(world, properties)
+            world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+            assert write_count == 3
+            _slot, _contexts, context = _spring_chain_context(world)
+            assert [record["bone_name"] for record in context._records] == ["fork", "left", "right"]
+            assert tuple(int(value) for value in context._static["parent_indices"]) == (-1, 0, 0)
+            assert tuple(int(value) for value in context._static["pinned"]) == (0, 0, 0)
+            assert tuple(int(value) for value in context._static["use_connect"]) == (1, 0, 0)
+            assert apply_all_writebacks(world, restart=restart) == 3
+            cache, _committed_world, _solver_count = physicsWorldCommit(world, enabled=True)
+
+        bpy.context.view_layer.update()
+        fork_tail = armature.matrix_world @ armature.pose.bones["fork"].tail
+        assert fork_tail.x > 1.0e-5, "fixture must move the shared branch parent"
+        for child_name in ("left", "right"):
+            child_head = armature.matrix_world @ armature.pose.bones[child_name].head
+            assert (child_head - fork_tail).length < 1.0e-5, (
+                f"{child_name} head must follow the simulated shared parent"
+            )
     finally:
         _delete_object(armature)
 
@@ -2224,7 +2251,7 @@ _TESTS = (
     ("SpringBone multiple armatures create isolated slots", test_spring_vrm_multiple_armatures_create_isolated_slots),
     ("SpringBone multiple chains share one armature slot", test_spring_vrm_multiple_chains_share_one_armature_slot),
     ("SpringBone rejects duplicate roots and overlapping bones", test_spring_vrm_rejects_duplicate_roots_and_overlapping_bones),
-    ("SpringBone branch chain reaches native context", test_spring_vrm_branch_chain_reaches_native_context),
+    ("SpringBone branch chain follows shared parent", test_spring_vrm_branch_chain_follows_shared_parent),
     ("SpringBone topology change disposes old slot", test_spring_vrm_topology_change_disposes_old_slot),
     ("SpringBone override pin reaches native static state", test_spring_vrm_override_pin_reaches_native_static_state),
     ("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose),

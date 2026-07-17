@@ -364,6 +364,55 @@ void mat4_mul_point(const float* m, const float& x, const float& y, const float&
     out_z = m[8] * x + m[9] * y + m[10] * z + m[11];
 }
 
+bool transform_point_between_affine_frames(
+    const float* current_frame,
+    const float* target_frame,
+    const float point[3],
+    float out[3])
+{
+    const float a00 = current_frame[0];
+    const float a01 = current_frame[1];
+    const float a02 = current_frame[2];
+    const float a10 = current_frame[4];
+    const float a11 = current_frame[5];
+    const float a12 = current_frame[6];
+    const float a20 = current_frame[8];
+    const float a21 = current_frame[9];
+    const float a22 = current_frame[10];
+    const float determinant =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+    if (std::fabs(determinant) <= kEpsilon) {
+        return false;
+    }
+
+    const float inv_det = 1.0f / determinant;
+    const float inverse[9] = {
+        (a11 * a22 - a12 * a21) * inv_det,
+        (a02 * a21 - a01 * a22) * inv_det,
+        (a01 * a12 - a02 * a11) * inv_det,
+        (a12 * a20 - a10 * a22) * inv_det,
+        (a00 * a22 - a02 * a20) * inv_det,
+        (a02 * a10 - a00 * a12) * inv_det,
+        (a10 * a21 - a11 * a20) * inv_det,
+        (a01 * a20 - a00 * a21) * inv_det,
+        (a00 * a11 - a01 * a10) * inv_det,
+    };
+    const float relative[3] = {
+        point[0] - current_frame[3],
+        point[1] - current_frame[7],
+        point[2] - current_frame[11],
+    };
+    const float local[3] = {
+        inverse[0] * relative[0] + inverse[1] * relative[1] + inverse[2] * relative[2],
+        inverse[3] * relative[0] + inverse[4] * relative[1] + inverse[5] * relative[2],
+        inverse[6] * relative[0] + inverse[7] * relative[1] + inverse[8] * relative[2],
+    };
+    mat4_mul_point(target_frame, local[0], local[1], local[2], out[0], out[1], out[2]);
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+
 void matrix_from_quat_scale(
     const float quat[4],
     const float scale[3],
@@ -680,16 +729,30 @@ void step_spring_vrm_context(SpringVrmStepView& view) {
                 view.current_heads[vec_offset + 1],
                 view.current_heads[vec_offset + 2],
             };
-            if (use_connect) {
-                if (parent_index < 0) {
-                    head[0] = view.current_heads[vec_offset + 0];
-                    head[1] = view.current_heads[vec_offset + 1];
-                    head[2] = view.current_heads[vec_offset + 2];
-                } else {
+            if (parent_index >= 0 && parent_index < bone) {
+                if (use_connect) {
                     const std::int64_t parent_offset = static_cast<std::int64_t>(parent_index) * 3;
                     head[0] = view.current_tails[parent_offset + 0];
                     head[1] = view.current_tails[parent_offset + 1];
                     head[2] = view.current_tails[parent_offset + 2];
+                } else {
+                    float head_pose[3];
+                    mat4_mul_point(
+                        view.armature_world_inv,
+                        head[0], head[1], head[2],
+                        head_pose[0], head_pose[1], head_pose[2]);
+                    float target_head_pose[3];
+                    const auto parent_matrix_offset = static_cast<std::int64_t>(parent_index) * 16;
+                    if (transform_point_between_affine_frames(
+                            view.current_pose_matrices + parent_matrix_offset,
+                            view.target_matrices + parent_matrix_offset,
+                            head_pose,
+                            target_head_pose)) {
+                        mat4_mul_point(
+                            view.armature_world,
+                            target_head_pose[0], target_head_pose[1], target_head_pose[2],
+                            head[0], head[1], head[2]);
+                    }
                 }
             }
 

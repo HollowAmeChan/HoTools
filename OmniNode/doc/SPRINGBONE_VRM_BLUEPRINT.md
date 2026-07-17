@@ -102,7 +102,9 @@ Slot id 由 `slot_kind + armature_ptr + armature_data_ptr + spec_hash` 组成。
 
 - 重复 root 明确报错。
 - 两条链包含同一 simulated bone 明确报错。
-- root 自身不参与模拟；`bones[1:]` 是 simulated bones。
+- 输入 root 是不参与模拟的中控骨；`bones[1:]` 全部是 simulated bones。
+- 中控骨可以是多串骨链的共同父级；其下分叉节点仍只是一根模拟骨，所有分支共享该父级的解算结果。
+- simulated bones 只有 `Bone.hotools_collision.pin` 或对应覆写能够固定。
 - 多条不重叠链共享 armature slot，各自持有 native chain context。
 
 Slot 私有状态只包含 spec、`frame_state`、native contexts、`writeback_plan`、debug 请求和诊断。每帧结果不把 slot 当作跨 solver 总线。
