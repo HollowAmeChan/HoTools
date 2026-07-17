@@ -24,6 +24,7 @@ NATIVE_FILES = (
     "mc2_context_v0.cpp",
     "mc2_context_interaction.cpp",
     "mc2_context_readback.cpp",
+    "mc2_context_static.cpp",
     "mc2_fingerprint.cpp",
     "mc2_kernels.cpp",
     "mc2_static_build.cpp",

@@ -13,6 +13,10 @@ inline constexpr long kSchemaVersion = 0;
 inline constexpr Py_ssize_t kIntCount = 11;
 inline constexpr Py_ssize_t kSelfCollisionSyncMode = 10;
 inline constexpr float kMc2Epsilon = 0.00000001f;
+inline constexpr std::uint32_t kSelfFix0 = 0x04000000u;
+inline constexpr std::uint32_t kSelfAllFix = 0x20000000u;
+inline constexpr std::uint32_t kSelfIgnore = 0x40000000u;
+inline constexpr std::int32_t kSelfIgnoreGrid = 1000000;
 
 Mc2ContextV0* context_from(PyObject* object);
 Mc2InteractionV0* interaction_from(PyObject* object);
@@ -24,6 +28,7 @@ bool dict_i64(PyObject* dict, const char* key, std::int64_t value);
 bool dict_bool(PyObject* dict, const char* key, bool value);
 bool dict_float(PyObject* dict, const char* key, float value);
 bool dict_string(PyObject* dict, const char* key, const char* value);
+bool finite_floats(const py::Buffer& buffer, const char* name);
 bool expect_2d(
     const py::Buffer& buffer,
     const char* name,
@@ -31,6 +36,56 @@ bool expect_2d(
     Py_ssize_t columns
 );
 bool build_bone_output(Mc2ContextV0& context);
+bool validate_quaternions(const py::Buffer& rotations, const char* name);
+bool validate_indices(
+    const py::Buffer& buffer,
+    std::int64_t vertex_count,
+    const char* name,
+    bool allow_minus_one = false
+);
+bool validate_dense_ranges(
+    const py::Buffer& ranges,
+    Py_ssize_t data_count,
+    const char* name
+);
+bool expect_int8_scalar_array(const py::Buffer& buffer, const char* name);
+bool rebuild_baseline_step_pose(Mc2ContextV0& context);
+bool is_move(std::uint8_t attribute);
+void clear_self_collision_contacts(Mc2ContextV0& context);
+
+template <typename T>
+std::vector<T> copy_values(const py::Buffer& buffer) {
+    const auto count = static_cast<std::size_t>(
+        buffer.view.len / static_cast<Py_ssize_t>(sizeof(T))
+    );
+    const auto* values = static_cast<const T*>(buffer.view.buf);
+    return std::vector<T>(values, values + count);
+}
+
+template <typename T>
+std::vector<T>* validated_owned_values(
+    PyObject* capsule,
+    const char* capsule_name,
+    const py::Buffer& buffer
+) {
+    if (!PyCapsule_IsValid(capsule, capsule_name)) {
+        PyErr_SetString(PyExc_ValueError, "MC2 static owner capsule is invalid");
+        return nullptr;
+    }
+    auto* values = static_cast<std::vector<T>*>(
+        PyCapsule_GetPointer(capsule, capsule_name)
+    );
+    if (values == nullptr) return nullptr;
+    const auto count = static_cast<std::size_t>(
+        buffer.view.len / static_cast<Py_ssize_t>(sizeof(T))
+    );
+    if (values->size() != count ||
+        (count > 0 && values->data() != buffer.view.buf)) {
+        PyErr_SetString(PyExc_ValueError, "MC2 static owner does not match its array");
+        return nullptr;
+    }
+    return values;
+}
 bool interaction_scope_matches(
     Mc2InteractionV0& interaction,
     const std::vector<std::uintptr_t>& scope_identity
