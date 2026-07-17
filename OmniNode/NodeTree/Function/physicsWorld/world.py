@@ -231,7 +231,6 @@ def _collider_from_source(source: PhysicsColliderSource) -> dict | None:
     支持的 collision_type：
       - Object 级：SPHERE、CAPSULE、PLANE、BOX
       - Bone 级：SPHERE、CAPSULE
-    MESH 类型不产生碰撞 dict（它是 solver 内部的 mesh collision，不走此路径）。
     """
     props = source.props
     if props is None:
@@ -321,12 +320,9 @@ def build_collider_snapshot(world: PhysicsWorldCache, sources: list[PhysicsColli
     把 ColliderSource 列表转成碰撞快照 dict。
 
     快照格式与旧 build_collision_snapshot_from_scene 兼容，
-    MESH 类型 source 不产生碰撞条目（只作为 solver 的配置来源）。
     """
     colliders = []
     for source in sources:
-        if source.owner_type == "MESH":
-            continue  # Mesh collision 由 solver 内部处理
         entry = _collider_from_source(source)
         if entry is not None:
             colliders.append(entry)

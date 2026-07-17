@@ -299,7 +299,6 @@ def _body_case(harness, count: int, args) -> dict[str, Any]:
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     return _measure_case(
         harness,
@@ -345,7 +344,6 @@ def _constraint_case(harness, count: int, args) -> dict[str, Any]:
         include_rigid_constraint=True,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     return _measure_case(
         harness,
@@ -380,7 +378,6 @@ def _contact_case(harness, count: int, args) -> dict[str, Any]:
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     return _measure_case(
         harness,

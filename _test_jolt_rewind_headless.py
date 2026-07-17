@@ -139,7 +139,6 @@ def _run():
         [ball],
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
         include_rigid_body=True,
         include_rigid_constraint=False,
         include_hidden=False,

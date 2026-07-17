@@ -33,7 +33,6 @@ class PhysicsObjectScope:
         "objects",
         "include_passive_collision",
         "include_bone_collision",
-        "include_mesh_collision",
         "include_rigid_body",
         "include_rigid_constraint",
         "include_hidden",
@@ -44,7 +43,6 @@ class PhysicsObjectScope:
         objects: tuple = (),
         include_passive_collision: bool = True,
         include_bone_collision: bool = True,
-        include_mesh_collision: bool = True,
         include_rigid_body: bool = True,
         include_rigid_constraint: bool = True,
         include_hidden: bool = False,
@@ -52,7 +50,6 @@ class PhysicsObjectScope:
         self.objects: tuple = tuple(objects) if objects else ()
         self.include_passive_collision: bool = bool(include_passive_collision)
         self.include_bone_collision: bool = bool(include_bone_collision)
-        self.include_mesh_collision: bool = bool(include_mesh_collision)
         self.include_rigid_body: bool = bool(include_rigid_body)
         self.include_rigid_constraint: bool = bool(include_rigid_constraint)
         self.include_hidden: bool = bool(include_hidden)
@@ -63,7 +60,6 @@ class PhysicsObjectScope:
             f"objects={len(self.objects)}, "
             f"passive={self.include_passive_collision}, "
             f"bone={self.include_bone_collision}, "
-            f"mesh={self.include_mesh_collision}, "
             f"rigid={self.include_rigid_body}, "
             f"constraint={self.include_rigid_constraint}, "
             f"hidden={self.include_hidden})"
@@ -142,7 +138,7 @@ class PhysicsColliderSource:
     它是 Physics World Begin 内部的轻量中间值，不持有 native 资源，
     不跨帧缓存（由 collider_snapshot 负责帧间传递）。
 
-    owner_type: "OBJECT" | "BONE" | "MESH"
+    owner_type: "OBJECT" | "BONE"
     """
 
     __slots__ = (

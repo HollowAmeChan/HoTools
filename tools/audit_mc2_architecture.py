@@ -105,6 +105,12 @@ FORBIDDEN_MESH_RNA_FIELDS = {
     "self_collision_surface_thickness",
     "mass",
 }
+FORBIDDEN_WORLD_SCOPE_FIELD = "include_" "mesh_collision"
+WORLD_SCOPE_CONTRACT_FILES = (
+    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "nodes.py",
+    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "scope.py",
+    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "types.py",
+)
 
 
 def _module_name(path: Path) -> str:
@@ -448,12 +454,25 @@ def _legacy_hits() -> list[dict]:
     return sorted(hits, key=lambda item: (item["path"], item["term"]))
 
 
+def _world_scope_product_hits() -> list[dict]:
+    hits = []
+    for path in WORLD_SCOPE_CONTRACT_FILES:
+        source = path.read_text(encoding="utf-8")
+        if FORBIDDEN_WORLD_SCOPE_FIELD in source:
+            hits.append({
+                "path": path.relative_to(REPO_ROOT).as_posix(),
+                "term": FORBIDDEN_WORLD_SCOPE_FIELD,
+            })
+    return hits
+
+
 def build_report() -> dict:
     return {
         "schema": "hotools_mc2_architecture_audit_v0",
         "python": _python_facts(),
         "cpp": _cpp_facts(),
         "legacy_hits": _legacy_hits(),
+        "world_scope_product_hits": _world_scope_product_hits(),
     }
 
 
@@ -480,6 +499,7 @@ def _print_summary(report: dict) -> None:
             f"{len(facts['pyobject_entry_points'])} PyObject entries"
         )
     print(f"Legacy production hits: {len(report['legacy_hits'])}")
+    print(f"Physics World scope product violations: {len(report['world_scope_product_hits'])}")
     print(
         f"C++ API definitions: {cpp['api_symbol_count']} symbols, "
         f"{len(cpp['api_definition_violations'])} ownership violations"
@@ -523,6 +543,7 @@ def main() -> None:
             ),
             report["cpp"]["pure_native_violations"],
             report["legacy_hits"],
+            report["world_scope_product_hits"],
         )
         if any(failures):
             raise SystemExit(1)

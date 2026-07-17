@@ -71,7 +71,6 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
     include_flags = (
         bool(scope.include_passive_collision),
         bool(scope.include_bone_collision),
-        bool(scope.include_mesh_collision),
         bool(scope.include_rigid_body),
         bool(scope.include_rigid_constraint),
         bool(scope.include_hidden),
@@ -245,7 +244,6 @@ def make_scope(
     objects,
     include_passive_collision: bool = True,
     include_bone_collision: bool = True,
-    include_mesh_collision: bool = True,
     include_rigid_body: bool = True,
     include_rigid_constraint: bool = True,
     include_hidden: bool = False,
@@ -256,7 +254,6 @@ def make_scope(
         objects=tuple(deduped),
         include_passive_collision=include_passive_collision,
         include_bone_collision=include_bone_collision,
-        include_mesh_collision=include_mesh_collision,
         include_rigid_body=include_rigid_body,
         include_rigid_constraint=include_rigid_constraint,
         include_hidden=include_hidden,
@@ -326,20 +323,6 @@ def collect_physics_sources(scope: PhysicsObjectScope) -> tuple[list[PhysicsColl
                     bone_name=bone_name,
                     props=props,
                     key=f"bone:{obj_ptr}:{arm_data_ptr}:{bone_name}",
-                    visible=True,
-                ))
-
-        # Mesh 碰撞配置（vertex collision / self collision / base pose proxy）
-        if scope.include_mesh_collision and obj_type == "MESH" and obj.data is not None:
-            props = getattr(obj, "hotools_mesh_collision", None)
-            if props is not None and bool(getattr(props, "enabled", False)):
-                mesh_ptr = int(obj.data.as_pointer())
-                sources.append(PhysicsColliderSource(
-                    owner=obj,
-                    owner_type="MESH",
-                    bone_name="",
-                    props=props,
-                    key=f"mesh:{obj_ptr}:{mesh_ptr}",
                     visible=True,
                 ))
 

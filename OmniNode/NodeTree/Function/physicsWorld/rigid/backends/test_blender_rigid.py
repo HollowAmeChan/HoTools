@@ -379,7 +379,7 @@ def test_jolt_adapter_direct():
 def test_world_lifecycle():
     scene = bpy.context.scene
     scope = make_scope([], include_passive_collision=False,
-                       include_bone_collision=False, include_mesh_collision=False,
+                       include_bone_collision=False,
                        include_rigid_body=True, include_rigid_constraint=False,
                        include_hidden=False)
 
@@ -422,8 +422,7 @@ def test_rigid_body_commands_exchange():
     ball = _make_obj("T3B_CommandBall", (0, 0, 5), body_type="DYNAMIC")
 
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -484,8 +483,7 @@ def test_rigid_body_command_nodes():
     ball = _make_obj("T3C_CommandNodeBall", (0, 0, 5), body_type="DYNAMIC")
 
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -540,8 +538,7 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
     assert defaults[0]["max_contact_constraints"] == 2048
 
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -614,7 +611,6 @@ def test_rigid_body_capacity_overflow_isolated_and_reported():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
 
     scene.frame_set(1)
@@ -1023,7 +1019,6 @@ def test_constraint_state_result_pipeline():
         include_rigid_constraint=True,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -1227,7 +1222,6 @@ def test_coupled_constraint_spec_and_adapter():
         include_rigid_constraint=True,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     world, _, _, _ = physicsWorldBegin(
         cache_state=None, scene=scene, object_scope=scope, enabled=True,
@@ -1271,8 +1265,7 @@ def test_generated_constraint_implicit_object_pipeline():
     b = _make_obj("T3D_GeneratedBodyB", (0.5, 0, 2), body_type="DYNAMIC")
 
     scope = make_scope([a, b], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -1335,7 +1328,7 @@ def test_full_rigid_pipeline():
 
     scope = make_scope([ground, ball],
                        include_passive_collision=True, include_bone_collision=False,
-                       include_mesh_collision=False, include_rigid_body=True,
+                       include_rigid_body=True,
                        include_rigid_constraint=False, include_hidden=False)
 
     cache_state, z0 = None, ball.location.z
@@ -1385,7 +1378,6 @@ def test_contact_and_sensor_event_result_pipeline():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
 
     world, cache_value, stats = _begin_step_commit(scene, None, scope, 1)
@@ -1503,7 +1495,6 @@ def test_contact_event_overflow_result_pipeline():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -1567,7 +1558,6 @@ def test_rigid_ray_cast_query_pipeline():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     world, _cache_value, _stats = _begin_step_commit(scene, None, scope, 1)
     adapter = world.backend_resources.get("rigid_solver")
@@ -1645,8 +1635,7 @@ def test_dispose_and_rebuild():
     scene = bpy.context.scene
     ball  = _make_obj("T5_Ball", (0, 0, 3), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     cache_state = None
     for fi in range(10):
@@ -1726,8 +1715,7 @@ def test_runtime_cache_delete_and_clear_all_dispose():
 
     ball = _make_obj("T5B_RuntimeCacheBall", (0, 0, 4), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     ctx = OmniRuntimeState.begin_run(root_tree)
     hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
@@ -1763,8 +1751,7 @@ def test_runtime_cache_delete_and_clear_all_dispose():
 
     ball2 = _make_obj("T5C_RuntimeClearAllBall", (0, 0, 4), body_type="DYNAMIC")
     scope2 = make_scope([ball2], include_rigid_body=True, include_rigid_constraint=False,
-                        include_passive_collision=False, include_bone_collision=False,
-                        include_mesh_collision=False)
+                        include_passive_collision=False, include_bone_collision=False)
 
     ctx = OmniRuntimeState.begin_run(root_tree)
     world_clear, cache_value_clear, write_count_clear = _runtime_cache_rigid_step(scene, None, scope2, 1)
@@ -1786,8 +1773,7 @@ def test_same_frame_repeats_publish_cached_results_without_step():
     scene = bpy.context.scene
     ball = _make_obj("T6A_SameFrameBall", (0, 0, 4), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
     assert stats1 is not None
@@ -1818,8 +1804,7 @@ def test_frame_jump_back_replaces_world_and_restarts():
     scene = bpy.context.scene
     ball = _make_obj("T6B_JumpBackBall", (0, 0, 4), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     world1, cache_value, _stats1 = _begin_step_commit(scene, None, scope, 1)
     world2, cache_value, stats2 = _begin_step_commit(scene, cache_value, scope, 2)
@@ -1851,11 +1836,9 @@ def test_scope_prune_removes_rigid_slot_and_resyncs_remaining_body():
     a = _make_obj("T6C_PruneA", (0, 0, 4), body_type="DYNAMIC")
     b = _make_obj("T6C_PruneB", (1, 0, 4), body_type="DYNAMIC")
     scope_both = make_scope([a, b], include_rigid_body=True, include_rigid_constraint=False,
-                            include_passive_collision=False, include_bone_collision=False,
-                            include_mesh_collision=False)
+                            include_passive_collision=False, include_bone_collision=False)
     scope_one = make_scope([a], include_rigid_body=True, include_rigid_constraint=False,
-                           include_passive_collision=False, include_bone_collision=False,
-                           include_mesh_collision=False)
+                           include_passive_collision=False, include_bone_collision=False)
 
     spec_a = build_rigid_body_spec(a)
     spec_b = build_rigid_body_spec(b)
@@ -1891,8 +1874,7 @@ def test_reset_restarts_generation_and_clears_writeback_delta():
     scene = bpy.context.scene
     ball = _make_obj("T6D_ResetBall", (0, 0, 4), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1, writeback=True)
     assert stats1 is not None
@@ -1920,8 +1902,7 @@ def test_static_transform_dirty_resyncs_jolt_body_without_generation_restart():
     scene = bpy.context.scene
     block = _make_obj("T6E_StaticDirty", (0, 0, 0), body_type="STATIC")
     scope = make_scope([block], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     spec = build_rigid_body_spec(block)
     assert spec is not None
@@ -1954,8 +1935,7 @@ def test_kinematic_transform_dirty_updates_jolt_body_without_resync_generation()
     scene = bpy.context.scene
     mover = _make_obj("T6F_KinematicDirty", (0, 0, 1), body_type="KINEMATIC")
     scope = make_scope([mover], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     spec = build_rigid_body_spec(mover)
     assert spec is not None
@@ -2002,8 +1982,7 @@ def test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart():
     scene = bpy.context.scene
     ball = _make_obj("T6G_ShapeDirty", (0, 0, 4), body_type="DYNAMIC")
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     spec = build_rigid_body_spec(ball)
     assert spec is not None
@@ -2039,8 +2018,7 @@ def test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_rest
     c = _make_obj("T6H_TargetC", (1, 0, 2), body_type="DYNAMIC")
     empty = _make_constraint_empty("T6H_TargetConstraint", a, b, loc=(0, 0, 2))
     scope = make_scope([a, b, c, empty], include_rigid_body=True, include_rigid_constraint=True,
-                       include_passive_collision=False, include_bone_collision=False,
-                       include_mesh_collision=False)
+                       include_passive_collision=False, include_bone_collision=False)
 
     spec = build_constraint_spec(empty)
     assert spec is not None
@@ -2184,7 +2162,6 @@ def test_scope_enumeration_order_is_simulation_stable():
             include_rigid_constraint=True,
             include_passive_collision=False,
             include_bone_collision=False,
-            include_mesh_collision=False,
         )
         scene.frame_set(1)
         world, _, _, _ = physicsWorldBegin(
@@ -2249,7 +2226,6 @@ def test_simulation_order_key_collision_is_rejected():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(
@@ -2284,7 +2260,6 @@ def test_generated_constraint_source_id_collision_is_rejected():
         include_rigid_constraint=False,
         include_passive_collision=False,
         include_bone_collision=False,
-        include_mesh_collision=False,
     )
     scene.frame_set(1)
     world, _, _, _ = physicsWorldBegin(

@@ -624,7 +624,6 @@ class BlenderFixtureRuntime:
             include_rigid_constraint=bool(self.constraints),
             include_passive_collision=False,
             include_bone_collision=False,
-            include_mesh_collision=False,
         )
         events: dict[tuple[int, str], list] = {}
         for event in fixture.timeline:
