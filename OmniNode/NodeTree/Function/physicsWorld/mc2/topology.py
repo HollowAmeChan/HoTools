@@ -148,7 +148,15 @@ def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
 
 def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
     mesh = getattr(source, "data", None)
-    if mesh is None:
+    if (
+        mesh is None
+        or not callable(getattr(mesh, "update", None))
+        or not hasattr(mesh, "vertices")
+        or not hasattr(mesh, "edges")
+        or not hasattr(mesh, "polygons")
+        or not hasattr(mesh, "loops")
+        or not callable(getattr(mesh, "calc_loop_triangles", None))
+    ):
         return None
     mesh.update()
     positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
@@ -432,7 +440,7 @@ def _bone_source_selection(source):
     armature_data = getattr(armature, "data", None)
     collection = getattr(armature_data, "bones", None)
     if collection is None:
-        names = requested
+        names = ()
     elif explicit_chain:
         names = tuple(name for name in requested if _collection_get(collection, name) is not None)
     else:
@@ -779,6 +787,14 @@ def build_mc2_topology_spec(
             and all(isinstance(item, MC2BoneRawSnapshot) for item in static_input_snapshots)
             else ()
         )
+        for snapshot in compact_bone_snapshots:
+            if snapshot.resolved:
+                continue
+            for name in snapshot.requested:
+                key = (snapshot.armature_pointer, name)
+                if key in seen_bones:
+                    raise ValueError(f"MC2 task bone source overlaps: {name!r}")
+                seen_bones.add(key)
         for source, snapshot in zip(sources, compact_bone_snapshots):
             source_offset = len(positions)
             product_chains.append(tuple(

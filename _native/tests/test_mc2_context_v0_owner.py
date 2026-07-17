@@ -64,6 +64,26 @@ def test_owner_static_fingerprint_classification() -> None:
         assert info["static_overall_fingerprint"] == "5" * 32
 
 
+def test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer() -> None:
+    module = native.native_module()
+    fingerprint = module.mc2_mesh_static_fingerprint_v0(
+        np.asarray((0, 0, 0, 1, 0, 0, 0, 1, 0), dtype=np.float32),
+        np.asarray((0, 0, 1) * 3, dtype=np.float32),
+        np.asarray((0, 1, 1, 2, 0, 2), dtype=np.int32),
+        np.asarray((0, 1, 2), dtype=np.int32),
+        np.asarray((0, 1, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.float32),
+        np.empty((0,), dtype=np.float32),
+        1,
+        2,
+        False,
+        "",
+        False,
+    )
+    assert set(fingerprint) == {"topology", "geometry", "surface"}
+    assert all(len(value) == 32 for value in fingerprint.values())
+
+
 def test_owner_lifecycle_and_readback() -> None:
     module = native.native_module()
     baseline = module.mc2_context_v0_stats()["live"]
@@ -224,6 +244,8 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
 if __name__ == "__main__":
     test_owner_static_fingerprint_classification()
     print("PASS MC2 context V0 static fingerprint classification")
+    test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer()
+    print("PASS MC2 mesh static fingerprint without UV layer")
     test_owner_lifecycle_and_readback()
     print("PASS MC2 context V0 Python owner")
     test_owner_center_step_packing_dt_guard_and_readback()

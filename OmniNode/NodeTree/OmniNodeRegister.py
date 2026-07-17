@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2MeshCloth,physicsMC2BoneCloth,Armature
+from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,Armature
 from .Function.physicsWorld import nodes as physicsWorld
 from .Function.physicsWorld import registry as physicsWorldRegistry
 from .GraphNode import CLS_GRAPH
@@ -48,8 +48,6 @@ node_cls_image = FunctionNodeCore.loadRegisterFuncNodes(Image)
 node_cls_debug = FunctionNodeCore.loadRegisterFuncNodes(Debug)
 node_cls_cache = FunctionNodeCore.loadRegisterFuncNodes(Cache)
 node_cls_physics = FunctionNodeCore.loadRegisterFuncNodes(Physics)
-node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2MeshCloth)
-node_cls_physics_bonecloth = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2BoneCloth)
 node_cls_physics_world = FunctionNodeCore.loadRegisterFuncNodes(physicsWorld)
 node_cls_physics_world_solvers = _load_physics_world_solver_nodes()
 cls.extend(node_cls_data)
@@ -68,8 +66,6 @@ cls.extend(node_cls_image)
 cls.extend(node_cls_debug)
 cls.extend(node_cls_cache)
 cls.extend(node_cls_physics)
-cls.extend(node_cls_physics_mc2)
-cls.extend(node_cls_physics_bonecloth)
 cls.extend(node_cls_physics_world)
 cls.extend(node_cls_physics_world_solvers)
 
@@ -142,10 +138,6 @@ node_categories = [
     ]),
     OmniNodeCategory("PHYSICS", "Physics", items=[
         NodeItem(i.bl_idname) for i in node_cls_physics
-    ] + [
-        NodeItem(i.bl_idname) for i in node_cls_physics_mc2
-    ] + [
-        NodeItem(i.bl_idname) for i in node_cls_physics_bonecloth
     ]),
     # ── 物理世界：3个子分类 ─────────────────────────────────────────────────────
     OmniNodeCategory("PHYSICS_WORLD", "物理世界", items=[

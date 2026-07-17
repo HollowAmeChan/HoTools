@@ -852,7 +852,7 @@ README.md
 
 统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧实现只允许在删除前作产品语义、生产行为、性能和依赖审计材料，不能作为source oracle；SpringBone 已完成对拍并删除旧 Python runtime 与 35 参数 native ABI。
 
-MC2共享数值实现由`_native/src/mc2_kernels.cpp/.hpp`持有；文件名和owner不得再依附旧full-core接口。`HOTOOLS_ENABLE_LEGACY_MC2=OFF`是新Physics World的独立构建门禁：旧数组solve、旧context和旧BoneCloth IO不参与编译/导出，新V0 context、static build与self collision仍必须完整可用。
+MC2共享数值实现由`_native/src/mc2_kernels.cpp/.hpp`持有；文件名和owner不得再依附旧full-core接口。旧数组solve、旧context、旧BoneCloth IO及其构建选项已经物理删除。`build.bat 311 native`与`build.bat 313 native`只构建新Physics World的V0 context、static build、self collision和共享kernel，不得恢复legacy源码或公开ABI。
 
 MC2的P-08替代资格总门禁已经放行。P-09删除阶段以“旧Python节点/package、旧native context/IO删除，共享kernel与新V0/static/self保留”为机械边界；不得借删除提交重写新solver语义或引入兼容adapter。
 

@@ -7424,7 +7424,6 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
         triangles.view.shape[0] % 3 != 0 ||
         !expect_int32(loop_vertices, "loop_vertices") || loop_vertices.view.ndim != 1 ||
         !expect_float32(loop_uvs, "loop_uvs") || loop_uvs.view.ndim != 1 ||
-        loop_uvs.view.shape[0] != loop_vertices.view.shape[0] * 2 ||
         !finite_floats(loop_uvs, "loop_uvs") ||
         !expect_float32(pin_weights, "pin_weights") || pin_weights.view.ndim != 1 ||
         (pin_weights.view.shape[0] != 0 &&
@@ -7443,6 +7442,17 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
     );
     const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 11));
     if (PyErr_Occurred() || pin_enabled < 0 || has_uv_layer < 0 || pin_name == nullptr) {
+        return nullptr;
+    }
+    const Py_ssize_t expected_uv_values = loop_vertices.view.shape[0] * 2;
+    if ((has_uv_layer && loop_uvs.view.shape[0] != expected_uv_values) ||
+        (!has_uv_layer && loop_uvs.view.shape[0] != 0)) {
+        PyErr_SetString(
+            PyExc_ValueError,
+            has_uv_layer
+                ? "loop_uvs length must equal loop_vertices length * 2 when a UV layer exists"
+                : "loop_uvs must be empty when no UV layer exists"
+        );
         return nullptr;
     }
 

@@ -1108,7 +1108,7 @@ re_run_and_reset：
 
 旧 solver 的 Python 包装层默认不直接迁移，但删除前必须作为产品语义、生产行为、性能和依赖审查材料；它不是source parity oracle。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
 
-MC2的删除前构建边界由`HOTOOLS_ENABLE_LEGACY_MC2`表达：关闭时不得编译或导出旧数组solve、旧context和旧BoneCloth IO，但新Physics World V0、static producer、self collision与共享`mc2_kernels`必须独立构建并通过生产符号门禁。共享kernel的保留不构成旧solver兼容；旧package/context/公开ABI反向成为新runtime或测试依赖才构成违规。
+MC2删除后的永久构建边界不再包含legacy开关：旧数组solve、旧context、旧BoneCloth IO、旧package和公开ABI均不存在；新Physics World V0、static producer、self collision与共享`mc2_kernels`必须通过`311 native`/`313 native`独立构建和生产符号门禁。共享kernel的保留不构成旧solver兼容；任何恢复旧package/context/公开ABI或让测试反向依赖删除项的改动都构成违规。
 
 MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后正确性、职责重组、依赖洁净度、稳定蓝本和热点基线全部关闭前不得关闭solver acceptance blocker。
 

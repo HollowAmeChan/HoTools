@@ -20,6 +20,7 @@ from .parameters import (
     make_mc2_setup_options,
     make_mc2_solver_settings,
 )
+from .presets import MC2_PARTICLE_PRESETS
 from .specs import make_mc2_task_spec
 
 
@@ -205,6 +206,7 @@ def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
         "wind_depth_weight": {"min_value": 0.0, "max_value": 1.0},
         "moving_wind": {"min_value": 0.0, "max_value": 10.0},
     },
+    omni_presets=MC2_PARTICLE_PRESETS,
     _OUTPUT_NAME=["MC2粒子配置"],
     omni_description="三种 MC2 setup 共用的一套粒子/约束模型；setup 只在规范化时覆盖少量规则。",
 )

@@ -4,12 +4,6 @@ project(hotools_native LANGUAGES CXX)
 
 option(HOTOOLS_BUILD_NATIVE "Build the hotools_native extension" ON)
 option(HOTOOLS_BUILD_JOLT "Build the hotools_jolt extension" ON)
-option(
-    HOTOOLS_ENABLE_LEGACY_MC2
-    "Build the legacy MC2 array, context, and BoneCloth IO ABI"
-    ON
-)
-
 if(NOT HOTOOLS_BUILD_NATIVE AND NOT HOTOOLS_BUILD_JOLT)
     message(FATAL_ERROR "At least one of HOTOOLS_BUILD_NATIVE or HOTOOLS_BUILD_JOLT must be ON")
 endif()
@@ -135,15 +129,6 @@ nanobind_add_module(hotools_native
     src/property_curve.cpp
 )
 
-if(HOTOOLS_ENABLE_LEGACY_MC2)
-    target_sources(
-        hotools_native
-        PRIVATE
-            src/mc2_context.cpp
-            src/mc2_bonecloth_io.cpp
-    )
-endif()
-
 target_include_directories(hotools_native PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/include"
 )
@@ -152,7 +137,6 @@ target_compile_definitions(
     hotools_native
     PRIVATE
         PY_SSIZE_T_CLEAN
-        HOTOOLS_ENABLE_LEGACY_MC2=$<BOOL:${HOTOOLS_ENABLE_LEGACY_MC2}>
 )
 
 if(MSVC)

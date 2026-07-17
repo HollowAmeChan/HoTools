@@ -101,6 +101,9 @@ mc2_solver = importlib.import_module(
 mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
 )
+mc2_presets = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.presets"
+)
 mc2_results = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
 )
@@ -323,12 +326,6 @@ def test_mesh_cloth_rna_and_capability_share_one_schema():
 
 
 def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
-    legacy_modules = (
-        "HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth",
-        "HoTools.OmniNode.NodeTree.Function.physicsMC2BoneCloth",
-    )
-    assert not any(name in sys.modules for name in legacy_modules)
-
     assert solver_registry.builtin_solver_domains().count("mc2") == 1
     assert "mesh_cloth" not in solver_registry.builtin_solver_domains()
     assert solver_registry.builtin_component_domains() == ("collision", "mc2")
@@ -357,6 +354,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert tuple(node.bl_label for node in generated_node_classes) == (
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
+        "MC2可视化调试",
         "MC2 MeshCloth任务（框架）",
         "MC2粒子配置",
         "MC2模拟设置",
@@ -401,6 +399,31 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert "self_collision_thickness" not in inspect.signature(
         mc2_nodes.physicsMC2ParticleProfile
     ).parameters
+
+    profile_parameters = set(inspect.signature(mc2_nodes.physicsMC2ParticleProfile).parameters)
+    presets = tuple(mc2_presets.MC2_PARTICLE_PRESETS)
+    assert tuple(preset["name"] for preset in presets) == (
+        "MC2 Accessory",
+        "MC2 Cape",
+        "MC2 FrontHair",
+        "MC2 LongHair",
+        "MC2 ShortHair",
+        "MC2 Skirt",
+        "MC2 SoftSkirt",
+        "MC2 MiddleSpring",
+        "MC2 SoftSpring",
+        "MC2 HardSpring",
+        "MC2 Tail",
+    )
+    assert mc2_nodes.physicsMC2ParticleProfile.__meta["omni_presets"] == presets
+    for preset in presets:
+        values = preset["values"]
+        assert set(values) <= profile_parameters
+        assert "self_collision_thickness" not in values
+        assert "self_collision_curve" not in values
+        profile = mc2_nodes.physicsMC2ParticleProfile(**values)
+        assert profile.radius.value >= 0.001
+        assert profile.self_collision_thickness.value == 0.005
 
     class _FakeData:
         def __init__(self, pointer):
@@ -560,14 +583,25 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         mesh_task = mc2_specs.make_mc2_task_spec(
             mc2_names.MC2_SETUP_MESH_CLOTH, [real_obj]
         )
-        mesh_topology = mc2_topology.build_mc2_topology_spec(mesh_task)
+        mesh_fingerprint = mc2_topology.static_input_fingerprint_for_task(mesh_task)
+        mesh_topology = mc2_topology.build_mc2_topology_spec(
+            mesh_task,
+            static_input_fingerprint=mesh_fingerprint,
+        )
         assert mesh_topology.particle_count == 3
         assert mesh_topology.sources[0].resolved is True
         mesh_signature = mesh_topology.topology_signature
         real_mesh.vertices[1].co.x = 2.0
         real_mesh.update()
-        changed_topology = mc2_topology.build_mc2_topology_spec(mesh_task)
-        assert changed_topology.topology_signature != mesh_signature
+        changed_fingerprint = mc2_topology.static_input_fingerprint_for_task(mesh_task)
+        changed_topology = mc2_topology.build_mc2_topology_spec(
+            mesh_task,
+            static_input_fingerprint=changed_fingerprint,
+        )
+        assert changed_topology.topology_signature == mesh_signature
+        assert changed_fingerprint.topology == mesh_fingerprint.topology
+        assert changed_fingerprint.geometry != mesh_fingerprint.geometry
+        assert changed_fingerprint.surface == mesh_fingerprint.surface
 
         bpy.context.view_layer.objects.active = armature_obj
         armature_obj.select_set(True)
@@ -774,7 +808,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert reversed_state is not ordered_state
     assert ordered_state.disposed is True
     assert ordered_state.dispose_reason == "topology_changed"
-    assert ordered_context.disposed is True
+    assert ordered_context is None
 
     physics_world.generation += 1
     generation_state = reversed_state
@@ -783,7 +817,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert "重建 1" in status
     assert generation_state.disposed is True
     assert generation_state.dispose_reason == "world_generation_changed"
-    assert generation_context.disposed is True
+    assert generation_context is None
 
     slot_count = len(physics_world.solver_slots)
     _, _, status = mc2_solver.step_mc2(
@@ -795,7 +829,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     _, _, status = mc2_solver.step_mc2(physics_world, [])
     assert "清理 1" in status
     assert physics_world.solver_slots == {}
-    assert pruned_context.disposed is True
+    assert pruned_context is None
     assert all(context.disposed for context in first_native_contexts.values())
     source_profile = mc2_parameters.make_mc2_particle_profile(
         gravity=9.8,
@@ -830,7 +864,6 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert spring_effective["collision"]["mode"] == 1
     assert spring_effective["collision"]["dynamic_friction"] == 0.5
     assert spring_effective["spring"]["power"] == 0.07
-    assert not any(name in sys.modules for name in legacy_modules)
 
 
 def test_solver_registry_separates_owned_shared_and_planned_result_channels():

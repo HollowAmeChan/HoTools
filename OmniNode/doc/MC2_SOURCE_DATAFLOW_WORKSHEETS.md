@@ -326,9 +326,11 @@ Blender authoring/frame input
 
 29. Blender raw snapshot读取是允许保留的host热点边界：`foreach_get`/UV/Pin/Bone rest读取用于检测任意脚本、编辑模式与数据变化，连续数组随即交给native fingerprint/producer，不得在Python派生solver static。2026-07 depsgraph handler实测中，BasePose/GN正常逐帧求值与真实Mesh geometry/Pin/UV authoring都会产生Object/Mesh geometry update；Bone Pose与rest编辑也都会产生Armature geometry update，因此当前标志无法安全跳过snapshot。任何未来dirty tracker必须先增加能区分authoring与solver/evaluation更新的稳定revision合同，否则不得以性能为由漏检重建。
 
-30. P-07所有权边界固定为：`mc2_kernels.cpp/.hpp`持有新旧context都需要的数值kernel，`mc2_context_v0.*`、`mc2_static_build.*`与`mc2_self_collision.cpp`属于新Physics World保留集合；`mc2_context.*`、`mc2_bonecloth_io.cpp`及`hotools_native.cpp`中的旧数组/context/IO binding属于legacy删除集合。`HOTOOLS_ENABLE_LEGACY_MC2=OFF`必须能独立构建`hotools_native`并通过新`_REQUIRED_SYMBOLS`、raw V0/static及纯MC2门禁，不得以保留旧公开ABI来满足链接。默认ON只服务P-08前的旧产品审计，不能成为新runtime依赖。
+30. P-07/P-09所有权边界现为永久删除态：`mc2_kernels.cpp/.hpp`只持有新context需要的共享数值kernel，`mc2_context_v0.*`、`mc2_static_build.*`与`mc2_self_collision.cpp`属于新Physics World保留集合；`mc2_context.*`、`mc2_bonecloth_io.cpp`、旧数组/context/IO binding及legacy构建选项均已物理删除。`311 native`与`313 native`必须只构建`hotools_native`并通过新`_REQUIRED_SYMBOLS`、raw V0/static及纯MC2门禁，不得恢复旧公开ABI来满足链接。
 
 31. P-08删除准入已成立：产品拓扑、跨物体self、单半径、全隐式debug、all-task transaction、生命周期、性能和独立构建均无开放决策。P-09只能删除第30条legacy集合和旧Python节点/package，不得删除或复制共享kernel，也不得在新runtime增加compat import、fallback ABI或旧节点adapter。删除前后的最后可比benchmark证据固定使用P-08同轮Blender 5.1结果。
+
+32. P-09/P-10已关闭：旧Python Mesh/Bone package、旧native context/IO、11个legacy ABI及只服务旧路径的测试/benchmark已删除。官方11份MC2预设JSON迁入`physicsWorld/mc2/presets`并直接挂到`physicsMC2ParticleProfile`；转换器只写公共profile真实socket，`radius`映射源粒子半径，不写`self_collision_thickness`或第二套曲线。删除后`18/18` native/raw、`26/26`纯MC2、Blender 4.5属性契约`9/9`、Blender 5.1代表资产`8/7`及180帧soak通过；当前切入P-11逐文件职责与依赖审计。
 
 ## 9. Oracle 与冲突处理
 
