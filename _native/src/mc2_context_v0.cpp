@@ -17,10 +17,9 @@
 #include <vector>
 
 namespace hotools {
-namespace {
+namespace mc2_internal {
 
 using namespace py;
-using namespace mc2_internal;
 
 constexpr const char* kCapsuleName = "hotools_native.MC2ContextV0";
 constexpr const char* kInteractionCapsuleName = "hotools_native.MC2InteractionV0";
@@ -3792,7 +3791,9 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
     return result;
 }
 
-}  // namespace
+}  // namespace mc2_internal
+
+using namespace mc2_internal;
 
 PyObject* mc2_interaction_v0_create(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 1) {

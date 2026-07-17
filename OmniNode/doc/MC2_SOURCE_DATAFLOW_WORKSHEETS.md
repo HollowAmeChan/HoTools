@@ -348,6 +348,8 @@ Blender authoring/frame input
 
 40. P-13第三批将`Mc2ContextV0`、`Mc2InteractionParticipantV0`与`Mc2InteractionV0`三个唯一内部数据布局移入`mc2_context_internal.hpp`的`hotools::mc2_internal`命名空间；原context单元通过using消费同一类型，没有复制字段、新建host shadow或将Python对象存入state。context实现文件由7338降到7110行；3.11 native-only增量构建无Jolt，全量native `26/26`通过。该internal header是后续static/frame-step/interaction-debug translation unit的唯一state合同，不对binding或Python公开。
 
+41. P-13第四批将context helper的匿名namespace命名为`hotools::mc2_internal`，公开`PyObject*` ABI仍位于`hotools`并通过内部namespace消费原函数；没有改变符号名、函数体或state布局。这一步让后续translation unit可以只声明实际共享helper，不需要复制buffer/state校验。3.11 native-only增量构建无Jolt，全量native `26/26`通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
