@@ -122,6 +122,7 @@ nanobind_add_module(hotools_native
     src/hotools_native.cpp
     src/mc2_bindings.cpp
     src/mc2_context_v0.cpp
+    src/mc2_context_frame_step.cpp
     src/mc2_context_interaction.cpp
     src/mc2_context_readback.cpp
     src/mc2_context_static.cpp

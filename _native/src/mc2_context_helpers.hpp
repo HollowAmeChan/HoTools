@@ -11,11 +11,15 @@ inline constexpr const char* kInteractionCapsuleName =
     "hotools_native.MC2InteractionV0";
 inline constexpr long kSchemaVersion = 0;
 inline constexpr Py_ssize_t kIntCount = 11;
+inline constexpr Py_ssize_t kFloatCount = 47;
+inline constexpr Py_ssize_t kCurveRows = 9;
+inline constexpr Py_ssize_t kCurveColumns = 16;
 inline constexpr Py_ssize_t kSelfCollisionSyncMode = 10;
 inline constexpr float kMc2Epsilon = 0.00000001f;
 inline constexpr std::uint32_t kSelfFix0 = 0x04000000u;
 inline constexpr std::uint32_t kSelfAllFix = 0x20000000u;
 inline constexpr std::uint32_t kSelfIgnore = 0x40000000u;
+inline constexpr std::uint32_t kSelfIntersectMask = 0x00000007u;
 inline constexpr std::int32_t kSelfIgnoreGrid = 1000000;
 
 Mc2ContextV0* context_from(PyObject* object);
@@ -37,6 +41,7 @@ bool expect_2d(
 );
 bool build_bone_output(Mc2ContextV0& context);
 bool validate_quaternions(const py::Buffer& rotations, const char* name);
+bool validate_parameter_ints(const py::Buffer& ints);
 bool validate_indices(
     const py::Buffer& buffer,
     std::int64_t vertex_count,
@@ -52,6 +57,41 @@ bool expect_int8_scalar_array(const py::Buffer& buffer, const char* name);
 bool rebuild_baseline_step_pose(Mc2ContextV0& context);
 bool is_move(std::uint8_t attribute);
 void clear_self_collision_contacts(Mc2ContextV0& context);
+void rotate_vector_xyzw(const float* rotation, const float* value, float* output);
+Vec3 add(Vec3 first, Vec3 second);
+Vec3 mul(Vec3 value, float scale);
+Vec3 cross(Vec3 first, Vec3 second);
+float dot(Vec3 first, Vec3 second);
+float length(Vec3 value);
+std::array<float, 4> quaternion_multiply(
+    const std::array<float, 4>& left,
+    const std::array<float, 4>& right
+);
+void normalize_quaternion(std::array<float, 4>& value);
+std::array<float, 4> quaternion_from_forward_up(Vec3 forward, Vec3 up);
+Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value);
+Vec3 transform_vector_matrix(const float* matrix, Vec3 value);
+Vec3 transform_point_matrix(const float* matrix, Vec3 value);
+std::array<float, 4> transform_rotation_matrix(
+    const float* matrix,
+    const std::array<float, 4>& rotation
+);
+std::array<float, 4> load_quaternion(
+    const std::vector<float>& values,
+    std::size_t vertex
+);
+void store_quaternion(
+    std::vector<float>& values,
+    std::size_t vertex,
+    std::array<float, 4> rotation
+);
+Vec3 load_vector3(const std::vector<float>& values, std::size_t vertex);
+bool apply_bone_triangle_output(
+    Mc2ContextV0& context,
+    const std::vector<float>& positions,
+    std::vector<float>& work_rotations,
+    bool count_bone_output
+);
 
 template <typename T>
 std::vector<T> copy_values(const py::Buffer& buffer) {

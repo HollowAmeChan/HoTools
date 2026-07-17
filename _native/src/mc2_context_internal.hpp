@@ -8,6 +8,12 @@
 
 namespace hotools::mc2_internal {
 
+struct Vec3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
 struct Mc2ContextV0 {
     std::int64_t vertex_count = 0;
     std::int32_t setup_kind = 0;
