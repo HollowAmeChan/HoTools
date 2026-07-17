@@ -99,6 +99,10 @@ FORBIDDEN_PRODUCT_FUNCTIONS = {
     ("mc2.nodes", "physicsMC2SolverSettings"),
 }
 FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
+BONE_TASK_SOCKET_CONTRACTS = {
+    "physicsMC2BoneClothTask": ("control_bones", "list[_OmniBone]"),
+    "physicsMC2BoneSpringTask": ("root_bones", "list[_OmniBone]"),
+}
 FORBIDDEN_MESH_RNA_FIELDS = {
     "enabled",
     "radius",
@@ -279,6 +283,24 @@ def _python_facts() -> dict:
                     })
                 if fact["forwarded_call"]:
                     forwarders.append({"module": module_name, **fact})
+                socket_contract = BONE_TASK_SOCKET_CONTRACTS.get(fact["name"])
+                if module_name == "mc2.nodes" and socket_contract is not None:
+                    parameter_name, annotation = socket_contract
+                    parameter = next(
+                        (item for item in node.args.args if item.arg == parameter_name),
+                        None,
+                    )
+                    actual = (
+                        ast.unparse(parameter.annotation)
+                        if parameter is not None and parameter.annotation is not None
+                        else ""
+                    )
+                    if actual != annotation:
+                        product_boundary_violations.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "name": f"{fact['name']}.{parameter_name}:{actual or 'missing'}",
+                        })
             elif isinstance(node, ast.ClassDef):
                 classes.append({"name": node.name, "line": node.lineno})
                 if node.name == "MC2SolverSettingsSpec":

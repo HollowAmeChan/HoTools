@@ -406,6 +406,22 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     for task_node in task_nodes:
         assert "backend" not in inspect.signature(task_node).parameters
         assert all("后端" not in name for name in task_node.__meta["_INPUT_NAME"])
+    bone_socket_contracts = (
+        (mc2_nodes.physicsMC2BoneClothTask, "control_bones", "中控骨"),
+        (mc2_nodes.physicsMC2BoneSpringTask, "root_bones", "根骨"),
+    )
+    for task_node, identifier, label in bone_socket_contracts:
+        _node, inputs, _outputs, _defaults, multi, _settings = (
+            function_node_core.CheckMetaInfo(task_node)
+        )
+        assert tuple(inspect.signature(task_node).parameters)[0] == identifier
+        assert inputs[identifier] == {
+            "type": "OmniNodeSocketBone",
+            "name": label,
+            "identifier": identifier,
+            "use_multi_input": True,
+        }
+        assert multi[identifier] is True
     particle_inputs = mc2_nodes.physicsMC2ParticleProfile.__meta["_INPUT_NAME"]
     assert "跨物体自碰撞" in particle_inputs
     assert "自碰撞厚度" not in particle_inputs

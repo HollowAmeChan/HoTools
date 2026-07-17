@@ -5,7 +5,7 @@ import typing
 import mathutils
 
 from ....FunctionNodeCore import omni
-from ....OmniNodeSocketMapping import _OmniFloatCurve
+from ....OmniNodeSocketMapping import _OmniBone, _OmniFloatCurve
 from ... import _Color
 from ..types import PhysicsWorldCache
 from .debug_draw import update_mc2_debug_draw_store
@@ -112,11 +112,11 @@ def _owner_key(source: dict) -> tuple[int, int]:
     return owner_id, data_id
 
 
-def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
+def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
     if profile is None:
         profile = make_mc2_particle_profile()
     grouped: dict[tuple[int, int], list[dict]] = {}
-    for source in _expand_hotools_bone_sources(sources):
+    for source in _expand_hotools_bone_sources(control_bones):
         grouped.setdefault(_owner_key(source), []).append(source)
     return [
         make_mc2_task_spec(
@@ -126,6 +126,32 @@ def _hotools_bone_tasks(sources, profile, enabled: bool, **setup_values):
             setup_options=make_mc2_setup_options(
                 MC2_SETUP_BONE_CLOTH,
                 connection_model="hotools_product",
+                **setup_values,
+            ),
+            enabled=enabled,
+        )
+        for group in grouped.values()
+    ]
+
+
+def _bone_spring_tasks(root_bones, profile, enabled: bool, **setup_values):
+    if profile is None:
+        profile = make_mc2_particle_profile()
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for source in _flatten_values(root_bones):
+        if not isinstance(source, dict) or source.get("armature") is None:
+            raise TypeError("BoneSpring product source must be a root Bone socket")
+        root_name = str(source.get("bone") or source.get("root_bone") or "").strip()
+        if not root_name and not source.get("bones"):
+            raise ValueError("BoneSpring root Bone socket is empty")
+        grouped.setdefault(_owner_key(source), []).append(source)
+    return [
+        make_mc2_task_spec(
+            MC2_SETUP_BONE_SPRING,
+            group,
+            profile=profile,
+            setup_options=make_mc2_setup_options(
+                MC2_SETUP_BONE_SPRING,
                 **setup_values,
             ),
             enabled=enabled,
@@ -311,7 +337,7 @@ def physicsMC2MeshClothTask(
     bl_label="MC2 BoneCloth任务（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["骨链", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=["中控骨", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "connection_mode": {"min_value": 0, "max_value": 2},
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
@@ -321,7 +347,7 @@ def physicsMC2MeshClothTask(
     _OUTPUT_NAME=["MC2任务"],
 )
 def physicsMC2BoneClothTask(
-    sources: list[typing.Any],
+    control_bones: list[_OmniBone],
     profile: typing.Any = None,
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
@@ -330,7 +356,7 @@ def physicsMC2BoneClothTask(
     enabled: bool = True,
 ) -> list[typing.Any]:
     return _hotools_bone_tasks(
-        sources,
+        control_bones,
         profile,
         enabled,
         connection_mode=connection_mode,
@@ -345,7 +371,7 @@ def physicsMC2BoneClothTask(
     bl_label="MC2 BoneSpring任务（框架）",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["骨链", "粒子配置", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=["根骨", "粒子配置", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0},
@@ -354,16 +380,15 @@ def physicsMC2BoneClothTask(
     _OUTPUT_NAME=["MC2任务"],
 )
 def physicsMC2BoneSpringTask(
-    sources: list[typing.Any],
+    root_bones: list[_OmniBone],
     profile: typing.Any = None,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: int = 0,
     enabled: bool = True,
 ) -> list[typing.Any]:
-    return _task(
-        MC2_SETUP_BONE_SPRING,
-        sources,
+    return _bone_spring_tasks(
+        root_bones,
         profile,
         enabled,
         rotational_interpolation=rotational_interpolation,

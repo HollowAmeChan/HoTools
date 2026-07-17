@@ -87,7 +87,10 @@ rig_b = _product_armature("MC2_ProductRigB", 2, 3, 3.0)
 world = None
 try:
     tasks = nodes.physicsMC2BoneClothTask(
-        [(rig_a, "Parent"), (rig_b, "Parent")],
+        [
+            {"armature": rig_a, "bone": "Parent"},
+            {"armature": rig_b, "bone": "Parent"},
+        ],
         connection_mode=1,
     )
     assert len(tasks) == 2
@@ -97,6 +100,16 @@ try:
     )
     assert tuple(task.setup_options.connection_mode for task in tasks) == (1, 1)
     assert tuple(len(task.sources) for task in tasks) == (3, 2)
+
+    spring_tasks = nodes.physicsMC2BoneSpringTask([
+        {"armature": rig_a, "bone": "Chain0_0"},
+        {"armature": rig_b, "bone": "Chain0_0"},
+    ])
+    assert len(spring_tasks) == 2
+    assert tuple(
+        topology_module.build_mc2_topology_spec(task).particle_count
+        for task in spring_tasks
+    ) == (3, 3)
 
     topology_a = topology_module.build_mc2_topology_spec(tasks[0])
     assert topology_a.connection_model == "hotools_product"

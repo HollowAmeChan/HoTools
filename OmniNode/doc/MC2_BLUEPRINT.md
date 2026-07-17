@@ -72,6 +72,10 @@ profile + task combination
 
 BoneCloth横向连接是HoTools产品差异，不是需要抹平的MC2兼容分支：
 
+- 公开BoneCloth任务只接受多输入`_OmniBone`“中控骨”socket；每根中控骨的直接子骨分别成为有序链root，中控骨自身不进入模拟粒子。
+- 公开BoneSpring任务只接受多输入`_OmniBone`“根骨”socket；每根root自身进入固定Line骨链，并递归收集其后代。
+- 两类Bone任务都按Armature owner分组生成task；一个节点可输入多个骨架，但不同骨架绝不共享一个topology/context。
+- 任务节点不得用`Any`或泛化“骨链”标签隐藏这两个不同的选择语义；显式chain字典只属于内部spec、oracle和测试边界。
 - `mc2_source`保持MC2 Line连接语义。
 - `hotools_product`按稳定骨名、链组和节点输入顺序生成纵向与横向连接，并生成稳定UV triangle。
 - 同Armature可有多个不重叠component，结果在一次写回事务中合并。
@@ -127,8 +131,8 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | Setup | 输入/拓扑 | 碰撞 | 输出 | 限制 |
 |---|---|---|---|---|
 | MeshCloth | 单final-proxy Mesh + BasePose双对象 | Point/Edge外部碰撞，单/跨物体self | GN object-local offset | topology-preserving动画；UV seam和不兼容拓扑明确拒绝 |
-| BoneCloth | MC2 source Line或HoTools product ordered chains | Point/Edge外部碰撞，单/跨物体self | Bone transform batch | imported triangle拒绝；同Armature组件骨名不得重叠 |
-| BoneSpring | 固定Line骨链 | soft sphere，Sphere-only | Bone transform batch | gravity/self/max-distance/backstop按BoneSpring归一化关闭或固定 |
+| BoneCloth | Bone socket中控骨 -> 各直接子骨的HoTools product ordered chain | Point/Edge外部碰撞，单/跨物体self | Bone transform batch | 中控骨不入粒子；imported triangle拒绝；同Armature组件骨名不得重叠 |
+| BoneSpring | Bone socket根骨 -> 包含root的固定Line骨链 | soft sphere，Sphere-only | Bone transform batch | gravity/self/max-distance/backstop按BoneSpring归一化关闭或固定 |
 
 Bone imported triangle当前明确拒绝，因为现有producer没有成立的UV/tangent/basis输入。新增支持前必须建立真实authoring producer、Tier A oracle、产品节点和debug表达。
 
