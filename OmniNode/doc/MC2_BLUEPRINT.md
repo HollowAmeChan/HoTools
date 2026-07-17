@@ -68,6 +68,12 @@ profile + task combination
 
 ## 产品决策
 
+### MeshCloth对象输入
+
+公开MeshCloth任务使用多输入`list[bpy.types.Object]` Object socket，不使用`Any`。每个输入必须是Mesh Object，并各自产生一个只含单source的task；一个task不得包含多个Mesh，因为MeshCloth static/frame adapter以单final-proxy topology、单BasePose读对象和单写回目标为原子边界。节点输入多个Mesh时，全部task仍由同一个MC2模拟步统一推进，跨对象self collision由world-owned interaction处理。
+
+`Object.hotools_mesh_collision.mc2_base_pose_proxy`继续指定每个source/write对象对应的只读BasePose对象；BasePose不是第二个task source，也不作为额外公开socket重复输入。
+
 ### BoneCloth横向连接
 
 BoneCloth横向连接是HoTools产品差异，不是需要抹平的MC2兼容分支：
@@ -134,7 +140,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 | Setup | 输入/拓扑 | 碰撞 | 输出 | 限制 |
 |---|---|---|---|---|
-| MeshCloth | 单final-proxy Mesh + BasePose双对象 | Point/Edge外部碰撞，单/跨物体self | GN object-local offset | topology-preserving动画；UV seam和不兼容拓扑明确拒绝 |
+| MeshCloth | Object多输入 -> 每个Mesh一个单source task；每个source配套BasePose双对象 | Point/Edge外部碰撞，单/跨物体self | GN object-local offset | topology-preserving动画；UV seam和不兼容拓扑明确拒绝 |
 | BoneCloth | Bone socket中控骨 -> 各直接子骨的HoTools product ordered chain | Point/Edge外部碰撞，单/跨物体self | Bone transform batch | 中控骨不入粒子；imported triangle拒绝；同Armature组件骨名不得重叠 |
 | BoneSpring | Bone socket根骨 -> 包含root的固定Line骨链 | soft sphere，Sphere-only | Bone transform batch | gravity/self/max-distance/backstop按BoneSpring归一化关闭或固定 |
 

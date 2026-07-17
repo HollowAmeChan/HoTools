@@ -406,17 +406,33 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     for task_node in task_nodes:
         assert "backend" not in inspect.signature(task_node).parameters
         assert all("后端" not in name for name in task_node.__meta["_INPUT_NAME"])
-    bone_socket_contracts = (
-        (mc2_nodes.physicsMC2BoneClothTask, "control_bones", "中控骨"),
-        (mc2_nodes.physicsMC2BoneSpringTask, "root_bones", "根骨"),
+    source_socket_contracts = (
+        (
+            mc2_nodes.physicsMC2MeshClothTask,
+            "mesh_objects",
+            "代理网格",
+            "NodeSocketObject",
+        ),
+        (
+            mc2_nodes.physicsMC2BoneClothTask,
+            "control_bones",
+            "中控骨",
+            "OmniNodeSocketBone",
+        ),
+        (
+            mc2_nodes.physicsMC2BoneSpringTask,
+            "root_bones",
+            "根骨",
+            "OmniNodeSocketBone",
+        ),
     )
-    for task_node, identifier, label in bone_socket_contracts:
+    for task_node, identifier, label, socket_type in source_socket_contracts:
         _node, inputs, _outputs, _defaults, multi, _settings = (
             function_node_core.CheckMetaInfo(task_node)
         )
         assert tuple(inspect.signature(task_node).parameters)[0] == identifier
         assert inputs[identifier] == {
-            "type": "OmniNodeSocketBone",
+            "type": socket_type,
             "name": label,
             "identifier": identifier,
             "use_multi_input": True,
@@ -473,6 +489,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
             return self._pointer
 
     mesh = _FakeSource(10, "Cloth", "MESH")
+    second_mesh = _FakeSource(11, "SecondCloth", "MESH")
     armature = _FakeSource(20, "Rig", "ARMATURE")
     mesh_sources = [mesh]
     cloth_sources = [{"armature": armature, "root_bone": "ClothRoot"}]
@@ -483,7 +500,13 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         self_collision_interaction=True,
     )
     assert product_profile.self_collision_sync_mode == 2
-    product_task = mc2_nodes.physicsMC2MeshClothTask([mesh], product_profile)[0]
+    product_tasks = mc2_nodes.physicsMC2MeshClothTask(
+        [mesh, second_mesh],
+        product_profile,
+    )
+    assert len(product_tasks) == 2
+    assert tuple(task.sources for task in product_tasks) == ((mesh,), (second_mesh,))
+    product_task = product_tasks[0]
     assert product_task.setup_options.self_collision_radius_model == "derived_radius"
     product_runtime = mc2_runtime_parameters.make_mc2_runtime_parameters(
         product_profile,

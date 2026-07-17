@@ -99,7 +99,8 @@ FORBIDDEN_PRODUCT_FUNCTIONS = {
     ("mc2.nodes", "physicsMC2SolverSettings"),
 }
 FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
-BONE_TASK_SOCKET_CONTRACTS = {
+TASK_SOURCE_SOCKET_CONTRACTS = {
+    "physicsMC2MeshClothTask": ("mesh_objects", "list[bpy.types.Object]"),
     "physicsMC2BoneClothTask": ("control_bones", "list[_OmniBone]"),
     "physicsMC2BoneSpringTask": ("root_bones", "list[_OmniBone]"),
 }
@@ -283,7 +284,7 @@ def _python_facts() -> dict:
                     })
                 if fact["forwarded_call"]:
                     forwarders.append({"module": module_name, **fact})
-                socket_contract = BONE_TASK_SOCKET_CONTRACTS.get(fact["name"])
+                socket_contract = TASK_SOURCE_SOCKET_CONTRACTS.get(fact["name"])
                 if module_name == "mc2.nodes" and socket_contract is not None:
                     parameter_name, annotation = socket_contract
                     parameter = next(

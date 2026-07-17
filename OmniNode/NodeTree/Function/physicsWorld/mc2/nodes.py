@@ -2,6 +2,7 @@
 
 import typing
 
+import bpy
 import mathutils
 
 from ....FunctionNodeCore import omni
@@ -24,17 +25,25 @@ from .presets import MC2_PARTICLE_PRESETS
 from .specs import make_mc2_task_spec
 
 
-def _task(setup_type: str, sources, profile, enabled: bool, **setup_values):
+def _mesh_cloth_tasks(mesh_objects, profile, enabled: bool):
     if profile is None:
         profile = make_mc2_particle_profile()
+    sources = _flatten_values(mesh_objects)
+    for source in sources:
+        if getattr(source, "type", None) != "MESH":
+            raise TypeError("MeshCloth product source must be a Mesh Object socket")
     return [
         make_mc2_task_spec(
-            setup_type,
-            sources,
+            MC2_SETUP_MESH_CLOTH,
+            [source],
             profile=profile,
-            setup_options=make_mc2_setup_options(setup_type, **setup_values),
+            setup_options=make_mc2_setup_options(
+                MC2_SETUP_MESH_CLOTH,
+                self_collision_radius_model="derived_radius",
+            ),
             enabled=enabled,
         )
+        for source in sources
     ]
 
 
@@ -319,16 +328,14 @@ def physicsMC2ParticleProfile(
     _OUTPUT_NAME=["MC2任务"],
 )
 def physicsMC2MeshClothTask(
-    sources: list[typing.Any],
+    mesh_objects: list[bpy.types.Object],
     profile: typing.Any = None,
     enabled: bool = True,
 ) -> list[typing.Any]:
-    return _task(
-        MC2_SETUP_MESH_CLOTH,
-        sources,
+    return _mesh_cloth_tasks(
+        mesh_objects,
         profile,
         enabled,
-        self_collision_radius_model="derived_radius",
     )
 
 
