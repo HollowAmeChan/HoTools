@@ -39,6 +39,59 @@ LEGACY_TERMS = (
     "solve_meshcloth_mc2",
     "solve_mc2_bonecloth_io",
 )
+PURE_NATIVE_FILES = (
+    "mc2_context_internal.hpp",
+    "mc2_kernels.cpp",
+    "mc2_kernels.hpp",
+    "mc2_self_collision.cpp",
+    "mc2_static_build.cpp",
+    "mc2_static_build.hpp",
+)
+PYTHON_NATIVE_TERMS = ("Python.h", "PyObject", "nanobind")
+ALLOWED_FORWARDERS = {
+    ("mc2.bending_static", "record_count"),
+    ("mc2.bone_connection", "_triangle"),
+    ("mc2.bone_connection", "_distance"),
+    ("mc2.bone_connection", "_length_squared"),
+    ("mc2.bone_rotation", "debug_dict"),
+    ("mc2.bone_static", "_tuple_vectors"),
+    ("mc2.center_state", "fixed_count"),
+    ("mc2.center_state", "_shift_position_f32"),
+    ("mc2.center_state", "_matrix_tuple"),
+    ("mc2.collider_frame", "collider_count"),
+    ("mc2.debug_draw", "_primitive_pair_visible"),
+    ("mc2.distance_static", "record_count"),
+    ("mc2.frame_state", "particle_count"),
+    ("mc2.frame_state", "make_mc2_frame_input"),
+    ("mc2.interaction_scope", "_mesh_collision_properties"),
+    ("mc2.mesh_baseline", "baseline_count"),
+    ("mc2.nodes", "physicsMC2SolverSettings"),
+    ("mc2.nodes", "physicsMC2MeshClothTask"),
+    ("mc2.nodes", "physicsMC2BoneClothTask"),
+    ("mc2.nodes", "physicsMC2BoneSpringTask"),
+    ("mc2.nodes", "physicsMC2Step"),
+    ("mc2.parameters", "_clamp"),
+    ("mc2.parameters", "_non_negative"),
+    ("mc2.parameters", "_canonical_json"),
+    ("mc2.parameters", "_signature"),
+    ("mc2.parameters", "signature"),
+    ("mc2.parameters", "_default_curve"),
+    ("mc2.parameters", "debug_dict"),
+    ("mc2.results", "particle_count"),
+    ("mc2.runtime_parameters", "_multiply_float32"),
+    ("mc2.scheduler", "_f32"),
+    ("mc2.scheduler", "debug_dict"),
+    ("mc2.self_collision_static", "primitive_count"),
+    ("mc2.setups", "all_mc2_setup_adapters"),
+    ("mc2.setups.mesh_cloth.final_proxy", "vertex_count"),
+    ("mc2.setups.mesh_cloth.final_proxy", "metadata"),
+    ("mc2.setups.mesh_cloth.final_proxy", "every_vertex_has_triangle"),
+    ("mc2.setups.mesh_cloth.final_proxy", "_tuple_vectors"),
+    ("mc2.setups.mesh_cloth.frame_input", "vertex_count"),
+    ("mc2.static_data", "vertex_count"),
+    ("mc2.topology", "build_mc2_mesh_source_topology"),
+    ("mc2.topology", "build_mc2_bone_source_topology"),
+}
 
 
 def _module_name(path: Path) -> str:
@@ -71,19 +124,29 @@ def _call_name(call: ast.Call) -> str:
     return ".".join(reversed(parts))
 
 
-def _resolve_import(module_name: str, path: Path, node: ast.ImportFrom) -> str | None:
+def _resolved_import_name(module_name: str, path: Path, node: ast.ImportFrom) -> str | None:
     if node.level == 0:
-        imported = node.module or ""
+        return node.module or ""
     else:
         package = module_name if path.name == "__init__.py" else module_name.rpartition(".")[0]
         try:
-            imported = importlib.util.resolve_name(
+            return importlib.util.resolve_name(
                 "." * node.level + (node.module or ""),
                 package,
             )
         except (ImportError, ValueError):
             return None
+
+
+def _resolve_import(module_name: str, path: Path, node: ast.ImportFrom) -> str | None:
+    imported = _resolved_import_name(module_name, path, node)
+    if imported is None:
+        return None
     return imported if imported == "mc2" or imported.startswith("mc2.") else None
+
+
+def _is_test_module(name: str) -> bool:
+    return any(part in {"test", "tests"} for part in name.split("."))
 
 
 def _function_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict:
@@ -144,6 +207,9 @@ def _python_facts() -> dict:
     edges: dict[str, set[str]] = defaultdict(set)
     private_imports = []
     forwarders = []
+    test_imports = []
+    raw_readback_calls = []
+    persistent_array_fields = []
     for path in _production_python_files():
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -155,6 +221,13 @@ def _python_facts() -> dict:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 imported = _resolve_import(module_name, path, node)
+                resolved = _resolved_import_name(module_name, path, node)
+                if resolved is not None and _is_test_module(resolved):
+                    test_imports.append({
+                        "module": module_name,
+                        "line": node.lineno,
+                        "dependency": resolved,
+                    })
                 if imported is not None:
                     imports.append(imported)
                     edges[module_name].add(imported)
@@ -166,6 +239,14 @@ def _python_facts() -> dict:
                                 "dependency": imported,
                                 "name": alias.name,
                             })
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if _is_test_module(alias.name):
+                        test_imports.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "dependency": alias.name,
+                        })
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 fact = _function_facts(node)
                 functions.append(fact)
@@ -173,10 +254,31 @@ def _python_facts() -> dict:
                     forwarders.append({"module": module_name, **fact})
             elif isinstance(node, ast.ClassDef):
                 classes.append({"name": node.name, "line": node.lineno})
+                if node.name.endswith("State"):
+                    for field in node.body:
+                        if not isinstance(field, ast.AnnAssign) or not isinstance(field.target, ast.Name):
+                            continue
+                        annotation = ast.unparse(field.annotation)
+                        if "ndarray" in annotation:
+                            persistent_array_fields.append({
+                                "module": module_name,
+                                "class": node.name,
+                                "field": field.target.id,
+                                "line": field.lineno,
+                            })
             elif isinstance(node, ast.Assign):
                 if any(isinstance(target, ast.Name) and target.id == "_EXPORTS" for target in node.targets):
                     if isinstance(node.value, ast.Dict):
                         reexport_count = len(node.value.keys)
+            elif isinstance(node, ast.Call):
+                call_name = _call_name(node)
+                leaf = call_name.rpartition(".")[2]
+                if leaf.startswith("mc2_context_v0_read") and module_name != "mc2.native_context":
+                    raw_readback_calls.append({
+                        "module": module_name,
+                        "line": node.lineno,
+                        "call": call_name,
+                    })
         edges.setdefault(module_name, set())
         docstring = ast.get_docstring(tree) or ""
         modules[module_name] = {
@@ -191,11 +293,29 @@ def _python_facts() -> dict:
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
+        "reexport_count": sum(module["reexport_count"] for module in modules.values()),
         "modules": modules,
         "edges": {name: sorted(dependencies) for name, dependencies in sorted(edges.items())},
         "cycles": _strongly_connected_components(edges),
         "private_imports": sorted(private_imports, key=lambda item: (item["module"], item["line"])),
         "forwarders": sorted(forwarders, key=lambda item: (item["module"], item["line"])),
+        "unexpected_forwarders": sorted(
+            (
+                item
+                for item in forwarders
+                if (item["module"], item["name"]) not in ALLOWED_FORWARDERS
+            ),
+            key=lambda item: (item["module"], item["line"]),
+        ),
+        "test_imports": sorted(test_imports, key=lambda item: (item["module"], item["line"])),
+        "raw_readback_calls": sorted(
+            raw_readback_calls,
+            key=lambda item: (item["module"], item["line"]),
+        ),
+        "persistent_array_fields": sorted(
+            persistent_array_fields,
+            key=lambda item: (item["module"], item["line"]),
+        ),
     }
 
 
@@ -216,10 +336,32 @@ def _cpp_facts() -> dict:
             "python_bindings": binding_pattern.findall(source),
             "pyobject_entry_points": pyobject_pattern.findall(source),
         }
+    api_source = (NATIVE_ROOT / "mc2_api.hpp").read_text(encoding="utf-8")
+    api_symbols = pyobject_pattern.findall(api_source)
+    definition_counts = defaultdict(list)
+    for path in sorted(NATIVE_ROOT.glob("*.cpp")):
+        source = path.read_text(encoding="utf-8")
+        for symbol in pyobject_pattern.findall(source):
+            if symbol in api_symbols:
+                definition_counts[symbol].append(path.name)
+    api_definition_violations = [
+        {"symbol": symbol, "definitions": definition_counts[symbol]}
+        for symbol in api_symbols
+        if len(definition_counts[symbol]) != 1
+    ]
+    pure_native_violations = []
+    for filename in PURE_NATIVE_FILES:
+        source = (NATIVE_ROOT / filename).read_text(encoding="utf-8")
+        for term in PYTHON_NATIVE_TERMS:
+            if term in source:
+                pure_native_violations.append({"file": filename, "term": term})
     return {
         "translation_unit_count": len(files),
         "line_count": sum(item["lines"] for item in files.values()),
         "files": files,
+        "api_symbol_count": len(api_symbols),
+        "api_definition_violations": api_definition_violations,
+        "pure_native_violations": pure_native_violations,
     }
 
 
@@ -255,7 +397,14 @@ def _print_summary(report: dict) -> None:
     print(f"Python production: {python['module_count']} modules, {python['line_count']} lines")
     print(f"Python dependency cycles: {len(python['cycles'])}")
     print(f"Python private imports: {len(python['private_imports'])}")
-    print(f"Python one-call forwarders: {len(python['forwarders'])}")
+    print(f"Python lazy re-exports: {python['reexport_count']}")
+    print(
+        f"Python one-call forwarders: {len(python['forwarders'])} classified, "
+        f"{len(python['unexpected_forwarders'])} unexpected"
+    )
+    print(f"Python production test imports: {len(python['test_imports'])}")
+    print(f"Python raw readback boundary violations: {len(python['raw_readback_calls'])}")
+    print(f"Python persistent ndarray state fields: {len(python['persistent_array_fields'])}")
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -264,20 +413,38 @@ def _print_summary(report: dict) -> None:
             f"{len(facts['pyobject_entry_points'])} PyObject entries"
         )
     print(f"Legacy production hits: {len(report['legacy_hits'])}")
+    print(
+        f"C++ API definitions: {cpp['api_symbol_count']} symbols, "
+        f"{len(cpp['api_definition_violations'])} ownership violations"
+    )
+    print(f"C++ pure-native Python dependencies: {len(cpp['pure_native_violations'])}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", help="print the full JSON report")
-    parser.add_argument("--check", action="store_true", help="fail on cycles or legacy production hits")
+    parser.add_argument("--check", action="store_true", help="fail on architecture boundary violations")
     args = parser.parse_args()
     report = build_report()
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         _print_summary(report)
-    if args.check and (report["python"]["cycles"] or report["legacy_hits"]):
-        raise SystemExit(1)
+    if args.check:
+        failures = (
+            report["python"]["cycles"],
+            report["python"]["private_imports"],
+            report["python"]["reexport_count"],
+            report["python"]["unexpected_forwarders"],
+            report["python"]["test_imports"],
+            report["python"]["raw_readback_calls"],
+            report["python"]["persistent_array_fields"],
+            report["cpp"]["api_definition_violations"],
+            report["cpp"]["pure_native_violations"],
+            report["legacy_hits"],
+        )
+        if any(failures):
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

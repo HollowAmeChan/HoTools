@@ -242,6 +242,13 @@ def transform_vector_matrix_f32(vector: np.ndarray, matrix: np.ndarray) -> np.nd
     return np.asarray(matrix[:3, :3] @ vector, dtype=np.float32)
 
 
+def matrix4_to_numpy_f32(matrix) -> np.ndarray:
+    return np.asarray(
+        [[float(matrix[row][column]) for column in range(4)] for row in range(4)],
+        dtype=np.float32,
+    )
+
+
 def normalize_vector_f64(
     vector: np.ndarray,
     *,

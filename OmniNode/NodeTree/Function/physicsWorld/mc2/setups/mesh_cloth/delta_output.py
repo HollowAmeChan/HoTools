@@ -1,17 +1,11 @@
-"""
-MC2 MeshCloth setup 的后置 delta 输出工具。
-
-这是旧 MC2 运行路径的兼容工具，只管理其既有 ``mc2_delta`` 输出：
-1. 它不构成新 Physics World 的公开写回契约，也不得被新 solver 用来创建私有属性槽。
-2. 新路径统一发布对象局部最终 offset，由 ``physicsWorld.gn_offset`` 写入共享属性。
-3. 旧路径仍以 world display position - world base position 转换本地 offset，直到迁移完成。
-4. 修改器位于 Armature/基础变形之后，保证旧 MC2 当前行为不漂移。
-"""
+"""Shared Geometry Nodes delta-output lifecycle and writeback helpers."""
 
 from dataclasses import dataclass
 
 import bpy
 import numpy as np
+
+from ....utils.math3d import matrix4_to_numpy_f32
 
 
 @dataclass(frozen=True)
@@ -20,13 +14,6 @@ class PhysicsDeltaOutputSpec:
     modifier_name: str
     node_group_name: str
     label: str = "物理后置位移"
-
-
-def matrix_to_numpy(matrix) -> np.ndarray:
-    return np.asarray(
-        [[float(matrix[row][col]) for col in range(4)] for row in range(4)],
-        dtype=np.float32,
-    )
 
 
 def _new_geometry_nodes_group(spec: PhysicsDeltaOutputSpec) -> bpy.types.NodeTree:
@@ -138,7 +125,7 @@ def write_world_delta_attribute(
     if display.shape != (vertex_count, 3) or base.shape != (vertex_count, 3):
         raise ValueError(f"{spec.label}写入要求 display/base 顶点数量一致")
     world_delta = np.ascontiguousarray(display - base, dtype=np.float32)
-    inv_basis = matrix_to_numpy(obj.matrix_world.inverted())[:3, :3]
+    inv_basis = matrix4_to_numpy_f32(obj.matrix_world.inverted())[:3, :3]
     delta = np.ascontiguousarray(world_delta @ inv_basis.T, dtype=np.float32)
     attr.data.foreach_set("vector", delta.reshape(-1))
     obj.data.update()

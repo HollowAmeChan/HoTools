@@ -10,6 +10,7 @@ import numpy as np
 
 from ...center_state import MC2CenterFramePoseSpec
 from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
+from ....utils.math3d import matrix4_to_numpy_f32
 from .base_pose import validate_base_pose_proxy
 
 
@@ -21,13 +22,6 @@ def _readonly_float3(values) -> np.ndarray:
     array = np.array(values, dtype=np.float32, order="C", copy=True).reshape((-1, 3))
     array.flags.writeable = False
     return array
-
-
-def _matrix_to_numpy(matrix) -> np.ndarray:
-    return np.asarray(
-        [[float(matrix[row][column]) for column in range(4)] for row in range(4)],
-        dtype=np.float32,
-    )
 
 
 def _decompose_component_transform(evaluated_source, source_matrix):
@@ -56,7 +50,7 @@ def _decompose_component_transform(evaluated_source, source_matrix):
     )
     if np.any(np.abs(signed_scale) <= _NORMAL_EPSILON):
         raise ValueError("MC2 component scale cannot contain zero")
-    linear = _matrix_to_numpy(source_matrix)[:3, :3].astype(np.float64)
+    linear = matrix4_to_numpy_f32(source_matrix)[:3, :3].astype(np.float64)
     rotation_matrix = linear / signed_scale[np.newaxis, :]
     if not np.allclose(
         rotation_matrix.T @ rotation_matrix,
@@ -181,7 +175,7 @@ def _read_evaluated_world_pose(
         mesh.vertices.foreach_get("normal", normals)
         positions = positions.reshape((vertex_count, 3))
         normals = normals.reshape((vertex_count, 3))
-        matrix = _matrix_to_numpy(evaluated.matrix_world)
+        matrix = matrix4_to_numpy_f32(evaluated.matrix_world)
         world_positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
         world_normals = normals @ matrix[:3, :3].T
         lengths = np.linalg.norm(world_normals, axis=1)
@@ -232,7 +226,7 @@ def read_base_pose_frame_snapshot(
         generation=int(generation),
         mesh_topology_signature=signature,
         source_world_linear=_readonly_float3(
-            _matrix_to_numpy(source_matrix)[:3, :3]
+            matrix4_to_numpy_f32(source_matrix)[:3, :3]
         ),
         component_world_position=tuple(float(value) for value in component_position),
         component_world_rotation_xyzw=(

@@ -1008,31 +1008,13 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
     return rotate_vector_unit_quaternion_f32(quaternion_conjugate_f32(rotation), position - origin)
 
 
-def _quaternion_matrix_f32(rotation) -> np.ndarray:
-    return quaternion_matrix_unit_f32(_f32_vector(rotation, 4, "rotation"))
-
-
 def _trs_matrix_f32(position, rotation, scale) -> np.ndarray:
     result = np.eye(4, dtype=np.float32)
-    result[:3, :3] = _quaternion_matrix_f32(rotation) * _f32_vector(
-        scale, 3, "scale"
-    )[np.newaxis, :]
+    result[:3, :3] = quaternion_matrix_unit_f32(
+        _f32_vector(rotation, 4, "rotation")
+    ) * _f32_vector(scale, 3, "scale")[np.newaxis, :]
     result[:3, 3] = _f32_vector(position, 3, "position")
     return result
-
-
-def _transform_point_matrix_f32(position, matrix: np.ndarray) -> np.ndarray:
-    return transform_point_matrix_f32(
-        _f32_vector(position, 3, "position"),
-        matrix,
-    )
-
-
-def _transform_vector_matrix_f32(vector, matrix: np.ndarray) -> np.ndarray:
-    return transform_vector_matrix_f32(
-        _f32_vector(vector, 3, "vector"),
-        matrix,
-    )
 
 
 def _matrix_tuple(matrix: np.ndarray) -> tuple[tuple[float, float, float, float], ...]:
@@ -1128,21 +1110,32 @@ def evaluate_mc2_negative_scale_transition(
         center_negative_matrix=_matrix_tuple(center_matrix),
         old_component_world_position=tuple(
             float(value)
-            for value in _transform_point_matrix_f32(
-                transition.old_component_world_position, component_matrix
+            for value in transform_point_matrix_f32(
+                _f32_vector(
+                    transition.old_component_world_position,
+                    3,
+                    "position",
+                ),
+                component_matrix,
             )
         ),
         old_component_world_scale=tuple(float(value) for value in scale),
         old_anchor_world_position=tuple(
             float(value)
-            for value in _transform_point_matrix_f32(
-                transition.old_anchor_world_position, component_matrix
+            for value in transform_point_matrix_f32(
+                _f32_vector(
+                    transition.old_anchor_world_position,
+                    3,
+                    "position",
+                ),
+                component_matrix,
             )
         ),
         smoothing_velocity=tuple(
             float(value)
-            for value in _transform_vector_matrix_f32(
-                transition.smoothing_velocity, component_matrix
+            for value in transform_vector_matrix_f32(
+                _f32_vector(transition.smoothing_velocity, 3, "vector"),
+                component_matrix,
             )
         ),
     )

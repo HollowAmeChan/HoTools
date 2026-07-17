@@ -360,6 +360,8 @@ Blender authoring/frame input
 
 46. P-13最终批次将实现文件`mc2_context_v0.cpp`改名为`mc2_context_core.cpp`，并将跨translation-unit公开声明改名为`mc2_api.hpp`；`v0`继续只存在于公开符号和state类型中表示schema版本，不再作为实现文件的迁移标签。core是context生命周期、inspect/fingerprint分类与共享数值编排helper的唯一owner；static、frame-step、interaction和readback单元只消费同一internal state/helper合同。Python 3.11 native-only增量构建只输出`hotools_native.cp311-win_amd64.pyd`且无Jolt，native `26/26`及Blender 4.5 Mesh `7/7`、Bone frame、负缩放component、跨物体interaction 5项通过，P-13关闭。
 
+47. P-14第一批校正文档与代码偏差：删除Center三个仅改名math转发、Mesh baseline单消费者签名转发及两份Blender Matrix转NumPy重复实现，公共转换归`physicsWorld.utils.math3d`；`delta_output.py`过时的“旧MC2兼容工具”说明改为当前共享GN delta生命周期事实。架构审计现将49个合法单调用函数分类冻结，并以失败门禁验证0未分类转发、0 import环、0 private import、0 lazy re-export、0生产测试反向依赖、0 raw readback越界、0持久State ndarray影子、47个公开C ABI各唯一实现、纯native owner零Python依赖和0 legacy生产命中。26个纯MC2脚本及Blender 4.5负缩放component、Mesh `7/7`、Physics/UI生命周期通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
