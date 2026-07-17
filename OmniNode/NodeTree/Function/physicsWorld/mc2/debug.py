@@ -204,6 +204,9 @@ def _collision_payload(item, native_snapshot) -> dict:
     _floats, ints, curves = _curve_maps(effective)
     native = native_snapshot.get("native") or {}
     scale_ratio = float(native.get("scale_ratio", 1.0) or 1.0)
+    radius_multipliers = getattr(static, "radius_multipliers", None)
+    if radius_multipliers is None:
+        radius_multipliers = np.ones(len(depths), dtype=np.float32)
     collider = item.get("collider_frame")
     collider_payload = None
     if collider is not None:
@@ -221,7 +224,9 @@ def _collision_payload(item, native_snapshot) -> dict:
     return {
         "collision_mode": int(ints["collision_mode"]),
         "particle_radii": _readonly(
-            _sample_curve(curves["radius"], depths) * scale_ratio
+            _sample_curve(curves["radius"], depths)
+            * np.asarray(radius_multipliers, dtype=np.float32)
+            * scale_ratio
         ),
         "self_collision_mode": int(ints["self_collision_mode"]),
         "self_collision_sync_mode": int(ints["self_collision_sync_mode"]),

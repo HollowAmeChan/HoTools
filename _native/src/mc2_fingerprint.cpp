@@ -95,22 +95,26 @@ PyObject* static_fingerprint_result(
 }  // namespace
 
 PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 12) {
+    if (PyTuple_GET_SIZE(args) != 14) {
         PyErr_Format(
             PyExc_TypeError,
-            "mc2_mesh_static_fingerprint_v0 expects 12 arguments, got %zd",
+            "mc2_mesh_static_fingerprint_v0 expects 14 arguments, got %zd",
             PyTuple_GET_SIZE(args)
         );
         return nullptr;
     }
-    Buffer positions, normals, edges, triangles, loop_vertices, loop_uvs, pin_weights;
+    Buffer positions, normals, edges, triangles, loop_vertices, loop_uvs, pin_weights,
+        radius_multipliers;
     if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
         !normals.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "normals") ||
         !edges.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "edges") ||
         !triangles.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "triangles") ||
         !loop_vertices.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "loop_vertices") ||
         !loop_uvs.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "loop_uvs") ||
-        !pin_weights.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "pin_weights")) {
+        !pin_weights.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "pin_weights") ||
+        !radius_multipliers.get(
+            PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "radius_multipliers"
+        )) {
         return nullptr;
     }
     if (!expect_float32(positions, "positions") || positions.view.ndim != 1 ||
@@ -132,16 +136,36 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const auto object_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 7));
-    const auto mesh_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 8));
-    const int pin_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 9));
+    if (!expect_float32(radius_multipliers, "radius_multipliers") ||
+        radius_multipliers.view.ndim != 1 ||
+        radius_multipliers.view.shape[0] != positions.view.shape[0] / 3 ||
+        !finite_floats(radius_multipliers, "radius_multipliers")) {
+        return nullptr;
+    }
+    const auto* radius_values = static_cast<const float*>(radius_multipliers.view.buf);
+    for (Py_ssize_t index = 0; index < radius_multipliers.view.shape[0]; ++index) {
+        if (radius_values[index] < 0.0f || radius_values[index] > 1.0f) {
+            PyErr_SetString(PyExc_ValueError, "radius_multipliers must be in 0..1");
+            return nullptr;
+        }
+    }
+
+    const auto object_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 8));
+    const auto mesh_pointer = PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(args, 9));
+    const int pin_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 10));
     Py_ssize_t pin_name_size = 0;
     const char* pin_name = PyUnicode_AsUTF8AndSize(
-        PyTuple_GET_ITEM(args, 10),
+        PyTuple_GET_ITEM(args, 11),
         &pin_name_size
     );
-    const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 11));
-    if (PyErr_Occurred() || pin_enabled < 0 || has_uv_layer < 0 || pin_name == nullptr) {
+    Py_ssize_t radius_group_name_size = 0;
+    const char* radius_group_name = PyUnicode_AsUTF8AndSize(
+        PyTuple_GET_ITEM(args, 12),
+        &radius_group_name_size
+    );
+    const int has_uv_layer = PyObject_IsTrue(PyTuple_GET_ITEM(args, 13));
+    if (PyErr_Occurred() || pin_enabled < 0 || has_uv_layer < 0 ||
+        pin_name == nullptr || radius_group_name == nullptr) {
         return nullptr;
     }
     const Py_ssize_t expected_uv_values = loop_vertices.view.shape[0] * 2;
@@ -170,8 +194,10 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
     surface.append(&pin_enabled, sizeof(pin_enabled));
     surface.append(&has_uv_layer, sizeof(has_uv_layer));
     surface.append(pin_name, static_cast<std::size_t>(pin_name_size));
+    surface.append(radius_group_name, static_cast<std::size_t>(radius_group_name_size));
     surface.append_buffer("loop_uvs", loop_uvs);
     surface.append_buffer("pin_weights", pin_weights);
+    surface.append_buffer("radius_multipliers", radius_multipliers);
     return static_fingerprint_result(topology, geometry, surface);
 }
 

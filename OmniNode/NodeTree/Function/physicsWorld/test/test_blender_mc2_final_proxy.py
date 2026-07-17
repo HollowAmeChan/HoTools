@@ -328,6 +328,36 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         cleanup_properties()
 
 
+def test_mc2_radius_vertex_group_is_native_static_input() -> None:
+    cleanup_properties = _register_mesh_collision_properties()
+    obj = _make_object("MC2_RadiusVertexGroup", ((0, 1, 2, 3),))
+    world = world_types.PhysicsWorldCache()
+    try:
+        group = obj.vertex_groups.new(name="Radius")
+        group.add((0,), 1.0, "REPLACE")
+        group.add((1,), 0.5, "REPLACE")
+        obj.hotools_mesh_collision.radius_vertex_group = group.name
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+
+        mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        first_native = slot.data["native_context"]
+        assert slot.data["mesh_static"].radius_multipliers == (1.0, 0.5, 0.0, 0.0)
+
+        group.add((2,), 0.25, "REPLACE")
+        _world, _ready, status = mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        assert "重建 1" in status
+        assert slot.data["last_static_change_mask"] == mc2_native.MC2_STATIC_CHANGE_SURFACE
+        assert slot.data["native_context"] is not first_native
+        assert first_native.inspect()["released"] is True
+        assert slot.data["mesh_static"].radius_multipliers == (1.0, 0.5, 0.25, 0.0)
+    finally:
+        world.omni_cache_dispose("test_complete")
+        _remove_object(obj)
+        cleanup_properties()
+
+
 def test_active_world_mesh_step_requires_configured_base_pose() -> None:
     cleanup_properties = _register_mesh_collision_properties()
     obj = _make_object("MC2_MissingBasePose", ((0, 1, 2, 3),))
@@ -400,6 +430,7 @@ TESTS = (
     ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
     ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
     ("MC2 slot rebuilds for Pin/UV static changes", test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes),
+    ("MC2 radius vertex group is native static input", test_mc2_radius_vertex_group_is_native_static_input),
     ("MC2 static config reuses topology", test_mc2_static_config_change_reuses_topology),
     ("active MC2 Mesh step requires BasePose", test_active_world_mesh_step_requires_configured_base_pose),
 )

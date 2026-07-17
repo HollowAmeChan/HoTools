@@ -101,6 +101,8 @@ self_thickness = particle_radius * 0.25
 
 独立self thickness输入和曲线不对产品公开。MC2 source oracle可以保留独立thickness以核对源码，但不能进入生产节点或profile。
 
+数值半径只来自公开particle profile；Mesh对象只保存可选`radius_vertex_group`乘数。该权重进入raw snapshot、surface fingerprint和native proxy static，权重变化必须重建context；留空时全顶点乘数为1，指定不存在的组明确拒绝。对象RNA不再保存第二个radius、自碰开关、self thickness或cloth mass；通用碰撞预览也不重算粒子球，真实普通半径与self厚度统一由MC2隐式debug快照显示。
+
 Self primitive不能由外部collider替代：外部collider只表达cloth对外部Point/Edge等形状的碰撞，不能覆盖cloth内部或跨cloth的EE/PT、grid、contact cache和intersection history。派生较小self thickness也是明确的性能决策；直接复用完整particle radius会显著放大grid candidate/contact数量。
 
 ### 全隐式debug
@@ -382,7 +384,7 @@ Python host只保存opaque handle和可复用输出/debug buffer，不保存C++ 
 _native\build.bat 311 native
 ```
 
-该命令使用已有`vs2022-py311-native`构建目录增量编译，只生成`hotools_native.cp311-win_amd64.pyd`，不clean且不构建Jolt。Jolt是独立`EXCLUDE_FROM_ALL`目标；只有明确修改/验证Jolt时才选择对应module。
+该命令使用已有`vs2022-py311-native`构建目录，只生成`hotools_native.cp311-win_amd64.pyd`且不构建Jolt。普通调用保持增量；由于当前MSBuild不会可靠追踪项目内共享header，`build.bat`仅在`mc2_context_internal.hpp`比构建戳更新时对`hotools_native`目标执行一次`--clean-first`，随后恢复增量。Jolt是独立`EXCLUDE_FROM_ALL`目标；只有明确修改/验证Jolt时才选择对应module。
 
 Python 3.11 + Blender 4.5是主门禁。Python 3.13 + Blender 5.1用于ABI兼容、代表资产和长帧soak补充。
 
@@ -437,7 +439,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 |---|---|
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
-| Blender 4.5 | Mesh `7/7`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
+| Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
 | Blender 4.5维护态soak | 180帧；mean/P95/max `2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 
@@ -479,5 +481,6 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 9. create/update/step/read/free、staged replace、publish和writeback失败是否保持回滚/幂等。
 10. ABI、Python host、C++ owner、Tier A/raw fixture和Blender生产测试是否作为一个交付单元更新。
 11. `311 native`是否只构建hotools_native且无Jolt；是否需要兼容门禁才额外跑313/5.1。
-12. 自动架构审计是否仍为全零违规；新增合法单调用边界是否显式分类。
-13. 更新本文中的稳定事实；逐次修复和临时数字只由Git/benchmark输出保存。
+12. 修改共享context布局后，首次`311 native`是否触发单目标重建、第二次是否恢复增量。
+13. 自动架构审计是否仍为全零违规；新增合法单调用边界是否显式分类。
+14. 更新本文中的稳定事实；逐次修复和临时数字只由Git/benchmark输出保存。

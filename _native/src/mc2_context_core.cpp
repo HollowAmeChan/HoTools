@@ -114,6 +114,7 @@ void release_resources(Mc2ContextV0& context) {
     context.proxy_local_tangents.clear();
     context.proxy_uvs.clear();
     context.proxy_attributes.clear();
+    context.proxy_radius_multipliers.clear();
     context.proxy_edges.clear();
     context.proxy_triangles.clear();
     context.baseline_parents.clear();
@@ -465,6 +466,20 @@ float sample_curve16(const std::vector<float>& curves, Py_ssize_t row, float dep
     const float ratio = scaled - static_cast<float>(lower);
     const auto offset = row * kCurveColumns;
     return curves[offset + lower] * (1.0f - ratio) + curves[offset + upper] * ratio;
+}
+
+float collision_radius_for_vertex(const Mc2ContextV0& context, std::size_t vertex) {
+    if (vertex >= context.baseline_depths.size() ||
+        vertex >= context.proxy_radius_multipliers.size()) {
+        return 0.0f;
+    }
+    const float multiplier = context.proxy_radius_multipliers[vertex];
+    if (multiplier <= kMc2Epsilon) return 0.0f;
+    return std::max(
+        sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
+            multiplier * context.scale_ratio,
+        0.0001f
+    );
 }
 
 bool is_move(std::uint8_t attribute) {
@@ -3021,11 +3036,21 @@ void update_self_collision_primitives_once(
             maximum[2] - minimum[2],
         });
         if (kind == 1) edge_max_size = std::max(edge_max_size, unexpanded_size);
+        float primitive_radius_multiplier = 0.0f;
+        for (std::size_t axis = 0; axis < axis_count; ++axis) {
+            const auto vertex = static_cast<std::size_t>(
+                context.self_particle_indices[primitive * 3 + axis]
+            );
+            if (vertex < context.proxy_radius_multipliers.size()) {
+                primitive_radius_multiplier += context.proxy_radius_multipliers[vertex];
+            }
+        }
+        primitive_radius_multiplier /= static_cast<float>(axis_count);
         const float thickness = sample_curve16(
             context.curve_values,
             kSelfCollisionThicknessCurve,
             context.self_primitive_depths[primitive]
-        ) * context.scale_ratio;
+        ) * primitive_radius_multiplier * context.scale_ratio;
         context.self_primitive_thickness[primitive] = thickness;
         for (std::size_t component = 0; component < 3; ++component) {
             context.self_primitive_aabb_min[primitive * 3 + component] =
@@ -3072,11 +3097,7 @@ void solve_point_collision_once(Mc2ContextV0& context) {
         if ((is_spring ? valid : is_move(attribute)) && (attribute & 0x10u) == 0u) {
             inverse_masses[vertex] = 1.0f;
         }
-        collision_radii[vertex] = std::max(
-            sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
-                context.scale_ratio,
-            0.0001f
-        );
+        collision_radii[vertex] = collision_radius_for_vertex(context, vertex);
         if (is_spring) {
             max_lengths[vertex] = std::max(
                 sample_curve16(
@@ -3124,11 +3145,7 @@ void solve_edge_collision_once(Mc2ContextV0& context) {
         context.particle_collision_normals.size() != count * 3) return;
     std::vector<float> collision_radii(count, 0.0f);
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        collision_radii[vertex] = std::max(
-            sample_curve16(context.curve_values, kRadiusCurve, context.baseline_depths[vertex]) *
-                context.scale_ratio,
-            0.0001f
-        );
+        collision_radii[vertex] = collision_radius_for_vertex(context, vertex);
     }
     Mc2EdgeCollisionView view;
     view.positions = context.state_positions.data();
@@ -3482,6 +3499,7 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(proxy_local_tangents);
     MC2_ADD_VECTOR_BYTES(proxy_uvs);
     MC2_ADD_VECTOR_BYTES(proxy_attributes);
+    MC2_ADD_VECTOR_BYTES(proxy_radius_multipliers);
     MC2_ADD_VECTOR_BYTES(proxy_edges);
     MC2_ADD_VECTOR_BYTES(proxy_triangles);
     MC2_ADD_VECTOR_BYTES(baseline_parents);

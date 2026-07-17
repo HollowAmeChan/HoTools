@@ -95,6 +95,17 @@ ALLOWED_FORWARDERS = {
     ("mc2.topology", "build_mc2_bone_source_topology"),
 }
 
+FORBIDDEN_PRODUCT_FUNCTIONS = {
+    ("mc2.interaction_scope", "explicit_partner_pairs"),
+}
+FORBIDDEN_MESH_RNA_FIELDS = {
+    "enabled",
+    "radius",
+    "self_collision_enabled",
+    "self_collision_surface_thickness",
+    "mass",
+}
+
 
 def _module_name(path: Path) -> str:
     relative = path.relative_to(MC2_ROOT)
@@ -212,6 +223,7 @@ def _python_facts() -> dict:
     test_imports = []
     raw_readback_calls = []
     persistent_array_fields = []
+    product_boundary_violations = []
     for path in _production_python_files():
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -252,6 +264,12 @@ def _python_facts() -> dict:
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 fact = _function_facts(node)
                 functions.append(fact)
+                if (module_name, fact["name"]) in FORBIDDEN_PRODUCT_FUNCTIONS:
+                    product_boundary_violations.append({
+                        "module": module_name,
+                        "line": node.lineno,
+                        "name": fact["name"],
+                    })
                 if fact["forwarded_call"]:
                     forwarders.append({"module": module_name, **fact})
             elif isinstance(node, ast.ClassDef):
@@ -292,6 +310,21 @@ def _python_facts() -> dict:
             "classes": classes,
             "reexport_count": reexport_count,
         }
+        if module_name == "mc2.setups.mesh_cloth.schema":
+            for node in tree.body:
+                if not isinstance(node, ast.Assign) or not any(
+                    isinstance(target, ast.Name) and target.id == "MESH_COLLISION_RNA_FIELDS"
+                    for target in node.targets
+                ):
+                    continue
+                for declaration in ast.literal_eval(node.value):
+                    name = str(declaration.get("name") or "")
+                    if name in FORBIDDEN_MESH_RNA_FIELDS:
+                        product_boundary_violations.append({
+                            "module": module_name,
+                            "line": node.lineno,
+                            "name": name,
+                        })
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -317,6 +350,10 @@ def _python_facts() -> dict:
         "persistent_array_fields": sorted(
             persistent_array_fields,
             key=lambda item: (item["module"], item["line"]),
+        ),
+        "product_boundary_violations": sorted(
+            product_boundary_violations,
+            key=lambda item: (item["module"], item["line"], item["name"]),
         ),
     }
 
@@ -434,6 +471,7 @@ def _print_summary(report: dict) -> None:
     print(f"Python production test imports: {len(python['test_imports'])}")
     print(f"Python raw readback boundary violations: {len(python['raw_readback_calls'])}")
     print(f"Python persistent ndarray state fields: {len(python['persistent_array_fields'])}")
+    print(f"Python product boundary violations: {len(python['product_boundary_violations'])}")
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -476,6 +514,7 @@ def main() -> None:
             report["python"]["test_imports"],
             report["python"]["raw_readback_calls"],
             report["python"]["persistent_array_fields"],
+            report["python"]["product_boundary_violations"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item

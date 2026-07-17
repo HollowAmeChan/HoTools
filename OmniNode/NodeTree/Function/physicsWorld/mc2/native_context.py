@@ -266,6 +266,7 @@ class MC2NativeContextV0:
         *,
         proxy,
         finalizer,
+        radius_multipliers=None,
     ) -> None:
         self._ensure_live()
         proxy_registration = getattr(proxy, "native_registration", None)
@@ -274,7 +275,11 @@ class MC2NativeContextV0:
             frame_registration, dict
         ):
             raise TypeError("staged proxy/finalizer native registration is missing")
-        self.update_proxy_derived(proxy, proxy_registration)
+        self.update_proxy_derived(
+            proxy,
+            proxy_registration,
+            radius_multipliers=radius_multipliers,
+        )
         proxy_registration.clear()
         self._module.mc2_context_v0_update_frame_producer_static(
             self._handle,
@@ -285,7 +290,13 @@ class MC2NativeContextV0:
         )
         frame_registration.clear()
 
-    def update_proxy_derived(self, proxy, registration: dict) -> None:
+    def update_proxy_derived(
+        self,
+        proxy,
+        registration: dict,
+        *,
+        radius_multipliers=None,
+    ) -> None:
         self._ensure_live()
         if not isinstance(registration, dict) or not registration:
             raise TypeError("staged proxy native registration is missing")
@@ -293,7 +304,7 @@ class MC2NativeContextV0:
             proxy.vertex_attributes,
             dtype=np.uint8,
         )
-        self._module.mc2_context_v0_update_proxy_static(
+        arguments = [
             self._handle,
             registration["positions"],
             registration["normals"],
@@ -302,8 +313,16 @@ class MC2NativeContextV0:
             registration["attributes"],
             registration["edges"],
             registration["triangles"],
-            *registration["owners"],
-        )
+        ]
+        if radius_multipliers is not None:
+            values = np.ascontiguousarray(radius_multipliers, dtype=np.float32)
+            if values.shape != (self.vertex_count,):
+                raise ValueError("radius_multipliers must contain one value per vertex")
+            if not np.all(np.isfinite(values)) or np.any(values < 0.0) or np.any(values > 1.0):
+                raise ValueError("radius_multipliers must be finite values in 0..1")
+            arguments.append(values)
+        arguments.extend(registration["owners"])
+        self._module.mc2_context_v0_update_proxy_static(*arguments)
 
     def update_baseline_derived(
         self,

@@ -165,6 +165,11 @@ physics_blender.register()
 objects = (_grid("MC2DebugA", 0.0), _grid("MC2DebugB", 0.008))
 for obj in objects:
     obj.hotools_mesh_collision.collided_by_groups = 1
+    radius_group = obj.vertex_groups.new(name="MC2DebugRadius")
+    radius_group.add(tuple(range(len(obj.data.vertices))), 1.0, "REPLACE")
+    radius_group.add((0,), 0.0, "REPLACE")
+    radius_group.add((1,), 0.5, "REPLACE")
+    obj.hotools_mesh_collision.radius_vertex_group = radius_group.name
 collider_owner = bpy.data.objects.new("MC2DebugCollider", None)
 bpy.context.scene.collection.objects.link(collider_owner)
 world = world_types.PhysicsWorldCache()
@@ -247,11 +252,15 @@ try:
         assert snapshot["center"]["frame_shift"]["keep_teleport"] is True
         assert snapshot["center"]["negative_scale_transition"]["active"] is True
         assert snapshot["center"]["source_world_linear"].flags.writeable is False
-        assert snapshot["collision"]["particle_radii"].shape[0] == 16
+        particle_radii = snapshot["collision"]["particle_radii"]
+        assert particle_radii.shape[0] == 16
+        assert particle_radii[0] == 0.0
+        np.testing.assert_allclose(particle_radii[1], particle_radii[2] * 0.5)
         assert tuple(snapshot["collision"]["colliders"]["types"]) == (0,)
         assert snapshot["output"]["writeback_target_kind"] == "mesh_vertex"
         assert len(snapshot["output"]["writeback_targets"]) == 16
         self_state = snapshot["self_collision"]
+        assert self_state["thickness"][0] == 0.0
         assert self_state["particle_indices"].flags.writeable is False
         assert self_state["primitive_grids"].flags.writeable is False
     interaction_snapshot = interaction.debug_draw_snapshot()

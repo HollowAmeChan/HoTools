@@ -163,6 +163,9 @@ set "BUILD_PRESET=%~2"
 set "LABEL=%~3"
 set "BUILD_DIR=%~4"
 set "BUILD_TARGET=%~5"
+set "NATIVE_LAYOUT_HEADER=%SOURCE_DIR%\src\mc2_context_internal.hpp"
+set "NATIVE_LAYOUT_STAMP=%BUILD_DIR%\.mc2_context_layout.stamp"
+set "REBUILD_NATIVE_LAYOUT=0"
 
 echo [%LABEL%] Configure preset: %CONFIG_PRESET%
 echo [%LABEL%] Build preset:     %BUILD_PRESET%
@@ -177,8 +180,17 @@ if not exist "%BUILD_DIR%\CMakeCache.txt" (
     )
 )
 
+if /I "%BUILD_TARGET%"=="hotools_native" (
+    for /f %%I in ('powershell.exe -NoProfile -Command "$h=Get-Item -LiteralPath '%NATIVE_LAYOUT_HEADER%'; $s=Get-Item -LiteralPath '%NATIVE_LAYOUT_STAMP%' -ErrorAction SilentlyContinue; if ($null -eq $s -or $h.LastWriteTimeUtc -gt $s.LastWriteTimeUtc) { '1' } else { '0' }"') do set "REBUILD_NATIVE_LAYOUT=%%I"
+)
+
 if defined BUILD_TARGET (
-    "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --parallel
+    if "%REBUILD_NATIVE_LAYOUT%"=="1" (
+        echo [%LABEL%] Shared MC2 context layout changed; rebuilding hotools_native only.
+        "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --clean-first --parallel
+    ) else (
+        "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --parallel
+    )
 ) else (
     "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --parallel
 )
@@ -188,6 +200,7 @@ if errorlevel 1 (
 )
 
 echo [OK] %LABEL% build completed.
+if "%REBUILD_NATIVE_LAYOUT%"=="1" type nul > "%NATIVE_LAYOUT_STAMP%"
 echo.
 exit /b 0
 

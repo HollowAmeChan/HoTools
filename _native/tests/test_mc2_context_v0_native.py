@@ -89,6 +89,84 @@ def expect_error(exception, callback, text):
         raise AssertionError(f"expected {exception.__name__}: {text}")
 
 
+def test_radius_vertex_multipliers_drive_self_primitive_thickness():
+    context = hotools_native.mc2_context_v0_create(0, 3)
+    try:
+        proxy, baseline = static_arrays(3)
+        proxy = list(proxy)
+        proxy[6] = np.array([[0, 1, 2]], dtype=np.int32)
+        radius_multipliers = np.array([0.0, 0.5, 1.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_proxy_static(
+            context,
+            *proxy,
+            radius_multipliers,
+        )
+        baseline = list(baseline)
+        baseline[7] = np.full(3, 0.5, dtype=np.float32)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((3, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        derived = hotools_native.mc2_build_self_collision_derived_v0(
+            proxy[4],
+            baseline[7],
+            proxy[5],
+            proxy[6],
+        )
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            context,
+            derived["primitive_flags"],
+            derived["particle_indices"],
+            derived["primitive_depths"],
+            derived["point_count"],
+            derived["edge_count"],
+            derived["triangle_count"],
+        )
+        floats, ints, curves = parameters()
+        ints[9] = 2
+        curves[8, :] = 0.01
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((3, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 1, 1, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0)
+
+        primitive_count = int(derived["point_count"] + derived["edge_count"] + derived["triangle_count"])
+        inverse_masses = np.empty((primitive_count, 3), dtype=np.float32)
+        aabb_min = np.empty((primitive_count, 3), dtype=np.float32)
+        aabb_max = np.empty((primitive_count, 3), dtype=np.float32)
+        thickness = np.empty((primitive_count,), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_self_collision_primitives(
+            context,
+            inverse_masses,
+            aabb_min,
+            aabb_max,
+            thickness,
+        )
+        np.testing.assert_allclose(
+            thickness,
+            np.array([0.0, 0.005, 0.01, 0.0025, 0.0075, 0.005], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_tether_rollout_gate_and_source_order():
     context = hotools_native.mc2_context_v0_create(0, 2)
     try:

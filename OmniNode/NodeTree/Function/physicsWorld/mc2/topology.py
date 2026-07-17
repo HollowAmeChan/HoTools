@@ -108,8 +108,10 @@ class MC2MeshRawSnapshot:
     loop_vertices: np.ndarray
     loop_uvs: np.ndarray
     pin_weights: np.ndarray
+    radius_multipliers: np.ndarray
     pin_enabled: bool
     pin_name: str
+    radius_group_name: str
     has_uv: bool
 
 
@@ -193,6 +195,23 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
                     if int(assignment.group) == group_index:
                         weights[vertex.index] = float(assignment.weight)
                         break
+    radius_group_name = str(getattr(properties, "radius_vertex_group", "") or "")
+    radius_multipliers = np.ones(len(mesh.vertices), dtype=np.float32)
+    if radius_group_name:
+        radius_group = source.vertex_groups.get(radius_group_name)
+        if radius_group is None:
+            raise ValueError(
+                f"MC2 radius vertex group does not exist: {radius_group_name!r}"
+            )
+        radius_multipliers.fill(0.0)
+        radius_group_index = int(radius_group.index)
+        for vertex in mesh.vertices:
+            for assignment in vertex.groups:
+                if int(assignment.group) == radius_group_index:
+                    radius_multipliers[vertex.index] = max(
+                        0.0, min(1.0, float(assignment.weight))
+                    )
+                    break
     return MC2MeshRawSnapshot(
         source_pointer=_pointer(source),
         mesh_pointer=_pointer(mesh),
@@ -204,8 +223,10 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
         loop_vertices=loop_vertices,
         loop_uvs=uvs.reshape((-1, 2)),
         pin_weights=weights,
+        radius_multipliers=radius_multipliers,
         pin_enabled=pin_enabled,
         pin_name=pin_name,
+        radius_group_name=radius_group_name,
         has_uv=uv_layer is not None,
     )
 
@@ -228,10 +249,12 @@ def _mesh_input_fingerprint(
         snapshot.loop_vertices,
         snapshot.loop_uvs.reshape((-1,)),
         snapshot.pin_weights,
+        snapshot.radius_multipliers,
         snapshot.source_pointer,
         snapshot.mesh_pointer,
         snapshot.pin_enabled,
         snapshot.pin_name,
+        snapshot.radius_group_name,
         snapshot.has_uv,
     ))
 

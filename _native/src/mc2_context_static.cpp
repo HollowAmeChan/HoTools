@@ -1,5 +1,6 @@
 #include "mc2_api.hpp"
 
+#include "mc2_context_internal.hpp"
 #include "mc2_context_helpers.hpp"
 #include "mc2_static_build.hpp"
 #include "python_buffer_utils.hpp"
@@ -86,6 +87,7 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
     target->proxy_local_tangents = source->proxy_local_tangents;
     target->proxy_uvs = source->proxy_uvs;
     target->proxy_attributes = source->proxy_attributes;
+    target->proxy_radius_multipliers = source->proxy_radius_multipliers;
     target->proxy_edges = source->proxy_edges;
     target->proxy_triangles = source->proxy_triangles;
     target->baseline_parents = source->baseline_parents;
@@ -225,14 +227,18 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
 
 PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
     const auto argument_count = PyTuple_GET_SIZE(args);
-    const bool take_owned = argument_count == 15;
-    if (argument_count != 8 && !take_owned) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_proxy_static expects 8 or 15 arguments");
+    const bool has_radius_multipliers = argument_count == 9 || argument_count == 16;
+    const bool take_owned = argument_count == 15 || argument_count == 16;
+    if (argument_count != 8 && argument_count != 9 && !take_owned) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_update_proxy_static expects 8, 9, 15, or 16 arguments"
+        );
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
-    Buffer positions, normals, tangents, uvs, attributes, edges, triangles;
+    Buffer positions, normals, tangents, uvs, attributes, edges, triangles, radius_multipliers;
     if (!positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "local_positions") ||
         !normals.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "local_normals") ||
         !tangents.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "local_tangents") ||
@@ -240,6 +246,13 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
         !attributes.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "vertex_attributes") ||
         !edges.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "edges") ||
         !triangles.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "triangles")) {
+        return nullptr;
+    }
+    if (has_radius_multipliers && !radius_multipliers.get(
+            PyTuple_GET_ITEM(args, 8),
+            PyBUF_FORMAT | PyBUF_ND,
+            "radius_multipliers"
+        )) {
         return nullptr;
     }
     const auto count = static_cast<Py_ssize_t>(context->vertex_count);
@@ -255,6 +268,10 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
         !expect_2d(uvs, "uvs", count, 2) ||
         !expect_uint8(attributes, "vertex_attributes") ||
         !expect_1d_array(attributes, "vertex_attributes", count) ||
+        (has_radius_multipliers &&
+         (!expect_float32(radius_multipliers, "radius_multipliers") ||
+          !expect_1d_array(radius_multipliers, "radius_multipliers", count) ||
+          !finite_floats(radius_multipliers, "radius_multipliers"))) ||
         !expect_int32_pair_array(edges, "edges", &edge_count) ||
         !expect_int32_triple_array(triangles, "triangles", &triangle_count) ||
         !finite_floats(positions, "local_positions") ||
@@ -264,6 +281,15 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
         !validate_indices(edges, context->vertex_count, "edges") ||
         !validate_indices(triangles, context->vertex_count, "triangles")) {
         return nullptr;
+    }
+    if (has_radius_multipliers) {
+        const auto* values = static_cast<const float*>(radius_multipliers.view.buf);
+        for (Py_ssize_t index = 0; index < count; ++index) {
+            if (values[index] < 0.0f || values[index] > 1.0f) {
+                PyErr_SetString(PyExc_ValueError, "radius_multipliers must be in 0..1");
+                return nullptr;
+            }
+        }
     }
     const auto* edge_values = static_cast<const std::int32_t*>(edges.view.buf);
     for (Py_ssize_t row = 0; row < edge_count; ++row) {
@@ -285,29 +311,34 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
     std::vector<float> next_tangents;
     std::vector<float> next_uvs;
     std::vector<std::uint8_t> next_attributes;
+    std::vector<float> next_radius_multipliers(
+        static_cast<std::size_t>(count),
+        1.0f
+    );
     std::vector<std::int32_t> next_edges;
     std::vector<std::int32_t> next_triangles;
     if (take_owned) {
+        const Py_ssize_t owner_offset = has_radius_multipliers ? 9 : 8;
         auto* owned_positions = validated_owned_values<float>(
-            PyTuple_GET_ITEM(args, 8), "hotools_native.mc2.proxy_positions.v0", positions
+            PyTuple_GET_ITEM(args, owner_offset), "hotools_native.mc2.proxy_positions.v0", positions
         );
         auto* owned_normals = validated_owned_values<float>(
-            PyTuple_GET_ITEM(args, 9), "hotools_native.mc2.proxy_normals.v0", normals
+            PyTuple_GET_ITEM(args, owner_offset + 1), "hotools_native.mc2.proxy_normals.v0", normals
         );
         auto* owned_tangents = validated_owned_values<float>(
-            PyTuple_GET_ITEM(args, 10), "hotools_native.mc2.proxy_tangents.v0", tangents
+            PyTuple_GET_ITEM(args, owner_offset + 2), "hotools_native.mc2.proxy_tangents.v0", tangents
         );
         auto* owned_uvs = validated_owned_values<float>(
-            PyTuple_GET_ITEM(args, 11), "hotools_native.mc2.proxy_uvs.v0", uvs
+            PyTuple_GET_ITEM(args, owner_offset + 3), "hotools_native.mc2.proxy_uvs.v0", uvs
         );
         auto* owned_attributes = validated_owned_values<std::uint8_t>(
-            PyTuple_GET_ITEM(args, 12), "hotools_native.mc2.proxy_attributes.v0", attributes
+            PyTuple_GET_ITEM(args, owner_offset + 4), "hotools_native.mc2.proxy_attributes.v0", attributes
         );
         auto* owned_edges = validated_owned_values<std::int32_t>(
-            PyTuple_GET_ITEM(args, 13), "hotools_native.mc2.proxy_edges.v0", edges
+            PyTuple_GET_ITEM(args, owner_offset + 5), "hotools_native.mc2.proxy_edges.v0", edges
         );
         auto* owned_triangles = validated_owned_values<std::int32_t>(
-            PyTuple_GET_ITEM(args, 14), "hotools_native.mc2.proxy_triangles.v0", triangles
+            PyTuple_GET_ITEM(args, owner_offset + 6), "hotools_native.mc2.proxy_triangles.v0", triangles
         );
         if (owned_positions == nullptr || owned_normals == nullptr ||
             owned_tangents == nullptr || owned_uvs == nullptr ||
@@ -332,11 +363,15 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args) {
         next_edges = copy_values<std::int32_t>(edges);
         next_triangles = copy_values<std::int32_t>(triangles);
     }
+    if (has_radius_multipliers) {
+        next_radius_multipliers = copy_values<float>(radius_multipliers);
+    }
     context->proxy_local_positions.swap(next_positions);
     context->proxy_local_normals.swap(next_normals);
     context->proxy_local_tangents.swap(next_tangents);
     context->proxy_uvs.swap(next_uvs);
     context->proxy_attributes.swap(next_attributes);
+    context->proxy_radius_multipliers.swap(next_radius_multipliers);
     context->proxy_edges.swap(next_edges);
     context->proxy_triangles.swap(next_triangles);
     context->proxy_static_ready = true;

@@ -140,11 +140,10 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_MeshCollision": {
-        "sha256": "c7d69696b5d3a5415b81232449de5611108149ffc231103922036c12b2658734",
+        "sha256": "1e117dd41c351f8d5ef39a5d54dc254f4bfafef57e867b7ece348ebed0195304",
         "fields": (
-            "mc2_base_pose_proxy", "enabled", "radius", "radius_vertex_group",
-            "pin_enabled", "pin_vertex_group", "self_collision_enabled",
-            "self_collision_surface_thickness", "mass",
+            "mc2_base_pose_proxy", "radius_vertex_group",
+            "pin_enabled", "pin_vertex_group",
             "primary_collision_group", "collided_by_groups",
         ),
     },
@@ -316,7 +315,7 @@ def test_mesh_cloth_rna_and_capability_share_one_schema():
     schema = mesh_schema.MESH_COLLISION_RNA_FIELDS
     capability_fields = tuple(mesh_capabilities.MESH_COLLISION_CAPABILITY["fields"])
     names = tuple(str(field["name"]) for field in schema)
-    assert len(schema) == 11
+    assert len(schema) == 6
     assert tuple(mesh_property.PG_Hotools_MeshCollision.__annotations__) == names
     assert tuple(str(field["name"]) for field in capability_fields) == names
     for declaration, field in zip(schema, capability_fields):

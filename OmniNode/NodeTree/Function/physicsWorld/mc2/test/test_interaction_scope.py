@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mc2.interaction_scope import build_mc2_interaction_scope, explicit_partner_pairs
+from mc2.interaction_scope import build_mc2_interaction_scope
 from mc2.parameters import make_mc2_particle_profile
 from mc2.parameters import make_mc2_setup_options
 from mc2.runtime_parameters import make_mc2_runtime_parameters
@@ -79,13 +79,6 @@ def test_disabled_sync_tasks_do_not_enter_the_scope() -> None:
     assert scope.pairs == ()
 
 
-def test_explicit_partner_graph_is_only_identity_pair_data() -> None:
-    assert explicit_partner_pairs({"c": ["a", "b"], "a": ["c"]}) == (
-        ("a", "c"),
-        ("b", "c"),
-    )
-
-
 def test_product_radius_model_derives_self_thickness_from_radius() -> None:
     profile = make_mc2_particle_profile(radius=0.04, self_collision_thickness=0.003)
     source_runtime = make_mc2_runtime_parameters(
@@ -113,7 +106,6 @@ TESTS = (
     ("automatic wildcard scope", test_zero_mask_is_automatic_all_interaction),
     ("mutual group mask", test_nonzero_masks_require_a_mutual_group_handshake),
     ("sync disabled exclusion", test_disabled_sync_tasks_do_not_enter_the_scope),
-    ("explicit graph canonicalization", test_explicit_partner_graph_is_only_identity_pair_data),
     ("derived self radius", test_product_radius_model_derives_self_thickness_from_radius),
 )
 

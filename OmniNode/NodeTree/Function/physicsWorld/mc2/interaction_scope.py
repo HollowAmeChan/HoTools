@@ -139,27 +139,8 @@ def build_mc2_interaction_scope(
     )
 
 
-def explicit_partner_pairs(partners: dict[str, object]) -> tuple[tuple[str, str], ...]:
-    """Canonicalize a ListObj-like partner graph for benchmark comparison only."""
-
-    pairs = set()
-    for task_id, values in partners.items():
-        left = str(task_id or "")
-        if not left:
-            raise ValueError("explicit partner task identity cannot be empty")
-        if isinstance(values, str):
-            values = (values,)
-        for value in values or ():
-            right = str(value or "")
-            if not right or right == left:
-                raise ValueError("explicit partner identity is invalid")
-            pairs.add(tuple(sorted((left, right))))
-    return tuple(sorted(pairs))
-
-
 __all__ = [
     "MC2InteractionParticipantSpec",
     "MC2InteractionScopeSpec",
     "build_mc2_interaction_scope",
-    "explicit_partner_pairs",
 ]

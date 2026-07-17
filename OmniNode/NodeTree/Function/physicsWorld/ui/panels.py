@@ -100,14 +100,11 @@ def _draw_mesh_collision_controls(layout, obj, props):
         box.label(text="BasePose不能指向当前物理写入对象", icon="ERROR")
     elif base is not None and mesh_light_key(base) != mesh_light_key(obj):
         box.label(text="BasePose顶点/Loop/面数量不一致", icon="ERROR")
-    box.prop(props, "enabled")
     col = box.column(align=True)
-    col.enabled = bool(props.enabled)
     col.label(text="主碰撞组")
     _draw_group_buttons(col, _MESH_SET_PRIMARY_GROUP_OP, active_group=props.primary_collision_group)
     col.label(text="被碰撞组")
     _draw_group_buttons(col, _MESH_TOGGLE_COLLIDED_BY_GROUP_OP, mask=props.collided_by_groups)
-    col.prop(props, "radius")
     col.prop_search(props, "radius_vertex_group", obj, "vertex_groups", text="半径顶点组")
 
     pin_box = layout.box()
@@ -115,14 +112,6 @@ def _draw_mesh_collision_controls(layout, obj, props):
     pin_col = pin_box.column(align=True)
     pin_col.enabled = bool(props.pin_enabled)
     pin_col.prop_search(props, "pin_vertex_group", obj, "vertex_groups", text="Pin顶点组")
-
-    self_box = layout.box()
-    self_box.prop(props, "self_collision_enabled")
-    self_col = self_box.column(align=True)
-    self_col.enabled = bool(props.self_collision_enabled)
-    self_col.prop(props, "self_collision_surface_thickness")
-    self_col.prop(props, "mass")
-
 
 # ---------------------------------------------------------------------------
 # 父面板：开关网格

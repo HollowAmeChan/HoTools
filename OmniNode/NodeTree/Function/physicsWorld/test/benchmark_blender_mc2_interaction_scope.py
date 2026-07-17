@@ -59,6 +59,15 @@ interaction_scope = importlib.import_module(
 )
 
 
+def _explicit_partner_pairs(partners):
+    pairs = set()
+    for task_id, values in partners.items():
+        left = str(task_id)
+        for value in values:
+            pairs.add(tuple(sorted((left, str(value)))))
+    return tuple(sorted(pairs))
+
+
 def _grid(name, z, size=10, spacing=0.02):
     vertices = [(x * spacing, y * spacing, z) for y in range(size) for x in range(size)]
     faces = []
@@ -161,7 +170,7 @@ def _run_case(objects, label, *, partner_graph=None, frames=35):
                 masks = (0,) * len(bundles)
             else:
                 resolver_start = time.perf_counter_ns()
-                pairs = interaction_scope.explicit_partner_pairs(partner_graph)
+                pairs = _explicit_partner_pairs(partner_graph)
                 masks = _masks_from_pairs(task_ids, pairs)
                 resolver_samples.append((time.perf_counter_ns() - resolver_start) / 1.0e6)
             start = time.perf_counter_ns()

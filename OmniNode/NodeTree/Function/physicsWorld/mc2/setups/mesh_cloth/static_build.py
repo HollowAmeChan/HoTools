@@ -39,6 +39,7 @@ class MC2MeshClothStaticBuildResult:
     bending: MC2BendingStaticSpec | MC2BendingStaticMetadata | None
     center: MC2CenterStaticSpec | MC2CenterStaticMetadata
     self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
+    radius_multipliers: tuple[float, ...]
 
     @property
     def final_proxy(self):
@@ -85,6 +86,10 @@ class MC2MeshClothStaticBuildResult:
             raise ValueError("center and final proxy signatures must match")
         if self.self_collision.proxy_signature != self.baseline.final_proxy.proxy_signature:
             raise ValueError("self collision and final proxy signatures must match")
+        if len(self.radius_multipliers) != self.final_proxy.vertex_count:
+            raise ValueError("radius_multipliers must contain one value per vertex")
+        if any(not 0.0 <= value <= 1.0 for value in self.radius_multipliers):
+            raise ValueError("radius_multipliers must be in 0..1")
 
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
@@ -107,6 +112,9 @@ class MC2MeshClothStaticBuildResult:
             ),
             "center_fixed_count": self.center.fixed_count,
             "self_collision_primitive_count": self.self_collision.primitive_count,
+            "weighted_radius_vertex_count": sum(
+                1 for value in self.radius_multipliers if value > 0.0
+            ),
         }
         if include_signatures:
             result.update(
@@ -136,6 +144,7 @@ class MC2MeshClothStaticBuildResult:
             bending=self.bending,
             center=center,
             self_collision=self.self_collision,
+            radius_multipliers=self.radius_multipliers,
         )
 
 
@@ -175,6 +184,28 @@ def _mesh_cloth_pin_settings(obj) -> tuple[bool, str]:
     )
 
 
+def _mesh_radius_multipliers(obj, raw_snapshot=None) -> tuple[float, ...]:
+    if raw_snapshot is not None:
+        values = raw_snapshot.radius_multipliers
+    else:
+        properties = getattr(obj, "hotools_mesh_collision", None)
+        group_name = str(getattr(properties, "radius_vertex_group", "") or "")
+        if not group_name:
+            return (1.0,) * len(obj.data.vertices)
+        group = obj.vertex_groups.get(group_name)
+        if group is None:
+            raise ValueError(f"MC2 radius vertex group does not exist: {group_name!r}")
+        values = [0.0] * len(obj.data.vertices)
+        for vertex in obj.data.vertices:
+            for assignment in vertex.groups:
+                if int(assignment.group) == int(group.index):
+                    values[vertex.index] = max(
+                        0.0, min(1.0, float(assignment.weight))
+                    )
+                    break
+    return tuple(float(value) for value in values)
+
+
 def build_mc2_mesh_cloth_static(
     obj,
     *,
@@ -186,6 +217,7 @@ def build_mc2_mesh_cloth_static(
 ) -> MC2MeshClothStaticBuildResult:
     expected_mesh_topology_signature = str(topology_signature or "")
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
+    radius_multipliers = _mesh_radius_multipliers(obj, raw_snapshot)
     finalizer = build_blender_mesh_final_proxy(
         obj,
         task_id=task_id,
@@ -206,6 +238,7 @@ def build_mc2_mesh_cloth_static(
         native_context.update_proxy_finalizer_derived(
             proxy=baseline.final_proxy,
             finalizer=finalizer.finalizer,
+            radius_multipliers=radius_multipliers,
         )
         baseline_data = baseline.baseline
         native_context.update_baseline_derived(
@@ -247,6 +280,7 @@ def build_mc2_mesh_cloth_static(
         bending=bending,
         center=center,
         self_collision=self_collision,
+        radius_multipliers=radius_multipliers,
     )
     if native_context is not None:
         native_context.initialize_mesh_static_from_builders(result)

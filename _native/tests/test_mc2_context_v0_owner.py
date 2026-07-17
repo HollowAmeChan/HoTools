@@ -79,9 +79,11 @@ def test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer() -> None
         np.asarray((0, 1, 2), dtype=np.int32),
         np.empty((0,), dtype=np.float32),
         np.empty((0,), dtype=np.float32),
+        np.ones((3,), dtype=np.float32),
         1,
         2,
         False,
+        "",
         "",
         False,
     )

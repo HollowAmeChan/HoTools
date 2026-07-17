@@ -14,6 +14,7 @@ struct Vec3 {
     float z = 0.0f;
 };
 
+// Every translation unit that accesses this layout includes this header directly.
 struct Mc2ContextV0 {
     std::int64_t vertex_count = 0;
     std::int32_t setup_kind = 0;
@@ -119,6 +120,7 @@ struct Mc2ContextV0 {
     std::vector<float> proxy_local_tangents;
     std::vector<float> proxy_uvs;
     std::vector<std::uint8_t> proxy_attributes;
+    std::vector<float> proxy_radius_multipliers;
     std::vector<std::int32_t> proxy_edges;
     std::vector<std::int32_t> proxy_triangles;
     std::vector<std::int32_t> baseline_parents;
