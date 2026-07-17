@@ -32,7 +32,7 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 candidate_module = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.candidate"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
 )
 frame_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"

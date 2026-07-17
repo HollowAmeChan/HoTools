@@ -14,7 +14,6 @@ from .parameters import (
     make_mc2_solver_settings,
 )
 from .runtime_parameters import make_mc2_runtime_parameters
-from .candidate import make_mc2_result_candidate
 from .center_state import (
     MC2CenterPersistentState,
     derive_mc2_center_world_pose,
@@ -35,6 +34,7 @@ from .native_context import (
 from .results import (
     make_mc2_bone_result,
     make_mc2_mesh_result,
+    make_mc2_result_candidate,
     make_mc2_stats_result,
     merge_mc2_bone_results,
     publish_mc2_result_transaction,

@@ -338,6 +338,8 @@ Blender authoring/frame input
 
 35. P-12第三批将原`native.py`的扩展加载/符号资格与context host拆成单向依赖：`native.py`只定位、缓存和校验`hotools_native`，`native_context.py`才持有slot context、world interaction、ABI调用和按需debug readback。static producer只依赖loader，solver/debug显式依赖context host，不使用lazy import或兼容re-export。`audit_mc2_architecture.py --check`现为46个生产模块、约16.7k行、0依赖环、0 private import、0 legacy命中；`26/26`纯MC2、raw owner、Blender 4.5 Mesh `7/7`、Bone static/writeback、interaction 5项、全隐式debug 6项、属性合同`9/9`及生命周期均通过。
 
+36. P-12第四批将未发布的`MC2ResultCandidateV1`及其构造校验并入`results.py`，删除没有独立生命周期的`candidate.py`；candidate仍是`ready=False`的事务内部阶段，数组copy/read-only、schema、native identity校验及Mesh/Bone promotion顺序不变。生产模块由46回到45，审计仍为0依赖环/0 private import/0 legacy命中；`26/26`纯MC2、Blender 4.5 Mesh `7/7`及Bone多task原子step/writeback通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -365,8 +367,7 @@ Blender authoring/frame input
 | `frame_state.py` | particle frame、连续性和reset只读合同 | 与`collider_frame.py`同属frame DTO，P-12评估合并以减少碎片 |
 | `collider_frame.py` | shared World collider连续数组合同/adapter | 不持有collision算法；与frame DTO合并后仍由collision snapshot生产 |
 | `interaction_scope.py` | 自动跨物体self交互task-pair ownership | 保留独立产品策略，不引入ListObject兼容路径 |
-| `candidate.py` | native只读结果候选，未发布前私有 | 并入`results.py`，删除纯结果碎片 |
-| `results.py` | 公共result envelope、事务发布和stats读取 | 合并candidate后成为唯一result owner |
+| `results.py` | 私有candidate、公共result envelope、Bone/Mesh promotion、事务发布和stats读取 | 唯一result owner；不向外发布`ready=False`的candidate |
 | `debug.py` | 隐式debug请求、按需native capture与冻结快照 | 保留，不import bpy renderer |
 | `debug_draw.py` | Blender viewport renderer与过滤器 | 保留；只消费冻结快照，不反推RNA/最终结果 |
 | `topology.py` | Blender Mesh/Bone raw snapshot、native fingerprint和轻量topology | 保留单次authoring读取边界；公开共享identity/thaw或消除调用，不暴露private helper |
