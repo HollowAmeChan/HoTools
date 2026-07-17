@@ -22,6 +22,7 @@ NATIVE_FILES = (
     "hotools_native.cpp",
     "mc2_bindings.cpp",
     "mc2_context_v0.cpp",
+    "mc2_context_readback.cpp",
     "mc2_fingerprint.cpp",
     "mc2_kernels.cpp",
     "mc2_static_build.cpp",
