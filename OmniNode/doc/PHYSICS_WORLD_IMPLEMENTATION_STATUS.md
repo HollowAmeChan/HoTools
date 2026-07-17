@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
-| MC2 | V1-R替代资格审计 | 单一公开solver step先同步全部active tasks并按substep批量推进；profile+task映射component，per-task slot/context隔离；Bone链组产品拓扑、同Armature多component原子写回、三setup、外部collider、单/跨cloth self、派生self半径、全隐式中间态debug、生产可达性、公共result/writeback与stats已成立；逐帧orientation/Bone pose/Center已由native自产自用；静态raw fingerprint/change分类及Mesh六类派生、Bone共用pose/depth已由C++生产；Mesh Proxy/frame/Baseline/Distance/Bending/Center/Self已全部直接move，生产slot无完整immutable static shadow且static注册复制边界已清零；单一Mesh raw snapshot已供fingerprint/Final Proxy/BasePose拓扑token共享，token已改为固定端序数组流式签名，fallback tangent由native生产，staged records保持ndarray，生产Topology无完整冻结树；P-06b/P-06c已关闭 | 下一步按P-06d迁移Bone static，再按P-06e/P-06f收口变化重建与总体审计；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
+| MC2 | P-09后工程收尾 | P-08替代资格已放行；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、公共result/writeback、C++热点所有权及独立native构建成立 | 依次删除legacy路径并复验，再完成Python/C++职责重组、依赖洁净度、单一稳定蓝本和热点基线；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -79,8 +79,8 @@ physicsWorld/
 ## 当前优先级
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-2. 按`MC2_ACCEPTANCE_MAP.md`先完成MC2替代资格审计；未取得“允许删除”结论前保留旧实现作为语义、性能和依赖审计输入。
-   P-08已放行：8资产/7脚本通过；180帧soak mean/p95/max约2.738/3.110/3.460ms；large Mesh/Bone热帧相对旧CPP快1.30x/3.16x，首构快32.30x/19.24x；OFF独立构建成立。下一步P-09独立删除旧节点/package/context/IO，保留共享`mc2_kernels`与新V0/static/self实现。
+2. 按`MC2_ACCEPTANCE_MAP.md`完成MC2删除后工程收尾。
+   P-08已放行。当前从P-09开始：先独立删除旧节点/package/context/IO并形成删除后基线，再审计和重组Python/C++职责、依赖与原子边界，最后合并为单一MC2蓝本并建立热点性能基线；全部关闭前保持acceptance blocker。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 

@@ -1102,12 +1102,15 @@ re_run_and_reset：
 9. 在同一代表性资产和等价配置上比较旧/新生产链的语义、逐阶段耗时、内存和分配；只有source对拍或新链路绝对耗时不能证明产品替代资格。
 10. 证明新生产入口、测试和构建对待删除package、context和公开ABI零依赖；需要复用的数值kernel必须先转移到新owner。
 11. 语义、生产可达性、性能、架构和独立性门槛全部关闭后，才允许用独立提交删除旧路径并重跑完整门禁。
+12. 删除旧路径后，重新生成生产文件/translation-unit职责表和import/include/ABI依赖图；删除准入不能替代删除后的事实审计。
+13. 对迁移期间形成的巨型context、转发壳、临时命名和职责碎片做纯结构收口；结构提交不得夹带产品或数值变化。
+14. 维护态必须有单一稳定蓝本和可重复热点基线。迁移计划、验收流水和源码worksheet在收口后不继续作为平行权威文档。
 
 旧 solver 的 Python 包装层默认不直接迁移，但删除前必须作为产品语义、生产行为、性能和依赖审查材料；它不是source parity oracle。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
 
 MC2的删除前构建边界由`HOTOOLS_ENABLE_LEGACY_MC2`表达：关闭时不得编译或导出旧数组solve、旧context和旧BoneCloth IO，但新Physics World V0、static producer、self collision与共享`mc2_kernels`必须独立构建并通过生产符号门禁。共享kernel的保留不构成旧solver兼容；旧package/context/公开ABI反向成为新runtime或测试依赖才构成违规。
 
-MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后完整门禁通过前不得关闭solver acceptance blocker。
+MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后正确性、职责重组、依赖洁净度、稳定蓝本和热点基线全部关闭前不得关闭solver acceptance blocker。
 
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 

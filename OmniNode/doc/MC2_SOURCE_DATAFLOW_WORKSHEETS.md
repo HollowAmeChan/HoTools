@@ -370,3 +370,17 @@ Tier A host固定为`tools/mc2_unity_oracle`（Unity 6000.3，外部固定MC2 ch
 - `schema/properties/capabilities`分别拥有字段描述、RNA注册和UI/registry声明；setup adapter、BasePose、frame input与delta output分别拥有setup dispatch、缓存身份、evaluated snapshot和GN写回资源。它们虽然较小，但不是可删除的参数转发文件。
 
 P-05纯整理删除了math抽离后仅保留旧私有函数名的import aliases，并删除只固定`setup_type="mesh_cloth"`、没有校验/身份/事务职责的`build_mc2_mesh_final_proxy`包装；内部调用现在直达`math3d`规范函数或`build_mc2_final_proxy`唯一实现。保留的本地math helper负责输入域、float32舍入或稳定错误信息；保留的setup/Blender wrapper必须至少增加task/source解析、cache identity、snapshot、资源生命周期或事务职责。整理不改变参数、默认值、更新频率、支持域、ABI或数值顺序。
+
+## 11. 维护态文档与职责事实
+
+MC2迁移完成后的唯一专项维护入口固定为`MC2_BLUEPRINT.md`，结构对齐`SPRINGBONE_VRM_BLUEPRINT.md`。蓝本只陈述当前运行事实、节点/文件职责、数据所有权、产品决策、性能边界、已删除边界和扩展检查表；阶段编号、逐提交性能数字、临时冲突和修复流水只由Git保存。
+
+蓝本中的文件职责表必须从最终生产import/include/call图生成并人工核对，不能按期望目录反推。每个保留Python文件和C++ translation unit只能有一个主要owner；辅助职责必须指向该owner。以下情况不允许被描述成独立职责：
+
+- 只重命名函数或重导出符号；
+- 只把同一组参数再次转发给同层函数；
+- 只为迁移期旧spec/旧ABI做shape转换；
+- 生产runtime依赖的oracle/test入口；
+- context已持有状态在Python或另一translation unit中的平行shadow。
+
+验收表、执行计划和本文在P-15前继续承担迁移期职责；合并提交必须同时删除三份旧入口并原子更新Physics World status、公共contract、OmniNode architecture和代码注释中的文档路由，不能长期保留多个“权威”MC2文档。
