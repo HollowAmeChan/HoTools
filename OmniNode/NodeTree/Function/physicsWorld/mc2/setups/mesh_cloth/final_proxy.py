@@ -24,9 +24,6 @@ from ...static_data import mc2_proxy_content_signature
 from ...static_data import mc2_proxy_finalizer_content_signature
 
 
-UV_SEAM_TOLERANCE = 1.0e-6
-
-
 @dataclass(frozen=True)
 class MC2MeshFinalProxyBuildResult:
     proxy: MC2ProxyStaticSpec | MC2MeshProxyNativeData | MC2MeshProxyNativeMetadata
@@ -272,6 +269,7 @@ def _build_final_proxy_derived(
     attributes: list[int],
     triangles: tuple[tuple[int, int, int], ...],
     triangle_normals: list[np.ndarray],
+    triangle_uvs: np.ndarray,
     lines: tuple[tuple[int, int], ...],
     native_context=None,
     native_owner_kind: str = "",
@@ -302,7 +300,7 @@ def _build_final_proxy_derived(
     bind_rotations = np.empty((vertex_count, 4), dtype=np.float64)
     from ...native import native_module
 
-    counts = native_module().mc2_build_mesh_final_proxy_derived_v0(
+    counts = native_module().mc2_build_mesh_final_proxy_derived_v1(
         np.ascontiguousarray(positions, dtype=np.float64),
         normals,
         tangents,
@@ -310,6 +308,7 @@ def _build_final_proxy_derived(
         attribute_values,
         triangle_values,
         triangle_normal_values,
+        np.ascontiguousarray(triangle_uvs, dtype=np.float64).reshape((-1, 6)),
         line_values,
         out_edges,
         out_neighbor_ranges,
@@ -493,6 +492,7 @@ def build_mc2_final_proxy(
     vertex_attributes,
     lines=(),
     triangles=(),
+    triangle_uvs=None,
     native_context=None,
     native_owner_kind: str = "",
 ) -> MC2MeshFinalProxyBuildResult:
@@ -529,11 +529,35 @@ def build_mc2_final_proxy(
             name="triangles",
         )
 
+    original_triangles = np.ascontiguousarray(
+        triangle_records, dtype=np.int32
+    ).reshape((-1, 3)).copy()
+    if triangle_uvs is None:
+        source_triangle_uvs = uv_array[original_triangles]
+    else:
+        source_triangle_uvs = np.asarray(triangle_uvs, dtype=np.float64)
+        if source_triangle_uvs.shape != (len(original_triangles), 3, 2):
+            raise ValueError("triangle_uvs must have shape [triangle_count,3,2]")
+        if not np.all(np.isfinite(source_triangle_uvs)):
+            raise ValueError("triangle_uvs cannot contain NaN/Inf")
     final_triangles, triangle_normals = _optimize_triangle_direction(
         positions,
         triangle_records,
         keep_arrays=staged,
     )
+    final_triangle_array = np.asarray(final_triangles, dtype=np.int32).reshape((-1, 3))
+    final_triangle_uvs = np.empty((len(final_triangle_array), 3, 2), dtype=np.float64)
+    for triangle_index, (original, final) in enumerate(
+        zip(original_triangles, final_triangle_array)
+    ):
+        corner_uvs = {
+            int(vertex): source_triangle_uvs[triangle_index, corner]
+            for corner, vertex in enumerate(original)
+        }
+        if len(corner_uvs) != 3 or any(int(vertex) not in corner_uvs for vertex in final):
+            raise ValueError("triangle direction optimization changed triangle membership")
+        for corner, vertex in enumerate(final):
+            final_triangle_uvs[triangle_index, corner] = corner_uvs[int(vertex)]
     derived = _build_final_proxy_derived(
         positions,
         normals,
@@ -542,6 +566,7 @@ def build_mc2_final_proxy(
         attributes,
         final_triangles,
         triangle_normals,
+        final_triangle_uvs,
         line_records,
         native_context=native_context,
         native_owner_kind=native_owner_kind,
@@ -654,16 +679,20 @@ def _vertex_group_weights(obj, group_name: str, vertex_count: int) -> tuple[floa
     return tuple(weights)
 
 
-def _mesh_uvs(
+def _mesh_uv_data(
     mesh,
     triangles,
+    triangle_loops,
     *,
     uv_layer_name: str | None,
     raw_snapshot=None,
-) -> tuple[tuple[float, float], ...]:
+) -> tuple[tuple[tuple[float, float], ...], np.ndarray]:
     vertex_count = len(mesh.vertices)
     if len(triangles) == 0:
-        return tuple((0.0, 0.0) for _ in range(vertex_count))
+        return (
+            tuple((0.0, 0.0) for _ in range(vertex_count)),
+            np.empty((0, 3, 2), dtype=np.float32),
+        )
     if raw_snapshot is not None:
         if not bool(raw_snapshot.has_uv):
             raise ValueError("MeshCloth triangle proxy requires a UV layer")
@@ -680,25 +709,31 @@ def _mesh_uvs(
         uv_layer.data.foreach_get("uv", loop_uvs)
         loop_uvs = loop_uvs.reshape((-1, 2))
 
-    minimum = np.full((vertex_count, 2), np.inf, dtype=np.float32)
-    maximum = np.full((vertex_count, 2), -np.inf, dtype=np.float32)
-    np.minimum.at(minimum, loop_vertices, loop_uvs)
-    np.maximum.at(maximum, loop_vertices, loop_uvs)
-    invalid = np.flatnonzero(np.any(maximum - minimum > UV_SEAM_TOLERANCE, axis=1))
-    if len(invalid):
-        raise ValueError(
-            f"Blender vertex {int(invalid[0])} has multiple loop UVs; split the proxy vertex"
-        )
-
     values = np.zeros((vertex_count, 2), dtype=np.float32)
     vertices, first_indices = np.unique(loop_vertices, return_index=True)
     values[vertices] = loop_uvs[first_indices]
-    return tuple(tuple(float(value) for value in row) for row in values)
+    triangle_loop_array = np.asarray(triangle_loops, dtype=np.int32).reshape((-1, 3))
+    if len(triangle_loop_array) != len(triangles):
+        raise ValueError("triangle_loops length must match triangle count")
+    if np.any(triangle_loop_array < 0) or np.any(triangle_loop_array >= len(loop_uvs)):
+        raise ValueError("triangle_loops contains an out-of-range loop index")
+    return (
+        tuple(tuple(float(value) for value in row) for row in values),
+        np.ascontiguousarray(loop_uvs[triangle_loop_array], dtype=np.float32),
+    )
 
 
-def _mesh_triangles(mesh) -> tuple[tuple[int, int, int], ...]:
+def _mesh_triangle_data(mesh):
     mesh.calc_loop_triangles()
-    return tuple(tuple(int(value) for value in triangle.vertices) for triangle in mesh.loop_triangles)
+    triangles = tuple(
+        tuple(int(value) for value in triangle.vertices)
+        for triangle in mesh.loop_triangles
+    )
+    triangle_loops = tuple(
+        tuple(int(value) for value in triangle.loops)
+        for triangle in mesh.loop_triangles
+    )
+    return triangles, triangle_loops
 
 
 def build_blender_mesh_final_proxy(
@@ -740,10 +775,15 @@ def build_blender_mesh_final_proxy(
         raise ValueError("Mesh raw snapshot identity does not match the proxy object")
     mesh.update()
     vertex_count = len(mesh.vertices)
-    triangles = raw_snapshot.triangles if raw_snapshot is not None else _mesh_triangles(mesh)
-    uvs = _mesh_uvs(
+    if raw_snapshot is not None:
+        triangles = raw_snapshot.triangles
+        triangle_loops = raw_snapshot.triangle_loops
+    else:
+        triangles, triangle_loops = _mesh_triangle_data(mesh)
+    uvs, triangle_uvs = _mesh_uv_data(
         mesh,
         triangles,
+        triangle_loops,
         uv_layer_name=uv_layer_name,
         raw_snapshot=raw_snapshot,
     )
@@ -799,6 +839,7 @@ def build_blender_mesh_final_proxy(
             vertex_attributes=attributes,
             lines=lines,
             triangles=triangles,
+            triangle_uvs=triangle_uvs,
             native_context=native_context,
         ),
         mesh_topology_signature=actual_mesh_topology_signature,
@@ -811,7 +852,6 @@ __all__ = [
     "MC2MeshFinalizerNativeMetadata",
     "MC2MeshProxyNativeData",
     "MC2MeshProxyNativeMetadata",
-    "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
     "build_mc2_final_proxy",
     "mc2_world_rotation_xyzw",

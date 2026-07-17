@@ -78,6 +78,7 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* local_normals,
     const double* local_tangents,
     const double* uvs,
+    const double* triangle_uvs,
     const std::uint8_t* vertex_attributes,
     std::size_t vertex_count,
     const std::int32_t* triangles,

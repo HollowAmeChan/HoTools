@@ -503,7 +503,7 @@ void hotools::bind_mc2(nb::module_& m) {
         nb::arg("out_roots"), nb::arg("out_depths"),
         nb::arg("out_local_positions"), nb::arg("out_local_rotations"),
         nb::arg("produce_owned") = false);
-    m.def("mc2_build_mesh_final_proxy_derived_v0",
+    m.def("mc2_build_mesh_final_proxy_derived_v1",
         [](cf64_2d positions,
            f64_2d local_normals,
            f64_2d local_tangents,
@@ -511,6 +511,7 @@ void hotools::bind_mc2(nb::module_& m) {
            u8_1d vertex_attributes,
            ci32_2d triangles,
            cf64_2d triangle_normals,
+           cf64_2d triangle_uvs,
            ci32_2d lines,
            i32_2d out_edges,
            i32_2d out_neighbor_ranges,
@@ -533,6 +534,8 @@ void hotools::bind_mc2(nb::module_& m) {
             check_cols(triangles, 3, "triangles");
             check_cols(triangle_normals, 3, "triangle_normals");
             check_len(triangle_normals.shape(0), triangle_count, "triangle_normals");
+            check_cols(triangle_uvs, 6, "triangle_uvs");
+            check_len(triangle_uvs.shape(0), triangle_count, "triangle_uvs");
             check_cols(lines, 2, "lines");
             check_indices_in_range(triangles.data(), triangle_count * 3, vertex_count, "triangles");
             check_indices_in_range(lines.data(), lines.shape(0) * 2, vertex_count, "lines");
@@ -554,6 +557,7 @@ void hotools::bind_mc2(nb::module_& m) {
                     local_normals.data(),
                     local_tangents.data(),
                     uvs.data(),
+                    triangle_uvs.data(),
                     vertex_attributes.data(),
                     vertex_count,
                     triangles.data(),
@@ -701,6 +705,7 @@ void hotools::bind_mc2(nb::module_& m) {
         nb::arg("vertex_attributes"),
         nb::arg("triangles"),
         nb::arg("triangle_normals"),
+        nb::arg("triangle_uvs"),
         nb::arg("lines"),
         nb::arg("out_edges"),
         nb::arg("out_neighbor_ranges"),

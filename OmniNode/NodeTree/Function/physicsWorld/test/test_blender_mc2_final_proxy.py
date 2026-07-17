@@ -164,7 +164,7 @@ def test_vertex_group_pin_uses_same_vertex_indices() -> None:
         _remove_object(obj)
 
 
-def test_shared_vertex_with_multiple_loop_uvs_is_rejected() -> None:
+def test_shared_vertex_with_multiple_loop_uvs_uses_corner_uvs() -> None:
     obj = _make_object("MC2_FinalProxyUvSeam", ((0, 1, 2), (0, 2, 3)))
     try:
         uv_layer = obj.data.uv_layers.active
@@ -173,16 +173,27 @@ def test_shared_vertex_with_multiple_loop_uvs_is_rejected() -> None:
                 if obj.data.loops[loop_index].vertex_index == 0 and polygon.index == 1:
                     uv_layer.data[loop_index].uv = (0.25, 0.25)
 
-        try:
-            final_proxy.build_blender_mesh_final_proxy(
-                obj,
-                task_id="mc2:mesh_cloth:blender_uv_seam",
-            )
-        except ValueError as exc:
-            assert "multiple loop UVs" in str(exc)
-            assert "split the proxy vertex" in str(exc)
-        else:
-            raise AssertionError("UV seam on one Blender vertex must be rejected")
+        result = final_proxy.build_blender_mesh_final_proxy(
+            obj,
+            task_id="mc2:mesh_cloth:blender_uv_seam",
+        )
+        assert result.proxy.vertex_count == 4
+        assert len(result.proxy.triangles) == 2
+        assert tuple(result.proxy.vertex_identities) == (
+            "mesh:v0",
+            "mesh:v1",
+            "mesh:v2",
+            "mesh:v3",
+        )
+        assert all(
+            all(abs(component) <= 1.0 for component in tangent)
+            for tangent in result.proxy.local_tangents
+        )
+
+        world = world_types.PhysicsWorldCache()
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+        mc2_solver.step_mc2(world, [task])
+        assert world.solver_slots[task.task_id].data["mesh_static"].final_proxy.vertex_count == 4
     finally:
         _remove_object(obj)
 
@@ -427,7 +438,7 @@ def test_mc2_static_config_change_reuses_topology() -> None:
 TESTS = (
     ("n-gon final proxy keeps original vertices", test_ngon_proxy_keeps_original_vertices),
     ("vertex group pin uses same indices", test_vertex_group_pin_uses_same_vertex_indices),
-    ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
+    ("shared vertex UV seam uses triangle corner UVs", test_shared_vertex_with_multiple_loop_uvs_uses_corner_uvs),
     ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
     ("MC2 slot rebuilds for Pin/UV static changes", test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes),
     ("MC2 radius vertex group is native static input", test_mc2_radius_vertex_group_is_native_static_input),

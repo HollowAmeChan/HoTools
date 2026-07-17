@@ -91,6 +91,7 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
     triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
+    triangle_uvs = np.ascontiguousarray(uvs[triangles].reshape((-1, 6)))
     lines = np.empty((0, 2), dtype=np.int32)
     out_edges = np.empty((6, 2), dtype=np.int32)
     neighbor_ranges = np.empty((4, 2), dtype=np.int32)
@@ -100,14 +101,15 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     bind_positions = np.empty((4, 3), dtype=np.float64)
     bind_rotations = np.empty((4, 4), dtype=np.float64)
 
-    counts = hotools_native.mc2_build_mesh_final_proxy_derived_v0(
+    counts = hotools_native.mc2_build_mesh_final_proxy_derived_v1(
         positions,
         normals,
         tangents,
-        uvs,
+        np.zeros_like(uvs),
         attributes,
         triangles,
         triangle_normals,
+        triangle_uvs,
         lines,
         out_edges,
         neighbor_ranges,
@@ -144,6 +146,7 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
     attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
     triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
+    triangle_uvs = np.ascontiguousarray(uvs[triangles].reshape((-1, 6)))
     lines = np.empty((0, 2), dtype=np.int32)
     out_edges = np.empty((6, 2), dtype=np.int32)
     neighbor_ranges = np.empty((4, 2), dtype=np.int32)
@@ -152,7 +155,7 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
     triangle_data = np.empty((6, 2), dtype=np.int32)
     bind_positions = np.empty((4, 3), dtype=np.float64)
     bind_rotations = np.empty((4, 4), dtype=np.float64)
-    owned = hotools_native.mc2_build_mesh_final_proxy_derived_v0(
+    owned = hotools_native.mc2_build_mesh_final_proxy_derived_v1(
         positions,
         normals,
         tangents,
@@ -160,6 +163,7 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
         attributes,
         triangles,
         triangle_normals,
+        triangle_uvs,
         lines,
         out_edges,
         neighbor_ranges,

@@ -158,7 +158,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 | Setup | 输入/拓扑 | 碰撞 | 输出 | 限制 |
 |---|---|---|---|---|
-| MeshCloth | Object多输入 -> 每个Mesh一个单source task；每个source配套BasePose双对象 | Point/Edge外部碰撞，单/跨物体self | GN object-local offset | topology-preserving动画；UV seam和不兼容拓扑明确拒绝 |
+| MeshCloth | Object多输入 -> 每个Mesh一个单source task；每个source配套BasePose双对象 | Point/Edge外部碰撞，单/跨物体self | GN object-local offset | topology-preserving动画；UV seam按triangle corner读取，不拆粒子；不兼容拓扑明确拒绝 |
 | BoneCloth | Bone socket中控骨 -> 各直接子骨的HoTools product ordered chain | Point/Edge外部碰撞，单/跨物体self | Bone transform batch | 中控骨不入粒子；imported triangle拒绝；同Armature组件骨名不得重叠 |
 | BoneSpring | Bone socket根骨 -> 包含root的固定Line骨链 | soft sphere，Sphere-only | Bone transform batch | gravity/self/max-distance/backstop按BoneSpring归一化关闭或固定 |
 
@@ -202,7 +202,7 @@ Task identity覆盖setup、source/target身份和产品拓扑。Profile参数、
 |---|---|---|
 | H0 identity | task/setup/source/target、ordered Bone root identity | Python spec/session；不进入kernel |
 | H1 authoring | profile、curve、Pin/selection、bone hierarchy、外部identity | Python immutable authoring；用于重建/诊断 |
-| H2 raw snapshot | Mesh positions/normals/UV/index/Pin，Bone rest/pose matrix，component pose | Blender adapter短生命周期；交给native后丢弃 |
+| H2 raw snapshot | Mesh positions/normals/loop UV/triangle loop index/Pin，Bone rest/pose matrix，component pose | Blender adapter短生命周期；交给native后丢弃 |
 | N0 proxy static | fingerprint、final proxy、orientation、attribute、baseline、output mapping | per-task native context static |
 | N1 constraint static | Distance/Bending/Center/Self/Bone registration owner vectors | C++ producer直接move到context |
 | N2 runtime parameters | curve samples、scalar/bool/enum、team options | hot update；固定ABI |
@@ -231,7 +231,7 @@ config   = 8
 | config | 当前为gravity direction | 当前为gravity direction | context间复制不变static，只重建Center |
 | frame pose | 不进入static fingerprint | 不进入static fingerprint | N3同步，不重建 |
 
-UV-only当前不改变数值约束，但metadata通过Proxy signature形成完整身份链，因此仍全量重签/重建。未来只有在增加独立UV子指纹与native重签合同时才能缩小范围。
+UV-only不改变粒子数、拓扑或GN写回长度，但会改变C++按triangle corner UV构建的切线与orientation static；metadata通过Proxy signature形成完整身份链，因此仍全量重签/重建。未来只有在增加独立UV子指纹与native重签合同时才能缩小范围。
 
 旧context保持只读，新staged context复制可复用static并运行受影响producer；全部成功后才替换slot。禁止把native static回读成Python spec实现复用。
 

@@ -335,19 +335,20 @@ bool two_triangle_open(
 
 Vec3 triangle_tangent(
     const double* positions,
-    const double* uvs,
-    const Triangle& triangle
+    const double* triangle_uvs,
+    const Triangle& triangle,
+    std::size_t triangle_index
 ) {
     const Vec3 first = load_position(positions, triangle[0]);
     const Vec3 dist_ba = subtract(load_position(positions, triangle[1]), first);
     const Vec3 dist_ca = subtract(load_position(positions, triangle[2]), first);
-    const auto first_uv = static_cast<std::size_t>(triangle[0]) * 2;
-    const auto second_uv = static_cast<std::size_t>(triangle[1]) * 2;
-    const auto third_uv = static_cast<std::size_t>(triangle[2]) * 2;
-    const double uv_ba_x = uvs[second_uv] - uvs[first_uv];
-    const double uv_ba_y = uvs[second_uv + 1] - uvs[first_uv + 1];
-    const double uv_ca_x = uvs[third_uv] - uvs[first_uv];
-    const double uv_ca_y = uvs[third_uv + 1] - uvs[first_uv + 1];
+    const auto first_uv = triangle_index * 6;
+    const auto second_uv = first_uv + 2;
+    const auto third_uv = first_uv + 4;
+    const double uv_ba_x = triangle_uvs[second_uv] - triangle_uvs[first_uv];
+    const double uv_ba_y = triangle_uvs[second_uv + 1] - triangle_uvs[first_uv + 1];
+    const double uv_ca_x = triangle_uvs[third_uv] - triangle_uvs[first_uv];
+    const double uv_ca_y = triangle_uvs[third_uv + 1] - triangle_uvs[first_uv + 1];
     double area = uv_ba_x * uv_ca_y - uv_ba_y * uv_ca_x;
     if (area == 0.0) area = 1.0;
     const Vec3 tangent = scale(
@@ -689,6 +690,7 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     const double* local_normals,
     const double* local_tangents,
     const double* uvs,
+    const double* triangle_uvs,
     const std::uint8_t* vertex_attributes,
     std::size_t vertex_count,
     const std::int32_t* triangles,
@@ -699,7 +701,9 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
 ) {
     if (positions == nullptr || local_normals == nullptr || local_tangents == nullptr ||
         uvs == nullptr || vertex_attributes == nullptr ||
-        (triangle_count > 0 && (triangles == nullptr || triangle_normals == nullptr)) ||
+        (triangle_count > 0 && (
+            triangles == nullptr || triangle_normals == nullptr || triangle_uvs == nullptr
+        )) ||
         (line_count > 0 && lines == nullptr)) {
         throw std::invalid_argument("MC2 final proxy derived buffers cannot be null");
     }
@@ -734,7 +738,9 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
         }
         triangle_values[index] = triangle;
         normal_values[index] = load_vec3(triangle_normals, index);
-        tangent_values[index] = triangle_tangent(positions, uvs, triangle);
+        tangent_values[index] = triangle_tangent(
+            positions, triangle_uvs, triangle, index
+        );
         for (const auto& edge : triangle_edges(triangle)) edge_values.insert(edge);
         add_neighbor(triangle[0], triangle[1]);
         add_neighbor(triangle[0], triangle[2]);
