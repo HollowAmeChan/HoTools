@@ -20,6 +20,7 @@ from importlib import import_module
 SOLVER_MODULE = {
     "domain": "spring_vrm",
     "solver_id": "spring_vrm",
+    "menu_name": "VRM SpringBone",
     "declaration": ".declaration:SPRING_VRM_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:SPRING_VRM_CAPABILITIES",

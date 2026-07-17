@@ -324,12 +324,76 @@ def test_mesh_cloth_rna_and_capability_share_one_schema():
         assert field["explicit_property"] == f"Object.hotools_mesh_collision.{declaration['name']}"
 
 
+def test_solver_node_modules_are_grouped_by_manifest_menu_name():
+    groups = solver_registry.iter_solver_node_groups()
+    assert tuple(group["solver_id"] for group in groups) == (
+        "spring_vrm",
+        "rigid_jolt",
+        "mc2",
+    )
+    assert tuple(group["menu_name"] for group in groups) == (
+        "VRM SpringBone",
+        "Jolt刚体",
+        "MC2",
+    )
+    assert all(group["modules"] for group in groups)
+    assert all(
+        module["solver_id"] == group["solver_id"]
+        and module["menu_name"] == group["menu_name"]
+        for group in groups
+        for module in group["modules"]
+    )
+    assert tuple(
+        (module["domain"], module["module_ref"])
+        for module in solver_registry.iter_solver_node_modules()
+    ) == tuple(
+        (module["domain"], module["module_ref"])
+        for group in groups
+        for module in group["modules"]
+    )
+
+
+def test_solver_node_add_menu_uses_manifest_submenus():
+    node_register = importlib.import_module(
+        "HoTools.OmniNode.NodeTree.OmniNodeRegister"
+    )
+    expected = (
+        ("spring_vrm", "VRM SpringBone", "NODE_MT_OMNINODE_SOLVER_SPRING_VRM"),
+        ("rigid_jolt", "Jolt刚体", "NODE_MT_OMNINODE_SOLVER_RIGID_JOLT"),
+        ("mc2", "MC2", "NODE_MT_OMNINODE_SOLVER_MC2"),
+    )
+    assert tuple(
+        (group["solver_id"], group["menu_name"], group["menu_id"])
+        for group in node_register.physics_world_solver_groups
+    ) == expected
+    assert tuple(
+        (menu_class.bl_idname, menu_class.bl_label)
+        for menu_class in node_register.physics_world_solver_menu_classes
+    ) == tuple((menu_id, menu_name) for _solver, menu_name, menu_id in expected)
+
+    solver_category = next(
+        category
+        for category in node_register.node_categories
+        if category.identifier == "PHYSICS_SOLVER"
+    )
+    menu_calls = []
+
+    class Layout:
+        def menu(self, menu_id):
+            menu_calls.append(menu_id)
+
+    for item in solver_category.items(None):
+        item.draw(item, Layout(), None)
+    assert tuple(menu_calls) == tuple(menu_id for _solver, _name, menu_id in expected)
+
+
 def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert solver_registry.builtin_solver_domains().count("mc2") == 1
     assert "mesh_cloth" not in solver_registry.builtin_solver_domains()
     assert solver_registry.builtin_component_domains() == ("collision", "mc2")
     descriptor = solver_registry.all_solver_module_descriptors()["mc2"]
     assert descriptor["solver_id"] == "mc2"
+    assert descriptor["menu_name"] == "MC2"
     assert descriptor["nodes"] == (".nodes",)
     assert tuple(
         node.__meta["bl_label"]
@@ -1486,6 +1550,8 @@ TESTS = (
     ("components own shared and adapter capabilities", test_components_own_shared_and_solver_adapter_capabilities),
     ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
     ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
+    ("solver node modules keep manifest menu groups", test_solver_node_modules_are_grouped_by_manifest_menu_name),
+    ("solver add menu uses manifest submenus", test_solver_node_add_menu_uses_manifest_submenus),
     ("one MC2 solver owns three public setup types", test_mc2_is_one_solver_with_three_setup_types_and_public_step),
     ("solver registry separates owned/shared/planned result channels", test_solver_registry_separates_owned_shared_and_planned_result_channels),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),

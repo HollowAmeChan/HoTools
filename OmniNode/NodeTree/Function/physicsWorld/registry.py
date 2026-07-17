@@ -112,6 +112,7 @@ def _default_descriptor(domain: str) -> dict:
     return {
         "domain": str(domain),
         "solver_id": str(domain),
+        "menu_name": str(domain),
         "declaration": None,
         "nodes": (),
         "capabilities": None,
@@ -288,18 +289,38 @@ def iter_solver_declarations() -> list[dict]:
 
 def iter_solver_node_modules() -> list[dict]:
     modules: list[dict] = []
+    for group in iter_solver_node_groups():
+        for entry in group["modules"]:
+            modules.append(dict(entry))
+    return modules
+
+
+def iter_solver_node_groups() -> list[dict]:
+    """Return public node modules grouped by their owning solver."""
+    groups: list[dict] = []
     for domain, descriptor in all_solver_module_descriptors().items():
+        solver_id = _descriptor_solver_id(domain, descriptor)
+        menu_name = str(descriptor.get("menu_name") or solver_id).strip() or solver_id
+        modules: list[dict] = []
         for module_ref in _as_tuple(descriptor.get("nodes")):
             module = _resolve_module_ref(domain, module_ref)
             if module is None:
                 continue
             modules.append({
                 "domain": domain,
-                "solver_id": _descriptor_solver_id(domain, descriptor),
+                "solver_id": solver_id,
+                "menu_name": menu_name,
                 "module_ref": module_ref,
                 "module": module,
             })
-    return modules
+        if modules:
+            groups.append({
+                "domain": domain,
+                "solver_id": solver_id,
+                "menu_name": menu_name,
+                "modules": tuple(modules),
+            })
+    return groups
 
 
 def resolve_solver_capabilities(domain: str) -> dict:

@@ -1,7 +1,8 @@
 from . import FunctionNodeCore
 import bpy
 import nodeitems_utils
-from nodeitems_utils import NodeCategory, NodeItem
+import re
+from nodeitems_utils import NodeCategory, NodeItem, NodeItemCustom
 from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,Armature
 from .Function.physicsWorld import nodes as physicsWorld
@@ -19,11 +20,56 @@ def _label_startswith(node_list, *prefixes):
     return [n for n in node_list if any(n.bl_label.startswith(p) for p in prefixes)]
 
 
-def _load_physics_world_solver_nodes():
-    nodes = []
-    for entry in physicsWorldRegistry.iter_solver_node_modules():
-        nodes.extend(FunctionNodeCore.loadRegisterFuncNodes(entry["module"]))
-    return nodes
+def _solver_menu_id(solver_id):
+    token = re.sub(r"[^A-Za-z0-9_]+", "_", str(solver_id)).strip("_").upper()
+    if not token:
+        raise ValueError("solver_id cannot produce an empty menu identifier")
+    return f"NODE_MT_OMNINODE_SOLVER_{token}"
+
+
+def _load_physics_world_solver_groups():
+    groups = []
+    menu_ids = set()
+    for entry in physicsWorldRegistry.iter_solver_node_groups():
+        nodes = []
+        for module_entry in entry["modules"]:
+            nodes.extend(FunctionNodeCore.loadRegisterFuncNodes(module_entry["module"]))
+        if not nodes:
+            continue
+        menu_id = _solver_menu_id(entry["solver_id"])
+        if menu_id in menu_ids:
+            raise ValueError(f"duplicate solver menu identifier: {menu_id}")
+        menu_ids.add(menu_id)
+        groups.append({
+            "domain": entry["domain"],
+            "solver_id": entry["solver_id"],
+            "menu_name": entry["menu_name"],
+            "menu_id": menu_id,
+            "nodes": tuple(nodes),
+        })
+    return groups
+
+
+def _make_solver_menu_class(group):
+    node_items = tuple(NodeItem(node.bl_idname) for node in group["nodes"])
+
+    def draw(self, context):
+        column = self.layout.column(align=True)
+        for item in node_items:
+            item.draw(item, column, context)
+
+    return type(group["menu_id"], (bpy.types.Menu,), {
+        "bl_idname": group["menu_id"],
+        "bl_label": group["menu_name"],
+        "draw": draw,
+    })
+
+
+def _make_solver_menu_item(menu_id):
+    def draw(_item, layout, _context):
+        layout.menu(menu_id)
+
+    return NodeItemCustom(draw=draw)
 
 
 cls = []
@@ -49,7 +95,16 @@ node_cls_debug = FunctionNodeCore.loadRegisterFuncNodes(Debug)
 node_cls_cache = FunctionNodeCore.loadRegisterFuncNodes(Cache)
 node_cls_physics = FunctionNodeCore.loadRegisterFuncNodes(Physics)
 node_cls_physics_world = FunctionNodeCore.loadRegisterFuncNodes(physicsWorld)
-node_cls_physics_world_solvers = _load_physics_world_solver_nodes()
+physics_world_solver_groups = _load_physics_world_solver_groups()
+node_cls_physics_world_solvers = [
+    node
+    for group in physics_world_solver_groups
+    for node in group["nodes"]
+]
+physics_world_solver_menu_classes = [
+    _make_solver_menu_class(group)
+    for group in physics_world_solver_groups
+]
 cls.extend(node_cls_data)
 cls.extend(node_cls_armature)
 cls.extend(node_cls_math)
@@ -80,11 +135,11 @@ _pw_debug = _label_startswith(
     node_cls_physics_world,
     "物理世界-调试", "物理世界-结果", "物理世界-可视化",
 )
-# 解算器：所有 solver + 配套属性/注册/命令（刚体全部 + 弹簧骨全部）
-# 排序：属性 → 注册 → 模拟步 → 命令/结果，使同一 solver 的节点自然聚合
-_solver_items = (
-    node_cls_physics_world_solvers
-)
+# 解算器：顶层只保留 solver 子菜单；各模块自行声明 menu_name 和节点模块。
+_solver_items = [
+    _make_solver_menu_item(group["menu_id"])
+    for group in physics_world_solver_groups
+]
 # ─────────────────────────────────────────────────────────────────────────────
 
 node_categories = [
@@ -143,28 +198,48 @@ node_categories = [
     OmniNodeCategory("PHYSICS_WORLD", "物理世界", items=[
         NodeItem(i.bl_idname) for i in _pw_lifecycle
     ]),
-    OmniNodeCategory("PHYSICS_SOLVER", "解算器", items=[
-        NodeItem(i.bl_idname) for i in _solver_items
-    ]),
+    OmniNodeCategory("PHYSICS_SOLVER", "解算器", items=_solver_items),
     OmniNodeCategory("PHYSICS_WORLD_DEBUG", "物理世界调试", items=[
         NodeItem(i.bl_idname) for i in _pw_debug
     ]),
 ]
 
 
+_registered_node_classes = []
+_registered_solver_menu_classes = []
+_node_categories_registered = False
+
+
+def _rollback_registration():
+    global _node_categories_registered
+    if _node_categories_registered:
+        nodeitems_utils.unregister_node_categories(TREE_ID)
+        _node_categories_registered = False
+    for menu_class in reversed(_registered_solver_menu_classes):
+        bpy.utils.unregister_class(menu_class)
+    _registered_solver_menu_classes.clear()
+    for node_class in reversed(_registered_node_classes):
+        bpy.utils.unregister_class(node_class)
+    _registered_node_classes.clear()
+
+
 def register():
+    global _node_categories_registered
+    if _node_categories_registered:
+        return
     try:
-        for i in cls:
-            bpy.utils.register_class(i)
+        for node_class in cls:
+            bpy.utils.register_class(node_class)
+            _registered_node_classes.append(node_class)
+        for menu_class in physics_world_solver_menu_classes:
+            bpy.utils.register_class(menu_class)
+            _registered_solver_menu_classes.append(menu_class)
         nodeitems_utils.register_node_categories(TREE_ID, node_categories)
+        _node_categories_registered = True
     except Exception:
-        print(__file__+" register failed!!!")
+        _rollback_registration()
+        raise
 
 
 def unregister():
-    try:
-        for i in cls:
-            bpy.utils.unregister_class(i)
-        nodeitems_utils.unregister_node_categories(TREE_ID)
-    except Exception:
-        print(__file__+" unregister failed!!!")
+    _rollback_registration()

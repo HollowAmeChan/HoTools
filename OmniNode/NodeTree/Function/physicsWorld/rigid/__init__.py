@@ -8,6 +8,7 @@ from importlib import import_module
 SOLVER_MODULE = {
     "domain": "rigid",
     "solver_id": "rigid_jolt",
+    "menu_name": "Jolt刚体",
     "declaration": ".declaration:RIGID_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:RIGID_CAPABILITIES",

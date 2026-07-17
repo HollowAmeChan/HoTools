@@ -17,6 +17,7 @@ COMPONENT_MODULE = {
 SOLVER_MODULE = {
     "domain": "mc2",
     "solver_id": "mc2",
+    "menu_name": "MC2",
     "declaration": ".declaration:MC2_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:MC2_CAPABILITIES",

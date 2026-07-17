@@ -1017,6 +1017,14 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 节点注册和分类。负责注册 Graph 节点，从 `Function/` 加载 `@omni(enable=True)` 函数并生成节点类，建立 Blender add node 菜单分类。
 
+物理解算器节点按 solver manifest 原子化注册：
+
+- 顶层只显示“解算器”，其下为每个 solver 的折叠子菜单。
+- `Function/physicsWorld/<solver>/__init__.py` 的 `SOLVER_MODULE` 必须通过 `solver_id`、`menu_name` 和 `nodes` 声明菜单身份、显示名和节点模块。
+- `Function/physicsWorld/registry.py::iter_solver_node_groups()` 保留 solver 所有权并输出分组；`OmniNodeRegister.py` 不得根据节点标签猜测 solver，也不得维护内置 solver 名单。
+- Blender 4.5 的 `nodeitems_utils.NodeCategory` 只支持一层分类。solver 子层由动态 `bpy.types.Menu` 实现，父分类通过 `NodeItemCustom` 调用 `layout.menu(...)`。
+- 动态 solver 菜单必须先于 node categories 注册；注销时必须先注销 node categories，再注销 solver 菜单和节点类。
+
 ### `NodeTree/Function/*.py`
 
 函数节点库。提供实际业务逻辑。
