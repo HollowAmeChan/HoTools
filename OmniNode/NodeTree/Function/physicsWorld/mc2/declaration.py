@@ -106,5 +106,5 @@ MC2_SOLVER_DECLARATION = {
         "supports_bake": False,
         "solver_acceptance_blocker": True,
     },
-    "legacy_policy": "old physicsMC2 packages remain active and are not called by this framework",
+    "legacy_policy": "removed_no_compatibility_fallback",
 }

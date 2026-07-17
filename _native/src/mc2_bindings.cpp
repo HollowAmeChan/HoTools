@@ -50,7 +50,7 @@ nb::object steal_or_throw(PyObject* result) {
     if (result == nullptr) throw nb::python_error();
     return nb::steal<nb::object>(result);
 }
-inline void call_legacy(PyObject* (*fn)(PyObject*, PyObject*), nb::args a) {
+inline void call_pyobject_api(PyObject* (*fn)(PyObject*, PyObject*), nb::args a) {
     PyObject* r = fn(nullptr, a.ptr());
     if (!r) throw nb::python_error();
     Py_DECREF(r);
@@ -149,11 +149,11 @@ void hotools::bind_mc2(nb::module_& m) {
     m.def("mc2_interaction_v0_inspect",
         [](nb::args a) { return steal_or_throw(hotools::mc2_interaction_v0_inspect(nullptr, a.ptr())); });
     m.def("mc2_interaction_v0_step_group",
-        [](nb::args a) { call_legacy(hotools::mc2_interaction_v0_step_group, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_step_group, a); });
     m.def("mc2_interaction_v0_read_debug",
-        [](nb::args a) { call_legacy(hotools::mc2_interaction_v0_read_debug, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_read_debug, a); });
     m.def("mc2_interaction_v0_free",
-        [](nb::args a) { call_legacy(hotools::mc2_interaction_v0_free, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_free, a); });
     m.def("mc2_context_v0_create",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_create(nullptr, a.ptr())); });
     m.def("mc2_context_v0_inspect",
@@ -161,45 +161,45 @@ void hotools::bind_mc2(nb::module_& m) {
     m.def("mc2_context_v0_classify_static_fingerprint",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_classify_static_fingerprint(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_static_fingerprint",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_static_fingerprint, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_static_fingerprint, a); });
     m.def("mc2_context_v0_clone_config_static",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_clone_config_static(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_proxy_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_proxy_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_proxy_static, a); });
     m.def("mc2_context_v0_finalize_proxy_attributes",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_finalize_proxy_attributes, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_finalize_proxy_attributes, a); });
     m.def("mc2_context_v0_update_baseline_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_baseline_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_baseline_static, a); });
     m.def("mc2_context_v0_update_bone_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bone_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_bone_static, a); });
     m.def("mc2_context_v0_update_frame_producer_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_frame_producer_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_frame_producer_static, a); });
     m.def("mc2_context_v0_update_distance_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_distance_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_distance_static, a); });
     m.def("mc2_context_v0_update_bending_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bending_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_bending_static, a); });
     m.def("mc2_context_v0_update_self_collision_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_self_collision_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_self_collision_static, a); });
     m.def("mc2_context_v0_update_center_static",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_center_static, a); });
     m.def("mc2_context_v0_update_center_dynamic",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_dynamic, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_center_dynamic, a); });
     m.def("mc2_context_v0_update_step_interpolation",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_step_interpolation, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_step_interpolation, a); });
     m.def("mc2_context_v0_update_team_options",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_team_options, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_team_options, a); });
     m.def("mc2_context_v0_set_setup_kind",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_set_setup_kind, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_setup_kind, a); });
     m.def("mc2_context_v0_set_tether_enabled",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_set_tether_enabled, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_tether_enabled, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_apply_center_frame_shift, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_apply_center_negative_scale_teleport",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_apply_center_negative_scale_teleport, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_apply_center_negative_scale_teleport, a); });
     m.def("mc2_context_v0_update_parameters",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_dynamic, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_dynamic, a); });
     m.def("mc2_context_v0_derive_center_pose_raw",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_derive_center_pose_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_mesh_dynamic_raw",
@@ -207,31 +207,31 @@ void hotools::bind_mc2(nb::module_& m) {
     m.def("mc2_context_v0_update_bone_dynamic_raw",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_bone_dynamic_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_colliders",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_colliders, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_colliders, a); });
     m.def("mc2_context_v0_reset",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_reset, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_reset, a); });
     m.def("mc2_context_v0_step",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_step, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_step, a); });
     m.def("mc2_context_v0_read",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read, a); });
     m.def("mc2_context_v0_read_self_collision_primitives",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_primitives, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_primitives, a); });
     m.def("mc2_context_v0_read_self_collision_grid",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_grid, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_grid, a); });
     m.def("mc2_context_v0_read_self_collision_candidates",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_candidates, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_candidates, a); });
     m.def("mc2_context_v0_read_self_collision_contacts",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_contacts, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_contacts, a); });
     m.def("mc2_context_v0_read_self_collision_intersections",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_self_collision_intersections, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_intersections, a); });
     m.def("mc2_context_v0_read_bone_output",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_bone_output, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_bone_output, a); });
     m.def("mc2_context_v0_read_step_basic",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_step_basic, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_step_basic, a); });
     m.def("mc2_context_v0_read_center_step",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",
-        [](nb::args a) { call_legacy(hotools::mc2_context_v0_free, a); });
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_free, a); });
     m.def("mc2_context_v0_stats",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_stats(nullptr, a.ptr())); });
     m.def("mc2_mesh_static_fingerprint_v0",

@@ -38,6 +38,8 @@ LEGACY_TERMS = (
     "create_meshcloth_mc2_context",
     "solve_meshcloth_mc2",
     "solve_mc2_bonecloth_io",
+    "call_legacy",
+    "old physicsMC2 packages remain active",
 )
 PURE_NATIVE_FILES = (
     "mc2_context_internal.hpp",
@@ -338,6 +340,20 @@ def _cpp_facts() -> dict:
         }
     api_source = (NATIVE_ROOT / "mc2_api.hpp").read_text(encoding="utf-8")
     api_symbols = pyobject_pattern.findall(api_source)
+    binding_symbols = files["mc2_bindings.cpp"]["python_bindings"]
+    native_tree = ast.parse((MC2_ROOT / "native.py").read_text(encoding="utf-8"))
+    required_symbols = []
+    for node in native_tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "MC2_REQUIRED_NATIVE_SYMBOLS"
+                for target in node.targets
+            )
+        ):
+            required_symbols = list(ast.literal_eval(node.value))
+            break
     definition_counts = defaultdict(list)
     for path in sorted(NATIVE_ROOT.glob("*.cpp")):
         source = path.read_text(encoding="utf-8")
@@ -349,6 +365,16 @@ def _cpp_facts() -> dict:
         for symbol in api_symbols
         if len(definition_counts[symbol]) != 1
     ]
+    binding_contract_violations = {
+        "duplicate_bindings": sorted({
+            symbol for symbol in binding_symbols if binding_symbols.count(symbol) > 1
+        }),
+        "duplicate_required": sorted({
+            symbol for symbol in required_symbols if required_symbols.count(symbol) > 1
+        }),
+        "required_missing_bindings": sorted(set(required_symbols) - set(binding_symbols)),
+        "api_missing_required": sorted(set(api_symbols) - set(required_symbols)),
+    }
     pure_native_violations = []
     for filename in PURE_NATIVE_FILES:
         source = (NATIVE_ROOT / filename).read_text(encoding="utf-8")
@@ -360,7 +386,10 @@ def _cpp_facts() -> dict:
         "line_count": sum(item["lines"] for item in files.values()),
         "files": files,
         "api_symbol_count": len(api_symbols),
+        "binding_symbol_count": len(binding_symbols),
+        "required_symbol_count": len(required_symbols),
         "api_definition_violations": api_definition_violations,
+        "binding_contract_violations": binding_contract_violations,
         "pure_native_violations": pure_native_violations,
     }
 
@@ -417,6 +446,14 @@ def _print_summary(report: dict) -> None:
         f"C++ API definitions: {cpp['api_symbol_count']} symbols, "
         f"{len(cpp['api_definition_violations'])} ownership violations"
     )
+    binding_violation_count = sum(
+        len(items) for items in cpp["binding_contract_violations"].values()
+    )
+    print(
+        f"MC2 binding contract: {cpp['binding_symbol_count']} registered, "
+        f"{cpp['required_symbol_count']} production-required, "
+        f"{binding_violation_count} violations"
+    )
     print(f"C++ pure-native Python dependencies: {len(cpp['pure_native_violations'])}")
 
 
@@ -440,6 +477,11 @@ def main() -> None:
             report["python"]["raw_readback_calls"],
             report["python"]["persistent_array_fields"],
             report["cpp"]["api_definition_violations"],
+            tuple(
+                item
+                for items in report["cpp"]["binding_contract_violations"].values()
+                for item in items
+            ),
             report["cpp"]["pure_native_violations"],
             report["legacy_hits"],
         )
