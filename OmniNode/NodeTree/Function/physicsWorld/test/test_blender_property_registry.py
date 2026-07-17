@@ -1073,6 +1073,23 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert physics_world.solver_slots == {}
     assert pruned_context is None
     assert all(context.disposed for context in first_native_contexts.values())
+
+    returned_world, ready, status = mc2_nodes.physicsMC2Step(
+        physics_world,
+        [0.0],
+    )
+    assert returned_world is physics_world
+    assert ready is False
+    assert "任务 0" in status
+    assert physics_world.solver_slots == {}
+
+    try:
+        mc2_nodes.physicsMC2Step(physics_world, [1.0])
+    except TypeError as exc:
+        assert "float" in str(exc)
+    else:
+        raise AssertionError("non-default float MC2 task input must remain invalid")
+
     source_profile = mc2_parameters.make_mc2_particle_profile(
         gravity=9.8,
         max_distance_enabled=True,

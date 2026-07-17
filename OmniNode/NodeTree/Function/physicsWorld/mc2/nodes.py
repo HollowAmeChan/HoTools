@@ -607,6 +607,13 @@ def physicsMC2Step(
     max_simulation_count_per_frame: int = 3,
     enabled: bool = True,
 ) -> tuple[PhysicsWorldCache, bool, str]:
+    if (
+        isinstance(mc2_tasks, list)
+        and len(mc2_tasks) == 1
+        and type(mc2_tasks[0]) is float
+        and mc2_tasks[0] == 0.0
+    ):
+        mc2_tasks = []
     settings = make_mc2_solver_settings(
         time_scale=time_scale,
         simulation_frequency=simulation_frequency,
