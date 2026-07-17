@@ -238,4 +238,10 @@ struct Mc2InteractionV0 {
     bool released = false;
 };
 
+struct Mc2ContextStepStateV0 {
+    Mc2ContextV0* context = nullptr;
+    std::vector<float> previous_positions;
+    bool center_step_active = false;
+};
+
 }  // namespace hotools::mc2_internal

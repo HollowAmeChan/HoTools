@@ -352,6 +352,8 @@ Blender authoring/frame input
 
 42. P-13第五批将九个只读/按需派生入口移入`mc2_context_readback.cpp`：粒子结果、Self primitive/grid/candidate/contact/intersection、Bone output、step-basic与Center step。`mc2_context_helpers.hpp`只公开该单元实际需要的capsule解析、live/shape校验、Bone派生和小型float字典helper；纯`mc2_context_internal.hpp`仍不依赖Python。context主单元由7110降到6605行/38个Python入口，readback为522行/9个入口。3.11 native-only增量构建无Jolt，全量native `26/26`与Blender 4.5全隐式debug 6项通过。
 
+43. P-13第六批将world-owned interaction的5个公开入口移入`mc2_context_interaction.cpp`：create/inspect/all-context step-group/按需debug/free。`Mc2ContextStepStateV0`归入纯internal state header，interaction只通过helper header调用同一per-slot step/self内核；没有创建第二份particle或contact state。context主单元由6605降到6167行/33个Python入口，interaction为444行/5个入口。3.11 native-only增量构建无Jolt，全量native `26/26`、Blender 4.5跨物体交互5项与全隐式debug 6项通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -413,7 +415,8 @@ Blender authoring/frame input
 | `mc2_bindings.cpp/.hpp` | 1670行，唯一注册MC2 74个nanobind ABI，持有typed adapter的边界校验/转换 | 保留单一`bind_mc2`入口；不持有context状态或数值kernel |
 | `mc2_context_internal.hpp` | `Mc2ContextV0`、interaction participant/aggregate的唯一内部数据布局 | 只定state，不定义ABI/helper/数值行为；不对binding或Python公开 |
 | `mc2_context_helpers.hpp` | 跨context单元最小helper声明，依赖纯state与Python buffer边界 | 只公开真实跨单元消费者，禁止变成无分层的全量internal API |
-| `mc2_context_v0.cpp/.hpp` | 6605行；消费内部state并持有interaction、lifecycle、static、frame/step共38个Python入口 | 按lifecycle/static/frame-step/interaction继续拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
+| `mc2_context_v0.cpp/.hpp` | 6167行；消费内部state并持有lifecycle、static、frame/step共33个Python入口 | 按lifecycle/static/frame-step继续拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
+| `mc2_context_interaction.cpp` | 444行，world-owned interaction的create/inspect/step-group/debug/free 5个ABI | 已收口；通过共享step/self helper消费per-slot context，不复制数值state |
 | `mc2_context_readback.cpp` | 522行，唯一持有结果及隐式debug中间态的9个按需readback ABI | 已收口；只读state或构建Bone输出缓存，不执行step/static update |
 | `mc2_fingerprint.cpp` | 238行，唯一生产Mesh/Bone static topology/geometry/surface fingerprint | 已收口；保持无context state依赖，不与static owner vectors混合 |
 | `mc2_kernels.cpp/.hpp` | 约2.9k行，持有particle/inertia/distance/angle/collision/post数值kernel | 以热点与共同数据依赖决定是否拆分；不为缩短文件盲拆，不持有Python ABI/context |
