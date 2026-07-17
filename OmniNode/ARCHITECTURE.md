@@ -8,7 +8,7 @@
 
 - **应该写**：OmniNode通用节点模型、编译IR、执行上下文、runtime cache、调试机制、模块装卸和native开发边界。
 - **不应该写**：Physics World专属阶段契约、某个solver完成度、物理公式、MC2源码差异、验收计划或提交流水。
-- **内容路由**：Physics World公共结构写`doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2状态、计划和差异分别写三份MC2专项文档；历史只留Git。
+- **内容路由**：Physics World公共结构写`doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定事实写`doc/MC2_BLUEPRINT.md`；历史只留Git。
 - **示例原则**：solver示例只能用于说明通用框架机制，不得在本文承担该solver的状态或算法记录。
 
 ## 一句话模型
@@ -400,7 +400,7 @@ Python 侧职责：
 - 单task MC2 self primitive、grid run、broadphase candidate、half contact cache、fixed-point sum scratch、intersect record与particle flag属于slot-owned native context；跨物体阶段由`world.backend_resources["mc2_interaction_v0"]`持有临时聚合buffer、owner/group过滤和跨帧intersection history。它只协调开启产品开关的Mesh task，在Motion与Post之间运行并散回，不接管task persistent state，也不能借外部collider表达。
 - HoTools Mesh产品只公开一个`radius × 顶点组`半径真值；外部碰撞消费普通radius，self envelope固定派生为`radius * 0.25`。source oracle可在低层setup继续使用独立thickness，但不得重新暴露为产品节点输入。
 - MC2 debug沿用SpringBone VRM的全隐式请求模型：debug入口自动发现world内MC2 slots，后端按请求在下一推进帧产出语义化snapshot，solver renderer负责分层显示；不新增一套供用户连接中间数组的节点图surface。
-- MC2完成度见`doc/MC2_ACCEPTANCE_MAP.md`，当前工作顺序见`doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`doc/MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+- MC2产品决策、支持域、实现所有权、数值陷阱和维护门禁统一见`doc/MC2_BLUEPRINT.md`；当前阶段只看`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`。
 
 C++ 侧职责：
 

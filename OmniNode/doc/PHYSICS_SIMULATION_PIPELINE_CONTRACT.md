@@ -6,16 +6,14 @@
 
 - **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
 - **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
-- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2状态、计划和源码差异分别写对应三份MC2文档；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定产品/实现合同写`MC2_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
 - **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
 
 ## 文档路由
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
-- **`MC2_ACCEPTANCE_MAP.md`（MC2 验收总表）**：MC2 完成度、对齐结论、证据与 V1-R 阻塞的单一事实源。
-- **`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`（MC2 执行计划）**：只维护当前未完成工作的顺序与退出条件。
-- **`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`（MC2 源码语义与差异）**：只记录固定源码事实、危险顺序、Blender 特化、故意差异和冲突处理。
+- **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界、debug、性能与扩展合同的稳定入口。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
 本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。

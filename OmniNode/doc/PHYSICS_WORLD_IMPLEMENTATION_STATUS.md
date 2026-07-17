@@ -2,15 +2,15 @@
 
 更新日期：2026-07-17
 
-本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver专项状态由各自验收表维护；历史过程由Git保存。
+本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver稳定事实由各自蓝本维护；历史过程由Git保存。
 
-MC2专项入口：完成度见`MC2_ACCEPTANCE_MAP.md`，未完成工作顺序见`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，源码陷阱与故意差异见`MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+MC2专项入口：稳定产品/实现/维护合同见`MC2_BLUEPRINT.md`；当前阶段只看本文MC2 domain行。
 
 ## 写作边界
 
 - **应该写**：各domain的一页式当前状态、已经成立的系统边界、主要未完成项和Physics World全局优先级。
 - **不应该写**：单个solver的能力明细、数值公式、fixture清单、实施步骤、源码差异、调试过程或逐提交历史。
-- **内容路由**：公共结构规则写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；MC2明细分别写验收总表、执行计划和源码差异记录；OmniNode编译/缓存框架写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：公共结构规则写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；MC2稳定事实写`MC2_BLUEPRINT.md`；OmniNode编译/缓存框架写`../ARCHITECTURE.md`；历史只留Git。
 - **摘要原则**：domain行只回答“处于什么阶段、主要缺什么、去哪里看”，不在表后追加solver专项补充段落。
 
 ## 当前系统边界
@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | Path及剩余高级shape/query |
-| MC2 | P-15 稳定蓝本合一 | P-09至P-14均已关闭；生产Python import DAG无环，三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方粒子预设及C++热点所有权成立，依赖/ABI/事务门禁可重复 | 合并为单一MC2维护蓝本并更新全部路由，再完成热点基线；真实状态只看`MC2_ACCEPTANCE_MAP.md` |
+| MC2 | P-16 热点性能与维护态总门禁 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审和单一`MC2_BLUEPRINT.md`均已关闭；三setup、all-task step、Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立 | 增加分阶段热点benchmark，固定环境/资产/粗粒度ceiling，复核蓝本事实后解除`solver_acceptance_blocker` |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -79,8 +79,8 @@ physicsWorld/
 ## 当前优先级
 
 1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-2. 按`MC2_ACCEPTANCE_MAP.md`完成MC2删除后工程收尾。
-   P-08已放行，P-09至P-14均已关闭。当前执行P-15单一MC2蓝本合一，再完成热点性能基线；全部关闭前保持acceptance blocker。
+2. 按`MC2_BLUEPRINT.md`完成MC2维护态总门禁。
+   旧实现删除、职责重组、洁净度终审和单一蓝本均已关闭。当前只剩分阶段热点性能基线与事实总复核；关闭前保持acceptance blocker。
 3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 4. 决定Mesh XPBD迁移或删除。
 
