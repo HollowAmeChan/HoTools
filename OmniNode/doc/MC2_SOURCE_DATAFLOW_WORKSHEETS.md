@@ -332,6 +332,82 @@ Blender authoring/frame input
 
 32. P-09/P-10已关闭：旧Python Mesh/Bone package、旧native context/IO、11个legacy ABI及只服务旧路径的测试/benchmark已删除。官方11份MC2预设JSON迁入`physicsWorld/mc2/presets`并直接挂到`physicsMC2ParticleProfile`；转换器只写公共profile真实socket，`radius`映射源粒子半径，不写`self_collision_thickness`或第二套曲线。删除后`18/18` native/raw、`26/26`纯MC2、Blender 4.5属性契约`9/9`、Blender 5.1代表资产`8/7`及180帧soak通过；当前切入P-11逐文件职责与依赖审计。
 
+### 8.1 P-11代码事实与职责审计
+
+审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
+
+删除后基线事实：生产Python为45个模块、约16.8k行；存在1个16模块依赖强连通分量、5个跨模块私有访问、根package 106项和Mesh setup 11项lazy re-export。单调用函数共59个，其中属性getter、dataclass factory和产品节点是合法边界；确认需要清理的是Center math改名转发、未使用BasePose delta转发、Mesh baseline签名转发及重复matrix/tuple helper。C++相关5个translation unit约14.7k行；`hotools_native.cpp`约1.7k行并注册89个跨域binding，`mc2_context_v0.cpp`约7.5k行且含50个Python入口；生产legacy命中为0。
+
+依赖强连通分量由以下边形成：`native`在模块顶层读取Center/Distance/Self/frame DTO并执行`isinstance`，对应static producer在调用时反向import `native_module`；`topology`运行时读取`setups` adapter，而三个adapter模块又在顶层读取topology builder。P-12先移除无消费者barrel和private访问，再把DTO/adapter声明放到不反向依赖执行owner的合同边界；不得用更多lazy import掩盖环。
+
+| Python文件 | 当前唯一主要职责 | 审计结论/处理 |
+|---|---|---|
+| `mc2/__init__.py` | component/solver registry manifest | 保留manifest；删除无仓库消费者的106项lazy export兼容桶 |
+| `names.py` | 稳定solver/setup/channel标识 | 保留，不吸收行为 |
+| `capabilities.py` | solver能力与更新频率声明 | 保留，与declaration各自单一职责 |
+| `declaration.py` | registry公开solver声明 | 保留，不import runtime owner |
+| `nodes.py` | 产品节点surface与task/profile组装 | 保留；只调用公开authoring API |
+| `presets.py` | 官方MC2 JSON到粒子profile socket转换 | 保留；不得写第二套self半径 |
+| `parameters.py` | 纯profile/setup/settings/effective参数合同 | 保留；冻结编解码不得被其他模块私有import |
+| `specs.py` | task identity、source identity与task list规范化 | 保留；`_source_token`改为公开共享identity合同 |
+| `runtime_parameters.py` | profile到固定native参数ABI采样/打包 | 保留；消除对`parameters._thaw`的private访问 |
+| `scheduler.py` | 单次all-task step共享的固定步长调度 | 保留 |
+| `state.py` | slot轻量host生命周期计数，不持有particle shadow | 保留；若只剩solver消费者再并入slot runtime owner |
+| `solver.py` | all-task prepare/sync/step/result原子事务 | 保留为唯一orchestrator；P-12拆出可独立迁移的static prepare/rebuild owner，不复制状态 |
+| `native.py` | Python native模块加载、context/interaction handle生命周期与ABI调用 | 保留单一边界；DTO依赖下沉到无执行反向边的合同模块，禁止数值producer |
+| `frame_state.py` | particle frame、连续性和reset只读合同 | 与`collider_frame.py`同属frame DTO，P-12评估合并以减少碎片 |
+| `collider_frame.py` | shared World collider连续数组合同/adapter | 不持有collision算法；与frame DTO合并后仍由collision snapshot生产 |
+| `interaction_scope.py` | 自动跨物体self交互task-pair ownership | 保留独立产品策略，不引入ListObject兼容路径 |
+| `candidate.py` | native只读结果候选，未发布前私有 | 并入`results.py`，删除纯结果碎片 |
+| `results.py` | 公共result envelope、事务发布和stats读取 | 合并candidate后成为唯一result owner |
+| `debug.py` | 隐式debug请求、按需native capture与冻结快照 | 保留，不import bpy renderer |
+| `debug_draw.py` | Blender viewport renderer与过滤器 | 保留；只消费冻结快照，不反推RNA/最终结果 |
+| `topology.py` | Blender Mesh/Bone raw snapshot、native fingerprint和轻量topology | 保留单次authoring读取边界；公开共享identity/thaw或消除调用，不暴露private helper |
+| `static_data.py` | Proxy/Finalizer/Baseline显式Tier A合同、内容签名和packer | 保留为oracle/合同owner；生产不得回退完整packer |
+| `mesh_baseline.py` | Mesh baseline staged producer/metadata | 保留；删除仅转发`mc2_baseline_content_signature`的壳 |
+| `distance_static.py` | Distance Tier A与staged metadata | 保留独立数值域 |
+| `bending_static.py` | Bending Tier A与staged metadata | 保留独立数值域 |
+| `self_collision_static.py` | Self primitive Tier A与staged metadata | 保留；厚度只由公共radius派生 |
+| `center_state.py` | Center static DTO、frame/reset/negative-scale oracle和persistent state | 当前混合3种职责且最大；P-12先移除math转发，P-13随native迁移拆分执行owner，不复制Center状态 |
+| `bone_connection.py` | MC2与HoTools产品横向连接topology合同 | 保留产品差异点，不能折回通用MC2分支 |
+| `bone_rotation.py` | Bone Line/Triangle rotation Tier A合同 | 保留独立oracle数值域 |
+| `bone_static.py` | Bone proxy/baseline/registration staged data与显式oracle | 保留；公开共享attribute helper，消除private import |
+| `setups/__init__.py` | 三setup adapter registry | 保留；不得import完整static/runtime模块 |
+| `setups/contracts.py` | 轻量adapter DTO | 保留；topology builder依赖改为稳定标识或无环公开合同 |
+| `setups/bone_cloth/__init__.py` | BoneCloth adapter声明 | 保留package入口，不增加重导出桶 |
+| `setups/bone_cloth/static_build.py` | BoneCloth/BoneSpring staged static assembly | 保留setup专属owner；消除`topology._thaw`private访问 |
+| `setups/bone_frame_input.py` | BoneCloth/BoneSpring共享Blender pose frame adapter | 保留；直接消费公开raw/topology合同 |
+| `setups/bone_spring/__init__.py` | BoneSpring adapter声明 | 仅17行；P-12并入setup registry或保留最小package时不得再包一层转发 |
+| `setups/mesh_cloth/__init__.py` | MeshCloth adapter声明 | 保留adapter；删除11项lazy export桶 |
+| `setups/mesh_cloth/base_pose.py` | BasePose proxy对象和delta modifier生命周期 | 保留；删除无人调用的固定spec转发函数 |
+| `setups/mesh_cloth/delta_output.py` | Mesh结果delta attribute/modifier写回 | 保留写回owner；矩阵转换与frame adapter共用单一公开helper |
+| `setups/mesh_cloth/frame_input.py` | Mesh双对象Blender frame snapshot | 保留；不持有solver history |
+| `setups/mesh_cloth/final_proxy.py` | Mesh raw到final proxy staged producer/metadata | 保留；tuple helper只允许oracle分支并与Bone共用 |
+| `setups/mesh_cloth/static_build.py` | Mesh staged static assembly/registration顺序 | 保留setup专属owner |
+| `setups/mesh_cloth/schema.py` | 无bpy持久RNA字段单一schema | 保留，不能并入properties导致纯声明加载bpy |
+| `setups/mesh_cloth/properties.py` | schema到Blender PropertyGroup注册 | 保留，只消费schema |
+| `setups/mesh_cloth/capabilities.py` | schema到component capability映射 | 保留，与properties共享schema而不互相import |
+
+| C++文件 | 当前事实 | P-13目标 |
+|---|---|---|
+| `hotools_native.cpp` | 通用module shell约1.7k行，混合PropertyCurve、SpringBone和89个binding，包含MC2 typed kernel adapter | 抽出`mc2_bindings.cpp/.hpp`的单一`bind_mc2`入口；module shell不再知道MC2参数细节 |
+| `mc2_context_v0.cpp/.hpp` | 约7.5k行；前半持有context/interaction状态与helper，后半集中interaction、lifecycle、static、frame/step、debug/readback、fingerprint共50个Python入口 | 建立内部context state合同后按lifecycle/static/frame-step/interaction-debug拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
+| `mc2_kernels.cpp/.hpp` | 约2.9k行，持有particle/inertia/distance/angle/collision/post数值kernel | 以热点与共同数据依赖决定是否拆分；不为缩短文件盲拆，不持有Python ABI/context |
+| `mc2_static_build.cpp/.hpp` | 约1.6k行，唯一生产Proxy/Baseline/Bone/Distance/Bending/Center/Self owner vectors | 保留唯一static producer；继续context内自产自用，不回读host完整spec |
+| `mc2_self_collision.cpp` | 约0.9k行，self grid/candidate/contact/intersection数值 | 保留独立热点owner；交互membership由world/context输入，不读取产品节点 |
+
+| 声明/决策 | 实现owner | 主要证明 |
+|---|---|---|
+| 单次step处理全部task，组件是profile+task组合 | `solver.step_mc2`、`MC2NativeInteractionV0.step_group` | property registry、interaction V0资产、180帧soak |
+| 三setup共享同一solver/context模型 | `specs`、`setups`、`nodes`、`native` | 26/26纯MC2、Mesh/Bone代表资产 |
+| 首帧/变化重建按topology/geometry/surface/config分类 | `topology`、`solver._sync_mc2_slot`、native staged context | property geometry分类、BasePose/Bone static、soak rebuild计数 |
+| BoneCloth横向连接是HoTools产品特化 | `bone_connection.build_hotools_bone_connection`、Bone setup options | product connection Tier A与Bone product资产 |
+| 跨物体self为自动world scope，半径单一派生 | `interaction_scope`、`runtime_parameters`、native interaction/self | interaction scope纯测试、interaction V0资产、debug资产 |
+| debug全隐式且按需readback | `debug`、`debug_draw`、native debug buffers | debug draw代表资产、soak无常态capture |
+| 公共结果与写回事务不泄漏candidate | `candidate/results/solver`、Mesh/Bone writeback adapter | result candidate纯测试、representative assets |
+| native context/interaction唯一生命周期owner | `native`、`solver`、PhysicsWorld slot/resource | raw owner 18/18、property lifecycle、180帧释放6个context |
+| 官方MC2预设只写新粒子profile真实socket | `presets`、`nodes.physicsMC2ParticleProfile` | Blender property registry 11预设逐一构造 |
+
 ## 9. Oracle 与冲突处理
 
 | Tier | 来源 | 允许证明 |

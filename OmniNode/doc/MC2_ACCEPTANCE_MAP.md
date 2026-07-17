@@ -76,7 +76,7 @@
 | P-08 | 替代资格总门禁 | 完全对齐 | P-01..P-07、K-06/K-07与D-01全部关闭；8资产/7脚本复验、180帧soak、新旧同场benchmark及OFF独立构建通过 | 产品语义可替代、自动交互与单半径模型清晰、全隐式debug可观测、新链性能有优势且文件/ABI可独立；明确允许进入P-09删除 | 否 |
 | P-09 | 旧 MC2 路径删除 | 已关闭 | 旧Mesh/Bone节点package、`mc2_context.*`、`mc2_bonecloth_io.cpp`、legacy binding/测试及旧替代benchmark已删除；共享kernel和新V0/static/self保留。11份官方MC2 JSON预设迁入新粒子配置节点，且不恢复第二套self厚度输入 | 负向搜索保持旧package、构建选项和11个旧ABI为零 | 否 |
 | P-10 | 删除后正确性基线 | 已关闭 | `311 native`与`313 native`均只增量构建`hotools_native`且无Jolt；18/18 native/raw、26/26纯MC2、Blender 4.5属性契约9/9、5.1代表资产8项/7脚本及180帧soak通过。无UV fingerprint、geometry/topology分类和unresolved source边界已由测试冻结 | P-11重组不得依赖已删测试、ABI或package | 否 |
-| P-11 | 代码事实与职责审计 | 待审计 | 已知Python生产包文件多且分散，`mc2_context_v0.cpp`与module binding体积集中；现有文档结论尚未逐条反向核对实现 | 产出逐文件/translation-unit职责表、import/include/call依赖图、文档声明→代码/测试证据矩阵；标出转发壳、重复owner、跨层读取和错误命名 | 是 |
+| P-11 | 代码事实与职责审计 | 已关闭 | AST/include审计固定45个生产Python模块约16.8k行、1个16模块依赖环、5个private import、106+11项lazy re-export及确认的math/signature/delta转发；C++ 5单元约14.7k行，通用shell 89 binding、context 50个Python入口。逐文件/translation-unit职责表和声明→owner→测试矩阵已写入worksheet | P-12按表逐项消除barrel/private/重复helper并重组Python；P-13拆binding/context且不改变数值 | 否 |
 | P-12 | Python模块重组 | 待执行 | 等待P-11事实清单 | public/authoring、Blender adapter、runtime orchestration、native boundary、result/debug、oracle/test分层清晰；合并无独立职责的碎片，生产import无环、无只改名转发、无行为变化；全门禁通过 | 是 |
 | P-13 | C++原子化与文件重组 | 待执行 | 等待P-09删除与P-11职责清单 | binding、context state/lifecycle、static、frame/step、interaction、debug/readback、numeric kernel各有唯一owner；拆解巨型translation unit，清除legacy/v0迁移残名和重复适配，native中间态继续自产自用 | 是 |
 | P-14 | 依赖与洁净度终审 | 待执行 | 等待P-12/P-13 | 仓库搜索、import/include图和ABI清单证明：旧路径/兼容fallback/测试反向依赖为零，Python不持有native数值shadow，kernel不依赖Python对象，result/debug之外无大数组回读，生命周期释放唯一且幂等 | 是 |
