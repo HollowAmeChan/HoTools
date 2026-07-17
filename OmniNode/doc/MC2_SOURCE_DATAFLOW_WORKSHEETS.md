@@ -336,13 +336,15 @@ Blender authoring/frame input
 
 34. P-12第二批将setup adapter从持有`topology.py`函数对象改为持有稳定builder标识，并由topology owner本地解析；现有`debug_dict()["topology_builder"]`值和非法setup拒绝行为不变。setup注册不再反向import topology，该依赖环已消失；全局审计剩下的唯一强连通分量只由native boundary与其DTO producer构成。Python 3.11下`26/26`纯MC2通过，Blender 4.5下属性/节点合同`9/9`及注册/注销生命周期通过；后续以该组合为主门禁，3.13/5.1保留为兼容与soak补充。
 
+35. P-12第三批将原`native.py`的扩展加载/符号资格与context host拆成单向依赖：`native.py`只定位、缓存和校验`hotools_native`，`native_context.py`才持有slot context、world interaction、ABI调用和按需debug readback。static producer只依赖loader，solver/debug显式依赖context host，不使用lazy import或兼容re-export。`audit_mc2_architecture.py --check`现为46个生产模块、约16.7k行、0依赖环、0 private import、0 legacy命中；`26/26`纯MC2、raw owner、Blender 4.5 Mesh `7/7`、Bone static/writeback、interaction 5项、全隐式debug 6项、属性合同`9/9`及生命周期均通过。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
 
 删除后基线事实：生产Python为45个模块、约16.8k行；存在1个16模块依赖强连通分量、5个跨模块私有访问、根package 106项和Mesh setup 11项lazy re-export。单调用函数共59个，其中属性getter、dataclass factory和产品节点是合法边界；确认需要清理的是Center math改名转发、未使用BasePose delta转发、Mesh baseline签名转发及重复matrix/tuple helper。C++相关5个translation unit约14.7k行；`hotools_native.cpp`约1.7k行并注册89个跨域binding，`mc2_context_v0.cpp`约7.5k行且含50个Python入口；生产legacy命中为0。
 
-依赖强连通分量由以下边形成：`native`在模块顶层读取Center/Distance/Self/frame DTO并执行`isinstance`，对应static producer在调用时反向import `native_module`；`topology`运行时读取`setups` adapter，而三个adapter模块又在顶层读取topology builder。P-12先移除无消费者barrel和private访问，再把DTO/adapter声明放到不反向依赖执行owner的合同边界；不得用更多lazy import掩盖环。
+删除后基线的依赖强连通分量由以下边形成：原`native.py`在模块顶层读取Center/Distance/Self/frame DTO，对应static producer反向import `native_module`；`topology`运行时读取`setups` adapter，而三个adapter又读取topology builder。P-12已用稳定builder标识断开adapter反向边，并将纯native loader与context host分层；当前生产import DAG无环，不存在lazy import掩盖环或兼容re-export。
 
 | Python文件 | 当前唯一主要职责 | 审计结论/处理 |
 |---|---|---|
@@ -358,7 +360,8 @@ Blender authoring/frame input
 | `scheduler.py` | 单次all-task step共享的固定步长调度 | 保留 |
 | `state.py` | slot轻量host生命周期计数，不持有particle shadow | 保留；若只剩solver消费者再并入slot runtime owner |
 | `solver.py` | all-task prepare/sync/step/result原子事务 | 保留为唯一orchestrator；P-12拆出可独立迁移的static prepare/rebuild owner，不复制状态 |
-| `native.py` | Python native模块加载、context/interaction handle生命周期与ABI调用 | 保留单一边界；DTO依赖下沉到无执行反向边的合同模块，禁止数值producer |
+| `native.py` | `hotools_native`路径定位、进程级加载缓存与MC2符号资格校验 | 只保留loader/qualification；不import DTO、context host或solver |
+| `native_context.py` | slot context与world interaction的Python handle生命周期、ABI调用与按需readback | 唯一context host；依赖producer DTO但producer只反向依赖`native.py` loader，不形成环 |
 | `frame_state.py` | particle frame、连续性和reset只读合同 | 与`collider_frame.py`同属frame DTO，P-12评估合并以减少碎片 |
 | `collider_frame.py` | shared World collider连续数组合同/adapter | 不持有collision算法；与frame DTO合并后仍由collision snapshot生产 |
 | `interaction_scope.py` | 自动跨物体self交互task-pair ownership | 保留独立产品策略，不引入ListObject兼容路径 |

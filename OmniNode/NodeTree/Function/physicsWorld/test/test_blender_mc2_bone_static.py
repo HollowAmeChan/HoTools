@@ -35,7 +35,7 @@ for package_name, package_path in (
 
 names = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names")
 native_flags = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context"
 )
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"

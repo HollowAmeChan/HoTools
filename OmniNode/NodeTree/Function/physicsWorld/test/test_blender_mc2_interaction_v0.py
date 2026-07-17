@@ -49,7 +49,7 @@ frame_state = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
 native_module = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context"
 )
 runtime_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"

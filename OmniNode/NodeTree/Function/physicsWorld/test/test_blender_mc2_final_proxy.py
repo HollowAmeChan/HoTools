@@ -43,7 +43,7 @@ mc2_names = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
 )
 mc2_native = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context"
 )
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"

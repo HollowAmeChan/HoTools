@@ -22,7 +22,7 @@ from .center_state import (
 )
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync
 from .interaction_scope import build_mc2_interaction_scope
-from .native import (
+from .native_context import (
     MC2_INTERACTION_RESOURCE_KEY,
     MC2_STATIC_CHANGE_ALL,
     MC2_STATIC_CHANGE_CONFIG,
@@ -592,7 +592,7 @@ def step_mc2(
             staged_native_frame_applied = False
             staged_static_cloned = False
             if rebuild_reason and topology.particle_count > 0:
-                from .native import MC2NativeContextV0
+                from .native_context import MC2NativeContextV0
 
                 staged_native_context = MC2NativeContextV0(
                     topology.particle_count,

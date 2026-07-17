@@ -9,7 +9,7 @@ import numpy as np
 
 from ..types import PhysicsWorldCache
 from .names import MC2_DEBUG_DRAW_MODE, MC2_SLOT_KIND, MC2_SOLVER_ID
-from .native import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
+from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
 from .runtime_parameters import (
     MC2_RUNTIME_CURVE_FIELDS,
     MC2_RUNTIME_FLOAT_FIELDS,

@@ -18,7 +18,7 @@ from ..utils.debug_draw import (
     vector3,
 )
 from .debug import request_mc2_debug_capture
-from .native import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
+from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
 from .names import MC2_SLOT_KIND
 
 

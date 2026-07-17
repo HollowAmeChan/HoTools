@@ -37,7 +37,12 @@ parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physics
 runtime = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters")
 frames = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state")
 center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
-native = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native")
+native_loader = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
+native = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context"
+)
 
 
 class _StaticFingerprint:
@@ -65,7 +70,7 @@ def test_owner_static_fingerprint_classification() -> None:
 
 
 def test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer() -> None:
-    module = native.native_module()
+    module = native_loader.native_module()
     fingerprint = module.mc2_mesh_static_fingerprint_v0(
         np.asarray((0, 0, 0, 1, 0, 0, 0, 1, 0), dtype=np.float32),
         np.asarray((0, 0, 1) * 3, dtype=np.float32),
@@ -85,7 +90,7 @@ def test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer() -> None
 
 
 def test_owner_lifecycle_and_readback() -> None:
-    module = native.native_module()
+    module = native_loader.native_module()
     baseline = module.mc2_context_v0_stats()["live"]
     profile = parameters.make_mc2_particle_profile(gravity=0.0)
     options = parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
