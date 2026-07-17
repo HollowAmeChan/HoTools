@@ -346,6 +346,8 @@ Blender authoring/frame input
 
 39. P-13第二批将不依赖context state的Mesh/Bone static fingerprint从`mc2_context_v0.cpp`抽到`mc2_fingerprint.cpp`；两个公开ABI及其hash顺序原样移动，仅将`finite_floats`/`dict_string`边界校验本地化，不引入context内部header或状态访问。3.11 native-only增量构建无Jolt，MC2 raw/native `18/18`通过。审计现统计7个单元：context由7538降到7338行/47个Python入口，fingerprint为238行/3个Python返回入口；下一步才建立共享context state合同以拆分剩余执行owner。
 
+40. P-13第三批将`Mc2ContextV0`、`Mc2InteractionParticipantV0`与`Mc2InteractionV0`三个唯一内部数据布局移入`mc2_context_internal.hpp`的`hotools::mc2_internal`命名空间；原context单元通过using消费同一类型，没有复制字段、新建host shadow或将Python对象存入state。context实现文件由7338降到7110行；3.11 native-only增量构建无Jolt，全量native `26/26`通过。该internal header是后续static/frame-step/interaction-debug translation unit的唯一state合同，不对binding或Python公开。
+
 ### 8.1 P-11代码事实与职责审计
 
 审计入口为`tools/audit_mc2_architecture.py`。它使用Python AST解析生产模块和相对import，用强连通分量报告依赖环，并报告跨模块私有import、`_EXPORTS`桶、单调用函数；C++部分固定统计相关translation unit、内部include、`m.def`和`PyObject*`入口。`--check`把生产依赖环和legacy命中作为失败条件，P-12/P-14必须让它通过。
@@ -405,7 +407,8 @@ Blender authoring/frame input
 |---|---|---|
 | `hotools_native.cpp` | 168行通用module shell；只注册PropertyCurve/SpringBone 15个binding并调用`bind_mc2` | 已收口；不得恢复MC2参数细节或context状态 |
 | `mc2_bindings.cpp/.hpp` | 1670行，唯一注册MC2 74个nanobind ABI，持有typed adapter的边界校验/转换 | 保留单一`bind_mc2`入口；不持有context状态或数值kernel |
-| `mc2_context_v0.cpp/.hpp` | 7338行；持有context/interaction状态与interaction、lifecycle、static、frame/step、debug/readback共47个Python入口 | 建立内部context state合同后按lifecycle/static/frame-step/interaction-debug拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
+| `mc2_context_internal.hpp` | `Mc2ContextV0`、interaction participant/aggregate的唯一内部数据布局 | 只定state，不定义ABI/helper/数值行为；不对binding或Python公开 |
+| `mc2_context_v0.cpp/.hpp` | 7110行；消费内部state并持有interaction、lifecycle、static、frame/step、debug/readback共47个Python入口 | 按lifecycle/static/frame-step/interaction-debug继续拆translation unit；删除迁移阶段`v0`残名只允许独立schema变更提交 |
 | `mc2_fingerprint.cpp` | 238行，唯一生产Mesh/Bone static topology/geometry/surface fingerprint | 已收口；保持无context state依赖，不与static owner vectors混合 |
 | `mc2_kernels.cpp/.hpp` | 约2.9k行，持有particle/inertia/distance/angle/collision/post数值kernel | 以热点与共同数据依赖决定是否拆分；不为缩短文件盲拆，不持有Python ABI/context |
 | `mc2_static_build.cpp/.hpp` | 约1.6k行，唯一生产Proxy/Baseline/Bone/Distance/Bending/Center/Self owner vectors | 保留唯一static producer；继续context内自产自用，不回读host完整spec |
