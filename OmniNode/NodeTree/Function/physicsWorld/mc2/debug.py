@@ -27,9 +27,12 @@ MC2_DEBUG_DRAW_MODES = {
         "setup_types": ("mesh_cloth", "bone_cloth", "bone_spring"),
         "semantic_layers": (
             "topology",
+            "step_basic_reference",
+            "effective_gravity",
             "motion_base_position",
             "motion_limits",
             "angle_restoration_target",
+            "angle_limit_range",
             "center",
             "collision",
             "self_collision",
@@ -221,6 +224,9 @@ def _motion_payload(slot, native_snapshot) -> dict:
         "angle_restoration_strengths": _sample_curve(
             curves["angle_restoration_stiffness"], depths
         ),
+        "use_angle_limit": bool(ints["use_angle_limit"]),
+        "angle_limits": _sample_curve(curves["angle_limit"], depths),
+        "angle_limit_stiffness": float(floats["angle_limit_stiffness"]),
         "normal_axis": int(ints["normal_axis"]),
         "use_max_distance": bool(ints["use_max_distance"]),
         "max_distances": _sample_curve(
@@ -232,6 +238,33 @@ def _motion_payload(slot, native_snapshot) -> dict:
             curves["backstop_distance"], depths, square_depth=True
         ),
         "motion_stiffness": float(floats["motion_stiffness"]),
+    }
+
+
+def _parameter_payload(slot, native_snapshot) -> dict:
+    effective = slot.data.get("effective_parameters")
+    static = _active_static(slot)
+    baseline = _baseline_for_static(static)
+    depths = getattr(baseline, "depths", ())
+    if depths is None:
+        depths = ()
+    floats, _ints, curves = _curve_maps(effective)
+    native = native_snapshot.get("native") or {}
+    direction = np.asarray((
+        floats["gravity_direction_x"],
+        floats["gravity_direction_y"],
+        floats["gravity_direction_z"],
+    ), dtype=np.float32)
+    gravity_ratio = float(native.get("gravity_ratio", 1.0) or 0.0)
+    scale_ratio = float(native.get("scale_ratio", 1.0) or 1.0)
+    gravity_strength = float(floats["gravity"])
+    return {
+        "gravity_direction": _readonly(direction),
+        "gravity_strength": gravity_strength,
+        "gravity_ratio": gravity_ratio,
+        "gravity_effective_strength": gravity_strength * gravity_ratio * scale_ratio,
+        "damping": _sample_curve(curves["damping"], depths),
+        "distance_stiffness": _sample_curve(curves["distance_stiffness"], depths),
     }
 
 
@@ -384,11 +417,14 @@ def capture_requested_mc2_debug(
             native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
                 include_step_basic=bool(
                     filters.get("show_angle_restoration", True)
+                    or filters.get("show_angle_limit", False)
+                    or filters.get("show_step_basic", False)
                 ),
                 include_motion_debug=bool(
                     filters.get("show_motion", True)
                     or filters.get("show_motion_base", True)
                     or filters.get("show_angle_restoration", True)
+                    or filters.get("show_angle_limit", False)
                 ),
                 include_self=bool(filters.get("show_self", True)),
             )
@@ -403,6 +439,7 @@ def capture_requested_mc2_debug(
                 "filters": filters,
                 "native": native_snapshot,
                 "topology": _topology_payload(slot, native_snapshot),
+                "parameters": _parameter_payload(slot, native_snapshot),
                 "motion": _motion_payload(slot, native_snapshot),
                 "center": _center_payload(slot, item),
                 "collision": _collision_payload(item, native_snapshot),

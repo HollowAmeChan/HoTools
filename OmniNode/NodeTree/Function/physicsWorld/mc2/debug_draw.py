@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import bpy
 import mathutils
 import numpy as np
@@ -11,6 +13,7 @@ from ..utils.debug_draw import (
     add_arrow_lines,
     add_box_lines,
     add_capsule_lines,
+    add_circle_lines,
     add_line,
     add_plane_lines,
     add_point,
@@ -31,7 +34,10 @@ _COLORS = {
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
+    "step_basic": (0.58, 0.72, 1.00, 0.72),
+    "gravity": (0.45, 1.00, 0.30, 0.95),
     "angle_target": (1.00, 0.32, 0.72, 0.95),
+    "angle_limit": (1.00, 0.82, 0.20, 0.78),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
     "backstop": (1.00, 0.40, 0.22, 0.55),
     "center": (1.00, 0.92, 0.25, 0.95),
@@ -75,8 +81,11 @@ def update_mc2_debug_draw_store(
     show_output: bool = True,
     task_filter: str = "",
     max_items: int = 2000,
+    show_step_basic: bool = False,
+    show_gravity: bool = False,
     show_motion_base: bool = True,
     show_angle_restoration: bool = True,
+    show_angle_limit: bool = False,
 ) -> None:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
@@ -86,9 +95,12 @@ def update_mc2_debug_draw_store(
     filters = {
         "show_topology": bool(show_topology),
         "show_attributes": bool(show_attributes),
+        "show_step_basic": bool(show_step_basic),
+        "show_gravity": bool(show_gravity),
         "show_motion": bool(show_motion),
         "show_motion_base": bool(show_motion_base),
         "show_angle_restoration": bool(show_angle_restoration),
+        "show_angle_limit": bool(show_angle_limit),
         "show_center": bool(show_center),
         "show_collision": bool(show_collision),
         "show_radii": bool(show_radii),
@@ -210,6 +222,17 @@ def _append_slot_batches(
         _append_topology_batches(batches, topology, positions, limit)
     if filters["show_attributes"]:
         _append_attribute_batches(point_batches, topology, positions, limit)
+    if filters["show_step_basic"]:
+        _append_step_basic_batches(
+            batches, topology, snapshot.get("motion") or {}, limit
+        )
+    if filters["show_gravity"]:
+        _append_gravity_batches(
+            batches,
+            snapshot.get("parameters") or {},
+            snapshot.get("center") or {},
+            positions,
+        )
     if filters["show_motion_base"]:
         _append_motion_base_batches(
             batches, point_batches, snapshot.get("motion") or {}, limit
@@ -226,6 +249,10 @@ def _append_slot_batches(
                 dtype=np.float32,
             ).reshape((-1, 3)),
             limit,
+        )
+    if filters["show_angle_limit"]:
+        _append_angle_limit_batches(
+            batches, snapshot.get("motion") or {}, limit
         )
     if filters["show_center"]:
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
@@ -275,6 +302,47 @@ def _append_attribute_batches(point_batches, topology, positions, limit):
         add_point(target, positions[index])
     _point_batch(point_batches, fixed, "fixed", 6.0)
     _point_batch(point_batches, move, "move", 4.0)
+
+
+def _append_step_basic_batches(batches, topology, motion, limit):
+    positions = motion.get("step_basic_positions")
+    if positions is None:
+        return
+    positions = np.asarray(positions, dtype=np.float32).reshape((-1, 3))
+    edges = np.asarray(
+        _values(topology.get("edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    lines = []
+    for edge in edges[:limit]:
+        _add_index_line(lines, positions, edge)
+    _batch(batches, lines, "step_basic", 1.6)
+
+
+def _append_gravity_batches(batches, parameters, center, positions):
+    direction = np.asarray(
+        _values(parameters.get("gravity_direction")), dtype=np.float32
+    ).reshape((-1,))
+    strength = float(parameters.get("gravity_effective_strength", 0.0) or 0.0)
+    if len(direction) != 3 or strength <= 1.0e-8:
+        return
+    direction = vector3(direction)
+    if direction.length <= 1.0e-8:
+        return
+    direction.normalize()
+    frame_pose = center.get("frame_pose") or {}
+    step = center.get("step") or {}
+    origin = step.get("now_world_position") or frame_pose.get(
+        "component_world_position"
+    )
+    if origin is None:
+        if not len(positions):
+            return
+        origin = positions[0]
+    start = vector3(origin)
+    add = direction * strength * 0.02
+    lines = []
+    add_arrow_lines(lines, start, start + add)
+    _batch(batches, lines, "gravity", 2.2)
 
 
 def _append_motion_batches(batches, motion, limit):
@@ -348,6 +416,49 @@ def _append_angle_restoration_batches(
         add_point(points, target)
     _batch(batches, lines, "angle_target", 1.8)
     _point_batch(point_batches, points, "angle_target", 7.0)
+
+
+def _append_angle_limit_batches(batches, motion, limit):
+    if not bool(motion.get("use_angle_limit")):
+        return
+    if float(motion.get("angle_limit_stiffness", 0.0) or 0.0) <= 1.0e-8:
+        return
+    targets = motion.get("angle_restoration_target_positions")
+    vectors = motion.get("angle_restoration_target_vectors")
+    valid = motion.get("angle_restoration_target_valid")
+    limits = motion.get("angle_limits")
+    if targets is None or vectors is None or valid is None or limits is None:
+        return
+    targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
+    vectors = np.asarray(vectors, dtype=np.float32).reshape((-1, 3))
+    valid = np.asarray(valid, dtype=np.uint8)
+    limits = np.asarray(limits, dtype=np.float32)
+    lines = []
+    for index, (target, raw_vector) in enumerate(
+        zip(targets[:limit], vectors[:limit])
+    ):
+        if index >= len(valid) or not valid[index] or index >= len(limits):
+            continue
+        vector = vector3(raw_vector)
+        length = vector.length
+        if length <= 1.0e-8:
+            continue
+        direction = vector / length
+        parent = vector3(target) - vector
+        angle = math.radians(max(0.0, min(180.0, float(limits[index]))))
+        if angle >= math.pi - 1.0e-4:
+            _add_axis_sphere(lines, parent, length)
+            continue
+        cap_center = parent + direction * (math.cos(angle) * length)
+        cap_radius = math.sin(angle) * length
+        axis_a, axis_b = _plane_axes(direction)
+        if cap_radius > 1.0e-7:
+            add_circle_lines(lines, cap_center, axis_a, axis_b, cap_radius)
+            for side in (axis_a, -axis_a, axis_b, -axis_b):
+                add_line(lines, parent, cap_center + side * cap_radius)
+        else:
+            add_line(lines, parent, parent + direction * length)
+    _batch(batches, lines, "angle_limit", 1.4)
 
 
 def _append_center_batches(batches, point_batches, center):
