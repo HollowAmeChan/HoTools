@@ -55,7 +55,7 @@ def draw_line_batches(batch_specs) -> None:
     specs = list(batch_specs or ())
     if not any(lines for lines, _, _ in specs):
         return
-    shader = _round_point_shader()
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("NONE")
     gpu.state.depth_mask_set(False)
@@ -80,7 +80,7 @@ def draw_point_batches(batch_specs) -> None:
     specs = list(batch_specs or ())
     if not any(points for points, _, _ in specs):
         return
-    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    shader = _round_point_shader()
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("NONE")
     gpu.state.depth_mask_set(False)
