@@ -12,6 +12,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "integration_and_pose_blend",
         "setups": ALL_SETUPS,
         "frames": 900,
+        "runner": "test_blender_mc2_mixed_output_soak.py::mixed_three_setup",
         "fields": (
             "gravity", "gravity_direction_x", "gravity_direction_y",
             "gravity_direction_z", "gravity_falloff",
@@ -24,6 +25,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "center_inertia_and_teleport",
         "setups": ALL_SETUPS,
         "frames": 1200,
+        "runner": "test_blender_mc2_constraint_soak.py::center_keep_teleport",
         "fields": (
             "distance_culling_length", "distance_culling_fade_ratio",
             "anchor_inertia", "world_inertia", "movement_inertia_smoothing",
@@ -39,6 +41,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "tether_and_distance",
         "setups": CLOTH_SETUPS,
         "frames": 900,
+        "runner": "test_blender_mc2_constraint_soak.py::distance_tether",
         "fields": (
             "tether_compression_limit", "tether_stretch_limit",
             "distance_velocity_attenuation", "distance_stiffness",
@@ -49,6 +52,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "triangle_bending",
         "setups": ("mesh_cloth",),
         "frames": 900,
+        "runner": "test_blender_mc2_constraint_soak.py::triangle_bending",
         "fields": ("bending_stiffness", "bending_method"),
         "invariants": ("finite", "deterministic", "signed_volume_stable", "fixed_particles_static"),
     },
@@ -56,6 +60,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "angle_restoration",
         "setups": ALL_SETUPS,
         "frames": 1200,
+        "runner": "test_blender_mc2_constraint_soak.py::angle_restoration",
         "fields": (
             "angle_restoration_velocity_attenuation",
             "angle_restoration_gravity_falloff",
@@ -67,6 +72,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "angle_limit",
         "setups": ALL_SETUPS,
         "frames": 1200,
+        "runner": "test_blender_mc2_constraint_soak.py::angle_limit",
         "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
         "invariants": ("finite", "deterministic", "limit_bounded", "branch_transition_stable"),
     },
@@ -74,6 +80,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "motion_max_distance_backstop",
         "setups": CLOTH_SETUPS,
         "frames": 900,
+        "runner": "test_blender_mc2_constraint_soak.py::motion_base_backstop",
         "fields": (
             "backstop_radius", "motion_stiffness", "normal_axis",
             "use_max_distance", "use_backstop", "max_distance",
@@ -85,6 +92,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "external_collision",
         "setups": ALL_SETUPS,
         "frames": 1200,
+        "runner": "test_blender_mc2_constraint_soak.py::task_external_colliders",
         "fields": (
             "collision_dynamic_friction", "collision_static_friction",
             "cloth_mass", "collision_mode", "radius", "collision_limit_distance",
@@ -95,6 +103,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "id": "self_collision",
         "setups": CLOTH_SETUPS,
         "frames": 1800,
+        "runner": "test_blender_mc2_constraint_soak.py::cross_task_self",
         "fields": (
             "self_collision_mode", "self_collision_sync_mode",
             "self_collision_thickness",
@@ -132,3 +141,5 @@ MC2_DEBUG_ACCEPTANCE_LAYERS = (
     "final_output_offset",
 )
 
+
+MC2_DEBUG_ACCEPTANCE_RUNNER = "test_blender_mc2_debug_draw.py"

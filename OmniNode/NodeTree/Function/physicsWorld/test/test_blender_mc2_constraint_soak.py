@@ -266,11 +266,27 @@ def _motion_base_soak(obj):
         backstop_enabled=False,
         motion_stiffness=1.0,
     )
+    stable_task_id = task.task_id
     topology = topology_module.build_mc2_topology_spec(task)
     local = _base_positions(obj)
     last_positions = None
     try:
         for frame in range(1, 901):
+            if frame == 451:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _task(
+                    obj,
+                    angle_restoration_enabled=False,
+                    max_distance_enabled=True,
+                    max_distance=0.03,
+                    backstop_enabled=True,
+                    backstop_radius=0.01,
+                    backstop_distance=0.005,
+                    normal_axis=2,
+                    motion_stiffness=1.0,
+                )
+                assert task.task_id == stable_task_id
             translation = np.asarray(
                 (0.06 * math.sin(frame * 0.031), 0.0, 0.0),
                 dtype=np.float32,
@@ -288,6 +304,10 @@ def _motion_base_soak(obj):
             candidate = _candidate(world, task)
             distance = np.linalg.norm(candidate.world_positions - positions, axis=1)
             assert float(np.max(distance)) <= 0.031, (frame, float(np.max(distance)))
+            if frame == 451:
+                current_context = world.solver_slots[task.task_id].data["native_context"]
+                assert current_context is old_context
+                assert current_context.inspect()["parameter_revision"] == old_revision + 1
             if frame == 899:
                 debug_module.request_mc2_debug_capture(
                     world,
@@ -305,6 +325,7 @@ def _motion_base_soak(obj):
             atol=1.0e-6,
         )
         assert snapshot["frame"] == 900
+        assert snapshot["motion"]["use_backstop"] is True
         print("[PASS] 900-frame Motion BasePosition/max-distance boundary")
     finally:
         world.omni_cache_dispose("motion_base_soak")

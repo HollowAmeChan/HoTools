@@ -523,12 +523,13 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
 | Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧；双task外碰scope 600帧；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Center/Keep Teleport 1200帧；跨task self/hot update 1800帧 |
+| Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码 |
 | Blender 4.5维护态soak | 180帧；mean/P95/max `2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 
 维护时按风险选择分层，但native owner、binding或state变化必须同时跑Python 3.11 native和对应Blender 4.5生产链。
 
-长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单。每个runtime字段必须且只能归属一个active能力族或明确的hidden/no-native-behavior组；active族至少声明600帧、适用setup以及`finite`、`deterministic`和能力专项不变量。运行门禁分三层：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
+长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单。每个runtime字段必须且只能归属一个active能力族或明确的hidden/no-native-behavior组；active族至少声明600帧、适用setup、实际runner以及`finite`、`deterministic`和能力专项不变量。运行门禁分三层：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition/Backstop、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
 
 当前没有MC2发布阻断项。
 
