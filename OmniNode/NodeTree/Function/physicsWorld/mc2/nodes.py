@@ -651,10 +651,9 @@ def physicsMC2Step(
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=[
-        "物理世界", "拓扑连接", "Fixed/Move", "Motion约束", "Center/Teleport",
+        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move", "Motion约束", "Center/Teleport",
         "外部碰撞", "粒子半径", "自碰1 几何单元", "自碰2 空间网格", "自碰3 候选配对",
-        "自碰4 接触结果", "最终输出偏移", "任务筛选", "最大显示项",
-        "Motion BasePosition", "Angle恢复目标",
+        "自碰4 接触结果", "最终输出偏移", "Motion BasePosition", "Angle恢复目标",
     ],
     input_init={
         "world": {"description": "包含MC2 slot和隐式debug快照的Physics World。"},
@@ -680,6 +679,8 @@ def physicsMC2Step(
 )
 def physicsMC2DebugDraw(
     world: PhysicsWorldCache,
+    task_filter: str = "",
+    max_items: int = 2000,
     show_topology: bool = True,
     show_attributes: bool = True,
     show_motion: bool = True,
@@ -691,8 +692,6 @@ def physicsMC2DebugDraw(
     show_self_candidates: bool = False,
     show_self_contacts: bool = True,
     show_output: bool = True,
-    task_filter: str = "",
-    max_items: int = 2000,
     show_motion_base: bool = True,
     show_angle_restoration: bool = True,
 ) -> PhysicsWorldCache:
