@@ -66,3 +66,16 @@ def test_long_run_matrix_separates_requirements_from_real_evidence():
 def test_debug_acceptance_layers_are_inventory_not_coverage_claims():
     assert (BLENDER_TEST_ROOT / MC2_DEBUG_ACCEPTANCE_RUNNER).is_file()
     assert len(MC2_DEBUG_ACCEPTANCE_LAYERS) == len(set(MC2_DEBUG_ACCEPTANCE_LAYERS))
+
+
+def test_setup_local_evidence_cannot_close_another_setup():
+    by_id = {item["id"]: item for item in MC2_LONG_RUN_CAPABILITY_MATRIX}
+    angle_restoration = capability_gaps(by_id["angle_restoration"])
+    assert "zero_force_rest@mesh_cloth" not in angle_restoration["invariants"]
+    assert "zero_force_rest@bone_cloth" in angle_restoration["invariants"]
+    assert "zero_force_rest@bone_spring" in angle_restoration["invariants"]
+
+    angle_limit = capability_gaps(by_id["angle_limit"])
+    assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]
+    assert "limit_bounded@bone_cloth" in angle_limit["invariants"]
+    assert "limit_bounded@bone_spring" in angle_limit["invariants"]

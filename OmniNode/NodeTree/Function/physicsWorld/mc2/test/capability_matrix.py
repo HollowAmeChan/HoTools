@@ -11,11 +11,20 @@ def capability_gaps(capability):
     evidence = tuple(capability["evidence"])
     covered_setups = set().union(*(item["setups"] for item in evidence))
     exercised_fields = set().union(*(item["fields"] for item in evidence))
-    verified_invariants = set().union(*(item["invariants"] for item in evidence))
+    verified_invariant_setups = {}
+    for item in evidence:
+        for invariant in item["invariants"]:
+            verified_invariant_setups.setdefault(invariant, set()).update(item["setups"])
+    invariant_gaps = {
+        f"{invariant}@{setup}"
+        for invariant in capability["required_invariants"]
+        for setup in capability["required_setups"]
+        if setup not in verified_invariant_setups.get(invariant, set())
+    }
     return {
         "setups": set(capability["required_setups"]) - covered_setups,
         "fields": set(capability["owned_fields"]) - exercised_fields,
-        "invariants": set(capability["required_invariants"]) - verified_invariants,
+        "invariants": invariant_gaps,
     }
 
 
