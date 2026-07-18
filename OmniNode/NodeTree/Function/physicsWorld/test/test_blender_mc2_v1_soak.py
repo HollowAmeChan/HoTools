@@ -236,6 +236,7 @@ def main():
             world.generation = cycle + 1
             tasks = _tasks(mesh_source, cloth_armature, spring_armature, 0.1)
             previous_frame = None
+            previous_candidates = {}
             hot_context = None
             hot_reset_count = None
             old_static_context = None
@@ -288,6 +289,16 @@ def main():
                     timings.append(elapsed_ms)
 
                 assert len(world.solver_slots) == 3
+                for task in tasks:
+                    slot = world.solver_slots[task.task_id]
+                    candidate = slot.data["result_candidate"]
+                    assert candidate is not None
+                    assert candidate.frame == frame
+                    assert candidate.generation == cycle + 1
+                    assert np.all(np.isfinite(candidate.world_positions))
+                    assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+                    assert candidate is not previous_candidates.get(task.task_id)
+                    previous_candidates[task.task_id] = candidate
                 stats = world.consume_results(
                     mc2_names.MC2_STATS_CHANNEL,
                     solver="mc2",
