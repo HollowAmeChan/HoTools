@@ -273,8 +273,8 @@ def _append_attribute_batches(point_batches, topology, positions, limit):
     for index, attribute in enumerate(attributes[:limit]):
         target = move if int(attribute) & 0x02 else fixed
         add_point(target, positions[index])
-    _point_batch(point_batches, fixed, "fixed", 8.0)
-    _point_batch(point_batches, move, "move", 5.0)
+    _point_batch(point_batches, fixed, "fixed", 6.0)
+    _point_batch(point_batches, move, "move", 4.0)
 
 
 def _append_motion_batches(batches, motion, limit):
@@ -670,8 +670,8 @@ def _remove_draw_handler():
 
 def _draw_mc2_debug():
     for item in list(_MC2_DRAW_STORE.values()):
-        draw_line_batches(item.get("batches") or ())
         draw_point_batches(item.get("point_batches") or ())
+        draw_line_batches(item.get("batches") or ())
 
 
 def _tag_view3d_redraw():
