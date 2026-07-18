@@ -11,16 +11,17 @@ import numpy as np
 from ..types import PhysicsWorldCache
 from ..utils.debug_draw import (
     add_arrow_lines,
-    add_box_lines,
-    add_capsule_lines,
+    add_box_triangles,
     add_circle_lines,
     add_line,
-    add_plane_lines,
+    add_plane_triangles,
     add_point,
     add_sphere_lines,
-    add_tapered_capsule_lines,
+    add_sphere_triangles,
+    add_tapered_capsule_triangles,
     draw_line_batches,
     draw_point_batches,
+    draw_triangle_batches,
     vector3,
 )
 from .debug import normalize_mc2_task_filters, request_mc2_debug_capture
@@ -33,7 +34,9 @@ _COLORS = {
     "lateral": (0.20, 0.85, 0.95, 0.95),
     "triangle": (0.38, 0.62, 0.82, 0.50),
     "edge_collision": (1.00, 0.46, 0.12, 0.82),
-    "point_collision": (0.20, 1.00, 0.52, 0.78),
+    "edge_collision_surface": (1.00, 0.34, 0.06, 0.18),
+    "point_collision_surface": (0.12, 1.00, 0.38, 0.18),
+    "collider_surface": (0.62, 0.70, 0.82, 0.16),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
@@ -141,12 +144,13 @@ def update_mc2_debug_draw_store(
         "max_items": max(1, min(int(max_items), 100000)),
     }
     request_mc2_debug_capture(world, filters=filters)
-    batches, point_batches = _build_world_batches(world, filters)
+    batches, point_batches, triangle_batches = _build_world_batches(world, filters)
     _MC2_DRAW_STORE[node_key] = {
         "world_id": str(id(world)),
         "frame": int(getattr(world.frame_context, "frame", 0) or 0),
         "batches": batches,
         "point_batches": point_batches,
+        "triangle_batches": triangle_batches,
     }
     _ensure_draw_handler()
     _tag_view3d_redraw()
@@ -176,9 +180,10 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
         return None
     line_batches = item.get("batches") or ()
     point_batches = item.get("point_batches") or ()
+    triangle_batches = item.get("triangle_batches") or ()
     flattened = [
         coordinate
-        for specs in (line_batches, point_batches)
+        for specs in (line_batches, point_batches, triangle_batches)
         for batch in specs
         for point in batch[0]
         for coordinate in point
@@ -186,9 +191,11 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     return {
         "world_id": item["world_id"],
         "frame": item["frame"],
-        "batch_count": len(line_batches) + len(point_batches),
+        "batch_count": len(line_batches) + len(point_batches) + len(triangle_batches),
         "line_vertex_count": sum(len(batch[0]) for batch in line_batches),
         "point_vertex_count": sum(len(batch[0]) for batch in point_batches),
+        "triangle_vertex_count": sum(len(batch[0]) for batch in triangle_batches),
+        "triangle_count": sum(len(batch[1]) for batch in triangle_batches),
         "coordinate_checksum": round(
             sum((index + 1) * float(value) for index, value in enumerate(flattened)),
             6,
@@ -196,9 +203,10 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     }
 
 
-def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list, list]:
+def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list, list, list]:
     batches = []
     point_batches = []
+    triangle_meshes = {}
     task_filters = normalize_mc2_task_filters(filters["task_filter"])
     for slot in world.solver_slots.values():
         if slot.kind != MC2_SLOT_KIND:
@@ -210,7 +218,9 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
             token in str(snapshot.get("task_id") or "") for token in task_filters
         ):
             continue
-        _append_slot_batches(batches, point_batches, snapshot, filters)
+        _append_slot_batches(
+            batches, point_batches, triangle_meshes, snapshot, filters
+        )
 
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
@@ -219,7 +229,12 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
             _append_self_batches(
                 batches, point_batches, snapshot, filters, interaction=True
             )
-    return batches, point_batches
+    triangle_batches = [
+        (mesh["vertices"], mesh["indices"], _COLORS[color_name])
+        for color_name, mesh in triangle_meshes.items()
+        if mesh["vertices"] and mesh["indices"]
+    ]
+    return batches, point_batches, triangle_batches
 
 
 def _batch(batches: list, lines: list, color_name: str, width: float = 1.0) -> None:
@@ -234,8 +249,16 @@ def _point_batch(
         batches.append((points, _COLORS[color_name], size))
 
 
+def _triangle_mesh(meshes: dict, color_name: str) -> dict:
+    return meshes.setdefault(color_name, {"vertices": [], "indices": []})
+
+
 def _append_slot_batches(
-    batches: list, point_batches: list, snapshot: dict, filters: dict
+    batches: list,
+    point_batches: list,
+    triangle_meshes: dict,
+    snapshot: dict,
+    filters: dict,
 ) -> None:
     limit = filters["max_items"]
     topology = snapshot.get("topology") or {}
@@ -313,7 +336,7 @@ def _append_slot_batches(
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
     if filters["show_collision"]:
         _append_collision_situation_batches(
-            batches, snapshot, topology, positions, limit
+            batches, triangle_meshes, snapshot, topology, positions, limit
         )
     if filters["show_radii"]:
         _append_radius_batches(batches, snapshot, limit)
@@ -370,16 +393,17 @@ def _active_collision_payload(collision):
 
 
 def _append_collision_situation_batches(
-    batches, snapshot, topology, positions, limit
+    batches, triangle_meshes, snapshot, topology, positions, limit
 ):
     collision = snapshot.get("collision") or {}
     mode, colliders = _active_collision_payload(collision)
     if colliders is None:
         return
-    _append_collider_batches(batches, collision, limit)
+    _append_collider_batches(batches, triangle_meshes, collision, limit)
     if mode == 1:
         _append_point_collision_batches(
             batches,
+            triangle_meshes,
             positions,
             topology,
             collision,
@@ -388,19 +412,19 @@ def _append_collision_situation_batches(
         )
     else:
         _append_edge_collision_batches(
-            batches, topology, positions, collision, limit
+            batches, triangle_meshes, topology, positions, collision, limit
         )
 
 
 def _append_point_collision_batches(
-    batches, positions, topology, collision, setup_type, limit
+    batches, triangle_meshes, positions, topology, collision, setup_type, limit
 ):
     attributes = np.asarray(
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     )
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
     is_spring = setup_type == "bone_spring"
-    shapes = []
+    mesh = _triangle_mesh(triangle_meshes, "point_collision_surface")
     count = min(len(positions), len(attributes), len(radii), limit)
     for index in range(count):
         attribute = int(attributes[index])
@@ -410,11 +434,14 @@ def _append_point_collision_batches(
         radius = max(float(radii[index]), 0.0)
         if radius <= 1.0e-7:
             continue
-        _add_axis_sphere(shapes, positions[index], radius)
-    _batch(batches, shapes, "point_collision", 1.0)
+        add_sphere_triangles(
+            mesh["vertices"], mesh["indices"], positions[index], radius
+        )
 
 
-def _append_edge_collision_batches(batches, topology, positions, collision, limit):
+def _append_edge_collision_batches(
+    batches, triangle_meshes, topology, positions, collision, limit
+):
     mode, colliders = _active_collision_payload(collision)
     if mode != 2 or colliders is None:
         return
@@ -423,7 +450,7 @@ def _append_edge_collision_batches(batches, topology, positions, collision, limi
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     )
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
-    volumes = []
+    mesh = _triangle_mesh(triangle_meshes, "edge_collision_surface")
     centers = []
     for edge in edges[:limit]:
         left, right = map(int, edge)
@@ -438,14 +465,14 @@ def _append_edge_collision_batches(batches, topology, positions, collision, limi
         if max(radius_left, radius_right) <= 1.0e-7:
             continue
         add_line(centers, positions[left], positions[right])
-        add_tapered_capsule_lines(
-            volumes,
+        add_tapered_capsule_triangles(
+            mesh["vertices"],
+            mesh["indices"],
             positions[left],
             positions[right],
             radius_left,
             radius_right,
         )
-    _batch(batches, volumes, "edge_collision", 1.0)
     _batch(batches, centers, "edge_collision", 2.6)
 
 
@@ -857,11 +884,12 @@ def _append_center_batches(batches, point_batches, center):
     _point_batch(point_batches, negative_points, "negative", 13.0)
 
 
-def _append_collider_batches(batches, collision, limit):
+def _append_collider_batches(batches, triangle_meshes, collision, limit):
     colliders = collision.get("colliders")
     if not isinstance(colliders, dict):
         return
     lines = []
+    mesh = _triangle_mesh(triangle_meshes, "collider_surface")
     types = np.asarray(_values(colliders.get("types")), dtype=np.int32)
     group_bits = np.asarray(_values(colliders.get("group_bits")), dtype=np.int32)
     collided_by_groups = int(colliders.get("collided_by_groups", 0) or 0)
@@ -877,18 +905,41 @@ def _append_collider_batches(batches, collision, limit):
         kind = int(kind)
         radius = float(radius)
         if kind == 0:
-            _add_axis_sphere(lines, center, radius)
+            add_sphere_triangles(
+                mesh["vertices"], mesh["indices"], center, radius
+            )
         elif kind == 1:
-            add_capsule_lines(lines, first, second, radius)
+            add_tapered_capsule_triangles(
+                mesh["vertices"],
+                mesh["indices"],
+                first,
+                second,
+                radius,
+                radius,
+            )
+            add_line(lines, first, second)
         elif kind == 2:
             axis_x, axis_y = _plane_axes(first)
-            add_plane_lines(lines, center, axis_x, axis_y, first)
+            add_plane_triangles(
+                mesh["vertices"], mesh["indices"], center, axis_x, axis_y
+            )
+            normal = vector3(first)
+            if normal.length > 1.0e-8:
+                normal.normalize()
+                add_arrow_lines(lines, center, vector3(center) + normal * 0.35)
         elif kind == 3:
             cross = vector3(first).cross(vector3(second))
             if cross.length > 1.0e-8:
                 cross.normalize()
-                add_box_lines(lines, center, first, second, cross * radius)
-    _batch(batches, lines, "collider", 1.4)
+                add_box_triangles(
+                    mesh["vertices"],
+                    mesh["indices"],
+                    center,
+                    first,
+                    second,
+                    cross * radius,
+                )
+    _batch(batches, lines, "collider", 1.2)
 
 
 def _append_radius_batches(batches, snapshot, limit):
@@ -1139,6 +1190,7 @@ def _remove_draw_handler():
 
 def _draw_mc2_debug():
     for item in list(_MC2_DRAW_STORE.values()):
+        draw_triangle_batches(item.get("triangle_batches") or ())
         draw_point_batches(item.get("point_batches") or ())
         draw_line_batches(item.get("batches") or ())
 

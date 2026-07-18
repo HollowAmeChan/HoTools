@@ -11,6 +11,7 @@ from gpu_extras.batch import batch_for_shader
 
 _SEGMENTS = 24
 _ROUND_POINT_SHADER = None
+_SOLID_SHADER = None
 
 _ROUND_POINT_VERTEX_SHADER = """
 uniform mat4 ModelViewProjectionMatrix;
@@ -39,6 +40,32 @@ void main()
 }
 """
 
+_SOLID_VERTEX_SHADER = """
+uniform mat4 ModelViewProjectionMatrix;
+in vec3 pos;
+out vec3 worldPosition;
+
+void main()
+{
+    worldPosition = pos;
+    gl_Position = ModelViewProjectionMatrix * vec4(pos, 1.0);
+}
+"""
+
+_SOLID_FRAGMENT_SHADER = """
+uniform vec4 color;
+in vec3 worldPosition;
+out vec4 fragColor;
+
+void main()
+{
+    vec3 normal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));
+    vec3 lightDirection = normalize(vec3(0.35, -0.45, 0.82));
+    float lighting = 0.42 + 0.58 * abs(dot(normal, lightDirection));
+    fragColor = vec4(color.rgb * lighting, color.a);
+}
+"""
+
 
 def _round_point_shader():
     global _ROUND_POINT_SHADER
@@ -48,6 +75,16 @@ def _round_point_shader():
             _ROUND_POINT_FRAGMENT_SHADER,
         )
     return _ROUND_POINT_SHADER
+
+
+def _solid_shader():
+    global _SOLID_SHADER
+    if _SOLID_SHADER is None:
+        _SOLID_SHADER = gpu.types.GPUShader(
+            _SOLID_VERTEX_SHADER,
+            _SOLID_FRAGMENT_SHADER,
+        )
+    return _SOLID_SHADER
 
 
 def draw_line_batches(batch_specs) -> None:
@@ -100,6 +137,39 @@ def draw_point_batches(batch_specs) -> None:
             batch.draw(shader)
     finally:
         gpu.state.point_size_set(1.0)
+        gpu.state.depth_mask_set(True)
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.blend_set("NONE")
+
+
+def draw_triangle_batches(batch_specs) -> None:
+    """绘制 [(vertices, indices, color), ...] 半透明world-space三角面。"""
+    specs = list(batch_specs or ())
+    if not any(len(vertices) and len(indices) for vertices, indices, _ in specs):
+        return
+    shader = _solid_shader()
+    gpu.state.blend_set("ALPHA")
+    gpu.state.depth_test_set("LESS_EQUAL")
+    gpu.state.depth_mask_set(False)
+    try:
+        for vertices, indices, color in specs:
+            if not len(vertices) or not len(indices):
+                continue
+            batch = batch_for_shader(
+                shader,
+                "TRIS",
+                {"pos": vertices},
+                indices=indices,
+            )
+            shader.bind()
+            shader.uniform_float(
+                "ModelViewProjectionMatrix",
+                gpu.matrix.get_projection_matrix()
+                @ gpu.matrix.get_model_view_matrix(),
+            )
+            shader.uniform_float("color", color)
+            batch.draw(shader)
+    finally:
         gpu.state.depth_mask_set(True)
         gpu.state.depth_test_set("LESS_EQUAL")
         gpu.state.blend_set("NONE")
@@ -168,6 +238,212 @@ def add_line(lines: list, a, b) -> None:
 
 def add_point(points: list, position) -> None:
     points.append(tuple3(position))
+
+
+def _add_triangle_vertex(vertices: list, position) -> int:
+    vertices.append(tuple3(position))
+    return len(vertices) - 1
+
+
+def _add_ring_vertices(
+    vertices: list,
+    center,
+    axis_a,
+    axis_b,
+    radius: float,
+    segments: int,
+) -> list[int]:
+    center = vector3(center)
+    axis_a = vector3(axis_a)
+    axis_b = vector3(axis_b)
+    radius = max(float(radius), 0.0)
+    return [
+        _add_triangle_vertex(
+            vertices,
+            center
+            + (
+                math.cos(math.tau * index / segments) * axis_a
+                + math.sin(math.tau * index / segments) * axis_b
+            )
+            * radius,
+        )
+        for index in range(segments)
+    ]
+
+
+def _connect_triangle_rings(
+    indices: list,
+    first: list[int],
+    second: list[int],
+) -> None:
+    count = min(len(first), len(second))
+    for index in range(count):
+        next_index = (index + 1) % count
+        indices.append((first[index], second[next_index], second[index]))
+        indices.append((first[index], first[next_index], second[next_index]))
+
+
+def _connect_triangle_fan(
+    indices: list,
+    pole: int,
+    ring: list[int],
+    *,
+    reverse: bool,
+) -> None:
+    for index in range(len(ring)):
+        next_index = (index + 1) % len(ring)
+        if reverse:
+            indices.append((pole, ring[next_index], ring[index]))
+        else:
+            indices.append((pole, ring[index], ring[next_index]))
+
+
+def add_sphere_triangles(
+    vertices: list,
+    indices: list,
+    center,
+    radius: float,
+    *,
+    segments: int = 8,
+    rings: int = 4,
+) -> None:
+    radius = max(float(radius), 0.0)
+    segments = max(4, int(segments))
+    rings = max(2, int(rings))
+    if radius <= 1.0e-7:
+        return
+    center = vector3(center)
+    axis_a = mathutils.Vector((1.0, 0.0, 0.0))
+    axis_b = mathutils.Vector((0.0, 1.0, 0.0))
+    axis = mathutils.Vector((0.0, 0.0, 1.0))
+    south = _add_triangle_vertex(vertices, center - axis * radius)
+    ring_indices = []
+    for ring_index in range(1, rings):
+        angle = -math.pi * 0.5 + math.pi * ring_index / rings
+        ring_indices.append(
+            _add_ring_vertices(
+                vertices,
+                center + axis * (math.sin(angle) * radius),
+                axis_a,
+                axis_b,
+                math.cos(angle) * radius,
+                segments,
+            )
+        )
+    north = _add_triangle_vertex(vertices, center + axis * radius)
+    _connect_triangle_fan(indices, south, ring_indices[0], reverse=False)
+    for first, second in zip(ring_indices, ring_indices[1:]):
+        _connect_triangle_rings(indices, first, second)
+    _connect_triangle_fan(indices, north, ring_indices[-1], reverse=True)
+
+
+def add_tapered_capsule_triangles(
+    vertices: list,
+    indices: list,
+    segment_a,
+    segment_b,
+    radius_a: float,
+    radius_b: float,
+    *,
+    segments: int = 8,
+    cap_rings: int = 2,
+) -> None:
+    segment_a = vector3(segment_a)
+    segment_b = vector3(segment_b)
+    radius_a = max(float(radius_a), 0.0)
+    radius_b = max(float(radius_b), 0.0)
+    segments = max(4, int(segments))
+    cap_rings = max(1, int(cap_rings))
+    if max(radius_a, radius_b) <= 1.0e-7:
+        return
+    axis = segment_b - segment_a
+    if axis.length <= 1.0e-7:
+        add_sphere_triangles(
+            vertices,
+            indices,
+            segment_a,
+            max(radius_a, radius_b),
+            segments=segments,
+            rings=cap_rings * 2,
+        )
+        return
+    axis.normalize()
+    axis_a, axis_b = _perpendicular_axes(axis)
+    start = _add_triangle_vertex(vertices, segment_a - axis * radius_a)
+    ring_indices = []
+    if radius_a > 1.0e-7:
+        for ring_index in range(1, cap_rings + 1):
+            angle = -math.pi * 0.5 + math.pi * 0.5 * ring_index / cap_rings
+            ring_indices.append(
+                _add_ring_vertices(
+                    vertices,
+                    segment_a + axis * (math.sin(angle) * radius_a),
+                    axis_a,
+                    axis_b,
+                    math.cos(angle) * radius_a,
+                    segments,
+                )
+            )
+    if radius_b > 1.0e-7:
+        ring_indices.append(
+            _add_ring_vertices(
+                vertices, segment_b, axis_a, axis_b, radius_b, segments
+            )
+        )
+        for ring_index in range(1, cap_rings):
+            angle = math.pi * 0.5 * ring_index / cap_rings
+            ring_indices.append(
+                _add_ring_vertices(
+                    vertices,
+                    segment_b + axis * (math.sin(angle) * radius_b),
+                    axis_a,
+                    axis_b,
+                    math.cos(angle) * radius_b,
+                    segments,
+                )
+            )
+    end = _add_triangle_vertex(vertices, segment_b + axis * radius_b)
+    if not ring_indices:
+        return
+    _connect_triangle_fan(indices, start, ring_indices[0], reverse=False)
+    for first, second in zip(ring_indices, ring_indices[1:]):
+        _connect_triangle_rings(indices, first, second)
+    _connect_triangle_fan(indices, end, ring_indices[-1], reverse=True)
+
+
+def add_plane_triangles(vertices: list, indices: list, center, axis_x, axis_y) -> None:
+    center = vector3(center)
+    axis_x = vector3(axis_x)
+    axis_y = vector3(axis_y)
+    corners = [
+        _add_triangle_vertex(vertices, center - axis_x - axis_y),
+        _add_triangle_vertex(vertices, center + axis_x - axis_y),
+        _add_triangle_vertex(vertices, center + axis_x + axis_y),
+        _add_triangle_vertex(vertices, center - axis_x + axis_y),
+    ]
+    indices.extend(((corners[0], corners[1], corners[2]), (corners[0], corners[2], corners[3])))
+
+
+def add_box_triangles(vertices: list, indices: list, center, axis_x, axis_y, axis_z) -> None:
+    center = vector3(center)
+    axis_x = vector3(axis_x)
+    axis_y = vector3(axis_y)
+    axis_z = vector3(axis_z)
+    corners = [
+        _add_triangle_vertex(vertices, center + sx * axis_x + sy * axis_y + sz * axis_z)
+        for sx, sy, sz in (
+            (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+        )
+    ]
+    for first, second, third, fourth in (
+        (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+        (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7),
+    ):
+        indices.append((corners[first], corners[second], corners[third]))
+        indices.append((corners[first], corners[third], corners[fourth]))
 
 
 def _perpendicular_axes(direction: mathutils.Vector):
