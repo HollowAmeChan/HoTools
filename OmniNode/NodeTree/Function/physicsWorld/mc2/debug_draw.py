@@ -13,6 +13,7 @@ from ..utils.debug_draw import (
     add_arc_lines,
     add_arrow_lines,
     add_basis_lines,
+    add_box_lines,
     add_box_triangles,
     add_circle_lines,
     add_line,
@@ -207,6 +208,9 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
         "point_vertex_count": sum(len(batch[0]) for batch in point_batches),
         "triangle_vertex_count": sum(len(batch[0]) for batch in triangle_batches),
         "triangle_count": sum(len(batch[1]) for batch in triangle_batches),
+        "line_batch_colors": tuple(tuple(batch[1]) for batch in line_batches),
+        "point_batch_colors": tuple(tuple(batch[1]) for batch in point_batches),
+        "triangle_batch_colors": tuple(tuple(batch[2]) for batch in triangle_batches),
         "coordinate_checksum": round(
             sum((index + 1) * float(value) for index, value in enumerate(flattened)),
             6,

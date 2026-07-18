@@ -290,7 +290,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 粒子速度、Distance/Tether与Bending使用三个独立C++ readback入口；Python按显示开关精确分配并冻结数组。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带复制这些数组。
 
-MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。
+MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离20个开关，并要求输出包含该模式自己的batch颜色语义，而不是只检查总线数；它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、collision/radius、四种self和output分支。BoneCloth/BoneSpring的几何语义仍是能力矩阵缺口。
 
 ## Setup与支持域
 

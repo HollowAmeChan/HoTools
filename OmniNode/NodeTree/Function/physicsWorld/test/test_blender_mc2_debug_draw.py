@@ -385,18 +385,28 @@ try:
     print("[PASS] next true advance captures frozen slot and world interaction state")
 
     isolated_modes = (
-        ("show_step_basic", {"show_step_basic": True}),
-        ("show_gravity", {"show_gravity": True}),
-        ("show_velocity", {"show_velocity": True}),
-        ("show_distance", {"show_distance": True}),
-        ("show_tether", {"show_tether": True}),
-        ("show_bending", {"show_bending": True}),
-        ("show_motion_base", {"show_motion_base": True}),
-        ("show_angle_limit", {"show_angle_limit": True}),
-        ("show_angle_restoration", {"show_angle_restoration": True}),
-        ("show_output", {"show_output": True}),
+        ("show_topology", {"show_topology": True}, ("longitudinal",)),
+        ("show_attributes", {"show_attributes": True}, ("fixed", "move")),
+        ("show_step_basic", {"show_step_basic": True}, ("step_basic",)),
+        ("show_gravity", {"show_gravity": True}, ("gravity",)),
+        ("show_velocity", {"show_velocity": True}, ("velocity", "real_velocity")),
+        ("show_distance", {"show_distance": True}, ("distance_ok", "distance_compress", "distance_stretch")),
+        ("show_tether", {"show_tether": True}, ("tether",)),
+        ("show_bending", {"show_bending": True}, ("bending", "bending_volume", "bending_error")),
+        ("show_motion_base", {"show_motion_base": True}, ("motion_base",)),
+        ("show_motion", {"show_motion": True}, ("max_distance", "backstop")),
+        ("show_angle_limit", {"show_angle_limit": True}, ("angle_limit",)),
+        ("show_angle_restoration", {"show_angle_restoration": True}, ("angle_target",)),
+        ("show_center", {"show_center": True}, ("center", "teleport_keep")),
+        ("show_collision", {"show_collision": True}, ("collider", "edge_collision")),
+        ("show_radii", {"show_radii": True}, ("radius",)),
+        ("show_self_primitives", {"show_self_primitives": True}, ("primitive",)),
+        ("show_self_grid", {"show_self_grid": True}, ("grid",)),
+        ("show_self_candidates", {"show_self_candidates": True}, ("candidate",)),
+        ("show_self_contacts", {"show_self_contacts": True}, ("contact", "disabled_contact", "intersection")),
+        ("show_output", {"show_output": True}, ("output",)),
     )
-    for mode_name, overrides in isolated_modes:
+    for mode_name, overrides, expected_batches in isolated_modes:
         options = {
             "show_topology": False,
             "show_attributes": False,
@@ -427,8 +437,14 @@ try:
             **options,
         )
         isolated = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
-        assert isolated["line_vertex_count"] > 0, mode_name
-    print("[PASS] motion base, angle target, and final output are independent modes")
+        colors = set(
+            isolated["line_batch_colors"]
+            + isolated["point_batch_colors"]
+            + isolated["triangle_batch_colors"]
+        )
+        expected_colors = {tuple(debug_draw._COLORS[name]) for name in expected_batches}
+        assert colors & expected_colors, (mode_name, colors, expected_colors)
+    print("[PASS] isolated debug modes emit their own physical batch semantics")
 
     debug_draw.update_mc2_debug_draw_store(
         node_uid,
