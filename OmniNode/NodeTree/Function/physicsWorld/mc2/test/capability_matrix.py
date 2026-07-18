@@ -259,7 +259,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("bone_cloth",),
             "fields": ("collision_mode", "radius"),
             "invariants": (
-                "finite", "deterministic", "contact_response_bounded",
+                "finite", "deterministic", "task_scope_exact",
+                "contact_response_bounded",
                 "parameter_hot_update_in_place",
                 "connected_disconnected_writeback",
             ),
@@ -269,7 +270,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("bone_spring",),
             "fields": ("collision_mode", "radius", "collision_limit_distance"),
             "invariants": (
-                "finite", "deterministic", "contact_response_bounded",
+                "finite", "deterministic", "task_scope_exact",
+                "contact_response_bounded",
                 "parameter_hot_update_in_place", "soft_collision_limit_bounded",
             ),
         },),

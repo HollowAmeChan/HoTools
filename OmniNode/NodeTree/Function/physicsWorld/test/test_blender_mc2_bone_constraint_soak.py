@@ -364,15 +364,43 @@ def _run_bone_external_collision(setup_type):
                 0.0,
                 0.0,
             ))
-            world.collider_snapshot = {
-                "frame": frame,
-                "colliders": ({
+            colliders = [
+                {
                     "key": f"bone-collision-{setup_type}",
                     "type": "SPHERE",
                     "primary_group": 1,
                     "center": tuple(float(value) for value in collider_center),
                     "radius": 0.025,
-                },),
+                },
+                {
+                    "key": f"bone-self-owned-{setup_type}",
+                    "owner": armature,
+                    "type": "SPHERE",
+                    "primary_group": 1,
+                    "center": tuple(float(value) for value in target),
+                    "radius": 0.1,
+                },
+                {
+                    "key": f"bone-masked-{setup_type}",
+                    "type": "SPHERE",
+                    "primary_group": 2,
+                    "center": tuple(float(value) for value in target),
+                    "radius": 0.1,
+                },
+            ]
+            if is_spring:
+                colliders.append({
+                    "key": "bone-spring-disallowed-capsule",
+                    "type": "CAPSULE",
+                    "primary_group": 1,
+                    "center": tuple(float(value) for value in target),
+                    "segment_a": tuple(float(value) for value in target - (0.0, 0.1, 0.0)),
+                    "segment_b": tuple(float(value) for value in target + (0.0, 0.1, 0.0)),
+                    "radius": 0.05,
+                })
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": tuple(colliders),
             }
             mixed._set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(

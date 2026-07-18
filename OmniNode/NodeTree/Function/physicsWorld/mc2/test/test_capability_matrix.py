@@ -103,8 +103,8 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "contact_response_bounded@mesh_cloth" in external["invariants"]
     assert "contact_response_bounded@bone_cloth" not in external["invariants"]
     assert "contact_response_bounded@bone_spring" not in external["invariants"]
-    assert "task_scope_exact@bone_cloth" in external["invariants"]
-    assert "task_scope_exact@bone_spring" in external["invariants"]
+    assert "task_scope_exact@bone_cloth" not in external["invariants"]
+    assert "task_scope_exact@bone_spring" not in external["invariants"]
 
     motion = capability_gaps(by_id["motion_max_distance_backstop"])
     assert not motion["setups"]
