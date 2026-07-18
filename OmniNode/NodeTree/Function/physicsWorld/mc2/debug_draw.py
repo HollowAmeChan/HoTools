@@ -18,6 +18,7 @@ from ..utils.debug_draw import (
     add_plane_lines,
     add_point,
     add_sphere_lines,
+    add_tapered_capsule_lines,
     draw_line_batches,
     draw_point_batches,
     vector3,
@@ -31,6 +32,12 @@ _COLORS = {
     "longitudinal": (0.95, 0.70, 0.18, 0.95),
     "lateral": (0.20, 0.85, 0.95, 0.95),
     "triangle": (0.38, 0.62, 0.82, 0.50),
+    "lateral_direct": (0.08, 1.00, 0.92, 1.00),
+    "lateral_derived": (0.78, 0.30, 1.00, 0.95),
+    "lateral_surface": (0.30, 0.72, 1.00, 0.62),
+    "edge_collision": (1.00, 0.46, 0.12, 0.82),
+    "edge_collision_lateral": (0.05, 1.00, 0.82, 0.92),
+    "edge_collision_derived": (0.95, 0.24, 1.00, 0.92),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
@@ -80,10 +87,12 @@ def update_mc2_debug_draw_store(
     enabled: bool,
     *,
     show_topology: bool = True,
+    show_bonecloth_lateral: bool = False,
     show_attributes: bool = True,
     show_motion: bool = True,
     show_center: bool = True,
     show_collision: bool = True,
+    show_edge_collision: bool = False,
     show_radii: bool = True,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
@@ -109,6 +118,7 @@ def update_mc2_debug_draw_store(
 
     filters = {
         "show_topology": bool(show_topology),
+        "show_bonecloth_lateral": bool(show_bonecloth_lateral),
         "show_attributes": bool(show_attributes),
         "show_step_basic": bool(show_step_basic),
         "show_gravity": bool(show_gravity),
@@ -122,6 +132,7 @@ def update_mc2_debug_draw_store(
         "show_angle_limit": bool(show_angle_limit),
         "show_center": bool(show_center),
         "show_collision": bool(show_collision),
+        "show_edge_collision": bool(show_edge_collision),
         "show_radii": bool(show_radii),
         "show_self_primitives": bool(show_self_primitives),
         "show_self_grid": bool(show_self_grid),
@@ -239,6 +250,10 @@ def _append_slot_batches(
     positions = np.asarray(_values(topology.get("positions")), dtype=np.float32).reshape((-1, 3))
     if filters["show_topology"]:
         _append_topology_batches(batches, topology, positions, limit)
+    if filters["show_bonecloth_lateral"]:
+        _append_bonecloth_lateral_batches(
+            batches, point_batches, topology, positions, limit
+        )
     if filters["show_attributes"]:
         _append_attribute_batches(point_batches, topology, positions, limit)
     if filters["show_step_basic"]:
@@ -310,6 +325,14 @@ def _append_slot_batches(
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
     if filters["show_collision"]:
         _append_collider_batches(batches, snapshot.get("collision") or {}, limit)
+    if filters["show_edge_collision"]:
+        _append_edge_collision_batches(
+            batches,
+            topology,
+            positions,
+            snapshot.get("collision") or {},
+            limit,
+        )
     if filters["show_radii"]:
         _append_radius_batches(batches, snapshot, limit)
     _append_self_batches(
@@ -343,6 +366,104 @@ def _append_topology_batches(batches, topology, positions, limit):
     _batch(batches, longitudinal, "longitudinal", 2.0)
     _batch(batches, lateral, "lateral", 2.4)
     _batch(batches, triangles, "triangle", 1.0)
+
+
+def _append_bonecloth_lateral_batches(
+    batches, point_batches, topology, positions, limit
+):
+    if topology.get("connection_model") != "hotools_product":
+        return
+    direct = np.asarray(
+        _values(topology.get("lateral_edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    derived = np.asarray(
+        _values(topology.get("lateral_triangle_edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    triangles = np.asarray(
+        _values(topology.get("lateral_triangles")), dtype=np.int32
+    ).reshape((-1, 3))
+    direct_lines = []
+    derived_lines = []
+    surface_lines = []
+    endpoints = []
+    for edge in direct[:limit]:
+        _add_index_line(direct_lines, positions, edge)
+        for index in edge:
+            if 0 <= int(index) < len(positions):
+                add_point(endpoints, positions[int(index)])
+    for edge in derived[:limit]:
+        _add_index_line(derived_lines, positions, edge)
+    for triangle in triangles[:limit]:
+        _add_index_loop(surface_lines, positions, triangle)
+    _batch(batches, direct_lines, "lateral_direct", 4.0)
+    _batch(batches, derived_lines, "lateral_derived", 2.4)
+    _batch(batches, surface_lines, "lateral_surface", 1.2)
+    _point_batch(point_batches, endpoints, "lateral_direct", 6.0)
+
+
+def _append_edge_collision_batches(batches, topology, positions, collision, limit):
+    if int(collision.get("collision_mode", 0) or 0) != 2:
+        return
+    colliders = collision.get("colliders")
+    if not isinstance(colliders, dict):
+        return
+    if int(colliders.get("collided_by_groups", 0) or 0) == 0:
+        return
+    if not len(np.asarray(_values(colliders.get("types")), dtype=np.int32)):
+        return
+    edges = np.asarray(_values(topology.get("edges")), dtype=np.int32).reshape((-1, 2))
+    attributes = np.asarray(
+        _values(topology.get("vertex_attributes")), dtype=np.uint8
+    )
+    radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
+    direct_lateral = {
+        tuple(sorted(map(int, edge)))
+        for edge in np.asarray(
+            _values(topology.get("lateral_edges")), dtype=np.int32
+        ).reshape((-1, 2))
+    }
+    derived_lateral = {
+        tuple(sorted(map(int, edge)))
+        for edge in np.asarray(
+            _values(topology.get("lateral_triangle_edges")), dtype=np.int32
+        ).reshape((-1, 2))
+    }
+    groups = {
+        "edge_collision": [],
+        "edge_collision_lateral": [],
+        "edge_collision_derived": [],
+    }
+    centers = {name: [] for name in groups}
+    for edge in edges[:limit]:
+        left, right = map(int, edge)
+        if min(left, right) < 0 or max(left, right) >= len(positions):
+            continue
+        if max(left, right) >= len(attributes) or max(left, right) >= len(radii):
+            continue
+        if not (int(attributes[left]) & 0x02 or int(attributes[right]) & 0x02):
+            continue
+        radius_left = max(float(radii[left]), 0.0)
+        radius_right = max(float(radii[right]), 0.0)
+        if max(radius_left, radius_right) <= 1.0e-7:
+            continue
+        normalized = tuple(sorted((left, right)))
+        if normalized in direct_lateral:
+            color = "edge_collision_lateral"
+        elif normalized in derived_lateral:
+            color = "edge_collision_derived"
+        else:
+            color = "edge_collision"
+        add_line(centers[color], positions[left], positions[right])
+        add_tapered_capsule_lines(
+            groups[color],
+            positions[left],
+            positions[right],
+            radius_left,
+            radius_right,
+        )
+    for color in groups:
+        _batch(batches, groups[color], color, 1.0)
+        _batch(batches, centers[color], color, 2.6)
 
 
 def _append_attribute_batches(point_batches, topology, positions, limit):

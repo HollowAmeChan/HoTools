@@ -352,6 +352,51 @@ def add_capsule_lines(lines: list, segment_a, segment_b, radius: float) -> None:
         _add_capsule_cap_arc_lines(lines, segment_b, side, axis, radius)
 
 
+def add_tapered_capsule_lines(
+    lines: list,
+    segment_a,
+    segment_b,
+    radius_a: float,
+    radius_b: float,
+) -> None:
+    """Draw a segment whose collision radius interpolates between its endpoints."""
+    segment_a = vector3(segment_a)
+    segment_b = vector3(segment_b)
+    radius_a = max(float(radius_a), 0.0)
+    radius_b = max(float(radius_b), 0.0)
+    if max(radius_a, radius_b) <= 1.0e-7:
+        return
+
+    axis = segment_b - segment_a
+    if axis.length <= 1.0e-7:
+        add_sphere_lines(
+            lines,
+            segment_a,
+            mathutils.Vector((1, 0, 0)),
+            mathutils.Vector((0, 1, 0)),
+            mathutils.Vector((0, 0, 1)),
+            max(radius_a, radius_b),
+        )
+        return
+    axis.normalize()
+    axis_a, axis_b = _perpendicular_axes(axis)
+    if radius_a > 1.0e-7:
+        add_circle_lines(lines, segment_a, axis_a, axis_b, radius_a)
+    if radius_b > 1.0e-7:
+        add_circle_lines(lines, segment_b, axis_a, axis_b, radius_b)
+    for side in (axis_a, -axis_a, axis_b, -axis_b):
+        add_line(
+            lines,
+            segment_a + side * radius_a,
+            segment_b + side * radius_b,
+        )
+    for side in (axis_a, axis_b):
+        if radius_a > 1.0e-7:
+            _add_capsule_cap_arc_lines(lines, segment_a, side, -axis, radius_a)
+        if radius_b > 1.0e-7:
+            _add_capsule_cap_arc_lines(lines, segment_b, side, axis, radius_b)
+
+
 def _add_capsule_cap_arc_lines(lines: list, center, side, pole_axis, radius: float) -> None:
     points = [
         center + math.cos(math.pi * index / _SEGMENTS) * side * radius
