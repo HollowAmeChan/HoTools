@@ -271,6 +271,10 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
 | Final Output Offset | 已冻结result candidate与writeback plan | Mesh实际object-local offset对应的world线段；Bone只显示实际允许平移的target，connected rotation-only骨不伪造位移 |
 | Task External Colliders | 每个runtime item实际上传的`MC2ColliderFrameSpec` | 已经过source排除、group mask、setup type过滤的collider key/type/shape；task过滤必须只画该task参与集合 |
+| 自碰几何单元 | self static/dynamic的Point/Edge/Triangle primitive | 紫色点、边和三角形轮廓；回答“哪些几何真的进入自碰检测”，缺失时优先检查self static构建 |
+| 自碰空间网格 | native broadphase的primitive grid坐标与`grid_size` | 灰色占用格；回答“primitive怎样分桶”，格子过大或过密用于定位半径、厚度和primitive尺度问题 |
+| 自碰候选配对 | grid broadphase输出的candidate primitive pair | 黄色primitive中心连线；只表示可能相交，允许包含false positive，数量爆炸是性能诊断信号而非接触数量 |
+| 自碰接触结果 | narrowphase contact、enabled flag、normal与intersection history | 红色为启用接触及法线箭头，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。
 
