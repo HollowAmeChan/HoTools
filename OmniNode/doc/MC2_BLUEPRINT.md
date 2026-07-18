@@ -653,7 +653,9 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 维护时按风险选择分层，但native owner、binding或state变化必须同时跑Python 3.11 native和对应Blender 4.5生产链。
 
-长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单。每个runtime字段必须且只能归属一个active能力族或明确的hidden/no-native-behavior组；active族至少声明600帧、适用setup、实际runner以及`finite`、`deterministic`和能力专项不变量。运行门禁分三层：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition/Backstop、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
+长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
+
+当前九个能力族仍均为`gap`：Distance/Tether、Angle Restoration、Angle Limit、Motion、External Collision和Self Collision缺少声明的Bone setup；多数能力缺少字段分支变化与确定性复跑；debug acceptance layer目前只表示待验收库存，绘制批次非空不证明几何语义正确。运行门禁仍按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition/Backstop、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
 
 当前没有MC2发布阻断项。
 

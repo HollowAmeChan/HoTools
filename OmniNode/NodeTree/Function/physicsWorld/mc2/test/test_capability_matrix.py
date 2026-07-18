@@ -1,9 +1,13 @@
+import ast
+from pathlib import Path
+
 from .capability_matrix import (
     ALL_SETUPS,
     MC2_DEBUG_ACCEPTANCE_LAYERS,
     MC2_DEBUG_ACCEPTANCE_RUNNER,
     MC2_INACTIVE_FIELD_GROUPS,
     MC2_LONG_RUN_CAPABILITY_MATRIX,
+    capability_gaps,
 )
 from ..runtime_parameters import (
     MC2_RUNTIME_CURVE_FIELDS,
@@ -12,24 +16,45 @@ from ..runtime_parameters import (
 )
 
 
-def test_long_run_matrix_owns_every_runtime_field_once():
+BLENDER_TEST_ROOT = Path(__file__).resolve().parents[2] / "test"
+
+
+def _runner_symbol_exists(runner):
+    filename, symbol = runner.split("::", 1)
+    path = BLENDER_TEST_ROOT / filename
+    assert path.is_file(), path
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    symbols = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert symbol in symbols, (runner, sorted(symbols))
+
+
+def test_long_run_matrix_separates_requirements_from_real_evidence():
     expected = set(
-        MC2_RUNTIME_FLOAT_FIELDS
-        + MC2_RUNTIME_INT_FIELDS
-        + MC2_RUNTIME_CURVE_FIELDS
+        MC2_RUNTIME_FLOAT_FIELDS + MC2_RUNTIME_INT_FIELDS + MC2_RUNTIME_CURVE_FIELDS
     )
     owners = {}
     for capability in MC2_LONG_RUN_CAPABILITY_MATRIX:
         assert capability["id"]
-        assert set(capability["setups"]).issubset(ALL_SETUPS)
-        assert int(capability["frames"]) >= 600
-        runner = str(capability["runner"])
-        assert runner.startswith("test_blender_mc2_")
-        assert "_soak.py::" in runner
-        assert {"finite", "deterministic"}.issubset(capability["invariants"])
-        for field in capability["fields"]:
+        assert set(capability["required_setups"]).issubset(ALL_SETUPS)
+        assert capability["evidence"]
+        for item in capability["evidence"]:
+            _runner_symbol_exists(item["runner"])
+            assert int(item["frames"]) >= 600
+            assert set(item["setups"]).issubset(capability["required_setups"])
+            assert set(item["fields"]).issubset(capability["owned_fields"])
+            assert "finite" in item["invariants"]
+        for field in capability["owned_fields"]:
             assert field not in owners, (field, owners[field], capability["id"])
             owners[field] = capability["id"]
+        gaps = capability_gaps(capability)
+        complete = not any(gaps.values())
+        assert capability["status"] == ("verified" if complete else "gap"), (
+            capability["id"], gaps,
+        )
     for group, fields in MC2_INACTIVE_FIELD_GROUPS.items():
         assert group.endswith("_hidden")
         for field in fields:
@@ -38,12 +63,6 @@ def test_long_run_matrix_owns_every_runtime_field_once():
     assert set(owners) == expected, sorted(expected.symmetric_difference(owners))
 
 
-def test_debug_acceptance_layers_are_explicit_and_unique():
-    assert MC2_DEBUG_ACCEPTANCE_RUNNER == "test_blender_mc2_debug_draw.py"
+def test_debug_acceptance_layers_are_inventory_not_coverage_claims():
+    assert (BLENDER_TEST_ROOT / MC2_DEBUG_ACCEPTANCE_RUNNER).is_file()
     assert len(MC2_DEBUG_ACCEPTANCE_LAYERS) == len(set(MC2_DEBUG_ACCEPTANCE_LAYERS))
-    assert {
-        "motion_base_position",
-        "angle_restoration_target",
-        "task_external_colliders",
-        "final_output_offset",
-    }.issubset(MC2_DEBUG_ACCEPTANCE_LAYERS)
