@@ -453,10 +453,10 @@ PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 5) {
+    if (PyTuple_GET_SIZE(args) != 6) {
         PyErr_SetString(
             PyExc_TypeError,
-            "mc2_context_v0_read_debug_motion expects 5 arguments"
+            "mc2_context_v0_read_debug_motion expects 6 arguments"
         );
         return nullptr;
     }
@@ -474,7 +474,8 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    Buffer base_positions, base_rotations, restoration_targets, restoration_valid;
+    Buffer base_positions, base_rotations, restoration_targets;
+    Buffer restoration_vectors, restoration_valid;
     if (!base_positions.get(
             PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_motion_base_positions"
@@ -487,8 +488,12 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
             PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_angle_restoration_targets"
         ) ||
-        !restoration_valid.get(
+        !restoration_vectors.get(
             PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_angle_restoration_vectors"
+        ) ||
+        !restoration_valid.get(
+            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_angle_restoration_valid"
         )) {
         return nullptr;
@@ -500,6 +505,8 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
         !expect_2d(base_rotations, "out_motion_base_rotations", vertex_count, 4) ||
         !expect_float32(restoration_targets, "out_angle_restoration_targets") ||
         !expect_2d(restoration_targets, "out_angle_restoration_targets", vertex_count, 3) ||
+        !expect_float32(restoration_vectors, "out_angle_restoration_vectors") ||
+        !expect_2d(restoration_vectors, "out_angle_restoration_vectors", vertex_count, 3) ||
         !expect_uint8_scalar_array(restoration_valid, "out_angle_restoration_valid") ||
         !expect_1d_array(restoration_valid, "out_angle_restoration_valid", vertex_count)) {
         return nullptr;
@@ -516,12 +523,16 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
         context->animated_base_rotations.size() * sizeof(float)
     );
     auto* targets = static_cast<float*>(restoration_targets.view.buf);
+    auto* vectors = static_cast<float*>(restoration_vectors.view.buf);
     auto* valid = static_cast<std::uint8_t*>(restoration_valid.view.buf);
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         const auto offset = vertex * 3;
         targets[offset + 0] = context->step_basic_positions[offset + 0];
         targets[offset + 1] = context->step_basic_positions[offset + 1];
         targets[offset + 2] = context->step_basic_positions[offset + 2];
+        vectors[offset + 0] = 0.0f;
+        vectors[offset + 1] = 0.0f;
+        vectors[offset + 2] = 0.0f;
         valid[vertex] = 0;
         const auto parent = context->baseline_parents[vertex];
         if (parent < 0 || static_cast<std::size_t>(parent) >= count ||
@@ -529,15 +540,18 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
             continue;
         }
         const auto parent_offset = static_cast<std::size_t>(parent) * 3;
-        targets[offset + 0] = context->state_positions[parent_offset + 0] +
-            context->step_basic_positions[offset + 0] -
+        vectors[offset + 0] = context->step_basic_positions[offset + 0] -
             context->step_basic_positions[parent_offset + 0];
-        targets[offset + 1] = context->state_positions[parent_offset + 1] +
-            context->step_basic_positions[offset + 1] -
+        vectors[offset + 1] = context->step_basic_positions[offset + 1] -
             context->step_basic_positions[parent_offset + 1];
-        targets[offset + 2] = context->state_positions[parent_offset + 2] +
-            context->step_basic_positions[offset + 2] -
+        vectors[offset + 2] = context->step_basic_positions[offset + 2] -
             context->step_basic_positions[parent_offset + 2];
+        targets[offset + 0] = context->state_positions[parent_offset + 0] +
+            vectors[offset + 0];
+        targets[offset + 1] = context->state_positions[parent_offset + 1] +
+            vectors[offset + 1];
+        targets[offset + 2] = context->state_positions[parent_offset + 2] +
+            vectors[offset + 2];
         valid[vertex] = 1;
     }
     Py_RETURN_NONE;

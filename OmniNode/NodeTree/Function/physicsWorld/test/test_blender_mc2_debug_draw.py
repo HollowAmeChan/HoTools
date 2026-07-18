@@ -332,6 +332,7 @@ try:
         assert snapshot["motion"]["motion_base_positions"].flags.writeable is False
         assert snapshot["motion"]["motion_base_rotations_xyzw"].flags.writeable is False
         assert snapshot["motion"]["angle_restoration_target_positions"].flags.writeable is False
+        assert snapshot["motion"]["angle_restoration_target_vectors"].flags.writeable is False
         assert snapshot["motion"]["angle_restoration_target_valid"].flags.writeable is False
         assert np.count_nonzero(
             snapshot["motion"]["angle_restoration_target_valid"]

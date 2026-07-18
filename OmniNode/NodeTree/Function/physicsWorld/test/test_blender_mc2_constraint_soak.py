@@ -181,6 +181,17 @@ def _candidate(world, task):
     return candidate
 
 
+def _auto_step(world, task, frame, generation):
+    _set_world_frame(world, frame, frame - 1 if frame > 1 else None, generation)
+    returned, ready, status = solver_module.step_mc2(
+        world,
+        [task],
+        dt=1.0 / 90.0,
+    )
+    assert returned is world and ready is True, status
+    return _candidate(world, task)
+
+
 def _angle_restoration_rest_soak(obj):
     world = world_types.PhysicsWorldCache()
     generation = 41
@@ -205,14 +216,7 @@ def _angle_restoration_rest_soak(obj):
                     angle_limit_enabled=False,
                 )
                 assert task.task_id == stable_task_id
-            _set_world_frame(world, frame, frame - 1 if frame > 1 else None, generation)
-            returned, ready, status = solver_module.step_mc2(
-                world,
-                [task],
-                dt=1.0 / 90.0,
-            )
-            assert returned is world and ready is True, status
-            candidate = _candidate(world, task)
+            candidate = _auto_step(world, task, frame, generation)
             error = np.max(np.linalg.norm(candidate.world_positions - base, axis=1))
             assert error <= 2.0e-5, (frame, error)
             native_context = world.solver_slots[task.task_id].data["native_context"]
@@ -341,6 +345,172 @@ def _task_collider_scope_soak(objects):
         world.omni_cache_dispose("task_collider_scope_soak")
 
 
+def _distance_tether_soak(obj):
+    world = world_types.PhysicsWorldCache()
+    generation = 44
+    task = _task(
+        obj,
+        gravity=7.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        angle_restoration_enabled=False,
+        distance_stiffness=1.0,
+        bending_stiffness=0.0,
+    )
+    stable_task_id = task.task_id
+    base = _base_positions(obj)
+    edges = np.asarray([tuple(edge.vertices) for edge in obj.data.edges], dtype=np.int32)
+    rest_lengths = np.linalg.norm(base[edges[:, 1]] - base[edges[:, 0]], axis=1)
+    native_context = None
+    try:
+        for frame in range(1, 901):
+            if frame == 451:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _task(
+                    obj,
+                    gravity=7.0,
+                    gravity_direction=(0.0, 0.0, -1.0),
+                    angle_restoration_enabled=False,
+                    distance_stiffness=0.35,
+                    bending_stiffness=0.0,
+                )
+                assert task.task_id == stable_task_id
+            candidate = _auto_step(world, task, frame, generation)
+            lengths = np.linalg.norm(
+                candidate.world_positions[edges[:, 1]]
+                - candidate.world_positions[edges[:, 0]],
+                axis=1,
+            )
+            assert float(np.max(lengths / rest_lengths)) <= 1.55, (
+                frame,
+                float(np.max(lengths / rest_lengths)),
+            )
+            native_context = world.solver_slots[task.task_id].data["native_context"]
+            if frame == 451:
+                assert native_context is old_context
+                assert native_context.inspect()["parameter_revision"] == old_revision + 1
+        info = native_context.inspect()
+        assert info["distance_solve_count"] > 0
+        assert info["tether_solve_count"] > 0
+        print("[PASS] 900-frame Distance/Tether stretch and hot-update")
+    finally:
+        world.omni_cache_dispose("distance_tether_soak")
+
+
+def _run_bending_profile(obj, stiffness, generation):
+    world = world_types.PhysicsWorldCache()
+    task = _task(
+        obj,
+        gravity=8.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        angle_restoration_enabled=False,
+        distance_stiffness=0.8,
+        bending_stiffness=stiffness,
+        collision_mode=2,
+        radius=0.01,
+    )
+    try:
+        candidate = None
+        for frame in range(1, 901):
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": ({
+                    "key": "bending-sphere",
+                    "type": "SPHERE",
+                    "primary_group": 1,
+                    "center": (0.06, 0.08, -0.035),
+                    "radius": 0.045,
+                },),
+            }
+            candidate = _auto_step(world, task, frame, generation)
+        info = world.solver_slots[task.task_id].data["native_context"].inspect()
+        if stiffness > 0.0:
+            assert info["bending_solve_count"] > 0
+        else:
+            assert info["bending_solve_count"] == 0
+        positions = np.array(candidate.world_positions, copy=True)
+        rows = positions[:, 2].reshape((4, 4))
+        curvature = float(np.mean(np.abs(rows[:-2] - 2.0 * rows[1:-1] + rows[2:])))
+        return curvature, positions
+    finally:
+        world.omni_cache_dispose("bending_profile_soak")
+
+
+def _bending_soak(obj):
+    soft_curvature, soft_positions = _run_bending_profile(obj, 0.0, 45)
+    stiff_curvature, stiff_positions = _run_bending_profile(obj, 1.0, 46)
+    assert np.all(np.isfinite(soft_positions))
+    assert np.all(np.isfinite(stiff_positions))
+    assert max(soft_curvature, stiff_curvature) < 0.02
+    assert abs(stiff_curvature - soft_curvature) > 1.0e-3
+    assert not np.allclose(soft_positions, stiff_positions, atol=1.0e-6)
+    print("[PASS] 2x900-frame Triangle Bending response")
+
+
+def _angle_limit_soak(obj):
+    world = world_types.PhysicsWorldCache()
+    generation = 47
+    limit_degrees = 30.0
+    task = _task(
+        obj,
+        gravity=8.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        angle_restoration_enabled=False,
+        angle_limit_enabled=True,
+        angle_limit=limit_degrees,
+        angle_limit_stiffness=1.0,
+        distance_stiffness=0.8,
+        bending_stiffness=0.0,
+    )
+    try:
+        for frame in range(1, 1201):
+            candidate = _auto_step(world, task, frame, generation)
+            if frame == 1199:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_motion": False,
+                        "show_motion_base": True,
+                        "show_angle_restoration": False,
+                        "show_self": False,
+                    },
+                )
+        slot = world.solver_slots[task.task_id]
+        native_context = slot.data["native_context"]
+        motion = slot.data["_debug_draw_snapshot"]["motion"]
+        target_positions = motion["angle_restoration_target_positions"]
+        target_vectors = motion["angle_restoration_target_vectors"]
+        valid = motion["angle_restoration_target_valid"]
+        current = candidate.world_positions
+        attributes = np.asarray(
+            slot.data["mesh_static"].final_proxy.vertex_attributes,
+            dtype=np.uint8,
+        )
+        angles = []
+        for child, is_valid in enumerate(valid):
+            if not is_valid:
+                continue
+            base_vector = target_vectors[child]
+            parent_position = target_positions[child] - base_vector
+            parent_distances = np.linalg.norm(current - parent_position, axis=1)
+            parent = int(np.argmin(parent_distances))
+            if parent_distances[parent] > 1.0e-5 or attributes[parent] & 0x02:
+                continue
+            current_vector = current[child] - parent_position
+            base_length = float(np.linalg.norm(base_vector))
+            current_length = float(np.linalg.norm(current_vector))
+            if min(base_length, current_length) <= 1.0e-8:
+                continue
+            cosine = float(np.dot(base_vector, current_vector) / (base_length * current_length))
+            angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+        assert angles
+        assert max(angles) <= limit_degrees + 5.0, max(angles)
+        assert native_context.inspect()["angle_solve_count"] > 0
+        print("[PASS] 1200-frame Angle Limit target bound")
+    finally:
+        world.omni_cache_dispose("angle_limit_soak")
+
+
 def _remove_object(obj):
     mesh = obj.data
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -366,6 +536,9 @@ def main():
         _angle_restoration_rest_soak(objects[0])
         _motion_base_soak(objects[0])
         _task_collider_scope_soak(objects)
+        _distance_tether_soak(objects[0])
+        _bending_soak(objects[0])
+        _angle_limit_soak(objects[0])
     finally:
         for obj in objects:
             if obj.name in bpy.data.objects:

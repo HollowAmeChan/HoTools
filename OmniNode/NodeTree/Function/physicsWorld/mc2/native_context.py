@@ -822,18 +822,21 @@ class MC2NativeContextV0:
             motion_base_positions = np.empty((self.vertex_count, 3), dtype=np.float32)
             motion_base_rotations = np.empty((self.vertex_count, 4), dtype=np.float32)
             angle_targets = np.empty((self.vertex_count, 3), dtype=np.float32)
+            angle_vectors = np.empty((self.vertex_count, 3), dtype=np.float32)
             angle_valid = np.empty((self.vertex_count,), dtype=np.uint8)
             self._module.mc2_context_v0_read_debug_motion(
                 self._handle,
                 motion_base_positions,
                 motion_base_rotations,
                 angle_targets,
+                angle_vectors,
                 angle_valid,
             )
             snapshot.update({
                 "motion_base_positions": self._debug_array(motion_base_positions),
                 "motion_base_rotations_xyzw": self._debug_array(motion_base_rotations),
                 "angle_restoration_target_positions": self._debug_array(angle_targets),
+                "angle_restoration_target_vectors": self._debug_array(angle_vectors),
                 "angle_restoration_target_valid": self._debug_array(angle_valid),
             })
             readbacks += 1

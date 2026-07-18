@@ -212,6 +212,9 @@ def _motion_payload(slot, native_snapshot) -> dict:
         "angle_restoration_target_positions": native_snapshot.get(
             "angle_restoration_target_positions"
         ),
+        "angle_restoration_target_vectors": native_snapshot.get(
+            "angle_restoration_target_vectors"
+        ),
         "angle_restoration_target_valid": native_snapshot.get(
             "angle_restoration_target_valid"
         ),
