@@ -522,6 +522,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
+| Blender 4.5约束专项soak | Angle Restoration production frame零力静置/热更新900帧；Motion BasePosition/max-distance移动边界900帧；双task外碰scope 600帧 |
 | Blender 4.5维护态soak | 180帧；mean/P95/max `2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 

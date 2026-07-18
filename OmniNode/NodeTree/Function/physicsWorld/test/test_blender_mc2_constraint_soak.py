@@ -1,0 +1,379 @@
+"""Long-run MC2 constraint and task-scope acceptance cases."""
+
+from __future__ import annotations
+
+import importlib
+import math
+import os
+import sys
+import types
+
+import bpy
+import numpy as np
+
+
+HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
+FUNCTION = os.path.join(NODETREE, "Function")
+PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
+
+for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", os.path.join(HOTOOLS, "OmniNode")),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PW_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules[package_name] = module
+
+
+physics_blender = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender"
+)
+parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
+specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+)
+topology_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
+)
+frame_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
+)
+center_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state"
+)
+debug_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
+solver_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
+)
+world_types = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+)
+
+
+def _grid(name: str, x_offset: float = 0.0, *, size: int = 4):
+    vertices = [
+        (x_offset + x * 0.04, y * 0.04, 0.0)
+        for y in range(size)
+        for x in range(size)
+    ]
+    faces = []
+    for y in range(size - 1):
+        for x in range(size - 1):
+            a = y * size + x
+            b = a + 1
+            c = a + size
+            d = c + 1
+            faces.extend(((a, b, d), (a, d, c)))
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(vertices, (), faces)
+    uv = mesh.uv_layers.new(name="UVMap")
+    for loop in mesh.loops:
+        vertex = vertices[loop.vertex_index]
+        uv.data[loop.index].uv = (
+            (vertex[0] - x_offset) / max((size - 1) * 0.04, 1.0e-6),
+            vertex[1] / max((size - 1) * 0.04, 1.0e-6),
+        )
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    pin = obj.vertex_groups.new(name="Pin")
+    pin.add(tuple(range(size)), 1.0, "REPLACE")
+    props = obj.hotools_mesh_collision
+    props.pin_enabled = True
+    props.pin_vertex_group = pin.name
+    props.collided_by_groups = 1
+    return obj
+
+
+def _task(obj, **profile_overrides):
+    defaults = {
+        "gravity": 0.0,
+        "damping": 0.05,
+        "stabilization_time_after_reset": 0.0,
+        "collision_mode": 0,
+        "self_collision_mode": 0,
+    }
+    defaults.update(profile_overrides)
+    return specs.make_mc2_task_spec(
+        "mesh_cloth",
+        [obj],
+        profile=parameters.make_mc2_particle_profile(**defaults),
+    )
+
+
+def _base_positions(obj):
+    return np.asarray([tuple(vertex.co) for vertex in obj.data.vertices], dtype=np.float32)
+
+
+def _frame_input(task, topology, frame, positions, *, generation):
+    rotations = np.zeros((len(positions), 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
+    return frame_state.make_mc2_frame_input(
+        task_id=task.task_id,
+        topology_signature=topology.topology_signature,
+        frame=frame,
+        generation=generation,
+        world_positions=positions,
+        world_rotations_xyzw=rotations,
+        source_world_linear=np.eye(3, dtype=np.float32),
+        center_frame_pose=center_state.MC2CenterFramePoseSpec(
+            frame=frame,
+            generation=generation,
+            component_identity=task.task_id,
+            component_world_position=(0.0, 0.0, 0.0),
+            component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            component_world_scale=(1.0, 1.0, 1.0),
+        ),
+    )
+
+
+def _set_world_frame(world, frame, previous, generation):
+    context = world.frame_context
+    context.previous_frame = previous
+    context.frame = frame
+    context.same_frame = previous == frame
+    context.continuous = previous is not None and frame == previous + 1
+    context.raw_dt = 1.0 / 90.0
+    context.dt = 1.0 / 90.0
+    context.generation = generation
+    world.generation = generation
+
+
+def _step(world, task_list, topology_by_id, frame, positions_by_id, generation):
+    previous = frame - 1 if frame > 1 else None
+    _set_world_frame(world, frame, previous, generation)
+    inputs = {
+        task.task_id: _frame_input(
+            task,
+            topology_by_id[task.task_id],
+            frame,
+            positions_by_id[task.task_id],
+            generation=generation,
+        )
+        for task in task_list
+    }
+    returned, ready, status = solver_module.step_mc2(
+        world,
+        task_list,
+        frame_inputs=inputs,
+        dt=1.0 / 90.0,
+    )
+    assert returned is world and ready is True, status
+    return inputs
+
+
+def _candidate(world, task):
+    candidate = world.solver_slots[task.task_id].data["result_candidate"]
+    assert np.all(np.isfinite(candidate.world_positions))
+    assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+    return candidate
+
+
+def _angle_restoration_rest_soak(obj):
+    world = world_types.PhysicsWorldCache()
+    generation = 41
+    task = _task(
+        obj,
+        angle_restoration_enabled=True,
+        angle_restoration_stiffness=0.2,
+        angle_limit_enabled=False,
+    )
+    stable_task_id = task.task_id
+    base = _base_positions(obj)
+    native_context = None
+    try:
+        for frame in range(1, 901):
+            if frame == 451:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _task(
+                    obj,
+                    angle_restoration_enabled=True,
+                    angle_restoration_stiffness=0.85,
+                    angle_limit_enabled=False,
+                )
+                assert task.task_id == stable_task_id
+            _set_world_frame(world, frame, frame - 1 if frame > 1 else None, generation)
+            returned, ready, status = solver_module.step_mc2(
+                world,
+                [task],
+                dt=1.0 / 90.0,
+            )
+            assert returned is world and ready is True, status
+            candidate = _candidate(world, task)
+            error = np.max(np.linalg.norm(candidate.world_positions - base, axis=1))
+            assert error <= 2.0e-5, (frame, error)
+            native_context = world.solver_slots[task.task_id].data["native_context"]
+            if frame == 451:
+                assert native_context is old_context
+                assert native_context.inspect()["parameter_revision"] == old_revision + 1
+        print("[PASS] 900-frame Angle Restoration zero-force rest/hot-update")
+    finally:
+        world.omni_cache_dispose("angle_restoration_soak")
+        if native_context is not None:
+            assert native_context.inspect()["released"] is True
+
+
+def _motion_base_soak(obj):
+    world = world_types.PhysicsWorldCache()
+    generation = 42
+    task = _task(
+        obj,
+        angle_restoration_enabled=False,
+        max_distance_enabled=True,
+        max_distance=0.03,
+        backstop_enabled=False,
+        motion_stiffness=1.0,
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    local = _base_positions(obj)
+    last_positions = None
+    try:
+        for frame in range(1, 901):
+            translation = np.asarray(
+                (0.06 * math.sin(frame * 0.031), 0.0, 0.0),
+                dtype=np.float32,
+            )
+            positions = local + translation
+            last_positions = positions
+            _step(
+                world,
+                [task],
+                {task.task_id: topology},
+                frame,
+                {task.task_id: positions},
+                generation,
+            )
+            candidate = _candidate(world, task)
+            distance = np.linalg.norm(candidate.world_positions - positions, axis=1)
+            assert float(np.max(distance)) <= 0.031, (frame, float(np.max(distance)))
+            if frame == 899:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_motion": True,
+                        "show_motion_base": True,
+                        "show_angle_restoration": False,
+                        "show_self": False,
+                    },
+                )
+        snapshot = world.solver_slots[task.task_id].data["_debug_draw_snapshot"]
+        np.testing.assert_allclose(
+            snapshot["motion"]["motion_base_positions"],
+            last_positions,
+            atol=1.0e-6,
+        )
+        assert snapshot["frame"] == 900
+        print("[PASS] 900-frame Motion BasePosition/max-distance boundary")
+    finally:
+        world.omni_cache_dispose("motion_base_soak")
+
+
+def _task_collider_scope_soak(objects):
+    world = world_types.PhysicsWorldCache()
+    generation = 43
+    tasks = tuple(
+        _task(
+            obj,
+            angle_restoration_enabled=False,
+            collision_mode=2,
+            radius=0.01,
+        )
+        for obj in objects
+    )
+    topologies = {
+        task.task_id: topology_module.build_mc2_topology_spec(task)
+        for task in tasks
+    }
+    positions = {task.task_id: _base_positions(task.sources[0]) for task in tasks}
+    try:
+        for frame in range(1, 601):
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": (
+                    {
+                        "key": "scope-sphere",
+                        "owner": objects[1],
+                        "type": "SPHERE",
+                        "primary_group": 1,
+                        "center": (0.08, 0.08, -0.03),
+                        "radius": 0.02,
+                    },
+                    {
+                        "key": "scope-capsule",
+                        "owner": objects[0],
+                        "type": "CAPSULE",
+                        "primary_group": 1,
+                        "center": (0.28, 0.08, 0.0),
+                        "segment_a": (0.28, 0.04, -0.02),
+                        "segment_b": (0.28, 0.12, 0.02),
+                        "radius": 0.01,
+                    },
+                ),
+            }
+            _step(world, tasks, topologies, frame, positions, generation)
+            for task in tasks:
+                _candidate(world, task)
+            if frame == 599:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_collision": True, "show_self": False},
+                )
+        first = world.solver_slots[tasks[0].task_id].data["_debug_draw_snapshot"]
+        second = world.solver_slots[tasks[1].task_id].data["_debug_draw_snapshot"]
+        assert first["collision"]["colliders"]["keys"] == ("scope-sphere",)
+        assert second["collision"]["colliders"]["keys"] == ("scope-capsule",)
+        assert first["frame"] == second["frame"] == 600
+        print("[PASS] 600-frame per-task external collider scope")
+    finally:
+        world.omni_cache_dispose("task_collider_scope_soak")
+
+
+def _remove_object(obj):
+    mesh = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+
+
+def _remove_source_with_proxy(obj):
+    proxy = obj.hotools_mesh_collision.mc2_base_pose_proxy
+    _remove_object(obj)
+    if proxy is not None and proxy.name in bpy.data.objects:
+        _remove_object(proxy)
+
+
+def main():
+    physics_blender.register()
+    objects = ()
+    try:
+        objects = (
+            _grid("MC2ConstraintSoakA", 0.0),
+            _grid("MC2ConstraintSoakB", 0.24),
+        )
+        _angle_restoration_rest_soak(objects[0])
+        _motion_base_soak(objects[0])
+        _task_collider_scope_soak(objects)
+    finally:
+        for obj in objects:
+            if obj.name in bpy.data.objects:
+                _remove_source_with_proxy(obj)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+    print("MC2 constraint soak: PASS")
+
+
+if __name__ == "__main__":
+    main()
