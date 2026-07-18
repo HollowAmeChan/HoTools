@@ -128,6 +128,7 @@ def _bone_collision_type_from_socket(value) -> str:
     },
     omni_presets=_SPRING_VRM_CHAIN_PRESETS,
     _OUTPUT_NAME=["骨链属性"],
+    mute_passthrough=False,
     omni_description="""
     从 Bone socket 列表生成 VRM SpringBone 骨链属性。
 
@@ -162,6 +163,7 @@ def physicsSpringVRMChainProperties(
         "vrm_chain_properties": {"description": "一条或多条VRM骨链属性"},
     },
     _OUTPUT_NAME=["VRM骨链任务"],
+    mute_passthrough=False,
     omni_description="""
     把VRM骨链属性整理成任务列表，直接连接到SpringBone VRM模拟步。
     本节点不读写物理世界，不创建solver slot，也不推进模拟。
@@ -213,6 +215,7 @@ def physicsSpringVRMChainTask(
         },
     },
     _OUTPUT_NAME=["骨骼碰撞覆写"],
+    mute_passthrough=False,
     omni_description="""
     构建 bone_collision.override 隐式对象 payload。
     未勾选覆写的字段会继续从 solver 拥有的 Bone.hotools_collision 显式参数或 capability 默认值读取。

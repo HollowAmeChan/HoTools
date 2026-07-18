@@ -280,7 +280,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     3. 直接保存图像到指定文件路径，支持的格式：PNG, JPG, JPEG, TGA, BMP，然后导入到Blender中
     4. 膨胀像素数用于消除UV边缘缝隙
     """,
-    mute_passthrough={"_OUTPUT0": "img"},
+    mute_passthrough={"_OUTPUT0": "img", "_OUTPUT1": "file_path"},
     )
 def uv_reprojectionTransfer(
     objs:list[bpy.types.Object],
@@ -921,6 +921,12 @@ def _single_channel_to_rgba(channel: np.ndarray) -> np.ndarray:
     将输入图片拆分为 R/G/B/A 四张灰度通道图。
     输出图会自动命名为 前缀_R、前缀_G、前缀_B、前缀_A，且默认使用 Non-Color 色彩空间。
     """,
+    mute_passthrough={
+        "_OUTPUT0": "img",
+        "_OUTPUT1": "img",
+        "_OUTPUT2": "img",
+        "_OUTPUT3": "img",
+    },
 )
 def splitImageChannels(
     img: bpy.types.Image,
@@ -1031,7 +1037,7 @@ def mergeImageChannels(
     强度为 0 时输出平面法线，强度为 1 时保持原图，强度大于 1 时增强凹凸。
     输出图像自动使用 Non-Color 色彩空间；填写文件路径时会同时保存到磁盘。
     """,
-    mute_passthrough={"_OUTPUT0": "img"},
+    mute_passthrough={"_OUTPUT0": "img", "_OUTPUT1": "file_path"},
 )
 def adjustNormalMapStrength(
     img: bpy.types.Image,

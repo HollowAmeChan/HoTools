@@ -121,7 +121,7 @@ def _get_render_color_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
         颜色类型可选 BYTE_COLOR（8位颜色）或 FLOAT_COLOR（32位颜色）。
         属性域可选 POINT（顶点）、CORNER（角落/面-顶点）、EDGE（边）或 FACE（面）。
     """,
-    mute_passthrough={"_OUTPUT0": "obj"},
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT2": "attribute_name"},
 )
 def objectCreateColorAttribute(
     obj: bpy.types.Object,
@@ -271,7 +271,7 @@ def objectGetColorAttributeIndex(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性", "新名称"],
     _OUTPUT_NAME=["顶点色属性", "属性名称"],
-    mute_passthrough={"_OUTPUT0": "color_attribute"},
+    mute_passthrough={"_OUTPUT0": "color_attribute", "_OUTPUT1": "new_name"},
 )
 def colorAttributeRename(
     color_attribute: _OmniColorAttribute,

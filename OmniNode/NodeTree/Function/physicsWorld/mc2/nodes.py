@@ -304,6 +304,7 @@ def _profile_meta(fields: tuple[str, ...], *, label: str, description: str) -> d
         "input_init": {name: _PROFILE_INPUT_INIT[name] for name in fields},
         "omni_presets": _profile_presets(fields),
         "_OUTPUT_NAME": ["MC2粒子配置"],
+        "mute_passthrough": False,
         "omni_description": description,
     }
 
@@ -501,6 +502,7 @@ def physicsMC2BoneSpringProfile(
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     _OUTPUT_NAME=["MC2任务"],
+    mute_passthrough=False,
 )
 def physicsMC2MeshClothTask(
     mesh_objects: list[bpy.types.Object],
@@ -534,6 +536,7 @@ def physicsMC2MeshClothTask(
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     _OUTPUT_NAME=["MC2任务"],
+    mute_passthrough=False,
 )
 def physicsMC2BoneClothTask(
     control_bones: list[_OmniBone],
@@ -570,6 +573,7 @@ def physicsMC2BoneClothTask(
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     _OUTPUT_NAME=["MC2任务"],
+    mute_passthrough=False,
 )
 def physicsMC2BoneSpringTask(
     root_bones: list[_OmniBone],

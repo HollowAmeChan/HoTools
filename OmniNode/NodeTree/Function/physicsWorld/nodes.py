@@ -41,6 +41,7 @@ from .writeback import apply_all_writebacks
     is_output_node=False,
     _INPUT_NAME=["集合", "递归子集合"],
     _OUTPUT_NAME=["对象列表"],
+    mute_passthrough=False,
     omni_description="""
     从 Blender Collection 收集对象列表，供 Physics Object Scope 节点使用。
 
@@ -64,6 +65,7 @@ def physicsObjectsFromCollection(
     is_output_node=False,
     _INPUT_NAME=["场景", "包含隐藏"],
     _OUTPUT_NAME=["对象列表"],
+    mute_passthrough=False,
     omni_description="""
     从整个场景收集所有对象，供 Physics Object Scope 节点使用。
 
@@ -94,6 +96,7 @@ def physicsObjectsFromScene(
         "包含隐藏",
     ],
     _OUTPUT_NAME=["对象范围"],
+    mute_passthrough=False,
     omni_description="""
     把对象列表和物理类型过滤开关封装成 PhysicsObjectScope，传入物理世界-帧开始。
 
@@ -149,6 +152,7 @@ def physicsObjectScope(
         "substeps": {"min_value": 1, "max_value": 16},
     },
     _OUTPUT_NAME=["物理世界", "当前帧", "碰撞体数量", "需要重启"],
+    mute_passthrough=False,
     omni_description="""
     物理世界帧开始节点。
 

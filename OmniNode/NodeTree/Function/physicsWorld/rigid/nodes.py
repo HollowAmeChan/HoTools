@@ -364,6 +364,7 @@ def physicsRigidRayCast(
         "priority": {"min_value": -255, "max_value": 255},
     },
     _OUTPUT_NAME=["Jolt刚体世界设置属性"],
+    mute_passthrough=False,
     omni_description="""
     构造 Jolt 刚体世界级设置对象。当前落地项是 Jolt 刚体世界 gravity 和容量上限；
     对象本身不访问 Jolt，
@@ -497,6 +498,7 @@ def physicsRigidJoltWorldSettingsRegister(
         "rack_and_pinion_ratio": {"min_value": 0.0001},
     },
     _OUTPUT_NAME=["生成约束属性"],
+    mute_passthrough=False,
     omni_description="""
     构造可注册到物理世界的刚体生成约束属性。
 

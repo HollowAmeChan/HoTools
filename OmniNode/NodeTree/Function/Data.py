@@ -599,6 +599,7 @@ _CURVE_PREVIEW_STACK_PRESETS = [
       _INPUT_NAME=["浮点曲线 A", "颜色曲线 A", "浮点曲线 B", "颜色曲线 B"],
       _OUTPUT_NAME=["浮点曲线", "颜色曲线"],
       omni_presets=_CURVE_PREVIEW_STACK_PRESETS,
+      mute_passthrough={"_OUTPUT0": "float_a", "_OUTPUT1": "color_a"},
       )
 def curvePreviewStackTest(
         float_a: _OmniFloatCurve,

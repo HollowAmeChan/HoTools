@@ -72,7 +72,7 @@ def _get_vertex_group_by_index(obj: bpy.types.Object, group_index: int) -> bpy.t
     在目标物体上创建一个顶点组。
     如果同名顶点组已经存在，则直接返回已有顶点组。
     """,
-    mute_passthrough={"_OUTPUT0": "obj"},
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT2": "group_name"},
 )
 def objectCreateVertexGroup(
     obj: bpy.types.Object,
@@ -186,7 +186,7 @@ def vertexGroupGetObject(
     is_output_node=False,
     _INPUT_NAME=["顶点组", "新名称"],
     _OUTPUT_NAME=["顶点组", "顶点组名称"],
-    mute_passthrough={"_OUTPUT0": "vertex_group"},
+    mute_passthrough={"_OUTPUT0": "vertex_group", "_OUTPUT1": "new_name"},
 )
 def vertexGroupRename(
     vertex_group: _OmniVertexGroup,

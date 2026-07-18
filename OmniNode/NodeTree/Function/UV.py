@@ -69,7 +69,7 @@ def _find_uv_layer_index(obj: bpy.types.Object, uv_layer: bpy.types.MeshUVLoopLa
     在目标 Mesh 上创建一个 UV 槽。
     如果同名 UV 槽已经存在，则直接返回已有的 UV 槽。
     """,
-    mute_passthrough={"_OUTPUT0": "obj"},
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT2": "uv_name"},
 )
 def objectCreateUVLayer(
     obj: bpy.types.Object,
@@ -215,7 +215,7 @@ def objectGetUVLayerIndex(
     omni_description="""
     重命名目标 UV 层。
     """,
-    mute_passthrough={"_OUTPUT0": "uv_layer"},
+    mute_passthrough={"_OUTPUT0": "uv_layer", "_OUTPUT1": "new_name"},
 )
 def uvLayerRename(
     uv_layer: _OmniUVLayer,

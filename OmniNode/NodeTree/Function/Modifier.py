@@ -140,7 +140,7 @@ def _apply_modifier_operator(obj: bpy.types.Object, modifier: bpy.types.Modifier
     给目标物体添加一个修改器。
     如果修改器名称为空，会根据修改器类型自动生成默认名称。
     """,
-    mute_passthrough={"_OUTPUT0": "obj"},
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT1": "modifier_name"},
 )
 def objectAddModifier(
     obj: bpy.types.Object,
