@@ -650,6 +650,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；完整场景重复两次并比较最终粒子/写回数组摘要以验证确定性 |
 | Blender 4.5 Bone角度soak | BoneCloth/BoneSpring各900帧并重复两次；Restoration/Limit在301/601帧关闭与重开，context不重建且关闭区间solve count冻结；BoneCloth强制同时包含connected旋转写回与disconnected位移旋转写回。默认阻尼下静置漂移预算分别为`0.00005m`与`0.0016m`，因此只记为bounded drift，不冒充严格zero-force rest |
 | Blender 4.5 Bone Motion soak | BoneCloth 900帧并重复两次；同时包含connected/disconnected写回，前半程MaxDistance、451帧同context热开Backstop，逐帧相对动画基准距离不超过`0.031m`，最终debug Motion BasePosition逐点等于动画输入 |
+| Blender 4.5 Bone外碰soak | BoneCloth Edge与BoneSpring固定Point各900帧并重复两次；真实Sphere轻微压入并产生非零响应，451帧同context热更新半径/soft limit。BoneCloth逐帧覆盖connected/disconnected写回并以链总长约束跨度和回转范围；BoneSpring最大偏移`0.0102m`且受`collision_limit_distance`约束；最终debug快照包含该task实际上传的Sphere |
 | Blender 4.5维护态soak | 180帧；mean/P95/max历史基线`2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放；每个真实帧要求三setup各自产生新candidate且frame/generation精确，same-frame要求复用 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 
@@ -657,7 +658,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-当前九个能力族仍均为`gap`：Distance/Tether、Angle Restoration、Angle Limit、Motion、External Collision和Self Collision缺少声明的Bone setup；多数能力缺少字段分支变化与确定性复跑；debug acceptance layer目前只表示待验收库存，绘制批次非空不证明几何语义正确。运行门禁仍按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition/Backstop、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
+当前九个能力族仍均为`gap`。BoneCloth/BoneSpring的Angle和外碰真实响应、BoneCloth Motion已经补入生产路径长时证据，但不能替代仍缺失的字段分支、Mesh外碰响应/确定性、Bone外碰task scope、Bone Motion确定性以及各setup专项不变量。debug acceptance layer目前只表示待验收库存，绘制批次非空不证明几何语义正确。运行门禁仍按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak；外碰摩擦、self interaction、Center/Teleport和最终输出映射必须由各自行为断言闭环。
 
 当前没有MC2发布阻断项。
 

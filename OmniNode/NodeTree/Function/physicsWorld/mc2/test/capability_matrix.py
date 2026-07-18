@@ -241,6 +241,9 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "collision_dynamic_friction", "collision_static_friction",
             "collision_mode", "radius", "collision_limit_distance",
         ),
+        "field_setups": {
+            "collision_limit_distance": ("bone_spring",),
+        },
         "required_invariants": (
             "finite", "deterministic", "task_scope_exact", "contact_response_bounded",
         ),
@@ -250,6 +253,25 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("mesh_cloth",),
             "fields": ("collision_mode", "radius"),
             "invariants": ("finite", "task_scope_exact"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_external_collision",
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": ("collision_mode", "radius"),
+            "invariants": (
+                "finite", "deterministic", "contact_response_bounded",
+                "parameter_hot_update_in_place",
+                "connected_disconnected_writeback",
+            ),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_external_collision",
+            "frames": 900,
+            "setups": ("bone_spring",),
+            "fields": ("collision_mode", "radius", "collision_limit_distance"),
+            "invariants": (
+                "finite", "deterministic", "contact_response_bounded",
+                "parameter_hot_update_in_place", "soft_collision_limit_bounded",
+            ),
         },),
         "status": "gap",
     },

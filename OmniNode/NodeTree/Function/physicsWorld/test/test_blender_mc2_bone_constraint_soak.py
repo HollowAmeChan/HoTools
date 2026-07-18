@@ -1,8 +1,9 @@
-"""Long-run BoneCloth/BoneSpring angle-constraint branch acceptance."""
+"""Long-run BoneCloth/BoneSpring angle, Motion, and collision acceptance."""
 
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import sys
 
@@ -286,15 +287,208 @@ def bone_motion_constraints():
     print("[PASS] BoneCloth Motion: connected/disconnected x 2 x 900 frames")
 
 
+def _run_bone_external_collision(setup_type):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 75
+    is_spring = setup_type == names.MC2_SETUP_BONE_SPRING
+    armature = mixed._armature(
+        f"MC2Collision_{setup_type}",
+        0.0,
+        1.15 if is_spring else 0.9,
+    )
+
+    def make_task(*, radius, collision_limit):
+        profile = parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.05,
+            stabilization_time_after_reset=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            radius=radius,
+            collision_mode=2,
+            collision_limit_distance=collision_limit,
+            max_distance_enabled=False,
+            backstop_enabled=False,
+            self_collision_mode=0,
+            teleport_mode=0,
+        )
+        source = {"armature": armature, "bone": "Root"}
+        if is_spring:
+            tasks, _task_names = nodes.physicsMC2BoneSpringTask(
+                [source],
+                profile=profile,
+                collided_by_groups=1,
+            )
+        else:
+            tasks, _task_names = nodes.physicsMC2BoneClothTask(
+                [source],
+                profile=profile,
+                connection_mode=0,
+                collided_by_groups=1,
+            )
+        assert len(tasks) == 1
+        return tasks[0]
+
+    task = make_task(radius=0.012, collision_limit=0.03)
+    stable_task_id = task.task_id
+    topology = topology_module.build_mc2_topology_spec(task)
+    animation_input = bone_frame_input.build_mc2_bone_frame_input(
+        task,
+        topology,
+        frame=1,
+        generation=world.generation,
+    )
+    target_index = min(2, topology.particle_count - 1)
+    target = np.asarray(animation_input.world_positions[target_index], dtype=np.float64)
+    rest_chain_length = float(np.sum(np.linalg.norm(
+        np.diff(animation_input.world_positions, axis=0),
+        axis=1,
+    )))
+    orbit_budget = rest_chain_length * 2.0 + 0.05
+    span_budget = rest_chain_length * 1.25 + 0.01
+    context = None
+    max_response = 0.0
+    max_soft_limit_distance = 0.0
+    try:
+        for frame in range(1, 901):
+            active_limit = 0.03 if frame < 451 else 0.05
+            if frame == 451:
+                context = world.solver_slots[task.task_id].data["native_context"]
+                revision = context.inspect()["parameter_revision"]
+                task = make_task(radius=0.016, collision_limit=active_limit)
+                assert task.task_id == stable_task_id
+
+            collider_center = target + np.asarray((
+                0.033 + 0.002 * math.sin(frame * 0.071),
+                0.0,
+                0.0,
+            ))
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": ({
+                    "key": f"bone-collision-{setup_type}",
+                    "type": "SPHERE",
+                    "primary_group": 1,
+                    "center": tuple(float(value) for value in collider_center),
+                    "radius": 0.025,
+                },),
+            }
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            response = np.linalg.norm(
+                candidate.world_positions - animation_input.world_positions,
+                axis=1,
+            )
+            frame_response = float(np.max(response))
+            max_response = max(max_response, frame_response)
+            assert frame_response <= orbit_budget, (
+                setup_type,
+                frame,
+                frame_response,
+                orbit_budget,
+            )
+            positions = candidate.world_positions
+            pairwise_span = float(np.max(np.linalg.norm(
+                positions[:, None, :] - positions[None, :, :],
+                axis=2,
+            )))
+            assert pairwise_span <= span_budget, (
+                setup_type,
+                frame,
+                pairwise_span,
+                span_budget,
+            )
+            if is_spring:
+                max_soft_limit_distance = max(max_soft_limit_distance, frame_response)
+                assert frame_response <= active_limit + 1.0e-3, (
+                    setup_type,
+                    frame,
+                    frame_response,
+                    active_limit,
+                )
+            else:
+                plan = slot.data["writeback_plan"]
+                assert plan["rotation_only_connected_count"] > 0
+                assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+
+            info = slot.data["native_context"].inspect()
+            assert info["collider_count"] == 1
+            if frame == 451:
+                assert slot.data["native_context"] is context
+                assert info["parameter_revision"] == revision + 1
+            if frame == 899:
+                mixed.debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_collision": True, "show_self": False},
+                )
+
+        slot = world.solver_slots[task.task_id]
+        info = slot.data["native_context"].inspect()
+        if is_spring:
+            assert info["point_collision_solve_count"] > 0
+            assert info["edge_collision_solve_count"] == 0
+        else:
+            assert info["edge_collision_solve_count"] > 0
+        assert max_response > 1.0e-4, (setup_type, max_response)
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["frame"] == 900
+        assert snapshot["collision"]["colliders"]["keys"] == (
+            f"bone-collision-{setup_type}",
+        )
+        candidate = slot.data["result_candidate"]
+        digest = hashlib.sha256()
+        digest.update(np.asarray(candidate.world_positions).tobytes())
+        digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+        print(
+            f"[INFO] {setup_type} external collision max response: "
+            f"{max_response:.9f}m"
+            + (
+                f" / soft limit max {max_soft_limit_distance:.9f}m"
+                if is_spring else ""
+            )
+        )
+        return digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_external_collision_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_external_collision():
+    for setup_type in (
+        names.MC2_SETUP_BONE_CLOTH,
+        names.MC2_SETUP_BONE_SPRING,
+    ):
+        first = _run_bone_external_collision(setup_type)
+        second = _run_bone_external_collision(setup_type)
+        assert first == second, (setup_type, first, second)
+    print("[PASS] Bone external collision: 2 setups x 2 x 900 frames")
+
+
 def main():
     mixed.physics_blender.register()
     try:
         bone_angle_constraints()
         bone_motion_constraints()
+        bone_external_collision()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()
-    print("MC2 Bone angle constraint soak: PASS")
+    print("MC2 Bone constraint soak: PASS")
 
 
 if __name__ == "__main__":
