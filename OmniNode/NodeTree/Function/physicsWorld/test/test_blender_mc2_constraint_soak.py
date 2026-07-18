@@ -139,6 +139,31 @@ def _frame_input(task, topology, frame, positions, *, generation):
     )
 
 
+def _center_frame_input(task, topology, frame, positions, component_position, generation):
+    rotations = np.zeros((len(positions), 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
+    return frame_state.make_mc2_frame_input(
+        task_id=task.task_id,
+        topology_signature=topology.topology_signature,
+        frame=frame,
+        generation=generation,
+        world_positions=positions,
+        world_rotations_xyzw=rotations,
+        source_world_linear=np.eye(3, dtype=np.float32),
+        center_frame_pose=center_state.MC2CenterFramePoseSpec(
+            frame=frame,
+            generation=generation,
+            component_identity=task.task_id,
+            component_world_position=component_position,
+            component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            component_world_scale=(1.0, 1.0, 1.0),
+            anchor_identity=f"anchor:{task.task_id}",
+            anchor_world_position=(0.0, 0.0, 0.0),
+            anchor_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        ),
+    )
+
+
 def _set_world_frame(world, frame, previous, generation):
     context = world.frame_context
     context.previous_frame = previous
@@ -511,6 +536,158 @@ def _angle_limit_soak(obj):
         world.omni_cache_dispose("angle_limit_soak")
 
 
+def _center_keep_teleport_soak(obj):
+    world = world_types.PhysicsWorldCache()
+    generation = 48
+    task = _task(
+        obj,
+        gravity=0.0,
+        angle_restoration_enabled=False,
+        world_inertia=0.35,
+        anchor_inertia=0.25,
+        movement_inertia_smoothing=0.5,
+        movement_speed_limit=2.0,
+        rotation_speed_limit=360.0,
+        teleport_mode=2,
+        teleport_distance=0.25,
+        teleport_rotation=45.0,
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    local = _base_positions(obj)
+    keep_teleport_count = 0
+    try:
+        for frame in range(1, 1201):
+            jump = 1.0 if frame >= 601 else 0.0
+            component = (
+                jump + 0.08 * math.sin(frame * 0.019),
+                0.03 * math.sin(frame * 0.011),
+                0.0,
+            )
+            positions = local + np.asarray(component, dtype=np.float32)
+            _set_world_frame(
+                world,
+                frame,
+                frame - 1 if frame > 1 else None,
+                generation,
+            )
+            frame_input = _center_frame_input(
+                task,
+                topology,
+                frame,
+                positions,
+                component,
+                generation,
+            )
+            returned, ready, status = solver_module.step_mc2(
+                world,
+                [task],
+                frame_inputs={task.task_id: frame_input},
+                dt=1.0 / 90.0,
+            )
+            assert returned is world and ready is True, status
+            _candidate(world, task)
+            shift_result = world.solver_slots[task.task_id].data[
+                "center_frame_shift_result"
+            ]
+            keep_teleport_count += int(
+                bool(getattr(shift_result, "keep_teleport", False))
+            )
+            if frame == 1199:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_center": True, "show_self": False},
+                )
+        slot = world.solver_slots[task.task_id]
+        info = slot.data["native_context"].inspect()
+        assert keep_teleport_count >= 1
+        assert info["center_step_count"] > 0
+        center = slot.data["_debug_draw_snapshot"]["center"]
+        assert center["frame_sync"]["action"] == "updated"
+        assert center["frame_shift"]["keep_teleport"] is False
+        assert np.all(np.isfinite(center["source_world_linear"]))
+        print("[PASS] 1200-frame Center inertia/Keep Teleport")
+    finally:
+        world.omni_cache_dispose("center_keep_teleport_soak")
+
+
+def _self_interaction_soak(objects):
+    world = world_types.PhysicsWorldCache()
+    generation = 49
+
+    def make_tasks(radius):
+        return tuple(
+            _task(
+                obj,
+                gravity=0.0,
+                angle_restoration_enabled=False,
+                radius=radius,
+                self_collision_mode=2,
+                self_collision_sync_mode=2,
+            )
+            for obj in objects
+        )
+
+    tasks = make_tasks(0.02)
+    topologies = {
+        task.task_id: topology_module.build_mc2_topology_spec(task)
+        for task in tasks
+    }
+    positions = {task.task_id: _base_positions(task.sources[0]) for task in tasks}
+    original_contexts = None
+    try:
+        for frame in range(1, 1801):
+            if frame == 901:
+                original_contexts = tuple(
+                    world.solver_slots[task.task_id].data["native_context"]
+                    for task in tasks
+                )
+                old_revisions = tuple(
+                    context.inspect()["parameter_revision"]
+                    for context in original_contexts
+                )
+                tasks = make_tasks(0.03)
+            _step(world, tasks, topologies, frame, positions, generation)
+            for task in tasks:
+                _candidate(world, task)
+            if frame == 901:
+                current_contexts = tuple(
+                    world.solver_slots[task.task_id].data["native_context"]
+                    for task in tasks
+                )
+                assert current_contexts == original_contexts
+                assert tuple(
+                    context.inspect()["parameter_revision"]
+                    for context in current_contexts
+                ) == tuple(revision + 1 for revision in old_revisions)
+            if frame == 1799:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_self": True,
+                        "show_self_primitives": True,
+                        "show_self_candidates": True,
+                        "show_self_contacts": True,
+                    },
+                )
+        interaction = world.backend_resources["mc2_interaction_v0"]
+        interaction_info = interaction.inspect()
+        assert interaction_info["candidate_count"] > 0
+        assert interaction_info["contact_count"] <= interaction_info["candidate_count"]
+        assert interaction_info["primitive_count"] > 0
+        for task in tasks:
+            slot = world.solver_slots[task.task_id]
+            info = slot.data["native_context"].inspect()
+            assert info["self_contact_cache_count"] <= info["self_contact_candidate_count"]
+            snapshot = slot.data["_debug_draw_snapshot"]
+            assert snapshot["frame"] == 1800
+            assert np.all(np.isfinite(snapshot["self_collision"]["thickness"]))
+        interaction_snapshot = interaction.debug_draw_snapshot()
+        assert interaction_snapshot["native"]["candidate_count"] > 0
+        print("[PASS] 1800-frame cross-task self interaction/hot-update")
+    finally:
+        world.omni_cache_dispose("self_interaction_soak")
+
+
 def _remove_object(obj):
     mesh = obj.data
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -532,13 +709,17 @@ def main():
         objects = (
             _grid("MC2ConstraintSoakA", 0.0),
             _grid("MC2ConstraintSoakB", 0.24),
+            _grid("MC2ConstraintSelfA", 0.48),
+            _grid("MC2ConstraintSelfB", 0.485),
         )
         _angle_restoration_rest_soak(objects[0])
         _motion_base_soak(objects[0])
-        _task_collider_scope_soak(objects)
+        _task_collider_scope_soak(objects[:2])
         _distance_tether_soak(objects[0])
         _bending_soak(objects[0])
         _angle_limit_soak(objects[0])
+        _center_keep_teleport_soak(objects[0])
+        _self_interaction_soak(objects[2:])
     finally:
         for obj in objects:
             if obj.name in bpy.data.objects:
