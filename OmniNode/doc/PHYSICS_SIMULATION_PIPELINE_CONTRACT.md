@@ -695,7 +695,7 @@ PhysicsWorldCache / solver slot
 |---|---|---|
 | `Bone.hotools_collision` | `physicsWorld.collision` 的 `bone_collision` capability | SpringBone、MC2 BoneCloth/BoneSpring、scope、UI/preview |
 | `Object.hotools_object_collision` | `physicsWorld.collision` 的 `object_collision` capability | collider snapshot、SpringBone、MC2、UI/preview |
-| `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` 的 `mesh_collision` capability | MC2 MeshCloth、BasePose、mesh delta、UI |
+| `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` 的 `mesh_collision` capability | 简单布料面板、MC2 MeshCloth、BasePose、mesh delta；字段含enabled、BasePose、半径组、Pin与碰撞组 |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
 | `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
@@ -1159,6 +1159,8 @@ MC2删除后的永久构建边界不再包含legacy开关：旧数组solve、旧
 MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后正确性、职责重组、依赖洁净度、稳定蓝本和热点基线全部关闭前不得关闭solver acceptance blocker。
 
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
+
+MeshCloth BasePose是automatic frame prepare前的惰性场景资源，不是逐帧solver输入：帧首只允许对active live Mesh做属性组与空pointer检查，且仅在`mc2_base_pose_proxy`为空时创建独立Object/Mesh缓存。已有pointer必须零创建工作量返回，不得为了“保险”逐帧执行完整ensure、拓扑hash、复制或刷新；后续只读frame adapter消费已分配代理。
 
 ## 新迁移 solver 的 C++ 单实现策略
 

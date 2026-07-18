@@ -668,7 +668,7 @@ def physicsMC2Step(
         "show_self_candidates": {"description": "显示自碰撞broadphase候选对。"},
         "show_self_contacts": {"description": "显示自碰撞窄相contact。"},
         "show_output": {"description": "显示最终解算粒子/写回输出。"},
-        "task_filter": {"description": "连接任务节点的任务名称输出，或填写task id子串。\n多项用换行或逗号分隔；留空显示全部。"},
+        "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每类debug primitive允许显示的最大项目数。"},
     },
     _OUTPUT_NAME=["物理世界"],

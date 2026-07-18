@@ -237,6 +237,28 @@ def create_base_pose_proxy(
         raise
     return base_obj
 
+
+def initialize_base_pose_proxy_if_missing(
+    source_obj: bpy.types.Object,
+    scene: bpy.types.Scene = None,
+) -> tuple[bpy.types.Object, bool]:
+    """Create the generated BasePose once; existing assignments are untouched."""
+    if not _is_live_mesh_object(source_obj):
+        raise ValueError("MC2 MeshCloth source must be a live Mesh object")
+    props = getattr(source_obj, "hotools_mesh_collision", None)
+    if props is None:
+        raise ValueError("MC2 MeshCloth properties are not registered on the source object")
+    try:
+        base_obj = getattr(props, "mc2_base_pose_proxy", None)
+    except ReferenceError:
+        base_obj = None
+    if base_obj is not None:
+        return base_obj, False
+
+    base_obj = create_base_pose_proxy(source_obj, scene)
+    props.mc2_base_pose_proxy = base_obj
+    return base_obj, True
+
 def refresh_base_pose_proxy(
     source_obj: bpy.types.Object,
     base_obj: bpy.types.Object,

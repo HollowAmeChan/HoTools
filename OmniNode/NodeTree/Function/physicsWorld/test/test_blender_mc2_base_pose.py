@@ -139,6 +139,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     armature_obj = None
     source = None
     base_obj = None
+    implicit_world = None
     world = None
     auto_world = None
     fixed_world = None
@@ -155,6 +156,35 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         source = _make_source(armature_obj)
         gn_offset.write_gn_local_offsets(source, np.zeros((3, 3), dtype=np.float32))
         assert source.modifiers[-1].name == world_names.GN_OFFSET_MODIFIER_NAME
+
+        task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
+        assert source.hotools_mesh_collision.mc2_base_pose_proxy is None
+        implicit_world = world_types.PhysicsWorldCache()
+        implicit_world.generation = 31
+        implicit_world.frame_context.frame = 1
+        implicit_world.frame_context.generation = 31
+        implicit_world.frame_context.dt = 1.0 / 60.0
+        original_initializer = base_pose.initialize_base_pose_proxy_if_missing
+        initialize_calls = []
+
+        def _tracked_initializer(*args, **kwargs):
+            initialize_calls.append(args[0])
+            return original_initializer(*args, **kwargs)
+
+        base_pose.initialize_base_pose_proxy_if_missing = _tracked_initializer
+        try:
+            _, implicit_ready, _ = mc2_nodes.physicsMC2Step(implicit_world, [task])
+            assert implicit_ready is True
+            assert len(initialize_calls) == 1
+            base_obj = source.hotools_mesh_collision.mc2_base_pose_proxy
+            assert base_obj is not None
+            assert base_obj != source
+            assert base_obj.data != source.data
+            assert bool(base_obj.get(base_pose.CACHE_OBJECT_FLAG, False))
+            mc2_nodes.physicsMC2Step(implicit_world, [task])
+            assert len(initialize_calls) == 1
+        finally:
+            base_pose.initialize_base_pose_proxy_if_missing = original_initializer
 
         topology_signature = base_pose.mesh_topology_signature(source)
         base_obj = base_pose.ensure_base_pose_proxy(
@@ -215,7 +245,6 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         source.scale = (1.0, 1.0, 1.0)
         depsgraph = _update_depsgraph()
 
-        task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
         topology = mc2_topology.build_mc2_topology_spec(task)
         static_signature = mc2_topology.static_input_fingerprint_for_task(task).overall
         gravity_task = mc2_specs.make_mc2_task_spec(
@@ -2216,6 +2245,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert np.all(np.isfinite(baseline_negative_candidate.world_positions))
         assert baseline_negative_candidate.native_step_count == 3
     finally:
+        if implicit_world is not None:
+            implicit_world.omni_cache_dispose("test_complete")
         if world is not None:
             world.omni_cache_dispose("test_complete")
         if auto_world is not None:

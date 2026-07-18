@@ -511,6 +511,47 @@ def _validate_mc2_frame_input(spec, topology, frame_input: MC2FrameInputSpec) ->
         raise ValueError("MC2 frame input particle count mismatch")
 
 
+def _initialize_missing_mesh_base_pose_proxies(active_specs) -> int:
+    """Lazily create only absent MeshCloth BasePose resources at frame begin."""
+    initialized = 0
+    initializer = None
+    visited_sources: set[int] = set()
+    for spec in active_specs:
+        if spec.setup_type != "mesh_cloth":
+            continue
+        for source in spec.sources:
+            if (
+                getattr(source, "type", None) != "MESH"
+                or getattr(source, "data", None) is None
+            ):
+                continue
+            if getattr(getattr(source, "bl_rna", None), "identifier", "") != "Object":
+                continue
+            properties = getattr(source, "hotools_mesh_collision", None)
+            if properties is not None:
+                try:
+                    if getattr(properties, "mc2_base_pose_proxy", None) is not None:
+                        continue
+                except ReferenceError:
+                    pass
+            try:
+                source_key = int(source.as_pointer())
+            except (AttributeError, ReferenceError, TypeError, ValueError):
+                continue
+            if source_key in visited_sources:
+                continue
+            visited_sources.add(source_key)
+            if initializer is None:
+                from .setups.mesh_cloth.base_pose import (
+                    initialize_base_pose_proxy_if_missing,
+                )
+
+                initializer = initialize_base_pose_proxy_if_missing
+            _base_obj, created = initializer(source)
+            initialized += int(created)
+    return initialized
+
+
 def step_mc2(
     world,
     tasks=None,
@@ -557,6 +598,8 @@ def step_mc2(
                 "MC2 frame inputs do not match the active Physics World frame: "
                 f"{mismatched_frames!r}"
             )
+    if automatic_frame_inputs:
+        _initialize_missing_mesh_base_pose_proxies(active_specs)
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
     staged_native_contexts = []

@@ -90,7 +90,9 @@ profile + task combination
 
 公开MeshCloth任务使用多输入`list[bpy.types.Object]` Object socket，不使用`Any`。每个输入必须是Mesh Object，并各自产生一个只含单source的task；一个task不得包含多个Mesh，因为MeshCloth static/frame adapter以单final-proxy topology、单BasePose读对象和单写回目标为原子边界。节点输入多个Mesh时，全部task仍由同一个MC2模拟步统一推进，跨对象self collision由world-owned interaction处理。
 
-`Object.hotools_mesh_collision.mc2_base_pose_proxy`继续指定每个source/write对象对应的只读BasePose对象；BasePose不是第二个task source，也不作为额外公开socket重复输入。
+`Object.hotools_mesh_collision`由物理对象面板的“简单布料”入口公开。持久字段至少包含启用状态、BasePose只读对象、半径顶点组、Pin启用/Pin顶点组和碰撞组；Pin等对象级authoring不得藏在节点临时值或solver私有缓存中。
+
+`Object.hotools_mesh_collision.mc2_base_pose_proxy`指定每个source/write对象对应的只读BasePose对象；BasePose不是第二个task source，也不作为额外公开socket重复输入。automatic frame path在全部static/frame只读快照之前执行轻量门卫：只检查active MeshCloth source是否为live Mesh、属性组是否存在以及proxy pointer是否为空。仅空指针进入创建，生成独立Object与独立Mesh并归档到`HoPhysicsCache`；已有代理直接跳过，禁止逐帧调用完整ensure、拓扑签名计算、Mesh复制或刷新。
 
 ### BoneCloth横向连接
 
@@ -256,6 +258,8 @@ Source/write object
   -> 物理GN modifier常驻栈末端
   -> POINT object-local offset attribute
 ```
+
+新Mesh source不要求用户预先执行手工刷新：第一次进入active automatic MC2 frame时隐式创建缺失的BasePose缓存，首帧即可完成static/frame构建。手工创建/刷新operator只用于显式修复或替换已分配代理，不属于正常逐帧路径。
 
 不得用逐帧Shape Key写回、单对象modifier开关/重排或单对象双阶段读取替代。Raw snapshot读取是允许保留的host边界，因为当前depsgraph标志不能可靠区分authoring变化与求值更新；未来dirty tracker必须先提供稳定revision合同。
 

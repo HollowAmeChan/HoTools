@@ -2,6 +2,15 @@
 
 MESH_COLLISION_RNA_FIELDS = (
     {
+        "name": "enabled",
+        "property": "bool",
+        "kwargs": {
+            "name": "简单布料",
+            "description": "启用当前Mesh对象的简单布料持久配置与物理面板",
+            "default": False,
+        },
+    },
+    {
         "name": "mc2_base_pose_proxy",
         "property": "pointer",
         "kwargs": {

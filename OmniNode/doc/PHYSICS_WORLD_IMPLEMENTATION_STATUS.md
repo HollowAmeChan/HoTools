@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 维护态；核心总门禁已关闭 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark均已关闭；三setup、逐帧all-task step、每中控骨独立Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立 | 审计发现runtime ABI尾部Spring/wind字段尚无native消费，产品节点已隐藏；若要开放必须先补kernel行为测试。其余按`MC2_BLUEPRINT.md`维护，不恢复旧路径 |
+| MC2 | 维护态；核心总门禁已关闭 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark均已关闭；三setup、逐帧all-task step、每中控骨独立Bone产品拓扑、自动跨物体self、单一派生self厚度、全隐式debug、官方预设及C++自产自用成立；简单布料RNA公开enabled/BasePose/半径组/Pin/碰撞组，缺失BasePose在automatic首帧按空pointer一次性创建 | 审计发现runtime ABI尾部Spring/wind字段尚无native消费，产品节点已隐藏；若要开放必须先补kernel行为测试。其余按`MC2_BLUEPRINT.md`维护，不恢复旧路径 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。

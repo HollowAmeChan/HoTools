@@ -49,6 +49,9 @@ base_pose = importlib.import_module(
 blender_registry = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender_registry"
 )
+physics_panels = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.ui.panels"
+)
 
 
 def main() -> None:
@@ -69,11 +72,23 @@ def main() -> None:
         mesh.from_pydata(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), (), ((0, 1, 2),))
         source = bpy.data.objects.new("PW_MeshClothIOContract", mesh)
         bpy.context.scene.collection.objects.link(source)
+        mesh_props = source.hotools_mesh_collision
+        assert mesh_props.enabled is False
+        mesh_props.enabled = True
+        pin_group = source.vertex_groups.new(name="Pinned")
+        pin_group.add((0,), 1.0, "REPLACE")
+        mesh_props.pin_enabled = True
+        mesh_props.pin_vertex_group = pin_group.name
+        assert mesh_props.pin_vertex_group == "Pinned"
+        assert physics_panels.PT_Hotools_Physics_MeshCollision.poll(
+            types.SimpleNamespace(object=source)
+        ) is True
         base_pose.ensure_delta_output(source)
         assert source.data.attributes.get(base_pose.DELTA_ATTRIBUTE_NAME) is not None
         assert source.modifiers.get(base_pose.DELTA_MODIFIER_NAME) is not None
         proxy = base_pose.ensure_base_pose_proxy(source)
         assert source.hotools_mesh_collision.mc2_base_pose_proxy == proxy
+        assert proxy.hotools_mesh_collision.enabled is False
         assert base_pose.mesh_light_key(source) == base_pose.mesh_light_key(proxy)
         assert bool(proxy.get(base_pose.CACHE_OBJECT_FLAG, False))
 
