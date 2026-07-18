@@ -115,6 +115,41 @@ def _multi_control_armature(name: str, control_count: int, chain_count: int, cha
     return obj
 
 
+def _oriented_chain_armature(name: str):
+    data = bpy.data.armatures.new(f"{name}Data")
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    parent = data.edit_bones.new("Parent")
+    parent.head = (0.0, 0.0, 0.0)
+    parent.tail = (0.0, 0.0, 1.0)
+    offsets = (
+        (1.0, 0.35, 0.20),
+        (0.85, -0.25, 0.45),
+        (0.70, 0.55, -0.15),
+        (0.55, -0.40, 0.30),
+    )
+    for chain_index in range(2):
+        head = parent.tail + mathutils.Vector((0.0, chain_index * 0.55, chain_index * 0.1))
+        previous = parent
+        for depth, offset in enumerate(offsets):
+            bone = data.edit_bones.new(f"Chain{chain_index}_{depth}")
+            bone.head = head
+            bone.tail = head + mathutils.Vector(offset)
+            bone.parent = previous
+            bone.use_connect = depth > 0
+            bone.roll = 0.2 + depth * 0.35 + chain_index * 0.15
+            head = bone.tail.copy()
+            previous = bone
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
+    return obj
+
+
 def _dispose_armature(obj) -> None:
     data = obj.data
     if obj.mode != "OBJECT":
@@ -143,6 +178,11 @@ rig_d = _product_armature(
     20.0,
     connect_children=False,
 )
+rig_e = _oriented_chain_armature("MC2_ProductRigE_ZeroGravity")
+rig_e.location = (1.5, -2.0, 0.75)
+rig_e.rotation_mode = "XYZ"
+rig_e.rotation_euler = (0.45, -0.3, 0.65)
+bpy.context.view_layer.update()
 world = None
 try:
     tasks = nodes.physicsMC2BoneClothTask(
@@ -166,6 +206,10 @@ try:
             {"armature": rig_c, "bone": "Parent0"},
             {"armature": rig_c, "bone": "Parent1"},
         ],
+        profile=parameters.make_mc2_particle_profile(
+            gravity_direction=(1.0, 0.0, 0.0),
+            wind_influence=0.0,
+        ),
         connection_mode=1,
     )
     assert len(independent_control_tasks) == 2
@@ -355,6 +399,78 @@ try:
         ) <= 1.0e-6, "current-frame animation input was overwritten by MC2 restore"
     finally:
         feedback_world.omni_cache_dispose("bone_feedback_regression_complete")
+
+    zero_world = world_types.PhysicsWorldCache()
+    zero_world.generation = 1
+    zero_world.frame_context.generation = 1
+    zero_world.frame_context.dt = 1.0 / 60.0
+    zero_world.frame_context.raw_dt = 1.0 / 60.0
+    zero_task = nodes.physicsMC2BoneClothTask(
+        [{"armature": rig_e, "bone": "Parent"}],
+        profile=parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            bending_stiffness=1.0,
+            angle_restoration_enabled=True,
+            angle_restoration_stiffness=1.0,
+            angle_restoration_velocity_attenuation=0.0,
+            angle_limit_enabled=False,
+            max_distance_enabled=False,
+            backstop_enabled=False,
+            wind_influence=0.0,
+        ),
+    )[0]
+    zero_topology = topology_module.build_mc2_topology_spec(zero_task)
+    zero_initial_input = bone_frame_input.build_mc2_bone_frame_input(
+        zero_task,
+        zero_topology,
+        frame=1,
+        generation=zero_world.generation,
+    )
+    zero_initial_bases = {
+        pose_bone.name: pose_bone.matrix_basis.copy()
+        for pose_bone in rig_e.pose.bones
+        if pose_bone.name.startswith("Chain")
+    }
+    try:
+        for frame in range(1, 11):
+            zero_world.frame_context.previous_frame = frame - 1 if frame > 1 else None
+            zero_world.frame_context.frame = frame
+            zero_world.frame_context.same_frame = False
+            zero_world.frame_context.continuous = frame > 1
+            zero_world.frame_context.dt = 1.0 / 60.0
+            zero_world.frame_context.raw_dt = 1.0 / 60.0
+            returned, ready, _status = solver.step_mc2(
+                zero_world,
+                [zero_task],
+                dt=1.0 / 60.0,
+            )
+            assert returned is zero_world and ready is True
+            zero_slot = zero_world.solver_slots[zero_task.task_id]
+            step_basic, _step_rotations = zero_slot.data[
+                "native_context"
+            ].read_step_basic()
+            np.testing.assert_allclose(
+                step_basic,
+                zero_initial_input.world_positions,
+                atol=1.0e-5,
+            )
+            np.testing.assert_allclose(
+                zero_slot.data["result_candidate"].world_positions,
+                zero_initial_input.world_positions,
+                atol=1.0e-5,
+            )
+            assert writeback.writeback_bone_transforms(zero_world) == 8
+            bpy.context.view_layer.update()
+            assert all(
+                _matrix_delta(
+                    rig_e.pose.bones[bone_name].matrix_basis,
+                    initial_basis,
+                ) <= 1.0e-5
+                for bone_name, initial_basis in zero_initial_bases.items()
+            )
+    finally:
+        zero_world.omni_cache_dispose("bone_zero_gravity_restoration_complete")
 
     free_world = world_types.PhysicsWorldCache()
     free_world.generation = 1
@@ -593,6 +709,7 @@ finally:
     _dispose_armature(rig_b)
     _dispose_armature(rig_c)
     _dispose_armature(rig_d)
+    _dispose_armature(rig_e)
 
 
 print("MC2 HoTools BoneCloth product topology/multi-task atomic step: PASS")

@@ -654,6 +654,14 @@ PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
         return nullptr;
     }
     const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (context->bone_vertex_to_transform_rotations.size() !=
+        static_cast<std::size_t>(context->vertex_count) * 4) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "raw Bone dynamic requires vertex-to-transform rotations"
+        );
+        return nullptr;
+    }
     if (!expect_float32(positions, "world_positions") ||
         !expect_2d(positions, "world_positions", count, 3) ||
         !expect_float32(matrices, "pose_matrices") || matrices.view.ndim != 3 ||
@@ -695,11 +703,26 @@ PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
             PyErr_SetString(PyExc_ValueError, "raw Bone pose matrix must be proper and shear-free");
             return nullptr;
         }
-        auto rotation = quaternion_multiply(
+        const auto transform_rotation = quaternion_multiply(
             component_quaternion,
             quaternion_from_forward_up(z, y)
         );
-        store_quaternion(next_rotations, vertex, rotation);
+        const auto vertex_to_transform = load_quaternion(
+            context->bone_vertex_to_transform_rotations,
+            vertex
+        );
+        const std::array<float, 4> transform_to_vertex {
+            -vertex_to_transform[0],
+            -vertex_to_transform[1],
+            -vertex_to_transform[2],
+            vertex_to_transform[3],
+        };
+        auto proxy_rotation = quaternion_multiply(
+            transform_rotation,
+            transform_to_vertex
+        );
+        normalize_quaternion(proxy_rotation);
+        store_quaternion(next_rotations, vertex, proxy_rotation);
     }
     commit_dynamic_values(
         *context, frame, generation, std::move(next_positions), std::move(next_rotations),
