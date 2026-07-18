@@ -8,6 +8,8 @@ import sys
 import types
 
 import bpy
+import mathutils
+import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
@@ -40,6 +42,9 @@ solver = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorl
 debug = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug")
 topology_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
+)
+bone_frame_input = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
 )
 world_types = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.types")
 writeback = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback")
@@ -113,6 +118,14 @@ def _dispose_armature(obj) -> None:
         bpy.data.armatures.remove(data)
 
 
+def _matrix_delta(left, right) -> float:
+    return max(
+        abs(float(left[row][column]) - float(right[row][column]))
+        for row in range(4)
+        for column in range(4)
+    )
+
+
 rig_a = _product_armature("MC2_ProductRigA", 3, 3, -3.0)
 rig_b = _product_armature("MC2_ProductRigB", 2, 3, 3.0)
 rig_c = _multi_control_armature("MC2_ProductRigC", 2, 2, 3)
@@ -157,6 +170,150 @@ try:
     )
     assert tuple(item.particle_count for item in independent_topologies) == (6, 6)
     assert all(item.bone_connection.triangles for item in independent_topologies)
+
+    feedback_world = world_types.PhysicsWorldCache()
+    feedback_world.generation = 1
+    feedback_world.frame_context.generation = 1
+    feedback_world.frame_context.dt = 1.0 / 60.0
+    feedback_world.frame_context.raw_dt = 1.0 / 60.0
+    feedback_bone_names = tuple(
+        bone_name
+        for task in independent_control_tasks
+        for source in task.sources
+        for bone_name in source["bones"]
+    )
+    animation_bases = {
+        bone_name: rig_c.pose.bones[bone_name].matrix_basis.copy()
+        for bone_name in feedback_bone_names
+    }
+    try:
+        for frame in (1, 2):
+            feedback_world.frame_context.frame = frame
+            returned, ready, _status = solver.step_mc2(
+                feedback_world,
+                independent_control_tasks,
+            )
+            assert returned is feedback_world and ready is True
+            assert writeback.writeback_bone_transforms(feedback_world) == 12
+            bpy.context.view_layer.update()
+
+        assert any(
+            _matrix_delta(
+                rig_c.pose.bones[bone_name].matrix_basis,
+                animation_bases[bone_name],
+            ) > 1.0e-5
+            for bone_name in feedback_bone_names
+        ), "fixture must produce a non-identity physical writeback"
+
+        physical_bases = {
+            bone_name: rig_c.pose.bones[bone_name].matrix_basis.copy()
+            for bone_name in feedback_bone_names
+        }
+        for bone_name, animation_basis in animation_bases.items():
+            rig_c.pose.bones[bone_name].matrix_basis = animation_basis
+        bpy.context.view_layer.update()
+        expected_inputs = tuple(
+            bone_frame_input.build_mc2_bone_frame_input(
+                task,
+                topology,
+                frame=3,
+                generation=feedback_world.generation,
+            )
+            for task, topology in zip(independent_control_tasks, independent_topologies)
+        )
+        for bone_name, physical_basis in physical_bases.items():
+            rig_c.pose.bones[bone_name].matrix_basis = physical_basis
+        bpy.context.view_layer.update()
+        restored_inputs = tuple(
+            bone_frame_input.build_mc2_bone_frame_input(
+                task,
+                topology,
+                frame=3,
+                generation=feedback_world.generation,
+                world=feedback_world,
+            )
+            for task, topology in zip(independent_control_tasks, independent_topologies)
+        )
+        for expected_input, restored_input in zip(expected_inputs, restored_inputs):
+            np.testing.assert_allclose(
+                restored_input.world_positions,
+                expected_input.world_positions,
+                atol=1.0e-6,
+            )
+            np.testing.assert_allclose(
+                restored_input.raw_pose_matrices,
+                expected_input.raw_pose_matrices,
+                atol=1.0e-6,
+            )
+
+        feedback_world.frame_context.frame = 3
+        returned, ready, _status = solver.step_mc2(
+            feedback_world,
+            independent_control_tasks,
+        )
+        assert returned is feedback_world and ready is True
+        assert all(
+            _matrix_delta(
+                rig_c.pose.bones[bone_name].matrix_basis,
+                physical_bases[bone_name],
+            ) <= 1.0e-6
+            for bone_name in feedback_bone_names
+        ), "MC2 frame input adapter must not mutate Blender pose state"
+
+        assert writeback.writeback_bone_transforms(feedback_world) == 12
+        animated_bone_name = feedback_bone_names[1]
+        animated_basis = mathutils.Matrix.Rotation(0.01, 4, "X")
+        rig_c.pose.bones[animated_bone_name].matrix_basis = animated_basis
+        bpy.context.view_layer.update()
+        animated_task = independent_control_tasks[0]
+        animated_topology = independent_topologies[0]
+        animated_names = tuple(
+            bone_name
+            for source in animated_task.sources
+            for bone_name in source["bones"]
+        )
+        animated_index = animated_names.index(animated_bone_name)
+        pre_animation_test_bases = {
+            bone_name: rig_c.pose.bones[bone_name].matrix_basis.copy()
+            for bone_name in feedback_bone_names
+        }
+        for bone_name, animation_basis in animation_bases.items():
+            rig_c.pose.bones[bone_name].matrix_basis = animation_basis
+        rig_c.pose.bones[animated_bone_name].matrix_basis = animated_basis
+        bpy.context.view_layer.update()
+        direct_animated_input = bone_frame_input.build_mc2_bone_frame_input(
+            animated_task,
+            animated_topology,
+            frame=4,
+            generation=feedback_world.generation,
+        )
+        for bone_name, current_basis in pre_animation_test_bases.items():
+            rig_c.pose.bones[bone_name].matrix_basis = current_basis
+        bpy.context.view_layer.update()
+        filtered_animated_input = bone_frame_input.build_mc2_bone_frame_input(
+            animated_task,
+            animated_topology,
+            frame=4,
+            generation=feedback_world.generation,
+            world=feedback_world,
+        )
+        np.testing.assert_allclose(
+            filtered_animated_input.raw_pose_matrices[animated_index],
+            direct_animated_input.raw_pose_matrices[animated_index],
+            atol=1.0e-6,
+        )
+        feedback_world.frame_context.frame = 4
+        returned, ready, _status = solver.step_mc2(
+            feedback_world,
+            independent_control_tasks,
+        )
+        assert returned is feedback_world and ready is True
+        assert _matrix_delta(
+            rig_c.pose.bones[animated_bone_name].matrix_basis,
+            animated_basis,
+        ) <= 1.0e-6, "current-frame animation input was overwritten by MC2 restore"
+    finally:
+        feedback_world.omni_cache_dispose("bone_feedback_regression_complete")
 
     spring_tasks = nodes.physicsMC2BoneSpringTask([
         {"armature": rig_a, "bone": "Chain0_0"},

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bpy
+import mathutils
 import numpy as np
 
 from ...utils.math3d import decompose_signed_orthogonal_linear_f64
@@ -14,6 +15,103 @@ from ..topology import MC2TopologySpec, thaw_mc2_topology_payload
 
 
 _TRANSFORM_EPSILON = 1.0e-8
+_WRITEBACK_MATCH_EPSILON = 1.0e-6
+MC2_BONE_FRAME_STATE_KEY = "_mc2_bone_frame_state_v0"
+
+
+def _matrix_matches(left, right, epsilon: float = _WRITEBACK_MATCH_EPSILON) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return all(
+            abs(float(left[row][column]) - float(right[row][column])) <= epsilon
+            for row in range(4)
+            for column in range(4)
+        )
+    except Exception:
+        return False
+
+
+def _mc2_bone_frame_state(world) -> dict:
+    resources = world.backend_resources
+    generation = int(getattr(world, "generation", 0) or 0)
+    state = resources.get(MC2_BONE_FRAME_STATE_KEY)
+    if not isinstance(state, dict) or state.get("generation") != generation:
+        state = {"generation": generation, "bones": {}}
+        resources[MC2_BONE_FRAME_STATE_KEY] = state
+    return state
+
+
+def clear_mc2_bone_frame_state(world) -> None:
+    world.backend_resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
+
+
+def _resolve_mc2_bone_source_basis(world, armature_ptr: int, pose_bone):
+    """Resolve the pre-physics basis at MC2's RestoreTransform/ReadTransform boundary."""
+    bones = _mc2_bone_frame_state(world)["bones"]
+    bone_key = (int(armature_ptr), str(pose_bone.name))
+    current_basis = pose_bone.matrix_basis.copy()
+    entry = bones.get(bone_key)
+    if entry is None:
+        bones[bone_key] = {
+            "armature": pose_bone.id_data,
+            "bone_name": str(pose_bone.name),
+            "source_basis": current_basis,
+            "expected_writeback_basis": None,
+        }
+        return None
+
+    expected_basis = entry.get("expected_writeback_basis")
+    if _matrix_matches(current_basis, expected_basis):
+        source_basis = entry.get("source_basis")
+        return source_basis.copy() if source_basis is not None else None
+
+    # Blender animation/driver/user evaluation has replaced the old MC2 output.
+    entry["source_basis"] = current_basis
+    return None
+
+
+def stage_mc2_bone_writeback_expectations(world, plans) -> None:
+    """Stage MC2-owned output fingerprints for the next frame's input adapter."""
+    bones = _mc2_bone_frame_state(world)["bones"]
+    for plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        armature = plan.get("armature")
+        try:
+            armature_ptr = int(armature.as_pointer())
+        except Exception:
+            continue
+        planned_bones = {}
+        for batch in plan.get("batches") or ():
+            if not isinstance(batch, dict):
+                continue
+            records = tuple(batch.get("records") or ())
+            matrix_bases = tuple(batch.get("matrix_bases") or ())
+            for record, matrix_basis in zip(records, matrix_bases):
+                if not isinstance(record, dict) or matrix_basis is None:
+                    continue
+                pose_bone = record.get("pose_bone")
+                bone_name = str(record.get("bone_name") or "")
+                if pose_bone is None or not bone_name:
+                    continue
+                location, rotation, scale = matrix_basis.decompose()
+                if bool(getattr(pose_bone.bone, "use_connect", False)):
+                    location = mathutils.Vector((0.0, 0.0, 0.0))
+                planned_bones[bone_name] = (
+                    pose_bone,
+                    mathutils.Matrix.LocRotScale(location, rotation, scale),
+                )
+
+        for bone_name, (pose_bone, canonical_basis) in planned_bones.items():
+            bone_key = (armature_ptr, bone_name)
+            entry = bones.setdefault(bone_key, {
+                "armature": armature,
+                "bone_name": bone_name,
+                "source_basis": pose_bone.matrix_basis.copy(),
+                "expected_writeback_basis": None,
+            })
+            entry["expected_writeback_basis"] = canonical_basis.copy()
 
 
 def _armature_from_source(source):
@@ -69,6 +167,7 @@ def build_mc2_bone_frame_input(
     *,
     frame: int,
     generation: int,
+    world=None,
 ) -> MC2FrameInputSpec:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -83,6 +182,8 @@ def build_mc2_bone_frame_input(
     pose_matrices = []
     component_pose = None
     component_poses = {}
+    resolved_pose_matrices = {}
+    reconstructed_bones = set()
     for source_topology in topology.sources:
         source_index = int(source_topology.source_index)
         armature = _armature_from_source(task.sources[source_index])
@@ -120,10 +221,41 @@ def build_mc2_bone_frame_input(
             pose_bone = pose_bones.get(name)
             if pose_bone is None:
                 raise ValueError(f"bone frame pose is missing stable bone {name!r}")
-            head = matrix_world @ pose_bone.head
+            bone_key = (armature_key, name)
+            parent = pose_bone.parent
+            parent_key = (
+                (armature_key, str(parent.name))
+                if parent is not None
+                else None
+            )
+            source_basis = (
+                _resolve_mc2_bone_source_basis(world, armature_key, pose_bone)
+                if world is not None
+                else None
+            )
+            reconstruct = source_basis is not None or parent_key in reconstructed_bones
+            if reconstruct:
+                basis = source_basis if source_basis is not None else pose_bone.matrix_basis
+                bone_rest = pose_bone.bone.matrix_local
+                if parent is None:
+                    pose_matrix = bone_rest @ basis
+                else:
+                    parent_matrix = resolved_pose_matrices.get(parent_key, parent.matrix)
+                    parent_rest = parent.bone.matrix_local
+                    pose_matrix = (
+                        parent_matrix
+                        @ parent_rest.inverted()
+                        @ bone_rest
+                        @ basis
+                    )
+                reconstructed_bones.add(bone_key)
+            else:
+                pose_matrix = pose_bone.matrix.copy()
+            resolved_pose_matrices[bone_key] = pose_matrix
+            head = matrix_world @ pose_matrix.translation
             pose_matrices.append(np.asarray(
                 [
-                    [float(pose_bone.matrix[row][column]) for column in range(3)]
+                    [float(pose_matrix[row][column]) for column in range(3)]
                     for row in range(3)
                 ],
                 dtype=np.float32,
@@ -150,4 +282,9 @@ def build_mc2_bone_frame_input(
     )
 
 
-__all__ = ["build_mc2_bone_frame_input"]
+__all__ = [
+    "MC2_BONE_FRAME_STATE_KEY",
+    "build_mc2_bone_frame_input",
+    "clear_mc2_bone_frame_state",
+    "stage_mc2_bone_writeback_expectations",
+]

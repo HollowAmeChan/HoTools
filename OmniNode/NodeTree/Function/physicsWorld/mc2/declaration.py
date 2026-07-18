@@ -74,6 +74,7 @@ MC2_SOLVER_DECLARATION = {
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
         "bone_cloth_partition": "one_control_bone_per_task_and_lateral_topology_group",
+        "bone_frame_feedback": "mc2_owned_restore_read_barrier_preserves_current_animation_override",
         "native_backend": "single_native_context_no_python_fallback",
     },
     "capabilities": MC2_CAPABILITIES,

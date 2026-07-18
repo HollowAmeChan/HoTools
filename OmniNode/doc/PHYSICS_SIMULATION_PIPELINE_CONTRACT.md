@@ -1049,6 +1049,8 @@ C++ native context:
 
 solver step 应产生统一 result stream，而不是直接写 Blender。
 
+当solver下一帧会从同一个Blender owner重新采集frame input时，必须定义输出反馈屏障：能够区分“上帧物理写回仍残留”和“本帧动画/driver已经覆盖”。该屏障及其持久状态由solver frame adapter拥有；统一writeback只应用结果plan，不替solver决定动画输入、不记录solver私有反馈状态，也不默认清零PoseBone。若蓝本在动画求值前恢复初始Transform、动画求值后再读取，Blender适配器必须在内存中表达等价输入时序，不得在solver执行期倒写场景来伪造早更新。
+
 **性能说明：** result stream 不应每帧在 Python 层构造 per-item dict 列表。对于骨骼数量较多的 solver（50+ bones），每帧为每根骨骼创建 Python dict 的开销不可忽视。推荐做法：
 
 - result stream 在 solver slot 里以预分配 numpy buffer 表达（`output.target_matrices`, `output.basis_values`）。

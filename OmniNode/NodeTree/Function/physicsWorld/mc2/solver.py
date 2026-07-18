@@ -40,6 +40,10 @@ from .results import (
     publish_mc2_result_transaction,
 )
 from .scheduler import MC2TimeSchedulerState
+from .setups.bone_frame_input import (
+    clear_mc2_bone_frame_state,
+    stage_mc2_bone_writeback_expectations,
+)
 from .specs import build_mc2_task_specs
 from .topology import build_mc2_topology_spec, prepare_static_inputs_for_task
 
@@ -92,6 +96,7 @@ def _invalidate_mc2_runtime_after_failure(
             pass
 
     world.clear_results(solver=MC2_SOLVER_ID)
+    clear_mc2_bone_frame_state(world)
     world.replace_required = True
 
 
@@ -714,6 +719,7 @@ def step_mc2(
                     topology,
                     frame=int(getattr(world.frame_context, "frame", 0) or 0),
                     generation=int(world.generation),
+                    world=world,
                 )
                 _validate_mc2_frame_input(spec, topology, frame_input)
                 frame_inputs[spec.task_id] = frame_input
@@ -1315,6 +1321,13 @@ def step_mc2(
                 slot = world.solver_slots.get(slot_id)
                 if slot is not None:
                     slot.data["writeback_plan"] = writeback_plan
+            stage_mc2_bone_writeback_expectations(
+                world,
+                tuple(
+                    staged_writeback_plans.get(str(result.get("slot_id") or ""))
+                    for result in bone_results
+                ),
+            )
     except Exception:
         if mutation_started:
             _invalidate_mc2_runtime_after_failure(
