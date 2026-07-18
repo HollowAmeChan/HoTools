@@ -33,10 +33,10 @@ _COLORS = {
     "longitudinal": (0.95, 0.70, 0.18, 0.95),
     "lateral": (0.20, 0.85, 0.95, 0.95),
     "triangle": (0.38, 0.62, 0.82, 0.50),
-    "edge_collision": (1.00, 0.46, 0.12, 0.82),
-    "edge_collision_surface": (1.00, 0.34, 0.06, 0.18),
-    "point_collision_surface": (0.12, 1.00, 0.38, 0.18),
-    "collider_surface": (0.62, 0.70, 0.82, 0.16),
+    "edge_collision": (0.70, 0.20, 0.04, 0.58),
+    "edge_collision_surface": (1.00, 0.30, 0.04, 0.32),
+    "point_collision_surface": (0.10, 0.92, 0.32, 0.26),
+    "collider_surface": (0.58, 0.66, 0.78, 0.22),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
@@ -473,7 +473,7 @@ def _append_edge_collision_batches(
             radius_left,
             radius_right,
         )
-    _batch(batches, centers, "edge_collision", 2.6)
+    _batch(batches, centers, "edge_collision", 1.0)
 
 
 def _append_attribute_batches(point_batches, topology, positions, limit):
@@ -939,7 +939,7 @@ def _append_collider_batches(batches, triangle_meshes, collision, limit):
                     second,
                     cross * radius,
                 )
-    _batch(batches, lines, "collider", 1.2)
+    _batch(batches, lines, "collider", 1.0)
 
 
 def _append_radius_batches(batches, snapshot, limit):
