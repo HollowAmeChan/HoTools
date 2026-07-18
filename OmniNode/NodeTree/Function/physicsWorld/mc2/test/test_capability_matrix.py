@@ -40,6 +40,12 @@ def test_long_run_matrix_separates_requirements_from_real_evidence():
     for capability in MC2_LONG_RUN_CAPABILITY_MATRIX:
         assert capability["id"]
         assert set(capability["required_setups"]).issubset(ALL_SETUPS)
+        field_setups = capability.get("field_setups", {})
+        assert set(field_setups).issubset(capability["owned_fields"])
+        assert all(
+            set(setups).issubset(capability["required_setups"])
+            for setups in field_setups.values()
+        )
         assert capability["evidence"]
         for item in capability["evidence"]:
             _runner_symbol_exists(item["runner"])
@@ -79,3 +85,15 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]
     assert "limit_bounded@bone_cloth" in angle_limit["invariants"]
     assert "limit_bounded@bone_spring" in angle_limit["invariants"]
+
+    integration = capability_gaps(by_id["integration_and_pose_blend"])
+    assert "gravity@mesh_cloth" not in integration["fields"]
+    assert "gravity@bone_cloth" not in integration["fields"]
+    assert "gravity@bone_spring" not in integration["fields"]
+    assert "rotational_interpolation@bone_cloth" in integration["fields"]
+    assert "rotational_interpolation@bone_spring" in integration["fields"]
+
+    external = capability_gaps(by_id["external_collision"])
+    assert "radius@mesh_cloth" not in external["fields"]
+    assert "radius@bone_cloth" in external["fields"]
+    assert "radius@bone_spring" in external["fields"]

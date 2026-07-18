@@ -10,7 +10,22 @@ CLOTH_SETUPS = ("mesh_cloth", "bone_cloth")
 def capability_gaps(capability):
     evidence = tuple(capability["evidence"])
     covered_setups = set().union(*(item["setups"] for item in evidence))
-    exercised_fields = set().union(*(item["fields"] for item in evidence))
+    exercised_field_setups = {}
+    for item in evidence:
+        for field in item["fields"]:
+            exercised_field_setups.setdefault(field, set()).update(item["setups"])
+    field_requirements = {
+        field: set(capability.get("field_setups", {}).get(
+            field, capability["required_setups"]
+        ))
+        for field in capability["owned_fields"]
+    }
+    field_gaps = {
+        f"{field}@{setup}"
+        for field, setups in field_requirements.items()
+        for setup in setups
+        if setup not in exercised_field_setups.get(field, set())
+    }
     verified_invariant_setups = {}
     for item in evidence:
         for invariant in item["invariants"]:
@@ -23,7 +38,7 @@ def capability_gaps(capability):
     }
     return {
         "setups": set(capability["required_setups"]) - covered_setups,
-        "fields": set(capability["owned_fields"]) - exercised_fields,
+        "fields": field_gaps,
         "invariants": invariant_gaps,
     }
 
@@ -38,6 +53,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "stabilization_time_after_reset", "blend_weight",
             "rotational_interpolation", "root_rotation", "damping",
         ),
+        "field_setups": {
+            "gravity": CLOTH_SETUPS,
+            "gravity_direction_x": CLOTH_SETUPS,
+            "gravity_direction_y": CLOTH_SETUPS,
+            "gravity_direction_z": CLOTH_SETUPS,
+            "gravity_falloff": CLOTH_SETUPS,
+            "rotational_interpolation": ("bone_cloth", "bone_spring"),
+            "root_rotation": ("bone_cloth", "bone_spring"),
+        },
         "required_invariants": (
             "finite", "deterministic", "bounded_velocity", "zero_force_rest",
             "candidate_frame_progresses", "writeback_targets_present",
@@ -104,7 +128,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
     },
     {
         "id": "triangle_bending",
-        "required_setups": ("mesh_cloth",),
+        "required_setups": ALL_SETUPS,
         "owned_fields": ("bending_stiffness", "bending_method"),
         "required_invariants": (
             "finite", "deterministic", "signed_volume_stable", "fixed_particles_static",
