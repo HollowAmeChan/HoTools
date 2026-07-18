@@ -37,6 +37,29 @@ MC2_DEBUG_DRAW_MODES = {
 }
 
 
+def normalize_mc2_task_filters(value) -> tuple[str, ...]:
+    pending = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    result = []
+    while pending:
+        item = pending.pop(0)
+        if item is None:
+            continue
+        if isinstance(item, (list, tuple, set)):
+            pending[0:0] = list(item)
+            continue
+        text = str(item).replace(";", "\n").replace(",", "\n")
+        for token in text.splitlines():
+            token = token.strip()
+            if token and token not in result:
+                result.append(token)
+    return tuple(result)
+
+
+def _matches_task_filter(task_id, filters) -> bool:
+    task_id = str(task_id or "")
+    return not filters or any(token in task_id for token in filters)
+
+
 def _readonly(values, dtype=None) -> np.ndarray:
     result = np.array(values, dtype=dtype, copy=True, order="C")
     result.flags.writeable = False
@@ -74,7 +97,7 @@ def request_mc2_debug_capture(
         return 0
     filters = dict(filters or {})
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
-    task_filter = str(filters.get("task_filter") or "").strip()
+    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
     setup_filter = str(filters.get("setup_filter") or "all").strip().lower()
     requested = 0
     for slot in world.solver_slots.values():
@@ -83,7 +106,7 @@ def request_mc2_debug_capture(
         spec = slot.data.get("spec")
         if spec is None:
             continue
-        if task_filter and task_filter not in str(spec.task_id):
+        if not _matches_task_filter(spec.task_id, task_filters):
             continue
         if setup_filter not in ("", "all", str(spec.setup_type).lower()):
             continue

@@ -185,13 +185,14 @@ rig_e.rotation_euler = (0.45, -0.3, 0.65)
 bpy.context.view_layer.update()
 world = None
 try:
-    tasks = nodes.physicsMC2BoneClothTask(
+    tasks, task_names = nodes.physicsMC2BoneClothTask(
         [
             {"armature": rig_a, "bone": "Parent"},
             {"armature": rig_b, "bone": "Parent"},
         ],
         connection_mode=1,
     )
+    assert task_names.splitlines() == [task.task_id for task in tasks]
     assert len(tasks) == 2
     assert tuple(task.setup_options.connection_model for task in tasks) == (
         "hotools_product",
@@ -201,7 +202,7 @@ try:
     assert tuple(len(task.sources) for task in tasks) == (3, 2)
     assert all(task.profile.spring_enabled is False for task in tasks)
 
-    independent_control_tasks = nodes.physicsMC2BoneClothTask(
+    independent_control_tasks, independent_task_names = nodes.physicsMC2BoneClothTask(
         [
             {"armature": rig_c, "bone": "Parent0"},
             {"armature": rig_c, "bone": "Parent1"},
@@ -212,6 +213,9 @@ try:
         ),
         connection_mode=1,
     )
+    assert independent_task_names.splitlines() == [
+        task.task_id for task in independent_control_tasks
+    ]
     assert len(independent_control_tasks) == 2
     assert len({task.task_id for task in independent_control_tasks}) == 2
     assert tuple(len(task.sources) for task in independent_control_tasks) == (2, 2)
@@ -419,7 +423,7 @@ try:
             backstop_enabled=False,
             wind_influence=0.0,
         ),
-    )[0]
+    )[0][0]
     zero_topology = topology_module.build_mc2_topology_spec(zero_task)
     zero_initial_input = bone_frame_input.build_mc2_bone_frame_input(
         zero_task,
@@ -479,7 +483,7 @@ try:
     free_world.frame_context.raw_dt = 1.0 / 60.0
     free_task = nodes.physicsMC2BoneClothTask([
         {"armature": rig_d, "bone": "Parent"},
-    ])[0]
+    ])[0][0]
     try:
         free_plan = None
         for frame in (1, 2):
@@ -519,10 +523,11 @@ try:
     finally:
         free_world.omni_cache_dispose("bone_free_translation_complete")
 
-    spring_tasks = nodes.physicsMC2BoneSpringTask([
+    spring_tasks, spring_task_names = nodes.physicsMC2BoneSpringTask([
         {"armature": rig_a, "bone": "Chain0_0"},
         {"armature": rig_b, "bone": "Chain0_0"},
     ])
+    assert spring_task_names.splitlines() == [task.task_id for task in spring_tasks]
     assert len(spring_tasks) == 2
     assert all(task.profile.spring_enabled is False for task in spring_tasks)
     assert tuple(
@@ -656,12 +661,12 @@ try:
         first_group_sources,
         profile=parameters.make_mc2_particle_profile(damping=0.1),
         connection_mode=1,
-    )[0]
+    )[0][0]
     second_group_task = nodes.physicsMC2BoneClothTask(
         second_group_sources,
         profile=parameters.make_mc2_particle_profile(damping=0.4),
         connection_mode=1,
-    )[0]
+    )[0][0]
     component_tasks = [first_group_task, second_group_task]
     returned, ready, _status = solver.step_mc2(world, component_tasks)
     assert returned is world and ready is True
@@ -687,7 +692,7 @@ try:
         [first_group_sources[1], second_group_sources[0]],
         profile=parameters.make_mc2_particle_profile(damping=0.7),
         connection_mode=1,
-    )[0]
+    )[0][0]
     world.frame_context.frame = 2
     try:
         solver.step_mc2(world, [first_group_task, overlapping_task])

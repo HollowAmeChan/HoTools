@@ -66,6 +66,24 @@ world_types = importlib.import_module(
 physics_blender = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender"
 )
+mc2_nodes = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+)
+function_node_core = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.FunctionNodeCore"
+)
+omni_ir = importlib.import_module("HoTools.OmniNode.NodeTree.OmniIR")
+omni_executor = importlib.import_module("HoTools.OmniNode.NodeTree.OmniExecutor")
+
+
+class _LazyTaskNode:
+    name = "MC2 debug task-name cache acceptance"
+
+    def __init__(self):
+        self.error = None
+
+    def set_bug_state(self, error):
+        self.error = error
 
 
 def _grid(name: str, z: float, *, size: int = 4, spacing: float = 0.02):
@@ -187,6 +205,55 @@ world.collider_snapshot = {
 }
 node_uid = "mc2-debug-acceptance"
 try:
+    for task_function in (
+        mc2_nodes.physicsMC2MeshClothTask,
+        mc2_nodes.physicsMC2BoneClothTask,
+        mc2_nodes.physicsMC2BoneSpringTask,
+    ):
+        _, _, output_meta, _, _, _ = function_node_core.CheckMetaInfo(task_function)
+        assert output_meta["_OUTPUT1"]["name"] == "任务名称"
+        assert output_meta["_OUTPUT1"]["type"] == "NodeSocketString"
+
+    task_node = _LazyTaskNode()
+    def _tracked_task_node(*args):
+        nonlocal_call_count[0] += 1
+        return mc2_nodes.physicsMC2MeshClothTask(*args)
+
+    nonlocal_call_count = [0]
+    task_call = omni_ir.OpCall(
+        _tracked_task_node,
+        [0, 1, 2],
+        [3, 4],
+        task_node,
+    )
+    task_call._init_lazy_fields()
+    compiled = omni_ir.CompiledGraph()
+    compiled.reg_count = 5
+    compiled.instructions = (
+        (omni_ir.OP_CONST, 0, list(objects)),
+        (omni_ir.OP_CONST, 1, None),
+        (omni_ir.OP_CONST, 2, True),
+        task_call,
+    )
+    compiled.output_regs = {"tasks": 3, "task_name": 4}
+
+    first_outputs = omni_executor.OmniExecutor.run(compiled)
+    cached_task_name = first_outputs["task_name"]
+    assert nonlocal_call_count[0] == 1
+    assert len(first_outputs["tasks"]) == 2
+    assert cached_task_name.splitlines() == [
+        task.task_id for task in first_outputs["tasks"]
+    ]
+    assert compiled.reg_values[4] == cached_task_name
+    assert compiled.reg_versions[4] == 1
+
+    second_outputs = omni_executor.OmniExecutor.run(compiled)
+    assert nonlocal_call_count[0] == 1
+    assert second_outputs["task_name"] == cached_task_name
+    assert compiled.reg_values[4] == cached_task_name
+    assert task_node.error is None
+    print("[PASS] lazy task node publishes and retains task-name output")
+
     tasks = tuple(_task(obj) for obj in objects)
     _world_frame(world, 1, None)
     solver_module.step_mc2(
@@ -285,10 +352,22 @@ try:
         show_self_primitives=True,
         show_self_grid=True,
         show_self_candidates=True,
-        task_filter=tasks[0].task_id,
+        task_filter=cached_task_name.splitlines()[0],
     )
     filtered = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
     assert 0 < filtered["line_vertex_count"] < rendered["line_vertex_count"]
+    debug_draw.update_mc2_debug_draw_store(
+        node_uid,
+        world,
+        True,
+        show_self_primitives=True,
+        show_self_grid=True,
+        show_self_candidates=True,
+        task_filter=cached_task_name,
+    )
+    multi_filtered = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
+    assert multi_filtered["line_vertex_count"] == rendered["line_vertex_count"]
+    print("[PASS] cached task-name output filters one or multiple tasks")
     debug_draw.update_mc2_debug_draw_store(
         node_uid,
         world,

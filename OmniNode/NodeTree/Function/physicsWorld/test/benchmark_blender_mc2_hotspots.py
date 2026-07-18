@@ -416,7 +416,7 @@ def _benchmark_bone(case, recorder) -> dict:
         world.generation = 1
         task = nodes.physicsMC2BoneClothTask(
             [(armature, "Parent")], profile=_profile(), connection_mode=1
-        )[0]
+        )[0][0]
         cold = _run_step(recorder, world, (task,), 1, None, "bone_cloth")
         previous = 1
         hot_records = []
@@ -431,7 +431,7 @@ def _benchmark_bone(case, recorder) -> dict:
             [(armature, "Parent")],
             profile=replace(_profile(), gravity_direction=(0.0, -1.0, 0.0)),
             connection_mode=1,
-        )[0]
+        )[0][0]
         assert config_task.task_id == task.task_id
         config = _run_step(recorder, world, (config_task,), previous + 1, previous, "bone_cloth")
         previous += 1

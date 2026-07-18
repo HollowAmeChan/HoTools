@@ -670,11 +670,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         self_collision_interaction=True,
     )
     assert product_profile.self_collision_sync_mode == 2
-    product_tasks = mc2_nodes.physicsMC2MeshClothTask(
+    product_tasks, product_task_names = mc2_nodes.physicsMC2MeshClothTask(
         [mesh, second_mesh],
         product_profile,
     )
     assert len(product_tasks) == 2
+    assert product_task_names.splitlines() == [task.task_id for task in product_tasks]
     assert tuple(task.sources for task in product_tasks) == ((mesh,), (second_mesh,))
     product_task = product_tasks[0]
     assert product_task.setup_options.self_collision_radius_model == "derived_radius"

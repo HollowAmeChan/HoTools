@@ -153,6 +153,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 - 用户不连接任何中间态socket。
 - debug节点自动发现world内MC2 slots并登记一次性或continuous请求。
+- MeshCloth、BoneCloth和BoneSpring任务节点都输出可直连debug过滤输入的`任务名称`字符串；值是精确`task_id`，多task按换行分隔。任务节点首轮真实求值必须把任务与名称同时写入OmniNode持久寄存器，后续lazy skip复用该缓存值。
 - 请求只在下一次真实native advance时捕获；same-frame保留请求但不伪造快照。
 - renderer只消费冻结只读快照，不读取当前RNA反推过程。
 - 无请求时不得执行中间态native readback，`debug_readback_count`保持零。

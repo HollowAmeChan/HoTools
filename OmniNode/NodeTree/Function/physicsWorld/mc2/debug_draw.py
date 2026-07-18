@@ -17,7 +17,7 @@ from ..utils.debug_draw import (
     draw_line_batches,
     vector3,
 )
-from .debug import request_mc2_debug_capture
+from .debug import normalize_mc2_task_filters, request_mc2_debug_capture
 from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
 from .names import MC2_SLOT_KIND
 
@@ -95,7 +95,7 @@ def update_mc2_debug_draw_store(
             or show_self_contacts
         ),
         "show_output": bool(show_output),
-        "task_filter": str(task_filter or "").strip(),
+        "task_filter": normalize_mc2_task_filters(task_filter),
         "max_items": max(1, min(int(max_items), 100000)),
     }
     request_mc2_debug_capture(world, filters=filters)
@@ -146,14 +146,16 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
 
 def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> list:
     batches = []
-    task_filter = filters["task_filter"]
+    task_filters = normalize_mc2_task_filters(filters["task_filter"])
     for slot in world.solver_slots.values():
         if slot.kind != MC2_SLOT_KIND:
             continue
         snapshot = slot.data.get("_debug_draw_snapshot")
         if not isinstance(snapshot, dict):
             continue
-        if task_filter and task_filter not in str(snapshot.get("task_id") or ""):
+        if task_filters and not any(
+            token in str(snapshot.get("task_id") or "") for token in task_filters
+        ):
             continue
         _append_slot_batches(batches, snapshot, filters)
 
@@ -342,13 +344,16 @@ def _append_self_batches(batches, native_snapshot, filters, *, interaction):
     limit = filters["max_items"]
     visible_primitives = np.ones((len(indices),), dtype=bool)
     visible_particles = np.ones((len(positions),), dtype=bool)
-    if interaction and filters.get("task_filter"):
-        task_filter = filters["task_filter"]
+    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
+    if interaction and task_filters:
         participants = tuple(native_snapshot.get("participants") or ())
         allowed_owners = {
             index
             for index, participant in enumerate(participants)
-            if task_filter in str(participant.get("task_id") or "")
+            if any(
+                token in str(participant.get("task_id") or "")
+                for token in task_filters
+            )
         }
         owners = np.asarray(_values(state.get("owner_indices")), dtype=np.int32)
         visible_primitives = np.asarray(

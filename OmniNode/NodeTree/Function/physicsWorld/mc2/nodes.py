@@ -25,6 +25,10 @@ from .presets import MC2_PARTICLE_PRESETS
 from .specs import make_mc2_task_spec
 
 
+def _task_name_output(tasks) -> str:
+    return "\n".join(str(task.task_id) for task in tasks)
+
+
 def _mesh_cloth_tasks(mesh_objects, profile, enabled: bool):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
@@ -501,19 +505,20 @@ def physicsMC2BoneSpringProfile(
         "profile": {"description": "MC2 MeshCloth配置\n留空使用默认值"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
-    _OUTPUT_NAME=["MC2任务"],
+    _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
 def physicsMC2MeshClothTask(
     mesh_objects: list[bpy.types.Object],
     profile: typing.Any = None,
     enabled: bool = True,
-) -> list[typing.Any]:
-    return _mesh_cloth_tasks(
+) -> tuple[list[typing.Any], str]:
+    tasks = _mesh_cloth_tasks(
         mesh_objects,
         profile,
         enabled,
     )
+    return tasks, _task_name_output(tasks)
 
 
 @omni(
@@ -535,7 +540,7 @@ def physicsMC2MeshClothTask(
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
-    _OUTPUT_NAME=["MC2任务"],
+    _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
 def physicsMC2BoneClothTask(
@@ -546,8 +551,8 @@ def physicsMC2BoneClothTask(
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
-) -> list[typing.Any]:
-    return _hotools_bone_tasks(
+) -> tuple[list[typing.Any], str]:
+    tasks = _hotools_bone_tasks(
         control_bones,
         profile,
         enabled,
@@ -556,6 +561,7 @@ def physicsMC2BoneClothTask(
         root_rotation=root_rotation,
         collided_by_groups=collided_by_groups,
     )
+    return tasks, _task_name_output(tasks)
 
 
 @omni(
@@ -572,7 +578,7 @@ def physicsMC2BoneClothTask(
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
-    _OUTPUT_NAME=["MC2任务"],
+    _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
 def physicsMC2BoneSpringTask(
@@ -582,8 +588,8 @@ def physicsMC2BoneSpringTask(
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
-) -> list[typing.Any]:
-    return _bone_spring_tasks(
+) -> tuple[list[typing.Any], str]:
+    tasks = _bone_spring_tasks(
         root_bones,
         profile,
         enabled,
@@ -591,6 +597,7 @@ def physicsMC2BoneSpringTask(
         root_rotation=root_rotation,
         collided_by_groups=collided_by_groups,
     )
+    return tasks, _task_name_output(tasks)
 
 
 @omni(
@@ -661,7 +668,7 @@ def physicsMC2Step(
         "show_self_candidates": {"description": "显示自碰撞broadphase候选对。"},
         "show_self_contacts": {"description": "显示自碰撞窄相contact。"},
         "show_output": {"description": "显示最终解算粒子/写回输出。"},
-        "task_filter": {"description": "按task id子串筛选；留空显示全部active task。"},
+        "task_filter": {"description": "连接任务节点的任务名称输出，或填写task id子串。\n多项用换行或逗号分隔；留空显示全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每类debug primitive允许显示的最大项目数。"},
     },
     _OUTPUT_NAME=["物理世界"],
