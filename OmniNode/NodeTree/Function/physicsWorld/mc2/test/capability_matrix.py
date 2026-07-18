@@ -207,7 +207,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "finite", "deterministic", "motion_base_exact", "constraint_boundary_bounded",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_motion_base_soak",
+            "runner": "test_blender_mc2_constraint_soak.py::motion_base_deterministic",
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": (
@@ -215,7 +215,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "use_max_distance", "use_backstop", "max_distance", "backstop_distance",
             ),
             "invariants": (
-                "finite", "motion_base_exact", "constraint_boundary_bounded",
+                "finite", "deterministic", "motion_base_exact",
+                "constraint_boundary_bounded",
                 "parameter_hot_update_in_place",
             ),
         }, {
@@ -232,7 +233,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         },),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "external_collision",

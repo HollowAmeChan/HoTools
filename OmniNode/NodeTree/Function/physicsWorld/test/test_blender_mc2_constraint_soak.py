@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import math
 import os
@@ -270,6 +271,7 @@ def _motion_base_soak(obj):
     topology = topology_module.build_mc2_topology_spec(task)
     local = _base_positions(obj)
     last_positions = None
+    trajectory_digest = hashlib.sha256()
     try:
         for frame in range(1, 901):
             if frame == 451:
@@ -302,6 +304,9 @@ def _motion_base_soak(obj):
                 generation,
             )
             candidate = _candidate(world, task)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             distance = np.linalg.norm(candidate.world_positions - positions, axis=1)
             assert float(np.max(distance)) <= 0.031, (frame, float(np.max(distance)))
             if frame == 451:
@@ -326,9 +331,20 @@ def _motion_base_soak(obj):
         )
         assert snapshot["frame"] == 900
         assert snapshot["motion"]["use_backstop"] is True
+        trajectory_digest.update(np.asarray(
+            snapshot["motion"]["motion_base_positions"]
+        ).tobytes())
         print("[PASS] 900-frame Motion BasePosition/max-distance boundary")
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("motion_base_soak")
+
+
+def motion_base_deterministic(obj):
+    first = _motion_base_soak(obj)
+    second = _motion_base_soak(obj)
+    assert first == second, (first, second)
+    print("[PASS] repeated Mesh Motion trajectory is deterministic")
 
 
 def _task_collider_scope_soak(objects):
@@ -734,7 +750,7 @@ def main():
             _grid("MC2ConstraintSelfB", 0.485),
         )
         _angle_restoration_rest_soak(objects[0])
-        _motion_base_soak(objects[0])
+        motion_base_deterministic(objects[0])
         _task_collider_scope_soak(objects[:2])
         _distance_tether_soak(objects[0])
         _bending_soak(objects[0])

@@ -115,5 +115,6 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert not motion["fields"]
     assert "motion_base_exact@mesh_cloth" not in motion["invariants"]
     assert "motion_base_exact@bone_cloth" not in motion["invariants"]
-    assert "deterministic@mesh_cloth" in motion["invariants"]
+    assert "deterministic@mesh_cloth" not in motion["invariants"]
     assert "deterministic@bone_cloth" not in motion["invariants"]
+    assert not any(motion.values())
