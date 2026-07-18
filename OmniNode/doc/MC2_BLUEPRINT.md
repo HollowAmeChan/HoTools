@@ -484,13 +484,13 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 | Attribute | Fixed/Move/ZeroDistance、Pin与depth |
 | Motion | MaxDistance、Backstop方向/半径、limit命中 |
 | Center | anchor、frame shift、teleport判定、negative-scale、world transform抵消 |
-| Collision | collider shape、group/mask、Point/Edge模式；Edge模式实际消费的proxy段、端点插值半径及横向来源分类 |
+| Collision | collider shape、group/mask、Point/Edge模式；Edge模式实际消费的最终proxy段与端点插值半径 |
 | Self | primitive、grid/hash、candidate、contact、intersection flags/history |
 | Output | basic step、final particle/Bone输出、result identity |
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
 
-`BoneCloth横向连接`调试模式使用青色显示显式横边、紫色显示横向triangle补出的跨链proxy边、蓝色显示跨链triangle；它表达producer及其下游作用域。`Edge碰撞代理`只在当前有效模式为2且存在匹配collider scope时绘制：橙色是普通proxy段，青色是显式横边，紫色是横向triangle补边，线框体积使用内核同一份两端粒子半径并沿段线性插值。两个模式必须能独立于总拓扑与普通粒子半径开关显示。
+`碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色线框显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状；灰色线框显示本帧实际上传的Sphere/Capsule/Plane/Box collider。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 
 ## Python模块所有权
 

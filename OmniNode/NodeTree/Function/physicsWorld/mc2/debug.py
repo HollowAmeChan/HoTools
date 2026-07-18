@@ -169,9 +169,6 @@ def _topology_payload(slot, native_snapshot) -> dict:
     connection = getattr(topology, "bone_connection", None)
     longitudinal = []
     lateral = []
-    lateral_collision = []
-    lateral_triangle_edges = []
-    lateral_triangles = []
     if connection is not None:
         roots = connection.root_indices
         levels = connection.levels
@@ -181,21 +178,6 @@ def _topology_payload(slot, native_snapshot) -> dict:
                 longitudinal.append(edge)
             else:
                 lateral.append(edge)
-        roots = tuple(int(value) for value in connection.root_indices)
-        direct_lateral = {tuple(sorted(map(int, edge))) for edge in lateral}
-        proxy_edges = tuple(getattr(proxy, "edges", ()))
-        for edge in proxy_edges:
-            left, right = map(int, edge)
-            if roots[left] == roots[right]:
-                continue
-            normalized = tuple(sorted((left, right)))
-            lateral_collision.append(normalized)
-            if normalized not in direct_lateral:
-                lateral_triangle_edges.append(normalized)
-        for triangle in tuple(getattr(proxy, "triangles", ())):
-            indices = tuple(map(int, triangle))
-            if len({roots[index] for index in indices}) > 1:
-                lateral_triangles.append(indices)
     return {
         "connection_model": str(getattr(topology, "connection_model", "")),
         "connection_mode": int(getattr(topology, "connection_mode", 0) or 0),
@@ -209,15 +191,6 @@ def _topology_payload(slot, native_snapshot) -> dict:
         ).reshape((-1, 3)),
         "longitudinal_edges": _readonly(longitudinal, np.int32).reshape((-1, 2)),
         "lateral_edges": _readonly(lateral, np.int32).reshape((-1, 2)),
-        "lateral_collision_edges": _readonly(
-            lateral_collision, np.int32
-        ).reshape((-1, 2)),
-        "lateral_triangle_edges": _readonly(
-            lateral_triangle_edges, np.int32
-        ).reshape((-1, 2)),
-        "lateral_triangles": _readonly(
-            lateral_triangles, np.int32
-        ).reshape((-1, 3)),
         "chain_indices": _readonly(
             getattr(connection, "root_indices", ()), np.int32
         ),

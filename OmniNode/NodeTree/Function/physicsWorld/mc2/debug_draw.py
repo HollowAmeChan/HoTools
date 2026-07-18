@@ -32,12 +32,8 @@ _COLORS = {
     "longitudinal": (0.95, 0.70, 0.18, 0.95),
     "lateral": (0.20, 0.85, 0.95, 0.95),
     "triangle": (0.38, 0.62, 0.82, 0.50),
-    "lateral_direct": (0.08, 1.00, 0.92, 1.00),
-    "lateral_derived": (0.78, 0.30, 1.00, 0.95),
-    "lateral_surface": (0.30, 0.72, 1.00, 0.62),
     "edge_collision": (1.00, 0.46, 0.12, 0.82),
-    "edge_collision_lateral": (0.05, 1.00, 0.82, 0.92),
-    "edge_collision_derived": (0.95, 0.24, 1.00, 0.92),
+    "point_collision": (0.20, 1.00, 0.52, 0.78),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
@@ -87,13 +83,11 @@ def update_mc2_debug_draw_store(
     enabled: bool,
     *,
     show_topology: bool = True,
-    show_bonecloth_lateral: bool = False,
     show_attributes: bool = True,
     show_motion: bool = True,
     show_center: bool = True,
     show_collision: bool = True,
-    show_edge_collision: bool = False,
-    show_radii: bool = True,
+    show_radii: bool = False,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
     show_self_candidates: bool = False,
@@ -118,7 +112,6 @@ def update_mc2_debug_draw_store(
 
     filters = {
         "show_topology": bool(show_topology),
-        "show_bonecloth_lateral": bool(show_bonecloth_lateral),
         "show_attributes": bool(show_attributes),
         "show_step_basic": bool(show_step_basic),
         "show_gravity": bool(show_gravity),
@@ -132,7 +125,6 @@ def update_mc2_debug_draw_store(
         "show_angle_limit": bool(show_angle_limit),
         "show_center": bool(show_center),
         "show_collision": bool(show_collision),
-        "show_edge_collision": bool(show_edge_collision),
         "show_radii": bool(show_radii),
         "show_self_primitives": bool(show_self_primitives),
         "show_self_grid": bool(show_self_grid),
@@ -250,10 +242,6 @@ def _append_slot_batches(
     positions = np.asarray(_values(topology.get("positions")), dtype=np.float32).reshape((-1, 3))
     if filters["show_topology"]:
         _append_topology_batches(batches, topology, positions, limit)
-    if filters["show_bonecloth_lateral"]:
-        _append_bonecloth_lateral_batches(
-            batches, point_batches, topology, positions, limit
-        )
     if filters["show_attributes"]:
         _append_attribute_batches(point_batches, topology, positions, limit)
     if filters["show_step_basic"]:
@@ -324,14 +312,8 @@ def _append_slot_batches(
     if filters["show_center"]:
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
     if filters["show_collision"]:
-        _append_collider_batches(batches, snapshot.get("collision") or {}, limit)
-    if filters["show_edge_collision"]:
-        _append_edge_collision_batches(
-            batches,
-            topology,
-            positions,
-            snapshot.get("collision") or {},
-            limit,
+        _append_collision_situation_batches(
+            batches, snapshot, topology, positions, limit
         )
     if filters["show_radii"]:
         _append_radius_batches(batches, snapshot, limit)
@@ -368,72 +350,81 @@ def _append_topology_batches(batches, topology, positions, limit):
     _batch(batches, triangles, "triangle", 1.0)
 
 
-def _append_bonecloth_lateral_batches(
-    batches, point_batches, topology, positions, limit
+def _active_collision_payload(collision):
+    mode = int(collision.get("collision_mode", 0) or 0)
+    if mode not in (1, 2):
+        return mode, None
+    colliders = collision.get("colliders")
+    if not isinstance(colliders, dict):
+        return mode, None
+    if int(colliders.get("collided_by_groups", 0) or 0) == 0:
+        return mode, None
+    types = np.asarray(_values(colliders.get("types")), dtype=np.int32)
+    group_bits = np.asarray(_values(colliders.get("group_bits")), dtype=np.int32)
+    if not len(types) or len(group_bits) != len(types):
+        return mode, None
+    collided_by_groups = int(colliders.get("collided_by_groups", 0) or 0)
+    if not any(collided_by_groups & int(value) for value in group_bits):
+        return mode, None
+    return mode, colliders
+
+
+def _append_collision_situation_batches(
+    batches, snapshot, topology, positions, limit
 ):
-    if topology.get("connection_model") != "hotools_product":
+    collision = snapshot.get("collision") or {}
+    mode, colliders = _active_collision_payload(collision)
+    if colliders is None:
         return
-    direct = np.asarray(
-        _values(topology.get("lateral_edges")), dtype=np.int32
-    ).reshape((-1, 2))
-    derived = np.asarray(
-        _values(topology.get("lateral_triangle_edges")), dtype=np.int32
-    ).reshape((-1, 2))
-    triangles = np.asarray(
-        _values(topology.get("lateral_triangles")), dtype=np.int32
-    ).reshape((-1, 3))
-    direct_lines = []
-    derived_lines = []
-    surface_lines = []
-    endpoints = []
-    for edge in direct[:limit]:
-        _add_index_line(direct_lines, positions, edge)
-        for index in edge:
-            if 0 <= int(index) < len(positions):
-                add_point(endpoints, positions[int(index)])
-    for edge in derived[:limit]:
-        _add_index_line(derived_lines, positions, edge)
-    for triangle in triangles[:limit]:
-        _add_index_loop(surface_lines, positions, triangle)
-    _batch(batches, direct_lines, "lateral_direct", 4.0)
-    _batch(batches, derived_lines, "lateral_derived", 2.4)
-    _batch(batches, surface_lines, "lateral_surface", 1.2)
-    _point_batch(point_batches, endpoints, "lateral_direct", 6.0)
+    _append_collider_batches(batches, collision, limit)
+    if mode == 1:
+        _append_point_collision_batches(
+            batches,
+            positions,
+            topology,
+            collision,
+            str(snapshot.get("setup_type") or ""),
+            limit,
+        )
+    else:
+        _append_edge_collision_batches(
+            batches, topology, positions, collision, limit
+        )
+
+
+def _append_point_collision_batches(
+    batches, positions, topology, collision, setup_type, limit
+):
+    attributes = np.asarray(
+        _values(topology.get("vertex_attributes")), dtype=np.uint8
+    )
+    radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
+    is_spring = setup_type == "bone_spring"
+    shapes = []
+    count = min(len(positions), len(attributes), len(radii), limit)
+    for index in range(count):
+        attribute = int(attributes[index])
+        valid = bool(attribute & 0x03) if is_spring else bool(attribute & 0x02)
+        if not valid or attribute & 0x10:
+            continue
+        radius = max(float(radii[index]), 0.0)
+        if radius <= 1.0e-7:
+            continue
+        _add_axis_sphere(shapes, positions[index], radius)
+    _batch(batches, shapes, "point_collision", 1.0)
 
 
 def _append_edge_collision_batches(batches, topology, positions, collision, limit):
-    if int(collision.get("collision_mode", 0) or 0) != 2:
-        return
-    colliders = collision.get("colliders")
-    if not isinstance(colliders, dict):
-        return
-    if int(colliders.get("collided_by_groups", 0) or 0) == 0:
-        return
-    if not len(np.asarray(_values(colliders.get("types")), dtype=np.int32)):
+    mode, colliders = _active_collision_payload(collision)
+    if mode != 2 or colliders is None:
         return
     edges = np.asarray(_values(topology.get("edges")), dtype=np.int32).reshape((-1, 2))
     attributes = np.asarray(
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     )
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
-    direct_lateral = {
-        tuple(sorted(map(int, edge)))
-        for edge in np.asarray(
-            _values(topology.get("lateral_edges")), dtype=np.int32
-        ).reshape((-1, 2))
-    }
-    derived_lateral = {
-        tuple(sorted(map(int, edge)))
-        for edge in np.asarray(
-            _values(topology.get("lateral_triangle_edges")), dtype=np.int32
-        ).reshape((-1, 2))
-    }
-    groups = {
-        "edge_collision": [],
-        "edge_collision_lateral": [],
-        "edge_collision_derived": [],
-    }
-    centers = {name: [] for name in groups}
+    volumes = []
+    centers = []
     for edge in edges[:limit]:
         left, right = map(int, edge)
         if min(left, right) < 0 or max(left, right) >= len(positions):
@@ -446,24 +437,16 @@ def _append_edge_collision_batches(batches, topology, positions, collision, limi
         radius_right = max(float(radii[right]), 0.0)
         if max(radius_left, radius_right) <= 1.0e-7:
             continue
-        normalized = tuple(sorted((left, right)))
-        if normalized in direct_lateral:
-            color = "edge_collision_lateral"
-        elif normalized in derived_lateral:
-            color = "edge_collision_derived"
-        else:
-            color = "edge_collision"
-        add_line(centers[color], positions[left], positions[right])
+        add_line(centers, positions[left], positions[right])
         add_tapered_capsule_lines(
-            groups[color],
+            volumes,
             positions[left],
             positions[right],
             radius_left,
             radius_right,
         )
-    for color in groups:
-        _batch(batches, groups[color], color, 1.0)
-        _batch(batches, centers[color], color, 2.6)
+    _batch(batches, volumes, "edge_collision", 1.0)
+    _batch(batches, centers, "edge_collision", 2.6)
 
 
 def _append_attribute_batches(point_batches, topology, positions, limit):
@@ -880,11 +863,17 @@ def _append_collider_batches(batches, collision, limit):
         return
     lines = []
     types = np.asarray(_values(colliders.get("types")), dtype=np.int32)
+    group_bits = np.asarray(_values(colliders.get("group_bits")), dtype=np.int32)
+    collided_by_groups = int(colliders.get("collided_by_groups", 0) or 0)
     centers = np.asarray(_values(colliders.get("centers")), dtype=np.float32).reshape((-1, 3))
     segment_a = np.asarray(_values(colliders.get("segment_a")), dtype=np.float32).reshape((-1, 3))
     segment_b = np.asarray(_values(colliders.get("segment_b")), dtype=np.float32).reshape((-1, 3))
     radii = np.asarray(_values(colliders.get("radii")), dtype=np.float32)
-    for kind, center, first, second, radius in zip(types[:limit], centers, segment_a, segment_b, radii):
+    for kind, group_bit, center, first, second, radius in zip(
+        types[:limit], group_bits, centers, segment_a, segment_b, radii
+    ):
+        if not (collided_by_groups & int(group_bit)):
+            continue
         kind = int(kind)
         radius = float(radius)
         if kind == 0:
