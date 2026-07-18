@@ -673,7 +673,7 @@ def physicsMC2Step(
         "show_angle_restoration": {"description": "粉色箭头显示Angle Restoration目标。"},
         "show_angle_limit": {"description": "黄色锥体显示每个父子段允许的Angle Limit范围。\n刚度为0时不绘制。"},
         "show_center": {"description": "显示Center/Teleport/变换抵消"},
-        "show_collision": {"description": "半透明实体显示外碰双方。\n绿色=Point粒子球\n橙色=Edge布料形状\n灰色=外部碰撞体。"},
+        "show_collision": {"description": "半透明实体显示外碰双方。\n绿色=Point粒子球\n橙色=Edge布料形状\n蓝色=外部碰撞体。"},
         "show_radii": {"description": "参数审计：显示全部粒子半径。\n不表示当前一定参与碰撞。"},
         "show_self_primitives": {"description": "自碰阶段1：几何单元\n紫色点/边/三角形\n表示实际参与检测的primitive。"},
         "show_self_grid": {"description": "自碰阶段2：空间网格\n灰色方格表示broadphase占用单元\n用于检查分桶尺度与密度。"},
