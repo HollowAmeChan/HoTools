@@ -165,7 +165,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
             "invariants": (
-                "finite", "bone_deterministic", "bone_branch_transition_stable",
+                "finite", "deterministic", "bone_branch_transition_stable",
                 "bounded_zero_force_drift", "connected_disconnected_writeback",
             ),
         },),
@@ -190,7 +190,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
             "invariants": (
-                "finite", "bone_deterministic", "bone_branch_transition_stable",
+                "finite", "deterministic", "bone_branch_transition_stable",
                 "bounded_zero_force_drift", "connected_disconnected_writeback",
             ),
         },),
@@ -227,7 +227,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "use_max_distance", "use_backstop", "max_distance", "backstop_distance",
             ),
             "invariants": (
-                "finite", "bone_deterministic", "motion_base_exact",
+                "finite", "deterministic", "motion_base_exact",
                 "constraint_boundary_bounded", "parameter_hot_update_in_place",
                 "connected_disconnected_writeback",
             ),

@@ -88,6 +88,7 @@ def _run_setup(setup_type):
     enabled_count = None
     disabled_count = None
     max_rest_error = 0.0
+    trajectory_digest = hashlib.sha256()
     rest_budget = (
         5.0e-5
         if setup_type == names.MC2_SETUP_BONE_CLOTH
@@ -118,6 +119,9 @@ def _run_setup(setup_type):
             assert candidate.frame == frame
             assert np.all(np.isfinite(candidate.world_positions))
             assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             if setup_type == names.MC2_SETUP_BONE_CLOTH:
                 plan = slot.data["writeback_plan"]
                 assert plan["rotation_only_connected_count"] > 0
@@ -153,15 +157,11 @@ def _run_setup(setup_type):
             elif frame == 900:
                 assert info["angle_solve_count"] > disabled_count
 
-        final_candidate = world.solver_slots[task.task_id].data["result_candidate"]
-        digest = hashlib.sha256()
-        digest.update(np.asarray(final_candidate.world_positions).tobytes())
-        digest.update(np.asarray(final_candidate.world_rotations_xyzw).tobytes())
         print(
             f"[INFO] {setup_type} max zero-force drift: "
             f"{max_rest_error:.9f}m / budget {rest_budget:.9f}m"
         )
-        return digest.hexdigest()
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("bone_constraint_soak")
         if armature.name in bpy.data.objects:
@@ -217,6 +217,7 @@ def _run_bone_motion():
         task, topology, frame=1, generation=world.generation
     )
     context = None
+    trajectory_digest = hashlib.sha256()
     try:
         for frame in range(1, 901):
             if frame == 451:
@@ -236,6 +237,9 @@ def _run_bone_motion():
             candidate = slot.data["result_candidate"]
             assert candidate.frame == frame
             assert np.all(np.isfinite(candidate.world_positions))
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             distance = np.linalg.norm(
                 candidate.world_positions - animation_input.world_positions,
                 axis=1,
@@ -269,11 +273,10 @@ def _run_bone_motion():
             animation_input.world_positions,
             atol=1.0e-6,
         )
-        candidate = slot.data["result_candidate"]
-        digest = hashlib.sha256()
-        digest.update(np.asarray(candidate.world_positions).tobytes())
-        digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
-        return digest.hexdigest()
+        trajectory_digest.update(np.asarray(
+            snapshot["motion"]["motion_base_positions"]
+        ).tobytes())
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("bone_motion_soak")
         if armature.name in bpy.data.objects:
@@ -350,6 +353,7 @@ def _run_bone_external_collision(setup_type):
     context = None
     max_response = 0.0
     max_soft_limit_distance = 0.0
+    trajectory_digest = hashlib.sha256()
     try:
         for frame in range(1, 901):
             active_limit = 0.03 if frame < 451 else 0.05
@@ -415,6 +419,9 @@ def _run_bone_external_collision(setup_type):
             assert candidate.frame == frame
             assert np.all(np.isfinite(candidate.world_positions))
             assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             response = np.linalg.norm(
                 candidate.world_positions - animation_input.world_positions,
                 axis=1,
@@ -477,10 +484,9 @@ def _run_bone_external_collision(setup_type):
         assert snapshot["collision"]["colliders"]["keys"] == (
             f"bone-collision-{setup_type}",
         )
-        candidate = slot.data["result_candidate"]
-        digest = hashlib.sha256()
-        digest.update(np.asarray(candidate.world_positions).tobytes())
-        digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+        trajectory_digest.update("\0".join(
+            snapshot["collision"]["colliders"]["keys"]
+        ).encode("utf-8"))
         print(
             f"[INFO] {setup_type} external collision max response: "
             f"{max_response:.9f}m"
@@ -489,7 +495,7 @@ def _run_bone_external_collision(setup_type):
                 if is_spring else ""
             )
         )
-        return digest.hexdigest()
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("bone_external_collision_soak")
         if armature.name in bpy.data.objects:

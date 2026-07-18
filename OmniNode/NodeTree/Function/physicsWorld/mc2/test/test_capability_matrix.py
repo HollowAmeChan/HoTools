@@ -80,11 +80,15 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "zero_force_rest@mesh_cloth" not in angle_restoration["invariants"]
     assert "zero_force_rest@bone_cloth" in angle_restoration["invariants"]
     assert "zero_force_rest@bone_spring" in angle_restoration["invariants"]
+    assert "deterministic@bone_cloth" not in angle_restoration["invariants"]
+    assert "deterministic@bone_spring" not in angle_restoration["invariants"]
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]
     assert "limit_bounded@bone_cloth" in angle_limit["invariants"]
     assert "limit_bounded@bone_spring" in angle_limit["invariants"]
+    assert "deterministic@bone_cloth" not in angle_limit["invariants"]
+    assert "deterministic@bone_spring" not in angle_limit["invariants"]
 
     integration = capability_gaps(by_id["integration_and_pose_blend"])
     assert "gravity@mesh_cloth" not in integration["fields"]
@@ -112,4 +116,4 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "motion_base_exact@mesh_cloth" not in motion["invariants"]
     assert "motion_base_exact@bone_cloth" not in motion["invariants"]
     assert "deterministic@mesh_cloth" in motion["invariants"]
-    assert "deterministic@bone_cloth" in motion["invariants"]
+    assert "deterministic@bone_cloth" not in motion["invariants"]
