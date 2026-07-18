@@ -649,6 +649,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧；双task外碰scope 600帧；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Mesh Center/Keep 1200帧；跨task self/hot update 1800帧。三setup Keep/Reset 900帧runner已执行，包含非单位正scale、逐帧真实写回及zero-substep立即Reset |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；完整场景重复两次并比较最终粒子/写回数组摘要以验证确定性 |
 | Blender 4.5 Bone角度soak | BoneCloth/BoneSpring各900帧并重复两次；Restoration/Limit在301/601帧关闭与重开，context不重建且关闭区间solve count冻结；BoneCloth强制同时包含connected旋转写回与disconnected位移旋转写回。默认阻尼下静置漂移预算分别为`0.00005m`与`0.0016m`，因此只记为bounded drift，不冒充严格zero-force rest |
+| Blender 4.5 Bone Motion soak | BoneCloth 900帧并重复两次；同时包含connected/disconnected写回，前半程MaxDistance、451帧同context热开Backstop，逐帧相对动画基准距离不超过`0.031m`，最终debug Motion BasePosition逐点等于动画输入 |
 | Blender 4.5维护态soak | 180帧；mean/P95/max历史基线`2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放；每个真实帧要求三setup各自产生新candidate且frame/generation精确，same-frame要求复用 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 

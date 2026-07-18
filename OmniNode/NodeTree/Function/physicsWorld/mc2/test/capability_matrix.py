@@ -218,6 +218,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "finite", "motion_base_exact", "constraint_boundary_bounded",
                 "parameter_hot_update_in_place",
             ),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_motion_constraints",
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": (
+                "backstop_radius", "motion_stiffness", "normal_axis",
+                "use_max_distance", "use_backstop", "max_distance", "backstop_distance",
+            ),
+            "invariants": (
+                "finite", "bone_deterministic", "motion_base_exact",
+                "constraint_boundary_bounded", "parameter_hot_update_in_place",
+                "connected_disconnected_writeback",
+            ),
         },),
         "status": "gap",
     },

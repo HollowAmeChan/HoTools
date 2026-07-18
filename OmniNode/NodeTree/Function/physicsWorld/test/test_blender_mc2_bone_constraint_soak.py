@@ -178,10 +178,119 @@ def bone_angle_constraints():
     print("[PASS] Bone angle constraints: 2 setups x 2 deterministic x 900 frames")
 
 
+def _run_bone_motion():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 74
+    armature = mixed._armature("MC2Motion_bone_cloth", 0.0, 0.8)
+
+    def make_task(backstop):
+        profile = parameters.make_mc2_particle_profile(
+            gravity=6.0,
+            gravity_direction=(0.0, 0.0, -1.0),
+            damping=0.05,
+            stabilization_time_after_reset=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            max_distance_enabled=True,
+            max_distance=0.03,
+            backstop_enabled=backstop,
+            backstop_radius=0.01,
+            backstop_distance=0.005,
+            normal_axis=2,
+            motion_stiffness=1.0,
+            self_collision_mode=0,
+        )
+        tasks, _task_names = nodes.physicsMC2BoneClothTask(
+            [{"armature": armature, "bone": "Root"}],
+            profile=profile,
+            connection_mode=0,
+        )
+        assert len(tasks) == 1
+        return tasks[0]
+
+    task = make_task(False)
+    stable_task_id = task.task_id
+    topology = topology_module.build_mc2_topology_spec(task)
+    animation_input = bone_frame_input.build_mc2_bone_frame_input(
+        task, topology, frame=1, generation=world.generation
+    )
+    context = None
+    try:
+        for frame in range(1, 901):
+            if frame == 451:
+                context = world.solver_slots[task.task_id].data["native_context"]
+                revision = context.inspect()["parameter_revision"]
+                task = make_task(True)
+                assert task.task_id == stable_task_id
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            distance = np.linalg.norm(
+                candidate.world_positions - animation_input.world_positions,
+                axis=1,
+            )
+            assert float(np.max(distance)) <= 0.031, (frame, float(np.max(distance)))
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+            if frame == 899:
+                mixed.debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_motion": True,
+                        "show_motion_base": True,
+                        "show_angle_restoration": False,
+                        "show_self": False,
+                    },
+                )
+            if frame == 451:
+                assert slot.data["native_context"] is context
+                assert slot.data["native_context"].inspect()["parameter_revision"] == revision + 1
+
+        slot = world.solver_slots[task.task_id]
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["frame"] == 900
+        assert snapshot["motion"]["use_backstop"] is True
+        np.testing.assert_allclose(
+            snapshot["motion"]["motion_base_positions"],
+            animation_input.world_positions,
+            atol=1.0e-6,
+        )
+        candidate = slot.data["result_candidate"]
+        digest = hashlib.sha256()
+        digest.update(np.asarray(candidate.world_positions).tobytes())
+        digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+        return digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_motion_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_motion_constraints():
+    first = _run_bone_motion()
+    second = _run_bone_motion()
+    assert first == second, (first, second)
+    print("[PASS] BoneCloth Motion: connected/disconnected x 2 x 900 frames")
+
+
 def main():
     mixed.physics_blender.register()
     try:
         bone_angle_constraints()
+        bone_motion_constraints()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

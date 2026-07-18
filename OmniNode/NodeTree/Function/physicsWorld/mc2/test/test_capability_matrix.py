@@ -97,3 +97,11 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "radius@mesh_cloth" not in external["fields"]
     assert "radius@bone_cloth" in external["fields"]
     assert "radius@bone_spring" in external["fields"]
+
+    motion = capability_gaps(by_id["motion_max_distance_backstop"])
+    assert not motion["setups"]
+    assert not motion["fields"]
+    assert "motion_base_exact@mesh_cloth" not in motion["invariants"]
+    assert "motion_base_exact@bone_cloth" not in motion["invariants"]
+    assert "deterministic@mesh_cloth" in motion["invariants"]
+    assert "deterministic@bone_cloth" in motion["invariants"]
