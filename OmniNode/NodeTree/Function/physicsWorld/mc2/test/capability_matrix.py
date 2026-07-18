@@ -39,7 +39,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ALL_SETUPS,
             "fields": ("gravity", "damping"),
             "invariants": (
-                "finite", "candidate_frame_progresses", "writeback_targets_present",
+                "finite", "deterministic", "candidate_frame_progresses",
+                "writeback_targets_present",
                 "parameter_hot_update_in_place",
             ),
         },),
@@ -66,7 +67,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ALL_SETUPS,
             "fields": ("teleport_distance", "teleport_mode"),
             "invariants": (
-                "finite", "teleport_keep_reset_all_setups_exact",
+                "finite", "deterministic", "teleport_keep_reset_all_setups_exact",
                 "teleport_zero_substep_immediate", "teleport_reset_pose_exact",
                 "teleport_nonunit_positive_scale", "real_writeback_each_frame",
             ),

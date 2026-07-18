@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import math
 import os
 import sys
@@ -200,7 +201,7 @@ def _remove_object(obj):
         bpy.data.armatures.remove(data)
 
 
-def main():
+def _run_scenario():
     physics_blender.register()
     mesh = cloth = spring = None
     world = world_types.PhysicsWorldCache()
@@ -374,6 +375,22 @@ def main():
         assert stats[0]["mesh_cloth_count"] == 1
         assert stats[0]["bone_cloth_count"] == 1
         assert stats[0]["bone_spring_count"] == 1
+        digest = hashlib.sha256()
+        for setup_type in sorted(setup_snapshots):
+            output = setup_snapshots[setup_type]["output"]
+            digest.update(setup_type.encode("ascii"))
+            for field in (
+                "world_offsets", "target_positions", "translation_applied",
+                "writeback_motion_modes",
+            ):
+                value = output.get(field)
+                if value is None:
+                    continue
+                array = np.asarray(value)
+                digest.update(str(array.dtype).encode("ascii"))
+                digest.update(str(array.shape).encode("ascii"))
+                digest.update(array.tobytes())
+        deterministic_digest = digest.hexdigest()
         print("[PASS] 900-frame mixed output/hot-update + all-setup Keep/Reset")
     finally:
         world.omni_cache_dispose("mixed_output_soak")
@@ -387,6 +404,14 @@ def main():
                 _remove_object(armature)
         if physics_blender.is_registered():
             physics_blender.unregister()
+    return deterministic_digest
+
+
+def main():
+    first = _run_scenario()
+    second = _run_scenario()
+    assert second == first, (first, second)
+    print("[PASS] repeated 900-frame mixed scenario is deterministic")
     print("MC2 mixed output soak: PASS")
 
 
