@@ -230,6 +230,12 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_step_basic, a); });
     m.def("mc2_context_v0_read_debug_motion",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_motion, a); });
+    m.def("mc2_context_v0_read_debug_dynamics",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_dynamics, a); });
+    m.def("mc2_context_v0_read_debug_distance_tether",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_distance_tether, a); });
+    m.def("mc2_context_v0_read_debug_bending",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_bending, a); });
     m.def("mc2_context_v0_read_center_step",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",

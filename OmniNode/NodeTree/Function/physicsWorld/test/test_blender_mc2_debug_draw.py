@@ -111,7 +111,7 @@ def _grid(name: str, z: float, *, size: int = 4, spacing: float = 0.02):
 
 def _task(obj):
     profile = parameters.make_mc2_particle_profile(
-        gravity=0.0,
+        gravity=1.0,
         damping=0.0,
         stabilization_time_after_reset=0.0,
         radius=0.02,
@@ -120,6 +120,8 @@ def _task(obj):
         backstop_enabled=True,
         backstop_radius=0.01,
         backstop_distance=0.01,
+        angle_limit_enabled=True,
+        angle_limit=45.0,
         teleport_mode=2,
         teleport_distance=0.1,
         teleport_rotation=30.0,
@@ -296,6 +298,10 @@ try:
         show_self_primitives=True,
         show_self_grid=True,
         show_self_candidates=True,
+        show_velocity=True,
+        show_distance=True,
+        show_tether=True,
+        show_bending=True,
     )
     empty_snapshot = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
     assert empty_snapshot["line_vertex_count"] == 0
@@ -339,6 +345,11 @@ try:
         assert np.count_nonzero(
             snapshot["motion"]["angle_restoration_target_valid"]
         ) > 0
+        assert snapshot["native"]["dynamics"]["velocities"].flags.writeable is False
+        assert snapshot["native"]["dynamics"]["real_velocities"].flags.writeable is False
+        assert snapshot["native"]["distance_tether"]["baseline_roots"].flags.writeable is False
+        assert snapshot["native"]["distance_tether"]["distance_targets"].flags.writeable is False
+        assert snapshot["native"]["bending"]["quads"].flags.writeable is False
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         assert snapshot["center"]["frame_shift"]["keep_teleport"] is True
         assert snapshot["center"]["negative_scale_transition"]["active"] is True
@@ -374,7 +385,14 @@ try:
     print("[PASS] next true advance captures frozen slot and world interaction state")
 
     isolated_modes = (
+        ("show_step_basic", {"show_step_basic": True}),
+        ("show_gravity", {"show_gravity": True}),
+        ("show_velocity", {"show_velocity": True}),
+        ("show_distance", {"show_distance": True}),
+        ("show_tether", {"show_tether": True}),
+        ("show_bending", {"show_bending": True}),
         ("show_motion_base", {"show_motion_base": True}),
+        ("show_angle_limit", {"show_angle_limit": True}),
         ("show_angle_restoration", {"show_angle_restoration": True}),
         ("show_output", {"show_output": True}),
     )
@@ -391,7 +409,14 @@ try:
             "show_self_candidates": False,
             "show_self_contacts": False,
             "show_output": False,
+            "show_step_basic": False,
+            "show_gravity": False,
+            "show_velocity": False,
+            "show_distance": False,
+            "show_tether": False,
+            "show_bending": False,
             "show_motion_base": False,
+            "show_angle_limit": False,
             "show_angle_restoration": False,
         }
         options.update(overrides)

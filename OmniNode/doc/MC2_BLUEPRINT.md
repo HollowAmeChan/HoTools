@@ -268,6 +268,10 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 |---|---|---|
 | StepBasic参考姿态 | C++ context的`step_basic_positions`与真实topology edges | Distance、Angle和bone输出共同消费的结构参考姿态；用于和动画Motion BasePosition区分 |
 | 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 绿色箭头；长度为实际加速度乘`0.02`，已包含Center重力衰减与组件scale |
+| 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分保存速度，橙色为本步真实位移速度，长度均乘`0.03`；用于区分阻尼/摩擦/限速结果和真实运动 |
+| Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
+| Tether范围 | C++ `baseline_roots` + StepBasic root rest length + runtime压缩/拉伸限制 | 灰线为当前root距离，蓝环为最短允许距离，黄环为最长允许距离；环是沿当前方向的球面截面 |
+| Bending约束 | C++ `bending_quads/rest/marker` + 当前位置 | 紫色为接近rest的dihedral quad，青色为volume四面体，超过5度或5% volume误差转红；共享边/四面体边来自真实native role顺序 |
 | Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
 | MaxDistance/Backstop | Motion BasePosition + native实际参数数组 | 约束球、Backstop中心和半径 |
 | Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
@@ -280,6 +284,8 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 自碰接触结果 | narrowphase contact、enabled flag、normal与intersection history | 红色为启用接触及法线箭头，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。
+
+粒子速度、Distance/Tether与Bending使用三个独立C++ readback入口；Python按显示开关精确分配并冻结数组。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带复制这些数组。
 
 MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。
 

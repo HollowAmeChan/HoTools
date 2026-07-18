@@ -29,6 +29,10 @@ MC2_DEBUG_DRAW_MODES = {
             "topology",
             "step_basic_reference",
             "effective_gravity",
+            "particle_velocity",
+            "distance_error",
+            "tether_range",
+            "bending_error",
             "motion_base_position",
             "motion_limits",
             "angle_restoration_target",
@@ -263,6 +267,13 @@ def _parameter_payload(slot, native_snapshot) -> dict:
         "gravity_strength": gravity_strength,
         "gravity_ratio": gravity_ratio,
         "gravity_effective_strength": gravity_strength * gravity_ratio * scale_ratio,
+        "scale_ratio": scale_ratio,
+        "negative_scale_sign": float(native.get("negative_scale_sign", 1.0) or 1.0),
+        "animation_pose_ratio": float(native.get("animation_pose_ratio", 0.0) or 0.0),
+        "particle_speed_limit": float(floats["particle_speed_limit"]),
+        "tether_compression": float(floats["tether_compression_limit"]),
+        "tether_stretch": float(floats["tether_stretch_limit"]),
+        "bending_stiffness": float(floats["bending_stiffness"]),
         "damping": _sample_curve(curves["damping"], depths),
         "distance_stiffness": _sample_curve(curves["distance_stiffness"], depths),
     }
@@ -419,6 +430,8 @@ def capture_requested_mc2_debug(
                     filters.get("show_angle_restoration", True)
                     or filters.get("show_angle_limit", False)
                     or filters.get("show_step_basic", False)
+                    or filters.get("show_distance", False)
+                    or filters.get("show_tether", False)
                 ),
                 include_motion_debug=bool(
                     filters.get("show_motion", True)
@@ -426,6 +439,12 @@ def capture_requested_mc2_debug(
                     or filters.get("show_angle_restoration", True)
                     or filters.get("show_angle_limit", False)
                 ),
+                include_dynamics=bool(filters.get("show_velocity", False)),
+                include_distance_tether=bool(
+                    filters.get("show_distance", False)
+                    or filters.get("show_tether", False)
+                ),
+                include_bending=bool(filters.get("show_bending", False)),
                 include_self=bool(filters.get("show_self", True)),
             )
             snapshot = {

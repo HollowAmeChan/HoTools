@@ -800,6 +800,9 @@ class MC2NativeContextV0:
         *,
         include_step_basic: bool = True,
         include_motion_debug: bool = False,
+        include_dynamics: bool = False,
+        include_distance_tether: bool = False,
+        include_bending: bool = False,
         include_self: bool = True,
     ) -> dict:
         self._ensure_live()
@@ -839,6 +842,47 @@ class MC2NativeContextV0:
                 "angle_restoration_target_vectors": self._debug_array(angle_vectors),
                 "angle_restoration_target_valid": self._debug_array(angle_valid),
             })
+            readbacks += 1
+        if include_dynamics:
+            velocities = np.empty((self.vertex_count, 3), dtype=np.float32)
+            real_velocities = np.empty((self.vertex_count, 3), dtype=np.float32)
+            self._module.mc2_context_v0_read_debug_dynamics(
+                self._handle, velocities, real_velocities
+            )
+            snapshot["dynamics"] = {
+                "velocities": self._debug_array(velocities),
+                "real_velocities": self._debug_array(real_velocities),
+            }
+            readbacks += 1
+        if include_distance_tether:
+            record_count = int(info.get("distance_record_count", 0) or 0)
+            roots = np.empty((self.vertex_count,), dtype=np.int32)
+            ranges = np.empty((self.vertex_count, 2), dtype=np.int32)
+            targets = np.empty((record_count,), dtype=np.int32)
+            rests = np.empty((record_count,), dtype=np.float32)
+            self._module.mc2_context_v0_read_debug_distance_tether(
+                self._handle, roots, ranges, targets, rests
+            )
+            snapshot["distance_tether"] = {
+                "baseline_roots": self._debug_array(roots),
+                "distance_ranges": self._debug_array(ranges),
+                "distance_targets": self._debug_array(targets),
+                "distance_rest_signed": self._debug_array(rests),
+            }
+            readbacks += 1
+        if include_bending:
+            record_count = int(info.get("bending_record_count", 0) or 0)
+            quads = np.empty((record_count, 4), dtype=np.int32)
+            rests = np.empty((record_count,), dtype=np.float32)
+            markers = np.empty((record_count,), dtype=np.int32)
+            self._module.mc2_context_v0_read_debug_bending(
+                self._handle, quads, rests, markers
+            )
+            snapshot["bending"] = {
+                "quads": self._debug_array(quads),
+                "rests": self._debug_array(rests),
+                "markers": self._debug_array(markers),
+            }
             readbacks += 1
         if include_self and bool(info.get("self_primitive_dynamic_ready", False)):
             primitive_count = int(info.get("self_primitive_count", 0) or 0)

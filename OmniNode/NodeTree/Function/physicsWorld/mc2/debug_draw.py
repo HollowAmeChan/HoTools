@@ -36,6 +36,17 @@ _COLORS = {
     "motion_base": (0.20, 0.85, 1.00, 0.90),
     "step_basic": (0.58, 0.72, 1.00, 0.72),
     "gravity": (0.45, 1.00, 0.30, 0.95),
+    "velocity": (0.20, 0.92, 1.00, 0.92),
+    "real_velocity": (1.00, 0.52, 0.18, 0.72),
+    "distance_ok": (0.35, 0.95, 0.42, 0.72),
+    "distance_stretch": (1.00, 0.18, 0.12, 0.95),
+    "distance_compress": (0.20, 0.48, 1.00, 0.95),
+    "tether": (0.72, 0.76, 0.82, 0.55),
+    "tether_min": (0.22, 0.55, 1.00, 0.72),
+    "tether_max": (1.00, 0.78, 0.18, 0.72),
+    "bending": (0.70, 0.38, 1.00, 0.72),
+    "bending_error": (1.00, 0.20, 0.14, 0.95),
+    "bending_volume": (0.20, 0.90, 0.82, 0.72),
     "angle_target": (1.00, 0.32, 0.72, 0.95),
     "angle_limit": (1.00, 0.82, 0.20, 0.78),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
@@ -83,6 +94,10 @@ def update_mc2_debug_draw_store(
     max_items: int = 2000,
     show_step_basic: bool = False,
     show_gravity: bool = False,
+    show_velocity: bool = False,
+    show_distance: bool = False,
+    show_tether: bool = False,
+    show_bending: bool = False,
     show_motion_base: bool = True,
     show_angle_restoration: bool = True,
     show_angle_limit: bool = False,
@@ -97,6 +112,10 @@ def update_mc2_debug_draw_store(
         "show_attributes": bool(show_attributes),
         "show_step_basic": bool(show_step_basic),
         "show_gravity": bool(show_gravity),
+        "show_velocity": bool(show_velocity),
+        "show_distance": bool(show_distance),
+        "show_tether": bool(show_tether),
+        "show_bending": bool(show_bending),
         "show_motion": bool(show_motion),
         "show_motion_base": bool(show_motion_base),
         "show_angle_restoration": bool(show_angle_restoration),
@@ -233,6 +252,39 @@ def _append_slot_batches(
             snapshot.get("center") or {},
             positions,
         )
+    if filters["show_velocity"]:
+        _append_velocity_batches(
+            batches,
+            positions,
+            (snapshot.get("native") or {}).get("dynamics") or {},
+            limit,
+        )
+    if filters["show_distance"]:
+        _append_distance_batches(
+            batches,
+            positions,
+            snapshot.get("motion") or {},
+            snapshot.get("parameters") or {},
+            (snapshot.get("native") or {}).get("distance_tether") or {},
+            limit,
+        )
+    if filters["show_tether"]:
+        _append_tether_batches(
+            batches,
+            positions,
+            snapshot.get("motion") or {},
+            snapshot.get("parameters") or {},
+            (snapshot.get("native") or {}).get("distance_tether") or {},
+            limit,
+        )
+    if filters["show_bending"]:
+        _append_bending_batches(
+            batches,
+            positions,
+            snapshot.get("parameters") or {},
+            (snapshot.get("native") or {}).get("bending") or {},
+            limit,
+        )
     if filters["show_motion_base"]:
         _append_motion_base_batches(
             batches, point_batches, snapshot.get("motion") or {}, limit
@@ -343,6 +395,202 @@ def _append_gravity_batches(batches, parameters, center, positions):
     lines = []
     add_arrow_lines(lines, start, start + add)
     _batch(batches, lines, "gravity", 2.2)
+
+
+def _append_velocity_batches(batches, positions, dynamics, limit):
+    velocities = dynamics.get("velocities")
+    real_velocities = dynamics.get("real_velocities")
+    if velocities is None or real_velocities is None:
+        return
+    velocities = np.asarray(velocities, dtype=np.float32).reshape((-1, 3))
+    real_velocities = np.asarray(real_velocities, dtype=np.float32).reshape((-1, 3))
+    stored_lines = []
+    real_lines = []
+    for position, velocity, real_velocity in zip(
+        positions[:limit], velocities[:limit], real_velocities[:limit]
+    ):
+        start = vector3(position)
+        stored = vector3(velocity) * 0.03
+        real = vector3(real_velocity) * 0.03
+        if stored.length > 1.0e-7:
+            add_arrow_lines(stored_lines, start, start + stored)
+        if real.length > 1.0e-7:
+            add_arrow_lines(real_lines, start, start + real)
+    _batch(batches, real_lines, "real_velocity", 1.0)
+    _batch(batches, stored_lines, "velocity", 1.8)
+
+
+def _append_distance_batches(
+    batches, positions, motion, parameters, distance, limit
+):
+    ranges = distance.get("distance_ranges")
+    targets = distance.get("distance_targets")
+    rests = distance.get("distance_rest_signed")
+    step_basic = motion.get("step_basic_positions")
+    if ranges is None or targets is None or rests is None or step_basic is None:
+        return
+    ranges = np.asarray(ranges, dtype=np.int32).reshape((-1, 2))
+    targets = np.asarray(targets, dtype=np.int32)
+    rests = np.asarray(rests, dtype=np.float32)
+    step_basic = np.asarray(step_basic, dtype=np.float32).reshape((-1, 3))
+    stiffness = np.asarray(
+        _values(parameters.get("distance_stiffness")), dtype=np.float32
+    )
+    scale = float(parameters.get("scale_ratio", 1.0) or 1.0)
+    animation_ratio = max(
+        0.0, min(1.0, float(parameters.get("animation_pose_ratio", 0.0) or 0.0))
+    )
+    ok_lines = []
+    stretch_lines = []
+    compress_lines = []
+    seen = set()
+    drawn = 0
+    for vertex, (start, count) in enumerate(ranges):
+        if drawn >= limit or vertex >= len(positions):
+            break
+        if vertex < len(stiffness) and float(stiffness[vertex]) <= 1.0e-8:
+            continue
+        for record in range(int(start), int(start + count)):
+            if drawn >= limit or record < 0 or record >= len(targets):
+                break
+            target = int(targets[record])
+            if target < 0 or target >= len(positions) or record >= len(rests):
+                continue
+            key = (min(vertex, target), max(vertex, target))
+            if key in seen:
+                continue
+            seen.add(key)
+            current = (vector3(positions[target]) - vector3(positions[vertex])).length
+            static_rest = abs(float(rests[record])) * scale
+            animated_rest = (
+                vector3(step_basic[target]) - vector3(step_basic[vertex])
+            ).length
+            rest = static_rest * (1.0 - animation_ratio) + animated_rest * animation_ratio
+            error = current - rest
+            tolerance = max(rest * 0.02, 1.0e-5)
+            target_lines = (
+                stretch_lines
+                if error > tolerance
+                else compress_lines if error < -tolerance else ok_lines
+            )
+            add_line(target_lines, positions[vertex], positions[target])
+            drawn += 1
+    _batch(batches, ok_lines, "distance_ok", 1.4)
+    _batch(batches, compress_lines, "distance_compress", 1.8)
+    _batch(batches, stretch_lines, "distance_stretch", 1.8)
+
+
+def _append_tether_batches(
+    batches, positions, motion, parameters, distance, limit
+):
+    roots = distance.get("baseline_roots")
+    step_basic = motion.get("step_basic_positions")
+    if roots is None or step_basic is None:
+        return
+    roots = np.asarray(roots, dtype=np.int32)
+    step_basic = np.asarray(step_basic, dtype=np.float32).reshape((-1, 3))
+    compression = max(
+        0.0, min(1.0, float(parameters.get("tether_compression", 0.0) or 0.0))
+    )
+    stretch = max(0.0, float(parameters.get("tether_stretch", 0.0) or 0.0))
+    current_lines = []
+    minimum_lines = []
+    maximum_lines = []
+    drawn = 0
+    for vertex, root in enumerate(roots):
+        root = int(root)
+        if drawn >= limit:
+            break
+        if root < 0 or root >= len(positions) or vertex == root or vertex >= len(positions):
+            continue
+        rest_vector = vector3(step_basic[vertex]) - vector3(step_basic[root])
+        rest = rest_vector.length
+        if rest <= 1.0e-7:
+            continue
+        current_vector = vector3(positions[vertex]) - vector3(positions[root])
+        direction = current_vector.normalized() if current_vector.length > 1.0e-7 else rest_vector.normalized()
+        axis_a, axis_b = _plane_axes(direction)
+        minimum = rest * (1.0 - compression)
+        maximum = rest * (1.0 + stretch)
+        ring_radius = max(rest * 0.035, 0.002)
+        root_position = vector3(positions[root])
+        add_line(current_lines, root_position, positions[vertex])
+        if minimum > 1.0e-7:
+            add_circle_lines(
+                minimum_lines,
+                root_position + direction * minimum,
+                axis_a,
+                axis_b,
+                ring_radius,
+            )
+        add_circle_lines(
+            maximum_lines,
+            root_position + direction * maximum,
+            axis_a,
+            axis_b,
+            ring_radius,
+        )
+        drawn += 1
+    _batch(batches, current_lines, "tether", 1.0)
+    _batch(batches, minimum_lines, "tether_min", 1.5)
+    _batch(batches, maximum_lines, "tether_max", 1.5)
+
+
+def _append_bending_batches(batches, positions, parameters, bending, limit):
+    quads = bending.get("quads")
+    rests = bending.get("rests")
+    markers = bending.get("markers")
+    if quads is None or rests is None or markers is None:
+        return
+    if float(parameters.get("bending_stiffness", 0.0) or 0.0) <= 1.0e-8:
+        return
+    quads = np.asarray(quads, dtype=np.int32).reshape((-1, 4))
+    rests = np.asarray(rests, dtype=np.float32)
+    markers = np.asarray(markers, dtype=np.int32)
+    negative_sign = float(parameters.get("negative_scale_sign", 1.0) or 1.0)
+    scale = float(parameters.get("scale_ratio", 1.0) or 1.0)
+    normal_lines = []
+    error_lines = []
+    volume_lines = []
+    for record, quad in enumerate(quads[:limit]):
+        if record >= len(rests) or record >= len(markers):
+            continue
+        indices = tuple(int(value) for value in quad)
+        if any(index < 0 or index >= len(positions) for index in indices):
+            continue
+        points = [vector3(positions[index]) for index in indices]
+        marker = int(markers[record])
+        if marker == 100:
+            volume = (
+                (points[1] - points[0]).cross(points[2] - points[0])
+            ).dot(points[3] - points[0]) / 6.0 * 1000.0
+            expected = float(rests[record]) * scale * negative_sign
+            target_lines = (
+                error_lines
+                if abs(volume - expected) > max(abs(expected) * 0.05, 1.0e-5)
+                else volume_lines
+            )
+            for first, second in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
+                add_line(target_lines, points[first], points[second])
+            continue
+        edge = points[3] - points[2]
+        normal_a = (points[2] - points[0]).cross(points[3] - points[0])
+        normal_b = (points[3] - points[1]).cross(points[2] - points[1])
+        if edge.length <= 1.0e-7 or normal_a.length <= 1.0e-7 or normal_b.length <= 1.0e-7:
+            continue
+        normal_a.normalize()
+        normal_b.normalize()
+        angle = math.acos(max(-1.0, min(1.0, normal_a.dot(normal_b))))
+        direction = normal_a.cross(normal_b).dot(edge)
+        if direction < 0.0:
+            angle = -angle
+        expected = float(rests[record]) * (-1.0 if marker < 0 else 1.0) * negative_sign
+        target_lines = error_lines if abs(angle - expected) > math.radians(5.0) else normal_lines
+        for first, second in ((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
+            add_line(target_lines, points[first], points[second])
+    _batch(batches, normal_lines, "bending", 1.2)
+    _batch(batches, volume_lines, "bending_volume", 1.2)
+    _batch(batches, error_lines, "bending_error", 2.0)
 
 
 def _append_motion_batches(batches, motion, limit):

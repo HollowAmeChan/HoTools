@@ -557,6 +557,194 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_dynamics(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_dynamics expects 3 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->initialized ||
+        context->state_velocities.size() != count * 3 ||
+        context->particle_real_velocities.size() != count * 3) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug dynamics are not ready");
+        return nullptr;
+    }
+    Buffer velocities, real_velocities;
+    if (!velocities.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_state_velocities"
+        ) ||
+        !real_velocities.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_real_velocities"
+        )) {
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(velocities, "out_state_velocities") ||
+        !expect_2d(velocities, "out_state_velocities", vertex_count, 3) ||
+        !expect_float32(real_velocities, "out_real_velocities") ||
+        !expect_2d(real_velocities, "out_real_velocities", vertex_count, 3)) {
+        return nullptr;
+    }
+    std::memcpy(
+        velocities.view.buf,
+        context->state_velocities.data(),
+        context->state_velocities.size() * sizeof(float)
+    );
+    std::memcpy(
+        real_velocities.view.buf,
+        context->particle_real_velocities.data(),
+        context->particle_real_velocities.size() * sizeof(float)
+    );
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_distance_tether(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 5) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_distance_tether expects 5 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto vertex_count = static_cast<std::size_t>(context->vertex_count);
+    const auto record_count = context->distance_targets.size();
+    if (!context->initialized ||
+        context->baseline_roots.size() != vertex_count ||
+        context->distance_ranges.size() != vertex_count * 2 ||
+        context->distance_rest_signed.size() != record_count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 V0 debug distance/tether state is not ready"
+        );
+        return nullptr;
+    }
+    Buffer roots, ranges, targets, rests;
+    if (!roots.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_baseline_roots"
+        ) ||
+        !ranges.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_distance_ranges"
+        ) ||
+        !targets.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_distance_targets"
+        ) ||
+        !rests.get(
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_distance_rest_signed"
+        )) {
+        return nullptr;
+    }
+    const auto vertices = static_cast<Py_ssize_t>(vertex_count);
+    const auto records = static_cast<Py_ssize_t>(record_count);
+    if (!expect_int32(roots, "out_baseline_roots") ||
+        !expect_1d_array(roots, "out_baseline_roots", vertices) ||
+        !expect_int32(ranges, "out_distance_ranges") ||
+        !expect_2d(ranges, "out_distance_ranges", vertices, 2) ||
+        !expect_int32(targets, "out_distance_targets") ||
+        !expect_1d_array(targets, "out_distance_targets", records) ||
+        !expect_float32(rests, "out_distance_rest_signed") ||
+        !expect_1d_array(rests, "out_distance_rest_signed", records)) {
+        return nullptr;
+    }
+    std::memcpy(
+        roots.view.buf,
+        context->baseline_roots.data(),
+        context->baseline_roots.size() * sizeof(std::int32_t)
+    );
+    std::memcpy(
+        ranges.view.buf,
+        context->distance_ranges.data(),
+        context->distance_ranges.size() * sizeof(std::int32_t)
+    );
+    if (record_count > 0) {
+        std::memcpy(
+            targets.view.buf,
+            context->distance_targets.data(),
+            context->distance_targets.size() * sizeof(std::int32_t)
+        );
+        std::memcpy(
+            rests.view.buf,
+            context->distance_rest_signed.data(),
+            context->distance_rest_signed.size() * sizeof(float)
+        );
+    }
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_bending(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_bending expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto record_count = context->bending_rest_angle_or_volume.size();
+    if (!context->initialized ||
+        context->bending_quads.size() != record_count * 4 ||
+        context->bending_sign_or_volume.size() != record_count) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug bending state is not ready");
+        return nullptr;
+    }
+    Buffer quads, rests, markers;
+    if (!quads.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_bending_quads"
+        ) ||
+        !rests.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_bending_rests"
+        ) ||
+        !markers.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_bending_markers"
+        )) {
+        return nullptr;
+    }
+    const auto records = static_cast<Py_ssize_t>(record_count);
+    if (!expect_int32(quads, "out_bending_quads") ||
+        !expect_2d(quads, "out_bending_quads", records, 4) ||
+        !expect_float32(rests, "out_bending_rests") ||
+        !expect_1d_array(rests, "out_bending_rests", records) ||
+        !expect_int32(markers, "out_bending_markers") ||
+        !expect_1d_array(markers, "out_bending_markers", records)) {
+        return nullptr;
+    }
+    if (record_count > 0) {
+        std::memcpy(
+            quads.view.buf,
+            context->bending_quads.data(),
+            context->bending_quads.size() * sizeof(std::int32_t)
+        );
+        std::memcpy(
+            rests.view.buf,
+            context->bending_rest_angle_or_volume.data(),
+            context->bending_rest_angle_or_volume.size() * sizeof(float)
+        );
+        auto* marker_values = static_cast<std::int32_t*>(markers.view.buf);
+        for (std::size_t index = 0; index < record_count; ++index) {
+            marker_values[index] = static_cast<std::int32_t>(
+                context->bending_sign_or_volume[index]
+            );
+        }
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 8) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_center_step expects 8 arguments");
