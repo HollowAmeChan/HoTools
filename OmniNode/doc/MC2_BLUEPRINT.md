@@ -129,7 +129,7 @@ profile + task combination
 | `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置状态；`2:Keep`把已有粒子状态整体搬到新组件位置 | `center_state.py`在读完组件帧变换后判定并选择reset或keep shift；三个setup有效。 |
 | `Teleport距离`、`Teleport旋转` | 设置Teleport触发的组件位移和旋转阈值 | 位移阈值乘当前组件scale ratio，旋转单位为度；仅当模式非0时消费，三个setup有效。 |
 
-Teleport每帧比较Anchor补偿后的旧组件姿态与当前组件姿态，触发条件为`measured_distance >= teleport_distance * component_scale_ratio OR measured_rotation_degrees >= teleport_rotation`。`Reset`触发后frame shift归零，solver重建状态并通过稳定时间恢复速度/输出权重；`Keep`应用完整组件平移与旋转搬运已有粒子状态，使相对物理形状连续且本帧moving speed归零。两者不是同一种“瞬移后继续算”。
+Teleport每个新的Physics World帧都比较Anchor补偿后的旧组件姿态与当前组件姿态，判定先于fixed-step scheduler是否产生substep；不能因为本帧`update_count == 0`而延迟到下一次积分。触发条件为`measured_distance >= teleport_distance * component_scale_ratio OR measured_rotation_degrees >= teleport_rotation`，稳定的任意正组件scale均有效。`Reset`触发后frame shift归零，即使本帧没有substep也立即用当前动画输入重建状态、清除旧速度并发布新结果，再通过稳定时间恢复速度/输出权重；`Keep`立即应用完整组件平移与旋转搬运已有粒子状态，使相对物理形状连续且本帧moving speed归零。两者不是同一种“瞬移后继续算”。
 
 `distance_culling_enabled/length/fade_ratio`仍存在于统一profile和runtime ABI，但三个产品节点均不公开，当前生产step也没有按相机距离停算或淡出的consumer；它们不是当前产品能力。
 
@@ -646,7 +646,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
-| Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧；双task外碰scope 600帧；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Mesh Center/Keep 1200帧；跨task self/hot update 1800帧。三setup Keep/Reset 900帧runner已补，待下一次Blender门禁执行 |
+| Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧；双task外碰scope 600帧；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Mesh Center/Keep 1200帧；跨task self/hot update 1800帧。三setup Keep/Reset 900帧runner已执行，包含非单位正scale、逐帧真实写回及zero-substep立即Reset |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码 |
 | Blender 4.5维护态soak | 180帧；mean/P95/max `2.7426/3.3693/3.6732ms`，2次hot update/rebuild/reset/same-frame和6次context释放 |
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |

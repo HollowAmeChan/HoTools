@@ -49,11 +49,20 @@ names = importlib.import_module(
 debug_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
 )
+bone_frame_input = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
+)
+topology_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
+)
 nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
 )
 world_types = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+)
+writeback = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
 )
 
 
@@ -87,10 +96,11 @@ def _mesh_source():
     return obj
 
 
-def _armature(name, x_offset):
+def _armature(name, x_offset, scale):
     data = bpy.data.armatures.new(f"{name}Data")
     obj = bpy.data.objects.new(name, data)
     obj.location.x = x_offset
+    obj.scale = (scale, scale, scale)
     bpy.context.scene.collection.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
@@ -150,14 +160,15 @@ def _tasks(mesh, cloth, spring, damping, teleport_mode):
     return (mesh_task, cloth_task, spring_task)
 
 
-def _set_frame(world, frame, generation):
+def _set_frame(world, frame, generation, *, raw_dt=None):
     context = world.frame_context
     context.previous_frame = frame - 1 if frame > 1 else None
     context.frame = frame
     context.same_frame = False
     context.continuous = frame > 1
-    context.raw_dt = 1.0 / 90.0
-    context.dt = 1.0 / 90.0
+    frame_dt = 1.0 / 90.0 if raw_dt is None else float(raw_dt)
+    context.raw_dt = frame_dt
+    context.dt = frame_dt
     context.time_scale = 1.0
     context.generation = generation
     world.generation = generation
@@ -197,12 +208,19 @@ def main():
     original_contexts = None
     try:
         mesh = _mesh_source()
-        cloth = _armature("MC2MixedBoneCloth", -0.3)
-        spring = _armature("MC2MixedBoneSpring", 0.3)
+        cloth = _armature("MC2MixedBoneCloth", -0.3, 0.5)
+        spring = _armature("MC2MixedBoneSpring", 0.3, 1.5)
         tasks = _tasks(mesh, cloth, spring, 0.05, 2)
         stable_ids = tuple(task.task_id for task in tasks)
         keep_hits = set()
         reset_hits = set()
+        previous_candidate_revisions = {task_id: 0 for task_id in stable_ids}
+        topologies = {
+            task.task_id: topology_module.build_mc2_topology_spec(task)
+            for task in tasks
+        }
+        reset_counts_before = None
+        reset_bone_inputs = {}
         for frame in range(1, 901):
             _animate_armature(cloth, frame, 0.18)
             _animate_armature(spring, frame, -0.14)
@@ -226,7 +244,29 @@ def main():
                 for source in (mesh, cloth, spring):
                     source.location.x += 2.0
                 bpy.context.view_layer.update()
-            _set_frame(world, frame, generation)
+                reset_counts_before = {
+                    task.task_id: world.solver_slots[task.task_id]
+                    .data["native_context"]
+                    .inspect()["reset_count"]
+                    for task in tasks
+                }
+                reset_bone_inputs = {
+                    task.task_id: bone_frame_input.build_mc2_bone_frame_input(
+                        task,
+                        topologies[task.task_id],
+                        frame=frame,
+                        generation=generation,
+                        world=world,
+                    )
+                    for task in tasks
+                    if task.setup_type != names.MC2_SETUP_MESH_CLOTH
+                }
+            _set_frame(
+                world,
+                frame,
+                generation,
+                raw_dt=(1.0 / 360.0 if frame == 601 else None),
+            )
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(tasks),
@@ -237,7 +277,10 @@ def main():
             assert len(world.solver_slots) == 3
             for task in tasks:
                 slot = world.solver_slots[task.task_id]
-                _assert_candidate(slot)
+                candidate = _assert_candidate(slot)
+                assert candidate.frame == frame
+                assert candidate.revision == previous_candidate_revisions[task.task_id] + 1
+                previous_candidate_revisions[task.task_id] = candidate.revision
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
                     assert shift is not None
@@ -250,7 +293,21 @@ def main():
                     assert shift.keep_teleport is False
                     assert shift.reset_teleport is True
                     assert shift.teleport_measured_distance >= shift.teleport_distance_threshold
+                    assert slot.data["frame_schedule"].update_count == 0
+                    assert (
+                        slot.data["native_context"].inspect()["reset_count"]
+                        == reset_counts_before[task.task_id] + 1
+                    )
+                    if task.task_id in reset_bone_inputs:
+                        np.testing.assert_allclose(
+                            candidate.world_positions,
+                            reset_bone_inputs[task.task_id].world_positions,
+                            atol=1.0e-6,
+                        )
                     reset_hits.add(task.setup_type)
+            assert writeback.writeback_gn_attributes(world) == 1
+            assert writeback.writeback_bone_transforms(world) == 10
+            bpy.context.view_layer.update()
             if frame == 451:
                 current_contexts = tuple(
                     world.solver_slots[task.task_id].data["native_context"]

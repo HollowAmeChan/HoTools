@@ -299,7 +299,6 @@ def _make_slot_center_frame_shift(
     if not isinstance(center_state, MC2CenterPersistentState) or not center_state.initialized:
         return None
     profile = spec.profile
-    unit_scale = (1.0, 1.0, 1.0)
     anchor_stable = bool(
         center_state.anchor_identity
         and center_state.anchor_identity == frame_pose.anchor_identity
@@ -313,13 +312,14 @@ def _make_slot_center_frame_shift(
     skip_shift_active = int(skip_count) > 0
     teleport_mode = int(profile.teleport_mode)
     configured_teleport_active = teleport_mode in (1, 2)
-    unit_positive_scale_domain = all(
-        math.isclose(float(value), expected, abs_tol=1.0e-8)
-        for values in (
-            center_state.old_component_world_scale,
-            frame_pose.component_world_scale,
+    old_scale = tuple(float(value) for value in center_state.old_component_world_scale)
+    current_scale = tuple(float(value) for value in frame_pose.component_world_scale)
+    stable_positive_scale_domain = (
+        all(math.isfinite(value) and value > 1.0e-8 for value in old_scale + current_scale)
+        and all(
+            math.isclose(old, current, rel_tol=1.0e-6, abs_tol=1.0e-8)
+            for old, current in zip(old_scale, current_scale)
         )
-        for value, expected in zip(values, unit_scale)
     )
     configured_negative_transition_domain = bool(
         teleport_mode in (1, 2)
@@ -335,10 +335,9 @@ def _make_slot_center_frame_shift(
             or skip_shift_active
             or configured_teleport_active
         )
-        and 0.0 <= float(time_scale) <= 1.0
-        and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
+        and float(time_scale) >= 0.0
         and (
-            unit_positive_scale_domain
+            stable_positive_scale_domain
             or configured_negative_transition_domain
         )
     )
@@ -1007,7 +1006,7 @@ def step_mc2(
                             center_pose,
                         )
                     )
-                    if center_action in ("step", "pause"):
+                    if center_action in ("step", "pause", "idle"):
                         center_frame_shift_result = _make_slot_center_frame_shift(
                             slot,
                             frame_input,
@@ -1022,6 +1021,13 @@ def step_mc2(
                             skip_count=frame_schedule.skip_count,
                             negative_scale_transition=center_negative_scale_result,
                         )
+                        if (
+                            center_action == "idle"
+                            and center_frame_shift_result is not None
+                            and not center_frame_shift_result.keep_teleport
+                            and not center_frame_shift_result.reset_teleport
+                        ):
+                            center_frame_shift_result = None
                         configured_reset_teleport = bool(
                             center_frame_shift_result is not None
                             and center_frame_shift_result.reset_teleport
@@ -1279,8 +1285,25 @@ def step_mc2(
                     slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "idle":
                     slot.data["center_step_result"] = None
-                    slot.data["center_frame_shift_result"] = None
-                    slot.data["center_negative_scale_result"] = None
+                    if center_frame_shift_result is not None:
+                        if configured_reset_teleport:
+                            slot.data["center_state"] = staged_reset_center_state
+                            center_state = staged_reset_center_state
+                        else:
+                            center_state.apply_negative_scale_transition(
+                                center_negative_scale_result
+                            )
+                            center_state.commit_paused_frame(
+                                frame_input.center_frame_pose,
+                                center_frame_shift_result,
+                            )
+                    slot.data["center_frame_shift_result"] = center_frame_shift_result
+                    slot.data["center_negative_scale_result"] = (
+                        center_negative_scale_result
+                        if center_frame_shift_result is not None
+                        and not configured_reset_teleport
+                        else None
+                    )
                     slot.data["frame_schedule"] = frame_schedule
                 if configured_reset_teleport:
                     runtime_state.mark_frame_reset(
