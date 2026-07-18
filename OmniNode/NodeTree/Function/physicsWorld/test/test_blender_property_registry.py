@@ -466,6 +466,9 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert declaration["update_policy"]["bone_frame_feedback"] == (
         "mc2_owned_restore_read_barrier_preserves_current_animation_override"
     )
+    assert declaration["update_policy"]["bone_motion_mapping"] == (
+        "connected_rotation_only_disconnected_position_rotation"
+    )
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == [
         mc2_names.MC2_STATS_CHANNEL,

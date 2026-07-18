@@ -266,12 +266,14 @@ def _output_payload(slot, native_snapshot) -> dict:
     static = _active_static(slot)
     proxy = getattr(static, "final_proxy", None)
     targets = []
+    motion_modes = []
     if is_bone_plan:
         for batch in plan.get("batches") or ():
             for record in batch.get("records") or ():
                 name = str(record.get("bone_name") or "")
                 if name:
                     targets.append(name)
+                    motion_modes.append((name, str(record.get("motion_mode") or "")))
     if not targets:
         targets = [str(value) for value in getattr(proxy, "vertex_identities", ())]
     return {
@@ -281,6 +283,13 @@ def _output_payload(slot, native_snapshot) -> dict:
         "has_writeback_plan": bool(plan),
         "writeback_targets": tuple(targets),
         "writeback_target_kind": "bone" if is_bone_plan else "mesh_vertex",
+        "writeback_motion_modes": tuple(motion_modes),
+        "rotation_only_connected_count": int(
+            plan.get("rotation_only_connected_count", 0) or 0
+        ) if is_bone_plan else 0,
+        "position_rotation_count": int(
+            plan.get("position_rotation_count", 0) or 0
+        ) if is_bone_plan else 0,
     }
 
 

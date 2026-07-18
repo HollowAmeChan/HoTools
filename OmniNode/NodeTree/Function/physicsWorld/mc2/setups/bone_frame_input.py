@@ -96,8 +96,6 @@ def stage_mc2_bone_writeback_expectations(world, plans) -> None:
                 if pose_bone is None or not bone_name:
                     continue
                 location, rotation, scale = matrix_basis.decompose()
-                if bool(getattr(pose_bone.bone, "use_connect", False)):
-                    location = mathutils.Vector((0.0, 0.0, 0.0))
                 planned_bones[bone_name] = (
                     pose_bone,
                     mathutils.Matrix.LocRotScale(location, rotation, scale),

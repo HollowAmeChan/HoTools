@@ -50,7 +50,14 @@ world_types = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physic
 writeback = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback")
 
 
-def _product_armature(name: str, chain_count: int, chain_length: int, x_offset: float):
+def _product_armature(
+    name: str,
+    chain_count: int,
+    chain_length: int,
+    x_offset: float,
+    *,
+    connect_children: bool = True,
+):
     data = bpy.data.armatures.new(f"{name}Data")
     obj = bpy.data.objects.new(name, data)
     bpy.context.scene.collection.objects.link(obj)
@@ -69,7 +76,7 @@ def _product_armature(name: str, chain_count: int, chain_length: int, x_offset: 
             bone.head = (x, 0.0, 1.0 + depth)
             bone.tail = (x, 0.0, 2.0 + depth)
             bone.parent = previous
-            bone.use_connect = depth > 0
+            bone.use_connect = connect_children and depth > 0
             previous = bone
 
     bpy.ops.object.mode_set(mode="OBJECT")
@@ -129,6 +136,13 @@ def _matrix_delta(left, right) -> float:
 rig_a = _product_armature("MC2_ProductRigA", 3, 3, -3.0)
 rig_b = _product_armature("MC2_ProductRigB", 2, 3, 3.0)
 rig_c = _multi_control_armature("MC2_ProductRigC", 2, 2, 3)
+rig_d = _product_armature(
+    "MC2_ProductRigD_Free",
+    1,
+    3,
+    20.0,
+    connect_children=False,
+)
 world = None
 try:
     tasks = nodes.physicsMC2BoneClothTask(
@@ -204,6 +218,33 @@ try:
             ) > 1.0e-5
             for bone_name in feedback_bone_names
         ), "fixture must produce a non-identity physical writeback"
+        feedback_result = feedback_world.result_streams["bone_transform"][0]
+        assert feedback_result["rotation_only_connected_count"] == 8
+        assert feedback_result["position_rotation_count"] == 4
+        feedback_plan = feedback_world.solver_slots[
+            feedback_result["slot_id"]
+        ].data["writeback_plan"]
+        assert feedback_plan["rotation_only_connected_count"] == 8
+        assert feedback_plan["position_rotation_count"] == 4
+        feedback_records = tuple(
+            (record, matrix_basis)
+            for batch in feedback_plan["batches"]
+            for record, matrix_basis in zip(
+                batch["records"], batch["matrix_bases"]
+            )
+        )
+        assert all(
+            matrix_basis.translation.length <= 1.0e-8
+            for record, matrix_basis in feedback_records
+            if record["motion_mode"] == "rotation_only_connected"
+        )
+        feedback_debug = debug._output_payload(
+            feedback_world.solver_slots[feedback_result["slot_id"]],
+            {"positions": np.empty((0, 3), dtype=np.float32)},
+        )
+        assert feedback_debug["rotation_only_connected_count"] == 8
+        assert feedback_debug["position_rotation_count"] == 4
+        assert len(feedback_debug["writeback_motion_modes"]) == 12
 
         physical_bases = {
             bone_name: rig_c.pose.bones[bone_name].matrix_basis.copy()
@@ -314,6 +355,53 @@ try:
         ) <= 1.0e-6, "current-frame animation input was overwritten by MC2 restore"
     finally:
         feedback_world.omni_cache_dispose("bone_feedback_regression_complete")
+
+    free_world = world_types.PhysicsWorldCache()
+    free_world.generation = 1
+    free_world.frame_context.generation = 1
+    free_world.frame_context.dt = 1.0 / 60.0
+    free_world.frame_context.raw_dt = 1.0 / 60.0
+    free_task = nodes.physicsMC2BoneClothTask([
+        {"armature": rig_d, "bone": "Parent"},
+    ])[0]
+    try:
+        free_plan = None
+        for frame in (1, 2):
+            free_world.frame_context.frame = frame
+            returned, ready, _status = solver.step_mc2(free_world, [free_task])
+            assert returned is free_world and ready is True
+            free_result = free_world.result_streams["bone_transform"][0]
+            assert free_result["rotation_only_connected_count"] == 0
+            assert free_result["position_rotation_count"] == 3
+            free_plan = free_world.solver_slots[
+                free_result["slot_id"]
+            ].data["writeback_plan"]
+            assert writeback.writeback_bone_transforms(free_world) == 3
+            bpy.context.view_layer.update()
+
+        assert free_plan is not None
+        assert free_plan["rotation_only_connected_count"] == 0
+        assert free_plan["position_rotation_count"] == 3
+        free_records = tuple(
+            (record, matrix_basis)
+            for batch in free_plan["batches"]
+            for record, matrix_basis in zip(
+                batch["records"], batch["matrix_bases"]
+            )
+        )
+        assert all(
+            record["motion_mode"] == "position_rotation"
+            for record, _matrix_basis in free_records
+        )
+        assert any(
+            matrix_basis.translation.length > 1.0e-5
+            for _record, matrix_basis in free_records[1:]
+        ), "disconnected BoneCloth fixture must produce particle-driven translation"
+        for record, matrix_basis in free_records:
+            actual_translation = record["pose_bone"].matrix_basis.translation
+            assert (actual_translation - matrix_basis.translation).length <= 1.0e-6
+    finally:
+        free_world.omni_cache_dispose("bone_free_translation_complete")
 
     spring_tasks = nodes.physicsMC2BoneSpringTask([
         {"armature": rig_a, "bone": "Chain0_0"},
@@ -504,6 +592,7 @@ finally:
     _dispose_armature(rig_a)
     _dispose_armature(rig_b)
     _dispose_armature(rig_c)
+    _dispose_armature(rig_d)
 
 
 print("MC2 HoTools BoneCloth product topology/multi-task atomic step: PASS")
