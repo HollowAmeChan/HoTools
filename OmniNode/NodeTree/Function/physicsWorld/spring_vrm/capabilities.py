@@ -13,9 +13,6 @@ from ..collision.capabilities import (
     bone_collision_capability_field_names,
     bone_collision_capability_fields,
 )
-from .names import SPRING_VRM_CHAIN_OBJECT_TAG
-
-
 # SpringBone 不再拥有共享 collision capability。
 SPRING_VRM_CAPABILITIES = {}
 
@@ -28,13 +25,13 @@ SPRING_VRM_UPDATE_FREQUENCY_TABLE = [
     },
     {
         "data": "骨链根骨骼 / 骨骼列表",
-        "source": f'world.implicit_objects["{SPRING_VRM_CHAIN_OBJECT_TAG}"]',
-        "policy": "implicit_object_dirty",
+        "source": "SpringBone VRM模拟步.vrm_chain_tasks",
+        "policy": "task_input_dirty",
     },
     {
         "data": "刚度 / 阻尼 / 重力",
-        "source": f'world.implicit_objects["{SPRING_VRM_CHAIN_OBJECT_TAG}"]',
-        "policy": "implicit_object_dirty",
+        "source": "SpringBone VRM模拟步.vrm_chain_tasks",
+        "policy": "task_input_dirty",
     },
     {
         "data": "姿态 head / tail / 父级目标姿态",

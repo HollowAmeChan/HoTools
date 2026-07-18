@@ -205,7 +205,7 @@ physicsWorldBegin = _pw("world").physicsWorldBegin
 physicsWorldCommit = _pw("world").physicsWorldCommit
 apply_all_writebacks = _pw("writeback").apply_all_writebacks
 physicsSpringVRMChainProperties = _pw("spring_vrm.nodes").physicsSpringVRMChainProperties
-physicsSpringVRMChainRegister = _pw("spring_vrm.nodes").physicsSpringVRMChainRegister
+physicsSpringVRMChainTask = _pw("spring_vrm.nodes").physicsSpringVRMChainTask
 physicsBoneCollisionOverrideProperties = _pw("spring_vrm.nodes").physicsBoneCollisionOverrideProperties
 physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
@@ -216,7 +216,6 @@ resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_co
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
 make_bone_collision_override_properties = _pw("spring_vrm.implicit_objects").make_bone_collision_override_properties
 register_bone_collision_override_objects = _pw("spring_vrm.implicit_objects").register_bone_collision_override_objects
-register_spring_vrm_chain_objects = _pw("spring_vrm.implicit_objects").register_spring_vrm_chain_objects
 native_bone_collision_profile = _pw("spring_vrm.native")._bone_collision_profile
 spring_vrm_debug_draw = _pw("spring_vrm.debug_draw")
 
@@ -474,11 +473,13 @@ def _run_spring_frame(
         gravity_dir=mathutils.Vector(gravity_dir or (1.0, 0.0, 0.0)),
         gravity_power=float(gravity_power),
     )
-    world, object_count, dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
-    assert object_count == 1, f"应注册 1 条 VRM 骨链，实际 {object_count}"
-    assert dirty_count >= 0
-
-    world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=max(1, int(substeps)))
+    tasks = physicsSpringVRMChainTask(properties)
+    assert len(tasks) == 1, f"应生成 1 条 VRM 骨链任务，实际 {len(tasks)}"
+    world, write_count, _step_ms = physicsSpringVRMSolver(
+        world,
+        tasks,
+        substeps=max(1, int(substeps)),
+    )
     assert write_count == 2, f"应产生 2 个 PoseBone 写回项，实际 {write_count}"
 
     results = list(iter_spring_vrm_pose_results(
@@ -880,9 +881,9 @@ def test_spring_vrm_multiple_armatures_create_isolated_slots():
         properties = []
         for armature in (armature_a, armature_b):
             properties.extend(physicsSpringVRMChainProperties([_bone_value(armature, "root")]))
-        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
-        assert object_count == 2
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        tasks = physicsSpringVRMChainTask(properties)
+        assert len(tasks) == 2
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, tasks, substeps=1)
         assert write_count == 4
         assert apply_all_writebacks(world, restart=restart) == 4
         cache, committed_world, solver_count = physicsWorldCommit(world, enabled=True)
@@ -906,9 +907,9 @@ def test_spring_vrm_multiple_chains_share_one_armature_slot():
             _bone_value(armature, "root_b"),
         ])
         assert len(properties) == 2
-        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
-        assert object_count == 2
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        tasks = physicsSpringVRMChainTask(properties)
+        assert len(tasks) == 2
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, tasks, substeps=1)
         assert write_count == 4
         assert apply_all_writebacks(world, restart=restart) == 4
         slot_ids = _spring_slot_ids(world)
@@ -961,8 +962,8 @@ def test_spring_vrm_branch_chain_follows_shared_parent():
                 gravity_power=9.8,
             )
             assert properties[0]["bones"] == ["root", "fork", "left", "right"]
-            world, _count, _dirty, _version = physicsSpringVRMChainRegister(world, properties)
-            world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+            tasks = physicsSpringVRMChainTask(properties)
+            world, write_count, _step_ms = physicsSpringVRMSolver(world, tasks, substeps=1)
             assert write_count == 3
             _slot, _contexts, context = _spring_chain_context(world)
             assert [record["bone_name"] for record in context._records] == ["fork", "left", "right"]
@@ -990,8 +991,7 @@ def test_spring_vrm_topology_change_disposes_old_slot():
         cache = _OmniCache()
         world, _frame, _collider_count, _restart = _world_for_frame(cache, armature, 87, reset=True)
         chain_a = physicsSpringVRMChainProperties([_bone_value(armature, "root_a")])
-        register_spring_vrm_chain_objects(world, chain_a, enabled=True)
-        physicsSpringVRMSolver(world, substeps=1)
+        physicsSpringVRMSolver(world, physicsSpringVRMChainTask(chain_a), substeps=1)
         old_slot_id = _spring_slot_ids(world)[0]
         old_slot = world.solver_slots[old_slot_id]
         old_context = old_slot.data["_native_ctxs"]["root_a"]
@@ -999,10 +999,8 @@ def test_spring_vrm_topology_change_disposes_old_slot():
         cache, _committed, _count = physicsWorldCommit(world, enabled=True)
 
         world, _frame, _collider_count, _restart = _world_for_frame(cache, armature, 88, reset=False)
-        register_spring_vrm_chain_objects(world, chain_a, enabled=False)
         chain_b = physicsSpringVRMChainProperties([_bone_value(armature, "root_b")])
-        register_spring_vrm_chain_objects(world, chain_b, enabled=True)
-        physicsSpringVRMSolver(world, substeps=1)
+        physicsSpringVRMSolver(world, physicsSpringVRMChainTask(chain_b), substeps=1)
 
         new_slot_ids = _spring_slot_ids(world)
         assert len(new_slot_ids) == 1 and new_slot_ids[0] != old_slot_id
@@ -1010,6 +1008,32 @@ def test_spring_vrm_topology_change_disposes_old_slot():
         assert old_context._handle is None
         new_slot = world.solver_slots[new_slot_ids[0]]
         assert set(new_slot.data["_native_ctxs"]) == {"root_b"}
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_empty_task_input_prunes_old_slot():
+    armature = _make_chain_armature("PW_SpringVRM_EmptyTasks")
+    try:
+        cache = _OmniCache()
+        world, _frame, _collider_count, _restart = _world_for_frame(
+            cache, armature, 87, reset=True,
+        )
+        properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
+        physicsSpringVRMSolver(world, physicsSpringVRMChainTask(properties), substeps=1)
+        old_slot = world.solver_slots[_spring_slot_ids(world)[0]]
+        old_context = old_slot.data["_native_ctxs"]["root"]
+        cache, _committed, _count = physicsWorldCommit(world, enabled=True)
+
+        world, _frame, _collider_count, _restart = _world_for_frame(
+            cache, armature, 88, reset=False,
+        )
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, [0.0], substeps=1)
+
+        assert write_count == 0
+        assert not _spring_slot_ids(world)
+        assert old_slot.data == {}
+        assert old_context._handle is None
     finally:
         _delete_object(armature)
 
@@ -1029,13 +1053,16 @@ def test_spring_vrm_override_pin_reaches_native_static_state():
             gravity_dir=(1.0, 0.0, 0.0),
             gravity_power=9.8,
         )
-        physicsSpringVRMChainRegister(world, properties)
         override = make_bone_collision_override_properties(
             _bone_value(armature, "bone_1"),
             pin=True,
         )
         register_bone_collision_override_objects(world, [override])
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        world, write_count, _step_ms = physicsSpringVRMSolver(
+            world,
+            physicsSpringVRMChainTask(properties),
+            substeps=1,
+        )
         assert write_count == 2
         apply_all_writebacks(world, restart=restart)
         cache, _world, _solver_count = physicsWorldCommit(world, enabled=True)
@@ -1867,8 +1894,8 @@ def test_spring_vrm_bone_collider_override_reaches_native_arrays():
         assert collider_count == 0, "explicit NONE should not create a world snapshot collider"
 
         properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
-        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
-        assert object_count == 1
+        tasks = physicsSpringVRMChainTask(properties)
+        assert len(tasks) == 1
 
         override = make_bone_collision_override_properties(
             _bone_value(collider_armature, "bone_1"),
@@ -1879,7 +1906,7 @@ def test_spring_vrm_bone_collider_override_reaches_native_arrays():
             primary_collision_group=9,
         )
         register_bone_collision_override_objects(world, [override])
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, tasks, substeps=1)
         assert write_count == 2
 
         slot, _native_context, chain_context = _spring_chain_context(world)
@@ -1952,8 +1979,8 @@ def test_spring_vrm_cpp_debug_snapshot_uses_override_profile():
             reset=True,
         )
         properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
-        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
-        assert object_count == 1
+        tasks = physicsSpringVRMChainTask(properties)
+        assert len(tasks) == 1
         override = make_bone_collision_override_properties(
             _bone_value(armature, "bone_1"),
             collision_type="CAPSULE",
@@ -1966,7 +1993,7 @@ def test_spring_vrm_cpp_debug_snapshot_uses_override_profile():
         count, _dirty_count, _version = register_bone_collision_override_objects(world, [override])
         assert count == 1
 
-        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, tasks, substeps=1)
         assert write_count == 2
         slot, _native_context, chain_context = _spring_chain_context(world)
         spec = slot.data.get("spec")
@@ -2232,7 +2259,7 @@ def test_spring_vrm_soak_reuses_native_resources():
         assert final_identities == identities
         assert len(world.solver_slots) == 1
         assert len(final_contexts) == 1
-        assert len(world.implicit_objects) == 1
+        assert not world.implicit_objects
         assert int(final_context.debug_dict().get("step_count", 0) or 0) == frame_count - 1
     finally:
         _delete_object(armature)
@@ -2240,7 +2267,7 @@ def test_spring_vrm_soak_reuses_native_resources():
 
 _TESTS = (
     ("native 模块可用", test_native_available),
-    ("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice),
+    ("任务输入 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice),
     ("SpringBone rest pose has no synthetic side force", test_spring_vrm_stiffness_rest_pose_has_no_side_force),
     ("SpringBone frame jump resets without stepping", test_spring_vrm_frame_jump_resets_without_step),
     ("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results),
@@ -2253,6 +2280,7 @@ _TESTS = (
     ("SpringBone rejects duplicate roots and overlapping bones", test_spring_vrm_rejects_duplicate_roots_and_overlapping_bones),
     ("SpringBone branch chain follows shared parent", test_spring_vrm_branch_chain_follows_shared_parent),
     ("SpringBone topology change disposes old slot", test_spring_vrm_topology_change_disposes_old_slot),
+    ("SpringBone empty task input prunes old slot", test_spring_vrm_empty_task_input_prunes_old_slot),
     ("SpringBone override pin reaches native static state", test_spring_vrm_override_pin_reaches_native_static_state),
     ("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose),
     ("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers),

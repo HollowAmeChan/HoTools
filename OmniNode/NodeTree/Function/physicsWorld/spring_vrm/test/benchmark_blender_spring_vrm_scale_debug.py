@@ -114,15 +114,12 @@ def _run_scale_case(
                 reset=(offset == 0),
                 extra_objects=armatures[1:],
             )
-            world, object_count, _dirty_count, _version = harness["physicsSpringVRMChainRegister"](
-                world,
-                properties,
-            )
-            if object_count != armature_count:
-                raise AssertionError(f"expected {armature_count} chain objects, got {object_count}")
+            tasks = harness["physicsSpringVRMChainTask"](properties)
+            if len(tasks) != armature_count:
+                raise AssertionError(f"expected {armature_count} chain tasks, got {len(tasks)}")
 
             solver_started = time.perf_counter()
-            world, write_count, _solver_ms = harness["physicsSpringVRMSolver"](world, substeps=1)
+            world, write_count, _solver_ms = harness["physicsSpringVRMSolver"](world, tasks, substeps=1)
             solver_wall_ms = (time.perf_counter() - solver_started) * 1000.0
             expected_writes = armature_count * bones_per_armature
             if write_count != expected_writes:
@@ -211,13 +208,10 @@ def _run_debug_case(
                 frame,
                 reset=(offset == 0),
             )
-            world, _object_count, _dirty_count, _version = harness["physicsSpringVRMChainRegister"](
-                world,
-                properties,
-            )
+            tasks = harness["physicsSpringVRMChainTask"](properties)
 
             solver_started = time.perf_counter()
-            world, write_count, _solver_ms = harness["physicsSpringVRMSolver"](world, substeps=1)
+            world, write_count, _solver_ms = harness["physicsSpringVRMSolver"](world, tasks, substeps=1)
             solver_wall_ms = (time.perf_counter() - solver_started) * 1000.0
             if write_count != bone_count:
                 raise AssertionError(f"debug {mode}: expected {bone_count} writes, got {write_count}")

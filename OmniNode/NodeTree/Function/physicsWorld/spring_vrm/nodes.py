@@ -12,9 +12,9 @@ from .implicit_objects import (
     make_bone_collision_override_properties,
     make_spring_vrm_chain_properties,
     register_bone_collision_override_objects,
-    register_spring_vrm_chain_objects,
 )
 from .solver import step_spring_vrm
+from .specs import normalize_spring_vrm_chain_properties
 
 
 _SPRING_VRM_CHAIN_PRESETS = [
@@ -154,31 +154,23 @@ def physicsSpringVRMChainProperties(
 
 @omni(
     enable=True,
-    bl_label="VRM骨链对象注册",
+    bl_label="VRM骨链任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "骨链属性"],
-    _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
+    _INPUT_NAME=["骨链属性"],
+    input_init={
+        "vrm_chain_properties": {"description": "一条或多条VRM骨链属性"},
+    },
+    _OUTPUT_NAME=["VRM骨链任务"],
     omni_description="""
-    把 VRM SpringBone 骨链属性注册为 PhysicsWorldCache.implicit_objects。
-
-    本节点不需要用户提供 key。每条骨链对象带有统一 tag，SpringBone solver 会直接收集全部 VRM 骨链对象。
-    相同骨架、根骨和骨链会按内部 stable_id 更新，不会因为节点重复执行而无限累积。
+    把VRM骨链属性整理成任务列表，直接连接到SpringBone VRM模拟步。
+    本节点不读写物理世界，不创建solver slot，也不推进模拟。
     """,
-    mute_passthrough={"_OUTPUT0": "world"},
 )
-def physicsSpringVRMChainRegister(
-    world: object,
+def physicsSpringVRMChainTask(
     vrm_chain_properties: list[object],
-) -> tuple[object, int, int, int]:
-    if not isinstance(world, PhysicsWorldCache):
-        return world, 0, 0, 0
-    count, dirty_count, version = register_spring_vrm_chain_objects(
-        world,
-        vrm_chain_properties,
-        enabled=True,
-    )
-    return world, int(count), int(dirty_count), int(version)
+) -> list[object]:
+    return list(normalize_spring_vrm_chain_properties(vrm_chain_properties))
 
 
 @omni(
@@ -298,8 +290,9 @@ def physicsBoneCollisionOverrideRegister(
     bl_label="SpringBone VRM模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "子步数"],
+    _INPUT_NAME=["物理世界", "VRM骨链任务", "子步数"],
     input_init={
+        "vrm_chain_tasks": {"description": "全部VRM骨链任务\n单步统一处理"},
         "substeps": {"min_value": 1, "max_value": 16},
     },
     omni_presets=_SPRING_VRM_SOLVER_PRESETS,
@@ -308,10 +301,10 @@ def physicsBoneCollisionOverrideRegister(
     新物理世界版 VRM SpringBone 模拟步。
 
     本节点直接走 C++ / native 计算路径，不提供 Python solver fallback。
-    节点会从 world.implicit_objects 收集全部 VRM 骨链对象；旧 solver、旧 cache 和旧写回不会参与。
+    节点直接消费全部VRM骨链任务；旧solver、旧cache和旧写回不会参与。
 
     执行流程：
-    1. 从 world 隐式对象构建 SpringVRMSolverSpec。
+    1. 从VRM骨链任务构建SpringVRMSolverSpec。
     2. 注册到 world.solver_slots["spring_vrm:..."]。
     3. 调用 hotools_native SpringBone context API（create/update/step/read）。
     4. 发布 world.result_streams["bone_transform"] 通用写回指令。
@@ -325,12 +318,21 @@ def physicsBoneCollisionOverrideRegister(
 )
 def physicsSpringVRMSolver(
     world: object,
+    vrm_chain_tasks: list[object],
     substeps: int = 1,
 ) -> tuple[object, int, float]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0.0
+    if (
+        isinstance(vrm_chain_tasks, list)
+        and len(vrm_chain_tasks) == 1
+        and type(vrm_chain_tasks[0]) is float
+        and vrm_chain_tasks[0] == 0.0
+    ):
+        vrm_chain_tasks = []
     write_count, step_ms = step_spring_vrm(
         world,
+        vrm_chain_tasks,
         enabled=True,
         substeps=max(1, int(substeps)),
     )

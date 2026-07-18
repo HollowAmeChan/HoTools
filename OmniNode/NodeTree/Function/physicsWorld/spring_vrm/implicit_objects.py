@@ -7,14 +7,10 @@ import mathutils
 
 from ....OmniNodeSocketMapping import _OmniBone
 from ..collision.capabilities import BONE_COLLISION_CAPABILITY, BONE_COLLISION_CAPABILITY_ID
-from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG, SPRING_VRM_CHAIN_OBJECT_TAG
+from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
 from ..utils.values import float3
-from .specs import normalize_spring_vrm_chain_properties
-
-
-SPRING_VRM_OBJECT_REGISTER_PRODUCER = "physicsSpringVRMChainRegister"
 BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER = "physicsBoneCollisionOverrideRegister"
 
 _BONE_COLLISION_FIELDS = tuple(
@@ -227,105 +223,6 @@ def make_spring_vrm_chain_properties(
         }
         for bone_chain_value in bone_chains
     ]
-
-
-def _copy_chain_object(setting: dict) -> dict:
-    bones = list(setting.get("bones") or ())
-    return {
-        "armature": setting.get("armature"),
-        "root_bone": str(setting.get("root_bone") or ""),
-        "bones": [str(name or "") for name in bones if str(name or "")],
-        "enabled": bool(setting.get("enabled", True)),
-        "stiffness_force": max(float(setting.get("stiffness_force", 1.0)), 0.0),
-        "drag_force": max(0.0, min(1.0, float(setting.get("drag_force", 0.4)))),
-        "gravity_dir": float3(setting.get("gravity_dir", (0.0, 0.0, -1.0)), fallback=(0.0, 0.0, -1.0)),
-        "gravity_power": max(float(setting.get("gravity_power", 0.0)), 0.0),
-    }
-
-
-def normalize_spring_vrm_chain_objects(vrm_chain_properties) -> list[dict]:
-    """把节点传入的 VRM 骨链属性整理成隐式对象 payload。"""
-    return [_copy_chain_object(item) for item in normalize_spring_vrm_chain_properties(vrm_chain_properties)]
-
-
-def spring_vrm_chain_object_signature(setting: dict) -> str:
-    armature = setting.get("armature")
-    payload = [
-        str(as_pointer(armature)),
-        str(data_pointer(armature)),
-        str(setting.get("root_bone") or ""),
-        ",".join(str(name or "") for name in (setting.get("bones") or ())),
-        "1" if bool(setting.get("enabled", True)) else "0",
-        f"{float(setting.get('stiffness_force', 1.0)):.8g}",
-        f"{float(setting.get('drag_force', 0.4)):.8g}",
-        ",".join(f"{value:.8g}" for value in float3(setting.get("gravity_dir", (0.0, 0.0, -1.0)))),
-        f"{float(setting.get('gravity_power', 0.0)):.8g}",
-    ]
-    return stable_short_hash(payload, 16)
-
-
-def spring_vrm_chain_object_stable_id(setting: dict) -> str:
-    armature = setting.get("armature")
-    bones_hash = stable_short_hash([str(name or "") for name in (setting.get("bones") or ())], 8)
-    return (
-        f"{SPRING_VRM_CHAIN_OBJECT_TAG}:"
-        f"{as_pointer(armature)}:{data_pointer(armature)}:"
-        f"{str(setting.get('root_bone') or '')}:{bones_hash}"
-    )
-
-
-def register_spring_vrm_chain_objects(
-    world: PhysicsWorldCache,
-    vrm_chain_properties,
-    enabled: bool = True,
-    producer: str = SPRING_VRM_OBJECT_REGISTER_PRODUCER,
-) -> tuple[int, int, int]:
-    """
-    把 VRM 骨链属性注册为 world.implicit_objects。
-
-    用户不需要提供 key；solver 直接按 tag 收集所有 VRM 骨链对象。
-    """
-    if not isinstance(world, PhysicsWorldCache):
-        return 0, 0, 0
-
-    objects = normalize_spring_vrm_chain_objects(vrm_chain_properties)
-    writer = str(producer or SPRING_VRM_OBJECT_REGISTER_PRODUCER)
-    dirty_count = 0
-    version_max = 0
-
-    world.acquire_write(writer)
-    try:
-        for item in objects:
-            item["enabled"] = bool(enabled) and bool(item.get("enabled", True))
-            entry = world.append_implicit_object(
-                tag=SPRING_VRM_CHAIN_OBJECT_TAG,
-                producer=writer,
-                stable_id=spring_vrm_chain_object_stable_id(item),
-                signature=spring_vrm_chain_object_signature(item),
-                enabled=bool(item.get("enabled", True)),
-                schema=1,
-                payload=item,
-            )
-            if isinstance(entry, dict):
-                dirty_count += 1 if bool(entry.get("dirty", False)) else 0
-                version_max = max(version_max, int(entry.get("version", 0) or 0))
-    finally:
-        world.release_write(writer)
-
-    return len(objects), dirty_count, version_max
-
-
-def collect_spring_vrm_chain_objects(world: PhysicsWorldCache) -> list[dict]:
-    """从 world.implicit_objects 读取启用的 VRM 骨链对象。"""
-    if not isinstance(world, PhysicsWorldCache):
-        return []
-
-    result: list[dict] = []
-    for entry in world.iter_implicit_objects(tag=SPRING_VRM_CHAIN_OBJECT_TAG, enabled=True):
-        payload = entry.get("payload")
-        if isinstance(payload, dict):
-            result.append(payload)
-    return result
 
 
 def _field_default(name: str):

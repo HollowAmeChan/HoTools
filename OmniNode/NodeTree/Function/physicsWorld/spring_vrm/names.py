@@ -8,5 +8,4 @@ SPRING_VRM_SLOT_KIND = "spring_vrm"
 # 兼容别名：SpringBone 姿态输出现在发布到通用 bone_transform 写回通道。
 SPRING_VRM_POSE_CHANNEL = "bone_transform"
 SPRING_VRM_STATS_CHANNEL = "spring_vrm_stats"
-SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"
 SPRING_VRM_DEBUG_DRAW_MODE = "spring_vrm.debug"

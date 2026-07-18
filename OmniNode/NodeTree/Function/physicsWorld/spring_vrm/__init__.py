@@ -10,7 +10,7 @@
 #   specs.py       - 从节点输入构建稳定的 SpringVRM 规格
 #   solver.py      - 把规格注册进 PhysicsWorldCache 解算器槽
 #   results.py     - 纯快照结果流辅助函数
-#   implicit_objects.py - VRM 骨链隐式对象注册入口
+#   implicit_objects.py - 骨链属性构建与骨骼碰撞覆写注册
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ SOLVER_MODULE = {
 _LAZY_EXPORTS = {
     # names.py
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG": ".names",
-    "SPRING_VRM_CHAIN_OBJECT_TAG": ".names",
     "SPRING_VRM_POSE_CHANNEL": ".names",
     "SPRING_VRM_DEBUG_DRAW_MODE": ".names",
     "SPRING_VRM_SLOT_KIND": ".names",
@@ -67,25 +66,17 @@ _LAZY_EXPORTS = {
     "publish_spring_vrm_pose_result": ".results",
     "publish_spring_vrm_stats_result": ".results",
     # solver.py
-    "register_spring_vrm_from_chain_properties": ".solver",
-    "register_spring_vrm_specs": ".solver",
     "step_spring_vrm": ".solver",
     # implicit_objects.py
     "BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER": ".implicit_objects",
-    "SPRING_VRM_OBJECT_REGISTER_PRODUCER": ".implicit_objects",
     "bone_collision_override_signature": ".implicit_objects",
     "bone_collision_override_stable_id": ".implicit_objects",
     "bone_chains_from_bone_values": ".implicit_objects",
     "collect_bone_collision_override_objects": ".implicit_objects",
-    "collect_spring_vrm_chain_objects": ".implicit_objects",
     "make_bone_collision_override_properties": ".implicit_objects",
     "make_spring_vrm_chain_properties": ".implicit_objects",
     "normalize_bone_collision_override_objects": ".implicit_objects",
-    "normalize_spring_vrm_chain_objects": ".implicit_objects",
     "register_bone_collision_override_objects": ".implicit_objects",
-    "register_spring_vrm_chain_objects": ".implicit_objects",
-    "spring_vrm_chain_object_signature": ".implicit_objects",
-    "spring_vrm_chain_object_stable_id": ".implicit_objects",
     # specs.py
     "SpringVRMChainSpec": ".specs",
     "SpringVRMSolverSpec": ".specs",
@@ -117,8 +108,6 @@ __all__ = [
     "SPRING_VRM_POSE_CHANNEL",
     "SPRING_VRM_DEBUG_DRAW_MODE",
     "SPRING_VRM_DEBUG_DRAW_MODES",
-    "SPRING_VRM_CHAIN_OBJECT_TAG",
-    "SPRING_VRM_OBJECT_REGISTER_PRODUCER",
     "SPRING_VRM_SLOT_KIND",
     "SPRING_VRM_SOLVER_DECLARATION",
     "SPRING_VRM_SOLVER_ID",
@@ -147,17 +136,10 @@ __all__ = [
     "make_spring_vrm_chain_properties",
     "normalize_bone_collision_override_objects",
     "normalize_spring_vrm_chain_properties",
-    "normalize_spring_vrm_chain_objects",
-    "collect_spring_vrm_chain_objects",
     "publish_spring_vrm_pose_result",
     "publish_spring_vrm_stats_result",
     "register_bone_collision_override_objects",
-    "register_spring_vrm_chain_objects",
-    "register_spring_vrm_from_chain_properties",
-    "register_spring_vrm_specs",
     "spring_vrm_native_context_stats_for_slots",
-    "spring_vrm_chain_object_signature",
-    "spring_vrm_chain_object_stable_id",
     "spring_vrm_slot_debug_snapshot",
     "step_spring_vrm",
 ]

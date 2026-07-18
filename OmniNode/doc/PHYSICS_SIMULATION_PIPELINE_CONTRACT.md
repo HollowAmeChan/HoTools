@@ -370,7 +370,7 @@ debug_markers
 
 | 通道 | 用途 | 生命周期 | 允许谁写 | 允许谁读 |
 |---|---|---|---|---|
-| `implicit_objects` | 持久懒更新的隐式物理对象，例如 VRM 骨链对象、批量生成约束、solver 参数对象 | 当前已编译根树内跨帧；Begin 不清空，成功重编译时清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
+| `implicit_objects` | 持久懒更新的隐式物理对象，例如批量生成约束、solver 参数对象、运行时覆写 | 当前已编译根树内跨帧；Begin 不清空，成功重编译时清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
 | `exchange` | 当前图执行内的命令、事件、临时共享数据，例如 force/impulse、临时碰撞代理 | frame / until_next_begin | solver 或命令节点 | 下游声明消费 channel 的 solver |
 | `result_streams` | solver 输出的本帧纯结果快照，例如 transform、pose matrix、contact event | 当前图执行 | solver | writeback、debug、export、下游 solver |
 | `solver_slots` | solver 私有状态和 native context | 跨帧，归属单个 solver | 所属 solver | 只能所属 solver 读写，debug 只读摘要 |
@@ -379,15 +379,15 @@ debug_markers
 
 ```python
 {
-    "tag": "spring_vrm.chain",
-    "stable_id": "spring_vrm.chain:{arm_ptr}:{arm_data_ptr}:{root}:{bones_hash}",
+    "tag": "rigid.generated_constraint",
+    "stable_id": "rigid.generated_constraint:{source_or_target_identity}",
     "schema": 1,
     "payload": {...},               # 纯对象/spec 片段；可含 Blender 引用，但不得含 native handle
     "signature": "stable_hash",
     "version": 3,
     "dirty": False,
     "enabled": True,
-    "producer": "physicsSpringVRMChainRegister",
+    "producer": "physicsRigidGeneratedConstraintRegister",
     "source_id": "node-or-rule-id",
     "updated_frame": 12,
     "last_seen_frame": 14,
@@ -398,7 +398,7 @@ debug_markers
 
 规则：
 
-- `tag` 是对象类型标记，必须使用名称常量而不是各写一份裸字符串。例如 `SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"`。
+- `tag` 是对象类型标记，必须使用名称常量而不是各写一份裸字符串。例如 `RIGID_GENERATED_CONSTRAINT_OBJECT_TAG = "rigid.generated_constraint"`。
 - 名称常量的组织方式已分层：跨 solver 通用的 channel / collider ABI 常量仍集中在 `physicsWorld/names.py`；各 solver 自有的 tag / slot_kind / solver_id 等权威定义已拆回各自子模块的 `names.py`（`spring_vrm/names.py`、`rigid/names.py`）。中央 `physicsWorld/names.py` 只保留惰性重导出兼容，避免跨 solver 识别名称错位。
 - `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
 - `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
@@ -408,11 +408,12 @@ debug_markers
 - 注册节点必须接收并返回同一个 `PhysicsWorldCache`，只调用 `world.append_implicit_object()`，不得直接创建 solver slot、不得写 `world.exchange`、不得写 Blender。
 - 注册节点默认不标记 `always_run=True`。即使因节点图依赖被执行，语义上也只是按 stable_id/signature 更新 registry；输入未变时不产生新的 solver 重建。
 - 成功重编译是统一物理世界的冷启动边界：框架清空根树 runtime cache，active 注册节点在新图第一次运行时重新填充 registry；编译缓存命中和编译失败都不清理。
-- solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。solver step 不应该再暴露大量同类对象 socket。
+- solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
+- 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
 
-后续 solver 必须按同一模式组织：
+选择隐式对象合同的 domain 按以下模式组织：
 
 ```text
 <Domain>属性节点
@@ -429,13 +430,13 @@ debug_markers
   行为：读取声明的 implicit object tag，注册/更新 solver slot，调用 native，发布 result stream
 ```
 
-示例（VRM SpringBone 骨链隐式对象链路）：
+示例（刚体生成约束隐式对象链路）：
 
 ```text
 Physics World Begin
-  -> VRM骨链属性                    # <Domain>属性节点
-  -> VRM骨链对象注册                # <Domain>对象注册节点，append world.implicit_objects[tag]
-  -> SpringBone VRM模拟步          # 读取 tag=SPRING_VRM_CHAIN_OBJECT_TAG 的全部隐式对象
+  -> 刚体生成约束属性                # <Domain>属性节点
+  -> 刚体生成约束注册                # <Domain>对象注册节点，append world.implicit_objects[tag]
+  -> 刚体模拟步                      # 读取 tag=RIGID_GENERATED_CONSTRAINT_OBJECT_TAG 的全部隐式对象
   -> Physics Writeback
   -> Physics World Commit
 ```

@@ -10,7 +10,6 @@ from .capabilities import SPRING_VRM_UPDATE_FREQUENCY_TABLE
 from ..names import BONE_TRANSFORM_CHANNEL
 from .names import (
     BONE_COLLISION_OVERRIDE_OBJECT_TAG,
-    SPRING_VRM_CHAIN_OBJECT_TAG,
     SPRING_VRM_SLOT_KIND,
     SPRING_VRM_SOLVER_ID,
     SPRING_VRM_STATS_CHANNEL,
@@ -27,18 +26,17 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "骨骼碰撞覆写属性",
         "骨骼碰撞覆写注册",
         "VRM骨链属性",
-        "VRM骨链对象注册",
+        "VRM骨链任务",
         "SpringBone VRM模拟步",
     ],
     "planned_nodes": [],
     "writers": [
         SPRING_VRM_STEP_WRITER_ID,
-        SPRING_VRM_SOLVER_ID,
     ],
     "consumes": [
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
-        f'world.implicit_objects["{SPRING_VRM_CHAIN_OBJECT_TAG}"]',
+        "SpringBone VRM模拟步.vrm_chain_tasks",
         f"capability[{BONE_COLLISION_CAPABILITY_ID}] 生成并读取 Bone.hotools_collision 显式 RNA",
         f"capability[{BONE_COLLISION_CAPABILITY_ID}] 覆写层通过 "
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"]',
@@ -56,8 +54,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "world.generation",
         "armature_ptr",
         "armature_data_ptr",
-        "implicit_object.signature",
-        "implicit_object.version",
+        "vrm_chain_tasks topology/config signature",
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"].signature',
         "Bone.hotools_collision capability hash",
         "collider_snapshot.source_key",
@@ -65,7 +62,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
     ],
     "same_frame_policy": "skip_republish_cached_results",
     "update_policy": {
-        "implicit_objects": "lazy_by_tag_stable_id_signature",
+        "task_input": "direct_list_rebuild_specs_and_prune_stale_slots",
         "topology": "rebuild_slot_on_armature_or_chain_topology_change",
         "params": "refresh_native_arrays_without_python_solver_backend",
         "bone_collision_profile": "resolve_capability_override_then_explicit_property_then_default",
@@ -77,10 +74,10 @@ SPRING_VRM_SOLVER_DECLARATION = {
     "consumes_capabilities": [BONE_COLLISION_CAPABILITY_ID],
     "update_frequency_table": SPRING_VRM_UPDATE_FREQUENCY_TABLE,
     "implicit_objects": {
-        "consumes": [SPRING_VRM_CHAIN_OBJECT_TAG, BONE_COLLISION_OVERRIDE_OBJECT_TAG],
+        "consumes": [BONE_COLLISION_OVERRIDE_OBJECT_TAG],
         "planned": [],
-        "entry_kind": "spring_vrm_chain 或 bone_collision.override",
-        "producer_nodes": ["VRM骨链对象注册", "骨骼碰撞覆写注册"],
+        "entry_kind": "bone_collision.override",
+        "producer_nodes": ["骨骼碰撞覆写注册"],
         "planned_producer_nodes": [],
         "update_policy": "lazy_by_signature",
         "conflict_policy": "same_tag_and_stable_id_last_writer_wins",

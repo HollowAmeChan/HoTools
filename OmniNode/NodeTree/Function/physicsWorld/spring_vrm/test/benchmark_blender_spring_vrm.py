@@ -83,7 +83,7 @@ def _run_new(
     cache = harness["_OmniCache"]()
     samples = []
     solver_samples = []
-    stage_samples = {name: [] for name in ("begin", "register", "solver", "writeback", "commit")}
+    stage_samples = {name: [] for name in ("begin", "task", "solver", "writeback", "commit")}
     total = warmup + frames
     for offset in range(total):
         frame = frame_base + offset
@@ -103,15 +103,12 @@ def _run_new(
             )
         begin_ms = (time.perf_counter() - stage_started) * 1000.0
         stage_started = time.perf_counter()
-        world, object_count, _dirty_count, _version = harness["physicsSpringVRMChainRegister"](
-            world,
-            properties,
-        )
-        if object_count != 1:
-            raise AssertionError(f"context path registered {object_count} chains")
-        register_ms = (time.perf_counter() - stage_started) * 1000.0
+        tasks = harness["physicsSpringVRMChainTask"](properties)
+        if len(tasks) != 1:
+            raise AssertionError(f"context path built {len(tasks)} tasks")
+        task_ms = (time.perf_counter() - stage_started) * 1000.0
         stage_started = time.perf_counter()
-        world, write_count, solver_ms = harness["physicsSpringVRMSolver"](world, substeps=1)
+        world, write_count, solver_ms = harness["physicsSpringVRMSolver"](world, tasks, substeps=1)
         if write_count != len(armature.pose.bones) - 1:
             raise AssertionError(f"context path produced {write_count} writes")
         solver_wall_ms = (time.perf_counter() - stage_started) * 1000.0
@@ -127,7 +124,7 @@ def _run_new(
             solver_samples.append(float(solver_ms))
             for name, value in (
                 ("begin", begin_ms),
-                ("register", register_ms),
+                ("task", task_ms),
                 ("solver", solver_wall_ms),
                 ("writeback", writeback_ms),
                 ("commit", commit_ms),

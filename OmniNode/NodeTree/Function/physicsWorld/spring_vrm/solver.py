@@ -6,7 +6,6 @@ from ..types import PhysicsWorldCache
 from .declaration import SPRING_VRM_SOLVER_DECLARATION
 from .names import (
     SPRING_VRM_SLOT_KIND,
-    SPRING_VRM_SOLVER_ID,
     SPRING_VRM_STEP_WRITER_ID,
 )
 from .results import (
@@ -15,7 +14,6 @@ from .results import (
     publish_spring_vrm_stats_result,
 )
 from .specs import SpringVRMSolverSpec, build_spring_vrm_solver_specs
-from .implicit_objects import collect_spring_vrm_chain_objects
 from .debug import (
     install_spring_vrm_slot_debug_snapshot,
     spring_vrm_native_context_stats_for_slots,
@@ -43,28 +41,13 @@ def _install_spring_vrm_slot_dispose(slot) -> None:
     )
 
 
-def register_spring_vrm_from_chain_properties(
-    world: PhysicsWorldCache,
-    vrm_chain_properties,
-    backend: str = "cpp",
-    substeps: int = 1,
-) -> tuple[int, list[str]]:
-    specs = build_spring_vrm_solver_specs(
-        vrm_chain_properties,
-        backend=backend,
-        substeps=substeps,
-    )
-    return register_spring_vrm_specs(world, specs)
-
-
 def _register_slots_from_specs(
     world: PhysicsWorldCache,
     specs,
 ) -> tuple[list[str], int, int]:
     """把 specs 落进 world.solver_slots，返回 (registered_ids, chain_count, bone_count)。
 
-    register_spring_vrm_specs（外部注册入口）和 step_spring_vrm（节点每帧路径）
-    共用这段 slot 生命周期逻辑，避免两处并行真值源漂移（见 ARCHITECTURE §7.3）。
+    模拟步通过这段内部逻辑维护 slot 生命周期。
     调用方负责 acquire_write / clear_spring_vrm_pose_results / prune / 发布 stats。
     """
     registered_ids: list[str] = []
@@ -94,38 +77,9 @@ def _register_slots_from_specs(
     return registered_ids, chain_count, bone_count
 
 
-def register_spring_vrm_specs(
-    world: PhysicsWorldCache,
-    specs,
-) -> tuple[int, list[str]]:
-    if world is None or not isinstance(world, PhysicsWorldCache):
-        return 0, []
-
-    world.acquire_write(SPRING_VRM_SOLVER_ID)
-    try:
-        clear_spring_vrm_pose_results(world)
-        registered_ids, chain_count, bone_count = _register_slots_from_specs(world, specs)
-
-        _prune_stale_spring_vrm_slots(world, registered_ids)
-
-        publish_spring_vrm_stats_result(
-            world,
-            frame=int(getattr(world.frame_context, "frame", 0) or 0),
-            generation=int(world.generation),
-            slot_count=len(registered_ids),
-            chain_count=chain_count,
-            bone_count=bone_count,
-            collider_count=int(len((world.collider_snapshot or {}).get("colliders") or ())),
-            status="registered",
-            native_context=spring_vrm_native_context_stats_for_slots(world, registered_ids),
-        )
-        return len(registered_ids), registered_ids
-    finally:
-        world.release_write(SPRING_VRM_SOLVER_ID)
-
-
 def step_spring_vrm(
     world: PhysicsWorldCache,
+    vrm_chain_tasks,
     enabled: bool = True,
     substeps: int = 1,
 ) -> tuple[int, float]:
@@ -135,9 +89,8 @@ def step_spring_vrm(
     fc = getattr(world, "frame_context", None)
     effective_substeps = max(1, min(16, int(substeps or 1)))
 
-    chain_objects = _resolve_chain_objects(world)
     specs = build_spring_vrm_solver_specs(
-        chain_objects,
+        vrm_chain_tasks,
         backend="cpp",
         substeps=effective_substeps,
     )
@@ -199,12 +152,6 @@ def step_spring_vrm(
         return published, step_ms
     finally:
         world.release_write(solver_id)
-
-
-def _resolve_chain_objects(
-    world: PhysicsWorldCache,
-) -> list[dict]:
-    return collect_spring_vrm_chain_objects(world)
 
 
 def _prune_stale_spring_vrm_slots(world: PhysicsWorldCache, active_slot_ids) -> int:
