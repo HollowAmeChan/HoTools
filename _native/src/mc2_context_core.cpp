@@ -1627,6 +1627,7 @@ void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
 
     if (!context.distance_static_ready || context.distance_targets.empty()) return;
     if (context.baseline_depths.size() != count ||
+        context.proxy_local_positions.size() != count * 3 ||
         context.distance_ranges.size() != count * 2 ||
         context.distance_targets.size() != context.distance_rest_signed.size()) {
         return;
@@ -1686,8 +1687,31 @@ void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
                 animated_dx * animated_dx + animated_dy * animated_dy +
                 animated_dz * animated_dz
             );
+            const float static_local_dx =
+                context.proxy_local_positions[target_offset + 0] -
+                context.proxy_local_positions[offset + 0];
+            const float static_local_dy =
+                context.proxy_local_positions[target_offset + 1] -
+                context.proxy_local_positions[offset + 1];
+            const float static_local_dz =
+                context.proxy_local_positions[target_offset + 2] -
+                context.proxy_local_positions[offset + 2];
+            const float static_scaled_x = static_local_dx *
+                context.center_initial_scale[0] * context.scale_ratio;
+            const float static_scaled_y = static_local_dy *
+                context.center_initial_scale[1] * context.scale_ratio;
+            const float static_scaled_z = static_local_dz *
+                context.center_initial_scale[2] * context.scale_ratio;
+            const float local_scaled_rest = std::sqrt(
+                static_scaled_x * static_scaled_x +
+                static_scaled_y * static_scaled_y +
+                static_scaled_z * static_scaled_z
+            );
+            const float scaled_static_rest = local_scaled_rest > kMc2Epsilon
+                ? local_scaled_rest
+                : static_rest * context.scale_ratio;
             const float rest =
-                static_rest * context.scale_ratio * (1.0f - context.animation_pose_ratio) +
+                scaled_static_rest * (1.0f - context.animation_pose_ratio) +
                 animated_rest * context.animation_pose_ratio;
             const float local_stiffness = rest_signed < 0.0f
                 ? stiffness * kDistanceHorizontalStiffness

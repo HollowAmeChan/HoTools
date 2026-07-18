@@ -126,6 +126,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("mesh_cloth",),
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
             "invariants": ("finite", "zero_force_rest", "parameter_hot_update_in_place"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
+            "frames": 900,
+            "setups": ("bone_cloth", "bone_spring"),
+            "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
+            "invariants": (
+                "finite", "bone_deterministic", "bone_branch_transition_stable",
+                "bounded_zero_force_drift", "connected_disconnected_writeback",
+            ),
         },),
         "status": "gap",
     },
@@ -142,6 +151,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("mesh_cloth",),
             "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
             "invariants": ("finite", "limit_bounded"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
+            "frames": 900,
+            "setups": ("bone_cloth", "bone_spring"),
+            "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
+            "invariants": (
+                "finite", "bone_deterministic", "bone_branch_transition_stable",
+                "bounded_zero_force_drift", "connected_disconnected_writeback",
+            ),
         },),
         "status": "gap",
     },
