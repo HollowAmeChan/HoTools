@@ -69,9 +69,11 @@ MC2_SOLVER_DECLARATION = {
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
+        "node_execution": "always_run_then_frame_context_decides_step_reset_pause_or_same_frame",
         "framework": "sync_topology_auto_mesh_or_bone_frame_native_context_and_public_result",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
+        "bone_cloth_partition": "one_control_bone_per_task_and_lateral_topology_group",
         "native_backend": "single_native_context_no_python_fallback",
     },
     "capabilities": MC2_CAPABILITIES,

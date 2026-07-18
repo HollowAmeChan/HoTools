@@ -51,6 +51,7 @@ Cache Read
 7. 每个 solver 必须声明 consumes、produces、persistent state、update policy、writeback 和 export 能力。
 8. Python 管 Blender 边界、cache 生命周期和 debug；C++ 管适合常驻的纯数据 context 和数值热路径。
 9. 隐式写入会参与模拟的 solver 对象必须走 `world.implicit_objects`，不能写 `exchange`、不能直接写 solver slot、不能放进模块全局状态。
+10. 消费 `PhysicsWorldCache.frame_context` 的公开 solver step 必须逐次进入自身时间判定；节点应声明 `always_run=True`，不能因 world/task对象身份跨帧复用而被值缓存跳过。
 
 ## 已固定的架构支柱
 

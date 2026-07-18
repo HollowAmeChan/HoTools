@@ -72,6 +72,37 @@ def _product_armature(name: str, chain_count: int, chain_length: int, x_offset: 
     return obj
 
 
+def _multi_control_armature(name: str, control_count: int, chain_count: int, chain_length: int):
+    data = bpy.data.armatures.new(f"{name}Data")
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    for control_index in range(control_count):
+        x_base = float(control_index) * 10.0
+        parent = data.edit_bones.new(f"Parent{control_index}")
+        parent.head = (x_base, 0.0, 0.0)
+        parent.tail = (x_base, 0.0, 1.0)
+        for chain_index in range(chain_count):
+            x = x_base + float(chain_index)
+            previous = parent
+            for depth in range(chain_length):
+                bone = data.edit_bones.new(
+                    f"Group{control_index}_Chain{chain_index}_{depth}"
+                )
+                bone.head = (x, 0.0, 1.0 + depth)
+                bone.tail = (x, 0.0, 2.0 + depth)
+                bone.parent = previous
+                bone.use_connect = depth > 0
+                previous = bone
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
+    return obj
+
+
 def _dispose_armature(obj) -> None:
     data = obj.data
     if obj.mode != "OBJECT":
@@ -84,6 +115,7 @@ def _dispose_armature(obj) -> None:
 
 rig_a = _product_armature("MC2_ProductRigA", 3, 3, -3.0)
 rig_b = _product_armature("MC2_ProductRigB", 2, 3, 3.0)
+rig_c = _multi_control_armature("MC2_ProductRigC", 2, 2, 3)
 world = None
 try:
     tasks = nodes.physicsMC2BoneClothTask(
@@ -101,6 +133,30 @@ try:
     assert tuple(task.setup_options.connection_mode for task in tasks) == (1, 1)
     assert tuple(len(task.sources) for task in tasks) == (3, 2)
     assert all(task.profile.spring_enabled is False for task in tasks)
+
+    independent_control_tasks = nodes.physicsMC2BoneClothTask(
+        [
+            {"armature": rig_c, "bone": "Parent0"},
+            {"armature": rig_c, "bone": "Parent1"},
+        ],
+        connection_mode=1,
+    )
+    assert len(independent_control_tasks) == 2
+    assert len({task.task_id for task in independent_control_tasks}) == 2
+    assert tuple(len(task.sources) for task in independent_control_tasks) == (2, 2)
+    assert tuple(
+        tuple(source["root_bone"] for source in task.sources)
+        for task in independent_control_tasks
+    ) == (
+        ("Group0_Chain0_0", "Group0_Chain1_0"),
+        ("Group1_Chain0_0", "Group1_Chain1_0"),
+    )
+    independent_topologies = tuple(
+        topology_module.build_mc2_topology_spec(task)
+        for task in independent_control_tasks
+    )
+    assert tuple(item.particle_count for item in independent_topologies) == (6, 6)
+    assert all(item.bone_connection.triangles for item in independent_topologies)
 
     spring_tasks = nodes.physicsMC2BoneSpringTask([
         {"armature": rig_a, "bone": "Chain0_0"},
@@ -290,6 +346,7 @@ finally:
         world.omni_cache_dispose("bone_product_test_cleanup")
     _dispose_armature(rig_a)
     _dispose_armature(rig_b)
+    _dispose_armature(rig_c)
 
 
 print("MC2 HoTools BoneCloth product topology/multi-task atomic step: PASS")

@@ -444,6 +444,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "每帧最大模拟次数",
         "启用",
     )
+    assert mc2_nodes.physicsMC2Step.__meta["always_run"] is True
 
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
@@ -458,6 +459,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
     assert declaration["native_strategy"].endswith("single_native_context")
     assert declaration["update_policy"]["framework"] == "sync_topology_auto_mesh_or_bone_frame_native_context_and_public_result"
+    assert declaration["update_policy"]["node_execution"].startswith("always_run")
+    assert declaration["update_policy"]["bone_cloth_partition"] == (
+        "one_control_bone_per_task_and_lateral_topology_group"
+    )
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == [
         mc2_names.MC2_STATS_CHANNEL,

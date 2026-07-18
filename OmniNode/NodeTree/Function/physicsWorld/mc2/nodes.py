@@ -73,41 +73,39 @@ def _bone_chain_names(root_bone) -> list[str]:
     return [name for name in names if name]
 
 
-def _expand_hotools_bone_sources(values) -> list[dict]:
+def _expand_hotools_bone_source(value) -> list[dict]:
     chains = []
-    for value in _flatten_values(values):
-        if isinstance(value, dict) and value.get("armature") is not None:
-            armature = value.get("armature")
-            explicit = [str(name) for name in (value.get("bones") or ()) if str(name)]
-            if explicit:
-                chains.append({
-                    "armature": armature,
-                    "root_bone": str(value.get("root_bone") or explicit[0]),
-                    "bones": explicit,
-                })
-                continue
-            parent_name = str(value.get("bone") or value.get("root_bone") or "").strip()
-        elif isinstance(value, tuple) and len(value) == 2:
-            armature, parent_name = value
-            parent_name = str(parent_name or "").strip()
-        else:
-            raise TypeError("BoneCloth product source must be a Bone socket or explicit chain")
+    if isinstance(value, dict) and value.get("armature") is not None:
+        armature = value.get("armature")
+        explicit = [str(name) for name in (value.get("bones") or ()) if str(name)]
+        if explicit:
+            return [{
+                "armature": armature,
+                "root_bone": str(value.get("root_bone") or explicit[0]),
+                "bones": explicit,
+            }]
+        parent_name = str(value.get("bone") or value.get("root_bone") or "").strip()
+    elif isinstance(value, tuple) and len(value) == 2:
+        armature, parent_name = value
+        parent_name = str(parent_name or "").strip()
+    else:
+        raise TypeError("BoneCloth product source must be a Bone socket or explicit chain")
 
-        pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
-        parent = pose_bones.get(parent_name) if pose_bones is not None else None
-        if parent is None:
-            raise ValueError(f"BoneCloth parent bone not found: {parent_name!r}")
-        children = list(getattr(parent, "children", ()) or ())
-        if not children:
-            raise ValueError(f"BoneCloth parent bone has no child chains: {parent_name!r}")
-        for child in children:
-            names = _bone_chain_names(child)
-            if names:
-                chains.append({
-                    "armature": armature,
-                    "root_bone": names[0],
-                    "bones": names,
-                })
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    parent = pose_bones.get(parent_name) if pose_bones is not None else None
+    if parent is None:
+        raise ValueError(f"BoneCloth parent bone not found: {parent_name!r}")
+    children = list(getattr(parent, "children", ()) or ())
+    if not children:
+        raise ValueError(f"BoneCloth parent bone has no child chains: {parent_name!r}")
+    for child in children:
+        names = _bone_chain_names(child)
+        if names:
+            chains.append({
+                "armature": armature,
+                "root_bone": names[0],
+                "bones": names,
+            })
     return chains
 
 
@@ -124,9 +122,21 @@ def _owner_key(source: dict) -> tuple[int, int]:
 def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
-    grouped: dict[tuple[int, int], list[dict]] = {}
-    for source in _expand_hotools_bone_sources(control_bones):
-        grouped.setdefault(_owner_key(source), []).append(source)
+    groups: list[list[dict]] = []
+    explicit_group_indices: dict[tuple[int, int], int] = {}
+    for value in _flatten_values(control_bones):
+        sources = _expand_hotools_bone_source(value)
+        is_explicit_chain = isinstance(value, dict) and bool(value.get("bones"))
+        if not is_explicit_chain:
+            groups.append(sources)
+            continue
+        owner_key = _owner_key(sources[0])
+        group_index = explicit_group_indices.get(owner_key)
+        if group_index is None:
+            explicit_group_indices[owner_key] = len(groups)
+            groups.append(list(sources))
+        else:
+            groups[group_index].extend(sources)
     return [
         make_mc2_task_spec(
             MC2_SETUP_BONE_CLOTH,
@@ -139,7 +149,7 @@ def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
             ),
             enabled=enabled,
         )
-        for group in grouped.values()
+        for group in groups
     ]
 
 
@@ -511,7 +521,7 @@ def physicsMC2MeshClothTask(
     is_output_node=False,
     _INPUT_NAME=["中控骨", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
-        "control_bones": {"description": "直接子骨生成模拟链\n中控骨不生成粒子"},
+        "control_bones": {"description": "直接子骨生成模拟链\n每个中控骨独立横连"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
         "connection_mode": {
             "min_value": 0,
@@ -581,6 +591,7 @@ def physicsMC2BoneSpringTask(
 
 @omni(
     enable=True,
+    always_run=True,
     bl_label="MC2模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
