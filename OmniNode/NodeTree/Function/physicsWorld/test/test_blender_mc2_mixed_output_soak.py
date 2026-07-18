@@ -108,7 +108,7 @@ def _armature(name, x_offset):
     return obj
 
 
-def _tasks(mesh, cloth, spring, damping):
+def _tasks(mesh, cloth, spring, damping, teleport_mode):
     mesh_task = specs.make_mc2_task_spec(
         names.MC2_SETUP_MESH_CLOTH,
         [mesh],
@@ -116,6 +116,9 @@ def _tasks(mesh, cloth, spring, damping):
             gravity=5.0,
             damping=damping,
             self_collision_mode=0,
+            teleport_mode=teleport_mode,
+            teleport_distance=0.5,
+            teleport_rotation=180.0,
         ),
     )
     cloth_task = specs.make_mc2_task_spec(
@@ -125,12 +128,20 @@ def _tasks(mesh, cloth, spring, damping):
             gravity=3.0,
             damping=damping,
             self_collision_mode=0,
+            teleport_mode=teleport_mode,
+            teleport_distance=0.5,
+            teleport_rotation=180.0,
         ),
     )
     spring_task = specs.make_mc2_task_spec(
         names.MC2_SETUP_BONE_SPRING,
         [{"armature": spring, "root_bone": "Root"}],
-        profile=parameters.make_mc2_particle_profile(damping=damping),
+        profile=parameters.make_mc2_particle_profile(
+            damping=damping,
+            teleport_mode=teleport_mode,
+            teleport_distance=0.5,
+            teleport_rotation=180.0,
+        ),
         setup_options=parameters.make_mc2_setup_options(
             names.MC2_SETUP_BONE_SPRING,
             collided_by_groups=1,
@@ -188,12 +199,18 @@ def main():
         mesh = _mesh_source()
         cloth = _armature("MC2MixedBoneCloth", -0.3)
         spring = _armature("MC2MixedBoneSpring", 0.3)
-        tasks = _tasks(mesh, cloth, spring, 0.05)
+        tasks = _tasks(mesh, cloth, spring, 0.05, 2)
         stable_ids = tuple(task.task_id for task in tasks)
+        keep_hits = set()
+        reset_hits = set()
         for frame in range(1, 901):
             _animate_armature(cloth, frame, 0.18)
             _animate_armature(spring, frame, -0.14)
             bpy.context.view_layer.update()
+            if frame == 301:
+                for source in (mesh, cloth, spring):
+                    source.location.x += 2.0
+                bpy.context.view_layer.update()
             if frame == 451:
                 original_contexts = tuple(
                     world.solver_slots[task.task_id].data["native_context"]
@@ -203,8 +220,12 @@ def main():
                     context.inspect()["parameter_revision"]
                     for context in original_contexts
                 )
-                tasks = _tasks(mesh, cloth, spring, 0.25)
+                tasks = _tasks(mesh, cloth, spring, 0.25, 1)
                 assert tuple(task.task_id for task in tasks) == stable_ids
+            if frame == 601:
+                for source in (mesh, cloth, spring):
+                    source.location.x += 2.0
+                bpy.context.view_layer.update()
             _set_frame(world, frame, generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
@@ -215,7 +236,21 @@ def main():
             assert returned is world and ready is True, status
             assert len(world.solver_slots) == 3
             for task in tasks:
-                _assert_candidate(world.solver_slots[task.task_id])
+                slot = world.solver_slots[task.task_id]
+                _assert_candidate(slot)
+                shift = slot.data["center_frame_shift_result"]
+                if frame == 301:
+                    assert shift is not None
+                    assert shift.keep_teleport is True
+                    assert shift.reset_teleport is False
+                    assert shift.teleport_measured_distance >= shift.teleport_distance_threshold
+                    keep_hits.add(task.setup_type)
+                if frame == 601:
+                    assert shift is not None
+                    assert shift.keep_teleport is False
+                    assert shift.reset_teleport is True
+                    assert shift.teleport_measured_distance >= shift.teleport_distance_threshold
+                    reset_hits.add(task.setup_type)
             if frame == 451:
                 current_contexts = tuple(
                     world.solver_slots[task.task_id].data["native_context"]
@@ -264,6 +299,14 @@ def main():
             assert np.count_nonzero(output["translation_applied"] == 0) > 0
             assert np.count_nonzero(output["translation_applied"] == 1) > 0
 
+        expected_setups = {
+            names.MC2_SETUP_MESH_CLOTH,
+            names.MC2_SETUP_BONE_CLOTH,
+            names.MC2_SETUP_BONE_SPRING,
+        }
+        assert keep_hits == expected_setups
+        assert reset_hits == expected_setups
+
         stats = world.consume_results(
             names.MC2_STATS_CHANNEL,
             solver="mc2",
@@ -274,7 +317,7 @@ def main():
         assert stats[0]["mesh_cloth_count"] == 1
         assert stats[0]["bone_cloth_count"] == 1
         assert stats[0]["bone_spring_count"] == 1
-        print("[PASS] 900-frame mixed three-setup output/hot-update")
+        print("[PASS] 900-frame mixed output/hot-update + all-setup Keep/Reset")
     finally:
         world.omni_cache_dispose("mixed_output_soak")
         if mesh is not None and mesh.name in bpy.data.objects:

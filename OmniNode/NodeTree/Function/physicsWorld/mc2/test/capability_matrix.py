@@ -24,8 +24,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
     {
         "id": "center_inertia_and_teleport",
         "setups": ALL_SETUPS,
-        "frames": 1200,
-        "runner": "test_blender_mc2_constraint_soak.py::center_keep_teleport",
+        "frames": 900,
+        "runner": "test_blender_mc2_mixed_output_soak.py::mixed_three_setup_keep_reset",
         "fields": (
             "distance_culling_length", "distance_culling_fade_ratio",
             "anchor_inertia", "world_inertia", "movement_inertia_smoothing",
@@ -35,7 +35,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "teleport_distance", "teleport_rotation", "use_distance_culling",
             "teleport_mode",
         ),
-        "invariants": ("finite", "deterministic", "same_frame_stable", "teleport_branch_exact"),
+        "invariants": (
+            "finite", "deterministic", "same_frame_stable",
+            "teleport_keep_reset_all_setups_exact",
+        ),
     },
     {
         "id": "tether_and_distance",

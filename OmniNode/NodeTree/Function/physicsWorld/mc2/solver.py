@@ -289,10 +289,12 @@ def _make_slot_center_frame_shift(
     negative_scale_transition=None,
 ):
     mesh_static = slot.data.get("mesh_static")
+    bone_static = slot.data.get("bone_static")
+    active_static = mesh_static if mesh_static is not None else bone_static
     center_state = slot.data.get("center_state")
     spec = slot.data.get("spec")
     frame_pose = frame_input.center_frame_pose
-    if mesh_static is None or frame_pose is None or spec is None:
+    if active_static is None or frame_pose is None or spec is None:
         return None
     if not isinstance(center_state, MC2CenterPersistentState) or not center_state.initialized:
         return None
