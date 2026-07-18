@@ -1239,6 +1239,14 @@ world.begin
 
 ## Debug 与性能统计
 
+Viewport物理debug的基础图元由`physicsWorld/utils/debug_draw.py`统一拥有，solver不得各自复制GPU状态或几何生成器。表达规则固定为：
+
+- 只有位置语义的粒子、锚点、目标点和接触点使用抗锯齿圆点；圆点大小是屏幕像素，不随world scale变化。
+- 位移、速度、力、法线和修正量使用带箭头向量；普通线只表达拓扑边、无向约束、候选pair或形状轮廓。
+- 只有数据真实包含旋转时才绘制basis/axis，禁止用三轴十字代替普通位置点并暗示不存在的旋转。
+- 角限制/旋转差使用角弧，弹簧或柔性距离语义可使用spring line；半径、包围体和碰撞形状继续使用world-space圆、球、胶囊、平面和box。
+- 公共renderer负责GPU blend/depth/line width/point size的保存与恢复；domain renderer只组装冻结snapshot生成的line/point batches，不读取live RNA补画。
+
 统一 timing 应使用阶段名，而不是 solver 私有术语。推荐基础阶段：
 
 ```text

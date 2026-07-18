@@ -297,7 +297,9 @@ try:
         show_self_grid=True,
         show_self_candidates=True,
     )
-    assert debug_draw.mc2_debug_draw_store_snapshot(node_uid)["line_vertex_count"] == 0
+    empty_snapshot = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
+    assert empty_snapshot["line_vertex_count"] == 0
+    assert empty_snapshot["point_vertex_count"] == 0
     assert all(slot.data["_debug_capture_state"]["requested"] for slot in world.solver_slots.values())
     print("[PASS] implicit node requests without immediate readback")
 
@@ -413,6 +415,7 @@ try:
     )
     rendered = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
     assert rendered["batch_count"] > 0 and rendered["line_vertex_count"] > 0
+    assert rendered["point_vertex_count"] > 0
     debug_draw.update_mc2_debug_draw_store(
         node_uid,
         world,

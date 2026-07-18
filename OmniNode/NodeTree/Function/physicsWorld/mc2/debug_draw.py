@@ -8,13 +8,15 @@ import numpy as np
 
 from ..types import PhysicsWorldCache
 from ..utils.debug_draw import (
+    add_arrow_lines,
     add_box_lines,
     add_capsule_lines,
-    add_cross_lines,
     add_line,
     add_plane_lines,
+    add_point,
     add_sphere_lines,
     draw_line_batches,
+    draw_point_batches,
     vector3,
 )
 from .debug import normalize_mc2_task_filters, request_mc2_debug_capture
@@ -105,11 +107,12 @@ def update_mc2_debug_draw_store(
         "max_items": max(1, min(int(max_items), 100000)),
     }
     request_mc2_debug_capture(world, filters=filters)
-    batches = _build_world_batches(world, filters)
+    batches, point_batches = _build_world_batches(world, filters)
     _MC2_DRAW_STORE[node_key] = {
         "world_id": str(id(world)),
         "frame": int(getattr(world.frame_context, "frame", 0) or 0),
         "batches": batches,
+        "point_batches": point_batches,
     }
     _ensure_draw_handler()
     _tag_view3d_redraw()
@@ -137,12 +140,21 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     item = _MC2_DRAW_STORE.get(str(node_uid))
     if item is None:
         return None
-    flattened = [coordinate for batch in item["batches"] for point in batch[0] for coordinate in point]
+    line_batches = item.get("batches") or ()
+    point_batches = item.get("point_batches") or ()
+    flattened = [
+        coordinate
+        for specs in (line_batches, point_batches)
+        for batch in specs
+        for point in batch[0]
+        for coordinate in point
+    ]
     return {
         "world_id": item["world_id"],
         "frame": item["frame"],
-        "batch_count": len(item["batches"]),
-        "line_vertex_count": sum(len(batch[0]) for batch in item["batches"]),
+        "batch_count": len(line_batches) + len(point_batches),
+        "line_vertex_count": sum(len(batch[0]) for batch in line_batches),
+        "point_vertex_count": sum(len(batch[0]) for batch in point_batches),
         "coordinate_checksum": round(
             sum((index + 1) * float(value) for index, value in enumerate(flattened)),
             6,
@@ -150,8 +162,9 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     }
 
 
-def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> list:
+def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list, list]:
     batches = []
+    point_batches = []
     task_filters = normalize_mc2_task_filters(filters["task_filter"])
     for slot in world.solver_slots.values():
         if slot.kind != MC2_SLOT_KIND:
@@ -163,14 +176,16 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> list:
             token in str(snapshot.get("task_id") or "") for token in task_filters
         ):
             continue
-        _append_slot_batches(batches, snapshot, filters)
+        _append_slot_batches(batches, point_batches, snapshot, filters)
 
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
         snapshot = interaction.debug_draw_snapshot()
         if isinstance(snapshot, dict):
-            _append_self_batches(batches, snapshot, filters, interaction=True)
-    return batches
+            _append_self_batches(
+                batches, point_batches, snapshot, filters, interaction=True
+            )
+    return batches, point_batches
 
 
 def _batch(batches: list, lines: list, color_name: str, width: float = 1.0) -> None:
@@ -178,21 +193,33 @@ def _batch(batches: list, lines: list, color_name: str, width: float = 1.0) -> N
         batches.append((lines, _COLORS[color_name], width))
 
 
-def _append_slot_batches(batches: list, snapshot: dict, filters: dict) -> None:
+def _point_batch(
+    batches: list, points: list, color_name: str, size: float = 5.0
+) -> None:
+    if points:
+        batches.append((points, _COLORS[color_name], size))
+
+
+def _append_slot_batches(
+    batches: list, point_batches: list, snapshot: dict, filters: dict
+) -> None:
     limit = filters["max_items"]
     topology = snapshot.get("topology") or {}
     positions = np.asarray(_values(topology.get("positions")), dtype=np.float32).reshape((-1, 3))
     if filters["show_topology"]:
         _append_topology_batches(batches, topology, positions, limit)
     if filters["show_attributes"]:
-        _append_attribute_batches(batches, topology, positions, limit)
+        _append_attribute_batches(point_batches, topology, positions, limit)
     if filters["show_motion_base"]:
-        _append_motion_base_batches(batches, snapshot.get("motion") or {}, limit)
+        _append_motion_base_batches(
+            batches, point_batches, snapshot.get("motion") or {}, limit
+        )
     if filters["show_motion"]:
         _append_motion_batches(batches, snapshot.get("motion") or {}, limit)
     if filters["show_angle_restoration"]:
         _append_angle_restoration_batches(
             batches,
+            point_batches,
             snapshot.get("motion") or {},
             np.asarray(
                 _values((snapshot.get("native") or {}).get("positions")),
@@ -201,14 +228,20 @@ def _append_slot_batches(batches: list, snapshot: dict, filters: dict) -> None:
             limit,
         )
     if filters["show_center"]:
-        _append_center_batches(batches, snapshot.get("center") or {})
+        _append_center_batches(batches, point_batches, snapshot.get("center") or {})
     if filters["show_collision"]:
         _append_collider_batches(batches, snapshot.get("collision") or {}, limit)
     if filters["show_radii"]:
         _append_radius_batches(batches, snapshot, limit)
-    _append_self_batches(batches, snapshot.get("native") or {}, filters, interaction=False)
+    _append_self_batches(
+        batches,
+        point_batches,
+        snapshot.get("native") or {},
+        filters,
+        interaction=False,
+    )
     if filters["show_output"]:
-        _append_output_batches(batches, snapshot, limit)
+        _append_output_batches(batches, point_batches, snapshot, limit)
 
 
 def _append_topology_batches(batches, topology, positions, limit):
@@ -233,15 +266,15 @@ def _append_topology_batches(batches, topology, positions, limit):
     _batch(batches, triangles, "triangle", 1.0)
 
 
-def _append_attribute_batches(batches, topology, positions, limit):
+def _append_attribute_batches(point_batches, topology, positions, limit):
     fixed = []
     move = []
     attributes = np.asarray(_values(topology.get("vertex_attributes")), dtype=np.uint8)
     for index, attribute in enumerate(attributes[:limit]):
         target = move if int(attribute) & 0x02 else fixed
-        add_cross_lines(target, positions[index], 0.015 if target is move else 0.025)
-    _batch(batches, fixed, "fixed", 2.2)
-    _batch(batches, move, "move", 1.2)
+        add_point(target, positions[index])
+    _point_batch(point_batches, fixed, "fixed", 8.0)
+    _point_batch(point_batches, move, "move", 5.0)
 
 
 def _append_motion_batches(batches, motion, limit):
@@ -268,7 +301,7 @@ def _append_motion_batches(batches, motion, limit):
         _batch(batches, lines, "backstop", 1.4)
 
 
-def _append_motion_base_batches(batches, motion, limit):
+def _append_motion_base_batches(batches, point_batches, motion, limit):
     base = motion.get("motion_base_positions")
     rotations = motion.get("motion_base_rotations_xyzw")
     if base is None or rotations is None:
@@ -277,13 +310,22 @@ def _append_motion_base_batches(batches, motion, limit):
     rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
     axes = _motion_axes(base, rotations, int(motion.get("normal_axis", 1)))
     lines = []
+    points = []
     for center, axis in zip(base[:limit], axes[:limit]):
-        add_cross_lines(lines, center, 0.012)
-        add_line(lines, center, vector3(center) + vector3(axis) * 0.025)
+        add_point(points, center)
+        add_arrow_lines(
+            lines,
+            center,
+            vector3(center) + vector3(axis) * 0.025,
+            head_length=0.007,
+        )
     _batch(batches, lines, "motion_base", 1.2)
+    _point_batch(point_batches, points, "motion_base", 5.0)
 
 
-def _append_angle_restoration_batches(batches, motion, current, limit):
+def _append_angle_restoration_batches(
+    batches, point_batches, motion, current, limit
+):
     if not bool(motion.get("use_angle_restoration")):
         return
     targets = motion.get("angle_restoration_target_positions")
@@ -296,48 +338,60 @@ def _append_angle_restoration_batches(batches, motion, current, limit):
         _values(motion.get("angle_restoration_strengths")), dtype=np.float32
     )
     lines = []
+    points = []
     for index, target in enumerate(targets[:limit]):
         if index >= len(current) or index >= len(valid) or not valid[index]:
             continue
         if index < len(strengths) and float(strengths[index]) <= 1.0e-8:
             continue
-        add_line(lines, current[index], target)
-        add_cross_lines(lines, target, 0.016)
+        add_arrow_lines(lines, current[index], target)
+        add_point(points, target)
     _batch(batches, lines, "angle_target", 1.8)
+    _point_batch(point_batches, points, "angle_target", 7.0)
 
 
-def _append_center_batches(batches, center):
+def _append_center_batches(batches, point_batches, center):
     frame_pose = center.get("frame_pose") or {}
     shift = center.get("frame_shift") or {}
     step = center.get("step") or {}
     negative = center.get("negative_scale_transition") or {}
     center_lines = []
     shift_lines = []
-    negative_lines = []
+    center_points = []
+    anchor_points = []
+    old_points = []
+    now_points = []
+    negative_points = []
     position = frame_pose.get("component_world_position")
     anchor = frame_pose.get("anchor_world_position")
     if position is not None:
-        add_cross_lines(center_lines, position, 0.08)
+        add_point(center_points, position)
     if anchor is not None and frame_pose.get("anchor_identity"):
-        add_cross_lines(center_lines, anchor, 0.06)
+        add_point(anchor_points, anchor)
         if position is not None:
             add_line(center_lines, position, anchor)
     old_position = shift.get("old_frame_world_position")
     now_position = shift.get("now_world_position") or step.get("now_world_position")
     if old_position is not None and now_position is not None:
-        add_line(shift_lines, old_position, now_position)
-        add_cross_lines(shift_lines, old_position, 0.035)
-        add_cross_lines(shift_lines, now_position, 0.05)
+        add_arrow_lines(shift_lines, old_position, now_position)
+        add_point(old_points, old_position)
+        add_point(now_points, now_position)
     shift_vector = shift.get("frame_component_shift_vector")
     if position is not None and shift_vector is not None:
-        add_line(shift_lines, position, vector3(position) + vector3(shift_vector))
+        add_arrow_lines(
+            shift_lines, position, vector3(position) + vector3(shift_vector)
+        )
     if bool(negative.get("active")):
         target = negative.get("old_component_world_position") or position
         if target is not None:
-            add_cross_lines(negative_lines, target, 0.11)
+            add_point(negative_points, target)
     _batch(batches, center_lines, "center", 2.0)
     _batch(batches, shift_lines, "shift", 2.0)
-    _batch(batches, negative_lines, "negative", 2.5)
+    _point_batch(point_batches, center_points, "center", 11.0)
+    _point_batch(point_batches, anchor_points, "center", 9.0)
+    _point_batch(point_batches, old_points, "shift", 7.0)
+    _point_batch(point_batches, now_points, "shift", 9.0)
+    _point_batch(point_batches, negative_points, "negative", 13.0)
 
 
 def _append_collider_batches(batches, collision, limit):
@@ -387,7 +441,9 @@ def _append_radius_batches(batches, snapshot, limit):
     _batch(batches, lines, "self_radius")
 
 
-def _append_self_batches(batches, native_snapshot, filters, *, interaction):
+def _append_self_batches(
+    batches, point_batches, native_snapshot, filters, *, interaction
+):
     state = native_snapshot if interaction else native_snapshot.get("self_collision")
     if not isinstance(state, dict) or state.get("positions") is None and interaction:
         return
@@ -424,18 +480,20 @@ def _append_self_batches(batches, native_snapshot, filters, *, interaction):
             offset += count
     if filters["show_self_primitives"]:
         lines = []
+        points = []
         for primitive_index, primitive in enumerate(indices[:limit]):
             if primitive_index >= len(visible_primitives) or not visible_primitives[primitive_index]:
                 continue
             if primitive_index < point_count:
                 center = _primitive_center(positions, primitive)
                 if center is not None:
-                    add_cross_lines(lines, center, 0.018)
+                    add_point(points, center)
             elif primitive_index < point_count + edge_count:
                 _add_index_line(lines, positions, primitive[:2])
             else:
                 _add_index_loop(lines, positions, primitive)
         _batch(batches, lines, "primitive", 1.5)
+        _point_batch(point_batches, points, "primitive", 6.0)
     if filters["show_self_grid"]:
         lines = []
         grid_size = float(info.get("grid_size" if interaction else "self_grid_size", 0.0) or 0.0)
@@ -480,7 +538,12 @@ def _append_self_batches(batches, native_snapshot, filters, *, interaction):
             _add_center_line(target, centers, int(first), int(second))
             if index < len(normals) and 0 <= int(first) < len(centers) and centers[int(first)] is not None:
                 length = float(thickness[index]) if index < len(thickness) else 0.04
-                add_line(target, centers[int(first)], vector3(centers[int(first)]) + vector3(normals[index]) * max(length, 0.02))
+                add_arrow_lines(
+                    target,
+                    centers[int(first)],
+                    vector3(centers[int(first)])
+                    + vector3(normals[index]) * max(length, 0.02),
+                )
         intersections = []
         for record in np.asarray(_values(state.get("intersect_records")), dtype=np.int32).reshape((-1, 5))[:limit]:
             if not any(
@@ -496,7 +559,7 @@ def _append_self_batches(batches, native_snapshot, filters, *, interaction):
         _batch(batches, intersections, "intersection", 2.6)
 
 
-def _append_output_batches(batches, snapshot, limit):
+def _append_output_batches(batches, point_batches, snapshot, limit):
     output = snapshot.get("output") or {}
     base = output.get("base_positions")
     target = output.get("target_positions")
@@ -508,12 +571,14 @@ def _append_output_batches(batches, snapshot, limit):
         _values(output.get("translation_applied")), dtype=np.uint8
     )
     lines = []
+    points = []
     for index, (start, end) in enumerate(zip(base[:limit], target[:limit])):
         if len(applied) and (index >= len(applied) or not applied[index]):
             continue
-        add_line(lines, start, end)
-        add_cross_lines(lines, end, 0.012)
+        add_arrow_lines(lines, start, end)
+        add_point(points, end)
     _batch(batches, lines, "output", 1.4)
+    _point_batch(point_batches, points, "output", 5.0)
 
 
 def _motion_axes(positions, rotations, normal_axis):
@@ -606,6 +671,7 @@ def _remove_draw_handler():
 def _draw_mc2_debug():
     for item in list(_MC2_DRAW_STORE.values()):
         draw_line_batches(item.get("batches") or ())
+        draw_point_batches(item.get("point_batches") or ())
 
 
 def _tag_view3d_redraw():
