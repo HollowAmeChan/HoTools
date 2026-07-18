@@ -57,6 +57,8 @@ def _box_signed_half_z(axis_x, axis_y, axis_z) -> float | None:
 class MC2ColliderFrameSpec:
     frame: int
     collided_by_groups: int
+    source_pointer: int
+    collider_keys: tuple[str, ...]
     collider_types: np.ndarray
     collider_group_bits: np.ndarray
     collider_centers: np.ndarray
@@ -76,6 +78,8 @@ class MC2ColliderFrameSpec:
         return {
             "frame": self.frame,
             "collided_by_groups": self.collided_by_groups,
+            "source_pointer": self.source_pointer,
+            "collider_keys": self.collider_keys,
             "collider_count": self.collider_count,
             "frame_signature": self.frame_signature,
         }
@@ -116,6 +120,7 @@ def build_mc2_collider_frame(
     old_segment_a_values = []
     old_segment_b_values = []
     radii = []
+    keys = []
     for collider in snapshot.get("colliders") or ():
         if not isinstance(collider, dict) or _pointer(collider.get("owner")) == source_pointer:
             continue
@@ -175,6 +180,7 @@ def build_mc2_collider_frame(
         old_segment_a_values.append(segment_a if old_a is None else old_a)
         old_segment_b_values.append(segment_b if old_b is None else old_b)
         radii.append(radius)
+        keys.append(key)
 
     count = len(types)
     arrays = (
@@ -189,12 +195,18 @@ def build_mc2_collider_frame(
         _array(radii, np.float32, (count,)),
     )
     digest = hashlib.sha256()
-    digest.update(np.asarray((int(snapshot.get("frame", -1) or -1), collided_by_groups), dtype=np.int64).tobytes())
+    digest.update(np.asarray(
+        (int(snapshot.get("frame", -1) or -1), collided_by_groups, source_pointer),
+        dtype=np.int64,
+    ).tobytes())
+    digest.update("\0".join(keys).encode("utf-8"))
     for value in arrays:
         digest.update(value.tobytes())
     return MC2ColliderFrameSpec(
         int(snapshot.get("frame", -1) or -1),
         collided_by_groups,
+        source_pointer,
+        tuple(keys),
         *arrays,
         digest.hexdigest(),
     )

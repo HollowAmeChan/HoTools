@@ -27,11 +27,13 @@ MC2_DEBUG_DRAW_MODES = {
         "setup_types": ("mesh_cloth", "bone_cloth", "bone_spring"),
         "semantic_layers": (
             "topology",
-            "motion",
+            "motion_base_position",
+            "motion_limits",
+            "angle_restoration_target",
             "center",
             "collision",
             "self_collision",
-            "output",
+            "final_output_offset",
         ),
     },
 }
@@ -200,8 +202,22 @@ def _motion_payload(slot, native_snapshot) -> dict:
         depths = ()
     floats, ints, curves = _curve_maps(effective)
     return {
+        "motion_base_positions": native_snapshot.get("motion_base_positions"),
+        "motion_base_rotations_xyzw": native_snapshot.get(
+            "motion_base_rotations_xyzw"
+        ),
         "step_basic_positions": native_snapshot.get("step_basic_positions"),
         "step_basic_rotations_xyzw": native_snapshot.get("step_basic_rotations_xyzw"),
+        "use_angle_restoration": bool(ints["use_angle_restoration"]),
+        "angle_restoration_target_positions": native_snapshot.get(
+            "angle_restoration_target_positions"
+        ),
+        "angle_restoration_target_valid": native_snapshot.get(
+            "angle_restoration_target_valid"
+        ),
+        "angle_restoration_strengths": _sample_curve(
+            curves["angle_restoration_stiffness"], depths
+        ),
         "normal_axis": int(ints["normal_axis"]),
         "use_max_distance": bool(ints["use_max_distance"]),
         "max_distances": _sample_curve(
@@ -234,6 +250,9 @@ def _collision_payload(item, native_snapshot) -> dict:
     collider_payload = None
     if collider is not None:
         collider_payload = {
+            "keys": tuple(getattr(collider, "collider_keys", ()) or ()),
+            "source_pointer": int(getattr(collider, "source_pointer", 0) or 0),
+            "collided_by_groups": int(collider.collided_by_groups),
             "types": _readonly(collider.collider_types),
             "group_bits": _readonly(collider.collider_group_bits),
             "centers": _readonly(collider.collider_centers),
@@ -280,7 +299,7 @@ def _center_payload(slot, item) -> dict:
     }
 
 
-def _output_payload(slot, native_snapshot) -> dict:
+def _output_payload(slot, item) -> dict:
     plan = slot.data.get("writeback_plan")
     is_bone_plan = (
         isinstance(plan, dict)
@@ -288,6 +307,8 @@ def _output_payload(slot, native_snapshot) -> dict:
     )
     static = _active_static(slot)
     proxy = getattr(static, "final_proxy", None)
+    candidate = slot.data.get("result_candidate")
+    frame_input = item.get("frame_input")
     targets = []
     motion_modes = []
     if is_bone_plan:
@@ -299,8 +320,31 @@ def _output_payload(slot, native_snapshot) -> dict:
                     motion_modes.append((name, str(record.get("motion_mode") or "")))
     if not targets:
         targets = [str(value) for value in getattr(proxy, "vertex_identities", ())]
+    base_positions = getattr(frame_input, "world_positions", None)
+    target_positions = getattr(candidate, "world_positions", None)
+    offsets = None
+    applied = None
+    local_offsets = getattr(candidate, "mesh_object_local_offsets", None)
+    if base_positions is not None and target_positions is not None:
+        base_positions = np.asarray(base_positions, dtype=np.float32)
+        target_positions = np.asarray(target_positions, dtype=np.float32)
+        if base_positions.shape == target_positions.shape:
+            applied = np.ones((len(base_positions),), dtype=np.uint8)
+            if is_bone_plan and motion_modes:
+                for index, (_name, mode) in enumerate(motion_modes):
+                    if index < len(applied) and mode == "rotation_only_connected":
+                        applied[index] = 0
+                target_positions = target_positions.copy()
+                target_positions[applied == 0] = base_positions[applied == 0]
+            offsets = target_positions - base_positions
     return {
-        "positions": native_snapshot["positions"],
+        "base_positions": _readonly(base_positions) if base_positions is not None else None,
+        "target_positions": _readonly(target_positions) if target_positions is not None else None,
+        "world_offsets": _readonly(offsets) if offsets is not None else None,
+        "mesh_object_local_offsets": (
+            _readonly(local_offsets) if local_offsets is not None else None
+        ),
+        "translation_applied": _readonly(applied) if applied is not None else None,
         "writeback_schema": str(plan.get("schema") or "") if isinstance(plan, dict) else "",
         "writeback_target_count": len(targets),
         "has_writeback_plan": bool(plan),
@@ -336,8 +380,12 @@ def capture_requested_mc2_debug(
             filters = dict(state.get("filters") or {})
             native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
                 include_step_basic=bool(
+                    filters.get("show_angle_restoration", True)
+                ),
+                include_motion_debug=bool(
                     filters.get("show_motion", True)
-                    or filters.get("show_center", True)
+                    or filters.get("show_motion_base", True)
+                    or filters.get("show_angle_restoration", True)
                 ),
                 include_self=bool(filters.get("show_self", True)),
             )
@@ -356,7 +404,7 @@ def capture_requested_mc2_debug(
                 "center": _center_payload(slot, item),
                 "collision": _collision_payload(item, native_snapshot),
                 "self_collision": native_snapshot.get("self_collision"),
-                "output": _output_payload(slot, native_snapshot),
+                "output": _output_payload(slot, item),
             }
             slot.data["_debug_draw_snapshot"] = snapshot
             state.pop("error", None)

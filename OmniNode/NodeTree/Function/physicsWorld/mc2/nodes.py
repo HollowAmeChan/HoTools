@@ -653,13 +653,14 @@ def physicsMC2Step(
     _INPUT_NAME=[
         "物理世界", "拓扑连接", "Fixed/Move", "Motion约束", "Center/Teleport",
         "外部碰撞", "粒子半径", "自碰Primitive", "自碰Grid", "自碰Candidate",
-        "自碰Contact", "最终输出", "任务筛选", "最大显示项",
+        "自碰Contact", "最终输出偏移", "任务筛选", "最大显示项",
+        "Motion BasePosition", "Angle恢复目标",
     ],
     input_init={
         "world": {"description": "包含MC2 slot和隐式debug快照的Physics World。"},
         "show_topology": {"description": "显示真实纵向/横向拓扑连接。"},
         "show_attributes": {"description": "显示Fixed/Move等粒子属性。"},
-        "show_motion": {"description": "显示Motion、MaxDistance与Backstop约束。"},
+        "show_motion": {"description": "显示MaxDistance与Backstop约束。"},
         "show_center": {"description": "显示Center/Teleport/变换抵消"},
         "show_collision": {"description": "显示实际上传到MC2的外部碰撞体。"},
         "show_radii": {"description": "显示普通粒子半径。"},
@@ -667,9 +668,11 @@ def physicsMC2Step(
         "show_self_grid": {"description": "显示自碰撞空间grid。"},
         "show_self_candidates": {"description": "显示自碰撞broadphase候选对。"},
         "show_self_contacts": {"description": "显示自碰撞窄相contact。"},
-        "show_output": {"description": "显示最终解算粒子/写回输出。"},
+        "show_output": {"description": "显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每类debug primitive允许显示的最大项目数。"},
+        "show_motion_base": {"description": "Motion实际BasePosition/法线轴。"},
+        "show_angle_restoration": {"description": "Angle Restoration目标。"},
     },
     _OUTPUT_NAME=["物理世界"],
     mute_passthrough={"_OUTPUT0": "world"},
@@ -689,6 +692,8 @@ def physicsMC2DebugDraw(
     show_output: bool = True,
     task_filter: str = "",
     max_items: int = 2000,
+    show_motion_base: bool = True,
+    show_angle_restoration: bool = True,
 ) -> PhysicsWorldCache:
     update_mc2_debug_draw_store(
         str(id(world)),
@@ -707,5 +712,7 @@ def physicsMC2DebugDraw(
         show_output=show_output,
         task_filter=task_filter,
         max_items=max_items,
+        show_motion_base=show_motion_base,
+        show_angle_restoration=show_angle_restoration,
     )
     return world

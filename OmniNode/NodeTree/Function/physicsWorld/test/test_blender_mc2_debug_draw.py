@@ -181,27 +181,41 @@ def _world_frame(world, frame, previous):
 
 physics_blender.register()
 objects = (_grid("MC2DebugA", 0.0), _grid("MC2DebugB", 0.008))
-for obj in objects:
+for object_index, obj in enumerate(objects):
     obj.hotools_mesh_collision.collided_by_groups = 1
+    pin_group = obj.vertex_groups.new(name="MC2DebugPin")
+    pin_group.add((0,), 1.0, "REPLACE")
+    obj.hotools_mesh_collision.pin_enabled = True
+    obj.hotools_mesh_collision.pin_vertex_group = pin_group.name
     radius_group = obj.vertex_groups.new(name="MC2DebugRadius")
     radius_group.add(tuple(range(len(obj.data.vertices))), 1.0, "REPLACE")
     radius_group.add((0,), 0.0, "REPLACE")
     radius_group.add((1,), 0.5, "REPLACE")
     obj.hotools_mesh_collision.radius_vertex_group = radius_group.name
-collider_owner = bpy.data.objects.new("MC2DebugCollider", None)
-bpy.context.scene.collection.objects.link(collider_owner)
 world = world_types.PhysicsWorldCache()
 world.collider_snapshot = {
     "frame": 1,
-    "source_count": 1,
-    "colliders": [{
-        "key": "mc2-debug-sphere",
-        "owner": collider_owner,
-        "type": "SPHERE",
-        "center": (0.03, 0.03, -0.02),
-        "radius": 0.025,
-        "primary_group": 1,
-    }],
+    "source_count": 2,
+    "colliders": [
+        {
+            "key": "mc2-debug-sphere",
+            "owner": objects[1],
+            "type": "SPHERE",
+            "center": (0.03, 0.03, -0.02),
+            "radius": 0.025,
+            "primary_group": 1,
+        },
+        {
+            "key": "mc2-debug-capsule",
+            "owner": objects[0],
+            "type": "CAPSULE",
+            "center": (0.05, 0.03, 0.0),
+            "segment_a": (0.05, 0.01, -0.02),
+            "segment_b": (0.05, 0.05, 0.02),
+            "radius": 0.01,
+            "primary_group": 1,
+        },
+    ],
 }
 node_uid = "mc2-debug-acceptance"
 try:
@@ -306,7 +320,7 @@ try:
     )
     assert all(context.inspect()["debug_readback_count"] > 0 for context in contexts)
     assert interaction.inspect()["debug_readback_count"] == 1
-    for task in tasks:
+    for task_index, task in enumerate(tasks):
         slot = world.solver_slots[task.task_id]
         state = slot.data["_debug_capture_state"]
         snapshot = slot.data["_debug_draw_snapshot"]
@@ -315,6 +329,13 @@ try:
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["topology"]["edges"].flags.writeable is False
         assert snapshot["motion"]["max_distances"].flags.writeable is False
+        assert snapshot["motion"]["motion_base_positions"].flags.writeable is False
+        assert snapshot["motion"]["motion_base_rotations_xyzw"].flags.writeable is False
+        assert snapshot["motion"]["angle_restoration_target_positions"].flags.writeable is False
+        assert snapshot["motion"]["angle_restoration_target_valid"].flags.writeable is False
+        assert np.count_nonzero(
+            snapshot["motion"]["angle_restoration_target_valid"]
+        ) > 0
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         assert snapshot["center"]["frame_shift"]["keep_teleport"] is True
         assert snapshot["center"]["negative_scale_transition"]["active"] is True
@@ -323,17 +344,63 @@ try:
         assert particle_radii.shape[0] == 16
         assert particle_radii[0] == 0.0
         np.testing.assert_allclose(particle_radii[1], particle_radii[2] * 0.5)
-        assert tuple(snapshot["collision"]["colliders"]["types"]) == (0,)
+        expected_type = task_index
+        expected_key = (
+            "mc2-debug-sphere" if task_index == 0 else "mc2-debug-capsule"
+        )
+        colliders = snapshot["collision"]["colliders"]
+        assert tuple(colliders["types"]) == (expected_type,)
+        assert colliders["keys"] == (expected_key,)
+        assert colliders["collided_by_groups"] == 1
         assert snapshot["output"]["writeback_target_kind"] == "mesh_vertex"
         assert len(snapshot["output"]["writeback_targets"]) == 16
+        assert snapshot["output"]["world_offsets"].flags.writeable is False
+        assert snapshot["output"]["mesh_object_local_offsets"].flags.writeable is False
+        np.testing.assert_allclose(
+            snapshot["output"]["world_offsets"],
+            snapshot["output"]["target_positions"] - snapshot["output"]["base_positions"],
+        )
         self_state = snapshot["self_collision"]
-        assert self_state["thickness"][0] == 0.0
+        assert np.all(np.isfinite(self_state["thickness"]))
+        assert np.min(self_state["thickness"]) < np.max(self_state["thickness"])
         assert self_state["particle_indices"].flags.writeable is False
         assert self_state["primitive_grids"].flags.writeable is False
     interaction_snapshot = interaction.debug_draw_snapshot()
     assert interaction_snapshot["positions"].flags.writeable is False
     assert interaction_snapshot["native"]["candidate_count"] > 0
     print("[PASS] next true advance captures frozen slot and world interaction state")
+
+    isolated_modes = (
+        ("show_motion_base", {"show_motion_base": True}),
+        ("show_angle_restoration", {"show_angle_restoration": True}),
+        ("show_output", {"show_output": True}),
+    )
+    for mode_name, overrides in isolated_modes:
+        options = {
+            "show_topology": False,
+            "show_attributes": False,
+            "show_motion": False,
+            "show_center": False,
+            "show_collision": False,
+            "show_radii": False,
+            "show_self_primitives": False,
+            "show_self_grid": False,
+            "show_self_candidates": False,
+            "show_self_contacts": False,
+            "show_output": False,
+            "show_motion_base": False,
+            "show_angle_restoration": False,
+        }
+        options.update(overrides)
+        debug_draw.update_mc2_debug_draw_store(
+            node_uid,
+            world,
+            True,
+            **options,
+        )
+        isolated = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
+        assert isolated["line_vertex_count"] > 0, mode_name
+    print("[PASS] motion base, angle target, and final output are independent modes")
 
     debug_draw.update_mc2_debug_draw_store(
         node_uid,
@@ -400,7 +467,6 @@ finally:
         mesh = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
         bpy.data.meshes.remove(mesh)
-    bpy.data.objects.remove(collider_owner, do_unlink=True)
     physics_blender.unregister()
 
 

@@ -799,6 +799,7 @@ class MC2NativeContextV0:
         self,
         *,
         include_step_basic: bool = True,
+        include_motion_debug: bool = False,
         include_self: bool = True,
     ) -> dict:
         self._ensure_live()
@@ -816,6 +817,25 @@ class MC2NativeContextV0:
             basic_positions, basic_rotations = self.read_step_basic()
             snapshot["step_basic_positions"] = self._debug_array(basic_positions)
             snapshot["step_basic_rotations_xyzw"] = self._debug_array(basic_rotations)
+            readbacks += 1
+        if include_motion_debug and bool(info.get("step_basic_ready", False)):
+            motion_base_positions = np.empty((self.vertex_count, 3), dtype=np.float32)
+            motion_base_rotations = np.empty((self.vertex_count, 4), dtype=np.float32)
+            angle_targets = np.empty((self.vertex_count, 3), dtype=np.float32)
+            angle_valid = np.empty((self.vertex_count,), dtype=np.uint8)
+            self._module.mc2_context_v0_read_debug_motion(
+                self._handle,
+                motion_base_positions,
+                motion_base_rotations,
+                angle_targets,
+                angle_valid,
+            )
+            snapshot.update({
+                "motion_base_positions": self._debug_array(motion_base_positions),
+                "motion_base_rotations_xyzw": self._debug_array(motion_base_rotations),
+                "angle_restoration_target_positions": self._debug_array(angle_targets),
+                "angle_restoration_target_valid": self._debug_array(angle_valid),
+            })
             readbacks += 1
         if include_self and bool(info.get("self_primitive_dynamic_ready", False)):
             primitive_count = int(info.get("self_primitive_count", 0) or 0)

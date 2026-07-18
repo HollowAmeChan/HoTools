@@ -28,6 +28,8 @@ _COLORS = {
     "triangle": (0.38, 0.62, 0.82, 0.50),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
+    "motion_base": (0.20, 0.85, 1.00, 0.90),
+    "angle_target": (1.00, 0.32, 0.72, 0.95),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
     "backstop": (1.00, 0.40, 0.22, 0.55),
     "center": (1.00, 0.92, 0.25, 0.95),
@@ -71,6 +73,8 @@ def update_mc2_debug_draw_store(
     show_output: bool = True,
     task_filter: str = "",
     max_items: int = 2000,
+    show_motion_base: bool = True,
+    show_angle_restoration: bool = True,
 ) -> None:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
@@ -81,6 +85,8 @@ def update_mc2_debug_draw_store(
         "show_topology": bool(show_topology),
         "show_attributes": bool(show_attributes),
         "show_motion": bool(show_motion),
+        "show_motion_base": bool(show_motion_base),
+        "show_angle_restoration": bool(show_angle_restoration),
         "show_center": bool(show_center),
         "show_collision": bool(show_collision),
         "show_radii": bool(show_radii),
@@ -180,8 +186,20 @@ def _append_slot_batches(batches: list, snapshot: dict, filters: dict) -> None:
         _append_topology_batches(batches, topology, positions, limit)
     if filters["show_attributes"]:
         _append_attribute_batches(batches, topology, positions, limit)
+    if filters["show_motion_base"]:
+        _append_motion_base_batches(batches, snapshot.get("motion") or {}, limit)
     if filters["show_motion"]:
         _append_motion_batches(batches, snapshot.get("motion") or {}, limit)
+    if filters["show_angle_restoration"]:
+        _append_angle_restoration_batches(
+            batches,
+            snapshot.get("motion") or {},
+            np.asarray(
+                _values((snapshot.get("native") or {}).get("positions")),
+                dtype=np.float32,
+            ).reshape((-1, 3)),
+            limit,
+        )
     if filters["show_center"]:
         _append_center_batches(batches, snapshot.get("center") or {})
     if filters["show_collision"]:
@@ -227,8 +245,8 @@ def _append_attribute_batches(batches, topology, positions, limit):
 
 
 def _append_motion_batches(batches, motion, limit):
-    base = motion.get("step_basic_positions")
-    rotations = motion.get("step_basic_rotations_xyzw")
+    base = motion.get("motion_base_positions")
+    rotations = motion.get("motion_base_rotations_xyzw")
     if base is None or rotations is None:
         return
     base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
@@ -248,6 +266,44 @@ def _append_motion_batches(batches, motion, limit):
             _add_axis_sphere(lines, backstop_center, radius)
             add_line(lines, center, backstop_center)
         _batch(batches, lines, "backstop", 1.4)
+
+
+def _append_motion_base_batches(batches, motion, limit):
+    base = motion.get("motion_base_positions")
+    rotations = motion.get("motion_base_rotations_xyzw")
+    if base is None or rotations is None:
+        return
+    base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
+    rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
+    axes = _motion_axes(base, rotations, int(motion.get("normal_axis", 1)))
+    lines = []
+    for center, axis in zip(base[:limit], axes[:limit]):
+        add_cross_lines(lines, center, 0.012)
+        add_line(lines, center, vector3(center) + vector3(axis) * 0.025)
+    _batch(batches, lines, "motion_base", 1.2)
+
+
+def _append_angle_restoration_batches(batches, motion, current, limit):
+    if not bool(motion.get("use_angle_restoration")):
+        return
+    targets = motion.get("angle_restoration_target_positions")
+    valid = motion.get("angle_restoration_target_valid")
+    if targets is None or valid is None:
+        return
+    targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
+    valid = np.asarray(valid, dtype=np.uint8)
+    strengths = np.asarray(
+        _values(motion.get("angle_restoration_strengths")), dtype=np.float32
+    )
+    lines = []
+    for index, target in enumerate(targets[:limit]):
+        if index >= len(current) or index >= len(valid) or not valid[index]:
+            continue
+        if index < len(strengths) and float(strengths[index]) <= 1.0e-8:
+            continue
+        add_line(lines, current[index], target)
+        add_cross_lines(lines, target, 0.016)
+    _batch(batches, lines, "angle_target", 1.8)
 
 
 def _append_center_batches(batches, center):
@@ -441,13 +497,20 @@ def _append_self_batches(batches, native_snapshot, filters, *, interaction):
 
 
 def _append_output_batches(batches, snapshot, limit):
-    native = snapshot.get("native") or {}
-    current = np.asarray(_values(native.get("positions")), dtype=np.float32).reshape((-1, 3))
-    base = native.get("step_basic_positions")
-    if base is None:
+    output = snapshot.get("output") or {}
+    base = output.get("base_positions")
+    target = output.get("target_positions")
+    if base is None or target is None:
         return
+    base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
+    target = np.asarray(target, dtype=np.float32).reshape((-1, 3))
+    applied = np.asarray(
+        _values(output.get("translation_applied")), dtype=np.uint8
+    )
     lines = []
-    for start, end in zip(np.asarray(base, dtype=np.float32)[:limit], current[:limit]):
+    for index, (start, end) in enumerate(zip(base[:limit], target[:limit])):
+        if len(applied) and (index >= len(applied) or not applied[index]):
+            continue
         add_line(lines, start, end)
         add_cross_lines(lines, end, 0.012)
     _batch(batches, lines, "output", 1.4)

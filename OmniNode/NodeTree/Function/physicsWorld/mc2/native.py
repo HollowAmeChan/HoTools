@@ -51,6 +51,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_read_self_collision_intersections",
     "mc2_context_v0_read_bone_output",
     "mc2_context_v0_read_step_basic",
+    "mc2_context_v0_read_debug_motion",
     "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
     "mc2_context_v0_stats",

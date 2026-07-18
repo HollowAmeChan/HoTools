@@ -38,7 +38,9 @@ def test_shared_snapshot_packing_and_previous_pose():
     )
     result = build_mc2_collider_frame(world, source)
     assert result.frame == 7
+    assert result.source_pointer == 10
     assert result.collider_count == 4
+    assert result.collider_keys == ("sphere", "capsule", "plane", "box")
     assert result.collider_types.tolist() == [0, 1, 2, 3]
     assert result.collider_group_bits.tolist() == [1, 2, 1, 1]
     np.testing.assert_allclose(result.collider_old_centers[0], (0, 2, 3))
@@ -85,6 +87,8 @@ def test_bone_source_uses_explicit_group_mask_and_excludes_armature_owner():
     )
     assert result.collided_by_groups == 2
     assert result.collider_count == 1
+    assert result.source_pointer == 30
+    assert result.collider_keys == ("other",)
     assert result.collider_group_bits.tolist() == [2]
 
 

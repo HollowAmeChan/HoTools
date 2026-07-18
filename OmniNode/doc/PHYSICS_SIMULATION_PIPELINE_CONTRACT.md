@@ -1042,6 +1042,7 @@ C++ native context:
 - solver可视化debug默认采用SpringBone VRM式隐式请求：debug入口声明world/scope、语义层和过滤条件，自动发现匹配solver slot，不要求用户为每个constraint或中间数组接线。请求在后续真实推进帧捕获；一次性请求消费后清除，只有continuous模式持续readback。
 - 无debug请求时不得执行native中间态readback、per-item对象展开或viewport几何构建。复杂solver通过分层snapshot、按需buffer和renderer registry扩展，不通过常驻全量快照换取实现简单。
 - 每个会改变空间边界、连接membership或重要分支判定的用户参数，必须在solver专项验收中登记可观测方式：直接绘制、数值overlay/diagnostic或明确说明其为何不是空间量。debug coverage属于产品验收，不以“MC2/第三方原版没有可视化”作为豁免。
+- 同一产品词下存在多个真实基准时必须拆分模式。MC2的Motion BasePosition来自animated base pose，Angle Restoration target来自StepBasic父子目标，Final Output Offset来自result/writeback；三者不得共用一个模糊Motion快照。外部碰撞debug必须消费每个task实际上传、经过owner/group/type过滤后的collider frame，不能直接绘制world全量collider snapshot。
 - 当某个 domain 的调试语义因类型而显著不同（例如 Fixed/Hinge/Slider/Cone）时，应在 solver 子模块内拆分按类型 renderer registry。renderer 只把“后端实际消费的 spec 快照 + 后端发布的动态 state”转换成纯绘制 primitives；viewport handler 只聚合、着色和提交 GPU batch。未知类型必须显式降级并进入 debug audit，不能套用一个看似成功的通用图形。
 - solver 用户文档应与实现一起放在 solver 子模块的 `docs/` 中，并区分 backend 原生能力、当前 binding 能力和节点已暴露能力；新增约束类型的验收必须同时覆盖 spec/binding、result state、专用 renderer、用户文档和测试。
 

@@ -160,6 +160,18 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 - renderer只消费冻结只读快照，不读取当前RNA反推过程。
 - 无请求时不得执行中间态native readback，`debug_readback_count`保持零。
 
+空间debug模式必须按实际消费语义拆分，不允许继续用一个“Motion”开关混画不同基准：
+
+| 模式 | 冻结数据源 | 表达 |
+|---|---|---|
+| Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
+| MaxDistance/Backstop | Motion BasePosition + native实际参数数组 | 约束球、Backstop中心和半径 |
+| Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
+| Final Output Offset | 已冻结result candidate与writeback plan | Mesh实际object-local offset对应的world线段；Bone只显示实际允许平移的target，connected rotation-only骨不伪造位移 |
+| Task External Colliders | 每个runtime item实际上传的`MC2ColliderFrameSpec` | 已经过source排除、group mask、setup type过滤的collider key/type/shape；task过滤必须只画该task参与集合 |
+
+上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。
+
 ## Setup与支持域
 
 | Setup | 输入/拓扑 | 碰撞 | 输出 | 限制 |
@@ -514,6 +526,8 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Blender 5.1补充 | 8个代表资产/7个生产脚本、180帧三setup混合soak |
 
 维护时按风险选择分层，但native owner、binding或state变化必须同时跑Python 3.11 native和对应Blender 4.5生产链。
+
+长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单。每个runtime字段必须且只能归属一个active能力族或明确的hidden/no-native-behavior组；active族至少声明600帧、适用setup以及`finite`、`deterministic`和能力专项不变量。运行门禁分三层：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。Angle Restoration和Angle Limit分别验收，Motion BasePosition、外碰task scope、self interaction、Center/Teleport和最终输出映射不得用其他测试间接代替。
 
 当前没有MC2发布阻断项。
 
