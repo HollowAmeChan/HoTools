@@ -129,6 +129,8 @@ profile + task combination
 | `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置状态；`2:Keep`把已有粒子状态整体搬到新组件位置 | `center_state.py`在读完组件帧变换后判定并选择reset或keep shift；三个setup有效。 |
 | `Teleport距离`、`Teleport旋转` | 设置Teleport触发的组件位移和旋转阈值 | 位移阈值乘当前组件scale ratio，旋转单位为度；仅当模式非0时消费，三个setup有效。 |
 
+Teleport每帧比较Anchor补偿后的旧组件姿态与当前组件姿态，触发条件为`measured_distance >= teleport_distance * component_scale_ratio OR measured_rotation_degrees >= teleport_rotation`。`Reset`触发后frame shift归零，solver重建状态并通过稳定时间恢复速度/输出权重；`Keep`应用完整组件平移与旋转搬运已有粒子状态，使相对物理形状连续且本帧moving speed归零。两者不是同一种“瞬移后继续算”。
+
 `distance_culling_enabled/length/fade_ratio`仍存在于统一profile和runtime ABI，但三个产品节点均不公开，当前生产step也没有按相机距离停算或淡出的consumer；它们不是当前产品能力。
 
 #### 结构约束
@@ -489,6 +491,8 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 | Output | basic step、final particle/Bone输出、result identity |
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
+
+`Center/Teleport`使用黄色轴标记当前组件Center、青色点与连线标记Anchor、蓝色/橙色点标记补偿后的旧/新frame、橙色箭头标记实际frame shift、浅蓝箭头标记本substep完整Center位移、紫色箭头标记Local inertia处理后的Center跟随基值；particle prediction还会按Depth inertia在紫色基值与浅蓝完整位移之间混合。Teleport模式非0时，蓝色球是缩放后的位移阈值，蓝色外弧是旋转阈值；绿色箭头/内弧表示本帧测量值尚未触发，粉色表示触发Keep，红色表示触发Reset。绘制数据直接来自`MC2CenterFrameShiftResult`中的本帧测量值和阈值，不由renderer从最终粒子位置反推。
 
 `碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色半透明低模球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色半透明低模胶囊显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状，并只保留一根中心线；蓝色半透明实体显示本帧实际上传的Sphere/Capsule/Plane/Box collider，并保持正常深度测试以便判断真实遮挡和穿插。所有同色实体合并为单一indexed triangle batch，公共utils保留原线框API并旁路提供实体API。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 

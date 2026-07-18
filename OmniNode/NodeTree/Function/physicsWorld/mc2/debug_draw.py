@@ -10,7 +10,9 @@ import numpy as np
 
 from ..types import PhysicsWorldCache
 from ..utils.debug_draw import (
+    add_arc_lines,
     add_arrow_lines,
+    add_basis_lines,
     add_box_triangles,
     add_circle_lines,
     add_line,
@@ -58,7 +60,16 @@ _COLORS = {
     "max_distance": (0.30, 0.75, 1.00, 0.36),
     "backstop": (1.00, 0.40, 0.22, 0.55),
     "center": (1.00, 0.92, 0.25, 0.95),
-    "shift": (0.98, 0.45, 0.15, 0.95),
+    "center_anchor": (0.10, 0.88, 1.00, 0.92),
+    "center_old": (0.28, 0.52, 1.00, 0.78),
+    "center_now": (1.00, 0.72, 0.12, 0.96),
+    "shift": (1.00, 0.38, 0.08, 0.94),
+    "center_step": (0.22, 0.78, 1.00, 0.92),
+    "center_inertia": (0.72, 0.32, 1.00, 0.92),
+    "teleport_threshold": (0.18, 0.62, 1.00, 0.58),
+    "teleport_measure": (0.28, 0.95, 0.42, 0.94),
+    "teleport_keep": (1.00, 0.20, 0.82, 1.00),
+    "teleport_reset": (1.00, 0.08, 0.06, 1.00),
     "negative": (0.95, 0.20, 0.70, 0.95),
     "collider": (0.08, 0.58, 0.92, 0.72),
     "radius": (0.32, 0.92, 0.72, 0.38),
@@ -846,42 +857,135 @@ def _append_center_batches(batches, point_batches, center):
     step = center.get("step") or {}
     negative = center.get("negative_scale_transition") or {}
     center_lines = []
+    anchor_lines = []
+    frame_lines = []
     shift_lines = []
+    step_lines = []
+    inertia_lines = []
+    teleport_threshold_lines = []
+    teleport_measure_lines = []
+    teleport_keep_lines = []
+    teleport_reset_lines = []
     center_points = []
     anchor_points = []
     old_points = []
     now_points = []
     negative_points = []
+    teleport_measure_points = []
+    teleport_keep_points = []
+    teleport_reset_points = []
     position = frame_pose.get("component_world_position")
     anchor = frame_pose.get("anchor_world_position")
     if position is not None:
         add_point(center_points, position)
+        rotation = frame_pose.get("component_world_rotation_xyzw")
+        if rotation is not None and len(rotation) == 4:
+            add_basis_lines(
+                center_lines,
+                position,
+                (rotation[3], rotation[0], rotation[1], rotation[2]),
+                0.12,
+            )
     if anchor is not None and frame_pose.get("anchor_identity"):
         add_point(anchor_points, anchor)
         if position is not None:
-            add_line(center_lines, position, anchor)
+            add_line(anchor_lines, position, anchor)
     old_position = shift.get("old_frame_world_position")
     now_position = shift.get("now_world_position") or step.get("now_world_position")
     if old_position is not None and now_position is not None:
-        add_arrow_lines(shift_lines, old_position, now_position)
+        add_arrow_lines(frame_lines, old_position, now_position)
         add_point(old_points, old_position)
         add_point(now_points, now_position)
     shift_vector = shift.get("frame_component_shift_vector")
-    if position is not None and shift_vector is not None:
+    shift_origin = shift.get("teleport_origin_world_position") or position
+    if shift_origin is not None and shift_vector is not None:
         add_arrow_lines(
-            shift_lines, position, vector3(position) + vector3(shift_vector)
+            shift_lines,
+            shift_origin,
+            vector3(shift_origin) + vector3(shift_vector),
         )
+    step_now = step.get("now_world_position")
+    step_vector = step.get("step_vector")
+    inertia_vector = step.get("inertia_vector")
+    if step_now is not None and step_vector is not None:
+        step_start = vector3(step_now) - vector3(step_vector)
+        add_arrow_lines(step_lines, step_start, step_now)
+        if inertia_vector is not None:
+            add_arrow_lines(
+                inertia_lines,
+                step_start,
+                step_start + vector3(inertia_vector),
+            )
+    teleport_mode = int(shift.get("teleport_mode", 0) or 0)
+    teleport_origin = shift.get("teleport_origin_world_position")
+    teleport_target = shift.get("teleport_target_world_position")
+    if teleport_mode in (1, 2) and teleport_origin is not None and teleport_target is not None:
+        threshold = max(float(shift.get("teleport_distance_threshold", 0.0) or 0.0), 0.0)
+        measured_distance = max(float(shift.get("teleport_measured_distance", 0.0) or 0.0), 0.0)
+        measured_rotation = max(float(shift.get("teleport_measured_rotation_degrees", 0.0) or 0.0), 0.0)
+        rotation_threshold = max(float(shift.get("teleport_rotation_threshold_degrees", 0.0) or 0.0), 0.0)
+        _add_axis_sphere(teleport_threshold_lines, teleport_origin, threshold)
+        triggered = bool(shift.get("teleport_triggered"))
+        if bool(shift.get("reset_teleport")):
+            result_lines = teleport_reset_lines
+            result_points = teleport_reset_points
+        elif bool(shift.get("keep_teleport")):
+            result_lines = teleport_keep_lines
+            result_points = teleport_keep_points
+        else:
+            result_lines = teleport_measure_lines
+            result_points = teleport_measure_points
+        add_arrow_lines(result_lines, teleport_origin, teleport_target)
+        add_point(result_points, teleport_target)
+        axis = vector3(shift.get("teleport_rotation_axis"), (0.0, 0.0, 1.0))
+        if axis.length <= 1.0e-8:
+            axis = mathutils.Vector((0.0, 0.0, 1.0))
+        else:
+            axis.normalize()
+        axis_a, axis_b = _plane_axes(axis)
+        arc_radius = max(min(max(threshold, measured_distance) * 0.28, 0.5), 0.08)
+        add_arc_lines(
+            teleport_threshold_lines,
+            teleport_origin,
+            axis_a,
+            axis_b,
+            arc_radius,
+            0.0,
+            math.radians(min(rotation_threshold, 180.0)),
+        )
+        add_arc_lines(
+            result_lines,
+            teleport_origin,
+            axis_a,
+            axis_b,
+            arc_radius * 0.78,
+            0.0,
+            math.radians(min(measured_rotation, 180.0)),
+        )
+        if triggered and measured_distance <= 1.0e-8 and measured_rotation <= 1.0e-8:
+            add_point(result_points, teleport_origin)
     if bool(negative.get("active")):
         target = negative.get("old_component_world_position") or position
         if target is not None:
             add_point(negative_points, target)
-    _batch(batches, center_lines, "center", 2.0)
-    _batch(batches, shift_lines, "shift", 2.0)
+    _batch(batches, center_lines, "center", 1.4)
+    _batch(batches, anchor_lines, "center_anchor", 1.4)
+    _batch(batches, frame_lines, "center_now", 1.2)
+    _batch(batches, shift_lines, "shift", 1.8)
+    _batch(batches, step_lines, "center_step", 1.5)
+    _batch(batches, inertia_lines, "center_inertia", 1.5)
+    _batch(batches, teleport_threshold_lines, "teleport_threshold", 1.2)
+    _batch(batches, teleport_measure_lines, "teleport_measure", 1.8)
+    _batch(batches, teleport_keep_lines, "teleport_keep", 2.2)
+    _batch(batches, teleport_reset_lines, "teleport_reset", 2.2)
     _point_batch(point_batches, center_points, "center", 11.0)
-    _point_batch(point_batches, anchor_points, "center", 9.0)
-    _point_batch(point_batches, old_points, "shift", 7.0)
-    _point_batch(point_batches, now_points, "shift", 9.0)
+    _point_batch(point_batches, anchor_points, "center_anchor", 9.0)
+    _point_batch(point_batches, old_points, "center_old", 7.0)
+    _point_batch(point_batches, now_points, "center_now", 9.0)
     _point_batch(point_batches, negative_points, "negative", 13.0)
+    _point_batch(point_batches, teleport_measure_points, "teleport_measure", 7.0)
+    _point_batch(point_batches, teleport_keep_points, "teleport_keep", 10.0)
+    _point_batch(point_batches, teleport_reset_points, "teleport_reset", 10.0)
 
 
 def _append_collider_batches(batches, triangle_meshes, collision, limit):

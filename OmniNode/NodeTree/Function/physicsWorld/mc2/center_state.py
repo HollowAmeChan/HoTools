@@ -846,6 +846,15 @@ class MC2CenterFrameShiftResult:
     smoothing_velocity: tuple[float, float, float]
     keep_teleport: bool = False
     reset_teleport: bool = False
+    teleport_mode: int = 0
+    teleport_triggered: bool = False
+    teleport_origin_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    teleport_target_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    teleport_measured_distance: float = 0.0
+    teleport_distance_threshold: float = 0.0
+    teleport_measured_rotation_degrees: float = 0.0
+    teleport_rotation_threshold_degrees: float = 0.0
+    teleport_rotation_axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 
 @dataclass(frozen=True)
@@ -1243,14 +1252,50 @@ def evaluate_mc2_center_frame_shift(
         _f32(1.0),
     )
     teleport_angle = _f32(2.0) * _f32(np.arccos(teleport_cosine))
+    teleport_measured_distance = _f32(np.linalg.norm(teleport_delta))
+    teleport_distance_threshold = _f32(frame.teleport_distance) * component_scale_ratio
+    teleport_measured_rotation_degrees = _f32(np.degrees(teleport_angle))
+    teleport_rotation_delta = _normalize_quaternion_f32(
+        quaternion_multiply_f32(
+            component_rotation,
+            quaternion_conjugate_f32(adjusted_old_component_rotation),
+        )
+    )
+    if teleport_rotation_delta[3] < 0.0:
+        teleport_rotation_delta *= _f32(-1.0)
+    teleport_axis_length = _f32(np.linalg.norm(teleport_rotation_delta[:3]))
+    teleport_rotation_axis = (
+        np.asarray(
+            teleport_rotation_delta[:3] / teleport_axis_length,
+            dtype=np.float32,
+        )
+        if teleport_axis_length > _f32(1.0e-8)
+        else np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+    )
     teleport_triggered = bool(
         int(frame.teleport_mode) != 0
         and (
-            _f32(np.linalg.norm(teleport_delta))
-            >= _f32(frame.teleport_distance) * component_scale_ratio
-            or _f32(np.degrees(teleport_angle)) >= _f32(frame.teleport_rotation)
+            teleport_measured_distance >= teleport_distance_threshold
+            or teleport_measured_rotation_degrees >= _f32(frame.teleport_rotation)
         )
     )
+    teleport_debug = {
+        "teleport_mode": int(frame.teleport_mode),
+        "teleport_triggered": teleport_triggered,
+        "teleport_origin_world_position": tuple(
+            float(value) for value in adjusted_old_component
+        ),
+        "teleport_target_world_position": tuple(float(value) for value in component),
+        "teleport_measured_distance": float(teleport_measured_distance),
+        "teleport_distance_threshold": float(teleport_distance_threshold),
+        "teleport_measured_rotation_degrees": float(
+            teleport_measured_rotation_degrees
+        ),
+        "teleport_rotation_threshold_degrees": float(frame.teleport_rotation),
+        "teleport_rotation_axis": tuple(
+            float(value) for value in teleport_rotation_axis
+        ),
+    }
     keep_teleport = teleport_triggered and int(frame.teleport_mode) == 2
     reset_teleport = teleport_triggered and int(frame.teleport_mode) == 1
     if reset_teleport:
@@ -1276,6 +1321,7 @@ def evaluate_mc2_center_frame_shift(
             smoothing_velocity=(0.0, 0.0, 0.0),
             keep_teleport=False,
             reset_teleport=True,
+            **teleport_debug,
         )
 
     smooth_shift_vector = np.zeros(3, dtype=np.float32)
@@ -1479,6 +1525,7 @@ def evaluate_mc2_center_frame_shift(
         smoothing_velocity=tuple(float(value) for value in smoothing_velocity),
         keep_teleport=keep_teleport,
         reset_teleport=reset_teleport,
+        **teleport_debug,
     )
 
 
