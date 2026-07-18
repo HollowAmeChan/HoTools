@@ -358,10 +358,12 @@ def _build_final_proxy_derived(
                     "triangle_ranges": counts["frame_triangle_ranges"],
                     "triangle_records": counts["frame_triangle_records"],
                     "bind_rotations": counts["frame_bind_rotations"],
+                    "triangle_uvs": counts["frame_triangle_uvs"],
                     "owners": (
                         counts["_frame_triangle_ranges_owner"],
                         counts["_frame_triangle_records_owner"],
                         counts["_frame_bind_rotations_owner"],
+                        counts["_frame_triangle_uvs_owner"],
                     ),
                 },
             },

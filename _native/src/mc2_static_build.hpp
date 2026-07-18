@@ -63,6 +63,7 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
 struct Mc2MeshFinalProxyDerived {
     std::vector<double> local_normals;
     std::vector<double> local_tangents;
+    std::vector<double> triangle_uvs;
     std::vector<std::uint8_t> vertex_attributes;
     std::vector<std::int32_t> edges;
     std::vector<std::int32_t> vertex_to_vertex_ranges;

@@ -646,6 +646,12 @@ void hotools::bind_mc2(nb::module_& m) {
                     "hotools_native.mc2.proxy_triangles.v0"
                 );
                 if (owner_mode == 1) {
+                    result["frame_triangle_uvs"] = owned_array_2d(
+                        float_vector(derived.triangle_uvs.data(), triangle_count * 6),
+                        triangle_count, 6,
+                        &result, "_frame_triangle_uvs_owner",
+                        "hotools_native.mc2.frame_triangle_uvs.v0"
+                    );
                     result["frame_triangle_ranges"] = owned_array_2d(
                         std::move(derived.vertex_to_triangle_ranges), vertex_count, 2,
                         &result, "_frame_triangle_ranges_owner",

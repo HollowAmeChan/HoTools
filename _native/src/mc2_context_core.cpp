@@ -113,6 +113,7 @@ void release_resources(Mc2ContextV0& context) {
     context.proxy_local_normals.clear();
     context.proxy_local_tangents.clear();
     context.proxy_uvs.clear();
+    context.frame_triangle_uvs.clear();
     context.proxy_attributes.clear();
     context.proxy_radius_multipliers.clear();
     context.proxy_edges.clear();
@@ -935,7 +936,8 @@ bool apply_bone_triangle_output(
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
     const auto triangle_count = context.proxy_triangles.size() / 3;
     if (triangle_count == 0) return true;
-    if (context.proxy_uvs.size() != vertex_count * 2 ||
+    const bool has_corner_uvs = context.frame_triangle_uvs.size() == triangle_count * 6;
+    if ((!has_corner_uvs && context.proxy_uvs.size() != vertex_count * 2) ||
         positions.size() != vertex_count * 3 ||
         work_rotations.size() != vertex_count * 4 ||
         context.bone_vertex_to_triangle_ranges.size() != vertex_count * 2 ||
@@ -961,14 +963,15 @@ bool apply_bone_triangle_output(
             triangle_normals[triangle] = mul(triangle_cross, 1.0f / normal_length);
         }
 
-        const float uv_ba_x = context.proxy_uvs[vertex1 * 2] -
-            context.proxy_uvs[vertex0 * 2];
-        const float uv_ba_y = context.proxy_uvs[vertex1 * 2 + 1] -
-            context.proxy_uvs[vertex0 * 2 + 1];
-        const float uv_ca_x = context.proxy_uvs[vertex2 * 2] -
-            context.proxy_uvs[vertex0 * 2];
-        const float uv_ca_y = context.proxy_uvs[vertex2 * 2 + 1] -
-            context.proxy_uvs[vertex0 * 2 + 1];
+        const auto uv_value = [&](std::size_t corner, std::size_t vertex, std::size_t component) {
+            return has_corner_uvs
+                ? context.frame_triangle_uvs[triangle * 6 + corner * 2 + component]
+                : context.proxy_uvs[vertex * 2 + component];
+        };
+        const float uv_ba_x = uv_value(1, vertex1, 0) - uv_value(0, vertex0, 0);
+        const float uv_ba_y = uv_value(1, vertex1, 1) - uv_value(0, vertex0, 1);
+        const float uv_ca_x = uv_value(2, vertex2, 0) - uv_value(0, vertex0, 0);
+        const float uv_ca_y = uv_value(2, vertex2, 1) - uv_value(0, vertex0, 1);
         float area = uv_ba_x * uv_ca_y - uv_ba_y * uv_ca_x;
         if (area == 0.0f) area = 1.0f;
         const float delta = 1.0f / area;
@@ -3498,6 +3501,7 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(proxy_local_normals);
     MC2_ADD_VECTOR_BYTES(proxy_local_tangents);
     MC2_ADD_VECTOR_BYTES(proxy_uvs);
+    MC2_ADD_VECTOR_BYTES(frame_triangle_uvs);
     MC2_ADD_VECTOR_BYTES(proxy_attributes);
     MC2_ADD_VECTOR_BYTES(proxy_radius_multipliers);
     MC2_ADD_VECTOR_BYTES(proxy_edges);

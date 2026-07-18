@@ -146,7 +146,13 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
     attributes = np.asarray((0x02,) * 4, dtype=np.uint8)
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
     triangle_normals = np.asarray(((0.0, 0.0, 1.0),) * 2, dtype=np.float64)
-    triangle_uvs = np.ascontiguousarray(uvs[triangles].reshape((-1, 6)))
+    triangle_uvs = np.asarray(
+        (
+            (0.0, 0.0, 1.0, 0.0, 1.0, 1.0),
+            (0.0, 0.0, 1.0, 0.0, 1.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
     lines = np.empty((0, 2), dtype=np.int32)
     out_edges = np.empty((6, 2), dtype=np.int32)
     neighbor_ranges = np.empty((4, 2), dtype=np.int32)
@@ -196,11 +202,13 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
         owned["frame_triangle_ranges"],
         owned["frame_triangle_records"],
         owned["frame_bind_rotations"],
+        owned["frame_triangle_uvs"],
     )
     frame_owners = (
         owned["_frame_triangle_ranges_owner"],
         owned["_frame_triangle_records_owner"],
         owned["_frame_bind_rotations_owner"],
+        owned["_frame_triangle_uvs_owner"],
     )
     context = hotools_native.mc2_context_v0_create(0, 4)
     try:
@@ -214,6 +222,40 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
         assert info["proxy_static_ready"] is True
         assert info["proxy_static_revision"] == 1
         assert info["owned_static_take_count"] == 2
+        hotools_native.mc2_context_v0_update_parameters(
+            context,
+            np.zeros(47, dtype=np.float32),
+            np.zeros(11, dtype=np.int32),
+            np.zeros((9, 16), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_mesh_dynamic_raw(
+            context,
+            1,
+            0,
+            positions.astype(np.float32),
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            np.zeros(3, dtype=np.float32),
+            np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32),
+            np.ones(3, dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_reset(context)
+        dynamic_positions = np.empty((4, 3), dtype=np.float32)
+        dynamic_rotations = np.empty((4, 4), dtype=np.float32)
+        hotools_native.mc2_context_v0_read(
+            context, dynamic_positions, dynamic_rotations
+        )
+        expected_rotations = bind_rotations.astype(np.float32)
+        expected_rotations[:, :3] *= -1.0
+        for index in range(4):
+            if np.dot(dynamic_rotations[index], expected_rotations[index]) < 0.0:
+                dynamic_rotations[index] *= -1.0
+        np.testing.assert_allclose(
+            dynamic_rotations, expected_rotations, rtol=1.0e-6, atol=1.0e-6
+        )
         try:
             hotools_native.mc2_context_v0_update_proxy_static(
                 context, *proxy_arrays, *proxy_owners

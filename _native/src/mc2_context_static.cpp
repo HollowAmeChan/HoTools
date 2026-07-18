@@ -86,6 +86,7 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
     target->proxy_local_normals = source->proxy_local_normals;
     target->proxy_local_tangents = source->proxy_local_tangents;
     target->proxy_uvs = source->proxy_uvs;
+    target->frame_triangle_uvs = source->frame_triangle_uvs;
     target->proxy_attributes = source->proxy_attributes;
     target->proxy_radius_multipliers = source->proxy_radius_multipliers;
     target->proxy_edges = source->proxy_edges;
@@ -782,11 +783,13 @@ PyObject* mc2_context_v0_update_bone_static(PyObject*, PyObject* args) {
 
 PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args) {
     const auto argument_count = PyTuple_GET_SIZE(args);
-    const bool take_owned = argument_count == 7;
-    if (argument_count != 4 && !take_owned) {
+    const bool has_triangle_uvs = argument_count == 5 || argument_count == 9;
+    const bool take_owned = argument_count == 7 || argument_count == 9;
+    if (argument_count != 4 && argument_count != 5 &&
+        argument_count != 7 && argument_count != 9) {
         PyErr_SetString(
             PyExc_TypeError,
-            "mc2_context_v0_update_frame_producer_static expects 4 or 7 arguments"
+            "mc2_context_v0_update_frame_producer_static expects 4, 5, 7, or 9 arguments"
         );
         return nullptr;
     }
@@ -796,7 +799,7 @@ PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args)
         PyErr_SetString(PyExc_RuntimeError, "frame producer static requires proxy static");
         return nullptr;
     }
-    Buffer ranges, data, bind_rotations;
+    Buffer ranges, data, bind_rotations, triangle_uvs;
     if (!ranges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_ranges") ||
         !data.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "vertex_to_triangle_data") ||
         !bind_rotations.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "vertex_bind_pose_rotations")) {
@@ -815,9 +818,18 @@ PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args)
         !validate_quaternions(bind_rotations, "vertex_bind_pose_rotations")) {
         return nullptr;
     }
+    const auto triangle_count = static_cast<Py_ssize_t>(context->proxy_triangles.size() / 3);
+    if (has_triangle_uvs &&
+        (!triangle_uvs.get(
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "triangle_uvs"
+        ) ||
+        !expect_float32(triangle_uvs, "triangle_uvs") ||
+        !expect_2d(triangle_uvs, "triangle_uvs", triangle_count, 6) ||
+        !finite_floats(triangle_uvs, "triangle_uvs"))) {
+        return nullptr;
+    }
     const auto* range_values = static_cast<const std::int32_t*>(ranges.view.buf);
     const auto* data_values = static_cast<const std::int32_t*>(data.view.buf);
-    const auto triangle_count = static_cast<std::int32_t>(context->proxy_triangles.size() / 3);
     for (Py_ssize_t vertex = 0; vertex < count; ++vertex) {
         const auto start = range_values[vertex * 2];
         const auto length = range_values[vertex * 2 + 1];
@@ -836,38 +848,52 @@ PyObject* mc2_context_v0_update_frame_producer_static(PyObject*, PyObject* args)
     std::vector<std::int32_t> next_ranges;
     std::vector<std::int32_t> next_data;
     std::vector<float> next_bind_rotations;
+    std::vector<float> next_triangle_uvs;
     if (take_owned) {
+        const auto owner_offset = has_triangle_uvs ? 5 : 4;
         auto* owned_ranges = validated_owned_values<std::int32_t>(
-            PyTuple_GET_ITEM(args, 4),
+            PyTuple_GET_ITEM(args, owner_offset),
             "hotools_native.mc2.frame_triangle_ranges.v0",
             ranges
         );
         auto* owned_data = validated_owned_values<std::int32_t>(
-            PyTuple_GET_ITEM(args, 5),
+            PyTuple_GET_ITEM(args, owner_offset + 1),
             "hotools_native.mc2.frame_triangle_records.v0",
             data
         );
         auto* owned_bind_rotations = validated_owned_values<float>(
-            PyTuple_GET_ITEM(args, 6),
+            PyTuple_GET_ITEM(args, owner_offset + 2),
             "hotools_native.mc2.frame_bind_rotations.v0",
             bind_rotations
         );
+        std::vector<float>* owned_triangle_uvs = nullptr;
+        if (has_triangle_uvs) {
+            owned_triangle_uvs = validated_owned_values<float>(
+                PyTuple_GET_ITEM(args, owner_offset + 3),
+                "hotools_native.mc2.frame_triangle_uvs.v0",
+                triangle_uvs
+            );
+        }
         if (owned_ranges == nullptr || owned_data == nullptr ||
-            owned_bind_rotations == nullptr) {
+            owned_bind_rotations == nullptr ||
+            (has_triangle_uvs && owned_triangle_uvs == nullptr)) {
             return nullptr;
         }
         next_ranges = std::move(*owned_ranges);
         next_data = std::move(*owned_data);
         next_bind_rotations = std::move(*owned_bind_rotations);
+        if (has_triangle_uvs) next_triangle_uvs = std::move(*owned_triangle_uvs);
         ++context->owned_static_take_count;
     } else {
         next_ranges = copy_values<std::int32_t>(ranges);
         next_data = copy_values<std::int32_t>(data);
         next_bind_rotations = copy_values<float>(bind_rotations);
+        if (has_triangle_uvs) next_triangle_uvs = copy_values<float>(triangle_uvs);
     }
     context->bone_vertex_to_triangle_ranges.swap(next_ranges);
     context->bone_vertex_to_triangle_data.swap(next_data);
     context->bone_vertex_bind_pose_rotations.swap(next_bind_rotations);
+    context->frame_triangle_uvs.swap(next_triangle_uvs);
     context->bone_normal_adjustment_rotations.assign(
         static_cast<std::size_t>(context->vertex_count) * 4,
         0.0f

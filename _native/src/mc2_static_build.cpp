@@ -710,6 +710,9 @@ Mc2MeshFinalProxyDerived mc2_build_mesh_final_proxy_derived(
     Mc2MeshFinalProxyDerived result;
     result.local_normals.assign(local_normals, local_normals + vertex_count * 3);
     result.local_tangents.assign(local_tangents, local_tangents + vertex_count * 3);
+    if (triangle_count > 0) {
+        result.triangle_uvs.assign(triangle_uvs, triangle_uvs + triangle_count * 6);
+    }
     result.vertex_attributes.assign(vertex_attributes, vertex_attributes + vertex_count);
 
     std::vector<Triangle> triangle_values(triangle_count);

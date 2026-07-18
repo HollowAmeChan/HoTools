@@ -286,6 +286,7 @@ class MC2NativeContextV0:
             frame_registration["triangle_ranges"],
             frame_registration["triangle_records"],
             frame_registration["bind_rotations"],
+            frame_registration["triangle_uvs"],
             *frame_registration["owners"],
         )
         frame_registration.clear()

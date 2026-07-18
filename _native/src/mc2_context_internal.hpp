@@ -119,6 +119,7 @@ struct Mc2ContextV0 {
     std::vector<float> proxy_local_normals;
     std::vector<float> proxy_local_tangents;
     std::vector<float> proxy_uvs;
+    std::vector<float> frame_triangle_uvs;
     std::vector<std::uint8_t> proxy_attributes;
     std::vector<float> proxy_radius_multipliers;
     std::vector<std::int32_t> proxy_edges;
