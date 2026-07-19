@@ -32,6 +32,7 @@ def _profile(*, restoration: bool, limit: bool):
         gravity=0.0,
         damping=0.05,
         stabilization_time_after_reset=0.0,
+        distance_stiffness=0.0,
         bending_stiffness=0.0,
         angle_restoration_enabled=restoration,
         angle_restoration_stiffness=0.85,
@@ -43,6 +44,7 @@ def _profile(*, restoration: bool, limit: bool):
         max_distance_enabled=False,
         backstop_enabled=False,
         self_collision_mode=0,
+        spring_enabled=False,
         teleport_mode=0,
     )
 
@@ -90,9 +92,9 @@ def _run_setup(setup_type):
     max_rest_error = 0.0
     trajectory_digest = hashlib.sha256()
     rest_budget = (
-        5.0e-5
+        1.0e-7
         if setup_type == names.MC2_SETUP_BONE_CLOTH
-        else 1.6e-3
+        else 1.0e-6
     )
     try:
         for frame in range(1, 901):
@@ -138,6 +140,44 @@ def _run_setup(setup_type):
                     axis=1,
                 )))
                 raise AssertionError((setup_type, frame, rest_error, "step_basic", step_error))
+            if frame in (1, 900):
+                native_snapshot = slot.data["native_context"].refresh_debug_draw_snapshot(
+                    include_step_basic=True,
+                    include_angle_restoration=True,
+                )
+                step_basic = native_snapshot["step_basic_positions"]
+                targets = native_snapshot["angle_restoration_target_positions"]
+                vectors = native_snapshot["angle_restoration_target_vectors"]
+                valid = native_snapshot["angle_restoration_target_valid"].astype(bool)
+                valid_indices = np.flatnonzero(valid)
+                assert len(valid_indices) > 0
+                parent_points = (
+                    targets[valid_indices] - vectors[valid_indices]
+                )
+                parent_distances = np.linalg.norm(
+                    parent_points[:, None, :] - candidate.world_positions[None, :, :],
+                    axis=2,
+                )
+                parent_indices = np.argmin(parent_distances, axis=1)
+                matched_distances = parent_distances[
+                    np.arange(len(valid_indices)), parent_indices
+                ]
+                assert float(np.max(matched_distances)) <= 1.0e-7
+                assert np.all(parent_indices != valid_indices)
+                expected_vectors = (
+                    step_basic[valid_indices] - step_basic[parent_indices]
+                )
+                expected_targets = (
+                    candidate.world_positions[parent_indices] + expected_vectors
+                )
+                np.testing.assert_allclose(
+                    vectors[valid_indices], expected_vectors, rtol=0.0, atol=1.0e-7
+                )
+                np.testing.assert_allclose(
+                    targets[valid_indices], expected_targets, rtol=0.0, atol=1.0e-7
+                )
+                trajectory_digest.update(vectors[valid_indices].tobytes())
+                trajectory_digest.update(targets[valid_indices].tobytes())
             assert writeback.writeback_bone_transforms(world) == topology.particle_count
             bpy.context.view_layer.update()
 

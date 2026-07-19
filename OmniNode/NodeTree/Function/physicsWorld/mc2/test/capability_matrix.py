@@ -194,7 +194,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
             "invariants": (
                 "finite", "deterministic", "bone_branch_transition_stable",
-                "bounded_zero_force_drift", "connected_disconnected_writeback",
+                "zero_force_rest", "target_direction_exact",
+                "connected_disconnected_writeback",
             ),
         },),
         "status": "gap",

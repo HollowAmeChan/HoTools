@@ -84,8 +84,11 @@ def test_setup_local_evidence_cannot_close_another_setup():
     by_id = {item["id"]: item for item in MC2_LONG_RUN_CAPABILITY_MATRIX}
     angle_restoration = capability_gaps(by_id["angle_restoration"])
     assert "zero_force_rest@mesh_cloth" not in angle_restoration["invariants"]
-    assert "zero_force_rest@bone_cloth" in angle_restoration["invariants"]
-    assert "zero_force_rest@bone_spring" in angle_restoration["invariants"]
+    assert "zero_force_rest@bone_cloth" not in angle_restoration["invariants"]
+    assert "zero_force_rest@bone_spring" not in angle_restoration["invariants"]
+    assert "target_direction_exact@bone_cloth" not in angle_restoration["invariants"]
+    assert "target_direction_exact@bone_spring" not in angle_restoration["invariants"]
+    assert "target_direction_exact@mesh_cloth" in angle_restoration["invariants"]
     assert "deterministic@bone_cloth" not in angle_restoration["invariants"]
     assert "deterministic@bone_spring" not in angle_restoration["invariants"]
 

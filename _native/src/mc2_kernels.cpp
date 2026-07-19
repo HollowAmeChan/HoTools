@@ -34,6 +34,7 @@ constexpr int kAngleLimitIteration = 3;
 constexpr float kAngleLimitAttenuation = 0.9f;
 constexpr float kAngleRestorationVelocityAttenuation = 0.8f;
 constexpr float kAngleRestorationGravityFalloff = 0.0f;
+constexpr float kDirectionDotDeadzone = 1.0e-7f;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr std::uint8_t kMc2AttrMove = 1u << 2u;
 constexpr int kColliderSphere = 0;
@@ -565,7 +566,7 @@ void from_to_rotation(float source_x,
     float dst_z = 1.0f;
     safe_normal_with_fallback(target_x, target_y, target_z, src_x, src_y, src_z, dst_x, dst_y, dst_z);
     const float dot = clamp_float(dot3(src_x, src_y, src_z, dst_x, dst_y, dst_z), -1.0f, 1.0f);
-    if (dot > 1.0f - kMc2Epsilon || ratio <= kMc2Epsilon) {
+    if (dot >= 1.0f - kDirectionDotDeadzone || ratio <= kMc2Epsilon) {
         out_q[0] = 0.0f;
         out_q[1] = 0.0f;
         out_q[2] = 0.0f;
@@ -2505,6 +2506,15 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     continue;
                 }
                 if (vector_len <= kMc2Epsilon) {
+                    continue;
+                }
+                const float direction_dot = clamp_float(
+                    dot3(vector_x, vector_y, vector_z, target_x, target_y, target_z) /
+                        (vector_len * target_len),
+                    -1.0f,
+                    1.0f
+                );
+                if (direction_dot >= 1.0f - kDirectionDotDeadzone) {
                     continue;
                 }
 

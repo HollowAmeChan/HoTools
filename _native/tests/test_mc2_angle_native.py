@@ -438,6 +438,46 @@ def assert_native_matches_tier_a_oracle():
     )
 
 
+def test_angle_restoration_identity_is_exact_noop():
+    positions = np.asarray((
+        (0.17, 0.23, -0.11),
+        (0.20, 0.50, 0.03),
+        (0.31, 0.74, 0.19),
+        (0.47, 0.91, 0.38),
+    ), dtype=np.float32)
+    initial_positions = positions.copy()
+    velocity_positions = np.asarray((
+        (0.01, -0.02, 0.03),
+        (0.04, 0.05, -0.06),
+        (-0.07, 0.08, 0.09),
+        (0.10, -0.11, 0.12),
+    ), dtype=np.float32)
+    initial_velocity_positions = velocity_positions.copy()
+    rotations = np.zeros((len(positions), 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
+    restoration = np.asarray((0.0, 0.85, 0.85, 0.85), dtype=np.float32)
+    limit = np.zeros((len(positions),), dtype=np.float32)
+    for _ in range(10000):
+        hotools_native.project_angle_constraints_mc2(
+            positions,
+            np.asarray((0.0, 1.0, 1.0, 1.0), dtype=np.float32),
+            np.asarray((-1, 0, 1, 2), dtype=np.int32),
+            np.asarray((0,), dtype=np.int32),
+            np.asarray((4,), dtype=np.int32),
+            np.asarray((0, 1, 2, 3), dtype=np.int32),
+            initial_positions,
+            rotations,
+            restoration,
+            limit,
+            velocity_positions,
+            0.25,
+            0.0,
+            1.0,
+        )
+    np.testing.assert_array_equal(positions, initial_positions)
+    np.testing.assert_array_equal(velocity_positions, initial_velocity_positions)
+
+
 def main():
     assert_native_matches_reference()
     assert_native_matches_tier_a_oracle()
