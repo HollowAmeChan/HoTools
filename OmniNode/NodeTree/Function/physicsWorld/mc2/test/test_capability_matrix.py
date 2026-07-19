@@ -185,6 +185,23 @@ def test_setup_local_evidence_cannot_close_another_setup():
         invariant.startswith("particle_speed_limit_bounded_and_active@")
         for invariant in teleport["invariants"]
     )
+    for field in (
+        "world_inertia", "movement_inertia_smoothing", "movement_speed_limit",
+        "rotation_speed_limit",
+    ):
+        assert not any(
+            gap.startswith(f"{field}@") for gap in teleport["fields"]
+        )
+    for invariant in (
+        "world_translation_inertia_ordered",
+        "world_movement_smoothing_active",
+        "world_movement_limit_active",
+        "world_rotation_limit_active",
+        "center_controls_no_implicit_debug_readback",
+    ):
+        assert not any(
+            gap.startswith(f"{invariant}@") for gap in teleport["invariants"]
+        )
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

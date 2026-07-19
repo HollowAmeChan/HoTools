@@ -136,6 +136,11 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "bone_root_teleport_detected",
             "teleport_debug_layers_isolated",
             "particle_speed_limit_bounded_and_active",
+            "world_translation_inertia_ordered",
+            "world_movement_smoothing_active",
+            "world_movement_limit_active",
+            "world_rotation_limit_active",
+            "center_controls_no_implicit_debug_readback",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
@@ -184,6 +189,26 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "invariants": (
                     "finite", "deterministic",
                     "particle_reset_self_history_invalidated",
+                ),
+            },
+            {
+                "runner": (
+                    "test_blender_mc2_mixed_output_soak.py::"
+                    "center_world_controls"
+                ),
+                "frames": 600,
+                "setups": ALL_SETUPS,
+                "fields": (
+                    "world_inertia", "movement_inertia_smoothing",
+                    "movement_speed_limit", "rotation_speed_limit",
+                ),
+                "invariants": (
+                    "finite", "deterministic",
+                    "world_translation_inertia_ordered",
+                    "world_movement_smoothing_active",
+                    "world_movement_limit_active",
+                    "world_rotation_limit_active",
+                    "center_controls_no_implicit_debug_readback",
                 ),
             },
         ),

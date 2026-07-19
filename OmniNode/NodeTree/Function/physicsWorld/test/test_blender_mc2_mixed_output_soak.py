@@ -67,7 +67,7 @@ writeback = importlib.import_module(
 )
 
 
-def _mesh_source():
+def _mesh_source(name="MC2MixedMesh"):
     vertices = tuple(
         (x * 0.04, y * 0.04, 0.0)
         for y in range(4)
@@ -81,13 +81,13 @@ def _mesh_source():
             c = a + 4
             d = c + 1
             faces.extend(((a, b, d), (a, d, c)))
-    mesh = bpy.data.meshes.new("MC2MixedMeshData")
+    mesh = bpy.data.meshes.new(f"{name}Data")
     mesh.from_pydata(vertices, (), faces)
     uv = mesh.uv_layers.new(name="UVMap")
     for loop in mesh.loops:
         x, y, _z = vertices[loop.vertex_index]
         uv.data[loop.index].uv = (x / 0.12, y / 0.12)
-    obj = bpy.data.objects.new("MC2MixedMesh", mesh)
+    obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
     pin = obj.vertex_groups.new(name="Pin")
     pin.add((0, 1, 2, 3), 1.0, "REPLACE")
@@ -133,6 +133,10 @@ def _tasks(
     stabilization_time_after_reset=0.1,
     teleport_rotation=180.0,
     particle_speed_limit=4.0,
+    world_inertia=1.0,
+    movement_inertia_smoothing=0.4,
+    movement_speed_limit=5.0,
+    rotation_speed_limit=720.0,
 ):
     mesh_profile = parameters.make_mc2_particle_profile(
         gravity=5.0,
@@ -144,6 +148,10 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        world_inertia=world_inertia,
+        movement_inertia_smoothing=movement_inertia_smoothing,
+        movement_speed_limit=movement_speed_limit,
+        rotation_speed_limit=rotation_speed_limit,
     )
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity=3.0,
@@ -155,6 +163,10 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        world_inertia=world_inertia,
+        movement_inertia_smoothing=movement_inertia_smoothing,
+        movement_speed_limit=movement_speed_limit,
+        rotation_speed_limit=rotation_speed_limit,
     )
     spring_profile = parameters.make_mc2_particle_profile(
         damping=damping,
@@ -164,6 +176,10 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        world_inertia=world_inertia,
+        movement_inertia_smoothing=movement_inertia_smoothing,
+        movement_speed_limit=movement_speed_limit,
+        rotation_speed_limit=rotation_speed_limit,
     )
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
         [mesh], profile=mesh_profile
@@ -1124,11 +1140,294 @@ def _run_scenario():
     return deterministic_digest
 
 
+def _center_translation_velocity(frame):
+    if frame <= 200:
+        return 0.9
+    if frame <= 400:
+        return -0.45
+    return 0.3
+
+
+_CENTER_TRANSLATION_FRAME_RATE = 30.0
+
+
+def _run_center_world_case(
+    case_name,
+    *,
+    component_translation=True,
+    component_rotation_speed=0.0,
+    **profile_values,
+):
+    physics_blender.register()
+    mesh = cloth = spring = None
+    world = world_types.PhysicsWorldCache()
+    generation = 70
+    try:
+        mesh = _mesh_source(f"MC2Center{case_name}Mesh")
+        cloth = _armature(f"MC2Center{case_name}Cloth", -0.3, 0.5)
+        spring = _armature(f"MC2Center{case_name}Spring", 0.3, 1.5)
+        sources = (mesh, cloth, spring)
+        base_x = {source.name: float(source.location.x) for source in sources}
+        tasks = _tasks(
+            mesh,
+            cloth,
+            spring,
+            0.1,
+            0,
+            stabilization_time_after_reset=0.0,
+            particle_speed_limit=4.0,
+            **profile_values,
+        )
+        observations = {
+            task.setup_type: {
+                "shift_x": [],
+                "moving_speed": [],
+                "smoothing_x": [],
+                "shift_rotation_degrees": [],
+                "update_count": [],
+                "skip_count": [],
+            }
+            for task in tasks
+        }
+        component_x = 0.0
+        component_rotation_degrees = 0.0
+        for frame in range(1, 601):
+            velocity = _center_translation_velocity(frame)
+            if frame > 1 and component_translation:
+                component_x += velocity / _CENTER_TRANSLATION_FRAME_RATE
+            if frame > 1:
+                component_rotation_degrees += (
+                    component_rotation_speed / _CENTER_TRANSLATION_FRAME_RATE
+                )
+            for source in sources:
+                source.location.x = base_x[source.name] + component_x
+                source.rotation_mode = "XYZ"
+                source.rotation_euler.z = math.radians(component_rotation_degrees)
+            bpy.context.view_layer.update()
+            _set_frame(world, frame, generation)
+            world.frame_context.raw_dt = 1.0 / _CENTER_TRANSLATION_FRAME_RATE
+            world.frame_context.dt = 1.0 / _CENTER_TRANSLATION_FRAME_RATE
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(tasks),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            for task in tasks:
+                slot = world.solver_slots[task.task_id]
+                candidate = _assert_candidate(slot)
+                assert candidate.frame == frame
+                if frame == 1:
+                    assert slot.data["center_frame_shift_result"] is None
+                    continue
+                result = slot.data["center_frame_shift_result"]
+                values = observations[task.setup_type]
+                schedule = slot.data["frame_schedule"]
+                values["update_count"].append(float(schedule.update_count))
+                values["skip_count"].append(float(schedule.skip_count))
+                if result is None and case_name == "Hold":
+                    values["shift_x"].append(0.0)
+                    values["moving_speed"].append(0.0)
+                    values["smoothing_x"].append(0.0)
+                    values["shift_rotation_degrees"].append(0.0)
+                    continue
+                assert result is not None, (
+                    case_name,
+                    task.setup_type,
+                    frame,
+                    slot.data.get("frame_schedule"),
+                    slot.data["native_context"].inspect(),
+                )
+                assert result.teleport_triggered is False
+                values["shift_x"].append(
+                    float(result.frame_component_shift_vector[0])
+                )
+                values["moving_speed"].append(float(result.frame_moving_speed))
+                values["smoothing_x"].append(float(result.smoothing_velocity[0]))
+                shift_rotation = result.frame_component_shift_rotation_xyzw
+                shift_cosine = min(1.0, max(0.0, abs(float(shift_rotation[3]))))
+                values["shift_rotation_degrees"].append(
+                    math.degrees(2.0 * math.acos(shift_cosine))
+                )
+
+        for task in tasks:
+            context = world.solver_slots[task.task_id].data["native_context"]
+            info = context.inspect()
+            assert info["debug_readback_count"] == 0
+            if case_name == "Hold":
+                assert info["center_frame_shift_count"] <= 3, (
+                    task.setup_type,
+                    info["center_frame_shift_count"],
+                )
+            else:
+                assert info["center_frame_shift_count"] == 599, (
+                    case_name,
+                    task.setup_type,
+                    info["center_frame_shift_count"],
+                )
+        return {
+            setup_type: {
+                name: np.asarray(values, dtype=np.float32)
+                for name, values in setup_values.items()
+            }
+            for setup_type, setup_values in observations.items()
+        }
+    finally:
+        world.omni_cache_dispose(f"center_world_translation_{case_name}")
+        if mesh is not None and mesh.name in bpy.data.objects:
+            proxy = mesh.hotools_mesh_collision.mc2_base_pose_proxy
+            _remove_object(mesh)
+            if proxy is not None and proxy.name in bpy.data.objects:
+                _remove_object(proxy)
+        for armature in (cloth, spring):
+            if armature is not None and armature.name in bpy.data.objects:
+                _remove_object(armature)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+
+
+def _run_center_world_suite():
+    cases = {
+        "follow": _run_center_world_case(
+            "Follow",
+            world_inertia=0.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+        ),
+        "hold": _run_center_world_case(
+            "Hold",
+            world_inertia=1.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+        ),
+        "smooth": _run_center_world_case(
+            "Smooth",
+            world_inertia=1.0,
+            movement_inertia_smoothing=0.8,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+        ),
+        "limited": _run_center_world_case(
+            "Limited",
+            world_inertia=1.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=0.2,
+            rotation_speed_limit=-1.0,
+        ),
+        "rotation_limited": _run_center_world_case(
+            "RotationLimited",
+            component_translation=False,
+            component_rotation_speed=90.0,
+            world_inertia=1.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=30.0,
+        ),
+    }
+    input_velocity = np.asarray(
+        [_center_translation_velocity(frame) for frame in range(2, 601)],
+        dtype=np.float32,
+    )
+    input_delta = input_velocity / np.float32(_CENTER_TRANSLATION_FRAME_RATE)
+    digest = hashlib.sha256()
+    for setup_type in sorted(cases["follow"]):
+        follow = cases["follow"][setup_type]
+        hold = cases["hold"][setup_type]
+        smooth = cases["smooth"][setup_type]
+        limited = cases["limited"][setup_type]
+        rotation_limited = cases["rotation_limited"][setup_type]
+        stable = np.logical_and(
+            hold["update_count"] == 3.0,
+            hold["skip_count"] == 0.0,
+        )
+        assert int(np.count_nonzero(stable)) >= 590
+        np.testing.assert_allclose(
+            follow["shift_x"][stable],
+            input_delta[stable],
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+        np.testing.assert_allclose(
+            hold["shift_x"][stable],
+            np.zeros(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+        residual_speed = (
+            np.abs(input_delta - limited["shift_x"])
+            * _CENTER_TRANSLATION_FRAME_RATE
+        )
+        assert np.all(residual_speed[stable] <= 0.2001), (
+            setup_type,
+            float(np.max(residual_speed[stable])),
+        )
+        np.testing.assert_allclose(
+            residual_speed[stable],
+            np.full(int(np.count_nonzero(stable)), 0.2, dtype=np.float32),
+            rtol=0.0,
+            atol=2.0e-4,
+        )
+        assert np.max(np.abs(smooth["smoothing_x"])) > 0.25
+        assert np.max(np.abs(smooth["shift_x"] - hold["shift_x"])) > 1.0e-4
+        assert np.max(np.abs(smooth["shift_x"] - follow["shift_x"])) > 1.0e-4
+        assert np.all(
+            np.abs(follow["shift_x"][stable]) + 2.0e-6
+            >= np.abs(limited["shift_x"][stable])
+        )
+        assert np.all(
+            np.abs(limited["shift_x"][stable]) + 2.0e-6
+            >= np.abs(hold["shift_x"][stable])
+        )
+        rotation_stable = np.logical_and(
+            rotation_limited["update_count"] == 3.0,
+            rotation_limited["skip_count"] == 0.0,
+        )
+        assert int(np.count_nonzero(rotation_stable)) >= 590
+        np.testing.assert_allclose(
+            rotation_limited["shift_rotation_degrees"][rotation_stable],
+            np.full(
+                int(np.count_nonzero(rotation_stable)),
+                2.0,
+                dtype=np.float32,
+            ),
+            rtol=0.0,
+            atol=2.0e-3,
+        )
+        for case_name in sorted(cases):
+            values = cases[case_name][setup_type]
+            for field in (
+                "shift_x", "moving_speed", "smoothing_x",
+                "shift_rotation_degrees",
+                "update_count", "skip_count",
+            ):
+                array = values[field]
+                assert np.all(np.isfinite(array))
+                digest.update(setup_type.encode("ascii"))
+                digest.update(case_name.encode("ascii"))
+                digest.update(field.encode("ascii"))
+                digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def center_world_controls():
+    first = _run_center_world_suite()
+    second = _run_center_world_suite()
+    assert second == first, (first, second)
+    print(
+        "[PASS] Center World inertia/smoothing/translation+rotation limits: "
+        "3 setups x 5 cases x 2 deterministic runs x 600 frames"
+    )
+
+
 def main():
     first = _run_scenario()
     second = _run_scenario()
     assert second == first, (first, second)
     print("[PASS] repeated 900-frame mixed scenario is deterministic")
+    center_world_controls()
     print("MC2 mixed output soak: PASS")
 
 

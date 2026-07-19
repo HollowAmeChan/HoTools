@@ -315,6 +315,8 @@ def _make_slot_center_frame_shift(
     )
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
+    movement_limit_active = float(profile.movement_speed_limit) >= 0.0
+    rotation_limit_active = float(profile.rotation_speed_limit) >= 0.0
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     skip_shift_active = int(skip_count) > 0
     teleport_mode = int(profile.teleport_mode)
@@ -338,6 +340,8 @@ def _make_slot_center_frame_shift(
             world_shift_active
             or anchor_shift_active
             or smoothing_active
+            or movement_limit_active
+            or rotation_limit_active
             or time_scale_active
             or skip_shift_active
             or configured_teleport_active
