@@ -88,9 +88,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "zero_force_rest@bone_spring" not in angle_restoration["invariants"]
     assert "target_direction_exact@bone_cloth" not in angle_restoration["invariants"]
     assert "target_direction_exact@bone_spring" not in angle_restoration["invariants"]
-    assert "target_direction_exact@mesh_cloth" in angle_restoration["invariants"]
+    assert "target_direction_exact@mesh_cloth" not in angle_restoration["invariants"]
     assert "deterministic@bone_cloth" not in angle_restoration["invariants"]
     assert "deterministic@bone_spring" not in angle_restoration["invariants"]
+    assert "deterministic@mesh_cloth" not in angle_restoration["invariants"]
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]

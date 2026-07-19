@@ -218,7 +218,7 @@ def _auto_step(world, task, frame, generation):
     return _candidate(world, task)
 
 
-def _angle_restoration_rest_soak(obj):
+def _run_angle_restoration_rest(obj):
     world = world_types.PhysicsWorldCache()
     generation = 41
     task = _task(
@@ -230,6 +230,8 @@ def _angle_restoration_rest_soak(obj):
     stable_task_id = task.task_id
     base = _base_positions(obj)
     native_context = None
+    trajectory_digest = hashlib.sha256()
+    max_rest_error = 0.0
     try:
         for frame in range(1, 901):
             if frame == 451:
@@ -244,16 +246,66 @@ def _angle_restoration_rest_soak(obj):
                 assert task.task_id == stable_task_id
             candidate = _auto_step(world, task, frame, generation)
             error = np.max(np.linalg.norm(candidate.world_positions - base, axis=1))
-            assert error <= 2.0e-5, (frame, error)
+            max_rest_error = max(max_rest_error, float(error))
+            assert error <= 1.0e-7, (frame, error)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(candidate.world_positions.tobytes())
             native_context = world.solver_slots[task.task_id].data["native_context"]
+            if frame in (1, 900):
+                snapshot = native_context.refresh_debug_draw_snapshot(
+                    include_step_basic=True,
+                    include_angle_restoration=True,
+                )
+                step_basic = snapshot["step_basic_positions"]
+                targets = snapshot["angle_restoration_target_positions"]
+                vectors = snapshot["angle_restoration_target_vectors"]
+                valid = snapshot["angle_restoration_target_valid"].astype(bool)
+                valid_indices = np.flatnonzero(valid)
+                assert len(valid_indices) > 0
+                parent_points = targets[valid_indices] - vectors[valid_indices]
+                parent_distances = np.linalg.norm(
+                    parent_points[:, None, :] - candidate.world_positions[None, :, :],
+                    axis=2,
+                )
+                parent_indices = np.argmin(parent_distances, axis=1)
+                matched_distances = parent_distances[
+                    np.arange(len(valid_indices)), parent_indices
+                ]
+                assert float(np.max(matched_distances)) <= 1.0e-7
+                assert np.all(parent_indices != valid_indices)
+                expected_vectors = (
+                    step_basic[valid_indices] - step_basic[parent_indices]
+                )
+                expected_targets = (
+                    candidate.world_positions[parent_indices] + expected_vectors
+                )
+                np.testing.assert_allclose(
+                    vectors[valid_indices], expected_vectors, rtol=0.0, atol=1.0e-7
+                )
+                np.testing.assert_allclose(
+                    targets[valid_indices], expected_targets, rtol=0.0, atol=1.0e-7
+                )
+                trajectory_digest.update(vectors[valid_indices].tobytes())
+                trajectory_digest.update(targets[valid_indices].tobytes())
             if frame == 451:
                 assert native_context is old_context
                 assert native_context.inspect()["parameter_revision"] == old_revision + 1
-        print("[PASS] 900-frame Angle Restoration zero-force rest/hot-update")
+        print(
+            "[INFO] Mesh Angle Restoration max zero-force drift: "
+            f"{max_rest_error:.9f}m"
+        )
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("angle_restoration_soak")
         if native_context is not None:
             assert native_context.inspect()["released"] is True
+
+
+def _angle_restoration_rest_soak(obj):
+    first = _run_angle_restoration_rest(obj)
+    second = _run_angle_restoration_rest(obj)
+    assert first == second, (first, second)
+    print("[PASS] Mesh Angle Restoration: 2 deterministic x 900 frames")
 
 
 def _motion_base_soak(obj):

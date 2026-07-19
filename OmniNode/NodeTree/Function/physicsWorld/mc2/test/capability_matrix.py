@@ -186,7 +186,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
-            "invariants": ("finite", "zero_force_rest", "parameter_hot_update_in_place"),
+            "invariants": (
+                "finite", "deterministic", "zero_force_rest",
+                "target_direction_exact", "parameter_hot_update_in_place",
+            ),
         }, {
             "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
             "frames": 900,
