@@ -182,6 +182,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "finite", "deterministic", "zero_force_rest", "target_direction_exact",
             "velocity_attenuation_response_ordered",
             "gravity_falloff_response_ordered",
+            "center_input_reachable",
         ),
         "evidence": ({
             "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
@@ -224,6 +225,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         },),
+        "known_gap": (
+            "MC2 task nodes do not expose or derive a user-reachable Team Center/Anchor; "
+            "manual frame-input evidence cannot close center_input_reachable."
+        ),
         "status": "gap",
     },
     {

@@ -102,6 +102,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "gravity_falloff_response_ordered@mesh_cloth" not in angle_restoration["invariants"]
     assert "gravity_falloff_response_ordered@bone_cloth" in angle_restoration["invariants"]
     assert "gravity_falloff_response_ordered@bone_spring" in angle_restoration["invariants"]
+    assert "center_input_reachable@mesh_cloth" in angle_restoration["invariants"]
+    assert "center_input_reachable@bone_cloth" in angle_restoration["invariants"]
+    assert "center_input_reachable@bone_spring" in angle_restoration["invariants"]
+    assert "Team Center/Anchor" in by_id["angle_restoration"]["known_gap"]
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]
