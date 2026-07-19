@@ -168,7 +168,7 @@ def request_mc2_debug_capture(
         requested += 1
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
-        if has_modes and requested:
+        if has_modes and requested and filters["show_self"]:
             interaction.request_debug_capture(frame, filters)
         else:
             interaction.cancel_debug_capture(filters)
@@ -386,6 +386,7 @@ def _center_payload(slot, item) -> dict:
     center_step = slot.data.get("center_step_result")
     frame_shift = slot.data.get("center_frame_shift_result")
     negative = slot.data.get("center_negative_scale_result")
+    particle_teleport = slot.data.get("particle_teleport_result")
     return {
         "frame_pose": _freeze_value(
             getattr(frame_input, "center_frame_pose", None)
@@ -399,6 +400,7 @@ def _center_payload(slot, item) -> dict:
         ),
         "step": _freeze_value(center_step),
         "frame_shift": _freeze_value(frame_shift),
+        "particle_teleport": _freeze_value(particle_teleport),
         "negative_scale_transition": _freeze_value(negative),
         "frame_sync": _freeze_value(item.get("frame_plan")),
     }
@@ -476,18 +478,21 @@ def capture_requested_mc2_debug(
     for item in runtime_items:
         slot = item["slot"]
         state = slot.data.get("_debug_capture_state")
-        if not _state_requested(state, frame) or not item.get("substeps"):
+        if not _state_requested(state, frame):
+            continue
+        filters = dict(state.get("filters") or {})
+        native_requested = any(
+            bool(filters.get(name, False))
+            for name in MC2_NATIVE_DEBUG_FILTER_KEYS
+        )
+        if native_requested and not item.get("substeps"):
             continue
         started = time.perf_counter()
         attempted = False
         try:
             attempted = True
-            filters = dict(state.get("filters") or {})
             native_snapshot = {}
-            if any(
-                bool(filters.get(name, False))
-                for name in MC2_NATIVE_DEBUG_FILTER_KEYS
-            ):
+            if native_requested:
                 native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
                     include_step_basic=bool(
                         filters.get("show_angle_restoration", False)
