@@ -513,12 +513,128 @@ def bone_external_collision():
     print("[PASS] Bone external collision: 2 setups x 2 x 900 frames")
 
 
+def _run_bone_cloth_friction(friction):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 76
+    armature = mixed._armature(f"MC2BoneFriction{friction}", 0.0, 0.9)
+    initial_basis = {
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    }
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.02,
+        stabilization_time_after_reset=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        collision_mode=1,
+        collision_friction=friction,
+        radius=0.02,
+        self_collision_mode=0,
+    )
+    tasks, _task_names = nodes.physicsMC2BoneClothTask(
+        [{"armature": armature, "bone": "Root"}],
+        profile=profile,
+        connection_mode=0,
+        collided_by_groups=1,
+    )
+    assert len(tasks) == 1
+    task = tasks[0]
+    topology = topology_module.build_mc2_topology_spec(task)
+    bone_names = topology.sources[0].bone_names
+    lags = []
+    try:
+        for bone in armature.pose.bones:
+            bone.matrix_basis = initial_basis[bone.name].copy()
+        bpy.context.view_layer.update()
+        initial = bone_frame_input.build_mc2_bone_frame_input(
+            task,
+            topology,
+            frame=1,
+            generation=world.generation,
+        ).world_positions
+        plane_z = float(initial[1, 2] - 0.015)
+        orbit_budget = float(np.sum(np.linalg.norm(
+            np.diff(initial, axis=0),
+            axis=1,
+        ))) * 2.0 + 0.05
+
+        for frame in range(1, 601):
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            armature.pose.bones["Root"].location.x = frame * 0.0002
+            bpy.context.view_layer.update()
+            expected = np.asarray([
+                tuple(armature.matrix_world @ armature.pose.bones[name].matrix.translation)
+                for name in bone_names
+            ], dtype=np.float32)
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": ({
+                    "key": "bone-friction-plane",
+                    "type": "PLANE",
+                    "primary_group": 1,
+                    "center": (0.0, 0.0, plane_z),
+                    "normal": (0.0, 0.0, 1.0),
+                },),
+            }
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            response = float(np.max(np.linalg.norm(
+                candidate.world_positions - expected,
+                axis=1,
+            )))
+            assert response <= orbit_budget, (friction, frame, response, orbit_budget)
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            lag = float(np.mean(
+                expected[1:, 0] - candidate.world_positions[1:, 0]
+            ))
+            if frame > 300:
+                lags.append(lag)
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+
+        info = world.solver_slots[task.task_id].data["native_context"].inspect()
+        assert info["point_collision_solve_count"] > 0
+        assert info["collider_count"] == 1
+        return float(np.mean(lags)), float(lags[-1])
+    finally:
+        world.omni_cache_dispose("bone_cloth_friction_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_friction_response():
+    low_mean, low_final = _run_bone_cloth_friction(0.0)
+    high_mean, high_final = _run_bone_cloth_friction(0.5)
+    assert high_mean > low_mean + 0.02, (low_mean, high_mean)
+    assert high_final > low_final + 0.02, (low_final, high_final)
+    print(
+        "[PASS] BoneCloth friction ordered tangential lag: "
+        f"mean {low_mean:.6f}m -> {high_mean:.6f}m"
+    )
+
+
 def main():
     mixed.physics_blender.register()
     try:
         bone_angle_constraints()
         bone_motion_constraints()
         bone_external_collision()
+        bone_friction_response()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

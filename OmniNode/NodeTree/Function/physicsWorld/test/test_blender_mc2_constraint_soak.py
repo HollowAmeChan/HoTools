@@ -463,6 +463,70 @@ def _task_collider_scope_soak(objects):
     print("[PASS] repeated Mesh external-collision trajectory is deterministic")
 
 
+def _run_mesh_friction(obj, friction):
+    world = world_types.PhysicsWorldCache()
+    generation = 50
+    task = _task(
+        obj,
+        gravity=0.0,
+        damping=0.02,
+        angle_restoration_enabled=False,
+        bending_stiffness=0.0,
+        collision_mode=1,
+        collision_friction=friction,
+        radius=0.01,
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    base = _base_positions(obj)
+    lags = []
+    try:
+        for frame in range(1, 601):
+            translation = np.asarray((frame * 0.0002, 0.0, 0.0), dtype=np.float32)
+            positions = base + translation
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": ({
+                    "key": "mesh-friction-plane",
+                    "type": "PLANE",
+                    "primary_group": 1,
+                    "center": (0.0, 0.0, 0.0),
+                    "normal": (0.0, 0.0, 1.0),
+                },),
+            }
+            _step(
+                world,
+                [task],
+                {task.task_id: topology},
+                frame,
+                {task.task_id: positions},
+                generation,
+            )
+            candidate = _candidate(world, task)
+            lag = float(np.mean(
+                positions[4:, 0] - candidate.world_positions[4:, 0]
+            ))
+            assert abs(lag) < 0.1, (friction, frame, lag)
+            if frame > 300:
+                lags.append(lag)
+        info = world.solver_slots[task.task_id].data["native_context"].inspect()
+        assert info["point_collision_solve_count"] > 0
+        assert info["collider_count"] == 1
+        return float(np.mean(lags)), float(lags[-1])
+    finally:
+        world.omni_cache_dispose("mesh_friction_soak")
+
+
+def mesh_friction_response(obj):
+    low_mean, low_final = _run_mesh_friction(obj, 0.0)
+    high_mean, high_final = _run_mesh_friction(obj, 0.5)
+    assert high_mean > low_mean + 0.005, (low_mean, high_mean)
+    assert high_final > low_final + 0.005, (low_final, high_final)
+    print(
+        "[PASS] Mesh friction ordered tangential lag: "
+        f"mean {low_mean:.6f}m -> {high_mean:.6f}m"
+    )
+
+
 def _distance_tether_soak(obj):
     world = world_types.PhysicsWorldCache()
     generation = 44
@@ -808,6 +872,7 @@ def main():
         _angle_restoration_rest_soak(objects[0])
         motion_base_deterministic(objects[0])
         _task_collider_scope_soak(objects[:2])
+        mesh_friction_response(objects[0])
         _distance_tether_soak(objects[0])
         _bending_soak(objects[0])
         _angle_limit_soak(objects[0])

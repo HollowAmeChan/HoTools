@@ -41,10 +41,16 @@ def test_long_run_matrix_separates_requirements_from_real_evidence():
         assert capability["id"]
         assert set(capability["required_setups"]).issubset(ALL_SETUPS)
         field_setups = capability.get("field_setups", {})
+        invariant_setups = capability.get("invariant_setups", {})
         assert set(field_setups).issubset(capability["owned_fields"])
+        assert set(invariant_setups).issubset(capability["required_invariants"])
         assert all(
             set(setups).issubset(capability["required_setups"])
             for setups in field_setups.values()
+        )
+        assert all(
+            set(setups).issubset(capability["required_setups"])
+            for setups in invariant_setups.values()
         )
         assert capability["evidence"]
         for item in capability["evidence"]:
@@ -110,6 +116,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "task_scope_exact@bone_cloth" not in external["invariants"]
     assert "task_scope_exact@bone_spring" not in external["invariants"]
     assert "deterministic@mesh_cloth" not in external["invariants"]
+    assert "friction_response_ordered@mesh_cloth" not in external["invariants"]
+    assert "friction_response_ordered@bone_cloth" not in external["invariants"]
+    assert "friction_response_ordered@bone_spring" not in external["invariants"]
+    assert not any(external.values())
 
     motion = capability_gaps(by_id["motion_max_distance_backstop"])
     assert not motion["setups"]
