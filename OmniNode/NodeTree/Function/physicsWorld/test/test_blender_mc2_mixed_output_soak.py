@@ -231,6 +231,9 @@ def _run_scenario():
         keep_hits = set()
         reset_hits = set()
         previous_candidate_revisions = {task_id: 0 for task_id in stable_ids}
+        max_particle_speeds = {
+            task.setup_type: 0.0 for task in tasks
+        }
         topologies = {
             task.task_id: topology_module.build_mc2_topology_spec(task)
             for task in tasks
@@ -313,6 +316,28 @@ def _run_scenario():
                 assert candidate.frame == frame
                 assert candidate.revision == previous_candidate_revisions[task.task_id] + 1
                 previous_candidate_revisions[task.task_id] = candidate.revision
+                native_context = slot.data["native_context"]
+                dynamics = native_context.refresh_debug_draw_snapshot(
+                    include_step_basic=False,
+                    include_dynamics=True,
+                )["dynamics"]
+                particle_speed = float(np.max(np.linalg.norm(
+                    dynamics["velocities"],
+                    axis=1,
+                )))
+                max_particle_speeds[task.setup_type] = max(
+                    max_particle_speeds[task.setup_type], particle_speed
+                )
+                speed_limit = (
+                    float(task.profile.particle_speed_limit)
+                    * float(native_context.inspect()["scale_ratio"])
+                )
+                assert particle_speed <= speed_limit + 0.01, (
+                    frame,
+                    task.setup_type,
+                    particle_speed,
+                    speed_limit,
+                )
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
                     assert shift is not None
@@ -402,6 +427,7 @@ def _run_scenario():
         }
         assert keep_hits == expected_setups
         assert reset_hits == expected_setups
+        assert all(speed > 0.0 for speed in max_particle_speeds.values())
         expected_increment = (1.0 / 90.0) / 0.2
         for setup_type, samples in stabilization_samples.items():
             first_velocity, first_blend = samples[602]
@@ -465,7 +491,10 @@ def _run_scenario():
                 digest.update(str(array.shape).encode("ascii"))
                 digest.update(array.tobytes())
         deterministic_digest = digest.hexdigest()
-        print("[PASS] 900-frame mixed output/hot-update + all-setup Keep/Reset")
+        print(
+            "[PASS] 900-frame mixed output/hot-update + all-setup Keep/Reset; "
+            f"max speeds={max_particle_speeds}"
+        )
     finally:
         world.omni_cache_dispose("mixed_output_soak")
         if mesh is not None and mesh.name in bpy.data.objects:

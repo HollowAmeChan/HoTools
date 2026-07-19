@@ -137,6 +137,11 @@ def test_setup_local_evidence_cannot_close_another_setup():
         invariant.startswith("stabilization_blend_ramp_exact@")
         for invariant in integration["invariants"]
     )
+    assert not any(
+        invariant.startswith("bounded_velocity@")
+        or invariant.startswith("zero_force_rest@")
+        for invariant in integration["invariants"]
+    )
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())
