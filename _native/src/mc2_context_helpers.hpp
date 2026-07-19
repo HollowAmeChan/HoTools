@@ -22,6 +22,18 @@ inline constexpr std::uint32_t kSelfIgnore = 0x40000000u;
 inline constexpr std::uint32_t kSelfIntersectMask = 0x00000007u;
 inline constexpr std::int32_t kSelfIgnoreGrid = 1000000;
 
+inline std::uint64_t self_particle_pair_key(
+    std::int32_t first,
+    std::int32_t second
+) {
+    const auto first_value = static_cast<std::uint32_t>(first);
+    const auto second_value = static_cast<std::uint32_t>(second);
+    const auto lower = first_value < second_value ? first_value : second_value;
+    const auto upper = first_value < second_value ? second_value : first_value;
+    return (static_cast<std::uint64_t>(lower) << 32u) |
+        static_cast<std::uint64_t>(upper);
+}
+
 Mc2ContextV0* context_from(PyObject* object);
 Mc2InteractionV0* interaction_from(PyObject* object);
 bool ensure_live(Mc2ContextV0* context);

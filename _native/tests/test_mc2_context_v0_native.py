@@ -1005,6 +1005,213 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         hotools_native.mc2_context_v0_free(point_triangle_context)
 
 
+def test_self_collision_excludes_one_ring_topology_neighbors():
+    edge_context = hotools_native.mc2_context_v0_create(0, 4)
+    point_triangle_context = hotools_native.mc2_context_v0_create(0, 4)
+    intersection_context = hotools_native.mc2_context_v0_create(0, 5)
+    contexts = (edge_context, point_triangle_context, intersection_context)
+    try:
+        floats, ints, curves = parameters()
+        ints[9] = 2
+        curves[8] = 0.05
+
+        proxy, baseline = static_arrays(4)
+        edge_topology = np.array(
+            [[0, 1], [2, 3], [1, 2]], dtype=np.int32
+        )
+        proxy = list(proxy)
+        proxy[5] = edge_topology
+        hotools_native.mc2_context_v0_update_proxy_static(edge_context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(edge_context, *baseline)
+        edge_indices = np.column_stack(
+            (edge_topology, np.full(3, -1, dtype=np.int32))
+        )
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            edge_context,
+            np.full(3, 0x01000000, dtype=np.uint32),
+            edge_indices,
+            baseline[7][edge_topology].mean(axis=1).astype(np.float32),
+            0,
+            3,
+            0,
+        )
+        hotools_native.mc2_context_v0_update_parameters(
+            edge_context, floats, ints, curves
+        )
+        edge_positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+             [0.0, 0.04, 0.0], [1.0, 0.04, 0.0]],
+            dtype=np.float32,
+        )
+        edge_rotations = np.zeros((4, 4), dtype=np.float32)
+        edge_rotations[:, 3] = 1.0
+        update_dynamic(edge_context, 40, 8, edge_positions, edge_rotations)
+        hotools_native.mc2_context_v0_reset(edge_context)
+        step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
+        edge_info = hotools_native.mc2_context_v0_inspect(edge_context)
+        assert edge_info["self_candidate_ready"] is True
+        assert edge_info["self_contact_candidate_count"] == 0
+        assert edge_info["self_contact_enabled_count"] == 0
+
+        proxy, baseline = static_arrays(4)
+        surface_edges = np.array(
+            [[0, 1], [1, 2], [2, 0], [3, 0]], dtype=np.int32
+        )
+        triangles = np.array([[0, 1, 2]], dtype=np.int32)
+        proxy = list(proxy)
+        proxy[5] = surface_edges
+        proxy[6] = triangles
+        hotools_native.mc2_context_v0_update_proxy_static(
+            point_triangle_context, *proxy
+        )
+        hotools_native.mc2_context_v0_update_baseline_static(
+            point_triangle_context, *baseline
+        )
+        point_triangle_indices = np.concatenate(
+            (
+                np.column_stack(
+                    (
+                        np.arange(4, dtype=np.int32),
+                        np.full(4, -1, dtype=np.int32),
+                        np.full(4, -1, dtype=np.int32),
+                    )
+                ),
+                np.column_stack(
+                    (surface_edges, np.full(4, -1, dtype=np.int32))
+                ),
+                triangles,
+            ),
+            axis=0,
+        )
+        point_triangle_flags = np.concatenate(
+            (
+                np.zeros(4, dtype=np.uint32),
+                np.full(4, 0x01000000, dtype=np.uint32),
+                np.full(1, 0x02000000, dtype=np.uint32),
+            )
+        )
+        point_triangle_depths = np.concatenate(
+            (
+                baseline[7],
+                baseline[7][surface_edges].mean(axis=1),
+                baseline[7][triangles].mean(axis=1),
+            )
+        ).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            point_triangle_context,
+            point_triangle_flags,
+            point_triangle_indices,
+            point_triangle_depths,
+            4,
+            4,
+            1,
+        )
+        hotools_native.mc2_context_v0_update_parameters(
+            point_triangle_context, floats, ints, curves
+        )
+        point_triangle_positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+             [0.0, 2.0, 0.0], [0.5, 0.5, 0.01]],
+            dtype=np.float32,
+        )
+        update_dynamic(
+            point_triangle_context,
+            41,
+            8,
+            point_triangle_positions,
+            edge_rotations,
+        )
+        hotools_native.mc2_context_v0_reset(point_triangle_context)
+        step(point_triangle_context, 1.0 / 90.0, simulation_power_z=0.0)
+        point_triangle_info = hotools_native.mc2_context_v0_inspect(
+            point_triangle_context
+        )
+        assert point_triangle_info["self_candidate_ready"] is True
+        assert point_triangle_info["self_contact_candidate_count"] == 0
+        assert point_triangle_info["self_contact_enabled_count"] == 0
+
+        proxy, baseline = static_arrays(5)
+        intersection_edges = np.array(
+            [[0, 1], [1, 2], [2, 0], [3, 4], [4, 0]], dtype=np.int32
+        )
+        proxy = list(proxy)
+        proxy[5] = intersection_edges
+        proxy[6] = triangles
+        hotools_native.mc2_context_v0_update_proxy_static(
+            intersection_context, *proxy
+        )
+        hotools_native.mc2_context_v0_update_baseline_static(
+            intersection_context, *baseline
+        )
+        intersection_indices = np.concatenate(
+            (
+                np.column_stack(
+                    (
+                        np.arange(5, dtype=np.int32),
+                        np.full(5, -1, dtype=np.int32),
+                        np.full(5, -1, dtype=np.int32),
+                    )
+                ),
+                np.column_stack(
+                    (intersection_edges, np.full(5, -1, dtype=np.int32))
+                ),
+                triangles,
+            ),
+            axis=0,
+        )
+        intersection_flags = np.concatenate(
+            (
+                np.zeros(5, dtype=np.uint32),
+                np.full(5, 0x01000000, dtype=np.uint32),
+                np.full(1, 0x02000000, dtype=np.uint32),
+            )
+        )
+        intersection_depths = np.concatenate(
+            (
+                baseline[7],
+                baseline[7][intersection_edges].mean(axis=1),
+                baseline[7][triangles].mean(axis=1),
+            )
+        ).astype(np.float32)
+        hotools_native.mc2_context_v0_update_self_collision_static(
+            intersection_context,
+            intersection_flags,
+            intersection_indices,
+            intersection_depths,
+            5,
+            5,
+            1,
+        )
+        hotools_native.mc2_context_v0_update_parameters(
+            intersection_context, floats, ints, curves
+        )
+        intersection_positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0],
+             [0.5, 0.5, 1.0], [0.5, 0.5, -1.0]],
+            dtype=np.float32,
+        )
+        intersection_rotations = np.zeros((5, 4), dtype=np.float32)
+        intersection_rotations[:, 3] = 1.0
+        update_dynamic(
+            intersection_context,
+            2,
+            8,
+            intersection_positions,
+            intersection_rotations,
+        )
+        hotools_native.mc2_context_v0_reset(intersection_context)
+        step(intersection_context, 1.0 / 90.0, simulation_power_z=0.0)
+        intersection_info = hotools_native.mc2_context_v0_inspect(
+            intersection_context
+        )
+        assert intersection_info["self_intersect_detection_count"] == 1
+        assert intersection_info["self_intersect_record_count"] == 0
+        assert intersection_info["self_intersect_particle_count"] == 0
+    finally:
+        for context in contexts:
+            hotools_native.mc2_context_v0_free(context)
+
+
 def test_self_collision_intersect_records_commit_only_on_final_substep():
     context = hotools_native.mc2_context_v0_create(0, 5)
     try:
@@ -2036,6 +2243,8 @@ if __name__ == "__main__":
     print("PASS self-collision grid sort and Unity hash")
     test_self_collision_broadphase_candidates_are_filtered_and_typed()
     print("PASS self-collision broadphase candidates")
+    test_self_collision_excludes_one_ring_topology_neighbors()
+    print("PASS self-collision one-ring topology exclusion")
     test_self_collision_intersect_records_commit_only_on_final_substep()
     print("PASS self-collision cross-frame Intersect")
     test_point_collision_projection_and_post()

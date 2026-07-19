@@ -180,6 +180,7 @@ struct Mc2ContextV0 {
     std::vector<std::uint32_t> self_primitive_flags;
     std::vector<std::int32_t> self_particle_indices;
     std::vector<float> self_primitive_depths;
+    std::vector<std::uint64_t> self_topology_neighbor_keys;
     std::vector<float> self_primitive_inverse_masses;
     std::vector<float> self_primitive_aabb_min;
     std::vector<float> self_primitive_aabb_max;

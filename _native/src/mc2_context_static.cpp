@@ -118,6 +118,7 @@ PyObject* mc2_context_v0_clone_config_static(PyObject*, PyObject* args) {
     target->self_primitive_flags = source->self_primitive_flags;
     target->self_particle_indices = source->self_particle_indices;
     target->self_primitive_depths = source->self_primitive_depths;
+    target->self_topology_neighbor_keys = source->self_topology_neighbor_keys;
     target->self_point_primitive_count = source->self_point_primitive_count;
     target->self_edge_primitive_count = source->self_edge_primitive_count;
     target->self_triangle_primitive_count = source->self_triangle_primitive_count;
@@ -1155,6 +1156,27 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     std::vector<std::uint32_t> next_flags;
     std::vector<std::int32_t> next_indices;
     std::vector<float> next_depths;
+    std::vector<std::uint64_t> next_topology_neighbor_keys;
+    next_topology_neighbor_keys.reserve(context->proxy_edges.size() / 2);
+    for (std::size_t edge = 0; edge < context->proxy_edges.size(); edge += 2) {
+        const auto first = context->proxy_edges[edge];
+        const auto second = context->proxy_edges[edge + 1];
+        if (first == second) continue;
+        next_topology_neighbor_keys.push_back(
+            self_particle_pair_key(first, second)
+        );
+    }
+    std::sort(
+        next_topology_neighbor_keys.begin(),
+        next_topology_neighbor_keys.end()
+    );
+    next_topology_neighbor_keys.erase(
+        std::unique(
+            next_topology_neighbor_keys.begin(),
+            next_topology_neighbor_keys.end()
+        ),
+        next_topology_neighbor_keys.end()
+    );
     if (take_owned) {
         auto* owned_flags = validated_owned_values<std::uint32_t>(
             PyTuple_GET_ITEM(args, 7), "hotools_native.mc2.self_flags.v0", flags
@@ -1178,6 +1200,7 @@ PyObject* mc2_context_v0_update_self_collision_static(PyObject*, PyObject* args)
     context->self_primitive_flags.swap(next_flags);
     context->self_particle_indices.swap(next_indices);
     context->self_primitive_depths.swap(next_depths);
+    context->self_topology_neighbor_keys.swap(next_topology_neighbor_keys);
     context->self_primitive_inverse_masses.assign(static_cast<std::size_t>(count) * 3, 0.0f);
     context->self_primitive_aabb_min.assign(static_cast<std::size_t>(count) * 3, 0.0f);
     context->self_primitive_aabb_max.assign(static_cast<std::size_t>(count) * 3, 0.0f);

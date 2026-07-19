@@ -154,6 +154,7 @@ void release_resources(Mc2ContextV0& context) {
     context.self_primitive_flags.clear();
     context.self_particle_indices.clear();
     context.self_primitive_depths.clear();
+    context.self_topology_neighbor_keys.clear();
     context.self_primitive_inverse_masses.clear();
     context.self_primitive_aabb_min.clear();
     context.self_primitive_aabb_max.clear();
@@ -2141,7 +2142,7 @@ bool update_self_collision_grid(Mc2ContextV0& context) {
     return true;
 }
 
-bool self_primitives_share_particle(
+bool self_primitives_are_topology_neighbors(
     const Mc2ContextV0& context,
     std::size_t left,
     std::size_t right
@@ -2155,7 +2156,15 @@ bool self_primitives_share_particle(
     for (std::size_t left_axis = 0; left_axis <= left_kind; ++left_axis) {
         const auto particle = context.self_particle_indices[left * 3 + left_axis];
         for (std::size_t right_axis = 0; right_axis <= right_kind; ++right_axis) {
-            if (particle == context.self_particle_indices[right * 3 + right_axis]) return true;
+            const auto target = context.self_particle_indices[right * 3 + right_axis];
+            if (particle == target) return true;
+            const auto key = self_particle_pair_key(particle, target);
+            if (std::binary_search(
+                    context.self_topology_neighbor_keys.begin(),
+                    context.self_topology_neighbor_keys.end(),
+                    key)) {
+                return true;
+            }
         }
     }
     return false;
@@ -2292,7 +2301,7 @@ void detect_self_collision_intersections_once(Mc2ContextV0& context) {
                             (triangle_flag & kSelfIgnore) != 0u ||
                             ((edge_flag & kSelfAllFix) != 0u &&
                              (triangle_flag & kSelfAllFix) != 0u) ||
-                            self_primitives_share_particle(context, edge, triangle)) {
+                            self_primitives_are_topology_neighbors(context, edge, triangle)) {
                             continue;
                         }
                         records.push_back(IntersectRecord {{
@@ -2446,7 +2455,11 @@ void update_self_collision_candidates(Mc2ContextV0& context) {
                                 (target_flag & kSelfIgnore) != 0u ||
                                 ((flag & kSelfAllFix) != 0u &&
                                  (target_flag & kSelfAllFix) != 0u) ||
-                                self_primitives_share_particle(context, primitive, target)) {
+                                self_primitives_are_topology_neighbors(
+                                    context,
+                                    primitive,
+                                    target
+                                )) {
                                 continue;
                             }
                             candidates.push_back(Candidate {
@@ -3377,6 +3390,7 @@ bool build_and_solve_interaction(
     aggregate.self_primitive_flags.clear();
     aggregate.self_particle_indices.clear();
     aggregate.self_primitive_depths.clear();
+    aggregate.self_topology_neighbor_keys.clear();
     aggregate.self_primitive_inverse_masses.clear();
     aggregate.self_primitive_aabb_min.clear();
     aggregate.self_primitive_aabb_max.clear();
@@ -3579,6 +3593,7 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(self_primitive_flags);
     MC2_ADD_VECTOR_BYTES(self_particle_indices);
     MC2_ADD_VECTOR_BYTES(self_primitive_depths);
+    MC2_ADD_VECTOR_BYTES(self_topology_neighbor_keys);
     MC2_ADD_VECTOR_BYTES(self_primitive_inverse_masses);
     MC2_ADD_VECTOR_BYTES(self_primitive_aabb_min);
     MC2_ADD_VECTOR_BYTES(self_primitive_aabb_max);

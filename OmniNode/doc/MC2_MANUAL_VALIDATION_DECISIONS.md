@@ -29,7 +29,7 @@
 | D-01 | **已决策** | Teleport 判定模型 | 整个 task 统一触发；首个 Fixed 粒子为判定基准，无 Fixed 时回退物体原点；完整复核 Reset/Keep 清理链路 |
 | D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
 | D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
-| D-04 | 待确认 | 自碰静置质量标准 | 单层无穿插布料不应持续可见微动；先审计误报和 contact churn，再定容差 |
+| D-04 | 首轮人工改善已确认，待定量关闭 | 自碰静置质量标准 | 一环过滤实测使红箭头、洋红候选和边缘持续抖动明显减少；剩余洋红闪烁已定位为二分扫描候选的debug误表达，静置阈值与contact churn仍待量化 |
 | D-05 | 待确认 | 参数从 Profile 移到 Task 的规则 | 不批量搬迁；先按是否逐深度、是否可复用、是否属于交互/身份分组 |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
@@ -80,19 +80,24 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 
 - MC2 FullMesh 自碰不是单一接触算法，而是 Point-Triangle、Edge-Edge contact 加独立 Intersect 检测/修正。
 - MC2 源码将该功能标为 Beta2；fork 中 contact 固定迭代 4 次，Intersect 分批检测，`SelfCollisionIntersectDiv = 2`。
-- 当前 debug 的洋红线来自 intersection record，不等于普通厚度接触，也不等于“该处本帧一定可肉眼看到穿插”。红箭头来自 contact 结果；边界附近在厚度范围内也可能形成 contact。
+- 当前 debug 的洋红线来自本帧Edge-Triangle broadphase record，不等于普通厚度接触，也不等于最终几何测试确认的穿插。`solve_self_collision_intersections_final()`之后的particle intersect flag才表示该record通过线段-三角形测试；renderer目前无条件绘制全部record，属于错误的结果语义。红箭头来自 contact 结果；边界附近在厚度范围内也可能形成 contact。
 - 手测反例仍然有效：拓扑无交叉、无非流形的干净单层网格中，红色 contact 箭头主要密集出现在顶点密度较高区域，并伴随持续微动；这与洋红 intersection record 是两个问题。现有 long-run 只断言有 contact/intersection 和数值有限，没有证明密度无关性、误报率、接触 churn 或可见静置质量。
+- 生产审计确认一个直接根因：旧过滤只拒绝primitive共享同一个particle，没有拒绝两个primitive的particle由真实proxy edge直接相邻。密集单层曲面因此会把本应由结构约束维持的一环邻居送入EE/PT contact，也会送入独立intersection记录。
+- 当前native在self static上传时从final proxy edges一次性生成排序去重的粒子邻接键；task内candidate和intersection共同拒绝共享粒子或一环邻接的primitive。该表不进入逐帧构建，不产生debug payload，也不应用于不同owner的跨task interaction。
+- 3.11完整context runner已经覆盖：断开的远邻Edge-Edge与Point-Triangle仍产生接触；一环相连的Edge-Edge、Point-Triangle及Edge-Triangle intersection全部被排除；原跨帧真实穿插历史仍保留。该证据关闭“一环完全未过滤”的实现缺口，但不能替代原密集单层模型的人工静置复测。
+- 实际密集单层模型首轮复验确认：洋红record和红色contact箭头都明显减少，边缘持续跳动且不收敛的现象几乎消失。这证明一环缺口是主要真实扰动源之一，但仍需定量记录剩余contact churn和长时RMS速度后关闭D-04。
+- 剩余洋红线的规律闪烁不是优先归因于浮点随机性。生产路径按`frame % 2`每帧只检测奇数或偶数Edge，目的是把昂贵的Edge-Triangle检测摊到两帧；record又在每次检测前清空，因此当前候选视图必然隔帧变化。普通EE/PT contact不使用该二分显示节奏。
 
 ### 需要先做的审计
 
 1. 用完全平面、轻微弯曲、开边界、闭合裙摆、双层重叠五类最小网格，记录 primitive/candidate/contact/intersection 数量与身份变化。
-2. 核对相邻 triangle、共享 edge、共享 vertex、同一 primitive、同面近共面结构的排除规则是否与 MC2 一致。
+2. 相邻 triangle、共享 edge、共享 vertex和同一 primitive的一环排除已实现并有正反自动回归；下一步继续审计二环/厚度相关近邻和同面近共面结构，不能无依据扩大固定k-ring。
 3. 核对 Blender 代理三角方向、法线、负缩放、非流形边和重复顶点是否制造假 intersection；已确认干净样例无非流形或拓扑交叉时，不得继续把密集区红箭头归因于坏拓扑。
 4. 分开统计“新建 contact”“持续 contact”“失效 contact”“intersection 新增/消失”，不能只看总数。
 5. 比较 self off/on 在零重力、无动画、无外碰时的 RMS 速度、最大位移、能量衰减和 600/1800 帧稳定值。
 6. 判断微动来自接触厚度、交叉修正、缓存抖动、约束顺序还是 inverse mass/cloth mass。
 7. 对同一 world-space 曲面做低/中/高三档重拓扑，保持材质、厚度和外形不变，比较单位面积 candidate/contact、RMS 速度与 contact churn；顶点变密本身不得让接触数量或修正能量失控。
-8. 记录 self thickness 与局部一环边长的比例，核对共享 vertex/edge 及近邻 k-ring 排除是否足以阻止同一连续曲面在密集区互相排斥，并检查同一几何接触是否被 PT/EE 或多个 primitive 重复累计。
+8. 记录 self thickness 与局部一环边长的比例，复验已完成的一环排除是否足以阻止同一连续曲面在密集区互相排斥；若仍失败，再以局部厚度/边长证据评估自适应k-ring，并检查同一几何接触是否被 PT/EE 或多个 primitive 重复累计。
 
 ### 待确认的产品标准 D-04
 
@@ -101,8 +106,9 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 ### Debug 重组
 
 - 一级 `自碰接触`：只显示当前实际施加修正的 contact、法线、修正量和参与质量。
-- 一级 `几何交叉`：只显示经过 adjacency/有效性过滤后本帧参与 Intersect 修正的记录；洋红必须明确表示“几何穿越修正”，不是普通接触。
+- 一级 `几何交叉`：只显示final线段-三角形测试确认命中的记录；洋红必须明确表示“几何穿越命中”，不是普通接触或broadphase record。
 - 高级 `自碰形状`、`宽相网格`、`宽相候选`：保留给算法审计，默认关闭。
+- 高级 `穿插扫描候选`：低亮度表达当前奇/偶Edge分片及broadphase record。若提供稳定观察，只能在renderer合并最近两帧并按年龄淡出，必须标注为两帧观察窗，不能冒充本帧solver状态。
 - 每种模式显示本帧新增/持续/失效状态，避免闪烁被误读成稳定接触。
 - 若 debug 关闭，不得生产 contact 明细、intersection 线段或额外 readback；求解本来必需的缓存不算 debug，但不能为绘制复制整份数组。
 
