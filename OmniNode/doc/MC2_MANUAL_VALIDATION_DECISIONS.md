@@ -35,7 +35,7 @@
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
 | D-08 | **人工已验证** | Baseline depth 审计 | Mesh以4:1混入Fixed边界表面距离并单调保护；Depth inertia使用1.5次指数；非均匀减面实测确认旋转带动更自然且横向等高线偏移明显受抑制 |
 | D-09 | **已决策** | 参数说明载体 | 蓝本属性表与三个 Profile 节点长注释同步；socket tooltip 只保留短摘要和枚举映射 |
-| D-10 | **已发现，待审计** | 非连通 MeshCloth 碰撞可视化完整性 | `碰撞情况`必须覆盖任务内全部非连通分量；区分静态代理构建漏分量与renderer按单一连通分量截断 |
+| D-10 | **代码已修复，待手测** | 非连通 MeshCloth 碰撞可视化完整性 | 根因是`max_items`按数组前缀截断；现按连通分量公平分配预算并在分量内均匀抽样 |
 
 ## P0：Teleport 回退与高速穿模
 
@@ -271,7 +271,7 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 当前碰撞情况只画可参与碰撞的 Point/Edge proxy 与 collider 形状，不能判断本帧是否真的发生排斥。建议保留该模式，并新增独立 `实际接触`：
 
-新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计必须分别核对final proxy是否包含全部分量、Point/Edge collision记录是否按全局顶点范围生成、debug `max_items`截断是否错误集中在前一分量，以及renderer是否复用了单一root/连通分量的拓扑范围。修复前不得把该模式声明为完整表达实际碰撞形状。
+新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配；真实截图场景仍需手测关闭D-10。
 
 - 接触点、接触法线、穿深/修正量；
 - 当前 active 的粒子/边和 collider id；
@@ -345,7 +345,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
 5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
-6. **非连通碰撞绘制审计 D-10**：先定位final proxy、collision记录或renderer的分量截断，再补最小双分量自动回归。
+6. **非连通碰撞绘制 D-10（代码已修复，待手测）**：已确认renderer前缀截断并改为分量公平抽样；双分量Point/Edge自动回归已通过。
 7. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
 8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 9. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。

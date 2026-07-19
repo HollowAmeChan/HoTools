@@ -473,6 +473,83 @@ def _append_collision_situation_batches(
         )
 
 
+def _collision_component_ids(vertex_count, edges):
+    parent = np.arange(max(int(vertex_count), 0), dtype=np.int32)
+
+    def find(value):
+        value = int(value)
+        while int(parent[value]) != value:
+            parent[value] = parent[int(parent[value])]
+            value = int(parent[value])
+        return value
+
+    for edge in np.asarray(edges, dtype=np.int32).reshape((-1, 2)):
+        left, right = map(int, edge)
+        if min(left, right) < 0 or max(left, right) >= len(parent):
+            continue
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+    return np.asarray([find(index) for index in range(len(parent))], dtype=np.int32)
+
+
+def _component_fair_sample(candidate_indices, component_ids, limit):
+    candidates = np.asarray(candidate_indices, dtype=np.int32).reshape((-1,))
+    limit = max(int(limit), 0)
+    if len(candidates) <= limit:
+        return candidates
+    if limit == 0:
+        return np.empty((0,), dtype=np.int32)
+
+    groups = {}
+    for candidate, component in zip(candidates, component_ids):
+        groups.setdefault(int(component), []).append(int(candidate))
+    buckets = list(groups.values())
+    if len(buckets) >= limit:
+        selected = np.linspace(0, len(buckets) - 1, limit, dtype=np.int32)
+        return np.asarray(
+            [buckets[int(index)][len(buckets[int(index)]) // 2] for index in selected],
+            dtype=np.int32,
+        )
+
+    quotas = np.ones(len(buckets), dtype=np.int32)
+    capacities = np.asarray([len(bucket) - 1 for bucket in buckets], dtype=np.int32)
+    remaining = limit - len(buckets)
+    capacity_total = int(np.sum(capacities))
+    if remaining > 0 and capacity_total > 0:
+        shares = capacities.astype(np.float64) * (float(remaining) / capacity_total)
+        extras = np.minimum(np.floor(shares).astype(np.int32), capacities)
+        quotas += extras
+        remaining -= int(np.sum(extras))
+        order = sorted(
+            range(len(buckets)),
+            key=lambda index: (
+                -(shares[index] - math.floor(shares[index])),
+                -capacities[index],
+                index,
+            ),
+        )
+        while remaining > 0:
+            progressed = False
+            for index in order:
+                if quotas[index] >= len(buckets[index]):
+                    continue
+                quotas[index] += 1
+                remaining -= 1
+                progressed = True
+                if remaining == 0:
+                    break
+            if not progressed:
+                break
+
+    selected = []
+    for bucket, quota in zip(buckets, quotas):
+        offsets = np.linspace(0, len(bucket) - 1, int(quota), dtype=np.int32)
+        selected.extend(bucket[int(offset)] for offset in offsets)
+    return np.asarray(sorted(selected), dtype=np.int32)
+
+
 def _append_point_collision_batches(
     batches, triangle_meshes, positions, topology, collision, setup_type, limit
 ):
@@ -482,7 +559,10 @@ def _append_point_collision_batches(
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
     is_spring = setup_type == "bone_spring"
     mesh = _triangle_mesh(triangle_meshes, "point_collision_surface")
-    count = min(len(positions), len(attributes), len(radii), limit)
+    count = min(len(positions), len(attributes), len(radii))
+    edges = np.asarray(_values(topology.get("edges")), dtype=np.int32).reshape((-1, 2))
+    component_ids = _collision_component_ids(count, edges)
+    candidates = []
     for index in range(count):
         attribute = int(attributes[index])
         valid = bool(attribute & 0x03) if is_spring else bool(attribute & 0x02)
@@ -491,6 +571,15 @@ def _append_point_collision_batches(
         radius = max(float(radii[index]), 0.0)
         if radius <= 1.0e-7:
             continue
+        candidates.append(index)
+    selected = _component_fair_sample(
+        candidates,
+        component_ids[np.asarray(candidates, dtype=np.intp)],
+        limit,
+    )
+    for index in selected:
+        index = int(index)
+        radius = max(float(radii[index]), 0.0)
         add_sphere_triangles(
             mesh["vertices"], mesh["indices"], positions[index], radius
         )
@@ -509,7 +598,10 @@ def _append_edge_collision_batches(
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
     mesh = _triangle_mesh(triangle_meshes, "edge_collision_surface")
     centers = []
-    for edge in edges[:limit]:
+    vertex_count = min(len(positions), len(attributes), len(radii))
+    component_ids = _collision_component_ids(vertex_count, edges)
+    candidates = []
+    for edge_index, edge in enumerate(edges):
         left, right = map(int, edge)
         if min(left, right) < 0 or max(left, right) >= len(positions):
             continue
@@ -521,6 +613,18 @@ def _append_edge_collision_batches(
         radius_right = max(float(radii[right]), 0.0)
         if max(radius_left, radius_right) <= 1.0e-7:
             continue
+        candidates.append(edge_index)
+    selected = _component_fair_sample(
+        candidates,
+        component_ids[
+            np.asarray([int(edges[index][0]) for index in candidates], dtype=np.intp)
+        ],
+        limit,
+    )
+    for edge_index in selected:
+        left, right = map(int, edges[int(edge_index)])
+        radius_left = max(float(radii[left]), 0.0)
+        radius_right = max(float(radii[right]), 0.0)
         add_line(centers, positions[left], positions[right])
         add_tapered_capsule_triangles(
             mesh["vertices"],

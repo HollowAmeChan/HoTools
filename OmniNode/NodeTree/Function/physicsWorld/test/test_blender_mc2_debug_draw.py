@@ -224,6 +224,24 @@ world.collider_snapshot = {
 }
 node_uid = "mc2-debug-acceptance"
 try:
+    disconnected_edges = np.asarray(
+        ((0, 1), (1, 2), (2, 3), (4, 5), (5, 6), (6, 7)),
+        dtype=np.int32,
+    )
+    component_ids = debug_draw._collision_component_ids(8, disconnected_edges)
+    sampled_vertices = debug_draw._component_fair_sample(
+        np.arange(8, dtype=np.int32),
+        component_ids,
+        4,
+    )
+    assert set(component_ids[sampled_vertices]) == {0, 4}
+    sampled_edges = debug_draw._component_fair_sample(
+        np.arange(len(disconnected_edges), dtype=np.int32),
+        component_ids[disconnected_edges[:, 0]],
+        2,
+    )
+    assert set(component_ids[disconnected_edges[sampled_edges, 0]]) == {0, 4}
+
     for task_function in (
         mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
@@ -661,23 +679,20 @@ try:
             assert len(colors & depth_colors) >= 2, (mode_name, colors)
         elif mode_name == "show_teleport_threshold":
             teleport = captured_snapshot["teleport"]
-            assert teleport["status"] is None
-            threshold = teleport["threshold"]
-            assert threshold is not None
-            assert threshold["old_positions"].flags.writeable is False
-            assert threshold["positions"].flags.writeable is False
-            assert threshold["eligible"].flags.writeable is False
-            assert np.all(threshold["eligible"] == 1)
-            assert "teleport_threshold" in native_snapshot
+            assert teleport["reference_kind"] in ("first_fixed", "object_origin")
+            assert len(teleport["old_reference_position"]) == 3
+            assert len(teleport["reference_position"]) == 3
+            assert teleport["distance_threshold"] >= 0.0
+            assert teleport["rotation_threshold_degrees"] >= 0.0
+            assert "teleport_threshold" not in native_snapshot
             assert "teleport_status" not in native_snapshot
         elif mode_name == "show_teleport_status":
             teleport = captured_snapshot["teleport"]
-            assert teleport["threshold"] is None
-            status = teleport["status"]
-            assert status is not None
-            assert status["positions"].flags.writeable is False
-            assert status["status"].flags.writeable is False
-            assert "teleport_status" in native_snapshot
+            assert teleport["reference_kind"] in ("first_fixed", "object_origin")
+            assert int(teleport["mode"]) in (0, 1, 2)
+            assert isinstance(teleport["applied"], bool)
+            assert len(teleport["reference_position"]) == 3
+            assert "teleport_status" not in native_snapshot
             assert "teleport_threshold" not in native_snapshot
         elif mode_name == "show_distance":
             assert captured_snapshot["motion"].get("step_basic_positions") is not None
