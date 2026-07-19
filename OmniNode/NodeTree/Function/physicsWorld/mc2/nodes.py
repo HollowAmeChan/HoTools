@@ -671,7 +671,7 @@ def physicsMC2Step(
         "show_motion_base": {"description": "Motion实际BasePosition/法线轴。"},
         "show_motion": {"description": "显示MaxDistance与Backstop约束。"},
         "show_angle_restoration": {"description": "粉色箭头显示Angle Restoration目标。"},
-        "show_angle_limit": {"description": "黄色锥体显示每个父子段允许的Angle Limit范围。\n刚度为0时不绘制。"},
+        "show_angle_limit": {"description": "黄色锥体显示Angle Limit范围。\n方向来自父粒子的层级旋转目标。\n它不同于Angle Restoration目标。"},
         "show_center": {"description": "显示组件运动如何传入粒子。\n黄=组件Center  青=Anchor\n橙=帧补偿  浅蓝=完整Step\n紫=Local跟随基值\n蓝球/外弧=Teleport位移/旋转阈值\n绿=未触发  粉=Keep  红=Reset\n触发：位移>=阈值xScale，或旋转>=阈值。"},
         "show_collision": {"description": "半透明实体显示外碰双方。\n绿色=Point粒子球\n橙色=Edge布料形状\n蓝色=外部碰撞体。"},
         "show_radii": {"description": "参数审计：显示全部粒子半径。\n不表示当前一定参与碰撞。"},

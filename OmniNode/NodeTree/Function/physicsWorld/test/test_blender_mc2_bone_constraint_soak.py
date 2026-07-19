@@ -731,7 +731,7 @@ def _run_bone_distance_tether():
             if roots is None:
                 native_debug = slot.data["native_context"].refresh_debug_draw_snapshot(
                     include_step_basic=True,
-                    include_motion_debug=False,
+                    include_motion_base=False,
                     include_dynamics=False,
                     include_distance_tether=True,
                     include_bending=False,
@@ -823,6 +823,182 @@ def bone_distance_tether():
     print("[PASS] BoneCloth Distance/Tether: connected/disconnected x 2 x 900")
 
 
+def _bone_angle_values(native_context, candidate):
+    snapshot = native_context.refresh_debug_draw_snapshot(
+        include_step_basic=False,
+        include_angle_limit=True,
+        include_dynamics=False,
+        include_distance_tether=False,
+        include_bending=False,
+        include_self=False,
+    )
+    targets = snapshot["angle_limit_target_positions"]
+    vectors = snapshot["angle_limit_target_vectors"]
+    valid = snapshot["angle_limit_target_valid"]
+    angles = []
+    for child, is_valid in enumerate(valid):
+        if not is_valid:
+            continue
+        base_vector = vectors[child]
+        parent_position = targets[child] - base_vector
+        current_vector = candidate.world_positions[child] - parent_position
+        base_length = float(np.linalg.norm(base_vector))
+        current_length = float(np.linalg.norm(current_vector))
+        if min(base_length, current_length) <= 1.0e-8:
+            continue
+        cosine = float(np.dot(base_vector, current_vector) / (base_length * current_length))
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+    assert angles
+    return angles
+
+
+def _run_bone_angle_limit(setup_type):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 78 if setup_type == names.MC2_SETUP_BONE_CLOTH else 79
+    armature = mixed._armature(f"MC2AngleLimit_{setup_type}", 0.0, 1.0)
+    initial_basis = {
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    }
+
+    def make_task(enabled, limit):
+        profile = parameters.make_mc2_particle_profile(
+            gravity=4.0,
+            gravity_direction=(0.0, 0.0, -1.0),
+            damping=0.1,
+            stabilization_time_after_reset=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=enabled,
+            angle_limit=limit,
+            angle_limit_stiffness=1.0,
+            collision_mode=0,
+            self_collision_mode=0,
+        )
+        source = {"armature": armature, "bone": "Root"}
+        if setup_type == names.MC2_SETUP_BONE_CLOTH:
+            tasks, _task_names = nodes.physicsMC2BoneClothTask(
+                [source], profile=profile, connection_mode=0
+            )
+        else:
+            tasks, _task_names = nodes.physicsMC2BoneSpringTask(
+                [source], profile=profile
+            )
+        assert len(tasks) == 1
+        return tasks[0]
+
+    task = make_task(False, 30.0)
+    stable_task_id = task.task_id
+    topology = topology_module.build_mc2_topology_spec(task)
+    phase_angles = {"off_a": [], "limit_30": [], "off_b": [], "limit_15": []}
+    trajectory_digest = hashlib.sha256()
+    disabled_count = None
+    try:
+        for frame in range(1, 901):
+            if frame == 201:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(True, 30.0)
+                assert task.task_id == stable_task_id
+            elif frame == 401:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(False, 30.0)
+                assert task.task_id == stable_task_id
+            elif frame == 601:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(True, 15.0)
+                assert task.task_id == stable_task_id
+
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            root = armature.pose.bones["Root"]
+            root.rotation_mode = "XYZ"
+            root.rotation_euler.z = 0.75 * math.sin(frame * 0.13)
+            root.location.x = 0.035 * math.sin(frame * 0.09)
+            bpy.context.view_layer.update()
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            if frame <= 200:
+                phase = "off_a"
+            elif frame <= 400:
+                phase = "limit_30"
+            elif frame <= 600:
+                phase = "off_b"
+            else:
+                phase = "limit_15"
+            if phase in ("limit_30", "limit_15"):
+                phase_angles[phase].append(max(_bone_angle_values(
+                    slot.data["native_context"], candidate
+                )))
+
+            info = slot.data["native_context"].inspect()
+            if frame == 200:
+                assert info["angle_solve_count"] == 0
+            elif frame in (201, 401, 601):
+                assert slot.data["native_context"] is old_context
+                assert info["parameter_revision"] == old_revision + 1
+                if frame == 401:
+                    disabled_count = info["angle_solve_count"]
+            elif 401 < frame <= 600:
+                assert info["angle_solve_count"] == disabled_count
+            if setup_type == names.MC2_SETUP_BONE_CLOTH:
+                plan = slot.data["writeback_plan"]
+                assert plan["rotation_only_connected_count"] > 0
+                assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+
+        steady_15 = phase_angles["limit_15"][100:]
+        steady_30 = phase_angles["limit_30"][100:]
+        print(
+            f"[INFO] {setup_type} Angle Limit observed: "
+            f"30deg max={max(steady_30):.6f} p95={np.percentile(steady_30, 95):.6f}; "
+            f"15deg max={max(steady_15):.6f} p95={np.percentile(steady_15, 95):.6f}"
+        )
+        assert max(steady_30) <= 36.0, (setup_type, "30deg", max(steady_30))
+        assert max(steady_15) <= 29.0, (setup_type, "15deg", max(steady_15))
+        assert max(steady_15) <= max(steady_30) - 5.0, (
+            setup_type, max(steady_30), max(steady_15)
+        )
+        assert slot.data["native_context"].inspect()["angle_solve_count"] > disabled_count
+        for phase in ("limit_30", "limit_15"):
+            trajectory_digest.update(np.asarray(phase_angles[phase], dtype=np.float32).tobytes())
+        print(
+            f"[INFO] {setup_type} Angle Limit max: "
+            f"30deg {max(steady_30):.6f}, "
+            f"15deg {max(steady_15):.6f}"
+        )
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_angle_limit_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_angle_limit():
+    for setup_type in (names.MC2_SETUP_BONE_CLOTH, names.MC2_SETUP_BONE_SPRING):
+        first = _run_bone_angle_limit(setup_type)
+        second = _run_bone_angle_limit(setup_type)
+        assert first == second, (setup_type, first, second)
+    print("[PASS] Bone Angle Limit: 2 setups x 2 deterministic x 900 frames")
+
+
 def main():
     mixed.physics_blender.register()
     try:
@@ -831,6 +1007,7 @@ def main():
         bone_external_collision()
         bone_friction_response()
         bone_distance_tether()
+        bone_angle_limit()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

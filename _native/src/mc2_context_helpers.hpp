@@ -68,6 +68,12 @@ std::array<float, 4> quaternion_multiply(
     const std::array<float, 4>& right
 );
 void normalize_quaternion(std::array<float, 4>& value);
+std::array<float, 4> quaternion_inverse(std::array<float, 4> value);
+std::array<float, 4> quaternion_from_to(
+    Vec3 first,
+    Vec3 second,
+    float ratio = 1.0f
+);
 std::array<float, 4> quaternion_from_forward_up(Vec3 forward, Vec3 up);
 Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value);
 Vec3 transform_vector_matrix(const float* matrix, Vec3 value);

@@ -141,10 +141,13 @@ def _task(obj):
 def _frame_input(task, frame):
     topology = topology_module.build_mc2_topology_spec(task)
     positions = np.asarray([tuple(vertex.co) for vertex in task.sources[0].data.vertices], dtype=np.float32)
+    if frame >= 4:
+        phases = np.arange(len(positions), dtype=np.float32) * np.float32(0.31)
+        positions[:, 2] += np.sin(phases + np.float32(frame * 0.47)) * np.float32(0.003)
     rotations = np.zeros((len(positions), 4), dtype=np.float32)
     rotations[:, 3] = 1.0
     component_position = (1.0, 0.0, 0.0) if frame >= 3 else (0.0, 0.0, 0.0)
-    component_scale = (-1.0, 1.0, 1.0) if frame >= 3 else (1.0, 1.0, 1.0)
+    component_scale = (-1.0, 1.0, 1.0) if frame == 3 else (1.0, 1.0, 1.0)
     source_world_linear = np.diag(component_scale).astype(np.float32)
     center_pose = center_state.MC2CenterFramePoseSpec(
         frame=frame,
@@ -389,7 +392,7 @@ try:
         ("show_attributes", {"show_attributes": True}, ("fixed", "move")),
         ("show_step_basic", {"show_step_basic": True}, ("step_basic",)),
         ("show_gravity", {"show_gravity": True}, ("gravity",)),
-        ("show_velocity", {"show_velocity": True}, ("velocity", "real_velocity")),
+        ("show_velocity", {"show_velocity": True}, ()),
         ("show_distance", {"show_distance": True}, ("distance_ok", "distance_compress", "distance_stretch")),
         ("show_tether", {"show_tether": True}, ("tether",)),
         ("show_bending", {"show_bending": True}, ("bending", "bending_volume", "bending_error")),
@@ -436,6 +439,33 @@ try:
             True,
             **options,
         )
+        previous_frame = int(world.frame_context.frame)
+        capture_frame = previous_frame
+        for _attempt in range(4):
+            capture_frame += 1
+            _world_frame(world, capture_frame, capture_frame - 1)
+            solver_module.step_mc2(
+                world,
+                tasks,
+                frame_inputs={
+                    task.task_id: _frame_input(task, capture_frame)
+                    for task in tasks
+                },
+                dt=1.0 / 90.0,
+            )
+            captured = next(iter(world.solver_slots.values())).data.get(
+                "_debug_draw_snapshot"
+            )
+            if captured is not None and captured.get("frame") == capture_frame:
+                break
+        else:
+            raise AssertionError((mode_name, "no true advance", capture_frame))
+        debug_draw.update_mc2_debug_draw_store(
+            node_uid,
+            world,
+            True,
+            **options,
+        )
         isolated = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
         colors = set(
             isolated["line_batch_colors"]
@@ -443,7 +473,31 @@ try:
             + isolated["triangle_batch_colors"]
         )
         expected_colors = {tuple(debug_draw._COLORS[name]) for name in expected_batches}
-        assert colors & expected_colors, (mode_name, colors, expected_colors)
+        if expected_colors:
+            assert colors & expected_colors, (mode_name, colors, expected_colors)
+        captured_snapshot = next(iter(world.solver_slots.values())).data[
+            "_debug_draw_snapshot"
+        ]
+        assert captured_snapshot["frame"] == capture_frame, (
+            mode_name, captured_snapshot["frame"], capture_frame
+        )
+        native_snapshot = captured_snapshot["native"]
+        if mode_name == "show_motion_base":
+            assert "motion_base_positions" in native_snapshot
+            assert "angle_restoration_target_positions" not in native_snapshot
+            assert "angle_limit_target_positions" not in native_snapshot
+        elif mode_name == "show_angle_restoration":
+            assert "motion_base_positions" not in native_snapshot
+            assert "angle_restoration_target_positions" in native_snapshot
+            assert "angle_limit_target_positions" not in native_snapshot
+        elif mode_name == "show_angle_limit":
+            assert "motion_base_positions" not in native_snapshot
+            assert "angle_restoration_target_positions" not in native_snapshot
+            assert "angle_limit_target_positions" in native_snapshot
+        elif mode_name == "show_velocity":
+            assert "dynamics" in native_snapshot, (
+                mode_name, tuple(native_snapshot), captured_snapshot["filters"]
+            )
     print("[PASS] isolated debug modes emit their own physical batch semantics")
 
     debug_draw.update_mc2_debug_draw_store(

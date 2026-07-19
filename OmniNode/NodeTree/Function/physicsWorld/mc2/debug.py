@@ -229,6 +229,15 @@ def _motion_payload(slot, native_snapshot) -> dict:
             curves["angle_restoration_stiffness"], depths
         ),
         "use_angle_limit": bool(ints["use_angle_limit"]),
+        "angle_limit_target_positions": native_snapshot.get(
+            "angle_limit_target_positions"
+        ),
+        "angle_limit_target_vectors": native_snapshot.get(
+            "angle_limit_target_vectors"
+        ),
+        "angle_limit_target_valid": native_snapshot.get(
+            "angle_limit_target_valid"
+        ),
         "angle_limits": _sample_curve(curves["angle_limit"], depths),
         "angle_limit_stiffness": float(floats["angle_limit_stiffness"]),
         "normal_axis": int(ints["normal_axis"]),
@@ -439,12 +448,14 @@ def capture_requested_mc2_debug(
                     or filters.get("show_distance", False)
                     or filters.get("show_tether", False)
                 ),
-                include_motion_debug=bool(
+                include_motion_base=bool(
                     filters.get("show_motion", True)
                     or filters.get("show_motion_base", True)
-                    or filters.get("show_angle_restoration", True)
-                    or filters.get("show_angle_limit", False)
                 ),
+                include_angle_restoration=bool(
+                    filters.get("show_angle_restoration", True)
+                ),
+                include_angle_limit=bool(filters.get("show_angle_limit", False)),
                 include_dynamics=bool(filters.get("show_velocity", False)),
                 include_distance_tether=bool(
                     filters.get("show_distance", False)

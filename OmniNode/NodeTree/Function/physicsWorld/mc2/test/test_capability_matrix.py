@@ -91,8 +91,8 @@ def test_setup_local_evidence_cannot_close_another_setup():
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]
-    assert "limit_bounded@bone_cloth" in angle_limit["invariants"]
-    assert "limit_bounded@bone_spring" in angle_limit["invariants"]
+    assert "limit_bounded@bone_cloth" not in angle_limit["invariants"]
+    assert "limit_bounded@bone_spring" not in angle_limit["invariants"]
     assert "deterministic@bone_cloth" not in angle_limit["invariants"]
     assert "deterministic@bone_spring" not in angle_limit["invariants"]
     assert "deterministic@mesh_cloth" not in angle_limit["invariants"]

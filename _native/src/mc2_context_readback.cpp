@@ -6,11 +6,124 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace hotools {
 
 using namespace mc2_internal;
 using namespace py;
+
+namespace {
+
+void build_angle_limit_debug(
+    const Mc2ContextV0& context,
+    float* targets,
+    float* vectors,
+    std::uint8_t* valid
+) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.baseline_parents.size() != count ||
+        context.baseline_ranges.size() % 2 != 0 ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.step_basic_rotations.size() != count * 4 ||
+        context.state_positions.size() != count * 3 ||
+        context.proxy_attributes.size() != count) {
+        return;
+    }
+    std::vector<float> work_rotations = context.step_basic_rotations;
+    std::vector<Vec3> local_positions(count);
+    std::vector<std::array<float, 4>> local_rotations(
+        count, {0.0f, 0.0f, 0.0f, 1.0f}
+    );
+    const auto line_count = context.baseline_ranges.size() / 2;
+    for (std::size_t line = 0; line < line_count; ++line) {
+        const auto start = context.baseline_ranges[line * 2];
+        const auto line_size = context.baseline_ranges[line * 2 + 1];
+        if (start < 0 || line_size <= 1 ||
+            static_cast<std::size_t>(start + line_size) > context.baseline_data.size()) {
+            continue;
+        }
+        for (std::int32_t local = 1; local < line_size; ++local) {
+            const auto raw_child = context.baseline_data[static_cast<std::size_t>(start + local)];
+            if (raw_child < 0 || static_cast<std::size_t>(raw_child) >= count) continue;
+            const auto child = static_cast<std::size_t>(raw_child);
+            const auto raw_parent = context.baseline_parents[child];
+            if (raw_parent < 0 || static_cast<std::size_t>(raw_parent) >= count) continue;
+            const auto parent = static_cast<std::size_t>(raw_parent);
+            const Vec3 base {
+                context.step_basic_positions[child * 3 + 0] -
+                    context.step_basic_positions[parent * 3 + 0],
+                context.step_basic_positions[child * 3 + 1] -
+                    context.step_basic_positions[parent * 3 + 1],
+                context.step_basic_positions[child * 3 + 2] -
+                    context.step_basic_positions[parent * 3 + 2],
+            };
+            const float base_length = length(base);
+            if (base_length <= kMc2Epsilon) continue;
+            const auto parent_step_inverse = quaternion_inverse(
+                load_quaternion(context.step_basic_rotations, parent)
+            );
+            local_positions[child] = rotate_vector(
+                parent_step_inverse, mul(base, 1.0f / base_length)
+            );
+            local_rotations[child] = quaternion_multiply(
+                parent_step_inverse,
+                load_quaternion(context.step_basic_rotations, child)
+            );
+        }
+        for (std::int32_t local = 1; local < line_size; ++local) {
+            const auto raw_child = context.baseline_data[static_cast<std::size_t>(start + local)];
+            if (raw_child < 0 || static_cast<std::size_t>(raw_child) >= count) continue;
+            const auto child = static_cast<std::size_t>(raw_child);
+            const auto raw_parent = context.baseline_parents[child];
+            if (raw_parent < 0 || static_cast<std::size_t>(raw_parent) >= count ||
+                !is_move(context.proxy_attributes[child])) {
+                continue;
+            }
+            const auto parent = static_cast<std::size_t>(raw_parent);
+            const auto parent_rotation = load_quaternion(work_rotations, parent);
+            const Vec3 target_direction = rotate_vector(
+                parent_rotation, local_positions[child]
+            );
+            const Vec3 current {
+                context.state_positions[child * 3 + 0] -
+                    context.state_positions[parent * 3 + 0],
+                context.state_positions[child * 3 + 1] -
+                    context.state_positions[parent * 3 + 1],
+                context.state_positions[child * 3 + 2] -
+                    context.state_positions[parent * 3 + 2],
+            };
+            const float target_length = length(target_direction);
+            const float current_length = length(current);
+            if (target_length <= kMc2Epsilon || current_length <= kMc2Epsilon) continue;
+            const Vec3 target_vector = mul(
+                target_direction, current_length / target_length
+            );
+            const auto offset = child * 3;
+            vectors[offset + 0] = target_vector.x;
+            vectors[offset + 1] = target_vector.y;
+            vectors[offset + 2] = target_vector.z;
+            targets[offset + 0] = context.state_positions[parent * 3 + 0] + target_vector.x;
+            targets[offset + 1] = context.state_positions[parent * 3 + 1] + target_vector.y;
+            targets[offset + 2] = context.state_positions[parent * 3 + 2] + target_vector.z;
+            valid[child] = 1;
+
+            const auto base_rotation = quaternion_multiply(
+                parent_rotation, local_rotations[child]
+            );
+            store_quaternion(
+                work_rotations,
+                child,
+                quaternion_multiply(
+                    quaternion_from_to(target_direction, current),
+                    base_rotation
+                )
+            );
+        }
+    }
+}
+
+}  // namespace
 
 PyObject* mc2_context_v0_read(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 3) {
@@ -452,12 +565,9 @@ PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 6) {
-        PyErr_SetString(
-            PyExc_TypeError,
-            "mc2_context_v0_read_debug_motion expects 6 arguments"
-        );
+PyObject* mc2_context_v0_read_debug_motion_base(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_debug_motion_base expects 3 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -465,66 +575,85 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
     const auto count = static_cast<std::size_t>(context->vertex_count);
     if (!context->initialized ||
         context->animated_base_positions.size() != count * 3 ||
-        context->animated_base_rotations.size() != count * 4 ||
+        context->animated_base_rotations.size() != count * 4) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug Motion Base state is not ready");
+        return nullptr;
+    }
+    Buffer positions, rotations;
+    if (!positions.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_motion_base_positions"
+        ) ||
+        !rotations.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_motion_base_rotations"
+        )) {
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "out_motion_base_positions") ||
+        !expect_2d(positions, "out_motion_base_positions", vertex_count, 3) ||
+        !expect_float32(rotations, "out_motion_base_rotations") ||
+        !expect_2d(rotations, "out_motion_base_rotations", vertex_count, 4)) {
+        return nullptr;
+    }
+    std::memcpy(
+        positions.view.buf, context->animated_base_positions.data(),
+        context->animated_base_positions.size() * sizeof(float)
+    );
+    std::memcpy(
+        rotations.view.buf, context->animated_base_rotations.data(),
+        context->animated_base_rotations.size() * sizeof(float)
+    );
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_angle_restoration(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_angle_restoration expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->initialized ||
         context->step_basic_positions.size() != count * 3 ||
         context->state_positions.size() != count * 3 ||
         context->baseline_parents.size() != count ||
         context->proxy_attributes.size() != count) {
-        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug motion state is not ready");
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug Angle Restoration state is not ready");
         return nullptr;
     }
-
-    Buffer base_positions, base_rotations, restoration_targets;
-    Buffer restoration_vectors, restoration_valid;
-    if (!base_positions.get(
+    Buffer target_buffer, vector_buffer, valid_buffer;
+    if (!target_buffer.get(
             PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
-            "out_motion_base_positions"
-        ) ||
-        !base_rotations.get(
-            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
-            "out_motion_base_rotations"
-        ) ||
-        !restoration_targets.get(
-            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_angle_restoration_targets"
         ) ||
-        !restoration_vectors.get(
-            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+        !vector_buffer.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_angle_restoration_vectors"
         ) ||
-        !restoration_valid.get(
-            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+        !valid_buffer.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_angle_restoration_valid"
         )) {
         return nullptr;
     }
     const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
-    if (!expect_float32(base_positions, "out_motion_base_positions") ||
-        !expect_2d(base_positions, "out_motion_base_positions", vertex_count, 3) ||
-        !expect_float32(base_rotations, "out_motion_base_rotations") ||
-        !expect_2d(base_rotations, "out_motion_base_rotations", vertex_count, 4) ||
-        !expect_float32(restoration_targets, "out_angle_restoration_targets") ||
-        !expect_2d(restoration_targets, "out_angle_restoration_targets", vertex_count, 3) ||
-        !expect_float32(restoration_vectors, "out_angle_restoration_vectors") ||
-        !expect_2d(restoration_vectors, "out_angle_restoration_vectors", vertex_count, 3) ||
-        !expect_uint8_scalar_array(restoration_valid, "out_angle_restoration_valid") ||
-        !expect_1d_array(restoration_valid, "out_angle_restoration_valid", vertex_count)) {
+    if (!expect_float32(target_buffer, "out_angle_restoration_targets") ||
+        !expect_2d(target_buffer, "out_angle_restoration_targets", vertex_count, 3) ||
+        !expect_float32(vector_buffer, "out_angle_restoration_vectors") ||
+        !expect_2d(vector_buffer, "out_angle_restoration_vectors", vertex_count, 3) ||
+        !expect_uint8_scalar_array(valid_buffer, "out_angle_restoration_valid") ||
+        !expect_1d_array(valid_buffer, "out_angle_restoration_valid", vertex_count)) {
         return nullptr;
     }
-
-    std::memcpy(
-        base_positions.view.buf,
-        context->animated_base_positions.data(),
-        context->animated_base_positions.size() * sizeof(float)
-    );
-    std::memcpy(
-        base_rotations.view.buf,
-        context->animated_base_rotations.data(),
-        context->animated_base_rotations.size() * sizeof(float)
-    );
-    auto* targets = static_cast<float*>(restoration_targets.view.buf);
-    auto* vectors = static_cast<float*>(restoration_vectors.view.buf);
-    auto* valid = static_cast<std::uint8_t*>(restoration_valid.view.buf);
+    auto* targets = static_cast<float*>(target_buffer.view.buf);
+    auto* vectors = static_cast<float*>(vector_buffer.view.buf);
+    auto* valid = static_cast<std::uint8_t*>(valid_buffer.view.buf);
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         const auto offset = vertex * 3;
         targets[offset + 0] = context->step_basic_positions[offset + 0];
@@ -546,14 +675,70 @@ PyObject* mc2_context_v0_read_debug_motion(PyObject*, PyObject* args) {
             context->step_basic_positions[parent_offset + 1];
         vectors[offset + 2] = context->step_basic_positions[offset + 2] -
             context->step_basic_positions[parent_offset + 2];
-        targets[offset + 0] = context->state_positions[parent_offset + 0] +
-            vectors[offset + 0];
-        targets[offset + 1] = context->state_positions[parent_offset + 1] +
-            vectors[offset + 1];
-        targets[offset + 2] = context->state_positions[parent_offset + 2] +
-            vectors[offset + 2];
+        targets[offset + 0] = context->state_positions[parent_offset + 0] + vectors[offset + 0];
+        targets[offset + 1] = context->state_positions[parent_offset + 1] + vectors[offset + 1];
+        targets[offset + 2] = context->state_positions[parent_offset + 2] + vectors[offset + 2];
         valid[vertex] = 1;
     }
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_angle_limit(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_angle_limit expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->initialized ||
+        context->step_basic_positions.size() != count * 3 ||
+        context->step_basic_rotations.size() != count * 4 ||
+        context->state_positions.size() != count * 3) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug Angle Limit state is not ready");
+        return nullptr;
+    }
+    Buffer target_buffer, vector_buffer, valid_buffer;
+    if (!target_buffer.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_angle_limit_targets"
+        ) ||
+        !vector_buffer.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_angle_limit_vectors"
+        ) ||
+        !valid_buffer.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_angle_limit_valid"
+        )) {
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(target_buffer, "out_angle_limit_targets") ||
+        !expect_2d(target_buffer, "out_angle_limit_targets", vertex_count, 3) ||
+        !expect_float32(vector_buffer, "out_angle_limit_vectors") ||
+        !expect_2d(vector_buffer, "out_angle_limit_vectors", vertex_count, 3) ||
+        !expect_uint8_scalar_array(valid_buffer, "out_angle_limit_valid") ||
+        !expect_1d_array(valid_buffer, "out_angle_limit_valid", vertex_count)) {
+        return nullptr;
+    }
+    auto* targets = static_cast<float*>(target_buffer.view.buf);
+    auto* vectors = static_cast<float*>(vector_buffer.view.buf);
+    auto* valid = static_cast<std::uint8_t*>(valid_buffer.view.buf);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto offset = vertex * 3;
+        targets[offset + 0] = context->state_positions[offset + 0];
+        targets[offset + 1] = context->state_positions[offset + 1];
+        targets[offset + 2] = context->state_positions[offset + 2];
+        vectors[offset + 0] = 0.0f;
+        vectors[offset + 1] = 0.0f;
+        vectors[offset + 2] = 0.0f;
+        valid[vertex] = 0;
+    }
+    build_angle_limit_debug(*context, targets, vectors, valid);
     Py_RETURN_NONE;
 }
 

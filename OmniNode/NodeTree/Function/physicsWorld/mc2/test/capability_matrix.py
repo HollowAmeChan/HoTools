@@ -216,16 +216,17 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "branch_transition_stable", "parameter_hot_update_in_place",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_limit",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
             "invariants": (
-                "finite", "deterministic", "bone_branch_transition_stable",
-                "bounded_zero_force_drift", "connected_disconnected_writeback",
+                "finite", "deterministic", "limit_bounded",
+                "branch_transition_stable", "parameter_hot_update_in_place",
+                "connected_disconnected_writeback",
             ),
         },),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "motion_max_distance_backstop",

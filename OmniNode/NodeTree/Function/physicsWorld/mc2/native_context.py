@@ -799,7 +799,9 @@ class MC2NativeContextV0:
         self,
         *,
         include_step_basic: bool = True,
-        include_motion_debug: bool = False,
+        include_motion_base: bool = False,
+        include_angle_restoration: bool = False,
+        include_angle_limit: bool = False,
         include_dynamics: bool = False,
         include_distance_tether: bool = False,
         include_bending: bool = False,
@@ -821,26 +823,49 @@ class MC2NativeContextV0:
             snapshot["step_basic_positions"] = self._debug_array(basic_positions)
             snapshot["step_basic_rotations_xyzw"] = self._debug_array(basic_rotations)
             readbacks += 1
-        if include_motion_debug and bool(info.get("step_basic_ready", False)):
+        if include_motion_base and bool(info.get("step_basic_ready", False)):
             motion_base_positions = np.empty((self.vertex_count, 3), dtype=np.float32)
             motion_base_rotations = np.empty((self.vertex_count, 4), dtype=np.float32)
-            angle_targets = np.empty((self.vertex_count, 3), dtype=np.float32)
-            angle_vectors = np.empty((self.vertex_count, 3), dtype=np.float32)
-            angle_valid = np.empty((self.vertex_count,), dtype=np.uint8)
-            self._module.mc2_context_v0_read_debug_motion(
+            self._module.mc2_context_v0_read_debug_motion_base(
                 self._handle,
                 motion_base_positions,
                 motion_base_rotations,
+            )
+            snapshot.update({
+                "motion_base_positions": self._debug_array(motion_base_positions),
+                "motion_base_rotations_xyzw": self._debug_array(motion_base_rotations),
+            })
+            readbacks += 1
+        if include_angle_restoration and bool(info.get("step_basic_ready", False)):
+            angle_targets = np.empty((self.vertex_count, 3), dtype=np.float32)
+            angle_vectors = np.empty((self.vertex_count, 3), dtype=np.float32)
+            angle_valid = np.empty((self.vertex_count,), dtype=np.uint8)
+            self._module.mc2_context_v0_read_debug_angle_restoration(
+                self._handle,
                 angle_targets,
                 angle_vectors,
                 angle_valid,
             )
             snapshot.update({
-                "motion_base_positions": self._debug_array(motion_base_positions),
-                "motion_base_rotations_xyzw": self._debug_array(motion_base_rotations),
                 "angle_restoration_target_positions": self._debug_array(angle_targets),
                 "angle_restoration_target_vectors": self._debug_array(angle_vectors),
                 "angle_restoration_target_valid": self._debug_array(angle_valid),
+            })
+            readbacks += 1
+        if include_angle_limit and bool(info.get("step_basic_ready", False)):
+            limit_targets = np.empty((self.vertex_count, 3), dtype=np.float32)
+            limit_vectors = np.empty((self.vertex_count, 3), dtype=np.float32)
+            limit_valid = np.empty((self.vertex_count,), dtype=np.uint8)
+            self._module.mc2_context_v0_read_debug_angle_limit(
+                self._handle,
+                limit_targets,
+                limit_vectors,
+                limit_valid,
+            )
+            snapshot.update({
+                "angle_limit_target_positions": self._debug_array(limit_targets),
+                "angle_limit_target_vectors": self._debug_array(limit_vectors),
+                "angle_limit_target_valid": self._debug_array(limit_valid),
             })
             readbacks += 1
         if include_dynamics:

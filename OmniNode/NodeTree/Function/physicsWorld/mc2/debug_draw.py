@@ -817,9 +817,9 @@ def _append_angle_limit_batches(batches, motion, limit):
         return
     if float(motion.get("angle_limit_stiffness", 0.0) or 0.0) <= 1.0e-8:
         return
-    targets = motion.get("angle_restoration_target_positions")
-    vectors = motion.get("angle_restoration_target_vectors")
-    valid = motion.get("angle_restoration_target_valid")
+    targets = motion.get("angle_limit_target_positions")
+    vectors = motion.get("angle_limit_target_vectors")
+    valid = motion.get("angle_limit_target_valid")
     limits = motion.get("angle_limits")
     if targets is None or vectors is None or valid is None or limits is None:
         return

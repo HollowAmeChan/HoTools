@@ -630,7 +630,7 @@ def _run_mesh_tether_branch(obj, *, direction, compression, generation):
             if roots is None:
                 native_debug = slot.data["native_context"].refresh_debug_draw_snapshot(
                     include_step_basic=True,
-                    include_motion_debug=False,
+                    include_motion_base=False,
                     include_dynamics=False,
                     include_distance_tether=True,
                     include_bending=False,

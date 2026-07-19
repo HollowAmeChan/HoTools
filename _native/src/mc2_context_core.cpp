@@ -849,7 +849,7 @@ std::array<float, 4> quaternion_inverse(std::array<float, 4> value) {
     return {-value[0], -value[1], -value[2], value[3]};
 }
 
-std::array<float, 4> quaternion_from_to(Vec3 first, Vec3 second, float ratio = 1.0f) {
+std::array<float, 4> quaternion_from_to(Vec3 first, Vec3 second, float ratio) {
     const float first_length = length(first);
     const float second_length = length(second);
     if (first_length <= kMc2Epsilon || second_length <= kMc2Epsilon) {
