@@ -295,6 +295,17 @@ try:
     assert interaction._debug_scope == ()
     print("[PASS] debug disabled has zero native readback")
 
+    assert debug_module.request_mc2_debug_capture(
+        world, filters={"show_motion": True}
+    ) == len(tasks)
+    assert debug_module.request_mc2_debug_capture(world, filters={}) == 0
+    assert all(
+        slot.data["_debug_capture_state"]["requested"] is False
+        for slot in world.solver_slots.values()
+    )
+    assert interaction.debug_capture_state()["requested"] is False
+    print("[PASS] empty debug mode set cancels pending capture")
+
     debug_draw.update_mc2_debug_draw_store(
         node_uid,
         world,

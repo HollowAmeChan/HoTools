@@ -122,6 +122,8 @@ def update_mc2_debug_draw_store(
 ) -> None:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
+        if isinstance(world, PhysicsWorldCache):
+            request_mc2_debug_capture(world, filters={})
         clear_mc2_debug_draw_store(node_uid=node_key)
         return
 

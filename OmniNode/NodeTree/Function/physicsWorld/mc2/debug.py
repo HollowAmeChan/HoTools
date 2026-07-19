@@ -45,6 +45,29 @@ MC2_DEBUG_DRAW_MODES = {
     },
 }
 
+MC2_DEBUG_FILTER_KEYS = (
+    "show_topology",
+    "show_attributes",
+    "show_step_basic",
+    "show_gravity",
+    "show_velocity",
+    "show_distance",
+    "show_tether",
+    "show_bending",
+    "show_motion_base",
+    "show_motion",
+    "show_angle_restoration",
+    "show_angle_limit",
+    "show_center",
+    "show_collision",
+    "show_radii",
+    "show_self_primitives",
+    "show_self_grid",
+    "show_self_candidates",
+    "show_self_contacts",
+    "show_output",
+)
+
 
 def normalize_mc2_task_filters(value) -> tuple[str, ...]:
     pending = list(value) if isinstance(value, (list, tuple, set)) else [value]
@@ -114,6 +137,7 @@ def request_mc2_debug_capture(
             "show_self_contacts",
         )
     )
+    has_modes = any(bool(filters.get(name, False)) for name in MC2_DEBUG_FILTER_KEYS)
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
     setup_filter = str(filters.get("setup_filter") or "all").strip().lower()
@@ -129,6 +153,9 @@ def request_mc2_debug_capture(
         if setup_filter not in ("", "all", str(spec.setup_type).lower()):
             continue
         state = slot.data.setdefault("_debug_capture_state", {})
+        if not has_modes:
+            state.update({"requested": False, "filters": filters})
+            continue
         state.update({
             "requested": True,
             "request_frame": frame,
@@ -137,7 +164,10 @@ def request_mc2_debug_capture(
         requested += 1
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
-        interaction.request_debug_capture(frame, filters)
+        if has_modes and requested:
+            interaction.request_debug_capture(frame, filters)
+        else:
+            interaction.cancel_debug_capture(filters)
     return requested
 
 
@@ -591,6 +621,7 @@ def capture_requested_mc2_debug(
 
 __all__ = [
     "MC2_DEBUG_DRAW_MODES",
+    "MC2_DEBUG_FILTER_KEYS",
     "capture_requested_mc2_debug",
     "request_mc2_debug_capture",
 ]

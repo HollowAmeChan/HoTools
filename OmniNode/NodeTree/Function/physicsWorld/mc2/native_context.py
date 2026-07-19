@@ -1138,6 +1138,12 @@ class MC2NativeInteractionV0:
             "filters": dict(filters or {}),
         })
 
+    def cancel_debug_capture(self, filters: dict | None = None) -> None:
+        self._debug_capture_state.update({
+            "requested": False,
+            "filters": dict(filters or {}),
+        })
+
     def debug_capture_state(self) -> dict:
         return self._debug_capture_state
 

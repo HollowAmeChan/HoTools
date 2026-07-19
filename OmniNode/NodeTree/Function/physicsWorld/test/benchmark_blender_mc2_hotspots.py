@@ -374,7 +374,9 @@ def _benchmark_mesh(case, recorder) -> dict:
         pin.add((case["grid"],), 1.0, "REPLACE")
         change = _run_step(recorder, world, (config_task,), previous + 1, previous, "mesh_cloth")
         previous += 1
-        assert debug.request_mc2_debug_capture(world) == 1
+        assert debug.request_mc2_debug_capture(
+            world, filters={"show_topology": True, "show_output": True}
+        ) == 1
         debug_result = _run_step(recorder, world, (config_task,), previous + 1, previous, "mesh_cloth")
         previous += 1
         allocation_peak = _allocation_peak(
@@ -444,7 +446,9 @@ def _benchmark_bone(case, recorder) -> dict:
         bpy.context.view_layer.update()
         change = _run_step(recorder, world, (config_task,), previous + 1, previous, "bone_cloth")
         previous += 1
-        assert debug.request_mc2_debug_capture(world) == 1
+        assert debug.request_mc2_debug_capture(
+            world, filters={"show_topology": True, "show_output": True}
+        ) == 1
         debug_result = _run_step(recorder, world, (config_task,), previous + 1, previous, "bone_cloth")
         previous += 1
         allocation_peak = _allocation_peak(
