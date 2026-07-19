@@ -22,7 +22,9 @@ _NODE_GROUP_SCHEMA_KEY = "hotools_physics_offset_schema"
 _MESH_OWNER_KEY = "hotools_physics_offset_owner"
 _MESH_SCHEMA_KEY = "hotools_physics_offset_schema"
 _NODE_GROUP_OWNER = "physicsWorld.writeback"
-_NODE_GROUP_SCHEMA = 1
+_NODE_GROUP_SCHEMA = 2
+_BAKE_NODE_NAME = "HoTools Physics Bake"
+_BAKE_NODE_LABEL = "Physics Post-Displacement Cache"
 
 
 def _require_mesh_object(obj) -> None:
@@ -51,15 +53,20 @@ def _build_node_group(group) -> None:
     output_node = group.nodes.new("NodeGroupOutput")
     named_attr = group.nodes.new("GeometryNodeInputNamedAttribute")
     set_position = group.nodes.new("GeometryNodeSetPosition")
+    bake_node = group.nodes.new("GeometryNodeBake")
+    bake_node.name = _BAKE_NODE_NAME
+    bake_node.label = _BAKE_NODE_LABEL
     input_node.location = (-600, 0)
     named_attr.location = (-600, -180)
     set_position.location = (-260, 0)
-    output_node.location = (80, 0)
+    bake_node.location = (80, 0)
+    output_node.location = (420, 0)
     named_attr.data_type = "FLOAT_VECTOR"
     named_attr.inputs["Name"].default_value = GN_OFFSET_ATTRIBUTE_NAME
     group.links.new(input_node.outputs["Geometry"], set_position.inputs["Geometry"])
     group.links.new(named_attr.outputs["Attribute"], set_position.inputs["Offset"])
-    group.links.new(set_position.outputs["Geometry"], output_node.inputs["Geometry"])
+    group.links.new(set_position.outputs["Geometry"], bake_node.inputs["Geometry"])
+    group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
     group[_NODE_GROUP_OWNER_KEY] = _NODE_GROUP_OWNER
     group[_NODE_GROUP_SCHEMA_KEY] = _NODE_GROUP_SCHEMA
 
@@ -122,6 +129,55 @@ def ensure_gn_offset_output(obj):
     attribute = ensure_gn_offset_attribute(obj)
     modifier = ensure_gn_offset_modifier(obj)
     return attribute, modifier
+
+
+def get_gn_offset_bake_node(group=None):
+    group = group or ensure_gn_offset_node_group()
+    bake_node = group.nodes.get(_BAKE_NODE_NAME)
+    if bake_node is None or getattr(bake_node, "bl_idname", "") != "GeometryNodeBake":
+        raise RuntimeError("共享 GN 物理后置位移缺少受管 Bake 节点")
+    if not bake_node.inputs.get("Geometry") or not bake_node.outputs.get("Geometry"):
+        raise RuntimeError("共享 GN 物理 Bake 节点缺少 Geometry socket")
+    return bake_node
+
+
+def get_gn_offset_bake_entry(modifier):
+    if modifier is None or getattr(modifier, "type", None) != "NODES":
+        raise ValueError("GN 物理 Bake 需要有效的 Nodes modifier")
+    bake_node = get_gn_offset_bake_node(getattr(modifier, "node_group", None))
+    for entry in getattr(modifier, "bakes", ()):
+        if getattr(entry, "node", None) == bake_node:
+            return entry
+    raise RuntimeError("Nodes modifier 尚未生成 GN 物理 Bake entry")
+
+
+def configure_gn_offset_disk_bake(
+    obj,
+    directory: str,
+    frame_start: int,
+    frame_end: int,
+):
+    """Configure the managed post-displacement Bake entry without running it."""
+    start = int(frame_start)
+    end = int(frame_end)
+    if end < start:
+        raise ValueError("GN 物理 Bake 结束帧不能小于开始帧")
+    path = str(directory or "").strip()
+    if not path:
+        raise ValueError("GN 物理 Bake 磁盘目录不能为空")
+
+    modifier = ensure_gn_offset_modifier(obj)
+    entry = get_gn_offset_bake_entry(modifier)
+    modifier.bake_target = "DISK"
+    modifier.bake_directory = path
+    entry.use_custom_simulation_frame_range = True
+    entry.frame_start = start
+    entry.frame_end = end
+    entry.bake_mode = "ANIMATION"
+    entry.bake_target = "DISK"
+    entry.use_custom_path = True
+    entry.directory = path
+    return modifier, entry
 
 
 def normalize_local_offsets(offsets, vertex_count: int | None = None, *, copy: bool = True) -> np.ndarray:
@@ -194,10 +250,13 @@ def remove_gn_offset_output(obj) -> bool:
 
 __all__ = [
     "clear_gn_local_offsets",
+    "configure_gn_offset_disk_bake",
     "ensure_gn_offset_attribute",
     "ensure_gn_offset_modifier",
     "ensure_gn_offset_node_group",
     "ensure_gn_offset_output",
+    "get_gn_offset_bake_entry",
+    "get_gn_offset_bake_node",
     "normalize_local_offsets",
     "remove_gn_offset_output",
     "write_gn_local_offsets",

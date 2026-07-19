@@ -116,6 +116,22 @@ def test_shared_gn_final_offset_contract():
         assert modifier is not None and modifier.type == "NODES"
         assert modifier == obj.modifiers[-1]
         assert modifier.node_group.name == world_names.GN_OFFSET_NODE_GROUP_NAME
+        bake_node = gn_offset.get_gn_offset_bake_node(modifier.node_group)
+        assert bake_node.bl_idname == "GeometryNodeBake"
+        assert bake_node.inputs["Geometry"].is_linked
+        assert bake_node.outputs["Geometry"].is_linked
+        configured_modifier, bake_entry = gn_offset.configure_gn_offset_disk_bake(
+            obj,
+            "//physics_bake",
+            3,
+            9,
+        )
+        assert configured_modifier == modifier
+        assert bake_entry.node == bake_node
+        assert bake_entry.bake_mode == "ANIMATION"
+        assert bake_entry.bake_target == "DISK"
+        assert bake_entry.frame_start == 3 and bake_entry.frame_end == 9
+        assert bake_entry.directory == "//physics_bake"
         assert not any(
             attribute.name.startswith("mc2_") or attribute.name.startswith("spring_")
             for attribute in obj.data.attributes
@@ -197,6 +213,7 @@ def test_shared_gn_final_offset_contract():
         assert modifier.node_group.name == world_names.GN_OFFSET_NODE_GROUP_NAME
         assert modifier.node_group["hotools_physics_offset_owner"] == "physicsWorld.writeback"
         assert any(node.bl_idname == "GeometryNodeSetPosition" for node in modifier.node_group.nodes)
+        assert any(node.bl_idname == "GeometryNodeBake" for node in modifier.node_group.nodes)
 
         foreign_copy = bpy.data.objects.new("GNWritebackForeignCopy", foreign_mesh)
         bpy.context.scene.collection.objects.link(foreign_copy)
