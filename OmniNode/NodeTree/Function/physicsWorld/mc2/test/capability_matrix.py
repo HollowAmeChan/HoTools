@@ -199,6 +199,12 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": ("angle_restoration_velocity_attenuation",),
             "invariants": ("finite", "velocity_attenuation_response_ordered"),
         }, {
+            "runner": "test_blender_mc2_constraint_soak.py::mesh_angle_restoration_falloff",
+            "frames": 600,
+            "setups": ("mesh_cloth",),
+            "fields": ("angle_restoration_gravity_falloff",),
+            "invariants": ("finite", "gravity_falloff_response_ordered"),
+        }, {
             "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_restoration_attenuation",
             "frames": 600,
             "setups": ("bone_cloth", "bone_spring"),

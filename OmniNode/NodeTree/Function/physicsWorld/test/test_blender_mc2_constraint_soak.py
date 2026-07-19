@@ -118,7 +118,10 @@ def _base_positions(obj):
     return np.asarray([tuple(vertex.co) for vertex in obj.data.vertices], dtype=np.float32)
 
 
-def _frame_input(task, topology, frame, positions, *, generation):
+def _frame_input(
+    task, topology, frame, positions, *, generation,
+    anchor_rotation_xyzw=None,
+):
     rotations = np.zeros((len(positions), 4), dtype=np.float32)
     rotations[:, 3] = 1.0
     return frame_state.make_mc2_frame_input(
@@ -136,6 +139,15 @@ def _frame_input(task, topology, frame, positions, *, generation):
             component_world_position=(0.0, 0.0, 0.0),
             component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
             component_world_scale=(1.0, 1.0, 1.0),
+            anchor_identity=(
+                f"anchor:{task.task_id}"
+                if anchor_rotation_xyzw is not None else None
+            ),
+            anchor_world_position=(
+                (0.0, 0.0, 0.0)
+                if anchor_rotation_xyzw is not None else None
+            ),
+            anchor_world_rotation_xyzw=anchor_rotation_xyzw,
         ),
     )
 
@@ -403,6 +415,135 @@ def mesh_angle_restoration_response(obj):
         f"frame3 low/high={attenuation_low['responses'][1]:.9f}/"
         f"{attenuation_high['responses'][1]:.9f}; "
         f"movement30 low/high={low_movement:.9f}/{high_movement:.9f}"
+    )
+
+
+def _restoration_angular_errors(native_context, candidate):
+    snapshot = native_context.refresh_debug_draw_snapshot(
+        include_step_basic=False,
+        include_angle_restoration=True,
+    )
+    targets = snapshot["angle_restoration_target_positions"]
+    vectors = snapshot["angle_restoration_target_vectors"]
+    valid = snapshot["angle_restoration_target_valid"]
+    angles = []
+    for child, is_valid in enumerate(valid):
+        if not is_valid:
+            continue
+        target_vector = vectors[child]
+        parent_position = targets[child] - target_vector
+        current_vector = candidate.world_positions[child] - parent_position
+        target_length = float(np.linalg.norm(target_vector))
+        current_length = float(np.linalg.norm(current_vector))
+        if min(target_length, current_length) <= 1.0e-8:
+            continue
+        cosine = float(np.dot(target_vector, current_vector) / (
+            target_length * current_length
+        ))
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+    assert angles
+    return angles
+
+
+def _run_mesh_angle_falloff(obj, falloff):
+    world = world_types.PhysicsWorldCache()
+    generation = 49
+    def make_task(enabled, value):
+        return _task(
+            obj,
+            gravity=4.0,
+            gravity_direction=(0.0, 0.0, -1.0),
+            damping=0.05,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=enabled,
+            angle_restoration_stiffness=0.65,
+            angle_restoration_velocity_attenuation=1.0,
+            angle_restoration_gravity_falloff=value,
+            angle_limit_enabled=False,
+            max_distance_enabled=False,
+            backstop_enabled=False,
+            self_collision_mode=0,
+            spring_enabled=False,
+            teleport_mode=0,
+        )
+
+    task = make_task(False, 0.0)
+    stable_task_id = task.task_id
+    topology = topology_module.build_mc2_topology_spec(task)
+    base = _base_positions(obj)
+    context = None
+    branch_angles = None
+    branch_gravity_dot = None
+    prefix_digest = hashlib.sha256()
+    try:
+        for frame in range(1, 602):
+            if frame == 301:
+                context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = context.inspect()["parameter_revision"]
+                task = make_task(True, falloff)
+                assert task.task_id == stable_task_id
+            angle = math.pi * min(max((frame - 1) / 120.0, 0.0), 1.0)
+            anchor_rotation = (
+                math.sin(angle * 0.5), 0.0, 0.0, math.cos(angle * 0.5)
+            )
+            _set_world_frame(world, frame, frame - 1 if frame > 1 else None, generation)
+            frame_input = _frame_input(
+                task,
+                topology,
+                frame,
+                base,
+                generation=generation,
+                anchor_rotation_xyzw=anchor_rotation,
+            )
+            returned, ready, status = solver_module.step_mc2(
+                world,
+                [task],
+                frame_inputs={task.task_id: frame_input},
+                dt=1.0 / 90.0,
+            )
+            assert returned is world and ready is True, status
+            candidate = _candidate(world, task)
+            if frame <= 300:
+                prefix_digest.update(candidate.world_positions.tobytes())
+            slot = world.solver_slots[task.task_id]
+            if context is None:
+                context = slot.data["native_context"]
+            assert slot.data["native_context"] is context
+            if frame == 301:
+                info = context.inspect()
+                assert info["parameter_revision"] == old_revision + 1
+                assert info["center_result_ready"]
+                branch_gravity_dot = context.read_center_step().gravity_dot
+                branch_angles = _restoration_angular_errors(context, candidate)
+        assert branch_angles and branch_gravity_dot is not None
+        return {
+            "angles": np.asarray(branch_angles),
+            "gravity_dot": float(branch_gravity_dot),
+            "prefix_digest": prefix_digest.hexdigest(),
+        }
+    finally:
+        world.omni_cache_dispose("mesh_angle_falloff")
+
+
+def mesh_angle_restoration_falloff(obj):
+    low = _run_mesh_angle_falloff(obj, 0.0)
+    high = _run_mesh_angle_falloff(obj, 1.0)
+    assert low["prefix_digest"] == high["prefix_digest"]
+    assert abs(low["gravity_dot"] - 0.5) <= 1.0e-6
+    assert abs(high["gravity_dot"] - 0.5) <= 1.0e-6
+    assert np.mean(high["angles"]) >= np.mean(low["angles"]) + 0.5
+    assert np.percentile(high["angles"], 95) >= (
+        np.percentile(low["angles"], 95) + 1.0
+    )
+    print(
+        "[INFO] Mesh Angle Restoration gravity falloff: "
+        f"gravity dot low/high={low['gravity_dot']:.9f}/"
+        f"{high['gravity_dot']:.9f}; "
+        f"angle mean low/high={np.mean(low['angles']):.6f}/"
+        f"{np.mean(high['angles']):.6f}; p95 low/high="
+        f"{np.percentile(low['angles'], 95):.6f}/"
+        f"{np.percentile(high['angles'], 95):.6f}"
     )
 
 
@@ -1193,6 +1334,7 @@ def main():
         )
         _angle_restoration_rest_soak(objects[0])
         mesh_angle_restoration_response(objects[0])
+        mesh_angle_restoration_falloff(objects[0])
         motion_base_deterministic(objects[0])
         _task_collider_scope_soak(objects[:2])
         mesh_friction_response(objects[0])
