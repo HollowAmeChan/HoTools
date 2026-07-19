@@ -41,6 +41,9 @@ physics_blender = importlib.import_module(
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
+nodes = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+)
 specs = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
 )
@@ -141,13 +144,14 @@ def _frame_input(
             component_world_scale=(1.0, 1.0, 1.0),
             anchor_identity=(
                 f"anchor:{task.task_id}"
-                if anchor_rotation_xyzw is not None else None
+                if anchor_rotation_xyzw is not None else ""
             ),
-            anchor_world_position=(
-                (0.0, 0.0, 0.0)
-                if anchor_rotation_xyzw is not None else None
+            anchor_world_position=(0.0, 0.0, 0.0),
+            anchor_world_rotation_xyzw=(
+                anchor_rotation_xyzw
+                if anchor_rotation_xyzw is not None
+                else (0.0, 0.0, 0.0, 1.0)
             ),
-            anchor_world_rotation_xyzw=anchor_rotation_xyzw,
         ),
     )
 
@@ -1261,22 +1265,27 @@ def _center_keep_teleport_soak(obj):
         world.omni_cache_dispose("center_keep_teleport_soak")
 
 
-def _self_interaction_soak(objects):
+def _run_self_interaction_soak(objects):
     world = world_types.PhysicsWorldCache()
     generation = 49
 
     def make_tasks(radius):
-        return tuple(
-            _task(
-                obj,
+        result = []
+        for index, obj in enumerate(objects):
+            profile = parameters.make_mc2_particle_profile(
                 gravity=0.0,
                 angle_restoration_enabled=False,
                 radius=radius,
                 self_collision_mode=2,
                 self_collision_sync_mode=2,
+                cloth_mass=0.25 + index * 0.5,
             )
-            for obj in objects
-        )
+            product_tasks, _names = nodes.physicsMC2MeshClothTask(
+                [obj], profile=profile
+            )
+            assert len(product_tasks) == 1
+            result.append(product_tasks[0])
+        return tuple(result)
 
     tasks = make_tasks(0.02)
     topologies = {
@@ -1285,6 +1294,7 @@ def _self_interaction_soak(objects):
     }
     positions = {task.task_id: _base_positions(task.sources[0]) for task in tasks}
     original_contexts = None
+    trajectory_digest = hashlib.sha256()
     try:
         for frame in range(1, 1801):
             if frame == 901:
@@ -1299,7 +1309,11 @@ def _self_interaction_soak(objects):
                 tasks = make_tasks(0.03)
             _step(world, tasks, topologies, frame, positions, generation)
             for task in tasks:
-                _candidate(world, task)
+                candidate = _candidate(world, task)
+                trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+                trajectory_digest.update(task.task_id.encode("ascii"))
+                trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+                trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             if frame == 901:
                 current_contexts = tuple(
                     world.solver_slots[task.task_id].data["native_context"]
@@ -1322,6 +1336,8 @@ def _self_interaction_soak(objects):
                 )
         interaction = world.backend_resources["mc2_interaction_v0"]
         interaction_info = interaction.inspect()
+        assert interaction_info["participant_count"] == 2
+        assert interaction_info["pair_count"] == 1
         assert interaction_info["candidate_count"] > 0
         assert interaction_info["contact_count"] <= interaction_info["candidate_count"]
         assert interaction_info["primitive_count"] > 0
@@ -1331,12 +1347,39 @@ def _self_interaction_soak(objects):
             assert info["self_contact_cache_count"] <= info["self_contact_candidate_count"]
             snapshot = slot.data["_debug_draw_snapshot"]
             assert snapshot["frame"] == 1800
-            assert np.all(np.isfinite(snapshot["self_collision"]["thickness"]))
+            assert len(snapshot["self_collision"]["particle_indices"]) > 0
+            runtime_thickness = slot.data["effective_parameters"].debug_dict()[
+                "curve_values"
+            ]["self_collision_thickness"]
+            np.testing.assert_allclose(
+                runtime_thickness,
+                0.03 * 0.25,
+                rtol=0.0,
+                atol=1.0e-7,
+            )
         interaction_snapshot = interaction.debug_draw_snapshot()
         assert interaction_snapshot["native"]["candidate_count"] > 0
-        print("[PASS] 1800-frame cross-task self interaction/hot-update")
+        trajectory_digest.update(
+            np.asarray(
+                (
+                    interaction_info["participant_count"],
+                    interaction_info["pair_count"],
+                    interaction_info["candidate_count"],
+                    interaction_info["contact_count"],
+                ),
+                dtype=np.int64,
+            ).tobytes()
+        )
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("self_interaction_soak")
+
+
+def _self_interaction_soak(objects):
+    first = _run_self_interaction_soak(objects)
+    second = _run_self_interaction_soak(objects)
+    assert first == second, (first, second)
+    print("[PASS] Mesh cross-task self: 2 deterministic x 1800 frames")
 
 
 def _remove_object(obj):

@@ -393,16 +393,26 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "self_collision_mode", "self_collision_sync_mode",
             "self_collision_thickness", "cloth_mass",
         ),
+        "field_setups": {
+            "self_collision_sync_mode": ("mesh_cloth",),
+        },
         "required_invariants": (
             "finite", "deterministic", "cross_task_scope_exact", "contact_cache_bounded",
         ),
+        "invariant_setups": {
+            "cross_task_scope_exact": ("mesh_cloth",),
+        },
         "evidence": ({
             "runner": "test_blender_mc2_constraint_soak.py::_self_interaction_soak",
             "frames": 1800,
             "setups": ("mesh_cloth",),
-            "fields": ("self_collision_mode", "self_collision_sync_mode"),
+            "fields": (
+                "self_collision_mode", "self_collision_sync_mode",
+                "self_collision_thickness", "cloth_mass",
+            ),
             "invariants": (
-                "finite", "cross_task_candidates_present", "contact_cache_bounded",
+                "finite", "deterministic", "cross_task_scope_exact",
+                "cross_task_candidates_present", "contact_cache_bounded",
                 "parameter_hot_update_in_place",
             ),
         },),
