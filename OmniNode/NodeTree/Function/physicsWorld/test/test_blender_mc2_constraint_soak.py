@@ -755,24 +755,59 @@ def _bending_soak(obj):
     print("[PASS] 2x900-frame Triangle Bending response")
 
 
-def _angle_limit_soak(obj):
+def _run_angle_limit_soak(obj):
     world = world_types.PhysicsWorldCache()
     generation = 47
-    limit_degrees = 30.0
-    task = _task(
-        obj,
-        gravity=8.0,
-        gravity_direction=(0.0, 0.0, -1.0),
-        angle_restoration_enabled=False,
-        angle_limit_enabled=True,
-        angle_limit=limit_degrees,
-        angle_limit_stiffness=1.0,
-        distance_stiffness=0.8,
-        bending_stiffness=0.0,
-    )
+    final_limit_degrees = 20.0
+
+    def make_task(enabled, limit):
+        return _task(
+            obj,
+            gravity=8.0,
+            gravity_direction=(0.0, 0.0, -1.0),
+            angle_restoration_enabled=False,
+            angle_limit_enabled=enabled,
+            angle_limit=limit,
+            angle_limit_stiffness=1.0,
+            distance_stiffness=0.8,
+            bending_stiffness=0.0,
+        )
+
+    task = make_task(False, 30.0)
+    stable_task_id = task.task_id
+    trajectory_digest = hashlib.sha256()
+    disabled_count = None
     try:
         for frame in range(1, 1201):
+            if frame == 301:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(True, 30.0)
+                assert task.task_id == stable_task_id
+            elif frame == 601:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(False, 30.0)
+                assert task.task_id == stable_task_id
+            elif frame == 901:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(True, final_limit_degrees)
+                assert task.task_id == stable_task_id
             candidate = _auto_step(world, task, frame, generation)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            info = world.solver_slots[task.task_id].data["native_context"].inspect()
+            if frame == 300:
+                assert info["angle_solve_count"] == 0
+            elif frame in (301, 601, 901):
+                assert world.solver_slots[task.task_id].data["native_context"] is old_context
+                assert info["parameter_revision"] == old_revision + 1
+                if frame == 601:
+                    disabled_count = info["angle_solve_count"]
+            elif 601 < frame <= 900:
+                assert info["angle_solve_count"] == disabled_count
             if frame == 1199:
                 debug_module.request_mc2_debug_capture(
                     world,
@@ -812,11 +847,23 @@ def _angle_limit_soak(obj):
             cosine = float(np.dot(base_vector, current_vector) / (base_length * current_length))
             angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
         assert angles
-        assert max(angles) <= limit_degrees + 5.0, max(angles)
+        assert max(angles) <= final_limit_degrees + 6.0, max(angles)
         assert native_context.inspect()["angle_solve_count"] > 0
-        print("[PASS] 1200-frame Angle Limit target bound")
+        trajectory_digest.update(np.asarray(angles, dtype=np.float32).tobytes())
+        print(
+            "[PASS] 1200-frame Angle Limit transition/target bound: "
+            f"max {max(angles):.6f}deg"
+        )
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("angle_limit_soak")
+
+
+def _angle_limit_soak(obj):
+    first = _run_angle_limit_soak(obj)
+    second = _run_angle_limit_soak(obj)
+    assert first == second, (first, second)
+    print("[PASS] repeated Mesh Angle Limit trajectory is deterministic")
 
 
 def _center_keep_teleport_soak(obj):

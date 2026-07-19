@@ -95,6 +95,8 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "limit_bounded@bone_spring" in angle_limit["invariants"]
     assert "deterministic@bone_cloth" not in angle_limit["invariants"]
     assert "deterministic@bone_spring" not in angle_limit["invariants"]
+    assert "deterministic@mesh_cloth" not in angle_limit["invariants"]
+    assert "branch_transition_stable@mesh_cloth" not in angle_limit["invariants"]
 
     integration = capability_gaps(by_id["integration_and_pose_blend"])
     assert "gravity@mesh_cloth" not in integration["fields"]
