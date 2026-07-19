@@ -175,7 +175,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
             f"{invariant}@{setup}" not in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
         )
-    assert "Center inertia fields" in by_id[
+    assert "anchor_inertia remains a product-reachability gap" in by_id[
         "center_inertia_and_teleport"
     ]["known_gap"]
     assert "particle_speed_limit@mesh_cloth" not in teleport["fields"]
@@ -202,6 +202,30 @@ def test_setup_local_evidence_cannot_close_another_setup():
         assert not any(
             gap.startswith(f"{invariant}@") for gap in teleport["invariants"]
         )
+    for field in (
+        "local_inertia", "local_movement_speed_limit",
+        "local_rotation_speed_limit", "depth_inertia",
+    ):
+        assert not any(
+            gap.startswith(f"{field}@") for gap in teleport["fields"]
+        )
+    for invariant in (
+        "local_inertia_endpoints_exact",
+        "local_movement_limit_active",
+        "local_rotation_limit_active",
+        "depth_inertia_particle_ordered",
+    ):
+        assert not any(
+            gap.startswith(f"{invariant}@") for gap in teleport["invariants"]
+        )
+    assert teleport["fields"] == {
+        "anchor_inertia@mesh_cloth",
+        "anchor_inertia@bone_cloth",
+        "anchor_inertia@bone_spring",
+    }
+    assert "current task auto-producers expose no Anchor identity" in by_id[
+        "center_inertia_and_teleport"
+    ]["known_gap"]
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

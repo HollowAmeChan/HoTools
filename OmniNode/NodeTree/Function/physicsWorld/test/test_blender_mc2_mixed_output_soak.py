@@ -137,6 +137,10 @@ def _tasks(
     movement_inertia_smoothing=0.4,
     movement_speed_limit=5.0,
     rotation_speed_limit=720.0,
+    local_inertia=1.0,
+    local_movement_speed_limit=-1.0,
+    local_rotation_speed_limit=-1.0,
+    depth_inertia=0.0,
 ):
     mesh_profile = parameters.make_mc2_particle_profile(
         gravity=5.0,
@@ -152,6 +156,10 @@ def _tasks(
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
         rotation_speed_limit=rotation_speed_limit,
+        local_inertia=local_inertia,
+        local_movement_speed_limit=local_movement_speed_limit,
+        local_rotation_speed_limit=local_rotation_speed_limit,
+        depth_inertia=depth_inertia,
     )
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity=3.0,
@@ -167,6 +175,10 @@ def _tasks(
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
         rotation_speed_limit=rotation_speed_limit,
+        local_inertia=local_inertia,
+        local_movement_speed_limit=local_movement_speed_limit,
+        local_rotation_speed_limit=local_rotation_speed_limit,
+        depth_inertia=depth_inertia,
     )
     spring_profile = parameters.make_mc2_particle_profile(
         damping=damping,
@@ -180,6 +192,10 @@ def _tasks(
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
         rotation_speed_limit=rotation_speed_limit,
+        local_inertia=local_inertia,
+        local_movement_speed_limit=local_movement_speed_limit,
+        local_rotation_speed_limit=local_rotation_speed_limit,
+        depth_inertia=depth_inertia,
     )
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
         [mesh], profile=mesh_profile
@@ -1151,9 +1167,10 @@ def _center_translation_velocity(frame):
 _CENTER_TRANSLATION_FRAME_RATE = 30.0
 
 
-def _run_center_world_case(
+def _run_center_case(
     case_name,
     *,
+    motion_space="world",
     component_translation=True,
     component_rotation_speed=0.0,
     **profile_values,
@@ -1184,6 +1201,14 @@ def _run_center_world_case(
                 "moving_speed": [],
                 "smoothing_x": [],
                 "shift_rotation_degrees": [],
+                "step_x": [],
+                "step_rotation_degrees": [],
+                "angular_velocity_degrees": [],
+                "step_move_inertia_ratio": [],
+                "step_rotation_inertia_ratio": [],
+                "inertia_x": [],
+                "inertia_rotation_degrees": [],
+                "candidate_positions": [],
                 "update_count": [],
                 "skip_count": [],
             }
@@ -1191,6 +1216,8 @@ def _run_center_world_case(
         }
         component_x = 0.0
         component_rotation_degrees = 0.0
+        proxy_base = None
+        proxy_pivot = None
         for frame in range(1, 601):
             velocity = _center_translation_velocity(frame)
             if frame > 1 and component_translation:
@@ -1199,10 +1226,37 @@ def _run_center_world_case(
                 component_rotation_degrees += (
                     component_rotation_speed / _CENTER_TRANSLATION_FRAME_RATE
                 )
-            for source in sources:
-                source.location.x = base_x[source.name] + component_x
-                source.rotation_mode = "XYZ"
-                source.rotation_euler.z = math.radians(component_rotation_degrees)
+            if motion_space == "world":
+                for source in sources:
+                    source.location.x = base_x[source.name] + component_x
+                    source.rotation_mode = "XYZ"
+                    source.rotation_euler.z = math.radians(
+                        component_rotation_degrees
+                    )
+            elif motion_space == "local" and frame > 1:
+                angle = math.radians(component_rotation_degrees)
+                cosine = math.cos(angle)
+                sine = math.sin(angle)
+                for index in range(4):
+                    local = proxy_base[index] - proxy_pivot
+                    rotated = np.asarray((
+                        cosine * local[0] - sine * local[1],
+                        sine * local[0] + cosine * local[1],
+                        local[2],
+                    ))
+                    target = proxy_pivot + rotated
+                    target[0] += component_x
+                    proxy.data.vertices[index].co = target
+                proxy.data.update()
+                for armature in (cloth, spring):
+                    root = armature.pose.bones["Root"]
+                    root.rotation_mode = "XYZ"
+                    root.location = (component_x, 0.0, 0.0)
+                    root.rotation_euler = (
+                        0.0, 0.0, math.radians(component_rotation_degrees)
+                    )
+            elif motion_space != "local":
+                raise ValueError(f"unsupported Center motion space: {motion_space}")
             bpy.context.view_layer.update()
             _set_frame(world, frame, generation)
             world.frame_context.raw_dt = 1.0 / _CENTER_TRANSLATION_FRAME_RATE
@@ -1220,42 +1274,88 @@ def _run_center_world_case(
                 assert candidate.frame == frame
                 if frame == 1:
                     assert slot.data["center_frame_shift_result"] is None
+                    if motion_space == "local" and proxy_base is None:
+                        proxy = mesh.hotools_mesh_collision.mc2_base_pose_proxy
+                        assert proxy is not None
+                        proxy_base = np.asarray(
+                            [vertex.co[:] for vertex in proxy.data.vertices],
+                            dtype=np.float64,
+                        )
+                        proxy_pivot = np.mean(proxy_base[:4], axis=0)
                     continue
                 result = slot.data["center_frame_shift_result"]
                 values = observations[task.setup_type]
                 schedule = slot.data["frame_schedule"]
                 values["update_count"].append(float(schedule.update_count))
                 values["skip_count"].append(float(schedule.skip_count))
-                if result is None and case_name == "Hold":
+                if result is None:
+                    assert case_name == "Hold" or motion_space == "local", (
+                        case_name,
+                        motion_space,
+                        task.setup_type,
+                        frame,
+                    )
                     values["shift_x"].append(0.0)
                     values["moving_speed"].append(0.0)
                     values["smoothing_x"].append(0.0)
                     values["shift_rotation_degrees"].append(0.0)
-                    continue
-                assert result is not None, (
-                    case_name,
-                    task.setup_type,
-                    frame,
-                    slot.data.get("frame_schedule"),
-                    slot.data["native_context"].inspect(),
+                else:
+                    assert result.teleport_triggered is False
+                    values["shift_x"].append(
+                        float(result.frame_component_shift_vector[0])
+                    )
+                    values["moving_speed"].append(
+                        float(result.frame_moving_speed)
+                    )
+                    values["smoothing_x"].append(
+                        float(result.smoothing_velocity[0])
+                    )
+                    shift_rotation = result.frame_component_shift_rotation_xyzw
+                    shift_cosine = min(
+                        1.0, max(0.0, abs(float(shift_rotation[3])))
+                    )
+                    values["shift_rotation_degrees"].append(
+                        math.degrees(2.0 * math.acos(shift_cosine))
+                    )
+                center_step = slot.data["center_step_result"]
+                assert center_step is not None
+                values["candidate_positions"].append(
+                    np.array(candidate.world_positions, dtype=np.float32, copy=True)
                 )
-                assert result.teleport_triggered is False
-                values["shift_x"].append(
-                    float(result.frame_component_shift_vector[0])
+                values["step_x"].append(float(center_step.step_vector[0]))
+                step_rotation = center_step.step_rotation_xyzw
+                step_cosine = min(
+                    1.0, max(0.0, abs(float(step_rotation[3])))
                 )
-                values["moving_speed"].append(float(result.frame_moving_speed))
-                values["smoothing_x"].append(float(result.smoothing_velocity[0]))
-                shift_rotation = result.frame_component_shift_rotation_xyzw
-                shift_cosine = min(1.0, max(0.0, abs(float(shift_rotation[3]))))
-                values["shift_rotation_degrees"].append(
-                    math.degrees(2.0 * math.acos(shift_cosine))
+                values["step_rotation_degrees"].append(
+                    math.degrees(2.0 * math.acos(step_cosine))
+                )
+                values["angular_velocity_degrees"].append(
+                    math.degrees(float(center_step.angular_velocity))
+                )
+                values["step_move_inertia_ratio"].append(
+                    float(center_step.step_move_inertia_ratio)
+                )
+                values["step_rotation_inertia_ratio"].append(
+                    float(center_step.step_rotation_inertia_ratio)
+                )
+                values["inertia_x"].append(
+                    float(center_step.inertia_vector[0])
+                )
+                inertia_rotation = center_step.inertia_rotation_xyzw
+                inertia_cosine = min(
+                    1.0, max(0.0, abs(float(inertia_rotation[3])))
+                )
+                values["inertia_rotation_degrees"].append(
+                    math.degrees(2.0 * math.acos(inertia_cosine))
                 )
 
         for task in tasks:
-            context = world.solver_slots[task.task_id].data["native_context"]
+            slot = world.solver_slots[task.task_id]
+            context = slot.data["native_context"]
             info = context.inspect()
             assert info["debug_readback_count"] == 0
-            if case_name == "Hold":
+            if case_name == "Hold" or motion_space == "local":
                 assert info["center_frame_shift_count"] <= 3, (
                     task.setup_type,
                     info["center_frame_shift_count"],
@@ -1266,6 +1366,23 @@ def _run_center_world_case(
                     task.setup_type,
                     info["center_frame_shift_count"],
                 )
+            mesh_static = slot.data.get("mesh_static")
+            bone_static = slot.data.get("bone_static")
+            if mesh_static is not None:
+                depths = mesh_static.baseline.baseline.depths
+                attributes = mesh_static.final_proxy.vertex_attributes
+            else:
+                assert bone_static is not None
+                depths = bone_static.baseline.depths
+                attributes = bone_static.final_proxy.vertex_attributes
+            observations[task.setup_type]["depths"] = list(depths)
+            observations[task.setup_type]["move_mask"] = [
+                1.0 if int(attribute) & 0x02 else 0.0
+                for attribute in attributes
+            ]
+            observations[task.setup_type]["particle_inertia_count"] = [
+                float(info["particle_inertia_count"])
+            ]
         return {
             setup_type: {
                 name: np.asarray(values, dtype=np.float32)
@@ -1289,35 +1406,35 @@ def _run_center_world_case(
 
 def _run_center_world_suite():
     cases = {
-        "follow": _run_center_world_case(
+        "follow": _run_center_case(
             "Follow",
             world_inertia=0.0,
             movement_inertia_smoothing=0.0,
             movement_speed_limit=-1.0,
             rotation_speed_limit=-1.0,
         ),
-        "hold": _run_center_world_case(
+        "hold": _run_center_case(
             "Hold",
             world_inertia=1.0,
             movement_inertia_smoothing=0.0,
             movement_speed_limit=-1.0,
             rotation_speed_limit=-1.0,
         ),
-        "smooth": _run_center_world_case(
+        "smooth": _run_center_case(
             "Smooth",
             world_inertia=1.0,
             movement_inertia_smoothing=0.8,
             movement_speed_limit=-1.0,
             rotation_speed_limit=-1.0,
         ),
-        "limited": _run_center_world_case(
+        "limited": _run_center_case(
             "Limited",
             world_inertia=1.0,
             movement_inertia_smoothing=0.0,
             movement_speed_limit=0.2,
             rotation_speed_limit=-1.0,
         ),
-        "rotation_limited": _run_center_world_case(
+        "rotation_limited": _run_center_case(
             "RotationLimited",
             component_translation=False,
             component_rotation_speed=90.0,
@@ -1422,12 +1539,259 @@ def center_world_controls():
     )
 
 
+def _run_center_local_suite():
+    common = {
+        "motion_space": "local",
+        "world_inertia": 1.0,
+        "movement_inertia_smoothing": 0.0,
+        "movement_speed_limit": -1.0,
+        "rotation_speed_limit": -1.0,
+    }
+    cases = {
+        "inertia_zero": _run_center_case(
+            "LocalInertiaZero",
+            component_rotation_speed=90.0,
+            local_inertia=0.0,
+            local_movement_speed_limit=-1.0,
+            local_rotation_speed_limit=-1.0,
+            **common,
+        ),
+        "inertia_one": _run_center_case(
+            "LocalInertiaOne",
+            component_rotation_speed=90.0,
+            local_inertia=1.0,
+            local_movement_speed_limit=-1.0,
+            local_rotation_speed_limit=-1.0,
+            **common,
+        ),
+        "movement_limited": _run_center_case(
+            "LocalMovementLimited",
+            component_rotation_speed=0.0,
+            local_inertia=1.0,
+            local_movement_speed_limit=0.2,
+            local_rotation_speed_limit=-1.0,
+            **common,
+        ),
+        "rotation_limited": _run_center_case(
+            "LocalRotationLimited",
+            component_translation=False,
+            component_rotation_speed=90.0,
+            local_inertia=1.0,
+            local_movement_speed_limit=-1.0,
+            local_rotation_speed_limit=30.0,
+            **common,
+        ),
+    }
+    digest = hashlib.sha256()
+    for setup_type in sorted(cases["inertia_zero"]):
+        zero = cases["inertia_zero"][setup_type]
+        one = cases["inertia_one"][setup_type]
+        movement = cases["movement_limited"][setup_type]
+        rotation = cases["rotation_limited"][setup_type]
+        stable = np.logical_and(
+            zero["update_count"] == 3.0,
+            zero["skip_count"] == 0.0,
+        )
+        assert int(np.count_nonzero(stable)) >= 590
+        np.testing.assert_allclose(
+            zero["step_move_inertia_ratio"][stable],
+            np.ones(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            one["step_move_inertia_ratio"][stable],
+            np.zeros(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            zero["inertia_x"][stable],
+            zero["step_x"][stable],
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+        np.testing.assert_allclose(
+            one["inertia_x"][stable],
+            np.zeros(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+        np.testing.assert_allclose(
+            zero["step_rotation_inertia_ratio"][stable],
+            np.ones(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            one["step_rotation_inertia_ratio"][stable],
+            np.zeros(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            zero["inertia_rotation_degrees"][stable],
+            zero["step_rotation_degrees"][stable],
+            rtol=0.0,
+            atol=3.0e-3,
+        )
+        np.testing.assert_allclose(
+            one["inertia_rotation_degrees"][stable],
+            np.zeros(int(np.count_nonzero(stable)), dtype=np.float32),
+            rtol=0.0,
+            atol=2.0e-3,
+        )
+
+        movement_stable = np.logical_and(
+            movement["update_count"] == 3.0,
+            movement["skip_count"] == 0.0,
+        )
+        input_speed = np.abs(movement["step_x"]) * 90.0
+        movement_active = np.logical_and(movement_stable, input_speed > 0.2001)
+        movement_inactive = np.logical_and(movement_stable, ~movement_active)
+        assert int(np.count_nonzero(movement_active)) >= 390
+        followed_speed = input_speed * (
+            1.0 - movement["step_move_inertia_ratio"]
+        )
+        np.testing.assert_allclose(
+            followed_speed[movement_active],
+            np.full(
+                int(np.count_nonzero(movement_active)),
+                0.2,
+                dtype=np.float32,
+            ),
+            rtol=0.0,
+            atol=2.0e-4,
+        )
+        np.testing.assert_allclose(
+            movement["step_move_inertia_ratio"][movement_inactive],
+            np.zeros(int(np.count_nonzero(movement_inactive)), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            movement["inertia_x"][movement_stable],
+            (
+                movement["step_x"]
+                * movement["step_move_inertia_ratio"]
+            )[movement_stable],
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+
+        rotation_stable = np.logical_and(
+            rotation["update_count"] == 3.0,
+            rotation["skip_count"] == 0.0,
+        )
+        input_rotation_speed = rotation["angular_velocity_degrees"]
+        assert np.all(input_rotation_speed[rotation_stable] > 30.0)
+        followed_rotation_speed = input_rotation_speed * (
+            1.0 - rotation["step_rotation_inertia_ratio"]
+        )
+        np.testing.assert_allclose(
+            followed_rotation_speed[rotation_stable],
+            np.full(
+                int(np.count_nonzero(rotation_stable)),
+                30.0,
+                dtype=np.float32,
+            ),
+            rtol=0.0,
+            atol=2.0e-3,
+        )
+        for case_name in sorted(cases):
+            for field, array in sorted(cases[case_name][setup_type].items()):
+                assert np.all(np.isfinite(array))
+                digest.update(setup_type.encode("ascii"))
+                digest.update(case_name.encode("ascii"))
+                digest.update(field.encode("ascii"))
+                digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def center_local_controls():
+    first = _run_center_local_suite()
+    second = _run_center_local_suite()
+    assert second == first, (first, second)
+    print(
+        "[PASS] Center Local inertia/translation+rotation limits: "
+        "3 setups x 4 cases x 2 deterministic runs x 600 frames"
+    )
+
+
+def _run_center_depth_suite():
+    common = {
+        "motion_space": "local",
+        "component_rotation_speed": 0.0,
+        "world_inertia": 1.0,
+        "movement_inertia_smoothing": 0.0,
+        "movement_speed_limit": -1.0,
+        "rotation_speed_limit": -1.0,
+        "local_inertia": 1.0,
+        "local_movement_speed_limit": -1.0,
+        "local_rotation_speed_limit": -1.0,
+    }
+    zero = _run_center_case("DepthZero", depth_inertia=0.0, **common)
+    one = _run_center_case("DepthOne", depth_inertia=1.0, **common)
+    digest = hashlib.sha256()
+    for setup_type in sorted(zero):
+        zero_values = zero[setup_type]
+        one_values = one[setup_type]
+        np.testing.assert_array_equal(
+            zero_values["depths"], one_values["depths"]
+        )
+        np.testing.assert_array_equal(
+            zero_values["move_mask"], one_values["move_mask"]
+        )
+        assert zero_values["particle_inertia_count"][0] > 0.0
+        assert one_values["particle_inertia_count"][0] > 0.0
+        depths = zero_values["depths"]
+        move = zero_values["move_mask"].astype(bool)
+        expected_ratio = 1.0 - depths[move] * depths[move]
+        first_delta_x = (
+            one_values["candidate_positions"][0, move, 0]
+            - zero_values["candidate_positions"][0, move, 0]
+        )
+        correlation = float(np.corrcoef(expected_ratio, first_delta_x)[0, 1])
+        assert correlation > 0.9, (setup_type, correlation)
+        median_depth = float(np.median(depths[move]))
+        near = np.logical_and(move, depths <= median_depth)
+        far = np.logical_and(move, depths > median_depth)
+        assert np.any(near) and np.any(far)
+        all_first_delta_x = (
+            one_values["candidate_positions"][0, :, 0]
+            - zero_values["candidate_positions"][0, :, 0]
+        )
+        assert float(np.mean(all_first_delta_x[near])) > (
+            float(np.mean(all_first_delta_x[far])) + 0.002
+        ), (setup_type, all_first_delta_x, depths)
+        for case_name, values in (("zero", zero_values), ("one", one_values)):
+            for field, array in sorted(values.items()):
+                assert np.all(np.isfinite(array))
+                digest.update(setup_type.encode("ascii"))
+                digest.update(case_name.encode("ascii"))
+                digest.update(field.encode("ascii"))
+                digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def center_depth_controls():
+    first = _run_center_depth_suite()
+    second = _run_center_depth_suite()
+    assert second == first, (first, second)
+    print(
+        "[PASS] Center depth inertia: "
+        "3 setups x 2 cases x 2 deterministic runs x 600 frames"
+    )
+
+
 def main():
     first = _run_scenario()
     second = _run_scenario()
     assert second == first, (first, second)
     print("[PASS] repeated 900-frame mixed scenario is deterministic")
     center_world_controls()
+    center_local_controls()
+    center_depth_controls()
     print("MC2 mixed output soak: PASS")
 
 

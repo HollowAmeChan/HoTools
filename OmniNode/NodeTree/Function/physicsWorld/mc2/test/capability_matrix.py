@@ -141,6 +141,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "world_movement_limit_active",
             "world_rotation_limit_active",
             "center_controls_no_implicit_debug_readback",
+            "local_inertia_endpoints_exact",
+            "local_movement_limit_active",
+            "local_rotation_limit_active",
+            "depth_inertia_particle_ordered",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
@@ -211,6 +215,39 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "center_controls_no_implicit_debug_readback",
                 ),
             },
+            {
+                "runner": (
+                    "test_blender_mc2_mixed_output_soak.py::"
+                    "center_local_controls"
+                ),
+                "frames": 600,
+                "setups": ALL_SETUPS,
+                "fields": (
+                    "local_inertia", "local_movement_speed_limit",
+                    "local_rotation_speed_limit",
+                ),
+                "invariants": (
+                    "finite", "deterministic",
+                    "local_inertia_endpoints_exact",
+                    "local_movement_limit_active",
+                    "local_rotation_limit_active",
+                    "center_controls_no_implicit_debug_readback",
+                ),
+            },
+            {
+                "runner": (
+                    "test_blender_mc2_mixed_output_soak.py::"
+                    "center_depth_controls"
+                ),
+                "frames": 600,
+                "setups": ALL_SETUPS,
+                "fields": ("depth_inertia",),
+                "invariants": (
+                    "finite", "deterministic",
+                    "depth_inertia_particle_ordered",
+                    "center_controls_no_implicit_debug_readback",
+                ),
+            },
         ),
         "known_gap": (
             "Production now evaluates every particle animation base and supplements Mesh "
@@ -218,8 +255,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
             "velocity clearing, StepBasic alignment and isolated debug. BoneCloth task-local "
             "and MeshCloth cross-task self histories are invalidated in the zero-substep "
-            "Teleport frame and rebuild on later substeps. The remaining independent "
-            "Center inertia fields retain product evidence gaps."
+            "Teleport frame and rebuild on later substeps. World, Local, Depth and particle "
+            "speed controls have three-setup product evidence. The frame contract supports "
+            "Anchor inertia, but current task auto-producers expose no Anchor identity, so "
+            "anchor_inertia remains a product-reachability gap."
         ),
         "status": "gap",
     },
