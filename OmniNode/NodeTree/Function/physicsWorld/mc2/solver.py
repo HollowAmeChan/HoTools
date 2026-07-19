@@ -1052,7 +1052,32 @@ def step_mc2(
                     and center_negative_scale_result.active
                 )
             ):
-                particle_teleport_result = native_context.apply_particle_teleport()
+                teleport_debug_state = slot.data.get("_debug_capture_state")
+                teleport_debug_filters = (
+                    dict(teleport_debug_state.get("filters") or {})
+                    if isinstance(teleport_debug_state, dict)
+                    and bool(teleport_debug_state.get("requested", False))
+                    and int(
+                        teleport_debug_state.get(
+                            "request_frame", frame_input.frame
+                        )
+                        or 0
+                    )
+                    != int(frame_input.frame)
+                    else {}
+                )
+                particle_teleport_result = native_context.apply_particle_teleport(
+                    capture_threshold_debug=bool(
+                        teleport_debug_filters.get(
+                            "show_teleport_threshold", False
+                        )
+                    ),
+                    capture_status_debug=bool(
+                        teleport_debug_filters.get(
+                            "show_teleport_status", False
+                        )
+                    ),
+                )
                 particle_teleport_handled = bool(
                     int(particle_teleport_result.get("trigger_count", 0)) > 0
                 )

@@ -367,10 +367,11 @@ PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObjec
 }
 
 PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 1) {
+    const auto argument_count = PyTuple_GET_SIZE(args);
+    if (argument_count != 1 && argument_count != 3) {
         PyErr_SetString(
             PyExc_TypeError,
-            "mc2_context_v0_apply_particle_teleport expects 1 argument"
+            "mc2_context_v0_apply_particle_teleport expects 1 or 3 arguments"
         );
         return nullptr;
     }
@@ -394,6 +395,12 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
         );
         return nullptr;
     }
+    const bool capture_threshold_debug = argument_count == 3 &&
+        PyObject_IsTrue(PyTuple_GET_ITEM(args, 1)) == 1;
+    if (PyErr_Occurred()) return nullptr;
+    const bool capture_status_debug = argument_count == 3 &&
+        PyObject_IsTrue(PyTuple_GET_ITEM(args, 2)) == 1;
+    if (PyErr_Occurred()) return nullptr;
 
     const auto build_result = [&]() -> PyObject* {
         PyObject* result = PyDict_New();
@@ -430,6 +437,16 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
         return build_result();
     }
 
+    context->particle_teleport_threshold_debug_ready = false;
+    context->particle_teleport_status_debug_ready = false;
+    context->particle_teleport_debug_old_positions.clear();
+    context->particle_teleport_debug_positions.clear();
+    context->particle_teleport_debug_old_rotations.clear();
+    context->particle_teleport_debug_rotations.clear();
+    context->particle_teleport_debug_eligible.clear();
+    context->particle_teleport_debug_status_positions.clear();
+    context->particle_teleport_debug_status.clear();
+
     constexpr std::size_t kTeleportDistance = 22;
     constexpr std::size_t kTeleportRotation = 23;
     constexpr std::size_t kTeleportMode = 2;
@@ -443,8 +460,10 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
         context->float_values[kTeleportRotation],
         0.0f
     );
+    context->particle_teleport_distance_threshold = distance_threshold;
+    context->particle_teleport_rotation_threshold_degrees = rotation_threshold;
     std::vector<std::uint8_t> affected(count, static_cast<std::uint8_t>(0));
-    std::vector<std::int32_t> motion_sources(count, -1);
+    std::vector<std::uint8_t> eligible(count, static_cast<std::uint8_t>(1));
     std::int64_t trigger_count = 0;
     float max_distance = 0.0f;
     float max_rotation_degrees = 0.0f;
@@ -502,54 +521,148 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
             (component_rotation_degrees > kMc2Epsilon &&
                 component_rotation_degrees >= rotation_threshold);
     }
-    if (component_triggered) {
-        for (std::size_t vertex = 0; vertex < count; ++vertex) {
-            affected[vertex] = static_cast<std::uint8_t>(1);
-            motion_sources[vertex] = static_cast<std::int32_t>(vertex);
-            ++trigger_count;
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (!component_triggered && !source_triggered(vertex)) continue;
+        affected[vertex] = static_cast<std::uint8_t>(1);
+        ++trigger_count;
+    }
+
+    const auto display_position = [&](const std::vector<float>& values,
+                                      std::size_t vertex,
+                                      const std::array<float, 3>& pose_position,
+                                      const std::array<float, 4>& pose_rotation,
+                                      const std::array<float, 3>& pose_scale) {
+        const Vec3 raw = load_vector3(values, vertex);
+        if (context->setup_kind != 0 || !context->component_pose_ready) {
+            return raw;
         }
-    } else if (context->setup_kind == 0) {
-        for (std::size_t vertex = 0; vertex < count; ++vertex) {
-            if (!source_triggered(vertex)) continue;
-            affected[vertex] = static_cast<std::uint8_t>(1);
-            motion_sources[vertex] = static_cast<std::int32_t>(vertex);
-            ++trigger_count;
-        }
-    } else {
-        if (context->proxy_attributes.size() != count ||
-            context->baseline_roots.size() != count) {
-            PyErr_SetString(
-                PyExc_RuntimeError,
-                "Bone particle teleport requires attributes and baseline roots"
+        const auto reference_inverse = quaternion_inverse(
+            context->component_reference_rotation
+        );
+        Vec3 local = rotate_vector(reference_inverse, Vec3 {
+            raw.x - context->component_reference_position[0],
+            raw.y - context->component_reference_position[1],
+            raw.z - context->component_reference_position[2],
+        });
+        local.x *= pose_scale[0] / context->component_reference_scale[0];
+        local.y *= pose_scale[1] / context->component_reference_scale[1];
+        local.z *= pose_scale[2] / context->component_reference_scale[2];
+        const Vec3 rotated = rotate_vector(pose_rotation, local);
+        return Vec3 {
+            pose_position[0] + rotated.x,
+            pose_position[1] + rotated.y,
+            pose_position[2] + rotated.z,
+        };
+    };
+    const auto display_rotation = [&](const std::vector<float>& values,
+                                      std::size_t vertex,
+                                      const std::array<float, 4>& pose_rotation) {
+        auto value = load_quaternion(values, vertex);
+        if (context->setup_kind == 0 && context->component_pose_ready) {
+            value = quaternion_multiply(
+                quaternion_multiply(
+                    pose_rotation,
+                    quaternion_inverse(context->component_reference_rotation)
+                ),
+                value
             );
-            return nullptr;
+            normalize_quaternion(value);
         }
-        for (std::size_t source = 0; source < count; ++source) {
-            if (is_move(context->proxy_attributes[source]) ||
-                !source_triggered(source)) {
-                continue;
-            }
-            for (std::size_t vertex = 0; vertex < count; ++vertex) {
-                if (vertex != source &&
-                    context->baseline_roots[vertex] != static_cast<std::int32_t>(source)) {
-                    continue;
-                }
-                if (affected[vertex] == 0) ++trigger_count;
-                affected[vertex] = static_cast<std::uint8_t>(1);
-                motion_sources[vertex] = static_cast<std::int32_t>(source);
+        return value;
+    };
+    const auto store_position = [](std::vector<float>& values,
+                                   std::size_t vertex,
+                                   Vec3 position) {
+        const auto offset = vertex * 3;
+        values[offset + 0] = position.x;
+        values[offset + 1] = position.y;
+        values[offset + 2] = position.z;
+    };
+
+    if (capture_threshold_debug) {
+        context->particle_teleport_debug_old_positions.resize(count * 3);
+        context->particle_teleport_debug_positions.resize(count * 3);
+        context->particle_teleport_debug_old_rotations.resize(count * 4);
+        context->particle_teleport_debug_rotations.resize(count * 4);
+        context->particle_teleport_debug_eligible = eligible;
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            store_position(
+                context->particle_teleport_debug_old_positions,
+                vertex,
+                display_position(
+                    context->old_dynamic_positions,
+                    vertex,
+                    context->old_component_position,
+                    context->old_component_rotation,
+                    context->old_component_scale
+                )
+            );
+            store_position(
+                context->particle_teleport_debug_positions,
+                vertex,
+                display_position(
+                    context->dynamic_positions,
+                    vertex,
+                    context->component_position,
+                    context->component_rotation,
+                    context->component_scale
+                )
+            );
+            store_quaternion(
+                context->particle_teleport_debug_old_rotations,
+                vertex,
+                display_rotation(
+                    context->old_dynamic_rotations,
+                    vertex,
+                    context->old_component_rotation
+                )
+            );
+            store_quaternion(
+                context->particle_teleport_debug_rotations,
+                vertex,
+                display_rotation(
+                    context->dynamic_rotations,
+                    vertex,
+                    context->component_rotation
+                )
+            );
+        }
+        context->particle_teleport_threshold_debug_ready = true;
+    }
+    if (capture_status_debug) {
+        context->particle_teleport_debug_status_positions.resize(count * 3);
+        context->particle_teleport_debug_status.assign(
+            count,
+            static_cast<std::uint8_t>(0)
+        );
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            store_position(
+                context->particle_teleport_debug_status_positions,
+                vertex,
+                display_position(
+                    context->dynamic_positions,
+                    vertex,
+                    context->component_position,
+                    context->component_rotation,
+                    context->component_scale
+                )
+            );
+            if (affected[vertex] != 0) {
+                context->particle_teleport_debug_status[vertex] =
+                    static_cast<std::uint8_t>(mode);
             }
         }
+        context->particle_teleport_status_debug_ready = true;
     }
 
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         if (affected[vertex] == 0) continue;
-        const auto source = static_cast<std::size_t>(motion_sources[vertex]);
         const auto position_offset = vertex * 3;
         const auto rotation_offset = vertex * 4;
-        const Vec3 old_base = load_vector3(context->old_dynamic_positions, source);
-        const Vec3 current_base = load_vector3(context->dynamic_positions, source);
-        const auto old_rotation = load_quaternion(context->old_dynamic_rotations, source);
-        const auto current_rotation = load_quaternion(context->dynamic_rotations, source);
+        const Vec3 old_base = load_vector3(context->old_dynamic_positions, vertex);
+        const Vec3 current_base = load_vector3(context->dynamic_positions, vertex);
+        const auto old_rotation = load_quaternion(context->old_dynamic_rotations, vertex);
+        const auto current_rotation = load_quaternion(context->dynamic_rotations, vertex);
 
         if (mode == 1) {
             std::copy_n(
@@ -782,6 +895,9 @@ void commit_component_pose(
         std::copy_n(position, 3, context.old_component_position.begin());
         std::copy_n(rotation, 4, context.old_component_rotation.begin());
         std::copy_n(scale, 3, context.old_component_scale.begin());
+        std::copy_n(position, 3, context.component_reference_position.begin());
+        std::copy_n(rotation, 4, context.component_reference_rotation.begin());
+        std::copy_n(scale, 3, context.component_reference_scale.begin());
     }
     std::copy_n(position, 3, context.component_position.begin());
     std::copy_n(rotation, 4, context.component_rotation.begin());

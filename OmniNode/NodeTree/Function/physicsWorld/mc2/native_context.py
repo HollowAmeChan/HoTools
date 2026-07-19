@@ -690,9 +690,18 @@ class MC2NativeContextV0:
             matrix,
         )
 
-    def apply_particle_teleport(self) -> dict:
+    def apply_particle_teleport(
+        self,
+        *,
+        capture_threshold_debug: bool = False,
+        capture_status_debug: bool = False,
+    ) -> dict:
         self._ensure_live()
-        result = self._module.mc2_context_v0_apply_particle_teleport(self._handle)
+        result = self._module.mc2_context_v0_apply_particle_teleport(
+            self._handle,
+            bool(capture_threshold_debug),
+            bool(capture_status_debug),
+        )
         if not isinstance(result, dict):
             raise RuntimeError("MC2 native particle teleport returned an invalid result")
         return result
@@ -817,6 +826,8 @@ class MC2NativeContextV0:
         include_motion_base: bool = False,
         include_angle_restoration: bool = False,
         include_angle_limit: bool = False,
+        include_teleport_threshold: bool = False,
+        include_teleport_status: bool = False,
         include_dynamics: bool = False,
         include_distance_tether: bool = False,
         include_bending: bool = False,
@@ -853,6 +864,55 @@ class MC2NativeContextV0:
                 "motion_base_positions": self._debug_array(motion_base_positions),
                 "motion_base_rotations_xyzw": self._debug_array(motion_base_rotations),
             })
+            readbacks += 1
+        if include_teleport_threshold and bool(
+            info.get("particle_teleport_threshold_debug_ready", False)
+        ):
+            old_positions = np.empty((self.vertex_count, 3), dtype=np.float32)
+            positions = np.empty((self.vertex_count, 3), dtype=np.float32)
+            old_rotations = np.empty((self.vertex_count, 4), dtype=np.float32)
+            rotations = np.empty((self.vertex_count, 4), dtype=np.float32)
+            eligible = np.empty((self.vertex_count,), dtype=np.uint8)
+            self._module.mc2_context_v0_read_debug_particle_teleport_threshold(
+                self._handle,
+                old_positions,
+                positions,
+                old_rotations,
+                rotations,
+                eligible,
+            )
+            snapshot["teleport_threshold"] = {
+                "old_positions": self._debug_array(old_positions),
+                "positions": self._debug_array(positions),
+                "old_rotations_xyzw": self._debug_array(old_rotations),
+                "rotations_xyzw": self._debug_array(rotations),
+                "eligible": self._debug_array(eligible),
+                "distance_threshold": float(
+                    info.get("particle_teleport_distance_threshold", 0.0)
+                ),
+                "rotation_threshold_degrees": float(
+                    info.get(
+                        "particle_teleport_rotation_threshold_degrees", 0.0
+                    )
+                ),
+            }
+            readbacks += 1
+        if include_teleport_status and bool(
+            info.get("particle_teleport_status_debug_ready", False)
+        ):
+            status_positions = np.empty(
+                (self.vertex_count, 3), dtype=np.float32
+            )
+            status = np.empty((self.vertex_count,), dtype=np.uint8)
+            self._module.mc2_context_v0_read_debug_particle_teleport_status(
+                self._handle,
+                status_positions,
+                status,
+            )
+            snapshot["teleport_status"] = {
+                "positions": self._debug_array(status_positions),
+                "status": self._debug_array(status),
+            }
             readbacks += 1
         if include_angle_restoration and bool(info.get("step_basic_ready", False)):
             angle_targets = np.empty((self.vertex_count, 3), dtype=np.float32)

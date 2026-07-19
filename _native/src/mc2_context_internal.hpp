@@ -75,6 +75,8 @@ struct Mc2ContextV0 {
     float animation_pose_ratio = 0.0f;
     float particle_teleport_max_distance = 0.0f;
     float particle_teleport_max_rotation_degrees = 0.0f;
+    float particle_teleport_distance_threshold = 0.0f;
+    float particle_teleport_rotation_threshold_degrees = 0.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
@@ -95,6 +97,8 @@ struct Mc2ContextV0 {
     bool center_result_ready = false;
     bool dynamic_ready = false;
     bool component_pose_ready = false;
+    bool particle_teleport_threshold_debug_ready = false;
+    bool particle_teleport_status_debug_ready = false;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -116,6 +120,16 @@ struct Mc2ContextV0 {
     std::array<float, 3> component_position {};
     std::array<float, 4> component_rotation {0.0f, 0.0f, 0.0f, 1.0f};
     std::array<float, 3> component_scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> component_reference_position {};
+    std::array<float, 4> component_reference_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> component_reference_scale {1.0f, 1.0f, 1.0f};
+    std::vector<float> particle_teleport_debug_old_positions;
+    std::vector<float> particle_teleport_debug_positions;
+    std::vector<float> particle_teleport_debug_old_rotations;
+    std::vector<float> particle_teleport_debug_rotations;
+    std::vector<std::uint8_t> particle_teleport_debug_eligible;
+    std::vector<float> particle_teleport_debug_status_positions;
+    std::vector<std::uint8_t> particle_teleport_debug_status;
     std::vector<float> state_positions;
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;

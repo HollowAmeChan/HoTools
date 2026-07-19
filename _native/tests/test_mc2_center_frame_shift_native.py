@@ -454,7 +454,7 @@ def test_particle_reset_uses_rotation_threshold_without_resetting_siblings():
         hotools_native.mc2_context_v0_free(context)
 
 
-def test_bone_particle_teleport_is_root_driven_and_branch_scoped():
+def test_bone_particle_teleport_is_particle_driven_and_branch_scoped():
     count = 5
     identity = np.repeat(
         np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
@@ -486,26 +486,137 @@ def test_bone_particle_teleport_is_root_driven_and_branch_scoped():
             current[:3, 0] += 2.0
             current[4, 0] += 3.0
             _update_dynamic(context, 2, current, identity)
-            result = hotools_native.mc2_context_v0_apply_particle_teleport(context)
+            result = hotools_native.mc2_context_v0_apply_particle_teleport(
+                context, mode == 1, mode == 2
+            )
             assert result["mode"] == mode
-            assert result["trigger_count"] == 3
+            assert result["trigger_count"] == 4
             assert result["applied"] is True
             positions, _rotations = _read_many(context, count)
             if mode == 1:
                 np.testing.assert_allclose(positions[:3], current[:3], atol=1.0e-6)
+                np.testing.assert_allclose(positions[4], current[4], atol=1.0e-6)
+                eligible = np.empty((count,), dtype=np.uint8)
+                hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
+                    context,
+                    np.empty((count, 3), dtype=np.float32),
+                    np.empty((count, 3), dtype=np.float32),
+                    np.empty((count, 4), dtype=np.float32),
+                    np.empty((count, 4), dtype=np.float32),
+                    eligible,
+                )
+                np.testing.assert_array_equal(
+                    eligible,
+                    np.ones((count,), dtype=np.uint8),
+                )
             else:
                 np.testing.assert_allclose(
                     positions[:3],
                     initial[:3] + np.array([2.0, 0.25, 0.0], dtype=np.float32),
                     atol=1.0e-6,
                 )
+                np.testing.assert_allclose(
+                    positions[4],
+                    initial[4] + np.array([3.0, 0.25, 0.0], dtype=np.float32),
+                    atol=1.0e-6,
+                )
+                status = np.empty((count,), dtype=np.uint8)
+                hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
+                    context,
+                    np.empty((count, 3), dtype=np.float32),
+                    status,
+                )
+                np.testing.assert_array_equal(
+                    status,
+                    np.array([2, 2, 2, 0, 2], dtype=np.uint8),
+                )
             np.testing.assert_allclose(
-                positions[3:],
-                initial[3:] + np.array([0.0, 0.25, 0.0], dtype=np.float32),
+                positions[3],
+                initial[3] + np.array([0.0, 0.25, 0.0], dtype=np.float32),
                 atol=1.0e-6,
             )
         finally:
             hotools_native.mc2_context_v0_free(context)
+
+
+def test_particle_teleport_debug_is_explicit_and_layer_isolated():
+    count = 2
+    context = _particle_context(count, mode=1)
+    identity = np.repeat(
+        np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+        count,
+        axis=0,
+    )
+    initial = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32
+    )
+    try:
+        _update_dynamic(context, 1, initial, identity)
+        hotools_native.mc2_context_v0_reset(context)
+        current = initial.copy()
+        current[0, 0] += 2.0
+        _update_dynamic(context, 2, current, identity)
+        result = hotools_native.mc2_context_v0_apply_particle_teleport(
+            context, True, False
+        )
+        assert result["trigger_count"] == 1
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["particle_teleport_threshold_debug_ready"] is True
+        assert info["particle_teleport_status_debug_ready"] is False
+        old_positions = np.empty((count, 3), dtype=np.float32)
+        positions = np.empty((count, 3), dtype=np.float32)
+        old_rotations = np.empty((count, 4), dtype=np.float32)
+        rotations = np.empty((count, 4), dtype=np.float32)
+        eligible = np.empty((count,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
+            context, old_positions, positions, old_rotations, rotations, eligible
+        )
+        np.testing.assert_array_equal(old_positions, initial)
+        np.testing.assert_array_equal(positions, current)
+        np.testing.assert_array_equal(eligible, np.ones((count,), dtype=np.uint8))
+        try:
+            hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
+                context,
+                np.empty((count, 3), dtype=np.float32),
+                np.empty((count,), dtype=np.uint8),
+            )
+        except RuntimeError as exc:
+            assert "was not requested" in str(exc)
+        else:
+            raise AssertionError("unrequested teleport status debug was readable")
+
+        next_positions = current.copy()
+        next_positions[1, 0] -= 2.0
+        _update_dynamic(context, 3, next_positions, identity)
+        result = hotools_native.mc2_context_v0_apply_particle_teleport(
+            context, False, True
+        )
+        assert result["trigger_count"] == 1
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["particle_teleport_threshold_debug_ready"] is False
+        assert info["particle_teleport_status_debug_ready"] is True
+        status_positions = np.empty((count, 3), dtype=np.float32)
+        status = np.empty((count,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
+            context, status_positions, status
+        )
+        np.testing.assert_array_equal(status_positions, next_positions)
+        np.testing.assert_array_equal(status, np.array([0, 1], dtype=np.uint8))
+        try:
+            hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
+                context,
+                old_positions,
+                positions,
+                old_rotations,
+                rotations,
+                eligible,
+            )
+        except RuntimeError as exc:
+            assert "was not requested" in str(exc)
+        else:
+            raise AssertionError("unrequested teleport threshold debug was readable")
+    finally:
+        hotools_native.mc2_context_v0_free(context)
 
 
 if __name__ == "__main__":
@@ -513,5 +624,6 @@ if __name__ == "__main__":
     test_negative_scale_teleport_matches_center_oracle()
     test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity()
     test_particle_reset_uses_rotation_threshold_without_resetting_siblings()
-    test_bone_particle_teleport_is_root_driven_and_branch_scoped()
+    test_bone_particle_teleport_is_particle_driven_and_branch_scoped()
+    test_particle_teleport_debug_is_explicit_and_layer_isolated()
     print("PASS MC2 native Center frame shift")

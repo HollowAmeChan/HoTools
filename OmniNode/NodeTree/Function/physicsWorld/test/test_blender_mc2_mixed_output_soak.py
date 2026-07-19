@@ -304,11 +304,13 @@ def _run_scenario():
                 frame,
                 generation,
                 raw_dt=(
-                    1.0 / 360.0
+                    1.0e-6
                     if frame in (601, 651, 701)
                     else None
                 ),
             )
+            if frame in (301, 351, 401):
+                world.frame_context.time_scale = 0.0
             if frame in (301, 351, 401, 601, 651, 701, 751):
                 teleport_counts_before = {}
                 for task in tasks:
@@ -383,6 +385,14 @@ def _run_scenario():
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
                     assert shift is None
+                    np.testing.assert_array_equal(
+                        dynamics["velocities"],
+                        np.zeros_like(dynamics["velocities"]),
+                    )
+                    np.testing.assert_array_equal(
+                        dynamics["real_velocities"],
+                        np.zeros_like(dynamics["real_velocities"]),
+                    )
                     keep_hits.add(task.setup_type)
                 if frame in (301, 601, 751):
                     teleport = slot.data["particle_teleport_result"]
@@ -430,6 +440,14 @@ def _run_scenario():
                             == apply_count + 1
                         )
                         if expected_mode == 2:
+                            np.testing.assert_array_equal(
+                                dynamics["velocities"],
+                                np.zeros_like(dynamics["velocities"]),
+                            )
+                            np.testing.assert_array_equal(
+                                dynamics["real_velocities"],
+                                np.zeros_like(dynamics["real_velocities"]),
+                            )
                             root_keep_hits.add((frame, task.setup_type))
                         else:
                             assert slot.data["frame_schedule"].update_count == 0
@@ -438,7 +456,50 @@ def _run_scenario():
                                 reset_frame_inputs[task.task_id].world_positions,
                                 atol=1.0e-6,
                             )
+                            np.testing.assert_array_equal(
+                                dynamics["velocities"],
+                                np.zeros_like(dynamics["velocities"]),
+                            )
+                            np.testing.assert_array_equal(
+                                dynamics["real_velocities"],
+                                np.zeros_like(dynamics["real_velocities"]),
+                            )
                             root_reset_hits.add((frame, task.setup_type))
+                    if frame == 651:
+                        snapshot = slot.data["_debug_draw_snapshot"]
+                        assert snapshot["teleport"]["threshold"] is not None
+                        assert snapshot["teleport"]["status"] is None
+                        native_debug = snapshot["native"]["native"]
+                        assert native_debug[
+                            "particle_teleport_threshold_debug_ready"
+                        ] is True
+                        assert native_debug[
+                            "particle_teleport_status_debug_ready"
+                        ] is False
+                    if frame == 701:
+                        snapshot = slot.data["_debug_draw_snapshot"]
+                        assert snapshot["teleport"]["threshold"] is None
+                        assert snapshot["teleport"]["status"] is not None
+                        native_debug = snapshot["native"]["native"]
+                        assert native_debug[
+                            "particle_teleport_threshold_debug_ready"
+                        ] is False
+                        assert native_debug[
+                            "particle_teleport_status_debug_ready"
+                        ] is True
+                        expected_status = (
+                            0
+                            if task.setup_type == names.MC2_SETUP_MESH_CLOTH
+                            else 1
+                        )
+                        np.testing.assert_array_equal(
+                            snapshot["teleport"]["status"]["status"],
+                            np.full(
+                                (candidate.particle_count,),
+                                expected_status,
+                                dtype=np.uint8,
+                            ),
+                        )
                 if frame in (601, 751):
                     assert shift is None
                     if frame == 601:
@@ -448,6 +509,14 @@ def _run_scenario():
                             candidate.world_positions,
                             reset_frame_inputs[task.task_id].world_positions,
                             atol=1.0e-6,
+                        )
+                        np.testing.assert_array_equal(
+                            dynamics["velocities"],
+                            np.zeros_like(dynamics["velocities"]),
+                        )
+                        np.testing.assert_array_equal(
+                            dynamics["real_velocities"],
+                            np.zeros_like(dynamics["real_velocities"]),
                         )
                         distance_reset_hits.add(task.setup_type)
                     else:
@@ -469,6 +538,15 @@ def _run_scenario():
                     assert snapshot["frame"] == frame
                     assert snapshot["center"]["frame_shift"] is None
                     assert snapshot["center"]["particle_teleport"] == teleport
+                    if frame == 601:
+                        threshold_debug = snapshot["teleport"]["threshold"]
+                        status_debug = snapshot["teleport"]["status"]
+                        assert threshold_debug is not None
+                        assert status_debug is not None
+                        assert threshold_debug["eligible"].flags.writeable is False
+                        assert np.count_nonzero(threshold_debug["eligible"]) > 0
+                        assert status_debug["status"].flags.writeable is False
+                        assert np.all(status_debug["status"] == 1)
                     debug_output = snapshot["output"]
                     expected_output_positions = np.array(
                         candidate.world_positions,
@@ -557,7 +635,27 @@ def _run_scenario():
                     context.inspect()["parameter_revision"]
                     for context in current_contexts
                 ) == tuple(revision + 1 for revision in old_revisions)
-            if frame in (600, 750):
+            if frame in (300, 350, 400, 650):
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_teleport_threshold": True},
+                )
+            elif frame == 600:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_center": True,
+                        "show_teleport_threshold": True,
+                        "show_teleport_status": True,
+                        "show_output": True,
+                    },
+                )
+            elif frame == 700:
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_teleport_status": True},
+                )
+            elif frame == 750:
                 debug_module.request_mc2_debug_capture(
                     world,
                     filters={"show_center": True, "show_output": True},

@@ -97,6 +97,13 @@ void release_resources(Mc2ContextV0& context) {
     context.dynamic_rotations.clear();
     context.old_dynamic_positions.clear();
     context.old_dynamic_rotations.clear();
+    context.particle_teleport_debug_old_positions.clear();
+    context.particle_teleport_debug_positions.clear();
+    context.particle_teleport_debug_old_rotations.clear();
+    context.particle_teleport_debug_rotations.clear();
+    context.particle_teleport_debug_eligible.clear();
+    context.particle_teleport_debug_status_positions.clear();
+    context.particle_teleport_debug_status.clear();
     context.state_positions.clear();
     context.state_rotations.clear();
     context.state_velocities.clear();
@@ -3515,6 +3522,13 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(dynamic_rotations);
     MC2_ADD_VECTOR_BYTES(old_dynamic_positions);
     MC2_ADD_VECTOR_BYTES(old_dynamic_rotations);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_old_positions);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_positions);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_old_rotations);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_rotations);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_eligible);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_status_positions);
+    MC2_ADD_VECTOR_BYTES(particle_teleport_debug_status);
     MC2_ADD_VECTOR_BYTES(state_positions);
     MC2_ADD_VECTOR_BYTES(state_rotations);
     MC2_ADD_VECTOR_BYTES(state_velocities);
@@ -3745,6 +3759,16 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             "particle_teleport_max_rotation_degrees",
             context.particle_teleport_max_rotation_degrees
         ) ||
+        !dict_float(
+            result,
+            "particle_teleport_distance_threshold",
+            context.particle_teleport_distance_threshold
+        ) ||
+        !dict_float(
+            result,
+            "particle_teleport_rotation_threshold_degrees",
+            context.particle_teleport_rotation_threshold_degrees
+        ) ||
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
         !dict_i64(result, "static_fingerprint_revision", context.static_fingerprint_revision) ||
         !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||
@@ -3755,6 +3779,16 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
         !dict_bool(result, "component_pose_ready", context.component_pose_ready) ||
+        !dict_bool(
+            result,
+            "particle_teleport_threshold_debug_ready",
+            context.particle_teleport_threshold_debug_ready
+        ) ||
+        !dict_bool(
+            result,
+            "particle_teleport_status_debug_ready",
+            context.particle_teleport_status_debug_ready
+        ) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
         !dict_bool(result, "bone_static_ready", context.bone_static_ready) ||

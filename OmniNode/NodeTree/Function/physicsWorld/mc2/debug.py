@@ -59,6 +59,8 @@ MC2_DEBUG_FILTER_KEYS = (
     "show_angle_restoration",
     "show_angle_limit",
     "show_center",
+    "show_teleport_threshold",
+    "show_teleport_status",
     "show_collision",
     "show_radii",
     "show_self_primitives",
@@ -70,6 +72,11 @@ MC2_DEBUG_FILTER_KEYS = (
 
 MC2_NATIVE_DEBUG_FILTER_KEYS = tuple(
     name for name in MC2_DEBUG_FILTER_KEYS if name not in ("show_center", "show_output")
+)
+MC2_SUBSTEP_DEBUG_FILTER_KEYS = tuple(
+    name
+    for name in MC2_NATIVE_DEBUG_FILTER_KEYS
+    if name not in ("show_teleport_threshold", "show_teleport_status")
 )
 
 
@@ -485,7 +492,11 @@ def capture_requested_mc2_debug(
             bool(filters.get(name, False))
             for name in MC2_NATIVE_DEBUG_FILTER_KEYS
         )
-        if native_requested and not item.get("substeps"):
+        substep_requested = any(
+            bool(filters.get(name, False))
+            for name in MC2_SUBSTEP_DEBUG_FILTER_KEYS
+        )
+        if substep_requested and not item.get("substeps"):
             continue
         started = time.perf_counter()
         attempted = False
@@ -509,6 +520,12 @@ def capture_requested_mc2_debug(
                         filters.get("show_angle_restoration", False)
                     ),
                     include_angle_limit=bool(filters.get("show_angle_limit", False)),
+                    include_teleport_threshold=bool(
+                        filters.get("show_teleport_threshold", False)
+                    ),
+                    include_teleport_status=bool(
+                        filters.get("show_teleport_status", False)
+                    ),
                     include_dynamics=bool(filters.get("show_velocity", False)),
                     include_distance_tether=bool(
                         filters.get("show_distance", False)
@@ -579,6 +596,14 @@ def capture_requested_mc2_debug(
                     _center_payload(slot, item)
                     if filters.get("show_center", False) else {}
                 ),
+                "teleport": {
+                    "threshold": native_snapshot.get("teleport_threshold")
+                    if filters.get("show_teleport_threshold", False)
+                    else None,
+                    "status": native_snapshot.get("teleport_status")
+                    if filters.get("show_teleport_status", False)
+                    else None,
+                },
                 "collision": (
                     _collision_payload(item, native_snapshot)
                     if filters.get("show_collision", False)

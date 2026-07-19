@@ -879,6 +879,140 @@ PyObject* mc2_context_v0_read_debug_angle_limit(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_particle_teleport_threshold(
+    PyObject*, PyObject* args
+) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_particle_teleport_threshold expects 6 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->particle_teleport_threshold_debug_ready ||
+        context->particle_teleport_debug_old_positions.size() != count * 3 ||
+        context->particle_teleport_debug_positions.size() != count * 3 ||
+        context->particle_teleport_debug_old_rotations.size() != count * 4 ||
+        context->particle_teleport_debug_rotations.size() != count * 4 ||
+        context->particle_teleport_debug_eligible.size() != count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 particle teleport threshold debug was not requested"
+        );
+        return nullptr;
+    }
+    Buffer eligible;
+    if (!eligible.get(
+            PyTuple_GET_ITEM(args, 5),
+            PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_eligible"
+        )) {
+        return nullptr;
+    }
+    Buffer old_positions, positions, old_rotations, rotations;
+    Buffer* buffers[] = {&old_positions, &positions, &old_rotations, &rotations};
+    const char* names[] = {
+        "out_old_positions", "out_positions", "out_old_rotations", "out_rotations"
+    };
+    for (std::size_t index = 0; index < 4; ++index) {
+        if (!buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index]
+            )) {
+            return nullptr;
+        }
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(old_positions, names[0]) ||
+        !expect_2d(old_positions, names[0], vertex_count, 3) ||
+        !expect_float32(positions, names[1]) ||
+        !expect_2d(positions, names[1], vertex_count, 3) ||
+        !expect_float32(old_rotations, names[2]) ||
+        !expect_2d(old_rotations, names[2], vertex_count, 4) ||
+        !expect_float32(rotations, names[3]) ||
+        !expect_2d(rotations, names[3], vertex_count, 4) ||
+        !expect_uint8_scalar_array(eligible, "out_eligible") ||
+        eligible.view.shape[0] != vertex_count) {
+        return nullptr;
+    }
+    std::memcpy(
+        eligible.view.buf,
+        context->particle_teleport_debug_eligible.data(),
+        context->particle_teleport_debug_eligible.size() * sizeof(std::uint8_t)
+    );
+    const std::vector<float>* sources[] = {
+        &context->particle_teleport_debug_old_positions,
+        &context->particle_teleport_debug_positions,
+        &context->particle_teleport_debug_old_rotations,
+        &context->particle_teleport_debug_rotations,
+    };
+    for (std::size_t index = 0; index < 4; ++index) {
+        std::memcpy(
+            buffers[index]->view.buf,
+            sources[index]->data(),
+            sources[index]->size() * sizeof(float)
+        );
+    }
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_particle_teleport_status(
+    PyObject*, PyObject* args
+) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_particle_teleport_status expects 3 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->particle_teleport_status_debug_ready ||
+        context->particle_teleport_debug_status_positions.size() != count * 3 ||
+        context->particle_teleport_debug_status.size() != count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 particle teleport status debug was not requested"
+        );
+        return nullptr;
+    }
+    Buffer positions, status;
+    if (!positions.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_positions"
+        ) ||
+        !status.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_status"
+        )) {
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "out_positions") ||
+        !expect_2d(positions, "out_positions", vertex_count, 3) ||
+        !expect_uint8_scalar_array(status, "out_status") ||
+        status.view.shape[0] != vertex_count) {
+        return nullptr;
+    }
+    std::memcpy(
+        positions.view.buf,
+        context->particle_teleport_debug_status_positions.data(),
+        context->particle_teleport_debug_status_positions.size() * sizeof(float)
+    );
+    std::memcpy(
+        status.view.buf,
+        context->particle_teleport_debug_status.data(),
+        context->particle_teleport_debug_status.size() * sizeof(std::uint8_t)
+    );
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_dynamics(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 3) {
         PyErr_SetString(

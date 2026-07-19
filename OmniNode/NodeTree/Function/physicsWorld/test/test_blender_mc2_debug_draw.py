@@ -366,7 +366,10 @@ try:
         assert snapshot["native"]["distance_tether"]["distance_targets"].flags.writeable is False
         assert snapshot["native"]["bending"]["quads"].flags.writeable is False
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
-        assert snapshot["center"]["frame_shift"]["keep_teleport"] is True
+        center_shift = snapshot["center"]["frame_shift"]
+        if center_shift is not None:
+            assert center_shift["keep_teleport"] is False
+            assert center_shift["reset_teleport"] is False
         assert snapshot["center"]["negative_scale_transition"]["active"] is True
         assert snapshot["center"]["source_world_linear"].flags.writeable is False
         particle_radii = snapshot["collision"]["particle_radii"]
@@ -457,7 +460,17 @@ try:
         ("show_motion", {"show_motion": True}, ("max_distance", "backstop")),
         ("show_angle_limit", {"show_angle_limit": True}, ("angle_limit",)),
         ("show_angle_restoration", {"show_angle_restoration": True}, ("angle_target",)),
-        ("show_center", {"show_center": True}, ("center", "teleport_keep")),
+        ("show_center", {"show_center": True}, ("center",)),
+        (
+            "show_teleport_threshold",
+            {"show_teleport_threshold": True},
+            ("teleport_threshold",),
+        ),
+        (
+            "show_teleport_status",
+            {"show_teleport_status": True},
+            ("teleport_measure",),
+        ),
         ("show_collision", {"show_collision": True}, ("collider", "edge_collision")),
         ("show_radii", {"show_radii": True}, ("radius",)),
         ("show_self_primitives", {"show_self_primitives": True}, ("primitive",)),
@@ -478,6 +491,8 @@ try:
             "show_attributes": False,
             "show_motion": False,
             "show_center": False,
+            "show_teleport_threshold": False,
+            "show_teleport_status": False,
             "show_collision": False,
             "show_radii": False,
             "show_self_primitives": False,
@@ -559,6 +574,8 @@ try:
             "show_angle_limit": {"parameters", "motion"},
             "show_angle_restoration": {"parameters", "motion"},
             "show_center": {"center"},
+            "show_teleport_threshold": set(),
+            "show_teleport_status": set(),
             "show_collision": {"topology", "parameters", "collision"},
             "show_radii": {"parameters", "collision"},
             "show_self_primitives": set(),
@@ -606,6 +623,26 @@ try:
             )
         elif mode_name == "show_gravity":
             assert "gravity_effective_strength" in captured_snapshot["parameters"]
+        elif mode_name == "show_teleport_threshold":
+            teleport = captured_snapshot["teleport"]
+            assert teleport["status"] is None
+            threshold = teleport["threshold"]
+            assert threshold is not None
+            assert threshold["old_positions"].flags.writeable is False
+            assert threshold["positions"].flags.writeable is False
+            assert threshold["eligible"].flags.writeable is False
+            assert np.all(threshold["eligible"] == 1)
+            assert "teleport_threshold" in native_snapshot
+            assert "teleport_status" not in native_snapshot
+        elif mode_name == "show_teleport_status":
+            teleport = captured_snapshot["teleport"]
+            assert teleport["threshold"] is None
+            status = teleport["status"]
+            assert status is not None
+            assert status["positions"].flags.writeable is False
+            assert status["status"].flags.writeable is False
+            assert "teleport_status" in native_snapshot
+            assert "teleport_threshold" not in native_snapshot
         elif mode_name == "show_distance":
             assert captured_snapshot["motion"].get("step_basic_positions") is not None
             distance_state = native_snapshot.get("distance_tether") or {}

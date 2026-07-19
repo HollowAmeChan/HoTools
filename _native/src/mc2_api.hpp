@@ -56,6 +56,8 @@ PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_motion_base(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_angle_restoration(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_angle_limit(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_debug_particle_teleport_threshold(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_debug_particle_teleport_status(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_dynamics(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_distance_tether(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_bending(PyObject*, PyObject* args);

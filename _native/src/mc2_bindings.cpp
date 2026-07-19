@@ -246,6 +246,10 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_angle_restoration, a); });
     m.def("mc2_context_v0_read_debug_angle_limit",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_angle_limit, a); });
+    m.def("mc2_context_v0_read_debug_particle_teleport_threshold",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_particle_teleport_threshold, a); });
+    m.def("mc2_context_v0_read_debug_particle_teleport_status",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_particle_teleport_status, a); });
     m.def("mc2_context_v0_read_debug_dynamics",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_dynamics, a); });
     m.def("mc2_context_v0_read_debug_distance_tether",

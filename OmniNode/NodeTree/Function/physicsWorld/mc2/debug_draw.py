@@ -67,9 +67,10 @@ _COLORS = {
     "shift": (1.00, 0.38, 0.08, 0.94),
     "center_step": (0.22, 0.78, 1.00, 0.92),
     "center_inertia": (0.72, 0.32, 1.00, 0.92),
-    "teleport_threshold": (0.18, 0.62, 1.00, 0.58),
+    "teleport_threshold": (0.32, 0.70, 1.00, 0.32),
+    "teleport_direction": (0.62, 0.84, 1.00, 0.48),
     "teleport_measure": (0.28, 0.95, 0.42, 0.94),
-    "teleport_keep": (1.00, 0.20, 0.82, 1.00),
+    "teleport_keep": (1.00, 0.78, 0.10, 1.00),
     "teleport_reset": (1.00, 0.08, 0.06, 1.00),
     "negative": (0.95, 0.20, 0.70, 0.95),
     "collider": (0.08, 0.58, 0.92, 0.72),
@@ -119,6 +120,8 @@ def update_mc2_debug_draw_store(
     show_motion_base: bool = True,
     show_angle_restoration: bool = True,
     show_angle_limit: bool = False,
+    show_teleport_threshold: bool = False,
+    show_teleport_status: bool = False,
 ) -> None:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
@@ -141,6 +144,8 @@ def update_mc2_debug_draw_store(
         "show_angle_restoration": bool(show_angle_restoration),
         "show_angle_limit": bool(show_angle_limit),
         "show_center": bool(show_center),
+        "show_teleport_threshold": bool(show_teleport_threshold),
+        "show_teleport_status": bool(show_teleport_status),
         "show_collision": bool(show_collision),
         "show_radii": bool(show_radii),
         "show_self_primitives": bool(show_self_primitives),
@@ -354,6 +359,14 @@ def _append_slot_batches(
         )
     if filters["show_center"]:
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
+    if filters["show_teleport_threshold"] or filters["show_teleport_status"]:
+        _append_particle_teleport_batches(
+            batches,
+            point_batches,
+            snapshot.get("teleport") or {},
+            filters,
+            limit,
+        )
     if filters["show_collision"]:
         _append_collision_situation_batches(
             batches, triangle_meshes, snapshot, topology, positions, limit
@@ -858,6 +871,113 @@ def _append_angle_limit_batches(batches, motion, limit):
         else:
             add_line(lines, parent, parent + direction * length)
     _batch(batches, lines, "angle_limit", 1.4)
+
+
+def _append_particle_teleport_batches(
+    batches, point_batches, teleport, filters, limit
+):
+    if filters.get("show_teleport_threshold", False):
+        threshold = teleport.get("threshold") or {}
+        old_positions = np.asarray(
+            _values(threshold.get("old_positions")), dtype=np.float32
+        ).reshape((-1, 3))
+        positions = np.asarray(
+            _values(threshold.get("positions")), dtype=np.float32
+        ).reshape((-1, 3))
+        old_rotations = np.asarray(
+            _values(threshold.get("old_rotations_xyzw")), dtype=np.float32
+        ).reshape((-1, 4))
+        rotations = np.asarray(
+            _values(threshold.get("rotations_xyzw")), dtype=np.float32
+        ).reshape((-1, 4))
+        eligible = np.asarray(
+            _values(threshold.get("eligible")), dtype=np.uint8
+        ).reshape((-1,))
+        count = min(
+            len(old_positions), len(positions), len(old_rotations), len(rotations),
+            len(eligible), limit
+        )
+        radius = max(float(threshold.get("distance_threshold", 0.0) or 0.0), 0.0)
+        rotation_limit = math.radians(max(
+            float(threshold.get("rotation_threshold_degrees", 0.0) or 0.0),
+            0.0,
+        ))
+        threshold_lines = []
+        direction_lines = []
+        for index in range(count):
+            if eligible[index] == 0:
+                continue
+            old_position = vector3(old_positions[index])
+            position = vector3(positions[index])
+            if radius > 1.0e-7:
+                _add_axis_sphere(threshold_lines, old_position, radius)
+            if (position - old_position).length > 1.0e-7:
+                add_arrow_lines(direction_lines, old_position, position)
+            old_xyzw = old_rotations[index]
+            current_xyzw = rotations[index]
+            old_rotation = mathutils.Quaternion((
+                float(old_xyzw[3]),
+                float(old_xyzw[0]),
+                float(old_xyzw[1]),
+                float(old_xyzw[2]),
+            ))
+            current_rotation = mathutils.Quaternion((
+                float(current_xyzw[3]),
+                float(current_xyzw[0]),
+                float(current_xyzw[1]),
+                float(current_xyzw[2]),
+            ))
+            delta = current_rotation @ old_rotation.conjugated()
+            axis = delta.axis if abs(float(delta.angle)) > 1.0e-7 else old_rotation @ mathutils.Vector((0.0, 0.0, 1.0))
+            axis_a, axis_b = _plane_axes(axis)
+            arc_radius = max(min(radius * 0.28, 0.25), 0.025)
+            if rotation_limit > 1.0e-7:
+                add_arc_lines(
+                    threshold_lines,
+                    old_position,
+                    axis_a,
+                    axis_b,
+                    arc_radius,
+                    0.0,
+                    min(rotation_limit, math.pi),
+                )
+            if abs(float(delta.angle)) > 1.0e-7:
+                add_arc_lines(
+                    direction_lines,
+                    old_position,
+                    axis_a,
+                    axis_b,
+                    arc_radius * 0.76,
+                    0.0,
+                    min(abs(float(delta.angle)), math.pi),
+                )
+        _batch(batches, threshold_lines, "teleport_threshold", 0.8)
+        _batch(batches, direction_lines, "teleport_direction", 1.0)
+
+    if filters.get("show_teleport_status", False):
+        status_payload = teleport.get("status") or {}
+        positions = np.asarray(
+            _values(status_payload.get("positions")), dtype=np.float32
+        ).reshape((-1, 3))
+        status = np.asarray(
+            _values(status_payload.get("status")), dtype=np.uint8
+        ).reshape((-1,))
+        count = min(len(positions), len(status), limit)
+        normal_points = []
+        keep_points = []
+        reset_points = []
+        for index in range(count):
+            target = (
+                reset_points
+                if int(status[index]) == 1
+                else keep_points
+                if int(status[index]) == 2
+                else normal_points
+            )
+            add_point(target, positions[index])
+        _point_batch(point_batches, normal_points, "teleport_measure", 6.0)
+        _point_batch(point_batches, keep_points, "teleport_keep", 9.0)
+        _point_batch(point_batches, reset_points, "teleport_reset", 9.0)
 
 
 def _append_center_batches(batches, point_batches, center):

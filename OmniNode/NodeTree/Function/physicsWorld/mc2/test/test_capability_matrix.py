@@ -145,27 +145,34 @@ def test_setup_local_evidence_cannot_close_another_setup():
 
     teleport = capability_gaps(by_id["center_inertia_and_teleport"])
     assert not any(
-        invariant.startswith("component_keep_reset_all_setups_exact@")
-        or invariant.startswith("component_teleport_zero_substep_immediate@")
-        or invariant.startswith("component_reset_pose_exact@")
+        invariant.startswith("object_keep_reset_all_setups_detected@")
+        or invariant.startswith("object_teleport_zero_substep_immediate@")
+        or invariant.startswith("object_reset_pose_exact@")
+        or invariant.startswith("bone_root_teleport_detected@")
+        or invariant.startswith("teleport_debug_layers_isolated@")
         for invariant in teleport["invariants"]
     )
     for invariant in (
         "particle_teleport_bidirectional_exact",
         "particle_keep_offset_exact",
-        "particle_keep_velocity_cleared",
         "particle_reset_history_cleared",
         "particle_subset_scope_exact",
-        "teleport_debug_layers_isolated",
     ):
         assert all(
             f"{invariant}@{setup}" in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
         )
     assert "bone_root_teleport_detected@mesh_cloth" not in teleport["invariants"]
-    assert "bone_root_teleport_detected@bone_cloth" in teleport["invariants"]
-    assert "bone_root_teleport_detected@bone_spring" in teleport["invariants"]
-    assert "Team Center-only" in by_id["center_inertia_and_teleport"]["known_gap"]
+    assert "bone_root_teleport_detected@bone_cloth" not in teleport["invariants"]
+    assert "bone_root_teleport_detected@bone_spring" not in teleport["invariants"]
+    for invariant in (
+        "particle_keep_velocity_cleared",
+    ):
+        assert all(
+            f"{invariant}@{setup}" not in teleport["invariants"]
+            for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
+        )
+    assert "Keep offset" in by_id["center_inertia_and_teleport"]["known_gap"]
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

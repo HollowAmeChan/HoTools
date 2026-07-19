@@ -55,6 +55,8 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_read_debug_motion_base",
     "mc2_context_v0_read_debug_angle_restoration",
     "mc2_context_v0_read_debug_angle_limit",
+    "mc2_context_v0_read_debug_particle_teleport_threshold",
+    "mc2_context_v0_read_debug_particle_teleport_status",
     "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
     "mc2_context_v0_stats",

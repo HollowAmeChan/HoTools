@@ -115,9 +115,9 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         ),
         "required_invariants": (
             "finite", "deterministic", "same_frame_stable",
-            "component_keep_reset_all_setups_exact",
-            "component_teleport_zero_substep_immediate",
-            "component_reset_pose_exact",
+            "object_keep_reset_all_setups_detected",
+            "object_teleport_zero_substep_immediate",
+            "object_reset_pose_exact",
             "particle_teleport_bidirectional_exact",
             "particle_keep_offset_exact",
             "particle_keep_velocity_cleared",
@@ -133,19 +133,27 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "runner": "test_blender_mc2_mixed_output_soak.py::main",
             "frames": 900,
             "setups": ALL_SETUPS,
-            "fields": ("teleport_distance", "teleport_mode"),
+            "fields": (
+                "teleport_distance", "teleport_rotation", "teleport_mode",
+            ),
             "invariants": (
-                "finite", "deterministic", "component_keep_reset_all_setups_exact",
-                "component_teleport_zero_substep_immediate",
-                "component_reset_pose_exact",
+                "finite", "deterministic", "same_frame_stable",
+                "object_keep_reset_all_setups_detected",
+                "object_teleport_zero_substep_immediate",
+                "object_reset_pose_exact",
+                "particle_keep_velocity_cleared",
+                "bone_root_teleport_detected",
+                "teleport_debug_layers_isolated",
                 "teleport_nonunit_positive_scale", "real_writeback_each_frame",
             ),
         },),
         "known_gap": (
-            "Current production detection is MC2 Team Center-only. Per-particle old/current "
-            "animation-base thresholds, root-bone-only teleport, symmetric particle Keep, "
-            "velocity clearing, subset scope, and split threshold/status debug are not yet "
-            "implemented or covered by the component teleport runner."
+            "Production now evaluates every particle animation base and supplements Mesh "
+            "object motion with native component-pose history. The 900-frame product runner "
+            "covers object/root events, triggered Keep velocity clearing and isolated debug. "
+            "Bidirectional exact positions for every setup, complete Reset history clearing, "
+            "per-particle Keep offset and within-task subset exactness still require a 600+ "
+            "frame product runner; Center inertia fields also retain independent gaps."
         ),
         "status": "gap",
     },
@@ -489,7 +497,8 @@ MC2_INACTIVE_FIELD_GROUPS = {
 
 MC2_DEBUG_ACCEPTANCE_LAYERS = (
     "topology", "attributes", "motion_base_position", "motion_limits",
-    "angle_restoration_target", "center_teleport", "task_external_colliders",
+    "angle_restoration_target", "center", "teleport_threshold_direction",
+    "teleport_trigger_status", "task_external_colliders",
     "particle_radius", "self_primitives", "self_grid", "self_candidates",
     "self_contacts", "final_output_offset",
 )
