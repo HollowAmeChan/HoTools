@@ -121,41 +121,57 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "particle_teleport_bidirectional_exact",
             "particle_keep_offset_exact",
             "particle_keep_velocity_cleared",
-            "particle_reset_history_cleared",
+            "particle_reset_step_history_exact",
+            "particle_reset_self_history_invalidated",
             "particle_subset_scope_exact",
             "bone_root_teleport_detected",
             "teleport_debug_layers_isolated",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
+            "particle_reset_self_history_invalidated": CLOTH_SETUPS,
         },
-        "evidence": ({
-            "runner": "test_blender_mc2_mixed_output_soak.py::main",
-            "frames": 900,
-            "setups": ALL_SETUPS,
-            "fields": (
-                "teleport_distance", "teleport_rotation", "teleport_mode",
-            ),
-            "invariants": (
-                "finite", "deterministic", "same_frame_stable",
-                "object_keep_reset_all_setups_detected",
-                "object_teleport_zero_substep_immediate",
-                "object_reset_pose_exact",
-                "particle_teleport_bidirectional_exact",
-                "particle_keep_offset_exact",
-                "particle_keep_velocity_cleared",
-                "particle_subset_scope_exact",
-                "bone_root_teleport_detected",
-                "teleport_debug_layers_isolated",
-                "teleport_nonunit_positive_scale", "real_writeback_each_frame",
-            ),
-        },),
+        "evidence": (
+            {
+                "runner": "test_blender_mc2_mixed_output_soak.py::main",
+                "frames": 900,
+                "setups": ALL_SETUPS,
+                "fields": (
+                    "teleport_distance", "teleport_rotation", "teleport_mode",
+                ),
+                "invariants": (
+                    "finite", "deterministic", "same_frame_stable",
+                    "object_keep_reset_all_setups_detected",
+                    "object_teleport_zero_substep_immediate",
+                    "object_reset_pose_exact",
+                    "particle_teleport_bidirectional_exact",
+                    "particle_keep_offset_exact",
+                    "particle_keep_velocity_cleared",
+                    "particle_reset_step_history_exact",
+                    "particle_subset_scope_exact",
+                    "bone_root_teleport_detected",
+                    "teleport_debug_layers_isolated",
+                    "teleport_nonunit_positive_scale", "real_writeback_each_frame",
+                ),
+            },
+            {
+                "runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",
+                "frames": 900,
+                "setups": ("bone_cloth",),
+                "fields": ("teleport_distance", "teleport_mode"),
+                "invariants": (
+                    "finite", "deterministic",
+                    "particle_reset_self_history_invalidated",
+                ),
+            },
+        ),
         "known_gap": (
             "Production now evaluates every particle animation base and supplements Mesh "
             "object motion with native component-pose history. The 900-frame product runner "
             "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
-            "velocity clearing, StepBasic alignment and isolated debug. Complete Reset clearing "
-            "from a non-empty self/contact history still requires a 600+ frame product runner; "
+            "velocity clearing, StepBasic alignment and isolated debug. BoneCloth also clears "
+            "non-empty task-local self history in the zero-substep Reset frame. MeshCloth "
+            "cross-task self history still requires a 600+ frame product runner; "
             "Center inertia fields also retain independent gaps."
         ),
         "status": "gap",

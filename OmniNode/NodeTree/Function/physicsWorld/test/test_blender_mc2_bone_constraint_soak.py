@@ -1374,7 +1374,7 @@ def bone_triangle_bending():
     print("[PASS] BoneCloth Triangle Bending: 2 tasks x 2 deterministic x 900")
 
 
-def _bone_self_task(armature, enabled, cloth_mass):
+def _bone_self_task(armature, enabled, cloth_mass, teleport_mode=0):
     profile = nodes.physicsMC2BoneClothProfile(
         gravity=7.0,
         gravity_direction=(0.0, 0.0, -1.0),
@@ -1388,6 +1388,9 @@ def _bone_self_task(armature, enabled, cloth_mass):
         collision_mode=0,
         self_collision_enabled=enabled,
         cloth_mass=cloth_mass,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=180.0,
     )
     tasks, _names = nodes.physicsMC2BoneClothTask(
         [{"armature": armature, "bone": "Control"}],
@@ -1407,6 +1410,8 @@ def _run_bone_self_collision():
     stable_task_id = task.task_id
     trajectory_digest = hashlib.sha256()
     disabled_counts = None
+    pre_teleport_self_counts = None
+    teleport_cleared = False
     try:
         for frame in range(1, 901):
             if frame == 301:
@@ -1424,14 +1429,34 @@ def _run_bone_self_collision():
                 old_revision = old_context.inspect()["parameter_revision"]
                 task = _bone_self_task(armature, True, 0.75)
                 assert task.task_id == stable_task_id
+            elif frame == 801:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                before = old_context.inspect()
+                pre_teleport_self_counts = (
+                    before["self_contact_candidate_count"],
+                    before["self_contact_cache_count"],
+                    before["self_intersect_record_count"],
+                )
+                assert all(value > 0 for value in pre_teleport_self_counts), (
+                    pre_teleport_self_counts,
+                    before,
+                )
+                old_revision = before["parameter_revision"]
+                task = _bone_self_task(armature, True, 0.75, teleport_mode=1)
+                assert task.task_id == stable_task_id
 
             control = armature.pose.bones["Control"]
             control.rotation_mode = "XYZ"
-            control.rotation_euler.x = 0.7 * math.sin(frame * 0.043)
-            control.rotation_euler.z = 1.1 * math.sin(frame * 0.057)
-            control.location.y = 0.2 * math.sin(frame * 0.039)
+            animation_frame = min(frame, 800)
+            control.rotation_euler.x = 0.7 * math.sin(animation_frame * 0.043)
+            control.rotation_euler.z = 1.1 * math.sin(animation_frame * 0.057)
+            control.location.y = 0.2 * math.sin(animation_frame * 0.039)
+            if frame == 801:
+                armature.pose.bones["Chain1_2"].location = (2.0, 0.0, 0.0)
             bpy.context.view_layer.update()
             mixed._set_frame(world, frame, world.generation)
+            if frame == 801:
+                world.frame_context.time_scale = 0.0
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -1445,9 +1470,21 @@ def _run_bone_self_collision():
             assert np.all(np.isfinite(candidate.world_positions))
             assert np.all(np.isfinite(candidate.world_rotations_xyzw))
             info = slot.data["native_context"].inspect()
-            if frame in (301, 451, 601):
+            if frame in (301, 451, 601, 801):
                 assert slot.data["native_context"] is old_context
                 assert info["parameter_revision"] == old_revision + 1
+            if frame == 801:
+                teleport = slot.data["particle_teleport_result"]
+                assert teleport["mode"] == 1
+                assert 0 < teleport["trigger_count"] < topology.particle_count
+                assert slot.data["frame_schedule"].update_count == 0
+                assert info["self_contact_candidate_count"] == 0
+                assert info["self_contact_cache_count"] == 0
+                assert info["self_intersect_record_count"] == 0
+                assert info["self_primitive_dynamic_ready"] is False
+                assert info["self_grid_dynamic_ready"] is False
+                assert info["self_candidate_ready"] is False
+                teleport_cleared = True
             if frame == 450:
                 disabled_counts = (
                     info["self_primitive_update_count"],
@@ -1486,6 +1523,8 @@ def _run_bone_self_collision():
         assert info["self_contact_candidate_count"] > 0
         assert info["self_contact_cache_count"] <= info["self_contact_candidate_count"]
         assert info["self_intersect_record_count"] > 0
+        assert pre_teleport_self_counts is not None
+        assert teleport_cleared is True
         runtime = slot.data["effective_parameters"].debug_dict()
         assert runtime["float_values"]["cloth_mass"] == np.float32(0.75)
         assert runtime["int_values"]["self_collision_mode"] == 2

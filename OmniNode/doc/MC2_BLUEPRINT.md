@@ -32,7 +32,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 旧MC2节点package、旧数组solve、旧context/IO ABI、旧BoneCloth IO和兼容构建选项已经物理删除。不得恢复别名、fallback backend、shadow solver或旧节点adapter。
 
-产品、正确性、生命周期、洁净度、文档和热点性能门禁均已关闭，`solver_acceptance_blocker=False`。MC2当前进入维护态；未来扩展不重新打开已删除路径。
+旧路径替代、生命周期、洁净度、单一文档和热点性能门禁已经关闭，`solver_acceptance_blocker=False`只表示旧solver删除后的维护态准入成立，不表示九个能力族的产品证据已经全部闭环。能力缺口继续由本文末尾的长时矩阵声明；未来扩展或补证据都不得重新打开已删除路径。
 
 当前公开范围是restricted realtime。Bake/export、通用力场、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
 
@@ -312,7 +312,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 | 请求身份 | 独立request bit；不得用笼统`debug_enabled`替代 |
 | Producer/owner | C++ context、interaction或Python静态payload中的唯一生产者 |
 | State分类 | Solver、Oracle或Viewport派生；说明为何不能复用另一类接口 |
-| 生产时机 | 请求登记后的下一次真实substep；zero-substep必须保留请求，same-frame不得伪造 |
+| 生产时机 | substep中间态默认在请求后的下一次真实substep冻结；Teleport这类scheduler前帧判定必须显式声明为new-frame producer，可在zero-substep帧冻结；same-frame一律不得伪造 |
 | 精确依赖 | 该模式需要的共享base与阶段数组；不得顺带生产兄弟模式数据 |
 | 数据预算 | 顶点/primitive/contact数量级、分配字节和readback次数上界 |
 | 空值语义 | 物理量为零或无记录时允许空批次，但snapshot必须能区分“已请求且为空”和“未请求” |
@@ -327,10 +327,10 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 4. Renderer只消费snapshot中明确存在的键。不得从最终网格、当前RNA或另一模式的target反推缺失中间态；Angle Limit借用Restoration target属于明确禁止的越界。
 5. Oracle全量接口不得进入`MC2_REQUIRED_NATIVE_SYMBOLS`或viewport调用链；生产Debug使用最小`read_debug_*`接口。若测试需要完整scratch，必须保留在oracle层而不是扩大生产readback。
 6. Snapshot一经捕获必须只读并带精确frame/generation/task identity。新请求未遇到真实substep时继续显示旧快照，但验收必须检查`captured_frame`，不得把旧快照算作新模式覆盖。
-7. 隔离验收必须逐模式执行“登记请求 -> 等待真实advance -> 捕获 -> 绘制”。未请求阶段键必须不存在；有非零物理量时必须出现该模式自己的batch语义，零量只验证精确空readback，不得伪造图元。
+7. 隔离验收必须逐模式执行“登记请求 -> 等待该模式声明的真实生产阶段 -> 捕获 -> 绘制”。substep模式等待真实advance；scheduler前帧判定模式等待新的world frame。未请求阶段键必须不存在；有非零物理量时必须出现该模式自己的batch语义，零量只验证精确空readback，不得伪造图元。
 8. 性能验收至少比较debug全关、单模式和最重组合三档的readback次数、分配规模与capture耗时；debug全关必须保持零额外生产。任何常驻C++ debug buffer都需要单独产品决策，不得由可视化需求默认引入。
 
-MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离20个开关，每个模式都必须等待下一次真实substep并捕获匹配帧，禁止复用旧快照冒充覆盖；有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
+MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离22个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
 
 ## Setup与支持域
 
@@ -686,7 +686,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期。Bone产品测试要求横向triangle生成非零Bending record、static/native signature一致，并覆盖旋转Armature的零重力静置与显式topology/output debug请求；BoneSpring runtime强制Bending关闭 |
-| Blender 4.5约束专项soak | Mesh Angle Restoration零力/热更新各900帧并完整复跑，逐帧位置与首末帧target摘要必须一致，target逐点验证为当前parent加StepBasic父子方向；另以弯折动画基准各跑600帧，恢复速度衰减`0/1`的首个修正位置一致，下一帧及前30帧累计运动必须按低衰减更大排序。重力衰减的内部frame-input测试使用Center anchor形成`gravity_dot=0.5`，前300帧关闭Restoration且A/B轨迹摘要相同，301帧同context热开后falloff `1`保留更大target夹角；该测试只证明kernel与frame pipeline，不证明当前任务节点可达Center输入；Motion Base/max-distance 900帧并以全轨迹摘要重复两次；双task Sphere/Capsule外碰scope各600帧并整轨迹重复，两个Mesh均要求非零有界响应和精确collider key；Mesh Distance受力/热更新900帧，另以关闭Distance的600帧外拉/内压场景分别跨过Tether `1.03×/0.35×`阈值，整套轨迹重复两次；Mesh Triangle Bending零/强各900帧并完整复跑，逐帧检查Pin；BoneCloth同一step推进零/强两个横向triangle task各900帧并完整复跑，要求fixed root不受Bending开关影响、volume不翻面、connected/disconnected写回，后300帧平均dihedral误差`0.801053 -> 0.003975 rad`、volume相对误差`0.196909 -> 0.007234`；Mesh Angle Limit 1200帧按关/开/关/更小角度重开切换，同context计数冻结/恢复、最终几何边界与完整轨迹复跑；BoneCloth/BoneSpring Angle Limit各900帧重复两次，隔离Distance/Bending/碰撞并验证30度到15度热更新后结果至少收紧5度、源码三次迭代残差保持有限，BoneCloth逐帧覆盖connected/disconnected写回；Mesh Center/Keep 1200帧；Mesh跨task self使用产品task producer、不同cloth mass和半径热更新，两次完整运行1800帧，精确要求2 participant/1 pair、派生thickness=`radius*0.25`与有界contact cache；BoneCloth任务内self两次完整运行900帧，验证质量热更新、禁用区间计数冻结、重新启用、connected/disconnected写回、`radius=0.04 -> thickness=0.01`及显式请求后的primitive/candidate debug捕获。三setup逐粒子Teleport 900帧runner已执行，包含Object整体跃迁、Bone root正负跃迁、connected/disconnected写回、非单位正scale、zero-substep立即发布、阈值层/状态层独立请求，以及Mesh BasePose列/Bone3分支的正向Keep与反向Reset严格子集；逐粒子验证精确位置、StepBasic、触发粒子清速、未触发粒子状态保持和局部Reset不启动全局稳定化。仅从非空self/contact历史出发的完整Reset清除仍缺600帧以上产品runner证据 |
+| Blender 4.5约束专项soak | Mesh Angle Restoration零力/热更新各900帧并完整复跑，逐帧位置与首末帧target摘要必须一致，target逐点验证为当前parent加StepBasic父子方向；另以弯折动画基准各跑600帧，恢复速度衰减`0/1`的首个修正位置一致，下一帧及前30帧累计运动必须按低衰减更大排序。重力衰减的内部frame-input测试使用Center anchor形成`gravity_dot=0.5`，前300帧关闭Restoration且A/B轨迹摘要相同，301帧同context热开后falloff `1`保留更大target夹角；该测试只证明kernel与frame pipeline，不证明当前任务节点可达Center输入；Motion Base/max-distance 900帧并以全轨迹摘要重复两次；双task Sphere/Capsule外碰scope各600帧并整轨迹重复，两个Mesh均要求非零有界响应和精确collider key；Mesh Distance受力/热更新900帧，另以关闭Distance的600帧外拉/内压场景分别跨过Tether `1.03×/0.35×`阈值，整套轨迹重复两次；Mesh Triangle Bending零/强各900帧并完整复跑，逐帧检查Pin；BoneCloth同一step推进零/强两个横向triangle task各900帧并完整复跑，要求fixed root不受Bending开关影响、volume不翻面、connected/disconnected写回，后300帧平均dihedral误差`0.801053 -> 0.003975 rad`、volume相对误差`0.196909 -> 0.007234`；Mesh Angle Limit 1200帧按关/开/关/更小角度重开切换，同context计数冻结/恢复、最终几何边界与完整轨迹复跑；BoneCloth/BoneSpring Angle Limit各900帧重复两次，隔离Distance/Bending/碰撞并验证30度到15度热更新后结果至少收紧5度、源码三次迭代残差保持有限，BoneCloth逐帧覆盖connected/disconnected写回；Mesh Center/Keep 1200帧；Mesh跨task self使用产品task producer、不同cloth mass和半径热更新，两次完整运行1800帧，精确要求2 participant/1 pair、派生thickness=`radius*0.25`与有界contact cache；BoneCloth任务内self两次完整运行900帧，验证质量热更新、禁用区间计数冻结、重新启用、connected/disconnected写回、`radius=0.04 -> thickness=0.01`及显式请求后的primitive/candidate debug捕获，并在candidate/contact/intersection历史均非空后执行局部zero-substep Reset，同帧清空三类历史与ready位，后续正常重建。三setup逐粒子Teleport 900帧runner已执行，包含Object整体跃迁、Bone root正负跃迁、connected/disconnected写回、非单位正scale、zero-substep立即发布、阈值层/状态层独立请求，以及Mesh BasePose列/Bone3分支的正向Keep与反向Reset严格子集；逐粒子验证精确位置、StepBasic、触发粒子清速、未触发粒子状态保持和局部Reset不启动全局稳定化。仅MeshCloth跨task非空self历史的Reset失效仍缺600帧以上产品runner证据 |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；601帧Reset后验证三setup的`stabilization_time_after_reset=0.2`恢复斜率及`blend_weight=0.6`精确乘积；逐帧显式readback post后的`state_velocities`，不得超过`particle_speed_limit * center.scale_ratio + 0.01m/s`，不能用混有Center位移补偿的world position差伪装内部速度；完整场景重复两次并比较最终粒子/写回数组摘要以验证确定性 |
 | Blender 4.5 Bone角度soak | BoneCloth/BoneSpring各900帧并重复两次，逐帧粒子位置/旋转及首末帧Restoration target摘要必须一致；Spring、Distance、Bending和碰撞全部关闭，Restoration/Limit在301/601帧关闭与重开，context不重建且关闭区间solve count冻结；BoneCloth强制同时包含connected旋转写回与disconnected位移旋转写回。identity方向直接跳过投影后，零力静置最大误差分别为`4nm`与`0.581µm`，门槛为`0.1µm/1µm`；target vector逐点等于StepBasic父子向量，target position逐点等于当前parent加该向量。另以根动画和重力激励对两种setup分别执行恢复速度衰减`0/1`各600帧，首步位置一致，下一步响应与前30帧累计运动均须按低衰减更大排序，并逐帧执行BoneCloth connected/disconnected写回 |
 | Blender 4.5 Bone Motion soak | BoneCloth 900帧并重复两次，逐帧粒子位置/旋转及最终Motion Base摘要必须一致；同时包含connected/disconnected写回，前半程MaxDistance、451帧同context热开Backstop，逐帧相对动画基准距离不超过`0.031m`，最终debug Motion BasePosition逐点等于动画输入 |
@@ -700,7 +700,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-九个能力族中`tether_and_distance`、`angle_limit`、`motion_max_distance_backstop`与`external_collision`已经闭环，状态为`verified`；其余五族仍为`gap`。Distance/Tether在MeshCloth/BoneCloth各自具备受力边界、固定粒子、baseline root范围、热更新和完整轨迹复跑。Angle Limit具备三setup独立开关/热更新、有限迭代边界和完整轨迹确定性；BoneCloth同时覆盖connected/disconnected写回。External Collision具备三setup真实响应、task过滤、完整轨迹确定性，以及MeshCloth/BoneCloth低/高摩擦切向行为对照；BoneSpring固定`0.5`摩擦，不伪装成可变字段。Angle Restoration仍只有部分Bone证据，不能替代缺失的严格零力与target专项不变量。debug acceptance按每个模式的下一次真实substep捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak；self interaction、Center/Teleport和最终输出映射必须由各自行为断言闭环。
+九个能力族中`tether_and_distance`、`triangle_bending`、`angle_limit`、`motion_max_distance_backstop`、`external_collision`与`self_collision`已经闭环，状态为`verified`；`integration_and_pose_blend`、`center_inertia_and_teleport`与`angle_restoration`仍为`gap`。Center/Teleport族当前只剩非空self/contact历史上的Reset清除，以及独立Center惯性字段证据；这两个缺口不能由Teleport位置通过代替。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
 
 当前没有MC2发布阻断项。
 
