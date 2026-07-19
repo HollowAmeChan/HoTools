@@ -135,6 +135,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "particle_subset_scope_exact",
             "bone_root_teleport_detected",
             "teleport_debug_layers_isolated",
+            "particle_speed_limit_bounded_and_active",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
@@ -146,7 +147,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "frames": 900,
                 "setups": ALL_SETUPS,
                 "fields": (
-                    "teleport_distance", "teleport_rotation", "teleport_mode",
+                    "particle_speed_limit", "teleport_distance",
+                    "teleport_rotation", "teleport_mode",
                 ),
                 "invariants": (
                     "finite", "deterministic", "same_frame_stable",
@@ -160,6 +162,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "particle_subset_scope_exact",
                     "bone_root_teleport_detected",
                     "teleport_debug_layers_isolated",
+                    "particle_speed_limit_bounded_and_active",
                     "teleport_nonunit_positive_scale", "real_writeback_each_frame",
                 ),
             },
@@ -190,8 +193,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
             "velocity clearing, StepBasic alignment and isolated debug. BoneCloth task-local "
             "and MeshCloth cross-task self histories are invalidated in the zero-substep "
-            "Teleport frame and rebuild on later substeps. Only the independent Center "
-            "inertia fields retain product evidence gaps."
+            "Teleport frame and rebuild on later substeps. The remaining independent "
+            "Center inertia fields retain product evidence gaps."
         ),
         "status": "gap",
     },

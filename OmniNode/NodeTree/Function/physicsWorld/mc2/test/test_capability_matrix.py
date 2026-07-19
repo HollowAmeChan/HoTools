@@ -178,6 +178,13 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "Center inertia fields" in by_id[
         "center_inertia_and_teleport"
     ]["known_gap"]
+    assert "particle_speed_limit@mesh_cloth" not in teleport["fields"]
+    assert "particle_speed_limit@bone_cloth" not in teleport["fields"]
+    assert "particle_speed_limit@bone_spring" not in teleport["fields"]
+    assert not any(
+        invariant.startswith("particle_speed_limit_bounded_and_active@")
+        for invariant in teleport["invariants"]
+    )
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

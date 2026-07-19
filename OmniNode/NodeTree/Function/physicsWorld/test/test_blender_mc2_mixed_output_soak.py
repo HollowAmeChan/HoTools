@@ -132,6 +132,7 @@ def _tasks(
     blend_weight=1.0,
     stabilization_time_after_reset=0.1,
     teleport_rotation=180.0,
+    particle_speed_limit=4.0,
 ):
     mesh_profile = parameters.make_mc2_particle_profile(
         gravity=5.0,
@@ -142,6 +143,7 @@ def _tasks(
         teleport_mode=teleport_mode,
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
+        particle_speed_limit=particle_speed_limit,
     )
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity=3.0,
@@ -152,6 +154,7 @@ def _tasks(
         teleport_mode=teleport_mode,
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
+        particle_speed_limit=particle_speed_limit,
     )
     spring_profile = parameters.make_mc2_particle_profile(
         damping=damping,
@@ -160,6 +163,7 @@ def _tasks(
         teleport_mode=teleport_mode,
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
+        particle_speed_limit=particle_speed_limit,
     )
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
         [mesh], profile=mesh_profile
@@ -473,6 +477,9 @@ def _run_scenario():
         max_particle_speeds = {
             task.setup_type: 0.0 for task in tasks
         }
+        low_limit_peak_ratios = {
+            task.setup_type: 0.0 for task in tasks
+        }
         topologies = {
             task.task_id: topology_module.build_mc2_topology_spec(task)
             for task in tasks
@@ -521,6 +528,23 @@ def _run_scenario():
                     blend_weight=0.6,
                     stabilization_time_after_reset=0.2,
                     teleport_rotation=30.0,
+                )
+                assert tuple(task.task_id for task in tasks) == stable_ids
+            if frame in (501, 551):
+                contexts_before_limit_update = tuple(
+                    world.solver_slots[task.task_id].data["native_context"]
+                    for task in tasks
+                )
+                tasks = _tasks(
+                    mesh,
+                    cloth,
+                    spring,
+                    0.25,
+                    1,
+                    blend_weight=0.6,
+                    stabilization_time_after_reset=0.2,
+                    teleport_rotation=30.0,
+                    particle_speed_limit=0.05 if frame == 501 else 4.0,
                 )
                 assert tuple(task.task_id for task in tasks) == stable_ids
             if frame == 601:
@@ -626,6 +650,11 @@ def _run_scenario():
                     particle_speed,
                     speed_limit,
                 )
+                if 501 <= frame < 551:
+                    low_limit_peak_ratios[task.setup_type] = max(
+                        low_limit_peak_ratios[task.setup_type],
+                        particle_speed / speed_limit,
+                    )
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
                     assert shift is None
@@ -893,6 +922,11 @@ def _run_scenario():
                     context.inspect()["parameter_revision"]
                     for context in current_contexts
                 ) == tuple(revision + 1 for revision in old_revisions)
+            if frame in (501, 551):
+                assert tuple(
+                    world.solver_slots[task.task_id].data["native_context"]
+                    for task in tasks
+                ) == contexts_before_limit_update
             if frame in (300, 350, 400, 650):
                 debug_module.request_mc2_debug_capture(
                     world,
@@ -993,6 +1027,10 @@ def _run_scenario():
         assert subset_keep_hits == expected_setups
         assert subset_reset_hits == expected_setups
         assert all(speed > 0.0 for speed in max_particle_speeds.values())
+        assert all(
+            0.98 <= ratio <= 1.0001
+            for ratio in low_limit_peak_ratios.values()
+        ), low_limit_peak_ratios
         expected_increment = (1.0 / 90.0) / 0.2
         for setup_type, samples in stabilization_samples.items():
             first_velocity, first_blend = samples[602]
@@ -1060,10 +1098,16 @@ def _run_scenario():
                 digest.update(str(array.dtype).encode("ascii"))
                 digest.update(str(array.shape).encode("ascii"))
                 digest.update(array.tobytes())
+            digest.update(
+                np.asarray(
+                    low_limit_peak_ratios[setup_type], dtype=np.float32
+                ).tobytes()
+            )
         deterministic_digest = digest.hexdigest()
         print(
             "[PASS] 900-frame mixed output/hot-update + all-setup Keep/Reset; "
-            f"max speeds={max_particle_speeds}"
+            f"max speeds={max_particle_speeds}; "
+            f"low-limit peak ratios={low_limit_peak_ratios}"
         )
     finally:
         world.omni_cache_dispose("mixed_output_soak")
