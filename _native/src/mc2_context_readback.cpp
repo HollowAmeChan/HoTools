@@ -201,25 +201,47 @@ PyObject* mc2_context_v0_read_self_collision_primitives(PyObject*, PyObject* arg
         !expect_1d_array(thickness, "out_self_thickness", count)) {
         return nullptr;
     }
+    std::memcpy(inverse_masses.view.buf, context->self_primitive_inverse_masses.data(),
+                context->self_primitive_inverse_masses.size() * sizeof(float));
+    std::memcpy(aabb_min.view.buf, context->self_primitive_aabb_min.data(),
+                context->self_primitive_aabb_min.size() * sizeof(float));
+    std::memcpy(aabb_max.view.buf, context->self_primitive_aabb_max.data(),
+                context->self_primitive_aabb_max.size() * sizeof(float));
+    std::memcpy(thickness.view.buf, context->self_primitive_thickness.data(),
+                context->self_primitive_thickness.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_self_indices(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_self_indices expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_primitive_dynamic_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision primitive dynamics are not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_primitive_flags.size());
+    Buffer indices;
+    if (!indices.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_particle_indices"
+        )) {
+        return nullptr;
+    }
+    if (!expect_int32(indices, "out_self_particle_indices") ||
+        !expect_2d(indices, "out_self_particle_indices", count, 3)) {
+        return nullptr;
+    }
     std::memcpy(
-        inverse_masses.view.buf,
-        context->self_primitive_inverse_masses.data(),
-        context->self_primitive_inverse_masses.size() * sizeof(float)
-    );
-    std::memcpy(
-        aabb_min.view.buf,
-        context->self_primitive_aabb_min.data(),
-        context->self_primitive_aabb_min.size() * sizeof(float)
-    );
-    std::memcpy(
-        aabb_max.view.buf,
-        context->self_primitive_aabb_max.data(),
-        context->self_primitive_aabb_max.size() * sizeof(float)
-    );
-    std::memcpy(
-        thickness.view.buf,
-        context->self_primitive_thickness.data(),
-        context->self_primitive_thickness.size() * sizeof(float)
+        indices.view.buf,
+        context->self_particle_indices.data(),
+        context->self_particle_indices.size() * sizeof(std::int32_t)
     );
     Py_RETURN_NONE;
 }
@@ -240,31 +262,78 @@ PyObject* mc2_context_v0_read_self_collision_grid(PyObject*, PyObject* args) {
     }
     const auto count = static_cast<Py_ssize_t>(context->self_primitive_flags.size());
     Buffer particle_indices, grids, hashes, starts, counts;
-    if (!particle_indices.get(
+    Buffer* outputs[] = {&particle_indices, &grids, &hashes, &starts, &counts};
+    const char* names[] = {
+        "out_self_particle_indices", "out_self_primitive_grids",
+        "out_self_grid_hashes", "out_self_grid_starts", "out_self_grid_counts",
+    };
+    for (std::size_t index = 0; index < 5; ++index) {
+        if (!outputs[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE, names[index])) {
+            return nullptr;
+        }
+    }
+    if (!expect_int32(particle_indices, names[0]) ||
+        !expect_2d(particle_indices, names[0], count, 3) ||
+        !expect_int32(grids, names[1]) ||
+        !expect_2d(grids, names[1], count, 3) ||
+        !expect_int32(hashes, names[2]) ||
+        !expect_1d_array(hashes, names[2], count) ||
+        !expect_int32(starts, names[3]) ||
+        !expect_1d_array(starts, names[3], count) ||
+        !expect_int32(counts, names[4]) ||
+        !expect_1d_array(counts, names[4], count)) {
+        return nullptr;
+    }
+    std::memcpy(particle_indices.view.buf, context->self_particle_indices.data(),
+                context->self_particle_indices.size() * sizeof(std::int32_t));
+    std::memcpy(grids.view.buf, context->self_primitive_grids.data(),
+                context->self_primitive_grids.size() * sizeof(std::int32_t));
+    std::memcpy(hashes.view.buf, context->self_grid_hashes.data(),
+                context->self_grid_hashes.size() * sizeof(std::int32_t));
+    std::memcpy(starts.view.buf, context->self_grid_starts.data(),
+                context->self_grid_starts.size() * sizeof(std::int32_t));
+    std::memcpy(counts.view.buf, context->self_grid_counts.data(),
+                context->self_grid_counts.size() * sizeof(std::int32_t));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_self_grid(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 5) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_self_grid expects 5 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_grid_dynamic_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision grid is not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_primitive_flags.size());
+    Buffer grids, hashes, starts, counts;
+    if (!grids.get(
             PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
-            "out_self_particle_indices"
-        ) ||
-        !grids.get(
-            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_primitive_grids"
         ) ||
         !hashes.get(
-            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_grid_hashes"
         ) ||
         !starts.get(
-            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_grid_starts"
         ) ||
         !counts.get(
-            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_grid_counts"
         )) {
         return nullptr;
     }
-    if (!expect_int32(particle_indices, "out_self_particle_indices") ||
-        !expect_2d(particle_indices, "out_self_particle_indices", count, 3) ||
-        !expect_int32(grids, "out_self_primitive_grids") ||
+    if (!expect_int32(grids, "out_self_primitive_grids") ||
         !expect_2d(grids, "out_self_primitive_grids", count, 3) ||
         !expect_int32(hashes, "out_self_grid_hashes") ||
         !expect_1d_array(hashes, "out_self_grid_hashes", count) ||
@@ -274,11 +343,6 @@ PyObject* mc2_context_v0_read_self_collision_grid(PyObject*, PyObject* args) {
         !expect_1d_array(counts, "out_self_grid_counts", count)) {
         return nullptr;
     }
-    std::memcpy(
-        particle_indices.view.buf,
-        context->self_particle_indices.data(),
-        context->self_particle_indices.size() * sizeof(std::int32_t)
-    );
     std::memcpy(
         grids.view.buf,
         context->self_primitive_grids.data(),
@@ -336,6 +400,10 @@ PyObject* mc2_context_v0_read_self_collision_candidates(PyObject*, PyObject* arg
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_self_candidates(PyObject* self, PyObject* args) {
+    return mc2_context_v0_read_self_collision_candidates(self, args);
+}
+
 PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 8) {
         PyErr_SetString(
@@ -352,6 +420,68 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
     }
     const auto count = static_cast<Py_ssize_t>(context->self_contact_types.size());
     Buffer indices, types, enabled, thickness, s, t, normals;
+    Buffer* outputs[] = {&indices, &types, &enabled, &thickness, &s, &t, &normals};
+    const char* names[] = {
+        "out_self_contact_indices", "out_self_contact_types",
+        "out_self_contact_enabled", "out_self_contact_thickness",
+        "out_self_contact_s", "out_self_contact_t", "out_self_contact_normals",
+    };
+    for (std::size_t index = 0; index < 7; ++index) {
+        if (!outputs[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE, names[index])) {
+            return nullptr;
+        }
+    }
+    if (!expect_int32(indices, names[0]) ||
+        !expect_2d(indices, names[0], count, 2) ||
+        !expect_int32(types, names[1]) ||
+        !expect_1d_array(types, names[1], count) ||
+        !expect_uint8_scalar_array(enabled, names[2]) ||
+        !expect_1d_array(enabled, names[2], count) ||
+        !expect_float32(thickness, names[3]) ||
+        !expect_1d_array(thickness, names[3], count) ||
+        !expect_float32(s, names[4]) ||
+        !expect_1d_array(s, names[4], count) ||
+        !expect_float32(t, names[5]) ||
+        !expect_1d_array(t, names[5], count) ||
+        !expect_float32(normals, names[6]) ||
+        !expect_2d(normals, names[6], count, 3)) {
+        return nullptr;
+    }
+    std::memcpy(indices.view.buf, context->self_contact_primitive_indices.data(),
+                context->self_contact_primitive_indices.size() * sizeof(std::int32_t));
+    std::memcpy(types.view.buf, context->self_contact_types.data(),
+                context->self_contact_types.size() * sizeof(std::int32_t));
+    std::memcpy(enabled.view.buf, context->self_contact_enabled.data(),
+                context->self_contact_enabled.size() * sizeof(std::uint8_t));
+    std::memcpy(thickness.view.buf, context->self_contact_thickness.data(),
+                context->self_contact_thickness.size() * sizeof(float));
+    std::memcpy(s.view.buf, context->self_contact_s.data(),
+                context->self_contact_s.size() * sizeof(float));
+    std::memcpy(t.view.buf, context->self_contact_t.data(),
+                context->self_contact_t.size() * sizeof(float));
+    std::memcpy(normals.view.buf, context->self_contact_normals.data(),
+                context->self_contact_normals.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_self_contacts expects 6 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_contact_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision contacts are not ready");
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->self_contact_types.size());
+    Buffer indices, types, enabled, thickness, normals;
     if (!indices.get(
             PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_contact_indices"
@@ -368,16 +498,8 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
             PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_contact_thickness"
         ) ||
-        !s.get(
-            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
-            "out_self_contact_s"
-        ) ||
-        !t.get(
-            PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
-            "out_self_contact_t"
-        ) ||
         !normals.get(
-            PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_contact_normals"
         )) {
         return nullptr;
@@ -390,10 +512,6 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
         !expect_1d_array(enabled, "out_self_contact_enabled", count) ||
         !expect_float32(thickness, "out_self_contact_thickness") ||
         !expect_1d_array(thickness, "out_self_contact_thickness", count) ||
-        !expect_float32(s, "out_self_contact_s") ||
-        !expect_1d_array(s, "out_self_contact_s", count) ||
-        !expect_float32(t, "out_self_contact_t") ||
-        !expect_1d_array(t, "out_self_contact_t", count) ||
         !expect_float32(normals, "out_self_contact_normals") ||
         !expect_2d(normals, "out_self_contact_normals", count, 3)) {
         return nullptr;
@@ -406,10 +524,6 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
                 context->self_contact_enabled.size() * sizeof(std::uint8_t));
     std::memcpy(thickness.view.buf, context->self_contact_thickness.data(),
                 context->self_contact_thickness.size() * sizeof(float));
-    std::memcpy(s.view.buf, context->self_contact_s.data(),
-                context->self_contact_s.size() * sizeof(float));
-    std::memcpy(t.view.buf, context->self_contact_t.data(),
-                context->self_contact_t.size() * sizeof(float));
     std::memcpy(normals.view.buf, context->self_contact_normals.data(),
                 context->self_contact_normals.size() * sizeof(float));
     Py_RETURN_NONE;
@@ -452,29 +566,52 @@ PyObject* mc2_context_v0_read_self_collision_intersections(PyObject*, PyObject* 
     if (!expect_int32(records, "out_self_intersect_records") ||
         !expect_2d(records, "out_self_intersect_records", record_count, 5) ||
         !expect_uint8_scalar_array(particle_flags, "out_self_particle_intersect_flags") ||
-        !expect_1d_array(
-            particle_flags,
-            "out_self_particle_intersect_flags",
-            vertex_count
-        ) ||
+        !expect_1d_array(particle_flags, "out_self_particle_intersect_flags", vertex_count) ||
         !expect_uint32_scalar_array(primitive_flags, "out_self_primitive_flags") ||
         !expect_1d_array(primitive_flags, "out_self_primitive_flags", primitive_count)) {
+        return nullptr;
+    }
+    std::memcpy(records.view.buf, context->self_intersect_records.data(),
+                context->self_intersect_records.size() * sizeof(std::int32_t));
+    std::memcpy(particle_flags.view.buf, context->self_particle_intersect_flags.data(),
+                context->self_particle_intersect_flags.size() * sizeof(std::uint8_t));
+    std::memcpy(primitive_flags.view.buf, context->self_primitive_flags.data(),
+                context->self_primitive_flags.size() * sizeof(std::uint32_t));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_debug_self_intersections(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_self_intersections expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->self_intersect_detection_ready && !context->self_intersect_flags_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision intersections are not ready");
+        return nullptr;
+    }
+    const auto record_count = static_cast<Py_ssize_t>(
+        context->self_intersect_records.size() / 5
+    );
+    Buffer records;
+    if (!records.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_intersect_records"
+        )) {
+        return nullptr;
+    }
+    if (!expect_int32(records, "out_self_intersect_records") ||
+        !expect_2d(records, "out_self_intersect_records", record_count, 5)) {
         return nullptr;
     }
     std::memcpy(
         records.view.buf,
         context->self_intersect_records.data(),
         context->self_intersect_records.size() * sizeof(std::int32_t)
-    );
-    std::memcpy(
-        particle_flags.view.buf,
-        context->self_particle_intersect_flags.data(),
-        context->self_particle_intersect_flags.size() * sizeof(std::uint8_t)
-    );
-    std::memcpy(
-        primitive_flags.view.buf,
-        context->self_primitive_flags.data(),
-        context->self_primitive_flags.size() * sizeof(std::uint32_t)
     );
     Py_RETURN_NONE;
 }

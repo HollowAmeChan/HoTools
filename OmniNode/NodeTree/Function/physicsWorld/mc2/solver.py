@@ -1154,16 +1154,21 @@ def step_mc2(
                     collided_by_groups.append(
                         participant.collided_by_groups if participant is not None else 0
                     )
-                interaction.set_debug_scope((
-                    {
-                        "task_id": str(item["spec"].task_id),
-                        "slot_id": str(item["slot"].slot_id),
-                        "vertex_count": int(item["native_context"].vertex_count),
-                        "primary_group_bit": int(primary_group_bits[index]),
-                        "collided_by_groups": int(collided_by_groups[index]),
-                    }
-                    for index, (item, _local_update_index) in enumerate(batch)
-                ))
+                debug_state = interaction.debug_capture_state()
+                debug_filters = dict(debug_state.get("filters") or {})
+                if bool(debug_state.get("requested", False)) and bool(
+                    debug_filters.get("show_self", False)
+                ):
+                    interaction.set_debug_scope((
+                        {
+                            "task_id": str(item["spec"].task_id),
+                            "slot_id": str(item["slot"].slot_id),
+                            "vertex_count": int(item["native_context"].vertex_count),
+                            "primary_group_bit": int(primary_group_bits[index]),
+                            "collided_by_groups": int(collided_by_groups[index]),
+                        }
+                        for index, (item, _local_update_index) in enumerate(batch)
+                    ))
                 interaction.step_group(
                     contexts,
                     primary_group_bits,

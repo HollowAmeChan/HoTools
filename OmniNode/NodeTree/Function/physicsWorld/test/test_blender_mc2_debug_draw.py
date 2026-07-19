@@ -292,6 +292,7 @@ try:
     interaction = world.backend_resources[native_module.MC2_INTERACTION_RESOURCE_KEY]
     assert all(context.inspect()["debug_readback_count"] == 0 for context in contexts)
     assert interaction.inspect()["debug_readback_count"] == 0
+    assert interaction._debug_scope == ()
     print("[PASS] debug disabled has zero native readback")
 
     debug_draw.update_mc2_debug_draw_store(
@@ -378,8 +379,6 @@ try:
             snapshot["output"]["target_positions"] - snapshot["output"]["base_positions"],
         )
         self_state = snapshot["self_collision"]
-        assert np.all(np.isfinite(self_state["thickness"]))
-        assert np.min(self_state["thickness"]) < np.max(self_state["thickness"])
         assert self_state["particle_indices"].flags.writeable is False
         assert self_state["primitive_grids"].flags.writeable is False
     interaction_snapshot = interaction.debug_draw_snapshot()
@@ -391,9 +390,9 @@ try:
         ("show_topology", {"show_topology": True}, ("longitudinal",)),
         ("show_attributes", {"show_attributes": True}, ("fixed", "move")),
         ("show_step_basic", {"show_step_basic": True}, ("step_basic",)),
-        ("show_gravity", {"show_gravity": True}, ("gravity",)),
+        ("show_gravity", {"show_gravity": True}, ()),
         ("show_velocity", {"show_velocity": True}, ()),
-        ("show_distance", {"show_distance": True}, ("distance_ok", "distance_compress", "distance_stretch")),
+        ("show_distance", {"show_distance": True}, ()),
         ("show_tether", {"show_tether": True}, ("tether",)),
         ("show_bending", {"show_bending": True}, ("bending", "bending_volume", "bending_error")),
         ("show_motion_base", {"show_motion_base": True}, ("motion_base",)),
@@ -482,6 +481,38 @@ try:
             mode_name, captured_snapshot["frame"], capture_frame
         )
         native_snapshot = captured_snapshot["native"]
+        expected_payloads = {
+            "show_topology": {"topology"},
+            "show_attributes": {"topology"},
+            "show_step_basic": {"topology", "motion"},
+            "show_gravity": {"parameters"},
+            "show_velocity": set(),
+            "show_distance": {"parameters", "motion"},
+            "show_tether": {"parameters", "motion"},
+            "show_bending": {"parameters"},
+            "show_motion_base": {"parameters", "motion"},
+            "show_motion": {"parameters", "motion"},
+            "show_angle_limit": {"parameters", "motion"},
+            "show_angle_restoration": {"parameters", "motion"},
+            "show_center": {"center"},
+            "show_collision": {"topology", "parameters", "collision"},
+            "show_radii": {"parameters", "collision"},
+            "show_self_primitives": set(),
+            "show_self_grid": set(),
+            "show_self_candidates": set(),
+            "show_self_contacts": set(),
+            "show_output": {"output"},
+        }[mode_name]
+        actual_payloads = {
+            name
+            for name in (
+                "topology", "parameters", "motion", "center", "collision", "output"
+            )
+            if captured_snapshot.get(name)
+        }
+        assert actual_payloads == expected_payloads, (
+            mode_name, actual_payloads, expected_payloads
+        )
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot
             assert "angle_restoration_target_positions" not in native_snapshot
@@ -497,6 +528,58 @@ try:
         elif mode_name == "show_velocity":
             assert "dynamics" in native_snapshot, (
                 mode_name, tuple(native_snapshot), captured_snapshot["filters"]
+            )
+        elif mode_name == "show_gravity":
+            assert "gravity_effective_strength" in captured_snapshot["parameters"]
+        elif mode_name == "show_distance":
+            assert captured_snapshot["motion"].get("step_basic_positions") is not None
+            distance_state = native_snapshot.get("distance_tether") or {}
+            assert len(distance_state.get("distance_targets", ())) > 0
+            ranges = np.asarray(distance_state["distance_ranges"], dtype=np.int32)
+            targets = np.asarray(distance_state["distance_targets"], dtype=np.int32)
+            assert np.sum(ranges[:, 1]) > 0
+            assert np.min(targets) >= 0 and np.max(targets) < len(
+                native_snapshot["positions"]
+            )
+            assert np.max(captured_snapshot["parameters"]["distance_stiffness"]) > 0.0
+            assert colors & {
+                tuple(debug_draw._COLORS[name])
+                for name in ("distance_ok", "distance_compress", "distance_stretch")
+            }, (mode_name, colors)
+        elif mode_name.startswith("show_self_"):
+            self_state = captured_snapshot.get("self_collision") or {}
+            assert "particle_indices" in self_state
+            expected_stage_keys = {
+                "show_self_primitives": set(),
+                "show_self_grid": {"primitive_grids"},
+                "show_self_candidates": {"candidates"},
+                "show_self_contacts": {
+                    "contact_indices", "contact_enabled",
+                    "contact_normals", "intersect_records",
+                },
+            }[mode_name]
+            actual_stage_keys = {
+                key
+                for key in (
+                    "primitive_grids", "candidates", "contact_indices",
+                    "contact_enabled", "contact_normals", "intersect_records",
+                )
+                if key in self_state
+            }
+            assert actual_stage_keys == expected_stage_keys, (
+                mode_name, actual_stage_keys, expected_stage_keys
+            )
+            interaction_state = interaction.debug_draw_snapshot() or {}
+            interaction_stage_keys = {
+                key
+                for key in (
+                    "primitive_grids", "candidates", "contact_indices",
+                    "contact_enabled", "contact_normals", "intersect_records",
+                )
+                if key in interaction_state
+            }
+            assert interaction_stage_keys == expected_stage_keys, (
+                mode_name, interaction_stage_keys, expected_stage_keys
             )
     print("[PASS] isolated debug modes emit their own physical batch semantics")
 

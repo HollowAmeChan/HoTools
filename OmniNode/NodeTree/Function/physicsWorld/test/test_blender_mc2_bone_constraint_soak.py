@@ -735,7 +735,6 @@ def _run_bone_distance_tether():
                     include_dynamics=False,
                     include_distance_tether=True,
                     include_bending=False,
-                    include_self=False,
                 )
                 roots = np.asarray(
                     native_debug["distance_tether"]["baseline_roots"],
@@ -830,7 +829,6 @@ def _bone_angle_values(native_context, candidate):
         include_dynamics=False,
         include_distance_tether=False,
         include_bending=False,
-        include_self=False,
     )
     targets = snapshot["angle_limit_target_positions"]
     vectors = snapshot["angle_limit_target_vectors"]

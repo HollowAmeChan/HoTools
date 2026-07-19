@@ -805,7 +805,10 @@ class MC2NativeContextV0:
         include_dynamics: bool = False,
         include_distance_tether: bool = False,
         include_bending: bool = False,
-        include_self: bool = True,
+        include_self_primitives: bool = False,
+        include_self_grid: bool = False,
+        include_self_candidates: bool = False,
+        include_self_contacts: bool = False,
     ) -> dict:
         self._ensure_live()
         info = self.inspect()
@@ -909,64 +912,58 @@ class MC2NativeContextV0:
                 "markers": self._debug_array(markers),
             }
             readbacks += 1
-        if include_self and bool(info.get("self_primitive_dynamic_ready", False)):
+        include_any_self = bool(
+            include_self_primitives
+            or include_self_grid
+            or include_self_candidates
+            or include_self_contacts
+        )
+        if include_any_self and bool(info.get("self_primitive_dynamic_ready", False)):
             primitive_count = int(info.get("self_primitive_count", 0) or 0)
-            inverse_masses = np.empty((primitive_count, 3), dtype=np.float32)
-            aabb_min = np.empty((primitive_count, 3), dtype=np.float32)
-            aabb_max = np.empty((primitive_count, 3), dtype=np.float32)
-            thickness = np.empty((primitive_count,), dtype=np.float32)
-            self._module.mc2_context_v0_read_self_collision_primitives(
-                self._handle, inverse_masses, aabb_min, aabb_max, thickness
+            particle_indices = np.empty((primitive_count, 3), dtype=np.int32)
+            self._module.mc2_context_v0_read_debug_self_indices(
+                self._handle, particle_indices
             )
             self_state = {
-                "inverse_masses": self._debug_array(inverse_masses),
-                "aabb_min": self._debug_array(aabb_min),
-                "aabb_max": self._debug_array(aabb_max),
-                "thickness": self._debug_array(thickness),
+                "particle_indices": self._debug_array(particle_indices),
             }
             readbacks += 1
-            if bool(info.get("self_grid_dynamic_ready", False)):
-                particle_indices = np.empty((primitive_count, 3), dtype=np.int32)
+            if include_self_grid and bool(info.get("self_grid_dynamic_ready", False)):
                 grids = np.empty((primitive_count, 3), dtype=np.int32)
                 hashes = np.empty((primitive_count,), dtype=np.int32)
                 starts = np.empty((primitive_count,), dtype=np.int32)
                 counts = np.empty((primitive_count,), dtype=np.int32)
-                self._module.mc2_context_v0_read_self_collision_grid(
-                    self._handle, particle_indices, grids, hashes, starts, counts
+                self._module.mc2_context_v0_read_debug_self_grid(
+                    self._handle, grids, hashes, starts, counts
                 )
                 self_state.update({
-                    "particle_indices": self._debug_array(particle_indices),
                     "primitive_grids": self._debug_array(grids),
                     "grid_hashes": self._debug_array(hashes),
                     "grid_starts": self._debug_array(starts),
                     "grid_counts": self._debug_array(counts),
                 })
                 readbacks += 1
-            if bool(info.get("self_candidate_ready", False)):
+            if include_self_candidates and bool(info.get("self_candidate_ready", False)):
                 candidate_count = int(info.get("self_contact_candidate_count", 0) or 0)
                 candidates = np.empty((candidate_count, 3), dtype=np.int32)
-                self._module.mc2_context_v0_read_self_collision_candidates(
+                self._module.mc2_context_v0_read_debug_self_candidates(
                     self._handle, candidates
                 )
                 self_state["candidates"] = self._debug_array(candidates)
                 readbacks += 1
-            if bool(info.get("self_contact_ready", False)):
+            if include_self_contacts and bool(info.get("self_contact_ready", False)):
                 contact_count = int(info.get("self_contact_cache_count", 0) or 0)
                 indices = np.empty((contact_count, 2), dtype=np.int32)
                 types = np.empty((contact_count,), dtype=np.int32)
                 enabled = np.empty((contact_count,), dtype=np.uint8)
                 contact_thickness = np.empty((contact_count,), dtype=np.float32)
-                s = np.empty((contact_count,), dtype=np.float32)
-                t = np.empty((contact_count,), dtype=np.float32)
                 normals = np.empty((contact_count, 3), dtype=np.float32)
-                self._module.mc2_context_v0_read_self_collision_contacts(
+                self._module.mc2_context_v0_read_debug_self_contacts(
                     self._handle,
                     indices,
                     types,
                     enabled,
                     contact_thickness,
-                    s,
-                    t,
                     normals,
                 )
                 self_state.update({
@@ -974,25 +971,20 @@ class MC2NativeContextV0:
                     "contact_types": self._debug_array(types),
                     "contact_enabled": self._debug_array(enabled),
                     "contact_thickness": self._debug_array(contact_thickness),
-                    "contact_s": self._debug_array(s),
-                    "contact_t": self._debug_array(t),
                     "contact_normals": self._debug_array(normals),
                 })
                 readbacks += 1
-            if bool(info.get("self_intersect_detection_ready", False)) or bool(
-                info.get("self_intersect_flags_ready", False)
+            if include_self_contacts and (
+                bool(info.get("self_intersect_detection_ready", False))
+                or bool(info.get("self_intersect_flags_ready", False))
             ):
                 record_count = int(info.get("self_intersect_record_count", 0) or 0)
                 records = np.empty((record_count, 5), dtype=np.int32)
-                particle_flags = np.empty((self.vertex_count,), dtype=np.uint8)
-                primitive_flags = np.empty((primitive_count,), dtype=np.uint32)
-                self._module.mc2_context_v0_read_self_collision_intersections(
-                    self._handle, records, particle_flags, primitive_flags
+                self._module.mc2_context_v0_read_debug_self_intersections(
+                    self._handle, records
                 )
                 self_state.update({
                     "intersect_records": self._debug_array(records),
-                    "particle_intersect_flags": self._debug_array(particle_flags),
-                    "primitive_flags": self._debug_array(primitive_flags),
                 })
                 readbacks += 1
             snapshot["self_collision"] = self_state
@@ -1141,7 +1133,14 @@ class MC2NativeInteractionV0:
     def debug_capture_state(self) -> dict:
         return self._debug_capture_state
 
-    def refresh_debug_draw_snapshot(self) -> dict:
+    def refresh_debug_draw_snapshot(
+        self,
+        *,
+        include_primitives: bool = False,
+        include_grid: bool = False,
+        include_candidates: bool = False,
+        include_contacts: bool = False,
+    ) -> dict:
         self._ensure_live()
         info = self.inspect()
         vertex_count = int(info.get("vertex_count", 0) or 0)
@@ -1161,27 +1160,44 @@ class MC2NativeInteractionV0:
             }
             self._debug_draw_snapshot = snapshot
             return snapshot
+        flags = (
+            (1 if include_primitives else 0)
+            | (2 if include_grid else 0)
+            | (4 if include_candidates else 0)
+            | (8 if include_contacts else 0)
+        )
         arrays = {
             "positions": np.empty((vertex_count, 3), dtype=np.float32),
             "particle_indices": np.empty((primitive_count, 3), dtype=np.int32),
             "owner_indices": np.empty((primitive_count,), dtype=np.int32),
-            "aabb_min": np.empty((primitive_count, 3), dtype=np.float32),
-            "aabb_max": np.empty((primitive_count, 3), dtype=np.float32),
-            "thickness": np.empty((primitive_count,), dtype=np.float32),
-            "primitive_grids": np.empty((primitive_count, 3), dtype=np.int32),
-            "grid_hashes": np.empty((primitive_count,), dtype=np.int32),
-            "grid_starts": np.empty((primitive_count,), dtype=np.int32),
-            "grid_counts": np.empty((primitive_count,), dtype=np.int32),
-            "candidates": np.empty((candidate_count, 3), dtype=np.int32),
-            "contact_indices": np.empty((contact_count, 2), dtype=np.int32),
-            "contact_types": np.empty((contact_count,), dtype=np.int32),
-            "contact_enabled": np.empty((contact_count,), dtype=np.uint8),
-            "contact_normals": np.empty((contact_count, 3), dtype=np.float32),
-            "intersect_records": np.empty((intersect_count, 5), dtype=np.int32),
-            "particle_intersect_flags": np.empty((vertex_count,), dtype=np.uint8),
+            "primitive_grids": np.empty(
+                (primitive_count if include_grid else 0, 3), dtype=np.int32
+            ),
+            "candidates": np.empty(
+                (candidate_count if include_candidates else 0, 3), dtype=np.int32
+            ),
+            "contact_indices": np.empty(
+                (contact_count if include_contacts else 0, 2), dtype=np.int32
+            ),
+            "contact_types": np.empty(
+                (contact_count if include_contacts else 0,), dtype=np.int32
+            ),
+            "contact_enabled": np.empty(
+                (contact_count if include_contacts else 0,), dtype=np.uint8
+            ),
+            "contact_thickness": np.empty(
+                (contact_count if include_contacts else 0,), dtype=np.float32
+            ),
+            "contact_normals": np.empty(
+                (contact_count if include_contacts else 0, 3), dtype=np.float32
+            ),
+            "intersect_records": np.empty(
+                (intersect_count if include_contacts else 0, 5), dtype=np.int32
+            ),
         }
         self._module.mc2_interaction_v0_read_debug(
             self._handle,
+            flags,
             *arrays.values(),
         )
         self.debug_capture_count += 1
@@ -1194,10 +1210,22 @@ class MC2NativeInteractionV0:
             "capture_index": self.debug_capture_count,
             "readback_count": 1,
         }
-        snapshot.update({
-            name: MC2NativeContextV0._debug_array(value)
-            for name, value in arrays.items()
-        })
+        for name in ("positions", "particle_indices", "owner_indices"):
+            snapshot[name] = MC2NativeContextV0._debug_array(arrays[name])
+        if include_grid:
+            snapshot["primitive_grids"] = MC2NativeContextV0._debug_array(
+                arrays["primitive_grids"]
+            )
+        if include_candidates:
+            snapshot["candidates"] = MC2NativeContextV0._debug_array(
+                arrays["candidates"]
+            )
+        if include_contacts:
+            for name in (
+                "contact_indices", "contact_types", "contact_enabled",
+                "contact_thickness", "contact_normals", "intersect_records",
+            ):
+                snapshot[name] = MC2NativeContextV0._debug_array(arrays[name])
         self._debug_draw_snapshot = snapshot
         return snapshot
 

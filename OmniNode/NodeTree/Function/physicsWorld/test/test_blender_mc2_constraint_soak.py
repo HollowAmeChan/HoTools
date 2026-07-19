@@ -634,7 +634,6 @@ def _run_mesh_tether_branch(obj, *, direction, compression, generation):
                     include_dynamics=False,
                     include_distance_tether=True,
                     include_bending=False,
-                    include_self=False,
                 )
                 roots = np.asarray(
                     native_debug["distance_tether"]["baseline_roots"],

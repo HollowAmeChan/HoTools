@@ -462,7 +462,43 @@ def capture_requested_mc2_debug(
                     or filters.get("show_tether", False)
                 ),
                 include_bending=bool(filters.get("show_bending", False)),
-                include_self=bool(filters.get("show_self", True)),
+                include_self_primitives=bool(
+                    filters.get("show_self_primitives", False)
+                ),
+                include_self_grid=bool(filters.get("show_self_grid", False)),
+                include_self_candidates=bool(
+                    filters.get("show_self_candidates", False)
+                ),
+                include_self_contacts=bool(
+                    filters.get("show_self_contacts", False)
+                ),
+            )
+            include_topology = bool(
+                filters.get("show_topology", False)
+                or filters.get("show_attributes", False)
+                or filters.get("show_step_basic", False)
+                or filters.get("show_collision", False)
+            )
+            include_parameters = bool(
+                filters.get("show_gravity", False)
+                or filters.get("show_distance", False)
+                or filters.get("show_tether", False)
+                or filters.get("show_bending", False)
+                or filters.get("show_motion", False)
+                or filters.get("show_motion_base", False)
+                or filters.get("show_angle_restoration", False)
+                or filters.get("show_angle_limit", False)
+                or filters.get("show_collision", False)
+                or filters.get("show_radii", False)
+            )
+            include_motion = bool(
+                filters.get("show_step_basic", False)
+                or filters.get("show_distance", False)
+                or filters.get("show_tether", False)
+                or filters.get("show_motion", False)
+                or filters.get("show_motion_base", False)
+                or filters.get("show_angle_restoration", False)
+                or filters.get("show_angle_limit", False)
             )
             snapshot = {
                 "source": "mc2_capture",
@@ -474,13 +510,32 @@ def capture_requested_mc2_debug(
                 "generation": generation,
                 "filters": filters,
                 "native": native_snapshot,
-                "topology": _topology_payload(slot, native_snapshot),
-                "parameters": _parameter_payload(slot, native_snapshot),
-                "motion": _motion_payload(slot, native_snapshot),
-                "center": _center_payload(slot, item),
-                "collision": _collision_payload(item, native_snapshot),
+                "topology": (
+                    _topology_payload(slot, native_snapshot)
+                    if include_topology else {}
+                ),
+                "parameters": (
+                    _parameter_payload(slot, native_snapshot)
+                    if include_parameters else {}
+                ),
+                "motion": (
+                    _motion_payload(slot, native_snapshot)
+                    if include_motion else {}
+                ),
+                "center": (
+                    _center_payload(slot, item)
+                    if filters.get("show_center", False) else {}
+                ),
+                "collision": (
+                    _collision_payload(item, native_snapshot)
+                    if filters.get("show_collision", False)
+                    or filters.get("show_radii", False) else {}
+                ),
                 "self_collision": native_snapshot.get("self_collision"),
-                "output": _output_payload(slot, item),
+                "output": (
+                    _output_payload(slot, item)
+                    if filters.get("show_output", False) else {}
+                ),
             }
             slot.data["_debug_draw_snapshot"] = snapshot
             state.pop("error", None)
@@ -499,10 +554,23 @@ def capture_requested_mc2_debug(
         if _state_requested(state, frame) and any(item.get("substeps") for item in runtime_items):
             started = time.perf_counter()
             try:
-                interaction.refresh_debug_draw_snapshot()
+                filters = dict(state.get("filters") or {})
+                if bool(filters.get("show_self", False)):
+                    interaction.refresh_debug_draw_snapshot(
+                        include_primitives=bool(
+                            filters.get("show_self_primitives", False)
+                        ),
+                        include_grid=bool(filters.get("show_self_grid", False)),
+                        include_candidates=bool(
+                            filters.get("show_self_candidates", False)
+                        ),
+                        include_contacts=bool(
+                            filters.get("show_self_contacts", False)
+                        ),
+                    )
+                    captured += 1
                 state.pop("error", None)
                 state["captured_frame"] = frame
-                captured += 1
             except Exception as exc:
                 state["error"] = str(exc)
             finally:

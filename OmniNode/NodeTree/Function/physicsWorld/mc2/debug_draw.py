@@ -277,7 +277,10 @@ def _append_slot_batches(
 ) -> None:
     limit = filters["max_items"]
     topology = snapshot.get("topology") or {}
-    positions = np.asarray(_values(topology.get("positions")), dtype=np.float32).reshape((-1, 3))
+    positions = np.asarray(
+        _values((snapshot.get("native") or {}).get("positions")),
+        dtype=np.float32,
+    ).reshape((-1, 3))
     if filters["show_topology"]:
         _append_topology_batches(batches, topology, positions, limit)
     if filters["show_attributes"]:

@@ -286,9 +286,43 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 自碰候选配对 | grid broadphase输出的candidate primitive pair | 黄色primitive中心连线；只表示可能相交，允许包含false positive，数量爆炸是性能诊断信号而非接触数量 |
 | 自碰接触结果 | narrowphase contact、enabled flag、normal与intersection history | 红色为启用接触及法线箭头，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
 
-上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。
+上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式请求时读取，grid/candidate/contact/intersection按位复制。
 
-Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether与Bending分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
+Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether与Bending分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建。Topology、parameter、motion、center、collision和output等Python payload也必须按实际绘制依赖构造；interaction participant过滤字典只在self请求等待消费时生成。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
+
+### Debug state与绘制能力扩充规范
+
+Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同一职责：
+
+- **Solver state**是解算本身无论是否显示都必须生产的数据，例如self grid/contact cache。Debug只能按请求读取，不能复制一份Python shadow。
+- **Oracle state**是Tier A或源码对齐测试需要的完整内部数组。它可以保留全量native ABI，但生产viewport不得调用；接口名与调用点必须能和`read_debug_*`区分。
+- **Viewport debug state**只服务绘制。若该派生量不是solver必需状态，只能在对应显示位已请求后生产；热点派生在C++请求式生成，Python只负责精确分配、冻结和组装，不得每帧预生成。
+
+新增或扩充一种绘制能力前，设计记录必须填写以下契约；缺一项不得合入：
+
+| 项 | 必须明确的内容 |
+|---|---|
+| 用户模式 | 独立socket/开关名称及用户要回答的物理问题 |
+| 请求身份 | 独立request bit；不得用笼统`debug_enabled`替代 |
+| Producer/owner | C++ context、interaction或Python静态payload中的唯一生产者 |
+| State分类 | Solver、Oracle或Viewport派生；说明为何不能复用另一类接口 |
+| 生产时机 | 请求登记后的下一次真实substep；zero-substep必须保留请求，same-frame不得伪造 |
+| 精确依赖 | 该模式需要的共享base与阶段数组；不得顺带生产兄弟模式数据 |
+| 数据预算 | 顶点/primitive/contact数量级、分配字节和readback次数上界 |
+| 空值语义 | 物理量为零或无记录时允许空批次，但snapshot必须能区分“已请求且为空”和“未请求” |
+| Renderer语义 | 图元、颜色、深度测试、单位、缩放和`max_items`截断规则 |
+| 验收证据 | 隔离模式、真实捕获帧、未请求键缺失、非零几何语义、关闭debug零开销 |
+
+生产契约固定如下：
+
+1. Debug节点只登记请求，不立即读取当前state；capture只消费下一次具有substep的冻结结果。
+2. 未请求时不得遍历、重建、分配、`memcpy`、创建participant字典或增加native `debug_readback_count`。共享base只能在至少一个真实依赖模式请求时生产一次。
+3. 每个模式拥有独立位。只有数据域和生命周期完全相同的数组才允许共用readback；“实现方便”不是把Motion、self四阶段或多种约束打包的理由。
+4. Renderer只消费snapshot中明确存在的键。不得从最终网格、当前RNA或另一模式的target反推缺失中间态；Angle Limit借用Restoration target属于明确禁止的越界。
+5. Oracle全量接口不得进入`MC2_REQUIRED_NATIVE_SYMBOLS`或viewport调用链；生产Debug使用最小`read_debug_*`接口。若测试需要完整scratch，必须保留在oracle层而不是扩大生产readback。
+6. Snapshot一经捕获必须只读并带精确frame/generation/task identity。新请求未遇到真实substep时继续显示旧快照，但验收必须检查`captured_frame`，不得把旧快照算作新模式覆盖。
+7. 隔离验收必须逐模式执行“登记请求 -> 等待真实advance -> 捕获 -> 绘制”。未请求阶段键必须不存在；有非零物理量时必须出现该模式自己的batch语义，零量只验证精确空readback，不得伪造图元。
+8. 性能验收至少比较debug全关、单模式和最重组合三档的readback次数、分配规模与capture耗时；debug全关必须保持零额外生产。任何常驻C++ debug buffer都需要单独产品决策，不得由可视化需求默认引入。
 
 MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离20个开关，每个模式都必须等待下一次真实substep并捕获匹配帧，禁止复用旧快照冒充覆盖；有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、collision/radius、四种self和output分支。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
 
@@ -553,7 +587,7 @@ Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。R
 |---|---|
 | `hotools_native.cpp` | 通用module shell；只注册PropertyCurve/SpringBone并调用`bind_mc2` |
 | `mc2_bindings.cpp/.hpp` | MC2 74个nanobind注册与边界adapter |
-| `mc2_api.hpp` | 47个context/interaction/fingerprint C ABI唯一声明表 |
+| `mc2_api.hpp` | 58个context/interaction/fingerprint C ABI唯一声明表 |
 | `mc2_context_internal.hpp` | context、step与interaction唯一纯C++ state布局 |
 | `mc2_context_helpers.hpp` | context translation units真实共享的最小helper声明 |
 | `mc2_context_core.cpp` | context lifecycle、inspect、fingerprint分类与共享数值编排helper |
@@ -570,7 +604,7 @@ Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。R
 
 ## Native ABI与生命周期
 
-Python生产资格清单当前要求59个MC2符号；module注册74个MC2符号，其中额外入口服务Tier A/raw oracle。`mc2_api.hpp`的47个context/interaction/fingerprint ABI都必须恰好一个C++定义并存在于生产资格清单。
+Python生产资格清单当前要求63个MC2符号；`mc2_bindings.cpp`注册85个入口，其中额外入口服务Tier A/raw oracle。`mc2_api.hpp`的58个context/interaction/fingerprint ABI都必须恰好一个C++定义；其中生产接口必须存在于资格清单，oracle全量readback明确排除在生产资格之外。
 
 Context创建流程必须在设置setup/tether失败时立即free。Static upload先完整验证buffer/capsule，再move并增加revision；失败不部分修改context。Dispose/free幂等，以下路径都必须释放：
 
@@ -635,8 +669,8 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 - 0 Python import环、private import、lazy re-export、未分类单调用函数。
 - 0生产测试反向依赖、raw readback边界违规、持久State ndarray shadow。
 - 0 legacy生产命中。
-- 47个C ABI单一定义。
-- 74注册/59生产要求符号无缺失或重复。
+- 58个C ABI单一定义。
+- 85注册/63生产要求符号无缺失或重复。
 - 纯native owner零Python依赖。
 
 测试分层：

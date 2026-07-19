@@ -224,6 +224,16 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_contacts, a); });
     m.def("mc2_context_v0_read_self_collision_intersections",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_self_collision_intersections, a); });
+    m.def("mc2_context_v0_read_debug_self_indices",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_self_indices, a); });
+    m.def("mc2_context_v0_read_debug_self_grid",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_self_grid, a); });
+    m.def("mc2_context_v0_read_debug_self_candidates",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_self_candidates, a); });
+    m.def("mc2_context_v0_read_debug_self_contacts",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_self_contacts, a); });
+    m.def("mc2_context_v0_read_debug_self_intersections",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_self_intersections, a); });
     m.def("mc2_context_v0_read_bone_output",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_bone_output, a); });
     m.def("mc2_context_v0_read_step_basic",
