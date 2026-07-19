@@ -27,17 +27,21 @@ world_types = mixed.world_types
 writeback = mixed.writeback
 
 
-def _profile(*, restoration: bool, limit: bool):
+def _profile(
+    *, restoration: bool, limit: bool,
+    attenuation: float = 0.25, falloff: float = 0.5,
+    gravity: float = 0.0,
+):
     return parameters.make_mc2_particle_profile(
-        gravity=0.0,
+        gravity=gravity,
         damping=0.05,
         stabilization_time_after_reset=0.0,
         distance_stiffness=0.0,
         bending_stiffness=0.0,
         angle_restoration_enabled=restoration,
         angle_restoration_stiffness=0.85,
-        angle_restoration_velocity_attenuation=0.25,
-        angle_restoration_gravity_falloff=0.5,
+        angle_restoration_velocity_attenuation=attenuation,
+        angle_restoration_gravity_falloff=falloff,
         angle_limit_enabled=limit,
         angle_limit=35.0,
         angle_limit_stiffness=0.9,
@@ -49,8 +53,18 @@ def _profile(*, restoration: bool, limit: bool):
     )
 
 
-def _task(setup_type, armature, *, restoration: bool, limit: bool):
-    profile = _profile(restoration=restoration, limit=limit)
+def _task(
+    setup_type, armature, *, restoration: bool, limit: bool,
+    attenuation: float = 0.25, falloff: float = 0.5,
+    gravity: float = 0.0,
+):
+    profile = _profile(
+        restoration=restoration,
+        limit=limit,
+        attenuation=attenuation,
+        falloff=falloff,
+        gravity=gravity,
+    )
     source = {"armature": armature, "bone": "Root"}
     if setup_type == names.MC2_SETUP_BONE_CLOTH:
         tasks, _task_names = nodes.physicsMC2BoneClothTask(
@@ -217,6 +231,122 @@ def bone_angle_constraints():
         second = _run_setup(setup_type)
         assert first == second, (setup_type, first, second)
     print("[PASS] Bone angle constraints: 2 setups x 2 deterministic x 900 frames")
+
+
+def _run_bone_angle_attenuation(setup_type, attenuation):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 78
+    armature = mixed._armature(
+        f"MC2AngleAttenuation_{setup_type}_{attenuation:.1f}",
+        0.0,
+        0.9,
+    )
+    task = _task(
+        setup_type,
+        armature,
+        restoration=True,
+        limit=False,
+        attenuation=attenuation,
+        falloff=0.0,
+        gravity=4.0,
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    initial_input = bone_frame_input.build_mc2_bone_frame_input(
+        task,
+        topology,
+        frame=1,
+        generation=world.generation,
+    )
+    responses = []
+    movements = []
+    animation_input_response = 0.0
+    previous = None
+    initial_basis = {
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    }
+    try:
+        for frame in range(1, 602):
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            root = armature.pose.bones["Root"]
+            root.rotation_mode = "XYZ"
+            root.rotation_euler.z = 0.65 * math.sin(frame * 0.11)
+            root.location.x = 0.03 * math.sin(frame * 0.07)
+            bpy.context.view_layer.update()
+            if frame == 2:
+                animated_input = bone_frame_input.build_mc2_bone_frame_input(
+                    task,
+                    topology,
+                    frame=frame,
+                    generation=world.generation,
+                )
+                animation_input_response = float(np.max(np.linalg.norm(
+                    animated_input.world_positions - initial_input.world_positions,
+                    axis=1,
+                )))
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            if setup_type == names.MC2_SETUP_BONE_CLOTH:
+                plan = slot.data["writeback_plan"]
+                assert plan["rotation_only_connected_count"] > 0
+                assert plan["position_rotation_count"] > 0
+            if frame >= 2:
+                positions = candidate.world_positions.copy()
+                responses.append(float(np.mean(np.linalg.norm(
+                    positions - initial_input.world_positions,
+                    axis=1,
+                ))))
+                movements.append(
+                    0.0 if previous is None
+                    else float(np.mean(np.linalg.norm(positions - previous, axis=1)))
+                )
+                previous = positions
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+        return {
+            "responses": np.asarray(responses),
+            "movements": np.asarray(movements),
+            "animation_input_response": animation_input_response,
+        }
+    finally:
+        world.omni_cache_dispose("bone_angle_attenuation")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_angle_restoration_attenuation():
+    for setup_type in (
+        names.MC2_SETUP_BONE_CLOTH,
+        names.MC2_SETUP_BONE_SPRING,
+    ):
+        low = _run_bone_angle_attenuation(setup_type, 0.0)
+        high = _run_bone_angle_attenuation(setup_type, 1.0)
+        np.testing.assert_allclose(
+            low["responses"][0], high["responses"][0], rtol=0.0, atol=1.0e-7
+        )
+        assert low["animation_input_response"] >= 0.05
+        assert low["responses"][1] >= high["responses"][1] + 0.001
+        low_movement = float(np.sum(low["movements"][1:30]))
+        high_movement = float(np.sum(high["movements"][1:30]))
+        assert low_movement >= high_movement * 1.5
+        print(
+            f"[INFO] {setup_type} Angle Restoration attenuation: "
+            f"frame3 low/high={low['responses'][1]:.9f}/"
+            f"{high['responses'][1]:.9f}; movement30 low/high="
+            f"{low_movement:.9f}/{high_movement:.9f}; "
+            f"animation input={low['animation_input_response']:.9f}"
+        )
 
 
 def _run_bone_motion():
@@ -1041,6 +1171,7 @@ def main():
     mixed.physics_blender.register()
     try:
         bone_angle_constraints()
+        bone_angle_restoration_attenuation()
         bone_motion_constraints()
         bone_external_collision()
         bone_friction_response()
