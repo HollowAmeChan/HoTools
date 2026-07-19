@@ -29,7 +29,7 @@
 | D-01 | **已决策** | Teleport 判定模型 | 整个 task 统一触发；首个 Fixed 粒子为判定基准，无 Fixed 时回退物体原点；完整复核 Reset/Keep 清理链路 |
 | D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
 | D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
-| D-04 | 首轮人工改善已确认，待定量关闭 | 自碰静置质量标准 | 一环过滤实测使红箭头、洋红候选和边缘持续抖动明显减少；剩余洋红闪烁已定位为二分扫描候选的debug误表达，静置阈值与contact churn仍待量化 |
+| D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | 待确认 | 参数从 Profile 移到 Task 的规则 | 不批量搬迁；先按是否逐深度、是否可复用、是否属于交互/身份分组 |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
@@ -85,7 +85,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 - 生产审计确认一个直接根因：旧过滤只拒绝primitive共享同一个particle，没有拒绝两个primitive的particle由真实proxy edge直接相邻。密集单层曲面因此会把本应由结构约束维持的一环邻居送入EE/PT contact，也会送入独立intersection记录。
 - 当前native在self static上传时从final proxy edges一次性生成排序去重的粒子邻接键；task内candidate和intersection共同拒绝共享粒子或一环邻接的primitive。该表不进入逐帧构建，不产生debug payload，也不应用于不同owner的跨task interaction。
 - 3.11完整context runner已经覆盖：断开的远邻Edge-Edge与Point-Triangle仍产生接触；一环相连的Edge-Edge、Point-Triangle及Edge-Triangle intersection全部被排除；原跨帧真实穿插历史仍保留。该证据关闭“一环完全未过滤”的实现缺口，但不能替代原密集单层模型的人工静置复测。
-- 实际密集单层模型首轮复验确认：洋红record和红色contact箭头都明显减少，边缘持续跳动且不收敛的现象几乎消失。这证明一环缺口是主要真实扰动源之一，但仍需定量记录剩余contact churn和长时RMS速度后关闭D-04。
+- 实际密集单层模型最终复验确认：final过滤后洋红几何穿插完全消失；红色contact只剩在代理本身真实拥挤的区域，布料及这些接触区域均完全收敛且不再运动。该证据确认一环缺口是原持续扰动的主要根因，并关闭D-04当前产品阻断。红箭头表示有效接触法线而非持续修正量，静止时保留不等于solver仍在注入运动。
 - 洋红线的规律闪烁不是优先归因于浮点随机性。生产路径按`frame % 2`每帧只检测grid排序后索引为奇数或偶数的Edge，目的是把昂贵的Edge-Triangle检测摊到两帧；record又在每次检测前清空，因此真实命中也只会在其分片被扫描的帧出现。普通EE/PT contact不使用该二分节奏。若同一奇偶相位、相同输入仍随机翻转，才继续审计浮点边界。
 - 新帧开始生成穿插候选时必须立即撤销上一帧的`self_intersect_flags_ready`，本帧final测试完成后再发布。上一帧particle flags可继续供solver内部历史使用，但debug专用readback不得用旧ready读取新record；该发布时序已经进入native门卫与自动回归。
 
@@ -100,9 +100,9 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 7. 对同一 world-space 曲面做低/中/高三档重拓扑，保持材质、厚度和外形不变，比较单位面积 candidate/contact、RMS 速度与 contact churn；顶点变密本身不得让接触数量或修正能量失控。
 8. 记录 self thickness 与局部一环边长的比例，复验已完成的一环排除是否足以阻止同一连续曲面在密集区互相排斥；若仍失败，再以局部厚度/边长证据评估自适应k-ring，并检查同一几何接触是否被 PT/EE 或多个 primitive 重复累计。
 
-### 待确认的产品标准 D-04
+### 已确认的产品标准 D-04
 
-建议将“单层无穿插布料应收敛到不可见微动”定为硬标准，而不是把 FullMesh 的持续扰动解释为正常副作用。建议阈值由最小场景测量后冻结，至少包含末 300 帧 RMS 速度、最大粒子漂移、contact churn 和 false intersection 数量。双层布料抑制成功不能抵消单层稳定性失败。
+“单层无穿插布料应收敛到不可见微动”是当前硬标准，而不是把FullMesh持续扰动解释为正常副作用。实际模型已满足：final intersection为零、可见运动完全收敛、剩余contact仅与真实拥挤几何一致。末300帧RMS速度、最大漂移、contact churn和密度分档继续作为未来自动回归量化项，不再阻断当前D-04人工关闭；双层抑制仍不得替代单层稳定性证据。
 
 ### Debug 重组
 
@@ -337,11 +337,11 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **先冻结决策**：优先确认 D-04 自碰质量标准与 D-05 参数归属；D-01/D-02/D-03/D-06/D-08/D-09 方向已定，D-07 已确认。
+1. **先冻结决策**：D-04自碰质量与D-08深度已经人工关闭；下一项产品决策是D-05参数归属。D-01/D-02/D-03/D-06/D-09方向已定，D-07已确认。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
-3. **重开验收状态**：能力矩阵撤销 Teleport、自碰静置和 debug usability 的 verified 结论，加入本文件的新不变量。
+3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退**：按“首个 Fixed，否则物体原点”的 task 级路径重做处理与 debug，先解决高速穿模和跨缓存清理。
-5. **自碰密度最小场景审计**：先判断 density-dependent false contact/micro-motion 根因，再改算法或容差。
+5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
 6. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
 7. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 8. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。
@@ -355,7 +355,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 - 所有高级中间态都有准确空间/时间语义，静止或不跟随时能解释是合同还是 bug。
 - 粒子深度模式能定位 root、连续渐变、局部逆序/突跳与无可达 Fixed，并据此关闭或证实远端异常的 depth 假设。
 - Teleport 恢复单基准、整 task 触发模型，并在真实碰撞场景阻止传送产生的高速穿模。
-- 单层自碰静置质量达标，洋红 intersection 与红色 contact 不再大量无解释闪烁。
+- **已完成**：单层自碰静置质量达标；final洋红intersection为零，剩余红色contact仅位于真实拥挤区且完全收敛。
 - 曲线、硬钳制、惯性、法线轴和自碰质量均能在对应结果模式中被观察。
 - debug 关闭时不存在为绘制新增的常驻生产、复制或 readback。
 - 参数 UI 归属有逐字段事实表，不凭节点拥挤程度迁移。
