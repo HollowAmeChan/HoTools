@@ -138,6 +138,54 @@ def _particle_context(
     return context
 
 
+def _bone_particle_context(*, mode):
+    count = 5
+    context = hotools_native.mc2_context_v0_create(0, count)
+    hotools_native.mc2_context_v0_set_setup_kind(context, 1)
+    positions, normals, tangents, uvs, _attributes, _edges, _triangles = (
+        _proxy_static()
+    )
+    hotools_native.mc2_context_v0_update_proxy_static(
+        context,
+        np.repeat(positions, count, axis=0),
+        np.repeat(normals, count, axis=0),
+        np.repeat(tangents, count, axis=0),
+        np.repeat(uvs, count, axis=0),
+        np.array([1, 2, 2, 1, 2], dtype=np.uint8),
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0, 3), dtype=np.int32),
+    )
+    hotools_native.mc2_context_v0_update_baseline_static(
+        context,
+        np.array([-1, 0, 1, -1, 3], dtype=np.int32),
+        np.zeros((count, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int32),
+        np.empty((0,), dtype=np.uint8),
+        np.empty((0, 2), dtype=np.int32),
+        np.empty((0,), dtype=np.int32),
+        np.array([-1, 0, 0, -1, 3], dtype=np.int32),
+        np.zeros((count,), dtype=np.float32),
+        np.zeros((count, 3), dtype=np.float32),
+        np.repeat(
+            np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+            count,
+            axis=0,
+        ),
+    )
+    floats = np.zeros(47, dtype=np.float32)
+    floats[18] = 0.5
+    floats[19] = 180.0
+    ints = np.zeros(11, dtype=np.int32)
+    ints[2] = mode
+    hotools_native.mc2_context_v0_update_parameters(
+        context,
+        floats,
+        ints,
+        np.zeros((9, 16), dtype=np.float32),
+    )
+    return context
+
+
 def _axis_angle(value):
     axis = np.asarray(value["axis"], dtype=np.float32)
     half_angle = np.float32(np.radians(value["degrees"]) * 0.5)
@@ -406,9 +454,64 @@ def test_particle_reset_uses_rotation_threshold_without_resetting_siblings():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_bone_particle_teleport_is_root_driven_and_branch_scoped():
+    count = 5
+    identity = np.repeat(
+        np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
+        count,
+        axis=0,
+    )
+    initial = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [10.0, 1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    for mode in (1, 2):
+        context = _bone_particle_context(mode=mode)
+        try:
+            _update_dynamic(context, 1, initial, identity)
+            hotools_native.mc2_context_v0_reset(context)
+            hotools_native.mc2_context_v0_apply_center_frame_shift(
+                context,
+                np.zeros(3, dtype=np.float32),
+                np.array([0.0, 0.25, 0.0], dtype=np.float32),
+                np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            )
+            current = initial.copy()
+            current[:3, 0] += 2.0
+            current[4, 0] += 3.0
+            _update_dynamic(context, 2, current, identity)
+            result = hotools_native.mc2_context_v0_apply_particle_teleport(context)
+            assert result["mode"] == mode
+            assert result["trigger_count"] == 3
+            assert result["applied"] is True
+            positions, _rotations = _read_many(context, count)
+            if mode == 1:
+                np.testing.assert_allclose(positions[:3], current[:3], atol=1.0e-6)
+            else:
+                np.testing.assert_allclose(
+                    positions[:3],
+                    initial[:3] + np.array([2.0, 0.25, 0.0], dtype=np.float32),
+                    atol=1.0e-6,
+                )
+            np.testing.assert_allclose(
+                positions[3:],
+                initial[3:] + np.array([0.0, 0.25, 0.0], dtype=np.float32),
+                atol=1.0e-6,
+            )
+        finally:
+            hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_center_frame_shift_transforms_particle_history_and_velocity()
     test_negative_scale_teleport_matches_center_oracle()
     test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity()
     test_particle_reset_uses_rotation_threshold_without_resetting_siblings()
+    test_bone_particle_teleport_is_root_driven_and_branch_scoped()
     print("PASS MC2 native Center frame shift")
