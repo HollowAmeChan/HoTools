@@ -628,6 +628,154 @@ def bone_friction_response():
     )
 
 
+def _run_bone_distance_tether():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 77
+    armature = mixed._armature("MC2BoneDistanceTether", 0.0, 1.1)
+
+    def make_task(stiffness):
+        profile = parameters.make_mc2_particle_profile(
+            gravity=6.0,
+            gravity_direction=(0.0, 0.0, -1.0),
+            damping=0.05,
+            stabilization_time_after_reset=0.0,
+            tether_compression=0.4,
+            distance_stiffness=stiffness,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            collision_mode=0,
+            self_collision_mode=0,
+        )
+        tasks, _task_names = nodes.physicsMC2BoneClothTask(
+            [{"armature": armature, "bone": "Root"}],
+            profile=profile,
+            connection_mode=0,
+        )
+        assert len(tasks) == 1
+        return tasks[0]
+
+    task = make_task(0.9)
+    stable_task_id = task.task_id
+    topology = topology_module.build_mc2_topology_spec(task)
+    animation_input = bone_frame_input.build_mc2_bone_frame_input(
+        task,
+        topology,
+        frame=1,
+        generation=world.generation,
+    )
+    edge_indices = np.asarray([
+        (index, index + 1)
+        for index in range(topology.particle_count - 1)
+    ], dtype=np.int32)
+    edge_rests = np.linalg.norm(
+        animation_input.world_positions[edge_indices[:, 1]]
+        - animation_input.world_positions[edge_indices[:, 0]],
+        axis=1,
+    )
+    trajectory_digest = hashlib.sha256()
+    roots = step_basic = attributes = None
+    context = None
+    try:
+        for frame in range(1, 901):
+            if frame == 451:
+                context = world.solver_slots[task.task_id].data["native_context"]
+                revision = context.inspect()["parameter_revision"]
+                task = make_task(0.35)
+                assert task.task_id == stable_task_id
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+
+            if roots is None:
+                native_debug = slot.data["native_context"].refresh_debug_draw_snapshot(
+                    include_step_basic=True,
+                    include_motion_debug=False,
+                    include_dynamics=False,
+                    include_distance_tether=True,
+                    include_bending=False,
+                    include_self=False,
+                )
+                roots = np.asarray(
+                    native_debug["distance_tether"]["baseline_roots"],
+                    dtype=np.int32,
+                )
+                step_basic = np.asarray(
+                    native_debug["step_basic_positions"],
+                    dtype=np.float32,
+                )
+                attributes = np.asarray(
+                    slot.data["bone_static"].final_proxy.vertex_attributes,
+                    dtype=np.uint8,
+                )
+                assert np.any(attributes & 0x01)
+
+            fixed = (attributes & 0x01) != 0
+            np.testing.assert_allclose(
+                candidate.world_positions[fixed],
+                animation_input.world_positions[fixed],
+                atol=1.0e-6,
+            )
+            lengths = np.linalg.norm(
+                candidate.world_positions[edge_indices[:, 1]]
+                - candidate.world_positions[edge_indices[:, 0]],
+                axis=1,
+            )
+            assert float(np.max(lengths / edge_rests)) <= 1.55, (
+                frame,
+                float(np.max(lengths / edge_rests)),
+            )
+            for particle, root in enumerate(roots):
+                if root < 0 or root == particle:
+                    continue
+                rest = float(np.linalg.norm(step_basic[particle] - step_basic[root]))
+                if rest <= 1.0e-8:
+                    continue
+                current = float(np.linalg.norm(
+                    candidate.world_positions[particle]
+                    - candidate.world_positions[root]
+                ))
+                assert current >= rest * 0.35, (frame, particle, current, rest)
+                assert current <= rest * 1.08, (frame, particle, current, rest)
+
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+            if frame == 451:
+                assert slot.data["native_context"] is context
+                assert slot.data["native_context"].inspect()["parameter_revision"] == revision + 1
+
+        info = world.solver_slots[task.task_id].data["native_context"].inspect()
+        assert info["distance_solve_count"] > 0
+        assert info["tether_solve_count"] > 0
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_distance_tether_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_distance_tether():
+    first = _run_bone_distance_tether()
+    second = _run_bone_distance_tether()
+    assert first == second, (first, second)
+    print("[PASS] BoneCloth Distance/Tether: connected/disconnected x 2 x 900")
+
+
 def main():
     mixed.physics_blender.register()
     try:
@@ -635,6 +783,7 @@ def main():
         bone_motion_constraints()
         bone_external_collision()
         bone_friction_response()
+        bone_distance_tether()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

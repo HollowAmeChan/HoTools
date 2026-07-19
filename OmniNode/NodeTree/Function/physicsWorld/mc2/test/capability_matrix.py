@@ -129,6 +129,20 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("mesh_cloth",),
             "fields": ("distance_stiffness",),
             "invariants": ("finite", "rest_length_bounded", "parameter_hot_update_in_place"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_distance_tether",
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": (
+                "tether_compression_limit", "tether_stretch_limit",
+                "distance_velocity_attenuation", "distance_stiffness",
+            ),
+            "invariants": (
+                "finite", "deterministic", "rest_length_bounded",
+                "fixed_particles_static", "tether_range_bounded",
+                "parameter_hot_update_in_place",
+                "connected_disconnected_writeback",
+            ),
         },),
         "status": "gap",
     },
