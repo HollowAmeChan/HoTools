@@ -242,6 +242,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_bone_output, a); });
     m.def("mc2_context_v0_read_step_basic",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_step_basic, a); });
+    m.def("mc2_context_v0_read_debug_baseline",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_baseline, a); });
     m.def("mc2_context_v0_read_debug_motion_base",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_motion_base, a); });
     m.def("mc2_context_v0_read_debug_angle_restoration",

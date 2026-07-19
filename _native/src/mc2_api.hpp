@@ -54,6 +54,7 @@ PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_self_intersections(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_bone_output(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_debug_baseline(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_motion_base(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_angle_restoration(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_angle_limit(PyObject*, PyObject* args);

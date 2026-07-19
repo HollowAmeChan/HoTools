@@ -42,6 +42,12 @@ _COLORS = {
     "collider_surface": (0.03, 0.58, 1.00, 0.42),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
+    "depth_fixed": (1.00, 0.18, 0.62, 1.00),
+    "depth_unrooted": (0.72, 0.18, 1.00, 1.00),
+    "depth_root_boundary": (0.92, 0.96, 1.00, 0.90),
+    "depth_inversion": (1.00, 0.04, 0.03, 1.00),
+    "depth_jump": (1.00, 0.42, 0.04, 0.98),
+    "depth_zero_distance": (1.00, 0.96, 0.12, 1.00),
     "motion_base": (0.20, 0.85, 1.00, 0.90),
     "step_basic": (0.58, 0.72, 1.00, 0.72),
     "gravity": (0.45, 1.00, 0.30, 0.95),
@@ -85,6 +91,20 @@ _COLORS = {
     "output": (0.30, 1.00, 0.82, 0.85),
 }
 
+_DEPTH_COLORS = (
+    (0.10, 0.28, 1.00, 0.96),
+    (0.04, 0.52, 1.00, 0.96),
+    (0.02, 0.78, 0.96, 0.96),
+    (0.04, 0.92, 0.68, 0.96),
+    (0.24, 0.96, 0.32, 0.96),
+    (0.72, 0.96, 0.16, 0.96),
+    (1.00, 0.82, 0.08, 0.96),
+    (1.00, 0.48, 0.04, 0.96),
+    (1.00, 0.10, 0.06, 1.00),
+)
+for _depth_index, _depth_color in enumerate(_DEPTH_COLORS):
+    _COLORS[f"depth_{_depth_index}"] = _depth_color
+
 _MC2_DRAW_STORE: dict[str, dict] = {}
 _MC2_DRAW_HANDLE = None
 
@@ -100,6 +120,7 @@ def update_mc2_debug_draw_store(
     *,
     show_topology: bool = True,
     show_attributes: bool = True,
+    show_depth: bool = False,
     show_motion: bool = True,
     show_center: bool = True,
     show_collision: bool = True,
@@ -133,6 +154,7 @@ def update_mc2_debug_draw_store(
     filters = {
         "show_topology": bool(show_topology),
         "show_attributes": bool(show_attributes),
+        "show_depth": bool(show_depth),
         "show_step_basic": bool(show_step_basic),
         "show_gravity": bool(show_gravity),
         "show_velocity": bool(show_velocity),
@@ -292,6 +314,8 @@ def _append_slot_batches(
         _append_topology_batches(batches, topology, positions, limit)
     if filters["show_attributes"]:
         _append_attribute_batches(point_batches, topology, positions, limit)
+    if filters["show_depth"]:
+        _append_depth_batches(batches, point_batches, topology, positions, limit)
     if filters["show_step_basic"]:
         _append_step_basic_batches(
             batches, topology, snapshot.get("motion") or {}, limit
@@ -518,6 +542,110 @@ def _append_attribute_batches(point_batches, topology, positions, limit):
         add_point(target, positions[index])
     _point_batch(point_batches, fixed, "fixed", 6.0)
     _point_batch(point_batches, move, "move", 4.0)
+
+
+def _append_depth_batches(batches, point_batches, topology, positions, limit):
+    attributes = np.asarray(
+        _values(topology.get("vertex_attributes")), dtype=np.uint8
+    ).reshape((-1,))
+    parents = np.asarray(
+        _values(topology.get("baseline_parent_indices")), dtype=np.int32
+    ).reshape((-1,))
+    roots = np.asarray(
+        _values(topology.get("baseline_root_indices")), dtype=np.int32
+    ).reshape((-1,))
+    depths = np.asarray(
+        _values(topology.get("baseline_depths")), dtype=np.float32
+    ).reshape((-1,))
+    count = min(len(positions), len(attributes), len(parents), len(roots), len(depths))
+    draw_count = min(count, limit)
+    if draw_count <= 0:
+        return
+
+    def effective_root(index):
+        attribute = int(attributes[index])
+        if attribute & 0x01:
+            return index
+        root = int(roots[index])
+        return root if 0 <= root < count else -1
+
+    bins = [[] for _ in _DEPTH_COLORS]
+    fixed = []
+    unrooted = []
+    zero_distance = []
+    invalid = []
+    inversion_lines = []
+    jump_lines = []
+    root_boundary_lines = []
+    positive_deltas = []
+    for index in range(count):
+        if not int(attributes[index]) & 0x02:
+            continue
+        parent = int(parents[index])
+        if 0 <= parent < count:
+            delta = float(depths[index]) - float(depths[parent])
+            if delta > 1.0e-6:
+                positive_deltas.append(delta)
+    jump_threshold = max(
+        0.25,
+        float(np.median(positive_deltas)) * 4.0 if positive_deltas else 0.25,
+    )
+
+    for index in range(draw_count):
+        attribute = int(attributes[index])
+        if not attribute & 0x03:
+            continue
+        if attribute & 0x01:
+            add_point(fixed, positions[index])
+            continue
+        if attribute & 0x20:
+            add_point(zero_distance, positions[index])
+        parent = int(parents[index])
+        root = effective_root(index)
+        if root < 0:
+            add_point(unrooted, positions[index])
+            continue
+        if parent < 0 or parent >= count:
+            add_point(invalid, positions[index])
+            continue
+        raw_depth = float(depths[index])
+        depth = min(max(raw_depth, 0.0), 1.0)
+        bin_index = min(int(depth * len(_DEPTH_COLORS)), len(_DEPTH_COLORS) - 1)
+        add_point(bins[bin_index], positions[index])
+        parent_depth = float(depths[parent])
+        parent_root = effective_root(parent)
+        if raw_depth + 1.0e-5 < parent_depth or parent_root != root:
+            add_line(inversion_lines, positions[parent], positions[index])
+            add_point(invalid, positions[index])
+        elif depth - parent_depth > jump_threshold:
+            add_line(jump_lines, positions[parent], positions[index])
+
+    edges = np.asarray(
+        _values(topology.get("edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    boundary_count = 0
+    for left, right in edges:
+        if boundary_count >= limit:
+            break
+        left = int(left)
+        right = int(right)
+        if min(left, right) < 0 or max(left, right) >= count:
+            continue
+        left_root = effective_root(left)
+        right_root = effective_root(right)
+        if left_root >= 0 and right_root >= 0 and left_root != right_root:
+            add_line(root_boundary_lines, positions[left], positions[right])
+            boundary_count += 1
+
+    for index, points in enumerate(bins):
+        _point_batch(point_batches, points, f"depth_{index}", 5.0)
+    _point_batch(point_batches, unrooted, "depth_unrooted", 6.0)
+    _point_batch(point_batches, fixed, "depth_fixed", 7.0)
+    _point_batch(point_batches, zero_distance, "depth_zero_distance", 8.0)
+    _point_batch(point_batches, invalid, "depth_inversion", 8.0)
+    _batch(batches, root_boundary_lines, "depth_root_boundary", 1.4)
+    _batch(batches, jump_lines, "depth_jump", 2.0)
+    _batch(batches, inversion_lines, "depth_inversion", 2.8)
 
 
 def _append_step_basic_batches(batches, topology, motion, limit):

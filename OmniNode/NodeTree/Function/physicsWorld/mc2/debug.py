@@ -27,6 +27,7 @@ MC2_DEBUG_DRAW_MODES = {
         "setup_types": ("mesh_cloth", "bone_cloth", "bone_spring"),
         "semantic_layers": (
             "topology",
+            "particle_depth",
             "step_basic_reference",
             "effective_gravity",
             "particle_velocity",
@@ -48,6 +49,7 @@ MC2_DEBUG_DRAW_MODES = {
 MC2_DEBUG_FILTER_KEYS = (
     "show_topology",
     "show_attributes",
+    "show_depth",
     "show_step_basic",
     "show_gravity",
     "show_velocity",
@@ -211,11 +213,10 @@ def _sample_curve(values, depths, *, square_depth=False) -> np.ndarray:
     return _readonly(curve[lower] * (1.0 - weight) + curve[upper] * weight)
 
 
-def _topology_payload(slot, native_snapshot) -> dict:
+def _topology_payload(slot, native_snapshot, *, include_depth=False) -> dict:
     topology = slot.data.get("topology")
     static = _active_static(slot)
     proxy = getattr(static, "final_proxy", None)
-    baseline = _baseline_for_static(static)
     connection = getattr(topology, "bone_connection", None)
     longitudinal = []
     lateral = []
@@ -228,7 +229,7 @@ def _topology_payload(slot, native_snapshot) -> dict:
                 longitudinal.append(edge)
             else:
                 lateral.append(edge)
-    return {
+    result = {
         "connection_model": str(getattr(topology, "connection_model", "")),
         "connection_mode": int(getattr(topology, "connection_mode", 0) or 0),
         "vertex_identities": tuple(getattr(proxy, "vertex_identities", ()) or ()),
@@ -245,9 +246,16 @@ def _topology_payload(slot, native_snapshot) -> dict:
             getattr(connection, "root_indices", ()), np.int32
         ),
         "chain_depths": _readonly(getattr(connection, "levels", ()), np.int32),
-        "baseline_depths": _readonly(getattr(baseline, "depths", ()), np.float32),
         "positions": native_snapshot["positions"],
     }
+    if include_depth:
+        native_baseline = native_snapshot.get("baseline") or {}
+        result.update({
+            "baseline_parent_indices": native_baseline.get("parent_indices"),
+            "baseline_root_indices": native_baseline.get("root_indices"),
+            "baseline_depths": native_baseline.get("depths"),
+        })
+    return result
 
 
 def _motion_payload(slot, native_snapshot) -> dict:
@@ -505,6 +513,7 @@ def capture_requested_mc2_debug(
             native_snapshot = {}
             if native_requested:
                 native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
+                    include_baseline=bool(filters.get("show_depth", False)),
                     include_step_basic=bool(
                         filters.get("show_angle_restoration", False)
                         or filters.get("show_angle_limit", False)
@@ -546,6 +555,7 @@ def capture_requested_mc2_debug(
             include_topology = bool(
                 filters.get("show_topology", False)
                 or filters.get("show_attributes", False)
+                or filters.get("show_depth", False)
                 or filters.get("show_step_basic", False)
                 or filters.get("show_collision", False)
             )
@@ -581,7 +591,11 @@ def capture_requested_mc2_debug(
                 "filters": filters,
                 "native": native_snapshot,
                 "topology": (
-                    _topology_payload(slot, native_snapshot)
+                    _topology_payload(
+                        slot,
+                        native_snapshot,
+                        include_depth=bool(filters.get("show_depth", False)),
+                    )
                     if include_topology else {}
                 ),
                 "parameters": (

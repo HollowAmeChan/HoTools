@@ -822,6 +822,7 @@ class MC2NativeContextV0:
     def refresh_debug_draw_snapshot(
         self,
         *,
+        include_baseline: bool = False,
         include_step_basic: bool = False,
         include_motion_base: bool = False,
         include_angle_restoration: bool = False,
@@ -847,6 +848,19 @@ class MC2NativeContextV0:
             "positions": self._debug_array(positions),
             "rotations_xyzw": self._debug_array(rotations),
         }
+        if include_baseline:
+            parents = np.empty((self.vertex_count,), dtype=np.int32)
+            roots = np.empty((self.vertex_count,), dtype=np.int32)
+            depths = np.empty((self.vertex_count,), dtype=np.float32)
+            self._module.mc2_context_v0_read_debug_baseline(
+                self._handle, parents, roots, depths
+            )
+            snapshot["baseline"] = {
+                "parent_indices": self._debug_array(parents),
+                "root_indices": self._debug_array(roots),
+                "depths": self._debug_array(depths),
+            }
+            readbacks += 1
         if include_step_basic and bool(info.get("step_basic_ready", False)):
             basic_positions, basic_rotations = self.read_step_basic()
             snapshot["step_basic_positions"] = self._debug_array(basic_positions)

@@ -683,7 +683,7 @@ def physicsMC2Step(
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=[
-        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move",
+        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度",
         "StepBasic参考姿态", "有效重力", "粒子速度", "Distance误差", "Tether范围",
         "Bending约束", "Motion BasePosition", "Motion约束",
         "Angle恢复目标", "Angle限制范围", "Center", "Teleport阈值与方向",
@@ -695,6 +695,7 @@ def physicsMC2Step(
         "world": {"description": "包含MC2 slot和隐式debug快照的Physics World。"},
         "show_topology": {"description": "显示真实纵向/横向拓扑连接。"},
         "show_attributes": {"description": "显示Fixed/Move等粒子属性。"},
+        "show_depth": {"description": "蓝=近根 红=远端\n粉=Fixed 紫=无根"},
         "show_step_basic": {"description": "结构约束的StepBasic姿态。\n不同于Motion基准。"},
         "show_gravity": {"description": "绿箭头=有效重力。\n长度=加速度x0.02。"},
         "show_velocity": {"description": "青=保存速度  橙=真实速度\n长度=速度x0.03"},
@@ -724,7 +725,15 @@ def physicsMC2Step(
     },
     _OUTPUT_NAME=["物理世界"],
     mute_passthrough={"_OUTPUT0": "world"},
-    omni_description="从冻结的native快照绘制MC2真实中间态。自碰1到4对应检测流水线，不是四种算法。",
+    omni_description=(
+        "从冻结的native快照绘制MC2真实中间态。\n\n"
+        "粒子深度：显示约束、半径、阻尼和惯性曲线实际采样的baseline depth。"
+        "蓝色接近0（近根），经青/绿/黄过渡到红色1（远端）；粉色是Fixed根，"
+        "紫色是root=-1的无根Move粒子，黄色点是ZeroDistance。白线分隔不同Fixed根，"
+        "橙线表示异常大的局部深度跳变，红线表示深度逆序或parent/root不一致。"
+        "该模式只显示当前真实baseline，不代表Motion距离或骨链层级。\n\n"
+        "自碰1到4对应检测流水线，不是四种算法。"
+    ),
 )
 def physicsMC2DebugDraw(
     world: PhysicsWorldCache,
@@ -732,6 +741,7 @@ def physicsMC2DebugDraw(
     max_items: int = 2000,
     show_topology: bool = True,
     show_attributes: bool = True,
+    show_depth: bool = False,
     show_step_basic: bool = False,
     show_gravity: bool = False,
     show_velocity: bool = False,
@@ -759,6 +769,7 @@ def physicsMC2DebugDraw(
         True,
         show_topology=show_topology,
         show_attributes=show_attributes,
+        show_depth=show_depth,
         show_step_basic=show_step_basic,
         show_gravity=show_gravity,
         show_velocity=show_velocity,

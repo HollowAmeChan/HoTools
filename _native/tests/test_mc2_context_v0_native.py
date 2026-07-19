@@ -89,6 +89,41 @@ def expect_error(exception, callback, text):
         raise AssertionError(f"expected {exception.__name__}: {text}")
 
 
+def test_debug_baseline_readback_is_exact_and_validated():
+    context = hotools_native.mc2_context_v0_create(0, 4)
+    try:
+        proxy, baseline = static_arrays(4)
+        baseline = list(baseline)
+        baseline[0] = np.array([-1, 0, 1, 2], dtype=np.int32)
+        baseline[6] = np.array([-1, 0, 0, 0], dtype=np.int32)
+        baseline[7] = np.array([0.0, 0.2, 0.55, 1.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+
+        parents = np.empty((4,), dtype=np.int32)
+        roots = np.empty((4,), dtype=np.int32)
+        depths = np.empty((4,), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_baseline(
+            context, parents, roots, depths
+        )
+        np.testing.assert_array_equal(parents, baseline[0])
+        np.testing.assert_array_equal(roots, baseline[6])
+        np.testing.assert_array_equal(depths, baseline[7])
+
+        expect_error(
+            TypeError,
+            lambda: hotools_native.mc2_context_v0_read_debug_baseline(
+                context,
+                np.empty((4,), dtype=np.float32),
+                roots,
+                depths,
+            ),
+            "out_baseline_parents must use int32 elements",
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_radius_vertex_multipliers_drive_self_primitive_thickness():
     context = hotools_native.mc2_context_v0_create(0, 3)
     try:
@@ -1980,6 +2015,8 @@ def test_particle_inertia_matches_tier_a_fixture():
 
 
 if __name__ == "__main__":
+    test_debug_baseline_readback_is_exact_and_validated()
+    print("PASS debug baseline readback")
     test_tether_rollout_gate_and_source_order()
     print("PASS gated Tether source order")
     test_angle_runtime_values_and_source_order()

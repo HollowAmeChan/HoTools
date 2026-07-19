@@ -658,7 +658,7 @@ MC2_INACTIVE_FIELD_GROUPS = {
 
 
 MC2_DEBUG_ACCEPTANCE_LAYERS = (
-    "topology", "attributes", "motion_base_position", "motion_limits",
+    "topology", "attributes", "particle_depth", "motion_base_position", "motion_limits",
     "angle_restoration_target", "center", "teleport_threshold_direction",
     "teleport_trigger_status", "task_external_colliders",
     "particle_radius", "self_primitives", "self_grid", "self_candidates",

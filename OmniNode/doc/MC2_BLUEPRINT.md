@@ -284,7 +284,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 模式 | 冻结数据源 | 表达 |
 |---|---|---|
 | StepBasic参考姿态 | C++ context的`step_basic_positions`与真实topology edges | Distance、Angle和bone输出共同消费的结构参考姿态；用于和动画Motion BasePosition区分 |
-| 粒子深度 | static baseline的`depths/root_indices/parent_indices`；选中路径的累计长度按需派生 | 0..1色带显示真实曲线采样坐标，Fixed根与root归属边界单独编码；parent-child逆序、局部突跳、无可达Fixed和零长度链高亮。默认仅点，选中/抽样时显示parent线、数值与归一化分母 |
+| 粒子深度 | C++ context已有的`baseline_depths/root_indices/parent_indices`按请求readback | 0..1色带显示真实曲线采样坐标；粉色=Fixed，紫色=无根Move，黄色=ZeroDistance，白线=跨root边，橙线=局部突跳，红点/线=parent或深度不变量异常。选中路径、累计长度和归一化分母的数值标注仍待后续实现 |
 | 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 绿色箭头；长度为实际加速度乘`0.02`，已包含Center重力衰减与组件scale |
 | 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分保存速度，橙色为本步真实位移速度，长度均乘`0.03`；用于区分阻尼/摩擦/限速结果和真实运动 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
@@ -541,7 +541,7 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
 
-`粒子深度`是优先实现的高级中间态。静态`baseline_depths/root_indices/parent_indices`属于solver已有数据，debug只在该模式显式请求后组装绘制payload，不新建常驻C++副本。色带必须让用户直接看出0到1分布；Fixed、root边界、局部逆序/突跳、Move无可达Fixed和零长度链使用独立编码。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。选中或抽样粒子才展开parent路径，并由已有位置和parent按需计算累计长度与全局归一化分母。该模式先用于判断远端Mesh点异常是否来自baseline构建，手测前不得把“改成边长加权”写成既定修复，因为当前depth数值已经累计真实边长。
+`粒子深度`是已接通、待人工视觉验收的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move深度，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。选中/抽样路径、累计长度和全局归一化分母的数值标注仍是后续能力。该模式先用于判断远端Mesh点异常是否来自baseline构建，手测前不得把“改成边长加权”写成既定修复，因为当前depth数值已经累计真实边长。
 
 `Center`继续显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。现有逐粒子Teleport阈值球/状态点随实验实现一并废弃；目标debug只表达一组判定基准的类型/index、旧/新姿态、距离/角度阈值、实际测量和task级None/Keep/Reset状态。snapshot仍必须在scheduler前判定完成后捕获，zero-substep帧可观察；仅显式请求时生产，renderer不能从最终位置反推。
 

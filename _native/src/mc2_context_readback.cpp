@@ -745,6 +745,65 @@ PyObject* mc2_context_v0_read_debug_motion_base(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_baseline(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_baseline expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (context->baseline_parents.size() != count ||
+        context->baseline_roots.size() != count ||
+        context->baseline_depths.size() != count) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 debug baseline state is not ready");
+        return nullptr;
+    }
+    Buffer parents, roots, depths;
+    if (!parents.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_baseline_parents"
+        ) ||
+        !roots.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_baseline_roots"
+        ) ||
+        !depths.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_baseline_depths"
+        )) {
+        return nullptr;
+    }
+    const auto vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_int32(parents, "out_baseline_parents") ||
+        !expect_1d_array(parents, "out_baseline_parents", vertex_count) ||
+        !expect_int32(roots, "out_baseline_roots") ||
+        !expect_1d_array(roots, "out_baseline_roots", vertex_count) ||
+        !expect_float32(depths, "out_baseline_depths") ||
+        !expect_1d_array(depths, "out_baseline_depths", vertex_count)) {
+        return nullptr;
+    }
+    std::memcpy(
+        parents.view.buf,
+        context->baseline_parents.data(),
+        context->baseline_parents.size() * sizeof(std::int32_t)
+    );
+    std::memcpy(
+        roots.view.buf,
+        context->baseline_roots.data(),
+        context->baseline_roots.size() * sizeof(std::int32_t)
+    );
+    std::memcpy(
+        depths.view.buf,
+        context->baseline_depths.data(),
+        context->baseline_depths.size() * sizeof(float)
+    );
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_angle_restoration(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 4) {
         PyErr_SetString(

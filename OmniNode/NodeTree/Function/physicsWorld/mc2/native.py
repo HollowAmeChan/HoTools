@@ -53,6 +53,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_read_debug_self_intersections",
     "mc2_context_v0_read_bone_output",
     "mc2_context_v0_read_step_basic",
+    "mc2_context_v0_read_debug_baseline",
     "mc2_context_v0_read_debug_motion_base",
     "mc2_context_v0_read_debug_angle_restoration",
     "mc2_context_v0_read_debug_angle_limit",

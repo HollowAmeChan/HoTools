@@ -241,20 +241,21 @@ try:
     nonlocal_call_count = [0]
     task_call = omni_ir.OpCall(
         _tracked_task_node,
-        [0, 1, 2],
-        [3, 4],
+        [0, 1, 2, 3],
+        [4, 5],
         task_node,
     )
     task_call._init_lazy_fields()
     compiled = omni_ir.CompiledGraph()
-    compiled.reg_count = 5
+    compiled.reg_count = 6
     compiled.instructions = (
         (omni_ir.OP_CONST, 0, list(objects)),
         (omni_ir.OP_CONST, 1, None),
-        (omni_ir.OP_CONST, 2, True),
+        (omni_ir.OP_CONST, 2, None),
+        (omni_ir.OP_CONST, 3, True),
         task_call,
     )
-    compiled.output_regs = {"tasks": 3, "task_name": 4}
+    compiled.output_regs = {"tasks": 4, "task_name": 5}
 
     first_outputs = omni_executor.OmniExecutor.run(compiled)
     cached_task_name = first_outputs["task_name"]
@@ -263,13 +264,13 @@ try:
     assert cached_task_name.splitlines() == [
         task.task_id for task in first_outputs["tasks"]
     ]
-    assert compiled.reg_values[4] == cached_task_name
-    assert compiled.reg_versions[4] == 1
+    assert compiled.reg_values[5] == cached_task_name
+    assert compiled.reg_versions[5] == 1
 
     second_outputs = omni_executor.OmniExecutor.run(compiled)
     assert nonlocal_call_count[0] == 1
     assert second_outputs["task_name"] == cached_task_name
-    assert compiled.reg_values[4] == cached_task_name
+    assert compiled.reg_values[5] == cached_task_name
     assert task_node.error is None
     print("[PASS] lazy task node publishes and retains task-name output")
 
@@ -450,6 +451,7 @@ try:
     isolated_modes = (
         ("show_topology", {"show_topology": True}, ("longitudinal",)),
         ("show_attributes", {"show_attributes": True}, ("fixed", "move")),
+        ("show_depth", {"show_depth": True}, ("depth_fixed",)),
         ("show_step_basic", {"show_step_basic": True}, ("step_basic",)),
         ("show_gravity", {"show_gravity": True}, ()),
         ("show_velocity", {"show_velocity": True}, ()),
@@ -489,6 +491,7 @@ try:
         options = {
             "show_topology": False,
             "show_attributes": False,
+            "show_depth": False,
             "show_motion": False,
             "show_center": False,
             "show_teleport_threshold": False,
@@ -563,6 +566,7 @@ try:
         expected_payloads = {
             "show_topology": {"topology"},
             "show_attributes": {"topology"},
+            "show_depth": {"topology"},
             "show_step_basic": {"topology", "motion"},
             "show_gravity": {"parameters"},
             "show_velocity": set(),
@@ -603,8 +607,14 @@ try:
             )
             if mode_name in ("show_center", "show_output"):
                 assert readback_delta == 0, (mode_name, readback_delta)
+            elif mode_name == "show_depth":
+                assert readback_delta == 2, (mode_name, readback_delta)
             else:
                 assert readback_delta > 0, (mode_name, readback_delta)
+        if mode_name != "show_depth":
+            assert "baseline" not in native_snapshot, (
+                mode_name, tuple(native_snapshot)
+            )
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot
             assert "angle_restoration_target_positions" not in native_snapshot
@@ -623,6 +633,32 @@ try:
             )
         elif mode_name == "show_gravity":
             assert "gravity_effective_strength" in captured_snapshot["parameters"]
+        elif mode_name == "show_depth":
+            topology = captured_snapshot["topology"]
+            baseline = native_snapshot["baseline"]
+            parents = np.asarray(
+                topology["baseline_parent_indices"], dtype=np.int32
+            )
+            roots = np.asarray(topology["baseline_root_indices"], dtype=np.int32)
+            depths = np.asarray(topology["baseline_depths"], dtype=np.float32)
+            assert parents.flags.writeable is False
+            assert roots.flags.writeable is False
+            assert depths.flags.writeable is False
+            assert len(parents) == len(roots) == len(depths) == len(
+                native_snapshot["positions"]
+            )
+            np.testing.assert_array_equal(parents, baseline["parent_indices"])
+            np.testing.assert_array_equal(roots, baseline["root_indices"])
+            np.testing.assert_array_equal(depths, baseline["depths"])
+            move = np.asarray(topology["vertex_attributes"], dtype=np.uint8) & 0x02
+            assert np.all(roots[move != 0] >= 0)
+            assert float(np.max(depths)) > 0.0
+            depth_colors = {
+                tuple(debug_draw._COLORS[f"depth_{index}"])
+                for index in range(len(debug_draw._DEPTH_COLORS))
+            }
+            assert tuple(debug_draw._COLORS["depth_fixed"]) in colors
+            assert len(colors & depth_colors) >= 2, (mode_name, colors)
         elif mode_name == "show_teleport_threshold":
             teleport = captured_snapshot["teleport"]
             assert teleport["status"] is None
