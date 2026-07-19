@@ -1374,6 +1374,149 @@ def bone_triangle_bending():
     print("[PASS] BoneCloth Triangle Bending: 2 tasks x 2 deterministic x 900")
 
 
+def _bone_self_task(armature, enabled, cloth_mass):
+    profile = nodes.physicsMC2BoneClothProfile(
+        gravity=7.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        damping=0.05,
+        stabilization_time_after_reset=0.0,
+        radius=0.04,
+        distance_stiffness=0.45,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        collision_mode=0,
+        self_collision_enabled=enabled,
+        cloth_mass=cloth_mass,
+    )
+    tasks, _names = nodes.physicsMC2BoneClothTask(
+        [{"armature": armature, "bone": "Control"}],
+        profile=profile,
+        connection_mode=1,
+    )
+    assert len(tasks) == 1
+    return tasks[0]
+
+
+def _run_bone_self_collision():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 83
+    armature = _bending_armature("MC2BoneSelf", 0.0)
+    task = _bone_self_task(armature, True, 0.25)
+    topology = topology_module.build_mc2_topology_spec(task)
+    stable_task_id = task.task_id
+    trajectory_digest = hashlib.sha256()
+    disabled_counts = None
+    try:
+        for frame in range(1, 901):
+            if frame == 301:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _bone_self_task(armature, True, 0.75)
+                assert task.task_id == stable_task_id
+            elif frame == 451:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _bone_self_task(armature, False, 0.75)
+                assert task.task_id == stable_task_id
+            elif frame == 601:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = _bone_self_task(armature, True, 0.75)
+                assert task.task_id == stable_task_id
+
+            control = armature.pose.bones["Control"]
+            control.rotation_mode = "XYZ"
+            control.rotation_euler.x = 0.7 * math.sin(frame * 0.043)
+            control.rotation_euler.z = 1.1 * math.sin(frame * 0.057)
+            control.location.y = 0.2 * math.sin(frame * 0.039)
+            bpy.context.view_layer.update()
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            info = slot.data["native_context"].inspect()
+            if frame in (301, 451, 601):
+                assert slot.data["native_context"] is old_context
+                assert info["parameter_revision"] == old_revision + 1
+            if frame == 450:
+                disabled_counts = (
+                    info["self_primitive_update_count"],
+                    info["self_grid_update_count"],
+                    info["self_candidate_update_count"],
+                    info["self_contact_build_count"],
+                )
+            elif 451 <= frame <= 600:
+                assert disabled_counts == (
+                    info["self_primitive_update_count"],
+                    info["self_grid_update_count"],
+                    info["self_candidate_update_count"],
+                    info["self_contact_build_count"],
+                )
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            if frame == 899:
+                mixed.debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_self_primitives": True,
+                        "show_self_candidates": True,
+                        "show_self_contacts": True,
+                    },
+                )
+
+        slot = world.solver_slots[task.task_id]
+        info = slot.data["native_context"].inspect()
+        assert info["self_primitive_update_count"] > disabled_counts[0]
+        assert info["self_contact_candidate_count"] > 0
+        assert info["self_contact_cache_count"] <= info["self_contact_candidate_count"]
+        assert info["self_intersect_record_count"] > 0
+        runtime = slot.data["effective_parameters"].debug_dict()
+        assert runtime["float_values"]["cloth_mass"] == np.float32(0.75)
+        assert runtime["int_values"]["self_collision_mode"] == 2
+        assert runtime["int_values"]["self_collision_sync_mode"] == 0
+        np.testing.assert_allclose(
+            runtime["curve_values"]["radius"], 0.04, rtol=0.0, atol=1.0e-7
+        )
+        np.testing.assert_allclose(
+            runtime["curve_values"]["self_collision_thickness"],
+            0.005,
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["frame"] == 900
+        assert len(snapshot["self_collision"]["particle_indices"]) > 0
+        assert len(snapshot["self_collision"]["candidates"]) > 0
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_self_collision_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def bone_self_collision():
+    first = _run_bone_self_collision()
+    second = _run_bone_self_collision()
+    assert first == second, (first, second)
+    print("[PASS] BoneCloth task self: 2 deterministic x 900 frames")
+
+
 def main():
     mixed.physics_blender.register()
     try:
@@ -1385,6 +1528,7 @@ def main():
         bone_distance_tether()
         bone_angle_limit()
         bone_triangle_bending()
+        bone_self_collision()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

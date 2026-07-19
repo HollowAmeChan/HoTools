@@ -398,6 +398,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         },
         "required_invariants": (
             "finite", "deterministic", "cross_task_scope_exact", "contact_cache_bounded",
+            "single_radius_model_consistent",
         ),
         "invariant_setups": {
             "cross_task_scope_exact": ("mesh_cloth",),
@@ -413,9 +414,25 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "invariants": (
                 "finite", "deterministic", "cross_task_scope_exact",
                 "cross_task_candidates_present", "contact_cache_bounded",
+                "single_radius_model_consistent",
                 "parameter_hot_update_in_place",
             ),
-        },),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": (
+                "self_collision_mode", "self_collision_thickness", "cloth_mass",
+            ),
+            "invariants": (
+                "finite", "deterministic", "contact_cache_bounded",
+                "parameter_hot_update_in_place", "connected_disconnected_writeback",
+            ),
+        }),
+        "known_gap": (
+            "BoneCloth exposes particle radius but its hidden task-self thickness stays at "
+            "the source-profile default 0.005 instead of following radius * 0.25."
+        ),
         "status": "gap",
     },
 )
