@@ -119,13 +119,24 @@ def _armature(name, x_offset, scale):
     return obj
 
 
-def _tasks(mesh, cloth, spring, damping, teleport_mode):
+def _tasks(
+    mesh,
+    cloth,
+    spring,
+    damping,
+    teleport_mode,
+    *,
+    blend_weight=1.0,
+    stabilization_time_after_reset=0.1,
+):
     mesh_task = specs.make_mc2_task_spec(
         names.MC2_SETUP_MESH_CLOTH,
         [mesh],
         profile=parameters.make_mc2_particle_profile(
             gravity=5.0,
             damping=damping,
+            blend_weight=blend_weight,
+            stabilization_time_after_reset=stabilization_time_after_reset,
             self_collision_mode=0,
             teleport_mode=teleport_mode,
             teleport_distance=0.5,
@@ -138,6 +149,8 @@ def _tasks(mesh, cloth, spring, damping, teleport_mode):
         profile=parameters.make_mc2_particle_profile(
             gravity=3.0,
             damping=damping,
+            blend_weight=blend_weight,
+            stabilization_time_after_reset=stabilization_time_after_reset,
             self_collision_mode=0,
             teleport_mode=teleport_mode,
             teleport_distance=0.5,
@@ -149,6 +162,8 @@ def _tasks(mesh, cloth, spring, damping, teleport_mode):
         [{"armature": spring, "root_bone": "Root"}],
         profile=parameters.make_mc2_particle_profile(
             damping=damping,
+            blend_weight=blend_weight,
+            stabilization_time_after_reset=stabilization_time_after_reset,
             teleport_mode=teleport_mode,
             teleport_distance=0.5,
             teleport_rotation=180.0,
@@ -222,6 +237,14 @@ def _run_scenario():
         }
         reset_counts_before = None
         reset_bone_inputs = {}
+        stabilization_samples = {
+            setup_type: {}
+            for setup_type in (
+                names.MC2_SETUP_MESH_CLOTH,
+                names.MC2_SETUP_BONE_CLOTH,
+                names.MC2_SETUP_BONE_SPRING,
+            )
+        }
         for frame in range(1, 901):
             _animate_armature(cloth, frame, 0.18)
             _animate_armature(spring, frame, -0.14)
@@ -239,7 +262,15 @@ def _run_scenario():
                     context.inspect()["parameter_revision"]
                     for context in original_contexts
                 )
-                tasks = _tasks(mesh, cloth, spring, 0.25, 1)
+                tasks = _tasks(
+                    mesh,
+                    cloth,
+                    spring,
+                    0.25,
+                    1,
+                    blend_weight=0.6,
+                    stabilization_time_after_reset=0.2,
+                )
                 assert tuple(task.task_id for task in tasks) == stable_ids
             if frame == 601:
                 for source in (mesh, cloth, spring):
@@ -306,6 +337,13 @@ def _run_scenario():
                             atol=1.0e-6,
                         )
                     reset_hits.add(task.setup_type)
+                if frame in (602, 610, 620):
+                    center_result = slot.data["center_step_result"]
+                    assert center_result is not None
+                    stabilization_samples[task.setup_type][frame] = (
+                        center_result.velocity_weight,
+                        center_result.blend_weight,
+                    )
             assert writeback.writeback_gn_attributes(world) == 1
             assert writeback.writeback_bone_transforms(world) == 10
             bpy.context.view_layer.update()
@@ -364,6 +402,42 @@ def _run_scenario():
         }
         assert keep_hits == expected_setups
         assert reset_hits == expected_setups
+        expected_increment = (1.0 / 90.0) / 0.2
+        for setup_type, samples in stabilization_samples.items():
+            first_velocity, first_blend = samples[602]
+            middle_velocity, middle_blend = samples[610]
+            final_velocity, final_blend = samples[620]
+            np.testing.assert_allclose(
+                first_velocity, expected_increment, rtol=0.0, atol=1.0e-6
+            )
+            assert 0.0 < first_velocity < middle_velocity < final_velocity
+            np.testing.assert_allclose(final_velocity, 1.0, rtol=0.0, atol=1.0e-6)
+            for velocity, blend in (
+                (first_velocity, first_blend),
+                (middle_velocity, middle_blend),
+                (final_velocity, final_blend),
+            ):
+                np.testing.assert_allclose(
+                    blend, velocity * 0.6, rtol=0.0, atol=1.0e-6
+                )
+            slot = next(
+                world.solver_slots[task.task_id]
+                for task in tasks
+                if task.setup_type == setup_type
+            )
+            runtime = slot.data["effective_parameters"].debug_dict()
+            np.testing.assert_allclose(
+                runtime["float_values"]["blend_weight"],
+                0.6,
+                rtol=0.0,
+                atol=1.0e-7,
+            )
+            np.testing.assert_allclose(
+                runtime["float_values"]["stabilization_time_after_reset"],
+                0.2,
+                rtol=0.0,
+                atol=1.0e-7,
+            )
 
         stats = world.consume_results(
             names.MC2_STATS_CHANNEL,

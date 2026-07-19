@@ -130,6 +130,15 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "gravity@bone_spring" not in integration["fields"]
     assert "rotational_interpolation@bone_cloth" in integration["fields"]
     assert "rotational_interpolation@bone_spring" in integration["fields"]
+    assert not any(
+        field.startswith("blend_weight@")
+        or field.startswith("stabilization_time_after_reset@")
+        for field in integration["fields"]
+    )
+    assert not any(
+        invariant.startswith("stabilization_blend_ramp_exact@")
+        for invariant in integration["invariants"]
+    )
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

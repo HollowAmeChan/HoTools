@@ -71,16 +71,21 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "required_invariants": (
             "finite", "deterministic", "bounded_velocity", "zero_force_rest",
             "candidate_frame_progresses", "writeback_targets_present",
+            "stabilization_blend_ramp_exact",
         ),
         "evidence": ({
             "runner": "test_blender_mc2_mixed_output_soak.py::main",
             "frames": 900,
             "setups": ALL_SETUPS,
-            "fields": ("gravity", "damping"),
+            "fields": (
+                "gravity", "damping", "stabilization_time_after_reset",
+                "blend_weight",
+            ),
             "invariants": (
                 "finite", "deterministic", "candidate_frame_progresses",
                 "writeback_targets_present",
                 "parameter_hot_update_in_place",
+                "stabilization_blend_ramp_exact",
             ),
         },),
         "status": "gap",
