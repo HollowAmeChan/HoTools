@@ -125,8 +125,8 @@ def _particle_context(
     floats = np.zeros(47, dtype=np.float32)
     floats[0] = gravity
     floats[2] = 1.0
-    floats[18] = distance
-    floats[19] = rotation
+    floats[22] = distance
+    floats[23] = rotation
     ints = np.zeros(11, dtype=np.int32)
     ints[2] = mode
     hotools_native.mc2_context_v0_update_parameters(
@@ -173,8 +173,8 @@ def _bone_particle_context(*, mode):
         ),
     )
     floats = np.zeros(47, dtype=np.float32)
-    floats[18] = 0.5
-    floats[19] = 180.0
+    floats[22] = 0.5
+    floats[23] = 180.0
     ints = np.zeros(11, dtype=np.int32)
     ints[2] = mode
     hotools_native.mc2_context_v0_update_parameters(

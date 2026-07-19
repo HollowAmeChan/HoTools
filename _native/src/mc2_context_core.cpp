@@ -3754,6 +3754,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
+        !dict_bool(result, "component_pose_ready", context.component_pose_ready) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
         !dict_bool(result, "bone_static_ready", context.bone_static_ready) ||

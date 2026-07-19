@@ -94,6 +94,7 @@ struct Mc2ContextV0 {
     bool center_frame_ready = false;
     bool center_result_ready = false;
     bool dynamic_ready = false;
+    bool component_pose_ready = false;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -109,6 +110,12 @@ struct Mc2ContextV0 {
     std::vector<float> dynamic_rotations;
     std::vector<float> old_dynamic_positions;
     std::vector<float> old_dynamic_rotations;
+    std::array<float, 3> old_component_position {};
+    std::array<float, 4> old_component_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> old_component_scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> component_position {};
+    std::array<float, 4> component_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> component_scale {1.0f, 1.0f, 1.0f};
     std::vector<float> state_positions;
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;

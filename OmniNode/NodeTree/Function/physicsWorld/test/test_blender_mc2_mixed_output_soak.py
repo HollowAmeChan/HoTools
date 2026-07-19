@@ -41,9 +41,6 @@ physics_blender = importlib.import_module(
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
-specs = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
-)
 names = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
 )
@@ -52,6 +49,9 @@ debug_module = importlib.import_module(
 )
 bone_frame_input = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
+)
+mesh_frame_input = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.frame_input"
 )
 topology_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
@@ -106,13 +106,16 @@ def _armature(name, x_offset, scale):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
-    parent = None
+    control = data.edit_bones.new("Control")
+    control.head = (0.0, -0.12, 0.0)
+    control.tail = (0.0, 0.0, 0.0)
+    parent = control
     for index in range(5):
         bone = data.edit_bones.new("Root" if index == 0 else f"Bone{index}")
         bone.head = (0.0, index * 0.12, 0.02 * index)
         bone.tail = (0.015 * index, (index + 1) * 0.12, 0.02 * (index + 1))
         bone.parent = parent
-        bone.use_connect = parent is not None and index != 3
+        bone.use_connect = index > 0 and index != 3
         parent = bone
     bpy.ops.object.mode_set(mode="OBJECT")
     obj.select_set(False)
@@ -128,51 +131,54 @@ def _tasks(
     *,
     blend_weight=1.0,
     stabilization_time_after_reset=0.1,
+    teleport_rotation=180.0,
 ):
-    mesh_task = specs.make_mc2_task_spec(
-        names.MC2_SETUP_MESH_CLOTH,
-        [mesh],
-        profile=parameters.make_mc2_particle_profile(
-            gravity=5.0,
-            damping=damping,
-            blend_weight=blend_weight,
-            stabilization_time_after_reset=stabilization_time_after_reset,
-            self_collision_mode=0,
-            teleport_mode=teleport_mode,
-            teleport_distance=0.5,
-            teleport_rotation=180.0,
-        ),
+    mesh_profile = parameters.make_mc2_particle_profile(
+        gravity=5.0,
+        damping=damping,
+        blend_weight=blend_weight,
+        stabilization_time_after_reset=stabilization_time_after_reset,
+        self_collision_mode=0,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=teleport_rotation,
     )
-    cloth_task = specs.make_mc2_task_spec(
-        names.MC2_SETUP_BONE_CLOTH,
-        [{"armature": cloth, "root_bone": "Root"}],
-        profile=parameters.make_mc2_particle_profile(
-            gravity=3.0,
-            damping=damping,
-            blend_weight=blend_weight,
-            stabilization_time_after_reset=stabilization_time_after_reset,
-            self_collision_mode=0,
-            teleport_mode=teleport_mode,
-            teleport_distance=0.5,
-            teleport_rotation=180.0,
-        ),
+    cloth_profile = parameters.make_mc2_particle_profile(
+        gravity=3.0,
+        damping=damping,
+        blend_weight=blend_weight,
+        stabilization_time_after_reset=stabilization_time_after_reset,
+        self_collision_mode=0,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=teleport_rotation,
     )
-    spring_task = specs.make_mc2_task_spec(
-        names.MC2_SETUP_BONE_SPRING,
-        [{"armature": spring, "root_bone": "Root"}],
-        profile=parameters.make_mc2_particle_profile(
-            damping=damping,
-            blend_weight=blend_weight,
-            stabilization_time_after_reset=stabilization_time_after_reset,
-            teleport_mode=teleport_mode,
-            teleport_distance=0.5,
-            teleport_rotation=180.0,
-        ),
-        setup_options=parameters.make_mc2_setup_options(
-            names.MC2_SETUP_BONE_SPRING,
-            collided_by_groups=1,
-        ),
+    spring_profile = parameters.make_mc2_particle_profile(
+        damping=damping,
+        blend_weight=blend_weight,
+        stabilization_time_after_reset=stabilization_time_after_reset,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=teleport_rotation,
     )
+    mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
+        [mesh], profile=mesh_profile
+    )
+    cloth_tasks, _cloth_names = nodes.physicsMC2BoneClothTask(
+        [{"armature": cloth, "bone": "Control"}],
+        profile=cloth_profile,
+        connection_mode=0,
+        collided_by_groups=1,
+    )
+    spring_tasks, _spring_names = nodes.physicsMC2BoneSpringTask(
+        [{"armature": spring, "bone": "Root"}],
+        profile=spring_profile,
+        collided_by_groups=1,
+    )
+    assert len(mesh_tasks) == len(cloth_tasks) == len(spring_tasks) == 1
+    mesh_task = mesh_tasks[0]
+    cloth_task = cloth_tasks[0]
+    spring_task = spring_tasks[0]
     return (mesh_task, cloth_task, spring_task)
 
 
@@ -191,10 +197,10 @@ def _set_frame(world, frame, generation, *, raw_dt=None):
 
 
 def _animate_armature(armature, frame, amplitude):
-    root = armature.pose.bones["Root"]
-    root.rotation_mode = "XYZ"
-    root.rotation_euler.z = amplitude * math.sin(frame * 0.021)
-    root.location.x = 0.015 * math.sin(frame * 0.013)
+    control = armature.pose.bones["Control"]
+    control.rotation_mode = "XYZ"
+    control.rotation_euler.z = amplitude * math.sin(frame * 0.021)
+    control.location.x = 0.015 * math.sin(frame * 0.013)
 
 
 def _assert_candidate(slot):
@@ -229,7 +235,10 @@ def _run_scenario():
         tasks = _tasks(mesh, cloth, spring, 0.05, 2)
         stable_ids = tuple(task.task_id for task in tasks)
         keep_hits = set()
-        reset_hits = set()
+        distance_reset_hits = set()
+        rotation_reset_hits = set()
+        root_keep_hits = set()
+        root_reset_hits = set()
         previous_candidate_revisions = {task_id: 0 for task_id in stable_ids}
         max_particle_speeds = {
             task.setup_type: 0.0 for task in tasks
@@ -238,8 +247,8 @@ def _run_scenario():
             task.task_id: topology_module.build_mc2_topology_spec(task)
             for task in tasks
         }
-        reset_counts_before = None
-        reset_bone_inputs = {}
+        teleport_counts_before = {}
+        reset_frame_inputs = {}
         stabilization_samples = {
             setup_type: {}
             for setup_type in (
@@ -251,6 +260,11 @@ def _run_scenario():
         for frame in range(1, 901):
             _animate_armature(cloth, frame, 0.18)
             _animate_armature(spring, frame, -0.14)
+            if frame in (351, 401, 651, 701):
+                root_x = 2.0 if frame in (351, 651) else -2.0
+                for armature in (cloth, spring):
+                    root = armature.pose.bones["Root"]
+                    root.location = (root_x, 0.0, 0.0)
             bpy.context.view_layer.update()
             if frame == 301:
                 for source in (mesh, cloth, spring):
@@ -273,35 +287,63 @@ def _run_scenario():
                     1,
                     blend_weight=0.6,
                     stabilization_time_after_reset=0.2,
+                    teleport_rotation=30.0,
                 )
                 assert tuple(task.task_id for task in tasks) == stable_ids
             if frame == 601:
                 for source in (mesh, cloth, spring):
                     source.location.x += 2.0
                 bpy.context.view_layer.update()
-                reset_counts_before = {
-                    task.task_id: world.solver_slots[task.task_id]
-                    .data["native_context"]
-                    .inspect()["reset_count"]
-                    for task in tasks
-                }
-                reset_bone_inputs = {
-                    task.task_id: bone_frame_input.build_mc2_bone_frame_input(
-                        task,
-                        topologies[task.task_id],
-                        frame=frame,
-                        generation=generation,
-                        world=world,
-                    )
-                    for task in tasks
-                    if task.setup_type != names.MC2_SETUP_MESH_CLOTH
-                }
+            if frame == 751:
+                for source in (mesh, cloth, spring):
+                    source.rotation_mode = "XYZ"
+                    source.rotation_euler.z += math.radians(45.0)
+                bpy.context.view_layer.update()
             _set_frame(
                 world,
                 frame,
                 generation,
-                raw_dt=(1.0 / 360.0 if frame == 601 else None),
+                raw_dt=(
+                    1.0 / 360.0
+                    if frame in (601, 651, 701)
+                    else None
+                ),
             )
+            if frame in (301, 351, 401, 601, 651, 701, 751):
+                teleport_counts_before = {}
+                for task in tasks:
+                    info = (
+                        world.solver_slots[task.task_id]
+                        .data["native_context"]
+                        .inspect()
+                    )
+                    teleport_counts_before[task.task_id] = (
+                        info["reset_count"],
+                        info["particle_teleport_apply_count"],
+                    )
+            if frame in (601, 651, 701, 751):
+                reset_frame_inputs = {}
+                for task in tasks:
+                    slot = world.solver_slots[task.task_id]
+                    if task.setup_type == names.MC2_SETUP_MESH_CLOTH:
+                        reset_frame_inputs[task.task_id] = (
+                            mesh_frame_input.build_mc2_mesh_frame_input_for_task(
+                                world,
+                                task,
+                                topologies[task.task_id],
+                                slot.data["mesh_static"],
+                            )
+                        )
+                    else:
+                        reset_frame_inputs[task.task_id] = (
+                            bone_frame_input.build_mc2_bone_frame_input(
+                                task,
+                                topologies[task.task_id],
+                                frame=frame,
+                                generation=generation,
+                                world=world,
+                            )
+                        )
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(tasks),
@@ -340,29 +382,118 @@ def _run_scenario():
                 )
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
-                    assert shift is not None
-                    assert shift.keep_teleport is True
-                    assert shift.reset_teleport is False
-                    assert shift.teleport_measured_distance >= shift.teleport_distance_threshold
+                    assert shift is None
                     keep_hits.add(task.setup_type)
-                if frame == 601:
-                    assert shift is not None
-                    assert shift.keep_teleport is False
-                    assert shift.reset_teleport is True
-                    assert shift.teleport_measured_distance >= shift.teleport_distance_threshold
-                    assert slot.data["frame_schedule"].update_count == 0
+                if frame in (301, 601, 751):
+                    teleport = slot.data["particle_teleport_result"]
+                    assert teleport["mode"] == (2 if frame == 301 else 1)
                     assert (
-                        slot.data["native_context"].inspect()["reset_count"]
-                        == reset_counts_before[task.task_id] + 1
+                        teleport["trigger_count"]
+                        == topologies[task.task_id].particle_count
+                    ), (
+                        frame,
+                        task.setup_type,
+                        teleport,
+                        topologies[task.task_id].particle_count,
                     )
-                    if task.task_id in reset_bone_inputs:
+                    info = slot.data["native_context"].inspect()
+                    reset_count, apply_count = teleport_counts_before[task.task_id]
+                    assert info["reset_count"] == reset_count
+                    assert info["particle_teleport_apply_count"] == apply_count + 1
+                    if frame in (301, 601):
+                        assert teleport["max_distance"] >= (
+                            float(task.profile.teleport_distance)
+                            * float(info["scale_ratio"])
+                        )
+                    else:
+                        assert teleport["max_rotation_degrees"] >= float(
+                            task.profile.teleport_rotation
+                        )
+                if frame in (351, 401, 651, 701):
+                    teleport = slot.data["particle_teleport_result"]
+                    reset_count, apply_count = teleport_counts_before[task.task_id]
+                    info = slot.data["native_context"].inspect()
+                    if task.setup_type == names.MC2_SETUP_MESH_CLOTH:
+                        assert teleport["applied"] is False
+                        assert teleport["trigger_count"] == 0
+                        assert info["particle_teleport_apply_count"] == apply_count
+                    else:
+                        expected_mode = 2 if frame in (351, 401) else 1
+                        assert teleport["mode"] == expected_mode
+                        assert (
+                            teleport["trigger_count"]
+                            == topologies[task.task_id].particle_count
+                        ), (frame, task.setup_type, teleport)
+                        assert info["reset_count"] == reset_count
+                        assert (
+                            info["particle_teleport_apply_count"]
+                            == apply_count + 1
+                        )
+                        if expected_mode == 2:
+                            root_keep_hits.add((frame, task.setup_type))
+                        else:
+                            assert slot.data["frame_schedule"].update_count == 0
+                            np.testing.assert_allclose(
+                                candidate.world_positions,
+                                reset_frame_inputs[task.task_id].world_positions,
+                                atol=1.0e-6,
+                            )
+                            root_reset_hits.add((frame, task.setup_type))
+                if frame in (601, 751):
+                    assert shift is None
+                    if frame == 601:
+                        assert slot.data["frame_schedule"].update_count == 0
+                    if frame == 601:
                         np.testing.assert_allclose(
                             candidate.world_positions,
-                            reset_bone_inputs[task.task_id].world_positions,
+                            reset_frame_inputs[task.task_id].world_positions,
                             atol=1.0e-6,
                         )
-                    reset_hits.add(task.setup_type)
+                        distance_reset_hits.add(task.setup_type)
+                    else:
+                        fixed = np.asarray(
+                            slot.data[
+                                "mesh_static"
+                                if task.setup_type == names.MC2_SETUP_MESH_CLOTH
+                                else "bone_static"
+                            ].final_proxy.vertex_attributes,
+                            dtype=np.uint8,
+                        ) & np.uint8(0x01)
+                        np.testing.assert_allclose(
+                            candidate.world_positions[fixed != 0],
+                            reset_frame_inputs[task.task_id].world_positions[fixed != 0],
+                            atol=1.0e-6,
+                        )
+                        rotation_reset_hits.add(task.setup_type)
+                    snapshot = slot.data["_debug_draw_snapshot"]
+                    assert snapshot["frame"] == frame
+                    assert snapshot["center"]["frame_shift"] is None
+                    assert snapshot["center"]["particle_teleport"] == teleport
+                    debug_output = snapshot["output"]
+                    expected_output_positions = np.array(
+                        candidate.world_positions,
+                        dtype=np.float32,
+                        copy=True,
+                    )
+                    translation_applied = np.asarray(
+                        debug_output["translation_applied"],
+                        dtype=np.uint8,
+                    )
+                    expected_output_positions[translation_applied == 0] = (
+                        reset_frame_inputs[task.task_id]
+                        .world_positions[translation_applied == 0]
+                    )
+                    np.testing.assert_allclose(
+                        debug_output["target_positions"],
+                        expected_output_positions,
+                        atol=1.0e-7,
+                    )
                 if frame in (602, 610, 620):
+                    assert not slot.data["particle_teleport_result"]["applied"], (
+                        frame,
+                        task.setup_type,
+                        slot.data["particle_teleport_result"],
+                    )
                     center_result = slot.data["center_step_result"]
                     assert center_result is not None
                     stabilization_samples[task.setup_type][frame] = (
@@ -372,6 +503,50 @@ def _run_scenario():
             assert writeback.writeback_gn_attributes(world) == 1
             assert writeback.writeback_bone_transforms(world) == 10
             bpy.context.view_layer.update()
+            if frame == 751:
+                same_frame_state = {
+                    task.task_id: (
+                        world.solver_slots[task.task_id]
+                        .data["result_candidate"]
+                        .revision,
+                        np.array(
+                            world.solver_slots[task.task_id]
+                            .data["result_candidate"]
+                            .world_positions,
+                            copy=True,
+                        ),
+                        world.solver_slots[task.task_id]
+                        .data["native_context"]
+                        .inspect()["reset_count"],
+                        world.solver_slots[task.task_id]
+                        .data["native_context"]
+                        .inspect()["particle_teleport_apply_count"],
+                    )
+                    for task in tasks
+                }
+                returned, ready, status = nodes.physicsMC2Step(
+                    world,
+                    list(tasks),
+                    simulation_frequency=90,
+                    max_simulation_count_per_frame=3,
+                )
+                assert returned is world and ready is True, status
+                for task in tasks:
+                    revision, positions, reset_count, teleport_count = (
+                        same_frame_state[task.task_id]
+                    )
+                    slot = world.solver_slots[task.task_id]
+                    assert slot.data["result_candidate"].revision == revision
+                    np.testing.assert_array_equal(
+                        slot.data["result_candidate"].world_positions,
+                        positions,
+                    )
+                    assert slot.data["native_context"].inspect()["reset_count"] == reset_count
+                    assert (
+                        slot.data["native_context"]
+                        .inspect()["particle_teleport_apply_count"]
+                        == teleport_count
+                    )
             if frame == 451:
                 current_contexts = tuple(
                     world.solver_slots[task.task_id].data["native_context"]
@@ -382,7 +557,12 @@ def _run_scenario():
                     context.inspect()["parameter_revision"]
                     for context in current_contexts
                 ) == tuple(revision + 1 for revision in old_revisions)
-            if frame == 899:
+            if frame in (600, 750):
+                debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_center": True, "show_output": True},
+                )
+            elif frame == 899:
                 debug_module.request_mc2_debug_capture(
                     world,
                     filters={
@@ -426,7 +606,26 @@ def _run_scenario():
             names.MC2_SETUP_BONE_SPRING,
         }
         assert keep_hits == expected_setups
-        assert reset_hits == expected_setups
+        assert distance_reset_hits == expected_setups
+        assert rotation_reset_hits == expected_setups
+        expected_bone_events = {
+            (frame, setup_type)
+            for frame in (351, 401)
+            for setup_type in (
+                names.MC2_SETUP_BONE_CLOTH,
+                names.MC2_SETUP_BONE_SPRING,
+            )
+        }
+        assert root_keep_hits == expected_bone_events
+        expected_bone_events = {
+            (frame, setup_type)
+            for frame in (651, 701)
+            for setup_type in (
+                names.MC2_SETUP_BONE_CLOTH,
+                names.MC2_SETUP_BONE_SPRING,
+            )
+        }
+        assert root_reset_hits == expected_bone_events
         assert all(speed > 0.0 for speed in max_particle_speeds.values())
         expected_increment = (1.0 / 90.0) / 0.2
         for setup_type, samples in stabilization_samples.items():
@@ -436,7 +635,12 @@ def _run_scenario():
             np.testing.assert_allclose(
                 first_velocity, expected_increment, rtol=0.0, atol=1.0e-6
             )
-            assert 0.0 < first_velocity < middle_velocity < final_velocity
+            assert 0.0 < first_velocity < middle_velocity < final_velocity, (
+                setup_type,
+                first_velocity,
+                middle_velocity,
+                final_velocity,
+            )
             np.testing.assert_allclose(final_velocity, 1.0, rtol=0.0, atol=1.0e-6)
             for velocity, blend in (
                 (first_velocity, first_blend),

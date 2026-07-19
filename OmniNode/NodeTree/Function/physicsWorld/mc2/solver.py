@@ -112,6 +112,7 @@ def _slot_debug_snapshot(slot) -> dict:
     time_scheduler = slot.data.get("time_scheduler")
     center_step_result = slot.data.get("center_step_result")
     center_frame_shift_result = slot.data.get("center_frame_shift_result")
+    particle_teleport_result = slot.data.get("particle_teleport_result")
     frame_schedule = slot.data.get("frame_schedule")
     return {
         "slot_id": slot.slot_id,
@@ -180,6 +181,11 @@ def _slot_debug_snapshot(slot) -> dict:
             if center_frame_shift_result is not None
             else None
         ),
+        "particle_teleport_result": (
+            dict(particle_teleport_result)
+            if isinstance(particle_teleport_result, dict)
+            else None
+        ),
         "result_candidate": (
             result_candidate.debug_dict()
             if hasattr(result_candidate, "debug_dict")
@@ -241,6 +247,7 @@ def _install_mc2_slot(
             "frame_schedule": None,
             "center_step_result": None,
             "center_frame_shift_result": None,
+            "particle_teleport_result": None,
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
             "writeback_plan": {},
@@ -311,7 +318,7 @@ def _make_slot_center_frame_shift(
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     skip_shift_active = int(skip_count) > 0
     teleport_mode = int(profile.teleport_mode)
-    configured_teleport_active = teleport_mode in (1, 2)
+    configured_teleport_active = False
     old_scale = tuple(float(value) for value in center_state.old_component_world_scale)
     current_scale = tuple(float(value) for value in frame_pose.component_world_scale)
     stable_positive_scale_domain = (
@@ -356,7 +363,7 @@ def _make_slot_center_frame_shift(
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
         skip_count=int(skip_count),
-        teleport_mode=teleport_mode if configured_teleport_active else 0,
+        teleport_mode=0,
         teleport_distance=profile.teleport_distance,
         teleport_rotation=profile.teleport_rotation,
         negative_scale_transition=negative_scale_transition,
@@ -959,6 +966,10 @@ def step_mc2(
             center_frame_shift_result = None
             configured_reset_teleport = False
             staged_reset_center_state = None
+            particle_teleport_result = None
+            particle_teleport_handled = False
+            particle_reset_teleport = False
+            staged_particle_center_state = None
             frame_schedule = None
             time_scheduler = slot.data.get("time_scheduler")
             if not isinstance(time_scheduler, MC2TimeSchedulerState):
@@ -1032,19 +1043,55 @@ def step_mc2(
                             center_frame_shift_result is not None
                             and center_frame_shift_result.reset_teleport
                         )
-                        if configured_reset_teleport:
-                            staged_reset_center_state = replace(center_state)
-                            stabilization = float(
-                                spec.profile.stabilization_time_after_reset
-                            )
-                            staged_reset_center_state.reset(
-                                frame_input.center_frame_pose,
-                                center_pose.position,
-                                center_pose.rotation_xyzw,
-                                velocity_weight=(
-                                    0.0 if stabilization > 1.0e-6 else 1.0
-                                ),
-                            )
+            if (
+                native_context is not None
+                and frame_plan.action not in ("same_frame", "reset")
+                and not item["staged_native_frame_applied"]
+                and not (
+                    center_negative_scale_result is not None
+                    and center_negative_scale_result.active
+                )
+            ):
+                particle_teleport_result = native_context.apply_particle_teleport()
+                particle_teleport_handled = bool(
+                    int(particle_teleport_result.get("trigger_count", 0)) > 0
+                )
+                particle_reset_teleport = bool(
+                    particle_teleport_handled
+                    and int(particle_teleport_result.get("mode", 0)) == 1
+                )
+            if particle_teleport_handled:
+                configured_reset_teleport = False
+                center_frame_shift_result = None
+                if center_pose is not None:
+                    staged_particle_center_state = replace(center_state)
+                    stabilization = float(
+                        spec.profile.stabilization_time_after_reset
+                    )
+                    all_particles_reset = bool(
+                        particle_reset_teleport
+                        and int(particle_teleport_result["trigger_count"])
+                        == int(particle_teleport_result["particle_count"])
+                    )
+                    staged_particle_center_state.reset(
+                        frame_input.center_frame_pose,
+                        center_pose.position,
+                        center_pose.rotation_xyzw,
+                        velocity_weight=(
+                            0.0
+                            if all_particles_reset and stabilization > 1.0e-6
+                            else 1.0
+                        ),
+                    )
+            elif configured_reset_teleport:
+                staged_reset_center_state = replace(center_state)
+                stabilization = float(spec.profile.stabilization_time_after_reset)
+                staged_reset_center_state.reset(
+                    frame_input.center_frame_pose,
+                    center_pose.position,
+                    center_pose.rotation_xyzw,
+                    velocity_weight=0.0 if stabilization > 1.0e-6 else 1.0,
+                )
             if (
                 native_context is not None
                 and frame_plan.action != "same_frame"
@@ -1060,7 +1107,10 @@ def step_mc2(
                         native_context.apply_center_negative_scale_teleport(
                             center_negative_scale_result
                         )
-                    if center_frame_shift_result is not None:
+                    if (
+                        center_frame_shift_result is not None
+                        and not particle_teleport_handled
+                    ):
                         frame_shift_pivot = (
                             center_negative_scale_result.old_component_world_position
                             if (
@@ -1097,6 +1147,10 @@ def step_mc2(
                 "center_frame_shift_result": center_frame_shift_result,
                 "configured_reset_teleport": configured_reset_teleport,
                 "staged_reset_center_state": staged_reset_center_state,
+                "particle_teleport_result": particle_teleport_result,
+                "particle_teleport_handled": particle_teleport_handled,
+                "particle_reset_teleport": particle_reset_teleport,
+                "staged_particle_center_state": staged_particle_center_state,
                 "frame_schedule": frame_schedule,
                 "time_scheduler": time_scheduler,
                 "center_step_result": None,
@@ -1128,9 +1182,13 @@ def step_mc2(
                         )
                         if local_update_index == 0:
                             step_center_state = (
-                                item["staged_reset_center_state"]
-                                if item["configured_reset_teleport"]
-                                else item["center_state"]
+                                item["staged_particle_center_state"]
+                                if item["particle_teleport_handled"]
+                                else (
+                                    item["staged_reset_center_state"]
+                                    if item["configured_reset_teleport"]
+                                    else item["center_state"]
+                                )
                             )
                             center_step_input = step_center_state.make_step_input(
                                 item["frame_input"].center_frame_pose,
@@ -1139,7 +1197,10 @@ def step_mc2(
                                 frame_interpolation=frame_interpolation,
                                 frame_shift=(
                                     None
-                                    if item["configured_reset_teleport"]
+                                    if (
+                                        item["configured_reset_teleport"]
+                                        or item["particle_teleport_handled"]
+                                    )
                                     else item["center_frame_shift_result"]
                                 ),
                             )
@@ -1197,6 +1258,12 @@ def step_mc2(
                 center_frame_shift_result = item["center_frame_shift_result"]
                 configured_reset_teleport = item["configured_reset_teleport"]
                 staged_reset_center_state = item["staged_reset_center_state"]
+                particle_teleport_result = item["particle_teleport_result"]
+                particle_teleport_handled = item["particle_teleport_handled"]
+                particle_reset_teleport = item["particle_reset_teleport"]
+                staged_particle_center_state = item[
+                    "staged_particle_center_state"
+                ]
                 center_step_result = item["center_step_result"]
                 frame_schedule = item["frame_schedule"]
                 time_scheduler = item["time_scheduler"]
@@ -1241,11 +1308,15 @@ def step_mc2(
                     if center_step_result is None:
                         raise RuntimeError("MC2 native Center step did not produce a result")
                     committed_center_state = (
-                        staged_reset_center_state
-                        if configured_reset_teleport
-                        else center_state
+                        staged_particle_center_state
+                        if particle_teleport_handled
+                        else (
+                            staged_reset_center_state
+                            if configured_reset_teleport
+                            else center_state
+                        )
                     )
-                    if configured_reset_teleport:
+                    if configured_reset_teleport or particle_teleport_handled:
                         slot.data["center_state"] = committed_center_state
                         center_state = committed_center_state
                     else:
@@ -1267,9 +1338,15 @@ def step_mc2(
                     )
                     slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "pause":
-                    if center_frame_shift_result is None:
+                    if (
+                        center_frame_shift_result is None
+                        and not particle_teleport_handled
+                    ):
                         raise RuntimeError("MC2 paused Center frame requires a frame shift")
-                    if configured_reset_teleport:
+                    if particle_teleport_handled:
+                        slot.data["center_state"] = staged_particle_center_state
+                        center_state = staged_particle_center_state
+                    elif configured_reset_teleport:
                         slot.data["center_state"] = staged_reset_center_state
                         center_state = staged_reset_center_state
                     else:
@@ -1290,7 +1367,10 @@ def step_mc2(
                     slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "idle":
                     slot.data["center_step_result"] = None
-                    if center_frame_shift_result is not None:
+                    if particle_teleport_handled:
+                        slot.data["center_state"] = staged_particle_center_state
+                        center_state = staged_particle_center_state
+                    elif center_frame_shift_result is not None:
                         if configured_reset_teleport:
                             slot.data["center_state"] = staged_reset_center_state
                             center_state = staged_reset_center_state
@@ -1310,7 +1390,13 @@ def step_mc2(
                         else None
                     )
                     slot.data["frame_schedule"] = frame_schedule
-                if configured_reset_teleport:
+                slot.data["particle_teleport_result"] = particle_teleport_result
+                if particle_reset_teleport:
+                    runtime_state.mark_frame_reset(
+                        frame_input,
+                        "particle_teleport",
+                    )
+                elif configured_reset_teleport:
                     runtime_state.mark_frame_reset(
                         frame_input,
                         "configured_teleport",

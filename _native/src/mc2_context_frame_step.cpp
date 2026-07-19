@@ -430,8 +430,8 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
         return build_result();
     }
 
-    constexpr std::size_t kTeleportDistance = 18;
-    constexpr std::size_t kTeleportRotation = 19;
+    constexpr std::size_t kTeleportDistance = 22;
+    constexpr std::size_t kTeleportRotation = 23;
     constexpr std::size_t kTeleportMode = 2;
     constexpr float kRadiansToDegrees = 57.295779513082320876f;
     const auto mode = context->int_values[kTeleportMode];
@@ -475,7 +475,40 @@ PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
         );
     };
 
-    if (context->setup_kind == 0) {
+    bool component_triggered = false;
+    if (mode != 0 && context->component_pose_ready) {
+        const Vec3 component_delta {
+            context->component_position[0] - context->old_component_position[0],
+            context->component_position[1] - context->old_component_position[1],
+            context->component_position[2] - context->old_component_position[2],
+        };
+        const float component_distance = length(component_delta);
+        const float component_dot = std::clamp(std::fabs(
+            context->old_component_rotation[0] * context->component_rotation[0] +
+            context->old_component_rotation[1] * context->component_rotation[1] +
+            context->old_component_rotation[2] * context->component_rotation[2] +
+            context->old_component_rotation[3] * context->component_rotation[3]
+        ), 0.0f, 1.0f);
+        const float component_rotation_degrees =
+            2.0f * std::acos(component_dot) * kRadiansToDegrees;
+        max_distance = std::max(max_distance, component_distance);
+        max_rotation_degrees = std::max(
+            max_rotation_degrees,
+            component_rotation_degrees
+        );
+        component_triggered =
+            (component_distance > kMc2Epsilon &&
+                component_distance >= distance_threshold) ||
+            (component_rotation_degrees > kMc2Epsilon &&
+                component_rotation_degrees >= rotation_threshold);
+    }
+    if (component_triggered) {
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            affected[vertex] = static_cast<std::uint8_t>(1);
+            motion_sources[vertex] = static_cast<std::int32_t>(vertex);
+            ++trigger_count;
+        }
+    } else if (context->setup_kind == 0) {
         for (std::size_t vertex = 0; vertex < count; ++vertex) {
             if (!source_triggered(vertex)) continue;
             affected[vertex] = static_cast<std::uint8_t>(1);
@@ -735,6 +768,27 @@ void commit_dynamic_values(
     ++context.dynamic_revision;
 }
 
+void commit_component_pose(
+    Mc2ContextV0& context,
+    const float* position,
+    const float* rotation,
+    const float* scale
+) {
+    if (context.component_pose_ready) {
+        context.old_component_position = context.component_position;
+        context.old_component_rotation = context.component_rotation;
+        context.old_component_scale = context.component_scale;
+    } else {
+        std::copy_n(position, 3, context.old_component_position.begin());
+        std::copy_n(rotation, 4, context.old_component_rotation.begin());
+        std::copy_n(scale, 3, context.old_component_scale.begin());
+    }
+    std::copy_n(position, 3, context.component_position.begin());
+    std::copy_n(rotation, 4, context.component_rotation.begin());
+    std::copy_n(scale, 3, context.component_scale.begin());
+    context.component_pose_ready = true;
+}
+
 PyObject* build_raw_center_pose(
     Mc2ContextV0& context,
     const float* component_position,
@@ -920,6 +974,12 @@ PyObject* mc2_context_v0_update_mesh_dynamic_raw(PyObject*, PyObject* args) {
         *context, frame, generation, std::move(next_positions), std::move(next_rotations),
         velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation
     );
+    commit_component_pose(
+        *context,
+        static_cast<const float*>(component_position.view.buf),
+        static_cast<const float*>(component_rotation.view.buf),
+        static_cast<const float*>(component_scale.view.buf)
+    );
     return build_raw_center_pose(
         *context,
         static_cast<const float*>(component_position.view.buf),
@@ -1024,6 +1084,12 @@ PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
     commit_dynamic_values(
         *context, frame, generation, std::move(next_positions), std::move(next_rotations),
         velocity_weight, gravity_ratio, scale_ratio, negative_scale_sign, frame_interpolation
+    );
+    commit_component_pose(
+        *context,
+        static_cast<const float*>(component_position.view.buf),
+        component_rotation_values,
+        static_cast<const float*>(component_scale.view.buf)
     );
     return build_raw_center_pose(
         *context,
@@ -1144,6 +1210,12 @@ PyObject* mc2_context_v0_derive_center_pose_raw(PyObject*, PyObject* args) {
         PyErr_SetString(PyExc_ValueError, "component_scale cannot contain zero");
         return nullptr;
     }
+    commit_component_pose(
+        *context,
+        static_cast<const float*>(position.view.buf),
+        static_cast<const float*>(rotation.view.buf),
+        scale_values
+    );
     return build_raw_center_pose(
         *context,
         static_cast<const float*>(position.view.buf),
@@ -1241,6 +1313,11 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->state_rotations = context->dynamic_rotations;
     context->old_dynamic_positions = context->dynamic_positions;
     context->old_dynamic_rotations = context->dynamic_rotations;
+    if (context->component_pose_ready) {
+        context->old_component_position = context->component_position;
+        context->old_component_rotation = context->component_rotation;
+        context->old_component_scale = context->component_scale;
+    }
     context->state_velocities.assign(
         static_cast<std::size_t>(context->vertex_count) * 3,
         0.0f
