@@ -1382,6 +1382,146 @@ def _self_interaction_soak(objects):
     print("[PASS] Mesh cross-task self: 2 deterministic x 1800 frames")
 
 
+def _run_mesh_gravity_axes_falloff():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 93
+    directions = (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    objects = tuple(
+        _grid(f"MC2GravityAxis{index}", index * 0.25)
+        for index in range(3)
+    ) + (
+        _grid("MC2GravityFalloff0", 0.8),
+        _grid("MC2GravityFalloff1", 1.05),
+    )
+    for obj in objects[:3]:
+        obj.hotools_mesh_collision.pin_enabled = False
+
+    def profile(direction, falloff):
+        return parameters.make_mc2_particle_profile(
+            gravity=0.6,
+            gravity_direction=direction,
+            gravity_falloff=falloff,
+            damping=0.5,
+            stabilization_time_after_reset=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            collision_mode=0,
+            self_collision_mode=0,
+        )
+
+    profiles = tuple(profile(direction, 0.0) for direction in directions) + (
+        profile((0.0, 0.0, -1.0), 0.0),
+        profile((0.0, 0.0, -1.0), 1.0),
+    )
+    tasks = tuple(
+        nodes.physicsMC2MeshClothTask([obj], profile=item)[0][0]
+        for obj, item in zip(objects, profiles)
+    )
+    base_positions = {
+        task.task_id: _base_positions(obj)
+        for task, obj in zip(tasks, objects)
+    }
+    axis_velocity_directions = {}
+    trajectory_digest = hashlib.sha256()
+    try:
+        for frame in range(1, 601):
+            _set_world_frame(
+                world,
+                frame,
+                frame - 1 if frame > 1 else None,
+                world.generation,
+            )
+            returned, ready, status = nodes.physicsMC2Step(world, list(tasks))
+            assert returned is world and ready is True, status
+            for task_index, task in enumerate(tasks):
+                candidate = _candidate(world, task)
+                trajectory_digest.update(
+                    np.asarray(task_index, dtype=np.int32).tobytes()
+                )
+                trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+                trajectory_digest.update(candidate.world_positions.tobytes())
+                if frame == 2 and task in tasks[:3]:
+                    dynamics = world.solver_slots[task.task_id].data[
+                        "native_context"
+                    ].refresh_debug_draw_snapshot(
+                        include_step_basic=False,
+                        include_dynamics=True,
+                    )["dynamics"]["velocities"]
+                    mean_velocity = np.mean(dynamics, axis=0)
+                    speed = float(np.linalg.norm(mean_velocity))
+                    assert speed > 1.0e-6
+                    axis_velocity_directions[task.task_id] = mean_velocity / speed
+
+        for task, direction in zip(tasks[:3], directions):
+            candidate = _candidate(world, task)
+            displacement = np.mean(
+                candidate.world_positions - base_positions[task.task_id],
+                axis=0,
+            )
+            direction_array = np.asarray(direction, dtype=np.float32)
+            projection = float(np.dot(displacement, direction_array))
+            orthogonal = float(np.linalg.norm(
+                displacement - direction_array * projection
+            ))
+            assert projection > 0.1, (direction, projection)
+            assert orthogonal <= 1.0e-5, (direction, orthogonal)
+            np.testing.assert_allclose(
+                axis_velocity_directions[task.task_id],
+                direction_array,
+                rtol=0.0,
+                atol=1.0e-6,
+            )
+
+        falloff_zero, falloff_one = tasks[3:]
+        zero_slot = world.solver_slots[falloff_zero.task_id]
+        one_slot = world.solver_slots[falloff_one.task_id]
+        np.testing.assert_allclose(
+            zero_slot.data["center_step_result"].gravity_ratio,
+            1.0,
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            one_slot.data["center_step_result"].gravity_ratio,
+            0.0,
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        zero_displacement = float(np.max(np.linalg.norm(
+            _candidate(world, falloff_zero).world_positions
+            - base_positions[falloff_zero.task_id],
+            axis=1,
+        )))
+        one_displacement = float(np.max(np.linalg.norm(
+            _candidate(world, falloff_one).world_positions
+            - base_positions[falloff_one.task_id],
+            axis=1,
+        )))
+        assert zero_displacement > one_displacement + 0.05, (
+            zero_displacement,
+            one_displacement,
+        )
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("mesh_gravity_axes_falloff_soak")
+        for obj in objects:
+            if obj.name in bpy.data.objects:
+                _remove_source_with_proxy(obj)
+
+
+def mesh_gravity_axes_falloff():
+    first = _run_mesh_gravity_axes_falloff()
+    second = _run_mesh_gravity_axes_falloff()
+    assert first == second, (first, second)
+    print("[PASS] Mesh gravity XYZ/falloff: 2 deterministic x 600 frames")
+
+
 def _remove_object(obj):
     mesh = obj.data
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -1417,6 +1557,7 @@ def main():
         _angle_limit_soak(objects[0])
         _center_keep_teleport_soak(objects[0])
         _self_interaction_soak(objects[2:])
+        mesh_gravity_axes_falloff()
     finally:
         for obj in objects:
             if obj.name in bpy.data.objects:

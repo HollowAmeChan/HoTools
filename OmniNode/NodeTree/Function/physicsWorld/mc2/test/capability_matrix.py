@@ -100,6 +100,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ("bone_cloth", "bone_spring"),
             "fields": (),
             "invariants": ("finite", "deterministic", "zero_force_rest"),
+        }, {
+            "runner": "test_blender_mc2_constraint_soak.py::mesh_gravity_axes_falloff",
+            "frames": 600,
+            "setups": ("mesh_cloth",),
+            "fields": (
+                "gravity", "gravity_direction_x", "gravity_direction_y",
+                "gravity_direction_z", "gravity_falloff", "damping",
+            ),
+            "invariants": ("finite", "deterministic"),
         }),
         "status": "gap",
     },
