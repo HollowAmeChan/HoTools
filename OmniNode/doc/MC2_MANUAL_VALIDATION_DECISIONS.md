@@ -35,6 +35,7 @@
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
 | D-08 | **人工已验证** | Baseline depth 审计 | Mesh以4:1混入Fixed边界表面距离并单调保护；Depth inertia使用1.5次指数；非均匀减面实测确认旋转带动更自然且横向等高线偏移明显受抑制 |
 | D-09 | **已决策** | 参数说明载体 | 蓝本属性表与三个 Profile 节点长注释同步；socket tooltip 只保留短摘要和枚举映射 |
+| D-10 | **已发现，待审计** | 非连通 MeshCloth 碰撞可视化完整性 | `碰撞情况`必须覆盖任务内全部非连通分量；区分静态代理构建漏分量与renderer按单一连通分量截断 |
 
 ## P0：Teleport 回退与高速穿模
 
@@ -44,9 +45,9 @@
 
 OmniMC2 的判定基准明确采用**最终 proxy 顺序中的首个 Fixed 粒子**；比较该粒子前后两帧的动画/base world pose。若 task 没有任何 Fixed 粒子，则回退为模拟对象原点的 world pose；Bone task 使用 Armature Object 原点。这个选择必须稳定且可解释，不允许按距离、当前接触或哈希顺序每帧更换。任一位移或旋转阈值触发后，Reset/Keep 仍作用于整个 task。该规则是 Blender 产品层相对 MC2 Team Center 的明确差异点。
 
-### 当前确认的问题
+### 当前实现与未关闭问题
 
-- 当前 C++ `apply_particle_teleport` 逐粒子比较旧/新 dynamic base，debug 也逐粒子保存阈值球、方向和状态；这条路径需要整体撤销或降为内部实验代码后删除。
+- C++生产路径已改为`apply_task_teleport`：只读取最终proxy顺序中的首个Fixed；无Fixed时读取对象原点。一次判定只返回一个任务级结果，旧逐粒子扫描、局部状态修改及逐粒子debug数组已经移除。
 - 当前测试证明的是局部数组位移、速度归零、部分 self 历史失效等内部断言。它没有证明高速移动后布料不会继续高速运动或穿过碰撞体。
 - 手测已给出反例：触发 Reset/Keep 后仍可能高速穿模，说明缓存/时序清理链不完整，或者同帧碰撞体与粒子历史没有按 MC2 原版一起重置。
 - 现有阈值/状态绘制停在旧位置并只变色，是逐粒子实验的直接产物。回退后应改成单个判定基准的身份、旧姿态、新姿态、距离/角度阈值与 task 状态。
@@ -270,6 +271,8 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 当前碰撞情况只画可参与碰撞的 Point/Edge proxy 与 collider 形状，不能判断本帧是否真的发生排斥。建议保留该模式，并新增独立 `实际接触`：
 
+新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计必须分别核对final proxy是否包含全部分量、Point/Edge collision记录是否按全局顶点范围生成、debug `max_items`截断是否错误集中在前一分量，以及renderer是否复用了单一root/连通分量的拓扑范围。修复前不得把该模式声明为完整表达实际碰撞形状。
+
 - 接触点、接触法线、穿深/修正量；
 - 当前 active 的粒子/边和 collider id；
 - 至少一个 active contact 的 collider 表面改为红色，无接触保持蓝色；
@@ -340,14 +343,15 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 1. **先冻结决策**：D-04自碰质量与D-08深度已经人工关闭；下一项产品决策是D-05参数归属。D-01/D-02/D-03/D-06/D-09方向已定，D-07已确认。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
-4. **Teleport 回退**：按“首个 Fixed，否则物体原点”的 task 级路径重做处理与 debug，先解决高速穿模和跨缓存清理。
+4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
 5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
-6. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
-7. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
-8. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。
-9. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
-10. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
-11. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
+6. **非连通碰撞绘制审计 D-10**：先定位final proxy、collision记录或renderer的分量截断，再补最小双分量自动回归。
+7. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
+8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
+9. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。
+10. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
+11. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
+12. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
 
 ## 完成定义
 

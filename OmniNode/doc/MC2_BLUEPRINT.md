@@ -132,7 +132,7 @@ profile + task combination
 | `Local移动限速`、`Local旋转限速` | 限制Local惯性分量，负值关闭 | native Center step按`dt`换算速度后限幅；三个setup有效。 |
 | `深度惯性` | 让靠近根部更跟随Center step、远端保留更多惯性变换 | MC2源码使用`1-depth²`；OmniMC2生产路径改为`1-depth^1.5`以减弱末端极值附近对depth偏差的放大，三个setup有效。这是明确产品差异，不得让source oracle静默改写。 |
 | `离心力` | 预期把组件旋转产生的离心加速度写入粒子速度 | 当前公开节点和ABI保留字段，但生产solver/native context没有consumer；`M/C/S`均为仅ABI，不能依赖。 |
-| `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置整个task；`2:Keep`整体搬运模拟形状并清除传送造成的不连续速度 | 判定基准是最终proxy顺序中的首个Fixed；无Fixed时回退模拟对象原点。触发仍作用于整个task；当前逐粒子实验实现已废弃，回退完成前属于发布阻断。 |
+| `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置整个task；`2:Keep`整体搬运模拟形状并清除传送造成的不连续状态 | 判定基准是最终proxy顺序中的首个Fixed；无Fixed时回退模拟对象原点。触发作用于整个task；逐粒子实验实现及其debug数组已移除，真实场景复验完成前仍属于发布阻断。 |
 | `Teleport距离`、`Teleport旋转` | 设置判定基准帧姿态发生不连续跃迁的位移和旋转阈值 | 距离阈值乘当前组件scale ratio，旋转单位为度，两者为OR；三个setup使用相同task级触发语义。 |
 
 MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新动画world pose；没有Fixed时比较模拟对象原点，Bone task即Armature Object原点。位移或旋转任一越阈值即处理整个task，基准身份不得随帧改变。
@@ -204,7 +204,7 @@ Profile/curve authoring
 
 Spring/wind字段目前只为源码数据结构和预设解析兼容而保留；三个产品节点都写入`spring_enabled=False`，native也没有生产Spring/wind kernel consumer。BoneSpring的“弹簧感”来自固定distance、angle、惯性和soft-sphere组合；Line topology不生产Triangle Bending，也不等于启用了这些`spring_*`字段。
 
-实现owner固定如下：公开字段与tooltip在`mc2/nodes.py`，immutable authoring值与源码固定常量在`mc2/parameters.py`，setup归一化和16点ABI在`mc2/runtime_parameters.py`，Object Anchor帧适配在`mc2/anchor.py`，World/Anchor帧补偿在`mc2/center_state.py`，粒子预测与task内约束在native context/`_native/src/mc2_context_core.cpp`，跨task协调在`_native/src/mc2_context_interaction.cpp`。Teleport单基准整task回退尚未完成；当前`apply_particle_teleport`及逐粒子debug数组是待移除实验实现，不再是扩展依据。新增或删除粒子属性必须同时核对这些owner、三个setup视图和能力测试矩阵，不能只给profile加字段。
+实现owner固定如下：公开字段与tooltip在`mc2/nodes.py`，immutable authoring值与源码固定常量在`mc2/parameters.py`，setup归一化和16点ABI在`mc2/runtime_parameters.py`，Object Anchor帧适配在`mc2/anchor.py`，World/Anchor帧补偿在`mc2/center_state.py`，粒子预测与task内约束在native context/`_native/src/mc2_context_core.cpp`，跨task协调在`_native/src/mc2_context_interaction.cpp`。Teleport由native `apply_task_teleport`读取首个Fixed或对象原点的旧/新world pose并只返回一个任务级结果；Reset/Keep由solver统一提交，debug仅在显式请求时消费该小结果，不生产逐粒子阈值或状态数组。新增或删除粒子属性必须同时核对这些owner、三个setup视图和能力测试矩阵，不能只给profile加字段。
 
 四个已验收执行节点使用正式名称`MC2 MeshCloth任务`、`MC2 BoneCloth任务`、`MC2 BoneSpring任务`和`MC2模拟步`；维护态产品节点不得继续带“（框架）”后缀。
 

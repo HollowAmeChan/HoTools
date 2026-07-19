@@ -610,14 +610,12 @@ def capture_requested_mc2_debug(
                     _center_payload(slot, item)
                     if filters.get("show_center", False) else {}
                 ),
-                "teleport": {
-                    "threshold": native_snapshot.get("teleport_threshold")
+                "teleport": (
+                    _freeze_value(slot.data.get("particle_teleport_result"))
                     if filters.get("show_teleport_threshold", False)
-                    else None,
-                    "status": native_snapshot.get("teleport_status")
-                    if filters.get("show_teleport_status", False)
-                    else None,
-                },
+                    or filters.get("show_teleport_status", False)
+                    else {}
+                ),
                 "collision": (
                     _collision_payload(item, native_snapshot)
                     if filters.get("show_collision", False)

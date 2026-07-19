@@ -1006,6 +1006,62 @@ def _append_angle_limit_batches(batches, motion, limit):
 def _append_particle_teleport_batches(
     batches, point_batches, teleport, filters, limit
 ):
+    if "reference_position" in teleport:
+        old_position = vector3(teleport.get("old_reference_position", (0.0, 0.0, 0.0)))
+        position = vector3(teleport.get("reference_position", (0.0, 0.0, 0.0)))
+        if filters.get("show_teleport_threshold", False):
+            threshold_lines = []
+            direction_lines = []
+            radius = max(float(teleport.get("distance_threshold", 0.0) or 0.0), 0.0)
+            if radius > 1.0e-7:
+                _add_axis_sphere(threshold_lines, old_position, radius)
+            if (position - old_position).length > 1.0e-7:
+                add_arrow_lines(direction_lines, old_position, position)
+            old_xyzw = teleport.get("old_reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
+            current_xyzw = teleport.get("reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
+            old_rotation = mathutils.Quaternion((
+                float(old_xyzw[3]), float(old_xyzw[0]),
+                float(old_xyzw[1]), float(old_xyzw[2]),
+            ))
+            current_rotation = mathutils.Quaternion((
+                float(current_xyzw[3]), float(current_xyzw[0]),
+                float(current_xyzw[1]), float(current_xyzw[2]),
+            ))
+            delta = current_rotation @ old_rotation.conjugated()
+            if abs(float(delta.angle)) > 1.0e-7:
+                axis = delta.axis
+            else:
+                axis = old_rotation @ mathutils.Vector((0.0, 0.0, 1.0))
+            axis_a, axis_b = _plane_axes(axis)
+            arc_radius = max(min(radius * 0.28, 0.25), 0.025)
+            rotation_limit = math.radians(max(
+                float(teleport.get("rotation_threshold_degrees", 0.0) or 0.0),
+                0.0,
+            ))
+            if rotation_limit > 1.0e-7:
+                add_arc_lines(
+                    threshold_lines, old_position, axis_a, axis_b,
+                    arc_radius, 0.0, min(rotation_limit, math.pi),
+                )
+            if abs(float(delta.angle)) > 1.0e-7:
+                add_arc_lines(
+                    direction_lines, old_position, axis_a, axis_b,
+                    arc_radius * 0.76, 0.0,
+                    min(abs(float(delta.angle)), math.pi),
+                )
+            _batch(batches, threshold_lines, "teleport_threshold", 0.8)
+            _batch(batches, direction_lines, "teleport_direction", 1.0)
+        if filters.get("show_teleport_status", False):
+            mode = int(teleport.get("mode", 0) or 0)
+            applied = bool(teleport.get("applied", False))
+            target = (
+                "teleport_reset" if applied and mode == 1
+                else "teleport_keep" if applied and mode == 2
+                else "teleport_measure"
+            )
+            _point_batch(point_batches, [position], target, 9.0 if applied else 6.0)
+        return
+
     if filters.get("show_teleport_threshold", False):
         threshold = teleport.get("threshold") or {}
         old_positions = np.asarray(

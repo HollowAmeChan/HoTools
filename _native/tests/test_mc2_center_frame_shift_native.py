@@ -76,17 +76,21 @@ def _read_many(context, count):
 
 
 def _particle_context(
-    count, *, mode, distance=0.5, rotation=180.0, gravity=0.0
+    count, *, mode, distance=0.5, rotation=180.0, gravity=0.0,
+    fixed_indices=(0,),
 ):
     context = hotools_native.mc2_context_v0_create(0, count)
     positions, normals, tangents, uvs, attributes, _edges, _triangles = _proxy_static()
+    proxy_attributes = np.repeat(attributes, count, axis=0)
+    if fixed_indices:
+        proxy_attributes[np.asarray(fixed_indices, dtype=np.intp)] = np.uint8(1)
     hotools_native.mc2_context_v0_update_proxy_static(
         context,
         np.repeat(positions, count, axis=0),
         np.repeat(normals, count, axis=0),
         np.repeat(tangents, count, axis=0),
         np.repeat(uvs, count, axis=0),
-        np.repeat(attributes, count, axis=0),
+        proxy_attributes,
         np.empty((0, 2), dtype=np.int32),
         np.empty((0, 3), dtype=np.int32),
     )
@@ -121,6 +125,12 @@ def _particle_context(
         np.empty((0, 4), dtype=np.int32),
         np.empty((0,), dtype=np.float32),
         np.empty((0,), dtype=np.int8),
+    )
+    hotools_native.mc2_context_v0_update_center_static(
+        context,
+        np.asarray(fixed_indices, dtype=np.int32),
+        np.zeros(3, dtype=np.float32),
+        np.asarray((0.0, -1.0, 0.0), dtype=np.float32),
     )
     floats = np.zeros(47, dtype=np.float32)
     floats[0] = gravity
@@ -182,6 +192,12 @@ def _bone_particle_context(*, mode):
         floats,
         ints,
         np.zeros((9, 16), dtype=np.float32),
+    )
+    hotools_native.mc2_context_v0_update_center_static(
+        context,
+        np.asarray((0, 3), dtype=np.int32),
+        np.zeros(3, dtype=np.float32),
+        np.asarray((0.0, -1.0, 0.0), dtype=np.float32),
     )
     return context
 
@@ -339,7 +355,7 @@ def test_negative_scale_teleport_matches_center_oracle():
         hotools_native.mc2_context_v0_free(context)
 
 
-def test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity():
+def test_task_keep_uses_first_fixed_and_transforms_every_particle():
     count = 3
     context = _particle_context(count, mode=2, gravity=1.0)
     identity = np.repeat(
@@ -354,49 +370,32 @@ def test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity():
     try:
         _update_dynamic(context, 1, initial, identity)
         hotools_native.mc2_context_v0_reset(context)
-        hotools_native.mc2_context_v0_step(
-            context, 1.0, 1.0, 1.0, 1.0, True
+        hotools_native.mc2_context_v0_apply_center_frame_shift(
+            context,
+            np.zeros(3, dtype=np.float32),
+            np.array([0.0, 0.25, 0.0], dtype=np.float32),
+            np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
         )
         before_positions, _before_rotations = _read_many(context, count)
-        before_velocities = np.empty((count, 3), dtype=np.float32)
-        before_real_velocities = np.empty((count, 3), dtype=np.float32)
-        hotools_native.mc2_context_v0_read_debug_dynamics(
-            context, before_velocities, before_real_velocities
-        )
-        assert np.linalg.norm(before_velocities, axis=1).min() > 0.0
-        assert np.linalg.norm(before_real_velocities, axis=1).min() > 0.0
         current = initial.copy()
         current[0, 0] += 2.0
-        current[1, 0] -= 2.0
+        current[1, 0] -= 5.0
         current[2, 0] += 0.1
         _update_dynamic(context, 2, current, identity)
-        result = hotools_native.mc2_context_v0_apply_particle_teleport(context)
-        assert result == {
-            "mode": 2,
-            "trigger_count": 2,
-            "particle_count": 3,
-            "applied": True,
-            "max_distance": 2.0,
-            "max_rotation_degrees": 0.0,
-        }
+        result = hotools_native.mc2_context_v0_apply_task_teleport(context)
+        assert result["mode"] == 2
+        assert result["trigger_count"] == count
+        assert result["particle_count"] == count
+        assert result["applied"] is True
+        assert result["reference_kind"] == "first_fixed"
+        assert result["reference_index"] == 0
+        assert result["measured_distance"] == 2.0
+        assert result["measured_rotation_degrees"] == 0.0
         positions, rotations = _read_many(context, count)
-        expected_positions = before_positions.copy()
-        expected_positions[0, 0] += 2.0
-        expected_positions[1, 0] -= 2.0
+        expected_positions = before_positions + np.array([2.0, 0.0, 0.0], dtype=np.float32)
         np.testing.assert_allclose(positions, expected_positions, atol=1.0e-6)
         np.testing.assert_array_equal(rotations, identity)
-        dynamics = np.empty((count, 3), dtype=np.float32)
-        real_dynamics = np.empty((count, 3), dtype=np.float32)
-        hotools_native.mc2_context_v0_read_debug_dynamics(
-            context, dynamics, real_dynamics
-        )
-        np.testing.assert_array_equal(dynamics[:2], np.zeros((2, 3), dtype=np.float32))
-        np.testing.assert_array_equal(
-            real_dynamics[:2], np.zeros((2, 3), dtype=np.float32)
-        )
-        np.testing.assert_array_equal(dynamics[2], before_velocities[2])
-        np.testing.assert_array_equal(real_dynamics[2], before_real_velocities[2])
-        repeated = hotools_native.mc2_context_v0_apply_particle_teleport(context)
+        repeated = hotools_native.mc2_context_v0_apply_task_teleport(context)
         assert repeated == result
         assert hotools_native.mc2_context_v0_inspect(context)[
             "particle_teleport_apply_count"
@@ -405,7 +404,7 @@ def test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity():
         hotools_native.mc2_context_v0_free(context)
 
 
-def test_particle_reset_uses_rotation_threshold_without_resetting_siblings():
+def test_task_reset_uses_first_fixed_rotation_and_resets_every_particle():
     count = 2
     context = _particle_context(count, mode=1, distance=10.0, rotation=30.0)
     identity = np.repeat(
@@ -434,15 +433,24 @@ def test_particle_reset_uses_rotation_threshold_without_resetting_siblings():
             np.cos(half_angle),
         )
         _update_dynamic(context, 2, initial, current_rotations)
-        result = hotools_native.mc2_context_v0_apply_particle_teleport(context)
+        result = hotools_native.mc2_context_v0_apply_task_teleport(context)
         assert result["mode"] == 1
-        assert result["trigger_count"] == 1
+        assert result["trigger_count"] == count
         assert result["applied"] is True
-        assert abs(result["max_rotation_degrees"] - 90.0) <= 1.0e-4
+        assert result["reference_kind"] == "first_fixed"
+        assert result["reference_index"] == 0
+        assert abs(result["measured_rotation_degrees"] - 90.0) <= 1.0e-4
+        positions_before_reset, _ = _read_many(context, count)
+        np.testing.assert_allclose(
+            positions_before_reset,
+            [[0.0, 0.5, 0.0], [1.0, 0.5, 0.0]],
+            atol=1.0e-6,
+        )
+        hotools_native.mc2_context_v0_reset(context)
         positions, rotations = _read_many(context, count)
         np.testing.assert_allclose(
             positions,
-            [[0.0, 0.0, 0.0], [1.0, 0.5, 0.0]],
+            initial,
             atol=1.0e-6,
         )
         np.testing.assert_allclose(rotations[0], current_rotations[0], atol=1.0e-6)
@@ -454,7 +462,7 @@ def test_particle_reset_uses_rotation_threshold_without_resetting_siblings():
         hotools_native.mc2_context_v0_free(context)
 
 
-def test_bone_particle_teleport_is_particle_driven_and_branch_scoped():
+def test_bone_task_teleport_uses_first_fixed_not_other_branches():
     count = 5
     identity = np.repeat(
         np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32),
@@ -471,75 +479,36 @@ def test_bone_particle_teleport_is_particle_driven_and_branch_scoped():
         ],
         dtype=np.float32,
     )
-    for mode in (1, 2):
-        context = _bone_particle_context(mode=mode)
-        try:
-            _update_dynamic(context, 1, initial, identity)
-            hotools_native.mc2_context_v0_reset(context)
-            hotools_native.mc2_context_v0_apply_center_frame_shift(
-                context,
-                np.zeros(3, dtype=np.float32),
-                np.array([0.0, 0.25, 0.0], dtype=np.float32),
-                np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
-            )
-            current = initial.copy()
-            current[:3, 0] += 2.0
-            current[4, 0] += 3.0
-            _update_dynamic(context, 2, current, identity)
-            result = hotools_native.mc2_context_v0_apply_particle_teleport(
-                context, mode == 1, mode == 2
-            )
-            assert result["mode"] == mode
-            assert result["trigger_count"] == 4
-            assert result["applied"] is True
-            positions, _rotations = _read_many(context, count)
-            if mode == 1:
-                np.testing.assert_allclose(positions[:3], current[:3], atol=1.0e-6)
-                np.testing.assert_allclose(positions[4], current[4], atol=1.0e-6)
-                eligible = np.empty((count,), dtype=np.uint8)
-                hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
-                    context,
-                    np.empty((count, 3), dtype=np.float32),
-                    np.empty((count, 3), dtype=np.float32),
-                    np.empty((count, 4), dtype=np.float32),
-                    np.empty((count, 4), dtype=np.float32),
-                    eligible,
-                )
-                np.testing.assert_array_equal(
-                    eligible,
-                    np.ones((count,), dtype=np.uint8),
-                )
-            else:
-                np.testing.assert_allclose(
-                    positions[:3],
-                    initial[:3] + np.array([2.0, 0.25, 0.0], dtype=np.float32),
-                    atol=1.0e-6,
-                )
-                np.testing.assert_allclose(
-                    positions[4],
-                    initial[4] + np.array([3.0, 0.25, 0.0], dtype=np.float32),
-                    atol=1.0e-6,
-                )
-                status = np.empty((count,), dtype=np.uint8)
-                hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
-                    context,
-                    np.empty((count, 3), dtype=np.float32),
-                    status,
-                )
-                np.testing.assert_array_equal(
-                    status,
-                    np.array([2, 2, 2, 0, 2], dtype=np.uint8),
-                )
-            np.testing.assert_allclose(
-                positions[3],
-                initial[3] + np.array([0.0, 0.25, 0.0], dtype=np.float32),
-                atol=1.0e-6,
-            )
-        finally:
-            hotools_native.mc2_context_v0_free(context)
+    context = _bone_particle_context(mode=2)
+    try:
+        _update_dynamic(context, 1, initial, identity)
+        hotools_native.mc2_context_v0_reset(context)
+        other_branch = initial.copy()
+        other_branch[3:, 0] += 3.0
+        _update_dynamic(context, 2, other_branch, identity)
+        ignored = hotools_native.mc2_context_v0_apply_task_teleport(context)
+        assert ignored["reference_kind"] == "first_fixed"
+        assert ignored["reference_index"] == 0
+        assert ignored["applied"] is False
+
+        before, _ = _read_many(context, count)
+        current = other_branch.copy()
+        current[:3, 0] += 2.0
+        _update_dynamic(context, 3, current, identity)
+        result = hotools_native.mc2_context_v0_apply_task_teleport(context)
+        assert result["applied"] is True
+        assert result["trigger_count"] == count
+        positions, _ = _read_many(context, count)
+        np.testing.assert_allclose(
+            positions,
+            before + np.array([2.0, 0.0, 0.0], dtype=np.float32),
+            atol=1.0e-6,
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
 
 
-def test_particle_teleport_debug_is_explicit_and_layer_isolated():
+def test_task_teleport_returns_one_reference_without_particle_debug_arrays():
     count = 2
     context = _particle_context(count, mode=1)
     identity = np.repeat(
@@ -556,65 +525,55 @@ def test_particle_teleport_debug_is_explicit_and_layer_isolated():
         current = initial.copy()
         current[0, 0] += 2.0
         _update_dynamic(context, 2, current, identity)
-        result = hotools_native.mc2_context_v0_apply_particle_teleport(
-            context, True, False
-        )
-        assert result["trigger_count"] == 1
-        info = hotools_native.mc2_context_v0_inspect(context)
-        assert info["particle_teleport_threshold_debug_ready"] is True
-        assert info["particle_teleport_status_debug_ready"] is False
-        old_positions = np.empty((count, 3), dtype=np.float32)
-        positions = np.empty((count, 3), dtype=np.float32)
-        old_rotations = np.empty((count, 4), dtype=np.float32)
-        rotations = np.empty((count, 4), dtype=np.float32)
-        eligible = np.empty((count,), dtype=np.uint8)
-        hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
-            context, old_positions, positions, old_rotations, rotations, eligible
-        )
-        np.testing.assert_array_equal(old_positions, initial)
-        np.testing.assert_array_equal(positions, current)
-        np.testing.assert_array_equal(eligible, np.ones((count,), dtype=np.uint8))
-        try:
-            hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
-                context,
-                np.empty((count, 3), dtype=np.float32),
-                np.empty((count,), dtype=np.uint8),
-            )
-        except RuntimeError as exc:
-            assert "was not requested" in str(exc)
-        else:
-            raise AssertionError("unrequested teleport status debug was readable")
+        result = hotools_native.mc2_context_v0_apply_task_teleport(context)
+        assert result["trigger_count"] == count
+        assert result["reference_kind"] == "first_fixed"
+        assert result["reference_index"] == 0
+        np.testing.assert_allclose(result["old_reference_position"], initial[0])
+        np.testing.assert_allclose(result["reference_position"], current[0])
+        assert hotools_native.mc2_context_v0_inspect(context)[
+            "particle_teleport_apply_count"
+        ] == 1
+    finally:
+        hotools_native.mc2_context_v0_free(context)
 
-        next_positions = current.copy()
-        next_positions[1, 0] -= 2.0
-        _update_dynamic(context, 3, next_positions, identity)
-        result = hotools_native.mc2_context_v0_apply_particle_teleport(
-            context, False, True
+
+def test_task_teleport_falls_back_to_object_origin_without_fixed_particles():
+    count = 2
+    context = _particle_context(count, mode=1, fixed_indices=())
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)), dtype=np.float32
+    )
+    rotations = np.repeat(
+        np.asarray(((0.0, 0.0, 0.0, 1.0),), dtype=np.float32),
+        count,
+        axis=0,
+    )
+    component_rotation = np.asarray(
+        ((0.0, 0.0, 0.0, 1.0),), dtype=np.float32
+    )
+    component_scale = np.ones(3, dtype=np.float32)
+    try:
+        _update_dynamic(context, 1, positions, rotations)
+        hotools_native.mc2_context_v0_derive_center_pose_raw(
+            context,
+            np.zeros(3, dtype=np.float32),
+            component_rotation,
+            component_scale,
         )
-        assert result["trigger_count"] == 1
-        info = hotools_native.mc2_context_v0_inspect(context)
-        assert info["particle_teleport_threshold_debug_ready"] is False
-        assert info["particle_teleport_status_debug_ready"] is True
-        status_positions = np.empty((count, 3), dtype=np.float32)
-        status = np.empty((count,), dtype=np.uint8)
-        hotools_native.mc2_context_v0_read_debug_particle_teleport_status(
-            context, status_positions, status
+        hotools_native.mc2_context_v0_reset(context)
+        _update_dynamic(context, 2, positions, rotations)
+        hotools_native.mc2_context_v0_derive_center_pose_raw(
+            context,
+            np.asarray((2.0, 0.0, 0.0), dtype=np.float32),
+            component_rotation,
+            component_scale,
         )
-        np.testing.assert_array_equal(status_positions, next_positions)
-        np.testing.assert_array_equal(status, np.array([0, 1], dtype=np.uint8))
-        try:
-            hotools_native.mc2_context_v0_read_debug_particle_teleport_threshold(
-                context,
-                old_positions,
-                positions,
-                old_rotations,
-                rotations,
-                eligible,
-            )
-        except RuntimeError as exc:
-            assert "was not requested" in str(exc)
-        else:
-            raise AssertionError("unrequested teleport threshold debug was readable")
+        result = hotools_native.mc2_context_v0_apply_task_teleport(context)
+        assert result["applied"] is True
+        assert result["reference_kind"] == "object_origin"
+        assert result["reference_index"] == -1
+        assert result["measured_distance"] == 2.0
     finally:
         hotools_native.mc2_context_v0_free(context)
 
@@ -622,8 +581,9 @@ def test_particle_teleport_debug_is_explicit_and_layer_isolated():
 if __name__ == "__main__":
     test_center_frame_shift_transforms_particle_history_and_velocity()
     test_negative_scale_teleport_matches_center_oracle()
-    test_particle_keep_is_bidirectional_subset_scoped_and_clears_velocity()
-    test_particle_reset_uses_rotation_threshold_without_resetting_siblings()
-    test_bone_particle_teleport_is_particle_driven_and_branch_scoped()
-    test_particle_teleport_debug_is_explicit_and_layer_isolated()
+    test_task_keep_uses_first_fixed_and_transforms_every_particle()
+    test_task_reset_uses_first_fixed_rotation_and_resets_every_particle()
+    test_bone_task_teleport_uses_first_fixed_not_other_branches()
+    test_task_teleport_returns_one_reference_without_particle_debug_arrays()
+    test_task_teleport_falls_back_to_object_origin_without_fixed_particles()
     print("PASS MC2 native Center frame shift")

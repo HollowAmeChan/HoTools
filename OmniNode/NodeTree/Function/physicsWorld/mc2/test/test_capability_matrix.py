@@ -177,7 +177,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "bone_root_teleport_detected@bone_cloth" not in teleport["invariants"]
     assert "bone_root_teleport_detected@bone_spring" not in teleport["invariants"]
     for invariant in (
-        "particle_teleport_bidirectional_exact",
+        "task_teleport_single_reference_exact",
         "particle_keep_offset_exact",
         "particle_keep_velocity_cleared",
         "particle_reset_step_history_exact",
