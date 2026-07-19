@@ -115,20 +115,38 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         ),
         "required_invariants": (
             "finite", "deterministic", "same_frame_stable",
-            "teleport_keep_reset_all_setups_exact",
-            "teleport_zero_substep_immediate", "teleport_reset_pose_exact",
+            "component_keep_reset_all_setups_exact",
+            "component_teleport_zero_substep_immediate",
+            "component_reset_pose_exact",
+            "particle_teleport_bidirectional_exact",
+            "particle_keep_offset_exact",
+            "particle_keep_velocity_cleared",
+            "particle_reset_history_cleared",
+            "particle_subset_scope_exact",
+            "bone_root_teleport_detected",
+            "teleport_debug_layers_isolated",
         ),
+        "invariant_setups": {
+            "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
+        },
         "evidence": ({
             "runner": "test_blender_mc2_mixed_output_soak.py::main",
             "frames": 900,
             "setups": ALL_SETUPS,
             "fields": ("teleport_distance", "teleport_mode"),
             "invariants": (
-                "finite", "deterministic", "teleport_keep_reset_all_setups_exact",
-                "teleport_zero_substep_immediate", "teleport_reset_pose_exact",
+                "finite", "deterministic", "component_keep_reset_all_setups_exact",
+                "component_teleport_zero_substep_immediate",
+                "component_reset_pose_exact",
                 "teleport_nonunit_positive_scale", "real_writeback_each_frame",
             ),
         },),
+        "known_gap": (
+            "Current production detection is MC2 Team Center-only. Per-particle old/current "
+            "animation-base thresholds, root-bone-only teleport, symmetric particle Keep, "
+            "velocity clearing, subset scope, and split threshold/status debug are not yet "
+            "implemented or covered by the component teleport runner."
+        ),
         "status": "gap",
     },
     {
