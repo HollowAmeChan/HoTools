@@ -392,6 +392,7 @@ try:
         .inspect()["debug_readback_count"]
         for task in tasks
     }
+    sparse_interaction_readbacks = interaction.inspect()["debug_readback_count"]
     debug_module.request_mc2_debug_capture(
         world,
         filters={"show_self_candidates": True},
@@ -408,7 +409,10 @@ try:
         snapshot = slot.data["_debug_draw_snapshot"]
         native_snapshot = snapshot["native"]
         assert snapshot["frame"] == 4
-        assert snapshot["filters"] == {"show_self_candidates": True}
+        assert snapshot["filters"] == {
+            "show_self_candidates": True,
+            "show_self": True,
+        }
         assert not any(
             snapshot.get(name)
             for name in ("topology", "parameters", "motion", "center", "collision", "output")
@@ -422,6 +426,11 @@ try:
             slot.data["native_context"].inspect()["debug_readback_count"]
             == sparse_readbacks[task.task_id] + 3
         )
+    sparse_interaction = interaction.debug_draw_snapshot()
+    assert interaction.inspect()["debug_readback_count"] == sparse_interaction_readbacks + 1
+    assert "candidates" in sparse_interaction
+    assert "primitive_grids" not in sparse_interaction
+    assert "contact_indices" not in sparse_interaction
     print("[PASS] sparse debug request produces only explicitly declared state")
 
     isolated_modes = (

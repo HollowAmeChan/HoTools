@@ -317,7 +317,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 
 1. Debug节点只登记请求，不立即读取当前state；capture只消费下一次具有substep的冻结结果。
 2. 未请求时不得遍历、重建、分配、`memcpy`、创建participant字典或增加native `debug_readback_count`。共享base只能在至少一个真实依赖模式请求时生产一次。底层稀疏filter中缺失的模式键一律等价于`False`；节点UI可以有默认开启项，但不得把该UI默认下沉为readback API的隐式生产。
-3. 每个模式拥有独立位。只有数据域和生命周期完全相同的数组才允许共用readback；“实现方便”不是把Motion、self四阶段或多种约束打包的理由。
+3. 每个模式拥有独立位。只有数据域和生命周期完全相同的数组才允许共用readback；“实现方便”不是把Motion、self四阶段或多种约束打包的理由。world interaction内部的`show_self`只能由四个显式self阶段位派生，调用者不负责也不得用该聚合位替代具体请求。
 4. Renderer只消费snapshot中明确存在的键。不得从最终网格、当前RNA或另一模式的target反推缺失中间态；Angle Limit借用Restoration target属于明确禁止的越界。
 5. Oracle全量接口不得进入`MC2_REQUIRED_NATIVE_SYMBOLS`或viewport调用链；生产Debug使用最小`read_debug_*`接口。若测试需要完整scratch，必须保留在oracle层而不是扩大生产readback。
 6. Snapshot一经捕获必须只读并带精确frame/generation/task identity。新请求未遇到真实substep时继续显示旧快照，但验收必须检查`captured_frame`，不得把旧快照算作新模式覆盖。

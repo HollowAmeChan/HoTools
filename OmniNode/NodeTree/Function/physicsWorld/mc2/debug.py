@@ -105,6 +105,15 @@ def request_mc2_debug_capture(
     if not isinstance(world, PhysicsWorldCache):
         return 0
     filters = dict(filters or {})
+    filters["show_self"] = any(
+        bool(filters.get(name, False))
+        for name in (
+            "show_self_primitives",
+            "show_self_grid",
+            "show_self_candidates",
+            "show_self_contacts",
+        )
+    )
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
     setup_filter = str(filters.get("setup_filter") or "all").strip().lower()
