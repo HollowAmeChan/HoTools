@@ -8,7 +8,7 @@
 
 - **应该写**：OmniNode通用节点模型、编译IR、执行上下文、runtime cache、调试机制、模块装卸和native开发边界。
 - **不应该写**：Physics World专属阶段契约、某个solver完成度、物理公式、MC2源码差异、验收计划或提交流水。
-- **内容路由**：Physics World公共结构写`doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定事实写`doc/MC2_BLUEPRINT.md`；历史只留Git。
+- **内容路由**：Physics World公共结构写`doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定事实写`doc/MC2_BLUEPRINT.md`；通用Bake与外部几何缓存写`doc/PHYSICS_BAKE_NODE_BLUEPRINT.md`；历史只留Git。
 - **示例原则**：solver示例只能用于说明通用框架机制，不得在本文承担该solver的状态或算法记录。
 
 ## 一句话模型
