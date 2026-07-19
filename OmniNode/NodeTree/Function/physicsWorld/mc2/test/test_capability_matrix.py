@@ -103,6 +103,9 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "rotational_interpolation@bone_cloth" in integration["fields"]
     assert "rotational_interpolation@bone_spring" in integration["fields"]
 
+    tether = capability_gaps(by_id["tether_and_distance"])
+    assert not any(tether.values())
+
     external = capability_gaps(by_id["external_collision"])
     assert "radius@mesh_cloth" not in external["fields"]
     assert "radius@bone_cloth" not in external["fields"]

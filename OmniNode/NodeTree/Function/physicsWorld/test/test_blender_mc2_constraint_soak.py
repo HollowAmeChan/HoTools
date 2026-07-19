@@ -527,7 +527,7 @@ def mesh_friction_response(obj):
     )
 
 
-def _distance_tether_soak(obj):
+def _run_mesh_distance_profile(obj):
     world = world_types.PhysicsWorldCache()
     generation = 44
     task = _task(
@@ -543,6 +543,9 @@ def _distance_tether_soak(obj):
     edges = np.asarray([tuple(edge.vertices) for edge in obj.data.edges], dtype=np.int32)
     rest_lengths = np.linalg.norm(base[edges[:, 1]] - base[edges[:, 0]], axis=1)
     native_context = None
+    attributes = None
+    trajectory_digest = hashlib.sha256()
+    max_edge_ratio = 0.0
     try:
         for frame in range(1, 901):
             if frame == 451:
@@ -558,25 +561,148 @@ def _distance_tether_soak(obj):
                 )
                 assert task.task_id == stable_task_id
             candidate = _auto_step(world, task, frame, generation)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            slot = world.solver_slots[task.task_id]
+            if attributes is None:
+                attributes = np.asarray(
+                    slot.data["mesh_static"].final_proxy.vertex_attributes,
+                    dtype=np.uint8,
+                )
+                assert np.any(attributes & 0x01)
+            fixed = (attributes & 0x01) != 0
+            np.testing.assert_allclose(
+                candidate.world_positions[fixed],
+                base[fixed],
+                atol=1.0e-6,
+            )
             lengths = np.linalg.norm(
                 candidate.world_positions[edges[:, 1]]
                 - candidate.world_positions[edges[:, 0]],
                 axis=1,
             )
-            assert float(np.max(lengths / rest_lengths)) <= 1.55, (
+            edge_ratio = float(np.max(lengths / rest_lengths))
+            max_edge_ratio = max(max_edge_ratio, edge_ratio)
+            assert edge_ratio <= 1.55, (
                 frame,
-                float(np.max(lengths / rest_lengths)),
+                edge_ratio,
             )
-            native_context = world.solver_slots[task.task_id].data["native_context"]
+            native_context = slot.data["native_context"]
             if frame == 451:
                 assert native_context is old_context
                 assert native_context.inspect()["parameter_revision"] == old_revision + 1
         info = native_context.inspect()
         assert info["distance_solve_count"] > 0
         assert info["tether_solve_count"] > 0
-        print("[PASS] 900-frame Distance/Tether stretch and hot-update")
+        print(
+            "[PASS] 900-frame Distance profile/hot-update: "
+            f"max edge ratio {max_edge_ratio:.6f}"
+        )
+        return trajectory_digest.hexdigest()
     finally:
-        world.omni_cache_dispose("distance_tether_soak")
+        world.omni_cache_dispose("mesh_distance_profile_soak")
+
+
+def _run_mesh_tether_branch(obj, *, direction, compression, generation):
+    world = world_types.PhysicsWorldCache()
+    task = _task(
+        obj,
+        gravity=0.5,
+        gravity_direction=direction,
+        damping=0.5,
+        tether_compression=compression,
+        angle_restoration_enabled=False,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+    )
+    base = _base_positions(obj)
+    roots = step_basic = attributes = None
+    trajectory_digest = hashlib.sha256()
+    ratios = []
+    try:
+        for frame in range(1, 601):
+            candidate = _auto_step(world, task, frame, generation)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            slot = world.solver_slots[task.task_id]
+            if roots is None:
+                native_debug = slot.data["native_context"].refresh_debug_draw_snapshot(
+                    include_step_basic=True,
+                    include_motion_debug=False,
+                    include_dynamics=False,
+                    include_distance_tether=True,
+                    include_bending=False,
+                    include_self=False,
+                )
+                roots = np.asarray(
+                    native_debug["distance_tether"]["baseline_roots"],
+                    dtype=np.int32,
+                )
+                step_basic = np.asarray(
+                    native_debug["step_basic_positions"],
+                    dtype=np.float32,
+                )
+                attributes = np.asarray(
+                    slot.data["mesh_static"].final_proxy.vertex_attributes,
+                    dtype=np.uint8,
+                )
+            fixed = (attributes & 0x01) != 0
+            np.testing.assert_allclose(
+                candidate.world_positions[fixed], base[fixed], atol=1.0e-6
+            )
+            for particle, root in enumerate(roots):
+                if root < 0 or root == particle:
+                    continue
+                rest = float(np.linalg.norm(step_basic[particle] - step_basic[root]))
+                if rest <= 1.0e-8:
+                    continue
+                ratio = float(np.linalg.norm(
+                    candidate.world_positions[particle]
+                    - candidate.world_positions[root]
+                )) / rest
+                assert 0.15 <= ratio <= 1.35, (frame, particle, ratio)
+                ratios.append(ratio)
+        info = world.solver_slots[task.task_id].data["native_context"].inspect()
+        assert info["tether_solve_count"] > 0
+        return min(ratios), max(ratios), trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("mesh_tether_branch_soak")
+
+
+def _run_distance_tether_suite(obj):
+    distance_digest = _run_mesh_distance_profile(obj)
+    stretch_min, stretch_max, stretch_digest = _run_mesh_tether_branch(
+        obj,
+        direction=(0.0, 1.0, 0.0),
+        compression=0.4,
+        generation=45,
+    )
+    compression_min, compression_max, compression_digest = _run_mesh_tether_branch(
+        obj,
+        direction=(0.0, -1.0, 0.0),
+        compression=0.65,
+        generation=46,
+    )
+    assert stretch_max > 1.03, stretch_max
+    assert compression_min < 0.35, compression_min
+    print(
+        "[PASS] Mesh Tether branches: "
+        f"stretch {stretch_min:.6f}..{stretch_max:.6f}, "
+        f"compression {compression_min:.6f}..{compression_max:.6f}"
+    )
+    digest = hashlib.sha256()
+    for value in (distance_digest, stretch_digest, compression_digest):
+        digest.update(value.encode("ascii"))
+    return digest.hexdigest()
+
+
+def _distance_tether_soak(obj):
+    first = _run_distance_tether_suite(obj)
+    second = _run_distance_tether_suite(obj)
+    assert first == second, (first, second)
+    print("[PASS] repeated Mesh Distance/Tether trajectory is deterministic")
 
 
 def _run_bending_profile(obj, stiffness, generation):

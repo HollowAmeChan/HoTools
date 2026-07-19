@@ -633,13 +633,13 @@ def _run_bone_distance_tether():
     world.generation = 77
     armature = mixed._armature("MC2BoneDistanceTether", 0.0, 1.1)
 
-    def make_task(stiffness):
+    def make_task(*, gravity, gravity_direction, compression, stiffness):
         profile = parameters.make_mc2_particle_profile(
-            gravity=6.0,
-            gravity_direction=(0.0, 0.0, -1.0),
-            damping=0.05,
+            gravity=gravity,
+            gravity_direction=gravity_direction,
+            damping=0.5,
             stabilization_time_after_reset=0.0,
-            tether_compression=0.4,
+            tether_compression=compression,
             distance_stiffness=stiffness,
             bending_stiffness=0.0,
             angle_restoration_enabled=False,
@@ -655,7 +655,12 @@ def _run_bone_distance_tether():
         assert len(tasks) == 1
         return tasks[0]
 
-    task = make_task(0.9)
+    task = make_task(
+        gravity=0.8,
+        gravity_direction=(0.0, 1.0, 0.0),
+        compression=0.4,
+        stiffness=0.1,
+    )
     stable_task_id = task.task_id
     topology = topology_module.build_mc2_topology_spec(task)
     animation_input = bone_frame_input.build_mc2_bone_frame_input(
@@ -675,13 +680,37 @@ def _run_bone_distance_tether():
     )
     trajectory_digest = hashlib.sha256()
     roots = step_basic = attributes = None
-    context = None
+    phase_ratios = {"stretch": [], "compression": []}
     try:
         for frame in range(1, 901):
-            if frame == 451:
-                context = world.solver_slots[task.task_id].data["native_context"]
-                revision = context.inspect()["parameter_revision"]
-                task = make_task(0.35)
+            if frame == 226:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(
+                    gravity=0.8,
+                    gravity_direction=(0.0, 1.0, 0.0),
+                    compression=0.4,
+                    stiffness=0.05,
+                )
+                assert task.task_id == stable_task_id
+            elif frame == 451:
+                rebuild_context = world.solver_slots[task.task_id].data["native_context"]
+                task = make_task(
+                    gravity=0.5,
+                    gravity_direction=(0.0, -1.0, 0.0),
+                    compression=0.65,
+                    stiffness=0.35,
+                )
+                assert task.task_id == stable_task_id
+            elif frame == 676:
+                old_context = world.solver_slots[task.task_id].data["native_context"]
+                old_revision = old_context.inspect()["parameter_revision"]
+                task = make_task(
+                    gravity=0.5,
+                    gravity_direction=(0.0, -1.0, 0.0),
+                    compression=0.65,
+                    stiffness=0.25,
+                )
                 assert task.task_id == stable_task_id
             mixed._set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
@@ -747,21 +776,39 @@ def _run_bone_distance_tether():
                     candidate.world_positions[particle]
                     - candidate.world_positions[root]
                 ))
-                assert current >= rest * 0.35, (frame, particle, current, rest)
-                assert current <= rest * 1.08, (frame, particle, current, rest)
+                ratio = current / rest
+                phase = "stretch" if frame < 451 else "compression"
+                phase_ratios[phase].append(ratio)
+                minimum = 0.55 if frame < 451 else 0.32
+                assert ratio >= minimum, (frame, particle, ratio, minimum)
+                assert ratio <= 1.25, (frame, particle, ratio)
 
             plan = slot.data["writeback_plan"]
             assert plan["rotation_only_connected_count"] > 0
             assert plan["position_rotation_count"] > 0
             assert writeback.writeback_bone_transforms(world) == topology.particle_count
             bpy.context.view_layer.update()
-            if frame == 451:
-                assert slot.data["native_context"] is context
-                assert slot.data["native_context"].inspect()["parameter_revision"] == revision + 1
+            if frame in (226, 676):
+                assert slot.data["native_context"] is old_context
+                assert slot.data["native_context"].inspect()["parameter_revision"] == old_revision + 1
+            elif frame == 451:
+                assert slot.data["native_context"] is not rebuild_context
+                assert rebuild_context.inspect()["released"] is True
 
         info = world.solver_slots[task.task_id].data["native_context"].inspect()
         assert info["distance_solve_count"] > 0
         assert info["tether_solve_count"] > 0
+        stretch_min = min(phase_ratios["stretch"])
+        stretch_max = max(phase_ratios["stretch"])
+        compression_min = min(phase_ratios["compression"])
+        compression_max = max(phase_ratios["compression"])
+        assert stretch_max > 1.03, stretch_max
+        assert compression_min < 0.35, compression_min
+        print(
+            "[INFO] BoneCloth tether root ratio: "
+            f"stretch {stretch_min:.6f}..{stretch_max:.6f}, "
+            f"compression {compression_min:.6f}..{compression_max:.6f}"
+        )
         return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("bone_distance_tether_soak")
