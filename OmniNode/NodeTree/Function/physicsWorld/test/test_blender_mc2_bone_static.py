@@ -362,16 +362,20 @@ try:
     assert returned is world and ready is True
     spring_slot = world.solver_slots[spring_task.task_id]
     assert spring_slot.data["bone_static"].final_proxy.setup_type == "bone_spring"
+    assert spring_slot.data["bone_static"].bending is None
     assert spring_slot.data["bone_static"].static_signature != static.static_signature
     runtime = spring_slot.data["effective_parameters"].debug_dict()
     assert runtime["setup_type"] == "bone_spring"
     assert runtime["float_values"]["gravity"] == 0.0
+    assert runtime["float_values"]["bending_stiffness"] == 0.0
     assert abs(runtime["float_values"]["tether_compression_limit"] - 0.8) < 1.0e-7
     assert runtime["curve_values"]["distance_stiffness"] == [0.5] * 16
     assert runtime["int_values"]["use_max_distance"] == 0
+    assert runtime["int_values"]["bending_method"] == 0
     assert runtime["int_values"]["self_collision_mode"] == 0
     spring_info = spring_slot.data["native_context"].inspect()
     assert spring_info["setup_kind"] == 2
+    assert spring_info["bending_record_count"] == 0
     assert spring_info["self_collision_static_ready"] is True
     assert spring_info["self_primitive_count"] == 2
     assert spring_info["self_point_primitive_count"] == 0

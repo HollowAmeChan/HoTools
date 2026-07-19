@@ -1489,6 +1489,10 @@ bool calc_bending_volume(
 ) {
     float volume = dot(cross(sub(p[1], p[0]), sub(p[2], p[0])), sub(p[3], p[0])) /
         6.0f * 1000.0f;
+    const float volume_error = rest - volume;
+    if (std::fabs(volume_error) <= std::max(1.0e-6f, std::fabs(rest) * 2.0e-6f)) {
+        return false;
+    }
     Vec3 grad[4] = {
         cross(sub(p[1], p[2]), sub(p[3], p[2])),
         cross(sub(p[2], p[0]), sub(p[3], p[0])),
@@ -1499,7 +1503,7 @@ bool calc_bending_volume(
     for (int i = 0; i < 4; ++i) lambda += inv_mass[i] * length_squared(grad[i]);
     lambda *= 1000.0f;
     if (std::fabs(lambda) < 1.0e-6f) return false;
-    lambda = stiffness * (rest - volume) / lambda;
+    lambda = stiffness * volume_error / lambda;
     for (int i = 0; i < 4; ++i) out[i] = mul(grad[i], lambda * inv_mass[i]);
     return true;
 }
@@ -1539,7 +1543,9 @@ bool calc_bending_dihedral(
     const float direction_value = dot(cross(n1, n2), edge);
     const float direction = direction_value < 0.0f ? -1.0f : (direction_value > 0.0f ? 1.0f : 0.0f);
     phi *= direction;
-    const float lambda = (rest - phi) / denominator * stiffness;
+    const float angle_error = rest - phi;
+    if (std::fabs(angle_error) <= 1.0e-3f) return false;
+    const float lambda = angle_error / denominator * stiffness;
     for (int i = 0; i < 4; ++i) out[i] = mul(derivative[i], -inv_mass[i] * lambda);
     return true;
 }

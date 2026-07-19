@@ -577,7 +577,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     )
     assert {"collision_limit_distance"} <= spring_parameters
     assert not {
-        "gravity", "tether_compression", "distance_stiffness",
+        "gravity", "tether_compression", "distance_stiffness", "bending_stiffness",
         "max_distance_enabled", "backstop_enabled", "collision_mode",
         "self_collision_enabled", "self_collision_interaction", "cloth_mass",
         "spring_enabled", "spring_power", "spring_limit_distance",

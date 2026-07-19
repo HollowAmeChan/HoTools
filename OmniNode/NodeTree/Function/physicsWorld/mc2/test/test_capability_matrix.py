@@ -126,6 +126,15 @@ def test_setup_local_evidence_cannot_close_another_setup():
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())
 
+    bending = capability_gaps(by_id["triangle_bending"])
+    assert "bending_method@mesh_cloth" not in bending["fields"]
+    assert "bending_method@bone_cloth" in bending["fields"]
+    assert "deterministic@mesh_cloth" in bending["invariants"]
+    assert "deterministic@bone_cloth" in bending["invariants"]
+    assert not any("bone_spring" in item for item in bending["fields"])
+    assert not any("bone_spring" in item for item in bending["invariants"])
+    assert "Line-only" in by_id["triangle_bending"]["known_gap"]
+
     external = capability_gaps(by_id["external_collision"])
     assert "radius@mesh_cloth" not in external["fields"]
     assert "radius@bone_cloth" not in external["fields"]

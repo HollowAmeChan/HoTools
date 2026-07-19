@@ -477,6 +477,11 @@ class MC2NativeContextV0:
             raise RuntimeError("Bone Proxy/Baseline must be staged before registration")
         if not isinstance(static.distance, MC2DistanceStaticMetadata):
             raise TypeError("staged Bone Distance metadata is required")
+        if static.bending is not None:
+            from .bending_static import MC2BendingStaticMetadata
+
+            if not isinstance(static.bending, MC2BendingStaticMetadata):
+                raise TypeError("staged Bone Bending metadata is required")
         if not isinstance(static.center, MC2CenterStaticMetadata):
             raise TypeError("staged Bone Center metadata is required")
         if not isinstance(static.self_collision, MC2SelfCollisionStaticMetadata):
@@ -497,17 +502,20 @@ class MC2NativeContextV0:
             *registration["owners"],
         )
         registration.clear()
-        self._module.mc2_context_v0_update_bending_static(
-            self._handle,
-            np.empty((0, 4), dtype=np.int32),
-            np.empty((0,), dtype=np.float32),
-            np.empty((0,), dtype=np.int8),
-        )
+        if static.bending is None:
+            self._module.mc2_context_v0_update_bending_static(
+                self._handle,
+                np.empty((0, 4), dtype=np.int32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int8),
+            )
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline_signature
         self.bone_static_signature = static.bone.static_signature
         self.distance_signature = static.distance.distance_signature
-        self.bending_signature = "empty"
+        self.bending_signature = (
+            static.bending.bending_signature if static.bending is not None else "empty"
+        )
         self.center_signature = static.center.center_static_signature
         self.self_collision_signature = static.self_collision.static_signature
 

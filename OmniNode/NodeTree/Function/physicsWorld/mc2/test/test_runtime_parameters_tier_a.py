@@ -172,6 +172,11 @@ def test_bending_method_uses_mc2_epsilon_and_scheduler_is_not_in_abi() -> None:
     assert "iterations" not in runtime.MC2_RUNTIME_INT_FIELDS
     assert disabled.parameter_signature != enabled.parameter_signature
 
+    spring_options = parameters.make_mc2_setup_options(names.MC2_SETUP_BONE_SPRING)
+    spring = runtime.make_mc2_runtime_parameters(enabled_profile, spring_options)
+    assert _field(spring.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "bending_method") == 0
+    assert _field(spring.float_values, runtime.MC2_RUNTIME_FLOAT_FIELDS, "bending_stiffness") == 0.0
+
 
 def test_packer_freezes_exact_native_dtypes_shapes_and_read_only_arrays() -> None:
     profile = parameters.make_mc2_particle_profile()

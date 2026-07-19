@@ -2056,7 +2056,11 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         }
 
         const float rest_angle = view.dihedral_rest_angles[pair_index] * sign;
-        lamb = (rest_angle - phi) / lamb * local_stiffness;
+        const float angle_error = rest_angle - phi;
+        if (std::fabs(angle_error) <= 1.0e-3f) {
+            continue;
+        }
+        lamb = angle_error / lamb * local_stiffness;
         float corrections[12];
         for (int local = 0; local < 4; ++local) {
             corrections[local * 3 + 0] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 0];
@@ -2136,7 +2140,12 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             continue;
         }
 
-        lamb = local_stiffness * (view.volume_rest[pair_index] - volume) / lamb;
+        const float rest_volume = view.volume_rest[pair_index];
+        const float volume_error = rest_volume - volume;
+        if (std::fabs(volume_error) <= std::max(1.0e-6f, std::fabs(rest_volume) * 2.0e-6f)) {
+            continue;
+        }
+        lamb = local_stiffness * volume_error / lamb;
         float corrections[12];
         for (int local = 0; local < 4; ++local) {
             corrections[local * 3 + 0] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 0];

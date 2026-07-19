@@ -436,6 +436,7 @@ try:
         for pose_bone in rig_e.pose.bones
         if pose_bone.name.startswith("Chain")
     }
+    max_zero_basis_delta = 0.0
     try:
         for frame in range(1, 11):
             zero_world.frame_context.previous_frame = frame - 1 if frame > 1 else None
@@ -466,13 +467,15 @@ try:
             )
             assert writeback.writeback_bone_transforms(zero_world) == 8
             bpy.context.view_layer.update()
-            assert all(
-                _matrix_delta(
+            basis_deltas = {
+                bone_name: _matrix_delta(
                     rig_e.pose.bones[bone_name].matrix_basis,
                     initial_basis,
-                ) <= 1.0e-5
+                )
                 for bone_name, initial_basis in zero_initial_bases.items()
-            )
+            }
+            max_zero_basis_delta = max(max_zero_basis_delta, *basis_deltas.values())
+        assert max_zero_basis_delta <= 1.0e-5, max_zero_basis_delta
     finally:
         zero_world.omni_cache_dispose("bone_zero_gravity_restoration_complete")
 
@@ -557,8 +560,22 @@ try:
     assert slot_a.data["bone_static"].connection_model == "hotools_product"
     assert len(slot_a.data["bone_static"].final_proxy.triangles) > 0
     assert len(slot_b.data["bone_static"].final_proxy.triangles) > 0
-    assert slot_a.data["native_context"].inspect()["bone_triangle_output_count"] == 1
-    assert slot_b.data["native_context"].inspect()["bone_triangle_output_count"] == 1
+    assert slot_a.data["bone_static"].bending.record_count > 0
+    assert slot_b.data["bone_static"].bending.record_count > 0
+    inspect_a = slot_a.data["native_context"].inspect()
+    inspect_b = slot_b.data["native_context"].inspect()
+    assert inspect_a["bone_triangle_output_count"] == 1
+    assert inspect_b["bone_triangle_output_count"] == 1
+    assert inspect_a["bending_record_count"] == slot_a.data["bone_static"].bending.record_count
+    assert inspect_b["bending_record_count"] == slot_b.data["bone_static"].bending.record_count
+    assert (
+        slot_a.data["native_context"].bending_signature
+        == slot_a.data["bone_static"].bending.bending_signature
+    )
+    assert (
+        slot_b.data["native_context"].bending_signature
+        == slot_b.data["bone_static"].bending.bending_signature
+    )
     assert writeback.writeback_bone_transforms(world) == 15
 
     first_candidate = slot_a.data["result_candidate"]
@@ -568,7 +585,10 @@ try:
         channel: tuple(id(item) for item in items)
         for channel, items in world.result_streams.items()
     }
-    assert debug.request_mc2_debug_capture(world) == 2
+    assert debug.request_mc2_debug_capture(
+        world,
+        filters={"show_topology": True, "show_output": True},
+    ) == 2
 
     rig_b.scale = (0.0, 1.0, 1.0)
     bpy.context.view_layer.update()
