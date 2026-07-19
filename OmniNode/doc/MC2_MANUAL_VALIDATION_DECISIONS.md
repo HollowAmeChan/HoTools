@@ -1,0 +1,318 @@
+# MC2 手动验收问题与产品决策
+
+更新日期：2026-07-20
+
+本文档记录本轮 Blender 手动验收推翻或质疑的 MC2 产品结论，并作为重新实施前的决策清单。旧 solver 已经移除，不属于本文范围。当前 `MC2_BLUEPRINT.md` 中“九个能力族均 verified / 无发布阻断项”的结论在本文问题关闭前暂停成立；自动测试只能证明其断言覆盖的内部状态，不能覆盖本轮发现的可解释性、高速穿模、自碰静置和真实交互结果。
+
+## 写作边界
+
+- **应该写**：可复现的手测反例、当前代码/MC2 源码事实、用户真正要判断的问题、已确定或待确定的产品决策、实施顺序与行为验收证据。
+- **不应该写**：旧 solver 迁移历史、逐提交流水账、稳定实现的完整说明、通用 Physics World 合同、仅为通过现有测试而设计的内部断言。
+- **内容路由**：决策关闭并成为稳定事实后合入 `MC2_BLUEPRINT.md`；OmniNode 通用编译/运行缓存合同写入 `../ARCHITECTURE.md`；公共物理流水线规则写入 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；历史只留 Git。
+- **退出条件**：所有决策有结论，行为反例有真实 Blender 复测，自动矩阵按新产品要求重开并重新闭环后，删除本文档。
+
+## 总体结论
+
+本轮问题不能归为“再补一些绘制图元”。当前 debug 设计以内部数组和算法名为中心，主要证明“某份数据存在”，没有稳定回答用户的四个问题：
+
+1. 这个功能当前是否启用并实际参与了求解？
+2. 哪些粒子/约束正在接近阈值、已经触发或已经被钳制？
+3. 粒子原本想怎样运动，最终又被哪一步阻止或改向？
+4. 当前看到的是参考姿态、候选、接触、几何穿插，还是最终修正结果？
+
+后续 debug 的一级产品视图应优先表达结果与原因；StepBasic、空间网格和 primitive 等原始中间态保留为二级高级视图。不能再以“batch 非空、颜色存在、快照可读”作为视觉语义验收。
+
+## 决策总表
+
+| ID | 状态 | 决策 | 当前建议 |
+|---|---|---|---|
+| D-01 | **已决策** | Teleport 判定模型 | 回退逐粒子实验，恢复 MC2 组件级位移/旋转判定；完整复核 Reset/Keep 清理链路 |
+| D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
+| D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
+| D-04 | 待确认 | 自碰静置质量标准 | 单层无穿插布料不应持续可见微动；先审计误报和 contact churn，再定容差 |
+| D-05 | 待确认 | 参数从 Profile 移到 Task 的规则 | 不批量搬迁；先按是否逐深度、是否可复用、是否属于交互/身份分组 |
+| D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
+| D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
+
+## P0：Teleport 回退与高速穿模
+
+### 已确定的产品结论
+
+逐粒子 Teleport 是一次产品实验，手测结果不理想，现决定回退。MC2 原版在 `TeamManager.SimulationCalcCenterAndInertiaAndWind()` 中使用整个 component 的 `frameDeltaVector` 和 `frameDeltaAngle`，距离或角度任一超过阈值即给整个 team 设置 Reset 或 Keep。后续实现不得继续扩张逐粒子阈值、局部触发或逐粒子状态 UI。
+
+组件判定基点沿用 MC2 的 component/center 合同。固定粒子、首个 Fixed 或物体原点不作为新的默认模型；只有在 Blender 侧无法稳定提供 component pose 时才重新提案，不在回退中顺手引入第二种产品差异。
+
+### 当前确认的问题
+
+- 当前 C++ `apply_particle_teleport` 逐粒子比较旧/新 dynamic base，debug 也逐粒子保存阈值球、方向和状态；这条路径需要整体撤销或降为内部实验代码后删除。
+- 当前测试证明的是局部数组位移、速度归零、部分 self 历史失效等内部断言。它没有证明高速移动后布料不会继续高速运动或穿过碰撞体。
+- 手测已给出反例：触发 Reset/Keep 后仍可能高速穿模，说明缓存/时序清理链不完整，或者同帧碰撞体与粒子历史没有按 MC2 原版一起重置。
+- 现有阈值/状态绘制停在旧位置并只变色，是逐粒子实验的直接产物。回退后应改成单个组件级旧姿态、新姿态、距离/角度阈值与 team 状态。
+
+### 必须对照 MC2 重审的状态
+
+Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对照并证明以下状态的处理顺序：
+
+- `next/current/old/base/velocity-reference` 粒子位置与旋转；
+- 保存速度、真实速度、位移、摩擦、静摩擦、碰撞法线；
+- Center 的 old/current frame pose、平滑速度、惯性 shift 和 stabilization 权重；
+- collider 的 frame/old/now pose 与 Reset flag；
+- task 内 self primitive、grid、candidate、contact、intersection flag/history；
+- 跨 task interaction aggregate、participant old positions、contact/intersection history；
+- zero-substep、跳帧、暂停和同帧重复执行时的触发与清理时机；
+- Reset 与 Keep 的差别：Reset 回到当帧动画姿态并清速度，Keep 搬运已有形状但不得保留由传送本身制造的高速速度。
+
+### 新验收标准
+
+- MeshCloth、BoneCloth、BoneSpring 分别覆盖组件平移和旋转阈值，Reset/Keep 各一组。
+- 触发当帧即完成处理，不能等下一视觉帧；zero-substep 也必须正确。
+- 有静态和移动 collider；大位移后不得出现由旧粒子或旧 collider history 造成的高速穿透。
+- task 内自碰和跨 task 自碰分别验证历史已失效，下一帧可正常重新建 contact。
+- debug 只画一个组件级判定：旧/新 component pose、距离阈值、角度阈值、实际测量和最终状态。
+- 自动测试必须增加“碰撞体另一侧无高速粒子”“触发后实际速度有界”等外部结果断言，不能再只查内部 reset 数组。
+
+## P0：自碰误报、闪烁与持续微动
+
+### 当前事实
+
+- MC2 FullMesh 自碰不是单一接触算法，而是 Point-Triangle、Edge-Edge contact 加独立 Intersect 检测/修正。
+- MC2 源码将该功能标为 Beta2；fork 中 contact 固定迭代 4 次，Intersect 分批检测，`SelfCollisionIntersectDiv = 2`。
+- 当前 debug 的洋红线来自 intersection record，不等于普通厚度接触，也不等于“该处本帧一定可肉眼看到穿插”。红箭头来自 contact 结果；边界附近在厚度范围内也可能形成 contact。
+- 手测反例仍然有效：干净单层低模持续出现大量洋红闪烁和边缘红箭头，开启自碰后无法静置收敛。现有 long-run 只断言有 contact/intersection 和数值有限，没有证明误报率、接触 churn 或可见静置质量。
+
+### 需要先做的审计
+
+1. 用完全平面、轻微弯曲、开边界、闭合裙摆、双层重叠五类最小网格，记录 primitive/candidate/contact/intersection 数量与身份变化。
+2. 核对相邻 triangle、共享 edge、共享 vertex、同一 primitive、同面近共面结构的排除规则是否与 MC2 一致。
+3. 核对 Blender 代理三角方向、法线、负缩放、非流形边和重复顶点是否制造假 intersection。
+4. 分开统计“新建 contact”“持续 contact”“失效 contact”“intersection 新增/消失”，不能只看总数。
+5. 比较 self off/on 在零重力、无动画、无外碰时的 RMS 速度、最大位移、能量衰减和 600/1800 帧稳定值。
+6. 判断微动来自接触厚度、交叉修正、缓存抖动、约束顺序还是 inverse mass/cloth mass。
+
+### 待确认的产品标准 D-04
+
+建议将“单层无穿插布料应收敛到不可见微动”定为硬标准，而不是把 FullMesh 的持续扰动解释为正常副作用。建议阈值由最小场景测量后冻结，至少包含末 300 帧 RMS 速度、最大粒子漂移、contact churn 和 false intersection 数量。双层布料抑制成功不能抵消单层稳定性失败。
+
+### Debug 重组
+
+- 一级 `自碰接触`：只显示当前实际施加修正的 contact、法线、修正量和参与质量。
+- 一级 `几何交叉`：只显示经过 adjacency/有效性过滤后本帧参与 Intersect 修正的记录；洋红必须明确表示“几何穿越修正”，不是普通接触。
+- 高级 `自碰形状`、`宽相网格`、`宽相候选`：保留给算法审计，默认关闭。
+- 每种模式显示本帧新增/持续/失效状态，避免闪烁被误读成稳定接触。
+- 若 debug 关闭，不得生产 contact 明细、intersection 线段或额外 readback；求解本来必需的缓存不算 debug，但不能为绘制复制整份数组。
+
+## P1：Debug 信息架构重做
+
+### D-02：一级按用户问题组织（方向已决策）
+
+建议把当前按数组名排列的开关重组为以下一级视图：
+
+| 一级视图 | 用户要回答的问题 | 主要视觉编码 |
+|---|---|---|
+| 运动趋势 | 粒子想往哪动，实际往哪动，哪一步阻止了它 | 积分速度、真实位移速度、两者差向量；限速/阻尼/约束钳制标红 |
+| 结构约束 | 哪条 Distance/Tether/Bending 正在修正 | 只突出超限或本帧实际修正的记录；修正量决定颜色/宽度 |
+| 动画空间限制 | MaxDistance/Backstop 当前范围和触发情况 | 动画 BasePose、曲线采样后的范围、当前粒子、实际投影箭头 |
+| 角度约束 | 当前角、目标角、上限和本帧修正是多少 | 当前/目标向量、角弧、淡锥；触发时红色修正弧 |
+| 惯性与重力 | 原始 component 运动如何变成应用到粒子的量 | raw、平滑/限速后、最终 applied 三层向量；触发限值标红 |
+| 碰撞形状 | 什么形状可能与什么形状碰 | 当前已有的 Point/Edge/Collider surface 视图 |
+| 实际接触 | 本帧哪里真的在互相排斥 | 接触点、法线、穿深/修正；有 active contact 的 collider 标红 |
+| 自碰结果 | 当前 contact 与 geometric intersection 是否合理 | 结果视图，不默认显示 grid/candidate |
+| 最终输出 | 最终真正写回 Blender 的偏移是什么 | 保留现有模式 |
+
+StepBasic、Motion Base、primitive、grid、candidate 等放入“高级中间态”。大段 `omni_description` 可放表格和完整解释；socket tooltip 保持短句，避免 Blender 截断。
+
+### 所有模式的共同门禁
+
+- **不能静默空白**：模式无输出时必须能区分“功能关闭、字段为零、该 setup 不支持、没有 Motion 属性、无活动记录、快照尚未捕获”。表达可以放在节点状态/长说明，不伪造几何。
+- **结果优先**：范围几何用低亮度；真正触发/钳制/修正用高亮红色；接近阈值用黄色；未触发用低饱和色。
+- **曲线必须可见**：曲线采样结果应直接改变每粒子的长度、半径、颜色或透明度，不能只画统一形状。
+- **硬约束必须可见**：红色必须来自该 pass 的真实 pre/post correction 或 active flag，不能仅用最终位置反推，因为后续 pass 会覆盖证据。
+- **限制噪声**：默认只画 active/near-limit，支持 task filter、最大项、步进抽样和选择粒子；不得默认把所有 root-to-particle 线画满屏。
+- **显式生产**：新增 correction/contact/limit debug 数据只能由 debug 节点显式请求；C++ 在对应 pass 临时采集，冻结后 readback，不常驻生产第二套结果。
+- **行为验收**：截图像素非空不是验收。每个模式需要一个人为可读的最小场景和数值 oracle，证明颜色/形状对应真实触发。
+
+## 各模式问题与待办
+
+### StepBasic
+
+当前 StepBasic 是结构约束参考姿态：每个 substep 先从动画 base 初始化；当 `animation_pose_ratio < 1` 时，Move 后代会按 baseline 局部父子关系重建，再按比例混回动画姿态。它不是模拟粒子位置，也不是 Motion BasePosition。
+
+- 如果只动画子骨且 `animation_pose_ratio=0`，StepBasic 后代不完全跟随该子骨动画可能是合同结果。
+- 如果 component/root 的动画 base 已移动而 StepBasic 整体仍不动，则是捕获/更新 bug。
+- 描述必须说明它用于 Distance、Tether、Angle 和 Bone 输出的结构参考，而不是“当前动画姿态”。
+- 验收覆盖 object/root 移动、子骨动画、`animation_pose_ratio=0/0.5/1` 和暂停/多 substep。
+
+### 有效重力与重力衰减
+
+当前绘制只在 Center/component 附近画一根 `effective_strength * 0.02` 箭头。它没有表达 raw gravity、`gravity_ratio` 或衰减前后差异。重力衰减当前是组件级量：Center 朝向与初始/世界重力的 dot 产生一个全 task `gravity_ratio`，不是逐粒子深度曲线。
+
+- 不能假装存在逐粒子重力衰减。
+- 建议同时画 raw gravity 和 effective gravity，并用长度/颜色显示 ratio；可在粒子上抽样重复小箭头满足空间直觉，但必须说明数值相同。
+- `gravity_falloff=0/1`、Center 旋转 0/90/180 度必须能直观看到有效长度变化。
+- Angle Restoration 的 `restoration_gravity_falloff` 是另一条参数，必须在 Angle Restoration 模式显示其最终 strength，不与普通重力箭头混用。
+
+### 保存速度与真实速度
+
+当前语义可以保留，但必须改名和解释：
+
+- **积分速度**（当前“保存速度”）：下一 substep 用于预测的动量速度；由阻尼、重力、摩擦、速度上限和约束对 velocity reference 的修正共同决定。
+- **实际位移速度**（当前“真实速度”）：本 substep 最终位置减开始位置再除以 `dt`，包含约束投影后的真实移动。
+- 两者差值正是用户判断“想动但被约束、摩擦或限速挡住”的主要信号。
+
+待办：增加差向量/差值颜色；实际触发粒子限速时标红；阻尼不应伪装成硬钳制；Fixed 粒子明确为零。
+
+### Distance
+
+Distance 是 PBD/位置投影约束，不是向粒子施加牛顿力。它根据当前边长与 StepBasic/rest 长度误差移动粒子，随后通过 post-step 位置差形成下一步速度，因此会间接改变运动趋势。
+
+当前绿/红/蓝只表示最终边长误差，不能证明本帧 Distance pass 实际修正了多少。待办：默认只突出超容差/实际 correction 的边，显示归一化误差和 correction；刚度曲线改变颜色/透明度；后续 pass 再次拉坏的边与本 pass 已钳制的边应可区分。
+
+### Tether
+
+当前从 root 到每个粒子画当前线和最小/最大圆环，形成截图中的大量放射线与圆，信息密度失控。
+
+待办：默认只显示接近/超过最短或最长界限的粒子；范围改为沿 root→particle 方向的低亮度带/端帽，当前点与实际 correction 高亮；提供抽样/选中粒子模式。说明 Tether 限制的是相对 baseline root 的整体伸缩，不是相邻边，也不是弹簧力。
+
+### Bending
+
+当前整块 quad 画紫/青/红线，无法看到当前角、rest 角和修正方向。待办：角度记录画共享边、两面法线、rest/current 角弧和 correction；volume 记录单独显示体积误差；默认只画 active/near-limit。弯曲刚度为 0 或 topology 没有 triangle 时必须明确无效原因。
+
+### Motion Base、MaxDistance 与 Backstop
+
+MC2 源码明确规定 MaxDistance/Backstop 始终相对动画 BasePose 计算，不受模拟粒子位置驱动。Backstop 球应跟随动画 base 的位置/旋转和法线轴，但不跟随被约束后的粒子。`backstop_distance_curve` 与 `max_distance_curve` 按 `depth²` 采样。
+
+- 粒子移动、动画 base 不动：Backstop 不动是正确行为。
+- 动画 base 已移动而 Backstop 不动：需要修复 frame capture/update。
+- Motion 当前什么都不画时，优先检查开关、曲线是否为零、setup 是否 BoneSpring、粒子是否有可用 Motion 属性和快照是否在有效 substep 捕获。
+- 待办：同时画 BasePose、当前粒子和范围；曲线直接体现在每粒子球心/半径；实际进入 Backstop 或越过 MaxDistance 并发生 projection 时标红和画 correction。
+
+### Angle Limit
+
+当前只画大量范围锥，不显示当前角度、超出多少或本帧是否被限制。待办：范围锥降为淡背景；画当前向量、层级目标、当前角弧和 limit 弧；只有真实 Angle pass 发生 correction 的粒子标红，接近上限为黄。`angle_limit_curve` 必须直接改变每粒子的 limit 弧/锥，`angle_limit_stiffness<1` 必须显示“部分修正”而不是假装硬夹死。
+
+### Center、Anchor、惯性与限速
+
+当前 `show_center` 混合组件、Anchor、frame shift 和若干惯性线，仍不能回答 raw movement 如何经过 Anchor 抵消、平滑、World/Local/Depth inertia 与速度限制后成为最终粒子 shift。
+
+待办：分层画 raw component delta、Anchor 抵消、平滑/限速后的 delta、最终 applied shift；移动/旋转限速实际触发时标红；Depth inertia 用粒子颜色或 applied vector 长度表达。Anchor 仍是 task 的 Object 输入，不扩展为通用隐式类型。
+
+### Normal Axis
+
+Normal Axis 是局部 `+/-X/Y/Z` 经 Motion Base rotation 转到世界空间后的方向，当前主要影响 Backstop。它应合入 Motion Base/Backstop 视图，用短方向箭头和正反色表达；不能单独画一堆与功能无关的基轴。
+
+### Centrifugal Acceleration
+
+这是当前明确的产品矛盾：节点 Profile 仍公开 `centrifugal_acceleration`，但 production context step 没有调用独立 `apply_centrifugal_velocity_mc2` kernel；蓝图和 inactive field matrix 又声明它应隐藏。接入生产前必须从三个 Profile 节点移除，不能为无 consumer 字段制作 debug。
+
+### Cloth Mass
+
+MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是普通重力或积分的粒子质量。同一 task 内它通常是统一值，Fixed 和摩擦还会进一步改变接触权重。
+
+待办：在自碰接触视图用颜色/点大小显示最终 contact inverse mass 或相对“谁推动谁”，而不是泛称粒子更重；跨 task contact 必须同时显示双方权重。若参数最终移到 Task，名称应强调“自碰质量/交互质量”。
+
+### 曲线参数总表
+
+| 曲线 | 应归入的 debug | 可视编码 |
+|---|---|---|
+| Damping | 运动趋势 | 积分速度衰减比例/颜色，不伪装为硬钳制 |
+| Radius | 碰撞形状 | 实际球/胶囊半径；优化绘制性能 |
+| Distance stiffness | 结构约束 | correction 强度、透明度 |
+| Angle restoration stiffness | Angle Restoration | target 箭头强度/颜色 |
+| Angle limit | Angle Limit | 每粒子 limit 弧/锥大小 |
+| Max distance | 动画空间限制 | 每粒子允许球半径 |
+| Backstop distance | 动画空间限制 | 每粒子球心偏移 |
+| Collision limit | BoneSpring 接触 | soft-sphere 允许位移范围 |
+| Self thickness | 自碰形状/接触 | primitive 厚度及实际接触阈值 |
+
+## P1：外部碰撞“实际接触”模式 D-03
+
+当前碰撞情况只画可参与碰撞的 Point/Edge proxy 与 collider 形状，不能判断本帧是否真的发生排斥。建议保留该模式，并新增独立 `实际接触`：
+
+- 接触点、接触法线、穿深/修正量；
+- 当前 active 的粒子/边和 collider id；
+- 至少一个 active contact 的 collider 表面改为红色，无接触保持蓝色；
+- 同一位置反复新增/失效的 contact 用黄色或闪烁计数标识，帮助定位抖动；
+- Point 和 Edge kernel 都要覆盖，不能从最终 collision normal 猜 collider 身份。
+
+这需要在 C++ 碰撞 kernel 中增加**仅显式 debug 请求时**的 contact 记录。正常求解不能常驻生产 collider-particle 配对或复制大数组。性能验收要比较 debug off/on，胶囊/Edge 密集场景单独测量。
+
+## P2：参数 Profile/Task 归属 D-05
+
+当前三个 Profile 已经是“每个 task 消费一个统一 profile”，因此把 socket 从 Profile 节点搬到 Task 主要改变复用和 UI 心智，不会天然减少 solver 参数上传。迁移前按以下规则逐字段审计：
+
+### 倾向保留在 Profile
+
+- 存在逐深度曲线或明确粒子分布：阻尼、半径、Distance 刚度、Angle Restoration、Angle Limit、MaxDistance、Backstop distance、Collision limit、Self thickness。
+- 用户希望在多个 task 间复用一整套材料/动态风格的字段。
+
+### 倾向移到 Task
+
+- task 身份、交互和输出：对象/骨链、Anchor、连接模式、碰撞组、跨 task 交互、启用、输出旋转。
+- 仅 task/team 统一且与粒子材料无关的字段候选：Teleport、组件惯性、Normal Axis、自碰交互质量。是否移动仍需逐项确认复用需求。
+
+### 不能作为迁移理由
+
+- “没有曲线”本身不够；Gravity direction/strength、Blend、稳定时间等仍可能属于可复用动态 profile。
+- 不能为了缩短节点而复制同一字段到 Profile 和 Task；若需要 override，必须有明确优先级和显示来源。
+- 迁移不能改变 `MC2ParticleProfileSpec` 的统一 native 参数转换，除非同时重写 owner 合同与 preset。
+
+建议先做一张字段表，逐项记录：native consumer、setup、是否 curve、是否 hot update、是否参与 task identity、是否适合 preset、建议 owner。确认后再改节点，不在 debug 修复中夹带 UI 搬迁。
+
+## P2：重编译保留运行缓存 D-06
+
+### 当前事实
+
+`OmniNodeTree.compile_cached(force=True)` 在新 graph 成功编译并替换 compile cache 后，无条件调用 `OmniRuntimeState.clear_root_tree(self)`。因此点击“编译”总会 dispose Physics World 和所有 root runtime cache。编译失败会保留旧 graph 与 runtime cache；普通 cache hit 也会保留。
+
+MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下一次运行中区分 hot update、局部 static refresh 和 context rebuild。全树重编译先销毁 world，使这套细粒度机制失去作用，确实妨碍边看效果边调参。
+
+### 不采用“数组范围相同就保留”
+
+仅比较数组长度无法证明安全：节点删除/替换、group path 改变、batch item 重排、对象身份变化、cache owner 类型变化、ABI/schema 变化都可能在相同长度下复用错误状态。
+
+### 建议方案
+
+1. 编译仍先事务性生成新 graph；失败时保持现状。
+2. 新旧 graph 生成 runtime-cache compatibility manifest，至少包含稳定 node runtime UID、group/batch namespace path、cache producer 类型与 contract version、owner kind/schema。
+3. 对兼容 namespace 保留 committed owner；删除或不兼容 namespace 定向 dispose；无法证明时回退整 root clear。
+4. 参数/socket 默认值改变但 cache 节点和路径不变时保留 Physics World，让 solver 的 task/parameter/static fingerprint 决定 hot update 或 rebuild。
+5. batch 不能只按 index/长度判断；需要稳定 item identity，无法提供时该 batch namespace 清理。
+6. compile graph 的寄存器数组仍由新 graph 自己初始化；保留的是显式 runtime cache owner，不是旧寄存器值。
+
+### 验收矩阵
+
+- 只改 MC2 数值：world identity 保留，参数 revision 增加，模拟连续。
+- 改曲线但不改 topology：按参数合同 hot update，不卡回首帧。
+- 改 mesh/bone topology：world 可保留，但对应 MC2 slot 安全 rebuild。
+- 节点重排/改显示位置：缓存保留。
+- 增删不相关分支：只影响对应 namespace。
+- 删除/替换 Cache、Physics World 或 solver 节点：旧 owner 定向 dispose。
+- group path 改变、batch reorder/length 相同但身份变化：不得错误复用。
+- 编译失败：旧 graph 和 runtime cache 完整保留。
+- 无兼容 manifest 的旧节点：保守清理，不猜测。
+
+安全优先级高于连续预览，但“每次成功编译全清”不再是唯一安全策略。
+
+## 实施顺序
+
+1. **先冻结决策**：优先确认 D-04 自碰质量标准与 D-05 参数归属；D-01/D-02/D-03/D-06 方向已定，D-07 已确认。
+2. **重开验收状态**：能力矩阵撤销 Teleport、自碰静置和 debug usability 的 verified 结论，加入本文件的新不变量。
+3. **Teleport 回退**：按 MC2 组件级路径重做处理与 debug，先解决高速穿模和跨缓存清理。
+4. **自碰最小场景审计**：先判断 false positive/micro-motion 根因，再改算法或容差。
+5. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
+6. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
+7. **说明与长文本**：socket 保持短说明；Debug 节点 `omni_description` 放模式表、颜色和“何时不会显示”。
+8. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
+9. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
+10. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
+
+## 完成定义
+
+- 用户无需阅读 C++ 名词就能从一级 debug 判断启用、接近阈值、触发、修正和最终结果。
+- 所有高级中间态都有准确空间/时间语义，静止或不跟随时能解释是合同还是 bug。
+- Teleport 恢复组件级模型，并在真实碰撞场景阻止传送产生的高速穿模。
+- 单层自碰静置质量达标，洋红 intersection 与红色 contact 不再大量无解释闪烁。
+- 曲线、硬钳制、惯性、法线轴和自碰质量均能在对应结果模式中被观察。
+- debug 关闭时不存在为绘制新增的常驻生产、复制或 readback。
+- 参数 UI 归属有逐字段事实表，不凭节点拥挤程度迁移。
+- 安全兼容的重编译保留 runtime owner；不兼容变化仍可靠 dispose。
