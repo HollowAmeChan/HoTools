@@ -347,7 +347,7 @@ def motion_base_deterministic(obj):
     print("[PASS] repeated Mesh Motion trajectory is deterministic")
 
 
-def _task_collider_scope_soak(objects):
+def _run_task_collider_scope(objects):
     world = world_types.PhysicsWorldCache()
     generation = 43
     tasks = tuple(
@@ -364,6 +364,23 @@ def _task_collider_scope_soak(objects):
         for task in tasks
     }
     positions = {task.task_id: _base_positions(task.sources[0]) for task in tasks}
+    response_budgets = {}
+    span_budgets = {}
+    for task in tasks:
+        base = positions[task.task_id]
+        fixed = base[:4]
+        max_root_distance = float(np.max(np.min(np.linalg.norm(
+            base[:, None, :] - fixed[None, :, :],
+            axis=2,
+        ), axis=1)))
+        base_span = float(np.max(np.linalg.norm(
+            base[:, None, :] - base[None, :, :],
+            axis=2,
+        )))
+        response_budgets[task.task_id] = max_root_distance * 2.0 + 0.05
+        span_budgets[task.task_id] = base_span * 1.5 + 0.02
+    trajectory_digest = hashlib.sha256()
+    max_responses = {task.task_id: 0.0 for task in tasks}
     try:
         for frame in range(1, 601):
             world.collider_snapshot = {
@@ -374,7 +391,7 @@ def _task_collider_scope_soak(objects):
                         "owner": objects[1],
                         "type": "SPHERE",
                         "primary_group": 1,
-                        "center": (0.08, 0.08, -0.03),
+                        "center": (0.08, 0.08, -0.02),
                         "radius": 0.02,
                     },
                     {
@@ -385,13 +402,39 @@ def _task_collider_scope_soak(objects):
                         "center": (0.28, 0.08, 0.0),
                         "segment_a": (0.28, 0.04, -0.02),
                         "segment_b": (0.28, 0.12, 0.02),
-                        "radius": 0.01,
+                        "radius": 0.012,
                     },
                 ),
             }
             _step(world, tasks, topologies, frame, positions, generation)
             for task in tasks:
-                _candidate(world, task)
+                candidate = _candidate(world, task)
+                trajectory_digest.update(task.task_id.encode("utf-8"))
+                trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+                trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+                trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+                response = float(np.max(np.linalg.norm(
+                    candidate.world_positions - positions[task.task_id],
+                    axis=1,
+                )))
+                max_responses[task.task_id] = max(max_responses[task.task_id], response)
+                assert response <= response_budgets[task.task_id], (
+                    task.task_id,
+                    frame,
+                    response,
+                    response_budgets[task.task_id],
+                )
+                candidate_span = float(np.max(np.linalg.norm(
+                    candidate.world_positions[:, None, :]
+                    - candidate.world_positions[None, :, :],
+                    axis=2,
+                )))
+                assert candidate_span <= span_budgets[task.task_id], (
+                    task.task_id,
+                    frame,
+                    candidate_span,
+                    span_budgets[task.task_id],
+                )
             if frame == 599:
                 debug_module.request_mc2_debug_capture(
                     world,
@@ -402,9 +445,22 @@ def _task_collider_scope_soak(objects):
         assert first["collision"]["colliders"]["keys"] == ("scope-sphere",)
         assert second["collision"]["colliders"]["keys"] == ("scope-capsule",)
         assert first["frame"] == second["frame"] == 600
+        assert all(value > 1.0e-4 for value in max_responses.values()), max_responses
+        trajectory_digest.update("\0".join(
+            first["collision"]["colliders"]["keys"]
+            + second["collision"]["colliders"]["keys"]
+        ).encode("utf-8"))
         print("[PASS] 600-frame per-task external collider scope")
+        return trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("task_collider_scope_soak")
+
+
+def _task_collider_scope_soak(objects):
+    first = _run_task_collider_scope(objects)
+    second = _run_task_collider_scope(objects)
+    assert first == second, (first, second)
+    print("[PASS] repeated Mesh external-collision trajectory is deterministic")
 
 
 def _distance_tether_soak(obj):

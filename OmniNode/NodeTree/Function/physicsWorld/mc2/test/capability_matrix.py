@@ -253,7 +253,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": ("collision_mode", "radius"),
-            "invariants": ("finite", "task_scope_exact"),
+            "invariants": (
+                "finite", "deterministic", "task_scope_exact",
+                "contact_response_bounded",
+            ),
         }, {
             "runner": "test_blender_mc2_bone_constraint_soak.py::bone_external_collision",
             "frames": 900,

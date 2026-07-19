@@ -646,7 +646,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期 |
-| Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧并以全轨迹摘要重复两次；双task外碰scope 600帧；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Mesh Center/Keep 1200帧；跨task self/hot update 1800帧。三setup Keep/Reset 900帧runner已执行，包含非单位正scale、逐帧真实写回及zero-substep立即Reset |
+| Blender 4.5约束专项soak | Angle Restoration零力/热更新900帧；Motion Base/max-distance 900帧并以全轨迹摘要重复两次；双task Sphere/Capsule外碰scope各600帧并整轨迹重复，两个Mesh均要求非零有界响应和精确collider key；Distance/Tether 900帧；Triangle Bending零/强各900帧；Angle Limit 1200帧；Mesh Center/Keep 1200帧；跨task self/hot update 1800帧。三setup Keep/Reset 900帧runner已执行，包含非单位正scale、逐帧真实写回及zero-substep立即Reset |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧；三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；完整场景重复两次并比较最终粒子/写回数组摘要以验证确定性 |
 | Blender 4.5 Bone角度soak | BoneCloth/BoneSpring各900帧并重复两次，逐帧粒子位置/旋转轨迹摘要必须一致；Restoration/Limit在301/601帧关闭与重开，context不重建且关闭区间solve count冻结；BoneCloth强制同时包含connected旋转写回与disconnected位移旋转写回。默认阻尼下静置漂移预算分别为`0.00005m`与`0.0016m`，因此只记为bounded drift，不冒充严格zero-force rest |
 | Blender 4.5 Bone Motion soak | BoneCloth 900帧并重复两次，逐帧粒子位置/旋转及最终Motion Base摘要必须一致；同时包含connected/disconnected写回，前半程MaxDistance、451帧同context热开Backstop，逐帧相对动画基准距离不超过`0.031m`，最终debug Motion BasePosition逐点等于动画输入 |
@@ -658,7 +658,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-九个能力族中`motion_max_distance_backstop`已经由MeshCloth/BoneCloth各自900帧边界、Motion Base精确值、同context Backstop热更新和完整轨迹复跑闭环，状态为`verified`；其余八族仍为`gap`。BoneCloth/BoneSpring的Angle、外碰真实响应和外碰task过滤也已有生产路径长时证据，但不能替代仍缺失的字段分支和各setup专项不变量。debug acceptance layer目前只表示待验收库存，绘制批次非空不证明几何语义正确。运行门禁仍按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak；外碰摩擦、self interaction、Center/Teleport和最终输出映射必须由各自行为断言闭环。
+九个能力族中`motion_max_distance_backstop`已经由MeshCloth/BoneCloth各自900帧边界、Motion Base精确值、同context Backstop热更新和完整轨迹复跑闭环，状态为`verified`；其余八族仍为`gap`。三setup的外碰真实响应、task过滤与完整轨迹确定性已有生产路径长时证据，External Collision当前只剩dynamic/static friction字段缺少切向行为对照。Bone Angle也已有部分证据，但不能替代仍缺失的字段分支和专项不变量。debug acceptance layer目前只表示待验收库存，绘制批次非空不证明几何语义正确。运行门禁仍按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak；self interaction、Center/Teleport和最终输出映射必须由各自行为断言闭环。
 
 当前没有MC2发布阻断项。
 
