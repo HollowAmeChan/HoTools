@@ -100,15 +100,14 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "velocity_attenuation_response_ordered@bone_cloth" not in angle_restoration["invariants"]
     assert "velocity_attenuation_response_ordered@bone_spring" not in angle_restoration["invariants"]
     assert "gravity_falloff_response_ordered@mesh_cloth" not in angle_restoration["invariants"]
-    assert "gravity_falloff_response_ordered@bone_cloth" in angle_restoration["invariants"]
-    assert "gravity_falloff_response_ordered@bone_spring" in angle_restoration["invariants"]
+    assert "gravity_falloff_response_ordered@bone_cloth" not in angle_restoration["invariants"]
+    assert "gravity_falloff_response_ordered@bone_spring" not in angle_restoration["invariants"]
     assert not any(
         item.startswith("center_input_reachable@")
         for item in angle_restoration["invariants"]
     )
-    assert "Object Anchor makes Center input product-reachable" in by_id[
-        "angle_restoration"
-    ]["known_gap"]
+    assert not any(angle_restoration.values())
+    assert by_id["angle_restoration"]["status"] == "verified"
 
     self_collision = capability_gaps(by_id["self_collision"])
     assert self_collision["setups"] == set()
@@ -131,6 +130,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "gravity@bone_spring" not in integration["fields"]
     assert "rotational_interpolation@bone_cloth" in integration["fields"]
     assert "rotational_interpolation@bone_spring" in integration["fields"]
+    assert "gravity_direction_x@bone_cloth" not in integration["fields"]
+    assert "gravity_direction_y@bone_cloth" not in integration["fields"]
+    assert "gravity_direction_z@bone_cloth" not in integration["fields"]
+    assert "gravity_falloff@bone_cloth" not in integration["fields"]
     assert not any(
         field.startswith("blend_weight@")
         or field.startswith("stabilization_time_after_reset@")

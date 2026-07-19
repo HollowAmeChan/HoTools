@@ -350,6 +350,380 @@ def bone_angle_restoration_attenuation():
         )
 
 
+def _run_bone_gravity_axes_falloff():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 94
+    directions = (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    armatures = tuple(
+        mixed._armature(f"MC2BoneGravityAxis{index}", index * 0.8, 0.9)
+        for index in range(3)
+    ) + (
+        mixed._armature("MC2BoneGravityFalloff0", 2.8, 0.9),
+        mixed._armature("MC2BoneGravityFalloff1", 3.6, 0.9),
+    )
+    anchors = tuple(
+        bpy.data.objects.new(f"MC2BoneGravityAnchor{index}", None)
+        for index in range(2)
+    )
+    for anchor in anchors:
+        bpy.context.scene.collection.objects.link(anchor)
+
+    def make_profile(direction, falloff):
+        return parameters.make_mc2_particle_profile(
+            gravity=0.6,
+            gravity_direction=direction,
+            gravity_falloff=falloff,
+            damping=0.5,
+            stabilization_time_after_reset=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            collision_mode=0,
+            self_collision_mode=0,
+            world_inertia=0.0,
+            anchor_inertia=0.0,
+        )
+
+    profiles = tuple(make_profile(direction, 0.0) for direction in directions) + (
+        make_profile((0.0, 0.0, -1.0), 0.0),
+        make_profile((0.0, 0.0, -1.0), 1.0),
+    )
+    tasks = []
+    for index, (armature, profile) in enumerate(zip(armatures, profiles)):
+        product_tasks, _names = nodes.physicsMC2BoneClothTask(
+            [{"armature": armature, "bone": "Root"}],
+            profile=profile,
+            anchor_object=(anchors[index - 3] if index >= 3 else None),
+            connection_mode=0,
+        )
+        assert len(product_tasks) == 1
+        tasks.append(product_tasks[0])
+    tasks = tuple(tasks)
+    topologies = tuple(
+        topology_module.build_mc2_topology_spec(task) for task in tasks
+    )
+    initial_basis = tuple({
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    } for armature in armatures)
+    initial_positions = [None] * len(tasks)
+    axis_velocity_directions = {}
+    gravity_ratios = {task.task_id: [] for task in tasks[3:]}
+    trajectory_digest = hashlib.sha256()
+    try:
+        for frame in range(1, 601):
+            for armature, basis in zip(armatures, initial_basis):
+                for bone in armature.pose.bones:
+                    bone.matrix_basis = basis[bone.name].copy()
+            angle = 0.0 if frame == 1 else math.radians(90.0)
+            for armature, anchor in zip(armatures[3:], anchors):
+                armature.rotation_mode = "XYZ"
+                anchor.rotation_mode = "XYZ"
+                armature.rotation_euler.x = angle
+                anchor.rotation_euler.x = angle
+            bpy.context.view_layer.update()
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(tasks),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            for index, (task, topology) in enumerate(zip(tasks, topologies)):
+                slot = world.solver_slots[task.task_id]
+                candidate = slot.data["result_candidate"]
+                assert candidate.frame == frame
+                assert np.all(np.isfinite(candidate.world_positions))
+                assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+                plan = slot.data["writeback_plan"]
+                assert plan["rotation_only_connected_count"] > 0
+                assert plan["position_rotation_count"] > 0
+                if frame == 1:
+                    initial_positions[index] = np.array(
+                        candidate.world_positions, dtype=np.float32, copy=True
+                    )
+                if frame == 2 and index < 3:
+                    dynamics = slot.data[
+                        "native_context"
+                    ].refresh_debug_draw_snapshot(
+                        include_dynamics=True,
+                    )["dynamics"]
+                    attributes = np.asarray(
+                        slot.data["bone_static"].final_proxy.vertex_attributes,
+                        dtype=np.uint8,
+                    )
+                    move = (attributes & np.uint8(0x02)) != 0
+                    mean_velocity = np.mean(dynamics["velocities"][move], axis=0)
+                    speed = float(np.linalg.norm(mean_velocity))
+                    assert speed > 1.0e-6
+                    axis_velocity_directions[task.task_id] = mean_velocity / speed
+                if index >= 3 and frame > 1:
+                    center_step = slot.data["center_step_result"]
+                    if center_step is not None:
+                        gravity_ratios[task.task_id].append(
+                            float(center_step.gravity_ratio)
+                        )
+                trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+                trajectory_digest.update(np.asarray(index, dtype=np.int32).tobytes())
+                trajectory_digest.update(candidate.world_positions.tobytes())
+            assert writeback.writeback_bone_transforms(world) == sum(
+                topology.particle_count for topology in topologies
+            )
+            bpy.context.view_layer.update()
+
+        for task, direction, initial in zip(tasks[:3], directions, initial_positions[:3]):
+            slot = world.solver_slots[task.task_id]
+            candidate = slot.data["result_candidate"]
+            attributes = np.asarray(
+                slot.data["bone_static"].final_proxy.vertex_attributes,
+                dtype=np.uint8,
+            )
+            move = (attributes & np.uint8(0x02)) != 0
+            displacement = np.mean(
+                candidate.world_positions[move] - initial[move],
+                axis=0,
+            )
+            expected = np.asarray(direction, dtype=np.float32)
+            projection = float(np.dot(displacement, expected))
+            assert projection > 0.01, (direction, projection)
+            np.testing.assert_allclose(
+                axis_velocity_directions[task.task_id],
+                expected,
+                rtol=0.0,
+                atol=1.0e-6,
+            )
+
+        zero_task, one_task = tasks[3:]
+        zero_ratios = np.asarray(gravity_ratios[zero_task.task_id])
+        one_ratios = np.asarray(gravity_ratios[one_task.task_id])
+        np.testing.assert_allclose(zero_ratios, 1.0, rtol=0.0, atol=1.0e-6)
+        assert float(np.max(one_ratios)) <= 0.500001
+        assert float(np.min(one_ratios)) >= 0.499999
+        zero_slot = world.solver_slots[zero_task.task_id]
+        one_slot = world.solver_slots[one_task.task_id]
+        zero_move = np.asarray(
+            zero_slot.data["bone_static"].final_proxy.vertex_attributes,
+            dtype=np.uint8,
+        ) & np.uint8(0x02)
+        one_move = np.asarray(
+            one_slot.data["bone_static"].final_proxy.vertex_attributes,
+            dtype=np.uint8,
+        ) & np.uint8(0x02)
+        zero_displacement = float(np.mean(np.linalg.norm(
+            zero_slot.data["result_candidate"].world_positions[zero_move != 0]
+            - initial_positions[3][zero_move != 0],
+            axis=1,
+        )))
+        one_displacement = float(np.mean(np.linalg.norm(
+            one_slot.data["result_candidate"].world_positions[one_move != 0]
+            - initial_positions[4][one_move != 0],
+            axis=1,
+        )))
+        assert zero_displacement > one_displacement + 0.005, (
+            zero_displacement,
+            one_displacement,
+        )
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_gravity_axes_falloff")
+        for armature in armatures:
+            if armature.name in bpy.data.objects:
+                mixed._remove_object(armature)
+        for anchor in anchors:
+            if anchor.name in bpy.data.objects:
+                mixed._remove_object(anchor)
+
+
+def bone_gravity_axes_falloff():
+    first = _run_bone_gravity_axes_falloff()
+    second = _run_bone_gravity_axes_falloff()
+    assert second == first, (first, second)
+    print("[PASS] BoneCloth gravity XYZ/falloff: 2 deterministic x 600 frames")
+
+
+def _run_bone_angle_restoration_falloff(setup_type, falloff):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 95
+    armature = mixed._armature(
+        f"MC2AngleFalloff_{setup_type}_{falloff:.1f}",
+        0.0,
+        0.9,
+    )
+    anchor = bpy.data.objects.new(
+        f"MC2AngleFalloffAnchor_{setup_type}_{falloff:.1f}",
+        None,
+    )
+    bpy.context.scene.collection.objects.link(anchor)
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        damping=0.05,
+        stabilization_time_after_reset=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=True,
+        angle_restoration_stiffness=0.85,
+        angle_restoration_velocity_attenuation=0.0,
+        angle_restoration_gravity_falloff=falloff,
+        angle_limit_enabled=False,
+        collision_mode=0,
+        self_collision_mode=0,
+        world_inertia=0.0,
+        anchor_inertia=0.0,
+    )
+    source = [{"armature": armature, "bone": "Root"}]
+    if setup_type == names.MC2_SETUP_BONE_CLOTH:
+        task = nodes.physicsMC2BoneClothTask(
+            source,
+            profile=profile,
+            anchor_object=anchor,
+            connection_mode=0,
+        )[0][0]
+    else:
+        task = nodes.physicsMC2BoneSpringTask(
+            source,
+            profile=profile,
+            anchor_object=anchor,
+        )[0][0]
+    topology = topology_module.build_mc2_topology_spec(task)
+    initial_basis = {
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    }
+    errors = []
+    trajectory_digest = hashlib.sha256()
+    initial_context = None
+    try:
+        for frame in range(1, 601):
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            angle = 0.0 if frame == 1 else math.radians(90.0)
+            armature.rotation_mode = "XYZ"
+            anchor.rotation_mode = "XYZ"
+            armature.rotation_euler.x = angle
+            anchor.rotation_euler.x = angle
+            root = armature.pose.bones["Root"]
+            root.rotation_mode = "XYZ"
+            root.rotation_euler.z = 0.65 * math.sin(frame * 0.11)
+            root.location.x = 0.03 * math.sin(frame * 0.07)
+            bpy.context.view_layer.update()
+            current = bone_frame_input.build_mc2_bone_frame_input(
+                task,
+                topology,
+                frame=frame,
+                generation=world.generation,
+            )
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            context = slot.data["native_context"]
+            if initial_context is None:
+                initial_context = context
+            else:
+                assert context is initial_context
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            errors.append(float(np.mean(np.linalg.norm(
+                candidate.world_positions - current.world_positions,
+                axis=1,
+            ))))
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(candidate.world_positions.tobytes())
+            trajectory_digest.update(candidate.world_rotations_xyzw.tobytes())
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+            if frame == 599:
+                assert mixed.debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={
+                        "show_center": True,
+                        "show_angle_restoration": True,
+                    },
+                ) == 1
+
+        slot = world.solver_slots[task.task_id]
+        info = slot.data["native_context"].inspect()
+        assert info["angle_solve_count"] == 599
+        assert info["debug_capture_count"] == 1
+        assert info["debug_readback_count"] == 3
+        runtime = slot.data["effective_parameters"].debug_dict()
+        np.testing.assert_allclose(
+            runtime["float_values"]["angle_restoration_gravity_falloff"],
+            falloff,
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["frame"] == 600
+        assert snapshot["center"]["frame_pose"]["anchor_identity"] == (
+            f"object:{int(anchor.as_pointer())}"
+        )
+        valid = np.asarray(
+            snapshot["motion"]["angle_restoration_target_valid"],
+            dtype=np.uint8,
+        )
+        assert int(np.count_nonzero(valid)) > 0
+        error_array = np.asarray(errors, dtype=np.float32)
+        trajectory_digest.update(error_array.tobytes())
+        return error_array, trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_angle_restoration_falloff")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+        if anchor.name in bpy.data.objects:
+            mixed._remove_object(anchor)
+
+
+def bone_angle_restoration_falloff():
+    for setup_type in (
+        names.MC2_SETUP_BONE_CLOTH,
+        names.MC2_SETUP_BONE_SPRING,
+    ):
+        zero, zero_digest = _run_bone_angle_restoration_falloff(setup_type, 0.0)
+        one, one_digest = _run_bone_angle_restoration_falloff(setup_type, 1.0)
+        zero_repeat, zero_repeat_digest = _run_bone_angle_restoration_falloff(
+            setup_type, 0.0
+        )
+        one_repeat, one_repeat_digest = _run_bone_angle_restoration_falloff(
+            setup_type, 1.0
+        )
+        assert zero_repeat_digest == zero_digest
+        assert one_repeat_digest == one_digest
+        np.testing.assert_array_equal(zero_repeat, zero)
+        np.testing.assert_array_equal(one_repeat, one)
+        assert one[1] > zero[1] + 0.0005, (setup_type, zero[1], one[1])
+        zero_early = float(np.mean(zero[1:50]))
+        one_early = float(np.mean(one[1:50]))
+        assert one_early > zero_early * 1.25, (
+            setup_type,
+            zero_early,
+            one_early,
+        )
+        assert float(np.mean(one[-100:])) > float(np.mean(zero[-100:])) * 1.25
+        print(
+            f"[INFO] {setup_type} Angle Restoration gravity falloff: "
+            f"early {zero_early:.9f}->{one_early:.9f}"
+        )
+    print("[PASS] Bone Angle Restoration gravity falloff: 2 setups x 2 x 600")
+
+
 def _run_bone_motion():
     world = world_types.PhysicsWorldCache()
     world.generation = 74
@@ -1561,6 +1935,8 @@ def main():
     try:
         bone_angle_constraints()
         bone_angle_restoration_attenuation()
+        bone_gravity_axes_falloff()
+        bone_angle_restoration_falloff()
         bone_motion_constraints()
         bone_external_collision()
         bone_friction_response()

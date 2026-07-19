@@ -146,7 +146,7 @@ MC2源码基线以Team Center整体判定Teleport。OmniMC2把它定义为产品
 | `弯曲刚度` | 抵抗相邻三角面沿共享边折叠；0关闭 | runtime把大于0映射为MC2 bending method 2，native按dihedral/volume记录执行。MeshCloth有效；BoneCloth仅在横向连接实际生成triangle时有效，Bone static会注册相同的Bending Tier A。BoneSpring强制Line topology，没有triangle，因此产品配置不暴露该字段且runtime归一化为0。静置时角差`<=1e-3 rad`、volume误差`<=max(1e-6, abs(rest)*2e-6)`视为已满足，避免float32法线/体积重算噪声逐帧积累。 |
 | `角度恢复`、`角度恢复刚度`、`角度恢复曲线` | 把父子方向向StepBasic参考方向拉回，形成姿态记忆 | Angle kernel逐baseline投影；target来自StepBasic父子向量与当前parent position，不来自Motion BasePosition。方向dot落在`1 - 1e-7`以内时直接视为no-op，避免identity旋转仍做父子浮点重组而积累静置漂移。三个setup有效。 |
 | `恢复速度衰减` | 角度恢复修正后，控制有多少修正同步进velocity reference，抑制持续摆动 | Angle kernel更新位置时同步修正velocity reference；三个setup有效。 |
-| `恢复重力衰减` | MC2 Team Center旋转使初始重力方向偏离world重力时，降低角度恢复 | 内核使用`value * (1 - center_gravity_dot)`调节恢复，三个setup都上传该值。Object Anchor已使Center旋转在三个任务节点上产品可达；Mesh排序响应已有证据，BoneCloth/BoneSpring仍需补齐有序响应长跑。 |
+| `恢复重力衰减` | MC2 Team Center旋转使初始重力方向偏离world重力时，降低角度恢复 | 内核使用`value * (1 - center_gravity_dot)`调节恢复，三个setup都上传并消费该值。Object Anchor使Center旋转产品可达；Mesh、BoneCloth和BoneSpring均有`0/1`有序响应长跑证据。 |
 | `角度限制`、`限制角度`、`限制角度曲线` | 迭代收紧相邻粒子相对父级传播方向的弯折角 | 与角度恢复共用Angle pass，但目标由父粒子的模拟旋转和StepBasic局部方向逐级传播，不是Restoration target。MC2源码固定投影3次，因此它不是最终几何的硬裁剪；三个setup有效。 |
 | `限制刚度` | 控制超出角度上限后每次投影的修正比例 | Angle kernel只在角度限制启用时消费。刚度1仍保留链式父子共同修正和后续约束造成的有限残差。 |
 
@@ -705,7 +705,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-九个能力族中`center_inertia_and_teleport`、`tether_and_distance`、`triangle_bending`、`angle_limit`、`motion_max_distance_backstop`、`external_collision`与`self_collision`已经闭环，状态为`verified`；`integration_and_pose_blend`与`angle_restoration`仍为`gap`。Object Anchor产品路径以Copy Transforms约束Empty覆盖三个setup、`anchor_inertia=0/1`平移/旋转端点、同context不重建、确定性及零隐式native debug readback；它同时关闭`center_input_reachable`缺口。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
+九个能力族中除`integration_and_pose_blend`外均已闭环，状态为`verified`。Object Anchor产品路径以Copy Transforms约束Empty覆盖三个setup、`anchor_inertia=0/1`平移/旋转端点、同context不重建、确定性及零隐式native debug readback；它同时关闭`center_input_reachable`缺口。BoneCloth重力XYZ/Center衰减与BoneCloth/BoneSpring恢复重力衰减也已有产品长跑。当前矩阵只剩BoneCloth/BoneSpring的`rotational_interpolation`与`root_rotation`输出响应证据。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
 
 当前没有MC2发布阻断项。
 

@@ -109,6 +109,17 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "gravity_direction_z", "gravity_falloff", "damping",
             ),
             "invariants": ("finite", "deterministic"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_gravity_axes_falloff",
+            "frames": 600,
+            "setups": ("bone_cloth",),
+            "fields": (
+                "gravity", "gravity_direction_x", "gravity_direction_y",
+                "gravity_direction_z", "gravity_falloff", "damping",
+            ),
+            "invariants": (
+                "finite", "deterministic", "connected_disconnected_writeback",
+            ),
         }),
         "status": "gap",
     },
@@ -405,12 +416,17 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "setups": ALL_SETUPS,
             "fields": (),
             "invariants": ("finite", "deterministic", "center_input_reachable"),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_restoration_falloff",
+            "frames": 600,
+            "setups": ("bone_cloth", "bone_spring"),
+            "fields": ("angle_restoration_gravity_falloff",),
+            "invariants": (
+                "finite", "deterministic", "gravity_falloff_response_ordered",
+                "connected_disconnected_writeback",
+            ),
         },),
-        "known_gap": (
-            "Object Anchor makes Center input product-reachable for every setup. BoneCloth "
-            "and BoneSpring still lack ordered angle-restoration gravity-falloff evidence."
-        ),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "angle_limit",
