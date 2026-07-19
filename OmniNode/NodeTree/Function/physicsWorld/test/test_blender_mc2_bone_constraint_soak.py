@@ -1930,6 +1930,207 @@ def bone_self_collision():
     print("[PASS] BoneCloth task self: 2 deterministic x 900 frames")
 
 
+def _quaternion_angle_degrees(left, right):
+    left_norm = left / np.linalg.norm(left, axis=-1, keepdims=True)
+    right_norm = right / np.linalg.norm(right, axis=-1, keepdims=True)
+    dots = np.clip(np.abs(np.sum(left_norm * right_norm, axis=-1)), 0.0, 1.0)
+    return np.degrees(2.0 * np.arccos(dots))
+
+
+def _quaternion_component_distance(left, right):
+    direct = np.max(np.abs(left - right), axis=-1)
+    negated = np.max(np.abs(left + right), axis=-1)
+    return np.minimum(direct, negated)
+
+
+def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
+    world = world_types.PhysicsWorldCache()
+    world.generation = 96
+    armature = mixed._armature(
+        f"MC2RotationOutput_{setup_type}_{interpolation}_{root_rotation}",
+        0.0,
+        0.9,
+    )
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.05,
+        stabilization_time_after_reset=0.0,
+        distance_stiffness=0.4,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        radius=0.012,
+        collision_mode=2,
+        collision_limit_distance=0.05,
+        self_collision_mode=0,
+    )
+    source = [{"armature": armature, "bone": "Root"}]
+    if setup_type == names.MC2_SETUP_BONE_CLOTH:
+        task = nodes.physicsMC2BoneClothTask(
+            source,
+            profile=profile,
+            connection_mode=0,
+            rotational_interpolation=interpolation,
+            root_rotation=root_rotation,
+            collided_by_groups=1,
+        )[0][0]
+    else:
+        task = nodes.physicsMC2BoneSpringTask(
+            source,
+            profile=profile,
+            rotational_interpolation=interpolation,
+            root_rotation=root_rotation,
+            collided_by_groups=1,
+        )[0][0]
+    topology = topology_module.build_mc2_topology_spec(task)
+    initial_input = bone_frame_input.build_mc2_bone_frame_input(
+        task,
+        topology,
+        frame=1,
+        generation=world.generation,
+    )
+    initial_basis = {
+        bone.name: bone.matrix_basis.copy()
+        for bone in armature.pose.bones
+    }
+    target = np.asarray(initial_input.world_positions[2], dtype=np.float64)
+    positions = []
+    rotations = []
+    initial_context = None
+    try:
+        for frame in range(1, 601):
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            bpy.context.view_layer.update()
+            world.collider_snapshot = {
+                "frame": frame,
+                "colliders": ({
+                    "key": "bone-rotation-output",
+                    "type": "SPHERE",
+                    "primary_group": 1,
+                    "center": tuple(
+                        float(value) for value in target + (0.033, 0.0, 0.0)
+                    ),
+                    "radius": 0.025,
+                },),
+            }
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [task],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[task.task_id]
+            context = slot.data["native_context"]
+            if initial_context is None:
+                initial_context = context
+            else:
+                assert context is initial_context
+            candidate = slot.data["result_candidate"]
+            assert candidate.frame == frame
+            assert np.all(np.isfinite(candidate.world_positions))
+            assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+            positions.append(np.array(candidate.world_positions, copy=True))
+            rotations.append(np.array(candidate.world_rotations_xyzw, copy=True))
+            plan = slot.data["writeback_plan"]
+            assert plan["rotation_only_connected_count"] > 0
+            assert plan["position_rotation_count"] > 0
+            assert writeback.writeback_bone_transforms(world) == topology.particle_count
+            bpy.context.view_layer.update()
+            if frame == 599:
+                assert mixed.debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_output": True},
+                ) == 1
+
+        slot = world.solver_slots[task.task_id]
+        info = slot.data["native_context"].inspect()
+        if setup_type == names.MC2_SETUP_BONE_SPRING:
+            assert info["point_collision_solve_count"] > 0
+        else:
+            assert info["edge_collision_solve_count"] > 0
+        assert info["debug_capture_count"] == 0
+        runtime = slot.data["effective_parameters"].debug_dict()["float_values"]
+        np.testing.assert_allclose(
+            runtime["rotational_interpolation"], interpolation, rtol=0.0, atol=1.0e-7
+        )
+        np.testing.assert_allclose(
+            runtime["root_rotation"], root_rotation, rtol=0.0, atol=1.0e-7
+        )
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["frame"] == 600
+        assert snapshot["filters"]["show_output"] is True
+        assert len(snapshot["output"]["world_offsets"]) == topology.particle_count
+        attributes = np.asarray(
+            slot.data["bone_static"].final_proxy.vertex_attributes,
+            dtype=np.uint8,
+        )
+        return (
+            np.asarray(positions, dtype=np.float32),
+            np.asarray(rotations, dtype=np.float32),
+            attributes,
+        )
+    finally:
+        world.omni_cache_dispose("bone_rotation_output_soak")
+        if armature.name in bpy.data.objects:
+            mixed._remove_object(armature)
+
+
+def _run_bone_rotation_output_setup(setup_type):
+    base = _run_bone_rotation_output_case(setup_type, 0.0, 0.0)
+    interpolation = _run_bone_rotation_output_case(setup_type, 1.0, 0.0)
+    root = _run_bone_rotation_output_case(setup_type, 0.0, 1.0)
+    np.testing.assert_array_equal(base[0], interpolation[0])
+    np.testing.assert_array_equal(base[0], root[0])
+    np.testing.assert_array_equal(base[2], interpolation[2])
+    np.testing.assert_array_equal(base[2], root[2])
+
+    attributes = base[2]
+    indices = np.arange(len(attributes))
+    fixed = (attributes & 0x01) != 0
+    move_parent = np.logical_and(
+        (attributes & 0x02) != 0,
+        indices < len(attributes) - 1,
+    )
+    leaf = np.logical_not(np.logical_or(fixed, move_parent))
+    assert int(np.count_nonzero(fixed)) == 1
+    assert int(np.count_nonzero(move_parent)) >= 2
+    assert int(np.count_nonzero(leaf)) == 1
+
+    interpolation_angles = _quaternion_angle_degrees(base[1], interpolation[1])
+    root_angles = _quaternion_angle_degrees(base[1], root[1])
+    interpolation_distance = _quaternion_component_distance(
+        base[1], interpolation[1]
+    )
+    root_distance = _quaternion_component_distance(base[1], root[1])
+    assert float(np.max(interpolation_angles[:, move_parent])) > 0.05
+    assert float(np.max(interpolation_distance[:, fixed])) < 1.0e-6
+    assert float(np.max(root_angles[:, fixed])) > 0.01
+    assert float(np.max(root_distance[:, np.logical_not(fixed)])) < 1.0e-6, (
+        setup_type,
+        float(np.max(root_angles[:, fixed])),
+        float(np.max(root_distance[:, np.logical_not(fixed)])),
+    )
+
+    digest = hashlib.sha256()
+    for values in (base[0], base[1], interpolation[1], root[1], attributes):
+        digest.update(np.asarray(values).tobytes())
+    return digest.hexdigest()
+
+
+def bone_rotation_output_controls():
+    for setup_type in (names.MC2_SETUP_BONE_CLOTH, names.MC2_SETUP_BONE_SPRING):
+        first = _run_bone_rotation_output_setup(setup_type)
+        second = _run_bone_rotation_output_setup(setup_type)
+        assert second == first, (setup_type, first, second)
+    print(
+        "[PASS] Bone output rotation controls: "
+        "2 setups x 3 endpoints x 2 deterministic x 600 frames"
+    )
+
+
 def main():
     mixed.physics_blender.register()
     try:
@@ -1944,6 +2145,7 @@ def main():
         bone_angle_limit()
         bone_triangle_bending()
         bone_self_collision()
+        bone_rotation_output_controls()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

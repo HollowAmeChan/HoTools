@@ -72,7 +72,21 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "finite", "deterministic", "bounded_velocity", "zero_force_rest",
             "candidate_frame_progresses", "writeback_targets_present",
             "stabilization_blend_ramp_exact",
+            "bone_rotation_controls_particle_state_invariant",
+            "bone_rotation_controls_target_sets",
+            "connected_disconnected_writeback",
         ),
+        "invariant_setups": {
+            "bone_rotation_controls_particle_state_invariant": (
+                "bone_cloth", "bone_spring",
+            ),
+            "bone_rotation_controls_target_sets": (
+                "bone_cloth", "bone_spring",
+            ),
+            "connected_disconnected_writeback": (
+                "bone_cloth", "bone_spring",
+            ),
+        },
         "evidence": ({
             "runner": "test_blender_mc2_mixed_output_soak.py::main",
             "frames": 900,
@@ -120,8 +134,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "invariants": (
                 "finite", "deterministic", "connected_disconnected_writeback",
             ),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_rotation_output_controls",
+            "frames": 600,
+            "setups": ("bone_cloth", "bone_spring"),
+            "fields": ("rotational_interpolation", "root_rotation"),
+            "invariants": (
+                "finite", "deterministic",
+                "bone_rotation_controls_particle_state_invariant",
+                "bone_rotation_controls_target_sets",
+                "connected_disconnected_writeback",
+            ),
         }),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "center_inertia_and_teleport",

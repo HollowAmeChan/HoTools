@@ -128,8 +128,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "gravity@mesh_cloth" not in integration["fields"]
     assert "gravity@bone_cloth" not in integration["fields"]
     assert "gravity@bone_spring" not in integration["fields"]
-    assert "rotational_interpolation@bone_cloth" in integration["fields"]
-    assert "rotational_interpolation@bone_spring" in integration["fields"]
+    assert "rotational_interpolation@bone_cloth" not in integration["fields"]
+    assert "rotational_interpolation@bone_spring" not in integration["fields"]
+    assert "root_rotation@bone_cloth" not in integration["fields"]
+    assert "root_rotation@bone_spring" not in integration["fields"]
     assert "gravity_direction_x@bone_cloth" not in integration["fields"]
     assert "gravity_direction_y@bone_cloth" not in integration["fields"]
     assert "gravity_direction_z@bone_cloth" not in integration["fields"]
@@ -148,6 +150,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
         or invariant.startswith("zero_force_rest@")
         for invariant in integration["invariants"]
     )
+    assert not integration["setups"]
+    assert not integration["fields"]
+    assert not integration["invariants"]
+    assert by_id["integration_and_pose_blend"]["status"] == "verified"
 
     teleport = capability_gaps(by_id["center_inertia_and_teleport"])
     assert not any(

@@ -71,7 +71,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 维护收尾中；能力证据矩阵仅余一族缺口 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark已完成；C++逐粒子Teleport已覆盖三setup、双向/root骨跃迁、局部子集精确Keep/Reset、task内及跨task self历史失效、非单位正scale、zero-substep、真实写回和两层按需debug；三setup的Center/Teleport及Angle Restoration均闭环，BoneCloth重力XYZ/衰减也有产品证据 | `integration_and_pose_blend`仅余BoneCloth/BoneSpring的`rotational_interpolation`与`root_rotation`输出响应证据；无生产consumer字段与debug语义门禁仍需最终审计 |
+| MC2 | 维护收尾中；九个能力族均已验证 | 旧实现删除、Python/C++重组、依赖/ABI/事务终审、单一蓝本及分阶段热点benchmark已完成；C++逐粒子Teleport已覆盖三setup、双向/root骨跃迁、局部子集精确Keep/Reset、task内及跨task self历史失效、非单位正scale、zero-substep、真实写回和两层按需debug；三setup的Center/Teleport及Angle Restoration均闭环，BoneCloth重力XYZ/衰减与BoneCloth/BoneSpring输出旋转控制均有产品长跑证据 | 无生产consumer字段、按需debug生产边界与旧solver移除门槛仍需最终审计 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。

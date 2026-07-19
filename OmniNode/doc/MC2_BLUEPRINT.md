@@ -152,7 +152,7 @@ MC2源码基线以Team Center整体判定Teleport。OmniMC2把它定义为产品
 
 BoneCloth横向连接是final proxy topology的额外producer：显式横边进入Distance，横跨骨链的triangle进入Bending；两者最终并入`proxy.edges/triangles`，因此碰撞模式为Edge时横边和三角化产生的跨链斜边也参与外部碰撞，开启task内self collision时还会注册对应Edge/Triangle primitive。Point外碰只消费粒子位置/半径，不直接读取横向几何。每个中控骨仍独立生成横向topology，不改变粒子参数含义，也不会与其他中控骨合成同一task。
 
-Bone输出先执行Line方向写回：`rotational_interpolation`处理Move粒子的父子方向平均，`root_rotation`处理Fixed/Move链根，`blend_weight`混合StepBasic与模拟方向；随后参与横向triangle的顶点按最终表面normal/tangent重建proxy rotation并覆盖Line结果。这是MC2的输出顺序。产品保留该语义，节点meta必须明确两个旋转参数只对未被triangle覆盖的Line方向有效，不得在triangle之后追加第二次旋转混合。
+Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有子粒子的Move父骨，结果会沿Line输出链传给后代；`root_rotation`只调节Fixed链根；`blend_weight`混合StepBasic与模拟方向。三者只改变最终骨骼旋转，不回写粒子位置或下一帧solver状态。随后参与横向triangle的顶点按最终表面normal/tangent重建proxy rotation并覆盖Line结果。这是MC2的输出顺序。产品保留该语义，节点meta必须明确两个旋转参数只对未被triangle覆盖的Line方向有效，不得在triangle之后追加第二次旋转混合。
 
 #### Motion空间限制
 
@@ -705,7 +705,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-九个能力族中除`integration_and_pose_blend`外均已闭环，状态为`verified`。Object Anchor产品路径以Copy Transforms约束Empty覆盖三个setup、`anchor_inertia=0/1`平移/旋转端点、同context不重建、确定性及零隐式native debug readback；它同时关闭`center_input_reachable`缺口。BoneCloth重力XYZ/Center衰减与BoneCloth/BoneSpring恢复重力衰减也已有产品长跑。当前矩阵只剩BoneCloth/BoneSpring的`rotational_interpolation`与`root_rotation`输出响应证据。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
+九个能力族均已闭环，状态为`verified`。Object Anchor产品路径以Copy Transforms约束Empty覆盖三个setup、`anchor_inertia=0/1`平移/旋转端点、同context不重建、确定性及零隐式native debug readback；它同时关闭`center_input_reachable`缺口。BoneCloth重力XYZ/Center衰减与BoneCloth/BoneSpring恢复重力衰减已有产品长跑。BoneCloth/BoneSpring输出旋转控制以外部碰撞激活真实链弯曲，覆盖`rotational_interpolation=0/1`、`root_rotation=0/1`、600帧双确定性、connected/disconnected写回和显式Final Output debug；测试要求三组端点的粒子轨迹逐位一致，旋转插值不改变Fixed根，根旋转不改变非Fixed骨。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层维护：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
 
 当前没有MC2发布阻断项。
 
