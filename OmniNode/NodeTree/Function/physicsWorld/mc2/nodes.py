@@ -126,6 +126,7 @@ def _owner_key(source: dict) -> tuple[int, int]:
 def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
+    setup_values["self_collision_radius_model"] = "derived_radius"
     groups: list[list[dict]] = []
     explicit_group_indices: dict[tuple[int, int], int] = {}
     for value in _flatten_values(control_bones):
@@ -538,8 +539,16 @@ def physicsMC2MeshClothTask(
             "max_value": 2,
             "description": "横连：0 Line / 1 Seq / 2 SeqLoop",
         },
-        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "粒子方向写回骨骼旋转时的插值比例。"},
-        "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "模拟链根部旋转参与写回的比例。"},
+        "rotational_interpolation": {
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "description": "线拓扑方向插值。\n横向三角顶点由表面朝向覆盖。",
+        },
+        "root_rotation": {
+            "min_value": 0.0,
+            "max_value": 1.0,
+            "description": "线拓扑根旋转比例。\n横向三角顶点由表面朝向覆盖。",
+        },
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },

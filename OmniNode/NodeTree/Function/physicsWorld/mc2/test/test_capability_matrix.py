@@ -110,10 +110,8 @@ def test_setup_local_evidence_cannot_close_another_setup():
     self_collision = capability_gaps(by_id["self_collision"])
     assert self_collision["setups"] == set()
     assert self_collision["fields"] == set()
-    assert self_collision["invariants"] == {
-        "single_radius_model_consistent@bone_cloth"
-    }
-    assert "hidden task-self thickness" in by_id["self_collision"]["known_gap"]
+    assert self_collision["invariants"] == set()
+    assert by_id["self_collision"]["status"] == "verified"
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]

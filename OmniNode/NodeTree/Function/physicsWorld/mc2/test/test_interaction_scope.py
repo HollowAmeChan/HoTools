@@ -100,6 +100,26 @@ def test_product_radius_model_derives_self_thickness_from_radius() -> None:
         abs(value - 0.01) < 1.0e-7
         for value in product_runtime["curve_values"]["self_collision_thickness"]
     )
+    bone_runtime = make_mc2_runtime_parameters(
+        profile,
+        make_mc2_setup_options(
+            "bone_cloth",
+            self_collision_radius_model="derived_radius",
+        ),
+    ).debug_dict()
+    assert all(
+        abs(value - 0.01) < 1.0e-7
+        for value in bone_runtime["curve_values"]["self_collision_thickness"]
+    )
+    try:
+        make_mc2_setup_options(
+            "bone_spring",
+            self_collision_radius_model="derived_radius",
+        )
+    except ValueError as exc:
+        assert "Cloth-only" in str(exc)
+    else:
+        raise AssertionError("BoneSpring must reject the derived self radius model")
 
 
 TESTS = (

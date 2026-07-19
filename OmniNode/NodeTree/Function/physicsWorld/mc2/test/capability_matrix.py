@@ -432,13 +432,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "invariants": (
                 "finite", "deterministic", "contact_cache_bounded",
                 "parameter_hot_update_in_place", "connected_disconnected_writeback",
+                "single_radius_model_consistent",
             ),
         }),
-        "known_gap": (
-            "BoneCloth exposes particle radius but its hidden task-self thickness stays at "
-            "the source-profile default 0.005 instead of following radius * 0.25."
-        ),
-        "status": "gap",
+        "status": "verified",
     },
 )
 

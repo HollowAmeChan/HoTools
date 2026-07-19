@@ -1495,7 +1495,7 @@ def _run_bone_self_collision():
         )
         np.testing.assert_allclose(
             runtime["curve_values"]["self_collision_thickness"],
-            0.005,
+            0.01,
             rtol=0.0,
             atol=1.0e-7,
         )

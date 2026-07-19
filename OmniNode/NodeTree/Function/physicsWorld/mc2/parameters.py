@@ -524,9 +524,9 @@ class MC2SetupOptionsSpec:
             )
         if (
             self.self_collision_radius_model == "derived_radius"
-            and self.setup_type != MC2_SETUP_MESH_CLOTH
+            and self.setup_type not in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_CLOTH)
         ):
-            raise ValueError("derived_radius self collision model is MeshCloth-only")
+            raise ValueError("derived_radius self collision model is Cloth-only")
         allowed_modes = (0, 1, 2) if self.connection_model == "hotools_product" else (0, 1, 2, 3)
         if self.connection_mode not in allowed_modes:
             raise ValueError(f"connection_mode 必须位于 {allowed_modes}")
@@ -570,8 +570,11 @@ def make_mc2_setup_options(
         raise ValueError(
             "self_collision_radius_model 必须是 source_separate 或 derived_radius"
         )
-    if self_collision_radius_model == "derived_radius" and setup_type != MC2_SETUP_MESH_CLOTH:
-        raise ValueError("derived_radius self collision model is MeshCloth-only")
+    if self_collision_radius_model == "derived_radius" and setup_type not in (
+        MC2_SETUP_MESH_CLOTH,
+        MC2_SETUP_BONE_CLOTH,
+    ):
+        raise ValueError("derived_radius self collision model is Cloth-only")
     if setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING):
         # Unity MeshCloth 不消费该字段；BoneSpring 强制 Line。
         connection_mode = 0
