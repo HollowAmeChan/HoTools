@@ -346,6 +346,95 @@ def test_mesh_baseline_derived_arrays() -> None:
     np.testing.assert_allclose(shared_rotations, local_rotations, atol=1.0e-12)
 
 
+def test_mesh_depth_blends_parent_path_with_fixed_surface_distance() -> None:
+    import heapq
+
+    positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.0, 10.0, 0.0),
+            (8.0, 0.0, 0.0),
+            (9.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (4.0, 0.0, 0.0),
+            (6.0, 0.0, 0.0),
+            (8.0, -0.1, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * len(positions), dtype=np.float64)
+    tangents = np.asarray(((1.0, 0.0, 0.0),) * len(positions), dtype=np.float64)
+    attributes = np.asarray((0x01,) + (0x02,) * (len(positions) - 1), dtype=np.uint8)
+    edges = np.asarray(
+        (
+            (0, 1), (1, 2), (2, 3), (3, 4),
+            (0, 5), (5, 6), (6, 7), (7, 8), (8, 4),
+        ),
+        dtype=np.int32,
+    )
+    vertex_count = len(positions)
+    parents = np.empty(vertex_count, dtype=np.int32)
+    child_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    child_data = np.empty(vertex_count, dtype=np.int32)
+    baseline_flags = np.empty(vertex_count, dtype=np.uint8)
+    baseline_ranges = np.empty((vertex_count, 2), dtype=np.int32)
+    baseline_data = np.empty(vertex_count, dtype=np.int32)
+    roots = np.empty(vertex_count, dtype=np.int32)
+    depths = np.empty(vertex_count, dtype=np.float64)
+    local_positions = np.empty((vertex_count, 3), dtype=np.float64)
+    local_rotations = np.empty((vertex_count, 4), dtype=np.float64)
+
+    counts = hotools_native.mc2_build_mesh_baseline_derived_v0(
+        positions, normals, tangents, attributes, edges,
+        parents, child_ranges, child_data, baseline_flags, baseline_ranges,
+        baseline_data, roots, depths, local_positions, local_rotations,
+    )
+
+    parent_lengths = np.zeros(vertex_count, dtype=np.float64)
+    for vertex in range(1, vertex_count):
+        current = vertex
+        while parents[current] >= 0:
+            parent = int(parents[current])
+            parent_lengths[vertex] += np.linalg.norm(
+                positions[current] - positions[parent]
+            )
+            current = parent
+    source_depths = parent_lengths / np.max(parent_lengths)
+
+    adjacency = [[] for _ in range(vertex_count)]
+    for left, right in edges:
+        distance = float(np.linalg.norm(positions[left] - positions[right]))
+        adjacency[int(left)].append((int(right), distance))
+        adjacency[int(right)].append((int(left), distance))
+    fixed_distances = np.full(vertex_count, np.inf, dtype=np.float64)
+    fixed_distances[0] = 0.0
+    pending = [(0.0, 0)]
+    while pending:
+        distance, vertex = heapq.heappop(pending)
+        if distance != fixed_distances[vertex]:
+            continue
+        for target, edge_length in adjacency[vertex]:
+            candidate = distance + edge_length
+            if candidate >= fixed_distances[target]:
+                continue
+            fixed_distances[target] = candidate
+            heapq.heappush(pending, (candidate, target))
+    fixed_depths = fixed_distances / np.max(fixed_distances)
+    expected = source_depths * 0.8 + fixed_depths * 0.2
+    for vertex in baseline_data[:counts["baseline_data_count"]]:
+        parent = int(parents[vertex])
+        if parent >= 0:
+            expected[vertex] = max(expected[vertex], expected[parent])
+
+    np.testing.assert_allclose(depths, expected, rtol=0.0, atol=1.0e-12)
+    assert np.max(np.abs(depths - source_depths)) > 0.01
+    for vertex in range(vertex_count):
+        parent = int(parents[vertex])
+        if parent >= 0:
+            assert depths[vertex] >= depths[parent]
+
+
 def test_mesh_baseline_owned_context_transfer() -> None:
     positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
@@ -624,6 +713,7 @@ if __name__ == "__main__":
     test_mesh_final_proxy_owned_context_transfer()
     print("PASS MC2 native final proxy owned context transfer")
     test_mesh_baseline_derived_arrays()
+    test_mesh_depth_blends_parent_path_with_fixed_surface_distance()
     print("PASS MC2 native baseline derived arrays")
     test_mesh_baseline_owned_context_transfer()
     print("PASS MC2 native baseline owned context transfer")

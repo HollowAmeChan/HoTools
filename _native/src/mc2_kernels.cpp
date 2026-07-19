@@ -2761,7 +2761,7 @@ void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
             continue;
         }
         const float depth = clamp_float(view.depths[vertex], 0.0f, 1.0f);
-        const float ratio = depth_inertia * (1.0f - depth * depth);
+        const float ratio = depth_inertia * (1.0f - depth * std::sqrt(depth));
         const float inertia_vector_x = view.inertia_vector[0] * (1.0f - ratio) + view.step_vector[0] * ratio;
         const float inertia_vector_y = view.inertia_vector[1] * (1.0f - ratio) + view.step_vector[1] * ratio;
         const float inertia_vector_z = view.inertia_vector[2] * (1.0f - ratio) + view.step_vector[2] * ratio;

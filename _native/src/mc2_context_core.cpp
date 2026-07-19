@@ -608,7 +608,7 @@ bool predict_particles(
         if (apply_center_inertia) {
             const float depth = context.baseline_depths[vertex];
             const float inertia_depth = context.float_values[kDepthInertia] *
-                (1.0f - depth * depth);
+                (1.0f - depth * std::sqrt(depth));
             float inertia_rotation[4] {};
             slerp_xyzw(
                 context.center_inertia_rotation.data(),

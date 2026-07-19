@@ -88,7 +88,7 @@ def apply_substep_inertia_reference(
         if float(inv_masses[vertex_index]) <= EPSILON:
             continue
         depth = max(0.0, min(1.0, float(depths[vertex_index])))
-        ratio = depth_inertia * (1.0 - depth * depth)
+        ratio = depth_inertia * (1.0 - depth * np.sqrt(depth))
         vector = inertia_vector * (1.0 - ratio) + step_vector * ratio
         rotation = quat_slerp(inertia_rotation, step_rotation, ratio)
         local = old_positions[vertex_index] - old_world_position

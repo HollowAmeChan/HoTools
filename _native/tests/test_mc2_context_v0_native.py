@@ -1914,7 +1914,7 @@ def test_center_step_matches_tier_a_fixture():
         hotools_native.mc2_context_v0_free(context)
 
 
-def test_particle_inertia_matches_tier_a_fixture():
+def test_particle_inertia_uses_omnimc2_depth_exponent():
     fixture_path = (
         ROOT
         / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
@@ -1922,7 +1922,10 @@ def test_particle_inertia_matches_tier_a_fixture():
     )
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     values = fixture["input"]
-    expected = fixture["expected"]
+    source_expected = fixture["expected"]
+    expected = fixture["omnimc2_expected"]
+    assert expected["depth_exponent"] == 1.5
+    assert expected["next_positions"] != source_expected["next_positions"]
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
         proxy, baseline = static_arrays(1)
@@ -2047,5 +2050,5 @@ if __name__ == "__main__":
     print("PASS create/free soak")
     test_center_step_matches_tier_a_fixture()
     print("PASS Center step Tier A fixture")
-    test_particle_inertia_matches_tier_a_fixture()
-    print("PASS particle inertia Tier A fixture")
+    test_particle_inertia_uses_omnimc2_depth_exponent()
+    print("PASS OmniMC2 particle inertia depth exponent")

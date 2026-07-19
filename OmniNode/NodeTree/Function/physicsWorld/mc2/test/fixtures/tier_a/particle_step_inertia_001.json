@@ -41,5 +41,9 @@
     "step_basic_rotations_xyzw": [[0,0,0,1]],
     "next_positions": [[2.330433,3.30234385,1]],
     "velocity_positions": [[2.29992771,3.23382783,1]]
+  },
+  "omnimc2_expected": {
+    "depth_exponent": 1.5,
+    "next_positions": [[2.40591431,3.29971313,1]]
   }
 }

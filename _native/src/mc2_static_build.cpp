@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <limits>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -682,6 +684,7 @@ Mc2BoneTransformBaselineDerived mc2_build_bone_transform_baseline_derived(
     result.depths = std::move(pose_depth.depths);
     result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
     result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
+
     return result;
 }
 
@@ -1140,6 +1143,75 @@ Mc2MeshBaselineDerived mc2_build_mesh_baseline_derived(
     result.depths = std::move(pose_depth.depths);
     result.vertex_local_positions = std::move(pose_depth.vertex_local_positions);
     result.vertex_local_rotations = std::move(pose_depth.vertex_local_rotations);
+
+    // OmniMC2 keeps the source parent-chain field dominant, then corrects it
+    // with a weighted shortest surface distance to the Fixed boundary.
+    constexpr double kParentDepthWeight = 4.0;
+    constexpr double kFixedDistanceWeight = 1.0;
+    const double infinity = std::numeric_limits<double>::infinity();
+    std::vector<double> fixed_distances(vertex_count, infinity);
+    using DistanceEntry = std::pair<double, std::int32_t>;
+    std::priority_queue<
+        DistanceEntry,
+        std::vector<DistanceEntry>,
+        std::greater<DistanceEntry>
+    > pending;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (!is_fixed(result.vertex_attributes[vertex])) continue;
+        fixed_distances[vertex] = 0.0;
+        pending.emplace(0.0, static_cast<std::int32_t>(vertex));
+    }
+    while (!pending.empty()) {
+        const auto [distance, vertex_value] = pending.top();
+        pending.pop();
+        const auto vertex = static_cast<std::size_t>(vertex_value);
+        if (distance != fixed_distances[vertex]) continue;
+        for (const auto target_value : adjacency[vertex]) {
+            const auto target = static_cast<std::size_t>(target_value);
+            if (is_invalid(result.vertex_attributes[target])) continue;
+            const double candidate = distance + length(
+                subtract(load_vec3(positions, vertex), load_vec3(positions, target))
+            );
+            if (candidate >= fixed_distances[target]) continue;
+            fixed_distances[target] = candidate;
+            pending.emplace(candidate, target_value);
+        }
+    }
+    double max_fixed_distance = 0.0;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (result.root_indices[vertex] < 0 || !std::isfinite(fixed_distances[vertex])) {
+            continue;
+        }
+        max_fixed_distance = std::max(max_fixed_distance, fixed_distances[vertex]);
+    }
+    if (max_fixed_distance > kZeroEpsilon) {
+        constexpr double kWeightSum = kParentDepthWeight + kFixedDistanceWeight;
+        for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+            if (result.root_indices[vertex] < 0 || !std::isfinite(fixed_distances[vertex])) {
+                continue;
+            }
+            const double fixed_depth = std::clamp(
+                fixed_distances[vertex] / max_fixed_distance,
+                0.0,
+                1.0
+            );
+            result.depths[vertex] = std::clamp(
+                (result.depths[vertex] * kParentDepthWeight +
+                 fixed_depth * kFixedDistanceWeight) / kWeightSum,
+                0.0,
+                1.0
+            );
+        }
+        for (const auto vertex_value : result.baseline_data) {
+            const auto vertex = static_cast<std::size_t>(vertex_value);
+            const auto parent_value = result.parent_indices[vertex];
+            if (parent_value < 0) continue;
+            result.depths[vertex] = std::max(
+                result.depths[vertex],
+                result.depths[static_cast<std::size_t>(parent_value)]
+            );
+        }
+    }
     return result;
 }
 

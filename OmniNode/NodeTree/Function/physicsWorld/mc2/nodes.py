@@ -244,7 +244,7 @@ _PROFILE_INPUT_INIT = {
     "local_inertia": _profile_input("局部空间移动/旋转惯性比例。", min_value=0.0, max_value=1.0),
     "local_movement_speed_limit": _profile_input("局部移动速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
     "local_rotation_speed_limit": _profile_input("局部旋转速度上限（度/秒）；负值禁用。", min_value=-1.0, max_value=1440.0),
-    "depth_inertia": _profile_input("按粒子深度增加的惯性比例。", min_value=0.0, max_value=1.0),
+    "depth_inertia": _profile_input("按深度保留末端惯性。\n权重=1-depth^1.5", min_value=0.0, max_value=1.0),
     "centrifugal_acceleration": _profile_input("由组件旋转产生的离心加速度比例。", min_value=0.0, max_value=1.0),
     "particle_speed_limit": _profile_input("粒子速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
     "teleport_mode": _profile_input("0:None\n1:Reset重置\n2:Keep搬运", min_value=0, max_value=2),
