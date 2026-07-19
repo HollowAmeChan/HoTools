@@ -118,7 +118,7 @@ profile + task combination
 
 | 属性 | 用户看到的功能 | 当前实现与setup |
 |---|---|---|
-| `Anchor惯性` | 有独立anchor时，控制anchor变换有多少被保留为粒子惯性 | 帧合同按`1 - anchor_inertia`计算anchor frame shift；`0`应用完整anchor增量，`1`不施加该增量。三个setup的DTO/oracle支持该语义，但当前任务自动frame producer不输出Anchor identity，节点产品路径不可达，不能写成已验收。 |
+| `Anchor惯性` | 消除平台、载具或角色整体运动等非物理输入；控制剩余多少运动成为粒子惯性 | 三个任务节点直接接受可选Blender Object。帧合同按`1 - anchor_inertia`计算Anchor frame shift；`0`完整跟随Anchor，`1`不施加Anchor增量。每帧读取约束求值后的Object世界变换，三个setup均有效。 |
 | `World惯性` | 控制组件world平移和旋转有多少留给粒子形成拖尾 | Center frame shift用`1 - world_inertia`移动旧Center参考；`0`更跟随组件，`1`保留更多world惯性。三个setup有效。 |
 | `惯性平滑` | 平滑组件world移动速度，降低抖动传入粒子 | Center保存`smoothing_velocity`并在帧开始平滑位移；三个setup有效。 |
 | `World移动限速`、`World旋转限速` | 限制一次world Center补偿可产生的平移/旋转速度，负值关闭 | Center frame shift在计算world inertia后限幅；三个setup有效。 |
@@ -146,7 +146,7 @@ MC2源码基线以Team Center整体判定Teleport。OmniMC2把它定义为产品
 | `弯曲刚度` | 抵抗相邻三角面沿共享边折叠；0关闭 | runtime把大于0映射为MC2 bending method 2，native按dihedral/volume记录执行。MeshCloth有效；BoneCloth仅在横向连接实际生成triangle时有效，Bone static会注册相同的Bending Tier A。BoneSpring强制Line topology，没有triangle，因此产品配置不暴露该字段且runtime归一化为0。静置时角差`<=1e-3 rad`、volume误差`<=max(1e-6, abs(rest)*2e-6)`视为已满足，避免float32法线/体积重算噪声逐帧积累。 |
 | `角度恢复`、`角度恢复刚度`、`角度恢复曲线` | 把父子方向向StepBasic参考方向拉回，形成姿态记忆 | Angle kernel逐baseline投影；target来自StepBasic父子向量与当前parent position，不来自Motion BasePosition。方向dot落在`1 - 1e-7`以内时直接视为no-op，避免identity旋转仍做父子浮点重组而积累静置漂移。三个setup有效。 |
 | `恢复速度衰减` | 角度恢复修正后，控制有多少修正同步进velocity reference，抑制持续摆动 | Angle kernel更新位置时同步修正velocity reference；三个setup有效。 |
-| `恢复重力衰减` | MC2 Team Center旋转使初始重力方向偏离world重力时，降低角度恢复 | 内核使用`value * (1 - center_gravity_dot)`调节恢复，三个setup都上传该值。Mesh内部frame-input以显式Center anchor证明了排序行为，但当前三个任务节点都没有Center/Anchor对象输入，也没有等价的用户可达隐式来源；因此不能把“字段进入kernel”写成产品已完成，能力矩阵保留`center_input_reachable`缺口。 |
+| `恢复重力衰减` | MC2 Team Center旋转使初始重力方向偏离world重力时，降低角度恢复 | 内核使用`value * (1 - center_gravity_dot)`调节恢复，三个setup都上传该值。Object Anchor已使Center旋转在三个任务节点上产品可达；Mesh排序响应已有证据，BoneCloth/BoneSpring仍需补齐有序响应长跑。 |
 | `角度限制`、`限制角度`、`限制角度曲线` | 迭代收紧相邻粒子相对父级传播方向的弯折角 | 与角度恢复共用Angle pass，但目标由父粒子的模拟旋转和StepBasic局部方向逐级传播，不是Restoration target。MC2源码固定投影3次，因此它不是最终几何的硬裁剪；三个setup有效。 |
 | `限制刚度` | 控制超出角度上限后每次投影的修正比例 | Angle kernel只在角度限制启用时消费。刚度1仍保留链式父子共同修正和后续约束造成的有限残差。 |
 
@@ -192,9 +192,11 @@ Profile/curve authoring
 
 Spring/wind字段目前只为源码数据结构和预设解析兼容而保留；三个产品节点都写入`spring_enabled=False`，native也没有生产Spring/wind kernel consumer。BoneSpring的“弹簧感”来自固定distance、angle、惯性和soft-sphere组合；Line topology不生产Triangle Bending，也不等于启用了这些`spring_*`字段。
 
-实现owner固定如下：公开字段与tooltip在`mc2/nodes.py`，immutable authoring值与源码固定常量在`mc2/parameters.py`，setup归一化和16点ABI在`mc2/runtime_parameters.py`，World/Anchor帧补偿在`mc2/center_state.py`，逐粒子Teleport检测/状态转换与task内约束在native context，粒子预测在`_native/src/mc2_context_core.cpp`，跨task协调在`_native/src/mc2_context_interaction.cpp`。新增或删除粒子属性必须同时核对这些owner、三个setup视图和能力测试矩阵，不能只给profile加字段。
+实现owner固定如下：公开字段与tooltip在`mc2/nodes.py`，immutable authoring值与源码固定常量在`mc2/parameters.py`，setup归一化和16点ABI在`mc2/runtime_parameters.py`，Object Anchor帧适配在`mc2/anchor.py`，World/Anchor帧补偿在`mc2/center_state.py`，逐粒子Teleport检测/状态转换与task内约束在native context，粒子预测在`_native/src/mc2_context_core.cpp`，跨task协调在`_native/src/mc2_context_interaction.cpp`。新增或删除粒子属性必须同时核对这些owner、三个setup视图和能力测试矩阵，不能只给profile加字段。
 
 四个已验收执行节点使用正式名称`MC2 MeshCloth任务`、`MC2 BoneCloth任务`、`MC2 BoneSpring任务`和`MC2模拟步`；维护态产品节点不得继续带“（框架）”后缀。
+
+三个任务节点都有一个可选`Object`类型`Anchor`输入，不增加独立Anchor节点、Any socket或通用隐式对象协议。用户需要骨骼Anchor时创建Empty并用Blender约束跟随骨骼。`MC2TaskSpec`保存Object活引用；即使任务节点被lazy skip，always-run模拟步的frame adapter仍每帧读取depsgraph求值后的世界位置和旋转。Anchor身份或运动不进入task id、topology/config signature和native static build；替换、移除或首次连接Anchor时Center无冲击重新定基，普通运动只更新帧状态。Anchor不是Pin、碰撞体、Teleport判定源或可写回对象。
 
 ### MeshCloth对象输入
 
@@ -532,7 +534,7 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
 
-`Center`继续显示组件/Anchor、frame shift与惯性量。粒子Teleport拆成两个默认关闭的独立请求位：`Teleport阈值与方向`按粒子绘制半透明阈值球、浅色old->current动画基准箭头及旋转阈值弧；`Teleport触发状态`只绘制状态点/轮廓，未触发为绿、Keep为黄、Reset为红。C++只在对应请求位显式开启时生产该层冻结数组；请求其中一层不得生产另一层，也不得在未声明时常驻生产。snapshot必须在Teleport判定完成、积分覆盖旧动画基准之前捕获，因此zero-substep帧同样可观察；renderer只能消费冻结状态，不能从最终位置反推。
+`Center`继续显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。粒子Teleport拆成两个默认关闭的独立请求位：`Teleport阈值与方向`按粒子绘制半透明阈值球、浅色old->current动画基准箭头及旋转阈值弧；`Teleport触发状态`只绘制状态点/轮廓，未触发为绿、Keep为黄、Reset为红。C++只在对应请求位显式开启时生产该层冻结数组；请求其中一层不得生产另一层，也不得在未声明时常驻生产。snapshot必须在Teleport判定完成、积分覆盖旧动画基准之前捕获，因此zero-substep帧同样可观察；renderer只能消费冻结状态，不能从最终位置反推。
 
 `碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色半透明低模球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色半透明低模胶囊显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状，并只保留一根中心线；蓝色半透明实体显示本帧实际上传的Sphere/Capsule/Plane/Box collider，并保持正常深度测试以便判断真实遮挡和穿插。所有同色实体合并为单一indexed triangle batch，公共utils保留原线框API并旁路提供实体API。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 
@@ -703,7 +705,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-九个能力族中`tether_and_distance`、`triangle_bending`、`angle_limit`、`motion_max_distance_backstop`、`external_collision`与`self_collision`已经闭环，状态为`verified`；`integration_and_pose_blend`、`center_inertia_and_teleport`与`angle_restoration`仍为`gap`。Center/Teleport族除`anchor_inertia`外的字段与不变量已经闭环；Anchor当前缺口是任务自动producer不可达，不是DTO或oracle缺失，必须先决定产品输入owner，不能用手工frame input冒充节点验收。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
+九个能力族中`center_inertia_and_teleport`、`tether_and_distance`、`triangle_bending`、`angle_limit`、`motion_max_distance_backstop`、`external_collision`与`self_collision`已经闭环，状态为`verified`；`integration_and_pose_blend`与`angle_restoration`仍为`gap`。Object Anchor产品路径以Copy Transforms约束Empty覆盖三个setup、`anchor_inertia=0/1`平移/旋转端点、同context不重建、确定性及零隐式native debug readback；它同时关闭`center_input_reachable`缺口。debug acceptance按每个模式声明的真实生产阶段捕获，绘制批次非空本身仍不证明几何语义正确。运行门禁继续按三层补齐：单能力静置/受力/边界切换、同context参数hot update与reset/rebuild、三setup与跨task交互混合soak。
 
 当前没有MC2发布阻断项。
 

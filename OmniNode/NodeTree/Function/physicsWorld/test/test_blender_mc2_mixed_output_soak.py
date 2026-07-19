@@ -10,6 +10,7 @@ import sys
 import types
 
 import bpy
+from mathutils import Matrix
 import numpy as np
 
 
@@ -133,6 +134,7 @@ def _tasks(
     stabilization_time_after_reset=0.1,
     teleport_rotation=180.0,
     particle_speed_limit=4.0,
+    anchor_inertia=0.0,
     world_inertia=1.0,
     movement_inertia_smoothing=0.4,
     movement_speed_limit=5.0,
@@ -141,6 +143,7 @@ def _tasks(
     local_movement_speed_limit=-1.0,
     local_rotation_speed_limit=-1.0,
     depth_inertia=0.0,
+    anchor_object=None,
 ):
     mesh_profile = parameters.make_mc2_particle_profile(
         gravity=5.0,
@@ -152,6 +155,7 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        anchor_inertia=anchor_inertia,
         world_inertia=world_inertia,
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
@@ -171,6 +175,7 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        anchor_inertia=anchor_inertia,
         world_inertia=world_inertia,
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
@@ -188,6 +193,7 @@ def _tasks(
         teleport_distance=0.5,
         teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
+        anchor_inertia=anchor_inertia,
         world_inertia=world_inertia,
         movement_inertia_smoothing=movement_inertia_smoothing,
         movement_speed_limit=movement_speed_limit,
@@ -198,17 +204,19 @@ def _tasks(
         depth_inertia=depth_inertia,
     )
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
-        [mesh], profile=mesh_profile
+        [mesh], profile=mesh_profile, anchor_object=anchor_object
     )
     cloth_tasks, _cloth_names = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Control"}],
         profile=cloth_profile,
+        anchor_object=anchor_object,
         connection_mode=0,
         collided_by_groups=1,
     )
     spring_tasks, _spring_names = nodes.physicsMC2BoneSpringTask(
         [{"armature": spring, "bone": "Root"}],
         profile=spring_profile,
+        anchor_object=anchor_object,
         collided_by_groups=1,
     )
     assert len(mesh_tasks) == len(cloth_tasks) == len(spring_tasks) == 1
@@ -1784,6 +1792,237 @@ def center_depth_controls():
     )
 
 
+def _run_center_anchor_case(case_name, anchor_inertia):
+    physics_blender.register()
+    mesh = cloth = spring = driver = anchor = None
+    world = world_types.PhysicsWorldCache()
+    generation = 73
+    try:
+        mesh = _mesh_source(f"MC2Anchor{case_name}Mesh")
+        cloth = _armature(f"MC2Anchor{case_name}Cloth", -0.3, 0.5)
+        spring = _armature(f"MC2Anchor{case_name}Spring", 0.3, 1.5)
+        driver = bpy.data.objects.new(f"MC2Anchor{case_name}Driver", None)
+        anchor = bpy.data.objects.new(f"MC2Anchor{case_name}", None)
+        bpy.context.scene.collection.objects.link(driver)
+        bpy.context.scene.collection.objects.link(anchor)
+        constraint = anchor.constraints.new("COPY_TRANSFORMS")
+        constraint.target = driver
+        sources = (mesh, cloth, spring)
+        base_matrices = {
+            source.name: source.matrix_world.copy() for source in sources
+        }
+        tasks = _tasks(
+            mesh,
+            cloth,
+            spring,
+            0.1,
+            0,
+            stabilization_time_after_reset=0.0,
+            particle_speed_limit=100.0,
+            anchor_inertia=anchor_inertia,
+            world_inertia=1.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+            local_inertia=1.0,
+            local_movement_speed_limit=-1.0,
+            local_rotation_speed_limit=-1.0,
+            depth_inertia=0.0,
+            anchor_object=anchor,
+        )
+        stable_task_ids = tuple(task.task_id for task in tasks)
+        initial_contexts = None
+        observations = {
+            task.setup_type: {
+                "shift_x": [],
+                "shift_rotation_degrees": [],
+                "candidate_positions": [],
+                "update_count": [],
+                "skip_count": [],
+            }
+            for task in tasks
+        }
+        for frame in range(1, 601):
+            translation = 0.004 * float(min(frame - 1, 300))
+            rotation_degrees = 0.15 * float(max(frame - 301, 0))
+            platform = (
+                Matrix.Translation((translation, 0.0, 0.0))
+                @ Matrix.Rotation(math.radians(rotation_degrees), 4, "Z")
+            )
+            driver.matrix_world = platform
+            for source in sources:
+                source.matrix_world = platform @ base_matrices[source.name]
+            bpy.context.view_layer.update()
+            _set_frame(world, frame, generation)
+            world.frame_context.raw_dt = 1.0 / 30.0
+            world.frame_context.dt = 1.0 / 30.0
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(tasks),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            current_contexts = tuple(
+                world.solver_slots[task.task_id].data["native_context"]
+                for task in tasks
+            )
+            if frame == 1:
+                initial_contexts = current_contexts
+            else:
+                assert current_contexts == initial_contexts
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            evaluated_anchor = anchor.evaluated_get(depsgraph)
+            evaluated_position = tuple(
+                float(evaluated_anchor.matrix_world[row][3]) for row in range(3)
+            )
+            for task in tasks:
+                assert task.task_id in stable_task_ids
+                assert task.anchor_object is anchor
+                slot = world.solver_slots[task.task_id]
+                candidate = _assert_candidate(slot)
+                assert candidate.frame == frame
+                center_state = slot.data["center_state"]
+                assert center_state.anchor_identity == f"object:{int(anchor.as_pointer())}"
+                np.testing.assert_allclose(
+                    center_state.old_anchor_world_position,
+                    evaluated_position,
+                    rtol=0.0,
+                    atol=2.0e-6,
+                )
+                values = observations[task.setup_type]
+                values["candidate_positions"].append(
+                    np.array(candidate.world_positions, dtype=np.float32, copy=True)
+                )
+                if frame == 1:
+                    continue
+                schedule = slot.data["frame_schedule"]
+                values["update_count"].append(float(schedule.update_count))
+                values["skip_count"].append(float(schedule.skip_count))
+                shift = slot.data["center_frame_shift_result"]
+                if shift is None:
+                    values["shift_x"].append(0.0)
+                    values["shift_rotation_degrees"].append(0.0)
+                else:
+                    values["shift_x"].append(
+                        float(shift.frame_component_shift_vector[0])
+                    )
+                    quaternion = shift.frame_component_shift_rotation_xyzw
+                    cosine = min(1.0, max(0.0, abs(float(quaternion[3]))))
+                    values["shift_rotation_degrees"].append(
+                        math.degrees(2.0 * math.acos(cosine))
+                    )
+            if frame == 299:
+                assert debug_module.request_mc2_debug_capture(
+                    world,
+                    filters={"show_center": True},
+                ) == 3
+
+        for task in tasks:
+            slot = world.solver_slots[task.task_id]
+            info = slot.data["native_context"].inspect()
+            assert info["debug_readback_count"] == 0
+            if anchor_inertia < 1.0:
+                assert info["center_frame_shift_count"] == 599
+            else:
+                assert info["center_frame_shift_count"] <= 3, (
+                    case_name,
+                    task.setup_type,
+                    info["center_frame_shift_count"],
+                )
+            snapshot = slot.data["_debug_draw_snapshot"]
+            assert snapshot["frame"] == 300
+            frame_pose = snapshot["center"]["frame_pose"]
+            assert frame_pose["anchor_identity"] == (
+                f"object:{int(anchor.as_pointer())}"
+            )
+            assert snapshot["native"] == {}
+        return {
+            setup_type: {
+                name: np.asarray(values, dtype=np.float32)
+                for name, values in setup_values.items()
+            }
+            for setup_type, setup_values in observations.items()
+        }
+    finally:
+        world.omni_cache_dispose(f"center_anchor_{case_name}")
+        if mesh is not None and mesh.name in bpy.data.objects:
+            proxy = mesh.hotools_mesh_collision.mc2_base_pose_proxy
+            _remove_object(mesh)
+            if proxy is not None and proxy.name in bpy.data.objects:
+                _remove_object(proxy)
+        for obj in (cloth, spring, anchor, driver):
+            if obj is not None and obj.name in bpy.data.objects:
+                _remove_object(obj)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+
+
+def _run_center_anchor_suite():
+    follow = _run_center_anchor_case("Follow", 0.0)
+    inertial = _run_center_anchor_case("Inertial", 1.0)
+    digest = hashlib.sha256()
+    for setup_type in sorted(follow):
+        follow_values = follow[setup_type]
+        inertial_values = inertial[setup_type]
+        stable = np.logical_and(
+            inertial_values["update_count"] == 3.0,
+            inertial_values["skip_count"] == 0.0,
+        )
+        assert int(np.count_nonzero(stable)) >= 590
+        np.testing.assert_allclose(
+            follow_values["shift_x"][:299][stable[:299]],
+            np.full((int(np.count_nonzero(stable[:299])),), 0.004, dtype=np.float32),
+            rtol=0.0,
+            atol=2.0e-6,
+        )
+        np.testing.assert_allclose(
+            inertial_values["shift_x"][stable],
+            np.zeros((int(np.count_nonzero(stable)),), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            follow_values["shift_rotation_degrees"][300:][stable[300:]],
+            np.full((int(np.count_nonzero(stable[300:])),), 0.15, dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-2,
+        )
+        np.testing.assert_allclose(
+            inertial_values["shift_rotation_degrees"][stable],
+            np.zeros((int(np.count_nonzero(stable)),), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        trajectory_delta = np.linalg.norm(
+            follow_values["candidate_positions"]
+            - inertial_values["candidate_positions"],
+            axis=2,
+        )
+        assert float(np.max(trajectory_delta)) > 1.0e-4, (
+            setup_type,
+            trajectory_delta,
+        )
+        for case_name, values in (("follow", follow_values), ("inertial", inertial_values)):
+            for field, array in sorted(values.items()):
+                assert np.all(np.isfinite(array))
+                digest.update(setup_type.encode("ascii"))
+                digest.update(case_name.encode("ascii"))
+                digest.update(field.encode("ascii"))
+                digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def center_anchor_controls():
+    first = _run_center_anchor_suite()
+    second = _run_center_anchor_suite()
+    assert second == first, (first, second)
+    print(
+        "[PASS] Center Object Anchor: "
+        "3 setups x 2 endpoints x 2 deterministic runs x 600 frames"
+    )
+
+
 def main():
     first = _run_scenario()
     second = _run_scenario()
@@ -1792,6 +2031,7 @@ def main():
     center_world_controls()
     center_local_controls()
     center_depth_controls()
+    center_anchor_controls()
     print("MC2 mixed output soak: PASS")
 
 

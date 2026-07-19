@@ -102,10 +102,13 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "gravity_falloff_response_ordered@mesh_cloth" not in angle_restoration["invariants"]
     assert "gravity_falloff_response_ordered@bone_cloth" in angle_restoration["invariants"]
     assert "gravity_falloff_response_ordered@bone_spring" in angle_restoration["invariants"]
-    assert "center_input_reachable@mesh_cloth" in angle_restoration["invariants"]
-    assert "center_input_reachable@bone_cloth" in angle_restoration["invariants"]
-    assert "center_input_reachable@bone_spring" in angle_restoration["invariants"]
-    assert "Team Center/Anchor" in by_id["angle_restoration"]["known_gap"]
+    assert not any(
+        item.startswith("center_input_reachable@")
+        for item in angle_restoration["invariants"]
+    )
+    assert "Object Anchor makes Center input product-reachable" in by_id[
+        "angle_restoration"
+    ]["known_gap"]
 
     self_collision = capability_gaps(by_id["self_collision"])
     assert self_collision["setups"] == set()
@@ -175,9 +178,6 @@ def test_setup_local_evidence_cannot_close_another_setup():
             f"{invariant}@{setup}" not in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
         )
-    assert "anchor_inertia remains a product-reachability gap" in by_id[
-        "center_inertia_and_teleport"
-    ]["known_gap"]
     assert "particle_speed_limit@mesh_cloth" not in teleport["fields"]
     assert "particle_speed_limit@bone_cloth" not in teleport["fields"]
     assert "particle_speed_limit@bone_spring" not in teleport["fields"]
@@ -218,14 +218,8 @@ def test_setup_local_evidence_cannot_close_another_setup():
         assert not any(
             gap.startswith(f"{invariant}@") for gap in teleport["invariants"]
         )
-    assert teleport["fields"] == {
-        "anchor_inertia@mesh_cloth",
-        "anchor_inertia@bone_cloth",
-        "anchor_inertia@bone_spring",
-    }
-    assert "current task auto-producers expose no Anchor identity" in by_id[
-        "center_inertia_and_teleport"
-    ]["known_gap"]
+    assert not any(teleport.values())
+    assert by_id["center_inertia_and_teleport"]["status"] == "verified"
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())

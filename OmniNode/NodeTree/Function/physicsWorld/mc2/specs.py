@@ -131,6 +131,7 @@ class MC2TaskSpec:
     topology_signature: str
     config_signature: str
     parameter_signature: str
+    anchor_object: object | None = None
     enabled: bool = True
     implementation_version: int = 2
 
@@ -148,6 +149,10 @@ class MC2TaskSpec:
             raise ValueError(f"MC2TaskSpec.task_id 应为 {expected_task_id!r}")
         if type(self.enabled) is not bool:
             raise TypeError("MC2TaskSpec.enabled 必须是 bool")
+        if self.anchor_object is not None:
+            anchor_token = _pointer_token(self.anchor_object)
+            if anchor_token is None or not hasattr(self.anchor_object, "matrix_world"):
+                raise TypeError("MC2TaskSpec.anchor_object 必须是 Blender Object")
         if not isinstance(self.profile, MC2ParticleProfileSpec):
             raise TypeError("MC2TaskSpec.profile 必须是 MC2ParticleProfileSpec")
         if not isinstance(self.setup_options, MC2SetupOptionsSpec):
@@ -186,6 +191,11 @@ class MC2TaskSpec:
             "topology_signature": self.topology_signature,
             "config_signature": self.config_signature,
             "parameter_signature": self.parameter_signature,
+            "anchor": (
+                _pointer_token(self.anchor_object)
+                if self.anchor_object is not None
+                else None
+            ),
             "enabled": self.enabled,
             "implementation_version": self.implementation_version,
         }
@@ -202,6 +212,7 @@ def make_mc2_task_spec(
     *,
     profile: MC2ParticleProfileSpec | None = None,
     setup_options: MC2SetupOptionsSpec | None = None,
+    anchor_object=None,
     enabled: bool = True,
 ) -> MC2TaskSpec:
     normalized_setup = normalize_mc2_setup_type(setup_type)
@@ -238,6 +249,7 @@ def make_mc2_task_spec(
         topology_signature=topology_signature,
         config_signature=config_signature,
         parameter_signature=parameter_signature,
+        anchor_object=anchor_object,
         enabled=bool(enabled),
     )
 

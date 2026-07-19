@@ -145,6 +145,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "local_movement_limit_active",
             "local_rotation_limit_active",
             "depth_inertia_particle_ordered",
+            "anchor_translation_inertia_endpoints_exact",
+            "anchor_rotation_inertia_endpoints_exact",
+            "anchor_constraint_object_evaluated",
+            "anchor_motion_no_context_rebuild",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
@@ -248,19 +252,25 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "center_controls_no_implicit_debug_readback",
                 ),
             },
+            {
+                "runner": (
+                    "test_blender_mc2_mixed_output_soak.py::"
+                    "center_anchor_controls"
+                ),
+                "frames": 600,
+                "setups": ALL_SETUPS,
+                "fields": ("anchor_inertia",),
+                "invariants": (
+                    "finite", "deterministic",
+                    "anchor_translation_inertia_endpoints_exact",
+                    "anchor_rotation_inertia_endpoints_exact",
+                    "anchor_constraint_object_evaluated",
+                    "anchor_motion_no_context_rebuild",
+                    "center_controls_no_implicit_debug_readback",
+                ),
+            },
         ),
-        "known_gap": (
-            "Production now evaluates every particle animation base and supplements Mesh "
-            "object motion with native component-pose history. The 900-frame product runner "
-            "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
-            "velocity clearing, StepBasic alignment and isolated debug. BoneCloth task-local "
-            "and MeshCloth cross-task self histories are invalidated in the zero-substep "
-            "Teleport frame and rebuild on later substeps. World, Local, Depth and particle "
-            "speed controls have three-setup product evidence. The frame contract supports "
-            "Anchor inertia, but current task auto-producers expose no Anchor identity, so "
-            "anchor_inertia remains a product-reachability gap."
-        ),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "tether_and_distance",
@@ -389,10 +399,16 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "zero_force_rest", "target_direction_exact",
                 "connected_disconnected_writeback",
             ),
+        }, {
+            "runner": "test_blender_mc2_mixed_output_soak.py::center_anchor_controls",
+            "frames": 600,
+            "setups": ALL_SETUPS,
+            "fields": (),
+            "invariants": ("finite", "deterministic", "center_input_reachable"),
         },),
         "known_gap": (
-            "MC2 task nodes do not expose or derive a user-reachable Team Center/Anchor; "
-            "manual frame-input evidence cannot close center_input_reachable."
+            "Object Anchor makes Center input product-reachable for every setup. BoneCloth "
+            "and BoneSpring still lack ordered angle-restoration gravity-falloff evidence."
         ),
         "status": "gap",
     },

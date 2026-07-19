@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import bpy
 from mathutils import Matrix
@@ -10,6 +10,7 @@ import numpy as np
 
 from ...center_state import MC2CenterFramePoseSpec
 from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
+from ...anchor import attach_mc2_task_anchor
 from ....utils.math3d import matrix4_to_numpy_f32
 from .base_pose import validate_base_pose_proxy
 
@@ -322,6 +323,7 @@ def build_mc2_mesh_frame_input_for_task(
     expected_topology = str(getattr(mesh_static, "mesh_topology_signature", "") or "")
     if not expected_topology:
         raise ValueError("MC2 Mesh static bundle has no topology identity token")
+    depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
     snapshot = read_base_pose_frame_snapshot(
         source_obj,
         base_obj,
@@ -331,10 +333,18 @@ def build_mc2_mesh_frame_input_for_task(
         depsgraph=depsgraph,
         cache=getattr(world, "runtime_caches", None),
     )
-    return build_mc2_mesh_frame_input(
+    frame_input = build_mc2_mesh_frame_input(
         snapshot,
         mesh_static,
         topology_signature=str(getattr(topology, "topology_signature", "") or ""),
+    )
+    return replace(
+        frame_input,
+        center_frame_pose=attach_mc2_task_anchor(
+            frame_input.center_frame_pose,
+            task,
+            depsgraph=depsgraph,
+        ),
     )
 
 

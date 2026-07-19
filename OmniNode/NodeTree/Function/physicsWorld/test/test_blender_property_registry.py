@@ -469,6 +469,13 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert declaration["update_policy"]["bone_motion_mapping"] == (
         "connected_rotation_only_disconnected_position_rotation"
     )
+    assert declaration["update_policy"]["anchor_frame"] == (
+        "optional_object_evaluated_each_frame_no_static_rebuild"
+    )
+    assert "task.anchor_object" not in declaration["dirty_keys"]
+    assert "optional task.anchor_object evaluated world transform" in declaration[
+        "consumes"
+    ]
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == [
         mc2_names.MC2_STATS_CHANNEL,
@@ -548,6 +555,19 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
             "use_multi_input": True,
         }
         assert multi[identifier] is True
+    for task_node in task_nodes:
+        _node, inputs, _outputs, defaults, multi, settings = (
+            function_node_core.CheckMetaInfo(task_node)
+        )
+        assert inputs["anchor_object"] == {
+            "type": "NodeSocketObject",
+            "name": "Anchor",
+            "identifier": "anchor_object",
+            "use_multi_input": False,
+        }
+        assert defaults["anchor_object"] is None
+        assert multi["anchor_object"] is False
+        assert settings["anchor_object"]["description"]
     profile_nodes = (
         mc2_nodes.physicsMC2MeshClothProfile,
         mc2_nodes.physicsMC2BoneClothProfile,
@@ -661,6 +681,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
             self.name_full = name
             self.type = source_type
             self.data = _FakeData(pointer + 1000)
+            self.matrix_world = object()
 
         def as_pointer(self):
             return self._pointer
@@ -668,6 +689,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     mesh = _FakeSource(10, "Cloth", "MESH")
     second_mesh = _FakeSource(11, "SecondCloth", "MESH")
     armature = _FakeSource(20, "Rig", "ARMATURE")
+    anchor = _FakeSource(30, "Anchor", "EMPTY")
     mesh_sources = [mesh]
     cloth_sources = [{"armature": armature, "root_bone": "ClothRoot"}]
     spring_sources = [{"armature": armature, "bones": ("SpringA", "SpringB")}]
@@ -680,10 +702,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     product_tasks, product_task_names = mc2_nodes.physicsMC2MeshClothTask(
         [mesh, second_mesh],
         product_profile,
+        anchor_object=anchor,
     )
     assert len(product_tasks) == 2
     assert product_task_names.splitlines() == [task.task_id for task in product_tasks]
     assert tuple(task.sources for task in product_tasks) == ((mesh,), (second_mesh,))
+    assert all(task.anchor_object is anchor for task in product_tasks)
     product_task = product_tasks[0]
     assert product_task.setup_options.self_collision_radius_model == "derived_radius"
     product_runtime = mc2_runtime_parameters.make_mc2_runtime_parameters(

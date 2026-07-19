@@ -29,7 +29,7 @@ def _task_name_output(tasks) -> str:
     return "\n".join(str(task.task_id) for task in tasks)
 
 
-def _mesh_cloth_tasks(mesh_objects, profile, enabled: bool):
+def _mesh_cloth_tasks(mesh_objects, anchor_object, profile, enabled: bool):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     sources = _flatten_values(mesh_objects)
@@ -45,6 +45,7 @@ def _mesh_cloth_tasks(mesh_objects, profile, enabled: bool):
                 MC2_SETUP_MESH_CLOTH,
                 self_collision_radius_model="derived_radius",
             ),
+            anchor_object=anchor_object,
             enabled=enabled,
         )
         for source in sources
@@ -123,7 +124,9 @@ def _owner_key(source: dict) -> tuple[int, int]:
     return owner_id, data_id
 
 
-def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
+def _hotools_bone_tasks(
+    control_bones, anchor_object, profile, enabled: bool, **setup_values
+):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     setup_values["self_collision_radius_model"] = "derived_radius"
@@ -152,13 +155,16 @@ def _hotools_bone_tasks(control_bones, profile, enabled: bool, **setup_values):
                 connection_model="hotools_product",
                 **setup_values,
             ),
+            anchor_object=anchor_object,
             enabled=enabled,
         )
         for group in groups
     ]
 
 
-def _bone_spring_tasks(root_bones, profile, enabled: bool, **setup_values):
+def _bone_spring_tasks(
+    root_bones, anchor_object, profile, enabled: bool, **setup_values
+):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     grouped: dict[tuple[int, int], list[dict]] = {}
@@ -178,6 +184,7 @@ def _bone_spring_tasks(root_bones, profile, enabled: bool, **setup_values):
                 MC2_SETUP_BONE_SPRING,
                 **setup_values,
             ),
+            anchor_object=anchor_object,
             enabled=enabled,
         )
         for group in grouped.values()
@@ -222,7 +229,7 @@ _PROFILE_INPUT_INIT = {
     "gravity_direction": _profile_input("世界空间重力方向；仅MeshCloth/BoneCloth消费。"),
     "gravity": _profile_input("重力加速度强度；BoneSpring强制为0。", min_value=0.0, max_value=20.0),
     "gravity_falloff": _profile_input(
-        "按Center朝向衰减重力。\n0:不衰减  1:完全按朝向",
+        "Center朝向重力衰减\n0=关闭  1=完全",
         min_value=0.0,
         max_value=1.0,
     ),
@@ -507,9 +514,10 @@ def physicsMC2BoneSpringProfile(
     bl_label="MC2 MeshCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["代理网格", "粒子配置", "启用"],
+    _INPUT_NAME=["代理网格", "粒子配置", "Anchor", "启用"],
     input_init={
         "mesh_objects": {"description": "MeshCloth网格列表\n每对象一个任务"},
+        "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 MeshCloth配置\n留空使用默认值"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
@@ -519,10 +527,12 @@ def physicsMC2BoneSpringProfile(
 def physicsMC2MeshClothTask(
     mesh_objects: list[bpy.types.Object],
     profile: typing.Any = None,
+    anchor_object: bpy.types.Object = None,
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     tasks = _mesh_cloth_tasks(
         mesh_objects,
+        anchor_object,
         profile,
         enabled,
     )
@@ -534,9 +544,10 @@ def physicsMC2MeshClothTask(
     bl_label="MC2 BoneCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["中控骨", "粒子配置", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=["中控骨", "粒子配置", "Anchor", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "control_bones": {"description": "直接子骨生成模拟链\n每个中控骨独立横连"},
+        "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
         "connection_mode": {
             "min_value": 0,
@@ -546,12 +557,12 @@ def physicsMC2MeshClothTask(
         "rotational_interpolation": {
             "min_value": 0.0,
             "max_value": 1.0,
-            "description": "线拓扑方向插值。\n横向三角顶点由表面朝向覆盖。",
+            "description": "线拓扑方向插值\n横向顶点按表面朝向",
         },
         "root_rotation": {
             "min_value": 0.0,
             "max_value": 1.0,
-            "description": "线拓扑根旋转比例。\n横向三角顶点由表面朝向覆盖。",
+            "description": "线拓扑根旋转比例\n横向顶点按表面朝向",
         },
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
@@ -562,6 +573,7 @@ def physicsMC2MeshClothTask(
 def physicsMC2BoneClothTask(
     control_bones: list[_OmniBone],
     profile: typing.Any = None,
+    anchor_object: bpy.types.Object = None,
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
@@ -570,6 +582,7 @@ def physicsMC2BoneClothTask(
 ) -> tuple[list[typing.Any], str]:
     tasks = _hotools_bone_tasks(
         control_bones,
+        anchor_object,
         profile,
         enabled,
         connection_mode=connection_mode,
@@ -585,9 +598,10 @@ def physicsMC2BoneClothTask(
     bl_label="MC2 BoneSpring任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["根骨", "粒子配置", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=["根骨", "粒子配置", "Anchor", "旋转插值", "根旋转", "被碰撞组", "启用"],
     input_init={
         "root_bones": {"description": "BoneSpring根骨列表\n递归收集后代"},
+        "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneSpring配置\n留空使用默认值"},
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "粒子方向写回骨骼旋转时的插值比例。"},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "模拟链根部旋转参与写回的比例。"},
@@ -600,6 +614,7 @@ def physicsMC2BoneClothTask(
 def physicsMC2BoneSpringTask(
     root_bones: list[_OmniBone],
     profile: typing.Any = None,
+    anchor_object: bpy.types.Object = None,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
@@ -607,6 +622,7 @@ def physicsMC2BoneSpringTask(
 ) -> tuple[list[typing.Any], str]:
     tasks = _bone_spring_tasks(
         root_bones,
+        anchor_object,
         profile,
         enabled,
         rotational_interpolation=rotational_interpolation,
@@ -691,7 +707,7 @@ def physicsMC2Step(
         "show_angle_limit": {"description": "黄锥=Angle Limit范围。\n方向为层级目标。"},
         "show_center": {"description": "显示组件、Anchor、frame shift与惯性量。"},
         "show_teleport_threshold": {
-            "description": "Teleport阈值与方向。\n球=位移阈值  浅线=旧→新\n位移或旋转达到阈值即触发。"
+            "description": "Teleport阈值与方向\n球=阈值  线=旧到新"
         },
         "show_teleport_status": {
             "description": "Teleport触发状态。\n绿=未触发  黄=Keep  红=Reset"
