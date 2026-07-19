@@ -8,6 +8,7 @@ import os
 import sys
 
 import bpy
+import mathutils
 import numpy as np
 
 
@@ -1167,6 +1168,212 @@ def bone_angle_limit():
     print("[PASS] Bone Angle Limit: 2 setups x 2 deterministic x 900 frames")
 
 
+def _bending_armature(name, x_offset):
+    data = bpy.data.armatures.new(f"{name}Data")
+    obj = bpy.data.objects.new(name, data)
+    obj.location.x = x_offset
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    control = data.edit_bones.new("Control")
+    control.head = (0.0, 0.0, 0.0)
+    control.tail = (0.0, 0.0, 1.0)
+    offsets = (
+        (1.0, 0.35, 0.20),
+        (0.85, -0.25, 0.45),
+        (0.70, 0.55, -0.15),
+        (0.55, -0.40, 0.30),
+    )
+    for chain_index in range(2):
+        head = control.tail + mathutils.Vector(
+            (0.0, chain_index * 0.55, chain_index * 0.1)
+        )
+        previous = control
+        for depth, offset in enumerate(offsets):
+            bone = data.edit_bones.new(f"Chain{chain_index}_{depth}")
+            bone.head = head
+            bone.tail = head + mathutils.Vector(offset)
+            bone.parent = previous
+            bone.use_connect = depth > 0 and not (chain_index == 1 and depth == 2)
+            bone.roll = 0.2 + depth * 0.35 + chain_index * 0.15
+            head = bone.tail.copy()
+            previous = bone
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
+    return obj
+
+
+def _bending_task(armature, stiffness):
+    profile = parameters.make_mc2_particle_profile(
+        gravity=6.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        damping=0.08,
+        stabilization_time_after_reset=0.0,
+        distance_stiffness=0.65,
+        bending_stiffness=stiffness,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        max_distance_enabled=False,
+        backstop_enabled=False,
+        collision_mode=0,
+        self_collision_mode=0,
+    )
+    tasks, _names = nodes.physicsMC2BoneClothTask(
+        [{"armature": armature, "bone": "Control"}],
+        profile=profile,
+        connection_mode=1,
+    )
+    assert len(tasks) == 1
+    return tasks[0]
+
+
+def _bending_errors(positions, static):
+    angle_errors = []
+    volume_errors = []
+    volume_signs = []
+    for quad, rest, marker in zip(
+        static["quads"], static["rests"], static["markers"]
+    ):
+        p = positions[quad]
+        if marker == 100:
+            actual = float(np.dot(
+                np.cross(p[1] - p[0], p[2] - p[0]),
+                p[3] - p[0],
+            ) / 6.0 * 1000.0)
+            volume_errors.append(abs(actual - rest) / max(abs(rest), 1.0e-6))
+            volume_signs.append(actual * rest > 0.0)
+            continue
+        edge = p[3] - p[2]
+        n1 = np.cross(p[2] - p[0], p[3] - p[0])
+        n2 = np.cross(p[3] - p[1], p[2] - p[1])
+        n1_length = float(np.linalg.norm(n1))
+        n2_length = float(np.linalg.norm(n2))
+        if min(n1_length, n2_length) <= 1.0e-10:
+            angle_errors.append(math.pi)
+            continue
+        n1 /= n1_length
+        n2 /= n2_length
+        actual = math.acos(float(np.clip(np.dot(n1, n2), -1.0, 1.0)))
+        direction = float(np.dot(np.cross(n1, n2), edge))
+        actual *= -1.0 if direction < 0.0 else 1.0
+        expected = float(rest) * (-1.0 if marker < 0 else 1.0)
+        angle_errors.append(abs(actual - expected))
+    return angle_errors, volume_errors, volume_signs
+
+
+def _run_bone_bending_suite():
+    world = world_types.PhysicsWorldCache()
+    world.generation = 82
+    armatures = (
+        _bending_armature("MC2BendingSoft", -1.5),
+        _bending_armature("MC2BendingStiff", 1.5),
+    )
+    tasks = (
+        _bending_task(armatures[0], 0.0),
+        _bending_task(armatures[1], 1.0),
+    )
+    topologies = tuple(topology_module.build_mc2_topology_spec(task) for task in tasks)
+    assert all(topology.bone_connection.triangles for topology in topologies)
+    static_bending = [None, None]
+    angle_history = ([], [])
+    volume_history = ([], [])
+    trajectory_digest = hashlib.sha256()
+    try:
+        for frame in range(1, 901):
+            for armature in armatures:
+                control = armature.pose.bones["Control"]
+                control.rotation_mode = "XYZ"
+                control.rotation_euler.x = 0.22 * math.sin(frame * 0.031)
+                control.rotation_euler.z = 0.35 * math.sin(frame * 0.047)
+                control.location.y = 0.08 * math.sin(frame * 0.037)
+            bpy.context.view_layer.update()
+            mixed._set_frame(world, frame, world.generation)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(tasks),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            candidate_positions = []
+            for index, (task, topology) in enumerate(zip(tasks, topologies)):
+                slot = world.solver_slots[task.task_id]
+                candidate = slot.data["result_candidate"]
+                candidate_positions.append(candidate.world_positions)
+                assert candidate.frame == frame
+                assert np.all(np.isfinite(candidate.world_positions))
+                assert np.all(np.isfinite(candidate.world_rotations_xyzw))
+                if frame == 1:
+                    snapshot = slot.data["native_context"].refresh_debug_draw_snapshot(
+                        include_bending=True,
+                    )
+                    static_bending[index] = {
+                        key: np.array(value, copy=True)
+                        for key, value in snapshot["bending"].items()
+                    }
+                    assert np.any(static_bending[index]["markers"] == 100)
+                    assert np.any(static_bending[index]["markers"] != 100)
+                angle_errors, volume_errors, volume_signs = _bending_errors(
+                    candidate.world_positions,
+                    static_bending[index],
+                )
+                assert angle_errors and volume_errors
+                if index == 1 and frame > 30:
+                    assert all(volume_signs), (frame, volume_errors)
+                angle_history[index].append(float(np.mean(angle_errors)))
+                volume_history[index].append(float(np.mean(volume_errors)))
+                plan = slot.data["writeback_plan"]
+                assert plan["rotation_only_connected_count"] > 0
+                assert plan["position_rotation_count"] > 0
+                trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+                trajectory_digest.update(np.asarray(index, dtype=np.int32).tobytes())
+                trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+                trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            roots = np.asarray(topologies[0].bone_connection.root_order, dtype=np.int32)
+            np.testing.assert_allclose(
+                candidate_positions[0][roots] - np.asarray(armatures[0].location),
+                candidate_positions[1][roots] - np.asarray(armatures[1].location),
+                rtol=0.0,
+                atol=2.0e-5,
+            )
+            assert writeback.writeback_bone_transforms(world) == sum(
+                topology.particle_count for topology in topologies
+            )
+            bpy.context.view_layer.update()
+
+        soft_info = world.solver_slots[tasks[0].task_id].data["native_context"].inspect()
+        stiff_info = world.solver_slots[tasks[1].task_id].data["native_context"].inspect()
+        assert soft_info["bending_solve_count"] == 0
+        assert stiff_info["bending_solve_count"] > 0
+        soft_angle = float(np.mean(angle_history[0][-300:]))
+        stiff_angle = float(np.mean(angle_history[1][-300:]))
+        soft_volume = float(np.mean(volume_history[0][-300:]))
+        stiff_volume = float(np.mean(volume_history[1][-300:]))
+        assert stiff_angle < soft_angle * 0.9, (soft_angle, stiff_angle)
+        assert stiff_volume < soft_volume * 0.9, (soft_volume, stiff_volume)
+        print(
+            "[INFO] BoneCloth Bending mean error: "
+            f"angle {soft_angle:.6f}->{stiff_angle:.6f}, "
+            f"volume {soft_volume:.6f}->{stiff_volume:.6f}"
+        )
+        return trajectory_digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("bone_bending_soak")
+        for armature in armatures:
+            if armature.name in bpy.data.objects:
+                mixed._remove_object(armature)
+
+
+def bone_triangle_bending():
+    first = _run_bone_bending_suite()
+    second = _run_bone_bending_suite()
+    assert first == second, (first, second)
+    print("[PASS] BoneCloth Triangle Bending: 2 tasks x 2 deterministic x 900")
+
+
 def main():
     mixed.physics_blender.register()
     try:
@@ -1177,6 +1384,7 @@ def main():
         bone_friction_response()
         bone_distance_tether()
         bone_angle_limit()
+        bone_triangle_bending()
     finally:
         if mixed.physics_blender.is_registered():
             mixed.physics_blender.unregister()

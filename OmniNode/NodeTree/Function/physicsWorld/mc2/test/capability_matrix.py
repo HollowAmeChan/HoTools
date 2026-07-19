@@ -161,19 +161,30 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "required_invariants": (
             "finite", "deterministic", "signed_volume_stable", "fixed_particles_static",
         ),
+        "invariant_setups": {
+            "signed_volume_stable": ("bone_cloth",),
+        },
         "evidence": ({
             "runner": "test_blender_mc2_constraint_soak.py::_bending_soak",
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": ("bending_stiffness", "bending_method"),
-            "invariants": ("finite", "bending_response_changes", "solve_branch_exact"),
-        },),
-        "known_gap": (
-            "BoneCloth triangle topology now registers native Bending records, but "
-            "long-run response, fixed-particle, and signed-volume evidence is pending. "
-            "BoneSpring is Line-only and intentionally normalizes Bending off."
-        ),
-        "status": "gap",
+            "invariants": (
+                "finite", "deterministic", "fixed_particles_static",
+                "bending_response_changes", "solve_branch_exact",
+            ),
+        }, {
+            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_triangle_bending",
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": ("bending_stiffness", "bending_method"),
+            "invariants": (
+                "finite", "deterministic", "signed_volume_stable",
+                "fixed_particles_static", "bending_response_changes",
+                "connected_disconnected_writeback",
+            ),
+        }),
+        "status": "verified",
     },
     {
         "id": "angle_restoration",

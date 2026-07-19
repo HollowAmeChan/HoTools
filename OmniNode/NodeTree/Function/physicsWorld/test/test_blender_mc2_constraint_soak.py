@@ -1007,6 +1007,9 @@ def _run_bending_profile(obj, stiffness, generation):
         collision_mode=2,
         radius=0.01,
     )
+    trajectory_digest = hashlib.sha256()
+    fixed_indices = None
+    fixed_positions = None
     try:
         candidate = None
         for frame in range(1, 901):
@@ -1021,6 +1024,24 @@ def _run_bending_profile(obj, stiffness, generation):
                 },),
             }
             candidate = _auto_step(world, task, frame, generation)
+            trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
+            trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
+            if fixed_indices is None:
+                attributes = world.solver_slots[task.task_id].data[
+                    "mesh_static"
+                ].final_proxy.vertex_attributes
+                fixed_indices = np.flatnonzero(attributes & 0x01)
+                assert len(fixed_indices) > 0
+                fixed_positions = np.array(
+                    candidate.world_positions[fixed_indices], copy=True
+                )
+            np.testing.assert_allclose(
+                candidate.world_positions[fixed_indices],
+                fixed_positions,
+                rtol=0.0,
+                atol=1.0e-7,
+            )
         info = world.solver_slots[task.task_id].data["native_context"].inspect()
         if stiffness > 0.0:
             assert info["bending_solve_count"] > 0
@@ -1029,20 +1050,30 @@ def _run_bending_profile(obj, stiffness, generation):
         positions = np.array(candidate.world_positions, copy=True)
         rows = positions[:, 2].reshape((4, 4))
         curvature = float(np.mean(np.abs(rows[:-2] - 2.0 * rows[1:-1] + rows[2:])))
-        return curvature, positions
+        return curvature, positions, trajectory_digest.hexdigest()
     finally:
         world.omni_cache_dispose("bending_profile_soak")
 
 
-def _bending_soak(obj):
-    soft_curvature, soft_positions = _run_bending_profile(obj, 0.0, 45)
-    stiff_curvature, stiff_positions = _run_bending_profile(obj, 1.0, 46)
+def _run_bending_suite(obj):
+    soft_curvature, soft_positions, soft_digest = _run_bending_profile(obj, 0.0, 45)
+    stiff_curvature, stiff_positions, stiff_digest = _run_bending_profile(obj, 1.0, 46)
     assert np.all(np.isfinite(soft_positions))
     assert np.all(np.isfinite(stiff_positions))
     assert max(soft_curvature, stiff_curvature) < 0.02
     assert abs(stiff_curvature - soft_curvature) > 1.0e-3
     assert not np.allclose(soft_positions, stiff_positions, atol=1.0e-6)
-    print("[PASS] 2x900-frame Triangle Bending response")
+    digest = hashlib.sha256()
+    digest.update(soft_digest.encode("ascii"))
+    digest.update(stiff_digest.encode("ascii"))
+    return digest.hexdigest()
+
+
+def _bending_soak(obj):
+    first = _run_bending_suite(obj)
+    second = _run_bending_suite(obj)
+    assert first == second, (first, second)
+    print("[PASS] Mesh Triangle Bending: zero/strong x 2 deterministic x 900")
 
 
 def _run_angle_limit_soak(obj):
