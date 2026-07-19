@@ -97,6 +97,8 @@ profile + task combination
 
 - 每个“基础值 + 曲线”输入先相乘，再在归一化区间`0..1`按`i / 15`预采样为16个float32值；没有连接曲线时16项都等于基础值。kernel再按粒子的连续baseline depth插值取值，而不是逐帧求值Blender曲线。
 - Mesh baseline parent仍从所有Fixed按MC2拓扑层规则扩张：Fixed邻接优先较短边，后续候选parent优先保持与祖父方向连续。源码depth沿parent chain累计真实边长并按task最大root length归一化；OmniMC2再计算沿真实proxy边到Fixed集合的多源最短表面距离并全局归一化，以`4:1`混合`parent depth:Fixed边界距离depth`，最后沿parent顺序做单调保护。该修正只作用于MeshCloth，用于降低非均匀减面导致的横向等深线偏移；BoneCloth/BoneSpring保持链深度。
+- 实际非均匀减面模型已经人工确认该Mesh depth差异能明显抑制横向等高线偏移，并使旋转带动的远端响应更自然。当前`4:1`混合与`1.5`次深度惯性指数因此作为产品默认合同保留；它们暂不暴露socket，避免用户在不了解全部consumer时只针对单一动作过拟合。
+- Depth仍是后续可调设计面，可继续评估混合比例、惯性指数、按root/component归一化、路径代价和显式depth顶点组。任何调整必须同时回归阻尼、半径、Distance/Angle、Motion/Backstop、自碰厚度、Center深度惯性和最终输出，不能把depth当成只控制惯性的独立参数。
 - `阻尼`和`角度恢复刚度`在runtime转换时分别额外乘MC2源码比例`0.2`；其余公开曲线保持输入单位。这个缩放属于源码对齐，不是隐藏的额外迭代次数。
 - `动画姿态`是当帧输入产生的`animated_base_positions/rotations`；`StepBasic`是由静态baseline、组件变换和“动画姿态比例”重建的约束参考。MaxDistance/Backstop使用前者，Angle Restoration/Angle Limit与结构约束使用后者，两者不能混写。
 - `法线轴`映射为`0:+X, 1:+Y, 2:+Z, 3:-X, 4:-Y, 5:-Z`，由Motion Backstop把动画旋转转换成法线方向。
@@ -541,7 +543,7 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
 
-`粒子深度`是已接通、待人工视觉复验的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move最终生产depth，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。Mesh色带包含`4:1`的Fixed边界表面距离修正，Bone色带仍是parent-chain depth。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。选中/抽样路径、两种原始depth分量和归一化分母的数值标注仍是后续能力。
+`粒子深度`是已接通并完成首轮人工视觉复验的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move最终生产depth，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。Mesh色带包含`4:1`的Fixed边界表面距离修正，Bone色带仍是parent-chain depth；实际非均匀减面模型已确认该修正能抑制横向等高线偏移并改善旋转带动。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。选中/抽样路径、两种原始depth分量和归一化分母的数值标注仍是后续能力。
 
 `Center`继续显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。现有逐粒子Teleport阈值球/状态点随实验实现一并废弃；目标debug只表达一组判定基准的类型/index、旧/新姿态、距离/角度阈值、实际测量和task级None/Keep/Reset状态。snapshot仍必须在scheduler前判定完成后捕获，zero-substep帧可观察；仅显式请求时生产，renderer不能从最终位置反推。
 
