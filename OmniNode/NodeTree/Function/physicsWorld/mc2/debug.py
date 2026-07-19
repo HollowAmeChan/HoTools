@@ -68,6 +68,10 @@ MC2_DEBUG_FILTER_KEYS = (
     "show_output",
 )
 
+MC2_NATIVE_DEBUG_FILTER_KEYS = tuple(
+    name for name in MC2_DEBUG_FILTER_KEYS if name not in ("show_center", "show_output")
+)
+
 
 def normalize_mc2_task_filters(value) -> tuple[str, ...]:
     pending = list(value) if isinstance(value, (list, tuple, set)) else [value]
@@ -479,39 +483,44 @@ def capture_requested_mc2_debug(
         try:
             attempted = True
             filters = dict(state.get("filters") or {})
-            native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
-                include_step_basic=bool(
-                    filters.get("show_angle_restoration", False)
-                    or filters.get("show_angle_limit", False)
-                    or filters.get("show_step_basic", False)
-                    or filters.get("show_distance", False)
-                    or filters.get("show_tether", False)
-                ),
-                include_motion_base=bool(
-                    filters.get("show_motion", False)
-                    or filters.get("show_motion_base", False)
-                ),
-                include_angle_restoration=bool(
-                    filters.get("show_angle_restoration", False)
-                ),
-                include_angle_limit=bool(filters.get("show_angle_limit", False)),
-                include_dynamics=bool(filters.get("show_velocity", False)),
-                include_distance_tether=bool(
-                    filters.get("show_distance", False)
-                    or filters.get("show_tether", False)
-                ),
-                include_bending=bool(filters.get("show_bending", False)),
-                include_self_primitives=bool(
-                    filters.get("show_self_primitives", False)
-                ),
-                include_self_grid=bool(filters.get("show_self_grid", False)),
-                include_self_candidates=bool(
-                    filters.get("show_self_candidates", False)
-                ),
-                include_self_contacts=bool(
-                    filters.get("show_self_contacts", False)
-                ),
-            )
+            native_snapshot = {}
+            if any(
+                bool(filters.get(name, False))
+                for name in MC2_NATIVE_DEBUG_FILTER_KEYS
+            ):
+                native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
+                    include_step_basic=bool(
+                        filters.get("show_angle_restoration", False)
+                        or filters.get("show_angle_limit", False)
+                        or filters.get("show_step_basic", False)
+                        or filters.get("show_distance", False)
+                        or filters.get("show_tether", False)
+                    ),
+                    include_motion_base=bool(
+                        filters.get("show_motion", False)
+                        or filters.get("show_motion_base", False)
+                    ),
+                    include_angle_restoration=bool(
+                        filters.get("show_angle_restoration", False)
+                    ),
+                    include_angle_limit=bool(filters.get("show_angle_limit", False)),
+                    include_dynamics=bool(filters.get("show_velocity", False)),
+                    include_distance_tether=bool(
+                        filters.get("show_distance", False)
+                        or filters.get("show_tether", False)
+                    ),
+                    include_bending=bool(filters.get("show_bending", False)),
+                    include_self_primitives=bool(
+                        filters.get("show_self_primitives", False)
+                    ),
+                    include_self_grid=bool(filters.get("show_self_grid", False)),
+                    include_self_candidates=bool(
+                        filters.get("show_self_candidates", False)
+                    ),
+                    include_self_contacts=bool(
+                        filters.get("show_self_contacts", False)
+                    ),
+                )
             include_topology = bool(
                 filters.get("show_topology", False)
                 or filters.get("show_attributes", False)
@@ -622,6 +631,7 @@ def capture_requested_mc2_debug(
 __all__ = [
     "MC2_DEBUG_DRAW_MODES",
     "MC2_DEBUG_FILTER_KEYS",
+    "MC2_NATIVE_DEBUG_FILTER_KEYS",
     "capture_requested_mc2_debug",
     "request_mc2_debug_capture",
 ]

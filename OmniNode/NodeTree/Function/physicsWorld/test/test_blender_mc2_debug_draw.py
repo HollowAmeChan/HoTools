@@ -467,6 +467,12 @@ try:
         ("show_output", {"show_output": True}, ("output",)),
     )
     for mode_name, overrides, expected_batches in isolated_modes:
+        mode_readbacks_before = {
+            task.task_id: world.solver_slots[task.task_id]
+            .data["native_context"]
+            .inspect()["debug_readback_count"]
+            for task in tasks
+        }
         options = {
             "show_topology": False,
             "show_attributes": False,
@@ -571,6 +577,17 @@ try:
         assert actual_payloads == expected_payloads, (
             mode_name, actual_payloads, expected_payloads
         )
+        for task in tasks:
+            readback_delta = (
+                world.solver_slots[task.task_id]
+                .data["native_context"]
+                .inspect()["debug_readback_count"]
+                - mode_readbacks_before[task.task_id]
+            )
+            if mode_name in ("show_center", "show_output"):
+                assert readback_delta == 0, (mode_name, readback_delta)
+            else:
+                assert readback_delta > 0, (mode_name, readback_delta)
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot
             assert "angle_restoration_target_positions" not in native_snapshot
