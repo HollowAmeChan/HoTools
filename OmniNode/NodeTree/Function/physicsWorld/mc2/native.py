@@ -11,6 +11,7 @@ import sys
 MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_interaction_v0_create",
     "mc2_interaction_v0_inspect",
+    "mc2_interaction_v0_invalidate",
     "mc2_interaction_v0_step_group",
     "mc2_interaction_v0_read_debug",
     "mc2_interaction_v0_free",

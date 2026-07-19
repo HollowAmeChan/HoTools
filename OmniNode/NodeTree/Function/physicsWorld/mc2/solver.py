@@ -1181,6 +1181,24 @@ def step_mc2(
                 "center_step_result": None,
             })
 
+        invalidates_interaction = any(
+            item["particle_teleport_handled"]
+            and item["spec"].setup_type == "mesh_cloth"
+            and item["spec"].task_id in interaction_participants
+            for item in runtime_items
+        )
+        if invalidates_interaction:
+            existing_interaction = world.backend_resources.get(
+                MC2_INTERACTION_RESOURCE_KEY
+            )
+            if existing_interaction is not None:
+                if not isinstance(existing_interaction, MC2NativeInteractionV0):
+                    raise RuntimeError(
+                        "MC2 interaction resource key is occupied by another owner"
+                    )
+                if not existing_interaction.disposed:
+                    existing_interaction.invalidate()
+
         max_substeps = max(
             (len(item["substeps"]) for item in runtime_items),
             default=0,

@@ -1127,6 +1127,11 @@ class MC2NativeInteractionV0:
     def disposed(self) -> bool:
         return self._handle is None
 
+    def invalidate(self) -> None:
+        self._ensure_live()
+        self._module.mc2_interaction_v0_invalidate(self._handle)
+        self._debug_draw_snapshot = None
+
     def step_group(
         self,
         contexts,

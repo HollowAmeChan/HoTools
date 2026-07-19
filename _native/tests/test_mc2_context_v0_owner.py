@@ -129,6 +129,29 @@ def test_owner_lifecycle_and_readback() -> None:
     assert module.mc2_context_v0_stats()["live"] == baseline
 
 
+def test_interaction_owner_invalidation_is_explicit_and_idempotent() -> None:
+    interaction = native.MC2NativeInteractionV0()
+    try:
+        initial = interaction.inspect()
+        assert initial["invalidation_count"] == 0
+        interaction.invalidate()
+        interaction.invalidate()
+        info = interaction.inspect()
+        assert info["invalidation_count"] == 2
+        for name in (
+            "participant_count",
+            "pair_count",
+            "vertex_count",
+            "primitive_count",
+            "candidate_count",
+            "contact_count",
+            "intersect_record_count",
+        ):
+            assert info[name] == 0
+    finally:
+        interaction.dispose()
+
+
 class _RecordingModule:
     def __init__(self) -> None:
         self.center_args = None
@@ -255,5 +278,7 @@ if __name__ == "__main__":
     print("PASS MC2 mesh static fingerprint without UV layer")
     test_owner_lifecycle_and_readback()
     print("PASS MC2 context V0 Python owner")
+    test_interaction_owner_invalidation_is_explicit_and_idempotent()
+    print("PASS MC2 interaction V0 invalidation")
     test_owner_center_step_packing_dt_guard_and_readback()
     print("PASS MC2 context V0 Center wrapper")

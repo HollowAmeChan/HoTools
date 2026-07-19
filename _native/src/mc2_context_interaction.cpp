@@ -78,6 +78,7 @@ PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args) {
     if (!dict_string(result, "schema", "mc2_interaction_v0") ||
         !dict_i64(result, "schema_version", kSchemaVersion) ||
         !dict_i64(result, "scope_revision", interaction->scope_revision) ||
+        !dict_i64(result, "invalidation_count", interaction->invalidation_count) ||
         !dict_i64(result, "step_count", interaction->step_count) ||
         !dict_i64(
             result,
@@ -130,6 +131,21 @@ PyObject* mc2_interaction_v0_inspect(PyObject*, PyObject* args) {
         return nullptr;
     }
     return result;
+}
+
+PyObject* mc2_interaction_v0_invalidate(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_interaction_v0_invalidate expects 1 argument"
+        );
+        return nullptr;
+    }
+    auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(interaction)) return nullptr;
+    clear_interaction_scope_state(*interaction);
+    ++interaction->invalidation_count;
+    Py_RETURN_NONE;
 }
 
 PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {

@@ -266,6 +266,7 @@ struct Mc2InteractionV0 {
     std::vector<std::uintptr_t> scope_identity;
     std::vector<float> old_positions;
     std::int64_t scope_revision = 0;
+    std::int64_t invalidation_count = 0;
     std::int64_t step_count = 0;
     std::int64_t pair_count = 0;
     std::int64_t candidate_count = 0;

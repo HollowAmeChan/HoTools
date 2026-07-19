@@ -193,9 +193,20 @@ def _set_world_frame(world, frame, previous, generation):
     world.generation = generation
 
 
-def _step(world, task_list, topology_by_id, frame, positions_by_id, generation):
+def _step(
+    world,
+    task_list,
+    topology_by_id,
+    frame,
+    positions_by_id,
+    generation,
+    *,
+    dt=1.0 / 90.0,
+    paused=False,
+):
     previous = frame - 1 if frame > 1 else None
     _set_world_frame(world, frame, previous, generation)
+    world.frame_context.time_scale = 0.0 if paused else 1.0
     inputs = {
         task.task_id: _frame_input(
             task,
@@ -210,7 +221,7 @@ def _step(world, task_list, topology_by_id, frame, positions_by_id, generation):
         world,
         task_list,
         frame_inputs=inputs,
-        dt=1.0 / 90.0,
+        dt=dt,
     )
     assert returned is world and ready is True, status
     return inputs
@@ -1269,7 +1280,7 @@ def _run_self_interaction_soak(objects):
     world = world_types.PhysicsWorldCache()
     generation = 49
 
-    def make_tasks(radius):
+    def make_tasks(radius, teleport_mode=0):
         result = []
         for index, obj in enumerate(objects):
             profile = parameters.make_mc2_particle_profile(
@@ -1279,6 +1290,9 @@ def _run_self_interaction_soak(objects):
                 self_collision_mode=2,
                 self_collision_sync_mode=2,
                 cloth_mass=0.25 + index * 0.5,
+                teleport_mode=teleport_mode,
+                teleport_distance=0.5,
+                teleport_rotation=180.0,
             )
             product_tasks, _names = nodes.physicsMC2MeshClothTask(
                 [obj], profile=profile
@@ -1294,6 +1308,9 @@ def _run_self_interaction_soak(objects):
     }
     positions = {task.task_id: _base_positions(task.sources[0]) for task in tasks}
     original_contexts = None
+    pre_teleport_interaction = None
+    teleport_frame = None
+    interaction_invalidated = False
     trajectory_digest = hashlib.sha256()
     try:
         for frame in range(1, 1801):
@@ -1307,7 +1324,31 @@ def _run_self_interaction_soak(objects):
                     for context in original_contexts
                 )
                 tasks = make_tasks(0.03)
-            _step(world, tasks, topologies, frame, positions, generation)
+            elif teleport_frame is not None and frame == teleport_frame:
+                old_revisions = tuple(
+                    world.solver_slots[task.task_id]
+                    .data["native_context"]
+                    .inspect()["parameter_revision"]
+                    for task in tasks
+                )
+                tasks = make_tasks(0.03, teleport_mode=1)
+                moved = np.array(positions[tasks[0].task_id], copy=True)
+                moved[(3, 7, 11, 15), 0] += 0.6
+                positions[tasks[0].task_id] = moved
+            _step(
+                world,
+                tasks,
+                topologies,
+                frame,
+                positions,
+                generation,
+                dt=(
+                    1.0e-6
+                    if teleport_frame is not None and frame == teleport_frame
+                    else 1.0 / 90.0
+                ),
+                paused=(teleport_frame is not None and frame == teleport_frame),
+            )
             for task in tasks:
                 candidate = _candidate(world, task)
                 trajectory_digest.update(np.asarray(frame, dtype=np.int32).tobytes())
@@ -1324,6 +1365,51 @@ def _run_self_interaction_soak(objects):
                     context.inspect()["parameter_revision"]
                     for context in current_contexts
                 ) == tuple(revision + 1 for revision in old_revisions)
+            if teleport_frame is not None and frame == teleport_frame:
+                for index, task in enumerate(tasks):
+                    slot = world.solver_slots[task.task_id]
+                    info = slot.data["native_context"].inspect()
+                    assert info["parameter_revision"] == old_revisions[index] + 1
+                    teleport = slot.data["particle_teleport_result"]
+                    if index == 0:
+                        assert teleport["mode"] == 1
+                        assert 0 < teleport["trigger_count"] < topologies[
+                            task.task_id
+                        ].particle_count
+                    else:
+                        assert teleport["applied"] is False
+                    assert slot.data["frame_schedule"].update_count == 0
+                invalidated = world.backend_resources[
+                    "mc2_interaction_v0"
+                ].inspect()
+                assert invalidated["invalidation_count"] == (
+                    pre_teleport_interaction["invalidation_count"] + 1
+                )
+                assert invalidated["participant_count"] == 0
+                assert invalidated["pair_count"] == 0
+                assert invalidated["candidate_count"] == 0
+                assert invalidated["contact_count"] == 0
+                assert invalidated["intersect_record_count"] == 0
+                interaction_invalidated = True
+            elif teleport_frame is not None and frame == teleport_frame + 1:
+                rebuilt = world.backend_resources["mc2_interaction_v0"].inspect()
+                assert rebuilt["participant_count"] == 2
+                assert rebuilt["pair_count"] == 1
+                assert rebuilt["candidate_count"] > 0
+            if teleport_frame is None and 1000 <= frame <= 1700:
+                interaction_info = world.backend_resources[
+                    "mc2_interaction_v0"
+                ].inspect()
+                if all(
+                    interaction_info[name] > 0
+                    for name in (
+                        "candidate_count",
+                        "contact_count",
+                        "intersect_record_count",
+                    )
+                ):
+                    pre_teleport_interaction = dict(interaction_info)
+                    teleport_frame = frame + 1
             if frame == 1799:
                 debug_module.request_mc2_debug_capture(
                     world,
@@ -1337,10 +1423,13 @@ def _run_self_interaction_soak(objects):
         interaction = world.backend_resources["mc2_interaction_v0"]
         interaction_info = interaction.inspect()
         assert interaction_info["participant_count"] == 2
-        assert interaction_info["pair_count"] == 1
+        assert interaction_info["pair_count"] == 1, interaction_info
         assert interaction_info["candidate_count"] > 0
         assert interaction_info["contact_count"] <= interaction_info["candidate_count"]
         assert interaction_info["primitive_count"] > 0
+        assert pre_teleport_interaction is not None
+        assert teleport_frame is not None
+        assert interaction_invalidated is True
         for task in tasks:
             slot = world.solver_slots[task.task_id]
             info = slot.data["native_context"].inspect()

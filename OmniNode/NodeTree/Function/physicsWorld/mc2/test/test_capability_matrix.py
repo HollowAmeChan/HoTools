@@ -152,7 +152,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
         or invariant.startswith("teleport_debug_layers_isolated@")
         for invariant in teleport["invariants"]
     )
-    assert "particle_reset_self_history_invalidated@mesh_cloth" in teleport[
+    assert "particle_reset_self_history_invalidated@mesh_cloth" not in teleport[
         "invariants"
     ]
     assert "particle_reset_self_history_invalidated@bone_cloth" not in teleport[
@@ -175,7 +175,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
             f"{invariant}@{setup}" not in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
         )
-    assert "MeshCloth cross-task self history" in by_id[
+    assert "Center inertia fields" in by_id[
         "center_inertia_and_teleport"
     ]["known_gap"]
 

@@ -173,15 +173,25 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "particle_reset_self_history_invalidated",
                 ),
             },
+            {
+                "runner": "test_blender_mc2_constraint_soak.py::_self_interaction_soak",
+                "frames": 1800,
+                "setups": ("mesh_cloth",),
+                "fields": ("teleport_distance", "teleport_mode"),
+                "invariants": (
+                    "finite", "deterministic",
+                    "particle_reset_self_history_invalidated",
+                ),
+            },
         ),
         "known_gap": (
             "Production now evaluates every particle animation base and supplements Mesh "
             "object motion with native component-pose history. The 900-frame product runner "
             "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
-            "velocity clearing, StepBasic alignment and isolated debug. BoneCloth also clears "
-            "non-empty task-local self history in the zero-substep Reset frame. MeshCloth "
-            "cross-task self history still requires a 600+ frame product runner; "
-            "Center inertia fields also retain independent gaps."
+            "velocity clearing, StepBasic alignment and isolated debug. BoneCloth task-local "
+            "and MeshCloth cross-task self histories are invalidated in the zero-substep "
+            "Teleport frame and rebuild on later substeps. Only the independent Center "
+            "inertia fields retain product evidence gaps."
         ),
         "status": "gap",
     },

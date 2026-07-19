@@ -57,6 +57,7 @@ bool expect_int8_scalar_array(const py::Buffer& buffer, const char* name);
 bool rebuild_baseline_step_pose(Mc2ContextV0& context);
 bool is_move(std::uint8_t attribute);
 void clear_self_collision_contacts(Mc2ContextV0& context);
+void clear_interaction_scope_state(Mc2InteractionV0& interaction);
 void rotate_vector_xyzw(const float* rotation, const float* value, float* output);
 Vec3 add(Vec3 first, Vec3 second);
 Vec3 mul(Vec3 value, float scale);
