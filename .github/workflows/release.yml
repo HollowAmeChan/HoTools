@@ -19,12 +19,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install packaging tools
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y rsync zip
-
       - name: Create Blender install ZIP and release
         run: |
           set -euo pipefail
@@ -33,46 +27,16 @@ jobs:
           VERSION="$(date +'%Y%m%d-%H%M%S')"
           RELEASE_TAG="v${VERSION}"
           RELEASE_TITLE="HoTools-${VERSION}"
-          ZIP_NAME="HoTools-${VERSION}.zip"
+          ZIP_45="_dist/HoTools-${VERSION}-Blender-4.5-py311.zip"
+          ZIP_52="_dist/HoTools-${VERSION}-Blender-5.2-py313.zip"
 
-          # Blender 用户安装 zip 里需要有一个固定的 HoTools 根目录。
-          WORK_DIR="$(mktemp -d)"
-          PACKAGE_DIR="${WORK_DIR}/HoTools"
-          mkdir -p "$PACKAGE_DIR"
-          trap 'rm -rf "$WORK_DIR"' EXIT
+          # 每个安装包只携带目标 Blender 使用的 Python ABI 依赖，避免把两套大型
+          # Pillow/OIDN/native runtime 一起塞进同一个 ZIP。
+          python tools/build_release_zip.py --abi py311 --output "$ZIP_45"
+          python tools/build_release_zip.py --abi py313 --output "$ZIP_52"
 
-          # 这里自己打 zip，不使用 GitHub 自动生成的 Source code zip。
-          # Source code zip 会带上开发目录结构，不适合作为 Blender 用户安装包。
-          #
-          # _Lib/py311/HotoolsPackage 和 _Lib/py313/HotoolsPackage 不排除：
-          # 后续 C++ 编译后的 .pyd/.dll 等运行时产物需要跟随安装包发布。
-          #
-          # _native 是 C++ 开发工程目录；最终运行时产物会放到 _Lib/.../HotoolsPackage，
-          # 所以给 Blender 用户的安装包里不需要带 _native 源码和 CMake 中间产物。
-          # 发布边界集中维护在 .releaseignore；测试源码保留在仓库，但不进入安装包。
-          rsync -a --exclude-from=".releaseignore" ./ "$PACKAGE_DIR/"
-
-          # 防止新增测试采用常见命名后悄悄混入发布包。
-          TEST_PATHS="$(
-            find "$PACKAGE_DIR" \
-              \( -type d \( -name test -o -name tests \) \
-              -o -type f \( -name 'test_*.py' -o -name '_test_*.py' -o -name '*_test.py' \) \) \
-              -print
-          )"
-          if [[ -n "$TEST_PATHS" ]]; then
-            echo "Refusing to publish an install ZIP containing tests:" >&2
-            echo "$TEST_PATHS" >&2
-            exit 1
-          fi
-
-          (
-            cd "$WORK_DIR"
-            zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" HoTools
-          )
-
-          # 创建 GitHub Release，并上传给 Blender 用户安装的干净 zip。
-          # GitHub 页面仍会自动显示 Source code (zip/tar.gz)，但用户安装应下载这里上传的 ZIP_NAME。
-          gh release create "$RELEASE_TAG" "$ZIP_NAME" \
+          # GitHub 页面仍会自动显示源码压缩包；用户应下载这里上传的对应 Blender 版本 ZIP。
+          gh release create "$RELEASE_TAG" "$ZIP_45" "$ZIP_52" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE"
         env:

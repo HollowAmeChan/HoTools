@@ -13,13 +13,13 @@ from bpy.props import (
     StringProperty,
 )
 
-if sys.version_info >= (3, 13):
+if sys.version_info[:2] == (3, 13):
     from .._Lib.py313.PIL import Image, ImageDraw
     try:
         from .._Lib.py313 import pyoidn
     except ImportError:
         pyoidn = None
-elif sys.version_info >= (3, 11):
+elif sys.version_info[:2] == (3, 11):
     from .._Lib.py311.PIL import Image, ImageDraw
     try:
         from .._Lib.py311 import pyoidn

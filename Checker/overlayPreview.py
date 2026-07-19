@@ -1,6 +1,7 @@
 from array import array
 import math
 from pathlib import Path
+import sys
 
 import bpy
 import gpu
@@ -9,13 +10,10 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator, Panel
 from gpu_extras.batch import batch_for_shader
 
-try:
+if sys.version_info[:2] == (3, 13):
+    from .._Lib.py313.PIL import Image as PILImage
+elif sys.version_info[:2] == (3, 11):
     from .._Lib.py311.PIL import Image as PILImage
-except Exception:
-    try:
-        from .._Lib.py313.PIL import Image as PILImage
-    except Exception:
-        from PIL import Image as PILImage
 
 
 _ASSET_ROOT = Path(__file__).resolve().with_name("assets")

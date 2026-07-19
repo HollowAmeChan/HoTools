@@ -11,16 +11,18 @@ plugin_dir = os.path.dirname(__file__)
 sys.path.append(plugin_dir)
 lib_dir = os.path.join(plugin_dir, "_Lib")
 sys.path.append(lib_dir)
-if sys.version_info >= (3, 13):
+if sys.version_info[:2] == (3, 13):
     py_lib_dir = os.path.join(lib_dir, "py313")
-elif sys.version_info >= (3, 11):
+elif sys.version_info[:2] == (3, 11):
     py_lib_dir = os.path.join(lib_dir, "py311")
 else:
-    py_lib_dir = None
+    raise RuntimeError(
+        "HoTools supports Blender Python 3.11 and 3.13; "
+        f"found {sys.version_info.major}.{sys.version_info.minor}"
+    )
 
-if py_lib_dir:
-    sys.path.append(py_lib_dir)
-    sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
+sys.path.append(py_lib_dir)
+sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools
