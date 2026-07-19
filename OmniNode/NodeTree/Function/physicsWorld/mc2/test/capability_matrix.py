@@ -141,7 +141,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "object_keep_reset_all_setups_detected",
                 "object_teleport_zero_substep_immediate",
                 "object_reset_pose_exact",
+                "particle_teleport_bidirectional_exact",
+                "particle_keep_offset_exact",
                 "particle_keep_velocity_cleared",
+                "particle_subset_scope_exact",
                 "bone_root_teleport_detected",
                 "teleport_debug_layers_isolated",
                 "teleport_nonunit_positive_scale", "real_writeback_each_frame",
@@ -150,10 +153,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "known_gap": (
             "Production now evaluates every particle animation base and supplements Mesh "
             "object motion with native component-pose history. The 900-frame product runner "
-            "covers object/root events, triggered Keep velocity clearing and isolated debug. "
-            "Bidirectional exact positions for every setup, complete Reset history clearing, "
-            "per-particle Keep offset and within-task subset exactness still require a 600+ "
-            "frame product runner; Center inertia fields also retain independent gaps."
+            "covers object/root events, bidirectional exact subset Keep/Reset, triggered Keep "
+            "velocity clearing, StepBasic alignment and isolated debug. Complete Reset clearing "
+            "from a non-empty self/contact history still requires a 600+ frame product runner; "
+            "Center inertia fields also retain independent gaps."
         ),
         "status": "gap",
     },

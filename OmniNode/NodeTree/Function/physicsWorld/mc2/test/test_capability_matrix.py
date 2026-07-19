@@ -152,12 +152,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
         or invariant.startswith("teleport_debug_layers_isolated@")
         for invariant in teleport["invariants"]
     )
-    for invariant in (
-        "particle_teleport_bidirectional_exact",
-        "particle_keep_offset_exact",
-        "particle_reset_history_cleared",
-        "particle_subset_scope_exact",
-    ):
+    for invariant in ("particle_reset_history_cleared",):
         assert all(
             f"{invariant}@{setup}" in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
@@ -166,13 +161,18 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "bone_root_teleport_detected@bone_cloth" not in teleport["invariants"]
     assert "bone_root_teleport_detected@bone_spring" not in teleport["invariants"]
     for invariant in (
+        "particle_teleport_bidirectional_exact",
+        "particle_keep_offset_exact",
         "particle_keep_velocity_cleared",
+        "particle_subset_scope_exact",
     ):
         assert all(
             f"{invariant}@{setup}" not in teleport["invariants"]
             for setup in ("mesh_cloth", "bone_cloth", "bone_spring")
         )
-    assert "Keep offset" in by_id["center_inertia_and_teleport"]["known_gap"]
+    assert "non-empty self/contact history" in by_id[
+        "center_inertia_and_teleport"
+    ]["known_gap"]
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not any(tether.values())
