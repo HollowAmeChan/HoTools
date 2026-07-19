@@ -554,17 +554,18 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         mc2_nodes.physicsMC2BoneSpringProfile,
     )
     cloth_profile_nodes = profile_nodes[:2]
-    assert all(
-        tuple(inspect.signature(node).parameters) == mc2_nodes._CLOTH_PROFILE_FIELDS
-        for node in cloth_profile_nodes
-    )
+    assert tuple(
+        inspect.signature(mc2_nodes.physicsMC2MeshClothProfile).parameters
+    ) == mc2_nodes._MESH_CLOTH_PROFILE_FIELDS
+    assert tuple(
+        inspect.signature(mc2_nodes.physicsMC2BoneClothProfile).parameters
+    ) == mc2_nodes._BONE_CLOTH_PROFILE_FIELDS
     assert tuple(
         inspect.signature(mc2_nodes.physicsMC2BoneSpringProfile).parameters
     ) == mc2_nodes._SPRING_PROFILE_FIELDS
     for profile_node in cloth_profile_nodes:
         parameters = set(inspect.signature(profile_node).parameters)
         assert "self_collision_enabled" in parameters
-        assert "self_collision_interaction" in parameters
         assert "self_collision_mode" not in parameters
         assert "self_collision_thickness" not in parameters
         assert "spring_enabled" not in parameters
@@ -572,6 +573,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         assert "collision_limit_distance" not in parameters
         assert "wind_influence" not in parameters
         assert "moving_wind" not in parameters
+    assert "self_collision_interaction" in set(
+        inspect.signature(mc2_nodes.physicsMC2MeshClothProfile).parameters
+    )
+    assert "self_collision_interaction" not in set(
+        inspect.signature(mc2_nodes.physicsMC2BoneClothProfile).parameters
+    )
     spring_parameters = set(
         inspect.signature(mc2_nodes.physicsMC2BoneSpringProfile).parameters
     )

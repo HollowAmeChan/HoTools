@@ -178,6 +178,25 @@ def test_bending_method_uses_mc2_epsilon_and_scheduler_is_not_in_abi() -> None:
     assert _field(spring.float_values, runtime.MC2_RUNTIME_FLOAT_FIELDS, "bending_stiffness") == 0.0
 
 
+def test_cross_task_self_collision_is_mesh_only() -> None:
+    profile = parameters.make_mc2_particle_profile(
+        self_collision_mode=2,
+        self_collision_sync_mode=2,
+    )
+    mesh = runtime.make_mc2_runtime_parameters(
+        profile, parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
+    )
+    cloth = runtime.make_mc2_runtime_parameters(
+        profile, parameters.make_mc2_setup_options(names.MC2_SETUP_BONE_CLOTH)
+    )
+    spring = runtime.make_mc2_runtime_parameters(
+        profile, parameters.make_mc2_setup_options(names.MC2_SETUP_BONE_SPRING)
+    )
+    assert _field(mesh.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "self_collision_sync_mode") == 2
+    assert _field(cloth.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "self_collision_sync_mode") == 0
+    assert _field(spring.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "self_collision_sync_mode") == 0
+
+
 def test_packer_freezes_exact_native_dtypes_shapes_and_read_only_arrays() -> None:
     profile = parameters.make_mc2_particle_profile()
     options = parameters.make_mc2_setup_options(names.MC2_SETUP_BONE_CLOTH)

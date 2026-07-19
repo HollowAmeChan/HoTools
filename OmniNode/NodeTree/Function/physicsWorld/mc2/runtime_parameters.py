@@ -15,7 +15,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from .names import MC2_SETUP_BONE_SPRING
+from .names import MC2_SETUP_BONE_SPRING, MC2_SETUP_MESH_CLOTH
 from .parameters import (
     MC2_BONE_SPRING_COLLISION_FRICTION,
     MC2_BONE_SPRING_DISTANCE_STIFFNESS,
@@ -179,6 +179,7 @@ def make_mc2_runtime_parameters(
 
     setup_type = setup_options.setup_type
     is_spring = setup_type == MC2_SETUP_BONE_SPRING
+    is_mesh = setup_type == MC2_SETUP_MESH_CLOTH
     friction = MC2_BONE_SPRING_COLLISION_FRICTION if is_spring else profile.collision_friction
 
     float_map = {
@@ -241,7 +242,7 @@ def make_mc2_runtime_parameters(
         "use_backstop": int(profile.backstop_enabled and not is_spring),
         "collision_mode": 1 if is_spring else profile.collision_mode,
         "self_collision_mode": 0 if is_spring else profile.self_collision_mode,
-        "self_collision_sync_mode": 0 if is_spring else profile.self_collision_sync_mode,
+        "self_collision_sync_mode": profile.self_collision_sync_mode if is_mesh else 0,
     }
     zero_curve = MC2CurveSpec(0.0)
     curve_specs = {

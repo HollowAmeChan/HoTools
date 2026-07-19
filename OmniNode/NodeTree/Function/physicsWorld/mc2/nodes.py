@@ -272,9 +272,13 @@ _PROFILE_INPUT_INIT = {
     "cloth_mass": _profile_input("跨布料自碰撞时用于质量比例的参数。", min_value=0.0, max_value=1.0),
 }
 
-_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
+_MESH_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
     "collision_limit_distance", "collision_limit_curve",
 })
+_BONE_CLOTH_PROFILE_FIELDS = tuple(
+    name for name in _MESH_CLOTH_PROFILE_FIELDS
+    if name != "self_collision_interaction"
+)
 _SPRING_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
     "gravity_direction", "gravity", "gravity_falloff", "tether_compression",
     "distance_stiffness", "distance_stiffness_curve", "bending_stiffness",
@@ -326,7 +330,7 @@ def _make_profile(values: dict, setup_type: str):
 
 
 @omni(**_profile_meta(
-    _CLOTH_PROFILE_FIELDS,
+    _MESH_CLOTH_PROFILE_FIELDS,
     label="MC2 MeshCloth粒子配置",
     description="只显示MeshCloth实际可调字段；输出统一MC2ParticleProfileSpec。Spring字段不进入本节点。",
 ))
@@ -388,7 +392,7 @@ def physicsMC2MeshClothProfile(
 
 
 @omni(**_profile_meta(
-    _CLOTH_PROFILE_FIELDS,
+    _BONE_CLOTH_PROFILE_FIELDS,
     label="MC2 BoneCloth粒子配置",
     description="只显示BoneCloth实际可调字段；输出统一MC2ParticleProfileSpec。Spring字段不进入本节点。",
 ))
@@ -442,7 +446,6 @@ def physicsMC2BoneClothProfile(
     collision_mode: int = 1,
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
-    self_collision_interaction: bool = False,
     cloth_mass: float = 0.0,
 ) -> typing.Any:
     profile_values = dict(locals())
