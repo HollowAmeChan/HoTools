@@ -92,6 +92,12 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert "deterministic@bone_cloth" not in angle_restoration["invariants"]
     assert "deterministic@bone_spring" not in angle_restoration["invariants"]
     assert "deterministic@mesh_cloth" not in angle_restoration["invariants"]
+    assert "angle_restoration_velocity_attenuation@mesh_cloth" not in angle_restoration["fields"]
+    assert "angle_restoration_velocity_attenuation@bone_cloth" in angle_restoration["fields"]
+    assert "angle_restoration_velocity_attenuation@bone_spring" in angle_restoration["fields"]
+    assert "angle_restoration_gravity_falloff@mesh_cloth" in angle_restoration["fields"]
+    assert "velocity_attenuation_response_ordered@mesh_cloth" not in angle_restoration["invariants"]
+    assert "gravity_falloff_response_ordered@mesh_cloth" in angle_restoration["invariants"]
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]

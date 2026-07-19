@@ -180,6 +180,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         ),
         "required_invariants": (
             "finite", "deterministic", "zero_force_rest", "target_direction_exact",
+            "velocity_attenuation_response_ordered",
+            "gravity_falloff_response_ordered",
         ),
         "evidence": ({
             "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
@@ -190,6 +192,12 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "finite", "deterministic", "zero_force_rest",
                 "target_direction_exact", "parameter_hot_update_in_place",
             ),
+        }, {
+            "runner": "test_blender_mc2_constraint_soak.py::mesh_angle_restoration_response",
+            "frames": 600,
+            "setups": ("mesh_cloth",),
+            "fields": ("angle_restoration_velocity_attenuation",),
+            "invariants": ("finite", "velocity_attenuation_response_ordered"),
         }, {
             "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
             "frames": 900,

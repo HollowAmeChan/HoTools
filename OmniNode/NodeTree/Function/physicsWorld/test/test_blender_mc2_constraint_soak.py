@@ -308,6 +308,104 @@ def _angle_restoration_rest_soak(obj):
     print("[PASS] Mesh Angle Restoration: 2 deterministic x 900 frames")
 
 
+def _angle_response_task(obj, *, attenuation):
+    return _task(
+        obj,
+        gravity=0.0,
+        gravity_direction=(0.0, 0.0, -1.0),
+        damping=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=True,
+        angle_restoration_stiffness=0.65,
+        angle_restoration_velocity_attenuation=attenuation,
+        angle_restoration_gravity_falloff=0.0,
+        angle_limit_enabled=False,
+        max_distance_enabled=False,
+        backstop_enabled=False,
+        self_collision_mode=0,
+        spring_enabled=False,
+        teleport_mode=0,
+    )
+
+
+def _run_mesh_angle_response(obj, *, attenuation):
+    world = world_types.PhysicsWorldCache()
+    generation = 48
+    base = _base_positions(obj)
+    target = base.copy()
+    height = max(float(np.max(base[:, 1])), 1.0e-6)
+    depth = base[:, 1] / height
+    target[:, 0] += 0.08 * depth * depth
+    task = _angle_response_task(
+        obj,
+        attenuation=attenuation,
+    )
+    topology = topology_module.build_mc2_topology_spec(task)
+    topology_by_id = {task.task_id: topology}
+    responses = []
+    movements = []
+    trajectory_digest = hashlib.sha256()
+    previous = None
+    try:
+        _step(
+            world, [task], topology_by_id, 1,
+            {task.task_id: base}, generation,
+        )
+        initial_context = world.solver_slots[task.task_id].data["native_context"]
+        for frame in range(2, 602):
+            _step(
+                world, [task], topology_by_id, frame,
+                {task.task_id: target}, generation,
+            )
+            slot = world.solver_slots[task.task_id]
+            context = slot.data["native_context"]
+            assert context is initial_context
+            candidate = _candidate(world, task).world_positions.copy()
+            responses.append(float(np.mean(np.linalg.norm(candidate - base, axis=1))))
+            movements.append(
+                0.0 if previous is None
+                else float(np.mean(np.linalg.norm(candidate - previous, axis=1)))
+            )
+            trajectory_digest.update(candidate.tobytes())
+            previous = candidate
+        return {
+            "responses": np.asarray(responses),
+            "movements": np.asarray(movements),
+            "digest": trajectory_digest.hexdigest(),
+        }
+    finally:
+        world.omni_cache_dispose("mesh_angle_response")
+
+
+def mesh_angle_restoration_response(obj):
+    attenuation_low = _run_mesh_angle_response(
+        obj, attenuation=0.0,
+    )
+    attenuation_high = _run_mesh_angle_response(
+        obj, attenuation=1.0,
+    )
+    np.testing.assert_allclose(
+        attenuation_low["responses"][0],
+        attenuation_high["responses"][0],
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    assert (
+        attenuation_low["responses"][1]
+        >= attenuation_high["responses"][1] + 0.005
+    )
+    low_movement = float(np.sum(attenuation_low["movements"][1:30]))
+    high_movement = float(np.sum(attenuation_high["movements"][1:30]))
+    assert low_movement >= high_movement * 1.5
+    print(
+        "[INFO] Mesh Angle Restoration attenuation: "
+        f"frame3 low/high={attenuation_low['responses'][1]:.9f}/"
+        f"{attenuation_high['responses'][1]:.9f}; "
+        f"movement30 low/high={low_movement:.9f}/{high_movement:.9f}"
+    )
+
+
 def _motion_base_soak(obj):
     world = world_types.PhysicsWorldCache()
     generation = 42
@@ -1094,6 +1192,7 @@ def main():
             _grid("MC2ConstraintSelfB", 0.485),
         )
         _angle_restoration_rest_soak(objects[0])
+        mesh_angle_restoration_response(objects[0])
         motion_base_deterministic(objects[0])
         _task_collider_scope_soak(objects[:2])
         mesh_friction_response(objects[0])
