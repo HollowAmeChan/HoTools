@@ -1222,6 +1222,9 @@ def test_self_collision_intersect_records_commit_only_on_final_substep():
             dtype=np.int32,
         )
         triangles = np.array([[0, 1, 2]], dtype=np.int32)
+        attributes = proxy[4].copy()
+        attributes[3:] = 1
+        proxy[4] = attributes
         proxy[5] = edges
         proxy[6] = triangles
         hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
@@ -1247,6 +1250,8 @@ def test_self_collision_intersect_records_commit_only_on_final_substep():
                 np.full(1, 0x02000000, dtype=np.uint32),
             )
         )
+        primitive_flags[3:5] = 0x24000000
+        primitive_flags[8] = 0x2D000000
         depths = np.concatenate(
             (
                 baseline[7],
@@ -1301,6 +1306,13 @@ def test_self_collision_intersect_records_commit_only_on_final_substep():
         )
         np.testing.assert_array_equal(records, [[3, 4, 0, 1, 2]])
         np.testing.assert_array_equal(particle_flags, np.zeros(5, dtype=np.uint8))
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_debug_self_intersections(
+                context, records
+            ),
+            "final self-collision intersections are not ready",
+        )
 
         hotools_native.mc2_context_v0_step(
             context, 1.0 / 90.0, 1.0, 0.0, 1.0, True
@@ -1313,6 +1325,11 @@ def test_self_collision_intersect_records_commit_only_on_final_substep():
             context, records, particle_flags, current_primitive_flags
         )
         np.testing.assert_array_equal(particle_flags, [0, 0, 0, 1, 1])
+        debug_records = np.empty((1, 5), dtype=np.int32)
+        hotools_native.mc2_context_v0_read_debug_self_intersections(
+            context, debug_records
+        )
+        np.testing.assert_array_equal(debug_records, [[3, 4, 0, 1, 2]])
 
         update_dynamic(context, 3, 0, positions, rotations)
         step(context, 1.0 / 90.0, simulation_power_z=0.0)
@@ -1338,6 +1355,38 @@ def test_self_collision_intersect_records_commit_only_on_final_substep():
         )
         np.testing.assert_array_equal(crossing_row, [8])
         assert current_primitive_flags[crossing_row[0]] & 0x7 == 0x3
+
+        near_positions = positions.copy()
+        near_positions[3] = [1.5, 1.5, 1.0]
+        near_positions[4] = [1.5, 1.5, -1.0]
+        update_dynamic(context, 4, 0, near_positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+        observed_candidate = False
+        for frame_index in (5, 6):
+            update_dynamic(context, frame_index, 0, near_positions, rotations)
+            hotools_native.mc2_context_v0_step(
+                context, 1.0 / 90.0, 1.0, 0.0, 1.0, False
+            )
+            candidate_info = hotools_native.mc2_context_v0_inspect(context)
+            hotools_native.mc2_context_v0_step(
+                context, 1.0 / 90.0, 1.0, 0.0, 1.0, True
+            )
+            if candidate_info["self_intersect_record_count"] == 0:
+                continue
+            observed_candidate = True
+            rejected_info = hotools_native.mc2_context_v0_inspect(context)
+            assert rejected_info["self_intersect_record_count"] == 0, rejected_info
+            assert rejected_info["self_intersect_particle_count"] == 0
+            rejected_records = np.empty((0, 5), dtype=np.int32)
+            hotools_native.mc2_context_v0_read_self_collision_intersections(
+                context, rejected_records, particle_flags, current_primitive_flags
+            )
+            hotools_native.mc2_context_v0_read_debug_self_intersections(
+                context, rejected_records
+            )
+            break
+        assert observed_candidate
     finally:
         hotools_native.mc2_context_v0_free(context)
 

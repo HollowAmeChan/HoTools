@@ -718,7 +718,7 @@ def physicsMC2Step(
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
-        "show_self_contacts": {"description": "自碰4：红=接触 灰=禁用 洋红=穿插"},
+        "show_self_contacts": {"description": "自碰4：红=接触 灰=禁用\n洋红=最终确认的几何穿插"},
         "show_output": {"description": "显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},
@@ -732,7 +732,10 @@ def physicsMC2Step(
         "紫色是root=-1的无根Move粒子，黄色点是ZeroDistance。白线分隔不同Fixed根，"
         "橙线表示异常大的局部深度跳变，红线表示深度逆序或parent/root不一致。"
         "该模式只显示当前真实baseline，不代表Motion距离或骨链层级。\n\n"
-        "自碰1到4对应检测流水线，不是四种算法。"
+        "自碰1到4对应检测流水线，不是四种算法。自碰4中红色是实际厚度接触，"
+        "灰色是禁用接触，洋红只表示final线段-三角形测试确认的几何穿插。"
+        "独立穿插检测把排序后的Edge分成奇偶两组跨帧扫描，因此真实命中也只在"
+        "对应分片帧显示；这种规律切换不是普通EE/PT接触停止，也不是浮点随机。"
     ),
 )
 def physicsMC2DebugDraw(

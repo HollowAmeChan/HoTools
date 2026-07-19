@@ -80,13 +80,14 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 
 - MC2 FullMesh 自碰不是单一接触算法，而是 Point-Triangle、Edge-Edge contact 加独立 Intersect 检测/修正。
 - MC2 源码将该功能标为 Beta2；fork 中 contact 固定迭代 4 次，Intersect 分批检测，`SelfCollisionIntersectDiv = 2`。
-- 当前 debug 的洋红线来自本帧Edge-Triangle broadphase record，不等于普通厚度接触，也不等于最终几何测试确认的穿插。`solve_self_collision_intersections_final()`之后的particle intersect flag才表示该record通过线段-三角形测试；renderer目前无条件绘制全部record，属于错误的结果语义。红箭头来自 contact 结果；边界附近在厚度范围内也可能形成 contact。
+- 旧debug曾把本帧Edge-Triangle broadphase record全部画成洋红，导致候选被误解为最终穿插。当前final阶段会原地剔除未通过线段-三角形测试的record，debug专用readback也只允许读取final结果；洋红现表示最终确认命中。红箭头来自普通contact结果；边界附近在厚度范围内也可能形成contact。
 - 手测反例仍然有效：拓扑无交叉、无非流形的干净单层网格中，红色 contact 箭头主要密集出现在顶点密度较高区域，并伴随持续微动；这与洋红 intersection record 是两个问题。现有 long-run 只断言有 contact/intersection 和数值有限，没有证明密度无关性、误报率、接触 churn 或可见静置质量。
 - 生产审计确认一个直接根因：旧过滤只拒绝primitive共享同一个particle，没有拒绝两个primitive的particle由真实proxy edge直接相邻。密集单层曲面因此会把本应由结构约束维持的一环邻居送入EE/PT contact，也会送入独立intersection记录。
 - 当前native在self static上传时从final proxy edges一次性生成排序去重的粒子邻接键；task内candidate和intersection共同拒绝共享粒子或一环邻接的primitive。该表不进入逐帧构建，不产生debug payload，也不应用于不同owner的跨task interaction。
 - 3.11完整context runner已经覆盖：断开的远邻Edge-Edge与Point-Triangle仍产生接触；一环相连的Edge-Edge、Point-Triangle及Edge-Triangle intersection全部被排除；原跨帧真实穿插历史仍保留。该证据关闭“一环完全未过滤”的实现缺口，但不能替代原密集单层模型的人工静置复测。
 - 实际密集单层模型首轮复验确认：洋红record和红色contact箭头都明显减少，边缘持续跳动且不收敛的现象几乎消失。这证明一环缺口是主要真实扰动源之一，但仍需定量记录剩余contact churn和长时RMS速度后关闭D-04。
-- 剩余洋红线的规律闪烁不是优先归因于浮点随机性。生产路径按`frame % 2`每帧只检测奇数或偶数Edge，目的是把昂贵的Edge-Triangle检测摊到两帧；record又在每次检测前清空，因此当前候选视图必然隔帧变化。普通EE/PT contact不使用该二分显示节奏。
+- 洋红线的规律闪烁不是优先归因于浮点随机性。生产路径按`frame % 2`每帧只检测grid排序后索引为奇数或偶数的Edge，目的是把昂贵的Edge-Triangle检测摊到两帧；record又在每次检测前清空，因此真实命中也只会在其分片被扫描的帧出现。普通EE/PT contact不使用该二分节奏。若同一奇偶相位、相同输入仍随机翻转，才继续审计浮点边界。
+- 新帧开始生成穿插候选时必须立即撤销上一帧的`self_intersect_flags_ready`，本帧final测试完成后再发布。上一帧particle flags可继续供solver内部历史使用，但debug专用readback不得用旧ready读取新record；该发布时序已经进入native门卫与自动回归。
 
 ### 需要先做的审计
 
@@ -106,7 +107,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 ### Debug 重组
 
 - 一级 `自碰接触`：只显示当前实际施加修正的 contact、法线、修正量和参与质量。
-- 一级 `几何交叉`：只显示final线段-三角形测试确认命中的记录；洋红必须明确表示“几何穿越命中”，不是普通接触或broadphase record。
+- 一级 `几何交叉`：已只显示final线段-三角形测试确认命中的记录；洋红表示“几何穿越命中”，不是普通接触或broadphase record。
 - 高级 `自碰形状`、`宽相网格`、`宽相候选`：保留给算法审计，默认关闭。
 - 高级 `穿插扫描候选`：低亮度表达当前奇/偶Edge分片及broadphase record。若提供稳定观察，只能在renderer合并最近两帧并按年龄淡出，必须标注为两帧观察窗，不能冒充本帧solver状态。
 - 每种模式显示本帧新增/持续/失效状态，避免闪烁被误读成稳定接触。

@@ -2222,6 +2222,7 @@ void detect_self_collision_intersections_once(Mc2ContextV0& context) {
     }
     context.self_intersect_records.clear();
     context.self_intersect_detection_ready = false;
+    context.self_intersect_flags_ready = false;
     context.self_intersect_detection_frame = context.frame;
     context.self_intersect_detection_generation = context.generation;
     if (!self_collision_intersect_enabled(context)) {
@@ -2343,10 +2344,13 @@ void solve_self_collision_intersections_final(Mc2ContextV0& context) {
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
     context.self_particle_intersect_flags.assign(vertex_count, static_cast<std::uint8_t>(0));
     if (context.state_positions.size() != vertex_count * 3) {
+        context.self_intersect_records.clear();
         context.self_intersect_flags_ready = false;
         return;
     }
     const auto record_count = context.self_intersect_records.size() / 5;
+    std::vector<std::int32_t> confirmed_records;
+    confirmed_records.reserve(context.self_intersect_records.size());
     for (std::size_t record = 0; record < record_count; ++record) {
         const auto* particles = context.self_intersect_records.data() + record * 5;
         Vec3 p = load_vector3(context.state_positions, static_cast<std::size_t>(particles[0]));
@@ -2375,7 +2379,13 @@ void solve_self_collision_intersections_final(Mc2ContextV0& context) {
         if (w < 0.0f || v + w > d) continue;
         context.self_particle_intersect_flags[static_cast<std::size_t>(particles[0])] = 1;
         context.self_particle_intersect_flags[static_cast<std::size_t>(particles[1])] = 1;
+        confirmed_records.insert(
+            confirmed_records.end(),
+            particles,
+            particles + 5
+        );
     }
+    context.self_intersect_records.swap(confirmed_records);
     context.self_intersect_flags_ready = true;
     ++context.self_intersect_solve_count;
 }

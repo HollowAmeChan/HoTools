@@ -186,7 +186,7 @@ MeshCloth与BoneCloth产品只公开一个半径模型：`particle_radius = prof
 
 Task内self collision的拓扑排除以final proxy edges为事实源。self static上传时native一次性生成排序去重的一环粒子邻接键；EE/PT candidate和Edge-Triangle intersection都拒绝共享particle或任意端点一环相邻的primitive。该规则避免同一连续曲面的结构邻居互相排斥，不扩展到不同owner的跨task interaction，也不为debug增加逐帧生产。自动回归已经证明断开的远邻接触与真实穿插仍保留、一环三类误报被拒绝；原密集单层模型的静置和contact churn仍需人工复验，不能据此把D-04标记为完全关闭。
 
-独立Edge-Triangle穿插检测按`frame % 2`在奇偶Edge之间跨帧时间分片，以降低每帧窄相成本；普通EE/PT厚度contact仍每个真实step执行。`self_intersect_records`是当前分片经过grid/AABB与邻接过滤后的broadphase record，final线段-三角形测试命中由particle intersect flags表达。当前renderer把全部record画成洋红结果会产生规律隔帧闪烁，属于待修debug语义，不得解释为浮点随机或已确认穿插；产品应把候选与final命中拆开，稳定两帧观察只能作为明确标注的renderer窗口。
+独立Edge-Triangle穿插检测按`frame % 2`在grid排序后索引为奇数/偶数的Edge之间跨帧时间分片，以降低每帧窄相成本；普通EE/PT厚度contact仍每个真实step执行。`self_intersect_records`在非final阶段保存当前分片经过grid/AABB与邻接过滤的broadphase record，final线段-三角形测试后原地剔除未命中项，并设置particle intersect flags；debug专用readback只允许读取final结果，所以洋红现只表示确认穿插。新帧候选生成开始时必须撤销上一帧final-ready，本帧final完成后才重新发布；内部历史flags可保留，但不能授权debug读新候选。真实命中仍会按分片隔帧显示，这种规律切换不得解释为浮点随机或普通contact停止；稳定两帧观察只能作为明确标注的renderer窗口。
 
 #### 实际step中的消费顺序
 

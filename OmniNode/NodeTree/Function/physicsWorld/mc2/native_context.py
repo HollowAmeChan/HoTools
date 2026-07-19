@@ -1063,9 +1063,8 @@ class MC2NativeContextV0:
                     "contact_normals": self._debug_array(normals),
                 })
                 readbacks += 1
-            if include_self_contacts and (
-                bool(info.get("self_intersect_detection_ready", False))
-                or bool(info.get("self_intersect_flags_ready", False))
+            if include_self_contacts and bool(
+                info.get("self_intersect_flags_ready", False)
             ):
                 record_count = int(info.get("self_intersect_record_count", 0) or 0)
                 records = np.empty((record_count, 5), dtype=np.int32)

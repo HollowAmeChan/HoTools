@@ -590,8 +590,8 @@ PyObject* mc2_context_v0_read_debug_self_intersections(PyObject*, PyObject* args
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
-    if (!context->self_intersect_detection_ready && !context->self_intersect_flags_ready) {
-        PyErr_SetString(PyExc_RuntimeError, "self-collision intersections are not ready");
+    if (!context->self_intersect_flags_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "final self-collision intersections are not ready");
         return nullptr;
     }
     const auto record_count = static_cast<Py_ssize_t>(
