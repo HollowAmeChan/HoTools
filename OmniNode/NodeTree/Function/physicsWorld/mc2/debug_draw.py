@@ -98,9 +98,9 @@ _DEPTH_COLORS = (
     (0.04, 0.92, 0.68, 0.96),
     (0.24, 0.96, 0.32, 0.96),
     (0.72, 0.96, 0.16, 0.96),
-    (1.00, 0.82, 0.08, 0.96),
-    (1.00, 0.48, 0.04, 0.96),
-    (1.00, 0.10, 0.06, 1.00),
+    (1.00, 0.86, 0.05, 0.96),
+    (1.00, 0.62, 0.02, 0.96),
+    (1.00, 0.30, 0.00, 1.00),
 )
 for _depth_index, _depth_color in enumerate(_DEPTH_COLORS):
     _COLORS[f"depth_{_depth_index}"] = _depth_color
@@ -630,6 +630,8 @@ def _append_depth_batches(batches, point_batches, topology, positions, limit):
         left = int(left)
         right = int(right)
         if min(left, right) < 0 or max(left, right) >= count:
+            continue
+        if int(attributes[left]) & 0x01 and int(attributes[right]) & 0x01:
             continue
         left_root = effective_root(left)
         right_root = effective_root(right)

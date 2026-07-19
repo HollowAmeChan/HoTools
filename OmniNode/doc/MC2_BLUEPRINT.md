@@ -284,7 +284,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 模式 | 冻结数据源 | 表达 |
 |---|---|---|
 | StepBasic参考姿态 | C++ context的`step_basic_positions`与真实topology edges | Distance、Angle和bone输出共同消费的结构参考姿态；用于和动画Motion BasePosition区分 |
-| 粒子深度 | C++ context已有的`baseline_depths/root_indices/parent_indices`按请求readback | 0..1色带显示真实曲线采样坐标；粉色=Fixed，紫色=无根Move，黄色=ZeroDistance，白线=跨root边，橙线=局部突跳，红点/线=parent或深度不变量异常。选中路径、累计长度和归一化分母的数值标注仍待后续实现 |
+| 粒子深度 | C++ context已有的`baseline_depths/root_indices/parent_indices`按请求readback | 蓝到橙的0..1色带显示真实曲线采样坐标；粉色=Fixed，紫色=无根Move，黄色=ZeroDistance，白线=至少含一个Move的跨root边，橙线=局部突跳，纯红点/线=parent或深度不变量异常。选中路径、累计长度和归一化分母的数值标注仍待后续实现 |
 | 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 绿色箭头；长度为实际加速度乘`0.02`，已包含Center重力衰减与组件scale |
 | 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分保存速度，橙色为本步真实位移速度，长度均乘`0.03`；用于区分阻尼/摩擦/限速结果和真实运动 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
