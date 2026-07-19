@@ -555,7 +555,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
-- 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器；backend在下一次真实推进后冻结快照。same-frame、reset-only和无推进调用不得伪造新快照。
+- 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器。substep中间态在下一次真实推进后冻结；若某层观察的是scheduler前的新帧判定（例如Teleport阈值/触发），domain必须显式声明其producer阶段，并允许在zero-substep新帧冻结。same-frame和没有到达声明生产阶段的调用不得伪造新快照。
 - 未登记请求时禁止执行中间态native readback和逐项viewport几何展开。持续显示由`always_run`调试节点逐帧重新登记一次性请求表达，不把调试成本永久塞进solver主循环。
 - renderer只消费冻结的只读数组/普通值与真实result stream，禁止读取当前RNA或从最终输出反推约束、碰撞、teleport等backend过程；world dispose必须清除对应draw store。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
@@ -1039,7 +1039,7 @@ C++ native context:
 - dispose 必须幂等（多次调用不崩溃）。
 - debug snapshot 只输出数量统计和状态摘要，不直接暴露 C++ 内部对象。
 - solver 自有 debug draw 必须使用 result stream 或 `read_{solver}_debug()` 读回的后端真实快照。不得在 Python 绘制层根据 Blender 当前对象、属性面板或 result matrix 重新推导一套可能与后端不一致的状态。
-- solver可视化debug默认采用SpringBone VRM式隐式请求：debug入口声明world/scope、语义层和过滤条件，自动发现匹配solver slot，不要求用户为每个constraint或中间数组接线。请求在后续真实推进帧捕获；一次性请求消费后清除，只有continuous模式持续readback。
+- solver可视化debug默认采用SpringBone VRM式隐式请求：debug入口声明world/scope、语义层和过滤条件，自动发现匹配solver slot，不要求用户为每个constraint或中间数组接线。请求在该语义层声明的后续生产阶段捕获；substep层等待真实推进，scheduler前帧判定层可在zero-substep新帧捕获。一次性请求消费后清除，只有continuous模式持续readback。
 - 无debug请求时不得执行native中间态readback、per-item对象展开或viewport几何构建。复杂solver通过分层snapshot、按需buffer和renderer registry扩展，不通过常驻全量快照换取实现简单。
 - 每个会改变空间边界、连接membership或重要分支判定的用户参数，必须在solver专项验收中登记可观测方式：直接绘制、数值overlay/diagnostic或明确说明其为何不是空间量。debug coverage属于产品验收，不以“MC2/第三方原版没有可视化”作为豁免。
 - 同一产品词下存在多个真实基准时必须拆分模式。MC2的Motion BasePosition来自animated base pose，Angle Restoration target来自StepBasic父子目标，Final Output Offset来自result/writeback；三者不得共用一个模糊Motion快照。外部碰撞debug必须消费每个task实际上传、经过owner/group/type过滤后的collider frame，不能直接绘制world全量collider snapshot。
