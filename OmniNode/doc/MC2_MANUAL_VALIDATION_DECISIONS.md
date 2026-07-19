@@ -26,28 +26,30 @@
 
 | ID | 状态 | 决策 | 当前建议 |
 |---|---|---|---|
-| D-01 | **已决策** | Teleport 判定模型 | 回退逐粒子实验，恢复 MC2 组件级位移/旋转判定；完整复核 Reset/Keep 清理链路 |
+| D-01 | **已决策** | Teleport 判定模型 | 整个 task 统一触发；首个 Fixed 粒子为判定基准，无 Fixed 时回退物体原点；完整复核 Reset/Keep 清理链路 |
 | D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
 | D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
 | D-04 | 待确认 | 自碰静置质量标准 | 单层无穿插布料不应持续可见微动；先审计误报和 contact churn，再定容差 |
 | D-05 | 待确认 | 参数从 Profile 移到 Task 的规则 | 不批量搬迁；先按是否逐深度、是否可复用、是否属于交互/身份分组 |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
+| D-08 | **方向已决策** | Baseline depth 审计 | 先实现逐粒子深度高级调试并手测，再决定父链代价或构建后修正；不得先凭现象改算法 |
+| D-09 | **已决策** | 参数说明载体 | 蓝本属性表与三个 Profile 节点长注释同步；socket tooltip 只保留短摘要和枚举映射 |
 
 ## P0：Teleport 回退与高速穿模
 
 ### 已确定的产品结论
 
-逐粒子 Teleport 是一次产品实验，手测结果不理想，现决定回退。MC2 原版在 `TeamManager.SimulationCalcCenterAndInertiaAndWind()` 中使用整个 component 的 `frameDeltaVector` 和 `frameDeltaAngle`，距离或角度任一超过阈值即给整个 team 设置 Reset 或 Keep。后续实现不得继续扩张逐粒子阈值、局部触发或逐粒子状态 UI。
+逐粒子 Teleport 是一次产品实验，手测结果不理想，现决定回退。MC2 原版在 `TeamManager.SimulationCalcCenterAndInertiaAndWind()` 中使用整个 component 的 `frameDeltaVector` 和 `frameDeltaAngle`，距离或角度任一超过阈值即给整个 team 设置 Reset 或 Keep。OmniMC2 仍保持整个 task 统一触发，不扩张逐粒子阈值、局部触发或逐粒子状态 UI。
 
-组件判定基点沿用 MC2 的 component/center 合同。固定粒子、首个 Fixed 或物体原点不作为新的默认模型；只有在 Blender 侧无法稳定提供 component pose 时才重新提案，不在回退中顺手引入第二种产品差异。
+OmniMC2 的判定基准明确采用**最终 proxy 顺序中的首个 Fixed 粒子**；比较该粒子前后两帧的动画/base world pose。若 task 没有任何 Fixed 粒子，则回退为模拟对象原点的 world pose；Bone task 使用 Armature Object 原点。这个选择必须稳定且可解释，不允许按距离、当前接触或哈希顺序每帧更换。任一位移或旋转阈值触发后，Reset/Keep 仍作用于整个 task。该规则是 Blender 产品层相对 MC2 Team Center 的明确差异点。
 
 ### 当前确认的问题
 
 - 当前 C++ `apply_particle_teleport` 逐粒子比较旧/新 dynamic base，debug 也逐粒子保存阈值球、方向和状态；这条路径需要整体撤销或降为内部实验代码后删除。
 - 当前测试证明的是局部数组位移、速度归零、部分 self 历史失效等内部断言。它没有证明高速移动后布料不会继续高速运动或穿过碰撞体。
 - 手测已给出反例：触发 Reset/Keep 后仍可能高速穿模，说明缓存/时序清理链不完整，或者同帧碰撞体与粒子历史没有按 MC2 原版一起重置。
-- 现有阈值/状态绘制停在旧位置并只变色，是逐粒子实验的直接产物。回退后应改成单个组件级旧姿态、新姿态、距离/角度阈值与 team 状态。
+- 现有阈值/状态绘制停在旧位置并只变色，是逐粒子实验的直接产物。回退后应改成单个判定基准的身份、旧姿态、新姿态、距离/角度阈值与 task 状态。
 
 ### 必须对照 MC2 重审的状态
 
@@ -64,11 +66,12 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 
 ### 新验收标准
 
-- MeshCloth、BoneCloth、BoneSpring 分别覆盖组件平移和旋转阈值，Reset/Keep 各一组。
+- MeshCloth、BoneCloth、BoneSpring 分别覆盖基准平移和旋转阈值，Reset/Keep 各一组；有多个 Fixed 时必须证明只使用稳定的首个 Fixed。
+- 每种 setup 都覆盖“存在 Fixed”和“无 Fixed 回退物体原点”；移动非基准粒子不得单独触发，移动基准必须触发整个 task。
 - 触发当帧即完成处理，不能等下一视觉帧；zero-substep 也必须正确。
 - 有静态和移动 collider；大位移后不得出现由旧粒子或旧 collider history 造成的高速穿透。
 - task 内自碰和跨 task 自碰分别验证历史已失效，下一帧可正常重新建 contact。
-- debug 只画一个组件级判定：旧/新 component pose、距离阈值、角度阈值、实际测量和最终状态。
+- debug 只画一个 task 级判定：基准类型与 proxy index、旧/新 pose、距离阈值、角度阈值、实际测量和最终状态。
 - 自动测试必须增加“碰撞体另一侧无高速粒子”“触发后实际速度有界”等外部结果断言，不能再只查内部 reset 数组。
 
 ## P0：自碰误报、闪烁与持续微动
@@ -78,16 +81,18 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 - MC2 FullMesh 自碰不是单一接触算法，而是 Point-Triangle、Edge-Edge contact 加独立 Intersect 检测/修正。
 - MC2 源码将该功能标为 Beta2；fork 中 contact 固定迭代 4 次，Intersect 分批检测，`SelfCollisionIntersectDiv = 2`。
 - 当前 debug 的洋红线来自 intersection record，不等于普通厚度接触，也不等于“该处本帧一定可肉眼看到穿插”。红箭头来自 contact 结果；边界附近在厚度范围内也可能形成 contact。
-- 手测反例仍然有效：干净单层低模持续出现大量洋红闪烁和边缘红箭头，开启自碰后无法静置收敛。现有 long-run 只断言有 contact/intersection 和数值有限，没有证明误报率、接触 churn 或可见静置质量。
+- 手测反例仍然有效：拓扑无交叉、无非流形的干净单层网格中，红色 contact 箭头主要密集出现在顶点密度较高区域，并伴随持续微动；这与洋红 intersection record 是两个问题。现有 long-run 只断言有 contact/intersection 和数值有限，没有证明密度无关性、误报率、接触 churn 或可见静置质量。
 
 ### 需要先做的审计
 
 1. 用完全平面、轻微弯曲、开边界、闭合裙摆、双层重叠五类最小网格，记录 primitive/candidate/contact/intersection 数量与身份变化。
 2. 核对相邻 triangle、共享 edge、共享 vertex、同一 primitive、同面近共面结构的排除规则是否与 MC2 一致。
-3. 核对 Blender 代理三角方向、法线、负缩放、非流形边和重复顶点是否制造假 intersection。
+3. 核对 Blender 代理三角方向、法线、负缩放、非流形边和重复顶点是否制造假 intersection；已确认干净样例无非流形或拓扑交叉时，不得继续把密集区红箭头归因于坏拓扑。
 4. 分开统计“新建 contact”“持续 contact”“失效 contact”“intersection 新增/消失”，不能只看总数。
 5. 比较 self off/on 在零重力、无动画、无外碰时的 RMS 速度、最大位移、能量衰减和 600/1800 帧稳定值。
 6. 判断微动来自接触厚度、交叉修正、缓存抖动、约束顺序还是 inverse mass/cloth mass。
+7. 对同一 world-space 曲面做低/中/高三档重拓扑，保持材质、厚度和外形不变，比较单位面积 candidate/contact、RMS 速度与 contact churn；顶点变密本身不得让接触数量或修正能量失控。
+8. 记录 self thickness 与局部一环边长的比例，核对共享 vertex/edge 及近邻 k-ring 排除是否足以阻止同一连续曲面在密集区互相排斥，并检查同一几何接触是否被 PT/EE 或多个 primitive 重复累计。
 
 ### 待确认的产品标准 D-04
 
@@ -120,6 +125,28 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 | 最终输出 | 最终真正写回 Blender 的偏移是什么 | 保留现有模式 |
 
 StepBasic、Motion Base、primitive、grid、candidate 等放入“高级中间态”。大段 `omni_description` 可放表格和完整解释；socket tooltip 保持短句，避免 Blender 截断。
+
+### D-08：逐粒子 Baseline Depth（优先实施）
+
+用户已观察到旋转布料时远端 Mesh 粒子异常移动，需要先判断是 depth 构建错误，还是 depth consumer/Center 惯性使用错误。当前 OmniMC2 与 MC2 源码均先从 Fixed 分层建立 parent tree，再沿 parent chain 累加真实几何边长，并用整个 task 的最大 root length 归一化到 `0..1`。因此“边长加权”已经存在于最终 depth 数值中，但当前父链扩张并不是累计边长最短路径：Fixed 邻接优先短边，后续 parent 主要按与祖父方向的夹角连续性选择。
+
+第一优先级是新增高级 `粒子深度` 模式，而不是直接改算法：
+
+- 每个有效粒子显示真实 `baseline_depths` 的 `0..1` 色带；Fixed 明确显示为根，Move 点必须能肉眼比较近根与远端。
+- 同时显示稳定的 `root_index`/根归属边界；多 Fixed 区域不能只靠一条全局渐变掩盖归属切换。
+- 高亮 parent-child 深度逆序、局部突跳、Move 粒子无可达 Fixed、零长度链及同一局部区域异常跨根等诊断项。无 Fixed 时当前 baseline 不会生成物体原点根；所有 Move 的 `root=-1/depth=0` 必须被明确标为无根，不能和 Teleport 的物体原点回退混淆。
+- 默认点视图保持轻量；选中/抽样粒子时才显示数值、parent 线、累计路径长度和归一化分母，避免全屏文字与连线。
+- 该模式首先复用 solver 已有的 static depth/root/parent 数据；只有用户显式请求高级诊断时才组装绘制 payload，不得为了 debug 在 C++ 常驻生产另一份深度。
+
+肉眼与最小场景证据取得后，再分别评估：父链建立是否应使用累计拓扑边长代价、方向连续性与长度如何联合、全 task 最大值是否应改为按 root/component 归一化，以及是否需要构建后的反向/单调一致性修正。反向修正目前是候选，不是既定答案；任何改法都必须同时检查阻尼、半径、Distance/Angle、Motion/Backstop 曲线和深度惯性等全部 consumer。
+
+最小审计矩阵至少包含：同一曲面的均匀/非均匀重拓扑、跨区域长边或三角斜边、多个 Fixed 岛且链长差异很大、相同拓扑仅旋转组件，以及相同 world 形状改变细分密度。每个场景对比当前“拓扑层 + 方向连续性”父链、累计边长候选父链与只做构建后一致性检查三条路径；先验证 root 身份稳定、沿 parent 单调、局部变化连续和旋转不改变 static depth，再比较最终运动。不得用最终看起来更顺眼替代这些不变量。
+
+### 参数长说明与蓝本同步（已决策）
+
+三种粒子配置节点允许在 `omni_description` 中使用长文本和表格；用户无需只靠易截断的 socket tooltip 理解参数。`MC2_BLUEPRINT.md` 的粒子属性表是语义基准，每个 setup 节点只展示自己实际公开且有效的字段，内容必须同步说明用途、单位/范围、实际 consumer、曲线/depth 采样、无效条件、相关 debug 模式。socket tooltip 只保留短摘要和枚举映射。
+
+实现时应建立可校验的结构化说明 owner 或同步测试，禁止蓝本、三个节点长说明和 tooltip 各自手写后长期漂移。字段公开性或 consumer 变化时，说明同步属于同一提交的完成条件。
 
 ### 所有模式的共同门禁
 
@@ -295,22 +322,24 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **先冻结决策**：优先确认 D-04 自碰质量标准与 D-05 参数归属；D-01/D-02/D-03/D-06 方向已定，D-07 已确认。
-2. **重开验收状态**：能力矩阵撤销 Teleport、自碰静置和 debug usability 的 verified 结论，加入本文件的新不变量。
-3. **Teleport 回退**：按 MC2 组件级路径重做处理与 debug，先解决高速穿模和跨缓存清理。
-4. **自碰最小场景审计**：先判断 false positive/micro-motion 根因，再改算法或容差。
-5. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
-6. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
-7. **说明与长文本**：socket 保持短说明；Debug 节点 `omni_description` 放模式表、颜色和“何时不会显示”。
-8. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
-9. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
-10. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
+1. **先冻结决策**：优先确认 D-04 自碰质量标准与 D-05 参数归属；D-01/D-02/D-03/D-06/D-08/D-09 方向已定，D-07 已确认。
+2. **粒子深度调试**：先以显式按需模式展示真实 depth/root/parent 和异常项，让用户肉眼判断远端异常是否来自深度。
+3. **重开验收状态**：能力矩阵撤销 Teleport、自碰静置和 debug usability 的 verified 结论，加入本文件的新不变量。
+4. **Teleport 回退**：按“首个 Fixed，否则物体原点”的 task 级路径重做处理与 debug，先解决高速穿模和跨缓存清理。
+5. **自碰密度最小场景审计**：先判断 density-dependent false contact/micro-motion 根因，再改算法或容差。
+6. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
+7. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
+8. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。
+9. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
+10. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
+11. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
 
 ## 完成定义
 
 - 用户无需阅读 C++ 名词就能从一级 debug 判断启用、接近阈值、触发、修正和最终结果。
 - 所有高级中间态都有准确空间/时间语义，静止或不跟随时能解释是合同还是 bug。
-- Teleport 恢复组件级模型，并在真实碰撞场景阻止传送产生的高速穿模。
+- 粒子深度模式能定位 root、连续渐变、局部逆序/突跳与无可达 Fixed，并据此关闭或证实远端异常的 depth 假设。
+- Teleport 恢复单基准、整 task 触发模型，并在真实碰撞场景阻止传送产生的高速穿模。
 - 单层自碰静置质量达标，洋红 intersection 与红色 contact 不再大量无解释闪烁。
 - 曲线、硬钳制、惯性、法线轴和自碰质量均能在对应结果模式中被观察。
 - debug 关闭时不存在为绘制新增的常驻生产、复制或 readback。
