@@ -384,7 +384,7 @@ def _append_slot_batches(
     if filters["show_center"]:
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
     if filters["show_teleport_threshold"] or filters["show_teleport_status"]:
-        _append_particle_teleport_batches(
+        _append_task_teleport_batches(
             batches,
             point_batches,
             snapshot.get("teleport") or {},
@@ -1107,7 +1107,7 @@ def _append_angle_limit_batches(batches, motion, limit):
     _batch(batches, lines, "angle_limit", 1.4)
 
 
-def _append_particle_teleport_batches(
+def _append_task_teleport_batches(
     batches, point_batches, teleport, filters, limit
 ):
     if "reference_position" in teleport:

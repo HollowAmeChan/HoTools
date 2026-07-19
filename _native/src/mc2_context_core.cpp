@@ -3751,34 +3751,34 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         ) ||
         !dict_i64(
             result,
-            "particle_teleport_apply_count",
-            context.particle_teleport_apply_count
+            "task_teleport_apply_count",
+            context.task_teleport_apply_count
         ) ||
         !dict_i64(
             result,
-            "particle_teleport_trigger_count",
-            context.particle_teleport_trigger_count
+            "task_teleport_trigger_count",
+            context.task_teleport_trigger_count
         ) ||
-        !dict_i64(result, "particle_teleport_mode", context.particle_teleport_mode) ||
+        !dict_i64(result, "task_teleport_mode", context.task_teleport_mode) ||
         !dict_float(
             result,
-            "particle_teleport_max_distance",
-            context.particle_teleport_max_distance
-        ) ||
-        !dict_float(
-            result,
-            "particle_teleport_max_rotation_degrees",
-            context.particle_teleport_max_rotation_degrees
+            "task_teleport_max_distance",
+            context.task_teleport_max_distance
         ) ||
         !dict_float(
             result,
-            "particle_teleport_distance_threshold",
-            context.particle_teleport_distance_threshold
+            "task_teleport_max_rotation_degrees",
+            context.task_teleport_max_rotation_degrees
         ) ||
         !dict_float(
             result,
-            "particle_teleport_rotation_threshold_degrees",
-            context.particle_teleport_rotation_threshold_degrees
+            "task_teleport_distance_threshold",
+            context.task_teleport_distance_threshold
+        ) ||
+        !dict_float(
+            result,
+            "task_teleport_rotation_threshold_degrees",
+            context.task_teleport_rotation_threshold_degrees
         ) ||
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
         !dict_i64(result, "static_fingerprint_revision", context.static_fingerprint_revision) ||

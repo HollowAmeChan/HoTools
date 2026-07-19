@@ -391,7 +391,7 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         context->velocity_reference_positions.size() != count * 3) {
         PyErr_SetString(
             PyExc_RuntimeError,
-            "particle teleport requires initialized parameters, dynamic bases, and state"
+            "task teleport requires initialized parameters, dynamic bases, and state"
         );
         return nullptr;
     }
@@ -420,62 +420,62 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
     const auto build_task_result = [&]() -> PyObject* {
         PyObject* result = PyDict_New();
         if (result == nullptr) return nullptr;
-        const bool triggered = context->particle_teleport_trigger_count > 0;
-        if (!dict_i64(result, "mode", context->particle_teleport_mode) ||
+        const bool triggered = context->task_teleport_trigger_count > 0;
+        if (!dict_i64(result, "mode", context->task_teleport_mode) ||
             !dict_i64(result, "trigger_count", triggered ? context->vertex_count : 0) ||
             !dict_i64(result, "particle_count", context->vertex_count) ||
             !dict_bool(result, "applied", triggered) ||
             !dict_string(
                 result,
                 "reference_kind",
-                context->particle_teleport_reference_kind == 1
+                context->task_teleport_reference_kind == 1
                     ? "first_fixed"
                     : "object_origin"
             ) ||
             !dict_i64(
                 result,
                 "reference_index",
-                context->particle_teleport_reference_index
+                context->task_teleport_reference_index
             ) ||
             !set_tuple3(
                 result,
                 "old_reference_position",
-                context->particle_teleport_old_reference_position
+                context->task_teleport_old_reference_position
             ) ||
             !set_tuple3(
                 result,
                 "reference_position",
-                context->particle_teleport_reference_position
+                context->task_teleport_reference_position
             ) ||
             !set_tuple4(
                 result,
                 "old_reference_rotation_xyzw",
-                context->particle_teleport_old_reference_rotation
+                context->task_teleport_old_reference_rotation
             ) ||
             !set_tuple4(
                 result,
                 "reference_rotation_xyzw",
-                context->particle_teleport_reference_rotation
+                context->task_teleport_reference_rotation
             ) ||
             !dict_float(
                 result,
                 "measured_distance",
-                context->particle_teleport_max_distance
+                context->task_teleport_max_distance
             ) ||
             !dict_float(
                 result,
                 "distance_threshold",
-                context->particle_teleport_distance_threshold
+                context->task_teleport_distance_threshold
             ) ||
             !dict_float(
                 result,
                 "measured_rotation_degrees",
-                context->particle_teleport_max_rotation_degrees
+                context->task_teleport_max_rotation_degrees
             ) ||
             !dict_float(
                 result,
                 "rotation_threshold_degrees",
-                context->particle_teleport_rotation_threshold_degrees
+                context->task_teleport_rotation_threshold_degrees
             )) {
             Py_DECREF(result);
             return nullptr;
@@ -483,7 +483,7 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         return result;
     };
 
-    if (context->particle_teleport_evaluation_revision == context->dynamic_revision) {
+    if (context->task_teleport_evaluation_revision == context->dynamic_revision) {
         return build_task_result();
     }
 
@@ -549,8 +549,8 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
     Vec3 current_reference {};
     std::array<float, 4> old_reference_rotation {0.0f, 0.0f, 0.0f, 1.0f};
     std::array<float, 4> current_reference_rotation {0.0f, 0.0f, 0.0f, 1.0f};
-    context->particle_teleport_reference_kind = 0;
-    context->particle_teleport_reference_index = -1;
+    context->task_teleport_reference_kind = 0;
+    context->task_teleport_reference_index = -1;
     if (!context->center_fixed_indices.empty()) {
         const auto raw_index = context->center_fixed_indices.front();
         if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= count) {
@@ -585,8 +585,8 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
             index,
             context->component_rotation
         );
-        context->particle_teleport_reference_kind = 1;
-        context->particle_teleport_reference_index = raw_index;
+        context->task_teleport_reference_kind = 1;
+        context->task_teleport_reference_index = raw_index;
     } else {
         if (!context->component_pose_ready) {
             PyErr_SetString(
@@ -628,21 +628,21 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         (measured_rotation > kMc2Epsilon && measured_rotation >= rotation_threshold)
     );
 
-    context->particle_teleport_evaluation_revision = context->dynamic_revision;
-    context->particle_teleport_mode = mode;
-    context->particle_teleport_trigger_count = triggered ? 1 : 0;
-    context->particle_teleport_max_distance = measured_distance;
-    context->particle_teleport_max_rotation_degrees = measured_rotation;
-    context->particle_teleport_distance_threshold = distance_threshold;
-    context->particle_teleport_rotation_threshold_degrees = rotation_threshold;
-    context->particle_teleport_old_reference_position = {
+    context->task_teleport_evaluation_revision = context->dynamic_revision;
+    context->task_teleport_mode = mode;
+    context->task_teleport_trigger_count = triggered ? 1 : 0;
+    context->task_teleport_max_distance = measured_distance;
+    context->task_teleport_max_rotation_degrees = measured_rotation;
+    context->task_teleport_distance_threshold = distance_threshold;
+    context->task_teleport_rotation_threshold_degrees = rotation_threshold;
+    context->task_teleport_old_reference_position = {
         old_reference.x, old_reference.y, old_reference.z
     };
-    context->particle_teleport_reference_position = {
+    context->task_teleport_reference_position = {
         current_reference.x, current_reference.y, current_reference.z
     };
-    context->particle_teleport_old_reference_rotation = old_reference_rotation;
-    context->particle_teleport_reference_rotation = current_reference_rotation;
+    context->task_teleport_old_reference_rotation = old_reference_rotation;
+    context->task_teleport_reference_rotation = current_reference_rotation;
 
     if (triggered && mode == 2) {
         auto delta_rotation = quaternion_multiply(
@@ -707,7 +707,7 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         );
     }
     if (triggered) {
-        ++context->particle_teleport_apply_count;
+        ++context->task_teleport_apply_count;
         context->bone_output_positions.clear();
         context->bone_output_rotations.clear();
         context->self_contact_keys.clear();

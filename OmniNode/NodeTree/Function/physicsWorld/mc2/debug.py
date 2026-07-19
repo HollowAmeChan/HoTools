@@ -401,7 +401,7 @@ def _center_payload(slot, item) -> dict:
     center_step = slot.data.get("center_step_result")
     frame_shift = slot.data.get("center_frame_shift_result")
     negative = slot.data.get("center_negative_scale_result")
-    particle_teleport = slot.data.get("particle_teleport_result")
+    task_teleport = slot.data.get("task_teleport_result")
     return {
         "frame_pose": _freeze_value(
             getattr(frame_input, "center_frame_pose", None)
@@ -415,7 +415,7 @@ def _center_payload(slot, item) -> dict:
         ),
         "step": _freeze_value(center_step),
         "frame_shift": _freeze_value(frame_shift),
-        "particle_teleport": _freeze_value(particle_teleport),
+        "task_teleport": _freeze_value(task_teleport),
         "negative_scale_transition": _freeze_value(negative),
         "frame_sync": _freeze_value(item.get("frame_plan")),
     }
@@ -611,7 +611,7 @@ def capture_requested_mc2_debug(
                     if filters.get("show_center", False) else {}
                 ),
                 "teleport": (
-                    _freeze_value(slot.data.get("particle_teleport_result"))
+                    _freeze_value(slot.data.get("task_teleport_result"))
                     if filters.get("show_teleport_threshold", False)
                     or filters.get("show_teleport_status", False)
                     else {}

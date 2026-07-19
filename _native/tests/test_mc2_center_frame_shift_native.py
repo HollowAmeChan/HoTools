@@ -398,7 +398,7 @@ def test_task_keep_uses_first_fixed_and_transforms_every_particle():
         repeated = hotools_native.mc2_context_v0_apply_task_teleport(context)
         assert repeated == result
         assert hotools_native.mc2_context_v0_inspect(context)[
-            "particle_teleport_apply_count"
+            "task_teleport_apply_count"
         ] == 1
     finally:
         hotools_native.mc2_context_v0_free(context)
@@ -456,8 +456,8 @@ def test_task_reset_uses_first_fixed_rotation_and_resets_every_particle():
         np.testing.assert_allclose(rotations[0], current_rotations[0], atol=1.0e-6)
         np.testing.assert_allclose(rotations[1], identity[1], atol=1.0e-6)
         info = hotools_native.mc2_context_v0_inspect(context)
-        assert info["particle_teleport_trigger_count"] == 1
-        assert info["particle_teleport_mode"] == 1
+        assert info["task_teleport_trigger_count"] == 1
+        assert info["task_teleport_mode"] == 1
     finally:
         hotools_native.mc2_context_v0_free(context)
 
@@ -532,7 +532,7 @@ def test_task_teleport_returns_one_reference_without_particle_debug_arrays():
         np.testing.assert_allclose(result["old_reference_position"], initial[0])
         np.testing.assert_allclose(result["reference_position"], current[0])
         assert hotools_native.mc2_context_v0_inspect(context)[
-            "particle_teleport_apply_count"
+            "task_teleport_apply_count"
         ] == 1
     finally:
         hotools_native.mc2_context_v0_free(context)
