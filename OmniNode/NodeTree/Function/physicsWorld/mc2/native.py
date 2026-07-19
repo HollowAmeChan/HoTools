@@ -35,6 +35,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_set_tether_enabled",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",
+    "mc2_context_v0_apply_particle_teleport",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_derive_center_pose_raw",

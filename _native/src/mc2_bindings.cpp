@@ -196,6 +196,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_apply_center_negative_scale_teleport",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_apply_center_negative_scale_teleport, a); });
+    m.def("mc2_context_v0_apply_particle_teleport",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_apply_particle_teleport(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_parameters",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",

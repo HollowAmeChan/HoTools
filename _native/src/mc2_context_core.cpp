@@ -3724,6 +3724,27 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             "center_negative_scale_teleport_count",
             context.center_negative_scale_teleport_count
         ) ||
+        !dict_i64(
+            result,
+            "particle_teleport_apply_count",
+            context.particle_teleport_apply_count
+        ) ||
+        !dict_i64(
+            result,
+            "particle_teleport_trigger_count",
+            context.particle_teleport_trigger_count
+        ) ||
+        !dict_i64(result, "particle_teleport_mode", context.particle_teleport_mode) ||
+        !dict_float(
+            result,
+            "particle_teleport_max_distance",
+            context.particle_teleport_max_distance
+        ) ||
+        !dict_float(
+            result,
+            "particle_teleport_max_rotation_degrees",
+            context.particle_teleport_max_rotation_degrees
+        ) ||
         !dict_i64(result, "team_options_revision", context.team_options_revision) ||
         !dict_i64(result, "static_fingerprint_revision", context.static_fingerprint_revision) ||
         !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||

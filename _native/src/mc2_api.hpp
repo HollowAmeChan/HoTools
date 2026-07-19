@@ -31,6 +31,7 @@ PyObject* mc2_context_v0_set_setup_kind(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_derive_center_pose_raw(PyObject*, PyObject* args);

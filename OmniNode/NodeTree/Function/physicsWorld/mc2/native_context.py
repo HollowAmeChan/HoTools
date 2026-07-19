@@ -690,6 +690,13 @@ class MC2NativeContextV0:
             matrix,
         )
 
+    def apply_particle_teleport(self) -> dict:
+        self._ensure_live()
+        result = self._module.mc2_context_v0_apply_particle_teleport(self._handle)
+        if not isinstance(result, dict):
+            raise RuntimeError("MC2 native particle teleport returned an invalid result")
+        return result
+
     def reset(self) -> None:
         self._ensure_live()
         self._module.mc2_context_v0_reset(self._handle)

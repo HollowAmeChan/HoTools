@@ -366,6 +366,303 @@ PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObjec
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_apply_particle_teleport(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_apply_particle_teleport expects 1 argument"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->parameters_ready || !context->dynamic_ready || !context->initialized ||
+        context->float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context->int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context->old_dynamic_positions.size() != count * 3 ||
+        context->dynamic_positions.size() != count * 3 ||
+        context->old_dynamic_rotations.size() != count * 4 ||
+        context->dynamic_rotations.size() != count * 4 ||
+        context->state_positions.size() != count * 3 ||
+        context->state_rotations.size() != count * 4 ||
+        context->state_velocities.size() != count * 3 ||
+        context->velocity_reference_positions.size() != count * 3) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "particle teleport requires initialized parameters, dynamic bases, and state"
+        );
+        return nullptr;
+    }
+
+    const auto build_result = [&]() -> PyObject* {
+        PyObject* result = PyDict_New();
+        if (result == nullptr) return nullptr;
+        if (!dict_i64(result, "mode", context->particle_teleport_mode) ||
+            !dict_i64(
+                result,
+                "trigger_count",
+                context->particle_teleport_trigger_count
+            ) ||
+            !dict_i64(result, "particle_count", context->vertex_count) ||
+            !dict_bool(
+                result,
+                "applied",
+                context->particle_teleport_trigger_count > 0
+            ) ||
+            !dict_float(
+                result,
+                "max_distance",
+                context->particle_teleport_max_distance
+            ) ||
+            !dict_float(
+                result,
+                "max_rotation_degrees",
+                context->particle_teleport_max_rotation_degrees
+            )) {
+            Py_DECREF(result);
+            return nullptr;
+        }
+        return result;
+    };
+
+    if (context->particle_teleport_evaluation_revision == context->dynamic_revision) {
+        return build_result();
+    }
+
+    constexpr std::size_t kTeleportDistance = 18;
+    constexpr std::size_t kTeleportRotation = 19;
+    constexpr std::size_t kTeleportMode = 2;
+    constexpr float kRadiansToDegrees = 57.295779513082320876f;
+    const auto mode = context->int_values[kTeleportMode];
+    const float distance_threshold = std::max(
+        context->float_values[kTeleportDistance] * std::fabs(context->scale_ratio),
+        0.0f
+    );
+    const float rotation_threshold = std::max(
+        context->float_values[kTeleportRotation],
+        0.0f
+    );
+    std::vector<std::uint8_t> affected(count, static_cast<std::uint8_t>(0));
+    std::vector<std::int32_t> motion_sources(count, -1);
+    std::int64_t trigger_count = 0;
+    float max_distance = 0.0f;
+    float max_rotation_degrees = 0.0f;
+
+    const auto source_triggered = [&](std::size_t vertex) {
+        const Vec3 old_base = load_vector3(context->old_dynamic_positions, vertex);
+        const Vec3 current_base = load_vector3(context->dynamic_positions, vertex);
+        const float measured_distance = length(Vec3 {
+            current_base.x - old_base.x,
+            current_base.y - old_base.y,
+            current_base.z - old_base.z,
+        });
+        const auto old_rotation = load_quaternion(context->old_dynamic_rotations, vertex);
+        const auto current_rotation = load_quaternion(context->dynamic_rotations, vertex);
+        const float quaternion_dot = std::clamp(std::fabs(
+            old_rotation[0] * current_rotation[0] +
+            old_rotation[1] * current_rotation[1] +
+            old_rotation[2] * current_rotation[2] +
+            old_rotation[3] * current_rotation[3]
+        ), 0.0f, 1.0f);
+        const float measured_rotation =
+            2.0f * std::acos(quaternion_dot) * kRadiansToDegrees;
+        max_distance = std::max(max_distance, measured_distance);
+        max_rotation_degrees = std::max(max_rotation_degrees, measured_rotation);
+        return mode != 0 && (
+            (measured_distance > kMc2Epsilon && measured_distance >= distance_threshold) ||
+            (measured_rotation > kMc2Epsilon && measured_rotation >= rotation_threshold)
+        );
+    };
+
+    if (context->setup_kind == 0) {
+        for (std::size_t vertex = 0; vertex < count; ++vertex) {
+            if (!source_triggered(vertex)) continue;
+            affected[vertex] = static_cast<std::uint8_t>(1);
+            motion_sources[vertex] = static_cast<std::int32_t>(vertex);
+            ++trigger_count;
+        }
+    } else {
+        if (context->proxy_attributes.size() != count ||
+            context->baseline_roots.size() != count) {
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                "Bone particle teleport requires attributes and baseline roots"
+            );
+            return nullptr;
+        }
+        for (std::size_t source = 0; source < count; ++source) {
+            if (is_move(context->proxy_attributes[source]) ||
+                !source_triggered(source)) {
+                continue;
+            }
+            for (std::size_t vertex = 0; vertex < count; ++vertex) {
+                if (vertex != source &&
+                    context->baseline_roots[vertex] != static_cast<std::int32_t>(source)) {
+                    continue;
+                }
+                if (affected[vertex] == 0) ++trigger_count;
+                affected[vertex] = static_cast<std::uint8_t>(1);
+                motion_sources[vertex] = static_cast<std::int32_t>(source);
+            }
+        }
+    }
+
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (affected[vertex] == 0) continue;
+        const auto source = static_cast<std::size_t>(motion_sources[vertex]);
+        const auto position_offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        const Vec3 old_base = load_vector3(context->old_dynamic_positions, source);
+        const Vec3 current_base = load_vector3(context->dynamic_positions, source);
+        const auto old_rotation = load_quaternion(context->old_dynamic_rotations, source);
+        const auto current_rotation = load_quaternion(context->dynamic_rotations, source);
+
+        if (mode == 1) {
+            std::copy_n(
+                context->dynamic_positions.data() + position_offset,
+                3,
+                context->state_positions.data() + position_offset
+            );
+            std::copy_n(
+                context->dynamic_rotations.data() + rotation_offset,
+                4,
+                context->state_rotations.data() + rotation_offset
+            );
+            std::copy_n(
+                context->dynamic_positions.data() + position_offset,
+                3,
+                context->velocity_reference_positions.data() + position_offset
+            );
+            if (context->step_basic_positions.size() == count * 3) {
+                std::copy_n(
+                    context->dynamic_positions.data() + position_offset,
+                    3,
+                    context->step_basic_positions.data() + position_offset
+                );
+            }
+            if (context->step_basic_rotations.size() == count * 4) {
+                std::copy_n(
+                    context->dynamic_rotations.data() + rotation_offset,
+                    4,
+                    context->step_basic_rotations.data() + rotation_offset
+                );
+            }
+            if (context->animated_base_positions.size() == count * 3) {
+                std::copy_n(
+                    context->dynamic_positions.data() + position_offset,
+                    3,
+                    context->animated_base_positions.data() + position_offset
+                );
+            }
+            if (context->animated_base_rotations.size() == count * 4) {
+                std::copy_n(
+                    context->dynamic_rotations.data() + rotation_offset,
+                    4,
+                    context->animated_base_rotations.data() + rotation_offset
+                );
+            }
+        } else {
+            auto delta_rotation = quaternion_multiply(
+                current_rotation,
+                quaternion_inverse(old_rotation)
+            );
+            normalize_quaternion(delta_rotation);
+            const auto transform_position = [&](std::vector<float>& values) {
+                if (values.size() != count * 3) return;
+                const Vec3 value = load_vector3(values, vertex);
+                const Vec3 rotated = rotate_vector(delta_rotation, Vec3 {
+                    value.x - old_base.x,
+                    value.y - old_base.y,
+                    value.z - old_base.z,
+                });
+                values[position_offset + 0] = current_base.x + rotated.x;
+                values[position_offset + 1] = current_base.y + rotated.y;
+                values[position_offset + 2] = current_base.z + rotated.z;
+            };
+            const auto transform_rotation = [&](std::vector<float>& values) {
+                if (values.size() != count * 4) return;
+                auto value = quaternion_multiply(
+                    delta_rotation,
+                    load_quaternion(values, vertex)
+                );
+                normalize_quaternion(value);
+                store_quaternion(values, vertex, value);
+            };
+            transform_position(context->state_positions);
+            transform_position(context->velocity_reference_positions);
+            transform_position(context->step_basic_positions);
+            transform_position(context->animated_base_positions);
+            transform_rotation(context->state_rotations);
+            transform_rotation(context->step_basic_rotations);
+            transform_rotation(context->animated_base_rotations);
+        }
+
+        std::fill_n(context->state_velocities.data() + position_offset, 3, 0.0f);
+        if (context->particle_real_velocities.size() == count * 3) {
+            std::fill_n(
+                context->particle_real_velocities.data() + position_offset,
+                3,
+                0.0f
+            );
+        }
+        if (context->particle_collision_normals.size() == count * 3) {
+            std::fill_n(
+                context->particle_collision_normals.data() + position_offset,
+                3,
+                0.0f
+            );
+        }
+        if (context->particle_friction.size() == count) {
+            context->particle_friction[vertex] = 0.0f;
+        }
+        if (context->particle_static_friction.size() == count) {
+            context->particle_static_friction[vertex] = 0.0f;
+        }
+    }
+
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (affected[vertex] == 0) continue;
+        const auto position_offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        std::copy_n(
+            context->dynamic_positions.data() + position_offset,
+            3,
+            context->old_dynamic_positions.data() + position_offset
+        );
+        std::copy_n(
+            context->dynamic_rotations.data() + rotation_offset,
+            4,
+            context->old_dynamic_rotations.data() + rotation_offset
+        );
+    }
+
+    context->particle_teleport_evaluation_revision = context->dynamic_revision;
+    context->particle_teleport_mode = mode;
+    context->particle_teleport_trigger_count = trigger_count;
+    context->particle_teleport_max_distance = max_distance;
+    context->particle_teleport_max_rotation_degrees = max_rotation_degrees;
+    if (trigger_count > 0) {
+        ++context->particle_teleport_apply_count;
+        context->bone_output_positions.clear();
+        context->bone_output_rotations.clear();
+        context->self_contact_keys.clear();
+        context->self_intersect_records.clear();
+        context->self_particle_intersect_flags.assign(count, static_cast<std::uint8_t>(0));
+        context->self_intersect_detection_ready = false;
+        context->self_intersect_flags_ready = false;
+        for (auto& flag : context->self_primitive_flags) {
+            flag &= ~kSelfIntersectMask;
+        }
+        context->self_contact_candidates.clear();
+        clear_self_collision_contacts(*context);
+        context->self_primitive_dynamic_ready = false;
+        context->self_grid_dynamic_ready = false;
+        context->self_candidate_ready = false;
+    }
+    return build_result();
+}
+
 PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 4) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_parameters expects 4 arguments");

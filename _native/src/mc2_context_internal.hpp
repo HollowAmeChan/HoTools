@@ -56,6 +56,10 @@ struct Mc2ContextV0 {
     std::int64_t center_step_count = 0;
     std::int64_t center_frame_shift_count = 0;
     std::int64_t center_negative_scale_teleport_count = 0;
+    std::int64_t particle_teleport_evaluation_revision = -1;
+    std::int64_t particle_teleport_apply_count = 0;
+    std::int64_t particle_teleport_trigger_count = 0;
+    std::int32_t particle_teleport_mode = 0;
     std::int64_t team_options_revision = 0;
     std::int64_t static_fingerprint_revision = 0;
     std::int64_t baseline_pose_rebuild_count = 0;
@@ -69,6 +73,8 @@ struct Mc2ContextV0 {
     float negative_scale_sign = 1.0f;
     float frame_interpolation = 1.0f;
     float animation_pose_ratio = 0.0f;
+    float particle_teleport_max_distance = 0.0f;
+    float particle_teleport_max_rotation_degrees = 0.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
