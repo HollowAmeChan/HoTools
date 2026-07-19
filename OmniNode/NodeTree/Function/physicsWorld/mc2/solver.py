@@ -1186,7 +1186,7 @@ def step_mc2(
             })
 
         invalidates_interaction = any(
-            item["particle_teleport_handled"]
+            item.get("particle_teleport_handled", False)
             and item["spec"].setup_type == "mesh_cloth"
             and item["spec"].task_id in interaction_participants
             for item in runtime_items
