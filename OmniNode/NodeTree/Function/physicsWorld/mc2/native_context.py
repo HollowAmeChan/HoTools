@@ -806,7 +806,7 @@ class MC2NativeContextV0:
     def refresh_debug_draw_snapshot(
         self,
         *,
-        include_step_basic: bool = True,
+        include_step_basic: bool = False,
         include_motion_base: bool = False,
         include_angle_restoration: bool = False,
         include_angle_limit: bool = False,

@@ -386,6 +386,44 @@ try:
     assert interaction_snapshot["native"]["candidate_count"] > 0
     print("[PASS] next true advance captures frozen slot and world interaction state")
 
+    sparse_readbacks = {
+        task.task_id: world.solver_slots[task.task_id]
+        .data["native_context"]
+        .inspect()["debug_readback_count"]
+        for task in tasks
+    }
+    debug_module.request_mc2_debug_capture(
+        world,
+        filters={"show_self_candidates": True},
+    )
+    _world_frame(world, 4, 3)
+    solver_module.step_mc2(
+        world,
+        tasks,
+        frame_inputs={task.task_id: _frame_input(task, 4) for task in tasks},
+        dt=1.0 / 90.0,
+    )
+    for task in tasks:
+        slot = world.solver_slots[task.task_id]
+        snapshot = slot.data["_debug_draw_snapshot"]
+        native_snapshot = snapshot["native"]
+        assert snapshot["frame"] == 4
+        assert snapshot["filters"] == {"show_self_candidates": True}
+        assert not any(
+            snapshot.get(name)
+            for name in ("topology", "parameters", "motion", "center", "collision", "output")
+        )
+        assert "step_basic_positions" not in native_snapshot
+        assert "motion_base_positions" not in native_snapshot
+        assert "angle_restoration_target_positions" not in native_snapshot
+        assert "angle_limit_target_positions" not in native_snapshot
+        assert "candidates" in snapshot["self_collision"]
+        assert (
+            slot.data["native_context"].inspect()["debug_readback_count"]
+            == sparse_readbacks[task.task_id] + 3
+        )
+    print("[PASS] sparse debug request produces only explicitly declared state")
+
     isolated_modes = (
         ("show_topology", {"show_topology": True}, ("longitudinal",)),
         ("show_attributes", {"show_attributes": True}, ("fixed", "move")),

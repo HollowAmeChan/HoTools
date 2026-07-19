@@ -442,18 +442,18 @@ def capture_requested_mc2_debug(
             filters = dict(state.get("filters") or {})
             native_snapshot = item["native_context"].refresh_debug_draw_snapshot(
                 include_step_basic=bool(
-                    filters.get("show_angle_restoration", True)
+                    filters.get("show_angle_restoration", False)
                     or filters.get("show_angle_limit", False)
                     or filters.get("show_step_basic", False)
                     or filters.get("show_distance", False)
                     or filters.get("show_tether", False)
                 ),
                 include_motion_base=bool(
-                    filters.get("show_motion", True)
-                    or filters.get("show_motion_base", True)
+                    filters.get("show_motion", False)
+                    or filters.get("show_motion_base", False)
                 ),
                 include_angle_restoration=bool(
-                    filters.get("show_angle_restoration", True)
+                    filters.get("show_angle_restoration", False)
                 ),
                 include_angle_limit=bool(filters.get("show_angle_limit", False)),
                 include_dynamics=bool(filters.get("show_velocity", False)),
