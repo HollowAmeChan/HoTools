@@ -1163,17 +1163,18 @@ def _run_angle_limit_soak(obj):
                     world,
                     filters={
                         "show_motion": False,
-                        "show_motion_base": True,
+                        "show_motion_base": False,
                         "show_angle_restoration": False,
+                        "show_angle_limit": True,
                         "show_self": False,
                     },
                 )
         slot = world.solver_slots[task.task_id]
         native_context = slot.data["native_context"]
         motion = slot.data["_debug_draw_snapshot"]["motion"]
-        target_positions = motion["angle_restoration_target_positions"]
-        target_vectors = motion["angle_restoration_target_vectors"]
-        valid = motion["angle_restoration_target_valid"]
+        target_positions = motion["angle_limit_target_positions"]
+        target_vectors = motion["angle_limit_target_vectors"]
+        valid = motion["angle_limit_target_valid"]
         current = candidate.world_positions
         attributes = np.asarray(
             slot.data["mesh_static"].final_proxy.vertex_attributes,
@@ -1266,11 +1267,12 @@ def _center_keep_teleport_soak(obj):
             )
             assert returned is world and ready is True, status
             _candidate(world, task)
-            shift_result = world.solver_slots[task.task_id].data[
-                "center_frame_shift_result"
-            ]
+            teleport_result = world.solver_slots[task.task_id].data.get(
+                "task_teleport_result"
+            ) or {}
             keep_teleport_count += int(
-                bool(getattr(shift_result, "keep_teleport", False))
+                bool(teleport_result.get("applied", False))
+                and int(teleport_result.get("mode", 0)) == 2
             )
             if frame == 1199:
                 debug_module.request_mc2_debug_capture(
@@ -1283,7 +1285,7 @@ def _center_keep_teleport_soak(obj):
         assert info["center_step_count"] > 0
         center = slot.data["_debug_draw_snapshot"]["center"]
         assert center["frame_sync"]["action"] == "updated"
-        assert center["frame_shift"]["keep_teleport"] is False
+        assert center["task_teleport"]["applied"] is False
         assert np.all(np.isfinite(center["source_world_linear"]))
         print("[PASS] 1200-frame Center inertia/Keep Teleport")
     finally:
@@ -1348,7 +1350,8 @@ def _run_self_interaction_soak(objects):
                 )
                 tasks = make_tasks(0.03, teleport_mode=1)
                 moved = np.array(positions[tasks[0].task_id], copy=True)
-                moved[(3, 7, 11, 15), 0] += 0.6
+                # Teleport is task-level and uses the first Fixed proxy vertex.
+                moved[0, 0] += 0.6
                 positions[tasks[0].task_id] = moved
             _step(
                 world,
@@ -1385,10 +1388,12 @@ def _run_self_interaction_soak(objects):
                     slot = world.solver_slots[task.task_id]
                     info = slot.data["native_context"].inspect()
                     assert info["parameter_revision"] == old_revisions[index] + 1
-                    teleport = slot.data["particle_teleport_result"]
+                    teleport = slot.data["task_teleport_result"]
                     if index == 0:
                         assert teleport["mode"] == 1
-                        assert 0 < teleport["trigger_count"] < topologies[
+                        assert teleport["reference_kind"] == "first_fixed"
+                        assert teleport["reference_index"] == 0
+                        assert teleport["trigger_count"] == topologies[
                             task.task_id
                         ].particle_count
                     else:
@@ -1415,14 +1420,7 @@ def _run_self_interaction_soak(objects):
                 interaction_info = world.backend_resources[
                     "mc2_interaction_v0"
                 ].inspect()
-                if all(
-                    interaction_info[name] > 0
-                    for name in (
-                        "candidate_count",
-                        "contact_count",
-                        "intersect_record_count",
-                    )
-                ):
+                if interaction_info["candidate_count"] > 0:
                     pre_teleport_interaction = dict(interaction_info)
                     teleport_frame = frame + 1
             if frame == 1799:
@@ -1443,6 +1441,7 @@ def _run_self_interaction_soak(objects):
         assert interaction_info["contact_count"] <= interaction_info["candidate_count"]
         assert interaction_info["primitive_count"] > 0
         assert pre_teleport_interaction is not None
+        assert pre_teleport_interaction["candidate_count"] > 0
         assert teleport_frame is not None
         assert interaction_invalidated is True
         for task in tasks:

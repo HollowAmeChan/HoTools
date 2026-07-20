@@ -1753,28 +1753,19 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         keep_info = keep_slot.data["native_context"].inspect()
         assert keep_info["center_fixed_count"] == 0
         assert keep_info["step_count"] == 3
-        assert keep_info["center_frame_shift_count"] == 1
+        assert keep_info["center_frame_shift_count"] == 0
         keep_shift = keep_slot.data["center_frame_shift_result"]
-        assert keep_shift.keep_teleport is True
-        assert keep_shift.reset_teleport is False
+        assert keep_shift is None
+        keep_teleport = keep_slot.data["task_teleport_result"]
+        assert keep_teleport["applied"] is True
+        assert keep_teleport["mode"] == 2
+        assert keep_teleport["reference_kind"] == "object_origin"
+        assert keep_teleport["reference_index"] == -1
+        assert keep_teleport["trigger_count"] == keep_topology.particle_count
+        assert keep_teleport["measured_distance"] >= 10.0 - 1.0e-5
         np.testing.assert_allclose(
-            keep_shift.frame_component_shift_vector,
-            (10.0, 0.0, 0.0),
-            atol=1.0e-6,
-        )
-        np.testing.assert_allclose(
-            keep_shift.frame_component_shift_rotation_xyzw,
-            fixed_rotation,
-            atol=1.0e-6,
-        )
-        np.testing.assert_allclose(
-            keep_shift.smoothing_velocity,
-            (2.0, 0.0, 0.0),
-            atol=1.0e-6,
-        )
-        np.testing.assert_allclose(
-            keep_shift.frame_moving_speed,
-            0.0,
+            keep_slot.data["center_state"].smoothing_velocity,
+            (0.0, 0.0, 0.0),
             atol=1.0e-6,
         )
         keep_candidate = keep_slot.data["result_candidate"]
@@ -1867,18 +1858,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert reset_info["center_step_count"] == 3
         assert reset_info["center_frame_shift_count"] == 0
         reset_shift = reset_slot.data["center_frame_shift_result"]
-        assert reset_shift.keep_teleport is False
-        assert reset_shift.reset_teleport is True
-        np.testing.assert_allclose(
-            reset_shift.frame_component_shift_vector,
-            (0.0, 0.0, 0.0),
-            atol=1.0e-6,
-        )
-        np.testing.assert_allclose(
-            reset_shift.smoothing_velocity,
-            (0.0, 0.0, 0.0),
-            atol=1.0e-6,
-        )
+        assert reset_shift is None
+        reset_teleport = reset_slot.data["task_teleport_result"]
+        assert reset_teleport["applied"] is True
+        assert reset_teleport["mode"] == 1
+        assert reset_teleport["reference_kind"] == "object_origin"
+        assert reset_teleport["trigger_count"] == reset_topology.particle_count
         reset_center_state = reset_slot.data["center_state"]
         assert reset_center_state.reset_count == 2
         assert reset_center_state.old_component_world_position == (10.0, 0.0, 0.0)
@@ -1888,7 +1873,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             atol=1.0e-6,
         )
         reset_runtime_state = reset_slot.data["runtime_state"]
-        assert reset_runtime_state.last_reset_reason == "configured_teleport"
+        assert reset_runtime_state.last_reset_reason == "task_teleport"
         assert reset_runtime_state.reset_count == 2
         reset_candidate = reset_slot.data["result_candidate"]
         np.testing.assert_allclose(
@@ -2016,14 +2001,19 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert reset_negative_info["center_frame_shift_count"] == 0
         assert reset_negative_info["center_negative_scale_teleport_count"] == 0
         reset_negative_shift = reset_negative_slot.data["center_frame_shift_result"]
-        assert reset_negative_shift.reset_teleport is True
+        assert reset_negative_shift is None
+        reset_negative_teleport = reset_negative_slot.data["task_teleport_result"]
+        assert reset_negative_teleport["applied"] is True
+        assert reset_negative_teleport["mode"] == 1
+        assert reset_negative_teleport["reference_kind"] == "object_origin"
+        assert reset_negative_teleport["measured_rotation_degrees"] >= 30.0
         assert reset_negative_slot.data["center_negative_scale_result"] is None
         reset_negative_center = reset_negative_slot.data["center_state"]
         assert reset_negative_center.reset_count == 2
         assert reset_negative_center.negative_scale_direction == (-1.0, 1.0, 1.0)
         assert reset_negative_center.smoothing_velocity == (0.0, 0.0, 0.0)
         reset_negative_runtime = reset_negative_slot.data["runtime_state"]
-        assert reset_negative_runtime.last_reset_reason == "configured_teleport"
+        assert reset_negative_runtime.last_reset_reason == "task_teleport"
         reset_negative_candidate = reset_negative_slot.data["result_candidate"]
         np.testing.assert_allclose(
             reset_negative_candidate.world_positions,
@@ -2116,29 +2106,22 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert keep_negative_info["reset_count"] == 1
         assert keep_negative_info["step_count"] == 3
         assert keep_negative_info["center_step_count"] == 3
-        assert keep_negative_info["center_frame_shift_count"] == 1
+        assert keep_negative_info["center_frame_shift_count"] == 0
         assert keep_negative_info["center_negative_scale_teleport_count"] == 1
         keep_negative_schedule = keep_negative_slot.data["frame_schedule"]
         assert keep_negative_schedule.update_count == 3
         assert keep_negative_schedule.skip_count == 0
         keep_negative_shift = keep_negative_slot.data["center_frame_shift_result"]
-        assert keep_negative_shift.keep_teleport is True
-        assert keep_negative_shift.reset_teleport is False
-        np.testing.assert_allclose(
-            keep_negative_shift.frame_component_shift_vector,
-            (0.0, 0.0, 0.0),
-            atol=1.0e-6,
-        )
-        np.testing.assert_allclose(
-            keep_negative_shift.frame_component_shift_rotation_xyzw,
-            reset_negative_rotation,
-            atol=1.0e-6,
-        )
+        assert keep_negative_shift is None
+        keep_negative_teleport = keep_negative_slot.data["task_teleport_result"]
+        assert keep_negative_teleport["applied"] is True
+        assert keep_negative_teleport["mode"] == 2
+        assert keep_negative_teleport["reference_kind"] == "object_origin"
+        assert keep_negative_teleport["measured_rotation_degrees"] >= 30.0
         keep_negative_transition = keep_negative_slot.data[
             "center_negative_scale_result"
         ]
-        assert keep_negative_transition is not None
-        assert keep_negative_transition.active is True
+        assert keep_negative_transition is None
         keep_negative_candidate = keep_negative_slot.data["result_candidate"]
         assert np.all(np.isfinite(keep_negative_candidate.world_positions))
         assert not np.allclose(

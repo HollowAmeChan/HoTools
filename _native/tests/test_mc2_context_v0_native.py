@@ -270,6 +270,87 @@ def test_tether_rollout_gate_and_source_order():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_constraint_debug_is_request_driven_and_exact():
+    context = hotools_native.mc2_context_v0_create(0, 2)
+    try:
+        proxy, baseline = static_arrays(2)
+        proxy = list(proxy)
+        proxy[4] = np.array([1, 2], dtype=np.uint8)
+        baseline = list(baseline)
+        baseline[6] = np.array([0, 0], dtype=np.int32)
+        baseline[8][1, 0] = 1.0
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((2, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[24] = 0.4
+        floats[25] = 0.03
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        hotools_native.mc2_context_v0_set_tether_enabled(context, True)
+        positions = np.array([[0, 0, 0], [2, 0, 0]], dtype=np.float32)
+        rotations = np.zeros((2, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_request_mask"] == 0
+        assert info["debug_constraint_ready_mask"] == 0
+        assert info["debug_constraint_float_count"] == 0
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 1)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_request_mask"] == 1
+        assert info["debug_constraint_ready_mask"] == 1
+        assert info["debug_constraint_float_count"] == 72
+        origins = np.empty((12, 3), dtype=np.float32)
+        corrections = np.empty((12, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_constraint_results(
+            context,
+            origins,
+            corrections,
+        )
+        np.testing.assert_allclose(origins[:2], positions, atol=1.0e-6)
+        assert np.linalg.norm(corrections[1]) > 0.0
+        np.testing.assert_array_equal(corrections[2:], 0.0)
+
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_request_mask"] == 0
+        assert info["debug_constraint_ready_mask"] == 0
+        assert info["debug_constraint_float_count"] == 0
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_debug_constraint_results(
+                context,
+                origins,
+                corrections,
+            ),
+            "was not requested or is not ready",
+        )
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_set_debug_constraint_results(
+                context, 1 << 5
+            ),
+            "unsupported bits",
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_angle_runtime_values_and_source_order():
     context = hotools_native.mc2_context_v0_create(0, 3)
     try:
@@ -2330,6 +2411,8 @@ if __name__ == "__main__":
     print("PASS debug baseline readback")
     test_tether_rollout_gate_and_source_order()
     print("PASS gated Tether source order")
+    test_constraint_debug_is_request_driven_and_exact()
+    print("PASS request-driven constraint debug")
     test_angle_runtime_values_and_source_order()
     print("PASS Angle runtime values and source order")
     test_motion_zero_max_distance_and_source_order()

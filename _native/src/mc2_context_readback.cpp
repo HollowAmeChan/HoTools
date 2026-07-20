@@ -1125,6 +1125,62 @@ PyObject* mc2_context_v0_read_debug_bending(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_constraint_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_constraint_results expects 3 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto vertex_count = static_cast<std::size_t>(context->vertex_count);
+    const auto row_count = kDebugConstraintPassCount * vertex_count;
+    const auto value_count = row_count * 3;
+    if (context->debug_constraint_request_mask == 0 ||
+        context->debug_constraint_ready_mask == 0 ||
+        context->debug_constraint_origins.size() != value_count ||
+        context->debug_constraint_corrections.size() != value_count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 constraint debug was not requested or is not ready"
+        );
+        return nullptr;
+    }
+    Buffer origins, corrections;
+    if (!origins.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_constraint_origins"
+        ) ||
+        !corrections.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_constraint_corrections"
+        )) {
+        return nullptr;
+    }
+    const auto rows = static_cast<Py_ssize_t>(row_count);
+    if (!expect_float32(origins, "out_constraint_origins") ||
+        !expect_2d(origins, "out_constraint_origins", rows, 3) ||
+        !expect_float32(corrections, "out_constraint_corrections") ||
+        !expect_2d(corrections, "out_constraint_corrections", rows, 3)) {
+        return nullptr;
+    }
+    if (value_count > 0) {
+        std::memcpy(
+            origins.view.buf,
+            context->debug_constraint_origins.data(),
+            value_count * sizeof(float)
+        );
+        std::memcpy(
+            corrections.view.buf,
+            context->debug_constraint_corrections.data(),
+            value_count * sizeof(float)
+        );
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_external_contacts(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 7) {
         PyErr_SetString(

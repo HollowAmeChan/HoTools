@@ -543,6 +543,14 @@ def capture_requested_mc2_debug(
                         or filters.get("show_tether", False)
                     ),
                     include_bending=bool(filters.get("show_bending", False)),
+                    include_constraint_results=bool(
+                        filters.get("show_distance", False)
+                        or filters.get("show_tether", False)
+                        or filters.get("show_bending", False)
+                        or filters.get("show_motion", False)
+                        or filters.get("show_angle_restoration", False)
+                        or filters.get("show_angle_limit", False)
+                    ),
                     include_external_contacts=bool(
                         filters.get("show_collision_contacts", False)
                     ),

@@ -386,6 +386,15 @@ try:
         assert snapshot["native"]["distance_tether"]["baseline_roots"].flags.writeable is False
         assert snapshot["native"]["distance_tether"]["distance_targets"].flags.writeable is False
         assert snapshot["native"]["bending"]["quads"].flags.writeable is False
+        constraint_results = snapshot["native"]["constraint_results"]
+        assert constraint_results["ready_mask"] == 31, constraint_results["ready_mask"]
+        assert set(constraint_results) == {
+            "ready_mask", "tether", "distance", "angle", "bending", "motion"
+        }
+        for result_name in ("tether", "distance", "angle", "bending", "motion"):
+            result = constraint_results[result_name]
+            assert result["origins"].flags.writeable is False
+            assert result["corrections"].flags.writeable is False
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
         if center_shift is not None:
@@ -460,6 +469,7 @@ try:
         assert "motion_base_positions" not in native_snapshot
         assert "angle_restoration_target_positions" not in native_snapshot
         assert "angle_limit_target_positions" not in native_snapshot
+        assert "constraint_results" not in native_snapshot
         assert "candidates" in snapshot["self_collision"]
         assert (
             slot.data["native_context"].inspect()["debug_readback_count"]
@@ -651,6 +661,39 @@ try:
             assert "baseline" not in native_snapshot, (
                 mode_name, tuple(native_snapshot)
             )
+        constraint_expectations = {
+            "show_distance": ("distance", 2, "distance_correction"),
+            "show_tether": ("tether", 1, "tether_correction"),
+            "show_bending": ("bending", 8, "bending_correction"),
+            "show_motion": ("motion", 16, "motion_correction"),
+            "show_angle_limit": ("angle", 4, "angle_correction"),
+            "show_angle_restoration": ("angle", 4, "angle_correction"),
+        }
+        constraint_expectation = constraint_expectations.get(mode_name)
+        if constraint_expectation is None:
+            assert "constraint_results" not in native_snapshot, (
+                mode_name, tuple(native_snapshot)
+            )
+        else:
+            result_name, ready_mask, correction_color = constraint_expectation
+            constraint_results = native_snapshot.get("constraint_results") or {}
+            assert constraint_results.get("ready_mask") == ready_mask, (
+                mode_name, constraint_results
+            )
+            assert set(constraint_results) == {"ready_mask", result_name}
+            constraint_result = constraint_results[result_name]
+            assert constraint_result["origins"].flags.writeable is False
+            assert constraint_result["corrections"].flags.writeable is False
+            assert constraint_result["origins"].shape == constraint_result[
+                "corrections"
+            ].shape
+            corrections = np.asarray(
+                constraint_result["corrections"], dtype=np.float32
+            ).reshape((-1, 3))
+            if np.any(np.linalg.norm(corrections, axis=1) > 1.0e-8):
+                assert tuple(debug_draw._COLORS[correction_color]) in colors, (
+                    mode_name, correction_color, colors
+                )
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot
             assert "angle_restoration_target_positions" not in native_snapshot

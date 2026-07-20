@@ -22,6 +22,11 @@ from .center_state import (
 from .frame_state import MC2FrameInputSpec, MC2SlotRuntimeState, plan_mc2_frame_sync
 from .interaction_scope import build_mc2_interaction_scope
 from .native_context import (
+    MC2_DEBUG_CONSTRAINT_ANGLE,
+    MC2_DEBUG_CONSTRAINT_BENDING,
+    MC2_DEBUG_CONSTRAINT_DISTANCE,
+    MC2_DEBUG_CONSTRAINT_MOTION,
+    MC2_DEBUG_CONSTRAINT_TETHER,
     MC2_INTERACTION_RESOURCE_KEY,
     MC2_STATIC_CHANGE_ALL,
     MC2_STATIC_CHANGE_CONFIG,
@@ -1055,10 +1060,6 @@ def step_mc2(
                 native_context is not None
                 and frame_plan.action not in ("same_frame", "reset")
                 and not item["staged_native_frame_applied"]
-                and not (
-                    center_negative_scale_result is not None
-                    and center_negative_scale_result.active
-                )
             ):
                 task_teleport_result = native_context.apply_task_teleport()
                 task_teleport_handled = bool(
@@ -1217,6 +1218,26 @@ def step_mc2(
                         and debug_state.get("requested", False)
                         and debug_filters.get("show_collision_contacts", False)
                     ))
+                    constraint_debug_mask = 0
+                    if isinstance(debug_state, dict) and debug_state.get(
+                        "requested", False
+                    ):
+                        if debug_filters.get("show_tether", False):
+                            constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_TETHER
+                        if debug_filters.get("show_distance", False):
+                            constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_DISTANCE
+                        if (
+                            debug_filters.get("show_angle_restoration", False)
+                            or debug_filters.get("show_angle_limit", False)
+                        ):
+                            constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_ANGLE
+                        if debug_filters.get("show_bending", False):
+                            constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_BENDING
+                        if debug_filters.get("show_motion", False):
+                            constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_MOTION
+                    native_context.set_debug_constraint_results(
+                        constraint_debug_mask
+                    )
                     if item["center_action"] == "step":
                         frame_interpolation = item["time_scheduler"].advance_step(
                             local_update_index
@@ -1374,7 +1395,7 @@ def step_mc2(
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
                     slot.data["center_negative_scale_result"] = (
                         None
-                        if configured_reset_teleport
+                        if configured_reset_teleport or task_teleport_handled
                         else center_negative_scale_result
                     )
                     slot.data["frame_schedule"] = frame_schedule
@@ -1402,7 +1423,7 @@ def step_mc2(
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
                     slot.data["center_negative_scale_result"] = (
                         None
-                        if configured_reset_teleport
+                        if configured_reset_teleport or task_teleport_handled
                         else center_negative_scale_result
                     )
                     slot.data["frame_schedule"] = frame_schedule
@@ -1428,6 +1449,7 @@ def step_mc2(
                         center_negative_scale_result
                         if center_frame_shift_result is not None
                         and not configured_reset_teleport
+                        and not task_teleport_handled
                         else None
                     )
                     slot.data["frame_schedule"] = frame_schedule

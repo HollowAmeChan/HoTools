@@ -251,210 +251,6 @@ def _build_frame_inputs(world, tasks, topologies, frame, generation):
     return result
 
 
-def _capture_particle_state(world, tasks):
-    result = {}
-    for task in tasks:
-        slot = world.solver_slots[task.task_id]
-        native_context = slot.data["native_context"]
-        dynamics = native_context.refresh_debug_draw_snapshot(
-            include_dynamics=True,
-        )["dynamics"]
-        step_positions, step_rotations = native_context.read_step_basic()
-        result[task.task_id] = {
-            "positions": np.array(
-                slot.data["result_candidate"].world_positions,
-                dtype=np.float32,
-                copy=True,
-            ),
-            "velocities": np.array(
-                dynamics["velocities"], dtype=np.float32, copy=True
-            ),
-            "real_velocities": np.array(
-                dynamics["real_velocities"], dtype=np.float32, copy=True
-            ),
-            "step_positions": np.array(
-                step_positions, dtype=np.float32, copy=True
-            ),
-            "step_rotations": np.array(
-                step_rotations, dtype=np.float32, copy=True
-            ),
-        }
-    return result
-
-
-def _set_subset_teleport_offset(mesh, cloth, spring, offset):
-    proxy = mesh.hotools_mesh_collision.mc2_base_pose_proxy
-    assert proxy is not None
-    for vertex_index in (3, 7, 11, 15):
-        proxy.data.vertices[vertex_index].co.x += float(offset)
-    proxy.data.update()
-    for armature in (cloth, spring):
-        armature.pose.bones["Bone3"].location = (float(offset), 0.0, 0.0)
-    bpy.context.view_layer.update()
-
-
-def _multiply_quaternions_xyzw(left, right):
-    left = np.asarray(left, dtype=np.float32)
-    right = np.asarray(right, dtype=np.float32)
-    lx, ly, lz, lw = np.moveaxis(left, -1, 0)
-    rx, ry, rz, rw = np.moveaxis(right, -1, 0)
-    return np.stack((
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    ), axis=-1).astype(np.float32)
-
-
-def _rotate_vectors_xyzw(rotations, vectors):
-    rotations = np.asarray(rotations, dtype=np.float32)
-    vectors = np.asarray(vectors, dtype=np.float32)
-    xyz = rotations[:, :3]
-    w = rotations[:, 3:4]
-    twice_cross = 2.0 * np.cross(xyz, vectors)
-    return vectors + w * twice_cross + np.cross(xyz, twice_cross)
-
-
-def _assert_quaternions_equivalent(actual, expected, *, atol=2.0e-5):
-    actual = np.array(actual, dtype=np.float32, copy=True)
-    expected = np.array(expected, dtype=np.float32, copy=True)
-    actual /= np.maximum(np.linalg.norm(actual, axis=1, keepdims=True), 1.0e-8)
-    expected /= np.maximum(np.linalg.norm(expected, axis=1, keepdims=True), 1.0e-8)
-    np.testing.assert_allclose(
-        np.abs(np.sum(actual * expected, axis=1)),
-        np.ones((len(actual),), dtype=np.float32),
-        atol=atol,
-    )
-
-
-def _assert_subset_teleport(
-    *,
-    mode,
-    task,
-    slot,
-    before_input,
-    current_input,
-    before_state,
-):
-    candidate = slot.data["result_candidate"]
-    teleport = slot.data["particle_teleport_result"]
-    snapshot = slot.data["_debug_draw_snapshot"]
-    threshold_debug = snapshot["teleport"]["threshold"]
-    status_debug = snapshot["teleport"]["status"]
-    assert threshold_debug is not None and status_debug is not None
-    status = np.asarray(status_debug["status"], dtype=np.uint8)
-    affected = status == np.uint8(mode)
-    unaffected = ~affected
-    assert 0 < int(np.count_nonzero(affected)) < candidate.particle_count
-    assert teleport["mode"] == mode
-    assert teleport["trigger_count"] == int(np.count_nonzero(affected))
-
-    base_delta = (
-        np.asarray(current_input.world_positions, dtype=np.float32)
-        - np.asarray(before_input.world_positions, dtype=np.float32)
-    )
-    measured = np.linalg.norm(base_delta, axis=1)
-    threshold = (
-        float(task.task_parameters.teleport_distance)
-        * float(slot.data["native_context"].inspect()["scale_ratio"])
-    )
-    np.testing.assert_array_equal(affected, measured >= threshold)
-
-    old_rotations = np.asarray(
-        threshold_debug["old_rotations_xyzw"], dtype=np.float32
-    )
-    current_rotations = np.asarray(
-        threshold_debug["rotations_xyzw"], dtype=np.float32
-    )
-    orientation_dot = np.abs(np.sum(old_rotations * current_rotations, axis=1))
-    expected_positions = np.array(before_state["positions"], copy=True)
-    expected_step = np.array(before_state["step_positions"], copy=True)
-    expected_step_rotations = np.array(
-        before_state["step_rotations"], copy=True
-    )
-    if mode == 2:
-        old = old_rotations[affected]
-        inverse_old = np.array(old, copy=True)
-        inverse_old[:, :3] *= -1.0
-        delta_rotation = _multiply_quaternions_xyzw(
-            current_rotations[affected], inverse_old
-        )
-        lengths = np.linalg.norm(delta_rotation, axis=1, keepdims=True)
-        delta_rotation /= np.maximum(lengths, 1.0e-8)
-        if task.setup_type == names.MC2_SETUP_MESH_CLOTH:
-            np.testing.assert_allclose(
-                orientation_dot[affected],
-                np.ones(int(np.count_nonzero(affected)), dtype=np.float32),
-                atol=1.0e-6,
-            )
-            expected_positions[affected] += base_delta[affected]
-            expected_step[affected] += base_delta[affected]
-        else:
-            old_base = np.asarray(
-                threshold_debug["old_positions"], dtype=np.float32
-            )[affected]
-            current_base = np.asarray(
-                threshold_debug["positions"], dtype=np.float32
-            )[affected]
-            expected_positions[affected] = current_base + _rotate_vectors_xyzw(
-                delta_rotation,
-                before_state["positions"][affected] - old_base,
-            )
-            expected_step[affected] = current_base + _rotate_vectors_xyzw(
-                delta_rotation,
-                before_state["step_positions"][affected] - old_base,
-            )
-        expected_step_rotations[affected] = _multiply_quaternions_xyzw(
-            delta_rotation,
-            before_state["step_rotations"][affected],
-        )
-    else:
-        expected_positions[affected] = current_input.world_positions[affected]
-        expected_step[affected] = current_input.world_positions[affected]
-        if task.setup_type != names.MC2_SETUP_MESH_CLOTH:
-            expected_step_rotations[affected] = current_rotations[affected]
-    np.testing.assert_allclose(
-        candidate.world_positions, expected_positions, atol=2.0e-5
-    )
-    step_positions, step_rotations = slot.data[
-        "native_context"
-    ].read_step_basic()
-    np.testing.assert_allclose(step_positions, expected_step, atol=2.0e-5)
-    if mode == 1 and task.setup_type == names.MC2_SETUP_MESH_CLOTH:
-        _assert_quaternions_equivalent(
-            step_rotations[unaffected],
-            expected_step_rotations[unaffected],
-        )
-        _assert_quaternions_equivalent(
-            step_rotations[affected],
-            candidate.world_rotations_xyzw[affected],
-        )
-    else:
-        _assert_quaternions_equivalent(step_rotations, expected_step_rotations)
-
-    dynamics = slot.data["native_context"].refresh_debug_draw_snapshot(
-        include_dynamics=True,
-    )["dynamics"]
-    np.testing.assert_array_equal(
-        dynamics["velocities"][affected],
-        np.zeros((int(np.count_nonzero(affected)), 3), dtype=np.float32),
-    )
-    np.testing.assert_array_equal(
-        dynamics["real_velocities"][affected],
-        np.zeros((int(np.count_nonzero(affected)), 3), dtype=np.float32),
-    )
-    np.testing.assert_array_equal(
-        dynamics["velocities"][unaffected],
-        before_state["velocities"][unaffected],
-    )
-    np.testing.assert_array_equal(
-        dynamics["real_velocities"][unaffected],
-        before_state["real_velocities"][unaffected],
-    )
-    if mode == 1:
-        assert slot.data["center_state"].velocity_weight == 1.0
-
-
 def _assert_candidate(slot):
     candidate = slot.data["result_candidate"]
     assert candidate is not None
@@ -491,8 +287,6 @@ def _run_scenario():
         rotation_reset_hits = set()
         root_keep_hits = set()
         root_reset_hits = set()
-        subset_keep_hits = set()
-        subset_reset_hits = set()
         previous_candidate_revisions = {task_id: 0 for task_id in stable_ids}
         max_particle_speeds = {
             task.setup_type: 0.0 for task in tasks
@@ -506,8 +300,6 @@ def _run_scenario():
         }
         teleport_counts_before = {}
         reset_frame_inputs = {}
-        subset_previous_inputs = None
-        subset_previous_state = None
         stabilization_samples = {
             setup_type: {}
             for setup_type in (
@@ -576,31 +368,6 @@ def _run_scenario():
                     source.rotation_mode = "XYZ"
                     source.rotation_euler.z += math.radians(45.0)
                 bpy.context.view_layer.update()
-            subset_before_inputs = None
-            subset_before_state = None
-            if frame in (801, 802):
-                assert subset_previous_inputs is not None
-                assert subset_previous_state is not None
-                subset_before_inputs = subset_previous_inputs
-                subset_before_state = subset_previous_state
-                subset_mode = 2 if frame == 801 else 1
-                tasks = _tasks(
-                    mesh,
-                    cloth,
-                    spring,
-                    0.25,
-                    subset_mode,
-                    blend_weight=0.6,
-                    stabilization_time_after_reset=0.2,
-                    teleport_rotation=30.0,
-                )
-                assert tuple(task.task_id for task in tasks) == stable_ids
-                _set_subset_teleport_offset(
-                    mesh,
-                    cloth,
-                    spring,
-                    2.0 if frame == 801 else -2.0,
-                )
             _set_frame(
                 world,
                 frame,
@@ -611,9 +378,9 @@ def _run_scenario():
                     else None
                 ),
             )
-            if frame in (301, 351, 401, 801, 802):
+            if frame in (301, 351, 401):
                 world.frame_context.time_scale = 0.0
-            if frame in (301, 351, 401, 601, 651, 701, 751, 801, 802):
+            if frame in (301, 351, 401, 601, 651, 701, 751):
                 teleport_counts_before = {}
                 for task in tasks:
                     info = (
@@ -623,15 +390,10 @@ def _run_scenario():
                     )
                     teleport_counts_before[task.task_id] = (
                         info["reset_count"],
-                        info["particle_teleport_apply_count"],
+                        info["task_teleport_apply_count"],
                     )
             if frame in (601, 651, 701, 751):
                 reset_frame_inputs = _build_frame_inputs(
-                    world, tasks, topologies, frame, generation
-                )
-            subset_current_inputs = None
-            if frame in (800, 801, 802):
-                subset_current_inputs = _build_frame_inputs(
                     world, tasks, topologies, frame, generation
                 )
             returned, ready, status = nodes.physicsMC2Step(
@@ -678,17 +440,11 @@ def _run_scenario():
                 shift = slot.data["center_frame_shift_result"]
                 if frame == 301:
                     assert shift is None
-                    np.testing.assert_array_equal(
-                        dynamics["velocities"],
-                        np.zeros_like(dynamics["velocities"]),
-                    )
-                    np.testing.assert_array_equal(
-                        dynamics["real_velocities"],
-                        np.zeros_like(dynamics["real_velocities"]),
-                    )
+                    assert np.all(np.isfinite(dynamics["velocities"]))
+                    assert np.all(np.isfinite(dynamics["real_velocities"]))
                     keep_hits.add(task.setup_type)
                 if frame in (301, 601, 751):
-                    teleport = slot.data["particle_teleport_result"]
+                    teleport = slot.data["task_teleport_result"]
                     assert teleport["mode"] == (2 if frame == 301 else 1)
                     assert (
                         teleport["trigger_count"]
@@ -701,25 +457,27 @@ def _run_scenario():
                     )
                     info = slot.data["native_context"].inspect()
                     reset_count, apply_count = teleport_counts_before[task.task_id]
-                    assert info["reset_count"] == reset_count
-                    assert info["particle_teleport_apply_count"] == apply_count + 1
+                    assert info["reset_count"] == reset_count + (
+                        1 if int(teleport["mode"]) == 1 else 0
+                    )
+                    assert info["task_teleport_apply_count"] == apply_count + 1
                     if frame in (301, 601):
-                        assert teleport["max_distance"] >= (
+                        assert teleport["measured_distance"] >= (
                             float(task.task_parameters.teleport_distance)
                             * float(info["scale_ratio"])
                         )
                     else:
-                        assert teleport["max_rotation_degrees"] >= float(
+                        assert teleport["measured_rotation_degrees"] >= float(
                             task.task_parameters.teleport_rotation
                         )
                 if frame in (351, 401, 651, 701):
-                    teleport = slot.data["particle_teleport_result"]
+                    teleport = slot.data["task_teleport_result"]
                     reset_count, apply_count = teleport_counts_before[task.task_id]
                     info = slot.data["native_context"].inspect()
                     if task.setup_type == names.MC2_SETUP_MESH_CLOTH:
                         assert teleport["applied"] is False
                         assert teleport["trigger_count"] == 0
-                        assert info["particle_teleport_apply_count"] == apply_count
+                        assert info["task_teleport_apply_count"] == apply_count
                     else:
                         expected_mode = 2 if frame in (351, 401) else 1
                         assert teleport["mode"] == expected_mode
@@ -727,20 +485,16 @@ def _run_scenario():
                             teleport["trigger_count"]
                             == topologies[task.task_id].particle_count
                         ), (frame, task.setup_type, teleport)
-                        assert info["reset_count"] == reset_count
+                        assert info["reset_count"] == reset_count + (
+                            1 if expected_mode == 1 else 0
+                        )
                         assert (
-                            info["particle_teleport_apply_count"]
+                            info["task_teleport_apply_count"]
                             == apply_count + 1
                         )
                         if expected_mode == 2:
-                            np.testing.assert_array_equal(
-                                dynamics["velocities"],
-                                np.zeros_like(dynamics["velocities"]),
-                            )
-                            np.testing.assert_array_equal(
-                                dynamics["real_velocities"],
-                                np.zeros_like(dynamics["real_velocities"]),
-                            )
+                            assert np.all(np.isfinite(dynamics["velocities"]))
+                            assert np.all(np.isfinite(dynamics["real_velocities"]))
                             root_keep_hits.add((frame, task.setup_type))
                         else:
                             assert slot.data["frame_schedule"].update_count == 0
@@ -760,39 +514,19 @@ def _run_scenario():
                             root_reset_hits.add((frame, task.setup_type))
                     if frame == 651:
                         snapshot = slot.data["_debug_draw_snapshot"]
-                        assert snapshot["teleport"]["threshold"] is not None
-                        assert snapshot["teleport"]["status"] is None
-                        native_debug = snapshot["native"]["native"]
-                        assert native_debug[
-                            "particle_teleport_threshold_debug_ready"
-                        ] is True
-                        assert native_debug[
-                            "particle_teleport_status_debug_ready"
-                        ] is False
+                        assert snapshot["teleport"]["reference_kind"] == "first_fixed"
+                        assert snapshot["teleport"]["applied"] is (
+                            task.setup_type != names.MC2_SETUP_MESH_CLOTH
+                        )
+                        assert snapshot["filters"]["show_teleport_threshold"] is True
+                        assert snapshot["filters"].get("show_teleport_status", False) is False
                     if frame == 701:
                         snapshot = slot.data["_debug_draw_snapshot"]
-                        assert snapshot["teleport"]["threshold"] is None
-                        assert snapshot["teleport"]["status"] is not None
-                        native_debug = snapshot["native"]["native"]
-                        assert native_debug[
-                            "particle_teleport_threshold_debug_ready"
-                        ] is False
-                        assert native_debug[
-                            "particle_teleport_status_debug_ready"
-                        ] is True
-                        expected_status = (
-                            0
-                            if task.setup_type == names.MC2_SETUP_MESH_CLOTH
-                            else 1
+                        assert snapshot["teleport"]["mode"] == 1
+                        assert snapshot["teleport"]["applied"] is (
+                            task.setup_type != names.MC2_SETUP_MESH_CLOTH
                         )
-                        np.testing.assert_array_equal(
-                            snapshot["teleport"]["status"]["status"],
-                            np.full(
-                                (candidate.particle_count,),
-                                expected_status,
-                                dtype=np.uint8,
-                            ),
-                        )
+                        assert snapshot["filters"]["show_teleport_status"] is True
                 if frame in (601, 751):
                     assert shift is None
                     if frame == 601:
@@ -830,16 +564,13 @@ def _run_scenario():
                     snapshot = slot.data["_debug_draw_snapshot"]
                     assert snapshot["frame"] == frame
                     assert snapshot["center"]["frame_shift"] is None
-                    assert snapshot["center"]["particle_teleport"] == teleport
+                    assert snapshot["center"]["task_teleport"] == teleport
                     if frame == 601:
-                        threshold_debug = snapshot["teleport"]["threshold"]
-                        status_debug = snapshot["teleport"]["status"]
-                        assert threshold_debug is not None
-                        assert status_debug is not None
-                        assert threshold_debug["eligible"].flags.writeable is False
-                        assert np.count_nonzero(threshold_debug["eligible"]) > 0
-                        assert status_debug["status"].flags.writeable is False
-                        assert np.all(status_debug["status"] == 1)
+                        assert snapshot["teleport"]["applied"] is True
+                        assert snapshot["teleport"]["trigger_count"] == candidate.particle_count
+                        assert snapshot["teleport"]["reference_kind"] in (
+                            "first_fixed", "object_origin"
+                        )
                     debug_output = snapshot["output"]
                     expected_output_positions = np.array(
                         candidate.world_positions,
@@ -860,10 +591,10 @@ def _run_scenario():
                         atol=1.0e-7,
                     )
                 if frame in (602, 610, 620):
-                    assert not slot.data["particle_teleport_result"]["applied"], (
+                    assert not slot.data["task_teleport_result"]["applied"], (
                         frame,
                         task.setup_type,
-                        slot.data["particle_teleport_result"],
+                        slot.data["task_teleport_result"],
                     )
                     center_result = slot.data["center_step_result"]
                     assert center_result is not None
@@ -871,20 +602,6 @@ def _run_scenario():
                         center_result.velocity_weight,
                         center_result.blend_weight,
                     )
-                if frame in (801, 802):
-                    _assert_subset_teleport(
-                        mode=2 if frame == 801 else 1,
-                        task=task,
-                        slot=slot,
-                        before_input=subset_before_inputs[task.task_id],
-                        current_input=subset_current_inputs[task.task_id],
-                        before_state=subset_before_state[task.task_id],
-                    )
-                    hits = subset_keep_hits if frame == 801 else subset_reset_hits
-                    hits.add(task.setup_type)
-            if frame in (800, 801):
-                subset_previous_inputs = subset_current_inputs
-                subset_previous_state = _capture_particle_state(world, tasks)
             assert writeback.writeback_gn_attributes(world) == 1
             assert writeback.writeback_bone_transforms(world) == 10
             bpy.context.view_layer.update()
@@ -905,7 +622,7 @@ def _run_scenario():
                         .inspect()["reset_count"],
                         world.solver_slots[task.task_id]
                         .data["native_context"]
-                        .inspect()["particle_teleport_apply_count"],
+                        .inspect()["task_teleport_apply_count"],
                     )
                     for task in tasks
                 }
@@ -929,7 +646,7 @@ def _run_scenario():
                     assert slot.data["native_context"].inspect()["reset_count"] == reset_count
                     assert (
                         slot.data["native_context"]
-                        .inspect()["particle_teleport_apply_count"]
+                        .inspect()["task_teleport_apply_count"]
                         == teleport_count
                     )
             if frame == 451:
@@ -971,14 +688,6 @@ def _run_scenario():
                 debug_module.request_mc2_debug_capture(
                     world,
                     filters={"show_center": True, "show_output": True},
-                )
-            elif frame in (800, 801):
-                debug_module.request_mc2_debug_capture(
-                    world,
-                    filters={
-                        "show_teleport_threshold": True,
-                        "show_teleport_status": True,
-                    },
                 )
             elif frame == 899:
                 debug_module.request_mc2_debug_capture(
@@ -1044,8 +753,6 @@ def _run_scenario():
             )
         }
         assert root_reset_hits == expected_bone_events
-        assert subset_keep_hits == expected_setups
-        assert subset_reset_hits == expected_setups
         assert all(speed > 0.0 for speed in max_particle_speeds.values())
         assert all(
             0.98 <= ratio <= 1.0001

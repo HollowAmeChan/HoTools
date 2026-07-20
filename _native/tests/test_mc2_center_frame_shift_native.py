@@ -387,12 +387,19 @@ def test_task_keep_uses_first_fixed_and_transforms_every_particle():
     try:
         _update_dynamic(context, 1, initial, identity)
         hotools_native.mc2_context_v0_reset(context)
+        hotools_native.mc2_context_v0_step(context, 0.1, 1.0, 1.0)
         hotools_native.mc2_context_v0_apply_center_frame_shift(
             context,
             np.zeros(3, dtype=np.float32),
             np.array([0.0, 0.25, 0.0], dtype=np.float32),
             np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
         )
+        before_velocities = np.empty((count, 3), dtype=np.float32)
+        before_real_velocities = np.empty((count, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_dynamics(
+            context, before_velocities, before_real_velocities
+        )
+        assert np.linalg.norm(before_velocities[1:]) > 0.0
         before_positions, _before_rotations = _read_many(context, count)
         current = initial.copy()
         current[0, 0] += 2.0
@@ -414,6 +421,13 @@ def test_task_keep_uses_first_fixed_and_transforms_every_particle():
         expected_positions = before_positions + np.array([2.0, 0.0, 0.0], dtype=np.float32)
         np.testing.assert_allclose(positions, expected_positions, atol=1.0e-6)
         np.testing.assert_array_equal(rotations, identity)
+        velocities = np.empty((count, 3), dtype=np.float32)
+        real_velocities = np.empty((count, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_dynamics(
+            context, velocities, real_velocities
+        )
+        np.testing.assert_array_equal(velocities, before_velocities)
+        np.testing.assert_array_equal(real_velocities, before_real_velocities)
         hotools_native.mc2_context_v0_step(
             context, 1.0 / 90.0, 1.0, 1.0
         )

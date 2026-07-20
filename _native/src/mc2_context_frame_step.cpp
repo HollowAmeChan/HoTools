@@ -1385,6 +1385,9 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->step_basic_rotations = context->dynamic_rotations;
     context->external_contact_debug_records.clear();
     context->external_contact_debug_ready = false;
+    context->debug_constraint_ready_mask = 0;
+    context->debug_constraint_origins.clear();
+    context->debug_constraint_corrections.clear();
     context->center_dynamic_ready = false;
     context->center_frame_ready = false;
     context->center_result_ready = false;
@@ -1444,6 +1447,35 @@ PyObject* mc2_context_v0_set_debug_external_contacts(PyObject*, PyObject* args) 
     context->external_contact_debug_requested = requested != 0;
     context->external_contact_debug_ready = false;
     context->external_contact_debug_records.clear();
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_set_debug_constraint_results expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const long mask = as_long(PyTuple_GET_ITEM(args, 1), "constraint_debug_mask");
+    if (PyErr_Occurred()) return nullptr;
+    constexpr long kValidMask = (1L << 5) - 1L;
+    if (mask < 0 || (mask & ~kValidMask) != 0) {
+        PyErr_SetString(PyExc_ValueError, "constraint_debug_mask has unsupported bits");
+        return nullptr;
+    }
+    context->debug_constraint_request_mask = static_cast<std::uint32_t>(mask);
+    context->debug_constraint_ready_mask = 0;
+    if (mask == 0) {
+        std::vector<float>().swap(context->debug_constraint_origins);
+        std::vector<float>().swap(context->debug_constraint_corrections);
+    } else {
+        context->debug_constraint_origins.clear();
+        context->debug_constraint_corrections.clear();
+    }
     Py_RETURN_NONE;
 }
 

@@ -3264,6 +3264,43 @@ void commit_particle_post(Mc2ContextV0& context, float dt, const std::vector<flo
     apply_post_step_mc2(view);
 }
 
+void begin_constraint_debug_pass(
+    const Mc2ContextV0& context,
+    std::uint32_t request_bit,
+    std::vector<float>& before
+) {
+    before.clear();
+    if ((context.debug_constraint_request_mask & request_bit) == 0) return;
+    before = context.state_positions;
+}
+
+void finish_constraint_debug_pass(
+    Mc2ContextV0& context,
+    std::uint32_t request_bit,
+    std::size_t pass_index,
+    const std::vector<float>& before
+) {
+    if ((context.debug_constraint_request_mask & request_bit) == 0 ||
+        before.size() != context.state_positions.size()) {
+        return;
+    }
+    const auto stride = context.state_positions.size();
+    const auto required = stride * kDebugConstraintPassCount;
+    if (context.debug_constraint_origins.size() != required) {
+        context.debug_constraint_origins.assign(required, 0.0f);
+    }
+    if (context.debug_constraint_corrections.size() != required) {
+        context.debug_constraint_corrections.assign(required, 0.0f);
+    }
+    const auto start = pass_index * stride;
+    for (std::size_t index = 0; index < stride; ++index) {
+        context.debug_constraint_origins[start + index] = before[index];
+        context.debug_constraint_corrections[start + index] =
+            context.state_positions[index] - before[index];
+    }
+    context.debug_constraint_ready_mask |= request_bit;
+}
+
 bool begin_mc2_context_step(
     Mc2ContextV0& context,
     float dt,
@@ -3273,6 +3310,9 @@ bool begin_mc2_context_step(
     Mc2ContextStepStateV0& state
 ) {
     state.context = &context;
+    context.debug_constraint_ready_mask = 0;
+    context.debug_constraint_origins.clear();
+    context.debug_constraint_corrections.clear();
     if (context.external_contact_debug_requested) {
         context.external_contact_debug_records.clear();
         context.external_contact_debug_ready = false;
@@ -3289,14 +3329,39 @@ bool begin_mc2_context_step(
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
         return false;
     }
+    std::vector<float> debug_before;
+    begin_constraint_debug_pass(context, kDebugConstraintTether, debug_before);
     solve_tether_once(context);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintTether, 0, debug_before
+    );
+    begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
     solve_distance_once(context, simulation_power_y);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintDistance, 1, debug_before
+    );
+    begin_constraint_debug_pass(context, kDebugConstraintAngle, debug_before);
     solve_angle_once(context, simulation_power_w);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintAngle, 2, debug_before
+    );
+    begin_constraint_debug_pass(context, kDebugConstraintBending, debug_before);
     solve_bending_once(context, simulation_power_y);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintBending, 3, debug_before
+    );
     solve_point_collision_once(context);
     solve_edge_collision_once(context);
+    begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
     solve_distance_once(context, simulation_power_y);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintDistance, 4, debug_before
+    );
+    begin_constraint_debug_pass(context, kDebugConstraintMotion, debug_before);
     solve_motion_once(context);
+    finish_constraint_debug_pass(
+        context, kDebugConstraintMotion, 5, debug_before
+    );
     update_self_collision_primitives_once(context, state.previous_positions);
     return true;
 }
@@ -3562,6 +3627,8 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(particle_collision_normals);
     MC2_ADD_VECTOR_BYTES(particle_real_velocities);
     MC2_ADD_VECTOR_BYTES(external_contact_debug_records);
+    MC2_ADD_VECTOR_BYTES(debug_constraint_origins);
+    MC2_ADD_VECTOR_BYTES(debug_constraint_corrections);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -3744,6 +3811,24 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             result,
             "external_contact_debug_count",
             static_cast<std::int64_t>(context.external_contact_debug_records.size())
+        ) ||
+        !dict_i64(
+            result,
+            "debug_constraint_request_mask",
+            static_cast<std::int64_t>(context.debug_constraint_request_mask)
+        ) ||
+        !dict_i64(
+            result,
+            "debug_constraint_ready_mask",
+            static_cast<std::int64_t>(context.debug_constraint_ready_mask)
+        ) ||
+        !dict_i64(
+            result,
+            "debug_constraint_float_count",
+            static_cast<std::int64_t>(
+                context.debug_constraint_origins.size() +
+                context.debug_constraint_corrections.size()
+            )
         ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||
         !dict_i64(result, "self_grid_update_count", context.self_grid_update_count) ||

@@ -10,6 +10,13 @@
 
 namespace hotools::mc2_internal {
 
+constexpr std::uint32_t kDebugConstraintTether = 1u << 0;
+constexpr std::uint32_t kDebugConstraintDistance = 1u << 1;
+constexpr std::uint32_t kDebugConstraintAngle = 1u << 2;
+constexpr std::uint32_t kDebugConstraintBending = 1u << 3;
+constexpr std::uint32_t kDebugConstraintMotion = 1u << 4;
+constexpr std::size_t kDebugConstraintPassCount = 6;
+
 struct Vec3 {
     float x = 0.0f;
     float y = 0.0f;
@@ -107,6 +114,8 @@ struct Mc2ContextV0 {
     bool component_pose_ready = false;
     bool external_contact_debug_requested = false;
     bool external_contact_debug_ready = false;
+    std::uint32_t debug_constraint_request_mask = 0;
+    std::uint32_t debug_constraint_ready_mask = 0;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -140,6 +149,8 @@ struct Mc2ContextV0 {
     std::vector<float> particle_collision_normals;
     std::vector<float> particle_real_velocities;
     std::vector<hotools::Mc2ExternalCollisionDebugRecord> external_contact_debug_records;
+    std::vector<float> debug_constraint_origins;
+    std::vector<float> debug_constraint_corrections;
     std::vector<float> animated_base_positions;
     std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;

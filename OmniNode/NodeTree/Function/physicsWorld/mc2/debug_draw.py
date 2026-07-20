@@ -64,16 +64,21 @@ _COLORS = {
     "distance_ok": (0.35, 0.95, 0.42, 0.72),
     "distance_stretch": (1.00, 0.18, 0.12, 0.95),
     "distance_compress": (0.20, 0.48, 1.00, 0.95),
+    "distance_correction": (1.00, 0.08, 0.04, 1.00),
     "tether": (0.72, 0.76, 0.82, 0.55),
     "tether_min": (0.22, 0.55, 1.00, 0.72),
     "tether_max": (1.00, 0.78, 0.18, 0.72),
+    "tether_correction": (1.00, 0.08, 0.04, 1.00),
     "bending": (0.70, 0.38, 1.00, 0.72),
     "bending_error": (1.00, 0.20, 0.14, 0.95),
     "bending_volume": (0.20, 0.90, 0.82, 0.72),
+    "bending_correction": (1.00, 0.08, 0.04, 1.00),
     "angle_target": (1.00, 0.32, 0.72, 0.95),
     "angle_limit": (1.00, 0.82, 0.20, 0.78),
+    "angle_correction": (1.00, 0.08, 0.04, 1.00),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
     "backstop": (1.00, 0.40, 0.22, 0.55),
+    "motion_correction": (1.00, 0.08, 0.04, 1.00),
     "center": (1.00, 0.92, 0.25, 0.95),
     "center_anchor": (0.10, 0.88, 1.00, 0.92),
     "center_old": (0.28, 0.52, 1.00, 0.78),
@@ -364,6 +369,14 @@ def _append_slot_batches(
             (snapshot.get("native") or {}).get("distance_tether") or {},
             limit,
         )
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
+                "distance"
+            ) or {},
+            "distance_correction",
+            limit,
+        )
     if filters["show_tether"]:
         _append_tether_batches(
             batches,
@@ -371,6 +384,14 @@ def _append_slot_batches(
             snapshot.get("motion") or {},
             snapshot.get("parameters") or {},
             (snapshot.get("native") or {}).get("distance_tether") or {},
+            limit,
+        )
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
+                "tether"
+            ) or {},
+            "tether_correction",
             limit,
         )
     if filters["show_bending"]:
@@ -381,12 +402,28 @@ def _append_slot_batches(
             (snapshot.get("native") or {}).get("bending") or {},
             limit,
         )
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
+                "bending"
+            ) or {},
+            "bending_correction",
+            limit,
+        )
     if filters["show_motion_base"]:
         _append_motion_base_batches(
             batches, point_batches, snapshot.get("motion") or {}, limit
         )
     if filters["show_motion"]:
         _append_motion_batches(batches, snapshot.get("motion") or {}, limit)
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
+                "motion"
+            ) or {},
+            "motion_correction",
+            limit,
+        )
     if filters["show_angle_restoration"]:
         _append_angle_restoration_batches(
             batches,
@@ -401,6 +438,15 @@ def _append_slot_batches(
     if filters["show_angle_limit"]:
         _append_angle_limit_batches(
             batches, snapshot.get("motion") or {}, limit
+        )
+    if filters["show_angle_restoration"] or filters["show_angle_limit"]:
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
+                "angle"
+            ) or {},
+            "angle_correction",
+            limit,
         )
     if filters["show_center"]:
         _append_center_batches(batches, point_batches, snapshot.get("center") or {})
@@ -898,6 +944,29 @@ def _append_velocity_batches(batches, positions, dynamics, parameters, limit):
     _batch(batches, stored_lines, "velocity", 1.8)
     _batch(batches, delta_lines, "velocity_delta", 1.2)
     _batch(batches, clamped_lines, "velocity_clamped", 2.6)
+
+
+def _append_constraint_correction_batches(
+    batches, constraint_result, color_key, limit
+):
+    origins = constraint_result.get("origins")
+    corrections = constraint_result.get("corrections")
+    if origins is None or corrections is None:
+        return
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    corrections = np.asarray(corrections, dtype=np.float32).reshape((-1, 3))
+    correction_lines = []
+    drawn = 0
+    for origin, correction in zip(origins, corrections):
+        delta = vector3(correction)
+        if delta.length <= 1.0e-8:
+            continue
+        start = vector3(origin)
+        add_arrow_lines(correction_lines, start, start + delta)
+        drawn += 1
+        if drawn >= limit:
+            break
+    _batch(batches, correction_lines, color_key, 2.4)
 
 
 def _append_distance_batches(

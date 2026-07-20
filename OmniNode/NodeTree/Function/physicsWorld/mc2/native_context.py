@@ -39,6 +39,13 @@ MC2_STATIC_CHANGE_SOURCE = (
     | MC2_STATIC_CHANGE_SURFACE
 )
 MC2_STATIC_CHANGE_ALL = MC2_STATIC_CHANGE_SOURCE | MC2_STATIC_CHANGE_CONFIG
+MC2_DEBUG_CONSTRAINT_TETHER = 1 << 0
+MC2_DEBUG_CONSTRAINT_DISTANCE = 1 << 1
+MC2_DEBUG_CONSTRAINT_ANGLE = 1 << 2
+MC2_DEBUG_CONSTRAINT_BENDING = 1 << 3
+MC2_DEBUG_CONSTRAINT_MOTION = 1 << 4
+MC2_DEBUG_CONSTRAINT_ALL = (1 << 5) - 1
+MC2_DEBUG_CONSTRAINT_PASS_COUNT = 6
 
 
 class MC2NativeContextV0:
@@ -813,6 +820,16 @@ class MC2NativeContextV0:
             bool(requested),
         )
 
+    def set_debug_constraint_results(self, request_mask: int) -> None:
+        self._ensure_live()
+        request_mask = int(request_mask)
+        if request_mask < 0 or request_mask & ~MC2_DEBUG_CONSTRAINT_ALL:
+            raise ValueError("MC2 constraint debug mask has unsupported bits")
+        self._module.mc2_context_v0_set_debug_constraint_results(
+            self._handle,
+            request_mask,
+        )
+
     @staticmethod
     def _debug_array(values) -> np.ndarray:
         result = np.array(values, copy=True, order="C")
@@ -832,6 +849,7 @@ class MC2NativeContextV0:
         include_dynamics: bool = False,
         include_distance_tether: bool = False,
         include_bending: bool = False,
+        include_constraint_results: bool = False,
         include_external_contacts: bool = False,
         include_self_primitives: bool = False,
         include_self_grid: bool = False,
@@ -952,6 +970,46 @@ class MC2NativeContextV0:
                 "rests": self._debug_array(rests),
                 "markers": self._debug_array(markers),
             }
+            readbacks += 1
+        constraint_ready_mask = int(info.get("debug_constraint_ready_mask", 0) or 0)
+        if include_constraint_results and constraint_ready_mask:
+            rows = MC2_DEBUG_CONSTRAINT_PASS_COUNT * self.vertex_count
+            origins = np.empty((rows, 3), dtype=np.float32)
+            corrections = np.empty((rows, 3), dtype=np.float32)
+            self._module.mc2_context_v0_read_debug_constraint_results(
+                self._handle,
+                origins,
+                corrections,
+            )
+            origins = origins.reshape(
+                (MC2_DEBUG_CONSTRAINT_PASS_COUNT, self.vertex_count, 3)
+            )
+            corrections = corrections.reshape(
+                (MC2_DEBUG_CONSTRAINT_PASS_COUNT, self.vertex_count, 3)
+            )
+            pass_layout = (
+                ("tether", MC2_DEBUG_CONSTRAINT_TETHER, (0,)),
+                ("distance", MC2_DEBUG_CONSTRAINT_DISTANCE, (1, 4)),
+                ("angle", MC2_DEBUG_CONSTRAINT_ANGLE, (2,)),
+                ("bending", MC2_DEBUG_CONSTRAINT_BENDING, (3,)),
+                ("motion", MC2_DEBUG_CONSTRAINT_MOTION, (5,)),
+            )
+            constraint_results = {
+                "ready_mask": constraint_ready_mask,
+            }
+            for name, bit, indices in pass_layout:
+                if not constraint_ready_mask & bit:
+                    continue
+                selected_origins = origins[list(indices)]
+                selected_corrections = corrections[list(indices)]
+                if len(indices) == 1:
+                    selected_origins = selected_origins[0]
+                    selected_corrections = selected_corrections[0]
+                constraint_results[name] = {
+                    "origins": self._debug_array(selected_origins),
+                    "corrections": self._debug_array(selected_corrections),
+                }
+            snapshot["constraint_results"] = constraint_results
             readbacks += 1
         if include_external_contacts and bool(
             info.get("external_contact_debug_ready", False)
@@ -1336,6 +1394,12 @@ __all__ = [
     "MC2_STATIC_CHANGE_SOURCE",
     "MC2_STATIC_CHANGE_SURFACE",
     "MC2_STATIC_CHANGE_TOPOLOGY",
+    "MC2_DEBUG_CONSTRAINT_ALL",
+    "MC2_DEBUG_CONSTRAINT_ANGLE",
+    "MC2_DEBUG_CONSTRAINT_BENDING",
+    "MC2_DEBUG_CONSTRAINT_DISTANCE",
+    "MC2_DEBUG_CONSTRAINT_MOTION",
+    "MC2_DEBUG_CONSTRAINT_TETHER",
     "MC2_INTERACTION_RESOURCE_KEY",
     "MC2_NATIVE_CONTEXT_SCHEMA_VERSION",
     "MC2NativeContextV0",
