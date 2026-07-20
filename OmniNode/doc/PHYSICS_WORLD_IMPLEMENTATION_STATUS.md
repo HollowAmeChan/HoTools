@@ -78,7 +78,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 旧 solver 已移除；人工验收复核重新打开 | Python/C++重组、依赖/ABI/事务终审、单一蓝本及热点benchmark已完成；单层自碰、Mesh深度、参数归属、参数说明、碰撞结果、无consumer离心力隐藏与任务级Teleport均已关闭人工/代码验收；五类约束pass均已按需发布稳定记录identity、active状态和真实贡献，Angle保留三轮交错子分支；Center已发布World/Local/Depth分层与限速命中；外碰与self contact/intersection均已发布时间层；兼容重编译缓存已由OmniNode通用manifest合同实现并自动验证 | 整体复验debug界面。统一入口：`MC2_MANUAL_VALIDATION_DECISIONS.md` |
+| MC2 | 维护态 | Python/C++重组、依赖/ABI/事务终审、单一蓝本与热点benchmark已完成；Teleport、自碰静置、Mesh深度、参数归属/说明、真实碰撞结果、五类约束记录、Center分层、contact/intersection时间层、兼容重编译缓存及结果导向debug均已闭环；debug默认惰性、按模式请求并在capture后即时清理native位 | 按`MC2_BLUEPRINT.md`维护性能门禁和扩展检查表；无独立推进文档 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。

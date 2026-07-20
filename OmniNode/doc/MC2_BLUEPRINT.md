@@ -6,7 +6,7 @@
 
 - **应该写**：当前真实支持域、故意产品差异、Python/C++职责、数据所有权、更新频率、事务、debug、性能门槛和扩展检查表。
 - **不应该写**：迁移阶段、逐次修复、提交顺序、临时测试流水、已经删除实现的过程复盘或某次机器上的偶然性能数字。
-- **内容路由**：跨solver公共结构写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：跨solver公共结构写`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；domain摘要写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；MC2产品决策、debug合同和验收结论只写本文；历史只留Git。
 - **更新原则**：代码、declaration、测试和本文冲突时，先确认真实行为并修正唯一owner，再同步本文；不能用计划替代事实。
 
 相关文档：
@@ -14,7 +14,7 @@
 - 物理世界公共架构：`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - 各domain当前完成度：`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - OmniNode通用架构：`../ARCHITECTURE.md`
-- 当前人工验收反例与待决策：`MC2_MANUAL_VALIDATION_DECISIONS.md`
+- 人工验收反例与已吸收决策：见本文“Debug收尾与产品踩坑”及对应能力章节；不再维护独立推进文档。
 
 代码事实源优先级：`mc2/declaration.py`、`mc2/capabilities.py`、生产solver/native owner、自动化测试、本文。
 
@@ -137,7 +137,7 @@ profile + task combination
 
 MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新动画world pose；没有Fixed时比较模拟对象原点，Bone task即Armature Object原点。位移或旋转任一越阈值即处理整个task，基准身份不得随帧改变。
 
-`Reset`把整个task的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和碰撞历史对齐本帧动画基准；`Keep`按判定基准姿态delta整体搬运state、velocity reference、StepBasic、Motion base和rotation，并只旋转已有真实物理速度。两种模式都把old dynamic/component姿态重定基到本帧、把collider old shape重定基为current shape，避免第一substep沿传送路径重复插值或扫掠；摩擦、碰撞法线、外碰debug contact、task内self、bone output和跨task interaction历史失效后由真实substep重建。触发发生在scheduler之前，zero-substep帧也立即发布新结果。完整状态清单与复验矩阵见`MC2_MANUAL_VALIDATION_DECISIONS.md`。
+`Reset`把整个task的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和碰撞历史对齐本帧动画基准；`Keep`按判定基准姿态delta整体搬运state、velocity reference、StepBasic、Motion base和rotation，并只旋转已有真实物理速度。两种模式都把old dynamic/component姿态重定基到本帧、把collider old shape重定基为current shape，避免第一substep沿传送路径重复插值或扫掠；摩擦、碰撞法线、外碰debug contact、task内self、bone output和跨task interaction历史失效后由真实substep重建。触发发生在scheduler之前，zero-substep帧也立即发布新结果。后续新增setup、Teleport状态或collider插值路径时，必须继续覆盖首Fixed/对象原点、Reset/Keep、zero-substep、旧/新collider、task内self与跨task interaction历史。
 
 真实高速平移/旋转与collider场景已人工确认Keep/Reset均安全，不再属于发布阻断。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何表达判定输入，不表示粒子速度。
 
@@ -310,7 +310,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 自碰候选配对 | grid broadphase输出的candidate primitive pair | 黄色primitive中心连线；只表示可能相交，允许包含false positive，数量爆炸是性能诊断信号而非接触数量 |
 | 自碰接触结果 | narrowphase contact、enabled flag、两侧实际correction与intersection history | 细淡红线为启用接触存在提示，黄色箭头为两侧真实推动并固定放大8倍，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
 
-上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式或“实际接触”的跨task分支请求时读取，grid/candidate/contact/intersection按位复制；“实际接触”只请求contact，不得顺带读取grid或candidate。
+上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式或“实际接触”的跨task分支请求时读取，grid/candidate/contact/intersection按位复制；“实际接触”只请求contact，不得顺带读取grid或candidate。所有显示位默认关闭；没有显式模式时，节点只取消旧请求、清理自己的绘制快照，不安装绘制处理器，也不请求基础位置或readback。
 
 Debug节点长描述必须由与可见输入顺序一致的单一条目表生成。每项首先回答用户判断所需的五类事实：用途、当前状态怎样读、怎样算正常/异常、哪些公开参数精确影响它、哪些上游运动/约束/碰撞可能使它变化或触发；再说明必要的数据源、图元、颜色、捕获时机和不应作出的推断，不能只复述代码做了什么。Blender注册回归必须断言条目标签与`_INPUT_NAME`完整逐项相等、无重复，且五类标题逐项存在；新增或改名socket时必须同步更新说明。
 
@@ -342,7 +342,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 生产契约固定如下：
 
 1. Debug节点只登记请求，不立即读取当前state；capture只消费下一次具有substep的冻结结果。全部显示位关闭或节点禁用时必须取消尚未消费的slot/interaction请求，空模式集不得触发基础positions/rotations readback。
-2. 未请求时不得遍历、重建、分配、`memcpy`、创建participant字典或增加native `debug_readback_count`。共享base只能在至少一个真实依赖模式请求时生产一次。底层稀疏filter中缺失的模式键一律等价于`False`；节点UI可以有默认开启项，但不得把该UI默认下沉为readback API的隐式生产。纯Center与纯Output只消费已有Python冻结状态，context native readback增量必须为零。
+2. 未请求时不得遍历、重建、分配、`memcpy`、创建participant字典或增加native `debug_readback_count`。共享base只能在至少一个真实依赖模式请求时生产一次。底层稀疏filter中缺失的模式键一律等价于`False`；节点默认也必须全部关闭，不能把UI默认值下沉为readback API的隐式生产。纯Center与纯Output只消费已有Python冻结状态，context native readback增量必须为零。
 3. 每个模式拥有独立位。只有数据域和生命周期完全相同的数组才允许共用readback；“实现方便”不是把Motion、self四阶段或多种约束打包的理由。world interaction内部的`show_self`只能由四个显式self阶段位派生，调用者不负责也不得用该聚合位替代具体请求；“实际接触”的跨task分支使用独立`show_interaction_contacts`派生位，只复用contact readback数据域。
 4. Renderer只消费snapshot中明确存在的键。不得从最终网格、当前RNA或另一模式的target反推缺失中间态；Angle Limit借用Restoration target属于明确禁止的越界。
 5. Oracle全量接口不得进入`MC2_REQUIRED_NATIVE_SYMBOLS`或viewport调用链；生产Debug使用最小`read_debug_*`接口。若测试需要完整scratch，必须保留在oracle层而不是扩大生产readback。
@@ -355,6 +355,59 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 五类约束均已进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction。Bending记录身份是稳定`record_index + quad四角色`及dihedral/volume类型；请求时C++用生产公式影子重放，将role修正经过相同`int32`量化并除以该vertex的参与记录数，按vertex汇总必须等于Bending pass correction。Motion记录身份是稳定`branch + vertex`，branch固定为MaxDistance/Backstop；影子kernel按真实先后顺序把刚度后总修正拆为两个可加贡献，按vertex求和必须等于Motion pass correction。Angle记录身份是`branch + iteration + baseline_data_index + parent/child`；影子kernel严格保留三轮Limit/Restoration交错顺序，分别记录当轮current/limit和双角色贡献，两分支按vertex联合求和必须等于Angle pass correction，不得用两个独立重放替代。以上均由native与Blender runner锁定，且debug-off不分配记录buffer。
 
 MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离28个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
+
+### Debug收尾与产品踩坑
+
+#### 通用生命周期
+
+Debug不是solver的第二输出通道，而是一次请求驱动的观测事务：
+
+```text
+无显式模式
+  -> 取消旧slot/interaction请求
+  -> 不安装draw handler，不调用native debug setter，不读中间态
+
+显式模式
+  -> 节点登记按task/setup过滤的request bits
+  -> 下一次真实substep设置对应native位
+  -> C++只生产被请求的记录/贡献，production state仍由正常solver唯一写入
+  -> 真实step完成后复制最小readback并冻结只读snapshot
+  -> capture收尾立即清除native debug位
+  -> Python只派生状态摘要，renderer只消费冻结snapshot
+```
+
+same-frame、无substep和未匹配task/setup不伪造新快照；旧快照可以继续显示，但必须带原始`frame/generation/task_id`。切换task过滤、setup过滤、模式集合、generation或不连续帧时，旧时间层历史必须清除，不能把观察空档制造成新增/失效事件。
+
+#### 三类state与唯一职责
+
+| 层 | 唯一职责 | 关闭时的合同 |
+|---|---|---|
+| Solver state | 生产求解本身必需的state，例如self grid/contact cache、最终位置和速度 | 不因为viewport而复制第二份Python history |
+| Native viewport/oracle state | 在独立request bit下记录pass前origin、真实correction、contact/intersection和按记录归因数据 | 未请求不分配记录buffer、不遍历记录、不做shadow replay |
+| Python snapshot/renderer | 冻结只读数组、计算near/active/status、按语义绘制 | 不读当前RNA、最终网格或另一模式target反推中间态；不写solver state |
+
+C++ production kernel是唯一位置、速度和接触状态写入者。C++ debug记录只观察同一substep的真实pass，并在请求时运行必要的记录归因；Distance、Bending、Motion、Angle的影子记录必须与production公式、量化和共享粒子平均保持求和等价，但不得替代或二次提交production solve。Python不得实现第二个solver。
+
+#### 最终性能门禁
+
+- **debug全关**：没有native debug readback、没有约束记录buffer、没有contact/intersection明细、没有interaction participant debug字典；主循环只检查是否存在pending request。默认节点没有模式时不安装draw handler。
+- **单模式**：只付出该模式需要的C++记录、共享base和readback；`max_items=10000`只限制renderer绘制预算，不会降低native记录成本，因此性能测试必须同时看记录数量和绘制数量。
+- **最重组合**：允许按需付出多个模式的记录/readback，但共享positions、primitive indices和interaction owner数据每帧只复制一次；未打开的兄弟模式键必须缺失。
+- native setter只在请求状态改变时跨Python/C++调用；capture完成后立即清除，避免普通substep反复设置debug位。
+- self contact debug的逐贡献归因只在`self_contact_debug_requested`时构造；关闭时仍执行真实self求解，但不构造debug临时记录。
+
+当前自动证据包括：native MC2 context全套debug/生命周期回归、Blender隔离28模式、debug-off零readback、默认节点惰性、过滤切换取消旧request、未请求键缺失和冻结snapshot只读性；热点benchmark另行分开raw/frame/group/result/writeback/debug capture。绝对毫秒只作为同机同资产回归，不作为跨机器合同。
+
+#### 已吸收的真实反例与决策
+
+- **Teleport**：逐粒子判定实验导致高速穿模和不可解释的局部状态，已回退为首个Fixed、无Fixed则对象原点的整task判定；Reset/Keep重定基动画、collider、速度与接触历史，debug只显示一个task结果。
+- **自碰**：broadphase候选、普通contact和final Edge-Triangle intersection曾被画成同一种红/洋红结果；现按四个self模式和时间层分开，final intersection只读确认命中，一环邻接过滤属于production topology规则而不是debug补丁。
+- **真实接触**：原来用法线或固定长度箭头冒充推动强度；现只显示kernel真实半径形状、接触点和真实correction，跨task只纳入enabled且owner不同的EE/PT记录，显示倍率不进入solver。
+- **Tether**：范围圆环把牵引误读为水平摆动限制；rest明确为StepBasic粒子到baseline root的世界直线距离，不是parent累计长度或depth，灰线只说明牵引关系，蓝/橙点和箭头才说明接近/实际拉回。
+- **拓扑/碰撞显示**：按数组前缀截断会整块隐藏后续Mesh分量；当前按连通分量公平抽样。拓扑和候选属于高级审计，不能盖住结果视图。
+- **产品差异**：Baseline depth按OmniMC2产品定义和consumer矩阵验证，旧MC2源码测试矩阵只能作为参考，不能把深度差异误报成回归。
+
+这些结论、性能合同和最终实现状态取代阶段性人工验收文档；具体历史提交仍由Git保留。
 
 ## Setup与支持域
 
@@ -737,9 +790,9 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-代码级九个能力族当前均为`verified`。2026-07-20人工验收曾给出逐粒子Teleport高速穿模、自碰单层持续微动/疑似误报以及多项debug无法表达真实触发的反例；Teleport现已回退到“首个Fixed，否则物体原点”的单基准整task判定并完成Keep/Reset真实场景复验，自碰静置、深度、实际接触、参数归属与参数说明也已关闭。兼容重编译缓存已由OmniNode通用manifest合同实现并自动验证；剩余debug整体可读性以`MC2_MANUAL_VALIDATION_DECISIONS.md`为准。
+代码级九个能力族当前均为`verified`。2026-07-20人工验收给出的逐粒子Teleport高速穿模、自碰单层持续微动/疑似误报和debug无法表达真实触发等反例，均已转化为本文稳定合同并完成对应人工或自动复验。兼容重编译缓存由OmniNode通用manifest合同实现并自动验证；MC2不再维护独立验收推进文档。
 
-Teleport单基准整task回退、自碰静置、Mesh深度、碰撞结果、参数归属、参数说明、无consumer离心力隐藏和兼容重编译缓存均已完成人工或代码闭环，不再属于发布阻断。剩余验收集中在结果导向debug整体界面。
+Teleport单基准整task回退、自碰静置、Mesh深度、碰撞结果、参数归属、参数说明、无consumer离心力隐藏、兼容重编译缓存和结果导向debug均已闭环。后续工作属于按本文性能门禁与扩展检查表维护，不再以迁移或验收项目继续推进。
 
 ## 明确不支持与不得恢复
 
