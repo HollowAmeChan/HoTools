@@ -723,7 +723,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 代码级九个能力族当前均为`verified`，但 2026-07-20 人工验收已经给出逐粒子 Teleport 高速穿模、自碰单层持续微动/疑似误报以及多项 debug 无法表达真实触发的反例，因此该状态不能作为当前产品验收结论。Teleport 已决定回退到“首个Fixed，否则物体原点”的单基准整task判定；其余开放决策、实施顺序和新验收门槛以 `MC2_MANUAL_VALIDATION_DECISIONS.md` 为准。现有 Object Anchor、重力/恢复衰减、Bone 输出旋转等长跑证据仍保留，但不能替代被反例推翻的外部行为与可读性证据。
 
-当前发布阻断项是 Teleport 单基准整task回退与全状态清理、继续结果导向debug重做，以及公开但无production consumer的`centrifugal_acceleration`。自碰静置与Mesh深度已完成人工复验，不再属于当前阻断项。
+当前发布阻断项是 Teleport 单基准整task回退与全状态清理，以及继续结果导向debug重做。无production consumer的`centrifugal_acceleration`已从公开Profile/Task节点和preset隐藏，内部ABI槽位固定为0；自碰静置与Mesh深度已完成人工复验，这三项不再属于当前阻断项。
 
 ## 明确不支持与不得恢复
 

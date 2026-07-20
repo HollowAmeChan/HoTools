@@ -101,6 +101,20 @@ def test_task_parameters_are_the_only_runtime_owner() -> None:
     assert floats["teleport_distance"] == 1.25
     assert floats["teleport_rotation"] == 45.0
     assert abs(floats["cloth_mass"] - 0.8) < 1.0e-6
+    assert floats["centrifugal_acceleration"] == 0.0
+
+
+def test_hidden_centrifugal_abi_defaults_to_zero() -> None:
+    task_parameters = parameters.make_mc2_task_parameters()
+    assert task_parameters.centrifugal_acceleration == 0.0
+
+    value = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(),
+        parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH),
+        task_parameters,
+    )
+    floats, _ints = _runtime_maps(value)
+    assert floats["centrifugal_acceleration"] == 0.0
 
 
 def test_task_parameter_hot_update_preserves_identity_and_topology() -> None:

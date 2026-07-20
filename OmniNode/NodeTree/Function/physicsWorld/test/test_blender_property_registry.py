@@ -628,6 +628,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     )
     for profile_node in profile_nodes:
         profile_parameters = set(inspect.signature(profile_node).parameters)
+        assert "centrifugal_acceleration" not in profile_parameters
         node_presets = tuple(profile_node.__meta["omni_presets"])
         assert tuple(item["name"] for item in node_presets) == tuple(
             item["name"] for item in presets
@@ -635,6 +636,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         for preset in node_presets:
             values = preset["values"]
             assert set(values) <= profile_parameters
+            assert "centrifugal_acceleration" not in values
             assert "self_collision_thickness" not in values
             assert "self_collision_curve" not in values
             profile = profile_node(**values)
@@ -665,8 +667,16 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         mc2_nodes.physicsMC2BoneClothTask,
         mc2_nodes.physicsMC2BoneSpringTask,
     ):
+        task_parameters = set(inspect.signature(task_node).parameters)
+        assert "centrifugal_acceleration" not in task_parameters
         _node, inputs, _outputs, _defaults, _multi, settings = (
             function_node_core.CheckMetaInfo(task_node)
+        )
+        assert "centrifugal_acceleration" not in inputs
+        assert "centrifugal_acceleration" not in settings
+        assert all(
+            "centrifugal_acceleration" not in preset["values"]
+            for preset in task_node.__meta["omni_presets"]
         )
         assert "1:Reset" in settings["teleport_mode"]["description"]
         assert settings["anchor_inertia"]["description"]
