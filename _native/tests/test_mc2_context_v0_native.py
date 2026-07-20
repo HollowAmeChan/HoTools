@@ -636,6 +636,87 @@ def test_motion_zero_max_distance_and_source_order():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_motion_record_debug_attributes_max_distance_and_backstop():
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        proxy, baseline = static_arrays(1)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((1, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[0] = 20.0
+        floats[1:4] = (0.0, -1.0, 0.0)
+        floats[31] = 0.2
+        floats[32] = 0.5
+        ints[0] = 1
+        ints[6] = 1
+        ints[7] = 1
+        curves[5, :] = 1.0
+        curves[6, :] = 0.1
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.zeros((1, 3), dtype=np.float32)
+        rotations = np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_motion_record_ready"] is False
+        assert info["debug_motion_record_count"] == 0
+        assert info["debug_motion_record_float_count"] == 0
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 16)
+        step(context, 0.1, simulation_power_z=1.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_ready_mask"] == 16
+        assert info["debug_motion_record_ready"] is True
+        assert info["debug_motion_record_count"] == 2
+        assert info["debug_motion_record_float_count"] == 12
+        pass_origins = np.empty((1, 3), dtype=np.float32)
+        pass_corrections = np.empty((1, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_constraint_results(
+            context, pass_origins, pass_corrections
+        )
+        record_origins = np.empty((2, 3), dtype=np.float32)
+        record_corrections = np.empty((2, 3), dtype=np.float32)
+        record_valid = np.empty((2,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_motion_results(
+            context, record_origins, record_corrections, record_valid
+        )
+        np.testing.assert_array_equal(record_valid, (1, 1))
+        np.testing.assert_allclose(record_origins[0], pass_origins[0], atol=1.0e-7)
+        np.testing.assert_allclose(
+            record_origins[1],
+            pass_origins[0] + record_corrections[0],
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            np.sum(record_corrections, axis=0),
+            pass_corrections[0],
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(record_corrections[0], 0.0, atol=1.0e-7)
+        assert np.linalg.norm(record_corrections[1]) > 0.0
+
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_motion_record_ready"] is False
+        assert info["debug_motion_record_count"] == 0
+        assert info["debug_motion_record_float_count"] == 0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_collider_upload_is_transactional():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -2575,6 +2656,8 @@ if __name__ == "__main__":
     print("PASS Angle runtime values and source order")
     test_motion_zero_max_distance_and_source_order()
     print("PASS Motion zero MaxDistance and source order")
+    test_motion_record_debug_attributes_max_distance_and_backstop()
+    print("PASS Motion record debug branch attribution")
     test_collider_upload_is_transactional()
     print("PASS collider upload transaction")
     test_self_collision_static_upload_is_transactional()

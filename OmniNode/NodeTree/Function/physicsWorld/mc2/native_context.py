@@ -1088,6 +1088,34 @@ class MC2NativeContextV0:
                     "valid": self._debug_array(bending_valid),
                 }
                 readbacks += 1
+            if (
+                constraint_ready_mask & MC2_DEBUG_CONSTRAINT_MOTION
+                and bool(info.get("debug_motion_record_ready", False))
+            ):
+                record_count = self.vertex_count * 2
+                motion_origins = np.empty((record_count, 3), dtype=np.float32)
+                motion_corrections = np.empty(
+                    (record_count, 3), dtype=np.float32
+                )
+                motion_valid = np.empty((record_count,), dtype=np.uint8)
+                self._module.mc2_context_v0_read_debug_motion_results(
+                    self._handle,
+                    motion_origins,
+                    motion_corrections,
+                    motion_valid,
+                )
+                snapshot["motion_results"] = {
+                    "origins": self._debug_array(
+                        motion_origins.reshape((2, self.vertex_count, 3))
+                    ),
+                    "corrections": self._debug_array(
+                        motion_corrections.reshape((2, self.vertex_count, 3))
+                    ),
+                    "valid": self._debug_array(
+                        motion_valid.reshape((2, self.vertex_count))
+                    ),
+                }
+                readbacks += 1
         if include_external_contacts and bool(
             info.get("external_contact_debug_ready", False)
         ):

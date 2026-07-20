@@ -545,6 +545,38 @@ try:
             bending_corrections.reshape((bending_count, -1)), axis=1
         )
         assert np.all((bending_record_lengths > 1.0e-8) <= (np.abs(bending_states) == 2))
+        motion_records = snapshot["constraint_records"]["motion"]
+        assert set(motion_records) == {
+            "branches",
+            "vertices",
+            "origins",
+            "target_origins",
+            "corrections",
+            "distances",
+            "limits",
+            "errors",
+            "states",
+        }
+        motion_count = len(motion_records["vertices"])
+        assert motion_count > 0
+        for name in motion_records:
+            assert len(motion_records[name]) == motion_count
+            assert motion_records[name].flags.writeable is False
+        motion_branches = np.asarray(motion_records["branches"], dtype=np.int8)
+        motion_vertices = np.asarray(motion_records["vertices"], dtype=np.int32)
+        motion_corrections = np.asarray(
+            motion_records["corrections"], dtype=np.float32
+        )
+        assert set(np.unique(motion_branches)).issubset({0, 1})
+        grouped_motion = np.zeros_like(
+            np.asarray(constraint_results["motion"]["corrections"], dtype=np.float32)
+        )
+        np.add.at(grouped_motion, motion_vertices, motion_corrections)
+        np.testing.assert_allclose(
+            grouped_motion,
+            constraint_results["motion"]["corrections"],
+            atol=2.0e-7,
+        )
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
         if center_shift is not None:
@@ -866,12 +898,23 @@ try:
                 assert bending_records["vertices"].flags.writeable is False
                 assert bending_records["origins"].flags.writeable is False
                 assert bending_records["corrections"].flags.writeable is False
-            if mode_name in ("show_distance", "show_tether", "show_bending"):
+            if mode_name == "show_motion":
+                motion_records = captured_snapshot["constraint_records"][
+                    "motion"
+                ]
+                assert len(motion_records["vertices"]) > 0
+                assert motion_records["branches"].flags.writeable is False
+                assert motion_records["origins"].flags.writeable is False
+                assert motion_records["corrections"].flags.writeable is False
+            if mode_name in (
+                "show_distance", "show_tether", "show_bending", "show_motion"
+            ):
                 assert set(captured_snapshot["constraint_records"]) == {
                     {
                         "show_distance": "distance",
                         "show_tether": "tether",
                         "show_bending": "bending",
+                        "show_motion": "motion",
                     }[mode_name]
                 }
             else:

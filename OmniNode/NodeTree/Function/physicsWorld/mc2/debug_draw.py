@@ -406,9 +406,7 @@ def _append_slot_batches(
         _append_motion_batches(batches, snapshot.get("motion") or {}, limit)
         _append_constraint_correction_batches(
             batches,
-            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
-                "motion"
-            ) or {},
+            ((snapshot.get("constraint_records") or {}).get("motion") or {}),
             "motion_correction",
             limit,
         )

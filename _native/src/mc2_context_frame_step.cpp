@@ -1399,6 +1399,10 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->debug_bending_record_origins.clear();
     context->debug_bending_record_corrections.clear();
     context->debug_bending_record_valid.clear();
+    context->debug_motion_record_ready = false;
+    context->debug_motion_record_origins.clear();
+    context->debug_motion_record_corrections.clear();
+    context->debug_motion_record_valid.clear();
     context->center_dynamic_ready = false;
     context->center_frame_ready = false;
     context->center_result_ready = false;
@@ -1483,6 +1487,7 @@ PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args)
     context->debug_distance_record_phase_mask = 0;
     context->debug_distance_record_ready = false;
     context->debug_bending_record_ready = false;
+    context->debug_motion_record_ready = false;
     if (mask == 0) {
         std::vector<float>().swap(context->debug_constraint_origins);
         std::vector<float>().swap(context->debug_constraint_corrections);
@@ -1511,6 +1516,15 @@ PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args)
         context->debug_bending_record_origins.clear();
         context->debug_bending_record_corrections.clear();
         context->debug_bending_record_valid.clear();
+    }
+    if ((mask & static_cast<long>(kDebugConstraintMotion)) == 0) {
+        std::vector<float>().swap(context->debug_motion_record_origins);
+        std::vector<float>().swap(context->debug_motion_record_corrections);
+        std::vector<std::uint8_t>().swap(context->debug_motion_record_valid);
+    } else {
+        context->debug_motion_record_origins.clear();
+        context->debug_motion_record_corrections.clear();
+        context->debug_motion_record_valid.clear();
     }
     Py_RETURN_NONE;
 }

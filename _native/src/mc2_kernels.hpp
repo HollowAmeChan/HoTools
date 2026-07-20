@@ -57,6 +57,9 @@ struct Mc2MotionConstraintView {
     bool explicit_enable_flags = false;
     bool max_distance_enabled = false;
     bool backstop_enabled = false;
+    float* debug_record_origins = nullptr;
+    float* debug_record_corrections = nullptr;
+    std::uint8_t* debug_record_valid = nullptr;
 };
 
 struct Mc2PostStepView {

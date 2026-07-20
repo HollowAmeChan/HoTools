@@ -116,6 +116,9 @@ void release_resources(Mc2ContextV0& context) {
     context.debug_bending_record_origins.clear();
     context.debug_bending_record_corrections.clear();
     context.debug_bending_record_valid.clear();
+    context.debug_motion_record_origins.clear();
+    context.debug_motion_record_corrections.clear();
+    context.debug_motion_record_valid.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -2221,6 +2224,84 @@ void solve_motion_once(Mc2ContextV0& context) {
     ++context.motion_solve_count;
 }
 
+void capture_motion_records_once(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    const auto record_count = count * 2;
+    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) == 0 ||
+        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.state_positions.size() != count * 3 ||
+        context.velocity_reference_positions.size() != count * 3 ||
+        context.animated_base_positions.size() != count * 3 ||
+        context.animated_base_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_depths.size() != count ||
+        context.debug_motion_record_origins.size() != record_count * 3 ||
+        context.debug_motion_record_corrections.size() != record_count * 3 ||
+        context.debug_motion_record_valid.size() != record_count) {
+        return;
+    }
+    const bool use_max_distance = context.int_values[kUseMaxDistance] != 0;
+    const bool use_backstop = context.int_values[kUseBackstop] != 0;
+    if (!use_max_distance && !use_backstop) return;
+
+    std::vector<float> positions = context.state_positions;
+    std::vector<float> velocity_positions = context.velocity_reference_positions;
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> max_distances(count, 0.0f);
+    std::vector<float> stiffness_values(
+        count,
+        std::max(0.0f, std::min(1.0f, context.float_values[kMotionStiffness]))
+    );
+    std::vector<float> backstop_radii(count, 0.0f);
+    std::vector<float> backstop_distances(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto attribute = context.proxy_attributes[vertex];
+        if (is_move(attribute) && (attribute & 0x08u) == 0u) {
+            inverse_masses[vertex] = 1.0f;
+        }
+        const float motion_depth =
+            context.baseline_depths[vertex] * context.baseline_depths[vertex];
+        if (use_max_distance) {
+            max_distances[vertex] = std::max(
+                0.0f,
+                sample_curve16(context.curve_values, kMaxDistanceCurve, motion_depth)
+            );
+        }
+        if (use_backstop) {
+            backstop_radii[vertex] = std::max(
+                0.0f, context.float_values[kBackstopRadius]
+            );
+            backstop_distances[vertex] = std::max(
+                0.0f,
+                sample_curve16(
+                    context.curve_values, kBackstopDistanceCurve, motion_depth
+                )
+            );
+        }
+    }
+
+    Mc2MotionConstraintView view;
+    view.positions = positions.data();
+    view.base_positions = context.animated_base_positions.data();
+    view.base_rotations = context.animated_base_rotations.data();
+    view.inv_masses = inverse_masses.data();
+    view.max_distances = max_distances.data();
+    view.stiffness_values = stiffness_values.data();
+    view.backstop_radii = backstop_radii.data();
+    view.backstop_distances = backstop_distances.data();
+    view.velocity_positions = velocity_positions.data();
+    view.vertex_count = context.vertex_count;
+    view.normal_axis = context.int_values[kNormalAxis];
+    view.explicit_enable_flags = true;
+    view.max_distance_enabled = use_max_distance;
+    view.backstop_enabled = use_backstop;
+    view.debug_record_origins = context.debug_motion_record_origins.data();
+    view.debug_record_corrections = context.debug_motion_record_corrections.data();
+    view.debug_record_valid = context.debug_motion_record_valid.data();
+    project_motion_constraints_mc2(view);
+}
+
 std::int32_t self_grid_hash(std::int32_t x, std::int32_t y, std::int32_t z) {
     const std::uint32_t hash =
         static_cast<std::uint32_t>(x) * 0x4C7F6DD1u +
@@ -3606,6 +3687,10 @@ bool begin_mc2_context_step(
     context.debug_bending_record_origins.clear();
     context.debug_bending_record_corrections.clear();
     context.debug_bending_record_valid.clear();
+    context.debug_motion_record_ready = false;
+    context.debug_motion_record_origins.clear();
+    context.debug_motion_record_corrections.clear();
+    context.debug_motion_record_valid.clear();
     if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
         const auto record_count = context.distance_targets.size();
         context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
@@ -3621,6 +3706,14 @@ bool begin_mc2_context_step(
         context.debug_bending_record_origins.assign(record_count * 4 * 3, 0.0f);
         context.debug_bending_record_corrections.assign(record_count * 4 * 3, 0.0f);
         context.debug_bending_record_valid.assign(
+            record_count, static_cast<std::uint8_t>(0)
+        );
+    }
+    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+        const auto record_count = static_cast<std::size_t>(context.vertex_count) * 2;
+        context.debug_motion_record_origins.assign(record_count * 3, 0.0f);
+        context.debug_motion_record_corrections.assign(record_count * 3, 0.0f);
+        context.debug_motion_record_valid.assign(
             record_count, static_cast<std::uint8_t>(0)
         );
     }
@@ -3689,7 +3782,13 @@ bool begin_mc2_context_step(
         context, kDebugConstraintDistance, 4, debug_before
     );
     begin_constraint_debug_pass(context, kDebugConstraintMotion, debug_before);
+    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+        capture_motion_records_once(context);
+    }
     solve_motion_once(context);
+    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+        context.debug_motion_record_ready = true;
+    }
     finish_constraint_debug_pass(
         context, kDebugConstraintMotion, 5, debug_before
     );
@@ -3968,6 +4067,9 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(debug_bending_record_origins);
     MC2_ADD_VECTOR_BYTES(debug_bending_record_corrections);
     MC2_ADD_VECTOR_BYTES(debug_bending_record_valid);
+    MC2_ADD_VECTOR_BYTES(debug_motion_record_origins);
+    MC2_ADD_VECTOR_BYTES(debug_motion_record_corrections);
+    MC2_ADD_VECTOR_BYTES(debug_motion_record_valid);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -4205,6 +4307,24 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             static_cast<std::int64_t>(
                 context.debug_bending_record_origins.size() +
                 context.debug_bending_record_corrections.size()
+            )
+        ) ||
+        !dict_bool(
+            result,
+            "debug_motion_record_ready",
+            context.debug_motion_record_ready
+        ) ||
+        !dict_i64(
+            result,
+            "debug_motion_record_count",
+            static_cast<std::int64_t>(context.debug_motion_record_valid.size())
+        ) ||
+        !dict_i64(
+            result,
+            "debug_motion_record_float_count",
+            static_cast<std::int64_t>(
+                context.debug_motion_record_origins.size() +
+                context.debug_motion_record_corrections.size()
             )
         ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||

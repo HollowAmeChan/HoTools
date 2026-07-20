@@ -909,6 +909,9 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
                 constrained_z = view.base_positions[offset + 2] + dz * scale;
             }
         }
+        const float max_constrained_x = constrained_x;
+        const float max_constrained_y = constrained_y;
+        const float max_constrained_z = constrained_z;
 
         if (use_backstop && backstop_radius > kMc2Epsilon) {
             float axis_x = 0.0f;
@@ -944,6 +947,40 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         const float add_x = next_x - original_x;
         const float add_y = next_y - original_y;
         const float add_z = next_z - original_z;
+        if (view.debug_record_origins != nullptr &&
+            view.debug_record_corrections != nullptr &&
+            view.debug_record_valid != nullptr) {
+            const auto max_record = static_cast<std::size_t>(vertex);
+            const auto backstop_record = static_cast<std::size_t>(
+                view.vertex_count + vertex
+            );
+            const auto max_offset = max_record * 3;
+            const auto backstop_offset = backstop_record * 3;
+            const float max_next_x = original_x * (1.0f - clamped_stiffness) +
+                max_constrained_x * clamped_stiffness;
+            const float max_next_y = original_y * (1.0f - clamped_stiffness) +
+                max_constrained_y * clamped_stiffness;
+            const float max_next_z = original_z * (1.0f - clamped_stiffness) +
+                max_constrained_z * clamped_stiffness;
+            const float max_add_x = max_next_x - original_x;
+            const float max_add_y = max_next_y - original_y;
+            const float max_add_z = max_next_z - original_z;
+            view.debug_record_origins[max_offset + 0] = original_x;
+            view.debug_record_origins[max_offset + 1] = original_y;
+            view.debug_record_origins[max_offset + 2] = original_z;
+            view.debug_record_corrections[max_offset + 0] = max_add_x;
+            view.debug_record_corrections[max_offset + 1] = max_add_y;
+            view.debug_record_corrections[max_offset + 2] = max_add_z;
+            view.debug_record_valid[max_record] = apply_max_distance ? 1 : 0;
+            view.debug_record_origins[backstop_offset + 0] = original_x + max_add_x;
+            view.debug_record_origins[backstop_offset + 1] = original_y + max_add_y;
+            view.debug_record_origins[backstop_offset + 2] = original_z + max_add_z;
+            view.debug_record_corrections[backstop_offset + 0] = add_x - max_add_x;
+            view.debug_record_corrections[backstop_offset + 1] = add_y - max_add_y;
+            view.debug_record_corrections[backstop_offset + 2] = add_z - max_add_z;
+            view.debug_record_valid[backstop_record] =
+                use_backstop && backstop_radius > kMc2Epsilon ? 1 : 0;
+        }
         view.positions[offset + 0] = next_x;
         view.positions[offset + 1] = next_y;
         view.positions[offset + 2] = next_z;
