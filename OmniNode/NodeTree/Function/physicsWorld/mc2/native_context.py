@@ -1024,6 +1024,42 @@ class MC2NativeContextV0:
                 }
             snapshot["constraint_results"] = constraint_results
             readbacks += 1
+            if (
+                constraint_ready_mask & MC2_DEBUG_CONSTRAINT_DISTANCE
+                and bool(info.get("debug_distance_record_ready", False))
+            ):
+                record_count = int(info.get("distance_record_count", 0) or 0)
+                distance_origins = np.empty(
+                    (record_count * 2, 3), dtype=np.float32
+                )
+                distance_corrections = np.empty(
+                    (record_count * 2, 3), dtype=np.float32
+                )
+                distance_lengths = np.empty((2, record_count), dtype=np.float32)
+                distance_rests = np.empty((2, record_count), dtype=np.float32)
+                distance_valid = np.empty((record_count * 2,), dtype=np.uint8)
+                self._module.mc2_context_v0_read_debug_distance_results(
+                    self._handle,
+                    distance_origins,
+                    distance_corrections,
+                    distance_lengths,
+                    distance_rests,
+                    distance_valid,
+                )
+                snapshot["distance_results"] = {
+                    "origins": self._debug_array(
+                        distance_origins.reshape((2, record_count, 3))
+                    ),
+                    "corrections": self._debug_array(
+                        distance_corrections.reshape((2, record_count, 3))
+                    ),
+                    "lengths": self._debug_array(distance_lengths),
+                    "rests": self._debug_array(distance_rests),
+                    "valid": self._debug_array(
+                        distance_valid.reshape((2, record_count))
+                    ),
+                }
+                readbacks += 1
         if include_external_contacts and bool(
             info.get("external_contact_debug_ready", False)
         ):

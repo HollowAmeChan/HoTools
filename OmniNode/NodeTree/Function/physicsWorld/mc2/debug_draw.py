@@ -363,17 +363,12 @@ def _append_slot_batches(
     if filters["show_distance"]:
         _append_distance_batches(
             batches,
-            positions,
-            snapshot.get("motion") or {},
-            snapshot.get("parameters") or {},
-            (snapshot.get("native") or {}).get("distance_tether") or {},
+            ((snapshot.get("constraint_records") or {}).get("distance") or {}),
             limit,
         )
         _append_constraint_correction_batches(
             batches,
-            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
-                "distance"
-            ) or {},
+            ((snapshot.get("constraint_records") or {}).get("distance") or {}),
             "distance_correction",
             limit,
         )
@@ -964,62 +959,27 @@ def _append_constraint_correction_batches(
     _batch(batches, correction_lines, color_key, 2.4)
 
 
-def _append_distance_batches(
-    batches, positions, motion, parameters, distance, limit
-):
-    ranges = distance.get("distance_ranges")
-    targets = distance.get("distance_targets")
-    rests = distance.get("distance_rest_signed")
-    step_basic = motion.get("step_basic_positions")
-    if ranges is None or targets is None or rests is None or step_basic is None:
+def _append_distance_batches(batches, records, limit):
+    origins = records.get("origins")
+    target_origins = records.get("target_origins")
+    states = records.get("states")
+    if origins is None or target_origins is None or states is None:
         return
-    ranges = np.asarray(ranges, dtype=np.int32).reshape((-1, 2))
-    targets = np.asarray(targets, dtype=np.int32)
-    rests = np.asarray(rests, dtype=np.float32)
-    step_basic = np.asarray(step_basic, dtype=np.float32).reshape((-1, 3))
-    stiffness = np.asarray(
-        _values(parameters.get("distance_stiffness")), dtype=np.float32
-    )
-    scale = float(parameters.get("scale_ratio", 1.0) or 1.0)
-    animation_ratio = max(
-        0.0, min(1.0, float(parameters.get("animation_pose_ratio", 0.0) or 0.0))
-    )
-    ok_lines = []
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    target_origins = np.asarray(target_origins, dtype=np.float32).reshape((-1, 3))
+    states = np.asarray(states, dtype=np.int8).reshape((-1,))
     stretch_lines = []
     compress_lines = []
-    seen = set()
     drawn = 0
-    for vertex, (start, count) in enumerate(ranges):
-        if drawn >= limit or vertex >= len(positions):
+    for origin, target_origin, state in zip(origins, target_origins, states):
+        if drawn >= limit:
             break
-        if vertex < len(stiffness) and float(stiffness[vertex]) <= 1.0e-8:
+        state = int(state)
+        if state == 0:
             continue
-        for record in range(int(start), int(start + count)):
-            if drawn >= limit or record < 0 or record >= len(targets):
-                break
-            target = int(targets[record])
-            if target < 0 or target >= len(positions) or record >= len(rests):
-                continue
-            key = (min(vertex, target), max(vertex, target))
-            if key in seen:
-                continue
-            seen.add(key)
-            current = (vector3(positions[target]) - vector3(positions[vertex])).length
-            static_rest = abs(float(rests[record])) * scale
-            animated_rest = (
-                vector3(step_basic[target]) - vector3(step_basic[vertex])
-            ).length
-            rest = static_rest * (1.0 - animation_ratio) + animated_rest * animation_ratio
-            error = current - rest
-            tolerance = max(rest * 0.02, 1.0e-5)
-            target_lines = (
-                stretch_lines
-                if error > tolerance
-                else compress_lines if error < -tolerance else ok_lines
-            )
-            add_line(target_lines, positions[vertex], positions[target])
-            drawn += 1
-    _batch(batches, ok_lines, "distance_ok", 1.4)
+        target_lines = stretch_lines if state > 0 else compress_lines
+        add_line(target_lines, origin, target_origin)
+        drawn += 1
     _batch(batches, compress_lines, "distance_compress", 1.8)
     _batch(batches, stretch_lines, "distance_stretch", 1.8)
 

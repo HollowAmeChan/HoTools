@@ -1388,6 +1388,13 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->debug_constraint_ready_mask = 0;
     context->debug_constraint_origins.clear();
     context->debug_constraint_corrections.clear();
+    context->debug_distance_record_phase_mask = 0;
+    context->debug_distance_record_ready = false;
+    context->debug_distance_record_origins.clear();
+    context->debug_distance_record_corrections.clear();
+    context->debug_distance_record_lengths.clear();
+    context->debug_distance_record_rests.clear();
+    context->debug_distance_record_valid.clear();
     context->center_dynamic_ready = false;
     context->center_frame_ready = false;
     context->center_result_ready = false;
@@ -1469,12 +1476,27 @@ PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args)
     }
     context->debug_constraint_request_mask = static_cast<std::uint32_t>(mask);
     context->debug_constraint_ready_mask = 0;
+    context->debug_distance_record_phase_mask = 0;
+    context->debug_distance_record_ready = false;
     if (mask == 0) {
         std::vector<float>().swap(context->debug_constraint_origins);
         std::vector<float>().swap(context->debug_constraint_corrections);
     } else {
         context->debug_constraint_origins.clear();
         context->debug_constraint_corrections.clear();
+    }
+    if ((mask & static_cast<long>(kDebugConstraintDistance)) == 0) {
+        std::vector<float>().swap(context->debug_distance_record_origins);
+        std::vector<float>().swap(context->debug_distance_record_corrections);
+        std::vector<float>().swap(context->debug_distance_record_lengths);
+        std::vector<float>().swap(context->debug_distance_record_rests);
+        std::vector<std::uint8_t>().swap(context->debug_distance_record_valid);
+    } else {
+        context->debug_distance_record_origins.clear();
+        context->debug_distance_record_corrections.clear();
+        context->debug_distance_record_lengths.clear();
+        context->debug_distance_record_rests.clear();
+        context->debug_distance_record_valid.clear();
     }
     Py_RETURN_NONE;
 }

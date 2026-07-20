@@ -423,6 +423,66 @@ try:
             np.asarray(tether_records["corrections"], dtype=np.float32), axis=1
         )
         np.testing.assert_array_equal(np.abs(states) == 2, correction_lengths > 1.0e-8)
+        distance_records = snapshot["constraint_records"]["distance"]
+        assert set(distance_records) == {
+            "phases",
+            "record_indices",
+            "vertices",
+            "targets",
+            "origins",
+            "target_origins",
+            "corrections",
+            "lengths",
+            "rests",
+            "errors",
+            "normalized_errors",
+            "states",
+        }
+        distance_count = len(distance_records["record_indices"])
+        assert distance_count > 0
+        for name in distance_records:
+            assert len(distance_records[name]) == distance_count
+            assert distance_records[name].flags.writeable is False
+        phases = np.asarray(distance_records["phases"], dtype=np.int8)
+        vertices = np.asarray(distance_records["vertices"], dtype=np.int32)
+        targets = np.asarray(distance_records["targets"], dtype=np.int32)
+        record_origins = np.asarray(distance_records["origins"], dtype=np.float32)
+        target_origins = np.asarray(
+            distance_records["target_origins"], dtype=np.float32
+        )
+        record_corrections = np.asarray(
+            distance_records["corrections"], dtype=np.float32
+        )
+        distance_result = constraint_results["distance"]
+        pass_origins = np.asarray(distance_result["origins"], dtype=np.float32)
+        pass_corrections = np.asarray(
+            distance_result["corrections"], dtype=np.float32
+        )
+        np.testing.assert_allclose(
+            distance_records["errors"],
+            np.asarray(distance_records["lengths"])
+            - np.asarray(distance_records["rests"]),
+            atol=1.0e-7,
+        )
+        for record in range(distance_count):
+            np.testing.assert_allclose(
+                record_origins[record],
+                pass_origins[phases[record], vertices[record]],
+                atol=1.0e-7,
+            )
+            np.testing.assert_allclose(
+                target_origins[record],
+                pass_origins[phases[record], targets[record]],
+                atol=1.0e-7,
+            )
+        for phase in range(2):
+            for vertex in range(pass_corrections.shape[1]):
+                mask = (phases == phase) & (vertices == vertex)
+                np.testing.assert_allclose(
+                    np.sum(record_corrections[mask], axis=0),
+                    pass_corrections[phase, vertex],
+                    atol=2.0e-7,
+                )
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
         if center_shift is not None:
@@ -736,6 +796,12 @@ try:
                     np.abs(states) == 2,
                     np.linalg.norm(record_corrections, axis=1) > 1.0e-8,
                 )
+            if mode_name in ("show_distance", "show_tether"):
+                assert set(captured_snapshot["constraint_records"]) == {
+                    "distance" if mode_name == "show_distance" else "tether"
+                }
+            else:
+                assert "constraint_records" not in captured_snapshot
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot
             assert "angle_restoration_target_positions" not in native_snapshot

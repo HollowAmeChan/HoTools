@@ -32,6 +32,23 @@ FIXTURE = (
     / "particle_step_constraints_post_001.json"
 )
 
+# The JSON remains the MC2 source oracle. OmniMC2 intentionally uses
+# 1 - depth^1.5 for particle inertia instead of the source 1 - depth^2.
+OMNI_PRODUCT_POSITIONS_AFTER_POST = np.asarray((
+    (
+        (0.1, 1.05, -0.05),
+        (1.35724556, 0.06563706, -1.15565562),
+        (1.26957369, 0.84595281, -0.65183097),
+        (2.26655579, 0.87751120, -1.25101995),
+    ),
+    (
+        (0.2, 1.1, -0.1),
+        (2.08661151, 0.88325435, -0.84887791),
+        (1.96295857, 1.26717103, -0.84934980),
+        (3.08432388, 1.91037393, -1.62652421),
+    ),
+), dtype=np.float32)
+
 
 def _parameters(values):
     floats = np.zeros(47, dtype=np.float32)
@@ -74,7 +91,7 @@ def _read_center(context):
     return scalars, outputs
 
 
-def test_particle_frame_matches_fixed_oracle():
+def test_particle_frame_matches_omni_product_contract():
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     values = fixture["input"]
     expected = fixture["expected"]
@@ -203,11 +220,20 @@ def test_particle_frame_matches_fixed_oracle():
             hotools_native.mc2_context_v0_read(
                 context, out_positions, out_rotations
             )
+            source_positions = np.asarray(
+                expected["positions_after_post"][step_index], dtype=np.float32
+            )
             np.testing.assert_allclose(
                 out_positions,
-                expected["positions_after_post"][step_index],
+                OMNI_PRODUCT_POSITIONS_AFTER_POST[step_index],
                 rtol=1.0e-6,
                 atol=2.0e-5,
+            )
+            np.testing.assert_allclose(
+                out_positions[0], source_positions[0], rtol=1.0e-6, atol=2.0e-5
+            )
+            assert not np.allclose(
+                out_positions[1:], source_positions[1:], rtol=1.0e-6, atol=2.0e-5
             )
             scalars, center_outputs = _read_center(context)
             np.testing.assert_allclose(
@@ -240,5 +266,5 @@ def test_particle_frame_matches_fixed_oracle():
 
 
 if __name__ == "__main__":
-    test_particle_frame_matches_fixed_oracle()
+    test_particle_frame_matches_omni_product_contract()
     print("PASS MC2 native complete particle frame")

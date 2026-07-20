@@ -438,6 +438,118 @@ def _tether_constraint_record_payload(native_snapshot, motion, parameters) -> di
     }
 
 
+def _distance_constraint_record_payload(native_snapshot) -> dict:
+    distance = native_snapshot.get("distance_tether") or {}
+    results = native_snapshot.get("distance_results") or {}
+    constraint = (native_snapshot.get("constraint_results") or {}).get(
+        "distance"
+    ) or {}
+    ranges = distance.get("distance_ranges")
+    targets = distance.get("distance_targets")
+    origins = results.get("origins")
+    corrections = results.get("corrections")
+    lengths = results.get("lengths")
+    rests = results.get("rests")
+    valid = results.get("valid")
+    pass_origins = constraint.get("origins")
+    empty = {
+        "phases": _readonly((), np.int8),
+        "record_indices": _readonly((), np.int32),
+        "vertices": _readonly((), np.int32),
+        "targets": _readonly((), np.int32),
+        "origins": _readonly((), np.float32).reshape((0, 3)),
+        "target_origins": _readonly((), np.float32).reshape((0, 3)),
+        "corrections": _readonly((), np.float32).reshape((0, 3)),
+        "lengths": _readonly((), np.float32),
+        "rests": _readonly((), np.float32),
+        "errors": _readonly((), np.float32),
+        "normalized_errors": _readonly((), np.float32),
+        "states": _readonly((), np.int8),
+    }
+    if any(
+        value is None
+        for value in (
+            ranges, targets, origins, corrections, lengths, rests, valid,
+            pass_origins,
+        )
+    ):
+        return empty
+    ranges = np.asarray(ranges, dtype=np.int32).reshape((-1, 2))
+    targets = np.asarray(targets, dtype=np.int32).reshape((-1,))
+    record_count = len(targets)
+    origins = np.asarray(origins, dtype=np.float32).reshape((2, record_count, 3))
+    corrections = np.asarray(corrections, dtype=np.float32).reshape(
+        (2, record_count, 3)
+    )
+    lengths = np.asarray(lengths, dtype=np.float32).reshape((2, record_count))
+    rests = np.asarray(rests, dtype=np.float32).reshape((2, record_count))
+    valid = np.asarray(valid, dtype=np.uint8).reshape((2, record_count))
+    pass_origins = np.asarray(pass_origins, dtype=np.float32).reshape(
+        (2, -1, 3)
+    )
+    owners = np.full((record_count,), -1, dtype=np.int32)
+    for vertex, (start, count) in enumerate(ranges):
+        start = int(start)
+        count = int(count)
+        if start < 0 or count < 0 or start + count > record_count:
+            continue
+        owners[start:start + count] = vertex
+    records = []
+    for phase in range(2):
+        for record in range(record_count):
+            if not valid[phase, record]:
+                continue
+            vertex = int(owners[record])
+            target = int(targets[record])
+            if (
+                vertex < 0
+                or vertex >= pass_origins.shape[1]
+                or target < 0
+                or target >= pass_origins.shape[1]
+            ):
+                continue
+            length = float(lengths[phase, record])
+            rest = float(rests[phase, record])
+            error = length - rest
+            correction_length = float(np.linalg.norm(corrections[phase, record]))
+            if correction_length > 1.0e-8:
+                state = -2 if error < 0.0 else 2
+            elif abs(error) > 1.0e-8 and abs(error) <= max(rest * 0.02, 1.0e-5):
+                state = -1 if error < 0.0 else 1
+            else:
+                state = 0
+            records.append((
+                phase,
+                record,
+                vertex,
+                target,
+                origins[phase, record],
+                pass_origins[phase, target],
+                corrections[phase, record],
+                length,
+                rest,
+                error,
+                error / max(rest, 1.0e-8),
+                state,
+            ))
+    if not records:
+        return empty
+    return {
+        "phases": _readonly([item[0] for item in records], np.int8),
+        "record_indices": _readonly([item[1] for item in records], np.int32),
+        "vertices": _readonly([item[2] for item in records], np.int32),
+        "targets": _readonly([item[3] for item in records], np.int32),
+        "origins": _readonly([item[4] for item in records], np.float32),
+        "target_origins": _readonly([item[5] for item in records], np.float32),
+        "corrections": _readonly([item[6] for item in records], np.float32),
+        "lengths": _readonly([item[7] for item in records], np.float32),
+        "rests": _readonly([item[8] for item in records], np.float32),
+        "errors": _readonly([item[9] for item in records], np.float32),
+        "normalized_errors": _readonly([item[10] for item in records], np.float32),
+        "states": _readonly([item[11] for item in records], np.int8),
+    }
+
+
 def _collision_payload(item, native_snapshot) -> dict:
     slot = item["slot"]
     effective = slot.data.get("effective_parameters")
@@ -733,14 +845,19 @@ def capture_requested_mc2_debug(
                     if filters.get("show_output", False) else {}
                 ),
             }
+            constraint_records = {}
             if filters.get("show_tether", False):
-                snapshot["constraint_records"] = {
-                    "tether": _tether_constraint_record_payload(
-                        native_snapshot,
-                        snapshot["motion"],
-                        snapshot["parameters"],
-                    ),
-                }
+                constraint_records["tether"] = _tether_constraint_record_payload(
+                    native_snapshot,
+                    snapshot["motion"],
+                    snapshot["parameters"],
+                )
+            if filters.get("show_distance", False):
+                constraint_records["distance"] = _distance_constraint_record_payload(
+                    native_snapshot
+                )
+            if constraint_records:
+                snapshot["constraint_records"] = constraint_records
             slot.data["_debug_draw_snapshot"] = snapshot
             state.pop("error", None)
             state["captured_frame"] = frame

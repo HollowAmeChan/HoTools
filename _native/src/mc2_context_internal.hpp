@@ -144,6 +144,8 @@ struct Mc2ContextV0 {
     bool external_contact_debug_ready = false;
     std::uint32_t debug_constraint_request_mask = 0;
     std::uint32_t debug_constraint_ready_mask = 0;
+    std::uint8_t debug_distance_record_phase_mask = 0;
+    bool debug_distance_record_ready = false;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -179,6 +181,11 @@ struct Mc2ContextV0 {
     std::vector<hotools::Mc2ExternalCollisionDebugRecord> external_contact_debug_records;
     std::vector<float> debug_constraint_origins;
     std::vector<float> debug_constraint_corrections;
+    std::vector<float> debug_distance_record_origins;
+    std::vector<float> debug_distance_record_corrections;
+    std::vector<float> debug_distance_record_lengths;
+    std::vector<float> debug_distance_record_rests;
+    std::vector<std::uint8_t> debug_distance_record_valid;
     std::vector<float> animated_base_positions;
     std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;

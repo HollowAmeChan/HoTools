@@ -1184,6 +1184,96 @@ PyObject* mc2_context_v0_read_debug_constraint_results(PyObject*, PyObject* args
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_distance_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_distance_results expects 6 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto record_count = context->distance_targets.size();
+    const auto row_count = record_count * 2;
+    const auto vector_value_count = row_count * 3;
+    if ((context->debug_constraint_request_mask & kDebugConstraintDistance) == 0 ||
+        !context->debug_distance_record_ready ||
+        context->debug_distance_record_origins.size() != vector_value_count ||
+        context->debug_distance_record_corrections.size() != vector_value_count ||
+        context->debug_distance_record_lengths.size() != row_count ||
+        context->debug_distance_record_rests.size() != row_count ||
+        context->debug_distance_record_valid.size() != row_count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 distance record debug was not requested or is not ready"
+        );
+        return nullptr;
+    }
+    Buffer origins, corrections, lengths, rests, valid;
+    Buffer* buffers[] = {&origins, &corrections, &lengths, &rests, &valid};
+    const char* names[] = {
+        "out_distance_record_origins",
+        "out_distance_record_corrections",
+        "out_distance_record_lengths",
+        "out_distance_record_rests",
+        "out_distance_record_valid",
+    };
+    for (std::size_t index = 0; index < 5; ++index) {
+        if (!buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index]
+            )) {
+            return nullptr;
+        }
+    }
+    const auto rows = static_cast<Py_ssize_t>(row_count);
+    const auto records = static_cast<Py_ssize_t>(record_count);
+    if (!expect_float32(origins, names[0]) ||
+        !expect_2d(origins, names[0], rows, 3) ||
+        !expect_float32(corrections, names[1]) ||
+        !expect_2d(corrections, names[1], rows, 3) ||
+        !expect_float32(lengths, names[2]) ||
+        !expect_2d(lengths, names[2], 2, records) ||
+        !expect_float32(rests, names[3]) ||
+        !expect_2d(rests, names[3], 2, records) ||
+        !expect_uint8_scalar_array(valid, names[4]) ||
+        !expect_1d_array(valid, names[4], rows)) {
+        return nullptr;
+    }
+    if (vector_value_count > 0) {
+        std::memcpy(
+            origins.view.buf,
+            context->debug_distance_record_origins.data(),
+            vector_value_count * sizeof(float)
+        );
+        std::memcpy(
+            corrections.view.buf,
+            context->debug_distance_record_corrections.data(),
+            vector_value_count * sizeof(float)
+        );
+    }
+    if (row_count > 0) {
+        std::memcpy(
+            lengths.view.buf,
+            context->debug_distance_record_lengths.data(),
+            row_count * sizeof(float)
+        );
+        std::memcpy(
+            rests.view.buf,
+            context->debug_distance_record_rests.data(),
+            row_count * sizeof(float)
+        );
+        std::memcpy(
+            valid.view.buf,
+            context->debug_distance_record_valid.data(),
+            row_count * sizeof(std::uint8_t)
+        );
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_external_contacts(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 7) {
         PyErr_SetString(

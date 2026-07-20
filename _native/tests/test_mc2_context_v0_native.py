@@ -283,9 +283,9 @@ def test_constraint_debug_is_request_driven_and_exact():
         hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
         hotools_native.mc2_context_v0_update_distance_static(
             context,
-            np.zeros((2, 2), dtype=np.int32),
-            np.empty((0,), dtype=np.int32),
-            np.empty((0,), dtype=np.float32),
+            np.array([[0, 0], [0, 1]], dtype=np.int32),
+            np.array([0], dtype=np.int32),
+            np.array([1.0], dtype=np.float32),
         )
         hotools_native.mc2_context_v0_update_bending_static(
             context,
@@ -296,6 +296,7 @@ def test_constraint_debug_is_request_driven_and_exact():
         floats, ints, curves = parameters()
         floats[24] = 0.4
         floats[25] = 0.03
+        curves[2, :] = 1.0
         hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
         hotools_native.mc2_context_v0_set_tether_enabled(context, True)
         positions = np.array([[0, 0, 0], [2, 0, 0]], dtype=np.float32)
@@ -308,6 +309,9 @@ def test_constraint_debug_is_request_driven_and_exact():
         assert info["debug_constraint_request_mask"] == 0
         assert info["debug_constraint_ready_mask"] == 0
         assert info["debug_constraint_float_count"] == 0
+        assert info["debug_distance_record_ready"] is False
+        assert info["debug_distance_record_count"] == 0
+        assert info["debug_distance_record_float_count"] == 0
         hotools_native.mc2_context_v0_set_debug_constraint_results(context, 1)
         step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
 
@@ -315,6 +319,9 @@ def test_constraint_debug_is_request_driven_and_exact():
         assert info["debug_constraint_request_mask"] == 1
         assert info["debug_constraint_ready_mask"] == 1
         assert info["debug_constraint_float_count"] == 12
+        assert info["debug_distance_record_ready"] is False
+        assert info["debug_distance_record_count"] == 0
+        assert info["debug_distance_record_float_count"] == 0
         origins = np.empty((2, 3), dtype=np.float32)
         corrections = np.empty((2, 3), dtype=np.float32)
         hotools_native.mc2_context_v0_read_debug_constraint_results(
@@ -336,6 +343,62 @@ def test_constraint_debug_is_request_driven_and_exact():
                 context,
                 origins,
                 corrections,
+            ),
+            "was not requested or is not ready",
+        )
+
+        update_dynamic(context, 2, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 2)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_request_mask"] == 2
+        assert info["debug_constraint_ready_mask"] == 2
+        assert info["debug_constraint_float_count"] == 24
+        assert info["debug_distance_record_ready"] is True
+        assert info["debug_distance_record_count"] == 2
+        assert info["debug_distance_record_float_count"] == 16
+        pass_origins = np.empty((4, 3), dtype=np.float32)
+        pass_corrections = np.empty((4, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_constraint_results(
+            context, pass_origins, pass_corrections
+        )
+        record_origins = np.empty((2, 3), dtype=np.float32)
+        record_corrections = np.empty((2, 3), dtype=np.float32)
+        record_lengths = np.empty((2, 1), dtype=np.float32)
+        record_rests = np.empty((2, 1), dtype=np.float32)
+        record_valid = np.empty((2,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_distance_results(
+            context,
+            record_origins,
+            record_corrections,
+            record_lengths,
+            record_rests,
+            record_valid,
+        )
+        np.testing.assert_array_equal(record_valid, 1)
+        assert np.all(record_lengths > record_rests)
+        pass_origins = pass_origins.reshape((2, 2, 3))
+        pass_corrections = pass_corrections.reshape((2, 2, 3))
+        np.testing.assert_allclose(record_origins, pass_origins[:, 1], atol=1.0e-7)
+        np.testing.assert_allclose(
+            record_corrections, pass_corrections[:, 1], atol=1.0e-7
+        )
+
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_distance_record_ready"] is False
+        assert info["debug_distance_record_count"] == 0
+        assert info["debug_distance_record_float_count"] == 0
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_debug_distance_results(
+                context,
+                record_origins,
+                record_corrections,
+                record_lengths,
+                record_rests,
+                record_valid,
             ),
             "was not requested or is not ready",
         )

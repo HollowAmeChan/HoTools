@@ -106,6 +106,13 @@ void release_resources(Mc2ContextV0& context) {
     context.particle_collision_normals.clear();
     context.particle_real_velocities.clear();
     context.external_contact_debug_records.clear();
+    context.debug_constraint_origins.clear();
+    context.debug_constraint_corrections.clear();
+    context.debug_distance_record_origins.clear();
+    context.debug_distance_record_corrections.clear();
+    context.debug_distance_record_lengths.clear();
+    context.debug_distance_record_rests.clear();
+    context.debug_distance_record_valid.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -1752,6 +1759,175 @@ void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
     ++context.distance_solve_count;
 }
 
+void capture_distance_records_once(
+    Mc2ContextV0& context,
+    float simulation_power_y,
+    std::size_t debug_phase
+) {
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    const auto total_records = context.distance_targets.size();
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) == 0 ||
+        debug_phase >= 2 ||
+        !context.distance_static_ready ||
+        context.state_positions.size() != vertex_count * 3 ||
+        context.proxy_attributes.size() != vertex_count ||
+        context.baseline_depths.size() != vertex_count ||
+        context.proxy_local_positions.size() != vertex_count * 3 ||
+        context.distance_ranges.size() != vertex_count * 2 ||
+        context.distance_targets.size() != context.distance_rest_signed.size() ||
+        context.debug_distance_record_origins.size() != total_records * 2 * 3 ||
+        context.debug_distance_record_corrections.size() != total_records * 2 * 3 ||
+        context.debug_distance_record_lengths.size() != total_records * 2 ||
+        context.debug_distance_record_rests.size() != total_records * 2 ||
+        context.debug_distance_record_valid.size() != total_records * 2) {
+        return;
+    }
+
+    std::vector<float> positions = context.state_positions;
+    const auto phase_record_start = debug_phase * total_records;
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (!is_move(context.proxy_attributes[vertex])) continue;
+        const float stiffness = std::max(
+            0.0f,
+            std::min(1.0f, sample_curve16(
+                context.curve_values,
+                kDistanceStiffnessCurve,
+                context.baseline_depths[vertex]
+            ) * simulation_power_y)
+        );
+        if (stiffness <= kMc2Epsilon) continue;
+        const auto start = context.distance_ranges[vertex * 2];
+        const auto record_count = context.distance_ranges[vertex * 2 + 1];
+        const auto offset = vertex * 3;
+        const float current_x = positions[offset + 0];
+        const float current_y = positions[offset + 1];
+        const float current_z = positions[offset + 2];
+        const float inverse_mass = distance_inverse_mass(context, vertex);
+        float add_x = 0.0f;
+        float add_y = 0.0f;
+        float add_z = 0.0f;
+        std::int32_t add_count = 0;
+        for (std::int32_t local = 0; local < record_count; ++local) {
+            const auto record = static_cast<std::size_t>(start + local);
+            const auto target = static_cast<std::size_t>(
+                context.distance_targets[record]
+            );
+            const auto target_offset = target * 3;
+            const float dx = positions[target_offset + 0] - current_x;
+            const float dy = positions[target_offset + 1] - current_y;
+            const float dz = positions[target_offset + 2] - current_z;
+            const float rest_signed = context.distance_rest_signed[record];
+            const float static_rest = std::fabs(rest_signed);
+            const auto debug_record = phase_record_start + record;
+            const auto debug_offset = debug_record * 3;
+            context.debug_distance_record_origins[debug_offset + 0] = current_x;
+            context.debug_distance_record_origins[debug_offset + 1] = current_y;
+            context.debug_distance_record_origins[debug_offset + 2] = current_z;
+            if (static_rest <= kMc2Epsilon) {
+                add_x = dx * 0.5f;
+                add_y = dy * 0.5f;
+                add_z = dz * 0.5f;
+                for (std::int32_t previous = 0; previous < local; ++previous) {
+                    const auto previous_record = static_cast<std::size_t>(
+                        start + previous
+                    );
+                    const auto previous_offset =
+                        (phase_record_start + previous_record) * 3;
+                    context.debug_distance_record_corrections[previous_offset + 0] = 0.0f;
+                    context.debug_distance_record_corrections[previous_offset + 1] = 0.0f;
+                    context.debug_distance_record_corrections[previous_offset + 2] = 0.0f;
+                }
+                context.debug_distance_record_corrections[debug_offset + 0] = add_x;
+                context.debug_distance_record_corrections[debug_offset + 1] = add_y;
+                context.debug_distance_record_corrections[debug_offset + 2] = add_z;
+                context.debug_distance_record_lengths[debug_record] = std::sqrt(
+                    dx * dx + dy * dy + dz * dz
+                );
+                context.debug_distance_record_rests[debug_record] = 0.0f;
+                context.debug_distance_record_valid[debug_record] = 1;
+                ++add_count;
+                continue;
+            }
+            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance <= kMc2Epsilon) continue;
+            const float target_inverse_mass = distance_inverse_mass(context, target);
+            const float animated_dx =
+                context.step_basic_positions[target_offset + 0] -
+                context.step_basic_positions[offset + 0];
+            const float animated_dy =
+                context.step_basic_positions[target_offset + 1] -
+                context.step_basic_positions[offset + 1];
+            const float animated_dz =
+                context.step_basic_positions[target_offset + 2] -
+                context.step_basic_positions[offset + 2];
+            const float animated_rest = std::sqrt(
+                animated_dx * animated_dx + animated_dy * animated_dy +
+                animated_dz * animated_dz
+            );
+            const float static_local_dx =
+                context.proxy_local_positions[target_offset + 0] -
+                context.proxy_local_positions[offset + 0];
+            const float static_local_dy =
+                context.proxy_local_positions[target_offset + 1] -
+                context.proxy_local_positions[offset + 1];
+            const float static_local_dz =
+                context.proxy_local_positions[target_offset + 2] -
+                context.proxy_local_positions[offset + 2];
+            const float static_scaled_x = static_local_dx *
+                context.center_initial_scale[0] * context.scale_ratio;
+            const float static_scaled_y = static_local_dy *
+                context.center_initial_scale[1] * context.scale_ratio;
+            const float static_scaled_z = static_local_dz *
+                context.center_initial_scale[2] * context.scale_ratio;
+            const float local_scaled_rest = std::sqrt(
+                static_scaled_x * static_scaled_x +
+                static_scaled_y * static_scaled_y +
+                static_scaled_z * static_scaled_z
+            );
+            const float scaled_static_rest = local_scaled_rest > kMc2Epsilon
+                ? local_scaled_rest
+                : static_rest * context.scale_ratio;
+            const float rest =
+                scaled_static_rest * (1.0f - context.animation_pose_ratio) +
+                animated_rest * context.animation_pose_ratio;
+            const float local_stiffness = rest_signed < 0.0f
+                ? stiffness * kDistanceHorizontalStiffness
+                : stiffness;
+            const float correction =
+                ((distance - rest) * local_stiffness /
+                 (inverse_mass + target_inverse_mass)) /
+                distance;
+            const float record_x = dx * correction * inverse_mass;
+            const float record_y = dy * correction * inverse_mass;
+            const float record_z = dz * correction * inverse_mass;
+            add_x += record_x;
+            add_y += record_y;
+            add_z += record_z;
+            context.debug_distance_record_corrections[debug_offset + 0] = record_x;
+            context.debug_distance_record_corrections[debug_offset + 1] = record_y;
+            context.debug_distance_record_corrections[debug_offset + 2] = record_z;
+            context.debug_distance_record_lengths[debug_record] = distance;
+            context.debug_distance_record_rests[debug_record] = rest;
+            context.debug_distance_record_valid[debug_record] = 1;
+            ++add_count;
+        }
+        if (add_count <= 0) continue;
+        const float inverse_count = 1.0f / static_cast<float>(add_count);
+        for (std::int32_t local = 0; local < record_count; ++local) {
+            const auto record = static_cast<std::size_t>(start + local);
+            const auto debug_record = phase_record_start + record;
+            if (context.debug_distance_record_valid[debug_record] == 0) continue;
+            const auto debug_offset = debug_record * 3;
+            context.debug_distance_record_corrections[debug_offset + 0] *= inverse_count;
+            context.debug_distance_record_corrections[debug_offset + 1] *= inverse_count;
+            context.debug_distance_record_corrections[debug_offset + 2] *= inverse_count;
+        }
+        positions[offset + 0] = current_x + add_x * inverse_count;
+        positions[offset + 1] = current_y + add_y * inverse_count;
+        positions[offset + 2] = current_z + add_z * inverse_count;
+    }
+}
+
 void solve_tether_once(Mc2ContextV0& context) {
     if (!context.tether_enabled) return;
     const auto count = static_cast<std::size_t>(context.vertex_count);
@@ -3317,6 +3493,23 @@ bool begin_mc2_context_step(
     context.debug_constraint_ready_mask = 0;
     context.debug_constraint_origins.clear();
     context.debug_constraint_corrections.clear();
+    context.debug_distance_record_phase_mask = 0;
+    context.debug_distance_record_ready = false;
+    context.debug_distance_record_origins.clear();
+    context.debug_distance_record_corrections.clear();
+    context.debug_distance_record_lengths.clear();
+    context.debug_distance_record_rests.clear();
+    context.debug_distance_record_valid.clear();
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+        const auto record_count = context.distance_targets.size();
+        context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
+        context.debug_distance_record_corrections.assign(record_count * 2 * 3, 0.0f);
+        context.debug_distance_record_lengths.assign(record_count * 2, 0.0f);
+        context.debug_distance_record_rests.assign(record_count * 2, 0.0f);
+        context.debug_distance_record_valid.assign(
+            record_count * 2, static_cast<std::uint8_t>(0)
+        );
+    }
     if (context.external_contact_debug_requested) {
         context.external_contact_debug_records.clear();
         context.external_contact_debug_ready = false;
@@ -3340,7 +3533,13 @@ bool begin_mc2_context_step(
         context, kDebugConstraintTether, 0, debug_before
     );
     begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+        capture_distance_records_once(context, simulation_power_y, 0);
+    }
     solve_distance_once(context, simulation_power_y);
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+        context.debug_distance_record_phase_mask |= 1u;
+    }
     finish_constraint_debug_pass(
         context, kDebugConstraintDistance, 1, debug_before
     );
@@ -3357,7 +3556,15 @@ bool begin_mc2_context_step(
     solve_point_collision_once(context);
     solve_edge_collision_once(context);
     begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+        capture_distance_records_once(context, simulation_power_y, 1);
+    }
     solve_distance_once(context, simulation_power_y);
+    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+        context.debug_distance_record_phase_mask |= 2u;
+        context.debug_distance_record_ready =
+            context.debug_distance_record_phase_mask == 3u;
+    }
     finish_constraint_debug_pass(
         context, kDebugConstraintDistance, 4, debug_before
     );
@@ -3633,6 +3840,11 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(external_contact_debug_records);
     MC2_ADD_VECTOR_BYTES(debug_constraint_origins);
     MC2_ADD_VECTOR_BYTES(debug_constraint_corrections);
+    MC2_ADD_VECTOR_BYTES(debug_distance_record_origins);
+    MC2_ADD_VECTOR_BYTES(debug_distance_record_corrections);
+    MC2_ADD_VECTOR_BYTES(debug_distance_record_lengths);
+    MC2_ADD_VECTOR_BYTES(debug_distance_record_rests);
+    MC2_ADD_VECTOR_BYTES(debug_distance_record_valid);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -3832,6 +4044,26 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             static_cast<std::int64_t>(
                 context.debug_constraint_origins.size() +
                 context.debug_constraint_corrections.size()
+            )
+        ) ||
+        !dict_bool(
+            result,
+            "debug_distance_record_ready",
+            context.debug_distance_record_ready
+        ) ||
+        !dict_i64(
+            result,
+            "debug_distance_record_count",
+            static_cast<std::int64_t>(context.debug_distance_record_valid.size())
+        ) ||
+        !dict_i64(
+            result,
+            "debug_distance_record_float_count",
+            static_cast<std::int64_t>(
+                context.debug_distance_record_origins.size() +
+                context.debug_distance_record_corrections.size() +
+                context.debug_distance_record_lengths.size() +
+                context.debug_distance_record_rests.size()
             )
         ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||

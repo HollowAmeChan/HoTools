@@ -61,6 +61,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_read_debug_angle_limit",
     "mc2_context_v0_read_debug_external_contacts",
     "mc2_context_v0_read_debug_constraint_results",
+    "mc2_context_v0_read_debug_distance_results",
     "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
     "mc2_context_v0_stats",
