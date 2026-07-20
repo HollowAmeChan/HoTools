@@ -310,6 +310,8 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式请求时读取，grid/candidate/contact/intersection按位复制。
 
+Debug节点长描述必须由与可见输入顺序一致的单一条目表生成，逐项说明数据源、图元、颜色、捕获时机和不应作出的推断；不得只保留少数复杂模式的历史说明。Blender注册回归必须断言条目标签与`_INPUT_NAME`完整逐项相等、无重复且每条具有实质内容，新增或改名socket时必须同步更新说明。
+
 Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether、Bending static、Bending record结果与外碰实际接触分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建；外碰contact只在下一真实substep前收到显式请求后由Point/Edge kernel记录。Topology、parameter、motion、center、collision和output等Python payload也必须按实际绘制依赖构造；interaction participant过滤字典只在self请求等待消费时生成。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
 
 ### Debug state与绘制能力扩充规范

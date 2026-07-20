@@ -275,6 +275,19 @@ try:
     assert len(triangle_batch[0]) == 2
 
     assert mc2_nodes.physicsMC2DebugDraw.__defaults__[1] == 10000
+    debug_description = mc2_nodes.physicsMC2DebugDraw.__meta["omni_description"]
+    debug_labels = tuple(
+        label for label, _description in mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS
+    )
+    assert len(debug_labels) == len(set(debug_labels)) == 28
+    assert debug_labels == tuple(
+        mc2_nodes.physicsMC2DebugDraw.__meta["_INPUT_NAME"]
+    )
+    assert all(f"{label}：" in debug_description for label in debug_labels)
+    assert all(
+        len(description) >= 35
+        for _label, description in mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS
+    )
 
     contact_history = {}
     first_contacts = {

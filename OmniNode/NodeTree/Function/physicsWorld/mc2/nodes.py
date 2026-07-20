@@ -855,6 +855,49 @@ def physicsMC2Step(
     return step_mc2(world, mc2_tasks, settings=settings, enabled=enabled)
 
 
+_MC2_DEBUG_DESCRIPTION_ITEMS = (
+    ("物理世界", "读取其中已注册的MC2 task、slot和冻结debug快照，并原样输出同一个Physics World供后续节点继续使用。节点只登记按需捕获，不直接修改模拟状态。"),
+    ("任务筛选", "按task id筛选显示对象；空值显示全部，多个id可用换行或逗号分隔。MeshCloth、BoneCloth和BoneSpring任务节点的“任务名称”输出可直接连接到这里。"),
+    ("最大显示项", "限制每种图元的绘制数量，默认10000、上限100000，只影响viewport绘制，不截断solver数据或改变拓扑判断。碰撞形状会按final proxy连通分量公平分配预算，避免后序断开分量整块消失。"),
+    ("拓扑连接", "显示solver实际使用的去重final proxy edge。MeshCloth没有骨链纵向/横向分类，统一用橙色；BoneCloth纵向为橙色、横向为青色；蓝色只标出triangle引用但final edge表缺失的异常边，不重复描绘正常triangle边。"),
+    ("Fixed/Move", "按最终粒子属性显示Fixed与Move：红色点为Fixed，绿色点为Move。它回答哪些粒子可被约束移动，不代表当前是否正在发生修正；Ignore和ZeroDistance等细分状态由对应高级视图表达。"),
+    ("粒子深度", "显示生产路径真实baseline depth，也是阻尼、半径和多种约束曲线的采样坐标。蓝色0接近根，经过青/绿/黄到橙色1；粉色为Fixed根，紫色为无可达根的Move，黄色为ZeroDistance；白线是跨root边，橙线是局部突跳，纯红点/线是parent、root或深度单调性异常。Mesh显示4:1混合Fixed边界表面距离后的OmniMC2产品depth，不要求与旧MC2源码depth逐值相等。"),
+    ("深度粒子索引", "设为-1时不选中；指定有效粒子后以紫色高亮它沿真实parent一直到根的完整路径。该索引只控制诊断高亮，不改变depth、root、parent或任何模拟参数。"),
+    ("StepBasic参考姿态", "显示C++ context中的结构参考位置及真实topology edge。Distance、Angle和Bone输出消费这套参考；它不同于动画Motion BasePosition，也不是当前最终粒子位置。"),
+    ("有效重力", "每个Move粒子显示一组重力向量：灰色为方向、强度与组件scale作用后的未衰减量，绿色为再乘当前gravity ratio后的实际有效量。它表达本substep输入，不是由最终位移反推的受力。"),
+    ("粒子速度", "青色箭头为C++ post后保存、供下一步积分的state velocity，橙色为本步真实位移速度，黄色连接两者终点表示差值；state velocity命中particle speed limit时改为红色。Fixed粒子不伪造非零速度。"),
+    ("Distance误差", "每条去重无向边按当前长度与包含scale、animation pose ratio的有效rest比较：绿色接近rest，红色表示拉长，蓝色表示压缩。红色修正箭头来自真实Distance A与Distance B两个有序pass的记录贡献，保留phase、owner和target身份，不把两次修正相消后再展示。"),
+    ("Tether范围", "对每个Move粒子显示它到baseline root的约束：灰线为当前距离，蓝环为最短允许距离，黄环为最长允许距离。active或接近边界的记录显示真实修正箭头；身份稳定为vertex/root。"),
+    ("Bending约束", "显示triangle bending的有序quad记录：紫色表达dihedral角度项，青色表达volume项，红色表示明显误差。红色箭头是每个quad角色经过生产量化和顶点参与计数后的实际贡献，按vertex求和可还原Bending pass修正。"),
+    ("Motion BasePosition", "以青色点和法线轴显示MaxDistance与Backstop真正消费的动画基准位置/旋转。它来自native animated base readback，不使用StepBasic或最终网格反推。"),
+    ("Motion约束", "显示MaxDistance允许范围与Backstop中心/半径，并区分两个稳定branch。触发或接近边界的记录包含current、limit、error和刚度后的真实贡献；两个branch按vertex求和等于Motion pass修正。"),
+    ("Angle恢复目标", "粉色目标/箭头显示Angle Restoration基于StepBasic父子向量和当前parent位置形成的真实恢复目标；红色箭头显示三轮交错迭代中该branch的实际修正贡献。它不复用Angle Limit的层级方向。"),
+    ("Angle限制范围", "黄色方向锥显示父旋转级联后的真实Angle Limit target及按depth采样的角度上限；刚度为0时不伪造范围。红色箭头保留三轮Limit/Restoration交错顺序中的parent/child实际贡献。"),
+    ("Center", "显示组件、Anchor与Center位点，以及raw component delta、Anchor shift、平滑量、World惯性/限速后shift、Local shift和Depth混合后的实际分层向量。移动或旋转限速命中会显式标记，最终向量必须等于各实际层之和。"),
+    ("Teleport阈值与方向", "显示task唯一判定基准（首个Fixed或对象原点）的旧/新姿态、位移方向、距离阈值和旋转阈值。它是scheduler前的新帧判定，可在zero-substep帧捕获，不是逐粒子阈值球。"),
+    ("Teleport触发状态", "显示task级判定结果：绿色为None/未触发，黄色为Keep，红色为Reset，并区分距离或旋转阈值命中。整个task统一处理，不存在只重置部分粒子的状态。"),
+    ("碰撞情况", "显示当前模式下真正可参与外碰的双方。Point模式用绿色半透明球表示可移动且未Ignore的粒子；Edge模式用橙色半透明胶囊表示final proxy段及两端插值半径；蓝色实体为本帧实际上传并通过source、group/mask和setup过滤的外部collider。"),
+    ("实际接触", "只显示Point/Edge kernel在显式请求后记录的真实外碰：红色为当前/持续接触及active primitive，黄色点/线为新增接触，灰色为上一连续捕获帧已失效的接触；黄色箭头为法线，橙色箭头为实际correction，命中的collider表面变红。首帧或捕获中断只建立新基线，不制造churn；snapshot同时统计active/new/persistent/lost。"),
+    ("粒子半径", "用线框球显示每个粒子按生产baseline depth、Profile曲线和对象radius权重得到的实际外碰半径。该模式用于参数审计；显示半径不表示粒子在当前Point/Edge模式、Ignore状态和group scope下必然参与碰撞。"),
+    ("自碰1 几何单元", "显示真正注册到self static/dynamic的Point、Edge和Triangle primitive：紫色点、边和三角形轮廓。它回答哪些几何进入检测，缺失时应先检查粒子属性、final proxy和self static构建。"),
+    ("自碰2 空间网格", "显示native broadphase中primitive占用的灰色空间格及实际grid size。它用于判断分桶尺度、占用密度和潜在性能问题，不表示格内primitive已经接触。"),
+    ("自碰3 候选配对", "用黄色线连接grid broadphase输出的candidate primitive中心。候选允许包含false positive，只表示需要进入后续窄相；数量异常增大是性能/尺度诊断信号，不能当作接触数量。"),
+    ("自碰4 接触结果", "显示最终窄相与穿插结果：红色为启用的厚度contact及法线，灰色为缓存中未启用的contact，洋红为final线段-三角形测试确认的几何穿插。洋红记录按Edge奇偶分片跨帧检测，因此规律闪烁不是普通EE/PT接触停止，也不能直接归因于浮点随机。"),
+    ("最终输出偏移", "显示冻结result candidate和writeback plan真正提交给Blender的结果。Mesh为base到最终world位置的线段及object-local offset对应端点；Bone只显示允许平移的target，connected rotation-only骨不会伪造位移。"),
+)
+
+
+def _mc2_debug_long_description() -> str:
+    introduction = (
+        "从冻结的native快照绘制MC2真实中间态。大多数模式在登记后等待下一次真实substep捕获；"
+        "same-frame不会立即读取，未推进时可继续看到旧快照。Teleport属于scheduler前新帧状态。"
+        "所有开关均为按需readback，关闭debug不生产额外明细。"
+    )
+    return introduction + "\n\n" + "\n\n".join(
+        f"{label}：{description}" for label, description in _MC2_DEBUG_DESCRIPTION_ITEMS
+    )
+
+
 @omni(
     enable=True,
     always_run=True,
@@ -912,18 +955,7 @@ def physicsMC2Step(
     },
     _OUTPUT_NAME=["物理世界"],
     mute_passthrough={"_OUTPUT0": "world"},
-    omni_description=(
-        "从冻结的native快照绘制MC2真实中间态。\n\n"
-        "粒子深度：显示约束、半径、阻尼和惯性曲线实际采样的baseline depth。"
-        "蓝色接近0（近根），经青/绿/黄过渡到橙色1（远端）；粉色是Fixed根，"
-        "紫色是root=-1的无根Move粒子，黄色点是ZeroDistance。白线分隔不同Fixed根，"
-        "橙线表示异常大的局部深度跳变，红线表示深度逆序或parent/root不一致。"
-        "该模式只显示当前真实baseline，不代表Motion距离或骨链层级。\n\n"
-        "自碰1到4对应检测流水线，不是四种算法。自碰4中红色是实际厚度接触，"
-        "灰色是禁用接触，洋红只表示final线段-三角形测试确认的几何穿插。"
-        "独立穿插检测把排序后的Edge分成奇偶两组跨帧扫描，因此真实命中也只在"
-        "对应分片帧显示；这种规律切换不是普通EE/PT接触停止，也不是浮点随机。"
-    ),
+    omni_description=_mc2_debug_long_description(),
 )
 def physicsMC2DebugDraw(
     world: PhysicsWorldCache,
