@@ -132,12 +132,14 @@ profile + task combination
 | `Local移动限速`、`Local旋转限速` | 限制Local惯性分量，负值关闭 | native Center step按`dt`换算速度后限幅；三个setup有效。 |
 | `深度惯性` | 让靠近根部更跟随Center step、远端保留更多惯性变换 | MC2源码使用`1-depth²`；OmniMC2生产路径改为`1-depth^1.5`以减弱末端极值附近对depth偏差的放大，三个setup有效。这是明确产品差异，不得让source oracle静默改写。 |
 | `离心力` | 预期把组件旋转产生的离心加速度写入粒子速度 | 当前公开节点和ABI保留字段，但生产solver/native context没有consumer；`M/C/S`均为仅ABI，不能依赖。 |
-| `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置整个task；`2:Keep`整体搬运模拟形状并清除传送造成的不连续状态 | 判定基准是最终proxy顺序中的首个Fixed；无Fixed时回退模拟对象原点。触发作用于整个task；逐粒子实验实现及其debug数组已移除，真实场景复验完成前仍属于发布阻断。 |
+| `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置整个task；`2:Keep`整体搬运模拟形状并清除传送造成的不连续状态 | 判定基准是最终proxy顺序中的首个Fixed；无Fixed时回退模拟对象原点。触发作用于整个task；逐粒子实验实现及其debug数组已移除，Keep/Reset真实场景安全性已人工验证。 |
 | `Teleport距离`、`Teleport旋转` | 设置判定基准帧姿态发生不连续跃迁的位移和旋转阈值 | 距离阈值乘当前组件scale ratio，旋转单位为度，两者为OR；三个setup使用相同task级触发语义。 |
 
 MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新动画world pose；没有Fixed时比较模拟对象原点，Bone task即Armature Object原点。位移或旋转任一越阈值即处理整个task，基准身份不得随帧改变。
 
 `Reset`把整个task的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和碰撞历史对齐本帧动画基准；`Keep`按判定基准姿态delta整体搬运state、velocity reference、StepBasic、Motion base和rotation，并只旋转已有真实物理速度。两种模式都把old dynamic/component姿态重定基到本帧、把collider old shape重定基为current shape，避免第一substep沿传送路径重复插值或扫掠；摩擦、碰撞法线、外碰debug contact、task内self、bone output和跨task interaction历史失效后由真实substep重建。触发发生在scheduler之前，zero-substep帧也立即发布新结果。完整状态清单与复验矩阵见`MC2_MANUAL_VALIDATION_DECISIONS.md`。
+
+真实高速平移/旋转与collider场景已人工确认Keep/Reset均安全，不再属于发布阻断。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何表达判定输入，不表示粒子速度。
 
 Teleport判定姿态由task帧适配器按首个Fixed或对象原点统一提供；MeshCloth与Bone setup在应用整体Keep/Reset时仍需各自正确转换代理/骨骼世界空间。Anchor抵消、world frame shift与Teleport的先后顺序必须对照MC2 Team Center重审，不能把同一基准delta重复应用到粒子。
 
@@ -718,7 +720,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
 | Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项。完整particle-frame测试保留JSON中的MC2 source oracle，同时以独立常量锁定`1-depth^1.5`的Omni产品输出；Fixed仍与source一致，Move必须显式不同，禁止用更新source fixture掩盖产品差异 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期。Bone产品测试要求横向triangle生成非零Bending record、static/native signature一致，并覆盖旋转Armature的零重力静置与显式topology/output debug请求；BoneSpring runtime强制Bending关闭 |
-| Blender 4.5约束专项soak | runner覆盖重力三轴/衰减、Distance/Tether、Bending、Angle Restoration/Limit、Motion/Backstop、外碰/摩擦、task内与跨task self、Center，以及任务级首Fixed Teleport、interaction同帧失效与下一帧重建。Mesh 1200/1800帧与Bone 900帧场景均重复验证确定性；旧逐粒子subset schema与不可达断言已删除。它仍不能替代真实高速collider另一侧的人工穿模复验。 |
+| Blender 4.5约束专项soak | runner覆盖重力三轴/衰减、Distance/Tether、Bending、Angle Restoration/Limit、Motion/Backstop、外碰/摩擦、task内与跨task self、Center，以及任务级首Fixed Teleport、interaction同帧失效与下一帧重建。Mesh 1200/1800帧与Bone 900帧场景均重复验证确定性；旧逐粒子subset schema与不可达断言已删除。真实高速collider另一侧的人工穿模复验已经通过。 |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧并完整重复；任务级Teleport覆盖三setup的Keep/Reset、首Fixed/对象原点、平移/旋转阈值、reset/apply计数与稳定化恢复，旧逐粒子subset阶段已删除。三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；601帧Reset后验证三setup的`stabilization_time_after_reset=0.2`恢复斜率及`blend_weight=0.6`精确乘积；501至550帧把`particle_speed_limit`原位热更新为`0.05m/s`，逐帧显式readback C++ post后的`state_velocities`，三个setup均须真实达到限幅边界且不得越界，不能用混有Center位移补偿的world position差伪装内部速度；551帧恢复参数且context identity不变；完整场景重复两次并把限幅峰值写入确定性摘要。原生任务级Keep另以非零速度逐值锁定平移后速度不被清零。 |
 | Blender 4.5 Center World soak | MeshCloth、BoneCloth、BoneSpring分别在完全跟随、完全保留World惯性、`0.8`平滑、`0.2m/s`移动限速及`90deg/s`输入配`30deg/s`旋转限速五个产品场景运行600帧，整套重复两次；稳定的3-substep/0-skip帧要求平移shift按跟随、限速、保留严格排序，限速后的未补偿速度精确受`0.2m/s`约束，平滑速度与shift均产生独立非零响应，旋转补偿精确为每帧`2deg`；catch-up帧保留在有限性和确定性摘要中但不冒充单字段证据。所有context的`debug_readback_count`保持0。修复后的World移动/旋转限速均可独立激活Center frame gate。 |
 | Blender 4.5 Center Local soak | Mesh fixed row与BoneCloth/BoneSpring Root在组件内产生平移/旋转，四个产品场景各运行600帧并完整复跑；`local_inertia=0/1`要求native Center step的平移/旋转inertia ratio精确为`1/0`且vector/quaternion端点一致；`0.2m/s`移动限速分别验证真实超限帧精确受限和BoneCloth `0.15m/s`未超限段保持ratio 0；`30deg/s`旋转限速使用native `angular_velocity`验证。所有场景不请求debug，readback计数为0。 |
@@ -735,9 +737,9 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-代码级九个能力族当前均为`verified`，但 2026-07-20 人工验收已经给出逐粒子 Teleport 高速穿模、自碰单层持续微动/疑似误报以及多项 debug 无法表达真实触发的反例，因此该状态不能作为当前产品验收结论。Teleport 已决定回退到“首个Fixed，否则物体原点”的单基准整task判定；其余开放决策、实施顺序和新验收门槛以 `MC2_MANUAL_VALIDATION_DECISIONS.md` 为准。现有 Object Anchor、重力/恢复衰减、Bone 输出旋转等长跑证据仍保留，但不能替代被反例推翻的外部行为与可读性证据。
+代码级九个能力族当前均为`verified`。2026-07-20人工验收曾给出逐粒子Teleport高速穿模、自碰单层持续微动/疑似误报以及多项debug无法表达真实触发的反例；Teleport现已回退到“首个Fixed，否则物体原点”的单基准整task判定并完成Keep/Reset真实场景复验，自碰静置、深度与实际接触反例也已关闭。剩余debug整体可读性、参数说明界面复验和兼容重编译缓存以`MC2_MANUAL_VALIDATION_DECISIONS.md`为准。
 
-当前发布阻断项是 Teleport 单基准整task回退与全状态清理，以及继续结果导向debug重做。无production consumer的`centrifugal_acceleration`已从公开Profile/Task节点和preset隐藏，内部ABI槽位固定为0；自碰静置与Mesh深度已完成人工复验，这三项不再属于当前阻断项。
+Teleport单基准整task回退、自碰静置、Mesh深度、碰撞结果和无consumer离心力隐藏均已完成人工或代码闭环，不再属于发布阻断。剩余验收集中在结果导向debug整体界面、参数长说明界面及兼容重编译缓存。
 
 ## 明确不支持与不得恢复
 

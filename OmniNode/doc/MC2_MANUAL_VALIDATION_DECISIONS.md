@@ -26,7 +26,7 @@
 
 | ID | 状态 | 决策 | 当前建议 |
 |---|---|---|---|
-| D-01 | **代码已关闭，待最终手测** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史，清理接触状态 |
+| D-01 | **人工已验证** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史并清理接触状态，真实场景确认两种模式均安全 |
 | D-02 | **代码已实现，待整体手测** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量、外碰及self contact/intersection时间层均已接通 |
 | D-03 | **人工已验证** | 碰撞结果表达 | “碰撞情况”保留全部有效外碰形状；“实际接触”只显示命中的真实半径形状、接触位置、对应collider与实际推动，并覆盖跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
@@ -45,15 +45,14 @@
 
 OmniMC2 的判定基准明确采用**最终 proxy 顺序中的首个 Fixed 粒子**；比较该粒子前后两帧的动画/base world pose。若 task 没有任何 Fixed 粒子，则回退为模拟对象原点的 world pose；Bone task 使用 Armature Object 原点。这个选择必须稳定且可解释，不允许按距离、当前接触或哈希顺序每帧更换。任一位移或旋转阈值触发后，Reset/Keep 仍作用于整个 task。该规则是 Blender 产品层相对 MC2 Team Center 的明确差异点。
 
-### 当前实现与未关闭问题
+### 当前实现与验收结论
 
 - C++生产路径已改为`apply_task_teleport`：只读取最终proxy顺序中的首个Fixed；无Fixed时读取对象原点。一次判定只返回一个任务级结果，旧逐粒子扫描、局部状态修改及逐粒子debug数组已经移除。
 - Keep触发后除整体搬运state/velocity reference/StepBasic/Motion base外，还把`old_dynamic`重定基为本帧dynamic、把old component pose重定基为当前pose，并令collider old shape等于current shape；第一post-teleport substep因此不会在传送前后姿态或collider之间再次插值/扫掠。
 - Reset由solver在同一帧调用native reset，对齐本帧dynamic并清零速度、摩擦、碰撞法线、self和输出历史。Keep保留并旋转真实物理速度，但清零摩擦、碰撞法线，撤销外碰debug contact、bone output、task内self和world interaction历史；传送位移本身不进入速度。
-- 自动矩阵现已覆盖三setup任务级首Fixed/物体原点、非基准粒子不触发、Reset/Keep整task结果、同帧interaction失效与下一帧重建、Keep非零速度精确保留，以及900/1200/1800帧确定性与速度上限。它仍没有证明真实collider另一侧不会出现传送路径造成的高速穿模。
-- 手测已给出反例：触发 Reset/Keep 后仍可能高速穿模，说明缓存/时序清理链不完整，或者同帧碰撞体与粒子历史没有按 MC2 原版一起重置。
-- 现有阈值/状态绘制停在旧位置并只变色，是逐粒子实验的直接产物。回退后应改成单个判定基准的身份、旧姿态、新姿态、距离/角度阈值与 task 状态。
-- 当前阈值/状态绘制已经改为单个task判定基准、旧/新位置、阈值、实测位移与None/Keep/Reset颜色；不再申请逐粒子debug数组。
+- 自动矩阵覆盖三setup任务级首Fixed/物体原点、非基准粒子不触发、Reset/Keep整task结果、同帧interaction失效与下一帧重建、Keep非零速度精确保留，以及900/1200/1800帧确定性与速度上限。
+- 原高速穿模反例已经在真实场景复验关闭：Keep与Reset均不会沿旧粒子或旧collider history产生危险扫掠，触发后速度和接触重建符合预期。该人工证据关闭D-01发布阻断。
+- 阈值/状态绘制已改为单个task判定基准、旧/新位置、阈值、实测位移与None/Keep/Reset颜色；不再申请逐粒子debug数组。状态视图同时给真实测量位移箭头和旋转弧着色，终点保留同色圆点；这些线表示判定输入，不是粒子速度。
 
 ### 必须对照 MC2 重审的状态
 
@@ -78,6 +77,8 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 - debug 只画一个 task 级判定：基准类型与 proxy index、旧/新 pose、距离阈值、角度阈值、实际测量和最终状态。
 - 自动回归把传送帧`frame_interpolation`设为0.25，并证明Keep后的第一substep Motion BasePosition已完整位于新姿态，而不是传送路径25%处；Blender BasePose同时覆盖无Fixed物体原点Keep/Reset与3-substep结果。
 - 自动测试必须增加“碰撞体另一侧无高速粒子”“触发后实际速度有界”等外部结果断言，不能再只查内部 reset 数组。
+
+上述内部矩阵与真实场景复验已经共同满足当前D-01标准；后续新增setup、Teleport状态或collider插值路径时仍须按同一清单回归。
 
 ## P0：自碰误报、闪烁与持续微动
 
@@ -120,7 +121,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 
 ## P1：Debug 信息架构重做
 
-### D-02：一级按用户问题组织（分段实施中）
+### D-02：一级按用户问题组织（代码已实现，待整体手测）
 
 建议把当前按数组名排列的开关重组为以下一级视图：
 
@@ -362,10 +363,10 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **已冻结决策**：D-03碰撞结果、D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-02/D-07代码已关闭，D-02与D-09仍待整体界面复验，D-06方向已定。
+1. **已冻结决策**：D-01 Teleport、D-03碰撞结果、D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-02/D-07代码已关闭，D-02与D-09仍待整体界面复验，D-06方向已定。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
-3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
-4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
+3. **重开验收状态**：自碰静置、Teleport和实际接触已经按新不变量重新验收；debug整体可读性与参数说明仍待界面复验。
+4. **Teleport 回退（人工已关闭）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；真实高速平移/旋转及collider场景确认Keep/Reset均安全。
 5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
 6. **非连通碰撞绘制 D-10（人工已关闭）**：renderer前缀截断已改为分量公平抽样；双分量Point/Edge自动回归与真实多分量模型手测均已通过。
 7. **Debug 基础数据合同（代码已关闭，待整体手测）**：五类约束的六个有序pass均已稀疏捕获，并具备稳定记录identity、active状态与真实贡献；Angle保留三轮交错子分支顺序，Center发布raw/Anchor/smoothing/World/final实际层及限速命中。外碰按连续帧发布时间层，self contact按连续帧、intersection按同奇偶相位的前两帧发布时间层；debug-off保持零buffer/零readback。

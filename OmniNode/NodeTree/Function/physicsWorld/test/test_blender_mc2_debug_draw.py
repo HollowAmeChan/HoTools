@@ -293,6 +293,46 @@ try:
     assert "放大8倍" in debug_descriptions["实际接触"]
     assert "放大8倍" in debug_descriptions["自碰4 接触结果"]
     assert "同相位的前两帧" in debug_descriptions["自碰4 接触结果"]
+    assert "不是粒子速度" in debug_descriptions["Teleport触发状态"]
+
+    teleport_base = {
+        "reference_position": (1.0, 0.0, 0.0),
+        "old_reference_position": (0.0, 0.0, 0.0),
+        "reference_rotation_xyzw": (0.0, 0.0, 0.0, 1.0),
+        "old_reference_rotation_xyzw": (0.0, 0.0, 0.0, 1.0),
+        "distance_threshold": 0.5,
+        "rotation_threshold_degrees": 30.0,
+    }
+    for mode, applied, color_name in (
+        (0, False, "teleport_measure"),
+        (1, True, "teleport_reset"),
+        (2, True, "teleport_keep"),
+    ):
+        teleport_batches = []
+        teleport_points = []
+        debug_draw._append_task_teleport_batches(
+            teleport_batches,
+            teleport_points,
+            {**teleport_base, "mode": mode, "applied": applied},
+            {
+                "show_teleport_threshold": False,
+                "show_teleport_status": True,
+            },
+            10000,
+        )
+        status_batch = next(
+            batch
+            for batch in teleport_batches
+            if batch[1] == debug_draw._COLORS[color_name]
+        )
+        np.testing.assert_allclose(
+            np.asarray(status_batch[0][:2], dtype=np.float32),
+            ((0, 0, 0), (1, 0, 0)),
+        )
+        assert any(
+            batch[1] == debug_draw._COLORS[color_name]
+            for batch in teleport_points
+        )
 
     contact_positions = np.asarray(
         ((0, 0, 0), (1, 0, 0), (2, 0, 0)), dtype=np.float32

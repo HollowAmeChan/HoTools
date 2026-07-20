@@ -875,7 +875,7 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     ("Angle限制范围", "黄色方向锥显示父旋转级联后的真实Angle Limit target及按depth采样的角度上限；刚度为0时不伪造范围。红色箭头保留三轮Limit/Restoration交错顺序中的parent/child实际贡献。"),
     ("Center", "显示组件、Anchor与Center位点，以及raw component delta、Anchor shift、平滑量、World惯性/限速后shift、Local shift和Depth混合后的实际分层向量。移动或旋转限速命中会显式标记，最终向量必须等于各实际层之和。"),
     ("Teleport阈值与方向", "显示task唯一判定基准（首个Fixed或对象原点）的旧/新姿态、位移方向、距离阈值和旋转阈值。它是scheduler前的新帧判定，可在zero-substep帧捕获，不是逐粒子阈值球。"),
-    ("Teleport触发状态", "显示task级判定结果：绿色为None/未触发，黄色为Keep，红色为Reset，并区分距离或旋转阈值命中。整个task统一处理，不存在只重置部分粒子的状态。"),
+    ("Teleport触发状态", "显示task级判定结果及其真实测量方向：旧基准到新基准的位移箭头与旋转测量弧统一着色，绿色为None/未触发，黄色为Keep，红色为Reset；终点圆点使用同色。线和弧表示Teleport判定输入，不是粒子速度。整个task统一处理，不存在只重置部分粒子的状态。"),
     ("碰撞情况", "显示当前模式下真正可参与外碰的双方。Point模式用绿色半透明球表示可移动且未Ignore的粒子；Edge模式用橙色半透明胶囊表示final proxy段及两端插值半径；蓝色实体为本帧实际上传并通过source、group/mask和setup过滤的外部collider。"),
     ("实际接触", "同时显示两类真实接触。task与外部collider的Point/Edge接触中，只显示命中的真实半径球或变半径胶囊及对应红色collider，不重复“碰撞情况”的全部候选形状；白色小点是kernel接触位置，黄色为新增，灰色为上一连续捕获帧失效。黄色箭头从接触点显示kernel实际correction，固定放大8倍以便观察，不设置最短长度，方向与相对强度仍对应真实结果；首帧或捕获中断只建立新基线。world interaction中只绘制两端owner不同且已启用的跨task EE/PT contact，细淡红线连接两个primitive中心，两侧黄色箭头分别显示四轮solve经过量化和共享粒子平均后的真实累计贡献，同样放大8倍；同task self contact仍归“自碰4”，不会在此重复。"),
     ("粒子半径", "用线框球显示每个粒子按生产baseline depth、Profile曲线和对象radius权重得到的实际外碰半径。该模式用于参数审计；显示半径不表示粒子在当前Point/Edge模式、Ignore状态和group scope下必然参与碰撞。"),
@@ -938,7 +938,7 @@ def _mc2_debug_long_description() -> str:
             "description": "Teleport阈值与方向\n球=阈值  线=旧到新"
         },
         "show_teleport_status": {
-            "description": "Teleport触发状态。\n绿=未触发  黄=Keep  红=Reset"
+            "description": "位移/旋转线：绿=None\n黄=Keep 红=Reset"
         },
         "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
         "show_collision_contacts": {

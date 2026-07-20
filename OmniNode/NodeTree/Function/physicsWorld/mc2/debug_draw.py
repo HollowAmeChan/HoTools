@@ -1276,31 +1276,32 @@ def _append_task_teleport_batches(
     if "reference_position" in teleport:
         old_position = vector3(teleport.get("old_reference_position", (0.0, 0.0, 0.0)))
         position = vector3(teleport.get("reference_position", (0.0, 0.0, 0.0)))
+        radius = max(float(teleport.get("distance_threshold", 0.0) or 0.0), 0.0)
+        old_xyzw = teleport.get("old_reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
+        current_xyzw = teleport.get("reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
+        old_rotation = mathutils.Quaternion((
+            float(old_xyzw[3]), float(old_xyzw[0]),
+            float(old_xyzw[1]), float(old_xyzw[2]),
+        ))
+        current_rotation = mathutils.Quaternion((
+            float(current_xyzw[3]), float(current_xyzw[0]),
+            float(current_xyzw[1]), float(current_xyzw[2]),
+        ))
+        delta = current_rotation @ old_rotation.conjugated()
+        axis = (
+            delta.axis
+            if abs(float(delta.angle)) > 1.0e-7
+            else old_rotation @ mathutils.Vector((0.0, 0.0, 1.0))
+        )
+        axis_a, axis_b = _plane_axes(axis)
+        arc_radius = max(min(radius * 0.28, 0.25), 0.025)
         if filters.get("show_teleport_threshold", False):
             threshold_lines = []
             direction_lines = []
-            radius = max(float(teleport.get("distance_threshold", 0.0) or 0.0), 0.0)
             if radius > 1.0e-7:
                 _add_axis_sphere(threshold_lines, old_position, radius)
             if (position - old_position).length > 1.0e-7:
                 add_arrow_lines(direction_lines, old_position, position)
-            old_xyzw = teleport.get("old_reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
-            current_xyzw = teleport.get("reference_rotation_xyzw", (0.0, 0.0, 0.0, 1.0))
-            old_rotation = mathutils.Quaternion((
-                float(old_xyzw[3]), float(old_xyzw[0]),
-                float(old_xyzw[1]), float(old_xyzw[2]),
-            ))
-            current_rotation = mathutils.Quaternion((
-                float(current_xyzw[3]), float(current_xyzw[0]),
-                float(current_xyzw[1]), float(current_xyzw[2]),
-            ))
-            delta = current_rotation @ old_rotation.conjugated()
-            if abs(float(delta.angle)) > 1.0e-7:
-                axis = delta.axis
-            else:
-                axis = old_rotation @ mathutils.Vector((0.0, 0.0, 1.0))
-            axis_a, axis_b = _plane_axes(axis)
-            arc_radius = max(min(radius * 0.28, 0.25), 0.025)
             rotation_limit = math.radians(max(
                 float(teleport.get("rotation_threshold_degrees", 0.0) or 0.0),
                 0.0,
@@ -1326,6 +1327,20 @@ def _append_task_teleport_batches(
                 else "teleport_keep" if applied and mode == 2
                 else "teleport_measure"
             )
+            status_lines = []
+            if (position - old_position).length > 1.0e-7:
+                add_arrow_lines(status_lines, old_position, position)
+            if abs(float(delta.angle)) > 1.0e-7:
+                add_arc_lines(
+                    status_lines,
+                    old_position,
+                    axis_a,
+                    axis_b,
+                    arc_radius * 0.76,
+                    0.0,
+                    min(abs(float(delta.angle)), math.pi),
+                )
+            _batch(batches, status_lines, target, 2.4 if applied else 1.8)
             _point_batch(point_batches, [position], target, 9.0 if applied else 6.0)
         return
 
