@@ -198,7 +198,14 @@ def test_physics_bake_bones() -> None:
 
     try:
         _publish(world, armature, 1)
-        returned, bone_count, mesh_count, status = physics_nodes.physicsBake(
+        (
+            returned,
+            output_directory,
+            output_prefix,
+            bone_count,
+            mesh_count,
+            status,
+        ) = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
@@ -212,6 +219,8 @@ def test_physics_bake_bones() -> None:
         assert returned is world
         assert bone_count == 2 and mesh_count == 0
         assert "Bone Bake：2" in status
+        assert output_directory == str(temp_root)
+        assert output_prefix == "BoneBake"
         bake_action = armature.animation_data.action
         assert bake_action != source_action
         assert bake_action.name.startswith("BoneBake_PhysicsBakeRig_PhysicsBake_")
@@ -229,7 +238,7 @@ def test_physics_bake_bones() -> None:
         assert untouched_paths == {'pose.bones["Untouched"].rotation_euler'}
 
         _publish_batch(world, armature, 2)
-        _, bone_count, _, _ = physics_nodes.physicsBake(
+        _, _, _, bone_count, _, _ = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
@@ -265,7 +274,7 @@ def test_physics_bake_bones() -> None:
             for curve in bake_action.fcurves
         }
         world.frame_context.same_frame = True
-        _, bone_count, _, status = physics_nodes.physicsBake(
+        _, _, _, bone_count, _, status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
@@ -350,7 +359,7 @@ def test_physics_bake_bones() -> None:
 
         bpy.context.scene.frame_set(2)
         _publish_batch(world, armature, 2)
-        _, bone_count, _, _ = physics_nodes.physicsBake(
+        _, _, _, bone_count, _, _ = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(temp_root),
             file_prefix="BoneBake",

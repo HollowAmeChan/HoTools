@@ -112,7 +112,11 @@ for module in (physics_nodes, mc2_nodes, rigid_nodes, spring_nodes):
 
 
 assert _mapping(physics_nodes.physicsWorldBegin) == {}
-assert _mapping(physics_nodes.physicsBake) == {"_OUTPUT0": "world"}
+assert _mapping(physics_nodes.physicsBake) == {
+    "_OUTPUT0": "world",
+    "_OUTPUT1": "cache_directory",
+    "_OUTPUT2": "file_prefix",
+}
 assert _mapping(physics_nodes.clearPhysicsBake) == {"_OUTPUT0": "world"}
 assert _mapping(physics_nodes.physicsWorldCommit) == {"_OUTPUT1": "world"}
 assert _mapping(mc2_nodes.physicsMC2Step) == {"_OUTPUT0": "world"}
@@ -165,11 +169,28 @@ try:
         "world", "cache_directory", "file_prefix", "frame_start", "frame_end",
         "bake_bones", "bake_mesh", "use_mesh_cache", "enabled",
     ]
+    assert [socket.identifier for socket in bake_node.outputs] == [
+        "_OUTPUT0", "_OUTPUT1", "_OUTPUT2", "_OUTPUT3", "_OUTPUT4", "_OUTPUT5",
+    ]
+    assert bake_node.outputs["_OUTPUT1"].name == "缓存目录"
+    assert bake_node.outputs["_OUTPUT2"].name == "文件前缀"
+    assert bake_node.outputs["_OUTPUT3"].name == "Bone数量"
     assert [socket.identifier for socket in clear_node.inputs] == [
         "world", "cache_directory", "file_prefix", "clear_frame",
         "animation_clear_mode", "mesh_cache_policy", "finalize_cache_policy",
         "clear_live_output", "pause_timeline", "enabled",
     ]
+    for output_identifier, input_identifier in (
+        ("_OUTPUT0", "world"),
+        ("_OUTPUT1", "cache_directory"),
+        ("_OUTPUT2", "file_prefix"),
+    ):
+        link = tree.links.new(
+            bake_node.outputs[output_identifier],
+            clear_node.inputs[input_identifier],
+        )
+        assert link.from_socket == bake_node.outputs[output_identifier]
+        assert link.to_socket == clear_node.inputs[input_identifier]
     output_io = tree.group_outputs.add()
     output_io.name = "Name"
     output_io.uid = uuid.uuid4().hex

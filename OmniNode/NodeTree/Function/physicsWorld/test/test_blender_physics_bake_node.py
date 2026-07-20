@@ -157,7 +157,7 @@ def test_physics_bake_node_mesh_stage() -> None:
                 bake_mesh=True,
                 use_mesh_cache=True,
                 enabled=True,
-            )[3]
+            )[5]
         )
 
     try:
@@ -167,7 +167,7 @@ def test_physics_bake_node_mesh_stage() -> None:
         bpy.context.scene.frame_set(FRAME_START)
         _publish_frame(world, objects, offsets, FRAME_START)
 
-        _, _, count, status = physics_nodes.physicsBake(
+        _, output_directory, output_prefix, _, count, status = physics_nodes.physicsBake(
             world=world,
             cache_directory="//physics_bake",
             file_prefix=PREFIX,
@@ -178,7 +178,8 @@ def test_physics_bake_node_mesh_stage() -> None:
             use_mesh_cache=True,
         )
         assert count == 0 and "必须先保存" in status
-        _, _, count, status = physics_nodes.physicsBake(
+        assert output_directory == "//physics_bake" and output_prefix == PREFIX
+        _, _, _, _, count, status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,
@@ -195,7 +196,14 @@ def test_physics_bake_node_mesh_stage() -> None:
             check_existing=False,
         ) == {"FINISHED"}
 
-        returned_world, bone_count, target_count, status = physics_nodes.physicsBake(
+        (
+            returned_world,
+            output_directory,
+            output_prefix,
+            bone_count,
+            target_count,
+            status,
+        ) = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,
@@ -209,7 +217,8 @@ def test_physics_bake_node_mesh_stage() -> None:
         assert bone_count == 0
         assert target_count == 2
         assert "已排队" in status
-        _, _, duplicate_count, duplicate_status = physics_nodes.physicsBake(
+        assert output_directory == str(cache_root) and output_prefix == PREFIX
+        _, _, _, _, duplicate_count, duplicate_status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,
@@ -234,7 +243,7 @@ def test_physics_bake_node_mesh_stage() -> None:
         assert cleared_animations == 0 and cleared_meshes == 0
         assert "Clear 完成" in clear_status
         assert physics_bake.run_pending_geometry_bake() is False
-        _, _, target_count, status = physics_nodes.physicsBake(
+        _, _, _, _, target_count, status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,
@@ -297,7 +306,7 @@ def test_physics_bake_node_mesh_stage() -> None:
                 )
 
         # False rearms the trigger and disables playback without touching files.
-        _, _, disabled_count, status = physics_nodes.physicsBake(
+        _, _, _, _, disabled_count, status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,
@@ -314,7 +323,7 @@ def test_physics_bake_node_mesh_stage() -> None:
             for path in _files(cache_root)
         ]
 
-        _, _, enabled_count, status = physics_nodes.physicsBake(
+        _, _, _, _, enabled_count, status = physics_nodes.physicsBake(
             world=world,
             cache_directory=str(cache_root),
             file_prefix=PREFIX,

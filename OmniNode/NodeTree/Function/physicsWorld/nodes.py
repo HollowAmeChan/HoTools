@@ -248,7 +248,9 @@ def physicsWorldCommit(
         "frame_start": {"min_value": -1048574, "max_value": 1048574},
         "frame_end": {"min_value": -1048574, "max_value": 1048574},
     },
-    _OUTPUT_NAME=["物理世界", "Bone数量", "Mesh数量", "状态"],
+    _OUTPUT_NAME=[
+        "物理世界", "缓存目录", "文件前缀", "Bone数量", "Mesh数量", "状态",
+    ],
     omni_description="""
     Physics World 通用烘焙节点的 Bone + Mesh 阶段。
 
@@ -268,7 +270,11 @@ def physicsWorldCommit(
     Object Action Bake 将由后续阶段实现；动画与缓存清理由下游独立
     “清除物理Bake动画”节点负责。
     """,
-    mute_passthrough={"_OUTPUT0": "world"},
+    mute_passthrough={
+        "_OUTPUT0": "world",
+        "_OUTPUT1": "cache_directory",
+        "_OUTPUT2": "file_prefix",
+    },
 )
 def physicsBake(
     world: object,
@@ -280,11 +286,16 @@ def physicsBake(
     bake_mesh: bool = False,
     use_mesh_cache: bool = False,
     enabled: bool = True,
-) -> tuple[object, int, int, str]:
+) -> tuple[object, str, str, int, int, str]:
+    directory_output = str(cache_directory or "")
+    prefix_output = str(file_prefix or "")
     if not isinstance(world, PhysicsWorldCache):
-        return world, 0, 0, f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
+        return (
+            world, directory_output, prefix_output, 0, 0,
+            f"world 不是 PhysicsWorldCache（{type(world).__name__}）",
+        )
     if not bool(enabled):
-        return world, 0, 0, "物理烘焙已禁用"
+        return world, directory_output, prefix_output, 0, 0, "物理烘焙已禁用"
 
     try:
         record_actions = geometry_bake_should_record_actions()
@@ -301,6 +312,8 @@ def physicsBake(
         if geometry_bake_is_active():
             return (
                 world,
+                directory_output,
+                prefix_output,
                 bone_count,
                 geometry_bake_target_count(),
                 f"{bone_status}；{geometry_bake_status()}",
@@ -322,9 +335,14 @@ def physicsBake(
                 file_prefix,
                 bool(use_mesh_cache),
             )
-        return world, bone_count, count, f"{bone_status}；{status}"
+        return (
+            world, directory_output, prefix_output,
+            bone_count, count, f"{bone_status}；{status}",
+        )
     except Exception as exc:
-        return world, 0, 0, f"物理烘焙错误：{exc}"
+        return (
+            world, directory_output, prefix_output, 0, 0, f"物理烘焙错误：{exc}",
+        )
 
 
 @omni(

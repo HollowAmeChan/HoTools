@@ -90,13 +90,15 @@ def physicsBake(
     bake_mesh: bool = False,
     use_mesh_cache: bool = False,
     enabled: bool = True,
-) -> tuple[object, int, int, str]:
+) -> tuple[object, str, str, int, int, str]:
     ...
 ```
 
 `bake_bones` 在连续帧从当前 frame/generation 的 `bone_transform` 和 batch result 精确解析 Armature/PoseBone。每个 Armature 首次复制已有 Action 或创建新 Action，打上 session ownership 标记并绑定；后续帧复用同一 Action。未出现在 result 中的骨骼不会新增物理曲线。
 
 `bake_mesh` 是边沿触发：False 重新武装，True 只排队一次。节点从当前 frame/generation 的 GN result stream 精确解析 Mesh target，timer 在本轮树执行返回后逐对象调用 `geometry_node_bake_single`。多 Mesh 时仅第一遍完整时间轴允许记录 Action，后续遍只写当前 Mesh cache。原子 manifest 状态依次为 `BAKING -> COMPLETE/PARTIAL/FAILED`；只有 `COMPLETE` 才允许 `use_mesh_cache=True`。
+
+前三个输出固定为 `物理世界 / 缓存目录 / 文件前缀`，与下游 `清除物理Bake动画` 的前三个输入同序，可直接横向连接；Bake mute 时这三项仍逐一透传。
 
 当前 Bone 后端为兼容旧节点的第一条生产竖切，仍统一 K location、当前 rotation mode 与 scale。result 尚未携带 component ownership，因此 component-aware keying 仍是未完成项。独立 Clear 节点与 Bone boundary baseline 已落地；Object Action 和 Bake 自有回绕暂停仍未提供 socket。
 
@@ -117,7 +119,7 @@ def physicsBake(
     bake_object_offset: bool = True,
     bake_object_transform: bool = True,
     enabled: bool = True,
-) -> tuple[object, int, int, str]:
+) -> tuple[object, str, str, int, int, str]:
     ...
 ```
 
@@ -142,6 +144,8 @@ def physicsBake(
 | 输出 | 内容 |
 |---|---|
 | 物理世界 | 原样透传，继续连接 Commit |
+| 缓存目录 | 原样输出 Bake 输入目录，直接连接 Clear |
+| 文件前缀 | 原样输出 Bake 输入前缀，直接连接 Clear |
 | 关键帧数量 | 本次实际插入或覆盖的目标 component 数量 |
 | Mesh 样本数量 | 本次成功提交的 Mesh sample 数量 |
 | 状态 | 简洁状态或错误文本；详细信息进入 world debug snapshot |
