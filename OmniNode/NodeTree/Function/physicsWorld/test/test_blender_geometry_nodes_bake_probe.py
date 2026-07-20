@@ -24,7 +24,7 @@ import numpy as np
 
 ATTRIBUTE_NAME = "hotools_physics_offset"
 OBJECT_NAME = "PhysicsGNBakeProbe"
-MODIFIER_NAME = "HoTools Physics Bake Probe"
+MODIFIER_NAME = "HoTools 物理网格缓存"
 FRAME_START = 1
 FRAME_END = 3
 
@@ -123,8 +123,7 @@ def test_geometry_nodes_bake_post_displacement() -> None:
 
     try:
         obj = _make_mesh_object()
-        _attribute, modifier = gn_offset.ensure_gn_offset_output(obj)
-        bake_node = gn_offset.get_gn_offset_bake_node(modifier.node_group)
+        _attribute, _live_modifier = gn_offset.ensure_gn_offset_output(obj)
         _select_only(obj)
         bpy.context.view_layer.update()
         modifier, entry = gn_offset.configure_gn_offset_disk_bake(
@@ -133,13 +132,15 @@ def test_geometry_nodes_bake_post_displacement() -> None:
             FRAME_START,
             FRAME_END,
         )
-        modifier.name = MODIFIER_NAME
+        bake_node = gn_offset.get_gn_offset_bake_node(modifier.node_group)
 
         assert entry.node == bake_node
+        assert modifier.name == MODIFIER_NAME
         assert entry.bake_id > 0
         assert bake_node.bake_items[0].socket_type == "GEOMETRY"
         assert bake_node.inputs["Geometry"].is_linked
         assert bake_node.outputs["Geometry"].is_linked
+        assert gn_offset.is_gn_offset_cache_enabled(obj) is False
 
         def write_offset_on_frame(scene, depsgraph=None):
             del depsgraph
@@ -160,6 +161,9 @@ def test_geometry_nodes_bake_post_displacement() -> None:
         result = bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=False)
         assert result == {"FINISHED"}
 
+        # Make the targeted Bake branch part of the evaluated modifier while
+        # Blender owns the bake, then keep it enabled for playback.
+        gn_offset.set_gn_offset_cache_enabled(obj, True)
         frame_events.clear()
         result = bpy.ops.object.geometry_node_bake_single(
             session_uid=int(obj.session_uid),
@@ -188,11 +192,37 @@ def test_geometry_nodes_bake_post_displacement() -> None:
 
         # Once baked, changing the live attribute must not change evaluated output.
         _write_frame_offset(obj, 100)
+        cached_positions = {
+            frame: _evaluated_positions(obj, frame)
+            for frame in range(FRAME_START, FRAME_END + 1)
+        }
+        print(
+            "Geometry Nodes switched cache Z:",
+            {frame: values[:, 2].tolist() for frame, values in cached_positions.items()},
+        )
         for frame in range(FRAME_START, FRAME_END + 1):
-            actual = _evaluated_positions(obj, frame)
+            actual = cached_positions[frame]
             np.testing.assert_allclose(actual, _expected_positions(frame), rtol=0.0, atol=1.0e-6)
 
         bpy.app.handlers.frame_change_post.remove(write_offset_on_frame)
+        file_state = [(path, path.stat().st_size, path.stat().st_mtime_ns) for path in files]
+
+        # Playback is per modifier: disabling it restores live geometry while
+        # retaining every cache file, then enabling it restores the same bake.
+        gn_offset.set_gn_offset_cache_enabled(obj, False)
+        _write_frame_offset(obj, 20)
+        for frame in range(FRAME_START, FRAME_END + 1):
+            actual = _evaluated_positions(obj, frame)
+            np.testing.assert_allclose(actual, _expected_positions(20), rtol=0.0, atol=1.0e-6)
+        assert file_state == [
+            (path, path.stat().st_size, path.stat().st_mtime_ns)
+            for path in files
+        ]
+
+        gn_offset.set_gn_offset_cache_enabled(obj, True)
+        for frame in range(FRAME_START, FRAME_END + 1):
+            actual = _evaluated_positions(obj, frame)
+            np.testing.assert_allclose(actual, _expected_positions(frame), rtol=0.0, atol=1.0e-6)
         result = bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=False)
         assert result == {"FINISHED"}
 
@@ -202,6 +232,7 @@ def test_geometry_nodes_bake_post_displacement() -> None:
         obj = bpy.data.objects[OBJECT_NAME]
         modifier = obj.modifiers[MODIFIER_NAME]
         entry = modifier.bakes[0]
+        assert gn_offset.is_gn_offset_cache_enabled(obj) is True
         for frame in range(FRAME_START, FRAME_END + 1):
             actual = _evaluated_positions(obj, frame)
             np.testing.assert_allclose(actual, _expected_positions(frame), rtol=0.0, atol=1.0e-6)
@@ -215,6 +246,7 @@ def test_geometry_nodes_bake_post_displacement() -> None:
             bake_id=int(entry.bake_id),
         )
         assert result == {"FINISHED"}, result
+        gn_offset.set_gn_offset_cache_enabled(obj, False)
         actual = _evaluated_positions(obj, FRAME_START + 1)
         np.testing.assert_allclose(actual, _expected_positions(20), rtol=0.0, atol=1.0e-6)
         assert not _disk_files(bake_dir), "deleting the Bake left owned disk files behind"

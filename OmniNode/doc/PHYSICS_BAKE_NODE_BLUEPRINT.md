@@ -13,8 +13,8 @@
 1. 新增独立的 `Physics Bake` 普通函数节点，固定接在 `Physics Writeback` 之后、`Physics World Commit` 之前。
 2. Bake 与 Writeback 消费同一批当前帧公共结果；Bake 不重新扫描场景猜测物理参与者，也不读取 backend-private native handle。
 3. Bone、Object delta 和未来 Object transform 写入专用 Bake Action，只处理结果流中真实出现的对象或骨骼，不扫描整个 Armature。
-4. Mesh 第一版使用共享后置位移 Geometry Nodes 组内的 `GeometryNodeBake`：`Set Position -> Bake -> Group Output`。它直接缓存最终 Geometry，烘焙回放时不会再次叠加 live physics offset。
-5. 每个对象使用自己的 Nodes modifier bake entry 和独立目录。Blender 4.5 对普通 Bake 节点只提供单节点 operator，因此多对象要逐对象调度、逐对象确认提交，不能误用只处理 Simulation Zone 的批量 operator。
+4. Mesh 第一版使用两个相邻的受管 Geometry Nodes modifier：共享实时后置位移 `Set Position` 在前，共享直通 `GeometryNodeBake` 缓存层在后。缓存层按对象启用/禁用，文件留存与播放状态完全分离。
+5. 每个对象使用自己的 cache modifier bake entry 和独立目录。Blender 4.5 对普通 Bake 节点只提供单节点 operator，因此多对象要逐对象调度、逐对象确认提交，不能误用只处理 Simulation Zone 的批量 operator。
 6. GN Bake 是 Blender 工程内部主缓存；PC2 保留为可选的可恢复/兼容工作后端；Alembic 仍由显式 `Finalize Physics Cache` 生成，承担多对象交付和交换。
 7. GN 磁盘缓存为 Blender 私有 `.blob/.json` 数据，必须保存 `.blend` 后才能 Bake，不承诺跨 Blender 版本或第三方 DCC 读取。MDD 不实现，USD/USDC 保留实验后端，`PointCache/ptcache` 不接入。
 8. Bake 不使用 Physics World 的 `restart_required` 或跳帧分类控制清理。清理由独立 `Clear Physics Bake` 节点在用户指定帧显式触发，默认第 1 帧，并可通过 mute/enable 关闭。
@@ -86,6 +86,7 @@ def physicsBake(
     stop_on_return: bool = True,
     bake_bones: bool = True,
     bake_mesh: bool = False,
+    use_mesh_cache: bool = False,
     bake_object_offset: bool = True,
     bake_object_transform: bool = True,
     enabled: bool = True,
@@ -104,6 +105,7 @@ UI 名称：
 | `stop_on_return` | 回到边界帧时暂停 | `True` | manifest 已有更高已提交帧后再次到达边界帧时，请求停止时间轴 |
 | `bake_bones` | Bake Bone | `True` | 记录 Bone result target |
 | `bake_mesh` | Bake Mesh | `False` | 通过后置位移 GN Bake 记录 final geometry；后端可切换为 PC2 fallback |
+| `use_mesh_cache` | Use Mesh Cache | `False` | 每对象启用缓存 modifier；False 显示 live，但不删除或修改缓存 |
 | `bake_object_offset` | Bake Object Offset | `True` | 记录 delta transform |
 | `bake_object_transform` | Bake Object Transform | `True` | 记录公共 full transform command；当前无此结果时为零写入 |
 | `enabled` | 启用 | `True` | False 时只透传 world，不写 Action 或文件 |
@@ -624,26 +626,27 @@ physicsWorld/bake/mesh.py     通用 Mesh bake sample/PC2 writer
 physicsWorld/bake/playback.py 缓存修改器与 live/baked 模式切换
 ```
 
-对 source/write object 复用现有固定名字的共享 GN modifier，并在它的末端确保一个受管 Bake 节点：
+对 source/write object 确保两个相邻且固定名字的共享 GN modifier：
 
 ```text
-Group Input
-  -> Named Attribute(hotools_physics_offset)
-  -> Set Position
-  -> HoTools Physics Bake
-  -> Group Output
+HoTools 物理后置位移
+  Group Input -> Named Attribute -> Set Position -> Group Output
+
+HoTools 物理网格缓存
+  Group Input -> HoTools Physics Bake -> Group Output
 ```
 
 配置 Bake session 时检查并修正：
 
-- modifier 类型必须是 `NODES`，且位于 topology-preserving base modifier 之后；
-- node group owner/schema、Bake node 名称和前后 Geometry link 必须匹配；
+- 两个 modifier 都是 `NODES`；live offset 位于 topology-preserving base stack 之后，cache modifier 紧跟其后；
+- 两个 node group 分别校验 owner/schema，cache group 只允许 Geometry 直通 Bake；
 - 每对象 bake entry 使用 custom frame range、`ANIMATION`、`DISK` 和独立目录；
-- manifest 记录 object UUID、`session_uid` 仅作当前进程 resolver、modifier name、bake id 和目录；
-- 已 Bake 时直接读取 Bake node 输出，不清零 `hotools_physics_offset`，因为上游 live 变化已被 Bake 输出隔离；
-- 删除该 entry 的 Bake 后自动恢复 live `Set Position` 输出。
+- manifest 记录 object UUID、modifier name 和目录；`session_uid/bake_id` 只在调用 operator 前即时解析；
+- `use_mesh_cache=False` 同时关闭 cache modifier 的 viewport/render，但保留全部文件与 entry；
+- `use_mesh_cache=True` 启用 cache modifier，Bake 输出隔离上游 live 变化；
+- 删除 entry 后关闭 cache modifier，恢复前一层 live `Set Position` 输出。
 
-这使 live simulation 和 cache playback 在同一个 GN 节点上天然互斥，避免：
+这使 live simulation 和 cache playback 通过对象自己的 modifier 显隐互斥，避免：
 
 ```text
 Baked final geometry -> GN physics offset again
@@ -675,10 +678,10 @@ Blender 4.5 `NodesModifier` 暴露 `bake_directory`、`bake_target` 和 bake col
 
 2026-07-20 的 Blender 4.5 background spike 已验证：
 
-1. 生产共享节点组可直接采用 `Group Input -> Named Attribute -> Set Position -> Bake -> Group Output`；未 Bake 时透明透传，Bake 后修改 live offset 不再改变输出，因此天然消除了 cache playback 再叠加物理 offset 的反馈路径。
+1. 生产链路采用两个相邻 modifier：`Physics Offset(Set Position)` 后接 `Physics Mesh Cache(GeometryNodeBake)`。缓存 modifier 启用时直接输出 final Geometry，修改 live offset 不再改变结果；禁用时 Blender 跳过缓存层并显示实时后置位移。
 2. `geometry_node_bake_single` 会从自定义 `frame_start` 精确驱动到 `frame_end`，触发 `frame_change_post`，并在结束后恢复调用前帧。`1..3` 测试收到的 distinct frame events 精确为 `[1, 2, 3]`，所以显式 Mesh Bake 不存在“永远从第 2 帧才写”的问题。
 3. 磁盘结果按帧生成 `.blob + .json`；保存并重新打开 `.blend` 后仍能回放。调用 `geometry_node_bake_delete_single` 会删除该 entry 拥有的数据并恢复 live 链路。
-4. 两个对象可以共享同一个 GN node group 和 bake id，但 ownership 仍由 object `session_uid` + modifier entry 区分。它们必须使用不同子目录；逐对象删除 A 不影响 B。
+4. 两个对象可以共享同一个 cache node group，但 `bake_id` 只作当前 modifier entry 的运行时句柄，可能在 node group 增加用户时重新生成。operator 调用前必须即时解析；ownership 由稳定 target id、object `session_uid`、modifier entry 和独立目录共同确定。逐对象删除 A 不影响 B。
 5. `bpy.ops.object.simulation_nodes_cache_bake(selected=True)` 只负责 Simulation Zone，实测不会 Bake 普通 `GeometryNodeBake`。Blender 4.5 没有普通 Bake 节点的公开 multi-object operator，因此 N 个 Mesh target 需要 N 次 `geometry_node_bake_single`，也就是 N 次帧范围求值。
 
 据此，GN Bake 升级为 Blender 内部主路径，但有以下硬边界：
@@ -686,9 +689,12 @@ Blender 4.5 `NodesModifier` 暴露 `bake_directory`、`bake_target` 和 bake col
 - `.blend` 必须先保存；未保存文件需先提示用户保存，不能静默切换临时路径。
 - 每对象目录必须由 `{prefix}/{target_uuid}` 生成，不能让多个 entry 共用一个目录。
 - Bake、Delete、Pack、Unpack 都必须按精确 `session_uid/modifier_name/bake_id` 调用并记录 manifest；不能把目录级删除当作正常清理方式。
+- manifest 不得把 `bake_id` 当作跨结构变化的稳定身份；每次 operator 前从当前 cache modifier 重新解析。
+- `Use Mesh Cache` 只切换 cache modifier 的 `show_viewport/show_render`，不 mute 共享 Bake node，不改目录、不删除文件。
+- Blender 4.5 RNA 没有公开 `NodesModifierBake.is_baked`。产品节点启用缓存前必须用 manifest 完整状态、entry ownership 和目录文件校验；底层显隐 helper 不得冒充完成状态。
 - GN 私有磁盘格式不能作为交换合同，也不能承诺跨 Blender 版本；交付仍显式导出 Alembic。
 - 多对象重复时间轴求值可能成为主成本，必须用代表资产 benchmark。若成本不可接受，PC2 单次 live 播放采样仍是 fallback。
-- 共享节点组 schema 升级会改变 bake id/entry；存在已提交 cache 时禁止无提示重建节点组，迁移必须先标记旧缓存 stale 并由用户决定保留或删除。
+- schema 2 的组合 `Set Position -> Bake` 迁移时，原 modifier 和 Bake node 原位保留为 cache 层并改名，在它前面新建 live offset 层；不得替换 Bake node 或丢失 entry。
 
 ### GN Bake 调度合同
 
@@ -841,14 +847,14 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 
 ### Phase 2：Geometry Nodes Mesh Bake
 
-1. 固化共享后置位移组的 `Set Position -> GeometryNodeBake -> Output` schema，并保护已有 Bake entry，禁止无提示重建。
+1. 固化相邻的 live offset 与 cache modifier schema，并实现 schema 2 组合组的无损拆分迁移。
 2. 实现每对象唯一目录、manifest ownership 和保存 `.blend` 前置检查。
 3. 实现 `geometry_node_bake_single` 逐对象调度、进度、取消、失败后状态恢复。
 4. 实现精确 delete/pack/unpack；Clear 节点的默认策略仍为 KEEP。
 5. 对接 Bake Node 的 `bake_mesh`，显式 Mesh Bake 时由 Blender operator 驱动完整帧范围，不走 frame2 baseline 回填路径。
 6. 对 1/8/32 Mesh targets 做重复 depsgraph 求值成本 benchmark。
 
-完成门槛：保存/重开后的 GN cache 每帧顶点与 live MC2 result 逐点一致；多个共享 node group 的对象使用独立目录，删除一个不影响其他对象；未保存 blend、取消、写盘失败、节点组 schema 变化均不留下伪完成状态。
+完成门槛：保存/重开后的 GN cache 每帧顶点与 live MC2 result 逐点一致；关闭/开启 cache modifier 不改磁盘数据且立即切换 live/baked；多个共享 node group 的对象使用独立目录，删除一个不影响其他对象；未保存 blend、取消、写盘失败、节点组 schema 变化均不留下伪完成状态。
 
 ### Phase 2B：PC2 Fallback
 
@@ -927,7 +933,7 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 - Writeback 后执行并消费 receipt/result，不读现场猜测。
 - 专用 Action，保护源 Action 和未参与物理骨。
 - Geometry Nodes Bake 为第一版 Blender 内部 Mesh 工作缓存。
-- 受管 Bake 节点位于共享 Set Position 后，直接缓存最终 Geometry。
+- 受管 cache modifier 紧跟 live Set Position modifier，直接缓存其最终 Geometry。
 - 普通 Bake 节点按对象逐次调 operator，每对象独立目录；Simulation Zone 的批量 operator 不适用。
 - PC2 保留为恢复、审计和性能 fallback，不是默认路径。
 - Alembic 为显式 finalize 交付格式。
@@ -993,7 +999,8 @@ Live simulation
          -> WritebackReceiptV1
     -> Physics Bake
          -> dedicated Actions (Bone/Object)
-         -> shared GN Set Position -> GeometryNodeBake
+         -> shared GN Set Position modifier
+         -> per-object enabled/disabled GN Bake modifier
          -> per-object GN cache directory + atomic manifest
          -> optional MC2 MeshBakeSampleV1 -> PC2 fallback
          -> optional TimelineStopRequest at boundary return

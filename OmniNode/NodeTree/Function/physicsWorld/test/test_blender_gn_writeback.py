@@ -116,17 +116,57 @@ def test_shared_gn_final_offset_contract():
         assert modifier is not None and modifier.type == "NODES"
         assert modifier == obj.modifiers[-1]
         assert modifier.node_group.name == world_names.GN_OFFSET_NODE_GROUP_NAME
-        bake_node = gn_offset.get_gn_offset_bake_node(modifier.node_group)
-        assert bake_node.bl_idname == "GeometryNodeBake"
-        assert bake_node.inputs["Geometry"].is_linked
-        assert bake_node.outputs["Geometry"].is_linked
+        assert not any(
+            node.bl_idname == "GeometryNodeBake"
+            for node in modifier.node_group.nodes
+        )
+
+        # 构造已提交版本的 schema 2 组合组，迁移必须保留 Bake node/bake_id。
+        legacy_group = modifier.node_group
+        set_position = next(
+            node for node in legacy_group.nodes
+            if node.bl_idname == "GeometryNodeSetPosition"
+        )
+        output_node = next(
+            node for node in legacy_group.nodes
+            if node.bl_idname == "NodeGroupOutput"
+        )
+        for link in tuple(output_node.inputs["Geometry"].links):
+            legacy_group.links.remove(link)
+        bake_node = legacy_group.nodes.new("GeometryNodeBake")
+        bake_node.name = "HoTools Physics Bake"
+        legacy_group.links.new(set_position.outputs["Geometry"], bake_node.inputs["Geometry"])
+        legacy_group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
+        legacy_group["hotools_physics_offset_schema"] = 2
+        legacy_entry = gn_offset.get_gn_offset_bake_entry(modifier)
+        original_bake_pointer = int(bake_node.as_pointer())
+        original_bake_id = int(legacy_entry.bake_id)
+
+        migrated_group = gn_offset.ensure_gn_offset_node_group()
+        live_modifier = obj.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME)
+        cache_modifier = obj.modifiers.get(world_names.GN_CACHE_MODIFIER_NAME)
+        assert migrated_group == live_modifier.node_group
+        assert cache_modifier == modifier
+        assert obj.modifiers.find(live_modifier.name) + 1 == obj.modifiers.find(cache_modifier.name)
+        bake_node = gn_offset.get_gn_offset_bake_node(cache_modifier.node_group)
+        migrated_entry = gn_offset.get_gn_offset_bake_entry(cache_modifier)
+        assert int(bake_node.as_pointer()) == original_bake_pointer
+        assert int(migrated_entry.bake_id) == original_bake_id
+
+        gn_offset.set_gn_offset_cache_enabled(obj, False)
+        assert gn_offset.is_gn_offset_cache_enabled(obj) is False
+        assert gn_offset.set_gn_offset_cache_enabled(obj, True) == cache_modifier
+        assert gn_offset.is_gn_offset_cache_enabled(obj) is True
+        assert cache_modifier.show_viewport is True and cache_modifier.show_render is True
+        gn_offset.set_gn_offset_cache_enabled(obj, False)
+        assert cache_modifier.show_viewport is False and cache_modifier.show_render is False
         configured_modifier, bake_entry = gn_offset.configure_gn_offset_disk_bake(
             obj,
             "//physics_bake",
             3,
             9,
         )
-        assert configured_modifier == modifier
+        assert configured_modifier == cache_modifier
         assert bake_entry.node == bake_node
         assert bake_entry.bake_mode == "ANIMATION"
         assert bake_entry.bake_target == "DISK"
@@ -213,7 +253,8 @@ def test_shared_gn_final_offset_contract():
         assert modifier.node_group.name == world_names.GN_OFFSET_NODE_GROUP_NAME
         assert modifier.node_group["hotools_physics_offset_owner"] == "physicsWorld.writeback"
         assert any(node.bl_idname == "GeometryNodeSetPosition" for node in modifier.node_group.nodes)
-        assert any(node.bl_idname == "GeometryNodeBake" for node in modifier.node_group.nodes)
+        assert not any(node.bl_idname == "GeometryNodeBake" for node in modifier.node_group.nodes)
+        assert gn_offset.is_gn_offset_cache_enabled(foreign_obj) is False
 
         foreign_copy = bpy.data.objects.new("GNWritebackForeignCopy", foreign_mesh)
         bpy.context.scene.collection.objects.link(foreign_copy)

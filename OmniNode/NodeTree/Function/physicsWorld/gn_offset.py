@@ -11,6 +11,8 @@ import bpy
 import numpy as np
 
 from .names import (
+    GN_CACHE_MODIFIER_NAME,
+    GN_CACHE_NODE_GROUP_NAME,
     GN_OFFSET_ATTRIBUTE_NAME,
     GN_OFFSET_MODIFIER_NAME,
     GN_OFFSET_NODE_GROUP_NAME,
@@ -22,7 +24,9 @@ _NODE_GROUP_SCHEMA_KEY = "hotools_physics_offset_schema"
 _MESH_OWNER_KEY = "hotools_physics_offset_owner"
 _MESH_SCHEMA_KEY = "hotools_physics_offset_schema"
 _NODE_GROUP_OWNER = "physicsWorld.writeback"
-_NODE_GROUP_SCHEMA = 2
+_CACHE_GROUP_OWNER = "physicsWorld.bake"
+_NODE_GROUP_SCHEMA = 3
+_CACHE_GROUP_SCHEMA = 1
 _BAKE_NODE_NAME = "HoTools Physics Bake"
 _BAKE_NODE_LABEL = "Physics Post-Displacement Cache"
 
@@ -37,8 +41,7 @@ def _require_mesh_object(obj) -> None:
         raise ValueError("GN 物理 offset 目标已经失效") from exc
 
 
-def _build_node_group(group) -> None:
-    group.nodes.clear()
+def _reset_geometry_interface(group) -> None:
     if hasattr(group, "interface"):
         group.interface.clear()
         group.interface.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
@@ -49,26 +52,80 @@ def _build_node_group(group) -> None:
         group.inputs.new("NodeSocketGeometry", "Geometry")
         group.outputs.new("NodeSocketGeometry", "Geometry")
 
+
+def _build_node_group(group) -> None:
+    group.nodes.clear()
+    _reset_geometry_interface(group)
+
     input_node = group.nodes.new("NodeGroupInput")
     output_node = group.nodes.new("NodeGroupOutput")
     named_attr = group.nodes.new("GeometryNodeInputNamedAttribute")
     set_position = group.nodes.new("GeometryNodeSetPosition")
-    bake_node = group.nodes.new("GeometryNodeBake")
-    bake_node.name = _BAKE_NODE_NAME
-    bake_node.label = _BAKE_NODE_LABEL
     input_node.location = (-600, 0)
     named_attr.location = (-600, -180)
     set_position.location = (-260, 0)
-    bake_node.location = (80, 0)
-    output_node.location = (420, 0)
+    output_node.location = (80, 0)
     named_attr.data_type = "FLOAT_VECTOR"
     named_attr.inputs["Name"].default_value = GN_OFFSET_ATTRIBUTE_NAME
     group.links.new(input_node.outputs["Geometry"], set_position.inputs["Geometry"])
     group.links.new(named_attr.outputs["Attribute"], set_position.inputs["Offset"])
-    group.links.new(set_position.outputs["Geometry"], bake_node.inputs["Geometry"])
-    group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
+    group.links.new(set_position.outputs["Geometry"], output_node.inputs["Geometry"])
     group[_NODE_GROUP_OWNER_KEY] = _NODE_GROUP_OWNER
     group[_NODE_GROUP_SCHEMA_KEY] = _NODE_GROUP_SCHEMA
+
+
+def _build_cache_node_group(group, *, preserve_bake_node=None) -> None:
+    bake_node = preserve_bake_node
+    for node in tuple(group.nodes):
+        if node != bake_node:
+            group.nodes.remove(node)
+    _reset_geometry_interface(group)
+    input_node = group.nodes.new("NodeGroupInput")
+    output_node = group.nodes.new("NodeGroupOutput")
+    if bake_node is None:
+        bake_node = group.nodes.new("GeometryNodeBake")
+    bake_node.name = _BAKE_NODE_NAME
+    bake_node.label = _BAKE_NODE_LABEL
+    input_node.location = (-340, 0)
+    bake_node.location = (0, 0)
+    output_node.location = (340, 0)
+    group.links.new(input_node.outputs["Geometry"], bake_node.inputs["Geometry"])
+    group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
+    group[_NODE_GROUP_OWNER_KEY] = _CACHE_GROUP_OWNER
+    group[_NODE_GROUP_SCHEMA_KEY] = _CACHE_GROUP_SCHEMA
+
+
+def _migrate_combined_v2_group(group):
+    """Split schema 2 without replacing its Bake node or modifier entries."""
+    bake_node = group.nodes.get(_BAKE_NODE_NAME)
+    if bake_node is None or getattr(bake_node, "bl_idname", "") != "GeometryNodeBake":
+        raise RuntimeError("共享 GN 物理节点组 schema 2 已损坏，不能安全迁移 Bake")
+    existing_cache_group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
+    if existing_cache_group is not None and existing_cache_group != group:
+        raise RuntimeError("GN 物理缓存节点组已存在，不能自动接管旧 schema 2")
+
+    affected = []
+    for obj in bpy.data.objects:
+        for modifier in obj.modifiers:
+            if modifier.type == "NODES" and modifier.node_group == group:
+                affected.append((obj, modifier, obj.modifiers.find(modifier.name)))
+
+    group.name = GN_CACHE_NODE_GROUP_NAME
+    _build_cache_node_group(group, preserve_bake_node=bake_node)
+    offset_group = bpy.data.node_groups.new(GN_OFFSET_NODE_GROUP_NAME, "GeometryNodeTree")
+    _build_node_group(offset_group)
+
+    for obj, cache_modifier, old_index in affected:
+        cache_modifier.name = GN_CACHE_MODIFIER_NAME
+        live_modifier = obj.modifiers.get(GN_OFFSET_MODIFIER_NAME)
+        if live_modifier is None or live_modifier == cache_modifier:
+            live_modifier = obj.modifiers.new(GN_OFFSET_MODIFIER_NAME, "NODES")
+        live_modifier.node_group = offset_group
+        current_index = obj.modifiers.find(live_modifier.name)
+        target_index = max(0, min(old_index, len(obj.modifiers) - 1))
+        if current_index != target_index:
+            obj.modifiers.move(current_index, target_index)
+    return offset_group
 
 
 def ensure_gn_offset_node_group():
@@ -84,14 +141,45 @@ def ensure_gn_offset_node_group():
         return group
     owner = str(group.get(_NODE_GROUP_OWNER_KEY, "") or "")
     schema = int(group.get(_NODE_GROUP_SCHEMA_KEY, 0) or 0)
-    if owner != _NODE_GROUP_OWNER or schema != _NODE_GROUP_SCHEMA:
+    if owner == _NODE_GROUP_OWNER and schema == 2:
+        return _migrate_combined_v2_group(group)
+    elif owner != _NODE_GROUP_OWNER or schema < 2:
         _build_node_group(group)
+    elif schema != _NODE_GROUP_SCHEMA:
+        raise RuntimeError(f"共享 GN 物理节点组 schema 不受支持：{schema}")
     return group
 
 
-def _move_modifier_to_bottom(obj, modifier) -> None:
+def ensure_gn_cache_node_group():
+    group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
+    if group is None:
+        group = bpy.data.node_groups.new(GN_CACHE_NODE_GROUP_NAME, "GeometryNodeTree")
+        _build_cache_node_group(group)
+        return group
+    owner = str(group.get(_NODE_GROUP_OWNER_KEY, "") or "")
+    schema = int(group.get(_NODE_GROUP_SCHEMA_KEY, 0) or 0)
+    if (
+        getattr(group, "bl_idname", "") != "GeometryNodeTree"
+        or owner != _CACHE_GROUP_OWNER
+        or schema != _CACHE_GROUP_SCHEMA
+    ):
+        raise RuntimeError("GN 物理缓存节点组所有权或 schema 无效")
+    return group
+
+
+def _place_live_modifier(obj, modifier) -> None:
+    cache_modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
     index = obj.modifiers.find(modifier.name)
-    if 0 <= index < len(obj.modifiers) - 1:
+    if (
+        cache_modifier is not None
+        and cache_modifier != modifier
+        and cache_modifier.type == "NODES"
+    ):
+        cache_index = obj.modifiers.find(cache_modifier.name)
+        target_index = cache_index if index > cache_index else cache_index - 1
+        if index != target_index:
+            obj.modifiers.move(index, target_index)
+    elif 0 <= index < len(obj.modifiers) - 1:
         obj.modifiers.move(index, len(obj.modifiers) - 1)
 
 
@@ -105,7 +193,28 @@ def ensure_gn_offset_modifier(obj):
     if modifier is None:
         modifier = obj.modifiers.new(GN_OFFSET_MODIFIER_NAME, "NODES")
     modifier.node_group = group
-    _move_modifier_to_bottom(obj, modifier)
+    _place_live_modifier(obj, modifier)
+    return modifier
+
+
+def ensure_gn_cache_modifier(obj):
+    _require_mesh_object(obj)
+    live_modifier = ensure_gn_offset_modifier(obj)
+    group = ensure_gn_cache_node_group()
+    modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
+    if modifier is not None and modifier.type != "NODES":
+        obj.modifiers.remove(modifier)
+        modifier = None
+    if modifier is None:
+        modifier = obj.modifiers.new(GN_CACHE_MODIFIER_NAME, "NODES")
+        modifier.show_viewport = False
+        modifier.show_render = False
+    modifier.node_group = group
+    live_index = obj.modifiers.find(live_modifier.name)
+    cache_index = obj.modifiers.find(modifier.name)
+    target_index = live_index + 1
+    if cache_index != target_index:
+        obj.modifiers.move(cache_index, target_index)
     return modifier
 
 
@@ -132,10 +241,10 @@ def ensure_gn_offset_output(obj):
 
 
 def get_gn_offset_bake_node(group=None):
-    group = group or ensure_gn_offset_node_group()
+    group = group or ensure_gn_cache_node_group()
     bake_node = group.nodes.get(_BAKE_NODE_NAME)
     if bake_node is None or getattr(bake_node, "bl_idname", "") != "GeometryNodeBake":
-        raise RuntimeError("共享 GN 物理后置位移缺少受管 Bake 节点")
+        raise RuntimeError("共享 GN 物理缓存组缺少受管 Bake 节点")
     if not bake_node.inputs.get("Geometry") or not bake_node.outputs.get("Geometry"):
         raise RuntimeError("共享 GN 物理 Bake 节点缺少 Geometry socket")
     return bake_node
@@ -149,6 +258,28 @@ def get_gn_offset_bake_entry(modifier):
         if getattr(entry, "node", None) == bake_node:
             return entry
     raise RuntimeError("Nodes modifier 尚未生成 GN 物理 Bake entry")
+
+
+def is_gn_offset_cache_enabled(obj) -> bool:
+    _require_mesh_object(obj)
+    modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
+    return bool(
+        modifier is not None
+        and modifier.type == "NODES"
+        and modifier.show_viewport
+    )
+
+
+def set_gn_offset_cache_enabled(obj, enabled: bool):
+    """Select cached or live post-displacement geometry for one object only."""
+    modifier = ensure_gn_cache_modifier(obj)
+    modifier.show_viewport = bool(enabled)
+    modifier.show_render = bool(enabled)
+    obj.update_tag()
+    view_layer = getattr(bpy.context, "view_layer", None)
+    if view_layer is not None:
+        view_layer.update()
+    return modifier
 
 
 def configure_gn_offset_disk_bake(
@@ -166,7 +297,7 @@ def configure_gn_offset_disk_bake(
     if not path:
         raise ValueError("GN 物理 Bake 磁盘目录不能为空")
 
-    modifier = ensure_gn_offset_modifier(obj)
+    modifier = ensure_gn_cache_modifier(obj)
     entry = get_gn_offset_bake_entry(modifier)
     modifier.bake_target = "DISK"
     modifier.bake_directory = path
@@ -251,13 +382,17 @@ def remove_gn_offset_output(obj) -> bool:
 __all__ = [
     "clear_gn_local_offsets",
     "configure_gn_offset_disk_bake",
+    "ensure_gn_cache_modifier",
+    "ensure_gn_cache_node_group",
     "ensure_gn_offset_attribute",
     "ensure_gn_offset_modifier",
     "ensure_gn_offset_node_group",
     "ensure_gn_offset_output",
     "get_gn_offset_bake_entry",
     "get_gn_offset_bake_node",
+    "is_gn_offset_cache_enabled",
     "normalize_local_offsets",
     "remove_gn_offset_output",
+    "set_gn_offset_cache_enabled",
     "write_gn_local_offsets",
 ]

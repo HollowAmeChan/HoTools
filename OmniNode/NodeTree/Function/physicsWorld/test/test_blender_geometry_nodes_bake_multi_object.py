@@ -139,8 +139,6 @@ def test_multi_object_bake_with_separate_owned_caches() -> None:
                 _write_offset(obj, base_offset + frame)
 
     try:
-        bake_ids = set()
-        bake_handles = {}
         for obj in objects:
             directory = bake_dirs[obj.name]
             directory.mkdir(parents=True, exist_ok=True)
@@ -151,11 +149,12 @@ def test_multi_object_bake_with_separate_owned_caches() -> None:
                 FRAME_END,
             )
             assert entry.node == gn_offset.get_gn_offset_bake_node(modifier.node_group)
-            bake_ids.add(int(entry.bake_id))
-            bake_handles[obj.name] = (modifier.name, int(entry.bake_id))
+            live_modifier = obj.modifiers.get("HoTools 物理后置位移")
+            assert obj.modifiers.find(live_modifier.name) + 1 == obj.modifiers.find(modifier.name)
+            assert gn_offset.is_gn_offset_cache_enabled(obj) is False
+            gn_offset.set_gn_offset_cache_enabled(obj, True)
+            assert int(entry.bake_id) > 0
 
-        # The shared node group has one bake id; object session_uid keeps ownership separate.
-        assert len(bake_ids) == 1
         _select_objects(objects)
         bpy.context.scene.frame_start = FRAME_START
         bpy.context.scene.frame_end = FRAME_END
@@ -172,12 +171,15 @@ def test_multi_object_bake_with_separate_owned_caches() -> None:
         # Simulation Zones and intentionally does not cover GeometryNodeBake.
         for obj in objects:
             frame_events.clear()
-            modifier_name, bake_id = bake_handles[obj.name]
+            modifier = obj.modifiers["HoTools 物理网格缓存"]
+            entry = gn_offset.get_gn_offset_bake_entry(modifier)
+            modifier_name, bake_id = modifier.name, int(entry.bake_id)
             result = bpy.ops.object.geometry_node_bake_single(
                 session_uid=int(obj.session_uid),
                 modifier_name=modifier_name,
                 bake_id=bake_id,
             )
+            print("Geometry Nodes Bake target:", obj.name, modifier_name, bake_id, result)
             assert result == {"FINISHED"}, result
             distinct_events = [
                 frame
@@ -206,14 +208,44 @@ def test_multi_object_bake_with_separate_owned_caches() -> None:
                 )
 
         bpy.app.handlers.frame_change_post.remove(write_all_offsets)
+
+        # Cache playback is independent per object and does not mutate files.
+        first, second = objects
+        first_files = [(path, path.stat().st_size) for path in _files(bake_dirs[first.name])]
+        gn_offset.set_gn_offset_cache_enabled(first, False)
+        _write_offset(first, 50.0)
+        np.testing.assert_allclose(
+            _positions(first, FRAME_START),
+            _expected(first, 50.0),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            _positions(second, FRAME_START),
+            _expected(second, object_offsets[second.name] + FRAME_START),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        assert first_files == [(path, path.stat().st_size) for path in _files(bake_dirs[first.name])]
+        gn_offset.set_gn_offset_cache_enabled(first, True)
+        np.testing.assert_allclose(
+            _positions(first, FRAME_START),
+            _expected(first, FRAME_START),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+
         for index, obj in enumerate(objects):
-            modifier_name, bake_id = bake_handles[obj.name]
+            modifier = obj.modifiers["HoTools 物理网格缓存"]
+            entry = gn_offset.get_gn_offset_bake_entry(modifier)
+            modifier_name, bake_id = modifier.name, int(entry.bake_id)
             result = bpy.ops.object.geometry_node_bake_delete_single(
                 session_uid=int(obj.session_uid),
                 modifier_name=modifier_name,
                 bake_id=bake_id,
             )
             assert result == {"FINISHED"}, result
+            gn_offset.set_gn_offset_cache_enabled(obj, False)
             assert not _files(bake_dirs[obj.name])
             for untouched in objects[index + 1 :]:
                 assert _files(bake_dirs[untouched.name]), (
