@@ -380,6 +380,22 @@ bool expect_2d(const Buffer& buffer,
     return true;
 }
 
+bool expect_3d(
+    const Buffer& buffer,
+    const char* name,
+    Py_ssize_t first,
+    Py_ssize_t second,
+    Py_ssize_t third
+) {
+    if (buffer.view.ndim != 3 || buffer.view.shape == nullptr ||
+        buffer.view.shape[0] != first || buffer.view.shape[1] != second ||
+        buffer.view.shape[2] != third) {
+        PyErr_Format(PyExc_ValueError, "%s shape mismatch", name);
+        return false;
+    }
+    return true;
+}
+
 bool validate_quaternions(const Buffer& rotations, const char* name) {
     const auto* values = static_cast<const float*>(rotations.view.buf);
     for (Py_ssize_t row = 0; row < rotations.view.shape[0]; ++row) {
@@ -3233,6 +3249,8 @@ void clear_self_collision_contacts(Mc2ContextV0& context) {
     context.self_contact_s.clear();
     context.self_contact_t.clear();
     context.self_contact_normals.clear();
+    context.self_contact_debug_ready = false;
+    context.debug_self_contact_corrections.clear();
     context.self_contact_ready = false;
 }
 
@@ -3319,15 +3337,38 @@ void add_wrapped_int32(std::int32_t& destination, std::int32_t value) {
 void solve_self_collision_contacts(Mc2ContextV0& context) {
     if (!context.self_contact_ready) return;
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    const auto contact_count = context.self_contact_types.size();
+    const bool capture_debug = context.self_contact_debug_requested;
+    context.self_contact_debug_ready = false;
+    if (capture_debug) {
+        context.debug_self_contact_corrections.assign(contact_count * 2 * 3, 0.0f);
+    } else {
+        context.debug_self_contact_corrections.clear();
+    }
     std::vector<std::int32_t> counts(vertex_count, 0);
     std::vector<std::int32_t> sums(vertex_count * 3, 0);
-    auto accumulate = [&](std::size_t vertex, Vec3 correction) {
+    struct DebugContribution {
+        std::size_t contact;
+        std::size_t side;
+        std::size_t vertex;
+        std::array<std::int32_t, 3> fixed;
+    };
+    std::vector<DebugContribution> debug_contributions;
+    auto accumulate = [&](
+        std::size_t vertex,
+        Vec3 correction,
+        std::size_t contact,
+        std::size_t side
+    ) {
         ++counts[vertex];
         const std::array<float, 3> values {correction.x, correction.y, correction.z};
+        DebugContribution debug {contact, side, vertex, {}};
         for (std::size_t component = 0; component < 3; ++component) {
             const auto fixed = static_cast<std::int32_t>(values[component] * 1000000.0f);
             add_wrapped_int32(sums[vertex * 3 + component], fixed);
+            debug.fixed[component] = fixed;
         }
+        if (capture_debug) debug_contributions.push_back(debug);
     };
     auto particle = [&](std::size_t primitive, std::size_t axis) {
         return static_cast<std::size_t>(context.self_particle_indices[primitive * 3 + axis]);
@@ -3342,7 +3383,6 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
 
     constexpr int kSolverIterations = 4;
     for (int iteration = 0; iteration < kSolverIterations; ++iteration) {
-        const auto contact_count = context.self_contact_types.size();
         for (std::size_t contact = 0; contact < contact_count; ++contact) {
             if (context.self_contact_enabled[contact] == 0) continue;
             const auto primitive0 = static_cast<std::size_t>(
@@ -3393,10 +3433,10 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
                 const Vec3 correction_a1 = mul(normal, scale * inv_a1 * weight_a1);
                 const Vec3 correction_b0 = mul(normal, -scale * inv_b0 * weight_b0);
                 const Vec3 correction_b1 = mul(normal, -scale * inv_b1 * weight_b1);
-                if (can_write(primitive0, 0)) accumulate(a0, correction_a0);
-                if (can_write(primitive0, 1)) accumulate(a1, correction_a1);
-                if (can_write(primitive1, 0)) accumulate(b0, correction_b0);
-                if (can_write(primitive1, 1)) accumulate(b1, correction_b1);
+                if (can_write(primitive0, 0)) accumulate(a0, correction_a0, contact, 0);
+                if (can_write(primitive0, 1)) accumulate(a1, correction_a1, contact, 0);
+                if (can_write(primitive1, 0)) accumulate(b0, correction_b0, contact, 1);
+                if (can_write(primitive1, 1)) accumulate(b1, correction_b1, contact, 1);
             } else if (context.self_contact_types[contact] == 1) {
                 const auto point_index = particle(primitive0, 0);
                 const auto b0 = particle(primitive1, 0);
@@ -3436,11 +3476,24 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
                 const Vec3 correction_b0 = mul(normal, scale * inv_b0 * uvw.x);
                 const Vec3 correction_b1 = mul(normal, scale * inv_b1 * uvw.y);
                 const Vec3 correction_b2 = mul(normal, scale * inv_b2 * uvw.z);
-                if (can_write(primitive0, 0)) accumulate(point_index, correction);
-                if (can_write(primitive1, 0)) accumulate(b0, correction_b0);
-                if (can_write(primitive1, 1)) accumulate(b1, correction_b1);
-                if (can_write(primitive1, 2)) accumulate(b2, correction_b2);
+                if (can_write(primitive0, 0)) accumulate(point_index, correction, contact, 0);
+                if (can_write(primitive1, 0)) accumulate(b0, correction_b0, contact, 1);
+                if (can_write(primitive1, 1)) accumulate(b1, correction_b1, contact, 1);
+                if (can_write(primitive1, 2)) accumulate(b2, correction_b2, contact, 1);
             }
+        }
+        if (capture_debug) {
+            for (const auto& contribution : debug_contributions) {
+                const auto count = counts[contribution.vertex];
+                if (count <= 0) continue;
+                const auto start = (contribution.contact * 2 + contribution.side) * 3;
+                for (std::size_t component = 0; component < 3; ++component) {
+                    context.debug_self_contact_corrections[start + component] +=
+                        static_cast<float>(contribution.fixed[component]) /
+                        static_cast<float>(count) * 0.000001f;
+                }
+            }
+            debug_contributions.clear();
         }
         for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
             const auto count = counts[vertex];
@@ -3458,6 +3511,7 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
         ++context.self_contact_solver_iteration_count;
         ++context.self_contact_sum_count;
     }
+    context.self_contact_debug_ready = capture_debug;
 }
 
 void update_self_collision_primitives_once(
@@ -4289,6 +4343,7 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(self_contact_s);
     MC2_ADD_VECTOR_BYTES(self_contact_t);
     MC2_ADD_VECTOR_BYTES(self_contact_normals);
+    MC2_ADD_VECTOR_BYTES(debug_self_contact_corrections);
     MC2_ADD_VECTOR_BYTES(self_contact_keys);
     MC2_ADD_VECTOR_BYTES(self_intersect_records);
     MC2_ADD_VECTOR_BYTES(self_particle_intersect_flags);
@@ -4409,6 +4464,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             result,
             "external_contact_debug_count",
             static_cast<std::int64_t>(context.external_contact_debug_records.size())
+        ) ||
+        !dict_i64(
+            result,
+            "self_contact_debug_correction_count",
+            static_cast<std::int64_t>(context.debug_self_contact_corrections.size() / 6)
         ) ||
         !dict_i64(
             result,
@@ -4578,6 +4638,16 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             result,
             "external_contact_debug_ready",
             context.external_contact_debug_ready
+        ) ||
+        !dict_bool(
+            result,
+            "self_contact_debug_requested",
+            context.self_contact_debug_requested
+        ) ||
+        !dict_bool(
+            result,
+            "self_contact_debug_ready",
+            context.self_contact_debug_ready
         ) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||

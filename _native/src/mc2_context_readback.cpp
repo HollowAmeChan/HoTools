@@ -467,21 +467,21 @@ PyObject* mc2_context_v0_read_self_collision_contacts(PyObject*, PyObject* args)
 }
 
 PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 6) {
+    if (PyTuple_GET_SIZE(args) != 7) {
         PyErr_SetString(
             PyExc_TypeError,
-            "mc2_context_v0_read_debug_self_contacts expects 6 arguments"
+            "mc2_context_v0_read_debug_self_contacts expects 7 arguments"
         );
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
-    if (!context->self_contact_ready) {
-        PyErr_SetString(PyExc_RuntimeError, "self-collision contacts are not ready");
+    if (!context->self_contact_ready || !context->self_contact_debug_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "self-collision contact debug is not ready");
         return nullptr;
     }
     const auto count = static_cast<Py_ssize_t>(context->self_contact_types.size());
-    Buffer indices, types, enabled, thickness, normals;
+    Buffer indices, types, enabled, thickness, normals, corrections;
     if (!indices.get(
             PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_contact_indices"
@@ -501,6 +501,10 @@ PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args) {
         !normals.get(
             PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
             "out_self_contact_normals"
+        ) ||
+        !corrections.get(
+            PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_self_contact_corrections"
         )) {
         return nullptr;
     }
@@ -513,7 +517,9 @@ PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args) {
         !expect_float32(thickness, "out_self_contact_thickness") ||
         !expect_1d_array(thickness, "out_self_contact_thickness", count) ||
         !expect_float32(normals, "out_self_contact_normals") ||
-        !expect_2d(normals, "out_self_contact_normals", count, 3)) {
+        !expect_2d(normals, "out_self_contact_normals", count, 3) ||
+        !expect_float32(corrections, "out_self_contact_corrections") ||
+        !expect_3d(corrections, "out_self_contact_corrections", count, 2, 3)) {
         return nullptr;
     }
     std::memcpy(indices.view.buf, context->self_contact_primitive_indices.data(),
@@ -526,6 +532,8 @@ PyObject* mc2_context_v0_read_debug_self_contacts(PyObject*, PyObject* args) {
                 context->self_contact_thickness.size() * sizeof(float));
     std::memcpy(normals.view.buf, context->self_contact_normals.data(),
                 context->self_contact_normals.size() * sizeof(float));
+    std::memcpy(corrections.view.buf, context->debug_self_contact_corrections.data(),
+                context->debug_self_contact_corrections.size() * sizeof(float));
     Py_RETURN_NONE;
 }
 

@@ -41,13 +41,13 @@ _COLORS = {
     "point_collision_surface": (0.10, 0.92, 0.32, 0.26),
     "collider_surface": (0.03, 0.58, 1.00, 0.42),
     "active_collider_surface": (1.00, 0.04, 0.02, 0.62),
-    "external_contact": (1.00, 0.08, 0.04, 1.00),
+    "external_contact": (1.00, 0.08, 0.04, 0.30),
+    "external_contact_point": (1.00, 0.08, 0.04, 0.92),
     "external_contact_new": (1.00, 0.88, 0.08, 1.00),
     "external_contact_lost": (0.58, 0.64, 0.70, 0.68),
-    "external_contact_normal": (1.00, 0.82, 0.12, 0.96),
-    "external_contact_correction": (1.00, 0.28, 0.04, 1.00),
-    "cross_task_contact": (1.00, 0.12, 0.04, 1.00),
-    "cross_task_contact_normal": (1.00, 0.84, 0.10, 0.96),
+    "external_contact_correction": (1.00, 0.84, 0.10, 1.00),
+    "cross_task_contact": (1.00, 0.12, 0.04, 0.26),
+    "contact_correction": (1.00, 0.84, 0.10, 1.00),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "depth_fixed": (1.00, 0.18, 0.62, 1.00),
@@ -107,7 +107,7 @@ _COLORS = {
     "primitive": (0.75, 0.42, 0.98, 0.72),
     "grid": (0.45, 0.50, 0.58, 0.25),
     "candidate": (0.95, 0.72, 0.25, 0.35),
-    "contact": (1.00, 0.15, 0.12, 0.95),
+    "contact": (1.00, 0.15, 0.12, 0.28),
     "disabled_contact": (0.55, 0.55, 0.60, 0.38),
     "intersection": (1.00, 0.05, 0.72, 1.00),
     "output": (0.30, 1.00, 0.82, 0.85),
@@ -1730,9 +1730,8 @@ def _append_external_contact_batches(
     lost_points = []
     primitive_lines = []
     new_lines = []
-    normal_lines = []
     correction_lines = []
-    for index, (kind, primitive, contact, normal, correction) in enumerate(zip(
+    for index, (kind, primitive, contact, _normal, correction) in enumerate(zip(
         kinds[:count],
         primitive_indices[:count],
         contact_positions[:count],
@@ -1750,15 +1749,6 @@ def _append_external_contact_batches(
         elif kind == 1 and 0 <= primitive < len(edges):
             _add_index_line(target_primitives, positions, edges[primitive])
         correction_vector = vector3(correction)
-        normal_vector = vector3(normal)
-        if normal_vector.length > 1.0e-8:
-            normal_vector.normalize()
-            normal_length = max(correction_vector.length, 0.025)
-            add_arrow_lines(
-                normal_lines,
-                contact,
-                vector3(contact) + normal_vector * normal_length,
-            )
         if correction_vector.length > 1.0e-8:
             add_arrow_lines(
                 correction_lines,
@@ -1768,27 +1758,13 @@ def _append_external_contact_batches(
     lost_positions = np.asarray(
         _values(contacts.get("lost_positions")), dtype=np.float32
     ).reshape((-1, 3))
-    lost_normals = np.asarray(
-        _values(contacts.get("lost_normals")), dtype=np.float32
-    ).reshape((-1, 3))
-    lost_lines = []
-    for contact, normal in zip(lost_positions[:limit], lost_normals[:limit]):
+    for contact in lost_positions[:limit]:
         add_point(lost_points, contact)
-        normal_vector = vector3(normal)
-        if normal_vector.length > 1.0e-8:
-            normal_vector.normalize()
-            add_line(
-                lost_lines,
-                contact,
-                vector3(contact) + normal_vector * 0.025,
-            )
-    _point_batch(point_batches, points, "external_contact", 7.0)
+    _point_batch(point_batches, points, "external_contact_point", 7.0)
     _point_batch(point_batches, new_points, "external_contact_new", 8.0)
     _point_batch(point_batches, lost_points, "external_contact_lost", 6.0)
-    _batch(batches, primitive_lines, "external_contact", 2.2)
-    _batch(batches, new_lines, "external_contact_new", 2.4)
-    _batch(batches, lost_lines, "external_contact_lost", 1.2)
-    _batch(batches, normal_lines, "external_contact_normal", 1.4)
+    _batch(batches, primitive_lines, "external_contact", 0.8)
+    _batch(batches, new_lines, "external_contact_new", 1.0)
     _batch(batches, correction_lines, "external_contact_correction", 2.2)
 
 
@@ -1899,21 +1875,26 @@ def _append_self_batches(
         disabled_lines = []
         contacts = np.asarray(_values(state.get("contact_indices")), dtype=np.int32).reshape((-1, 2))
         enabled = np.asarray(_values(state.get("contact_enabled")), dtype=np.uint8)
-        normals = np.asarray(_values(state.get("contact_normals")), dtype=np.float32).reshape((-1, 3))
-        thickness = np.asarray(_values(state.get("contact_thickness")), dtype=np.float32)
+        corrections = np.asarray(
+            _values(state.get("contact_corrections")), dtype=np.float32
+        ).reshape((-1, 2, 3))
+        correction_lines = []
         for index, (first, second) in enumerate(contacts[:limit]):
             if not _primitive_pair_visible(visible_primitives, first, second):
                 continue
             target = enabled_lines if index < len(enabled) and enabled[index] else disabled_lines
             _add_center_line(target, centers, int(first), int(second))
-            if index < len(normals) and 0 <= int(first) < len(centers) and centers[int(first)] is not None:
-                length = float(thickness[index]) if index < len(thickness) else 0.04
-                add_arrow_lines(
-                    target,
-                    centers[int(first)],
-                    vector3(centers[int(first)])
-                    + vector3(normals[index]) * max(length, 0.02),
-                )
+            if index < len(corrections):
+                for side, primitive in enumerate((int(first), int(second))):
+                    if not (0 <= primitive < len(centers)) or centers[primitive] is None:
+                        continue
+                    correction = vector3(corrections[index, side])
+                    if correction.length > 1.0e-8:
+                        add_arrow_lines(
+                            correction_lines,
+                            centers[primitive],
+                            vector3(centers[primitive]) + correction,
+                        )
         intersections = []
         for record in np.asarray(_values(state.get("intersect_records")), dtype=np.int32).reshape((-1, 5))[:limit]:
             if not any(
@@ -1924,8 +1905,9 @@ def _append_self_batches(
                 continue
             _add_index_line(intersections, positions, record[:2])
             _add_index_loop(intersections, positions, record[2:])
-        _batch(batches, enabled_lines, "contact", 2.2)
+        _batch(batches, enabled_lines, "contact", 0.8)
         _batch(batches, disabled_lines, "disabled_contact")
+        _batch(batches, correction_lines, "contact_correction", 2.2)
         _batch(batches, intersections, "intersection", 2.6)
 
 
@@ -1945,12 +1927,9 @@ def _append_interaction_contact_batches(batches, state, filters):
     enabled = np.asarray(
         _values(state.get("contact_enabled")), dtype=np.uint8
     ).reshape((-1,))
-    normals = np.asarray(
-        _values(state.get("contact_normals")), dtype=np.float32
-    ).reshape((-1, 3))
-    thickness = np.asarray(
-        _values(state.get("contact_thickness")), dtype=np.float32
-    ).reshape((-1,))
+    corrections = np.asarray(
+        _values(state.get("contact_corrections")), dtype=np.float32
+    ).reshape((-1, 2, 3))
     if not len(contacts) or len(owners) != len(primitives):
         return
     participants = tuple(state.get("participants") or ())
@@ -1967,7 +1946,7 @@ def _append_interaction_contact_batches(batches, state, filters):
         }
     centers = [_primitive_center(positions, primitive) for primitive in primitives]
     contact_lines = []
-    normal_lines = []
+    correction_lines = []
     for index, (first, second) in enumerate(contacts[:filters["max_items"]]):
         first = int(first)
         second = int(second)
@@ -1984,19 +1963,19 @@ def _append_interaction_contact_batches(batches, state, filters):
         ):
             continue
         _add_center_line(contact_lines, centers, first, second)
-        if first >= len(centers) or centers[first] is None or index >= len(normals):
-            continue
-        normal = vector3(normals[index])
-        if normal.length <= 1.0e-8:
-            continue
-        length = float(thickness[index]) if index < len(thickness) else 0.04
-        add_arrow_lines(
-            normal_lines,
-            centers[first],
-            vector3(centers[first]) + normal * max(length, 0.02),
-        )
-    _batch(batches, contact_lines, "cross_task_contact", 2.4)
-    _batch(batches, normal_lines, "cross_task_contact_normal", 1.6)
+        if index < len(corrections):
+            for side, primitive in enumerate((first, second)):
+                if centers[primitive] is None:
+                    continue
+                correction = vector3(corrections[index, side])
+                if correction.length > 1.0e-8:
+                    add_arrow_lines(
+                        correction_lines,
+                        centers[primitive],
+                        vector3(centers[primitive]) + correction,
+                    )
+    _batch(batches, contact_lines, "cross_task_contact", 0.8)
+    _batch(batches, correction_lines, "contact_correction", 2.2)
 
 
 def _append_output_batches(batches, point_batches, snapshot, limit):

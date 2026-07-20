@@ -348,6 +348,14 @@ try:
         "contact_normals": np.asarray(
             ((1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float32
         ),
+        "contact_corrections": np.asarray(
+            (
+                ((0.04, 0, 0), (-0.04, 0, 0)),
+                ((0, 0.03, 0), (0, -0.03, 0)),
+                ((0, 0, 0.02), (0, 0, -0.02)),
+            ),
+            dtype=np.float32,
+        ),
         "contact_thickness": np.asarray((0.1, 0.1, 0.1), dtype=np.float32),
         "participants": ({"task_id": "cloth-a"}, {"task_id": "cloth-b"}),
     }
@@ -363,6 +371,10 @@ try:
         if batch[1] == debug_draw._COLORS["cross_task_contact"]
     )
     assert len(cross_contact_batch[0]) == 2
+    assert any(
+        batch[1] == debug_draw._COLORS["contact_correction"]
+        for batch in interaction_batches
+    )
     hidden_interaction_batches = []
     debug_draw._append_interaction_contact_batches(
         hidden_interaction_batches,
@@ -904,7 +916,11 @@ try:
         ("show_self_primitives", {"show_self_primitives": True}, ("primitive",)),
         ("show_self_grid", {"show_self_grid": True}, ("grid",)),
         ("show_self_candidates", {"show_self_candidates": True}, ("candidate",)),
-        ("show_self_contacts", {"show_self_contacts": True}, ("contact", "disabled_contact", "intersection")),
+        (
+            "show_self_contacts",
+            {"show_self_contacts": True},
+            ("contact", "contact_correction", "disabled_contact", "intersection"),
+        ),
         ("show_output", {"show_output": True}, ("output",)),
     )
     for mode_name, overrides, expected_batches in isolated_modes:
@@ -1231,6 +1247,10 @@ try:
             interaction_owners = np.asarray(
                 interaction_state["owner_indices"], dtype=np.int32
             )
+            interaction_corrections = np.asarray(
+                interaction_state["contact_corrections"], dtype=np.float32
+            )
+            assert interaction_corrections.flags.writeable is False
             assert any(
                 index < len(interaction_enabled)
                 and interaction_enabled[index]
@@ -1239,6 +1259,7 @@ try:
                 for index, (first, second) in enumerate(interaction_contacts)
             )
             assert tuple(debug_draw._COLORS["cross_task_contact"]) in colors
+            assert tuple(debug_draw._COLORS["contact_correction"]) in colors
         elif mode_name.startswith("show_self_"):
             self_state = captured_snapshot.get("self_collision") or {}
             assert "particle_indices" in self_state
@@ -1248,14 +1269,15 @@ try:
                 "show_self_candidates": {"candidates"},
                 "show_self_contacts": {
                     "contact_indices", "contact_enabled",
-                    "contact_normals", "intersect_records",
+                    "contact_normals", "contact_corrections", "intersect_records",
                 },
             }[mode_name]
             actual_stage_keys = {
                 key
                 for key in (
                     "primitive_grids", "candidates", "contact_indices",
-                    "contact_enabled", "contact_normals", "intersect_records",
+                    "contact_enabled", "contact_normals", "contact_corrections",
+                    "intersect_records",
                 )
                 if key in self_state
             }
@@ -1267,7 +1289,8 @@ try:
                 key
                 for key in (
                     "primitive_grids", "candidates", "contact_indices",
-                    "contact_enabled", "contact_normals", "intersect_records",
+                    "contact_enabled", "contact_normals", "contact_corrections",
+                    "intersect_records",
                 )
                 if key in interaction_state
             }

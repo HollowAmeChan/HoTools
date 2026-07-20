@@ -35,6 +35,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_set_setup_kind",
     "mc2_context_v0_set_tether_enabled",
     "mc2_context_v0_set_debug_external_contacts",
+    "mc2_context_v0_set_debug_self_contacts",
     "mc2_context_v0_set_debug_constraint_results",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",

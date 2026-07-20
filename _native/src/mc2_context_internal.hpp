@@ -142,6 +142,8 @@ struct Mc2ContextV0 {
     bool component_pose_ready = false;
     bool external_contact_debug_requested = false;
     bool external_contact_debug_ready = false;
+    bool self_contact_debug_requested = false;
+    bool self_contact_debug_ready = false;
     std::uint32_t debug_constraint_request_mask = 0;
     std::uint32_t debug_constraint_ready_mask = 0;
     std::uint8_t debug_distance_record_phase_mask = 0;
@@ -182,6 +184,7 @@ struct Mc2ContextV0 {
     std::vector<float> particle_collision_normals;
     std::vector<float> particle_real_velocities;
     std::vector<hotools::Mc2ExternalCollisionDebugRecord> external_contact_debug_records;
+    std::vector<float> debug_self_contact_corrections;
     std::vector<float> debug_constraint_origins;
     std::vector<float> debug_constraint_corrections;
     std::vector<float> debug_distance_record_origins;

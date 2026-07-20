@@ -196,6 +196,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_tether_enabled, a); });
     m.def("mc2_context_v0_set_debug_external_contacts",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_debug_external_contacts, a); });
+    m.def("mc2_context_v0_set_debug_self_contacts",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_debug_self_contacts, a); });
     m.def("mc2_context_v0_set_debug_constraint_results",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_debug_constraint_results, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",

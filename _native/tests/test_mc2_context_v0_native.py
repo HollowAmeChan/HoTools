@@ -1251,6 +1251,7 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         rotations[:, 3] = 1.0
         update_dynamic(edge_context, 30, 6, positions, rotations)
         hotools_native.mc2_context_v0_reset(edge_context)
+        hotools_native.mc2_context_v0_set_debug_self_contacts(edge_context, True)
         step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
         info = hotools_native.mc2_context_v0_inspect(edge_context)
         assert info["self_candidate_ready"] is True
@@ -1294,6 +1295,16 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         np.testing.assert_array_equal(contact_s, [0.0])
         np.testing.assert_array_equal(contact_t, [0.0])
         np.testing.assert_array_equal(contact_normals, [[0.0, -1.0, 0.0]])
+        debug_contact_corrections = np.empty((1, 2, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_self_contacts(
+            edge_context,
+            contact_indices,
+            contact_types,
+            contact_enabled,
+            contact_thickness,
+            contact_normals,
+            debug_contact_corrections,
+        )
         solved_positions = np.empty_like(positions)
         solved_rotations = np.empty_like(rotations)
         hotools_native.mc2_context_v0_read(
@@ -1313,6 +1324,25 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         np.testing.assert_allclose(
             solved_positions, expected_positions, rtol=0.0, atol=1.0e-7
         )
+        np.testing.assert_allclose(
+            debug_contact_corrections[0, 0],
+            solved_positions[0] - positions[0],
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            debug_contact_corrections[0, 1],
+            solved_positions[2] - positions[2],
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            np.sum(debug_contact_corrections, axis=1),
+            np.zeros((1, 3), dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-7,
+        )
+        hotools_native.mc2_context_v0_set_debug_self_contacts(edge_context, False)
         step(edge_context, 1.0 / 90.0, simulation_power_z=0.0)
         edge_info = hotools_native.mc2_context_v0_inspect(edge_context)
         assert edge_info["self_candidate_update_count"] == 1
@@ -1321,6 +1351,8 @@ def test_self_collision_broadphase_candidates_are_filtered_and_typed():
         assert edge_info["self_contact_enabled_count"] == 1
         assert edge_info["self_contact_solver_iteration_count"] == 8
         assert edge_info["self_contact_sum_count"] == 8
+        assert edge_info["self_contact_debug_ready"] is False
+        assert edge_info["self_contact_debug_correction_count"] == 0
 
         proxy, baseline = static_arrays(4)
         edges = np.array([[0, 1], [1, 2], [2, 0]], dtype=np.int32)

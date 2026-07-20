@@ -281,7 +281,7 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 `碰撞情况`继续只画可参与碰撞的Point/Edge proxy与collider形状；独立`实际接触`已经接通真实kernel结果，不再从最终normal或位置差反推。
 
-`实际接触`同时覆盖两个真实owner：task context中的外部collider Point/Edge contact，以及world interaction中的跨task EE/PT contact。后者只绘制`enabled != 0`且两端primitive `owner_indices`不同的记录；红线连接primitive中心，黄色箭头显示native contact normal。任务筛选保留任一端属于所选task的跨task记录。同task self contact继续只由`自碰4 接触结果`表达，避免两个一级视图重复描边。
+`实际接触`同时覆盖两个真实owner：task context中的外部collider Point/Edge contact，以及world interaction中的跨task EE/PT contact。后者只绘制`enabled != 0`且两端primitive `owner_indices`不同的记录；细淡红线只提示contact存在，两侧黄色箭头显示四轮solver经过生产量化与共享粒子平均后的实际累计推动方向和强度。任务筛选保留任一端属于所选task的跨task记录。同task self contact继续只由`自碰4 接触结果`表达，避免两个一级视图重复描边。原来按`normal * max(thickness, 0.02)`绘制的黄色箭头已删除，因为其长度是可视化常量而非解算结果。
 
 新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配，真实多分量模型也已人工确认完整显示，D-10关闭。
 

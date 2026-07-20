@@ -819,6 +819,13 @@ class MC2NativeContextV0:
             bool(requested),
         )
 
+    def set_debug_self_contacts(self, requested: bool) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_set_debug_self_contacts(
+            self._handle,
+            bool(requested),
+        )
+
     def set_debug_constraint_results(self, request_mask: int) -> None:
         self._ensure_live()
         request_mask = int(request_mask)
@@ -1238,6 +1245,7 @@ class MC2NativeContextV0:
                 enabled = np.empty((contact_count,), dtype=np.uint8)
                 contact_thickness = np.empty((contact_count,), dtype=np.float32)
                 normals = np.empty((contact_count, 3), dtype=np.float32)
+                corrections = np.empty((contact_count, 2, 3), dtype=np.float32)
                 self._module.mc2_context_v0_read_debug_self_contacts(
                     self._handle,
                     indices,
@@ -1245,6 +1253,7 @@ class MC2NativeContextV0:
                     enabled,
                     contact_thickness,
                     normals,
+                    corrections,
                 )
                 self_state.update({
                     "contact_indices": self._debug_array(indices),
@@ -1252,6 +1261,7 @@ class MC2NativeContextV0:
                     "contact_enabled": self._debug_array(enabled),
                     "contact_thickness": self._debug_array(contact_thickness),
                     "contact_normals": self._debug_array(normals),
+                    "contact_corrections": self._debug_array(corrections),
                 })
                 readbacks += 1
             if include_self_contacts and bool(
@@ -1388,6 +1398,17 @@ class MC2NativeInteractionV0:
             simulation_power_z,
             simulation_power_w,
             bool(is_final_substep),
+            bool(
+                self._debug_capture_state.get("requested", False)
+                and (
+                    (self._debug_capture_state.get("filters") or {}).get(
+                        "show_self_contacts", False
+                    )
+                    or (self._debug_capture_state.get("filters") or {}).get(
+                        "show_interaction_contacts", False
+                    )
+                )
+            ),
         )
         for context in contexts:
             context._center_step_dt = None
@@ -1481,6 +1502,9 @@ class MC2NativeInteractionV0:
             "contact_normals": np.empty(
                 (contact_count if include_contacts else 0, 3), dtype=np.float32
             ),
+            "contact_corrections": np.empty(
+                (contact_count if include_contacts else 0, 2, 3), dtype=np.float32
+            ),
             "intersect_records": np.empty(
                 (intersect_count if include_contacts else 0, 5), dtype=np.int32
             ),
@@ -1513,7 +1537,8 @@ class MC2NativeInteractionV0:
         if include_contacts:
             for name in (
                 "contact_indices", "contact_types", "contact_enabled",
-                "contact_thickness", "contact_normals", "intersect_records",
+                "contact_thickness", "contact_normals", "contact_corrections",
+                "intersect_records",
             ):
                 snapshot[name] = MC2NativeContextV0._debug_array(arrays[name])
         self._debug_draw_snapshot = snapshot

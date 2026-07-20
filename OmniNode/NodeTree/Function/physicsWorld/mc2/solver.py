@@ -1218,6 +1218,11 @@ def step_mc2(
                         and debug_state.get("requested", False)
                         and debug_filters.get("show_collision_contacts", False)
                     ))
+                    native_context.set_debug_self_contacts(bool(
+                        isinstance(debug_state, dict)
+                        and debug_state.get("requested", False)
+                        and debug_filters.get("show_self_contacts", False)
+                    ))
                     constraint_debug_mask = 0
                     if isinstance(debug_state, dict) and debug_state.get(
                         "requested", False

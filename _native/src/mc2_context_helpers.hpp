@@ -51,6 +51,13 @@ bool expect_2d(
     Py_ssize_t rows,
     Py_ssize_t columns
 );
+bool expect_3d(
+    const py::Buffer& buffer,
+    const char* name,
+    Py_ssize_t first,
+    Py_ssize_t second,
+    Py_ssize_t third
+);
 bool build_bone_output(Mc2ContextV0& context);
 bool validate_quaternions(const py::Buffer& rotations, const char* name);
 bool validate_parameter_ints(const py::Buffer& ints);

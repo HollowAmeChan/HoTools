@@ -149,8 +149,8 @@ PyObject* mc2_interaction_v0_invalidate(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 9) {
-        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_step_group expects 9 arguments");
+    if (PyTuple_GET_SIZE(args) != 10) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_step_group expects 10 arguments");
         return nullptr;
     }
     auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
@@ -190,7 +190,8 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
         PyTuple_GET_ITEM(args, 7), "simulation_power_w"
     );
     const int final_substep_value = PyObject_IsTrue(PyTuple_GET_ITEM(args, 8));
-    if (PyErr_Occurred() || final_substep_value < 0 ||
+    const int debug_self_contacts = PyObject_IsTrue(PyTuple_GET_ITEM(args, 9));
+    if (PyErr_Occurred() || final_substep_value < 0 || debug_self_contacts < 0 ||
         !std::isfinite(dt) || dt < 0.0 ||
         !std::isfinite(simulation_power_y) || simulation_power_y < 0.0 ||
         !std::isfinite(simulation_power_z) || simulation_power_z < 0.0 ||
@@ -320,6 +321,7 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
         }
     }
     if (interaction->participants.size() >= 2) {
+        interaction->aggregate.self_contact_debug_requested = debug_self_contacts != 0;
         build_and_solve_interaction(*interaction, states);
     } else {
         interaction->candidate_count = 0;
@@ -339,8 +341,8 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_interaction_v0_read_debug(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 13) {
-        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_read_debug expects 13 arguments");
+    if (PyTuple_GET_SIZE(args) != 14) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_read_debug expects 14 arguments");
         return nullptr;
     }
     auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
@@ -377,19 +379,19 @@ PyObject* mc2_interaction_v0_read_debug(PyObject*, PyObject* args) {
         ? intersect_count : 0;
     Buffer positions, particle_indices, owner_indices, grids, candidates;
     Buffer contact_indices, contact_types, contact_enabled, contact_thickness;
-    Buffer contact_normals, intersect_records;
+    Buffer contact_normals, contact_corrections, intersect_records;
     Buffer* buffers[] = {
         &positions, &particle_indices, &owner_indices, &grids, &candidates,
         &contact_indices, &contact_types, &contact_enabled, &contact_thickness,
-        &contact_normals, &intersect_records,
+        &contact_normals, &contact_corrections, &intersect_records,
     };
     const char* names[] = {
         "out_positions", "out_particle_indices", "out_owner_indices",
         "out_grids", "out_candidates", "out_contact_indices",
         "out_contact_types", "out_contact_enabled", "out_contact_thickness",
-        "out_contact_normals", "out_intersect_records",
+        "out_contact_normals", "out_contact_corrections", "out_intersect_records",
     };
-    for (std::size_t index = 0; index < 11; ++index) {
+    for (std::size_t index = 0; index < 12; ++index) {
         if (!buffers[index]->get(
                 PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 2)),
                 PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
@@ -417,8 +419,10 @@ PyObject* mc2_interaction_v0_read_debug(PyObject*, PyObject* args) {
         !expect_1d_array(contact_thickness, names[8], requested_contact_count) ||
         !expect_float32(contact_normals, names[9]) ||
         !expect_2d(contact_normals, names[9], requested_contact_count, 3) ||
-        !expect_int32(intersect_records, names[10]) ||
-        !expect_2d(intersect_records, names[10], requested_intersect_count, 5)) {
+        !expect_float32(contact_corrections, names[10]) ||
+        !expect_3d(contact_corrections, names[10], requested_contact_count, 2, 3) ||
+        !expect_int32(intersect_records, names[11]) ||
+        !expect_2d(intersect_records, names[11], requested_intersect_count, 5)) {
         return nullptr;
     }
     auto copy = [](Buffer& output, const auto& source) {
@@ -438,6 +442,7 @@ PyObject* mc2_interaction_v0_read_debug(PyObject*, PyObject* args) {
         copy(contact_enabled, aggregate.self_contact_enabled);
         copy(contact_thickness, aggregate.self_contact_thickness);
         copy(contact_normals, aggregate.self_contact_normals);
+        copy(contact_corrections, aggregate.debug_self_contact_corrections);
         copy(intersect_records, aggregate.self_intersect_records);
     }
     Py_RETURN_NONE;

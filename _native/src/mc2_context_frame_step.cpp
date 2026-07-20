@@ -1473,6 +1473,24 @@ PyObject* mc2_context_v0_set_debug_external_contacts(PyObject*, PyObject* args) 
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_set_debug_self_contacts(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_set_debug_self_contacts expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const int requested = PyObject_IsTrue(PyTuple_GET_ITEM(args, 1));
+    if (requested < 0) return nullptr;
+    context->self_contact_debug_requested = requested != 0;
+    context->self_contact_debug_ready = false;
+    context->debug_self_contact_corrections.clear();
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 2) {
         PyErr_SetString(

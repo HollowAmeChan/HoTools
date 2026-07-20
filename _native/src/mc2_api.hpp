@@ -31,6 +31,7 @@ PyObject* mc2_context_v0_update_team_options(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_setup_kind(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_debug_external_contacts(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_set_debug_self_contacts(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_set_debug_constraint_results(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObject* args);
