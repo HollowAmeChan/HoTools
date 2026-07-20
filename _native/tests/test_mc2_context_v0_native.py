@@ -314,17 +314,16 @@ def test_constraint_debug_is_request_driven_and_exact():
         info = hotools_native.mc2_context_v0_inspect(context)
         assert info["debug_constraint_request_mask"] == 1
         assert info["debug_constraint_ready_mask"] == 1
-        assert info["debug_constraint_float_count"] == 72
-        origins = np.empty((12, 3), dtype=np.float32)
-        corrections = np.empty((12, 3), dtype=np.float32)
+        assert info["debug_constraint_float_count"] == 12
+        origins = np.empty((2, 3), dtype=np.float32)
+        corrections = np.empty((2, 3), dtype=np.float32)
         hotools_native.mc2_context_v0_read_debug_constraint_results(
             context,
             origins,
             corrections,
         )
-        np.testing.assert_allclose(origins[:2], positions, atol=1.0e-6)
+        np.testing.assert_allclose(origins, positions, atol=1.0e-6)
         assert np.linalg.norm(corrections[1]) > 0.0
-        np.testing.assert_array_equal(corrections[2:], 0.0)
 
         hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
         info = hotools_native.mc2_context_v0_inspect(context)

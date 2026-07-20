@@ -16,6 +16,34 @@ constexpr std::uint32_t kDebugConstraintAngle = 1u << 2;
 constexpr std::uint32_t kDebugConstraintBending = 1u << 3;
 constexpr std::uint32_t kDebugConstraintMotion = 1u << 4;
 constexpr std::size_t kDebugConstraintPassCount = 6;
+constexpr std::array<std::uint32_t, kDebugConstraintPassCount>
+    kDebugConstraintPassBits {
+        kDebugConstraintTether,
+        kDebugConstraintDistance,
+        kDebugConstraintAngle,
+        kDebugConstraintBending,
+        kDebugConstraintDistance,
+        kDebugConstraintMotion,
+    };
+
+constexpr std::size_t debug_constraint_pass_count(std::uint32_t mask) {
+    std::size_t count = 0;
+    for (const auto bit : kDebugConstraintPassBits) {
+        count += (mask & bit) != 0 ? 1u : 0u;
+    }
+    return count;
+}
+
+constexpr std::size_t debug_constraint_pass_offset(
+    std::uint32_t mask,
+    std::size_t pass_index
+) {
+    std::size_t offset = 0;
+    for (std::size_t index = 0; index < pass_index; ++index) {
+        offset += (mask & kDebugConstraintPassBits[index]) != 0 ? 1u : 0u;
+    }
+    return offset;
+}
 
 struct Vec3 {
     float x = 0.0f;

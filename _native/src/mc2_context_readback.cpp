@@ -1136,10 +1136,13 @@ PyObject* mc2_context_v0_read_debug_constraint_results(PyObject*, PyObject* args
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
     const auto vertex_count = static_cast<std::size_t>(context->vertex_count);
-    const auto row_count = kDebugConstraintPassCount * vertex_count;
+    const auto row_count = debug_constraint_pass_count(
+        context->debug_constraint_ready_mask
+    ) * vertex_count;
     const auto value_count = row_count * 3;
     if (context->debug_constraint_request_mask == 0 ||
         context->debug_constraint_ready_mask == 0 ||
+        context->debug_constraint_ready_mask != context->debug_constraint_request_mask ||
         context->debug_constraint_origins.size() != value_count ||
         context->debug_constraint_corrections.size() != value_count) {
         PyErr_SetString(

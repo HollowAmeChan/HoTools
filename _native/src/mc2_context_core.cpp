@@ -3285,14 +3285,18 @@ void finish_constraint_debug_pass(
         return;
     }
     const auto stride = context.state_positions.size();
-    const auto required = stride * kDebugConstraintPassCount;
+    const auto required = stride * debug_constraint_pass_count(
+        context.debug_constraint_request_mask
+    );
     if (context.debug_constraint_origins.size() != required) {
         context.debug_constraint_origins.assign(required, 0.0f);
     }
     if (context.debug_constraint_corrections.size() != required) {
         context.debug_constraint_corrections.assign(required, 0.0f);
     }
-    const auto start = pass_index * stride;
+    const auto start = debug_constraint_pass_offset(
+        context.debug_constraint_request_mask, pass_index
+    ) * stride;
     for (std::size_t index = 0; index < stride; ++index) {
         context.debug_constraint_origins[start + index] = before[index];
         context.debug_constraint_corrections[start + index] =

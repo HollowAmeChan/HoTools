@@ -45,7 +45,6 @@ MC2_DEBUG_CONSTRAINT_ANGLE = 1 << 2
 MC2_DEBUG_CONSTRAINT_BENDING = 1 << 3
 MC2_DEBUG_CONSTRAINT_MOTION = 1 << 4
 MC2_DEBUG_CONSTRAINT_ALL = (1 << 5) - 1
-MC2_DEBUG_CONSTRAINT_PASS_COUNT = 6
 
 
 class MC2NativeContextV0:
@@ -973,7 +972,25 @@ class MC2NativeContextV0:
             readbacks += 1
         constraint_ready_mask = int(info.get("debug_constraint_ready_mask", 0) or 0)
         if include_constraint_results and constraint_ready_mask:
-            rows = MC2_DEBUG_CONSTRAINT_PASS_COUNT * self.vertex_count
+            mode_layout = (
+                ("tether", MC2_DEBUG_CONSTRAINT_TETHER),
+                ("distance", MC2_DEBUG_CONSTRAINT_DISTANCE),
+                ("angle", MC2_DEBUG_CONSTRAINT_ANGLE),
+                ("bending", MC2_DEBUG_CONSTRAINT_BENDING),
+                ("motion", MC2_DEBUG_CONSTRAINT_MOTION),
+            )
+            pass_layout = (
+                ("tether", MC2_DEBUG_CONSTRAINT_TETHER),
+                ("distance", MC2_DEBUG_CONSTRAINT_DISTANCE),
+                ("angle", MC2_DEBUG_CONSTRAINT_ANGLE),
+                ("bending", MC2_DEBUG_CONSTRAINT_BENDING),
+                ("distance", MC2_DEBUG_CONSTRAINT_DISTANCE),
+                ("motion", MC2_DEBUG_CONSTRAINT_MOTION),
+            )
+            active_passes = tuple(
+                item for item in pass_layout if constraint_ready_mask & item[1]
+            )
+            rows = len(active_passes) * self.vertex_count
             origins = np.empty((rows, 3), dtype=np.float32)
             corrections = np.empty((rows, 3), dtype=np.float32)
             self._module.mc2_context_v0_read_debug_constraint_results(
@@ -981,25 +998,21 @@ class MC2NativeContextV0:
                 origins,
                 corrections,
             )
-            origins = origins.reshape(
-                (MC2_DEBUG_CONSTRAINT_PASS_COUNT, self.vertex_count, 3)
-            )
+            origins = origins.reshape((len(active_passes), self.vertex_count, 3))
             corrections = corrections.reshape(
-                (MC2_DEBUG_CONSTRAINT_PASS_COUNT, self.vertex_count, 3)
-            )
-            pass_layout = (
-                ("tether", MC2_DEBUG_CONSTRAINT_TETHER, (0,)),
-                ("distance", MC2_DEBUG_CONSTRAINT_DISTANCE, (1, 4)),
-                ("angle", MC2_DEBUG_CONSTRAINT_ANGLE, (2,)),
-                ("bending", MC2_DEBUG_CONSTRAINT_BENDING, (3,)),
-                ("motion", MC2_DEBUG_CONSTRAINT_MOTION, (5,)),
+                (len(active_passes), self.vertex_count, 3)
             )
             constraint_results = {
                 "ready_mask": constraint_ready_mask,
             }
-            for name, bit, indices in pass_layout:
+            for name, bit in mode_layout:
                 if not constraint_ready_mask & bit:
                     continue
+                indices = tuple(
+                    index
+                    for index, (pass_name, _pass_bit) in enumerate(active_passes)
+                    if pass_name == name
+                )
                 selected_origins = origins[list(indices)]
                 selected_corrections = corrections[list(indices)]
                 if len(indices) == 1:
