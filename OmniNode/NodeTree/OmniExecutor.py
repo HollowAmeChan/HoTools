@@ -11,7 +11,7 @@ from .OmniIR import (
     RuntimeTimingEndCall,
 )
 from .OmniDebug import OmniDebug
-from .OmniTiming import OmniRuntimeTiming
+from .OmniTiming import OmniNodeTiming, OmniRuntimeTiming
 from . import OmniRuntimeState
 from .OmniTracy import omni_zone, omni_frame_mark, tracy_enabled
 import time
@@ -25,8 +25,10 @@ class RuntimeObserver:
         trace=None,
         timing_collector=None,
         timing_node_collector=None,
+        timing_node_detail_collector=None,
         overlay_sampled=None,
         overlay_gate=None,
+        inherited_node_timing=False,
     ):
         self.debug = bool(debug)
         self.depth = int(depth)
@@ -34,6 +36,7 @@ class RuntimeObserver:
         self.timing_start = None
         self.timing_stages = None
         self.timing_node_stages = None
+        self.timing_node_details = None
         # None means this observer owns the sampling decision. Frame-level callers
         # pass an explicit bool so the root tree never checks the clock twice.
         self.overlay_sampled = overlay_sampled
@@ -42,6 +45,10 @@ class RuntimeObserver:
         # 不再单独成一个报告块。子树仍走各自的独立报告。
         self.timing_collector = timing_collector
         self.timing_node_collector = timing_node_collector
+        self.timing_node_detail_collector = timing_node_detail_collector
+        self._node_timing_token = None
+        self._node_timing_name = None
+        self.inherited_node_timing = bool(inherited_node_timing)
         # Tracy zone 句柄：仅在 Tracy 构建下非 None
         self._tracy_tree_zone = None   # 树级 zone（整棵树执行期间）
         self._tracy_step_zone = None   # 当前 step zone（step_begin→step_end）
@@ -56,6 +63,10 @@ class RuntimeObserver:
             depth=self.depth + 1,
             trace=self.trace,
             overlay_gate=self.overlay_gate,
+            inherited_node_timing=(
+                self._node_timing_token is not None
+                and self._node_timing_name is not None
+            ),
         )
 
     def log(self, message):
@@ -95,6 +106,7 @@ class RuntimeObserver:
             self.timing_start = time.perf_counter()
             self.timing_stages = {}
             self.timing_node_stages = {} if self.overlay_sampled else None
+            self.timing_node_details = {} if self.overlay_sampled else None
             # 每帧重置懒求值计数器
             self._lazy_nodes_run     = 0
             self._lazy_nodes_skipped = 0
@@ -125,6 +137,11 @@ class RuntimeObserver:
                 )
             if self.timing_node_collector is not None:
                 self.timing_node_collector.update(self.timing_node_stages or {})
+            if self.timing_node_detail_collector is not None:
+                for node_name, details in (self.timing_node_details or {}).items():
+                    target = self.timing_node_detail_collector.setdefault(node_name, {})
+                    for detail_stage, seconds in details.items():
+                        target[detail_stage] = target.get(detail_stage, 0.0) + float(seconds)
             return
 
         stages["total"] = time.perf_counter() - self.timing_start
@@ -137,6 +154,7 @@ class RuntimeObserver:
             console_enabled=bool(getattr(tree_ref, "debug_runtime_timing", False)),
             overlay_sampled=self.overlay_sampled,
             node_stages=self.timing_node_stages,
+            node_details=self.timing_node_details,
         )
 
     def step_begin(self, step_index, op):
@@ -147,18 +165,43 @@ class RuntimeObserver:
             self._tracy_step_zone = omni_zone(zone_name)
             self._tracy_step_zone.__enter__()
         if self.timing_stages is None:
+            if self.inherited_node_timing:
+                self._node_timing_token = OmniNodeTiming.suspend_capture()
             return None, None
         stage = OmniExecutor.timing_stage_name(step_index, op)
         node_name = getattr(getattr(op, "node", None), "name", None)
         if self.timing_node_stages is not None and stage and node_name:
             self.timing_node_stages[stage] = node_name
-        return time.perf_counter(), stage
+        start_time = time.perf_counter()
+        if self.overlay_sampled and node_name:
+            self._node_timing_token = OmniNodeTiming.begin_capture(
+                started_at=start_time
+            )
+            self._node_timing_name = node_name
+        elif self.inherited_node_timing:
+            self._node_timing_token = OmniNodeTiming.suspend_capture()
+        return start_time, stage
+
+    def _finish_node_timing(self):
+        token = self._node_timing_token
+        if token is None:
+            return
+        node_name = self._node_timing_name
+        self._node_timing_token = None
+        self._node_timing_name = None
+        details = OmniNodeTiming.end_capture(token)
+        if not details or not node_name or self.timing_node_details is None:
+            return
+        target = self.timing_node_details.setdefault(node_name, {})
+        for detail_stage, seconds in details.items():
+            target[detail_stage] = target.get(detail_stage, 0.0) + float(seconds)
 
     def step_end(self, start_time, stage):
         # Tracy：关闭当前 step zone
         if self._tracy_step_zone is not None:
             self._tracy_step_zone.__exit__(None, None, None)
             self._tracy_step_zone = None
+        self._finish_node_timing()
         if start_time is not None and stage:
             self.timing_stages[stage] = self.timing_stages.get(stage, 0.0) + (
                 time.perf_counter() - start_time
@@ -321,6 +364,7 @@ class RuntimeObserver:
         if self._tracy_step_zone is not None:
             self._tracy_step_zone.__exit__(None, None, None)
             self._tracy_step_zone = None
+        self._finish_node_timing()
         if not self.debug:
             return
 
@@ -574,6 +618,7 @@ class OmniExecutor:
         observer=None,
         timing_collector=None,
         timing_node_collector=None,
+        timing_node_detail_collector=None,
         overlay_sampled=None,
         overlay_gate=None,
     ):
@@ -589,6 +634,7 @@ class OmniExecutor:
                     observer=observer,
                     timing_collector=timing_collector,
                     timing_node_collector=timing_node_collector,
+                    timing_node_detail_collector=timing_node_detail_collector,
                     overlay_sampled=overlay_sampled,
                     overlay_gate=overlay_gate,
                 )
@@ -604,6 +650,7 @@ class OmniExecutor:
                 depth=depth,
                 timing_collector=timing_collector,
                 timing_node_collector=timing_node_collector,
+                timing_node_detail_collector=timing_node_detail_collector,
                 overlay_sampled=overlay_sampled,
                 overlay_gate=overlay_gate,
             )
@@ -929,6 +976,7 @@ class OmniExecutor:
         debug=False,
         phases=None,
         timing_node_stages=None,
+        timing_node_details=None,
         overlay_sampled=None,
         overlay_gate=None,
     ):
@@ -945,6 +993,7 @@ class OmniExecutor:
                 runtime_context=runtime_context,
                 timing_collector=phases,
                 timing_node_collector=timing_node_stages,
+                timing_node_detail_collector=timing_node_details,
                 overlay_sampled=overlay_sampled,
                 overlay_gate=overlay_gate,
             )

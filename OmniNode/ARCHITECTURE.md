@@ -602,30 +602,27 @@ debug_compile
 
 ```text
 show_compile_flow
-compile_flow_cycle_duration
 ```
 
-`show_compile_flow` 是独立于命令行 `debug_compile` 的编辑器动画开关。编译器在 `CompiledGraph.compile_flow` 中保存实际编译结果的轻量快照，绘制层不得重新遍历 Blender links 猜测数据流。快照包含：
+`show_compile_flow` 是独立于命令行 `debug_compile` 的静态编辑器标注开关。编译器在 `CompiledGraph.compile_flow` 中保存实际编译结果的轻量快照，绘制层不得重新遍历 Blender links 猜测数据流。快照包含：
 
 - 最终 topo 中会运行的节点及顺序；输出节点作为终点保留。
 - 编译输入真正消费的 source socket、target socket 与寄存器号。
 - mute passthrough 展开后的直连边与经过的 muted node 路径。
 - `always_run` 节点标记；cache op 和包含 always-run 子树的 group 同样按常驻运行处理。
 
-动画语义固定如下：
+显示语义固定如下：
 
-- 一个周期从上游到下游按 topo 顺序播放；同级节点的编号就是实际稳定排序。
-- 普通节点和普通 link 统一使用白色；link 流光在目标节点点亮前沿 source → target 前进，并在流光头显示 `rN`。
-- muted 节点不获得运行序号，因为它不生成执行 op；但透传流光必须穿过该节点，并触发低亮白色边缘呼吸，表示“跳过执行、保留寄存器透传”。
-- 只有 `always_run` 节点和由其产生的 link 使用循环彩色呼吸，表示它不受普通 lazy skip 控制；色相轮转频率固定为 `0.65` 圈/秒，不受 topo 播放周期影响。
-- overlay link 必须跟随当前 Node Editor 主题的 `noodle_curving`：值为 `0` 时使用采样直线，非零时使用曲线。直线仍要保留足够采样点，以维持流光位置和渐变连续，不得硬编码为 Bezier 或退化成两个端点。
-- 动画只用于解释已缓存的编译结果，不代表当前帧真实执行/skip 状态；真实耗时由“节点运行计时”负责。
+- 所有运行节点同时静态显示；节点编号就是实际稳定 topo 顺序，不播放时序动画。
+- 普通运行节点使用高亮绿色边框。
+- muted 节点不获得运行序号，因为它不生成执行 op；仅使用低亮绿色静态边框表示“跳过执行、保留寄存器透传”。
+- `always_run` 节点使用高亮蓝色静态边框，表示它不受普通 lazy skip 控制。
+- 编译流程可视化禁止重绘任何 link，包括普通 link、寄存器流光、`rN` 标签和 muted 节点内部透传线。Blender Python RNA 不公开 socket 最终 UI 坐标，复刻私有节点布局会与自定义绘制区、multi-input 和 Blender 版本产生不必要耦合。
+- 静态标注只用于解释已缓存的编译结果，不代表当前帧真实执行/skip 状态；真实耗时由“节点运行计时”负责。
 
-坐标合同：该动画使用 Node Editor `POST_VIEW` 绘制。`location_absolute` 是未缩放的节点位置，进入 GPU batch 前必须乘 `preferences.system.ui_scale`；实时 UI 中非零的 `node.dimensions` 已经是最终绘制宽高，必须原样加到缩放后的位置，禁止再次缩放。只有后台测试或首帧尚未完成布局、`dimensions == (0, 0)` 时，才使用 `node.width/height * ui_scale` 作为 fallback。socket 近似偏移和 Bezier 最小控制柄仍需乘 `ui_scale`。Frame 子节点直接使用 `location_absolute`，不得再次叠加父级位置。
+坐标合同：该动画使用 Node Editor `POST_VIEW` 绘制。`location_absolute` 是未缩放的节点位置，进入 GPU batch 前必须乘 `preferences.system.ui_scale`；实时 UI 中非零的 `node.dimensions` 已经是最终绘制宽高，必须原样加到缩放后的位置，禁止再次缩放。只有后台测试或首帧尚未完成布局、`dimensions == (0, 0)` 时，才使用 `node.width/height * ui_scale` 作为 fallback。Frame 子节点直接使用 `location_absolute`，不得再次叠加父级位置。折叠节点的 location 是隐藏节点布局基准而非左上角，外框中心线必须按 Blender hidden-node 规则减去半个 header 高度后再套用实时 dimensions。
 
-socket 锚点合同：Blender 4.5 的 Python RNA 不提供 socket UI 坐标。普通 output 必须从节点顶部按可见 output 顺序向下定位；普通 input 必须从节点底部按可见 input 的逆序向上定位，不能同样从顶部开始计数，否则 output 区和 `draw_buttons` 会让所有 input link 整体错行。`hide`、disabled 和 unavailable socket 不参与可见序号。
-
-性能约定：动画关闭时不得注册 redraw timer。开启后使用单一全局 handler 和单一 24 FPS timer；关闭最后一个可视化树、清除编译缓存或注销插件时必须停止 timer。编译器只生成字符串/整数 tuple 快照，不得为动画保留额外 node/socket 强引用。
+性能约定：编译流程标注只使用单一全局 draw handler，禁止注册 redraw timer、读取高频时钟或持续 `tag_redraw`。开关、重新编译、节点布局变化和编辑器自身刷新负责触发重绘。编译器只生成字符串/整数 tuple 快照，不得为标注保留额外 node/socket 强引用。
 
 ### 2. Debug 运行
 
@@ -707,6 +704,14 @@ runtime_timing_sample_interval
 - 禁止让节点显示为了平滑而跨帧平均、EMA 或持续收集所有帧。
 - 禁止新增 timing consumer 却不在本节声明它是“每次执行”还是“低频采样”，以及它是否要求逐 step 时钟。
 - 修改门控、profile 或绘制发布时，必须保留 `tests/test_runtime_timing.py` 的默认 3 秒、deadline、根/子树共享单次墙钟、单样本替换和 schedule reset 回归，并运行 Blender 集成测试。
+
+#### 复杂节点内部阶段端口
+
+取得overlay采样权的普通函数节点会在调用期间获得一个可选`OmniNodeTiming.current()` session。节点或domain可以用`checkpoint(显示文字)`切分连续阶段，也可以用`record(显示文字, seconds)`发布已经由自己的profiler测得的耗时。显示文字由节点原样提供；通用层没有solver阶段标签表，只负责按耗时排序、最多显示8行、合并溢出项和按节点宽度截断。
+
+这条端口不替业务节点决定是否需要常开诊断socket。像MC2这类需要逐次测量并在控制台聚合模拟范围/状态的复杂solver，可以用默认关闭的domain开关创建自己的profiler，再把同一次阶段测量通过`record()`扇出到当前可选session，禁止为浮层重复读一次墙钟。domain开关只控制观察，不进入solver设置指纹、缓存身份或重建判定，也不能读取树RNA或直接调用绘制模块。
+
+嵌套调用必须隔离session：采样子树创建自己的session；未采样子树在执行期间暂停父节点session，不能把子树内部阶段误记到Group节点。普通关闭路径只允许`timing=None`分支；不得读取阶段时钟、创建阶段字典或复制诊断状态。domain显式开启逐次热点诊断后的成本是用户主动选择，不属于低频overlay的默认成本。
 
 #### 帧级统一计时（frame 报告）
 

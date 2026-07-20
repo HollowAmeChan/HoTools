@@ -1,4 +1,5 @@
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 
@@ -11,7 +12,69 @@ class RuntimeTimingSnapshot:
     sample_count: int
     totals: dict
     node_totals: dict
+    node_details: dict
     frame_level: bool
+
+
+class NodeTimingSession:
+    """Optional per-node stage sink owned by the runtime timing observer."""
+
+    __slots__ = ("_cursor", "_totals")
+
+    def __init__(self, started_at=None):
+        self._cursor = None if started_at is None else float(started_at)
+        self._totals = {}
+
+    def restart(self):
+        self._cursor = time.perf_counter()
+
+    def checkpoint(self, stage):
+        stage = str(stage or "").strip()
+        if not stage:
+            raise ValueError("node timing stage must not be empty")
+        now = time.perf_counter()
+        if self._cursor is None:
+            self._cursor = now
+            return 0.0
+        elapsed = max(now - self._cursor, 0.0)
+        self._totals[stage] = self._totals.get(stage, 0.0) + elapsed
+        self._cursor = now
+        return elapsed
+
+    def record(self, stage, seconds):
+        stage = str(stage or "").strip()
+        if not stage:
+            raise ValueError("node timing stage must not be empty")
+        seconds = max(float(seconds), 0.0)
+        self._totals[stage] = self._totals.get(stage, 0.0) + seconds
+
+    def snapshot(self):
+        return dict(self._totals)
+
+
+class OmniNodeTiming:
+    """Expose the active node's optional stage sink without knowing the drawer."""
+
+    _current = ContextVar("omni_node_timing_session", default=None)
+
+    @classmethod
+    def current(cls):
+        return cls._current.get()
+
+    @classmethod
+    def begin_capture(cls, started_at=None):
+        session = NodeTimingSession(started_at=started_at)
+        return cls._current.set(session)
+
+    @classmethod
+    def suspend_capture(cls):
+        return cls._current.set(None)
+
+    @classmethod
+    def end_capture(cls, token):
+        session = cls._current.get()
+        cls._current.reset(token)
+        return session.snapshot() if session is not None else {}
 
 
 class OmniRuntimeTiming:
@@ -80,6 +143,7 @@ class OmniRuntimeTiming:
             "samples": 0,
             "stages": {},
             "nodes": {},
+            "node_details": {},
         }
 
     @classmethod
@@ -95,6 +159,7 @@ class OmniRuntimeTiming:
         console_enabled=False,
         overlay_sampled=False,
         node_stages=None,
+        node_details=None,
     ):
         if not stages or not (console_enabled or overlay_sampled):
             return
@@ -142,6 +207,14 @@ class OmniRuntimeTiming:
                 node_name = node_stages.get(stage)
                 if node_name:
                     bucket["nodes"][node_name] = bucket["nodes"].get(node_name, 0.0) + seconds
+            for node_name, details in (node_details or {}).items():
+                clean_details = {
+                    str(stage): max(float(seconds), 0.0)
+                    for stage, seconds in details.items()
+                    if str(stage).strip() and float(seconds) >= 0.0
+                }
+                if clean_details:
+                    bucket["node_details"][str(node_name)] = clean_details
             profile[cls.OVERLAY] = bucket
 
     @staticmethod
@@ -176,6 +249,10 @@ class OmniRuntimeTiming:
                     sample_count=int(bucket["samples"]),
                     totals=dict(bucket["stages"]),
                     node_totals=dict(bucket["nodes"]),
+                    node_details={
+                        node_name: dict(details)
+                        for node_name, details in bucket["node_details"].items()
+                    },
                     frame_level=bool(profile["frame_level"]),
                 ))
                 profile[consumer] = cls._empty_bucket(now)

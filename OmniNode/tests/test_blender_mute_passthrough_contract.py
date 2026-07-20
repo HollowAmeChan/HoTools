@@ -132,13 +132,16 @@ from HoTools.OmniNode.NodeTree import OmniNodeRegister
 from HoTools.OmniNode.NodeTree import OmniNodeSocket
 from HoTools.OmniNode.NodeTree import OmniNodeTree
 from HoTools.OmniNode.NodeTree import OmniRuntimeState
-from HoTools.OmniNode.NodeTree.OmniTiming import OmniRuntimeTiming
+from HoTools.OmniNode.NodeTree.OmniExecutor import OmniExecutor
+from HoTools.OmniNode.NodeTree.OmniTiming import OmniNodeTiming, OmniRuntimeTiming
 from HoTools.OmniNode.NodeTree.OmniCompiler import OmniCompiler
 from HoTools.OmniNode.NodeTree.OmniIR import (
     CacheReadCall,
     CacheWriteCall,
     CompiledGraph,
     OpCall,
+    RuntimeTimingBeginCall,
+    RuntimeTimingEndCall,
 )
 
 
@@ -245,21 +248,13 @@ try:
     assert passthrough_flow[3] == output.inputs[output_io.uid].identifier
     assert passthrough_flow[5] == (muted.name, muted_upstream.name)
     assert compile_flow["muted_nodes"] == tuple(sorted((muted.name, muted_upstream.name)))
-    assert OmniNodeDraw._compile_flow_node_pulse(0.0, 0, 3) == 1.0
-    assert OmniNodeDraw._compile_flow_link_progress(1.0, 1, 3) == 0.0
-    assert OmniNodeDraw._compile_flow_link_progress(1.5, 1, 3) == 0.5
-    assert OmniNodeDraw._compile_flow_link_progress(2.0, 1, 3) == 1.0
-    assert OmniNodeDraw._compile_flow_node_pulse(2.0, 1, 3) == 1.0
-    assert OmniNodeDraw._compile_flow_muted_pulse(0.5, 0, 1) == 1.0
-    assert OmniNodeDraw._compile_flow_muted_pulse(0.0, 0, 1) == 0.0
-    assert OmniNodeDraw.DrawCompileFlow.REGULAR_COLOR == (1.0, 1.0, 1.0)
-    assert OmniNodeDraw.DrawCompileFlow.MUTED_LINK_COLOR == (1.0, 1.0, 1.0)
-    assert OmniNodeDraw.DrawCompileFlow.MUTED_NODE_COLOR == (1.0, 1.0, 1.0)
-    assert OmniNodeDraw.DrawCompileFlow.ALWAYS_HUE_CYCLES_PER_SECOND >= 0.5
-    assert (
-        OmniNodeDraw.DrawCompileFlow._always_color(0.0, 0)
-        != OmniNodeDraw.DrawCompileFlow._always_color(0.5, 0)
-    )
+    assert OmniNodeDraw.DrawCompileFlow.REGULAR_COLOR == (0.1, 1.0, 0.22)
+    assert OmniNodeDraw.DrawCompileFlow.ALWAYS_RUN_COLOR == (0.15, 0.58, 1.0)
+    assert OmniNodeDraw.DrawCompileFlow.MUTED_NODE_COLOR == (0.1, 1.0, 0.22)
+    assert not hasattr(OmniNodeDraw, "_compile_flow_sequence_position")
+    assert not hasattr(OmniNodeDraw, "_compile_flow_node_pulse")
+    assert not hasattr(OmniNodeDraw, "_compile_flow_link_progress")
+    assert not hasattr(OmniNodeDraw, "_compile_flow_muted_pulse")
 
     scale = bpy.context.preferences.system.ui_scale
     bounds_node = types.SimpleNamespace(
@@ -294,105 +289,49 @@ try:
         50.0 * scale,
     )
 
-    def anchor_socket(identifier, **state):
-        return types.SimpleNamespace(identifier=identifier, **state)
-
-    anchor_node = types.SimpleNamespace(
+    collapsed_node = types.SimpleNamespace(
         absolute_location=None,
-        location_absolute=(10.0, 100.0),
-        dimensions=(140.0, 220.0),
+        location_absolute=(40.0, 80.0),
+        dimensions=(210.0, 43.5),
         width=140.0,
-        height=220.0,
-        hide=False,
+        height=100.0,
+        hide=True,
         parent=None,
-        outputs=(anchor_socket("out_a"), anchor_socket("out_b")),
-        inputs=(
-            anchor_socket("in_a"),
-            anchor_socket("hidden", hide=True),
-            anchor_socket("in_b"),
-            anchor_socket("disabled", enabled=False),
-            anchor_socket("in_c"),
-        ),
+        outputs=(),
+        inputs=(),
     )
-    anchor_left, anchor_bottom, anchor_right, anchor_top = (
-        OmniNodeDraw.DrawCompileFlow._node_bounds(anchor_node)
+    _left, collapsed_bottom, _right, collapsed_top = (
+        OmniNodeDraw.DrawCompileFlow._node_bounds(collapsed_node)
     )
-    row_height = OmniNodeDraw.DrawCompileFlow.SOCKET_ROW_HEIGHT * scale
-    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
-        anchor_node, "out_b", True
-    ) == (
-        anchor_right,
-        anchor_top - OmniNodeDraw.DrawCompileFlow.OUTPUT_SOCKET_TOP * scale - row_height,
+    collapsed_origin_y = OmniNodeDraw.DrawCompileFlow._pixel_round(80.0 * scale)
+    assert (collapsed_top + collapsed_bottom) * 0.5 == (
+        collapsed_origin_y
+        - OmniNodeDraw.DrawCompileFlow.COLLAPSED_HEADER_HALF_HEIGHT * scale
     )
-    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
-        anchor_node, "in_a", False
-    ) == (
-        anchor_left,
-        anchor_bottom + OmniNodeDraw.DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale + 2 * row_height,
+    assert collapsed_top - collapsed_bottom == 43.5
+    assert not hasattr(OmniNodeDraw.DrawCompileFlow, "_draw_link")
+    assert not hasattr(OmniNodeDraw.DrawCompileFlow, "_socket_anchor")
+    assert not hasattr(OmniNodeDraw.DrawCompileFlow, "_draw_colored_polyline")
+
+    assert OmniNodeDraw.DrawRuntimeTiming.detail_rows(0.001, {}) == []
+    raw_rows = OmniNodeDraw.DrawRuntimeTiming.detail_rows(
+        0.003,
+        {"节点提供的原样文字": 0.002},
     )
-    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
-        anchor_node, "in_c", False
-    ) == (
-        anchor_left,
-        anchor_bottom + OmniNodeDraw.DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale,
+    assert raw_rows == [
+        ("节点提供的原样文字", 0.002),
+        ("其他", 0.001),
+    ]
+    overflow_rows = OmniNodeDraw.DrawRuntimeTiming.detail_rows(
+        0.010,
+        {
+            **{f"阶段{index}": 0.001 for index in range(9)},
+            "其他": 0.001,
+        },
     )
-
-    node_theme = bpy.context.preferences.themes[0].node_editor
-    original_noodle_curving = node_theme.noodle_curving
-    try:
-        node_theme.noodle_curving = 0
-        straight_points = OmniNodeDraw.DrawCompileFlow._link_segment_points(
-            (0.0, 10.0), (30.0, 40.0), count=4
-        )
-        assert straight_points == [
-            (0.0, 10.0),
-            (10.0, 20.0),
-            (20.0, 30.0),
-            (30.0, 40.0),
-        ]
-        node_theme.noodle_curving = 5
-        curved_points = OmniNodeDraw.DrawCompileFlow._link_segment_points(
-            (0.0, 10.0), (30.0, 40.0), count=4
-        )
-        assert curved_points[0] == (0.0, 10.0)
-        assert curved_points[-1] == (30.0, 40.0)
-        assert curved_points[1] != straight_points[1]
-    finally:
-        node_theme.noodle_curving = original_noodle_curving
-
-    drawn_flow = {"colored_points": (), "labels": []}
-    original_polyline = OmniNodeDraw.DrawSocketView.draw_polyline
-    original_label = OmniNodeDraw.DrawSocketView.draw_label
-    original_colored = OmniNodeDraw.DrawCompileFlow._draw_colored_polyline
-
-    def capture_label(text, *args, **kwargs):
-        drawn_flow["labels"].append(text)
-
-    def capture_colored(points, colors, width=2.0):
-        drawn_flow["colored_points"] = tuple(points)
-
-    OmniNodeDraw.DrawSocketView.draw_polyline = staticmethod(lambda *args, **kwargs: None)
-    OmniNodeDraw.DrawSocketView.draw_label = staticmethod(capture_label)
-    OmniNodeDraw.DrawCompileFlow._draw_colored_polyline = staticmethod(capture_colored)
-    try:
-        output_index = flow_node_names.index(output.name)
-        transfer_position = (output_index * 2.0 - 0.5) % (len(flow_node_names) * 2.0)
-        progress = OmniNodeDraw.DrawCompileFlow._draw_link(
-            tree,
-            passthrough_flow,
-            output_index,
-            len(flow_node_names),
-            transfer_position,
-            0.0,
-            {name for name, enabled in flow_node_flags.items() if enabled},
-        )
-    finally:
-        OmniNodeDraw.DrawSocketView.draw_polyline = staticmethod(original_polyline)
-        OmniNodeDraw.DrawSocketView.draw_label = staticmethod(original_label)
-        OmniNodeDraw.DrawCompileFlow._draw_colored_polyline = staticmethod(original_colored)
-    assert progress == 0.5
-    assert len(drawn_flow["colored_points"]) > 32
-    assert f"r{passthrough_flow[4]}" in drawn_flow["labels"]
+    assert len(overflow_rows) == OmniNodeDraw.DrawRuntimeTiming.MAX_DETAIL_ROWS
+    assert [label for label, _seconds in overflow_rows].count("其他") == 1
+    assert abs(sum(seconds for _label, seconds in overflow_rows) - 0.010) < 1e-12
 
     def state_owner(value, amount):
         return value, amount
@@ -482,15 +421,14 @@ try:
     cache_tree.compile_cached(force=True)
 
     assert cache_tree.show_compile_flow is False
-    assert cache_tree.compile_flow_cycle_duration == 4.0
+    assert not hasattr(cache_tree, "compile_flow_cycle_duration")
     cache_tree.show_compile_flow = True
     compile_flow_key = int(cache_tree.as_pointer())
     assert compile_flow_key in OmniNodeDraw._COMPILE_FLOW_TREES
-    cache_tree.compile_flow_cycle_duration = 5.0
-    assert cache_tree.compile_flow_cycle_duration == 5.0
     cache_tree.show_compile_flow = False
     assert compile_flow_key not in OmniNodeDraw._COMPILE_FLOW_TREES
-    assert OmniNodeDraw.DrawCompileFlow._timer_running is False
+    assert not hasattr(OmniNodeDraw.DrawCompileFlow, "animation_timer")
+    assert not hasattr(OmniNodeDraw.DrawCompileFlow, "_timer_running")
 
     assert cache_tree.debug_runtime_timing is False
     assert cache_tree.show_runtime_timing is False
@@ -520,6 +458,55 @@ try:
     assert cache_read.name in timing_payload
     cache_tree.show_runtime_timing = False
     assert int(cache_tree.as_pointer()) not in OmniNodeDraw._RUNTIME_TIMING_TREES
+
+    class TimingNode:
+        name = "TimingProbe"
+        bl_idname = "HO_TestTimingProbe"
+        omni_runtime_uid = "timing-probe"
+
+        @staticmethod
+        def set_bug_state(exc):
+            raise AssertionError(f"timing probe failed: {exc}")
+
+    def publish_timing_detail():
+        session = OmniNodeTiming.current()
+        assert session is not None
+        session.record("节点自报阶段", 0.002)
+        return 7
+
+    timing_graph = CompiledGraph()
+    timing_call = OpCall(
+        publish_timing_detail,
+        [],
+        [0],
+        TimingNode(),
+        has_always_run=True,
+    )
+    timing_call._init_lazy_fields()
+    timing_graph.instructions = (
+        RuntimeTimingBeginCall("TimingProbeTree", cache_tree),
+        timing_call,
+        RuntimeTimingEndCall("TimingProbeTree", cache_tree),
+    )
+    timing_graph.reg_count = 1
+    timing_graph.output_regs = {"result": 0}
+    timing_graph.tree_name = "TimingProbeTree"
+    timing_graph.tree_ref = cache_tree
+    timing_graph.runtime_timing_tree_key = "timing-probe-tree"
+    OmniRuntimeTiming.clear_tree(cache_tree)
+    result = OmniExecutor.run(timing_graph, overlay_sampled=True)
+    assert result == {"result": 7}
+    timing_snapshots = [
+        snapshot
+        for snapshot in OmniRuntimeTiming.flush()
+        if snapshot.consumer == OmniRuntimeTiming.OVERLAY
+        and snapshot.tree_name == "TimingProbeTree"
+    ]
+    assert len(timing_snapshots) == 1
+    assert timing_snapshots[0].node_details == {
+        "TimingProbe": {"节点自报阶段": 0.002}
+    }
+    OmniRuntimeTiming.clear_tree(cache_tree)
 
     cache_tree.debug_runtime_timing = True
     assert OmniRuntimeTiming.is_enabled(cache_tree)

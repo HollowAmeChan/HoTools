@@ -10,6 +10,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _MODULE
 _SPEC.loader.exec_module(_MODULE)
 OmniRuntimeTiming = _MODULE.OmniRuntimeTiming
+OmniNodeTiming = _MODULE.OmniNodeTiming
 
 
 class _Tree:
@@ -86,12 +87,16 @@ def test_console_aggregates_while_overlay_keeps_one_direct_sample():
         console_enabled=True,
         overlay_sampled=True,
         node_stages={"step1:Slow:call": "Slow"},
+        node_details={"Slow": {"solver.step": 0.003, "exchange.publish": 0.0002}},
     )
 
     snapshots = OmniRuntimeTiming.flush()
     assert [item.consumer for item in snapshots] == [OmniRuntimeTiming.OVERLAY]
     assert snapshots[0].sample_count == 1
     assert snapshots[0].node_totals == {"Slow": 0.004}
+    assert snapshots[0].node_details == {
+        "Slow": {"solver.step": 0.003, "exchange.publish": 0.0002}
+    }
 
     snapshots = OmniRuntimeTiming.flush(force=True)
     assert [item.consumer for item in snapshots] == [OmniRuntimeTiming.CONSOLE]
@@ -134,6 +139,41 @@ def test_clearing_overlay_resets_sampling_schedule():
     assert OmniRuntimeTiming.take_overlay_sample(tree, now=21.0)
 
 
+def test_node_timing_capture_is_nested_and_explicit():
+    assert OmniNodeTiming.current() is None
+    outer_token = OmniNodeTiming.begin_capture(started_at=10.0)
+    outer = OmniNodeTiming.current()
+    outer.record("frame.prepare", 0.002)
+    suspended_token = OmniNodeTiming.suspend_capture()
+    assert OmniNodeTiming.current() is None
+    assert OmniNodeTiming.end_capture(suspended_token) == {}
+    assert OmniNodeTiming.current() is outer
+    inner_token = OmniNodeTiming.begin_capture(started_at=20.0)
+    inner = OmniNodeTiming.current()
+    inner.record("solver.step", 0.004)
+    assert OmniNodeTiming.end_capture(inner_token) == {"solver.step": 0.004}
+    assert OmniNodeTiming.current() is outer
+    outer.record("exchange.publish", 0.001)
+    assert OmniNodeTiming.end_capture(outer_token) == {
+        "frame.prepare": 0.002,
+        "exchange.publish": 0.001,
+    }
+    assert OmniNodeTiming.current() is None
+
+
+def test_inactive_node_timing_port_does_not_read_the_clock():
+    assert OmniNodeTiming.current() is None
+    original = _MODULE.time.perf_counter
+    try:
+        def unexpected_clock_read():
+            raise AssertionError("inactive node timing port must not read perf_counter")
+
+        _MODULE.time.perf_counter = unexpected_clock_read
+        assert OmniNodeTiming.current() is None
+    finally:
+        _MODULE.time.perf_counter = original
+
+
 def main():
     tests = (
         test_overlay_sampling_defaults_to_three_seconds,
@@ -142,6 +182,8 @@ def main():
         test_console_aggregates_while_overlay_keeps_one_direct_sample,
         test_new_overlay_sample_replaces_instead_of_averaging,
         test_clearing_overlay_resets_sampling_schedule,
+        test_node_timing_capture_is_nested_and_explicit,
+        test_inactive_node_timing_port_does_not_read_the_clock,
     )
     for test in tests:
         test()
