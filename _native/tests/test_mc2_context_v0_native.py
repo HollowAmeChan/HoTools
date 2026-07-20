@@ -1419,7 +1419,11 @@ def test_point_collision_projection_and_post():
         rotations = np.array([[0, 0, 0, 1]], dtype=np.float32)
         update_dynamic(context, 1, 0, zero, rotations)
         hotools_native.mc2_context_v0_reset(context)
-        step(context, 1.0 / 90.0)
+        assert hotools_native.mc2_context_v0_inspect(context)[
+            "external_contact_debug_count"
+        ] == 0
+        hotools_native.mc2_context_v0_set_debug_external_contacts(context, True)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
         output = np.empty_like(zero)
         output_rotations = np.empty_like(rotations)
         hotools_native.mc2_context_v0_read(context, output, output_rotations)
@@ -1427,6 +1431,33 @@ def test_point_collision_projection_and_post():
         info = hotools_native.mc2_context_v0_inspect(context)
         assert info["point_collision_solve_count"] == 1
         assert info["distance_solve_count"] == 0
+        assert info["external_contact_debug_requested"] is True
+        assert info["external_contact_debug_ready"] is True
+        contact_count = info["external_contact_debug_count"]
+        assert contact_count == 1
+        kinds = np.empty(contact_count, dtype=np.int32)
+        primitives = np.empty(contact_count, dtype=np.int32)
+        colliders = np.empty(contact_count, dtype=np.int32)
+        contact_positions = np.empty((contact_count, 3), dtype=np.float32)
+        contact_normals = np.empty((contact_count, 3), dtype=np.float32)
+        corrections = np.empty((contact_count, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_external_contacts(
+            context,
+            kinds,
+            primitives,
+            colliders,
+            contact_positions,
+            contact_normals,
+            corrections,
+        )
+        np.testing.assert_array_equal(kinds, (0,))
+        np.testing.assert_array_equal(primitives, (0,))
+        np.testing.assert_array_equal(colliders, (0,))
+        assert np.linalg.norm(corrections[0]) > 0.0
+        hotools_native.mc2_context_v0_set_debug_external_contacts(context, False)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["external_contact_debug_requested"] is False
+        assert info["external_contact_debug_count"] == 0
     finally:
         hotools_native.mc2_context_v0_free(context)
 
@@ -1502,7 +1533,7 @@ def test_edge_collision_projection_and_post():
         )
         rotations = np.zeros((3, 4), dtype=np.float32)
         rotations[:, 3] = 1.0
-        centers = np.array([[0.5, -0.1, 0.0]], dtype=np.float32)
+        centers = np.array([[0.5, 0.01, 0.0]], dtype=np.float32)
         segments = centers.copy()
         hotools_native.mc2_context_v0_update_colliders(
             context, 1,
@@ -1512,7 +1543,8 @@ def test_edge_collision_projection_and_post():
         )
         update_dynamic(context, 1, 0, positions, rotations)
         hotools_native.mc2_context_v0_reset(context)
-        step(context, 1.0 / 90.0)
+        hotools_native.mc2_context_v0_set_debug_external_contacts(context, True)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
         output = np.empty_like(positions)
         output_rotations = np.empty_like(rotations)
         hotools_native.mc2_context_v0_read(context, output, output_rotations)
@@ -1521,6 +1553,26 @@ def test_edge_collision_projection_and_post():
         assert info["edge_collision_solve_count"] == 1
         assert info["point_collision_solve_count"] == 0
         assert info["distance_solve_count"] == 0
+        contact_count = info["external_contact_debug_count"]
+        assert contact_count > 0
+        kinds = np.empty(contact_count, dtype=np.int32)
+        primitives = np.empty(contact_count, dtype=np.int32)
+        colliders = np.empty(contact_count, dtype=np.int32)
+        contact_positions = np.empty((contact_count, 3), dtype=np.float32)
+        contact_normals = np.empty((contact_count, 3), dtype=np.float32)
+        corrections = np.empty((contact_count, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_external_contacts(
+            context,
+            kinds,
+            primitives,
+            colliders,
+            contact_positions,
+            contact_normals,
+            corrections,
+        )
+        assert np.all(kinds == 1)
+        assert np.all(colliders == 0)
+        assert np.max(np.linalg.norm(corrections, axis=1)) > 0.0
     finally:
         hotools_native.mc2_context_v0_free(context)
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mc2_kernels.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -103,6 +105,8 @@ struct Mc2ContextV0 {
     bool center_result_ready = false;
     bool dynamic_ready = false;
     bool component_pose_ready = false;
+    bool external_contact_debug_requested = false;
+    bool external_contact_debug_ready = false;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -135,6 +139,7 @@ struct Mc2ContextV0 {
     std::vector<float> particle_static_friction;
     std::vector<float> particle_collision_normals;
     std::vector<float> particle_real_velocities;
+    std::vector<hotools::Mc2ExternalCollisionDebugRecord> external_contact_debug_records;
     std::vector<float> animated_base_positions;
     std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;

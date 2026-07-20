@@ -1365,6 +1365,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->particle_real_velocities.assign(static_cast<std::size_t>(context->vertex_count) * 3, 0.0f);
     context->step_basic_positions = context->dynamic_positions;
     context->step_basic_rotations = context->dynamic_rotations;
+    context->external_contact_debug_records.clear();
+    context->external_contact_debug_ready = false;
     context->center_dynamic_ready = false;
     context->center_frame_ready = false;
     context->center_result_ready = false;
@@ -1406,6 +1408,24 @@ PyObject* mc2_context_v0_set_tether_enabled(PyObject*, PyObject* args) {
     const int enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, 1));
     if (enabled < 0) return nullptr;
     context->tether_enabled = enabled != 0;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_set_debug_external_contacts(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_set_debug_external_contacts expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const int requested = PyObject_IsTrue(PyTuple_GET_ITEM(args, 1));
+    if (requested < 0) return nullptr;
+    context->external_contact_debug_requested = requested != 0;
+    context->external_contact_debug_ready = false;
+    context->external_contact_debug_records.clear();
     Py_RETURN_NONE;
 }
 

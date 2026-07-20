@@ -806,6 +806,13 @@ class MC2NativeContextV0:
         result["debug_readback_count"] = self.debug_readback_count
         return result
 
+    def set_debug_external_contacts(self, requested: bool) -> None:
+        self._ensure_live()
+        self._module.mc2_context_v0_set_debug_external_contacts(
+            self._handle,
+            bool(requested),
+        )
+
     @staticmethod
     def _debug_array(values) -> np.ndarray:
         result = np.array(values, copy=True, order="C")
@@ -825,6 +832,7 @@ class MC2NativeContextV0:
         include_dynamics: bool = False,
         include_distance_tether: bool = False,
         include_bending: bool = False,
+        include_external_contacts: bool = False,
         include_self_primitives: bool = False,
         include_self_grid: bool = False,
         include_self_candidates: bool = False,
@@ -943,6 +951,34 @@ class MC2NativeContextV0:
                 "quads": self._debug_array(quads),
                 "rests": self._debug_array(rests),
                 "markers": self._debug_array(markers),
+            }
+            readbacks += 1
+        if include_external_contacts and bool(
+            info.get("external_contact_debug_ready", False)
+        ):
+            contact_count = int(info.get("external_contact_debug_count", 0) or 0)
+            primitive_kinds = np.empty((contact_count,), dtype=np.int32)
+            primitive_indices = np.empty((contact_count,), dtype=np.int32)
+            collider_indices = np.empty((contact_count,), dtype=np.int32)
+            contact_positions = np.empty((contact_count, 3), dtype=np.float32)
+            contact_normals = np.empty((contact_count, 3), dtype=np.float32)
+            contact_corrections = np.empty((contact_count, 3), dtype=np.float32)
+            self._module.mc2_context_v0_read_debug_external_contacts(
+                self._handle,
+                primitive_kinds,
+                primitive_indices,
+                collider_indices,
+                contact_positions,
+                contact_normals,
+                contact_corrections,
+            )
+            snapshot["external_contacts"] = {
+                "primitive_kinds": self._debug_array(primitive_kinds),
+                "primitive_indices": self._debug_array(primitive_indices),
+                "collider_indices": self._debug_array(collider_indices),
+                "positions": self._debug_array(contact_positions),
+                "normals": self._debug_array(contact_normals),
+                "corrections": self._debug_array(contact_corrections),
             }
             readbacks += 1
         include_any_self = bool(

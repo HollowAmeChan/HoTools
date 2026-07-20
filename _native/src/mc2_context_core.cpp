@@ -105,6 +105,7 @@ void release_resources(Mc2ContextV0& context) {
     context.particle_static_friction.clear();
     context.particle_collision_normals.clear();
     context.particle_real_velocities.clear();
+    context.external_contact_debug_records.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -3187,6 +3188,9 @@ void solve_point_collision_once(Mc2ContextV0& context) {
     view.collider_count = static_cast<std::int64_t>(context.collider_types.size());
     view.collided_by_groups = context.collided_by_groups;
     view.soft_sphere = is_spring;
+    view.debug_contacts = context.external_contact_debug_requested
+        ? &context.external_contact_debug_records
+        : nullptr;
     project_collisions_mc2(view);
     ++context.point_collision_solve_count;
 }
@@ -3224,6 +3228,9 @@ void solve_edge_collision_once(Mc2ContextV0& context) {
     view.collider_count = static_cast<std::int64_t>(context.collider_types.size());
     view.collided_by_groups = context.collided_by_groups;
     view.move_attribute_mask = 0x02u;
+    view.debug_contacts = context.external_contact_debug_requested
+        ? &context.external_contact_debug_records
+        : nullptr;
     project_edge_collisions_mc2(view);
     ++context.edge_collision_solve_count;
 }
@@ -3266,6 +3273,10 @@ bool begin_mc2_context_step(
     Mc2ContextStepStateV0& state
 ) {
     state.context = &context;
+    if (context.external_contact_debug_requested) {
+        context.external_contact_debug_records.clear();
+        context.external_contact_debug_ready = false;
+    }
     state.center_step_active = context.center_dynamic_ready;
     if (state.center_step_active && !evaluate_center_step(context, dt)) {
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
@@ -3299,6 +3310,9 @@ void finish_mc2_context_step(
     if (context.proxy_static_ready) {
         commit_particle_post(context, dt, state.previous_positions);
         if (is_final_substep) solve_self_collision_intersections_final(context);
+    }
+    if (context.external_contact_debug_requested && is_final_substep) {
+        context.external_contact_debug_ready = true;
     }
     if (state.center_step_active) {
         context.center_old_world_position = context.center_now_world_position;
@@ -3547,6 +3561,7 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(particle_static_friction);
     MC2_ADD_VECTOR_BYTES(particle_collision_normals);
     MC2_ADD_VECTOR_BYTES(particle_real_velocities);
+    MC2_ADD_VECTOR_BYTES(external_contact_debug_records);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -3725,6 +3740,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "motion_solve_count", context.motion_solve_count) ||
         !dict_i64(result, "point_collision_solve_count", context.point_collision_solve_count) ||
         !dict_i64(result, "edge_collision_solve_count", context.edge_collision_solve_count) ||
+        !dict_i64(
+            result,
+            "external_contact_debug_count",
+            static_cast<std::int64_t>(context.external_contact_debug_records.size())
+        ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||
         !dict_i64(result, "self_grid_update_count", context.self_grid_update_count) ||
         !dict_i64(result, "self_candidate_update_count", context.self_candidate_update_count) ||
@@ -3790,6 +3810,16 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
         !dict_bool(result, "component_pose_ready", context.component_pose_ready) ||
+        !dict_bool(
+            result,
+            "external_contact_debug_requested",
+            context.external_contact_debug_requested
+        ) ||
+        !dict_bool(
+            result,
+            "external_contact_debug_ready",
+            context.external_contact_debug_ready
+        ) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
         !dict_bool(result, "bone_static_ready", context.bone_static_ready) ||

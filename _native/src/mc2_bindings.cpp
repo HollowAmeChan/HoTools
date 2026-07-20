@@ -194,6 +194,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_setup_kind, a); });
     m.def("mc2_context_v0_set_tether_enabled",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_tether_enabled, a); });
+    m.def("mc2_context_v0_set_debug_external_contacts",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_set_debug_external_contacts, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_apply_center_negative_scale_teleport",
@@ -256,6 +258,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_distance_tether, a); });
     m.def("mc2_context_v0_read_debug_bending",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_bending, a); });
+    m.def("mc2_context_v0_read_debug_external_contacts",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_external_contacts, a); });
     m.def("mc2_context_v0_read_center_step",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",

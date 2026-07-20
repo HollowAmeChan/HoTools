@@ -1307,6 +1307,22 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 correction_y = projected_y - origin_y;
                 correction_z = projected_z - origin_z;
             }
+            if (view.debug_contacts != nullptr) {
+                Mc2ExternalCollisionDebugRecord record;
+                record.primitive_kind = 0;
+                record.primitive_index = static_cast<std::int32_t>(vertex);
+                record.collider_index = static_cast<std::int32_t>(collider);
+                record.position[0] = origin_x + correction_x;
+                record.position[1] = origin_y + correction_y;
+                record.position[2] = origin_z + correction_z;
+                record.normal[0] = normal_x;
+                record.normal[1] = normal_y;
+                record.normal[2] = normal_z;
+                record.correction[0] = correction_x;
+                record.correction[1] = correction_y;
+                record.correction[2] = correction_z;
+                view.debug_contacts->push_back(record);
+            }
             add_x += correction_x;
             add_y += correction_y;
             add_z += correction_z;
@@ -1807,6 +1823,28 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
                 continue;
             }
             if (dist <= 0.0f) {
+                if (view.debug_contacts != nullptr) {
+                    Mc2ExternalCollisionDebugRecord record;
+                    record.primitive_kind = 1;
+                    record.primitive_index = static_cast<std::int32_t>(edge_index);
+                    record.collider_index = static_cast<std::int32_t>(collider);
+                    record.position[0] = (out0[0] + out1[0]) * 0.5f;
+                    record.position[1] = (out0[1] + out1[1]) * 0.5f;
+                    record.position[2] = (out0[2] + out1[2]) * 0.5f;
+                    record.normal[0] = normal[0];
+                    record.normal[1] = normal[1];
+                    record.normal[2] = normal[2];
+                    record.correction[0] = (
+                        (out0[0] - p0x) + (out1[0] - p1x)
+                    ) * 0.5f;
+                    record.correction[1] = (
+                        (out0[1] - p0y) + (out1[1] - p1y)
+                    ) * 0.5f;
+                    record.correction[2] = (
+                        (out0[2] - p0z) + (out1[2] - p1z)
+                    ) * 0.5f;
+                    view.debug_contacts->push_back(record);
+                }
                 add0[0] += out0[0] - p0x;
                 add0[1] += out0[1] - p0y;
                 add0[2] += out0[2] - p0z;

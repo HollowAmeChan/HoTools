@@ -1125,6 +1125,81 @@ PyObject* mc2_context_v0_read_debug_bending(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_external_contacts(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 7) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_external_contacts expects 7 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->external_contact_debug_requested ||
+        !context->external_contact_debug_ready) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 external contact debug was not requested or is not ready"
+        );
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(
+        context->external_contact_debug_records.size()
+    );
+    Buffer primitive_kinds, primitive_indices, collider_indices;
+    Buffer positions, normals, corrections;
+    Buffer* integer_buffers[] = {
+        &primitive_kinds, &primitive_indices, &collider_indices
+    };
+    const char* integer_names[] = {
+        "out_primitive_kinds", "out_primitive_indices", "out_collider_indices"
+    };
+    for (std::size_t index = 0; index < 3; ++index) {
+        if (!integer_buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                integer_names[index]
+            ) ||
+            !expect_int32(*integer_buffers[index], integer_names[index]) ||
+            !expect_1d_array(*integer_buffers[index], integer_names[index], count)) {
+            return nullptr;
+        }
+    }
+    Buffer* vector_buffers[] = {&positions, &normals, &corrections};
+    const char* vector_names[] = {
+        "out_positions", "out_normals", "out_corrections"
+    };
+    for (std::size_t index = 0; index < 3; ++index) {
+        if (!vector_buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 4)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                vector_names[index]
+            ) ||
+            !expect_float32(*vector_buffers[index], vector_names[index]) ||
+            !expect_2d(*vector_buffers[index], vector_names[index], count, 3)) {
+            return nullptr;
+        }
+    }
+    auto* kinds = static_cast<std::int32_t*>(primitive_kinds.view.buf);
+    auto* primitives = static_cast<std::int32_t*>(primitive_indices.view.buf);
+    auto* colliders = static_cast<std::int32_t*>(collider_indices.view.buf);
+    auto* position_values = static_cast<float*>(positions.view.buf);
+    auto* normal_values = static_cast<float*>(normals.view.buf);
+    auto* correction_values = static_cast<float*>(corrections.view.buf);
+    for (std::size_t index = 0; index < context->external_contact_debug_records.size(); ++index) {
+        const auto& record = context->external_contact_debug_records[index];
+        kinds[index] = record.primitive_kind;
+        primitives[index] = record.primitive_index;
+        colliders[index] = record.collider_index;
+        for (std::size_t component = 0; component < 3; ++component) {
+            position_values[index * 3 + component] = record.position[component];
+            normal_values[index * 3 + component] = record.normal[component];
+            correction_values[index * 3 + component] = record.correction[component];
+        }
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 8) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_center_step expects 8 arguments");

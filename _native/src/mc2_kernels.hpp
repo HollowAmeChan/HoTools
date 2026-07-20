@@ -1,8 +1,18 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace hotools {
+
+struct Mc2ExternalCollisionDebugRecord {
+    std::int32_t primitive_kind = 0;
+    std::int32_t primitive_index = -1;
+    std::int32_t collider_index = -1;
+    float position[3] {};
+    float normal[3] {};
+    float correction[3] {};
+};
 
 struct Mc2NeighborConstraintView {
     float* positions = nullptr;
@@ -89,6 +99,7 @@ struct Mc2CollisionView {
     std::int64_t collider_count = 0;
     std::int32_t collided_by_groups = 0;
     bool soft_sphere = false;
+    std::vector<Mc2ExternalCollisionDebugRecord>* debug_contacts = nullptr;
 };
 
 struct Mc2EdgeCollisionView {
@@ -113,6 +124,7 @@ struct Mc2EdgeCollisionView {
     std::int64_t collider_count = 0;
     std::int32_t collided_by_groups = 0;
     std::uint8_t move_attribute_mask = 1u << 2u;
+    std::vector<Mc2ExternalCollisionDebugRecord>* debug_contacts = nullptr;
 };
 
 struct Mc2SelfCollisionView {
