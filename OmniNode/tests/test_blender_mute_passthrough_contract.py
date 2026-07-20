@@ -252,6 +252,47 @@ try:
     assert OmniNodeDraw._compile_flow_node_pulse(2.0, 1, 3) == 1.0
     assert OmniNodeDraw._compile_flow_muted_pulse(0.5, 0, 1) == 1.0
     assert OmniNodeDraw._compile_flow_muted_pulse(0.0, 0, 1) == 0.0
+    assert OmniNodeDraw.DrawCompileFlow.REGULAR_COLOR == (1.0, 1.0, 1.0)
+    assert OmniNodeDraw.DrawCompileFlow.MUTED_LINK_COLOR == (1.0, 1.0, 1.0)
+    assert OmniNodeDraw.DrawCompileFlow.MUTED_NODE_COLOR == (1.0, 1.0, 1.0)
+    assert OmniNodeDraw.DrawCompileFlow.ALWAYS_HUE_CYCLES_PER_SECOND >= 0.5
+    assert (
+        OmniNodeDraw.DrawCompileFlow._always_color(0.0, 0)
+        != OmniNodeDraw.DrawCompileFlow._always_color(0.5, 0)
+    )
+
+    scale = bpy.context.preferences.system.ui_scale
+    bounds_node = types.SimpleNamespace(
+        absolute_location=None,
+        location_absolute=(12.0, 50.0),
+        dimensions=(140.0, 80.0),
+        width=140.0,
+        height=80.0,
+        hide=False,
+        parent=None,
+    )
+    assert OmniNodeDraw.DrawCompileFlow._node_bounds(bounds_node) == (
+        12.0 * scale,
+        50.0 * scale - 80.0,
+        12.0 * scale + 140.0,
+        50.0 * scale,
+    )
+
+    fallback_bounds_node = types.SimpleNamespace(
+        absolute_location=None,
+        location_absolute=(12.0, 50.0),
+        dimensions=(0.0, 0.0),
+        width=140.0,
+        height=80.0,
+        hide=False,
+        parent=None,
+    )
+    assert OmniNodeDraw.DrawCompileFlow._node_bounds(fallback_bounds_node) == (
+        12.0 * scale,
+        -30.0 * scale,
+        152.0 * scale,
+        50.0 * scale,
+    )
 
     drawn_flow = {"colored_points": (), "labels": []}
     original_polyline = OmniNodeDraw.DrawSocketView.draw_polyline

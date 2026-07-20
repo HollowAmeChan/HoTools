@@ -723,10 +723,15 @@ class DrawCompileFlow:
 
     GLOBAL_OVERLAY_ID = "omni_compile_flow::global"
     TIMER_INTERVAL = 1.0 / 24.0
-    REGULAR_COLOR = (0.18, 0.78, 1.0)
-    MUTED_LINK_COLOR = (1.0, 0.55, 0.12)
-    MUTED_NODE_COLOR = (1.0, 0.55, 0.12)
+    REGULAR_COLOR = (1.0, 1.0, 1.0)
+    MUTED_LINK_COLOR = (1.0, 1.0, 1.0)
+    MUTED_NODE_COLOR = (1.0, 1.0, 1.0)
+    ALWAYS_HUE_CYCLES_PER_SECOND = 0.65
     _timer_running = False
+
+    @staticmethod
+    def _ui_scale():
+        return float(bpy.context.preferences.system.ui_scale)
 
     @staticmethod
     def _node_bounds(node):
@@ -734,10 +739,22 @@ class DrawCompileFlow:
         try:
             width, height = map(float, node.dimensions)
         except (TypeError, ValueError):
-            width, height = _get_node_width(node, 140.0), 80.0
-        width = max(_get_node_width(node, width), 24.0)
-        height = max(height, 24.0)
-        return left, top - height, left + width, top
+            width, height = 0.0, 0.0
+        scale = DrawCompileFlow._ui_scale()
+        if width <= 0.0:
+            width = _get_node_width(node, 140.0) * scale
+        if height <= 0.0:
+            height = float(getattr(node, "height", 80.0)) * scale
+        width = max(width, 24.0 * scale)
+        height = max(height, 24.0 * scale)
+        left *= scale
+        top *= scale
+        return (
+            left,
+            top - height,
+            left + width,
+            top,
+        )
 
     @staticmethod
     def _socket_anchor(node, identifier, is_output):
@@ -745,6 +762,7 @@ class DrawCompileFlow:
         if getattr(node, "hide", False):
             return (right if is_output else left), (top + bottom) * 0.5
 
+        scale = DrawCompileFlow._ui_scale()
         sockets = getattr(node, "outputs" if is_output else "inputs", ())
         visible = [sock for sock in sockets if not getattr(sock, "hide", False)]
         index = 0
@@ -752,10 +770,13 @@ class DrawCompileFlow:
             if getattr(sock, "identifier", None) == identifier:
                 index = socket_index
                 break
-        available = max((top - bottom) - 38.0, 16.0)
-        spacing = min(22.0, max(14.0, available / max(len(visible), 1)))
-        y = top - 34.0 - index * spacing
-        return (right if is_output else left), max(bottom + 8.0, y)
+        available = max((top - bottom) - 38.0 * scale, 16.0 * scale)
+        spacing = min(
+            22.0 * scale,
+            max(14.0 * scale, available / max(len(visible), 1)),
+        )
+        y = top - 34.0 * scale - index * spacing
+        return (right if is_output else left), max(bottom + 8.0 * scale, y)
 
     @staticmethod
     def _node_side_anchor(node, is_output):
@@ -767,7 +788,10 @@ class DrawCompileFlow:
         count = max(int(count), 2)
         x0, y0 = start
         x3, y3 = end
-        handle = max(abs(x3 - x0) * 0.5, 36.0)
+        handle = max(
+            abs(x3 - x0) * 0.5,
+            36.0 * DrawCompileFlow._ui_scale(),
+        )
         x1, y1 = x0 + handle, y0
         x2, y2 = x3 - handle, y3
         points = []
@@ -802,7 +826,10 @@ class DrawCompileFlow:
 
     @staticmethod
     def _always_color(elapsed, index):
-        hue = (float(elapsed) * 0.16 + int(index) * 0.13) % 1.0
+        hue = (
+            float(elapsed) * DrawCompileFlow.ALWAYS_HUE_CYCLES_PER_SECOND
+            + int(index) * 0.13
+        ) % 1.0
         return colorsys.hsv_to_rgb(hue, 0.78, 1.0)
 
     @staticmethod
@@ -813,13 +840,14 @@ class DrawCompileFlow:
             if always_run else DrawCompileFlow.REGULAR_COLOR
         )
         left, bottom, right, top = DrawCompileFlow._node_bounds(node)
+        scale = DrawCompileFlow._ui_scale()
         rect = [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)]
         DrawSocketView.draw_polyline(rect, (*color, 0.16 + pulse * 0.24), width=6.0)
         DrawSocketView.draw_polyline(rect, (*color, 0.34 + pulse * 0.66), width=2.0)
         DrawSocketView.draw_label(
             f"{index + 1:02d}",
-            left + 7.0,
-            top + 8.0,
+            left + 7.0 * scale,
+            top + 8.0 * scale,
             (*color, 0.45 + pulse * 0.55),
             size=9,
             align="LEFT",
@@ -871,7 +899,7 @@ class DrawCompileFlow:
         DrawSocketView.draw_label(
             f"r{reg}",
             head_x,
-            head_y + 9.0,
+            head_y + 9.0 * DrawCompileFlow._ui_scale(),
             (*color, 0.92),
             size=8,
             align="CENTER",

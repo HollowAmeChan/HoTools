@@ -615,10 +615,12 @@ compile_flow_cycle_duration
 动画语义固定如下：
 
 - 一个周期从上游到下游按 topo 顺序播放；同级节点的编号就是实际稳定排序。
-- 普通节点使用青色边缘呼吸；link 流光在目标节点点亮前沿 source → target 前进，并在流光头显示 `rN`。
-- muted 节点不获得运行序号，因为它不生成执行 op；但透传流光必须穿过该节点，并触发同色低亮边缘呼吸，表示“跳过执行、保留寄存器透传”。
-- `always_run` 节点和由其产生的 link 使用循环彩色呼吸，表示它不受普通 lazy skip 控制。
+- 普通节点和普通 link 统一使用白色；link 流光在目标节点点亮前沿 source → target 前进，并在流光头显示 `rN`。
+- muted 节点不获得运行序号，因为它不生成执行 op；但透传流光必须穿过该节点，并触发低亮白色边缘呼吸，表示“跳过执行、保留寄存器透传”。
+- 只有 `always_run` 节点和由其产生的 link 使用循环彩色呼吸，表示它不受普通 lazy skip 控制；色相轮转频率固定为 `0.65` 圈/秒，不受 topo 播放周期影响。
 - 动画只用于解释已缓存的编译结果，不代表当前帧真实执行/skip 状态；真实耗时由“节点运行计时”负责。
+
+坐标合同：该动画使用 Node Editor `POST_VIEW` 绘制。`location_absolute` 是未缩放的节点位置，进入 GPU batch 前必须乘 `preferences.system.ui_scale`；实时 UI 中非零的 `node.dimensions` 已经是最终绘制宽高，必须原样加到缩放后的位置，禁止再次缩放。只有后台测试或首帧尚未完成布局、`dimensions == (0, 0)` 时，才使用 `node.width/height * ui_scale` 作为 fallback。socket 近似偏移和 Bezier 最小控制柄仍需乘 `ui_scale`。Frame 子节点直接使用 `location_absolute`，不得再次叠加父级位置。
 
 性能约定：动画关闭时不得注册 redraw timer。开启后使用单一全局 handler 和单一 24 FPS timer；关闭最后一个可视化树、清除编译缓存或注销插件时必须停止 timer。编译器只生成字符串/整数 tuple 快照，不得为动画保留额外 node/socket 强引用。
 
