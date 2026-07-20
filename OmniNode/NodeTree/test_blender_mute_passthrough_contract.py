@@ -113,6 +113,7 @@ for module in (physics_nodes, mc2_nodes, rigid_nodes, spring_nodes):
 
 assert _mapping(physics_nodes.physicsWorldBegin) == {}
 assert _mapping(physics_nodes.physicsBake) == {"_OUTPUT0": "world"}
+assert _mapping(physics_nodes.clearPhysicsBake) == {"_OUTPUT0": "world"}
 assert _mapping(physics_nodes.physicsWorldCommit) == {"_OUTPUT1": "world"}
 assert _mapping(mc2_nodes.physicsMC2Step) == {"_OUTPUT0": "world"}
 assert _mapping(spring_nodes.physicsSpringVRMSolver) == {"_OUTPUT0": "world"}
@@ -142,7 +143,33 @@ try:
         module.register()
         registered.append(module)
 
+    physics_world_ids = {
+        node_class.bl_idname
+        for node_class in OmniNodeRegister.node_cls_physics_world
+    }
+    physics_world_menu_ids = {
+        node_class.bl_idname
+        for node_class in OmniNodeRegister._pw_lifecycle
+    }
+    bake_node_ids = {
+        "HO_OmniNode_physicsBake",
+        "HO_OmniNode_clearPhysicsBake",
+    }
+    assert bake_node_ids <= physics_world_ids
+    assert bake_node_ids <= physics_world_menu_ids
+
     tree = bpy.data.node_groups.new("MuteCompileRegression", "OmniNodeTree")
+    bake_node = tree.nodes.new("HO_OmniNode_physicsBake")
+    clear_node = tree.nodes.new("HO_OmniNode_clearPhysicsBake")
+    assert [socket.identifier for socket in bake_node.inputs] == [
+        "world", "cache_directory", "file_prefix", "frame_start", "frame_end",
+        "bake_bones", "bake_mesh", "use_mesh_cache", "enabled",
+    ]
+    assert [socket.identifier for socket in clear_node.inputs] == [
+        "world", "cache_directory", "file_prefix", "clear_frame",
+        "animation_clear_mode", "mesh_cache_policy", "finalize_cache_policy",
+        "clear_live_output", "pause_timeline", "enabled",
+    ]
     output_io = tree.group_outputs.add()
     output_io.name = "Name"
     output_io.uid = uuid.uuid4().hex

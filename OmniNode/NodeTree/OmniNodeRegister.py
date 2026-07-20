@@ -125,10 +125,10 @@ cls.extend(node_cls_physics_world)
 cls.extend(node_cls_physics_world_solvers)
 
 # ── 物理世界子分类（3块）─────────────────────────────────────────────────────
-# 物理世界：对象范围 + 帧开始/提交 + 写回
+# 物理世界：对象范围 + 帧开始/提交 + 写回 + Bake/Clear
 _pw_lifecycle = _label_startswith(
     node_cls_physics_world,
-    "物理对象", "物理世界-帧", "物理写回",
+    "物理对象", "物理世界-帧", "物理写回", "物理烘焙", "清除物理Bake",
 )
 # 物理世界调试：调试快照/文本/可视化 + 结果流
 _pw_debug = _label_startswith(

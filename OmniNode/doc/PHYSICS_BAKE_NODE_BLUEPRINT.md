@@ -77,7 +77,7 @@ object_transform
 
 ### 已落地 Bone + Mesh 阶段
 
-当前代码已注册以下真实 OmniNode：
+当前代码已注册以下真实 OmniNode，并已加入 OmniNode 的“物理世界”正常添加菜单：
 
 ```python
 def physicsBake(
@@ -166,7 +166,7 @@ def clearPhysicsBake(
     ...
 ```
 
-UI 名称固定为 `Clear Physics Bake` / `清除物理Bake动画`。它是普通函数节点，用户可以直接 mute，也可以用 `enabled` socket 控制。它只在：
+UI 名称固定为 `Clear Physics Bake` / `清除物理Bake动画`，并与 `物理烘焙` 一起出现在 OmniNode 的“物理世界”正常添加菜单。它是普通函数节点，用户可以直接 mute，也可以用 `enabled` socket 控制。它只在：
 
 ```text
 enabled == True and scene.frame_current == clear_frame
