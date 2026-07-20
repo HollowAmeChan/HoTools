@@ -75,7 +75,31 @@ object_transform
 
 ## 节点表面
 
-推荐节点：
+### 已落地 Mesh 阶段
+
+当前代码已注册以下真实 OmniNode：
+
+```python
+def physicsBake(
+    world: object,
+    cache_directory: str = "//physics_bake",
+    file_prefix: str = "PhysicsBake",
+    frame_start: int = 1,
+    frame_end: int = 250,
+    bake_mesh: bool = False,
+    use_mesh_cache: bool = False,
+    enabled: bool = True,
+) -> tuple[object, int, str]:
+    ...
+```
+
+`bake_mesh` 是边沿触发：False 重新武装，True 只排队一次。节点从当前 frame/generation 的 GN result stream 精确解析 Mesh target，timer 在本轮树执行返回后逐对象调用 `geometry_node_bake_single`。原子 manifest 状态依次为 `BAKING -> COMPLETE/PARTIAL/FAILED`；只有 `COMPLETE` 才允许 `use_mesh_cache=True`。
+
+这一阶段不提供 Bone/Object 的无效 socket。完整 Action 后端落地时通过显式节点 schema migration 增加对应输入，不让 UI 暗示尚不存在的能力。
+
+### 完整目标表面
+
+后续完整节点目标：
 
 ```python
 def physicsBake(
@@ -94,7 +118,7 @@ def physicsBake(
     ...
 ```
 
-UI 名称：
+完整目标 UI 名称：
 
 | 参数 | UI | 默认值 | 语义 |
 |---|---|---:|---|
@@ -847,12 +871,20 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 
 ### Phase 2：Geometry Nodes Mesh Bake
 
-1. 固化相邻的 live offset 与 cache modifier schema，并实现 schema 2 组合组的无损拆分迁移。
-2. 实现每对象唯一目录、manifest ownership 和保存 `.blend` 前置检查。
-3. 实现 `geometry_node_bake_single` 逐对象调度、进度、取消、失败后状态恢复。
-4. 实现精确 delete/pack/unpack；Clear 节点的默认策略仍为 KEEP。
-5. 对接 Bake Node 的 `bake_mesh`，显式 Mesh Bake 时由 Blender operator 驱动完整帧范围，不走 frame2 baseline 回填路径。
-6. 对 1/8/32 Mesh targets 做重复 depsgraph 求值成本 benchmark。
+当前已完成：
+
+1. 固化相邻的 live offset 与 cache modifier schema，并实现 schema 2 组合组保留 Bake node/entry 的拆分迁移。
+2. 注册真实 `物理烘焙` OmniNode；`bake_mesh` 边沿触发，mute 只透传 world。
+3. 实现每对象持久 UUID、唯一目录、原子 manifest、保存 `.blend` 前置检查。
+4. 实现 timer 延迟启动、`geometry_node_bake_single` 逐对象调度、active 重入保护、帧/选择恢复和失败状态。
+5. 实现 `use_mesh_cache` 的 COMPLETE 校验；live/cache 切换不修改缓存文件。
+
+本 Phase 剩余：
+
+1. UI 可取消、进度汇报与取消后的精确 PARTIAL 恢复。
+2. 精确 delete/pack/unpack；Clear 节点的默认策略仍为 KEEP。
+3. 对 1/8/32 Mesh targets 做重复 depsgraph 求值成本 benchmark。
+4. duplicate UUID 的全场景 audit，不只处理同一请求内冲突。
 
 完成门槛：保存/重开后的 GN cache 每帧顶点与 live MC2 result 逐点一致；关闭/开启 cache modifier 不改磁盘数据且立即切换 live/baked；多个共享 node group 的对象使用独立目录，删除一个不影响其他对象；未保存 blend、取消、写盘失败、节点组 schema 变化均不留下伪完成状态。
 

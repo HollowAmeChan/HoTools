@@ -1,6 +1,6 @@
 # OmniNode 物理世界当前实现状态
 
-更新日期：2026-07-19
+更新日期：2026-07-20
 
 本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver稳定事实由各自蓝本维护；历史过程由Git保存。
 
@@ -23,6 +23,7 @@ Cache Read
   -> solver step(s)
   -> result stream / exchange
   -> Physics Writeback
+  -> Physics Bake
   -> Physics World Commit
   -> Cache Write
 ```
@@ -40,6 +41,7 @@ physicsWorld/
   blender_registry.py        # domain注册journal、依赖和失败回滚
   registry.py                # component/solver发现与装卸
   gn_offset.py               # 共享GN顶点最终offset
+  physics_bake.py            # GN Mesh Bake coordinator/manifest/playback
   collision/                 # Object/Bone collider共享capability
   spring_vrm/                # VRM SpringBone
   rigid/                     # Rigid/Jolt
@@ -67,6 +69,7 @@ physicsWorld/
 | Domain | 当前状态 | 已成立边界 | 主要未完成项/入口 |
 |---|---|---|---|
 | World core | 可用 | Begin按Blender `fps/fps_base`统一生产raw_dt/dt；Begin/Commit、scope、slot/resource/result/exchange、channel registry、writeback、dispose、debug snapshot | 统一时间验收矩阵仍需覆盖全部solver；跨solver交互仍需真实业务闭环 |
+| Physics Bake | Mesh vertical slice可用 | `物理烘焙` OmniNode、真实GN result target解析、双modifier live/cache、每对象目录、原子manifest、timer延迟逐对象Bake、播放留存分离、schema 2迁移 | Bone/Object Action、Clear节点、取消/进度、delete/pack/unpack与多Mesh性能门槛；总合同见`PHYSICS_BAKE_NODE_BLUEPRINT.md` |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、公共snapshot与capability | 继续消除solver私有重复resolver |
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
@@ -78,10 +81,11 @@ physicsWorld/
 
 ## 当前优先级
 
-1. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-2. MC2已进入维护态；按`MC2_BLUEPRINT.md`保持职责、事务、debug和热点ceiling，不再维护迁移计划。
-3. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
-4. 决定Mesh XPBD迁移或删除。
+1. 推进 Physics Bake 的 Bone/Object Action 与独立 Clear 节点，同时保持 Mesh vertical slice 的留存合同。
+2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
+3. MC2已进入维护态；按`MC2_BLUEPRINT.md`保持职责、事务、debug和热点ceiling，不再维护迁移计划。
+4. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
+5. 决定Mesh XPBD迁移或删除。
 
 ## 公共验收门槛
 

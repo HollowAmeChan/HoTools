@@ -7,6 +7,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
   physicsObjectsFromCollection — 从 Collection 收集对象列表
   physicsObjectScope           — 构造 PhysicsObjectScope（objects 为多重输入，无需单独合并节点）
   physicsWorldBegin            — 物理世界帧开始
+  physicsBake                  — 配置、触发并切换 Physics World Mesh Bake
   physicsWorldCommit           — 物理世界帧提交
   physicsWorldDebugSnapshot    — 输出 PhysicsWorldCache debug snapshot dict
   physicsWorldResultStream     — 按 channel / solver 读取 world result stream
@@ -28,6 +29,14 @@ from .scope import (
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, result_items_to_text, validate_world, print_world_summary
 from .writeback import apply_all_writebacks
+from .physics_bake import (
+    geometry_bake_is_active,
+    geometry_bake_status,
+    geometry_bake_target_count,
+    rearm_geometry_bake_trigger,
+    request_geometry_bake,
+    set_session_cache_playback,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +221,85 @@ def physicsWorldCommit(
     world: object,
 ) -> tuple[_OmniCache, object, int]:
     return _commit(world=world, enabled=True)
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="物理烘焙",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "物理世界",
+        "缓存目录",
+        "文件前缀",
+        "开始帧",
+        "结束帧",
+        "烘焙Mesh",
+        "使用Mesh缓存",
+        "启用",
+    ],
+    input_init={
+        "frame_start": {"min_value": -1048574, "max_value": 1048574},
+        "frame_end": {"min_value": -1048574, "max_value": 1048574},
+    },
+    _OUTPUT_NAME=["物理世界", "Mesh数量", "状态"],
+    omni_description="""
+    Physics World 通用烘焙节点的 Mesh 第一阶段。
+
+    必须接在「物理写回」之后。节点只消费当前 world 的真实 GN Mesh
+    writeback target，不扫描整个场景猜测参与者。
+
+    烘焙Mesh 使用边沿触发：False 重新武装，切到 True 后只排队一次完整
+    Geometry Nodes Bake。长任务在当前节点树执行结束后由 timer 启动，避免
+    在 frame_change_post 内递归推进时间轴。
+
+    使用Mesh缓存 与文件留存完全独立：关闭只显示实时后置位移，不删除缓存；
+    开启前必须有本节点 manifest 标记为 COMPLETE 的完整缓存。
+
+    当前阶段只实现 Mesh。Bone/Object Action Bake 与 Clear Physics Bake
+    将由后续节点实现，不在这里读取现场姿态或笼统清理对象。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsBake(
+    world: object,
+    cache_directory: str = "//physics_bake",
+    file_prefix: str = "PhysicsBake",
+    frame_start: int = 1,
+    frame_end: int = 250,
+    bake_mesh: bool = False,
+    use_mesh_cache: bool = False,
+    enabled: bool = True,
+) -> tuple[object, int, str]:
+    if not isinstance(world, PhysicsWorldCache):
+        return world, 0, f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
+    if not bool(enabled):
+        return world, 0, "物理烘焙已禁用"
+    if geometry_bake_is_active():
+        return world, geometry_bake_target_count(), geometry_bake_status()
+
+    try:
+        if bool(bake_mesh):
+            count, status = request_geometry_bake(
+                world,
+                cache_directory,
+                file_prefix,
+                int(frame_start),
+                int(frame_end),
+                bool(use_mesh_cache),
+            )
+        else:
+            rearm_geometry_bake_trigger()
+            count, status = set_session_cache_playback(
+                world,
+                cache_directory,
+                file_prefix,
+                bool(use_mesh_cache),
+            )
+        return world, count, status
+    except Exception as exc:
+        return world, 0, f"物理烘焙错误：{exc}"
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,7 @@ for module in (physics_nodes, mc2_nodes, rigid_nodes, spring_nodes):
 
 
 assert _mapping(physics_nodes.physicsWorldBegin) == {}
+assert _mapping(physics_nodes.physicsBake) == {"_OUTPUT0": "world"}
 assert _mapping(physics_nodes.physicsWorldCommit) == {"_OUTPUT1": "world"}
 assert _mapping(mc2_nodes.physicsMC2Step) == {"_OUTPUT0": "world"}
 assert _mapping(spring_nodes.physicsSpringVRMSolver) == {"_OUTPUT0": "world"}
