@@ -25,6 +25,8 @@ class RuntimeObserver:
         trace=None,
         timing_collector=None,
         timing_node_collector=None,
+        overlay_sampled=None,
+        overlay_gate=None,
     ):
         self.debug = bool(debug)
         self.depth = int(depth)
@@ -32,6 +34,10 @@ class RuntimeObserver:
         self.timing_start = None
         self.timing_stages = None
         self.timing_node_stages = None
+        # None means this observer owns the sampling decision. Frame-level callers
+        # pass an explicit bool so the root tree never checks the clock twice.
+        self.overlay_sampled = overlay_sampled
+        self.overlay_gate = {} if overlay_gate is None else overlay_gate
         # 若提供收集器，则顶层 step 明细并入该字典（帧链路报告），
         # 不再单独成一个报告块。子树仍走各自的独立报告。
         self.timing_collector = timing_collector
@@ -49,6 +55,7 @@ class RuntimeObserver:
             debug=self.debug,
             depth=self.depth + 1,
             trace=self.trace,
+            overlay_gate=self.overlay_gate,
         )
 
     def log(self, message):
@@ -76,19 +83,25 @@ class RuntimeObserver:
 
     def begin_timing(self, op):
         tree_ref = getattr(op, "tree_ref", None)
-        if OmniRuntimeTiming.is_enabled(tree_ref):
+        console_enabled = bool(getattr(tree_ref, "debug_runtime_timing", False))
+        if self.overlay_sampled is None:
+            self.overlay_sampled = OmniRuntimeTiming.take_overlay_sample(
+                tree_ref,
+                gate=self.overlay_gate,
+            )
+        else:
+            self.overlay_sampled = bool(self.overlay_sampled)
+        if console_enabled or self.overlay_sampled:
             self.timing_start = time.perf_counter()
             self.timing_stages = {}
-            self.timing_node_stages = (
-                {} if bool(getattr(tree_ref, "show_runtime_timing", False)) else None
-            )
+            self.timing_node_stages = {} if self.overlay_sampled else None
             # 每帧重置懒求值计数器
             self._lazy_nodes_run     = 0
             self._lazy_nodes_skipped = 0
 
     def end_timing(self, compiled, op):
         tree_ref = getattr(op, "tree_ref", None)
-        if self.timing_start is None or not OmniRuntimeTiming.is_enabled(tree_ref):
+        if self.timing_start is None:
             return
 
         try:
@@ -122,7 +135,7 @@ class RuntimeObserver:
             tree_ref=tree_ref,
             interval=interval,
             console_enabled=bool(getattr(tree_ref, "debug_runtime_timing", False)),
-            overlay_enabled=bool(getattr(tree_ref, "show_runtime_timing", False)),
+            overlay_sampled=self.overlay_sampled,
             node_stages=self.timing_node_stages,
         )
 
@@ -561,6 +574,8 @@ class OmniExecutor:
         observer=None,
         timing_collector=None,
         timing_node_collector=None,
+        overlay_sampled=None,
+        overlay_gate=None,
     ):
         if runtime_context is None:
             runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
@@ -574,6 +589,8 @@ class OmniExecutor:
                     observer=observer,
                     timing_collector=timing_collector,
                     timing_node_collector=timing_node_collector,
+                    overlay_sampled=overlay_sampled,
+                    overlay_gate=overlay_gate,
                 )
             except Exception:
                 runtime_context.mark_failed()
@@ -587,6 +604,8 @@ class OmniExecutor:
                 depth=depth,
                 timing_collector=timing_collector,
                 timing_node_collector=timing_node_collector,
+                overlay_sampled=overlay_sampled,
+                overlay_gate=overlay_gate,
             )
 
         return OmniExecutor._execute_core(compiled, provided_inputs, runtime_context, observer)
@@ -905,8 +924,15 @@ class OmniExecutor:
         return result, observer.trace
 
     @staticmethod
-    def run(compiled: CompiledGraph, debug=False, phases=None, timing_node_stages=None):
-        t = time.perf_counter()
+    def run(
+        compiled: CompiledGraph,
+        debug=False,
+        phases=None,
+        timing_node_stages=None,
+        overlay_sampled=None,
+        overlay_gate=None,
+    ):
+        t = time.perf_counter() if phases is not None else None
         runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
         if phases is not None:
             phases["[run] begin_run"] = time.perf_counter() - t
@@ -919,12 +945,14 @@ class OmniExecutor:
                 runtime_context=runtime_context,
                 timing_collector=phases,
                 timing_node_collector=timing_node_stages,
+                overlay_sampled=overlay_sampled,
+                overlay_gate=overlay_gate,
             )
         except Exception:
             runtime_context.mark_failed()
             raise
         finally:
-            t = time.perf_counter()
+            t = time.perf_counter() if phases is not None else None
             OmniRuntimeState.finish_run(runtime_context, phases=phases)
             if phases is not None:
                 # finish_run 已写入三个子段；这里用 [finish] other 补齐

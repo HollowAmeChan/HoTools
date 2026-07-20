@@ -572,7 +572,7 @@ class DrawSidePanel:
 
 
 class DrawRuntimeTiming:
-    """Draw aggregated execution time above nodes with fixed severity colors."""
+    """Draw the latest sampled execution time above each node."""
 
     GLOBAL_OVERLAY_ID = "omni_runtime_timing::global"
     FAST_SECONDS = 0.001
@@ -656,11 +656,10 @@ class DrawRuntimeTiming:
         )
 
     @staticmethod
-    def update_tree(tree, node_totals, sample_count):
-        sample_count = max(int(sample_count), 1)
+    def update_tree(tree, node_timings):
         _RUNTIME_TIMING_TREES[_tree_draw_key(tree)] = {
-            node_name: float(total) / sample_count
-            for node_name, total in node_totals.items()
+            node_name: float(seconds)
+            for node_name, seconds in node_timings.items()
         }
         DrawRuntimeTiming.ensure_handler()
         DrawRuntimeTiming.tag_tree(tree)

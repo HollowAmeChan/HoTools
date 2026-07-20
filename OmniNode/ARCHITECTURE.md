@@ -618,16 +618,17 @@ debug_runtime_trace
 debug_runtime_timing
 debug_runtime_timing_interval
 show_runtime_timing
+runtime_timing_sample_interval
 ```
 
 实现：
 
 - 编译器总是插入 `RuntimeTimingBeginCall` 和 `RuntimeTimingEndCall`。
 - `debug_runtime_timing` 是命令行聚合报告开关；`show_runtime_timing` 是节点顶部计时开关。
-- 两个消费者任一开启时才真正计时，计时能力不从属于 runtime trace debug。
+- 命令行开启时每帧计时并聚合；仅开启节点显示时，只有采样到期的帧才真正启用 step 计时。
 - 每个 IR step 会记录一个 stage。
 - `OmniRuntimeTiming.record()` 把样本写入独立的 consumer profile。
-- 命令行按 `debug_runtime_timing_interval` 聚合；节点叠加以较短固定周期更新，二者互不拖慢。
+- 命令行按 `debug_runtime_timing_interval` 聚合；节点叠加按 `runtime_timing_sample_interval` 抽取单帧样本，默认 3 秒。
 - `OmniDebug` 只格式化命令行报告，`OmniNodeDraw.DrawRuntimeTiming` 只消费节点聚合结果。
 
 输出包含：
@@ -643,7 +644,38 @@ show_runtime_timing
 
 - timing 是观察工具，不应该改变节点行为。
 - 新增 IR 类型时，应在 `OmniExecutor.timing_stage_name()` 中补清晰 stage 名称。
-- 节点显示把同一节点对应的多个 IR step 求和后取窗口平均；绿色为不超过 1ms，黄色为 1-8ms，红色为 8ms 及以上。
+- 节点显示把本次样本中同一节点对应的多个 IR step 求和，不跨帧求平均；绿色为不超过 1ms，黄色为 1-8ms，红色为 8ms 及以上。
+
+#### 计时频率与性能硬契约
+
+先区分“编译插桩”和“运行计时”：`CompilerContext.finish()` 每次编译都把 `RuntimeTimingBeginCall` / `RuntimeTimingEndCall` 写进 IR，但编译阶段不调用计时器。执行器真正遇到 Begin 标记时，才根据下面的运行时条件决定是否创建 `timing_stages` 并对每个 step 调用 `time.perf_counter()`。
+
+| 运行状态 | 根树入口频率门控 | 本次执行逐 step 计时 | 节点叠加重绘 |
+| --- | --- | --- | --- |
+| 两个计时开关都关闭 | 不读取 overlay 墙钟 | 否 | 否 |
+| 仅 `show_runtime_timing=True`，尚未到采样时刻 | 整次根执行共享一次 `perf_counter`，各树只比较 deadline | 否 | 否 |
+| 仅 `show_runtime_timing=True`，采样到期 | 该次执行取得一次采样权 | 是，只计当前这一帧/次执行 | 执行完成后一次 |
+| `debug_runtime_timing=True` | 不论节点采样是否到期 | 是，每一次树执行都计时 | 仅节点采样到期时一次 |
+
+频率定义与调用顺序必须保持如下语义：
+
+1. 节点采样使用 `time.perf_counter()` 的墙钟间隔，不使用帧号，不存在后台 timer。同一次根执行创建一个共享 gate timestamp，根树及全部子树复用，因此无论子树被调用多少次，频率门控最多读取一次墙钟。启用后第一次实际执行立即采样；之后只有到期后的下一次实际树执行才采样。树不运行就不会采样或重绘。
+2. `runtime_timing_sample_interval` 只控制节点叠加采样，默认 3 秒。修改间隔、重新开启显示或完整重编译会重置 deadline，使下一次执行立即采样。
+3. `debug_runtime_timing_interval` 只控制命令行报告多久 flush/print，**不降低命令行计时频率**。只要 `debug_runtime_timing=True`，每次执行、每个 IR step 都会计时。
+4. 两个开关同时开启时，命令行消费者已经要求每次执行逐 step 计时；3 秒节点采样只限制节点名映射、显示数据替换和 `tag_redraw`，不能消除命令行计时成本。
+5. 每帧路径由 `run_frame_cached()` 在根树入口决定一次 overlay 采样，并把 bool 原样传进根 `RuntimeObserver`，禁止在同一次根执行的 Begin 标记再次读取墙钟。手动 `run_compiled()` 没有外层 frame collector，由 Begin 标记决定一次；两条路径都必须保证每次根执行最多一次墙钟门控。
+6. 子树 observer 不继承父树的 overlay 采样权，但必须继承同一次根执行的 gate timestamp。每个子树数据块依据自身的 `show_runtime_timing` 和采样 deadline 独立比较；同一子树在一个间隔内被多次调用时，只有第一个到期调用取得样本，后续调用不再读取墙钟。
+7. 取得计时权的执行在 Begin 记录树起点，每个普通 IR step 在 `step_begin/step_end` 各读取一次时钟，End 计算 total。Begin/End 标记自身不作为 step 显示；节点顶部只显示映射到该节点的 step 在本次样本内的合计。
+8. overlay profile 永远只保留最后一份单次样本，`sample_count` 固定为 1；禁止恢复跨帧累加或平均。`DrawRuntimeTiming.update_tree()` 只在该样本发布时替换数据并调用一次 `tag_redraw`。
+9. 未取得计时权且命令行计时关闭时，内建 timing 路径不得调用逐 step `perf_counter`，也不得为 phases、stage 或节点映射分配字典。IR 中只保留两个轻量标记分支。Tracy 是独立 profiler；开启 Tracy 后产生的 zone 成本不属于这里的“计时关闭”保证。
+
+以后修改 timing 必须同时满足以下禁止项：
+
+- 禁止把 `tag_redraw` 放进每帧执行路径或 `record()` 路径；它只能由到期 overlay snapshot 的发布触发。
+- 禁止用 `debug_runtime_timing_interval` 冒充采样频率；它是输出频率，不是测量频率。
+- 禁止让节点显示为了平滑而跨帧平均、EMA 或持续收集所有帧。
+- 禁止新增 timing consumer 却不在本节声明它是“每次执行”还是“低频采样”，以及它是否要求逐 step 时钟。
+- 修改门控、profile 或绘制发布时，必须保留 `test_runtime_timing.py` 的默认 3 秒、deadline、根/子树共享单次墙钟、单样本替换和 schedule reset 回归，并运行 Blender 集成测试。
 
 #### 帧级统一计时（frame 报告）
 
@@ -962,7 +994,7 @@ debug 格式化工具。
 职责：
 
 - 判断命令行和节点叠加两个消费者是否要求采样。
-- 分别维护两个消费者的聚合窗口与刷新周期。
+- 维护命令行聚合窗口，并调度节点叠加的低频单帧采样。
 - 输出不依赖 Blender 绘制或终端格式的 timing snapshot。
 
 ### `NodeTree/GraphNode.py`

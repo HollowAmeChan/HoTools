@@ -443,15 +443,22 @@ def finish_run(context, phases=None):
     t_ids = 0.0
     t_dispose = 0.0
     if dispose_candidates:
-        s = time.perf_counter()
-        active_ids = _committed_value_ids()
-        t_ids = time.perf_counter() - s
+        if phases is None:
+            active_ids = _committed_value_ids()
+        else:
+            s = time.perf_counter()
+            active_ids = _committed_value_ids()
+            t_ids = time.perf_counter() - s
 
         disposed_seen = set()
-        s = time.perf_counter()
-        for value, reason in dispose_candidates:
-            _dispose_cache_value(value, reason, seen=disposed_seen, active_ids=active_ids)
-        t_dispose = time.perf_counter() - s
+        if phases is None:
+            for value, reason in dispose_candidates:
+                _dispose_cache_value(value, reason, seen=disposed_seen, active_ids=active_ids)
+        else:
+            s = time.perf_counter()
+            for value, reason in dispose_candidates:
+                _dispose_cache_value(value, reason, seen=disposed_seen, active_ids=active_ids)
+            t_dispose = time.perf_counter() - s
 
     run.pending.clear()
     run.discarded_pending.clear()

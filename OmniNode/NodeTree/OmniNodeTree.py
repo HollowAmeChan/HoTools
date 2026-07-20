@@ -69,7 +69,6 @@ def _flush_runtime_timing(force=False):
             OmniNodeDraw.DrawRuntimeTiming.update_tree(
                 snapshot.tree_ref,
                 snapshot.node_totals,
-                snapshot.sample_count,
             )
 
 
@@ -85,6 +84,10 @@ def _show_runtime_timing_update(tree, context):
         return
     OmniRuntimeTiming.clear_tree(tree, consumer=OmniRuntimeTiming.OVERLAY)
     OmniNodeDraw.DrawRuntimeTiming.clear_tree(tree)
+
+
+def _runtime_timing_sample_interval_update(tree, context):
+    OmniRuntimeTiming.reset_overlay_schedule(tree)
 
 
 @persistent
@@ -215,19 +218,27 @@ class OmniNodeTree(NodeTree):
     )  # type: ignore
     debug_runtime_timing: bpy.props.BoolProperty(
         name="Debug运行时长",
-        description="聚合运行时节点计时并按输出间隔打印到命令行。",
+        description="每次执行、每个IR step都计时并聚合到命令行报告。",
         default=False,
         update=_debug_runtime_timing_update,
     )  # type: ignore
     show_runtime_timing: bpy.props.BoolProperty(
         name="节点运行计时",
-        description="在节点顶部动态显示聚合运行时长，并用颜色提示耗时。",
+        description="按采样间隔抓取单帧节点运行时长并显示在节点顶部。",
         default=False,
         update=_show_runtime_timing_update,
     )  # type: ignore
+    runtime_timing_sample_interval: bpy.props.FloatProperty(
+        name="采样间隔",
+        description="节点运行计时的采样与视图刷新间隔，单位为秒。",
+        default=3.0,
+        min=0.05,
+        soft_max=30.0,
+        update=_runtime_timing_sample_interval_update,
+    )  # type: ignore
     debug_runtime_timing_interval: bpy.props.FloatProperty(
         name="输出间隔",
-        description="运行时长统计输出间隔，单位为秒。",
+        description="仅控制报告打印间隔，不降低逐次执行计时频率，单位为秒。",
         default=1.0,
         min=0.05,
         soft_max=10.0,
@@ -263,6 +274,7 @@ class OmniNodeTree(NodeTree):
         #             正常帧没有 bug 节点时几乎零开销，避免每帧全树刷新。
         if full:
             OmniNodeDraw.clear_tree(self)
+            OmniRuntimeTiming.clear_tree(self, consumer=OmniRuntimeTiming.OVERLAY)
 
         for node in self.nodes:
             if not full and not getattr(node, "is_bug", False):
@@ -310,12 +322,21 @@ class OmniNodeTree(NodeTree):
     def clear_compile_cache(self):
         clear_tree_compile_cache(self)
 
-    def _run_compiled_graph(self, compiled, phases=None, timing_node_stages=None):
+    def _run_compiled_graph(
+        self,
+        compiled,
+        phases=None,
+        timing_node_stages=None,
+        timing_overlay_sampled=None,
+        timing_overlay_gate=None,
+    ):
         self._ensure_execution_enabled()
 
-        t = time.perf_counter()
-        self._clear_run_state(full=False)
-        if phases is not None:
+        if phases is None:
+            self._clear_run_state(full=False)
+        else:
+            t = time.perf_counter()
+            self._clear_run_state(full=False)
             phases["[frame] clear_state"] = time.perf_counter() - t
 
         # 不再单独计 [frame] execute 聚合项：OmniExecutor.run 已把
@@ -327,6 +348,8 @@ class OmniNodeTree(NodeTree):
             debug=debug_enabled,
             phases=phases,
             timing_node_stages=timing_node_stages,
+            overlay_sampled=timing_overlay_sampled,
+            overlay_gate=timing_overlay_gate,
         )
 
         return result
@@ -346,15 +369,25 @@ class OmniNodeTree(NodeTree):
     def run_frame_cached(self):
         self._ensure_execution_enabled()
 
-        if not OmniRuntimeTiming.is_enabled(self):
+        console_enabled = bool(getattr(self, "debug_runtime_timing", False))
+        overlay_gate = {}
+        overlay_sampled = OmniRuntimeTiming.take_overlay_sample(
+            self,
+            gate=overlay_gate,
+        )
+        if not console_enabled and not overlay_sampled:
             compiled = self.compile_cached(force=False)
-            return self._run_compiled_graph(compiled)
+            return self._run_compiled_graph(
+                compiled,
+                timing_overlay_sampled=False,
+                timing_overlay_gate=overlay_gate,
+            )
 
         # 统一帧计时：从 handler 入口到回写的整条链路，
         # 外层 phase（compile_check / clear_state / begin_run / finish_run）
         # 与执行器内部 step 明细并入同一份报告，所有叶子项之和即为 total。
         phases = {}
-        node_stages = {} if bool(getattr(self, "show_runtime_timing", False)) else None
+        node_stages = {} if overlay_sampled else None
         frame_start = time.perf_counter()
 
         t = time.perf_counter()
@@ -366,6 +399,8 @@ class OmniNodeTree(NodeTree):
                 compiled,
                 phases=phases,
                 timing_node_stages=node_stages,
+                timing_overlay_sampled=overlay_sampled,
+                timing_overlay_gate=overlay_gate,
             )
         finally:
             total = time.perf_counter() - frame_start
@@ -388,8 +423,8 @@ class OmniNodeTree(NodeTree):
                 tree_ref=self,
                 interval=interval,
                 frame_level=True,
-                console_enabled=bool(getattr(self, "debug_runtime_timing", False)),
-                overlay_enabled=bool(getattr(self, "show_runtime_timing", False)),
+                console_enabled=console_enabled,
+                overlay_sampled=overlay_sampled,
                 node_stages=node_stages,
             )
 
@@ -463,6 +498,9 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     timing_interval_row.enabled = bool(getattr(tree, "debug_runtime_timing", False))
     timing_interval_row.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
     layout.prop(tree, "show_runtime_timing", text="节点运行计时", toggle=True)
+    sample_interval_row = layout.row()
+    sample_interval_row.enabled = bool(getattr(tree, "show_runtime_timing", False))
+    sample_interval_row.prop(tree, "runtime_timing_sample_interval", text="采样间隔")
     layout.label(text=tree.compile_cache_status_label())
 
     execution_enabled = bool(getattr(tree, "is_execution_enabled", True))

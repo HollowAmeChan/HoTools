@@ -313,8 +313,26 @@ try:
 
     assert cache_tree.debug_runtime_timing is False
     assert cache_tree.show_runtime_timing is False
+    assert cache_tree.runtime_timing_sample_interval == 3.0
+    cache_tree.runtime_timing_sample_interval = 4.0
+    assert cache_tree.runtime_timing_sample_interval == 4.0
     cache_tree.show_runtime_timing = True
     assert OmniRuntimeTiming.is_enabled(cache_tree)
+    original_take_overlay_sample = OmniRuntimeTiming.take_overlay_sample.__func__
+    overlay_gate_calls = []
+
+    def count_overlay_gate(cls, target_tree, now=None, gate=None):
+        overlay_gate_calls.append(target_tree)
+        return original_take_overlay_sample(cls, target_tree, now=now, gate=gate)
+
+    OmniRuntimeTiming.take_overlay_sample = classmethod(count_overlay_gate)
+    try:
+        OmniRuntimeTiming.reset_overlay_schedule(cache_tree)
+        cache_tree.run_frame_cached()
+        cache_tree.run_frame_cached()
+    finally:
+        OmniRuntimeTiming.take_overlay_sample = classmethod(original_take_overlay_sample)
+    assert overlay_gate_calls == [cache_tree, cache_tree]
     cache_tree.run_compiled()
     timing_payload = OmniNodeDraw._RUNTIME_TIMING_TREES.get(int(cache_tree.as_pointer()))
     assert timing_payload
