@@ -1286,6 +1286,8 @@ mc2.solve_context
 rigid.jolt_step
 ```
 
+复杂solver节点若需要在编辑器直接展示这些内部阶段，使用OmniNode通用的可选节点分步session；domain发布自己的显示文字和互不重叠耗时，通用层只排序、限行和绘制，不维护solver阶段注册表。通用分步口本身不替domain增加socket；如果完整热点诊断需要逐次采样、控制台聚合或额外上下文，domain可以拥有显式诊断开关，并把一次测得的阶段耗时同时发布给自己的聚合器和当前可选overlay session。该开关属于观察策略，不进入solver配置指纹或重建判定。domain不得读取树RNA或调用renderer；诊断关闭且未取得session时，不得为阶段统计读取墙钟、分配字典、复制solver状态或生成控制台文本。
+
 判断优化方向：
 
 - `solver.step` 小，`pack/unpack/native_sync` 大：优先 native context 和常驻 arrays。

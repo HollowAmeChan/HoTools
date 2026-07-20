@@ -74,6 +74,7 @@ function_node_core = importlib.import_module(
 )
 omni_ir = importlib.import_module("HoTools.OmniNode.NodeTree.OmniIR")
 omni_executor = importlib.import_module("HoTools.OmniNode.NodeTree.OmniExecutor")
+omni_timing = importlib.import_module("HoTools.OmniNode.NodeTree.OmniTiming")
 
 
 class _LazyTaskNode:
@@ -996,12 +997,26 @@ try:
     print("[PASS] same-frame evaluation does not consume request")
 
     _world_frame(world, 3, 2)
+    timing_session = omni_timing.NodeTimingSession()
     solver_module.step_mc2(
         world,
         tasks,
         frame_inputs={task.task_id: _frame_input(task, 3) for task in tasks},
         dt=1.0 / 90.0,
+        timing=timing_session,
     )
+    timing_stages = timing_session.snapshot()
+    assert tuple(timing_stages) == (
+        "输入与任务",
+        "静态准备",
+        "帧与调度准备",
+        "模拟求解",
+        "结果构建",
+        "调试捕获",
+        "结果发布",
+    )
+    assert all(seconds >= 0.0 for seconds in timing_stages.values())
+    print("[PASS] MC2 publishes node-owned timing stage labels")
     assert all(context.inspect()["debug_readback_count"] > 0 for context in contexts)
     assert interaction.inspect()["debug_readback_count"] == 1
     for task_index, task in enumerate(tasks):

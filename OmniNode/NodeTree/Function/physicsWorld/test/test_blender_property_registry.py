@@ -435,6 +435,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "simulation_frequency",
         "max_simulation_count_per_frame",
         "enabled",
+        "hotspot_timing",
     )
     assert tuple(mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"]) == (
         "物理世界",
@@ -443,8 +444,54 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "模拟频率",
         "每帧最大模拟次数",
         "启用",
+        "热点时长调试",
     )
+    assert inspect.signature(mc2_nodes.physicsMC2Step).parameters[
+        "hotspot_timing"
+    ].default is False
     assert mc2_nodes.physicsMC2Step.__meta["always_run"] is True
+
+    class TimingProbe:
+        def __init__(self):
+            self.stages = []
+            self.context = None
+
+        def restart(self):
+            self.stages.clear()
+
+        def checkpoint(self, stage):
+            self.stages.append(stage)
+            return 0.0
+
+        def finish(self, context):
+            self.context = dict(context)
+
+    timing_factory_calls = []
+    timing_probe = TimingProbe()
+    original_timing_factory = mc2_nodes.make_mc2_hotspot_timing
+    try:
+        mc2_nodes.make_mc2_hotspot_timing = lambda world, overlay=None: (
+            timing_factory_calls.append((world, overlay)) or timing_probe
+        )
+        timing_world = world_types.PhysicsWorldCache()
+        mc2_nodes.physicsMC2Step(timing_world, [], hotspot_timing=False)
+        assert timing_factory_calls == []
+        mc2_nodes.physicsMC2Step(timing_world, [], hotspot_timing=True)
+        assert timing_factory_calls == [(timing_world, None)]
+        assert timing_probe.stages == [
+            "输入与任务",
+            "静态准备",
+            "帧与调度准备",
+            "模拟求解",
+            "结果构建",
+            "调试捕获",
+            "结果发布",
+        ]
+        assert timing_probe.context["tasks"] == 0
+        assert timing_probe.context["particles"] == 0
+        timing_world.omni_cache_dispose("test_mc2_hotspot_timing_gate")
+    finally:
+        mc2_nodes.make_mc2_hotspot_timing = original_timing_factory
 
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None

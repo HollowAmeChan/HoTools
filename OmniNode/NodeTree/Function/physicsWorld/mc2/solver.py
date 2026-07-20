@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+from typing import Protocol
 
 from ..types import PhysicsWorldCache
 from .declaration import MC2_SOLVER_DECLARATION
@@ -57,6 +58,18 @@ MC2_FRAMEWORK_STATUS = (
     "MC2 context V0 已接入 Center/Move inertia、Gravity、Pin、Distance、Bending 数值 step；"
     "Mesh/Bone/stats 公共结果事务与统一writeback已接入"
 )
+
+
+class _MC2TimingSink(Protocol):
+    def restart(self) -> None: ...
+
+    def checkpoint(self, stage: str) -> float: ...
+
+    def detail_restart(self) -> None: ...
+
+    def detail_checkpoint(self, stage: str) -> float: ...
+
+    def finish(self, context: dict) -> None: ...
 
 
 def _ensure_mc2_interaction(world: PhysicsWorldCache) -> MC2NativeInteractionV0:
@@ -578,8 +591,11 @@ def step_mc2(
     user_reset: bool = False,
     dt: float = 0.0,
     enabled: bool = True,
+    timing: _MC2TimingSink | None = None,
 ) -> tuple[object, bool, str]:
     """Sync MC2 slots, run the no-collision Mesh slice, and publish results."""
+    if timing is not None:
+        timing.restart()
     specs = build_mc2_task_specs(tasks)
     if settings is None:
         settings = make_mc2_solver_settings()
@@ -617,6 +633,8 @@ def step_mc2(
             )
     if automatic_frame_inputs:
         _initialize_missing_mesh_base_pose_proxies(active_specs)
+    if timing is not None:
+        timing.checkpoint("输入与任务")
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
     staged_native_contexts = []
@@ -871,12 +889,18 @@ def step_mc2(
                 f"MC2 Bone components overlap on target bones: {sorted(overlap)!r}"
             )
         bone_targets[target_key].update(identities)
+    if timing is not None:
+        timing.checkpoint("静态准备")
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     public_results: list[dict] = []
     stats_slots: list[dict] = []
     bone_result_entries: list[tuple[dict, dict]] = []
     writeback_result_count = 0
+    debug_task_count = 0
+    max_substeps = 0
+    batch_count = 0
+    interaction = None
     world.acquire_write(MC2_SOLVER_ID)
     mutation_started = False
     try:
@@ -1192,6 +1216,12 @@ def step_mc2(
             default=0,
         )
         interaction = _ensure_mc2_interaction(world) if max_substeps else None
+        if timing is not None:
+            timing.checkpoint("帧与调度准备")
+        detail_restart = getattr(timing, "detail_restart", None)
+        detail_checkpoint = getattr(timing, "detail_checkpoint", None)
+        if callable(detail_restart):
+            detail_restart()
         for update_index in range(max_substeps):
             batches = {}
             for item in runtime_items:
@@ -1201,6 +1231,9 @@ def step_mc2(
                 batches.setdefault((substep_dt, is_final_substep), []).append(
                     (item, local_update_index)
                 )
+            batch_count += len(batches)
+            if callable(detail_checkpoint):
+                detail_checkpoint("批次编组")
             for (substep_dt, is_final_substep), batch in batches.items():
                 contexts = []
                 primary_group_bits = []
@@ -1294,6 +1327,8 @@ def step_mc2(
                         }
                         for index, (item, _local_update_index) in enumerate(batch)
                     ))
+                if callable(detail_checkpoint):
+                    detail_checkpoint("任务同步与调试配置")
                 interaction.step_group(
                     contexts,
                     primary_group_bits,
@@ -1301,6 +1336,11 @@ def step_mc2(
                     substep_dt,
                     is_final_substep=is_final_substep,
                 )
+                if callable(detail_checkpoint):
+                    detail_checkpoint("native组求解")
+
+        if timing is not None:
+            timing.checkpoint("模拟求解")
 
         for item in runtime_items:
             if item.get("center_action") == "step" and item["substeps"]:
@@ -1525,7 +1565,18 @@ def step_mc2(
                 "debug_capture_count": native_info.get("debug_capture_count", 0),
                 "debug_readback_count": native_info.get("debug_readback_count", 0),
             })
+        if timing is not None:
+            timing.checkpoint("结果构建")
+        debug_task_count = sum(
+            int(bool(
+                isinstance(item["slot"].data.get("_debug_capture_state"), dict)
+                and item["slot"].data["_debug_capture_state"].get("requested", False)
+            ))
+            for item in runtime_items
+        )
         capture_requested_mc2_debug(world, runtime_items, interaction)
+        if timing is not None:
+            timing.checkpoint("调试捕获")
         mutation_started = True
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
         if int(world.generation) > 0:
@@ -1552,6 +1603,8 @@ def step_mc2(
                     for result in bone_results
                 ),
             )
+        if timing is not None:
+            timing.checkpoint("结果发布")
     except Exception:
         if mutation_started:
             _invalidate_mc2_runtime_after_failure(
@@ -1569,4 +1622,51 @@ def step_mc2(
         f"新建 {counts['created']}，重建 {counts['rebuilt']}，"
         f"更新 {counts['updated']}，复用 {counts['reused']}，清理 {pruned}）"
     )
+    if timing is not None:
+        finish_timing = getattr(timing, "finish", None)
+        if callable(finish_timing):
+            setup_counts = {}
+            for spec in active_specs:
+                setup_counts[spec.setup_type] = setup_counts.get(spec.setup_type, 0) + 1
+            finish_timing({
+                "frame": int(getattr(world.frame_context, "frame", 0) or 0),
+                "generation": int(world.generation),
+                "dt": float(dt),
+                "tasks": len(active_specs),
+                "setup_counts": setup_counts,
+                "particles": sum(
+                    int(getattr(item["topology"], "particle_count", 0) or 0)
+                    for item in runtime_items
+                ),
+                "scheduled_tasks": sum(
+                    int(bool(item["substeps"])) for item in runtime_items
+                ),
+                "substeps": sum(len(item["substeps"]) for item in runtime_items),
+                "max_substeps": int(max_substeps),
+                "batches": int(batch_count),
+                "colliders": len(
+                    (getattr(world, "collider_snapshot", None) or {}).get(
+                        "colliders", ()
+                    ) or ()
+                ),
+                "interaction_tasks": len(interaction_participants),
+                "interaction_pairs": len(interaction_scope.pairs),
+                "created": counts["created"],
+                "rebuilt": counts["rebuilt"],
+                "updated": counts["updated"],
+                "reused": counts["reused"],
+                "pruned": int(pruned),
+                "reset_tasks": sum(
+                    int(bool(item.get("configured_reset_teleport", False)))
+                    for item in runtime_items
+                ),
+                "teleport_tasks": sum(
+                    int(bool(item.get("task_teleport_handled", False)))
+                    for item in runtime_items
+                ),
+                "debug_tasks": int(debug_task_count),
+                "native_group_frames": int(interaction is not None),
+                "ready_frames": int(bool(writeback_result_count)),
+                "writeback_results": int(writeback_result_count),
+            })
     return world, bool(writeback_result_count), status

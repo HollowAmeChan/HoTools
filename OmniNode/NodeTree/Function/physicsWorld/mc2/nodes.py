@@ -6,6 +6,7 @@ import bpy
 import mathutils
 
 from ....FunctionNodeCore import omni
+from ....OmniTiming import OmniNodeTiming
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
 from ... import _Color
 from ..types import PhysicsWorldCache
@@ -16,6 +17,7 @@ from .names import (
     MC2_SETUP_MESH_CLOTH,
 )
 from .solver import step_mc2
+from .timing import make_mc2_hotspot_timing
 from .parameters import (
     make_mc2_particle_profile,
     make_mc2_setup_options,
@@ -819,7 +821,7 @@ def physicsMC2BoneSpringTask(
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界", "MC2任务", "时间缩放", "模拟频率",
-        "每帧最大模拟次数", "启用",
+        "每帧最大模拟次数", "启用", "热点时长调试",
     ],
     input_init={
         "world": {"description": "Physics World统一时间源"},
@@ -827,6 +829,9 @@ def physicsMC2BoneSpringTask(
         "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "MC2局部时间倍率\n缩放统一dt"},
         "simulation_frequency": {"min_value": 30, "max_value": 150, "description": "MC2固定步频率（Hz）"},
         "max_simulation_count_per_frame": {"min_value": 1, "max_value": 5, "description": "每帧固定步上限\n超出时跳过"},
+        "hotspot_timing": {
+            "description": "浮层分步与控制台聚合\n关闭时零采集",
+        },
         "enabled": {"description": "关闭整个MC2模拟步，不推进任何MC2 task。"},
     },
     _OUTPUT_NAME=["物理世界", "就绪", "状态"],
@@ -839,6 +844,7 @@ def physicsMC2Step(
     simulation_frequency: int = 90,
     max_simulation_count_per_frame: int = 3,
     enabled: bool = True,
+    hotspot_timing: bool = False,
 ) -> tuple[PhysicsWorldCache, bool, str]:
     if (
         isinstance(mc2_tasks, list)
@@ -852,7 +858,19 @@ def physicsMC2Step(
         simulation_frequency=simulation_frequency,
         max_simulation_count_per_frame=max_simulation_count_per_frame,
     )
-    return step_mc2(world, mc2_tasks, settings=settings, enabled=enabled)
+    timing = None
+    if bool(hotspot_timing) and bool(enabled) and isinstance(world, PhysicsWorldCache):
+        timing = make_mc2_hotspot_timing(
+            world,
+            overlay=OmniNodeTiming.current(),
+        )
+    return step_mc2(
+        world,
+        mc2_tasks,
+        settings=settings,
+        enabled=enabled,
+        timing=timing,
+    )
 
 
 def _mc2_debug_help(purpose, state, normal, parameters, triggers) -> str:

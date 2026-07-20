@@ -395,6 +395,7 @@ C++ production kernel是唯一位置、速度和接触状态写入者。C++ debu
 - **最重组合**：允许按需付出多个模式的记录/readback，但共享positions、primitive indices和interaction owner数据每帧只复制一次；未打开的兄弟模式键必须缺失。
 - native setter只在请求状态改变时跨Python/C++调用；capture完成后立即清除，避免普通substep反复设置debug位。
 - self contact debug的逐贡献归因只在`self_contact_debug_requested`时构造；关闭时仍执行真实self求解，但不构造debug临时记录。
+- `MC2模拟步`拥有默认关闭的`热点时长调试`socket。关闭时向solver传入`timing=None`，不读取分步墙钟、不创建聚合字典、不复制诊断上下文，也不在节点浮层显示内部阶段。开启后MC2逐次切分“输入与任务、静态准备、帧与调度准备、模拟求解、结果构建、调试捕获、结果发布”七个连续阶段：同一次测量既写入world自有的约1秒控制台聚合器，也在当前节点恰好取得通用`OmniNodeTiming`低频采样session时写入浮层。文字与阶段边界由MC2拥有，通用renderer只提供空槽、排序与绘制；MC2不读取树RNA、不调用绘制模块。控制台格式沿用NodeTree聚合耗时报告的Summary/Scope/State/Slow Stages结构，列出阶段均值、占比和窗口峰值，并把任务类型、粒子量、dt、实际substep/native batch、collider/interaction任务范围、创建/重建/更新/复用、Reset/Teleport、debug capture和写回情况放在同一窗口。控制台另列`Solve Detail`嵌套段，只对真实可分割的Python调度边界统计“批次编组、任务同步与调试配置、native组求解”；它明确以`模拟求解`为分母且不与外层七段相加。native当前没有公开约束/碰撞各自时长，禁止用推测值冒充内部阶段。该socket只控制观察，不进入settings、static fingerprint或slot重建判定。
 
 当前自动证据包括：native MC2 context全套debug/生命周期回归、Blender隔离28模式、debug-off零readback、默认节点惰性、过滤切换取消旧request、未请求键缺失和冻结snapshot只读性；热点benchmark另行分开raw/frame/group/result/writeback/debug capture。绝对毫秒只作为同机同资产回归，不作为跨机器合同。
 
