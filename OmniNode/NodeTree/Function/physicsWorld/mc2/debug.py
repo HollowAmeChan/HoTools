@@ -348,6 +348,96 @@ def _parameter_payload(slot, native_snapshot) -> dict:
     }
 
 
+def _tether_constraint_record_payload(native_snapshot, motion, parameters) -> dict:
+    distance = native_snapshot.get("distance_tether") or {}
+    constraint = (native_snapshot.get("constraint_results") or {}).get(
+        "tether"
+    ) or {}
+    roots = distance.get("baseline_roots")
+    step_basic = motion.get("step_basic_positions")
+    origins = constraint.get("origins")
+    corrections = constraint.get("corrections")
+    native = native_snapshot.get("native") or {}
+    empty = {
+        "enabled": bool(native.get("tether_enabled", False)),
+        "vertices": _readonly((), np.int32),
+        "roots": _readonly((), np.int32),
+        "origins": _readonly((), np.float32).reshape((0, 3)),
+        "root_origins": _readonly((), np.float32).reshape((0, 3)),
+        "corrections": _readonly((), np.float32).reshape((0, 3)),
+        "ratios": _readonly((), np.float32),
+        "minimums": _readonly((), np.float32),
+        "maximums": _readonly((), np.float32),
+        "errors": _readonly((), np.float32),
+        "states": _readonly((), np.int8),
+    }
+    if roots is None or step_basic is None or origins is None or corrections is None:
+        return empty
+    roots = np.asarray(roots, dtype=np.int32).reshape((-1,))
+    step_basic = np.asarray(step_basic, dtype=np.float32).reshape((-1, 3))
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    corrections = np.asarray(corrections, dtype=np.float32).reshape((-1, 3))
+    count = min(len(roots), len(step_basic), len(origins), len(corrections))
+    compression = max(
+        0.0, min(1.0, float(parameters.get("tether_compression", 0.0) or 0.0))
+    )
+    stretch = max(0.0, float(parameters.get("tether_stretch", 0.0) or 0.0))
+    records = []
+    for vertex in range(count):
+        root = int(roots[vertex])
+        if root < 0 or root >= count or root == vertex:
+            continue
+        rest = float(np.linalg.norm(step_basic[vertex] - step_basic[root]))
+        if rest <= 1.0e-8:
+            continue
+        distance_value = float(np.linalg.norm(origins[vertex] - origins[root]))
+        minimum = rest * (1.0 - compression)
+        maximum = rest * (1.0 + stretch)
+        error = (
+            distance_value - minimum
+            if distance_value < minimum
+            else distance_value - maximum if distance_value > maximum else 0.0
+        )
+        correction_length = float(np.linalg.norm(corrections[vertex]))
+        if correction_length > 1.0e-8:
+            state = -2 if error < 0.0 else 2
+        else:
+            near_width = max(rest * 0.05, 1.0e-5)
+            if minimum > 1.0e-8 and 0.0 <= distance_value - minimum <= near_width:
+                state = -1
+            elif 0.0 <= maximum - distance_value <= near_width:
+                state = 1
+            else:
+                state = 0
+        records.append((
+            vertex,
+            root,
+            origins[vertex],
+            origins[root],
+            corrections[vertex],
+            distance_value / rest,
+            minimum,
+            maximum,
+            error,
+            state,
+        ))
+    if not records:
+        return empty
+    return {
+        "enabled": empty["enabled"],
+        "vertices": _readonly([item[0] for item in records], np.int32),
+        "roots": _readonly([item[1] for item in records], np.int32),
+        "origins": _readonly([item[2] for item in records], np.float32),
+        "root_origins": _readonly([item[3] for item in records], np.float32),
+        "corrections": _readonly([item[4] for item in records], np.float32),
+        "ratios": _readonly([item[5] for item in records], np.float32),
+        "minimums": _readonly([item[6] for item in records], np.float32),
+        "maximums": _readonly([item[7] for item in records], np.float32),
+        "errors": _readonly([item[8] for item in records], np.float32),
+        "states": _readonly([item[9] for item in records], np.int8),
+    }
+
+
 def _collision_payload(item, native_snapshot) -> dict:
     slot = item["slot"]
     effective = slot.data.get("effective_parameters")
@@ -643,6 +733,14 @@ def capture_requested_mc2_debug(
                     if filters.get("show_output", False) else {}
                 ),
             }
+            if filters.get("show_tether", False):
+                snapshot["constraint_records"] = {
+                    "tether": _tether_constraint_record_payload(
+                        native_snapshot,
+                        snapshot["motion"],
+                        snapshot["parameters"],
+                    ),
+                }
             slot.data["_debug_draw_snapshot"] = snapshot
             state.pop("error", None)
             state["captured_frame"] = frame

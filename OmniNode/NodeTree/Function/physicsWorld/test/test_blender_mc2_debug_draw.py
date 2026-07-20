@@ -395,6 +395,34 @@ try:
             result = constraint_results[result_name]
             assert result["origins"].flags.writeable is False
             assert result["corrections"].flags.writeable is False
+        tether_records = snapshot["constraint_records"]["tether"]
+        assert set(tether_records) == {
+            "enabled",
+            "vertices",
+            "roots",
+            "origins",
+            "root_origins",
+            "corrections",
+            "ratios",
+            "minimums",
+            "maximums",
+            "errors",
+            "states",
+        }
+        record_count = len(tether_records["vertices"])
+        assert record_count > 0
+        for name in (
+            "vertices", "roots", "origins", "root_origins", "corrections",
+            "ratios", "minimums", "maximums", "errors", "states",
+        ):
+            assert len(tether_records[name]) == record_count
+            assert tether_records[name].flags.writeable is False
+        states = np.asarray(tether_records["states"], dtype=np.int8)
+        assert set(np.unique(states)).issubset({-2, -1, 0, 1, 2})
+        correction_lengths = np.linalg.norm(
+            np.asarray(tether_records["corrections"], dtype=np.float32), axis=1
+        )
+        np.testing.assert_array_equal(np.abs(states) == 2, correction_lengths > 1.0e-8)
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
         if center_shift is not None:
@@ -470,6 +498,7 @@ try:
         assert "angle_restoration_target_positions" not in native_snapshot
         assert "angle_limit_target_positions" not in native_snapshot
         assert "constraint_results" not in native_snapshot
+        assert "constraint_records" not in snapshot
         assert "candidates" in snapshot["self_collision"]
         assert (
             slot.data["native_context"].inspect()["debug_readback_count"]
@@ -693,6 +722,19 @@ try:
             if np.any(np.linalg.norm(corrections, axis=1) > 1.0e-8):
                 assert tuple(debug_draw._COLORS[correction_color]) in colors, (
                     mode_name, correction_color, colors
+                )
+            if mode_name == "show_tether":
+                tether_records = captured_snapshot["constraint_records"]["tether"]
+                states = np.asarray(tether_records["states"], dtype=np.int8)
+                record_corrections = np.asarray(
+                    tether_records["corrections"], dtype=np.float32
+                )
+                assert len(states) == len(tether_records["vertices"])
+                assert tether_records["vertices"].flags.writeable is False
+                assert tether_records["roots"].flags.writeable is False
+                np.testing.assert_array_equal(
+                    np.abs(states) == 2,
+                    np.linalg.norm(record_corrections, axis=1) > 1.0e-8,
                 )
         if mode_name == "show_motion_base":
             assert "motion_base_positions" in native_snapshot

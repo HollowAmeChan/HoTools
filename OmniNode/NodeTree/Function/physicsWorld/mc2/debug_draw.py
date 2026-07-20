@@ -380,17 +380,12 @@ def _append_slot_batches(
     if filters["show_tether"]:
         _append_tether_batches(
             batches,
-            positions,
-            snapshot.get("motion") or {},
-            snapshot.get("parameters") or {},
-            (snapshot.get("native") or {}).get("distance_tether") or {},
+            ((snapshot.get("constraint_records") or {}).get("tether") or {}),
             limit,
         )
         _append_constraint_correction_batches(
             batches,
-            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
-                "tether"
-            ) or {},
+            ((snapshot.get("constraint_records") or {}).get("tether") or {}),
             "tether_correction",
             limit,
         )
@@ -1029,56 +1024,58 @@ def _append_distance_batches(
     _batch(batches, stretch_lines, "distance_stretch", 1.8)
 
 
-def _append_tether_batches(
-    batches, positions, motion, parameters, distance, limit
-):
-    roots = distance.get("baseline_roots")
-    step_basic = motion.get("step_basic_positions")
-    if roots is None or step_basic is None:
+def _append_tether_batches(batches, records, limit):
+    origins = records.get("origins")
+    root_origins = records.get("root_origins")
+    minimums = records.get("minimums")
+    maximums = records.get("maximums")
+    states = records.get("states")
+    if any(
+        value is None
+        for value in (origins, root_origins, minimums, maximums, states)
+    ):
         return
-    roots = np.asarray(roots, dtype=np.int32)
-    step_basic = np.asarray(step_basic, dtype=np.float32).reshape((-1, 3))
-    compression = max(
-        0.0, min(1.0, float(parameters.get("tether_compression", 0.0) or 0.0))
-    )
-    stretch = max(0.0, float(parameters.get("tether_stretch", 0.0) or 0.0))
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    root_origins = np.asarray(root_origins, dtype=np.float32).reshape((-1, 3))
+    minimums = np.asarray(minimums, dtype=np.float32).reshape((-1,))
+    maximums = np.asarray(maximums, dtype=np.float32).reshape((-1,))
+    states = np.asarray(states, dtype=np.int8).reshape((-1,))
     current_lines = []
     minimum_lines = []
     maximum_lines = []
     drawn = 0
-    for vertex, root in enumerate(roots):
-        root = int(root)
+    for origin, root_origin, minimum, maximum, state in zip(
+        origins, root_origins, minimums, maximums, states
+    ):
         if drawn >= limit:
             break
-        if root < 0 or root >= len(positions) or vertex == root or vertex >= len(positions):
+        state = int(state)
+        if state == 0:
             continue
-        rest_vector = vector3(step_basic[vertex]) - vector3(step_basic[root])
-        rest = rest_vector.length
-        if rest <= 1.0e-7:
+        current_vector = vector3(origin) - vector3(root_origin)
+        if current_vector.length <= 1.0e-7:
             continue
-        current_vector = vector3(positions[vertex]) - vector3(positions[root])
-        direction = current_vector.normalized() if current_vector.length > 1.0e-7 else rest_vector.normalized()
+        direction = current_vector.normalized()
         axis_a, axis_b = _plane_axes(direction)
-        minimum = rest * (1.0 - compression)
-        maximum = rest * (1.0 + stretch)
-        ring_radius = max(rest * 0.035, 0.002)
-        root_position = vector3(positions[root])
-        add_line(current_lines, root_position, positions[vertex])
-        if minimum > 1.0e-7:
+        ring_radius = max(float(maximum) * 0.035, 0.002)
+        root_position = vector3(root_origin)
+        add_line(current_lines, root_position, origin)
+        if state < 0 and float(minimum) > 1.0e-7:
             add_circle_lines(
                 minimum_lines,
-                root_position + direction * minimum,
+                root_position + direction * float(minimum),
                 axis_a,
                 axis_b,
                 ring_radius,
             )
-        add_circle_lines(
-            maximum_lines,
-            root_position + direction * maximum,
-            axis_a,
-            axis_b,
-            ring_radius,
-        )
+        if state > 0:
+            add_circle_lines(
+                maximum_lines,
+                root_position + direction * float(maximum),
+                axis_a,
+                axis_b,
+                ring_radius,
+            )
         drawn += 1
     _batch(batches, current_lines, "tether", 1.0)
     _batch(batches, minimum_lines, "tether_min", 1.5)
