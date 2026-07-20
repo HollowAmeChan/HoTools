@@ -244,6 +244,38 @@ try:
     )
     assert set(component_ids[disconnected_edges[sampled_edges, 0]]) == {0, 4}
 
+    topology_positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float32,
+    )
+    complete_topology = {
+        "longitudinal_edges": np.empty((0, 2), dtype=np.int32),
+        "lateral_edges": np.empty((0, 2), dtype=np.int32),
+        "edges": np.asarray(((0, 1), (1, 2), (0, 2)), dtype=np.int32),
+        "triangles": np.asarray(((0, 1, 2),), dtype=np.int32),
+    }
+    topology_batches = []
+    debug_draw._append_topology_batches(
+        topology_batches, complete_topology, topology_positions, 10000
+    )
+    assert any(batch[1] == debug_draw._COLORS["longitudinal"] for batch in topology_batches)
+    assert not any(batch[1] == debug_draw._COLORS["triangle"] for batch in topology_batches)
+
+    incomplete_topology = dict(complete_topology)
+    incomplete_topology["edges"] = complete_topology["edges"][:2]
+    topology_batches = []
+    debug_draw._append_topology_batches(
+        topology_batches, incomplete_topology, topology_positions, 10000
+    )
+    triangle_batch = next(
+        batch
+        for batch in topology_batches
+        if batch[1] == debug_draw._COLORS["triangle"]
+    )
+    assert len(triangle_batch[0]) == 2
+
+    assert mc2_nodes.physicsMC2DebugDraw.__defaults__[1] == 10000
+
     for task_function in (
         mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,

@@ -151,7 +151,7 @@ def update_mc2_debug_draw_store(
     show_self_contacts: bool = True,
     show_output: bool = True,
     task_filter: str = "",
-    max_items: int = 2000,
+    max_items: int = 10000,
     show_step_basic: bool = False,
     show_gravity: bool = False,
     show_velocity: bool = False,
@@ -485,10 +485,24 @@ def _append_topology_batches(batches, topology, positions, limit):
     longitudinal = []
     lateral = []
     triangles = []
-    long_edges = np.asarray(_values(topology.get("longitudinal_edges")), dtype=np.int32).reshape((-1, 2))
-    lateral_edges = np.asarray(_values(topology.get("lateral_edges")), dtype=np.int32).reshape((-1, 2))
-    classified = {tuple(sorted(map(int, edge))) for edge in np.vstack((long_edges, lateral_edges))} if len(long_edges) + len(lateral_edges) else set()
-    all_edges = np.asarray(_values(topology.get("edges")), dtype=np.int32).reshape((-1, 2))
+    long_edges = np.asarray(
+        _values(topology.get("longitudinal_edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    lateral_edges = np.asarray(
+        _values(topology.get("lateral_edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    classified = (
+        {
+            tuple(sorted(map(int, edge)))
+            for edge in np.vstack((long_edges, lateral_edges))
+        }
+        if len(long_edges) + len(lateral_edges)
+        else set()
+    )
+    all_edges = np.asarray(
+        _values(topology.get("edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    all_edge_keys = {tuple(sorted(map(int, edge))) for edge in all_edges}
     for edge in long_edges[:limit]:
         _add_index_line(longitudinal, positions, edge)
     for edge in lateral_edges[:limit]:
@@ -496,8 +510,14 @@ def _append_topology_batches(batches, topology, positions, limit):
     for edge in all_edges[:limit]:
         if tuple(sorted(map(int, edge))) not in classified:
             _add_index_line(longitudinal, positions, edge)
-    for triangle in np.asarray(_values(topology.get("triangles")), dtype=np.int32).reshape((-1, 3))[:limit]:
-        _add_index_loop(triangles, positions, triangle)
+    triangle_values = np.asarray(
+        _values(topology.get("triangles")), dtype=np.int32
+    ).reshape((-1, 3))
+    for triangle in triangle_values[:limit]:
+        first, second, third = map(int, triangle)
+        for edge in ((first, second), (second, third), (third, first)):
+            if tuple(sorted(edge)) not in all_edge_keys:
+                _add_index_line(triangles, positions, edge)
     _batch(batches, longitudinal, "longitudinal", 2.0)
     _batch(batches, lateral, "lateral", 2.4)
     _batch(batches, triangles, "triangle", 1.0)

@@ -928,7 +928,7 @@ def physicsMC2Step(
 def physicsMC2DebugDraw(
     world: PhysicsWorldCache,
     task_filter: str = "",
-    max_items: int = 2000,
+    max_items: int = 10000,
     show_topology: bool = True,
     show_attributes: bool = True,
     show_depth: bool = False,

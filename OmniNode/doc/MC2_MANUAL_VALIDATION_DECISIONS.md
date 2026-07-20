@@ -35,7 +35,7 @@
 | D-07 | **代码已关闭** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 无 production consumer，已从全部公开 Profile/Task 节点及 preset 移除；内部 ABI 固定为0 |
 | D-08 | **人工已验证** | Baseline depth 审计 | Mesh以4:1混入Fixed边界表面距离并单调保护；Depth inertia使用1.5次指数；非均匀减面实测确认旋转带动更自然且横向等高线偏移明显受抑制 |
 | D-09 | **代码已实现，待界面复验** | 参数说明载体 | Profile/Task 长注释由实际字段 metadata 自动生成表格并由注册测试防漂移；socket tooltip 保留短摘要和枚举映射 |
-| D-10 | **代码已修复，待手测** | 非连通 MeshCloth 碰撞可视化完整性 | 根因是`max_items`按数组前缀截断；现按连通分量公平分配预算并在分量内均匀抽样 |
+| D-10 | **人工已验证** | 非连通 MeshCloth 碰撞可视化完整性 | 根因是`max_items`按数组前缀截断；分量公平抽样修复已在真实多分量模型中手测通过 |
 
 ## P0：Teleport 回退与高速穿模
 
@@ -281,7 +281,7 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 `碰撞情况`继续只画可参与碰撞的Point/Edge proxy与collider形状；独立`实际接触`已经接通真实kernel结果，不再从最终normal或位置差反推。
 
-新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配；真实截图场景仍需手测关闭D-10。
+新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配，真实多分量模型也已人工确认完整显示，D-10关闭。
 
 - C++ Point/Edge kernel只在`show_collision_contacts`显式请求时记录primitive kind/index、collider index、接触位置、法线和实际correction；关闭时请求位为false且记录数组为空。
 - 请求在下一真实substep前写入context，完成后只读冻结到slot snapshot；same-frame和zero-substep不得伪造contact。
@@ -364,7 +364,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
 5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
-6. **非连通碰撞绘制 D-10（代码已修复，待手测）**：已确认renderer前缀截断并改为分量公平抽样；双分量Point/Edge自动回归已通过。
+6. **非连通碰撞绘制 D-10（人工已关闭）**：renderer前缀截断已改为分量公平抽样；双分量Point/Edge自动回归与真实多分量模型手测均已通过。
 7. **Debug 基础数据合同（结构约束与Center分层已关闭）**：五类约束的六个有序pass均已稀疏捕获，并具备稳定记录identity、active状态与真实贡献；Angle保留三轮交错子分支顺序，Center发布raw/Anchor/smoothing/World/final实际层及限速命中，debug-off零buffer/零readback。后续转向contact时间层。
 8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 9. **参数长说明同步（代码已实现，待界面复验）**：Profile/Task节点表格由实际字段metadata生成，注册测试防止字段说明漂移；socket只保留短摘要。
