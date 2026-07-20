@@ -208,6 +208,224 @@ def _annotate_external_contact_temporal(
     })
 
 
+def _debug_primitive_center(positions, primitive):
+    indices = [
+        int(index)
+        for index in primitive
+        if 0 <= int(index) < len(positions)
+    ]
+    if not indices:
+        return None
+    return tuple(map(float, np.mean(positions[indices], axis=0)))
+
+
+def _debug_values(value):
+    return () if value is None else value
+
+
+def _annotate_self_temporal(
+    state: dict,
+    history: dict,
+    *,
+    positions,
+    frame: int,
+    generation: int,
+    scope,
+) -> None:
+    positions = np.asarray(
+        _debug_values(positions), dtype=np.float32
+    ).reshape((-1, 3))
+    primitives = np.asarray(
+        _debug_values(state.get("particle_indices")), dtype=np.int32
+    ).reshape((-1, 3))
+    scope = tuple(scope)
+    if (
+        int(history.get("generation", generation)) != generation
+        or tuple(history.get("scope", scope)) != scope
+    ):
+        history.clear()
+
+    contact_observed = all(
+        state.get(name) is not None
+        for name in ("contact_indices", "contact_types", "contact_enabled")
+    )
+    contacts = np.asarray(
+        _debug_values(state.get("contact_indices")), dtype=np.int32
+    ).reshape((-1, 2))
+    contact_types = np.asarray(
+        _debug_values(state.get("contact_types")), dtype=np.int32
+    ).reshape((-1,))
+    enabled = np.asarray(
+        _debug_values(state.get("contact_enabled")), dtype=np.uint8
+    ).reshape((-1,))
+    contact_count = min(len(contacts), len(contact_types), len(enabled))
+    previous_contact_state = history.get("contacts") or {}
+    previous_contacts = previous_contact_state.get("records") or {}
+    contact_history_valid = bool(
+        contact_observed
+        and "contacts" in history
+        and int(previous_contact_state.get("frame", frame - 1)) == frame - 1
+    )
+    contact_states = np.zeros((contact_count,), dtype=np.uint8)
+    current_contacts = {}
+    for index in range(contact_count):
+        if not enabled[index]:
+            continue
+        first, second = map(int, contacts[index])
+        if not (0 <= first < len(primitives) and 0 <= second < len(primitives)):
+            continue
+        first_center = _debug_primitive_center(positions, primitives[first])
+        second_center = _debug_primitive_center(positions, primitives[second])
+        if first_center is None or second_center is None:
+            continue
+        if first <= second:
+            pair = (first, second)
+            centers = (first_center, second_center)
+        else:
+            pair = (second, first)
+            centers = (second_center, first_center)
+        key = (int(contact_types[index]), *pair)
+        current_contacts[key] = (key, pair, centers)
+        if contact_history_valid:
+            contact_states[index] = 2 if key in previous_contacts else 1
+    lost_contacts = (
+        [
+            previous_contacts[key]
+            for key in sorted(previous_contacts.keys() - current_contacts.keys())
+        ]
+        if contact_history_valid
+        else []
+    )
+    persistent_contacts = (
+        len(previous_contacts.keys() & current_contacts.keys())
+        if contact_history_valid
+        else 0
+    )
+    new_contacts = (
+        len(current_contacts) - persistent_contacts if contact_history_valid else 0
+    )
+    state["contact_temporal_states"] = _readonly(contact_states)
+    state["lost_contact_types"] = _readonly(
+        [record[0][0] for record in lost_contacts], np.int32
+    )
+    state["lost_contact_indices"] = _readonly(
+        [record[1] for record in lost_contacts], np.int32
+    ).reshape((-1, 2))
+    state["lost_contact_positions"] = _readonly(
+        [record[2] for record in lost_contacts], np.float32
+    ).reshape((-1, 2, 3))
+    state["contact_temporal"] = {
+        "observed": contact_observed,
+        "history_valid": contact_history_valid,
+        "active_count": len(current_contacts),
+        "new_count": new_contacts,
+        "persistent_count": persistent_contacts,
+        "lost_count": len(lost_contacts),
+        "churn_count": new_contacts + len(lost_contacts),
+        "previous_frame": (
+            int(previous_contact_state.get("frame", -1))
+            if contact_history_valid else -1
+        ),
+        "frame": int(frame),
+        "observation_stride": 1,
+    }
+
+    intersection_observed = state.get("intersect_records") is not None
+    intersections = np.asarray(
+        _debug_values(state.get("intersect_records")), dtype=np.int32
+    ).reshape((-1, 5))
+    phase = int(frame) & 1
+    phase_histories = history.get("intersection_phases") or {}
+    previous_intersection_state = phase_histories.get(phase) or {}
+    previous_intersections = previous_intersection_state.get("records") or {}
+    intersection_history_valid = bool(
+        intersection_observed
+        and phase in phase_histories
+        and int(previous_intersection_state.get("frame", frame - 2)) == frame - 2
+    )
+    intersection_states = np.zeros((len(intersections),), dtype=np.uint8)
+    current_intersections = {}
+    for index, record in enumerate(intersections):
+        particle_indices = tuple(map(int, record))
+        if min(particle_indices) < 0 or max(particle_indices) >= len(positions):
+            continue
+        edge = tuple(sorted(particle_indices[:2]))
+        triangle = tuple(sorted(particle_indices[2:]))
+        key = (*edge, *triangle)
+        current_intersections[key] = (
+            key,
+            particle_indices,
+            tuple(tuple(map(float, positions[particle])) for particle in particle_indices),
+        )
+        if intersection_history_valid:
+            intersection_states[index] = (
+                2 if key in previous_intersections else 1
+            )
+    lost_intersections = (
+        [
+            previous_intersections[key]
+            for key in sorted(
+                previous_intersections.keys() - current_intersections.keys()
+            )
+        ]
+        if intersection_history_valid
+        else []
+    )
+    persistent_intersections = (
+        len(previous_intersections.keys() & current_intersections.keys())
+        if intersection_history_valid
+        else 0
+    )
+    new_intersections = (
+        len(current_intersections) - persistent_intersections
+        if intersection_history_valid else 0
+    )
+    state["intersection_temporal_states"] = _readonly(intersection_states)
+    state["lost_intersect_records"] = _readonly(
+        [record[1] for record in lost_intersections], np.int32
+    ).reshape((-1, 5))
+    state["lost_intersect_positions"] = _readonly(
+        [record[2] for record in lost_intersections], np.float32
+    ).reshape((-1, 5, 3))
+    state["intersection_temporal"] = {
+        "observed": intersection_observed,
+        "history_valid": intersection_history_valid,
+        "active_count": len(current_intersections),
+        "new_count": new_intersections,
+        "persistent_count": persistent_intersections,
+        "lost_count": len(lost_intersections),
+        "churn_count": new_intersections + len(lost_intersections),
+        "previous_frame": (
+            int(previous_intersection_state.get("frame", -1))
+            if intersection_history_valid else -1
+        ),
+        "frame": int(frame),
+        "phase": phase,
+        "observation_stride": 2,
+    }
+
+    history.update({
+        "generation": int(generation),
+        "scope": scope,
+    })
+    if contact_observed:
+        history["contacts"] = {
+            "frame": int(frame),
+            "records": current_contacts,
+        }
+    else:
+        history.pop("contacts", None)
+    if intersection_observed:
+        phase_histories = dict(phase_histories)
+        phase_histories[phase] = {
+            "frame": int(frame),
+            "records": current_intersections,
+        }
+        history["intersection_phases"] = phase_histories
+    else:
+        history.pop("intersection_phases", None)
+
+
 def _freeze_value(value):
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -267,6 +485,10 @@ def request_mc2_debug_capture(
             matches_task and matches_setup
         ):
             slot.data.pop("_debug_external_contact_history", None)
+        if not filters.get("show_self_contacts", False) or not (
+            matches_task and matches_setup
+        ):
+            slot.data.pop("_debug_self_temporal_history", None)
         if not matches_task:
             continue
         if not matches_setup:
@@ -283,6 +505,8 @@ def request_mc2_debug_capture(
         requested += 1
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
+        if not (has_modes and requested and filters.get("show_self_contacts", False)):
+            interaction.clear_debug_self_temporal_history()
         if has_modes and requested and (
             filters["show_self"] or filters["show_interaction_contacts"]
         ):
@@ -1167,6 +1391,25 @@ def capture_requested_mc2_debug(
                         frame=frame,
                         generation=generation,
                     )
+                self_state = native_snapshot.get("self_collision")
+                if (
+                    filters.get("show_self_contacts", False)
+                    and isinstance(self_state, dict)
+                ):
+                    history = slot.data.setdefault(
+                        "_debug_self_temporal_history", {}
+                    )
+                    _annotate_self_temporal(
+                        self_state,
+                        history,
+                        positions=native_snapshot.get("positions"),
+                        frame=frame,
+                        generation=generation,
+                        scope=(
+                            str(slot.slot_id),
+                            str(item["native_context"].proxy_signature),
+                        ),
+                    )
             include_topology = bool(
                 filters.get("show_topology", False)
                 or filters.get("show_attributes", False)
@@ -1298,7 +1541,7 @@ def capture_requested_mc2_debug(
                     filters.get("show_self", False)
                     or filters.get("show_interaction_contacts", False)
                 ):
-                    interaction.refresh_debug_draw_snapshot(
+                    interaction_snapshot = interaction.refresh_debug_draw_snapshot(
                         include_primitives=bool(
                             filters.get("show_self_primitives", False)
                         ),
@@ -1311,6 +1554,27 @@ def capture_requested_mc2_debug(
                             or filters.get("show_interaction_contacts", False)
                         ),
                     )
+                    if filters.get("show_self_contacts", False):
+                        participants = tuple(
+                            interaction_snapshot.get("participants") or ()
+                        )
+                        scope = tuple(
+                            (
+                                str(participant.get("task_id") or ""),
+                                str(participant.get("slot_id") or ""),
+                                int(participant.get("vertex_count", 0) or 0),
+                                str(participant.get("proxy_signature") or ""),
+                            )
+                            for participant in participants
+                        )
+                        _annotate_self_temporal(
+                            interaction_snapshot,
+                            interaction.debug_self_temporal_history(),
+                            positions=interaction_snapshot.get("positions"),
+                            frame=frame,
+                            generation=generation,
+                            scope=scope,
+                        )
                     captured += 1
                 state.pop("error", None)
                 state["captured_frame"] = frame

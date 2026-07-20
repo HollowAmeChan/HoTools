@@ -1334,6 +1334,7 @@ class MC2NativeInteractionV0:
         self._debug_scope = ()
         self._debug_draw_snapshot = None
         self._debug_capture_state = {}
+        self._debug_self_temporal_history = {}
         self.debug_capture_count = 0
         self.debug_readback_count = 0
 
@@ -1345,6 +1346,7 @@ class MC2NativeInteractionV0:
         self._ensure_live()
         self._module.mc2_interaction_v0_invalidate(self._handle)
         self._debug_draw_snapshot = None
+        self._debug_self_temporal_history.clear()
 
     def step_group(
         self,
@@ -1443,6 +1445,12 @@ class MC2NativeInteractionV0:
 
     def debug_capture_state(self) -> dict:
         return self._debug_capture_state
+
+    def debug_self_temporal_history(self) -> dict:
+        return self._debug_self_temporal_history
+
+    def clear_debug_self_temporal_history(self) -> None:
+        self._debug_self_temporal_history.clear()
 
     def refresh_debug_draw_snapshot(
         self,
@@ -1556,6 +1564,7 @@ class MC2NativeInteractionV0:
         self._debug_scope = ()
         self._debug_draw_snapshot = None
         self._debug_capture_state.clear()
+        self._debug_self_temporal_history.clear()
 
     def omni_cache_dispose(self, _reason: str = "") -> None:
         self.dispose()

@@ -882,7 +882,7 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     ("自碰1 几何单元", "显示真正注册到self static/dynamic的Point、Edge和Triangle primitive：紫色点、边和三角形轮廓。它回答哪些几何进入检测，缺失时应先检查粒子属性、final proxy和self static构建。"),
     ("自碰2 空间网格", "显示native broadphase中primitive占用的灰色空间格及实际grid size。它用于判断分桶尺度、占用密度和潜在性能问题，不表示格内primitive已经接触。"),
     ("自碰3 候选配对", "用黄色线连接grid broadphase输出的candidate primitive中心。候选允许包含false positive，只表示需要进入后续窄相；数量异常增大是性能/尺度诊断信号，不能当作接触数量。"),
-    ("自碰4 接触结果", "显示最终窄相与穿插结果：细淡红线只提示启用的厚度contact存在，灰色为缓存中未启用的contact，两侧黄色箭头分别显示四轮solve经过int32量化和同粒子多contact平均后的真实累计推动方向与强度，并固定放大8倍方便观察；不设置最短长度，因此相对强弱不被归一化。洋红为final线段-三角形测试确认的几何穿插。黄色不再表示人为定长的法线。洋红记录按Edge奇偶分片跨帧检测，因此规律闪烁不是普通EE/PT接触停止，也不能直接归因于浮点随机。"),
+    ("自碰4 接触结果", "显示最终窄相、解算推动与穿插时间层。enabled contact按连续捕获帧比较：淡红为基线或持续，橙色为新增，灰色细线为刚失效；缓存中从未启用的contact仍是另一种灰色。两侧黄色箭头分别显示四轮solve经过int32量化和同粒子多contact平均后的真实累计推动，并固定放大8倍，不设置最短长度。final线段-三角形命中按Edge奇偶分片比较同相位的前两帧：洋红为基线或持续，亮粉为新增，暗紫为刚失效；因此不会把隔帧扫描制造成每帧churn。所有时间历史在捕获中断、generation、proxy身份或观察模式变化时重建基线。"),
     ("最终输出偏移", "显示冻结result candidate和writeback plan真正提交给Blender的结果。Mesh为base到最终world位置的线段及object-local offset对应端点；Bone只显示允许平移的target，connected rotation-only骨不会伪造位移。"),
 )
 
@@ -948,7 +948,7 @@ def _mc2_debug_long_description() -> str:
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
-        "show_self_contacts": {"description": "自碰4：红=接触 黄=推动×8\n灰=禁用 紫=穿插"},
+        "show_self_contacts": {"description": "自碰4：红=持续 橙=新增\n灰=失效 紫=穿插"},
         "show_output": {"description": "显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},

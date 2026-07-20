@@ -27,7 +27,7 @@
 | ID | 状态 | 决策 | 当前建议 |
 |---|---|---|---|
 | D-01 | **代码已关闭，待最终手测** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史，清理接触状态 |
-| D-02 | **分段实施中** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量及外碰时间层已接通；self contact/intersection时间层仍待实施 |
+| D-02 | **代码已实现，待整体手测** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量、外碰及self contact/intersection时间层均已接通 |
 | D-03 | **人工已验证** | 碰撞结果表达 | “碰撞情况”保留全部有效外碰形状；“实际接触”只显示命中的真实半径形状、接触位置、对应collider与实际推动，并覆盖跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **已决策，代码已迁移** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；无双owner |
@@ -115,7 +115,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 - 一级 `几何交叉`：已只显示final线段-三角形测试确认命中的记录；洋红表示“几何穿越命中”，不是普通接触或broadphase record。
 - 高级 `自碰形状`、`宽相网格`、`宽相候选`：保留给算法审计，默认关闭。
 - 高级 `穿插扫描候选`：低亮度表达当前奇/偶Edge分片及broadphase record。若提供稳定观察，只能在renderer合并最近两帧并按年龄淡出，必须标注为两帧观察窗，不能冒充本帧solver状态。
-- 每种模式显示本帧新增/持续/失效状态，避免闪烁被误读成稳定接触。
+- self contact已按连续捕获帧显示基线/持续、新增与刚失效状态，只将`enabled != 0`计入active；缓存中disabled记录保持独立灰色。final intersection按Edge奇偶分片比较同相位的前两帧，显示洋红持续、亮粉新增和暗紫失效，不把隔帧扫描制造成每帧churn。两类snapshot分别发布active/new/persistent/lost/churn、previous frame和observation stride；捕获中断、generation、proxy scope或模式变化会重建基线。
 - 若 debug 关闭，不得生产 contact 明细、intersection 线段或额外 readback；求解本来必需的缓存不算 debug，但不能为绘制复制整份数组。
 
 ## P1：Debug 信息架构重做
@@ -362,13 +362,13 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **已冻结决策**：D-03碰撞结果、D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-07代码已关闭，D-02正在分段实施，D-06方向已定，D-09代码已实现待界面复验。
+1. **已冻结决策**：D-03碰撞结果、D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-02/D-07代码已关闭，D-02与D-09仍待整体界面复验，D-06方向已定。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
 5. **自碰密度最小场景审计（当前关闭）**：一环误碰根因已修，final结果debug已纠正，真实单层模型已收敛；密度量化转为未来回归，不继续无依据扩大k-ring。
 6. **非连通碰撞绘制 D-10（人工已关闭）**：renderer前缀截断已改为分量公平抽样；双分量Point/Edge自动回归与真实多分量模型手测均已通过。
-7. **Debug 基础数据合同（结构约束与Center分层已关闭）**：五类约束的六个有序pass均已稀疏捕获，并具备稳定记录identity、active状态与真实贡献；Angle保留三轮交错子分支顺序，Center发布raw/Anchor/smoothing/World/final实际层及限速命中，debug-off零buffer/零readback。后续转向contact时间层。
+7. **Debug 基础数据合同（代码已关闭，待整体手测）**：五类约束的六个有序pass均已稀疏捕获，并具备稳定记录identity、active状态与真实贡献；Angle保留三轮交错子分支顺序，Center发布raw/Anchor/smoothing/World/final实际层及限速命中。外碰按连续帧发布时间层，self contact按连续帧、intersection按同奇偶相位的前两帧发布时间层；debug-off保持零buffer/零readback。
 8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 9. **参数长说明同步（代码已实现，待界面复验）**：Profile/Task节点表格由实际字段metadata生成，注册测试防止字段说明漂移；socket只保留短摘要。
 10. **参数归属审计（已完成）**：字段表、唯一owner、节点裁剪、preset拆分和hot-update证据已经接通。

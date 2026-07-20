@@ -110,8 +110,12 @@ _COLORS = {
     "grid": (0.45, 0.50, 0.58, 0.25),
     "candidate": (0.95, 0.72, 0.25, 0.35),
     "contact": (1.00, 0.15, 0.12, 0.28),
+    "contact_new": (1.00, 0.68, 0.06, 0.94),
+    "contact_lost": (0.48, 0.52, 0.58, 0.34),
     "disabled_contact": (0.55, 0.55, 0.60, 0.38),
     "intersection": (1.00, 0.05, 0.72, 1.00),
+    "intersection_new": (1.00, 0.34, 0.88, 1.00),
+    "intersection_lost": (0.54, 0.34, 0.56, 0.46),
     "output": (0.30, 1.00, 0.82, 0.85),
 }
 
@@ -1923,9 +1927,14 @@ def _append_self_batches(
         _batch(batches, lines, "candidate")
     if filters["show_self_contacts"]:
         enabled_lines = []
+        new_contact_lines = []
+        lost_contact_lines = []
         disabled_lines = []
         contacts = np.asarray(_values(state.get("contact_indices")), dtype=np.int32).reshape((-1, 2))
         enabled = np.asarray(_values(state.get("contact_enabled")), dtype=np.uint8)
+        temporal_states = np.asarray(
+            _values(state.get("contact_temporal_states")), dtype=np.uint8
+        ).reshape((-1,))
         corrections = np.asarray(
             _values(state.get("contact_corrections")), dtype=np.float32
         ).reshape((-1, 2, 3))
@@ -1933,8 +1942,15 @@ def _append_self_batches(
         for index, (first, second) in enumerate(contacts[:limit]):
             if not _primitive_pair_visible(visible_primitives, first, second):
                 continue
-            target = enabled_lines if index < len(enabled) and enabled[index] else disabled_lines
+            if index >= len(enabled) or not enabled[index]:
+                target = disabled_lines
+            elif index < len(temporal_states) and temporal_states[index] == 1:
+                target = new_contact_lines
+            else:
+                target = enabled_lines
             _add_center_line(target, centers, int(first), int(second))
+            if index >= len(enabled) or not enabled[index]:
+                continue
             if index < len(corrections):
                 for side, primitive in enumerate((int(first), int(second))):
                     if not (0 <= primitive < len(centers)) or centers[primitive] is None:
@@ -1947,20 +1963,71 @@ def _append_self_batches(
                             vector3(centers[primitive])
                             + correction * _CONTACT_CORRECTION_DISPLAY_SCALE,
                         )
+        lost_contact_indices = np.asarray(
+            _values(state.get("lost_contact_indices")), dtype=np.int32
+        ).reshape((-1, 2))
+        lost_contact_positions = np.asarray(
+            _values(state.get("lost_contact_positions")), dtype=np.float32
+        ).reshape((-1, 2, 3))
+        for pair, pair_positions in zip(
+            lost_contact_indices[:limit], lost_contact_positions[:limit]
+        ):
+            if _primitive_pair_visible(
+                visible_primitives, int(pair[0]), int(pair[1])
+            ):
+                add_line(lost_contact_lines, pair_positions[0], pair_positions[1])
         intersections = []
-        for record in np.asarray(_values(state.get("intersect_records")), dtype=np.int32).reshape((-1, 5))[:limit]:
+        new_intersections = []
+        lost_intersections = []
+        intersection_states = np.asarray(
+            _values(state.get("intersection_temporal_states")), dtype=np.uint8
+        ).reshape((-1,))
+        for index, record in enumerate(np.asarray(
+            _values(state.get("intersect_records")), dtype=np.int32
+        ).reshape((-1, 5))[:limit]):
             if not any(
                 0 <= int(particle) < len(visible_particles)
                 and visible_particles[int(particle)]
                 for particle in record
             ):
                 continue
-            _add_index_line(intersections, positions, record[:2])
-            _add_index_loop(intersections, positions, record[2:])
+            target = (
+                new_intersections
+                if index < len(intersection_states)
+                and intersection_states[index] == 1
+                else intersections
+            )
+            _add_index_line(target, positions, record[:2])
+            _add_index_loop(target, positions, record[2:])
+        lost_intersect_records = np.asarray(
+            _values(state.get("lost_intersect_records")), dtype=np.int32
+        ).reshape((-1, 5))
+        lost_intersect_positions = np.asarray(
+            _values(state.get("lost_intersect_positions")), dtype=np.float32
+        ).reshape((-1, 5, 3))
+        for record, record_positions in zip(
+            lost_intersect_records[:limit], lost_intersect_positions[:limit]
+        ):
+            if not any(
+                0 <= int(particle) < len(visible_particles)
+                and visible_particles[int(particle)]
+                for particle in record
+            ):
+                continue
+            add_line(lost_intersections, record_positions[0], record_positions[1])
+            for first, second in zip(
+                record_positions[2:],
+                (*record_positions[3:], record_positions[2]),
+            ):
+                add_line(lost_intersections, first, second)
         _batch(batches, enabled_lines, "contact", 0.8)
+        _batch(batches, new_contact_lines, "contact_new", 1.2)
+        _batch(batches, lost_contact_lines, "contact_lost", 0.8)
         _batch(batches, disabled_lines, "disabled_contact")
         _batch(batches, correction_lines, "contact_correction", 2.2)
         _batch(batches, intersections, "intersection", 2.6)
+        _batch(batches, new_intersections, "intersection_new", 2.8)
+        _batch(batches, lost_intersections, "intersection_lost", 1.6)
 
 
 def _append_interaction_contact_batches(batches, state, filters):

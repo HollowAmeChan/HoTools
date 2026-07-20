@@ -1292,6 +1292,9 @@ def step_mc2(
                             "task_id": str(item["spec"].task_id),
                             "slot_id": str(item["slot"].slot_id),
                             "vertex_count": int(item["native_context"].vertex_count),
+                            "proxy_signature": str(
+                                item["native_context"].proxy_signature
+                            ),
                             "primary_group_bit": int(primary_group_bits[index]),
                             "collided_by_groups": int(collided_by_groups[index]),
                         }

@@ -292,6 +292,7 @@ try:
     assert "真实半径球" in debug_descriptions["实际接触"]
     assert "放大8倍" in debug_descriptions["实际接触"]
     assert "放大8倍" in debug_descriptions["自碰4 接触结果"]
+    assert "同相位的前两帧" in debug_descriptions["自碰4 接触结果"]
 
     contact_positions = np.asarray(
         ((0, 0, 0), (1, 0, 0), (2, 0, 0)), dtype=np.float32
@@ -413,6 +414,189 @@ try:
     )
     assert second_contacts["temporal"]["history_valid"] is False
     assert second_contacts["temporal"]["churn_count"] == 0
+
+    self_positions = np.asarray(
+        (
+            (0, 0, 0), (1, 0, 0), (2, 0, 0),
+            (0, 1, 0), (1, 1, 0), (2, 1, 0),
+        ),
+        dtype=np.float32,
+    )
+    self_primitives = np.asarray(
+        tuple((index, -1, -1) for index in range(6)), dtype=np.int32
+    )
+    self_history = {}
+    self_state_a = {
+        "particle_indices": self_primitives,
+        "contact_indices": np.asarray(((0, 1), (1, 2)), dtype=np.int32),
+        "contact_types": np.asarray((0, 1), dtype=np.int32),
+        "contact_enabled": np.asarray((1, 1), dtype=np.uint8),
+        "intersect_records": np.asarray(((0, 1, 2, 3, 4),), dtype=np.int32),
+    }
+    debug_module._annotate_self_temporal(
+        self_state_a,
+        self_history,
+        positions=self_positions,
+        frame=10,
+        generation=3,
+        scope=("slot", "proxy"),
+    )
+    assert self_state_a["contact_temporal"]["history_valid"] is False
+    assert self_state_a["intersection_temporal"]["history_valid"] is False
+    assert self_state_a["contact_temporal_states"].flags.writeable is False
+
+    self_state_b = {
+        "particle_indices": self_primitives,
+        "contact_indices": np.asarray(
+            ((0, 1), (1, 2), (2, 3)), dtype=np.int32
+        ),
+        "contact_types": np.asarray((0, 1, 0), dtype=np.int32),
+        "contact_enabled": np.asarray((1, 0, 1), dtype=np.uint8),
+        "intersect_records": np.asarray(((1, 2, 3, 4, 5),), dtype=np.int32),
+    }
+    debug_module._annotate_self_temporal(
+        self_state_b,
+        self_history,
+        positions=self_positions,
+        frame=11,
+        generation=3,
+        scope=("slot", "proxy"),
+    )
+    np.testing.assert_array_equal(
+        self_state_b["contact_temporal_states"], (2, 0, 1)
+    )
+    np.testing.assert_array_equal(
+        self_state_b["lost_contact_indices"], ((1, 2),)
+    )
+    assert self_state_b["contact_temporal"]["persistent_count"] == 1
+    assert self_state_b["contact_temporal"]["new_count"] == 1
+    assert self_state_b["contact_temporal"]["lost_count"] == 1
+    assert self_state_b["intersection_temporal"]["history_valid"] is False
+    self_temporal_batches = []
+    debug_draw._append_self_batches(
+        self_temporal_batches,
+        [],
+        {
+            "positions": self_positions,
+            "native": {
+                "self_point_primitive_count": 6,
+                "self_edge_primitive_count": 0,
+            },
+            "self_collision": self_state_b,
+        },
+        {
+            "max_items": 10000,
+            "task_filter": "",
+            "show_self_primitives": False,
+            "show_self_grid": False,
+            "show_self_candidates": False,
+            "show_self_contacts": True,
+        },
+        interaction=False,
+    )
+    self_temporal_colors = {tuple(batch[1]) for batch in self_temporal_batches}
+    assert tuple(debug_draw._COLORS["contact_new"]) in self_temporal_colors
+    assert tuple(debug_draw._COLORS["contact_lost"]) in self_temporal_colors
+
+    self_state_c = {
+        "particle_indices": self_primitives,
+        "contact_indices": np.asarray(
+            ((0, 1), (1, 2), (2, 3)), dtype=np.int32
+        ),
+        "contact_types": np.asarray((0, 1, 0), dtype=np.int32),
+        "contact_enabled": np.asarray((1, 0, 1), dtype=np.uint8),
+        "intersect_records": np.asarray(((0, 1, 2, 3, 5),), dtype=np.int32),
+    }
+    debug_module._annotate_self_temporal(
+        self_state_c,
+        self_history,
+        positions=self_positions,
+        frame=12,
+        generation=3,
+        scope=("slot", "proxy"),
+    )
+    np.testing.assert_array_equal(
+        self_state_c["intersection_temporal_states"], (1,)
+    )
+    np.testing.assert_array_equal(
+        self_state_c["lost_intersect_records"], ((0, 1, 2, 3, 4),)
+    )
+    assert self_state_c["intersection_temporal"] == {
+        "observed": True,
+        "history_valid": True,
+        "active_count": 1,
+        "new_count": 1,
+        "persistent_count": 0,
+        "lost_count": 1,
+        "churn_count": 2,
+        "previous_frame": 10,
+        "frame": 12,
+        "phase": 0,
+        "observation_stride": 2,
+    }
+    intersection_temporal_batches = []
+    debug_draw._append_self_batches(
+        intersection_temporal_batches,
+        [],
+        {
+            "positions": self_positions,
+            "native": {
+                "self_point_primitive_count": 6,
+                "self_edge_primitive_count": 0,
+            },
+            "self_collision": self_state_c,
+        },
+        {
+            "max_items": 10000,
+            "task_filter": "",
+            "show_self_primitives": False,
+            "show_self_grid": False,
+            "show_self_candidates": False,
+            "show_self_contacts": True,
+        },
+        interaction=False,
+    )
+    intersection_temporal_colors = {
+        tuple(batch[1]) for batch in intersection_temporal_batches
+    }
+    assert tuple(
+        debug_draw._COLORS["intersection_new"]
+    ) in intersection_temporal_colors
+    assert tuple(
+        debug_draw._COLORS["intersection_lost"]
+    ) in intersection_temporal_colors
+    unobserved_self_state = {"particle_indices": self_primitives}
+    debug_module._annotate_self_temporal(
+        unobserved_self_state,
+        self_history,
+        positions=self_positions,
+        frame=13,
+        generation=3,
+        scope=("slot", "proxy"),
+    )
+    assert unobserved_self_state["contact_temporal"]["observed"] is False
+    assert unobserved_self_state["intersection_temporal"]["observed"] is False
+    assert "contacts" not in self_history
+    assert "intersection_phases" not in self_history
+    resumed_self_state = {
+        "particle_indices": self_primitives,
+        "contact_indices": np.asarray(((0, 1),), dtype=np.int32),
+        "contact_types": np.asarray((0,), dtype=np.int32),
+        "contact_enabled": np.asarray((1,), dtype=np.uint8),
+        "intersect_records": np.asarray(((0, 1, 2, 3, 4),), dtype=np.int32),
+    }
+    debug_module._annotate_self_temporal(
+        resumed_self_state,
+        self_history,
+        positions=self_positions,
+        frame=14,
+        generation=3,
+        scope=("slot", "proxy"),
+    )
+    assert resumed_self_state["contact_temporal"]["history_valid"] is False
+    assert resumed_self_state["intersection_temporal"]["history_valid"] is False
+    assert resumed_self_state["contact_temporal"]["churn_count"] == 0
+    assert resumed_self_state["intersection_temporal"]["churn_count"] == 0
 
     interaction_contact_state = {
         "positions": np.asarray(
@@ -1391,6 +1575,22 @@ try:
             assert interaction_stage_keys == expected_stage_keys, (
                 mode_name, interaction_stage_keys, expected_stage_keys
             )
+            if mode_name == "show_self_contacts":
+                for temporal_state in (self_state, interaction_state):
+                    assert "contact_temporal" in temporal_state
+                    assert "intersection_temporal" in temporal_state
+                    assert temporal_state[
+                        "contact_temporal_states"
+                    ].flags.writeable is False
+                    assert temporal_state[
+                        "intersection_temporal_states"
+                    ].flags.writeable is False
+                    assert temporal_state["contact_temporal"][
+                        "observation_stride"
+                    ] == 1
+                    assert temporal_state["intersection_temporal"][
+                        "observation_stride"
+                    ] == 2
     print("[PASS] isolated debug modes emit their own physical batch semantics")
 
     debug_draw.update_mc2_debug_draw_store(
