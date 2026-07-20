@@ -68,6 +68,7 @@ PyObject* mc2_context_v0_read_debug_constraint_results(PyObject*, PyObject* args
 PyObject* mc2_context_v0_read_debug_distance_results(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_bending_results(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_debug_motion_results(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_read_debug_angle_results(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_free(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_stats(PyObject*, PyObject* args);

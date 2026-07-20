@@ -338,6 +338,9 @@ try:
         show_distance=True,
         show_tether=True,
         show_bending=True,
+        show_motion=True,
+        show_angle_restoration=True,
+        show_angle_limit=True,
     )
     empty_snapshot = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
     assert empty_snapshot["line_vertex_count"] == 0
@@ -576,6 +579,59 @@ try:
             grouped_motion,
             constraint_results["motion"]["corrections"],
             atol=2.0e-7,
+        )
+        grouped_angle = np.zeros_like(
+            np.asarray(constraint_results["angle"]["corrections"], dtype=np.float32)
+        )
+        for key, expected_branch in (
+            ("angle_limit", 0),
+            ("angle_restoration", 1),
+        ):
+            angle_records = snapshot["constraint_records"][key]
+            assert set(angle_records) == {
+                "branches",
+                "iterations",
+                "record_indices",
+                "children",
+                "parents",
+                "origins",
+                "parent_origins",
+                "corrections",
+                "parent_corrections",
+                "currents",
+                "limits",
+                "errors",
+                "normalized_errors",
+                "states",
+            }
+            angle_count = len(angle_records["record_indices"])
+            assert angle_count > 0
+            for name in angle_records:
+                assert len(angle_records[name]) == angle_count
+                assert angle_records[name].flags.writeable is False
+            np.testing.assert_array_equal(
+                angle_records["branches"], expected_branch
+            )
+            np.testing.assert_allclose(
+                angle_records["errors"],
+                np.asarray(angle_records["currents"])
+                - np.asarray(angle_records["limits"]),
+                atol=1.0e-7,
+            )
+            np.add.at(
+                grouped_angle,
+                np.asarray(angle_records["children"], dtype=np.int32),
+                np.asarray(angle_records["corrections"], dtype=np.float32),
+            )
+            np.add.at(
+                grouped_angle,
+                np.asarray(angle_records["parents"], dtype=np.int32),
+                np.asarray(angle_records["parent_corrections"], dtype=np.float32),
+            )
+        np.testing.assert_allclose(
+            grouped_angle,
+            constraint_results["angle"]["corrections"],
+            atol=3.0e-7,
         )
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
@@ -906,8 +962,21 @@ try:
                 assert motion_records["branches"].flags.writeable is False
                 assert motion_records["origins"].flags.writeable is False
                 assert motion_records["corrections"].flags.writeable is False
+            angle_record_key = {
+                "show_angle_limit": "angle_limit",
+                "show_angle_restoration": "angle_restoration",
+            }.get(mode_name)
+            if angle_record_key is not None:
+                angle_records = captured_snapshot["constraint_records"][
+                    angle_record_key
+                ]
+                assert len(angle_records["record_indices"]) > 0
+                assert angle_records["iterations"].flags.writeable is False
+                assert angle_records["origins"].flags.writeable is False
+                assert angle_records["corrections"].flags.writeable is False
             if mode_name in (
-                "show_distance", "show_tether", "show_bending", "show_motion"
+                "show_distance", "show_tether", "show_bending", "show_motion",
+                "show_angle_limit", "show_angle_restoration",
             ):
                 assert set(captured_snapshot["constraint_records"]) == {
                     {
@@ -915,6 +984,8 @@ try:
                         "show_tether": "tether",
                         "show_bending": "bending",
                         "show_motion": "motion",
+                        "show_angle_limit": "angle_limit",
+                        "show_angle_restoration": "angle_restoration",
                     }[mode_name]
                 }
             else:

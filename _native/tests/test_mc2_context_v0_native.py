@@ -594,6 +594,103 @@ def test_angle_runtime_values_and_source_order():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_angle_record_debug_tracks_interleaved_branch_contributions():
+    context = hotools_native.mc2_context_v0_create(0, 3)
+    try:
+        proxy, baseline = static_arrays(3)
+        proxy = list(proxy)
+        proxy[4] = np.array([1, 2, 2], dtype=np.uint8)
+        baseline = list(baseline)
+        baseline[8][1:, 0] = 1.0
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((3, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[28] = 0.8
+        floats[30] = 0.75
+        ints[4] = 1
+        ints[5] = 1
+        curves[3, :] = 0.2
+        curves[4, :] = 10.0
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [0.8, 0.6, 0.0], [1.5, 1.3, 0.0]],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((3, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_angle_record_ready"] is False
+        assert info["debug_angle_record_count"] == 0
+        assert info["debug_angle_record_float_count"] == 0
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 4)
+        step(context, 1.0 / 90.0, simulation_power_z=0.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_ready_mask"] == 4
+        assert info["debug_angle_record_ready"] is True
+        assert info["debug_angle_record_count"] == 18
+        assert info["debug_angle_record_float_count"] == 252
+        pass_origins = np.empty((3, 3), dtype=np.float32)
+        pass_corrections = np.empty((3, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_constraint_results(
+            context, pass_origins, pass_corrections
+        )
+        record_origins = np.empty((36, 3), dtype=np.float32)
+        record_corrections = np.empty((36, 3), dtype=np.float32)
+        currents = np.empty((18,), dtype=np.float32)
+        limits = np.empty((18,), dtype=np.float32)
+        children = np.empty((18,), dtype=np.int32)
+        parents = np.empty((18,), dtype=np.int32)
+        valid = np.empty((18,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_angle_results(
+            context,
+            record_origins,
+            record_corrections,
+            currents,
+            limits,
+            children,
+            parents,
+            valid,
+        )
+        record_corrections = record_corrections.reshape((18, 2, 3))
+        assert np.count_nonzero(valid) == 12
+        assert np.all(currents[valid != 0] >= 0.0)
+        assert np.all(limits[valid != 0] >= 0.0)
+        grouped = np.zeros_like(pass_corrections)
+        branch_lengths = np.zeros((2,), dtype=np.float32)
+        data_count = 3
+        for record in np.flatnonzero(valid):
+            grouped[parents[record]] += record_corrections[record, 0]
+            grouped[children[record]] += record_corrections[record, 1]
+            branch = record // (3 * data_count)
+            branch_lengths[branch] += np.linalg.norm(record_corrections[record])
+        np.testing.assert_allclose(grouped, pass_corrections, atol=3.0e-7)
+        assert np.all(branch_lengths > 0.0), branch_lengths
+
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_angle_record_ready"] is False
+        assert info["debug_angle_record_count"] == 0
+        assert info["debug_angle_record_float_count"] == 0
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_motion_zero_max_distance_and_source_order():
     context = hotools_native.mc2_context_v0_create(0, 1)
     try:
@@ -2654,6 +2751,8 @@ if __name__ == "__main__":
     print("PASS Bending record debug identity and contributions")
     test_angle_runtime_values_and_source_order()
     print("PASS Angle runtime values and source order")
+    test_angle_record_debug_tracks_interleaved_branch_contributions()
+    print("PASS Angle interleaved branch record debug")
     test_motion_zero_max_distance_and_source_order()
     print("PASS Motion zero MaxDistance and source order")
     test_motion_record_debug_attributes_max_distance_and_backstop()

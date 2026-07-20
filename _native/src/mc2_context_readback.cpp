@@ -1416,6 +1416,94 @@ PyObject* mc2_context_v0_read_debug_motion_results(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_angle_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 8) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_angle_results expects 8 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto record_count = context->baseline_data.size() *
+        static_cast<std::size_t>(kMc2AngleIterationCount) * 2;
+    const auto vector_value_count = record_count * 2 * 3;
+    if ((context->debug_constraint_request_mask & kDebugConstraintAngle) == 0 ||
+        !context->debug_angle_record_ready ||
+        context->debug_angle_record_origins.size() != vector_value_count ||
+        context->debug_angle_record_corrections.size() != vector_value_count ||
+        context->debug_angle_record_currents.size() != record_count ||
+        context->debug_angle_record_limits.size() != record_count ||
+        context->debug_angle_record_children.size() != record_count ||
+        context->debug_angle_record_parents.size() != record_count ||
+        context->debug_angle_record_valid.size() != record_count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 angle record debug was not requested or is not ready"
+        );
+        return nullptr;
+    }
+    Buffer origins, corrections, currents, limits, children, parents, valid;
+    Buffer* buffers[] = {
+        &origins, &corrections, &currents, &limits, &children, &parents, &valid
+    };
+    const char* names[] = {
+        "out_angle_record_origins",
+        "out_angle_record_corrections",
+        "out_angle_record_currents",
+        "out_angle_record_limits",
+        "out_angle_record_children",
+        "out_angle_record_parents",
+        "out_angle_record_valid",
+    };
+    for (std::size_t index = 0; index < 7; ++index) {
+        if (!buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index]
+            )) {
+            return nullptr;
+        }
+    }
+    const auto records = static_cast<Py_ssize_t>(record_count);
+    if (!expect_float32(origins, names[0]) ||
+        !expect_2d(origins, names[0], records * 2, 3) ||
+        !expect_float32(corrections, names[1]) ||
+        !expect_2d(corrections, names[1], records * 2, 3) ||
+        !expect_float32(currents, names[2]) ||
+        !expect_1d_array(currents, names[2], records) ||
+        !expect_float32(limits, names[3]) ||
+        !expect_1d_array(limits, names[3], records) ||
+        !expect_int32(children, names[4]) ||
+        !expect_1d_array(children, names[4], records) ||
+        !expect_int32(parents, names[5]) ||
+        !expect_1d_array(parents, names[5], records) ||
+        !expect_uint8_scalar_array(valid, names[6]) ||
+        !expect_1d_array(valid, names[6], records)) {
+        return nullptr;
+    }
+    if (vector_value_count > 0) {
+        std::memcpy(origins.view.buf, context->debug_angle_record_origins.data(),
+                    vector_value_count * sizeof(float));
+        std::memcpy(corrections.view.buf, context->debug_angle_record_corrections.data(),
+                    vector_value_count * sizeof(float));
+    }
+    if (record_count > 0) {
+        std::memcpy(currents.view.buf, context->debug_angle_record_currents.data(),
+                    record_count * sizeof(float));
+        std::memcpy(limits.view.buf, context->debug_angle_record_limits.data(),
+                    record_count * sizeof(float));
+        std::memcpy(children.view.buf, context->debug_angle_record_children.data(),
+                    record_count * sizeof(std::int32_t));
+        std::memcpy(parents.view.buf, context->debug_angle_record_parents.data(),
+                    record_count * sizeof(std::int32_t));
+        std::memcpy(valid.view.buf, context->debug_angle_record_valid.data(),
+                    record_count * sizeof(std::uint8_t));
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_external_contacts(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 7) {
         PyErr_SetString(

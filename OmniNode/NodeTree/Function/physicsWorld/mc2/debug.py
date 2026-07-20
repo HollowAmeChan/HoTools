@@ -742,6 +742,97 @@ def _motion_constraint_record_payload(native_snapshot, motion) -> dict:
     }
 
 
+def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> dict:
+    results = native_snapshot.get("angle_results") or {}
+    origins = results.get("origins")
+    corrections = results.get("corrections")
+    currents = results.get("currents")
+    limits = results.get("limits")
+    children = results.get("children")
+    parents = results.get("parents")
+    valid = results.get("valid")
+    empty = {
+        "branches": _readonly((), np.int8),
+        "iterations": _readonly((), np.int8),
+        "record_indices": _readonly((), np.int32),
+        "children": _readonly((), np.int32),
+        "parents": _readonly((), np.int32),
+        "origins": _readonly((), np.float32).reshape((0, 3)),
+        "parent_origins": _readonly((), np.float32).reshape((0, 3)),
+        "corrections": _readonly((), np.float32).reshape((0, 3)),
+        "parent_corrections": _readonly((), np.float32).reshape((0, 3)),
+        "currents": _readonly((), np.float32),
+        "limits": _readonly((), np.float32),
+        "errors": _readonly((), np.float32),
+        "normalized_errors": _readonly((), np.float32),
+        "states": _readonly((), np.int8),
+    }
+    if any(
+        value is None
+        for value in (
+            origins, corrections, currents, limits, children, parents, valid
+        )
+    ):
+        return empty
+    origins = np.asarray(origins, dtype=np.float32)
+    corrections = np.asarray(corrections, dtype=np.float32)
+    currents = np.asarray(currents, dtype=np.float32)
+    limits = np.asarray(limits, dtype=np.float32)
+    children = np.asarray(children, dtype=np.int32)
+    parents = np.asarray(parents, dtype=np.int32)
+    valid = np.asarray(valid, dtype=np.uint8)
+    if origins.ndim != 5 or origins.shape[:2] != (2, 3):
+        return empty
+    data_count = origins.shape[2]
+    records = []
+    branch = max(0, min(1, int(selected_branch)))
+    for iteration in range(3):
+        for record in range(data_count):
+            if not valid[branch, iteration, record]:
+                continue
+            current = float(currents[branch, iteration, record])
+            limit = float(limits[branch, iteration, record])
+            error = current - limit
+            role_corrections = corrections[branch, iteration, record]
+            correction_length = float(np.linalg.norm(role_corrections))
+            near_width = np.deg2rad(5.0)
+            state = 2 if correction_length > 1.0e-8 else 1 if error >= -near_width else 0
+            records.append((
+                branch,
+                iteration,
+                record,
+                int(children[branch, iteration, record]),
+                int(parents[branch, iteration, record]),
+                origins[branch, iteration, record, 1],
+                origins[branch, iteration, record, 0],
+                role_corrections[1],
+                role_corrections[0],
+                current,
+                limit,
+                error,
+                error / np.pi,
+                state,
+            ))
+    if not records:
+        return empty
+    return {
+        "branches": _readonly([item[0] for item in records], np.int8),
+        "iterations": _readonly([item[1] for item in records], np.int8),
+        "record_indices": _readonly([item[2] for item in records], np.int32),
+        "children": _readonly([item[3] for item in records], np.int32),
+        "parents": _readonly([item[4] for item in records], np.int32),
+        "origins": _readonly([item[5] for item in records], np.float32),
+        "parent_origins": _readonly([item[6] for item in records], np.float32),
+        "corrections": _readonly([item[7] for item in records], np.float32),
+        "parent_corrections": _readonly([item[8] for item in records], np.float32),
+        "currents": _readonly([item[9] for item in records], np.float32),
+        "limits": _readonly([item[10] for item in records], np.float32),
+        "errors": _readonly([item[11] for item in records], np.float32),
+        "normalized_errors": _readonly([item[12] for item in records], np.float32),
+        "states": _readonly([item[13] for item in records], np.int8),
+    }
+
+
 def _collision_payload(item, native_snapshot) -> dict:
     slot = item["slot"]
     effective = slot.data.get("effective_parameters")
@@ -1057,6 +1148,14 @@ def capture_requested_mc2_debug(
                 constraint_records["motion"] = _motion_constraint_record_payload(
                     native_snapshot,
                     snapshot["motion"],
+                )
+            if filters.get("show_angle_limit", False):
+                constraint_records["angle_limit"] = _angle_constraint_record_payload(
+                    native_snapshot, 0
+                )
+            if filters.get("show_angle_restoration", False):
+                constraint_records["angle_restoration"] = (
+                    _angle_constraint_record_payload(native_snapshot, 1)
                 )
             if constraint_records:
                 snapshot["constraint_records"] = constraint_records

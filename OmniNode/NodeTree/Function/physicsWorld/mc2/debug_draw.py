@@ -421,16 +421,21 @@ def _append_slot_batches(
             ).reshape((-1, 3)),
             limit,
         )
+        _append_constraint_correction_batches(
+            batches,
+            ((snapshot.get("constraint_records") or {}).get(
+                "angle_restoration"
+            ) or {}),
+            "angle_correction",
+            limit,
+        )
     if filters["show_angle_limit"]:
         _append_angle_limit_batches(
             batches, snapshot.get("motion") or {}, limit
         )
-    if filters["show_angle_restoration"] or filters["show_angle_limit"]:
         _append_constraint_correction_batches(
             batches,
-            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
-                "angle"
-            ) or {},
+            ((snapshot.get("constraint_records") or {}).get("angle_limit") or {}),
             "angle_correction",
             limit,
         )
@@ -941,6 +946,17 @@ def _append_constraint_correction_batches(
         return
     origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
     corrections = np.asarray(corrections, dtype=np.float32).reshape((-1, 3))
+    parent_origins = constraint_result.get("parent_origins")
+    parent_corrections = constraint_result.get("parent_corrections")
+    if parent_origins is not None and parent_corrections is not None:
+        origins = np.concatenate((
+            origins,
+            np.asarray(parent_origins, dtype=np.float32).reshape((-1, 3)),
+        ))
+        corrections = np.concatenate((
+            corrections,
+            np.asarray(parent_corrections, dtype=np.float32).reshape((-1, 3)),
+        ))
     correction_lines = []
     drawn = 0
     for origin, correction in zip(origins, corrections):

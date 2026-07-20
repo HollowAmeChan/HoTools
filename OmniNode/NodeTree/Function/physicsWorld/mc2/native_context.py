@@ -1116,6 +1116,54 @@ class MC2NativeContextV0:
                     ),
                 }
                 readbacks += 1
+            if (
+                constraint_ready_mask & MC2_DEBUG_CONSTRAINT_ANGLE
+                and bool(info.get("debug_angle_record_ready", False))
+            ):
+                record_count = int(info.get("debug_angle_record_count", 0) or 0)
+                if record_count % 6 != 0:
+                    raise RuntimeError("MC2 angle record count is not divisible by 6")
+                data_count = record_count // 6
+                angle_origins = np.empty((record_count * 2, 3), dtype=np.float32)
+                angle_corrections = np.empty(
+                    (record_count * 2, 3), dtype=np.float32
+                )
+                angle_currents = np.empty((record_count,), dtype=np.float32)
+                angle_limits = np.empty((record_count,), dtype=np.float32)
+                angle_children = np.empty((record_count,), dtype=np.int32)
+                angle_parents = np.empty((record_count,), dtype=np.int32)
+                angle_valid = np.empty((record_count,), dtype=np.uint8)
+                self._module.mc2_context_v0_read_debug_angle_results(
+                    self._handle,
+                    angle_origins,
+                    angle_corrections,
+                    angle_currents,
+                    angle_limits,
+                    angle_children,
+                    angle_parents,
+                    angle_valid,
+                )
+                record_shape = (2, 3, data_count)
+                snapshot["angle_results"] = {
+                    "origins": self._debug_array(
+                        angle_origins.reshape((*record_shape, 2, 3))
+                    ),
+                    "corrections": self._debug_array(
+                        angle_corrections.reshape((*record_shape, 2, 3))
+                    ),
+                    "currents": self._debug_array(
+                        angle_currents.reshape(record_shape)
+                    ),
+                    "limits": self._debug_array(angle_limits.reshape(record_shape)),
+                    "children": self._debug_array(
+                        angle_children.reshape(record_shape)
+                    ),
+                    "parents": self._debug_array(
+                        angle_parents.reshape(record_shape)
+                    ),
+                    "valid": self._debug_array(angle_valid.reshape(record_shape)),
+                }
+                readbacks += 1
         if include_external_contacts and bool(
             info.get("external_contact_debug_ready", False)
         ):

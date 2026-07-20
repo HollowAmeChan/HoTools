@@ -119,6 +119,13 @@ void release_resources(Mc2ContextV0& context) {
     context.debug_motion_record_origins.clear();
     context.debug_motion_record_corrections.clear();
     context.debug_motion_record_valid.clear();
+    context.debug_angle_record_origins.clear();
+    context.debug_angle_record_corrections.clear();
+    context.debug_angle_record_currents.clear();
+    context.debug_angle_record_limits.clear();
+    context.debug_angle_record_children.clear();
+    context.debug_angle_record_parents.clear();
+    context.debug_angle_record_valid.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -2159,6 +2166,122 @@ void solve_angle_once(Mc2ContextV0& context, float simulation_power_w) {
     ++context.angle_solve_count;
 }
 
+void capture_angle_records_once(
+    Mc2ContextV0& context,
+    float simulation_power_w
+) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    const auto data_count = context.baseline_data.size();
+    const auto record_count = data_count * kMc2AngleIterationCount * 2;
+    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) == 0 ||
+        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.state_positions.size() != count * 3 ||
+        context.velocity_reference_positions.size() != count * 3 ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.step_basic_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_parents.size() != count ||
+        context.baseline_depths.size() != count ||
+        context.baseline_ranges.empty() ||
+        context.baseline_ranges.size() % 2 != 0 ||
+        data_count == 0 ||
+        context.debug_angle_record_origins.size() != record_count * 2 * 3 ||
+        context.debug_angle_record_corrections.size() != record_count * 2 * 3 ||
+        context.debug_angle_record_currents.size() != record_count ||
+        context.debug_angle_record_limits.size() != record_count ||
+        context.debug_angle_record_children.size() != record_count ||
+        context.debug_angle_record_parents.size() != record_count ||
+        context.debug_angle_record_valid.size() != record_count) {
+        return;
+    }
+    const bool use_restoration = context.int_values[kUseAngleRestoration] != 0;
+    const bool use_limit = context.int_values[kUseAngleLimit] != 0;
+    if (!use_restoration && !use_limit) return;
+
+    std::vector<float> positions = context.state_positions;
+    std::vector<float> velocity_positions = context.velocity_reference_positions;
+    std::vector<float> inverse_masses(count, 0.0f);
+    std::vector<float> restoration_values(count, 0.0f);
+    std::vector<float> limit_values(count, 0.0f);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (is_move(context.proxy_attributes[vertex])) {
+            const float friction = context.particle_friction.size() == count
+                ? context.particle_friction[vertex] : 0.0f;
+            inverse_masses[vertex] = 1.0f / (1.0f + friction * kFrictionMass);
+        }
+        const float depth = context.baseline_depths[vertex];
+        if (use_restoration) {
+            restoration_values[vertex] = std::max(
+                0.0f,
+                std::min(1.0f, sample_curve16(
+                    context.curve_values, kAngleRestorationCurve, depth
+                ) * simulation_power_w)
+            );
+        }
+        if (use_limit) {
+            limit_values[vertex] = std::max(
+                0.0f,
+                sample_curve16(context.curve_values, kAngleLimitCurve, depth)
+            );
+        }
+    }
+    const auto line_count = context.baseline_ranges.size() / 2;
+    std::vector<std::int32_t> baseline_start(line_count, 0);
+    std::vector<std::int32_t> baseline_count(line_count, 0);
+    for (std::size_t line = 0; line < line_count; ++line) {
+        baseline_start[line] = context.baseline_ranges[line * 2];
+        baseline_count[line] = context.baseline_ranges[line * 2 + 1];
+    }
+    for (std::size_t branch = 0; branch < 2; ++branch) {
+        for (std::size_t iteration = 0;
+             iteration < static_cast<std::size_t>(kMc2AngleIterationCount);
+             ++iteration) {
+            for (std::size_t data = 0; data < data_count; ++data) {
+                const auto record =
+                    (branch * kMc2AngleIterationCount + iteration) * data_count + data;
+                const auto child = context.baseline_data[data];
+                context.debug_angle_record_children[record] = child;
+                context.debug_angle_record_parents[record] =
+                    child >= 0 && static_cast<std::size_t>(child) < count
+                    ? context.baseline_parents[static_cast<std::size_t>(child)]
+                    : -1;
+            }
+        }
+    }
+
+    Mc2AngleConstraintView view;
+    view.positions = positions.data();
+    view.inv_masses = inverse_masses.data();
+    view.parent_indices = context.baseline_parents.data();
+    view.baseline_start = baseline_start.data();
+    view.baseline_count = baseline_count.data();
+    view.baseline_data = context.baseline_data.data();
+    view.step_basic_positions = context.step_basic_positions.data();
+    view.step_basic_rotations = context.step_basic_rotations.data();
+    view.restoration_values = use_restoration ? restoration_values.data() : nullptr;
+    view.limit_values = use_limit ? limit_values.data() : nullptr;
+    view.velocity_positions = velocity_positions.data();
+    view.vertex_count = context.vertex_count;
+    view.line_count = static_cast<std::int64_t>(line_count);
+    view.baseline_data_count = static_cast<std::int64_t>(data_count);
+    view.restoration_velocity_attenuation =
+        context.float_values[kAngleRestorationVelocityAttenuation];
+    view.restoration_gravity_falloff =
+        context.float_values[kAngleRestorationGravityFalloff] *
+        (1.0f - context.center_gravity_dot);
+    view.limit_stiffness = context.float_values[kAngleLimitStiffness];
+    view.explicit_enable_flags = true;
+    view.restoration_enabled = use_restoration;
+    view.limit_enabled = use_limit;
+    view.debug_record_origins = context.debug_angle_record_origins.data();
+    view.debug_record_corrections = context.debug_angle_record_corrections.data();
+    view.debug_record_currents = context.debug_angle_record_currents.data();
+    view.debug_record_limits = context.debug_angle_record_limits.data();
+    view.debug_record_valid = context.debug_angle_record_valid.data();
+    project_angle_constraints_mc2(view);
+}
+
 void solve_motion_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
@@ -3691,6 +3814,14 @@ bool begin_mc2_context_step(
     context.debug_motion_record_origins.clear();
     context.debug_motion_record_corrections.clear();
     context.debug_motion_record_valid.clear();
+    context.debug_angle_record_ready = false;
+    context.debug_angle_record_origins.clear();
+    context.debug_angle_record_corrections.clear();
+    context.debug_angle_record_currents.clear();
+    context.debug_angle_record_limits.clear();
+    context.debug_angle_record_children.clear();
+    context.debug_angle_record_parents.clear();
+    context.debug_angle_record_valid.clear();
     if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
         const auto record_count = context.distance_targets.size();
         context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
@@ -3714,6 +3845,19 @@ bool begin_mc2_context_step(
         context.debug_motion_record_origins.assign(record_count * 3, 0.0f);
         context.debug_motion_record_corrections.assign(record_count * 3, 0.0f);
         context.debug_motion_record_valid.assign(
+            record_count, static_cast<std::uint8_t>(0)
+        );
+    }
+    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+        const auto record_count = context.baseline_data.size() *
+            static_cast<std::size_t>(kMc2AngleIterationCount) * 2;
+        context.debug_angle_record_origins.assign(record_count * 2 * 3, 0.0f);
+        context.debug_angle_record_corrections.assign(record_count * 2 * 3, 0.0f);
+        context.debug_angle_record_currents.assign(record_count, 0.0f);
+        context.debug_angle_record_limits.assign(record_count, 0.0f);
+        context.debug_angle_record_children.assign(record_count, -1);
+        context.debug_angle_record_parents.assign(record_count, -1);
+        context.debug_angle_record_valid.assign(
             record_count, static_cast<std::uint8_t>(0)
         );
     }
@@ -3751,7 +3895,13 @@ bool begin_mc2_context_step(
         context, kDebugConstraintDistance, 1, debug_before
     );
     begin_constraint_debug_pass(context, kDebugConstraintAngle, debug_before);
+    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+        capture_angle_records_once(context, simulation_power_w);
+    }
     solve_angle_once(context, simulation_power_w);
+    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+        context.debug_angle_record_ready = true;
+    }
     finish_constraint_debug_pass(
         context, kDebugConstraintAngle, 2, debug_before
     );
@@ -4070,6 +4220,13 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(debug_motion_record_origins);
     MC2_ADD_VECTOR_BYTES(debug_motion_record_corrections);
     MC2_ADD_VECTOR_BYTES(debug_motion_record_valid);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_origins);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_corrections);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_currents);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_limits);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_children);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_parents);
+    MC2_ADD_VECTOR_BYTES(debug_angle_record_valid);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -4325,6 +4482,26 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             static_cast<std::int64_t>(
                 context.debug_motion_record_origins.size() +
                 context.debug_motion_record_corrections.size()
+            )
+        ) ||
+        !dict_bool(
+            result,
+            "debug_angle_record_ready",
+            context.debug_angle_record_ready
+        ) ||
+        !dict_i64(
+            result,
+            "debug_angle_record_count",
+            static_cast<std::int64_t>(context.debug_angle_record_valid.size())
+        ) ||
+        !dict_i64(
+            result,
+            "debug_angle_record_float_count",
+            static_cast<std::int64_t>(
+                context.debug_angle_record_origins.size() +
+                context.debug_angle_record_corrections.size() +
+                context.debug_angle_record_currents.size() +
+                context.debug_angle_record_limits.size()
             )
         ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||

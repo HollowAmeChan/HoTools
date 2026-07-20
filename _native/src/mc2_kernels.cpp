@@ -30,7 +30,6 @@ constexpr float kStaticFrictionVelocityWidth = 0.2f;
 constexpr float kTriangleBendingFixedInverseMass = 0.01f;
 constexpr float kTriangleVolumeScale = 1000.0f;
 
-constexpr int kAngleLimitIteration = 3;
 constexpr float kAngleLimitAttenuation = 0.9f;
 constexpr float kAngleRestorationVelocityAttenuation = 0.8f;
 constexpr float kAngleRestorationGravityFalloff = 0.0f;
@@ -2285,6 +2284,47 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
     }
 
     const float limit_stiffness = clamp_float(view.limit_stiffness, 0.0f, 1.0f);
+    const bool debug_records =
+        view.debug_record_origins != nullptr &&
+        view.debug_record_corrections != nullptr &&
+        view.debug_record_currents != nullptr &&
+        view.debug_record_limits != nullptr &&
+        view.debug_record_valid != nullptr;
+    const auto debug_record_index = [&](int branch, int iteration, std::int64_t data_index) {
+        return (
+            (static_cast<std::size_t>(branch) * kMc2AngleIterationCount +
+             static_cast<std::size_t>(iteration)) *
+                static_cast<std::size_t>(view.baseline_data_count) +
+            static_cast<std::size_t>(data_index)
+        );
+    };
+    const auto debug_begin = [&](std::size_t record, std::int32_t parent, std::int32_t child) {
+        if (!debug_records) return;
+        const auto parent_offset = static_cast<std::size_t>(parent) * 3;
+        const auto child_offset = static_cast<std::size_t>(child) * 3;
+        const auto debug_offset = record * 2 * 3;
+        for (std::size_t component = 0; component < 3; ++component) {
+            view.debug_record_origins[debug_offset + component] =
+                view.positions[parent_offset + component];
+            view.debug_record_origins[debug_offset + 3 + component] =
+                view.positions[child_offset + component];
+        }
+        view.debug_record_valid[record] = 1;
+    };
+    const auto debug_add = [&] (
+        std::size_t record,
+        float parent_x, float parent_y, float parent_z,
+        float child_x, float child_y, float child_z
+    ) {
+        if (!debug_records) return;
+        const auto debug_offset = record * 2 * 3;
+        view.debug_record_corrections[debug_offset + 0] += parent_x;
+        view.debug_record_corrections[debug_offset + 1] += parent_y;
+        view.debug_record_corrections[debug_offset + 2] += parent_z;
+        view.debug_record_corrections[debug_offset + 3] += child_x;
+        view.debug_record_corrections[debug_offset + 4] += child_y;
+        view.debug_record_corrections[debug_offset + 5] += child_z;
+    };
 
     std::vector<float> length_buffer(static_cast<std::size_t>(view.vertex_count), 0.0f);
     std::vector<float> local_pos_buffer(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
@@ -2376,8 +2416,8 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
             }
         }
 
-        for (int iteration = 0; iteration < kAngleLimitIteration; ++iteration) {
-            const int iteration_den = std::max(kAngleLimitIteration - 1, 1);
+        for (int iteration = 0; iteration < kMc2AngleIterationCount; ++iteration) {
+            const int iteration_den = std::max(kMc2AngleIterationCount - 1, 1);
             const float iteration_ratio = static_cast<float>(iteration) / static_cast<float>(iteration_den);
             constexpr float limit_rot_ratio = 0.4f;
             const float restoration_rot_ratio = 0.1f + (0.5f - 0.1f) * iteration_ratio;
@@ -2408,6 +2448,8 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 float parent_z = view.positions[parent_offset + 2];
 
                 if (use_limit) {
+                    const auto debug_record = debug_record_index(0, iteration, data_index);
+                    debug_begin(debug_record, parent_index, child_index);
                     const std::int64_t parent_rot_offset = static_cast<std::int64_t>(parent_index) * 4;
                     const std::int64_t child_rot_offset = static_cast<std::int64_t>(child_index) * 4;
                     const std::int64_t child_local_pos_offset = static_cast<std::int64_t>(child_index) * 3;
@@ -2446,6 +2488,11 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                         view.velocity_positions[child_offset + 0] += add_x;
                         view.velocity_positions[child_offset + 1] += add_y;
                         view.velocity_positions[child_offset + 2] += add_z;
+                        debug_add(
+                            debug_record,
+                            0.0f, 0.0f, 0.0f,
+                            add_x, add_y, add_z
+                        );
                         float next_rot[4];
                         quat_mul(parent_rot, local_rot, next_rot);
                         rotation_buffer[static_cast<std::size_t>(child_rot_offset + 0)] = next_rot[0];
@@ -2476,6 +2523,10 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                             clamp_float(dot3(vector_dir_x, vector_dir_y, vector_dir_z, target_dir_x, target_dir_y,
                                              target_dir_z),
                                         -1.0f, 1.0f));
+                        if (debug_records) {
+                            view.debug_record_currents[debug_record] = angle;
+                            view.debug_record_limits[debug_record] = max_angle_rad;
+                        }
                         float result_x = vector_x;
                         float result_y = vector_y;
                         float result_z = vector_z;
@@ -2521,6 +2572,13 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                             view.velocity_positions[parent_offset + 1] += parent_add_y * kAngleLimitAttenuation;
                             view.velocity_positions[parent_offset + 2] += parent_add_z * kAngleLimitAttenuation;
                         }
+                        debug_add(
+                            debug_record,
+                            parent_inv_mass > kMc2Epsilon ? parent_add_x : 0.0f,
+                            parent_inv_mass > kMc2Epsilon ? parent_add_y : 0.0f,
+                            parent_inv_mass > kMc2Epsilon ? parent_add_z : 0.0f,
+                            child_add_x, child_add_y, child_add_z
+                        );
 
                         const float corrected_x = child_x - parent_x;
                         const float corrected_y = child_y - parent_y;
@@ -2551,6 +2609,8 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 if (!use_restoration) {
                     continue;
                 }
+                const auto debug_record = debug_record_index(1, iteration, data_index);
+                debug_begin(debug_record, parent_index, child_index);
                 const float gravity_falloff = clamp_float(
                     1.0f - (view.restoration_gravity_falloff_values != nullptr
                                 ? view.restoration_gravity_falloff_values[child_index]
@@ -2587,6 +2647,11 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     view.velocity_positions[child_offset + 0] += add_x;
                     view.velocity_positions[child_offset + 1] += add_y;
                     view.velocity_positions[child_offset + 2] += add_z;
+                    debug_add(
+                        debug_record,
+                        0.0f, 0.0f, 0.0f,
+                        add_x, add_y, add_z
+                    );
                     continue;
                 }
                 if (vector_len <= kMc2Epsilon) {
@@ -2598,6 +2663,10 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     -1.0f,
                     1.0f
                 );
+                if (debug_records) {
+                    view.debug_record_currents[debug_record] = std::acos(direction_dot);
+                    view.debug_record_limits[debug_record] = 0.0f;
+                }
                 if (direction_dot >= 1.0f - kDirectionDotDeadzone) {
                     continue;
                 }
@@ -2652,6 +2721,13 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     view.velocity_positions[parent_offset + 1] += parent_add_y * restoration_attenuation;
                     view.velocity_positions[parent_offset + 2] += parent_add_z * restoration_attenuation;
                 }
+                debug_add(
+                    debug_record,
+                    parent_inv_mass > kMc2Epsilon ? parent_add_x : 0.0f,
+                    parent_inv_mass > kMc2Epsilon ? parent_add_y : 0.0f,
+                    parent_inv_mass > kMc2Epsilon ? parent_add_z : 0.0f,
+                    child_add_x, child_add_y, child_add_z
+                );
             }
         }
     }

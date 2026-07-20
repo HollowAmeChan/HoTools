@@ -270,6 +270,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_bending_results, a); });
     m.def("mc2_context_v0_read_debug_motion_results",
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_motion_results, a); });
+    m.def("mc2_context_v0_read_debug_angle_results",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_read_debug_angle_results, a); });
     m.def("mc2_context_v0_read_center_step",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",

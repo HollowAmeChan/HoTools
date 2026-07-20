@@ -148,6 +148,7 @@ struct Mc2ContextV0 {
     bool debug_distance_record_ready = false;
     bool debug_bending_record_ready = false;
     bool debug_motion_record_ready = false;
+    bool debug_angle_record_ready = false;
     bool initialized = false;
     bool static_fingerprint_ready = false;
     bool released = false;
@@ -194,6 +195,13 @@ struct Mc2ContextV0 {
     std::vector<float> debug_motion_record_origins;
     std::vector<float> debug_motion_record_corrections;
     std::vector<std::uint8_t> debug_motion_record_valid;
+    std::vector<float> debug_angle_record_origins;
+    std::vector<float> debug_angle_record_corrections;
+    std::vector<float> debug_angle_record_currents;
+    std::vector<float> debug_angle_record_limits;
+    std::vector<std::int32_t> debug_angle_record_children;
+    std::vector<std::int32_t> debug_angle_record_parents;
+    std::vector<std::uint8_t> debug_angle_record_valid;
     std::vector<float> animated_base_positions;
     std::vector<float> animated_base_rotations;
     std::vector<float> step_basic_positions;

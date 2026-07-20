@@ -5,6 +5,8 @@
 
 namespace hotools {
 
+constexpr int kMc2AngleIterationCount = 3;
+
 struct Mc2ExternalCollisionDebugRecord {
     std::int32_t primitive_kind = 0;
     std::int32_t primitive_index = -1;
@@ -182,6 +184,11 @@ struct Mc2AngleConstraintView {
     bool explicit_enable_flags = false;
     bool restoration_enabled = false;
     bool limit_enabled = false;
+    float* debug_record_origins = nullptr;
+    float* debug_record_corrections = nullptr;
+    float* debug_record_currents = nullptr;
+    float* debug_record_limits = nullptr;
+    std::uint8_t* debug_record_valid = nullptr;
 };
 
 struct Mc2StepBasicPoseView {
