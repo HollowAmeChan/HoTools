@@ -71,10 +71,11 @@ _COLORS = {
     "distance_stretch": (1.00, 0.18, 0.12, 0.95),
     "distance_compress": (0.20, 0.48, 1.00, 0.95),
     "distance_correction": (1.00, 0.08, 0.04, 1.00),
-    "tether": (0.72, 0.76, 0.82, 0.55),
-    "tether_min": (0.22, 0.55, 1.00, 0.72),
-    "tether_max": (1.00, 0.78, 0.18, 0.72),
-    "tether_correction": (1.00, 0.08, 0.04, 1.00),
+    "tether_guide": (0.46, 0.49, 0.54, 0.24),
+    "tether_compress_near": (0.38, 0.68, 1.00, 0.78),
+    "tether_compress_active": (0.08, 0.42, 1.00, 1.00),
+    "tether_stretch_near": (1.00, 0.76, 0.26, 0.82),
+    "tether_stretch_active": (1.00, 0.48, 0.04, 1.00),
     "bending": (0.70, 0.38, 1.00, 0.72),
     "bending_error": (1.00, 0.20, 0.14, 0.95),
     "bending_volume": (0.20, 0.90, 0.82, 0.72),
@@ -177,13 +178,13 @@ def update_mc2_debug_draw_store(
     show_angle_limit: bool = False,
     show_teleport_threshold: bool = False,
     show_teleport_status: bool = False,
-) -> None:
+) -> str:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
         if isinstance(world, PhysicsWorldCache):
             request_mc2_debug_capture(world, filters={})
         clear_mc2_debug_draw_store(node_uid=node_key)
-        return
+        return "MC2调试未启用或物理世界无效。"
 
     filters = {
         "show_topology": bool(show_topology),
@@ -222,15 +223,18 @@ def update_mc2_debug_draw_store(
     }
     request_mc2_debug_capture(world, filters=filters)
     batches, point_batches, triangle_batches = _build_world_batches(world, filters)
+    status_text = _build_world_status_text(world, filters)
     _MC2_DRAW_STORE[node_key] = {
         "world_id": str(id(world)),
         "frame": int(getattr(world.frame_context, "frame", 0) or 0),
         "batches": batches,
         "point_batches": point_batches,
         "triangle_batches": triangle_batches,
+        "status_text": status_text,
     }
     _ensure_draw_handler()
     _tag_view3d_redraw()
+    return status_text
 
 
 def clear_mc2_debug_draw_store(
@@ -276,11 +280,266 @@ def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
         "line_batch_colors": tuple(tuple(batch[1]) for batch in line_batches),
         "point_batch_colors": tuple(tuple(batch[1]) for batch in point_batches),
         "triangle_batch_colors": tuple(tuple(batch[2]) for batch in triangle_batches),
+        "status_text": str(item.get("status_text") or ""),
         "coordinate_checksum": round(
             sum((index + 1) * float(value) for index, value in enumerate(flattened)),
             6,
         ),
     }
+
+
+def _matching_slot_snapshots(world: PhysicsWorldCache, filters: dict) -> list[dict]:
+    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
+    snapshots = []
+    for slot in world.solver_slots.values():
+        if slot.kind != MC2_SLOT_KIND:
+            continue
+        snapshot = slot.data.get("_debug_draw_snapshot")
+        if not isinstance(snapshot, dict):
+            continue
+        task_id = str(snapshot.get("task_id") or "")
+        if task_filters and not any(token in task_id for token in task_filters):
+            continue
+        snapshots.append(snapshot)
+    return snapshots
+
+
+def _constraint_state_counts(records: dict) -> tuple[int, int, int, int, int]:
+    states = np.asarray(_values(records.get("states")), dtype=np.int8).reshape((-1,))
+    return (
+        len(states),
+        int(np.count_nonzero(states == -1)),
+        int(np.count_nonzero(states == 1)),
+        int(np.count_nonzero(states == -2)),
+        int(np.count_nonzero(states == 2)),
+    )
+
+
+def _constraint_status_line(
+    label: str,
+    records: dict,
+    *,
+    negative_label: str,
+    positive_label: str,
+) -> str:
+    total, near_negative, near_positive, active_negative, active_positive = (
+        _constraint_state_counts(records)
+    )
+    if not total:
+        return f"{label}：等待下一次真实substep捕获。"
+    active = active_negative + active_positive
+    near = near_negative + near_positive
+    status = "本步未触发" if active == 0 else "本步已触发"
+    return (
+        f"{label}：{status}；记录{total}，接近{near}"
+        f"（{negative_label}{near_negative}/{positive_label}{near_positive}），"
+        f"触发{active}（{negative_label}{active_negative}/{positive_label}{active_positive}）。"
+    )
+
+
+def _branch_constraint_status_line(
+    label: str,
+    records: dict,
+    branches: tuple[tuple[int, str], ...],
+) -> str:
+    states = np.asarray(_values(records.get("states")), dtype=np.int8).reshape((-1,))
+    branch_values = np.asarray(
+        _values(records.get("branches")), dtype=np.int8
+    ).reshape((-1,))
+    count = min(len(states), len(branch_values))
+    if not count:
+        return f"{label}：等待下一次真实substep捕获。"
+    parts = []
+    active_total = 0
+    near_total = 0
+    for branch, branch_label in branches:
+        selected = states[:count][branch_values[:count] == branch]
+        active = int(np.count_nonzero(np.abs(selected) == 2))
+        near = int(np.count_nonzero(np.abs(selected) == 1))
+        active_total += active
+        near_total += near
+        parts.append(f"{branch_label}触发{active}/接近{near}")
+    status = "本步未触发" if active_total == 0 else "本步已触发"
+    return (
+        f"{label}：{status}；记录{count}，触发{active_total}，"
+        f"接近{near_total}；" + "，".join(parts) + "。"
+    )
+
+
+def _build_slot_status_lines(snapshot: dict, filters: dict) -> list[str]:
+    lines = [
+        f"[{snapshot.get('task_id') or '<unnamed>'}] "
+        f"{snapshot.get('setup_type') or 'unknown'}，捕获帧{int(snapshot.get('frame', 0) or 0)}"
+    ]
+    topology = snapshot.get("topology") or {}
+    parameters = snapshot.get("parameters") or {}
+    records = snapshot.get("constraint_records") or {}
+    native = snapshot.get("native") or {}
+    if filters.get("show_topology"):
+        vertices = np.asarray(_values(topology.get("vertex_attributes"))).reshape((-1,))
+        edges = np.asarray(_values(topology.get("edges"))).reshape((-1, 2))
+        triangles = np.asarray(_values(topology.get("triangles"))).reshape((-1, 3))
+        lines.append(
+            f"拓扑：粒子{len(vertices)}，边{len(edges)}，三角形{len(triangles)}；这是结构状态，不是触发数量。"
+        )
+    if filters.get("show_attributes"):
+        attributes = np.asarray(
+            _values(topology.get("vertex_attributes")), dtype=np.uint8
+        ).reshape((-1,))
+        move = int(np.count_nonzero((attributes & 0x02) != 0))
+        fixed = len(attributes) - move
+        lines.append(f"粒子属性：Fixed {fixed}，Move {move}。")
+    if filters.get("show_depth"):
+        attributes = np.asarray(
+            _values(topology.get("vertex_attributes")), dtype=np.uint8
+        ).reshape((-1,))
+        roots = np.asarray(
+            _values(topology.get("baseline_root_indices")), dtype=np.int32
+        ).reshape((-1,))
+        count = min(len(attributes), len(roots))
+        unrooted = int(np.count_nonzero(
+            ((attributes[:count] & 0x02) != 0) & (roots[:count] < 0)
+        ))
+        lines.append(
+            f"深度：有效粒子{count}，无可达Fixed的Move {unrooted}；无根或红色逆序需要检查。"
+        )
+    if filters.get("show_gravity"):
+        lines.append(
+            "重力：原始强度"
+            f"{float(parameters.get('gravity_strength', 0.0) or 0.0):.4g}，"
+            "当前有效强度"
+            f"{float(parameters.get('gravity_effective_strength', 0.0) or 0.0):.4g}。"
+        )
+    if filters.get("show_velocity"):
+        dynamics = native.get("dynamics") or {}
+        velocities = np.asarray(
+            _values(dynamics.get("velocities")), dtype=np.float32
+        ).reshape((-1, 3))
+        speeds = np.linalg.norm(velocities, axis=1) if len(velocities) else np.empty(0)
+        limit = float(parameters.get("particle_speed_limit", -1.0) or 0.0)
+        clamped = int(np.count_nonzero(speeds >= max(limit - 1.0e-5, 0.0))) if limit >= 0 else 0
+        lines.append(
+            f"速度：粒子{len(speeds)}，命中粒子限速{clamped}，"
+            f"最大保存速度{float(np.max(speeds)) if len(speeds) else 0.0:.4g}。"
+        )
+    if filters.get("show_distance"):
+        lines.append(_constraint_status_line(
+            "Distance", records.get("distance") or {},
+            negative_label="压缩", positive_label="拉伸",
+        ))
+    if filters.get("show_tether"):
+        line = _constraint_status_line(
+            "Tether", records.get("tether") or {},
+            negative_label="压缩", positive_label="拉伸",
+        )
+        lines.append(
+            line[:-1]
+            + f"；当前Tether压缩={float(parameters.get('tether_compression', 0.0) or 0.0):.3g}，"
+            f"拉伸上限={float(parameters.get('tether_stretch', 0.0) or 0.0):.3g}。"
+        )
+    if filters.get("show_bending"):
+        bending = records.get("bending") or {}
+        states = np.asarray(_values(bending.get("states")), dtype=np.int8).reshape((-1,))
+        kinds = np.asarray(_values(bending.get("kinds")), dtype=np.int8).reshape((-1,))
+        active = int(np.count_nonzero(np.abs(states) == 2))
+        lines.append(
+            f"Bending：记录{len(states)}，本步触发{active}；"
+            f"二面角{int(np.count_nonzero(kinds == 0))}，体积{int(np.count_nonzero(kinds == 1))}。"
+        )
+    if filters.get("show_motion"):
+        lines.append(_branch_constraint_status_line(
+            "Motion", records.get("motion") or {},
+            ((0, "MaxDistance"), (1, "Backstop")),
+        ))
+    if filters.get("show_angle_limit"):
+        lines.append(_branch_constraint_status_line(
+            "Angle Limit", records.get("angle_limit") or {}, ((0, "限制"),)
+        ))
+    if filters.get("show_angle_restoration"):
+        lines.append(_branch_constraint_status_line(
+            "Angle Restoration",
+            records.get("angle_restoration") or {},
+            ((1, "恢复"),),
+        ))
+    if filters.get("show_center"):
+        shift = (snapshot.get("center") or {}).get("frame_shift") or {}
+        lines.append(
+            "Center：移动限速"
+            f"{'已触发' if shift.get('movement_speed_limited') else '未触发'}，"
+            "旋转限速"
+            f"{'已触发' if shift.get('rotation_speed_limited') else '未触发'}。"
+        )
+    if filters.get("show_teleport_status") or filters.get("show_teleport_threshold"):
+        teleport = snapshot.get("teleport") or {}
+        mode = int(teleport.get("mode", 0) or 0)
+        applied = bool(teleport.get("applied", False))
+        result = "Reset" if applied and mode == 1 else "Keep" if applied and mode == 2 else "未触发"
+        lines.append(
+            f"Teleport：{result}；位移阈值{float(teleport.get('distance_threshold', 0.0) or 0.0):.4g}，"
+            f"旋转阈值{float(teleport.get('rotation_threshold_degrees', 0.0) or 0.0):.4g}度。"
+        )
+    if filters.get("show_collision_contacts"):
+        contacts = native.get("external_contacts") or {}
+        temporal = contacts.get("temporal") or {}
+        lines.append(
+            f"外碰接触：当前{int(temporal.get('active_count', 0) or 0)}，"
+            f"新增{int(temporal.get('new_count', 0) or 0)}，"
+            f"持续{int(temporal.get('persistent_count', 0) or 0)}，"
+            f"刚失效{int(temporal.get('lost_count', 0) or 0)}。"
+        )
+    if filters.get("show_self_contacts"):
+        self_state = snapshot.get("self_collision") or {}
+        contacts = self_state.get("contact_temporal") or {}
+        intersections = self_state.get("intersection_temporal") or {}
+        lines.append(
+            f"自碰：contact当前{int(contacts.get('active_count', 0) or 0)}/新增{int(contacts.get('new_count', 0) or 0)}/失效{int(contacts.get('lost_count', 0) or 0)}；"
+            f"几何穿插当前{int(intersections.get('active_count', 0) or 0)}/新增{int(intersections.get('new_count', 0) or 0)}/失效{int(intersections.get('lost_count', 0) or 0)}。"
+        )
+    if filters.get("show_output"):
+        output = snapshot.get("output") or {}
+        applied = np.asarray(
+            _values(output.get("translation_applied")), dtype=np.uint8
+        ).reshape((-1,))
+        lines.append(
+            f"最终输出：记录{len(applied)}，本帧允许平移写回{int(np.count_nonzero(applied))}。"
+        )
+    return lines
+
+
+def _build_world_status_text(world: PhysicsWorldCache, filters: dict) -> str:
+    snapshots = _matching_slot_snapshots(world, filters)
+    if not snapshots:
+        return (
+            "等待MC2调试快照：大多数模式需要节点先登记请求，再经过下一次真实substep才有状态。"
+        )
+    lines = [
+        f"MC2调试状态 | world帧{int(getattr(world.frame_context, 'frame', 0) or 0)} | task {len(snapshots)}"
+    ]
+    for snapshot in snapshots:
+        lines.extend(_build_slot_status_lines(snapshot, filters))
+    interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
+    if filters.get("show_collision_contacts") and isinstance(
+        interaction, MC2NativeInteractionV0
+    ):
+        state = interaction.debug_draw_snapshot() or {}
+        enabled = np.asarray(
+            _values(state.get("contact_enabled")), dtype=np.uint8
+        ).reshape((-1,))
+        owners = np.asarray(_values(state.get("owner_indices")), dtype=np.int32)
+        contacts = np.asarray(
+            _values(state.get("contact_indices")), dtype=np.int32
+        ).reshape((-1, 2))
+        cross_task = 0
+        for index, pair in enumerate(contacts):
+            first, second = map(int, pair)
+            if (
+                index < len(enabled) and enabled[index]
+                and 0 <= first < len(owners) and 0 <= second < len(owners)
+                and int(owners[first]) != int(owners[second])
+            ):
+                cross_task += 1
+        lines.append(f"跨task实际接触：当前启用{cross_task}。")
+    return "\n".join(lines)
 
 
 def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list, list, list]:
@@ -398,13 +657,8 @@ def _append_slot_batches(
     if filters["show_tether"]:
         _append_tether_batches(
             batches,
+            point_batches,
             ((snapshot.get("constraint_records") or {}).get("tether") or {}),
-            limit,
-        )
-        _append_constraint_correction_batches(
-            batches,
-            ((snapshot.get("constraint_records") or {}).get("tether") or {}),
-            "tether_correction",
             limit,
         )
     if filters["show_bending"]:
@@ -1039,62 +1293,63 @@ def _append_distance_batches(batches, records, limit):
     _batch(batches, stretch_lines, "distance_stretch", 1.8)
 
 
-def _append_tether_batches(batches, records, limit):
+def _append_tether_batches(batches, point_batches, records, limit):
     origins = records.get("origins")
     root_origins = records.get("root_origins")
-    minimums = records.get("minimums")
-    maximums = records.get("maximums")
+    corrections = records.get("corrections")
     states = records.get("states")
-    if any(
-        value is None
-        for value in (origins, root_origins, minimums, maximums, states)
-    ):
+    if any(value is None for value in (origins, root_origins, corrections, states)):
         return
     origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
     root_origins = np.asarray(root_origins, dtype=np.float32).reshape((-1, 3))
-    minimums = np.asarray(minimums, dtype=np.float32).reshape((-1,))
-    maximums = np.asarray(maximums, dtype=np.float32).reshape((-1,))
+    corrections = np.asarray(corrections, dtype=np.float32).reshape((-1, 3))
     states = np.asarray(states, dtype=np.int8).reshape((-1,))
-    current_lines = []
-    minimum_lines = []
-    maximum_lines = []
+    compress_near_points = []
+    compress_active_points = []
+    stretch_near_points = []
+    stretch_active_points = []
+    guide_lines = []
+    compress_arrows = []
+    stretch_arrows = []
     drawn = 0
-    for origin, root_origin, minimum, maximum, state in zip(
-        origins, root_origins, minimums, maximums, states
+    for origin, root_origin, correction, state in zip(
+        origins, root_origins, corrections, states
     ):
         if drawn >= limit:
             break
         state = int(state)
         if state == 0:
             continue
-        current_vector = vector3(origin) - vector3(root_origin)
-        if current_vector.length <= 1.0e-7:
-            continue
-        direction = current_vector.normalized()
-        axis_a, axis_b = _plane_axes(direction)
-        ring_radius = max(float(maximum) * 0.035, 0.002)
-        root_position = vector3(root_origin)
-        add_line(current_lines, root_position, origin)
-        if state < 0 and float(minimum) > 1.0e-7:
-            add_circle_lines(
-                minimum_lines,
-                root_position + direction * float(minimum),
-                axis_a,
-                axis_b,
-                ring_radius,
+        add_line(guide_lines, root_origin, origin)
+        active = abs(state) == 2
+        if state < 0:
+            add_point(
+                compress_active_points if active else compress_near_points,
+                origin,
             )
-        if state > 0:
-            add_circle_lines(
-                maximum_lines,
-                root_position + direction * float(maximum),
-                axis_a,
-                axis_b,
-                ring_radius,
+            arrows = compress_arrows
+        else:
+            add_point(
+                stretch_active_points if active else stretch_near_points,
+                origin,
             )
+            arrows = stretch_arrows
+        delta = vector3(correction)
+        if active and delta.length > 1.0e-8:
+            start = vector3(origin)
+            add_arrow_lines(arrows, start, start + delta)
         drawn += 1
-    _batch(batches, current_lines, "tether", 1.0)
-    _batch(batches, minimum_lines, "tether_min", 1.5)
-    _batch(batches, maximum_lines, "tether_max", 1.5)
+    _point_batch(point_batches, compress_near_points, "tether_compress_near", 3.0)
+    _point_batch(
+        point_batches, compress_active_points, "tether_compress_active", 7.0
+    )
+    _point_batch(point_batches, stretch_near_points, "tether_stretch_near", 3.0)
+    _point_batch(
+        point_batches, stretch_active_points, "tether_stretch_active", 7.0
+    )
+    _batch(batches, guide_lines, "tether_guide", 1.0)
+    _batch(batches, compress_arrows, "tether_compress_active", 2.4)
+    _batch(batches, stretch_arrows, "tether_stretch_active", 2.4)
 
 
 def _append_bending_batches(batches, positions, parameters, bending, limit):

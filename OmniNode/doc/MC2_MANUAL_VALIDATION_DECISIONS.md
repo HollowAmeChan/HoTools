@@ -27,7 +27,7 @@
 | ID | 状态 | 决策 | 当前建议 |
 |---|---|---|---|
 | D-01 | **人工已验证** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史并清理接触状态，真实场景确认两种模式均安全 |
-| D-02 | **代码已实现，待整体手测** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量、外碰及self contact/intersection时间层均已接通 |
+| D-02 | **代码已实现，待整体手测** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量、外碰及self contact/intersection时间层均已接通；调试节点新增按task的状态/接近/触发计数输出 |
 | D-03 | **人工已验证** | 碰撞结果表达 | “碰撞情况”保留全部有效外碰形状；“实际接触”只显示命中的真实半径形状、接触位置、对应collider与实际推动，并覆盖跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **人工已验证** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；唯一owner与实际节点行为均确认正常 |
@@ -139,7 +139,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 
 StepBasic、Motion Base、primitive、grid、candidate 等放入“高级中间态”。大段 `omni_description` 可放表格和完整解释；socket tooltip 保持短句，避免 Blender 截断。
 
-约束结果导向的第一段已经接通：Tether、Distance、Angle、Bending、Motion 各有独立请求位；C++只在请求后的真实substep中保存对应pass的pre-position与实际position delta。冻结顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`，Distance保留两次独立修正，不能相加后因方向相反而抵消。Python只为ready位分配稀疏数组并冻结只读结果，renderer把非零correction从真实pass原点画成红箭头；debug关闭或单模式未请求的兄弟pass不分配buffer、不readback。
+约束结果导向的第一段已经接通：Tether、Distance、Angle、Bending、Motion 各有独立请求位；C++只在请求后的真实substep中保存对应pass的pre-position与实际position delta。冻结顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`，Distance保留两次独立修正，不能相加后因方向相反而抵消。Python只为ready位分配稀疏数组并冻结只读结果，renderer按各模式语义把接近/触发结果画成高对比点或箭头；调试节点的“调试状态”输出按task汇总记录总数、接近数、实际触发数和触发分支；debug关闭或单模式未请求的兄弟pass不分配buffer、不readback。
 
 记录级第二段已经覆盖Tether、Distance与Bending。Tether以每个Move粒子的稳定`vertex/root`为记录，冻结pass前两端位置、上下限、ratio、signed error、near/active状态和真实correction，renderer只画active/near记录。Distance保留A/B两个phase及有向`record_index/owner/target`；C++在临时位置副本重放该phase并保存每条记录经owner平均后的实际贡献，记录按`phase+owner`求和必须还原生产pass粒子correction。Bending保留稳定`record_index + quad四角色`及dihedral/volume类型；请求时用同一求解公式影子重放，并把每个role修正按生产`int32`量化和顶点参与计数换算为实际贡献，所有记录按vertex求和必须还原Bending pass correction。真实context仍只由未改写的production solver写入，debug重放不得改变模拟轨迹。
 
@@ -178,7 +178,7 @@ Profile与Task节点的长说明现在由各自实际公开字段的label和`inp
 ### 所有模式的共同门禁
 
 - **不能静默空白**：模式无输出时必须能区分“功能关闭、字段为零、该 setup 不支持、没有 Motion 属性、无活动记录、快照尚未捕获”。表达可以放在节点状态/长说明，不伪造几何。
-- **结果优先**：范围几何用低亮度；真正触发/钳制/修正用高亮红色；接近阈值用黄色；未触发用低饱和色。
+- **结果优先**：关系/范围几何用低亮度；真正触发/钳制/修正使用该模式约定的高对比语义色（Tether压缩蓝、拉伸橙，接触/穿插沿时间层使用黄/洋红）；接近阈值用浅色；未触发用低饱和色。
 - **曲线必须可见**：曲线采样结果应直接改变每粒子的长度、半径、颜色或透明度，不能只画统一形状。
 - **硬约束必须可见**：红色必须来自该 pass 的真实 pre/post correction 或 active flag，不能仅用最终位置反推，因为后续 pass 会覆盖证据。
 - **限制噪声**：默认只画 active/near-limit，支持 task filter、最大项、步进抽样和选择粒子；不得默认把所有 root-to-particle 线画满屏。
@@ -223,9 +223,7 @@ Distance现在直接消费A/B phase的有向record结果，不再用最终边长
 
 ### Tether
 
-当前从 root 到每个粒子画当前线和最小/最大圆环，形成截图中的大量放射线与圆，信息密度失控。
-
-Tether已归因到稳定`vertex/root`记录：默认只显示接近/超过最短或最长界限的记录，pass前当前线、对应边界环与真实correction高亮；未触发且远离边界的root放射线不再铺满屏。后续只需增加选择记录/数值overlay与更紧凑的带/端帽表达。Tether限制的是相对baseline root的整体伸缩，不是相邻边，也不是弹簧力。
+旧版从 root 到粒子画高亮当前线和最小/最大圆环，圆环容易被误读成水平摆动限制，且在密集布料上淹没结果。当前Tether已归因到稳定`vertex/root`记录：低饱和细线只表达“谁拴住谁”的牵引关系；浅蓝/浅橙点表达接近压缩/拉伸边界，深蓝/深橙点和箭头才表达本步真实回拉修正；不再画任何范围圆环。调试状态输出给出记录、接近、压缩触发和拉伸触发的精确数量。Tether限制的是相对baseline root的整体直线伸缩，不是相邻边、parent链累计长度、depth或弹簧力；rest取StepBasic粒子到root的两点直线距离。
 
 ### Bending
 
@@ -293,7 +291,7 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 - task筛选发生在slot请求与绘制两侧；每个slot只显示自己实际上传并命中的collider identity。
 - native Point与Edge单测覆盖真实非零correction和debug-off零记录；Blender隔离模式覆盖请求、冻结、只读数组和至少一个实际contact成功出图。
 
-外碰contact时间层已经实现；尚未实现的是task内/跨task self contact及geometric intersection的新增、持续、失效与churn。它们仍属于D-02一级结果信息架构，不得用闪烁绘制假装完成。性能验收仍要比较debug off/on，胶囊/Edge密集场景单独测量；debug-off零生产是当前硬门禁。
+外碰contact时间层、task内/跨task self contact及geometric intersection的新增、持续、失效与churn均已实现并进入D-02结果视图；调试状态输出分开报告contact与intersection当前/新增/失效。性能验收仍要比较debug off/on，胶囊/Edge密集场景单独测量；debug-off零生产是当前硬门禁。
 
 ## P2：参数 Profile/Task 归属 D-05
 

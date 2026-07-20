@@ -288,12 +288,59 @@ try:
         len(description) >= 35
         for _label, description in mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS
     )
+    assert mc2_nodes.physicsMC2DebugDraw.__meta["_OUTPUT_NAME"] == [
+        "物理世界",
+        "调试状态",
+    ]
+    for _label, description in mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS:
+        for heading in (
+            "用途：",
+            "当前状态：",
+            "正常判断：",
+            "直接影响参数：",
+            "可能变化或触发它的来源：",
+        ):
+            assert heading in description, (_label, heading)
     debug_descriptions = dict(mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS)
+    assert "不是parent链累计长度" in debug_descriptions["Tether状态"]
+    assert "低饱和灰线" in debug_descriptions["Tether状态"]
+    assert "范围圈" in debug_descriptions["Tether状态"]
     assert "真实半径球" in debug_descriptions["实际接触"]
     assert "放大8倍" in debug_descriptions["实际接触"]
     assert "放大8倍" in debug_descriptions["自碰4 接触结果"]
     assert "同相位的前两帧" in debug_descriptions["自碰4 接触结果"]
     assert "不是粒子速度" in debug_descriptions["Teleport触发状态"]
+
+    tether_batches = []
+    tether_points = []
+    debug_draw._append_tether_batches(
+        tether_batches,
+        tether_points,
+        {
+            "origins": np.asarray(
+                ((1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0),
+                 (4.0, 0.0, 0.0), (5.0, 0.0, 0.0)), dtype=np.float32
+            ),
+            "root_origins": np.asarray(
+                ((0.0, 0.0, 0.0),) * 5, dtype=np.float32
+            ),
+            "corrections": np.asarray(
+                ((0.0, 0.0, 0.0), (-0.1, 0.0, 0.0), (0.0, 0.0, 0.0),
+                 (0.1, 0.0, 0.0), (0.2, 0.0, 0.0)), dtype=np.float32
+            ),
+            "states": np.asarray((-1, -2, 0, 1, 2), dtype=np.int8),
+        },
+        10000,
+    )
+    tether_line_colors = {tuple(batch[1]) for batch in tether_batches}
+    tether_point_colors = {tuple(batch[1]) for batch in tether_points}
+    assert tuple(debug_draw._COLORS["tether_guide"]) in tether_line_colors
+    assert tuple(debug_draw._COLORS["tether_compress_active"]) in tether_line_colors
+    assert tuple(debug_draw._COLORS["tether_stretch_active"]) in tether_line_colors
+    assert tuple(debug_draw._COLORS["tether_compress_near"]) in tether_point_colors
+    assert tuple(debug_draw._COLORS["tether_stretch_near"]) in tether_point_colors
+    assert "tether_min" not in debug_draw._COLORS
+    assert "tether_max" not in debug_draw._COLORS
 
     teleport_base = {
         "reference_position": (1.0, 0.0, 0.0),
@@ -1192,7 +1239,7 @@ try:
         ("show_gravity", {"show_gravity": True}, ("gravity_raw", "gravity")),
         ("show_velocity", {"show_velocity": True}, ()),
         ("show_distance", {"show_distance": True}, ()),
-        ("show_tether", {"show_tether": True}, ("tether",)),
+        ("show_tether", {"show_tether": True}, ("tether_guide",)),
         ("show_bending", {"show_bending": True}, ("bending", "bending_volume", "bending_error")),
         ("show_motion_base", {"show_motion_base": True}, ("motion_base",)),
         ("show_motion", {"show_motion": True}, ("max_distance", "backstop")),
@@ -1261,7 +1308,7 @@ try:
             "show_angle_restoration": False,
         }
         options.update(overrides)
-        debug_draw.update_mc2_debug_draw_store(
+        status_text = debug_draw.update_mc2_debug_draw_store(
             node_uid,
             world,
             True,
@@ -1288,13 +1335,21 @@ try:
                 break
         else:
             raise AssertionError((mode_name, "no true advance", capture_frame))
-        debug_draw.update_mc2_debug_draw_store(
+        status_text = debug_draw.update_mc2_debug_draw_store(
             node_uid,
             world,
             True,
             **options,
         )
         isolated = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
+        assert isolated["status_text"] == status_text
+        if mode_name == "show_tether":
+            assert "Tether：" in status_text
+            assert "记录" in status_text
+            assert "接近" in status_text
+            assert "触发" in status_text
+            assert "当前Tether压缩=" in status_text
+            assert "拉伸上限=" in status_text
         colors = set(
             isolated["line_batch_colors"]
             + isolated["point_batch_colors"]
@@ -1365,7 +1420,7 @@ try:
             )
         constraint_expectations = {
             "show_distance": ("distance", 2, "distance_correction"),
-            "show_tether": ("tether", 1, "tether_correction"),
+            "show_tether": ("tether", 1, None),
             "show_bending": ("bending", 8, "bending_correction"),
             "show_motion": ("motion", 16, "motion_correction"),
             "show_angle_limit": ("angle", 4, "angle_correction"),
@@ -1393,9 +1448,18 @@ try:
                 constraint_result["corrections"], dtype=np.float32
             ).reshape((-1, 3))
             if np.any(np.linalg.norm(corrections, axis=1) > 1.0e-8):
-                assert tuple(debug_draw._COLORS[correction_color]) in colors, (
-                    mode_name, correction_color, colors
-                )
+                if correction_color is None:
+                    assert any(
+                        color in colors
+                        for color in (
+                            tuple(debug_draw._COLORS["tether_compress_active"]),
+                            tuple(debug_draw._COLORS["tether_stretch_active"]),
+                        )
+                    ), (mode_name, colors)
+                else:
+                    assert tuple(debug_draw._COLORS[correction_color]) in colors, (
+                        mode_name, correction_color, colors
+                    )
             if mode_name == "show_tether":
                 tether_records = captured_snapshot["constraint_records"]["tether"]
                 states = np.asarray(tether_records["states"], dtype=np.int8)

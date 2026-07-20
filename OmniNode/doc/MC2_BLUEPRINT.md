@@ -296,7 +296,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 每个Move粒子重复一组组件级箭头：灰色为`gravity * scale_ratio`，绿色为再乘`gravity_ratio`的实际有效重力，长度均乘`0.02`；不表示逐粒子衰减 |
 | 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分速度，橙色为本步实际位移速度，长度均乘`0.03`；黄色连接两者终点表示差值，积分速度命中粒子限速时标红 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
-| Tether范围 | C++ `baseline_roots` + StepBasic root rest length + runtime压缩/拉伸限制 | 灰线为当前root距离，蓝环为最短允许距离，黄环为最长允许距离；环是沿当前方向的球面截面 |
+| Tether状态 | C++ `baseline_roots` + StepBasic root两点直线rest length + runtime压缩/拉伸限制 | 低饱和灰线只表达root到Move的栓绳关系；蓝/橙点表达压缩/拉伸侧接近或触发，深色箭头表达本步真实回拉修正；不画范围圆环，避免被误解为水平摆动限制。rest不是parent链累计长度，也不是depth |
 | Bending约束 | C++ `bending_quads/rest/marker` + 请求时记录结果 | 稳定`record_index + quad四角色`区分dihedral/volume；紫/青/红表达几何误差，红箭头来自该记录每个role经生产量化与顶点计数后的实际贡献 |
 | Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
 | MaxDistance/Backstop | Motion BasePosition + native实际参数数组 | 约束球、Backstop中心和半径 |
@@ -312,7 +312,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式或“实际接触”的跨task分支请求时读取，grid/candidate/contact/intersection按位复制；“实际接触”只请求contact，不得顺带读取grid或candidate。
 
-Debug节点长描述必须由与可见输入顺序一致的单一条目表生成，逐项说明数据源、图元、颜色、捕获时机和不应作出的推断；不得只保留少数复杂模式的历史说明。Blender注册回归必须断言条目标签与`_INPUT_NAME`完整逐项相等、无重复且每条具有实质内容，新增或改名socket时必须同步更新说明。
+Debug节点长描述必须由与可见输入顺序一致的单一条目表生成。每项首先回答用户判断所需的五类事实：用途、当前状态怎样读、怎样算正常/异常、哪些公开参数精确影响它、哪些上游运动/约束/碰撞可能使它变化或触发；再说明必要的数据源、图元、颜色、捕获时机和不应作出的推断，不能只复述代码做了什么。Blender注册回归必须断言条目标签与`_INPUT_NAME`完整逐项相等、无重复，且五类标题逐项存在；新增或改名socket时必须同步更新说明。
 
 Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether、Bending static、Bending record结果与外碰实际接触分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建；外碰contact只在下一真实substep前收到显式请求后由Point/Edge kernel记录。“实际接触”同时独立请求world interaction contact并用owner identity筛出跨task结果，不得要求用户额外开启自碰4。Topology、parameter、motion、center、collision和output等Python payload也必须按实际绘制依赖构造；interaction participant过滤字典只在self或跨task实际接触请求等待消费时生成。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
 
@@ -350,7 +350,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 7. 隔离验收必须逐模式执行“登记请求 -> 等待该模式声明的真实生产阶段 -> 捕获 -> 绘制”。substep模式等待真实advance；scheduler前帧判定模式等待新的world frame。未请求阶段键必须不存在；有非零物理量时必须出现该模式自己的batch语义，零量只验证精确空readback，不得伪造图元。
 8. 性能验收至少比较debug全关、单模式和最重组合三档的readback次数、分配规模与capture耗时；debug全关必须保持零额外生产。任何常驻C++ debug buffer都需要单独产品决策，不得由可视化需求默认引入。
 
-约束pass结果使用五个独立请求位，生产顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`。C++仅为被请求的pass保存pre-position和实际position delta；共享readback只传输ready位对应的稀疏pass，单Tether请求不携带另外五个空槽，请求清零时释放buffer容量。Python按canonical pass顺序恢复模式结果并冻结只读数组，renderer只把非零修正画成红箭头。
+约束pass结果使用五个独立请求位，生产顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`。C++仅为被请求的pass保存pre-position和实际position delta；共享readback只传输ready位对应的稀疏pass，单Tether请求不携带另外五个空槽，请求清零时释放buffer容量。Python按canonical pass顺序恢复模式结果并冻结只读数组，renderer按模式语义绘制关系线、接近点和真实修正箭头；调试节点另提供按task的状态/接近/触发计数文本，不把计数猜测成几何数量。
 
 五类约束均已进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction。Bending记录身份是稳定`record_index + quad四角色`及dihedral/volume类型；请求时C++用生产公式影子重放，将role修正经过相同`int32`量化并除以该vertex的参与记录数，按vertex汇总必须等于Bending pass correction。Motion记录身份是稳定`branch + vertex`，branch固定为MaxDistance/Backstop；影子kernel按真实先后顺序把刚度后总修正拆为两个可加贡献，按vertex求和必须等于Motion pass correction。Angle记录身份是`branch + iteration + baseline_data_index + parent/child`；影子kernel严格保留三轮Limit/Restoration交错顺序，分别记录当轮current/limit和双角色贡献，两分支按vertex联合求和必须等于Angle pass correction，不得用两个独立重放替代。以上均由native与Blender runner锁定，且debug-off不分配记录buffer。
 
