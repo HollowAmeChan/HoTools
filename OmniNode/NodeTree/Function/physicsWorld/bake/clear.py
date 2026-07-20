@@ -47,8 +47,6 @@ _timeline_stop_requested = False
 
 
 def _validate_policy(value, labels: tuple[str, ...], name: str) -> int:
-    if isinstance(value, str) and value in labels:
-        return labels.index(value)
     index = int(value)
     if index < 0 or index >= len(labels):
         raise ValueError(f"{name} 无效：{index}")

@@ -18,7 +18,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
 import bpy
 
 from ...FunctionNodeCore import omni
-from ...OmniNodeSocketMapping import _OmniCache, _OmniPhysicsBakePolicy
+from ...OmniNodeSocketMapping import _OmniCache
 from .. import _Color
 
 from .types import PhysicsObjectScope, PhysicsWorldCache
@@ -348,13 +348,19 @@ def physicsBake(
     input_init={
         "clear_frame": {"min_value": -1048574, "max_value": 1048574},
         "animation_clear_mode": {
-            "policy_kind": "ANIMATION",
+            "min_value": 0,
+            "max_value": 2,
+            "description": "0=仅清理帧，1=清理帧及之后，2=整个Bake Session",
         },
         "mesh_cache_policy": {
-            "policy_kind": "MESH",
+            "min_value": 0,
+            "max_value": 2,
+            "description": "0=保留文件，1=标记清理帧后失效，2=删除整个Session缓存",
         },
         "finalize_cache_policy": {
-            "policy_kind": "FINALIZE",
+            "min_value": 0,
+            "max_value": 2,
+            "description": "0=保留文件，1=标记失效，2=删除Session最终文件",
         },
     },
     _OUTPUT_NAME=["物理世界", "动画清除数量", "Mesh处理数量", "状态"],
@@ -364,6 +370,9 @@ def physicsBake(
 
     动画、Mesh 工作缓存和最终缓存使用互相独立的策略。默认只清本 session
     动画并保留全部缓存文件；清理实时输出只归零真实物理参与者。
+
+    模式编号：动画 0=仅清理帧、1=清理帧及之后、2=整个Session；
+    Mesh 0=保留、1=标记失效、2=删除Session；最终缓存同样为 0/1/2。
 
     推荐接在“物理烘焙”之后。重置时启用或 unmute，本节点完成后再 mute，
     从清理帧开始播放。首次下一帧会由 Bake 自动回填无残余关键帧的边界基线。
@@ -375,9 +384,9 @@ def clearPhysicsBake(
     cache_directory: str = "//physics_bake",
     file_prefix: str = "PhysicsBake",
     clear_frame: int = 1,
-    animation_clear_mode: _OmniPhysicsBakePolicy = "SESSION_ALL",
-    mesh_cache_policy: _OmniPhysicsBakePolicy = "KEEP",
-    finalize_cache_policy: _OmniPhysicsBakePolicy = "KEEP",
+    animation_clear_mode: int = 2,
+    mesh_cache_policy: int = 0,
+    finalize_cache_policy: int = 0,
     clear_live_output: bool = True,
     pause_timeline: bool = True,
     enabled: bool = True,
@@ -392,9 +401,9 @@ def clearPhysicsBake(
             cache_directory,
             file_prefix,
             int(clear_frame),
-            animation_clear_mode,
-            mesh_cache_policy,
-            finalize_cache_policy,
+            int(animation_clear_mode),
+            int(mesh_cache_policy),
+            int(finalize_cache_policy),
             bool(clear_live_output),
             bool(pause_timeline),
             bool(enabled),

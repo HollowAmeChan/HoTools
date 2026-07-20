@@ -172,16 +172,18 @@ def test_physics_bake_bones() -> None:
     _, input_meta, _, defaults, _, settings = node_core.CheckMetaInfo(
         physics_nodes.clearPhysicsBake
     )
-    for identifier, kind in (
-        ("animation_clear_mode", "ANIMATION"),
-        ("mesh_cache_policy", "MESH"),
-        ("finalize_cache_policy", "FINALIZE"),
+    for identifier in (
+        "animation_clear_mode",
+        "mesh_cache_policy",
+        "finalize_cache_policy",
     ):
-        assert input_meta[identifier]["type"] == "OmniNodeSocketPhysicsBakePolicy"
-        assert settings[identifier]["policy_kind"] == kind
-    assert defaults["animation_clear_mode"] == "SESSION_ALL"
-    assert defaults["mesh_cache_policy"] == "KEEP"
-    assert defaults["finalize_cache_policy"] == "KEEP"
+        assert input_meta[identifier]["type"] == "NodeSocketInt"
+        assert settings[identifier]["min_value"] == 0
+        assert settings[identifier]["max_value"] == 2
+        assert "0=" in settings[identifier]["description"]
+    assert defaults["animation_clear_mode"] == 2
+    assert defaults["mesh_cache_policy"] == 0
+    assert defaults["finalize_cache_policy"] == 0
 
     temp_root = Path(tempfile.mkdtemp(prefix="hotools_physics_bake_bones_"))
     armature = _make_armature()
@@ -284,9 +286,9 @@ def test_physics_bake_bones() -> None:
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
             clear_frame=1,
-            animation_clear_mode="TRIGGER_FRAME_ONLY",
-            mesh_cache_policy="KEEP",
-            finalize_cache_policy="KEEP",
+            animation_clear_mode=0,
+            mesh_cache_policy=0,
+            finalize_cache_policy=0,
             clear_live_output=True,
             pause_timeline=False,
         )
@@ -303,9 +305,9 @@ def test_physics_bake_bones() -> None:
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
             clear_frame=1,
-            animation_clear_mode="TRIGGER_FRAME_ONLY",
-            mesh_cache_policy="KEEP",
-            finalize_cache_policy="KEEP",
+            animation_clear_mode=0,
+            mesh_cache_policy=0,
+            finalize_cache_policy=0,
             clear_live_output=True,
             pause_timeline=False,
         )
@@ -399,9 +401,9 @@ def test_physics_bake_bones() -> None:
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
             clear_frame=2,
-            animation_clear_mode="FROM_CLEAR_FRAME",
-            mesh_cache_policy="KEEP",
-            finalize_cache_policy="KEEP",
+            animation_clear_mode=1,
+            mesh_cache_policy=0,
+            finalize_cache_policy=0,
             clear_live_output=True,
             pause_timeline=False,
         )
@@ -424,9 +426,9 @@ def test_physics_bake_bones() -> None:
             cache_directory=str(temp_root),
             file_prefix="BoneBake",
             clear_frame=1,
-            animation_clear_mode="SESSION_ALL",
-            mesh_cache_policy="KEEP",
-            finalize_cache_policy="KEEP",
+            animation_clear_mode=2,
+            mesh_cache_policy=0,
+            finalize_cache_policy=0,
             clear_live_output=True,
             pause_timeline=False,
         )

@@ -156,9 +156,9 @@ def clearPhysicsBake(
     cache_directory: str,
     file_prefix: str = "PhysicsBake",
     clear_frame: int = 1,
-    animation_clear_mode: str = "SESSION_ALL",
-    mesh_cache_policy: str = "KEEP",
-    finalize_cache_policy: str = "KEEP",
+    animation_clear_mode: int = 2,
+    mesh_cache_policy: int = 0,
+    finalize_cache_policy: int = 0,
     clear_live_output: bool = True,
     pause_timeline: bool = True,
     enabled: bool = True,
@@ -174,17 +174,17 @@ enabled == True and scene.frame_current == clear_frame
 
 时执行，不读取 `world.frame_context.restart_required`，不判断倒放，不判断是否跳到其他非零帧。重复执行必须幂等。
 
-清理策略使用菜单，而不是把“清动画”与“删昂贵缓存”绑成一个 bool：
+清理策略使用普通整数 socket，而不是为这一组局部选项增加专用 socket 类型，也不把“清动画”与“删昂贵缓存”绑成一个 bool。节点说明和各 socket description 必须同步显示编号语义：
 
 | 输入 | 选项 | 默认值 | 语义 |
 |---|---|---|---|
-| `animation_clear_mode` | `TRIGGER_FRAME_ONLY / FROM_CLEAR_FRAME / SESSION_ALL` | `SESSION_ALL` | 只清本 session 的 Bone/Object Bake 曲线；不碰源 Action |
-| `mesh_cache_policy` | `KEEP / INVALIDATE_FROM_CLEAR_FRAME / DELETE_SESSION` | `KEEP` | GN/PC2 工作缓存默认保留；PC2 可截断，GN 只能标 stale 后整段重烘 |
-| `finalize_cache_policy` | `KEEP / MARK_STALE / DELETE_SESSION` | `KEEP` | 最终 ABC 默认保留；是否标 stale 或删除由用户决定 |
+| `animation_clear_mode` | `0` 当前帧 / `1` 当前帧及之后 / `2` 整个 Session | `2` | 只清本 session 的 Bone/Object Bake 曲线；不碰源 Action |
+| `mesh_cache_policy` | `0` 保留 / `1` 标记失效 / `2` 删除 Session | `0` | GN/PC2 工作缓存默认保留；PC2 可截断，GN 只能标 stale 后整段重烘 |
+| `finalize_cache_policy` | `0` 保留 / `1` 标记失效 / `2` 删除 Session | `0` | 最终 ABC 默认保留；是否标 stale 或删除由用户决定 |
 | `clear_live_output` | bool | `True` | 清 manifest participant 的当前 Bone/Object/GN 写回值，不删除动画/文件 |
 | `pause_timeline` | bool | `True` | 清理事务完成后请求暂停 |
 
-当前实现已经注册真实节点和三个下拉策略。Bone 支持三种 Action 清理范围、重新绑定源 Action、精确 live participant 清零、无关键帧 boundary baseline，以及首次 `clear_frame + 1` 自动回填。GN 支持 KEEP、只标 stale 和调用 Blender single-delete 删除整个受管 entry；KEEP 不改缓存文件。上游 Bake 在同一次树执行中刚排队的 Mesh request 会由 Clear 取消，避免清理后立即重烘。finalize 策略只处理 manifest 已声明的最终文件；在 ABC producer 落地前通常为零目标。
+当前实现已经注册真实节点和三个 `0..2` 整数策略。Bone 支持三种 Action 清理范围、重新绑定源 Action、精确 live participant 清零、无关键帧 boundary baseline，以及首次 `clear_frame + 1` 自动回填。GN 支持保留、只标 stale 和调用 Blender single-delete 删除整个受管 entry；保留模式不改缓存文件。上游 Bake 在同一次树执行中刚排队的 Mesh request 会由 Clear 取消，避免清理后立即重烘。finalize 策略只处理 manifest 已声明的最终文件；在 ABC producer 落地前通常为零目标。
 
 硬规则：
 
@@ -870,7 +870,7 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 3. 从当前 frame/generation 的单条与 batch Bone result 精确解析 participant。
 4. 沿用旧骨骼 K 帧节点的三种 rotation mode 插帧机制，并覆盖 location/rotation/scale。
 5. GN 多 Mesh 调度仅允许第一遍完整时间轴记录 Action。
-6. 独立 `清除物理Bake动画` 节点、三个下拉留存策略和精确 participant live 清理。
+6. 独立 `清除物理Bake动画` 节点、三个整数留存策略和精确 participant live 清理。
 7. Bone boundary baseline capture、首次第 2 帧回填第 1 帧；清理帧不留清零关键帧。
 8. 部分清理后临时恢复源 Action，避免后续 Bake key 向前外推形成残余姿态。
 
