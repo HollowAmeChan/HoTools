@@ -28,7 +28,7 @@
 |---|---|---|---|
 | D-01 | **代码已关闭，待最终手测** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史，清理接触状态 |
 | D-02 | **分段实施中** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量及外碰时间层已接通；self contact/intersection时间层仍待实施 |
-| D-03 | **代码已实现，待手测** | 碰撞结果表达 | “碰撞情况”保留外碰形状；“实际接触”按需捕获task外碰Point/Edge contact及world interaction跨task EE/PT contact |
+| D-03 | **人工已验证** | 碰撞结果表达 | “碰撞情况”保留全部有效外碰形状；“实际接触”只显示命中的真实半径形状、接触位置、对应collider与实际推动，并覆盖跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **已决策，代码已迁移** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；无双owner |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
@@ -362,7 +362,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **已冻结决策**：D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-03/D-07代码已关闭或接通，D-02正在分段实施，D-06方向已定，D-09代码已实现待界面复验。
+1. **已冻结决策**：D-03碰撞结果、D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-07代码已关闭，D-02正在分段实施，D-06方向已定，D-09代码已实现待界面复验。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
