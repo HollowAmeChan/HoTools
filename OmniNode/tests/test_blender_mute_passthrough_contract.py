@@ -294,6 +294,29 @@ try:
         50.0 * scale,
     )
 
+    node_theme = bpy.context.preferences.themes[0].node_editor
+    original_noodle_curving = node_theme.noodle_curving
+    try:
+        node_theme.noodle_curving = 0
+        straight_points = OmniNodeDraw.DrawCompileFlow._link_segment_points(
+            (0.0, 10.0), (30.0, 40.0), count=4
+        )
+        assert straight_points == [
+            (0.0, 10.0),
+            (10.0, 20.0),
+            (20.0, 30.0),
+            (30.0, 40.0),
+        ]
+        node_theme.noodle_curving = 5
+        curved_points = OmniNodeDraw.DrawCompileFlow._link_segment_points(
+            (0.0, 10.0), (30.0, 40.0), count=4
+        )
+        assert curved_points[0] == (0.0, 10.0)
+        assert curved_points[-1] == (30.0, 40.0)
+        assert curved_points[1] != straight_points[1]
+    finally:
+        node_theme.noodle_curving = original_noodle_curving
+
     drawn_flow = {"colored_points": (), "labels": []}
     original_polyline = OmniNodeDraw.DrawSocketView.draw_polyline
     original_label = OmniNodeDraw.DrawSocketView.draw_label

@@ -784,6 +784,28 @@ class DrawCompileFlow:
         return (right if is_output else left), (top + bottom) * 0.5
 
     @staticmethod
+    def _noodle_curving():
+        try:
+            return float(
+                bpy.context.preferences.themes[0].node_editor.noodle_curving
+            )
+        except (AttributeError, IndexError, TypeError):
+            return 5.0
+
+    @staticmethod
+    def _linear_points(start, end, count=32):
+        count = max(int(count), 2)
+        x0, y0 = start
+        x1, y1 = end
+        return [
+            (
+                x0 + (x1 - x0) * index / float(count - 1),
+                y0 + (y1 - y0) * index / float(count - 1),
+            )
+            for index in range(count)
+        ]
+
+    @staticmethod
     def _bezier_points(start, end, count=32):
         count = max(int(count), 2)
         x0, y0 = start
@@ -803,6 +825,12 @@ class DrawCompileFlow:
                 u * u * u * y0 + 3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t * y3,
             ))
         return points
+
+    @staticmethod
+    def _link_segment_points(start, end, count=32):
+        if DrawCompileFlow._noodle_curving() <= 0.0:
+            return DrawCompileFlow._linear_points(start, end, count=count)
+        return DrawCompileFlow._bezier_points(start, end, count=count)
 
     @staticmethod
     def _draw_colored_polyline(points, colors, width=2.0):
@@ -870,7 +898,9 @@ class DrawCompileFlow:
         anchors.append(DrawCompileFlow._socket_anchor(target, to_socket, False))
         points = []
         for index in range(len(anchors) - 1):
-            segment = DrawCompileFlow._bezier_points(anchors[index], anchors[index + 1], count=16)
+            segment = DrawCompileFlow._link_segment_points(
+                anchors[index], anchors[index + 1], count=16
+            )
             points.extend(segment if not points else segment[1:])
         if muted_path:
             color = DrawCompileFlow.MUTED_LINK_COLOR
