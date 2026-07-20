@@ -52,29 +52,10 @@ blender_registry = importlib.import_module(
 physics_panels = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.ui.panels"
 )
-gn_offset = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.gn_offset"
-)
-
-
 def main() -> None:
-    managed_group = gn_offset.ensure_gn_offset_node_group()
-    output_node = next(
-        node for node in managed_group.nodes
-        if node.bl_idname == "NodeGroupOutput"
-    )
-    for link in tuple(output_node.inputs["Geometry"].links):
-        managed_group.links.remove(link)
-    assert not output_node.inputs["Geometry"].is_linked
-
     physics_blender.register()
     try:
         assert physics_blender.is_registered()
-        output_node = next(
-            node for node in managed_group.nodes
-            if node.bl_idname == "NodeGroupOutput"
-        )
-        assert output_node.inputs["Geometry"].is_linked
         assert blender_registry.registered_blender_property_domains() == (
             "collision", "mc2", "rigid", "physics_ui",
         )
@@ -108,21 +89,6 @@ def main() -> None:
         assert proxy.hotools_mesh_collision.enabled is False
         assert base_pose.mesh_light_key(source) == base_pose.mesh_light_key(proxy)
         assert bool(proxy.get(base_pose.CACHE_OBJECT_FLAG, False))
-
-        named_attribute = next(
-            node for node in managed_group.nodes
-            if node.bl_idname == "GeometryNodeInputNamedAttribute"
-        )
-        named_attribute.inputs["Name"].default_value = "broken_during_reload"
-        physics_blender.register()
-        named_attribute = next(
-            node for node in managed_group.nodes
-            if node.bl_idname == "GeometryNodeInputNamedAttribute"
-        )
-        assert (
-            named_attribute.inputs["Name"].default_value
-            == "hotools_physics_offset"
-        )
 
         physics_blender.unregister()
         assert not physics_blender.is_registered()

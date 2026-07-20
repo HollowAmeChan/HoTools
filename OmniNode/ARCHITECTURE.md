@@ -68,7 +68,7 @@ Source/write object
 
 BasePose 是只读求值源，不是第二个 solver mesh，也不是 MC2 reduction/render mapping。两对象必须共享等价的静态 topology signature；动画只允许移动既有顶点。PC2 modifier 只负责用户选择的最终显示回放，不得进入 BasePose read object，也不得把缓存结果反馈成下一帧 solver 输入。任何 Mesh solver 迁入 Physics World 时都不得用 BlendShape、单对象 modifier toggle/reorder 或双阶段单对象读取替换这条路径，除非先有新的 Blender 版本证据和完整性能基准，并由架构决策明确推翻本约定。
 
-受管 GN 数据块不能只用手写整数 schema 判断是否需要刷新。`physicsWorld.gn_offset` 从当前 builder 临时生成期望结构指纹，覆盖 group interface、节点类型、语义属性、socket 默认值和 links；插件首次 register 与 active 状态下重复 register 都强制比较实际结构，并原位重建有差异的 HoTools 保留组、修复保留 modifier 引用和 `live GN -> legacy GN cache -> PC2` 顺序。正常逐帧写回只比较数据块上保存的 contract digest；builder 代码变化会自动产生新 digest，即使开发者忘记提升 schema 也会进入实检。整数 schema 只保留旧版迁移和拒绝高版本降级的职责。刷新后必须 `update_tag` 组和全部使用对象并更新 view layer；同 schema 下改坏 attribute name、接口、节点或连线的 Blender 回归必须长期保留。
+受管 GN 数据块不能只用手写整数 schema 判断是否需要刷新。`physicsWorld.gn_offset` 从当前 builder 临时生成期望结构指纹，覆盖 group interface、节点类型、语义属性、socket 默认值和 links；原有 GN ensure 路径比较数据块保存的 contract digest，builder 代码变化会自动产生新 digest，即使开发者忘记提升 schema 也会进入实检并原位重建、修复保留 modifier 引用和 `live GN -> legacy GN cache -> PC2` 顺序。整数 schema 只保留旧版迁移和拒绝高版本降级的职责。插件 register 阶段不得扫描 `bpy.data` 或刷新旧场景资源；显式完整检查由 `refresh_managed_gn_node_groups()` 提供。刷新后必须 `update_tag` 组和全部使用对象并更新 view layer；同 schema 下改坏 attribute name、接口、节点或连线的 Blender 回归必须长期保留。
 
 ## 核心边界
 
