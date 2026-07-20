@@ -257,12 +257,12 @@ def physicsWorldCommit(
     必须接在「物理写回」之后。节点只消费当前 world 的真实 GN Mesh
     writeback target，不扫描整个场景猜测参与者。
 
-    烘焙Mesh 使用边沿触发：False 重新武装，切到 True 后只排队一次完整
-    Geometry Nodes Bake。长任务在当前节点树执行结束后由 timer 启动，避免
-    在 frame_change_post 内递归推进时间轴。
+    烘焙Mesh 每次执行时只把当前帧的真实 GN Mesh writeback target 写入独立 PC2 文件。
+    它不会接管时间轴，也不会阻塞执行整段 Geometry Nodes Bake；用户播放时间轴即可逐帧记录，
+    多目标文件写入彼此独立。
 
     使用Mesh缓存 与文件留存完全独立：关闭只显示实时后置位移，不删除缓存；
-    开启前必须有本节点 manifest 标记为 COMPLETE 的完整缓存。
+    开启前必须有本节点 manifest 标记为 COMPLETE 的完整 PC2 缓存。
 
     烘焙Bone 每个连续帧记录当前 bone_transform/batch 中真实出现的 PoseBone，
     首次为每个 Armature 复制/创建专用 Bake Action，绝不遍历整个骨架。

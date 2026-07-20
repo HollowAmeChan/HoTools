@@ -6,8 +6,7 @@ from pathlib import Path
 
 import bpy
 
-from ..gn_offset import clear_gn_local_offsets, get_gn_offset_bake_entry
-from ..names import GN_CACHE_MODIFIER_NAME
+from ..gn_offset import clear_gn_local_offsets
 from ..types import PhysicsWorldCache
 from ..writeback import clear_all_deltas
 from ..writeback_commands import (
@@ -22,7 +21,14 @@ from .bones import (
     _ACTION_TARGET_KEY,
     current_bone_targets,
 )
-from .mesh import cancel_pending_geometry_bake, current_mesh_targets
+from .pc2 import (
+    cancel_pending_geometry_bake,
+    current_mesh_targets,
+    objects_from_manifest,
+    remove_pc2_modifier,
+    set_pc2_playback_enabled,
+    truncate_pc2,
+)
 from .session import (
     MANIFEST_SCHEMA,
     TARGET_UUID_KEY,
@@ -212,12 +218,7 @@ def _capture_bone_baseline(participants: dict) -> dict:
 
 
 def _mesh_objects(manifest: dict, world: PhysicsWorldCache) -> dict[str, object]:
-    result = {}
-    wanted = manifest.get("targets") or {}
-    for obj in bpy.data.objects:
-        target_id = str(obj.get(TARGET_UUID_KEY, "") or "")
-        if obj.type == "MESH" and target_id in wanted:
-            result[target_id] = obj
+    result = objects_from_manifest(manifest)
     for obj in current_mesh_targets(world):
         target_id = str(obj.get(TARGET_UUID_KEY, "") or "")
         if target_id:
@@ -225,12 +226,8 @@ def _mesh_objects(manifest: dict, world: PhysicsWorldCache) -> dict[str, object]
     return result
 
 
-def _disable_existing_cache(obj) -> None:
-    modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
-    if modifier is not None and modifier.type == "NODES":
-        modifier.show_viewport = False
-        modifier.show_render = False
-        obj.update_tag()
+def _disable_existing_cache(obj, target_id: str) -> None:
+    set_pc2_playback_enabled(obj, target_id, False)
 
 
 def _clear_mesh_cache(
@@ -247,55 +244,50 @@ def _clear_mesh_cache(
     for target_id, record in (manifest.get("targets") or {}).items():
         if not isinstance(record, dict):
             continue
-        obj = objects.get(str(target_id))
+        target_id = str(target_id)
+        obj = objects.get(target_id)
+        path = _owned_path(root, str(record.get("file") or ""))
         if policy == MESH_CACHE_INVALIDATE_FROM_CLEAR_FRAME:
-            if (
-                record.get("status") == "STALE"
-                and int(record.get("stale_from_frame", clear_frame)) == clear_frame
-            ):
-                if obj is not None:
-                    _disable_existing_cache(obj)
-                continue
+            start = int(manifest.get("frame_start", clear_frame))
+            keep_count = max(0, clear_frame - start)
+            changed = (
+                record.get("status") != "STALE"
+                or int(record.get("stale_from_frame", clear_frame)) != clear_frame
+            )
+            if path is not None and path.is_file():
+                changed = truncate_pc2(path, keep_count)
+                record["byte_size"] = path.stat().st_size
+            kept_frames = [
+                int(frame)
+                for frame in record.get("written_frames") or ()
+                if int(frame) < clear_frame
+            ]
+            changed = changed or kept_frames != record.get("written_frames", [])
+            record["written_frames"] = kept_frames
+            record["sample_count"] = len(kept_frames)
             record["status"] = "STALE"
             record["stale_from_frame"] = clear_frame
             if obj is not None:
-                _disable_existing_cache(obj)
-            processed += 1
+                _disable_existing_cache(obj, target_id)
+            if changed:
+                processed += 1
             continue
-        if obj is None:
-            record["delete_error"] = "目标对象不存在，未删除磁盘缓存"
-            continue
-        if record.get("status") == "DELETED":
-            _disable_existing_cache(obj)
-            continue
-        directory = _owned_path(root, str(record.get("directory") or ""))
-        if directory is None:
-            record["delete_error"] = "缓存目录不在 session 根目录内"
-            continue
-        modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
-        if modifier is None or modifier.type != "NODES":
-            record["delete_error"] = "受管缓存修改器不存在"
-            continue
-        entry = get_gn_offset_bake_entry(modifier)
-        entry_directory = _owned_path(
-            root,
-            bpy.path.abspath(str(getattr(entry, "directory", "") or "")),
-        )
-        if entry_directory != directory:
-            record["delete_error"] = "修改器 Bake entry 与 manifest 目录不一致"
-            continue
-        result = bpy.ops.object.geometry_node_bake_delete_single(
-            session_uid=int(obj.session_uid),
-            modifier_name=modifier.name,
-            bake_id=int(entry.bake_id),
-        )
-        if result != {"FINISHED"}:
-            record["delete_error"] = f"Blender delete 返回 {sorted(result)}"
-            continue
-        _disable_existing_cache(obj)
-        record.update({"status": "DELETED", "file_count": 0, "byte_size": 0})
+        changed = False
+        if path is not None and path.is_file():
+            path.unlink()
+            changed = True
+        if obj is not None:
+            changed = remove_pc2_modifier(obj, target_id) or changed
+        already_deleted = record.get("status") == "DELETED"
+        record.update({
+            "status": "DELETED",
+            "sample_count": 0,
+            "byte_size": 0,
+            "written_frames": [],
+        })
         record.pop("delete_error", None)
-        processed += 1
+        if changed or not already_deleted:
+            processed += 1
     if processed:
         manifest["status"] = (
             "STALE" if policy == MESH_CACHE_INVALIDATE_FROM_CLEAR_FRAME else "CLEARED"

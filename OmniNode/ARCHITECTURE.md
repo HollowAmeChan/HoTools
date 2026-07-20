@@ -61,11 +61,12 @@ BasePose read object
 
 Source/write object
   同一 final-proxy topology/vertex identity
-  物理 GN modifier 常驻修改器栈末端
+  物理 GN modifier 常驻 topology-preserving 栈末端
+  完整 PC2 播放时只允许受管 Mesh Cache modifier 位于其后
   -> 每帧只更新 POINT object-local offset attribute
 ```
 
-BasePose 是只读求值源，不是第二个 solver mesh，也不是 MC2 reduction/render mapping。两对象必须共享等价的静态 topology signature；动画只允许移动既有顶点。任何 Mesh solver 迁入 Physics World 时都不得用 BlendShape、单对象 modifier toggle/reorder 或双阶段单对象读取替换这条路径，除非先有新的 Blender 版本证据和完整性能基准，并由架构决策明确推翻本约定。
+BasePose 是只读求值源，不是第二个 solver mesh，也不是 MC2 reduction/render mapping。两对象必须共享等价的静态 topology signature；动画只允许移动既有顶点。PC2 modifier 只负责用户选择的最终显示回放，不得进入 BasePose read object，也不得把缓存结果反馈成下一帧 solver 输入。任何 Mesh solver 迁入 Physics World 时都不得用 BlendShape、单对象 modifier toggle/reorder 或双阶段单对象读取替换这条路径，除非先有新的 Blender 版本证据和完整性能基准，并由架构决策明确推翻本约定。
 
 ## 核心边界
 

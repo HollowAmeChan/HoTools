@@ -20,6 +20,7 @@ GN_OFFSET_MODIFIER_NAME = "HoTools 物理后置位移"
 GN_OFFSET_NODE_GROUP_NAME = "HoTools_PhysicsOffset"
 GN_CACHE_MODIFIER_NAME = "HoTools 物理网格缓存"
 GN_CACHE_NODE_GROUP_NAME = "HoTools_PhysicsMeshCache"
+PC2_CACHE_MODIFIER_NAME = "HoTools 物理PC2缓存"
 GN_OFFSET_WRITEBACK_TYPE = "mesh_vertex_offset"
 GN_OFFSET_SPACE = "OBJECT_LOCAL"
 

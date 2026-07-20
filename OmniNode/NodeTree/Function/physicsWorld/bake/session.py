@@ -11,7 +11,7 @@ import uuid
 import bpy
 
 
-MANIFEST_SCHEMA = "hotools_physics_gn_bake_v1"
+MANIFEST_SCHEMA = "hotools_physics_bake_v2"
 TARGET_UUID_KEY = "hotools_physics_bake_uuid"
 _SAFE_PREFIX_RE = re.compile(r"[^A-Za-z0-9._-]+")
 

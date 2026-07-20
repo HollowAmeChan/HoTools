@@ -16,6 +16,7 @@ from .names import (
     GN_OFFSET_ATTRIBUTE_NAME,
     GN_OFFSET_MODIFIER_NAME,
     GN_OFFSET_NODE_GROUP_NAME,
+    PC2_CACHE_MODIFIER_NAME,
 )
 
 
@@ -169,6 +170,7 @@ def ensure_gn_cache_node_group():
 
 def _place_live_modifier(obj, modifier) -> None:
     cache_modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
+    pc2_modifier = obj.modifiers.get(PC2_CACHE_MODIFIER_NAME)
     index = obj.modifiers.find(modifier.name)
     if (
         cache_modifier is not None
@@ -177,6 +179,15 @@ def _place_live_modifier(obj, modifier) -> None:
     ):
         cache_index = obj.modifiers.find(cache_modifier.name)
         target_index = cache_index if index > cache_index else cache_index - 1
+        if index != target_index:
+            obj.modifiers.move(index, target_index)
+    elif (
+        pc2_modifier is not None
+        and pc2_modifier != modifier
+        and pc2_modifier.type == "MESH_CACHE"
+    ):
+        pc2_index = obj.modifiers.find(pc2_modifier.name)
+        target_index = pc2_index if index > pc2_index else pc2_index - 1
         if index != target_index:
             obj.modifiers.move(index, target_index)
     elif 0 <= index < len(obj.modifiers) - 1:

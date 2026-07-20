@@ -1,6 +1,6 @@
 """Physics World bake backends and session coordination."""
 
-from .mesh import (
+from .pc2 import (
     cancel_pending_geometry_bake,
     current_mesh_targets,
     geometry_bake_is_active,

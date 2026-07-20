@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""End-to-end Physics Bake OmniNode mesh stage regression."""
+"""End-to-end Physics Bake incremental PC2 mesh cache regression."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import numpy as np
 
 FRAME_START = 1
 FRAME_END = 3
-PREFIX = "NodeBake"
+PREFIX = "NodeBakePC2"
 
 TEST_DIR = Path(__file__).resolve().parent
 PW_ROOT = TEST_DIR.parent
@@ -54,6 +54,9 @@ gn_offset = importlib.import_module(
 physics_bake = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.bake"
 )
+pc2 = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.bake.pc2"
+)
 physics_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.nodes"
 )
@@ -77,6 +80,7 @@ def _make_object(name: str, x_offset: float):
 
 
 def _publish_frame(world, objects, offsets, frame: int) -> None:
+    bpy.context.scene.frame_set(frame)
     world.clear_results("gn_attribute")
     world.frame_context.frame = int(frame)
     world.frame_context.same_frame = False
@@ -86,8 +90,8 @@ def _publish_frame(world, objects, offsets, frame: int) -> None:
         values[:, 2] = np.float32(offsets[obj.name] + frame)
         commands.publish_gn_offset_writeback(
             world,
-            solver="node-test",
-            slot_id=f"node-test:{obj.name}",
+            solver="pc2-node-test",
+            slot_id=f"pc2-node-test:{obj.name}",
             object_ptr=int(obj.as_pointer()),
             object_data_ptr=int(obj.data.as_pointer()),
             frame=frame,
@@ -100,8 +104,7 @@ def _publish_frame(world, objects, offsets, frame: int) -> None:
 
 def _positions(obj, frame: int) -> np.ndarray:
     bpy.context.scene.frame_set(frame)
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    evaluated = obj.evaluated_get(depsgraph)
+    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     mesh = evaluated.to_mesh()
     try:
         values = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
@@ -119,183 +122,76 @@ def _expected(obj, z_offset: float) -> np.ndarray:
     return result
 
 
-def _files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file())
+def _payload_snapshot(paths) -> list[tuple[Path, int, int]]:
+    return [(path, path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
+
+
+def _bake_frame(world, cache_root: Path, objects, offsets, frame: int):
+    _publish_frame(world, objects, offsets, frame)
+    return physics_nodes.physicsBake(
+        world=world,
+        cache_directory=str(cache_root),
+        file_prefix=PREFIX,
+        frame_start=FRAME_START,
+        frame_end=FRAME_END,
+        bake_bones=False,
+        bake_mesh=True,
+        use_mesh_cache=True,
+    )
 
 
 def test_physics_bake_node_mesh_stage() -> None:
-    temp_root = Path(tempfile.mkdtemp(prefix="hotools_physics_bake_node_"))
-    blend_path = temp_root / "node.blend"
+    temp_root = Path(tempfile.mkdtemp(prefix="hotools_physics_pc2_"))
+    blend_path = temp_root / "pc2.blend"
     cache_root = temp_root / "cache"
     objects = (
-        _make_object("NodeBakeA", 0.0),
-        _make_object("NodeBakeB", 4.0),
+        _make_object("PC2BakeA", 0.0),
+        _make_object("PC2BakeB", 4.0),
     )
     offsets = {objects[0].name: 0.0, objects[1].name: 10.0}
     world = world_types.PhysicsWorldCache()
-    world.generation = 5
-    frame_events = []
-    nested_statuses = []
-    action_recording_flags = []
-
-    def execute_tree_on_frame(scene, depsgraph=None):
-        del depsgraph
-        frame = int(scene.frame_current)
-        frame_events.append(frame)
-        action_recording_flags.append(
-            physics_bake.geometry_bake_should_record_actions()
-        )
-        _publish_frame(world, objects, offsets, frame)
-        nested_statuses.append(
-            physics_nodes.physicsBake(
-                world=world,
-                cache_directory=str(cache_root),
-                file_prefix=PREFIX,
-                frame_start=FRAME_START,
-                frame_end=FRAME_END,
-                bake_bones=False,
-                bake_mesh=True,
-                use_mesh_cache=True,
-                enabled=True,
-            )[5]
-        )
+    world.generation = 7
 
     try:
         physics_bake.reset_geometry_bake_runtime_for_tests()
-        bpy.context.scene.frame_start = FRAME_START
-        bpy.context.scene.frame_end = FRAME_END
-        bpy.context.scene.frame_set(FRAME_START)
-        _publish_frame(world, objects, offsets, FRAME_START)
+        for frame in range(FRAME_START, FRAME_END + 1):
+            result = _bake_frame(world, cache_root, objects, offsets, frame)
+            assert result[0] is world
+            assert result[1] == str(cache_root) and result[2] == PREFIX
+            assert result[3] == 0 and result[4] == len(objects), result
+            for obj in objects:
+                modifier = obj.modifiers.get(pc2.PC2_MODIFIER_NAME)
+                assert modifier is not None and modifier.type == "MESH_CACHE"
+                assert obj.modifiers[-1] == modifier
+                assert modifier.cache_format == "PC2"
+                assert modifier.forward_axis == "POS_Y" and modifier.up_axis == "POS_Z"
+                assert modifier.show_viewport is (frame == FRAME_END)
 
-        _, output_directory, output_prefix, _, count, status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory="//physics_bake",
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=True,
-            use_mesh_cache=True,
-        )
-        assert count == 0 and "必须先保存" in status
-        assert output_directory == "//physics_bake" and output_prefix == PREFIX
-        _, _, _, _, count, status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=False,
-            use_mesh_cache=True,
-        )
-        assert count == 0 and "尚未完成" in status
-
-        assert bpy.ops.wm.save_as_mainfile(
-            filepath=str(blend_path),
-            check_existing=False,
-        ) == {"FINISHED"}
-
-        (
-            returned_world,
-            output_directory,
-            output_prefix,
-            bone_count,
-            target_count,
-            status,
-        ) = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=True,
-            use_mesh_cache=True,
-        )
-        assert returned_world is world
-        assert bone_count == 0
-        assert target_count == 2
-        assert "已排队" in status
-        assert output_directory == str(cache_root) and output_prefix == PREFIX
-        _, _, _, _, duplicate_count, duplicate_status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=True,
-            use_mesh_cache=True,
-        )
-        assert duplicate_count == 2 and "已排队" in duplicate_status
-        _, cleared_animations, cleared_meshes, clear_status = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=0,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
-        )
-        assert cleared_animations == 0 and cleared_meshes == 0
-        assert "Clear 完成" in clear_status
         assert physics_bake.run_pending_geometry_bake() is False
-        _, _, _, _, target_count, status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=True,
-            use_mesh_cache=True,
-        )
-        assert target_count == 2 and "已排队" in status
-        bpy.app.handlers.frame_change_post.append(execute_tree_on_frame)
-        assert physics_bake.run_pending_geometry_bake() is True
         assert physics_bake.geometry_bake_is_active() is False
-        assert any("正在运行" in status for status in nested_statuses), nested_statuses
-        assert all(
-            "正在运行" in status or "完成" in status
-            for status in nested_statuses
-        ), nested_statuses
-        assert [
-            frame
-            for index, frame in enumerate(frame_events)
-            if index == 0 or frame != frame_events[index - 1]
-        ] == [1, 2, 3, 1, 2, 3, 1]
-        assert action_recording_flags[:3] == [True, True, True]
-        assert action_recording_flags[3:6] == [False, False, False]
-
         manifest_path = cache_root / f"{PREFIX}.hotools-bake.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["status"] == "COMPLETE"
-        assert manifest["boundary_frame"] == FRAME_START
-        assert manifest["boundary_baseline_revision"] == 1
-        assert len(manifest["targets"]) == 2
-        assert all(record["status"] == "COMPLETE" for record in manifest["targets"].values())
-        files_before = [
-            (path, path.stat().st_size, path.stat().st_mtime_ns)
-            for path in _files(cache_root)
-        ]
+        assert manifest["schema"] == "hotools_physics_bake_v2"
+        assert manifest["backend"] == "PC2" and manifest["status"] == "COMPLETE"
+        assert len(manifest["targets"]) == len(objects)
+        payload_files = sorted(cache_root.glob("*.pc2"))
+        assert len(payload_files) == len(objects)
+        assert sorted(path.suffix for path in cache_root.iterdir()) == [".json", ".pc2", ".pc2"]
+        for record in manifest["targets"].values():
+            path = Path(record["file"])
+            header = pc2.read_pc2_header(path)
+            assert header.vertex_count == 3
+            assert header.start_frame == FRAME_START and header.sample_rate == 1.0
+            assert header.sample_count == FRAME_END - FRAME_START + 1
+            assert path.stat().st_size == pc2.PC2_HEADER.size + 3 * 3 * 12
+            assert record["written_frames"] == [1, 2, 3]
 
-        bpy.app.handlers.frame_change_post.remove(execute_tree_on_frame)
-        assert bpy.ops.wm.save_as_mainfile(
-            filepath=str(blend_path),
-            check_existing=False,
-        ) == {"FINISHED"}
-        object_names = tuple(obj.name for obj in objects)
-        assert bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False) == {"FINISHED"}
-        objects = tuple(bpy.data.objects[name] for name in object_names)
-        assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
-
+        # The completed PC2 modifier must override later live GN values and preserve XYZ.
         for obj in objects:
-            values = np.zeros((len(obj.data.vertices), 3), dtype=np.float32)
-            values[:, 2] = 100.0
-            gn_offset.write_gn_local_offsets(obj, values)
+            gn_offset.write_gn_local_offsets(
+                obj,
+                np.full((len(obj.data.vertices), 3), 100.0, dtype=np.float32),
+            )
         for frame in range(FRAME_START, FRAME_END + 1):
             for obj in objects:
                 np.testing.assert_allclose(
@@ -305,139 +201,105 @@ def test_physics_bake_node_mesh_stage() -> None:
                     atol=1.0e-6,
                 )
 
-        # False rearms the trigger and disables playback without touching files.
-        _, _, _, _, disabled_count, status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=False,
-            use_mesh_cache=False,
+        payload_before = _payload_snapshot(payload_files)
+        disabled = physics_nodes.physicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, FRAME_END,
+            False, False, False, True,
         )
-        assert disabled_count == 2 and "实时模式" in status
-        assert all(not gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
-        assert files_before == [
-            (path, path.stat().st_size, path.stat().st_mtime_ns)
-            for path in _files(cache_root)
-        ]
+        assert disabled[4] == len(objects)
+        assert all(not obj.modifiers[pc2.PC2_MODIFIER_NAME].show_viewport for obj in objects)
+        assert _payload_snapshot(payload_files) == payload_before
 
-        _, _, _, _, enabled_count, status = physics_nodes.physicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            frame_start=FRAME_START,
-            frame_end=FRAME_END,
-            bake_bones=False,
-            bake_mesh=False,
-            use_mesh_cache=True,
+        missing_path = payload_files[-1].with_suffix(".missing")
+        payload_files[-1].rename(missing_path)
+        failed_enable = physics_nodes.physicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, FRAME_END,
+            False, False, True, True,
         )
-        assert enabled_count == 2 and "正在使用" in status
-        assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
+        assert failed_enable[4] == 0
+        assert all(not obj.modifiers[pc2.PC2_MODIFIER_NAME].show_viewport for obj in objects)
+        missing_path.rename(payload_files[-1])
 
+        enabled = physics_nodes.physicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, FRAME_END,
+            False, False, True, True,
+        )
+        assert enabled[4] == len(objects)
+        assert all(obj.modifiers[pc2.PC2_MODIFIER_NAME].show_viewport for obj in objects)
+
+        # KEEP preserves both files and playback state.
         bpy.context.scene.frame_set(FRAME_START)
-        payload_files = [path for path in _files(cache_root) if path != manifest_path]
-        payload_snapshot = [
-            (path, path.stat().st_size, path.stat().st_mtime_ns)
-            for path in payload_files
-        ]
-        _, animation_count, mesh_count, status = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=0,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
+        kept = physics_nodes.clearPhysicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, 2, 0, 0, False, False, True
         )
-        assert animation_count == 0 and mesh_count == 0 and "Clear 完成" in status
-        assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
-        assert payload_snapshot == [
-            (path, path.stat().st_size, path.stat().st_mtime_ns)
-            for path in payload_files
-        ]
+        assert kept[1] == 0 and kept[2] == 0
+        assert _payload_snapshot(payload_files) == payload_before
+        assert all(obj.modifiers[pc2.PC2_MODIFIER_NAME].show_viewport for obj in objects)
 
-        _, _, mesh_count, status = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=1,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
+        # Invalidate at frame 2 keeps only frame 1 and disables playback.
+        bpy.context.scene.frame_set(2)
+        invalidated = physics_nodes.clearPhysicsBake(
+            world, str(cache_root), PREFIX, 2, 2, 1, 0, False, False, True
         )
-        assert mesh_count == 2 and "Mesh 2" in status
-        assert all(not gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
-        assert payload_snapshot == [
-            (path, path.stat().st_size, path.stat().st_mtime_ns)
-            for path in payload_files
-        ]
-        stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert stale_manifest["status"] == "STALE"
+        assert invalidated[2] == len(objects)
+        for path in payload_files:
+            header = pc2.read_pc2_header(path)
+            assert header.sample_count == 1
+            assert path.stat().st_size == pc2.PC2_HEADER.size + 3 * 12
+        stale = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert stale["status"] == "STALE"
         assert all(
             record["status"] == "STALE"
-            and record["stale_from_frame"] == FRAME_START
-            for record in stale_manifest["targets"].values()
+            and record["written_frames"] == [1]
+            and record["stale_from_frame"] == 2
+            for record in stale["targets"].values()
         )
-        _, _, repeated_count, _ = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=1,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
-        )
-        assert repeated_count == 0
+        assert all(not obj.modifiers[pc2.PC2_MODIFIER_NAME].show_viewport for obj in objects)
 
-        _, _, deleted_count, status = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=2,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
+        # Continue from the truncation boundary without rebuilding frame 1.
+        for frame in (2, 3):
+            result = _bake_frame(world, cache_root, objects, offsets, frame)
+            assert result[4] == len(objects)
+        resumed = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert resumed["status"] == "COMPLETE"
+        assert all(record["written_frames"] == [1, 2, 3] for record in resumed["targets"].values())
+
+        # Absolute PC2 paths and owned modifiers survive a .blend save/reopen.
+        assert bpy.ops.wm.save_as_mainfile(
+            filepath=str(blend_path), check_existing=False
+        ) == {"FINISHED"}
+        object_names = tuple(obj.name for obj in objects)
+        assert bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False) == {"FINISHED"}
+        objects = tuple(bpy.data.objects[name] for name in object_names)
+        for frame in range(FRAME_START, FRAME_END + 1):
+            for obj in objects:
+                np.testing.assert_allclose(
+                    _positions(obj, frame),
+                    _expected(obj, offsets[obj.name] + frame),
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+
+        # DELETE removes only manifest-owned PC2 files and owned modifiers.
+        bpy.context.scene.frame_set(FRAME_START)
+        deleted = physics_nodes.clearPhysicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, 2, 2, 0, False, False, True
         )
-        assert deleted_count == 2 and "Mesh 2" in status
-        assert not [path for path in _files(cache_root) if path != manifest_path]
-        deleted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert deleted_manifest["status"] == "CLEARED"
-        assert all(
-            record["status"] == "DELETED"
-            for record in deleted_manifest["targets"].values()
+        assert deleted[2] == len(objects)
+        assert not list(cache_root.glob("*.pc2"))
+        assert all(obj.modifiers.get(pc2.PC2_MODIFIER_NAME) is None for obj in objects)
+        repeated = physics_nodes.clearPhysicsBake(
+            world, str(cache_root), PREFIX, FRAME_START, 2, 2, 0, False, False, True
         )
-        _, _, repeated_delete_count, _ = physics_nodes.clearPhysicsBake(
-            world=world,
-            cache_directory=str(cache_root),
-            file_prefix=PREFIX,
-            clear_frame=FRAME_START,
-            animation_clear_mode=2,
-            mesh_cache_policy=2,
-            finalize_cache_policy=0,
-            clear_live_output=False,
-            pause_timeline=False,
-        )
-        assert repeated_delete_count == 0
+        assert repeated[2] == 0
     finally:
-        if execute_tree_on_frame in bpy.app.handlers.frame_change_post:
-            bpy.app.handlers.frame_change_post.remove(execute_tree_on_frame)
         physics_bake.reset_geometry_bake_runtime_for_tests()
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def main() -> None:
     test_physics_bake_node_mesh_stage()
-    print("Physics Bake OmniNode mesh stage: PASS")
+    print("Physics Bake incremental PC2 mesh stage: PASS")
 
 
 if __name__ == "__main__":
