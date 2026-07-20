@@ -29,8 +29,10 @@ from .scope import (
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, result_items_to_text, validate_world, print_world_summary
 from .writeback import apply_all_writebacks
-from .physics_bake import (
+from .bake import (
+    bake_bone_transforms,
     geometry_bake_is_active,
+    geometry_bake_should_record_actions,
     geometry_bake_status,
     geometry_bake_target_count,
     rearm_geometry_bake_trigger,
@@ -235,6 +237,7 @@ def physicsWorldCommit(
         "文件前缀",
         "开始帧",
         "结束帧",
+        "烘焙Bone",
         "烘焙Mesh",
         "使用Mesh缓存",
         "启用",
@@ -243,9 +246,9 @@ def physicsWorldCommit(
         "frame_start": {"min_value": -1048574, "max_value": 1048574},
         "frame_end": {"min_value": -1048574, "max_value": 1048574},
     },
-    _OUTPUT_NAME=["物理世界", "Mesh数量", "状态"],
+    _OUTPUT_NAME=["物理世界", "Bone数量", "Mesh数量", "状态"],
     omni_description="""
-    Physics World 通用烘焙节点的 Mesh 第一阶段。
+    Physics World 通用烘焙节点的 Bone + Mesh 阶段。
 
     必须接在「物理写回」之后。节点只消费当前 world 的真实 GN Mesh
     writeback target，不扫描整个场景猜测参与者。
@@ -257,8 +260,10 @@ def physicsWorldCommit(
     使用Mesh缓存 与文件留存完全独立：关闭只显示实时后置位移，不删除缓存；
     开启前必须有本节点 manifest 标记为 COMPLETE 的完整缓存。
 
-    当前阶段只实现 Mesh。Bone/Object Action Bake 与 Clear Physics Bake
-    将由后续节点实现，不在这里读取现场姿态或笼统清理对象。
+    烘焙Bone 每个连续帧记录当前 bone_transform/batch 中真实出现的 PoseBone，
+    首次为每个 Armature 复制/创建专用 Bake Action，绝不遍历整个骨架。
+
+    Object Action Bake 与 Clear Physics Bake 将由后续阶段实现。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
@@ -268,18 +273,35 @@ def physicsBake(
     file_prefix: str = "PhysicsBake",
     frame_start: int = 1,
     frame_end: int = 250,
+    bake_bones: bool = True,
     bake_mesh: bool = False,
     use_mesh_cache: bool = False,
     enabled: bool = True,
-) -> tuple[object, int, str]:
+) -> tuple[object, int, int, str]:
     if not isinstance(world, PhysicsWorldCache):
-        return world, 0, f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
+        return world, 0, 0, f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
     if not bool(enabled):
-        return world, 0, "物理烘焙已禁用"
-    if geometry_bake_is_active():
-        return world, geometry_bake_target_count(), geometry_bake_status()
+        return world, 0, 0, "物理烘焙已禁用"
 
     try:
+        record_actions = geometry_bake_should_record_actions()
+        if bool(bake_bones) and not record_actions:
+            bone_count = 0
+            bone_status = "后续 Mesh pass 跳过 Action Bake"
+        else:
+            bone_count, _action_count, bone_status = bake_bone_transforms(
+                world,
+                cache_directory,
+                file_prefix,
+                bool(bake_bones),
+            )
+        if geometry_bake_is_active():
+            return (
+                world,
+                bone_count,
+                geometry_bake_target_count(),
+                f"{bone_status}；{geometry_bake_status()}",
+            )
         if bool(bake_mesh):
             count, status = request_geometry_bake(
                 world,
@@ -297,9 +319,9 @@ def physicsBake(
                 file_prefix,
                 bool(use_mesh_cache),
             )
-        return world, count, status
+        return world, bone_count, count, f"{bone_status}；{status}"
     except Exception as exc:
-        return world, 0, f"物理烘焙错误：{exc}"
+        return world, 0, 0, f"物理烘焙错误：{exc}"
 
 
 # ---------------------------------------------------------------------------

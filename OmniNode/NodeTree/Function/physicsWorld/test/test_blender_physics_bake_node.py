@@ -52,7 +52,7 @@ gn_offset = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.gn_offset"
 )
 physics_bake = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.physics_bake"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.bake"
 )
 physics_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.nodes"
@@ -136,23 +136,28 @@ def test_physics_bake_node_mesh_stage() -> None:
     world.generation = 5
     frame_events = []
     nested_statuses = []
+    action_recording_flags = []
 
     def execute_tree_on_frame(scene, depsgraph=None):
         del depsgraph
         frame = int(scene.frame_current)
         frame_events.append(frame)
+        action_recording_flags.append(
+            physics_bake.geometry_bake_should_record_actions()
+        )
         _publish_frame(world, objects, offsets, frame)
         nested_statuses.append(
             physics_nodes.physicsBake(
-                world,
-                str(cache_root),
-                PREFIX,
-                FRAME_START,
-                FRAME_END,
-                True,
-                True,
-                True,
-            )[2]
+                world=world,
+                cache_directory=str(cache_root),
+                file_prefix=PREFIX,
+                frame_start=FRAME_START,
+                frame_end=FRAME_END,
+                bake_bones=False,
+                bake_mesh=True,
+                use_mesh_cache=True,
+                enabled=True,
+            )[3]
         )
 
     try:
@@ -162,12 +167,26 @@ def test_physics_bake_node_mesh_stage() -> None:
         bpy.context.scene.frame_set(FRAME_START)
         _publish_frame(world, objects, offsets, FRAME_START)
 
-        _, count, status = physics_nodes.physicsBake(
-            world, "//physics_bake", PREFIX, FRAME_START, FRAME_END, True, True, True
+        _, _, count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory="//physics_bake",
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=True,
+            use_mesh_cache=True,
         )
         assert count == 0 and "必须先保存" in status
-        _, count, status = physics_nodes.physicsBake(
-            world, str(cache_root), PREFIX, FRAME_START, FRAME_END, False, True, True
+        _, _, count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=False,
+            use_mesh_cache=True,
         )
         assert count == 0 and "尚未完成" in status
 
@@ -176,28 +195,29 @@ def test_physics_bake_node_mesh_stage() -> None:
             check_existing=False,
         ) == {"FINISHED"}
 
-        returned_world, target_count, status = physics_nodes.physicsBake(
-            world,
-            str(cache_root),
-            PREFIX,
-            FRAME_START,
-            FRAME_END,
-            True,
-            True,
-            True,
+        returned_world, bone_count, target_count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=True,
+            use_mesh_cache=True,
         )
         assert returned_world is world
+        assert bone_count == 0
         assert target_count == 2
         assert "已排队" in status
-        _, duplicate_count, duplicate_status = physics_nodes.physicsBake(
-            world,
-            str(cache_root),
-            PREFIX,
-            FRAME_START,
-            FRAME_END,
-            True,
-            True,
-            True,
+        _, _, duplicate_count, duplicate_status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=True,
+            use_mesh_cache=True,
         )
         assert duplicate_count == 2 and "已排队" in duplicate_status
         bpy.app.handlers.frame_change_post.append(execute_tree_on_frame)
@@ -213,6 +233,8 @@ def test_physics_bake_node_mesh_stage() -> None:
             for index, frame in enumerate(frame_events)
             if index == 0 or frame != frame_events[index - 1]
         ] == [1, 2, 3, 1, 2, 3, 1]
+        assert action_recording_flags[:3] == [True, True, True]
+        assert action_recording_flags[3:6] == [False, False, False]
 
         manifest_path = cache_root / f"{PREFIX}.hotools-bake.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -248,15 +270,15 @@ def test_physics_bake_node_mesh_stage() -> None:
                 )
 
         # False rearms the trigger and disables playback without touching files.
-        _, disabled_count, status = physics_nodes.physicsBake(
-            world,
-            str(cache_root),
-            PREFIX,
-            FRAME_START,
-            FRAME_END,
-            False,
-            False,
-            True,
+        _, _, disabled_count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=False,
+            use_mesh_cache=False,
         )
         assert disabled_count == 2 and "实时模式" in status
         assert all(not gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
@@ -265,15 +287,15 @@ def test_physics_bake_node_mesh_stage() -> None:
             for path in _files(cache_root)
         ]
 
-        _, enabled_count, status = physics_nodes.physicsBake(
-            world,
-            str(cache_root),
-            PREFIX,
-            FRAME_START,
-            FRAME_END,
-            False,
-            True,
-            True,
+        _, _, enabled_count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=False,
+            use_mesh_cache=True,
         )
         assert enabled_count == 2 and "正在使用" in status
         assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)

@@ -71,11 +71,11 @@ object_transform
 
 不能让 Bake 永久依赖 `rigid.results` 的私有字段，否则未来其他 solver 输出 Object transform 时会再造一条路径。
 
-旧 `keyframePoseBones` 可以保留为非 Physics World 工具，但不能作为新节点实现基础。它读取现场 PoseBone、对用户传入的全部骨骼统一 K location/rotation/scale，既无法证明目标来自当前物理结果，也无法在 world 重建后精确恢复 session participant。
+旧 `keyframePoseBones` 可以继续作为非 Physics World 工具。新节点复用它已经验证过的 PoseBone location、三种 rotation mode 和 scale 插帧机制，但不能复用它的目标发现语义：Bake 必须从当前 frame/generation 的 Physics World result 精确取得真实物理骨，不能对用户传入的整个骨架笼统 K 帧。
 
 ## 节点表面
 
-### 已落地 Mesh 阶段
+### 已落地 Bone + Mesh 阶段
 
 当前代码已注册以下真实 OmniNode：
 
@@ -86,16 +86,19 @@ def physicsBake(
     file_prefix: str = "PhysicsBake",
     frame_start: int = 1,
     frame_end: int = 250,
+    bake_bones: bool = True,
     bake_mesh: bool = False,
     use_mesh_cache: bool = False,
     enabled: bool = True,
-) -> tuple[object, int, str]:
+) -> tuple[object, int, int, str]:
     ...
 ```
 
-`bake_mesh` 是边沿触发：False 重新武装，True 只排队一次。节点从当前 frame/generation 的 GN result stream 精确解析 Mesh target，timer 在本轮树执行返回后逐对象调用 `geometry_node_bake_single`。原子 manifest 状态依次为 `BAKING -> COMPLETE/PARTIAL/FAILED`；只有 `COMPLETE` 才允许 `use_mesh_cache=True`。
+`bake_bones` 在连续帧从当前 frame/generation 的 `bone_transform` 和 batch result 精确解析 Armature/PoseBone。每个 Armature 首次复制已有 Action 或创建新 Action，打上 session ownership 标记并绑定；后续帧复用同一 Action。未出现在 result 中的骨骼不会新增物理曲线。
 
-这一阶段不提供 Bone/Object 的无效 socket。完整 Action 后端落地时通过显式节点 schema migration 增加对应输入，不让 UI 暗示尚不存在的能力。
+`bake_mesh` 是边沿触发：False 重新武装，True 只排队一次。节点从当前 frame/generation 的 GN result stream 精确解析 Mesh target，timer 在本轮树执行返回后逐对象调用 `geometry_node_bake_single`。多 Mesh 时仅第一遍完整时间轴允许记录 Action，后续遍只写当前 Mesh cache。原子 manifest 状态依次为 `BAKING -> COMPLETE/PARTIAL/FAILED`；只有 `COMPLETE` 才允许 `use_mesh_cache=True`。
+
+当前 Bone 后端为兼容旧节点的第一条生产竖切，仍统一 K location、当前 rotation mode 与 scale。result 尚未携带 component ownership，因此 component-aware keying 仍是未完成项。Object Action、Clear、boundary baseline 和回绕暂停也尚未提供 socket。
 
 ### 完整目标表面
 
@@ -858,14 +861,22 @@ physicsWorld/mc2/setups/mesh_cloth/bake_provider.py
 
 ### Phase 1：Bone/Object Action Bake
 
-1. 新建节点和 session manifest。
-2. 专用 Action copy/create/bind。
-3. Bone component-aware keying。
-4. Object delta keying。
-5. 接入 full object transform command，但允许当前无 producer。
-6. 实现 `Clear Physics Bake`、三类独立留存策略和精确 participant 清理。
-7. boundary baseline capture、首次第 2 帧回填第 1 帧。
-8. manifest 自有回绕检测、暂停请求和 journal 恢复。
+当前已完成：
+
+1. `物理烘焙` 节点、独立 `bake/` 包和共享 session manifest。
+2. 每个 Armature 的专用 Action copy/create/bind，后续帧稳定复用。
+3. 从当前 frame/generation 的单条与 batch Bone result 精确解析 participant。
+4. 沿用旧骨骼 K 帧节点的三种 rotation mode 插帧机制，并覆盖 location/rotation/scale。
+5. GN 多 Mesh 调度仅允许第一遍完整时间轴记录 Action。
+
+本 Phase 剩余：
+
+1. result/receipt 携带真实 component ownership 后实现 Bone component-aware keying。
+2. Object delta keying。
+3. 接入 full object transform command，但允许当前无 producer。
+4. 实现 `Clear Physics Bake`、三类独立留存策略和精确 participant 清理。
+5. boundary baseline capture、首次第 2 帧回填第 1 帧。
+6. manifest 自有回绕检测、暂停请求和 journal 恢复。
 
 完成门槛：未参与物理的 Bone/Object 曲线逐项不变；connected/disconnected bone、三种 rotation mode、parented object、同帧和双 world 通过后台测试；停在第 1 帧开始播放时最终 Action 同时拥有正确第 1、2 帧；从高帧回到第 1 帧后在完整事务结束后暂停。
 

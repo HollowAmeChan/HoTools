@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-import os
 from pathlib import Path
-import re
 import uuid
 
 import bpy
 
-from .gn_offset import (
+from ..gn_offset import (
     configure_gn_offset_disk_bake,
     get_gn_offset_bake_entry,
     set_gn_offset_cache_enabled,
 )
-from .names import GN_CACHE_MODIFIER_NAME
-from .types import PhysicsWorldCache
-from .writeback_commands import iter_gn_offset_writebacks
-
-
-_MANIFEST_SCHEMA = "hotools_physics_gn_bake_v1"
-_TARGET_UUID_KEY = "hotools_physics_bake_uuid"
-_SAFE_PREFIX_RE = re.compile(r"[^A-Za-z0-9._-]+")
+from ..names import GN_CACHE_MODIFIER_NAME
+from ..types import PhysicsWorldCache
+from ..writeback_commands import iter_gn_offset_writebacks
+from .session import (
+    MANIFEST_SCHEMA as _MANIFEST_SCHEMA,
+    TARGET_UUID_KEY as _TARGET_UUID_KEY,
+    read_manifest as _read_manifest,
+    resolve_cache_root,
+    safe_prefix as _safe_prefix,
+    write_manifest as _write_manifest,
+)
 
 
 @dataclass(frozen=True)
@@ -46,55 +46,9 @@ class GeometryBakeRequest:
 
 _pending_request: GeometryBakeRequest | None = None
 _active_request: GeometryBakeRequest | None = None
+_active_target_index: int | None = None
 _last_trigger_signature: tuple | None = None
 _last_status = "未请求烘焙"
-
-
-def _safe_prefix(value: str) -> str:
-    prefix = _SAFE_PREFIX_RE.sub("_", str(value or "").strip()).strip("._")
-    if not prefix:
-        raise ValueError("物理烘焙文件前缀不能为空")
-    return prefix
-
-
-def resolve_cache_root(directory: str) -> Path:
-    value = str(directory or "").strip()
-    if not value:
-        raise ValueError("物理烘焙缓存目录不能为空")
-    if value.startswith("//") and not bpy.data.filepath:
-        raise ValueError("使用 // 相对缓存目录前必须先保存 .blend")
-    root = Path(bpy.path.abspath(value)).resolve()
-    return root
-
-
-def _manifest_path(root: Path, prefix: str) -> Path:
-    return root / f"{prefix}.hotools-bake.json"
-
-
-def _read_manifest(root: Path, prefix: str) -> dict | None:
-    path = _manifest_path(root, prefix)
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return None
-    if not isinstance(data, dict) or data.get("schema") != _MANIFEST_SCHEMA:
-        return None
-    return data
-
-
-def _write_manifest(root: Path, prefix: str, manifest: dict) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    path = _manifest_path(root, prefix)
-    temp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-    payload = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
-    try:
-        temp_path.write_text(payload, encoding="utf-8")
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
 
 
 def _find_mesh_object(object_ptr: int, data_ptr: int):
@@ -306,6 +260,11 @@ def geometry_bake_is_active() -> bool:
     return _active_request is not None
 
 
+def geometry_bake_should_record_actions() -> bool:
+    """Record Action backends only during the first full timeline evaluation."""
+    return _active_request is None or _active_target_index in (None, 0)
+
+
 def geometry_bake_target_count() -> int:
     request = _active_request or _pending_request
     return len(request.targets) if request is not None else 0
@@ -331,6 +290,13 @@ def _manifest_for_request(request: GeometryBakeRequest) -> dict:
     }
 
 
+def _write_mesh_manifest(root: Path, prefix: str, manifest: dict) -> None:
+    current = _read_manifest(root, prefix)
+    if isinstance(current, dict) and isinstance(current.get("bones"), dict):
+        manifest["bones"] = current["bones"]
+    _write_manifest(root, prefix, manifest)
+
+
 def _resolve_request_object(target: GeometryBakeTarget):
     obj = bpy.data.objects.get(target.object_name)
     if obj is not None and str(obj.get(_TARGET_UUID_KEY, "") or "") == target.target_id:
@@ -343,7 +309,7 @@ def _resolve_request_object(target: GeometryBakeTarget):
 
 def run_pending_geometry_bake() -> bool:
     """Run one queued request synchronously. Intended for timer and tests."""
-    global _pending_request, _active_request, _last_status
+    global _pending_request, _active_request, _active_target_index, _last_status
     if _active_request is not None or _pending_request is None:
         return False
     request = _pending_request
@@ -357,8 +323,9 @@ def run_pending_geometry_bake() -> bool:
     original_selected = tuple(bpy.context.selected_objects)
     completed = set()
     try:
-        _write_manifest(root, request.prefix, manifest)
-        for target in request.targets:
+        _write_mesh_manifest(root, request.prefix, manifest)
+        for target_index, target in enumerate(request.targets):
+            _active_target_index = target_index
             obj = _resolve_request_object(target)
             if obj is None or obj.type != "MESH":
                 raise RuntimeError(f"Bake target 已失效：{target.object_name}")
@@ -386,9 +353,9 @@ def run_pending_geometry_bake() -> bool:
             record["status"] = "COMPLETE"
             record["file_count"] = len(files)
             record["byte_size"] = sum(path.stat().st_size for path in files)
-            _write_manifest(root, request.prefix, manifest)
+            _write_mesh_manifest(root, request.prefix, manifest)
         manifest["status"] = "COMPLETE"
-        _write_manifest(root, request.prefix, manifest)
+        _write_mesh_manifest(root, request.prefix, manifest)
         _last_status = f"Mesh Bake 完成：{len(completed)} 个目标"
         return True
     except Exception as exc:
@@ -396,7 +363,7 @@ def run_pending_geometry_bake() -> bool:
         manifest["error"] = f"{type(exc).__name__}: {exc}"
         _last_status = f"Mesh Bake 失败：{exc}"
         try:
-            _write_manifest(root, request.prefix, manifest)
+            _write_mesh_manifest(root, request.prefix, manifest)
         except Exception:
             pass
         return False
@@ -423,6 +390,7 @@ def run_pending_geometry_bake() -> bool:
             if original_active is not None and original_active.name in bpy.context.view_layer.objects:
                 bpy.context.view_layer.objects.active = original_active
         finally:
+            _active_target_index = None
             _active_request = None
 
 
@@ -432,11 +400,13 @@ def _geometry_bake_timer():
 
 
 def shutdown_geometry_bake_runtime() -> None:
-    global _pending_request, _active_request, _last_trigger_signature, _last_status
+    global _pending_request, _active_request, _active_target_index
+    global _last_trigger_signature, _last_status
     if bpy.app.timers.is_registered(_geometry_bake_timer):
         bpy.app.timers.unregister(_geometry_bake_timer)
     _pending_request = None
     _active_request = None
+    _active_target_index = None
     _last_trigger_signature = None
     _last_status = "未请求烘焙"
 
@@ -448,6 +418,7 @@ def reset_geometry_bake_runtime_for_tests() -> None:
 __all__ = [
     "current_mesh_targets",
     "geometry_bake_is_active",
+    "geometry_bake_should_record_actions",
     "geometry_bake_status",
     "geometry_bake_target_count",
     "rearm_geometry_bake_trigger",

@@ -29,7 +29,7 @@ def unregister() -> None:
     if not _ACTIVE:
         return
     from .ui import unregister as unregister_ui
-    from .physics_bake import shutdown_geometry_bake_runtime
+    from .bake import shutdown_geometry_bake_runtime
 
     shutdown_geometry_bake_runtime()
     unregister_ui()
