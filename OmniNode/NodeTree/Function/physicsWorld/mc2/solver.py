@@ -1208,25 +1208,19 @@ def step_mc2(
                 for item, local_update_index in batch:
                     native_context = item["native_context"]
                     debug_state = item["slot"].data.get("_debug_capture_state")
-                    debug_filters = (
-                        dict(debug_state.get("filters") or {})
-                        if isinstance(debug_state, dict)
-                        else {}
+                    debug_requested = bool(
+                        isinstance(debug_state, dict)
+                        and debug_state.get("requested", False)
                     )
-                    native_context.set_debug_external_contacts(bool(
-                        isinstance(debug_state, dict)
-                        and debug_state.get("requested", False)
-                        and debug_filters.get("show_collision_contacts", False)
-                    ))
-                    native_context.set_debug_self_contacts(bool(
-                        isinstance(debug_state, dict)
-                        and debug_state.get("requested", False)
-                        and debug_filters.get("show_self_contacts", False)
-                    ))
-                    constraint_debug_mask = 0
-                    if isinstance(debug_state, dict) and debug_state.get(
-                        "requested", False
-                    ):
+                    if debug_requested:
+                        debug_filters = dict(debug_state.get("filters") or {})
+                        native_context.set_debug_external_contacts(bool(
+                            debug_filters.get("show_collision_contacts", False)
+                        ))
+                        native_context.set_debug_self_contacts(bool(
+                            debug_filters.get("show_self_contacts", False)
+                        ))
+                        constraint_debug_mask = 0
                         if debug_filters.get("show_tether", False):
                             constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_TETHER
                         if debug_filters.get("show_distance", False):
@@ -1240,9 +1234,9 @@ def step_mc2(
                             constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_BENDING
                         if debug_filters.get("show_motion", False):
                             constraint_debug_mask |= MC2_DEBUG_CONSTRAINT_MOTION
-                    native_context.set_debug_constraint_results(
-                        constraint_debug_mask
-                    )
+                        native_context.set_debug_constraint_results(
+                            constraint_debug_mask
+                        )
                     if item["center_action"] == "step":
                         frame_interpolation = item["time_scheduler"].advance_step(
                             local_update_index

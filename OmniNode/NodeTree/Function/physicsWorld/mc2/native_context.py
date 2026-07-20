@@ -103,6 +103,9 @@ class MC2NativeContextV0:
         self._center_rotation_axis = np.empty(3, dtype=np.float32)
         self._debug_draw_snapshot = None
         self._derived_center_pose_values = None
+        self._debug_external_contacts_requested = False
+        self._debug_self_contacts_requested = False
+        self._debug_constraint_request_mask = 0
         self.debug_capture_count = 0
         self.debug_readback_count = 0
 
@@ -814,27 +817,51 @@ class MC2NativeContextV0:
 
     def set_debug_external_contacts(self, requested: bool) -> None:
         self._ensure_live()
+        requested = bool(requested)
+        if requested == self._debug_external_contacts_requested:
+            return
         self._module.mc2_context_v0_set_debug_external_contacts(
             self._handle,
-            bool(requested),
+            requested,
         )
+        self._debug_external_contacts_requested = requested
 
     def set_debug_self_contacts(self, requested: bool) -> None:
         self._ensure_live()
+        requested = bool(requested)
+        if requested == self._debug_self_contacts_requested:
+            return
         self._module.mc2_context_v0_set_debug_self_contacts(
             self._handle,
-            bool(requested),
+            requested,
         )
+        self._debug_self_contacts_requested = requested
 
     def set_debug_constraint_results(self, request_mask: int) -> None:
         self._ensure_live()
         request_mask = int(request_mask)
         if request_mask < 0 or request_mask & ~MC2_DEBUG_CONSTRAINT_ALL:
             raise ValueError("MC2 constraint debug mask has unsupported bits")
+        if request_mask == self._debug_constraint_request_mask:
+            return
         self._module.mc2_context_v0_set_debug_constraint_results(
             self._handle,
             request_mask,
         )
+        self._debug_constraint_request_mask = request_mask
+
+    @property
+    def has_debug_capture_request(self) -> bool:
+        return (
+            self._debug_external_contacts_requested
+            or self._debug_self_contacts_requested
+            or self._debug_constraint_request_mask != 0
+        )
+
+    def clear_debug_capture_requests(self) -> None:
+        self.set_debug_external_contacts(False)
+        self.set_debug_self_contacts(False)
+        self.set_debug_constraint_results(0)
 
     @staticmethod
     def _debug_array(values) -> np.ndarray:

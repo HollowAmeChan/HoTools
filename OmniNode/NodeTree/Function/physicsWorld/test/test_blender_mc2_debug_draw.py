@@ -916,9 +916,39 @@ try:
     assert interaction._debug_scope == ()
     print("[PASS] debug disabled has zero native readback")
 
+    default_status = debug_draw.update_mc2_debug_draw_store(
+        node_uid, world, True
+    )
+    assert "不会请求快照" in default_status
+    assert debug_draw.mc2_debug_draw_store_snapshot(node_uid) is None
+    assert all(
+        slot.data["_debug_capture_state"]["requested"] is False
+        for slot in world.solver_slots.values()
+    )
+    print("[PASS] default debug node stays inert until a view is selected")
+
     assert debug_module.request_mc2_debug_capture(
         world, filters={"show_motion": True}
     ) == len(tasks)
+    first_task = tasks[0].task_id
+    filtered_slot = next(
+        slot
+        for task_id, slot in world.solver_slots.items()
+        if task_id != first_task
+    )
+    filtered_context = filtered_slot.data["native_context"]
+    filtered_context.set_debug_self_contacts(True)
+    assert filtered_context.has_debug_capture_request
+    assert debug_module.request_mc2_debug_capture(
+        world, filters={"show_motion": True, "task_filter": first_task}
+    ) == 1
+    assert filtered_context.has_debug_capture_request is False
+    assert world.solver_slots[first_task].data["_debug_capture_state"]["requested"]
+    assert all(
+        slot.data["_debug_capture_state"]["requested"] is False
+        for task_id, slot in world.solver_slots.items()
+        if task_id != first_task
+    )
     assert debug_module.request_mc2_debug_capture(world, filters={}) == 0
     assert all(
         slot.data["_debug_capture_state"]["requested"] is False
@@ -979,6 +1009,7 @@ try:
         state = slot.data["_debug_capture_state"]
         snapshot = slot.data["_debug_draw_snapshot"]
         assert state["requested"] is False and state["captured_frame"] == 3
+        assert slot.data["native_context"].has_debug_capture_request is False
         assert snapshot["frame"] == 3
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["topology"]["edges"].flags.writeable is False

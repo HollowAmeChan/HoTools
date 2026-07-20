@@ -3362,13 +3362,22 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
     ) {
         ++counts[vertex];
         const std::array<float, 3> values {correction.x, correction.y, correction.z};
-        DebugContribution debug {contact, side, vertex, {}};
+        if (capture_debug) {
+            DebugContribution debug {contact, side, vertex, {}};
+            for (std::size_t component = 0; component < 3; ++component) {
+                const auto fixed = static_cast<std::int32_t>(
+                    values[component] * 1000000.0f
+                );
+                add_wrapped_int32(sums[vertex * 3 + component], fixed);
+                debug.fixed[component] = fixed;
+            }
+            debug_contributions.push_back(debug);
+            return;
+        }
         for (std::size_t component = 0; component < 3; ++component) {
             const auto fixed = static_cast<std::int32_t>(values[component] * 1000000.0f);
             add_wrapped_int32(sums[vertex * 3 + component], fixed);
-            debug.fixed[component] = fixed;
         }
-        if (capture_debug) debug_contributions.push_back(debug);
     };
     auto particle = [&](std::size_t primitive, std::size_t axis) {
         return static_cast<std::size_t>(context.self_particle_indices[primitive * 3 + axis]);

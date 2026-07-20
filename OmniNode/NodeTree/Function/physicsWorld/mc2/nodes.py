@@ -1068,9 +1068,9 @@ def _mc2_debug_long_description() -> str:
         "same-frame不会立即读取，未推进时可继续看到旧快照。Teleport属于scheduler前新帧状态。"
         "所有开关均为按需readback，关闭debug不生产额外明细。"
         "调试状态输出是上一份冻结快照的用户摘要，可接到调试文本/打印节点；它不修改模拟。"
-        "推荐调参顺序：先看调试状态，再只打开一个结果视图（实际接触、自碰4、Tether、Distance或Motion），"
-        "最后才打开拓扑、StepBasic、深度、空间网格和候选等高级审计视图。默认关闭的高级开关不会隐藏错误，"
-        "只是不让中间线先盖住结果。"
+        "所有显示位默认关闭，此时不会请求快照或安装绘制处理器。推荐调参顺序：先只打开一个结果视图"
+        "（实际接触、自碰4、Tether、Distance或Motion）并读取调试状态，最后才打开拓扑、StepBasic、"
+        "深度、空间网格和候选等高级审计视图；不要让中间线先盖住结果。"
     )
     return introduction + "\n\n" + "\n\n".join(
         f"{label}：{description}" for label, description in _MC2_DEBUG_DESCRIPTION_ITEMS
@@ -1107,12 +1107,12 @@ def _mc2_debug_long_description() -> str:
         "show_velocity": {"description": "青=保存 橙=真实 黄=差值\n红=命中粒子限速"},
         "show_distance": {"description": "Distance：绿=正常 红=拉长 蓝=压缩"},
         "show_tether": {"description": "Tether：灰=栓绳关系 蓝=压缩 黄=拉伸"},
-        "show_bending": {"description": "Bending：仅突出触发项\n紫=角度 青=体积 红箭头=修正"},
+        "show_bending": {"description": "紫=角度 青=体积\n大点+红箭头=触发"},
         "show_motion_base": {"description": "高级参考：Motion实际BasePosition/法线轴。"},
-        "show_motion": {"description": "结果视图：蓝=MaxDistance 橙=Backstop\n小点=接近 大点+箭头=触发"},
-        "show_angle_restoration": {"description": "结果视图：粉点=接近/触发\n低亮度线=恢复目标 红箭头=修正"},
-        "show_angle_limit": {"description": "结果视图：黄点=接近 橙点=触发\n低亮度锥=局部范围 红箭头=修正"},
-        "show_center": {"description": "状态先看最终惯性与来源；视口为高级分层审计。"},
+        "show_motion": {"description": "蓝=MaxDistance 橙=Backstop\n小点接近 大点触发"},
+        "show_angle_restoration": {"description": "粉点=接近/触发\n暗线=目标 红箭头=修正"},
+        "show_angle_limit": {"description": "黄点接近 橙点触发\n暗锥=范围 红箭头=修正"},
+        "show_center": {"description": "最终惯性与来源见状态；视口审计分层。"},
         "show_teleport_threshold": {
             "description": "Teleport阈值与方向\n球=阈值  线=旧到新"
         },
@@ -1141,7 +1141,7 @@ def physicsMC2DebugDraw(
     task_filter: str = "",
     max_items: int = 10000,
     show_topology: bool = False,
-    show_attributes: bool = True,
+    show_attributes: bool = False,
     show_depth: bool = False,
     depth_particle_index: int = -1,
     show_step_basic: bool = False,
@@ -1163,7 +1163,7 @@ def physicsMC2DebugDraw(
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
     show_self_candidates: bool = False,
-    show_self_contacts: bool = True,
+    show_self_contacts: bool = False,
     show_output: bool = False,
 ) -> tuple[PhysicsWorldCache, str]:
     status_text = update_mc2_debug_draw_store(

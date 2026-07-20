@@ -27,7 +27,11 @@ from ..utils.debug_draw import (
     draw_triangle_batches,
     vector3,
 )
-from .debug import normalize_mc2_task_filters, request_mc2_debug_capture
+from .debug import (
+    MC2_DEBUG_FILTER_KEYS,
+    normalize_mc2_task_filters,
+    request_mc2_debug_capture,
+)
 from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
 from .names import MC2_SLOT_KIND
 
@@ -170,7 +174,7 @@ def update_mc2_debug_draw_store(
     enabled: bool,
     *,
     show_topology: bool = False,
-    show_attributes: bool = True,
+    show_attributes: bool = False,
     show_depth: bool = False,
     depth_particle_index: int = -1,
     show_motion: bool = False,
@@ -181,7 +185,7 @@ def update_mc2_debug_draw_store(
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
     show_self_candidates: bool = False,
-    show_self_contacts: bool = True,
+    show_self_contacts: bool = False,
     show_output: bool = False,
     task_filter: str = "",
     max_items: int = 10000,
@@ -239,6 +243,10 @@ def update_mc2_debug_draw_store(
         "task_filter": normalize_mc2_task_filters(task_filter),
         "max_items": max(1, min(int(max_items), 100000)),
     }
+    if not any(filters.get(name, False) for name in MC2_DEBUG_FILTER_KEYS):
+        request_mc2_debug_capture(world, filters={})
+        clear_mc2_debug_draw_store(node_uid=node_key)
+        return "MC2调试未选择视图；不会请求快照或安装绘制处理器。"
     request_mc2_debug_capture(world, filters=filters)
     batches, point_batches, triangle_batches = _build_world_batches(world, filters)
     status_text = _build_world_status_text(world, filters)

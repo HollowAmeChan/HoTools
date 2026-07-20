@@ -32,8 +32,8 @@ MC2_DEBUG_DRAW_MODES = {
             "effective_gravity",
             "particle_velocity",
             "distance_error",
-            "tether_range",
-            "bending_error",
+            "tether_state",
+            "bending_constraint",
             "motion_base_position",
             "motion_limits",
             "angle_restoration_target",
@@ -479,6 +479,7 @@ def request_mc2_debug_capture(
         spec = slot.data.get("spec")
         if spec is None:
             continue
+        state = slot.data.setdefault("_debug_capture_state", {})
         matches_task = _matches_task_filter(spec.task_id, task_filters)
         matches_setup = setup_filter in ("", "all", str(spec.setup_type).lower())
         if not filters.get("show_collision_contacts", False) or not (
@@ -489,13 +490,14 @@ def request_mc2_debug_capture(
             matches_task and matches_setup
         ):
             slot.data.pop("_debug_self_temporal_history", None)
-        if not matches_task:
-            continue
-        if not matches_setup:
-            continue
-        state = slot.data.setdefault("_debug_capture_state", {})
-        if not has_modes:
+        if not (matches_task and matches_setup and has_modes):
             state.update({"requested": False, "filters": filters})
+            native_context = slot.data.get("native_context")
+            if (
+                native_context is not None
+                and native_context.has_debug_capture_request
+            ):
+                native_context.clear_debug_capture_requests()
             continue
         state.update({
             "requested": True,
@@ -1527,6 +1529,7 @@ def capture_requested_mc2_debug(
             state["error"] = str(exc)
         finally:
             if attempted:
+                item["native_context"].clear_debug_capture_requests()
                 state["requested"] = False
                 state["attempted_frame"] = frame
                 state["capture_ms"] = (time.perf_counter() - started) * 1000.0
