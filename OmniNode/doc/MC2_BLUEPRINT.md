@@ -346,7 +346,9 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 7. 隔离验收必须逐模式执行“登记请求 -> 等待该模式声明的真实生产阶段 -> 捕获 -> 绘制”。substep模式等待真实advance；scheduler前帧判定模式等待新的world frame。未请求阶段键必须不存在；有非零物理量时必须出现该模式自己的batch语义，零量只验证精确空readback，不得伪造图元。
 8. 性能验收至少比较debug全关、单模式和最重组合三档的readback次数、分配规模与capture耗时；debug全关必须保持零额外生产。任何常驻C++ debug buffer都需要单独产品决策，不得由可视化需求默认引入。
 
-约束pass结果当前按上述合同接通第一阶段：Tether、Distance、Angle、Bending、Motion使用五个独立请求位，生产顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`。C++仅为被请求的pass保存pre-position和实际position delta；Distance两次pass保持独立，不能合并抵消。共享readback只传输ready位对应的稀疏pass，单Tether请求只分配/复制一个pass，不携带另外五个空槽；请求清零时释放buffer容量。Python按canonical pass顺序恢复模式结果并冻结只读数组，renderer只把非零修正画成红箭头。该接口表达逐pass、逐粒子聚合修正，不表达具体edge/root/quad记录身份，也不把Angle correction武断归因到Restoration或Limit；记录级active/near-limit仍属于开放D-02工作。
+约束pass结果使用五个独立请求位，生产顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`。C++仅为被请求的pass保存pre-position和实际position delta；共享readback只传输ready位对应的稀疏pass，单Tether请求不携带另外五个空槽，请求清零时释放buffer容量。Python按canonical pass顺序恢复模式结果并冻结只读数组，renderer只把非零修正画成红箭头。
+
+Tether与Distance已经进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction，native与Blender runner同时锁定。Bending、Angle与Motion仍只表达逐pass、逐粒子聚合修正，不表达具体quad、Restoration/Limit子分支或MaxDistance/Backstop原因；这些记录级active/near-limit仍属于开放D-02工作。
 
 MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离22个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
 
@@ -704,7 +706,7 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 | 层 | 当前基线 |
 |---|---|
 | Python纯MC2 | 26个脚本，覆盖参数、static、Center、scheduler、result事务与oracle |
-| Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项 |
+| Python 3.11 native | `run_all.py` 26/26；MC2 context/static/raw与生命周期专项。完整particle-frame测试保留JSON中的MC2 source oracle，同时以独立常量锁定`1-depth^1.5`的Omni产品输出；Fixed仍与source一致，Move必须显式不同，禁止用更新source fixture掩盖产品差异 |
 | Blender 4.5 | Mesh final-proxy `8/8`、Bone static/frame/product、负缩放、交互5项、debug、属性和生命周期。Bone产品测试要求横向triangle生成非零Bending record、static/native signature一致，并覆盖旋转Armature的零重力静置与显式topology/output debug请求；BoneSpring runtime强制Bending关闭 |
 | Blender 4.5约束专项soak | runner覆盖重力三轴/衰减、Distance/Tether、Bending、Angle Restoration/Limit、Motion/Backstop、外碰/摩擦、task内与跨task self、Center，以及任务级首Fixed Teleport、interaction同帧失效与下一帧重建。Mesh 1200/1800帧与Bone 900帧场景均重复验证确定性；旧逐粒子subset schema与不可达断言已删除。它仍不能替代真实高速collider另一侧的人工穿模复验。 |
 | Blender 4.5混合输出soak | MeshCloth、BoneCloth、BoneSpring同world锁步900帧并完整重复；任务级Teleport覆盖三setup的Keep/Reset、首Fixed/对象原点、平移/旋转阈值、reset/apply计数与稳定化恢复，旧逐粒子subset阶段已删除。三context热更新；Mesh local offset与Bone connected/disconnected写回掩码；601帧Reset后验证三setup的`stabilization_time_after_reset=0.2`恢复斜率及`blend_weight=0.6`精确乘积；501至550帧把`particle_speed_limit`原位热更新为`0.05m/s`，逐帧显式readback C++ post后的`state_velocities`，三个setup均须真实达到限幅边界且不得越界，不能用混有Center位移补偿的world position差伪装内部速度；551帧恢复参数且context identity不变；完整场景重复两次并把限幅峰值写入确定性摘要。原生任务级Keep另以非零速度逐值锁定平移后速度不被清零。 |
