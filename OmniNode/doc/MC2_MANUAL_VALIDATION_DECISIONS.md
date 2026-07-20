@@ -28,7 +28,7 @@
 |---|---|---|---|
 | D-01 | **已决策** | Teleport 判定模型 | 整个 task 统一触发；首个 Fixed 粒子为判定基准，无 Fixed 时回退物体原点；完整复核 Reset/Keep 清理链路 |
 | D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
-| D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
+| D-03 | **代码已实现，待手测** | 外部碰撞结果表达 | “碰撞情况”保留形状；“实际接触”按需捕获真实Point/Edge contact、修正与活动collider |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **已决策，代码已迁移** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；无双owner |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
@@ -269,17 +269,17 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 ## P1：外部碰撞“实际接触”模式 D-03
 
-当前碰撞情况只画可参与碰撞的 Point/Edge proxy 与 collider 形状，不能判断本帧是否真的发生排斥。建议保留该模式，并新增独立 `实际接触`：
+`碰撞情况`继续只画可参与碰撞的Point/Edge proxy与collider形状；独立`实际接触`已经接通真实kernel结果，不再从最终normal或位置差反推。
 
 新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配；真实截图场景仍需手测关闭D-10。
 
-- 接触点、接触法线、穿深/修正量；
-- 当前 active 的粒子/边和 collider id；
-- 至少一个 active contact 的 collider 表面改为红色，无接触保持蓝色；
-- 同一位置反复新增/失效的 contact 用黄色或闪烁计数标识，帮助定位抖动；
-- Point 和 Edge kernel 都要覆盖，不能从最终 collision normal 猜 collider 身份。
+- C++ Point/Edge kernel只在`show_collision_contacts`显式请求时记录primitive kind/index、collider index、接触位置、法线和实际correction；关闭时请求位为false且记录数组为空。
+- 请求在下一真实substep前写入context，完成后只读冻结到slot snapshot；same-frame和zero-substep不得伪造contact。
+- renderer把接触点、法线、correction和active Point/Edge primitive标红，并只把本帧参与接触的collider表面改红；普通`碰撞情况`中的非活动collider保持蓝色。
+- task筛选发生在slot请求与绘制两侧；每个slot只显示自己实际上传并命中的collider identity。
+- native Point与Edge单测覆盖真实非零correction和debug-off零记录；Blender隔离模式覆盖请求、冻结、只读数组和至少一个实际contact成功出图。
 
-这需要在 C++ 碰撞 kernel 中增加**仅显式 debug 请求时**的 contact 记录。正常求解不能常驻生产 collider-particle 配对或复制大数组。性能验收要比较 debug off/on，胶囊/Edge 密集场景单独测量。
+尚未实现的时间层信息是contact新增/持续/失效与churn计数；它属于D-02一级结果信息架构，不得用闪烁绘制假装完成。性能验收仍要比较debug off/on，胶囊/Edge密集场景单独测量；debug-off零生产是当前硬门禁。
 
 ## P2：参数 Profile/Task 归属 D-05
 

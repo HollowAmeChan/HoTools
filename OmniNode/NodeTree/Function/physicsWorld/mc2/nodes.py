@@ -837,7 +837,7 @@ def physicsMC2Step(
         "StepBasic参考姿态", "有效重力", "粒子速度", "Distance误差", "Tether范围",
         "Bending约束", "Motion BasePosition", "Motion约束",
         "Angle恢复目标", "Angle限制范围", "Center", "Teleport阈值与方向",
-        "Teleport触发状态", "碰撞情况", "粒子半径",
+        "Teleport触发状态", "碰撞情况", "实际接触", "粒子半径",
         "自碰1 几何单元", "自碰2 空间网格", "自碰3 候选配对",
         "自碰4 接触结果", "最终输出偏移",
     ],
@@ -864,6 +864,9 @@ def physicsMC2Step(
             "description": "Teleport触发状态。\n绿=未触发  黄=Keep  红=Reset"
         },
         "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
+        "show_collision_contacts": {
+            "description": "本帧真实外碰接触\n红=接触/修正/活动碰撞体"
+        },
         "show_radii": {"description": "全部粒子半径（仅参数审计）。"},
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
@@ -909,6 +912,7 @@ def physicsMC2DebugDraw(
     show_teleport_threshold: bool = False,
     show_teleport_status: bool = False,
     show_collision: bool = True,
+    show_collision_contacts: bool = False,
     show_radii: bool = False,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
@@ -937,6 +941,7 @@ def physicsMC2DebugDraw(
         show_teleport_threshold=show_teleport_threshold,
         show_teleport_status=show_teleport_status,
         show_collision=show_collision,
+        show_collision_contacts=show_collision_contacts,
         show_radii=show_radii,
         show_self_primitives=show_self_primitives,
         show_self_grid=show_self_grid,

@@ -1206,6 +1206,17 @@ def step_mc2(
                 collided_by_groups = []
                 for item, local_update_index in batch:
                     native_context = item["native_context"]
+                    debug_state = item["slot"].data.get("_debug_capture_state")
+                    debug_filters = (
+                        dict(debug_state.get("filters") or {})
+                        if isinstance(debug_state, dict)
+                        else {}
+                    )
+                    native_context.set_debug_external_contacts(bool(
+                        isinstance(debug_state, dict)
+                        and debug_state.get("requested", False)
+                        and debug_filters.get("show_collision_contacts", False)
+                    ))
                     if item["center_action"] == "step":
                         frame_interpolation = item["time_scheduler"].advance_step(
                             local_update_index

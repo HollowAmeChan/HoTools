@@ -40,6 +40,7 @@ MC2_DEBUG_DRAW_MODES = {
             "angle_limit_range",
             "center",
             "collision",
+            "collision_contacts",
             "self_collision",
             "final_output_offset",
         ),
@@ -64,6 +65,7 @@ MC2_DEBUG_FILTER_KEYS = (
     "show_teleport_threshold",
     "show_teleport_status",
     "show_collision",
+    "show_collision_contacts",
     "show_radii",
     "show_self_primitives",
     "show_self_grid",
@@ -541,6 +543,9 @@ def capture_requested_mc2_debug(
                         or filters.get("show_tether", False)
                     ),
                     include_bending=bool(filters.get("show_bending", False)),
+                    include_external_contacts=bool(
+                        filters.get("show_collision_contacts", False)
+                    ),
                     include_self_primitives=bool(
                         filters.get("show_self_primitives", False)
                     ),
@@ -558,6 +563,7 @@ def capture_requested_mc2_debug(
                 or filters.get("show_depth", False)
                 or filters.get("show_step_basic", False)
                 or filters.get("show_collision", False)
+                or filters.get("show_collision_contacts", False)
             )
             include_parameters = bool(
                 filters.get("show_gravity", False)
@@ -569,6 +575,7 @@ def capture_requested_mc2_debug(
                 or filters.get("show_angle_restoration", False)
                 or filters.get("show_angle_limit", False)
                 or filters.get("show_collision", False)
+                or filters.get("show_collision_contacts", False)
                 or filters.get("show_radii", False)
             )
             include_motion = bool(
@@ -619,6 +626,7 @@ def capture_requested_mc2_debug(
                 "collision": (
                     _collision_payload(item, native_snapshot)
                     if filters.get("show_collision", False)
+                    or filters.get("show_collision_contacts", False)
                     or filters.get("show_radii", False) else {}
                 ),
                 "self_collision": native_snapshot.get("self_collision"),

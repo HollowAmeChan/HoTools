@@ -494,6 +494,11 @@ try:
             ("teleport_measure",),
         ),
         ("show_collision", {"show_collision": True}, ("collider", "edge_collision")),
+        (
+            "show_collision_contacts",
+            {"show_collision_contacts": True},
+            ("external_contact",),
+        ),
         ("show_radii", {"show_radii": True}, ("radius",)),
         ("show_self_primitives", {"show_self_primitives": True}, ("primitive",)),
         ("show_self_grid", {"show_self_grid": True}, ("grid",)),
@@ -517,6 +522,7 @@ try:
             "show_teleport_threshold": False,
             "show_teleport_status": False,
             "show_collision": False,
+            "show_collision_contacts": False,
             "show_radii": False,
             "show_self_primitives": False,
             "show_self_grid": False,
@@ -601,6 +607,7 @@ try:
             "show_teleport_threshold": set(),
             "show_teleport_status": set(),
             "show_collision": {"topology", "parameters", "collision"},
+            "show_collision_contacts": {"topology", "parameters", "collision"},
             "show_radii": {"parameters", "collision"},
             "show_self_primitives": set(),
             "show_self_grid": set(),
@@ -711,6 +718,13 @@ try:
                 tuple(debug_draw._COLORS[name])
                 for name in ("distance_ok", "distance_compress", "distance_stretch")
             }, (mode_name, colors)
+        elif mode_name == "show_collision_contacts":
+            contacts = native_snapshot.get("external_contacts") or {}
+            assert contacts, tuple(native_snapshot)
+            assert contacts["positions"].flags.writeable is False
+            assert contacts["normals"].flags.writeable is False
+            assert contacts["corrections"].flags.writeable is False
+            assert len(contacts["positions"]) > 0
         elif mode_name.startswith("show_self_"):
             self_state = captured_snapshot.get("self_collision") or {}
             assert "particle_indices" in self_state

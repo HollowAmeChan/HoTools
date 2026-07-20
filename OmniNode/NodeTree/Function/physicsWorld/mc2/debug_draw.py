@@ -40,6 +40,10 @@ _COLORS = {
     "edge_collision_surface": (1.00, 0.30, 0.04, 0.32),
     "point_collision_surface": (0.10, 0.92, 0.32, 0.26),
     "collider_surface": (0.03, 0.58, 1.00, 0.42),
+    "active_collider_surface": (1.00, 0.04, 0.02, 0.62),
+    "external_contact": (1.00, 0.08, 0.04, 1.00),
+    "external_contact_normal": (1.00, 0.82, 0.12, 0.96),
+    "external_contact_correction": (1.00, 0.28, 0.04, 1.00),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "depth_fixed": (1.00, 0.18, 0.62, 1.00),
@@ -124,6 +128,7 @@ def update_mc2_debug_draw_store(
     show_motion: bool = True,
     show_center: bool = True,
     show_collision: bool = True,
+    show_collision_contacts: bool = False,
     show_radii: bool = False,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
@@ -169,6 +174,7 @@ def update_mc2_debug_draw_store(
         "show_teleport_threshold": bool(show_teleport_threshold),
         "show_teleport_status": bool(show_teleport_status),
         "show_collision": bool(show_collision),
+        "show_collision_contacts": bool(show_collision_contacts),
         "show_radii": bool(show_radii),
         "show_self_primitives": bool(show_self_primitives),
         "show_self_grid": bool(show_self_grid),
@@ -394,6 +400,16 @@ def _append_slot_batches(
     if filters["show_collision"]:
         _append_collision_situation_batches(
             batches, triangle_meshes, snapshot, topology, positions, limit
+        )
+    if filters["show_collision_contacts"]:
+        _append_external_contact_batches(
+            batches,
+            point_batches,
+            triangle_meshes,
+            snapshot,
+            topology,
+            positions,
+            limit,
         )
     if filters["show_radii"]:
         _append_radius_batches(batches, snapshot, limit)
@@ -1407,12 +1423,21 @@ def _append_center_batches(batches, point_batches, center):
     _point_batch(point_batches, teleport_reset_points, "teleport_reset", 10.0)
 
 
-def _append_collider_batches(batches, triangle_meshes, collision, limit):
+def _append_collider_batches(
+    batches,
+    triangle_meshes,
+    collision,
+    limit,
+    *,
+    active_indices=(),
+    only_active=False,
+):
     colliders = collision.get("colliders")
     if not isinstance(colliders, dict):
         return
     lines = []
-    mesh = _triangle_mesh(triangle_meshes, "collider_surface")
+    active_lines = []
+    active_indices = {int(value) for value in active_indices}
     types = np.asarray(_values(colliders.get("types")), dtype=np.int32)
     group_bits = np.asarray(_values(colliders.get("group_bits")), dtype=np.int32)
     collided_by_groups = int(colliders.get("collided_by_groups", 0) or 0)
@@ -1420,11 +1445,19 @@ def _append_collider_batches(batches, triangle_meshes, collision, limit):
     segment_a = np.asarray(_values(colliders.get("segment_a")), dtype=np.float32).reshape((-1, 3))
     segment_b = np.asarray(_values(colliders.get("segment_b")), dtype=np.float32).reshape((-1, 3))
     radii = np.asarray(_values(colliders.get("radii")), dtype=np.float32)
-    for kind, group_bit, center, first, second, radius in zip(
+    for collider_index, (kind, group_bit, center, first, second, radius) in enumerate(zip(
         types[:limit], group_bits, centers, segment_a, segment_b, radii
-    ):
+    )):
         if not (collided_by_groups & int(group_bit)):
             continue
+        active = collider_index in active_indices
+        if only_active and not active:
+            continue
+        mesh = _triangle_mesh(
+            triangle_meshes,
+            "active_collider_surface" if active else "collider_surface",
+        )
+        target_lines = active_lines if active else lines
         kind = int(kind)
         radius = float(radius)
         if kind == 0:
@@ -1440,7 +1473,7 @@ def _append_collider_batches(batches, triangle_meshes, collision, limit):
                 radius,
                 radius,
             )
-            add_line(lines, first, second)
+            add_line(target_lines, first, second)
         elif kind == 2:
             axis_x, axis_y = _plane_axes(first)
             add_plane_triangles(
@@ -1449,7 +1482,9 @@ def _append_collider_batches(batches, triangle_meshes, collision, limit):
             normal = vector3(first)
             if normal.length > 1.0e-8:
                 normal.normalize()
-                add_arrow_lines(lines, center, vector3(center) + normal * 0.35)
+                add_arrow_lines(
+                    target_lines, center, vector3(center) + normal * 0.35
+                )
         elif kind == 3:
             cross = vector3(first).cross(vector3(second))
             if cross.length > 1.0e-8:
@@ -1463,6 +1498,102 @@ def _append_collider_batches(batches, triangle_meshes, collision, limit):
                     cross * radius,
                 )
     _batch(batches, lines, "collider", 1.0)
+    _batch(batches, active_lines, "external_contact", 1.5)
+
+
+def _append_external_contact_batches(
+    batches,
+    point_batches,
+    triangle_meshes,
+    snapshot,
+    topology,
+    positions,
+    limit,
+):
+    native = snapshot.get("native") or {}
+    contacts = native.get("external_contacts")
+    collision = snapshot.get("collision") or {}
+    if not isinstance(contacts, dict):
+        return
+    kinds = np.asarray(
+        _values(contacts.get("primitive_kinds")), dtype=np.int32
+    ).reshape((-1,))
+    primitive_indices = np.asarray(
+        _values(contacts.get("primitive_indices")), dtype=np.int32
+    ).reshape((-1,))
+    collider_indices = np.asarray(
+        _values(contacts.get("collider_indices")), dtype=np.int32
+    ).reshape((-1,))
+    contact_positions = np.asarray(
+        _values(contacts.get("positions")), dtype=np.float32
+    ).reshape((-1, 3))
+    normals = np.asarray(
+        _values(contacts.get("normals")), dtype=np.float32
+    ).reshape((-1, 3))
+    corrections = np.asarray(
+        _values(contacts.get("corrections")), dtype=np.float32
+    ).reshape((-1, 3))
+    count = min(
+        limit,
+        len(kinds),
+        len(primitive_indices),
+        len(collider_indices),
+        len(contact_positions),
+        len(normals),
+        len(corrections),
+    )
+    if count <= 0:
+        return
+    active_colliders = set(map(int, collider_indices[:count]))
+    _append_collider_batches(
+        batches,
+        triangle_meshes,
+        collision,
+        limit,
+        active_indices=active_colliders,
+        only_active=True,
+    )
+    edges = np.asarray(
+        _values(topology.get("edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    points = []
+    primitive_lines = []
+    normal_lines = []
+    correction_lines = []
+    for kind, primitive, contact, normal, correction in zip(
+        kinds[:count],
+        primitive_indices[:count],
+        contact_positions[:count],
+        normals[:count],
+        corrections[:count],
+    ):
+        add_point(points, contact)
+        kind = int(kind)
+        primitive = int(primitive)
+        if kind == 0 and 0 <= primitive < len(positions):
+            add_point(points, positions[primitive])
+        elif kind == 1 and 0 <= primitive < len(edges):
+            _add_index_line(primitive_lines, positions, edges[primitive])
+        correction_vector = vector3(correction)
+        normal_vector = vector3(normal)
+        if normal_vector.length > 1.0e-8:
+            normal_vector.normalize()
+            normal_length = max(correction_vector.length, 0.025)
+            add_arrow_lines(
+                normal_lines,
+                contact,
+                vector3(contact) + normal_vector * normal_length,
+            )
+        if correction_vector.length > 1.0e-8:
+            add_arrow_lines(
+                correction_lines,
+                contact,
+                vector3(contact) + correction_vector,
+            )
+    _point_batch(point_batches, points, "external_contact", 7.0)
+    _batch(batches, primitive_lines, "external_contact", 2.2)
+    _batch(batches, normal_lines, "external_contact_normal", 1.4)
+    _batch(batches, correction_lines, "external_contact_correction", 2.2)
 
 
 def _append_radius_batches(batches, snapshot, limit):
