@@ -342,6 +342,62 @@ try:
     assert "tether_min" not in debug_draw._COLORS
     assert "tether_max" not in debug_draw._COLORS
 
+    bending_batches = []
+    bending_points = []
+    debug_draw._append_bending_batches(
+        bending_batches,
+        bending_points,
+        {
+            "origins": np.asarray(
+                (
+                    ((0, 0, 0), (0, 1, 0), (1, 0, 0), (1, 1, 0)),
+                    ((2, 0, 0), (2, 1, 0), (3, 0, 0), (3, 1, 0)),
+                    ((4, 0, 0), (4, 1, 0), (5, 0, 0), (5, 1, 0)),
+                ),
+                dtype=np.float32,
+            ),
+            "kinds": np.asarray((0, 1, 0), dtype=np.int8),
+            "states": np.asarray((0, 2, -2), dtype=np.int8),
+        },
+        10000,
+    )
+    assert sum(len(batch[0]) for batch in bending_batches) == 4
+    assert sum(len(batch[0]) for batch in bending_points) == 2
+    assert {
+        tuple(debug_draw._COLORS["bending"]),
+        tuple(debug_draw._COLORS["bending_volume"]),
+    } == {tuple(batch[1]) for batch in bending_points}
+
+    motion_batches = []
+    motion_points = []
+    debug_draw._append_motion_batches(
+        motion_batches,
+        motion_points,
+        {
+            "origins": np.asarray(
+                ((0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)),
+                dtype=np.float32,
+            ),
+            "target_origins": np.asarray(
+                ((0, 1, 0), (1, 1, 0), (2, 1, 0), (3, 1, 0)),
+                dtype=np.float32,
+            ),
+            "limits": np.asarray((0.1, 0.1, 0.1, 0.1), dtype=np.float32),
+            "branches": np.asarray((0, 0, 1, 1), dtype=np.int8),
+            "states": np.asarray((0, 1, -1, 2), dtype=np.int8),
+        },
+        10000,
+    )
+    assert sum(len(batch[0]) for batch in motion_points) == 3
+    motion_line_colors = {tuple(batch[1]) for batch in motion_batches}
+    motion_point_colors = {tuple(batch[1]) for batch in motion_points}
+    assert tuple(debug_draw._COLORS["motion_guide"]) in motion_line_colors
+    assert tuple(debug_draw._COLORS["max_distance_range"]) in motion_line_colors
+    assert tuple(debug_draw._COLORS["backstop_range"]) in motion_line_colors
+    assert tuple(debug_draw._COLORS["max_distance"]) in motion_point_colors
+    assert tuple(debug_draw._COLORS["backstop"]) in motion_point_colors
+    assert tuple(debug_draw._COLORS["backstop_active"]) in motion_point_colors
+
     teleport_base = {
         "reference_position": (1.0, 0.0, 0.0),
         "old_reference_position": (0.0, 0.0, 0.0),
@@ -820,16 +876,23 @@ try:
         node_uid,
         world,
         True,
+        show_topology=True,
+        show_attributes=True,
         show_self_primitives=True,
         show_self_grid=True,
         show_self_candidates=True,
+        show_self_contacts=True,
         show_velocity=True,
         show_distance=True,
         show_tether=True,
         show_bending=True,
+        show_motion_base=True,
         show_motion=True,
         show_angle_restoration=True,
         show_angle_limit=True,
+        show_center=True,
+        show_collision=True,
+        show_output=True,
     )
     empty_snapshot = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
     assert empty_snapshot["line_vertex_count"] == 0
@@ -1240,9 +1303,9 @@ try:
         ("show_velocity", {"show_velocity": True}, ()),
         ("show_distance", {"show_distance": True}, ()),
         ("show_tether", {"show_tether": True}, ("tether_guide",)),
-        ("show_bending", {"show_bending": True}, ("bending", "bending_volume", "bending_error")),
+        ("show_bending", {"show_bending": True}, ("bending", "bending_volume")),
         ("show_motion_base", {"show_motion_base": True}, ("motion_base",)),
-        ("show_motion", {"show_motion": True}, ("max_distance", "backstop")),
+        ("show_motion", {"show_motion": True}, ("max_distance_active", "backstop_active")),
         ("show_angle_limit", {"show_angle_limit": True}, ("angle_limit",)),
         ("show_angle_restoration", {"show_angle_restoration": True}, ("angle_target",)),
         ("show_center", {"show_center": True}, ("center",)),

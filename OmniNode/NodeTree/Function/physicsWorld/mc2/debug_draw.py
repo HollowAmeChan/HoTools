@@ -33,9 +33,9 @@ from .names import MC2_SLOT_KIND
 
 
 _COLORS = {
-    "longitudinal": (0.95, 0.70, 0.18, 0.95),
-    "lateral": (0.20, 0.85, 0.95, 0.95),
-    "triangle": (0.38, 0.62, 0.82, 0.50),
+    "longitudinal": (0.58, 0.56, 0.48, 0.28),
+    "lateral": (0.48, 0.60, 0.62, 0.26),
+    "triangle": (0.38, 0.46, 0.54, 0.16),
     "edge_collision": (0.70, 0.20, 0.04, 0.58),
     "edge_collision_surface": (1.00, 0.30, 0.04, 0.32),
     "point_collision_surface": (0.10, 0.92, 0.32, 0.26),
@@ -58,8 +58,8 @@ _COLORS = {
     "depth_inversion": (1.00, 0.04, 0.03, 1.00),
     "depth_jump": (1.00, 0.42, 0.04, 0.98),
     "depth_zero_distance": (1.00, 0.96, 0.12, 1.00),
-    "motion_base": (0.20, 0.85, 1.00, 0.90),
-    "step_basic": (0.58, 0.72, 1.00, 0.72),
+    "motion_base": (0.20, 0.70, 0.84, 0.58),
+    "step_basic": (0.48, 0.58, 0.70, 0.30),
     "gravity": (0.45, 1.00, 0.30, 0.95),
     "gravity_raw": (0.70, 0.74, 0.80, 0.48),
     "velocity": (0.20, 0.92, 1.00, 0.92),
@@ -77,14 +77,19 @@ _COLORS = {
     "tether_stretch_near": (1.00, 0.76, 0.26, 0.82),
     "tether_stretch_active": (1.00, 0.48, 0.04, 1.00),
     "bending": (0.70, 0.38, 1.00, 0.72),
-    "bending_error": (1.00, 0.20, 0.14, 0.95),
+    "bending_guide": (0.46, 0.40, 0.54, 0.22),
     "bending_volume": (0.20, 0.90, 0.82, 0.72),
     "bending_correction": (1.00, 0.08, 0.04, 1.00),
     "angle_target": (1.00, 0.32, 0.72, 0.95),
     "angle_limit": (1.00, 0.82, 0.20, 0.78),
     "angle_correction": (1.00, 0.08, 0.04, 1.00),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
+    "max_distance_range": (0.30, 0.75, 1.00, 0.24),
+    "max_distance_active": (0.20, 0.70, 1.00, 0.88),
     "backstop": (1.00, 0.40, 0.22, 0.55),
+    "backstop_range": (1.00, 0.40, 0.22, 0.28),
+    "backstop_active": (1.00, 0.38, 0.16, 0.88),
+    "motion_guide": (0.48, 0.48, 0.54, 0.22),
     "motion_correction": (1.00, 0.08, 0.04, 1.00),
     "center": (1.00, 0.92, 0.25, 0.95),
     "center_anchor": (0.10, 0.88, 1.00, 0.92),
@@ -151,20 +156,20 @@ def update_mc2_debug_draw_store(
     world,
     enabled: bool,
     *,
-    show_topology: bool = True,
+    show_topology: bool = False,
     show_attributes: bool = True,
     show_depth: bool = False,
     depth_particle_index: int = -1,
-    show_motion: bool = True,
-    show_center: bool = True,
-    show_collision: bool = True,
+    show_motion: bool = False,
+    show_center: bool = False,
+    show_collision: bool = False,
     show_collision_contacts: bool = False,
     show_radii: bool = False,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
     show_self_candidates: bool = False,
     show_self_contacts: bool = True,
-    show_output: bool = True,
+    show_output: bool = False,
     task_filter: str = "",
     max_items: int = 10000,
     show_step_basic: bool = False,
@@ -173,8 +178,8 @@ def update_mc2_debug_draw_store(
     show_distance: bool = False,
     show_tether: bool = False,
     show_bending: bool = False,
-    show_motion_base: bool = True,
-    show_angle_restoration: bool = True,
+    show_motion_base: bool = False,
+    show_angle_restoration: bool = False,
     show_angle_limit: bool = False,
     show_teleport_threshold: bool = False,
     show_teleport_status: bool = False,
@@ -664,9 +669,8 @@ def _append_slot_batches(
     if filters["show_bending"]:
         _append_bending_batches(
             batches,
-            positions,
-            snapshot.get("parameters") or {},
-            (snapshot.get("native") or {}).get("bending") or {},
+            point_batches,
+            ((snapshot.get("constraint_records") or {}).get("bending") or {}),
             limit,
         )
         _append_constraint_correction_batches(
@@ -680,7 +684,12 @@ def _append_slot_batches(
             batches, point_batches, snapshot.get("motion") or {}, limit
         )
     if filters["show_motion"]:
-        _append_motion_batches(batches, snapshot.get("motion") or {}, limit)
+        _append_motion_batches(
+            batches,
+            point_batches,
+            ((snapshot.get("constraint_records") or {}).get("motion") or {}),
+            limit,
+        )
         _append_constraint_correction_batches(
             batches,
             ((snapshot.get("constraint_records") or {}).get("motion") or {}),
@@ -1352,85 +1361,71 @@ def _append_tether_batches(batches, point_batches, records, limit):
     _batch(batches, stretch_arrows, "tether_stretch_active", 2.4)
 
 
-def _append_bending_batches(batches, positions, parameters, bending, limit):
-    quads = bending.get("quads")
-    rests = bending.get("rests")
-    markers = bending.get("markers")
-    if quads is None or rests is None or markers is None:
+def _append_bending_batches(batches, point_batches, records, limit):
+    origins = records.get("origins")
+    kinds = records.get("kinds")
+    states = records.get("states")
+    if origins is None or kinds is None or states is None:
         return
-    if float(parameters.get("bending_stiffness", 0.0) or 0.0) <= 1.0e-8:
-        return
-    quads = np.asarray(quads, dtype=np.int32).reshape((-1, 4))
-    rests = np.asarray(rests, dtype=np.float32)
-    markers = np.asarray(markers, dtype=np.int32)
-    negative_sign = float(parameters.get("negative_scale_sign", 1.0) or 1.0)
-    scale = float(parameters.get("scale_ratio", 1.0) or 1.0)
-    normal_lines = []
-    error_lines = []
-    volume_lines = []
-    for record, quad in enumerate(quads[:limit]):
-        if record >= len(rests) or record >= len(markers):
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 4, 3))
+    kinds = np.asarray(kinds, dtype=np.int8).reshape((-1,))
+    states = np.asarray(states, dtype=np.int8).reshape((-1,))
+    guide_lines = []
+    angle_points = []
+    volume_points = []
+    for quad_origins, kind, state in zip(origins[:limit], kinds, states):
+        if abs(int(state)) != 2:
             continue
-        indices = tuple(int(value) for value in quad)
-        if any(index < 0 or index >= len(positions) for index in indices):
-            continue
-        points = [vector3(positions[index]) for index in indices]
-        marker = int(markers[record])
-        if marker == 100:
-            volume = (
-                (points[1] - points[0]).cross(points[2] - points[0])
-            ).dot(points[3] - points[0]) / 6.0 * 1000.0
-            expected = float(rests[record]) * scale * negative_sign
-            target_lines = (
-                error_lines
-                if abs(volume - expected) > max(abs(expected) * 0.05, 1.0e-5)
-                else volume_lines
-            )
-            for first, second in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
-                add_line(target_lines, points[first], points[second])
-            continue
-        edge = points[3] - points[2]
-        normal_a = (points[2] - points[0]).cross(points[3] - points[0])
-        normal_b = (points[3] - points[1]).cross(points[2] - points[1])
-        if edge.length <= 1.0e-7 or normal_a.length <= 1.0e-7 or normal_b.length <= 1.0e-7:
-            continue
-        normal_a.normalize()
-        normal_b.normalize()
-        angle = math.acos(max(-1.0, min(1.0, normal_a.dot(normal_b))))
-        direction = normal_a.cross(normal_b).dot(edge)
-        if direction < 0.0:
-            angle = -angle
-        expected = float(rests[record]) * (-1.0 if marker < 0 else 1.0) * negative_sign
-        target_lines = error_lines if abs(angle - expected) > math.radians(5.0) else normal_lines
-        for first, second in ((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
-            add_line(target_lines, points[first], points[second])
-    _batch(batches, normal_lines, "bending", 1.2)
-    _batch(batches, volume_lines, "bending_volume", 1.2)
-    _batch(batches, error_lines, "bending_error", 2.0)
+        points = [vector3(point) for point in quad_origins]
+        add_line(guide_lines, points[2], points[3])
+        center = sum(points, vector3((0.0, 0.0, 0.0))) / 4.0
+        add_point(volume_points if int(kind) == 1 else angle_points, center)
+    _batch(batches, guide_lines, "bending_guide", 1.0)
+    _point_batch(point_batches, angle_points, "bending", 7.0)
+    _point_batch(point_batches, volume_points, "bending_volume", 7.0)
 
 
-def _append_motion_batches(batches, motion, limit):
-    base = motion.get("motion_base_positions")
-    rotations = motion.get("motion_base_rotations_xyzw")
-    if base is None or rotations is None:
+def _append_motion_batches(batches, point_batches, records, limit):
+    origins = records.get("origins")
+    targets = records.get("target_origins")
+    limits = records.get("limits")
+    branches = records.get("branches")
+    states = records.get("states")
+    if any(value is None for value in (origins, targets, limits, branches, states)):
         return
-    base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
-    rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
-    axes = _motion_axes(base, rotations, int(motion.get("normal_axis", 1)))
-    if bool(motion.get("use_max_distance")):
-        lines = []
-        for center, radius in zip(base[:limit], np.asarray(_values(motion.get("max_distances")))[:limit]):
-            _add_axis_sphere(lines, center, float(radius))
-        _batch(batches, lines, "max_distance")
-    if bool(motion.get("use_backstop")):
-        lines = []
-        radius = max(float(motion.get("backstop_radius", 0.0) or 0.0), 0.0)
-        distances = np.asarray(_values(motion.get("backstop_distances")))
-        for center, axis, distance in zip(base[:limit], axes[:limit], distances[:limit]):
-            backstop_center = center - axis * (float(distance) + radius)
-            _add_axis_sphere(lines, backstop_center, radius)
-            add_line(lines, center, backstop_center)
-        _batch(batches, lines, "backstop", 1.4)
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
+    limits = np.asarray(limits, dtype=np.float32).reshape((-1,))
+    branches = np.asarray(branches, dtype=np.int8).reshape((-1,))
+    states = np.asarray(states, dtype=np.int8).reshape((-1,))
+    guide_lines = []
+    max_lines = []
+    backstop_lines = []
+    max_near_points = []
+    max_active_points = []
+    backstop_near_points = []
+    backstop_active_points = []
+    for origin, target, radius, branch, state in zip(
+        origins[:limit], targets[:limit], limits[:limit], branches, states
+    ):
+        if int(state) == 0:
+            continue
+        active = abs(int(state)) == 2
+        add_line(guide_lines, target, origin)
+        range_lines = max_lines if int(branch) == 0 else backstop_lines
+        _add_axis_sphere(range_lines, target, float(radius))
+        if int(branch) == 0:
+            points = max_active_points if active else max_near_points
+        else:
+            points = backstop_active_points if active else backstop_near_points
+        add_point(points, origin)
+    _batch(batches, guide_lines, "motion_guide", 0.8)
+    _batch(batches, max_lines, "max_distance_range", 1.0)
+    _batch(batches, backstop_lines, "backstop_range", 1.0)
+    _point_batch(point_batches, max_near_points, "max_distance", 3.0)
+    _point_batch(point_batches, max_active_points, "max_distance_active", 7.0)
+    _point_batch(point_batches, backstop_near_points, "backstop", 3.0)
+    _point_batch(point_batches, backstop_active_points, "backstop_active", 7.0)
 
 
 def _append_motion_base_batches(batches, point_batches, motion, limit):

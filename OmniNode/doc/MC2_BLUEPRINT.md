@@ -297,9 +297,9 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分速度，橙色为本步实际位移速度，长度均乘`0.03`；黄色连接两者终点表示差值，积分速度命中粒子限速时标红 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
 | Tether状态 | C++ `baseline_roots` + StepBasic root两点直线rest length + runtime压缩/拉伸限制 | 低饱和灰线只表达root到Move的栓绳关系；蓝/橙点表达压缩/拉伸侧接近或触发，深色箭头表达本步真实回拉修正；不画范围圆环，避免被误解为水平摆动限制。rest不是parent链累计长度，也不是depth |
-| Bending约束 | C++ `bending_quads/rest/marker` + 请求时记录结果 | 稳定`record_index + quad四角色`区分dihedral/volume；紫/青/红表达几何误差，红箭头来自该记录每个role经生产量化与顶点计数后的实际贡献 |
+| Bending约束 | C++ `bending_quads/rest/marker` + 请求时记录结果 | 只显示本步真实触发的记录：低饱和共享边用于定位，紫点=二面角、青点=体积，红箭头来自该记录各role的真实修正；未触发的全量quad不占据视口 |
 | Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
-| MaxDistance/Backstop | Motion BasePosition + native实际参数数组 | 约束球、Backstop中心和半径 |
+| MaxDistance/Backstop | Motion BasePosition + native逐记录触发状态 | 只在接近或触发时显示低亮度粒子到目标关系线及对应范围；蓝=MaxDistance、橙=Backstop，小点=接近，大点与红箭头=本步真实触发 |
 | Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
 | Angle限制范围 | C++按最终状态请求时重建的父旋转级联target + 按depth采样的`angle_limit` | 黄色方向锥；它表达Angle kernel实际使用的层级方向，不复用Restoration target，刚度为0时不绘制 |
 | Final Output Offset | 已冻结result candidate与writeback plan | Mesh实际object-local offset对应的world线段；Bone只显示实际允许平移的target，connected rotation-only骨不伪造位移 |
@@ -354,7 +354,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 
 五类约束均已进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction。Bending记录身份是稳定`record_index + quad四角色`及dihedral/volume类型；请求时C++用生产公式影子重放，将role修正经过相同`int32`量化并除以该vertex的参与记录数，按vertex汇总必须等于Bending pass correction。Motion记录身份是稳定`branch + vertex`，branch固定为MaxDistance/Backstop；影子kernel按真实先后顺序把刚度后总修正拆为两个可加贡献，按vertex求和必须等于Motion pass correction。Angle记录身份是`branch + iteration + baseline_data_index + parent/child`；影子kernel严格保留三轮Limit/Restoration交错顺序，分别记录当轮current/limit和双角色贡献，两分支按vertex联合求和必须等于Angle pass correction，不得用两个独立重放替代。以上均由native与Blender runner锁定，且debug-off不分配记录buffer。
 
-MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离22个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
+MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离28个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
 
 ## Setup与支持域
 

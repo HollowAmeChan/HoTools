@@ -1068,6 +1068,9 @@ def _mc2_debug_long_description() -> str:
         "same-frame不会立即读取，未推进时可继续看到旧快照。Teleport属于scheduler前新帧状态。"
         "所有开关均为按需readback，关闭debug不生产额外明细。"
         "调试状态输出是上一份冻结快照的用户摘要，可接到调试文本/打印节点；它不修改模拟。"
+        "推荐调参顺序：先看调试状态，再只打开一个结果视图（实际接触、自碰4、Tether、Distance或Motion），"
+        "最后才打开拓扑、StepBasic、深度、空间网格和候选等高级审计视图。默认关闭的高级开关不会隐藏错误，"
+        "只是不让中间线先盖住结果。"
     )
     return introduction + "\n\n" + "\n\n".join(
         f"{label}：{description}" for label, description in _MC2_DEBUG_DESCRIPTION_ITEMS
@@ -1090,8 +1093,8 @@ def _mc2_debug_long_description() -> str:
         "自碰4 接触结果", "最终输出偏移",
     ],
     input_init={
-        "world": {"description": "包含MC2 slot和隐式debug快照的Physics World。"},
-        "show_topology": {"description": "显示真实纵向/横向拓扑连接。"},
+        "world": {"description": "MC2物理世界；状态见输出。"},
+        "show_topology": {"description": "高级：低亮度拓扑连接（默认关闭）。"},
         "show_attributes": {"description": "显示Fixed/Move等粒子属性。"},
         "show_depth": {"description": "蓝=近根 橙=远端\n红=非法 粉=Fixed"},
         "depth_particle_index": {
@@ -1099,24 +1102,24 @@ def _mc2_debug_long_description() -> str:
             "max_value": 1000000,
             "description": "-1关闭；指定粒子显示完整parent路径",
         },
-        "show_step_basic": {"description": "结构约束的StepBasic姿态。\n不同于Motion基准。"},
+        "show_step_basic": {"description": "高级审计：结构参考姿态；不同于Motion基准。"},
         "show_gravity": {"description": "灰=未衰减 绿=有效重力\n每个Move粒子一组"},
         "show_velocity": {"description": "青=保存 橙=真实 黄=差值\n红=命中粒子限速"},
         "show_distance": {"description": "Distance：绿=正常 红=拉长 蓝=压缩"},
         "show_tether": {"description": "Tether：灰=栓绳关系 蓝=压缩 黄=拉伸"},
-        "show_bending": {"description": "Bending：紫=角度 青=体积 红=误差"},
-        "show_motion_base": {"description": "Motion实际BasePosition/法线轴。"},
-        "show_motion": {"description": "显示MaxDistance与Backstop约束。"},
+        "show_bending": {"description": "Bending：仅突出触发项\n紫=角度 青=体积 红箭头=修正"},
+        "show_motion_base": {"description": "高级参考：Motion实际BasePosition/法线轴。"},
+        "show_motion": {"description": "结果视图：蓝=MaxDistance 橙=Backstop\n小点=接近 大点+箭头=触发"},
         "show_angle_restoration": {"description": "粉色箭头显示Angle Restoration目标。"},
         "show_angle_limit": {"description": "黄锥=Angle Limit范围。\n方向为层级目标。"},
-        "show_center": {"description": "显示组件、Anchor、frame shift与惯性量。"},
+        "show_center": {"description": "高级参考：组件、Anchor、frame shift与惯性量。"},
         "show_teleport_threshold": {
             "description": "Teleport阈值与方向\n球=阈值  线=旧到新"
         },
         "show_teleport_status": {
             "description": "位移/旋转线：绿=None\n黄=Keep 红=Reset"
         },
-        "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
+        "show_collision": {"description": "高级范围：绿Point 橙Edge 蓝外部体；非命中。"},
         "show_collision_contacts": {
             "description": "命中球/胶囊+碰撞体\n白=接触 黄=推动×8"
         },
@@ -1125,7 +1128,7 @@ def _mc2_debug_long_description() -> str:
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
         "show_self_contacts": {"description": "自碰4：红=持续 橙=新增\n灰=失效 紫=穿插"},
-        "show_output": {"description": "显示实际写回的最终输出偏移。"},
+        "show_output": {"description": "高级结果：显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},
     },
@@ -1137,7 +1140,7 @@ def physicsMC2DebugDraw(
     world: PhysicsWorldCache,
     task_filter: str = "",
     max_items: int = 10000,
-    show_topology: bool = True,
+    show_topology: bool = False,
     show_attributes: bool = True,
     show_depth: bool = False,
     depth_particle_index: int = -1,
@@ -1147,21 +1150,21 @@ def physicsMC2DebugDraw(
     show_distance: bool = False,
     show_tether: bool = False,
     show_bending: bool = False,
-    show_motion_base: bool = True,
-    show_motion: bool = True,
-    show_angle_restoration: bool = True,
+    show_motion_base: bool = False,
+    show_motion: bool = False,
+    show_angle_restoration: bool = False,
     show_angle_limit: bool = False,
-    show_center: bool = True,
+    show_center: bool = False,
     show_teleport_threshold: bool = False,
     show_teleport_status: bool = False,
-    show_collision: bool = True,
+    show_collision: bool = False,
     show_collision_contacts: bool = False,
     show_radii: bool = False,
     show_self_primitives: bool = False,
     show_self_grid: bool = False,
     show_self_candidates: bool = False,
     show_self_contacts: bool = True,
-    show_output: bool = True,
+    show_output: bool = False,
 ) -> tuple[PhysicsWorldCache, str]:
     status_text = update_mc2_debug_draw_store(
         str(id(world)),
