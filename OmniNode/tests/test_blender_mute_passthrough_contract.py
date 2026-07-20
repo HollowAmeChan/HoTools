@@ -11,8 +11,9 @@ import uuid
 import bpy
 
 
-HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-OMNINODE = os.path.join(HOTOOLS, "OmniNode")
+TESTS = os.path.dirname(os.path.abspath(__file__))
+OMNINODE = os.path.dirname(TESTS)
+HOTOOLS = os.path.dirname(OMNINODE)
 NODETREE = os.path.join(OMNINODE, "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PHYSICS_WORLD = os.path.join(FUNCTION, "physicsWorld")

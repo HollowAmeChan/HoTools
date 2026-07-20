@@ -11,7 +11,9 @@ import types
 import bpy
 
 
-_NODE_TREE_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+_OMNINODE_DIR = os.path.dirname(_TEST_DIR)
+_NODE_TREE_DIR = os.path.join(_OMNINODE_DIR, "NodeTree")
 _PACKAGE = "HoTools.OmniNode.NodeTree"
 
 
