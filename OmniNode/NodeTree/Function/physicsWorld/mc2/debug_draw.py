@@ -41,8 +41,10 @@ _COLORS = {
     "point_collision_surface": (0.10, 0.92, 0.32, 0.26),
     "collider_surface": (0.03, 0.58, 1.00, 0.42),
     "active_collider_surface": (1.00, 0.04, 0.02, 0.62),
+    "active_point_contact_surface": (1.00, 0.16, 0.04, 0.42),
+    "active_edge_contact_surface": (1.00, 0.22, 0.04, 0.36),
     "external_contact": (1.00, 0.08, 0.04, 0.30),
-    "external_contact_point": (1.00, 0.08, 0.04, 0.92),
+    "external_contact_point": (0.92, 0.96, 1.00, 1.00),
     "external_contact_new": (1.00, 0.88, 0.08, 1.00),
     "external_contact_lost": (0.58, 0.64, 0.70, 0.68),
     "external_contact_correction": (1.00, 0.84, 0.10, 1.00),
@@ -112,6 +114,10 @@ _COLORS = {
     "intersection": (1.00, 0.05, 0.72, 1.00),
     "output": (0.30, 1.00, 0.82, 0.85),
 }
+
+# Contact corrections are often sub-pixel at world scale; a fixed multiplier
+# keeps their relative magnitude visible without normalizing short vectors.
+_CONTACT_CORRECTION_DISPLAY_SCALE = 8.0
 
 _DEPTH_COLORS = (
     (0.10, 0.28, 1.00, 0.96),
@@ -1722,50 +1728,95 @@ def _append_external_contact_batches(
         active_indices=active_colliders,
         only_active=True,
     )
-    edges = np.asarray(
-        _values(topology.get("edges")), dtype=np.int32
-    ).reshape((-1, 2))
+    _append_external_contact_primitive_surfaces(
+        triangle_meshes,
+        kinds[:count],
+        primitive_indices[:count],
+        topology,
+        positions,
+        collision,
+    )
     points = []
     new_points = []
     lost_points = []
-    primitive_lines = []
-    new_lines = []
     correction_lines = []
-    for index, (kind, primitive, contact, _normal, correction) in enumerate(zip(
-        kinds[:count],
-        primitive_indices[:count],
+    for index, (contact, correction) in enumerate(zip(
         contact_positions[:count],
-        normals[:count],
         corrections[:count],
     )):
         is_new = index < len(temporal_states) and temporal_states[index] == 1
         target_points = new_points if is_new else points
-        target_primitives = new_lines if is_new else primitive_lines
         add_point(target_points, contact)
-        kind = int(kind)
-        primitive = int(primitive)
-        if kind == 0 and 0 <= primitive < len(positions):
-            add_point(target_points, positions[primitive])
-        elif kind == 1 and 0 <= primitive < len(edges):
-            _add_index_line(target_primitives, positions, edges[primitive])
         correction_vector = vector3(correction)
         if correction_vector.length > 1.0e-8:
             add_arrow_lines(
                 correction_lines,
                 contact,
-                vector3(contact) + correction_vector,
+                vector3(contact)
+                + correction_vector * _CONTACT_CORRECTION_DISPLAY_SCALE,
             )
     lost_positions = np.asarray(
         _values(contacts.get("lost_positions")), dtype=np.float32
     ).reshape((-1, 3))
     for contact in lost_positions[:limit]:
         add_point(lost_points, contact)
-    _point_batch(point_batches, points, "external_contact_point", 7.0)
-    _point_batch(point_batches, new_points, "external_contact_new", 8.0)
-    _point_batch(point_batches, lost_points, "external_contact_lost", 6.0)
-    _batch(batches, primitive_lines, "external_contact", 0.8)
-    _batch(batches, new_lines, "external_contact_new", 1.0)
+    _point_batch(point_batches, points, "external_contact_point", 5.0)
+    _point_batch(point_batches, new_points, "external_contact_new", 6.0)
+    _point_batch(point_batches, lost_points, "external_contact_lost", 5.0)
     _batch(batches, correction_lines, "external_contact_correction", 2.2)
+
+
+def _append_external_contact_primitive_surfaces(
+    triangle_meshes,
+    kinds,
+    primitive_indices,
+    topology,
+    positions,
+    collision,
+):
+    """Draw only cloth collision shapes that produced a real external contact."""
+    radii = np.asarray(
+        _values(collision.get("particle_radii")), dtype=np.float32
+    ).reshape((-1,))
+    edges = np.asarray(
+        _values(topology.get("edges")), dtype=np.int32
+    ).reshape((-1, 2))
+    point_mesh = _triangle_mesh(triangle_meshes, "active_point_contact_surface")
+    edge_mesh = _triangle_mesh(triangle_meshes, "active_edge_contact_surface")
+    seen = set()
+    for kind, primitive in zip(kinds, primitive_indices):
+        kind = int(kind)
+        primitive = int(primitive)
+        identity = (kind, primitive)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if kind == 0:
+            if not (0 <= primitive < min(len(positions), len(radii))):
+                continue
+            radius = max(float(radii[primitive]), 0.0)
+            add_sphere_triangles(
+                point_mesh["vertices"],
+                point_mesh["indices"],
+                positions[primitive],
+                radius,
+            )
+        elif kind == 1:
+            if not 0 <= primitive < len(edges):
+                continue
+            left, right = map(int, edges[primitive])
+            if min(left, right) < 0 or max(left, right) >= min(
+                len(positions), len(radii)
+            ):
+                continue
+            add_tapered_capsule_triangles(
+                edge_mesh["vertices"],
+                edge_mesh["indices"],
+                positions[left],
+                positions[right],
+                max(float(radii[left]), 0.0),
+                max(float(radii[right]), 0.0),
+            )
 
 
 def _append_radius_batches(batches, snapshot, limit):
@@ -1893,7 +1944,8 @@ def _append_self_batches(
                         add_arrow_lines(
                             correction_lines,
                             centers[primitive],
-                            vector3(centers[primitive]) + correction,
+                            vector3(centers[primitive])
+                            + correction * _CONTACT_CORRECTION_DISPLAY_SCALE,
                         )
         intersections = []
         for record in np.asarray(_values(state.get("intersect_records")), dtype=np.int32).reshape((-1, 5))[:limit]:
@@ -1972,7 +2024,8 @@ def _append_interaction_contact_batches(batches, state, filters):
                     add_arrow_lines(
                         correction_lines,
                         centers[primitive],
-                        vector3(centers[primitive]) + correction,
+                        vector3(centers[primitive])
+                        + correction * _CONTACT_CORRECTION_DISPLAY_SCALE,
                     )
     _batch(batches, contact_lines, "cross_task_contact", 0.8)
     _batch(batches, correction_lines, "contact_correction", 2.2)

@@ -132,7 +132,7 @@ Reset 和 Keep 不能只改 `state_positions/state_velocities`。至少逐项对
 | 角度约束 | 当前角、目标角、上限和本帧修正是多少 | 当前/目标向量、角弧、淡锥；触发时红色修正弧 |
 | 惯性与重力 | 原始 component 运动如何变成应用到粒子的量 | raw、平滑/限速后、最终 applied 三层向量；触发限值标红 |
 | 碰撞形状 | 什么形状可能与什么形状碰 | 当前已有的 Point/Edge/Collider surface 视图 |
-| 实际接触 | 本帧哪里真的在互相排斥 | 接触点、法线、穿深/修正；有 active contact 的 collider 标红 |
+| 实际接触 | 本帧哪里真的在互相排斥 | 仅命中的真实半径球/胶囊与collider标红，白点为kernel接触位置，黄箭头为放大8倍的真实修正 |
 | 自碰结果 | 当前 contact 与 geometric intersection 是否合理 | 结果视图，不默认显示 grid/candidate |
 | 最终输出 | 最终真正写回 Blender 的偏移是什么 | 保留现有模式 |
 
@@ -281,14 +281,14 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 `碰撞情况`继续只画可参与碰撞的Point/Edge proxy与collider形状；独立`实际接触`已经接通真实kernel结果，不再从最终normal或位置差反推。
 
-`实际接触`同时覆盖两个真实owner：task context中的外部collider Point/Edge contact，以及world interaction中的跨task EE/PT contact。后者只绘制`enabled != 0`且两端primitive `owner_indices`不同的记录；细淡红线只提示contact存在，两侧黄色箭头显示四轮solver经过生产量化与共享粒子平均后的实际累计推动方向和强度。任务筛选保留任一端属于所选task的跨task记录。同task self contact继续只由`自碰4 接触结果`表达，避免两个一级视图重复描边。原来按`normal * max(thickness, 0.02)`绘制的黄色箭头已删除，因为其长度是可视化常量而非解算结果。
+`实际接触`同时覆盖两个真实owner：task context中的外部collider Point/Edge contact，以及world interaction中的跨task EE/PT contact。外碰分支只重建命中Point的真实半径球或命中Edge的真实变半径胶囊，并只显示对应active collider；白色小点只表示kernel接触位置，不再把粒子中心混成同色红点。后者只绘制`enabled != 0`且两端primitive `owner_indices`不同的记录；细淡红线只提示contact存在，两侧黄色箭头显示四轮solver经过生产量化与共享粒子平均后的实际累计推动方向和强度。所有实际contact correction统一固定放大8倍显示，不设最短长度，因此方向和相对强度不变，显示倍率不进入solver。任务筛选保留任一端属于所选task的跨task记录。同task self contact继续只由`自碰4 接触结果`表达，避免两个一级视图重复描边。原来按`normal * max(thickness, 0.02)`绘制的黄色箭头已删除，因为其长度是可视化常量而非解算结果。
 
 新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配，真实多分量模型也已人工确认完整显示，D-10关闭。
 
 - C++ Point/Edge kernel只在`show_collision_contacts`显式请求时记录primitive kind/index、collider index、接触位置、法线和实际correction；关闭时请求位为false且记录数组为空。
 - 请求在下一真实substep前写入context，完成后只读冻结到slot snapshot；same-frame和zero-substep不得伪造contact。
-- renderer把接触点、法线、correction和active Point/Edge primitive标红，并只把本帧参与接触的collider表面改红；普通`碰撞情况`中的非活动collider保持蓝色。
-- 连续冻结帧按`primitive kind + primitive index + collider index`比较真实记录：红色保留当前/持续接触，黄色标新增，灰色标上一帧失效；snapshot发布active/new/persistent/lost/churn计数。首个样本、帧跳跃、generation变化、task/setup过滤变化或关闭该模式都会重置基线，不得把观察空档制造成churn。
+- renderer把命中的Point真实半径球或Edge变半径胶囊和active collider表面标红，kernel接触位置单独显示为白色小点；黄色箭头是固定放大8倍的真实correction。普通`碰撞情况`仍负责显示全部可参与形状，`实际接触`不重复非活动形状。
+- 连续冻结帧按`primitive kind + primitive index + collider index`比较真实记录：当前/持续接触保留红色命中形状与白色接触点，黄色点标新增，灰色点标上一帧失效；snapshot发布active/new/persistent/lost/churn计数。首个样本、帧跳跃、generation变化、task/setup过滤变化或关闭该模式都会重置基线，不得把观察空档制造成churn。
 - task筛选发生在slot请求与绘制两侧；每个slot只显示自己实际上传并命中的collider identity。
 - native Point与Edge单测覆盖真实非零correction和debug-off零记录；Blender隔离模式覆盖请求、冻结、只读数组和至少一个实际contact成功出图。
 

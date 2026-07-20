@@ -302,11 +302,11 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | Angle限制范围 | C++按最终状态请求时重建的父旋转级联target + 按depth采样的`angle_limit` | 黄色方向锥；它表达Angle kernel实际使用的层级方向，不复用Restoration target，刚度为0时不绘制 |
 | Final Output Offset | 已冻结result candidate与writeback plan | Mesh实际object-local offset对应的world线段；Bone只显示实际允许平移的target，connected rotation-only骨不伪造位移 |
 | Task External Colliders | 每个runtime item实际上传的`MC2ColliderFrameSpec` | 已经过source排除、group mask、setup type过滤的collider key/type/shape；task过滤必须只画该task参与集合 |
-| 实际接触 | task Point/Edge外碰记录 + world interaction跨owner contact | 细淡红线只提示接触存在；黄色箭头显示实际推动方向与强度。跨task只纳入enabled且owner不同的EE/PT contact，并为两侧primitive分别显示四轮solve真实累计贡献；同task self不重复绘制 |
+| 实际接触 | task Point/Edge外碰记录 + world interaction跨owner contact | 外碰只显示命中的真实半径球/变半径胶囊、对应collider和白色接触点；黄色箭头将实际推动固定放大8倍。跨task只纳入enabled且owner不同的EE/PT contact，并为两侧primitive分别显示四轮solve真实累计贡献；同task self不重复绘制 |
 | 自碰几何单元 | self static/dynamic的Point/Edge/Triangle primitive | 紫色点、边和三角形轮廓；回答“哪些几何真的进入自碰检测”，缺失时优先检查self static构建 |
 | 自碰空间网格 | native broadphase的primitive grid坐标与`grid_size` | 灰色占用格；回答“primitive怎样分桶”，格子过大或过密用于定位半径、厚度和primitive尺度问题 |
 | 自碰候选配对 | grid broadphase输出的candidate primitive pair | 黄色primitive中心连线；只表示可能相交，允许包含false positive，数量爆炸是性能诊断信号而非接触数量 |
-| 自碰接触结果 | narrowphase contact、enabled flag、两侧实际correction与intersection history | 细淡红线为启用接触存在提示，黄色箭头为两侧真实推动，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
+| 自碰接触结果 | narrowphase contact、enabled flag、两侧实际correction与intersection history | 细淡红线为启用接触存在提示，黄色箭头为两侧真实推动并固定放大8倍，灰色为未启用接触，洋红为穿插记录；这是四项中唯一表达最终窄相/解算结果的模式 |
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式或“实际接触”的跨task分支请求时读取，grid/candidate/contact/intersection按位复制；“实际接触”只请求contact，不得顺带读取grid或candidate。
 
@@ -562,9 +562,9 @@ Topology视图以去重后的final proxy edge为唯一常规线段来源：MeshC
 
 `碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色半透明低模球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色半透明低模胶囊显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状，并只保留一根中心线；蓝色半透明实体显示本帧实际上传的Sphere/Capsule/Plane/Box collider，并保持正常深度测试以便判断真实遮挡和穿插。所有同色实体合并为单一indexed triangle batch，公共utils保留原线框API并旁路提供实体API。`max_items`默认10000，预算按final proxy连通分量公平分配并在分量内均匀抽样；预算不少于分量数时每个非连通分量至少保留一个形状，禁止再用数组前缀截断让后序分量整块消失。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 
-`实际接触`的外碰时间层只比较连续显式捕获帧中的真实kernel记录，稳定身份为`primitive kind + primitive index + collider index`。当前/持续接触用细淡红色提示，新增为黄色点/线，上一捕获帧失效为灰色；黄色箭头直接使用kernel实际correction，不再绘制人为定长法线。冻结snapshot同时发布active/new/persistent/lost/churn计数及失效记录的上一位置/法线。首个样本只建立基线；帧不连续、generation变化、task/setup过滤变化或关闭模式必须清空历史，因此观察空档不能制造事件。该身份差分属于按需debug派生，不改变C++ solver、接触缓存或debug-off零明细生产合同。self contact与geometric intersection的对应时间层仍待完成。
+`实际接触`的外碰时间层只比较连续显式捕获帧中的真实kernel记录，稳定身份为`primitive kind + primitive index + collider index`。结果视图只重建命中Point的真实粒子半径球或命中Edge的两端真实半径胶囊，并只绘制对应active collider；它不重复`碰撞情况`中的全部可参与形状。白色小点仅表示kernel接触位置，不再把粒子中心混成同色圆点；新增接触点为黄色，上一捕获帧失效为灰色。黄色箭头使用kernel实际correction并固定乘8作为显示倍率，不设置最短箭头或归一化，因此方向和接触间相对强度保持不变，但箭头长度不是1:1 world位移。冻结snapshot同时发布active/new/persistent/lost/churn计数及失效记录的上一位置/法线。首个样本只建立基线；帧不连续、generation变化、task/setup过滤变化或关闭模式必须清空历史，因此观察空档不能制造事件。该身份差分属于按需debug派生，不改变C++ solver、接触缓存或debug-off零明细生产合同。self contact与geometric intersection的对应时间层仍待完成。
 
-Self contact的黄色推动箭头来自生产solver内部按需记录的`contact × side × xyz`贡献。四轮solve中每个role correction先执行与生产相同的`int32 × 1e6`量化，再除以该轮同一粒子收到的全部contact贡献数，最后按contact两侧primitive分别累计；因此所有记录按vertex/side还原后等于实际写入位置的修正。该buffer只在`自碰4`或跨task`实际接触`等待捕获时分配，请求关闭立即清空。contact normal仍保留在只读snapshot供审计，但renderer不把它的方向或thickness缩放冒充推动强度。
+Self contact的黄色推动箭头来自生产solver内部按需记录的`contact × side × xyz`贡献。四轮solve中每个role correction先执行与生产相同的`int32 × 1e6`量化，再除以该轮同一粒子收到的全部contact贡献数，最后按contact两侧primitive分别累计；因此记录值按vertex/side还原后等于实际写入位置的修正。renderer与外碰统一将该值固定乘8后绘制，不设置最短长度，显示比例不进入solver。该buffer只在`自碰4`或跨task`实际接触`等待捕获时分配，请求关闭立即清空。contact normal仍保留在只读snapshot供审计，但renderer不把它的方向或thickness缩放冒充推动强度。
 
 ## Python模块所有权
 

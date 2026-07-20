@@ -877,12 +877,12 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     ("Teleport阈值与方向", "显示task唯一判定基准（首个Fixed或对象原点）的旧/新姿态、位移方向、距离阈值和旋转阈值。它是scheduler前的新帧判定，可在zero-substep帧捕获，不是逐粒子阈值球。"),
     ("Teleport触发状态", "显示task级判定结果：绿色为None/未触发，黄色为Keep，红色为Reset，并区分距离或旋转阈值命中。整个task统一处理，不存在只重置部分粒子的状态。"),
     ("碰撞情况", "显示当前模式下真正可参与外碰的双方。Point模式用绿色半透明球表示可移动且未Ignore的粒子；Edge模式用橙色半透明胶囊表示final proxy段及两端插值半径；蓝色实体为本帧实际上传并通过source、group/mask和setup过滤的外部collider。"),
-    ("实际接触", "同时显示两类真实接触。task与外部collider的Point/Edge接触中，细淡红线只提示当前/持续接触及active primitive，黄色点/线为新增，灰色为上一连续捕获帧失效，黄色箭头直接显示kernel实际correction的方向与强度，命中的collider表面变红；首帧或捕获中断只建立新基线。world interaction中只绘制两端owner不同且已启用的跨task EE/PT contact，细淡红线连接两个primitive中心，两侧黄色箭头分别显示四轮solve经过量化和共享粒子平均后的真实累计贡献；同task self contact仍归“自碰4”，不会在此重复。"),
+    ("实际接触", "同时显示两类真实接触。task与外部collider的Point/Edge接触中，只显示命中的真实半径球或变半径胶囊及对应红色collider，不重复“碰撞情况”的全部候选形状；白色小点是kernel接触位置，黄色为新增，灰色为上一连续捕获帧失效。黄色箭头从接触点显示kernel实际correction，固定放大8倍以便观察，不设置最短长度，方向与相对强度仍对应真实结果；首帧或捕获中断只建立新基线。world interaction中只绘制两端owner不同且已启用的跨task EE/PT contact，细淡红线连接两个primitive中心，两侧黄色箭头分别显示四轮solve经过量化和共享粒子平均后的真实累计贡献，同样放大8倍；同task self contact仍归“自碰4”，不会在此重复。"),
     ("粒子半径", "用线框球显示每个粒子按生产baseline depth、Profile曲线和对象radius权重得到的实际外碰半径。该模式用于参数审计；显示半径不表示粒子在当前Point/Edge模式、Ignore状态和group scope下必然参与碰撞。"),
     ("自碰1 几何单元", "显示真正注册到self static/dynamic的Point、Edge和Triangle primitive：紫色点、边和三角形轮廓。它回答哪些几何进入检测，缺失时应先检查粒子属性、final proxy和self static构建。"),
     ("自碰2 空间网格", "显示native broadphase中primitive占用的灰色空间格及实际grid size。它用于判断分桶尺度、占用密度和潜在性能问题，不表示格内primitive已经接触。"),
     ("自碰3 候选配对", "用黄色线连接grid broadphase输出的candidate primitive中心。候选允许包含false positive，只表示需要进入后续窄相；数量异常增大是性能/尺度诊断信号，不能当作接触数量。"),
-    ("自碰4 接触结果", "显示最终窄相与穿插结果：细淡红线只提示启用的厚度contact存在，灰色为缓存中未启用的contact，两侧黄色箭头分别显示四轮solve经过int32量化和同粒子多contact平均后的真实累计推动方向与强度，洋红为final线段-三角形测试确认的几何穿插。黄色不再表示人为定长的法线。洋红记录按Edge奇偶分片跨帧检测，因此规律闪烁不是普通EE/PT接触停止，也不能直接归因于浮点随机。"),
+    ("自碰4 接触结果", "显示最终窄相与穿插结果：细淡红线只提示启用的厚度contact存在，灰色为缓存中未启用的contact，两侧黄色箭头分别显示四轮solve经过int32量化和同粒子多contact平均后的真实累计推动方向与强度，并固定放大8倍方便观察；不设置最短长度，因此相对强弱不被归一化。洋红为final线段-三角形测试确认的几何穿插。黄色不再表示人为定长的法线。洋红记录按Edge奇偶分片跨帧检测，因此规律闪烁不是普通EE/PT接触停止，也不能直接归因于浮点随机。"),
     ("最终输出偏移", "显示冻结result candidate和writeback plan真正提交给Blender的结果。Mesh为base到最终world位置的线段及object-local offset对应端点；Bone只显示允许平移的target，connected rotation-only骨不会伪造位移。"),
 )
 
@@ -942,13 +942,13 @@ def _mc2_debug_long_description() -> str:
         },
         "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
         "show_collision_contacts": {
-            "description": "外碰与跨Task真实接触\n淡红=存在 黄箭头=实际推动"
+            "description": "命中球/胶囊+碰撞体\n白=接触 黄=推动×8"
         },
         "show_radii": {"description": "全部粒子半径（仅参数审计）。"},
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
-        "show_self_contacts": {"description": "自碰4：淡红=接触 黄=推动\n灰=禁用 洋红=确认穿插"},
+        "show_self_contacts": {"description": "自碰4：红=接触 黄=推动×8\n灰=禁用 紫=穿插"},
         "show_output": {"description": "显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},

@@ -288,6 +288,85 @@ try:
         len(description) >= 35
         for _label, description in mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS
     )
+    debug_descriptions = dict(mc2_nodes._MC2_DEBUG_DESCRIPTION_ITEMS)
+    assert "真实半径球" in debug_descriptions["实际接触"]
+    assert "放大8倍" in debug_descriptions["实际接触"]
+    assert "放大8倍" in debug_descriptions["自碰4 接触结果"]
+
+    contact_positions = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (2, 0, 0)), dtype=np.float32
+    )
+    contact_topology = {
+        "edges": np.asarray(((0, 1), (1, 2)), dtype=np.int32),
+    }
+    contact_collision = {
+        "particle_radii": np.asarray((0.1, 0.2, 0.3), dtype=np.float32),
+    }
+    contact_meshes = {}
+    debug_draw._append_external_contact_primitive_surfaces(
+        contact_meshes,
+        np.asarray((0, 0, 1), dtype=np.int32),
+        np.asarray((2, 2, 0), dtype=np.int32),
+        contact_topology,
+        contact_positions,
+        contact_collision,
+    )
+    point_contact_mesh = contact_meshes["active_point_contact_surface"]
+    edge_contact_mesh = contact_meshes["active_edge_contact_surface"]
+    assert len(point_contact_mesh["vertices"]) == 26
+    assert point_contact_mesh["indices"]
+    assert edge_contact_mesh["vertices"] and edge_contact_mesh["indices"]
+    point_vertices = np.asarray(point_contact_mesh["vertices"], dtype=np.float32)
+    np.testing.assert_allclose(
+        (np.min(point_vertices[:, 2]), np.max(point_vertices[:, 2])),
+        (-0.3, 0.3),
+        atol=1.0e-6,
+    )
+
+    external_batches = []
+    external_point_batches = []
+    external_meshes = {}
+    external_contact_position = np.asarray((0.09, 0.0, 0.0), dtype=np.float32)
+    debug_draw._append_external_contact_batches(
+        external_batches,
+        external_point_batches,
+        external_meshes,
+        {
+            "native": {
+                "external_contacts": {
+                    "primitive_kinds": np.asarray((0,), dtype=np.int32),
+                    "primitive_indices": np.asarray((0,), dtype=np.int32),
+                    "collider_indices": np.asarray((0,), dtype=np.int32),
+                    "positions": external_contact_position.reshape((1, 3)),
+                    "normals": np.asarray(((1, 0, 0),), dtype=np.float32),
+                    "corrections": np.asarray(((0, 0.01, 0),), dtype=np.float32),
+                    "temporal_states": np.asarray((0,), dtype=np.uint8),
+                },
+            },
+            "collision": contact_collision,
+        },
+        contact_topology,
+        contact_positions,
+        10000,
+    )
+    contact_point_batch = next(
+        batch
+        for batch in external_point_batches
+        if batch[1] == debug_draw._COLORS["external_contact_point"]
+    )
+    assert len(contact_point_batch[0]) == 1
+    np.testing.assert_allclose(contact_point_batch[0][0], external_contact_position)
+    correction_batch = next(
+        batch
+        for batch in external_batches
+        if batch[1] == debug_draw._COLORS["external_contact_correction"]
+    )
+    correction_shaft = np.asarray(correction_batch[0][:2], dtype=np.float32)
+    np.testing.assert_allclose(
+        correction_shaft[1] - correction_shaft[0],
+        (0.0, 0.08, 0.0),
+        atol=1.0e-6,
+    )
 
     contact_history = {}
     first_contacts = {
@@ -1233,6 +1312,21 @@ try:
             assert contacts["normals"].flags.writeable is False
             assert contacts["corrections"].flags.writeable is False
             assert len(contacts["positions"]) > 0
+            assert tuple(debug_draw._COLORS["external_contact_point"]) in colors
+            assert tuple(
+                debug_draw._COLORS["external_contact_correction"]
+            ) in colors
+            primitive_kinds = {
+                int(value) for value in np.asarray(contacts["primitive_kinds"])
+            }
+            if 0 in primitive_kinds:
+                assert tuple(
+                    debug_draw._COLORS["active_point_contact_surface"]
+                ) in colors
+            if 1 in primitive_kinds:
+                assert tuple(
+                    debug_draw._COLORS["active_edge_contact_surface"]
+                ) in colors
             interaction_state = interaction.debug_draw_snapshot() or {}
             assert "contact_indices" in interaction_state
             assert "owner_indices" in interaction_state
