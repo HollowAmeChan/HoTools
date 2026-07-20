@@ -413,6 +413,100 @@ def test_constraint_debug_is_request_driven_and_exact():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_bending_record_debug_preserves_identity_and_actual_contributions():
+    context = hotools_native.mc2_context_v0_create(0, 4)
+    try:
+        proxy, baseline = static_arrays(4)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((4, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        quads = np.array([[0, 1, 2, 3], [0, 1, 2, 3]], dtype=np.int32)
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            quads,
+            np.array([0.3, 0.1], dtype=np.float32),
+            np.array([1, 100], dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        floats[27] = 0.75
+        ints[3] = 2
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.1, 0.0, 0.0],
+                [0.0, 0.1, 0.0],
+                [0.0, 0.0, 0.1],
+            ],
+            dtype=np.float32,
+        )
+        rotations = np.zeros((4, 4), dtype=np.float32)
+        rotations[:, 3] = 1.0
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_bending_record_ready"] is False
+        assert info["debug_bending_record_count"] == 0
+        assert info["debug_bending_record_float_count"] == 0
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 8)
+        step(context, 1.0, simulation_power_y=1.0, simulation_power_z=0.0)
+
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_constraint_ready_mask"] == 8
+        assert info["debug_bending_record_ready"] is True
+        assert info["debug_bending_record_count"] == 2
+        assert info["debug_bending_record_float_count"] == 48
+        pass_origins = np.empty((4, 3), dtype=np.float32)
+        pass_corrections = np.empty((4, 3), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_constraint_results(
+            context, pass_origins, pass_corrections
+        )
+        record_origins = np.empty((8, 3), dtype=np.float32)
+        record_corrections = np.empty((8, 3), dtype=np.float32)
+        record_valid = np.empty((2,), dtype=np.uint8)
+        hotools_native.mc2_context_v0_read_debug_bending_results(
+            context,
+            record_origins,
+            record_corrections,
+            record_valid,
+        )
+        record_origins = record_origins.reshape((2, 4, 3))
+        record_corrections = record_corrections.reshape((2, 4, 3))
+        np.testing.assert_array_equal(record_valid, 1)
+        for record in range(2):
+            np.testing.assert_allclose(
+                record_origins[record], pass_origins[quads[record]], atol=1.0e-7
+            )
+        grouped = np.zeros_like(pass_corrections)
+        for record in range(2):
+            np.add.at(grouped, quads[record], record_corrections[record])
+        np.testing.assert_allclose(grouped, pass_corrections, atol=2.0e-7)
+
+        hotools_native.mc2_context_v0_set_debug_constraint_results(context, 0)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["debug_bending_record_ready"] is False
+        assert info["debug_bending_record_count"] == 0
+        assert info["debug_bending_record_float_count"] == 0
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_debug_bending_results(
+                context,
+                record_origins.reshape((8, 3)),
+                record_corrections.reshape((8, 3)),
+                record_valid,
+            ),
+            "was not requested or is not ready",
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 def test_angle_runtime_values_and_source_order():
     context = hotools_native.mc2_context_v0_create(0, 3)
     try:
@@ -2475,6 +2569,8 @@ if __name__ == "__main__":
     print("PASS gated Tether source order")
     test_constraint_debug_is_request_driven_and_exact()
     print("PASS request-driven constraint debug")
+    test_bending_record_debug_preserves_identity_and_actual_contributions()
+    print("PASS Bending record debug identity and contributions")
     test_angle_runtime_values_and_source_order()
     print("PASS Angle runtime values and source order")
     test_motion_zero_max_distance_and_source_order()

@@ -550,6 +550,106 @@ def _distance_constraint_record_payload(native_snapshot) -> dict:
     }
 
 
+def _bending_constraint_record_payload(native_snapshot, parameters) -> dict:
+    bending = native_snapshot.get("bending") or {}
+    results = native_snapshot.get("bending_results") or {}
+    quads = bending.get("quads")
+    raw_rests = bending.get("rests")
+    markers = bending.get("markers")
+    origins = results.get("origins")
+    corrections = results.get("corrections")
+    active = results.get("valid")
+    empty = {
+        "record_indices": _readonly((), np.int32),
+        "kinds": _readonly((), np.int8),
+        "markers": _readonly((), np.int8),
+        "vertices": _readonly((), np.int32).reshape((0, 4)),
+        "origins": _readonly((), np.float32).reshape((0, 4, 3)),
+        "corrections": _readonly((), np.float32).reshape((0, 4, 3)),
+        "currents": _readonly((), np.float32),
+        "rests": _readonly((), np.float32),
+        "errors": _readonly((), np.float32),
+        "normalized_errors": _readonly((), np.float32),
+        "states": _readonly((), np.int8),
+    }
+    if any(
+        value is None
+        for value in (quads, raw_rests, markers, origins, corrections, active)
+    ):
+        return empty
+    quads = np.asarray(quads, dtype=np.int32).reshape((-1, 4))
+    record_count = len(quads)
+    raw_rests = np.asarray(raw_rests, dtype=np.float32).reshape((-1,))
+    markers = np.asarray(markers, dtype=np.int8).reshape((-1,))
+    origins = np.asarray(origins, dtype=np.float32).reshape(
+        (record_count, 4, 3)
+    )
+    corrections = np.asarray(corrections, dtype=np.float32).reshape(
+        (record_count, 4, 3)
+    )
+    active = np.asarray(active, dtype=np.uint8).reshape((-1,))
+    if not (
+        len(raw_rests) == len(markers) == len(active) == record_count
+    ):
+        return empty
+    scale = float(parameters.get("scale_ratio", 1.0) or 1.0)
+    negative_sign = float(parameters.get("negative_scale_sign", 1.0) or 1.0)
+    currents = np.zeros((record_count,), dtype=np.float32)
+    rests = np.zeros((record_count,), dtype=np.float32)
+    kinds = np.zeros((record_count,), dtype=np.int8)
+    for record in range(record_count):
+        points = origins[record]
+        marker = int(markers[record])
+        if marker == 100:
+            kinds[record] = 1
+            currents[record] = np.float32(
+                np.dot(
+                    np.cross(points[1] - points[0], points[2] - points[0]),
+                    points[3] - points[0],
+                ) / 6.0 * 1000.0
+            )
+            rests[record] = np.float32(
+                raw_rests[record] * scale * negative_sign
+            )
+            continue
+        edge = points[3] - points[2]
+        normal_a = np.cross(points[2] - points[0], points[3] - points[0])
+        normal_b = np.cross(points[3] - points[1], points[2] - points[1])
+        length_a = float(np.linalg.norm(normal_a))
+        length_b = float(np.linalg.norm(normal_b))
+        if float(np.linalg.norm(edge)) > 1.0e-8 and length_a > 0.0 and length_b > 0.0:
+            normal_a /= length_a
+            normal_b /= length_b
+            angle = float(np.arccos(np.clip(np.dot(normal_a, normal_b), -1.0, 1.0)))
+            direction = float(np.dot(np.cross(normal_a, normal_b), edge))
+            currents[record] = np.float32(
+                -angle if direction < 0.0 else angle if direction > 0.0 else 0.0
+            )
+        rests[record] = np.float32(
+            raw_rests[record]
+            * (-1.0 if marker < 0 else 1.0)
+            * negative_sign
+        )
+    errors = rests - currents
+    normalized_errors = errors / np.maximum(np.abs(rests), np.float32(1.0e-8))
+    states = np.zeros((record_count,), dtype=np.int8)
+    states[(active != 0) & (errors < 0.0)] = -2
+    states[(active != 0) & (errors >= 0.0)] = 2
+    return {
+        "record_indices": _readonly(np.arange(record_count), np.int32),
+        "kinds": _readonly(kinds, np.int8),
+        "markers": _readonly(markers, np.int8),
+        "vertices": _readonly(quads, np.int32),
+        "origins": _readonly(origins, np.float32),
+        "corrections": _readonly(corrections, np.float32),
+        "currents": _readonly(currents, np.float32),
+        "rests": _readonly(rests, np.float32),
+        "errors": _readonly(errors, np.float32),
+        "normalized_errors": _readonly(normalized_errors, np.float32),
+        "states": _readonly(states, np.int8),
+    }
+
+
 def _collision_payload(item, native_snapshot) -> dict:
     slot = item["slot"]
     effective = slot.data.get("effective_parameters")
@@ -855,6 +955,11 @@ def capture_requested_mc2_debug(
             if filters.get("show_distance", False):
                 constraint_records["distance"] = _distance_constraint_record_payload(
                     native_snapshot
+                )
+            if filters.get("show_bending", False):
+                constraint_records["bending"] = _bending_constraint_record_payload(
+                    native_snapshot,
+                    snapshot["parameters"],
                 )
             if constraint_records:
                 snapshot["constraint_records"] = constraint_records

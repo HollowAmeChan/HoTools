@@ -1060,6 +1060,34 @@ class MC2NativeContextV0:
                     ),
                 }
                 readbacks += 1
+            if (
+                constraint_ready_mask & MC2_DEBUG_CONSTRAINT_BENDING
+                and bool(info.get("debug_bending_record_ready", False))
+            ):
+                record_count = int(info.get("bending_record_count", 0) or 0)
+                bending_origins = np.empty(
+                    (record_count * 4, 3), dtype=np.float32
+                )
+                bending_corrections = np.empty(
+                    (record_count * 4, 3), dtype=np.float32
+                )
+                bending_valid = np.empty((record_count,), dtype=np.uint8)
+                self._module.mc2_context_v0_read_debug_bending_results(
+                    self._handle,
+                    bending_origins,
+                    bending_corrections,
+                    bending_valid,
+                )
+                snapshot["bending_results"] = {
+                    "origins": self._debug_array(
+                        bending_origins.reshape((record_count, 4, 3))
+                    ),
+                    "corrections": self._debug_array(
+                        bending_corrections.reshape((record_count, 4, 3))
+                    ),
+                    "valid": self._debug_array(bending_valid),
+                }
+                readbacks += 1
         if include_external_contacts and bool(
             info.get("external_contact_debug_ready", False)
         ):

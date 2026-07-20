@@ -113,6 +113,9 @@ void release_resources(Mc2ContextV0& context) {
     context.debug_distance_record_lengths.clear();
     context.debug_distance_record_rests.clear();
     context.debug_distance_record_valid.clear();
+    context.debug_bending_record_origins.clear();
+    context.debug_bending_record_corrections.clear();
+    context.debug_bending_record_valid.clear();
     context.animated_base_positions.clear();
     context.animated_base_rotations.clear();
     context.step_basic_positions.clear();
@@ -1623,6 +1626,105 @@ void solve_bending_once(Mc2ContextV0& context, float simulation_power_y) {
         context.state_positions[offset + 2] += static_cast<float>(sums[offset + 2]) * scale;
     }
     ++context.bending_solve_count;
+}
+
+void capture_bending_records_once(
+    Mc2ContextV0& context,
+    float simulation_power_y
+) {
+    const auto record_count = context.bending_rest_angle_or_volume.size();
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    const auto role_count = record_count * 4;
+    if ((context.debug_constraint_request_mask & kDebugConstraintBending) == 0 ||
+        !context.bending_static_ready ||
+        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.int_values[3] == 0 ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        context.state_positions.size() != vertex_count * 3 ||
+        context.proxy_attributes.size() != vertex_count ||
+        context.baseline_depths.size() != vertex_count ||
+        context.bending_quads.size() != role_count ||
+        context.bending_sign_or_volume.size() != record_count ||
+        context.debug_bending_record_origins.size() != role_count * 3 ||
+        context.debug_bending_record_corrections.size() != role_count * 3 ||
+        context.debug_bending_record_valid.size() != record_count) {
+        return;
+    }
+    const float stiffness = std::max(
+        0.0f,
+        std::min(1.0f, context.float_values[kBendingStiffness] * simulation_power_y)
+    );
+    if (stiffness < 1.0e-6f) return;
+
+    std::vector<std::int32_t> counts(vertex_count, 0);
+    for (std::size_t record = 0; record < record_count; ++record) {
+        Vec3 positions[4];
+        float inv_mass[4];
+        std::size_t vertices[4];
+        for (int role = 0; role < 4; ++role) {
+            vertices[role] = static_cast<std::size_t>(
+                context.bending_quads[record * 4 + role]
+            );
+            const auto source_offset = vertices[role] * 3;
+            const auto debug_offset = (record * 4 + role) * 3;
+            positions[role] = {
+                context.state_positions[source_offset + 0],
+                context.state_positions[source_offset + 1],
+                context.state_positions[source_offset + 2],
+            };
+            inv_mass[role] = bending_inverse_mass(context, vertices[role]);
+            context.debug_bending_record_origins[debug_offset + 0] = positions[role].x;
+            context.debug_bending_record_origins[debug_offset + 1] = positions[role].y;
+            context.debug_bending_record_origins[debug_offset + 2] = positions[role].z;
+        }
+        Vec3 correction[4];
+        const auto marker = context.bending_sign_or_volume[record];
+        const float raw_rest = context.bending_rest_angle_or_volume[record];
+        const bool solved = marker == 100
+            ? calc_bending_volume(
+                positions,
+                inv_mass,
+                raw_rest * context.scale_ratio * context.negative_scale_sign,
+                stiffness,
+                correction
+            )
+            : calc_bending_dihedral(
+                positions,
+                inv_mass,
+                raw_rest * (marker < 0 ? -1.0f : 1.0f) *
+                    context.negative_scale_sign,
+                stiffness,
+                correction
+            );
+        if (!solved) continue;
+        context.debug_bending_record_valid[record] = 1;
+        for (int role = 0; role < 4; ++role) {
+            const auto debug_offset = (record * 4 + role) * 3;
+            context.debug_bending_record_corrections[debug_offset + 0] =
+                static_cast<float>(static_cast<std::int32_t>(correction[role].x * 1000000.0f));
+            context.debug_bending_record_corrections[debug_offset + 1] =
+                static_cast<float>(static_cast<std::int32_t>(correction[role].y * 1000000.0f));
+            context.debug_bending_record_corrections[debug_offset + 2] =
+                static_cast<float>(static_cast<std::int32_t>(correction[role].z * 1000000.0f));
+            ++counts[vertices[role]];
+        }
+    }
+    for (std::size_t record = 0; record < record_count; ++record) {
+        if (context.debug_bending_record_valid[record] == 0) continue;
+        for (int role = 0; role < 4; ++role) {
+            const auto vertex = static_cast<std::size_t>(
+                context.bending_quads[record * 4 + role]
+            );
+            const auto debug_offset = (record * 4 + role) * 3;
+            const float scale = is_move(context.proxy_attributes[vertex]) &&
+                counts[vertex] > 0
+                ? 0.000001f / static_cast<float>(counts[vertex])
+                : 0.0f;
+            context.debug_bending_record_corrections[debug_offset + 0] *= scale;
+            context.debug_bending_record_corrections[debug_offset + 1] *= scale;
+            context.debug_bending_record_corrections[debug_offset + 2] *= scale;
+        }
+    }
 }
 
 float distance_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
@@ -3500,6 +3602,10 @@ bool begin_mc2_context_step(
     context.debug_distance_record_lengths.clear();
     context.debug_distance_record_rests.clear();
     context.debug_distance_record_valid.clear();
+    context.debug_bending_record_ready = false;
+    context.debug_bending_record_origins.clear();
+    context.debug_bending_record_corrections.clear();
+    context.debug_bending_record_valid.clear();
     if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
         const auto record_count = context.distance_targets.size();
         context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
@@ -3508,6 +3614,14 @@ bool begin_mc2_context_step(
         context.debug_distance_record_rests.assign(record_count * 2, 0.0f);
         context.debug_distance_record_valid.assign(
             record_count * 2, static_cast<std::uint8_t>(0)
+        );
+    }
+    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+        const auto record_count = context.bending_rest_angle_or_volume.size();
+        context.debug_bending_record_origins.assign(record_count * 4 * 3, 0.0f);
+        context.debug_bending_record_corrections.assign(record_count * 4 * 3, 0.0f);
+        context.debug_bending_record_valid.assign(
+            record_count, static_cast<std::uint8_t>(0)
         );
     }
     if (context.external_contact_debug_requested) {
@@ -3549,7 +3663,13 @@ bool begin_mc2_context_step(
         context, kDebugConstraintAngle, 2, debug_before
     );
     begin_constraint_debug_pass(context, kDebugConstraintBending, debug_before);
+    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+        capture_bending_records_once(context, simulation_power_y);
+    }
     solve_bending_once(context, simulation_power_y);
+    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+        context.debug_bending_record_ready = true;
+    }
     finish_constraint_debug_pass(
         context, kDebugConstraintBending, 3, debug_before
     );
@@ -3845,6 +3965,9 @@ std::int64_t estimate_context_bytes(const Mc2ContextV0& context) {
     MC2_ADD_VECTOR_BYTES(debug_distance_record_lengths);
     MC2_ADD_VECTOR_BYTES(debug_distance_record_rests);
     MC2_ADD_VECTOR_BYTES(debug_distance_record_valid);
+    MC2_ADD_VECTOR_BYTES(debug_bending_record_origins);
+    MC2_ADD_VECTOR_BYTES(debug_bending_record_corrections);
+    MC2_ADD_VECTOR_BYTES(debug_bending_record_valid);
     MC2_ADD_VECTOR_BYTES(animated_base_positions);
     MC2_ADD_VECTOR_BYTES(animated_base_rotations);
     MC2_ADD_VECTOR_BYTES(step_basic_positions);
@@ -4064,6 +4187,24 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
                 context.debug_distance_record_corrections.size() +
                 context.debug_distance_record_lengths.size() +
                 context.debug_distance_record_rests.size()
+            )
+        ) ||
+        !dict_bool(
+            result,
+            "debug_bending_record_ready",
+            context.debug_bending_record_ready
+        ) ||
+        !dict_i64(
+            result,
+            "debug_bending_record_count",
+            static_cast<std::int64_t>(context.debug_bending_record_valid.size())
+        ) ||
+        !dict_i64(
+            result,
+            "debug_bending_record_float_count",
+            static_cast<std::int64_t>(
+                context.debug_bending_record_origins.size() +
+                context.debug_bending_record_corrections.size()
             )
         ) ||
         !dict_i64(result, "self_primitive_update_count", context.self_primitive_update_count) ||

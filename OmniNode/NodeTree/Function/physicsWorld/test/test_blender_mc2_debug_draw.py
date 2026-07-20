@@ -483,6 +483,68 @@ try:
                     pass_corrections[phase, vertex],
                     atol=2.0e-7,
                 )
+        bending_records = snapshot["constraint_records"]["bending"]
+        assert set(bending_records) == {
+            "record_indices",
+            "kinds",
+            "markers",
+            "vertices",
+            "origins",
+            "corrections",
+            "currents",
+            "rests",
+            "errors",
+            "normalized_errors",
+            "states",
+        }
+        bending_count = len(bending_records["record_indices"])
+        assert bending_count > 0
+        for name in bending_records:
+            assert len(bending_records[name]) == bending_count
+            assert bending_records[name].flags.writeable is False
+        bending_vertices = np.asarray(
+            bending_records["vertices"], dtype=np.int32
+        )
+        bending_origins = np.asarray(
+            bending_records["origins"], dtype=np.float32
+        )
+        bending_corrections = np.asarray(
+            bending_records["corrections"], dtype=np.float32
+        )
+        bending_result = constraint_results["bending"]
+        bending_pass_origins = np.asarray(
+            bending_result["origins"], dtype=np.float32
+        )
+        bending_pass_corrections = np.asarray(
+            bending_result["corrections"], dtype=np.float32
+        )
+        np.testing.assert_allclose(
+            bending_records["errors"],
+            np.asarray(bending_records["rests"])
+            - np.asarray(bending_records["currents"]),
+            atol=2.0e-6,
+        )
+        grouped_bending = np.zeros_like(bending_pass_corrections)
+        for record in range(bending_count):
+            np.testing.assert_allclose(
+                bending_origins[record],
+                bending_pass_origins[bending_vertices[record]],
+                atol=1.0e-7,
+            )
+            np.add.at(
+                grouped_bending,
+                bending_vertices[record],
+                bending_corrections[record],
+            )
+        np.testing.assert_allclose(
+            grouped_bending, bending_pass_corrections, atol=2.0e-7
+        )
+        bending_states = np.asarray(bending_records["states"], dtype=np.int8)
+        assert set(np.unique(bending_states)).issubset({-2, 0, 2})
+        bending_record_lengths = np.linalg.norm(
+            bending_corrections.reshape((bending_count, -1)), axis=1
+        )
+        assert np.all((bending_record_lengths > 1.0e-8) <= (np.abs(bending_states) == 2))
         assert snapshot["center"]["frame_sync"]["action"] == "updated"
         center_shift = snapshot["center"]["frame_shift"]
         if center_shift is not None:
@@ -796,9 +858,21 @@ try:
                     np.abs(states) == 2,
                     np.linalg.norm(record_corrections, axis=1) > 1.0e-8,
                 )
-            if mode_name in ("show_distance", "show_tether"):
+            if mode_name == "show_bending":
+                bending_records = captured_snapshot["constraint_records"][
+                    "bending"
+                ]
+                assert len(bending_records["record_indices"]) > 0
+                assert bending_records["vertices"].flags.writeable is False
+                assert bending_records["origins"].flags.writeable is False
+                assert bending_records["corrections"].flags.writeable is False
+            if mode_name in ("show_distance", "show_tether", "show_bending"):
                 assert set(captured_snapshot["constraint_records"]) == {
-                    "distance" if mode_name == "show_distance" else "tether"
+                    {
+                        "show_distance": "distance",
+                        "show_tether": "tether",
+                        "show_bending": "bending",
+                    }[mode_name]
                 }
             else:
                 assert "constraint_records" not in captured_snapshot

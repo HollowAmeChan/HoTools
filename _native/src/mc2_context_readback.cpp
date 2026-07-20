@@ -1274,6 +1274,78 @@ PyObject* mc2_context_v0_read_debug_distance_results(PyObject*, PyObject* args) 
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_read_debug_bending_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_read_debug_bending_results expects 4 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto record_count = context->bending_rest_angle_or_volume.size();
+    const auto row_count = record_count * 4;
+    const auto vector_value_count = row_count * 3;
+    if ((context->debug_constraint_request_mask & kDebugConstraintBending) == 0 ||
+        !context->debug_bending_record_ready ||
+        context->debug_bending_record_origins.size() != vector_value_count ||
+        context->debug_bending_record_corrections.size() != vector_value_count ||
+        context->debug_bending_record_valid.size() != record_count) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 bending record debug was not requested or is not ready"
+        );
+        return nullptr;
+    }
+    Buffer origins, corrections, valid;
+    Buffer* buffers[] = {&origins, &corrections, &valid};
+    const char* names[] = {
+        "out_bending_record_origins",
+        "out_bending_record_corrections",
+        "out_bending_record_valid",
+    };
+    for (std::size_t index = 0; index < 3; ++index) {
+        if (!buffers[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index]
+            )) {
+            return nullptr;
+        }
+    }
+    const auto rows = static_cast<Py_ssize_t>(row_count);
+    const auto records = static_cast<Py_ssize_t>(record_count);
+    if (!expect_float32(origins, names[0]) ||
+        !expect_2d(origins, names[0], rows, 3) ||
+        !expect_float32(corrections, names[1]) ||
+        !expect_2d(corrections, names[1], rows, 3) ||
+        !expect_uint8_scalar_array(valid, names[2]) ||
+        !expect_1d_array(valid, names[2], records)) {
+        return nullptr;
+    }
+    if (vector_value_count > 0) {
+        std::memcpy(
+            origins.view.buf,
+            context->debug_bending_record_origins.data(),
+            vector_value_count * sizeof(float)
+        );
+        std::memcpy(
+            corrections.view.buf,
+            context->debug_bending_record_corrections.data(),
+            vector_value_count * sizeof(float)
+        );
+    }
+    if (record_count > 0) {
+        std::memcpy(
+            valid.view.buf,
+            context->debug_bending_record_valid.data(),
+            record_count * sizeof(std::uint8_t)
+        );
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_read_debug_external_contacts(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 7) {
         PyErr_SetString(

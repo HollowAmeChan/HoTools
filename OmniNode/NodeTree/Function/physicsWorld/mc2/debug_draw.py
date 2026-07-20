@@ -394,9 +394,7 @@ def _append_slot_batches(
         )
         _append_constraint_correction_batches(
             batches,
-            ((snapshot.get("native") or {}).get("constraint_results") or {}).get(
-                "bending"
-            ) or {},
+            ((snapshot.get("constraint_records") or {}).get("bending") or {}),
             "bending_correction",
             limit,
         )
