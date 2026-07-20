@@ -623,6 +623,8 @@ compile_flow_cycle_duration
 
 坐标合同：该动画使用 Node Editor `POST_VIEW` 绘制。`location_absolute` 是未缩放的节点位置，进入 GPU batch 前必须乘 `preferences.system.ui_scale`；实时 UI 中非零的 `node.dimensions` 已经是最终绘制宽高，必须原样加到缩放后的位置，禁止再次缩放。只有后台测试或首帧尚未完成布局、`dimensions == (0, 0)` 时，才使用 `node.width/height * ui_scale` 作为 fallback。socket 近似偏移和 Bezier 最小控制柄仍需乘 `ui_scale`。Frame 子节点直接使用 `location_absolute`，不得再次叠加父级位置。
 
+socket 锚点合同：Blender 4.5 的 Python RNA 不提供 socket UI 坐标。普通 output 必须从节点顶部按可见 output 顺序向下定位；普通 input 必须从节点底部按可见 input 的逆序向上定位，不能同样从顶部开始计数，否则 output 区和 `draw_buttons` 会让所有 input link 整体错行。`hide`、disabled 和 unavailable socket 不参与可见序号。
+
 性能约定：动画关闭时不得注册 redraw timer。开启后使用单一全局 handler 和单一 24 FPS timer；关闭最后一个可视化树、清除编译缓存或注销插件时必须停止 timer。编译器只生成字符串/整数 tuple 快照，不得为动画保留额外 node/socket 强引用。
 
 ### 2. Debug 运行

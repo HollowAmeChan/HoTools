@@ -727,6 +727,9 @@ class DrawCompileFlow:
     MUTED_LINK_COLOR = (1.0, 1.0, 1.0)
     MUTED_NODE_COLOR = (1.0, 1.0, 1.0)
     ALWAYS_HUE_CYCLES_PER_SECOND = 0.65
+    SOCKET_ROW_HEIGHT = 22.0
+    OUTPUT_SOCKET_TOP = 34.0
+    INPUT_SOCKET_BOTTOM = 16.0
     _timer_running = False
 
     @staticmethod
@@ -764,19 +767,29 @@ class DrawCompileFlow:
 
         scale = DrawCompileFlow._ui_scale()
         sockets = getattr(node, "outputs" if is_output else "inputs", ())
-        visible = [sock for sock in sockets if not getattr(sock, "hide", False)]
+        visible = [
+            sock for sock in sockets
+            if not getattr(sock, "hide", False)
+            and getattr(sock, "enabled", True)
+            and not getattr(sock, "is_unavailable", False)
+        ]
         index = 0
         for socket_index, sock in enumerate(visible):
             if getattr(sock, "identifier", None) == identifier:
                 index = socket_index
                 break
-        available = max((top - bottom) - 38.0 * scale, 16.0 * scale)
-        spacing = min(
-            22.0 * scale,
-            max(14.0 * scale, available / max(len(visible), 1)),
+        spacing = DrawCompileFlow.SOCKET_ROW_HEIGHT * scale
+        if is_output:
+            y = top - DrawCompileFlow.OUTPUT_SOCKET_TOP * scale - index * spacing
+            return right, max(bottom + DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale, y)
+
+        reverse_index = max(len(visible) - index - 1, 0)
+        y = (
+            bottom
+            + DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale
+            + reverse_index * spacing
         )
-        y = top - 34.0 * scale - index * spacing
-        return (right if is_output else left), max(bottom + 8.0 * scale, y)
+        return left, min(top - DrawCompileFlow.OUTPUT_SOCKET_TOP * scale, y)
 
     @staticmethod
     def _node_side_anchor(node, is_output):

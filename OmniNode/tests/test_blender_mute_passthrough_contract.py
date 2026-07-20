@@ -294,6 +294,49 @@ try:
         50.0 * scale,
     )
 
+    def anchor_socket(identifier, **state):
+        return types.SimpleNamespace(identifier=identifier, **state)
+
+    anchor_node = types.SimpleNamespace(
+        absolute_location=None,
+        location_absolute=(10.0, 100.0),
+        dimensions=(140.0, 220.0),
+        width=140.0,
+        height=220.0,
+        hide=False,
+        parent=None,
+        outputs=(anchor_socket("out_a"), anchor_socket("out_b")),
+        inputs=(
+            anchor_socket("in_a"),
+            anchor_socket("hidden", hide=True),
+            anchor_socket("in_b"),
+            anchor_socket("disabled", enabled=False),
+            anchor_socket("in_c"),
+        ),
+    )
+    anchor_left, anchor_bottom, anchor_right, anchor_top = (
+        OmniNodeDraw.DrawCompileFlow._node_bounds(anchor_node)
+    )
+    row_height = OmniNodeDraw.DrawCompileFlow.SOCKET_ROW_HEIGHT * scale
+    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
+        anchor_node, "out_b", True
+    ) == (
+        anchor_right,
+        anchor_top - OmniNodeDraw.DrawCompileFlow.OUTPUT_SOCKET_TOP * scale - row_height,
+    )
+    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
+        anchor_node, "in_a", False
+    ) == (
+        anchor_left,
+        anchor_bottom + OmniNodeDraw.DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale + 2 * row_height,
+    )
+    assert OmniNodeDraw.DrawCompileFlow._socket_anchor(
+        anchor_node, "in_c", False
+    ) == (
+        anchor_left,
+        anchor_bottom + OmniNodeDraw.DrawCompileFlow.INPUT_SOCKET_BOTTOM * scale,
+    )
+
     node_theme = bpy.context.preferences.themes[0].node_editor
     original_noodle_curving = node_theme.noodle_curving
     try:
