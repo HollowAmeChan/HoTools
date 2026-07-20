@@ -69,6 +69,9 @@ class CompiledGraph:
         self.register_bridges = []
         self.function_catalog = []
         self.debug_enabled   = False
+        self.runtime_cache_contract = None
+        self.runtime_namespace_children = ()
+        self.runtime_output_contracts = {}
 
         # ── 懒求值：跨帧持久化寄存器 ──────────────────────────────────────────
         # reg_values  存任意 Python 对象，必须用 list（不能用 array.array）

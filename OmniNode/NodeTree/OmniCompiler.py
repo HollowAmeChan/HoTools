@@ -831,6 +831,162 @@ class CompilerContext:
             f"always_run={has_always_run} inputs={input_regs} outputs={output_regs}",
         )
 
+    @staticmethod
+    def _runtime_node_identity(node, func=None):
+        uid = OmniRuntimeState.ensure_node_runtime_uid(node)
+        node_idname = OmniCompiler._node_idname(node)
+        if func is None:
+            return (uid, node_idname)
+        return (
+            uid,
+            node_idname,
+            str(getattr(func, "__module__", "") or ""),
+            str(getattr(func, "__qualname__", getattr(func, "__name__", "")) or ""),
+        )
+
+    @staticmethod
+    def _runtime_cache_key_contract(op, constants):
+        node_identity = CompilerContext._runtime_node_identity(op.node)
+        key_reg = getattr(op, "cache_key_input", None)
+        if key_reg is None:
+            return ("implicit", node_identity[0])
+        if key_reg not in constants:
+            return None
+        value = constants[key_reg]
+        if value is not None and not isinstance(value, (str, bool, int, float)):
+            return None
+        key = str(value or "").strip()
+        return ("explicit", key) if key else ("implicit", node_identity[0])
+
+    @staticmethod
+    def _build_runtime_cache_contract(graph):
+        instructions = tuple(graph.instructions or ())
+        constants = {
+            int(op[1]): op[2]
+            for op in instructions
+            if isinstance(op, tuple) and len(op) == 3 and op[0] == "CONST"
+        }
+        producers = {}
+        for op in instructions:
+            for reg in getattr(op, "outputs", ()) or ():
+                producers[int(reg)] = op
+        input_uids = {int(reg): str(uid) for uid, reg in graph.input_regs.items()}
+        memo = {}
+
+        def input_signature(value):
+            if isinstance(value, list):
+                return ("multi", tuple(register_signature(reg) for reg in value))
+            if value is None:
+                return ("missing",)
+            return register_signature(value)
+
+        def register_signature(reg):
+            reg = int(reg)
+            if reg in memo:
+                return memo[reg]
+            if reg in constants:
+                result = ("const",)
+                memo[reg] = result
+                return result
+            if reg in input_uids:
+                result = ("tree_input", input_uids[reg])
+                memo[reg] = result
+                return result
+            op = producers.get(reg)
+            if op is None:
+                result = ("unbound",)
+                memo[reg] = result
+                return result
+            memo[reg] = ("cycle",)
+            if isinstance(op, OpCall):
+                result = (
+                    "call",
+                    CompilerContext._runtime_node_identity(op.node, op.func),
+                    list(op.outputs).index(reg),
+                    tuple(input_signature(value) for value in op.inputs),
+                )
+            elif isinstance(op, CacheReadCall):
+                result = (
+                    "cache_read",
+                    CompilerContext._runtime_node_identity(op.node),
+                    list(op.outputs).index(reg),
+                    CompilerContext._runtime_cache_key_contract(op, constants),
+                )
+            elif isinstance(op, CacheWriteCall):
+                result = (
+                    "cache_write",
+                    CompilerContext._runtime_node_identity(op.node),
+                    register_signature(op.value_input)
+                    if op.value_input is not None else ("missing",),
+                )
+            elif isinstance(op, (SubtreeCall, BatchSubtreeCall)):
+                child = op.compiled_graph
+                output_index = list(op.outputs).index(reg)
+                output_uids = list(child.output_regs.keys())
+                child_output = (
+                    child.runtime_output_contracts.get(output_uids[output_index])
+                    if output_index < len(output_uids) else None
+                )
+                result = (
+                    "batch" if isinstance(op, BatchSubtreeCall) else "group",
+                    CompilerContext._runtime_node_identity(op.node),
+                    str(OmniRuntimeState.runtime_tree_key(child.tree_ref)),
+                    child_output,
+                    tuple(input_signature(value) for value in op.inputs),
+                )
+            else:
+                result = (
+                    op.__class__.__name__,
+                    CompilerContext._runtime_node_identity(op.node),
+                )
+            memo[reg] = result
+            return result
+
+        owner_entries = []
+        preservable = True
+        children = []
+        for op in instructions:
+            if isinstance(op, (SubtreeCall, BatchSubtreeCall)):
+                child = op.compiled_graph
+                node_uid = OmniRuntimeState.ensure_node_runtime_uid(op.node)
+                child_key = OmniRuntimeState.runtime_tree_key(child.tree_ref)
+                children.append((
+                    "batch" if isinstance(op, BatchSubtreeCall) else "group",
+                    str(node_uid),
+                    str(child_key),
+                    child,
+                ))
+            if not isinstance(op, (CacheReadCall, CacheWriteCall, CacheDeleteCall)):
+                continue
+            key_contract = CompilerContext._runtime_cache_key_contract(op, constants)
+            if key_contract is None:
+                preservable = False
+            entry = [
+                op.__class__.__name__,
+                CompilerContext._runtime_node_identity(op.node),
+                key_contract,
+            ]
+            if isinstance(op, CacheWriteCall):
+                entry.append(
+                    register_signature(op.value_input)
+                    if op.value_input is not None else ("missing",)
+                )
+            owner_entries.append(tuple(entry))
+
+        graph.runtime_cache_contract = {
+            "schema": 1,
+            "preservable": bool(preservable),
+            "signature": (
+                "omni_runtime_cache_contract_v1",
+                tuple(sorted(owner_entries, key=repr)),
+            ),
+        }
+        graph.runtime_namespace_children = tuple(children)
+        graph.runtime_output_contracts = {
+            str(uid): register_signature(reg)
+            for uid, reg in graph.output_regs.items()
+        }
+
     def finish(self):
         # 插入计时桩
         self.instructions.insert(0, RuntimeTimingBeginCall(self.graph.tree_name, self.tree))
@@ -840,6 +996,8 @@ class CompilerContext:
         self.graph.instructions = tuple(self.instructions)
         self.graph.reg_count    = self.reg_id
         self.graph.node_order   = [node.name for node in self.topo]
+
+        self._build_runtime_cache_contract(self.graph)
 
         # ── 懒求值：计算 has_always_run_node ──────────────────────────────────
         self.graph.has_always_run_node = self._compute_has_always_run(self.graph)

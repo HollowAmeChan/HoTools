@@ -737,9 +737,9 @@ large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group 
 
 长时能力矩阵由`mc2/test/capability_matrix.py`作为代码级单一清单，但字段owner不等于行为覆盖。每个能力族分别声明产品要求的setup/字段/不变量，以及现有runner真正执行的帧数、setup、变化字段和断言；门禁解析runner文件与真实函数符号，并按集合差自动要求`status=gap`或`verified`。字段与专项不变量分别按`field@setup`、`invariant@setup`闭环，Mesh证据与Bone证据不得通过简单并集拼成三setup全覆盖；仅对部分setup成立的字段必须通过`field_setups`明确产品域。只有要求集合全部被实际证据覆盖时才能写`verified`，不得用runner名称、运行帧数、字段打包或`finite`字符串代替行为证据。`distance_culling_*`、`use_distance_culling`和仅有独立kernel但未接入context step的`centrifugal_acceleration`归入`source_abi_no_production_consumer_hidden`，不能占用active覆盖。
 
-代码级九个能力族当前均为`verified`。2026-07-20人工验收曾给出逐粒子Teleport高速穿模、自碰单层持续微动/疑似误报以及多项debug无法表达真实触发的反例；Teleport现已回退到“首个Fixed，否则物体原点”的单基准整task判定并完成Keep/Reset真实场景复验，自碰静置、深度、实际接触、参数归属与参数说明也已关闭。剩余debug整体可读性和兼容重编译缓存以`MC2_MANUAL_VALIDATION_DECISIONS.md`为准。
+代码级九个能力族当前均为`verified`。2026-07-20人工验收曾给出逐粒子Teleport高速穿模、自碰单层持续微动/疑似误报以及多项debug无法表达真实触发的反例；Teleport现已回退到“首个Fixed，否则物体原点”的单基准整task判定并完成Keep/Reset真实场景复验，自碰静置、深度、实际接触、参数归属与参数说明也已关闭。兼容重编译缓存已由OmniNode通用manifest合同实现并自动验证；剩余debug整体可读性以`MC2_MANUAL_VALIDATION_DECISIONS.md`为准。
 
-Teleport单基准整task回退、自碰静置、Mesh深度、碰撞结果、参数归属、参数说明和无consumer离心力隐藏均已完成人工或代码闭环，不再属于发布阻断。剩余验收集中在结果导向debug整体界面及兼容重编译缓存。
+Teleport单基准整task回退、自碰静置、Mesh深度、碰撞结果、参数归属、参数说明、无consumer离心力隐藏和兼容重编译缓存均已完成人工或代码闭环，不再属于发布阻断。剩余验收集中在结果导向debug整体界面。
 
 ## 明确不支持与不得恢复
 

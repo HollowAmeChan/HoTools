@@ -1,5 +1,6 @@
 import uuid
 import time
+import hashlib
 
 
 _COMMITTED_CACHE = {}
@@ -215,6 +216,53 @@ def _runtime_tree_key(tree):
         return f"tree:{id(tree)}"
 
 
+def runtime_tree_key(tree):
+    return _runtime_tree_key(tree)
+
+
+def batch_item_identity(value):
+    identity = None
+    for name in ("omni_runtime_identity", "stable_id", "task_id", "slot_id", "source_id"):
+        candidate = None
+        if isinstance(value, dict):
+            candidate = value.get(name)
+        else:
+            candidate = getattr(value, name, None)
+        if callable(candidate):
+            try:
+                candidate = candidate()
+            except Exception:
+                candidate = None
+        if candidate not in (None, ""):
+            identity = (name, str(candidate))
+            break
+    if identity is None:
+        session_uid = getattr(value, "session_uid", None)
+        if session_uid not in (None, 0, ""):
+            identity = ("session_uid", str(session_uid))
+    if identity is None and hasattr(value, "as_pointer"):
+        try:
+            identity = (
+                "bpy",
+                value.__class__.__name__,
+                str(getattr(value, "name_full", getattr(value, "name", "")) or ""),
+                str(int(value.as_pointer())),
+            )
+        except Exception:
+            identity = None
+    if identity is None and isinstance(value, (str, bool, int, float, type(None))):
+        identity = ("scalar", type(value).__name__, repr(value))
+    if identity is None:
+        identity = (
+            "fallback",
+            value.__class__.__module__,
+            value.__class__.__qualname__,
+            repr(value),
+        )
+    digest = hashlib.sha1(repr(identity).encode("utf-8")).hexdigest()[:20]
+    return digest
+
+
 def ensure_node_runtime_uid(node):
     uid = ""
     try:
@@ -293,12 +341,24 @@ class RuntimeCacheContext:
             self.path + (f"group:{node_uid}:{child_key}",),
         )
 
-    def descend_batch_item(self, node, child_tree, item_index):
+    def descend_batch_item(
+        self,
+        node,
+        child_tree,
+        item_index,
+        item_value=None,
+        item_identity=None,
+        identity_occurrence=0,
+    ):
         node_uid = ensure_node_runtime_uid(node)
         child_key = _runtime_tree_key(child_tree)
+        item_identity = str(item_identity or batch_item_identity(item_value))
         return RuntimeCacheContext(
             self.run,
-            self.path + (f"batch:{node_uid}:item:{int(item_index)}:{child_key}",),
+            self.path + (
+                f"batchv2:{node_uid}:item:{item_identity}:"
+                f"occ:{int(identity_occurrence)}:{child_key}",
+            ),
         )
 
 
@@ -514,7 +574,74 @@ def clear_all():
     _COMMITTED_CACHE.clear()
 
 
-def clear_root_tree(tree):
+def _compiled_namespace_contract(compiled, path):
+    if compiled is None:
+        return None
+    path = tuple(path or ())
+    if not path:
+        return getattr(compiled, "runtime_cache_contract", None)
+    segment = str(path[0])
+    for kind, node_uid, child_key, child in (
+        getattr(compiled, "runtime_namespace_children", ()) or ()
+    ):
+        if kind == "group":
+            if segment != f"group:{node_uid}:{child_key}":
+                continue
+        elif kind == "batch":
+            prefix = f"batchv2:{node_uid}:item:"
+            suffix = f":{child_key}"
+            if not (segment.startswith(prefix) and segment.endswith(suffix)):
+                continue
+        else:
+            continue
+        return _compiled_namespace_contract(child, path[1:])
+    return None
+
+
+def _contracts_compatible(previous, current):
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return False
+    return bool(
+        previous.get("schema") == current.get("schema") == 1
+        and previous.get("preservable", False)
+        and current.get("preservable", False)
+        and previous.get("signature") == current.get("signature")
+    )
+
+
+def reconcile_root_tree(tree, previous_compiled, current_compiled):
+    root_key = _runtime_tree_key(tree)
+    removed_values = []
+    preserved_namespaces = 0
+    removed_namespaces = 0
+    for namespace in list(_COMMITTED_CACHE.keys()):
+        if namespace[0] != root_key:
+            continue
+        previous = _compiled_namespace_contract(previous_compiled, namespace[1])
+        current = _compiled_namespace_contract(current_compiled, namespace[1])
+        if _contracts_compatible(previous, current):
+            preserved_namespaces += 1
+            continue
+        values = _COMMITTED_CACHE.pop(namespace, None)
+        removed_namespaces += 1
+        if values:
+            removed_values.extend(values.values())
+    active_ids = _committed_value_ids()
+    seen = set()
+    for value in removed_values:
+        _dispose_cache_value(
+            value,
+            "recompile_incompatible",
+            seen,
+            active_ids=active_ids,
+        )
+    return {
+        "preserved_namespaces": preserved_namespaces,
+        "removed_namespaces": removed_namespaces,
+    }
+
+
+def clear_root_tree(tree, reason="clear_root_tree"):
     root_key = _runtime_tree_key(tree)
     removed_values = []
     for namespace in list(_COMMITTED_CACHE.keys()):
@@ -525,4 +652,4 @@ def clear_root_tree(tree):
     active_ids = _committed_value_ids()
     seen = set()
     for value in removed_values:
-        _dispose_cache_value(value, "clear_root_tree", seen, active_ids=active_ids)
+        _dispose_cache_value(value, reason, seen, active_ids=active_ids)

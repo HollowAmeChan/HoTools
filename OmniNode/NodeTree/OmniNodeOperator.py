@@ -953,7 +953,7 @@ class LayerRunning(Operator):
 class OmniTreeCompile(Operator):
     bl_idname = "ho.omnitree_compile"
     bl_label = "编译OMNI树"
-    bl_description = "编译当前 OmniNodeTree，并重置该根树的运行缓存"
+    bl_description = "编译当前 OmniNodeTree；保留合同兼容的运行缓存，并释放不兼容状态"
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -968,7 +968,7 @@ class OmniTreeCompile(Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"已编译并重置运行缓存: {tree.name}")
+        self.report({'INFO'}, f"已编译并核对运行缓存: {tree.name}")
         return {'FINISHED'}
 
 

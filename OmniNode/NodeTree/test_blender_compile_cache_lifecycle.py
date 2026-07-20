@@ -100,9 +100,25 @@ class _FakeTree:
 
 
 class _CompiledGraph:
-    def __init__(self, marker):
+    def __init__(
+        self,
+        marker,
+        signature=None,
+        *,
+        preservable=True,
+        namespace_children=(),
+    ):
         self.marker = marker
         self.clear_count = 0
+        self.runtime_cache_contract = (
+            {
+                "schema": 1,
+                "preservable": bool(preservable),
+                "signature": signature,
+            }
+            if signature is not None else None
+        )
+        self.runtime_namespace_children = tuple(namespace_children)
 
     def clear_reg_arrays(self):
         self.clear_count += 1
@@ -133,7 +149,7 @@ def _compile(tree, force=False):
     return tree_module.OmniNodeTree.compile_cached(tree, force=force)
 
 
-def test_successful_compile_clears_only_its_root():
+def test_successful_compile_without_manifest_clears_only_its_root():
     tree = _FakeTree(1001, "compile-root")
     other_tree = _FakeTree(1002, "other-root")
     owner = _Disposable()
@@ -154,9 +170,190 @@ def test_successful_compile_clears_only_its_root():
     assert calls == [(tree, False)]
     assert tree.clear_run_state_count == 1
     assert _read_cache(tree, "world") == (False, None)
-    assert owner.reasons == ["clear_root_tree"]
+    assert owner.reasons == ["recompile_incompatible"]
     assert _read_cache(other_tree, "world") == (True, other_owner)
     assert other_owner.reasons == []
+
+
+def test_compatible_force_compile_preserves_runtime_owner():
+    tree = _FakeTree(1101, "compatible-root")
+    owner = _Disposable()
+    _write_cache(tree, "world", owner)
+    previous = _CompiledGraph("previous", ("world-owner", "v1"))
+    tree_module._COMPILED_TREE_CACHE[tree_module._tree_cache_key(tree)] = previous
+
+    def compile_ok(*args, **kwargs):
+        return _CompiledGraph("fresh", ("world-owner", "v1"))
+
+    _Compiler.compile = staticmethod(compile_ok)
+    compiled = _compile(tree, force=True)
+
+    assert compiled.marker == "fresh"
+    assert previous.clear_count == 1
+    assert _read_cache(tree, "world") == (True, owner)
+    assert owner.reasons == []
+
+
+def test_incompatible_force_compile_disposes_runtime_owner():
+    tree = _FakeTree(1201, "incompatible-root")
+    owner = _Disposable()
+    _write_cache(tree, "world", owner)
+    previous = _CompiledGraph("previous", ("world-owner", "v1"))
+    tree_module._COMPILED_TREE_CACHE[tree_module._tree_cache_key(tree)] = previous
+
+    def compile_ok(*args, **kwargs):
+        return _CompiledGraph("fresh", ("world-owner", "v2"))
+
+    _Compiler.compile = staticmethod(compile_ok)
+    _compile(tree, force=True)
+
+    assert _read_cache(tree, "world") == (False, None)
+    assert owner.reasons == ["recompile_incompatible"]
+
+
+def test_non_preservable_contract_clears_runtime_owner():
+    tree = _FakeTree(1301, "dynamic-key-root")
+    owner = _Disposable()
+    _write_cache(tree, "world", owner)
+    previous = _CompiledGraph(
+        "previous", ("dynamic-owner",), preservable=False
+    )
+    tree_module._COMPILED_TREE_CACHE[tree_module._tree_cache_key(tree)] = previous
+
+    def compile_ok(*args, **kwargs):
+        return _CompiledGraph("fresh", ("dynamic-owner",), preservable=False)
+
+    _Compiler.compile = staticmethod(compile_ok)
+    _compile(tree, force=True)
+
+    assert _read_cache(tree, "world") == (False, None)
+    assert owner.reasons == ["recompile_incompatible"]
+
+
+def test_batch_namespace_follows_stable_item_identity():
+    tree = _FakeTree(1401, "batch-root")
+    child_tree = _FakeTree(1402, "batch-child")
+    node = types.SimpleNamespace(omni_runtime_uid="batch-node")
+    context = runtime_state.begin_run(tree)
+    first_a = context.descend_batch_item(
+        node, child_tree, 0, {"stable_id": "item-a"}
+    ).namespace()
+    first_b = context.descend_batch_item(
+        node, child_tree, 1, {"stable_id": "item-b"}
+    ).namespace()
+    reordered_b = context.descend_batch_item(
+        node, child_tree, 0, {"stable_id": "item-b"}
+    ).namespace()
+    reordered_a = context.descend_batch_item(
+        node, child_tree, 1, {"stable_id": "item-a"}
+    ).namespace()
+    runtime_state.finish_run(context)
+
+    assert first_a == reordered_a
+    assert first_b == reordered_b
+    assert first_a != first_b
+    assert first_a[1][0].startswith("batchv2:batch-node:item:")
+    duplicate_first = context.descend_batch_item(
+        node,
+        child_tree,
+        0,
+        {"stable_id": "duplicate"},
+        identity_occurrence=0,
+    ).namespace()
+    duplicate_second = context.descend_batch_item(
+        node,
+        child_tree,
+        1,
+        {"stable_id": "duplicate"},
+        identity_occurrence=1,
+    ).namespace()
+    assert duplicate_first != duplicate_second
+
+
+def test_nested_namespace_contracts_reconcile_independently():
+    tree = _FakeTree(1501, "nested-root")
+    group_tree = _FakeTree(1502, "group-child")
+    batch_tree = _FakeTree(1503, "batch-child")
+    group_node = types.SimpleNamespace(omni_runtime_uid="group-node")
+    batch_node = types.SimpleNamespace(omni_runtime_uid="batch-node")
+    group_owner = _Disposable()
+    batch_owner = _Disposable()
+
+    context = runtime_state.begin_run(tree)
+    group_context = context.descend_group(group_node, group_tree)
+    batch_context = context.descend_batch_item(
+        batch_node,
+        batch_tree,
+        0,
+        {"stable_id": "item-a"},
+    )
+    runtime_state.write_cache(group_context, "world", group_owner)
+    runtime_state.write_cache(batch_context, "world", batch_owner)
+    runtime_state.finish_run(context)
+
+    previous_group = _CompiledGraph("previous-group", ("group-owner", "v1"))
+    previous_batch = _CompiledGraph("previous-batch", ("batch-owner", "v1"))
+    previous = _CompiledGraph(
+        "previous",
+        ("root", "v1"),
+        namespace_children=(
+            (
+                "group",
+                "group-node",
+                runtime_state.runtime_tree_key(group_tree),
+                previous_group,
+            ),
+            (
+                "batch",
+                "batch-node",
+                runtime_state.runtime_tree_key(batch_tree),
+                previous_batch,
+            ),
+        ),
+    )
+    tree_module._COMPILED_TREE_CACHE[tree_module._tree_cache_key(tree)] = previous
+
+    def compile_ok(*args, **kwargs):
+        fresh_group = _CompiledGraph("fresh-group", ("group-owner", "v1"))
+        fresh_batch = _CompiledGraph("fresh-batch", ("batch-owner", "v2"))
+        return _CompiledGraph(
+            "fresh",
+            ("root", "v1"),
+            namespace_children=(
+                (
+                    "group",
+                    "group-node",
+                    runtime_state.runtime_tree_key(group_tree),
+                    fresh_group,
+                ),
+                (
+                    "batch",
+                    "batch-node",
+                    runtime_state.runtime_tree_key(batch_tree),
+                    fresh_batch,
+                ),
+            ),
+        )
+
+    _Compiler.compile = staticmethod(compile_ok)
+    _compile(tree, force=True)
+
+    context = runtime_state.begin_run(tree)
+    group_context = context.descend_group(group_node, group_tree)
+    batch_context = context.descend_batch_item(
+        batch_node,
+        batch_tree,
+        0,
+        {"stable_id": "item-a"},
+    )
+    assert runtime_state.read_cache(group_context, "world") == (
+        True,
+        group_owner,
+    )
+    assert runtime_state.read_cache(batch_context, "world") == (False, None)
+    runtime_state.finish_run(context)
+    assert group_owner.reasons == []
+    assert batch_owner.reasons == ["recompile_incompatible"]
 
 
 def test_compile_cache_hit_preserves_runtime_cache():
@@ -203,7 +400,12 @@ def test_failed_compile_preserves_runtime_and_previous_compiled_graph():
 
 def main():
     tests = (
-        test_successful_compile_clears_only_its_root,
+        test_successful_compile_without_manifest_clears_only_its_root,
+        test_compatible_force_compile_preserves_runtime_owner,
+        test_incompatible_force_compile_disposes_runtime_owner,
+        test_non_preservable_contract_clears_runtime_owner,
+        test_batch_namespace_follows_stable_item_identity,
+        test_nested_namespace_contracts_reconcile_independently,
         test_compile_cache_hit_preserves_runtime_cache,
         test_failed_compile_preserves_runtime_and_previous_compiled_graph,
     )

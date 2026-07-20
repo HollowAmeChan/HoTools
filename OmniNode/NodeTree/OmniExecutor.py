@@ -825,10 +825,16 @@ class OmniExecutor:
 
                 try:
                     batch_uid = ordered_input_uids[op.batch_input_index]
+                    identity_counts = {}
                     for batch_index, batch_value in enumerate(batch_values):
                         subtree_inputs = dict(base_inputs)
                         subtree_inputs[batch_uid] = batch_value
                         observer.batch_item(batch_index, batch_uid, batch_value)
+                        item_identity = OmniRuntimeState.batch_item_identity(
+                            batch_value
+                        )
+                        identity_occurrence = identity_counts.get(item_identity, 0)
+                        identity_counts[item_identity] = identity_occurrence + 1
 
                         subtree_outputs, _ = OmniExecutor._execute(
                             op.compiled_graph,
@@ -839,6 +845,9 @@ class OmniExecutor:
                                 op.node,
                                 getattr(op.compiled_graph, "tree_ref", None),
                                 batch_index,
+                                batch_value,
+                                item_identity,
+                                identity_occurrence,
                             ),
                             observer=observer.child(),
                         )

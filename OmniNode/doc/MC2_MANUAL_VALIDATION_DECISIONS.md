@@ -31,7 +31,7 @@
 | D-03 | **人工已验证** | 碰撞结果表达 | “碰撞情况”保留全部有效外碰形状；“实际接触”只显示命中的真实半径形状、接触位置、对应collider与实际推动，并覆盖跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **人工已验证** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；唯一owner与实际节点行为均确认正常 |
-| D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
+| D-06 | **代码已实现并自动验证** | 重编译后的运行缓存保留 | 逐namespace比较Cache producer/owner结构合同；兼容保留，不兼容定向释放 |
 | D-07 | **代码已关闭** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 无 production consumer，已从全部公开 Profile/Task 节点及 preset 移除；内部 ABI 固定为0 |
 | D-08 | **人工已验证** | Baseline depth 审计 | Mesh以4:1混入Fixed边界表面距离并单调保护；Depth inertia使用1.5次指数；非均匀减面实测确认旋转带动更自然且横向等高线偏移明显受抑制 |
 | D-09 | **人工已验证** | 参数说明载体 | Profile/Task 长注释由实际字段 metadata 自动生成表格并由注册测试防漂移；socket短摘要、枚举映射和界面阅读均已确认 |
@@ -328,42 +328,42 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 ## P2：重编译保留运行缓存 D-06
 
-### 当前事实
+### 已实现事实
 
-`OmniNodeTree.compile_cached(force=True)` 在新 graph 成功编译并替换 compile cache 后，无条件调用 `OmniRuntimeState.clear_root_tree(self)`。因此点击“编译”总会 dispose Physics World 和所有 root runtime cache。编译失败会保留旧 graph 与 runtime cache；普通 cache hit 也会保留。
+`OmniNodeTree.compile_cached(force=True)` 先事务性编译新 graph；成功后由 `OmniRuntimeState.reconcile_root_tree()` 逐个检查该根树已经提交的 runtime namespace。新旧合同可证明且签名一致时保留原 owner identity；不兼容 namespace 以 `recompile_incompatible` 定向 dispose。编译失败仍保留旧 graph 与 runtime cache，普通 cache hit 不触发对账。
 
-MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下一次运行中区分 hot update、局部 static refresh 和 context rebuild。全树重编译先销毁 world，使这套细粒度机制失去作用，确实妨碍边看效果边调参。
+每个 `CompiledGraph` 现在发布 runtime-cache compatibility manifest。合同覆盖稳定 node runtime UID、Cache Read/Write/Delete 的常量/隐式 key、Cache Write owner 的上游调用结构、group/batch 子树路径与输出结构。数值/default CONST 只记“常量输入”而不记具体值，因此调参不会误判 owner 结构改变；MC2 继续用 task id、参数签名和 static fingerprint 区分 hot update、局部 static refresh 和 context rebuild。
 
 ### 不采用“数组范围相同就保留”
 
 仅比较数组长度无法证明安全：节点删除/替换、group path 改变、batch item 重排、对象身份变化、cache owner 类型变化、ABI/schema 变化都可能在相同长度下复用错误状态。
 
-### 建议方案
+### 已实现方案
 
 1. 编译仍先事务性生成新 graph；失败时保持现状。
-2. 新旧 graph 生成 runtime-cache compatibility manifest，至少包含稳定 node runtime UID、group/batch namespace path、cache producer 类型与 contract version、owner kind/schema。
+2. 新旧 graph 生成 runtime-cache compatibility manifest，包含稳定 node runtime UID、group/batch namespace path、cache producer/key合同、owner上游结构和contract schema。
 3. 对兼容 namespace 保留 committed owner；删除或不兼容 namespace 定向 dispose；无法证明时回退整 root clear。
 4. 参数/socket 默认值改变但 cache 节点和路径不变时保留 Physics World，让 solver 的 task/parameter/static fingerprint 决定 hot update 或 rebuild。
-5. batch 不能只按 index/长度判断；需要稳定 item identity，无法提供时该 batch namespace 清理。
+5. batch namespace 使用 item 的 `omni_runtime_identity/stable_id/task_id/slot_id/source_id` 等稳定身份和同身份 occurrence；对象/标量有确定fallback，不再按列表index绑定状态。
 6. compile graph 的寄存器数组仍由新 graph 自己初始化；保留的是显式 runtime cache owner，不是旧寄存器值。
 
 ### 验收矩阵
 
-- 只改 MC2 数值：world identity 保留，参数 revision 增加，模拟连续。
+- 只改 MC2 数值：真实MC2编译图的owner结构签名保持一致；真实Cache图强制重编译保留同一owner identity。参数revision与模拟连续性仍由现有solver回归和最终界面手测覆盖。
 - 改曲线但不改 topology：按参数合同 hot update，不卡回首帧。
 - 改 mesh/bone topology：world 可保留，但对应 MC2 slot 安全 rebuild。
 - 节点重排/改显示位置：缓存保留。
 - 增删不相关分支：只影响对应 namespace。
-- 删除/替换 Cache、Physics World 或 solver 节点：旧 owner 定向 dispose。
-- group path 改变、batch reorder/length 相同但身份变化：不得错误复用。
-- 编译失败：旧 graph 和 runtime cache 完整保留。
-- 无兼容 manifest 的旧节点：保守清理，不猜测。
+- 删除/替换 Cache、Physics World 或 solver 节点：真实Cache图替换producer会dispose旧owner；真实MC2图替换MC2 Step会改变合同。
+- group path 改变、batch reorder/length 相同但身份变化：namespace合同覆盖group路径；batch自动测试确认稳定身份随重排迁移，重复身份按occurrence隔离。
+- 编译失败：生命周期测试确认旧 graph 和 runtime cache 完整保留。
+- 无兼容 manifest、动态cache key或不可证明合同：生命周期/编译器测试确认保守清理，不猜测。
 
 安全优先级高于连续预览，但“每次成功编译全清”不再是唯一安全策略。
 
 ## 实施顺序
 
-1. **已冻结决策**：D-01 Teleport、D-03碰撞结果、D-04自碰质量、D-05参数归属、D-08深度与D-09参数说明已经人工关闭；D-02代码已实现待整体手测，D-07代码已关闭，D-06方向已定。
+1. **已冻结决策**：D-01 Teleport、D-03碰撞结果、D-04自碰质量、D-05参数归属、D-08深度与D-09参数说明已经人工关闭；D-02代码已实现待整体手测，D-07代码已关闭，D-06已实现并自动验证。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
 3. **重开验收状态**：自碰静置、Teleport、实际接触、参数归属和参数说明已经按新不变量重新验收；debug整体可读性仍待界面复验。
 4. **Teleport 回退（人工已关闭）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；真实高速平移/旋转及collider场景确认Keep/Reset均安全。
@@ -373,7 +373,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 9. **参数长说明同步（人工已关闭）**：Profile/Task节点表格由实际字段metadata生成，注册测试防止字段说明漂移；socket只保留短摘要，实际界面阅读已确认。
 10. **参数归属审计（人工已关闭）**：字段表、唯一owner、节点裁剪、preset拆分和hot-update证据已经接通，实际节点行为正常。
-11. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
+11. **兼容重编译缓存（代码已关闭）**：OmniNode通用manifest、逐namespace对账、稳定batch identity及真实Cache/MC2编译图测试已经实现。
 12. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
 
 ## 完成定义

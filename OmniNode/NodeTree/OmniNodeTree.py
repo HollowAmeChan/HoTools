@@ -242,19 +242,23 @@ class OmniNodeTree(NodeTree):
 
     def compile_cached(self, force=False):
         cache_key = _tree_cache_key(self)
-        compiled = _COMPILED_TREE_CACHE.get(cache_key)
+        previous_compiled = _COMPILED_TREE_CACHE.get(cache_key)
 
-        if not force and compiled is not None:
-            return compiled
+        if not force and previous_compiled is not None:
+            return previous_compiled
 
         self._clear_run_state()
         debug_enabled = getattr(self, "debug_compile", False)
         compiled = OmniCompiler.compile(self, debug=debug_enabled)
 
+        OmniRuntimeState.reconcile_root_tree(
+            self,
+            previous_compiled,
+            compiled,
+        )
         _COMPILED_TREE_CACHE[cache_key] = compiled
-        # A successful recompile is the runtime-state boundary for this root tree.
-        # Cache hits and failed compiles leave the committed runtime state intact.
-        OmniRuntimeState.clear_root_tree(self)
+        if previous_compiled is not None and previous_compiled is not compiled:
+            previous_compiled.clear_reg_arrays()
 
         if debug_enabled:
             print("\n".join(OmniDebug.format_runtime_header(self.name)))

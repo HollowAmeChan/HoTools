@@ -372,7 +372,7 @@ debug_markers
 
 | 通道 | 用途 | 生命周期 | 允许谁写 | 允许谁读 |
 |---|---|---|---|---|
-| `implicit_objects` | 持久懒更新的隐式物理对象，例如批量生成约束、solver 参数对象、运行时覆写 | 当前已编译根树内跨帧；Begin 不清空，成功重编译时清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
+| `implicit_objects` | 持久懒更新的隐式物理对象，例如批量生成约束、solver 参数对象、运行时覆写 | 当前根树兼容 runtime namespace 内跨帧；Begin 不清空，成功重编译时按 manifest 对账 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
 | `exchange` | 当前图执行内的命令、事件、临时共享数据，例如 force/impulse、临时碰撞代理 | frame / until_next_begin | solver 或命令节点 | 下游声明消费 channel 的 solver |
 | `result_streams` | solver 输出的本帧纯结果快照，例如 transform、pose matrix、contact event | 当前图执行 | solver | writeback、debug、export、下游 solver |
 | `solver_slots` | solver 私有状态和 native context | 跨帧，归属单个 solver | 所属 solver | 只能所属 solver 读写，debug 只读摘要 |
@@ -405,11 +405,11 @@ debug_markers
 - `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
 - `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
 - `dirty=True` 只表示该 entry 相对上一轮写入发生了设置变化，不表示本帧必须 step。
-- `enabled=False` 是禁用该隐式对象，不是 no-op。在当前已编译图持续运行期间，未被再次写入的旧 entry 仍然保留；需要不重编译就立即关闭时，应显式写 disabled entry，或执行 Cache Delete / clear runtime cache。删除、静音、改接或改名注册节点后，成功重编译会统一清空根树 runtime cache，旧 entry 不会进入新图，因此不再额外实现 source lease / mark-and-sweep。
+- `enabled=False` 是禁用该隐式对象，不是 no-op。在当前已编译图持续运行期间，未被再次写入的旧 entry 仍然保留；需要不重编译就立即关闭时，应显式写 disabled entry，或执行 Cache Delete / clear runtime cache。删除、静音、改接或改名注册节点会改变 Cache Write owner 的上游结构合同，成功重编译时对应 namespace 会被定向释放，旧 entry 不会进入新图，因此不再额外实现 source lease / mark-and-sweep。
 - `Physics World Begin` 不清空 `implicit_objects`。world owner 被 replace 时应浅拷贝对象；solver slot 和 native state 仍按 generation 冷启动。
 - 注册节点必须接收并返回同一个 `PhysicsWorldCache`，只调用 `world.append_implicit_object()`，不得直接创建 solver slot、不得写 `world.exchange`、不得写 Blender。
 - 注册节点默认不标记 `always_run=True`。即使因节点图依赖被执行，语义上也只是按 stable_id/signature 更新 registry；输入未变时不产生新的 solver 重建。
-- 成功重编译是统一物理世界的冷启动边界：框架清空根树 runtime cache，active 注册节点在新图第一次运行时重新填充 registry；编译缓存命中和编译失败都不清理。
+- 成功重编译是统一物理世界的兼容性边界：框架按 namespace manifest 比较 Cache producer 与 owner 上游结构。合同相同则保留 world，由 solver 的 config/param/static fingerprint 决定热更新或 slot 重建；合同变化、动态 cache key 或缺少 manifest 时释放对应 namespace，active 注册节点在新图第一次运行时重新填充 registry。编译缓存命中和编译失败都不清理。
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
 - 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
