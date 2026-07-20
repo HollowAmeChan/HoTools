@@ -295,7 +295,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分速度，橙色为本步实际位移速度，长度均乘`0.03`；黄色连接两者终点表示差值，积分速度命中粒子限速时标红 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
 | Tether范围 | C++ `baseline_roots` + StepBasic root rest length + runtime压缩/拉伸限制 | 灰线为当前root距离，蓝环为最短允许距离，黄环为最长允许距离；环是沿当前方向的球面截面 |
-| Bending约束 | C++ `bending_quads/rest/marker` + 当前位置 | 紫色为接近rest的dihedral quad，青色为volume四面体，超过5度或5% volume误差转红；共享边/四面体边来自真实native role顺序 |
+| Bending约束 | C++ `bending_quads/rest/marker` + 请求时记录结果 | 稳定`record_index + quad四角色`区分dihedral/volume；紫/青/红表达几何误差，红箭头来自该记录每个role经生产量化与顶点计数后的实际贡献 |
 | Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
 | MaxDistance/Backstop | Motion BasePosition + native实际参数数组 | 约束球、Backstop中心和半径 |
 | Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
@@ -310,7 +310,7 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 
 上述模式都只在请求后的下一次真实advance捕获。正常帧不得遍历或复制这些debug数组。每个slot的self几何、网格、候选、接触使用四个独立请求位；共同的primitive索引只读一次，未请求阶段不得分配或复制对应数组。跨task interaction使用同一组四位mask，基础position/index/owner只在任一self模式请求时读取，grid/candidate/contact/intersection按位复制。
 
-Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether、Bending与外碰实际接触分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建；外碰contact只在下一真实substep前收到显式请求后由Point/Edge kernel记录。Topology、parameter、motion、center、collision和output等Python payload也必须按实际绘制依赖构造；interaction participant过滤字典只在self请求等待消费时生成。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
+Motion BasePosition、Angle Restoration target、Angle Limit target、粒子速度、Distance/Tether、Bending static、Bending record结果与外碰实际接触分别使用独立C++ readback入口；Python按显示开关精确分配并冻结数组。Angle Limit的层级目标只在该模式请求时由C++重建；外碰contact只在下一真实substep前收到显式请求后由Point/Edge kernel记录。Topology、parameter、motion、center、collision和output等Python payload也必须按实际绘制依赖构造；interaction participant过滤字典只在self请求等待消费时生成。关闭对应模式时不得调用该入口，也不得因其它debug模式顺带生产或复制这些数组。
 
 ### Debug state与绘制能力扩充规范
 
@@ -348,7 +348,7 @@ Debug扩充必须先区分三类state，禁止因命名都含`debug`而混为同
 
 约束pass结果使用五个独立请求位，生产顺序固定为`Tether -> Distance A -> Angle -> Bending -> Distance B -> Motion`。C++仅为被请求的pass保存pre-position和实际position delta；共享readback只传输ready位对应的稀疏pass，单Tether请求不携带另外五个空槽，请求清零时释放buffer容量。Python按canonical pass顺序恢复模式结果并冻结只读数组，renderer只把非零修正画成红箭头。
 
-Tether与Distance已经进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction，native与Blender runner同时锁定。Bending、Angle与Motion仍只表达逐pass、逐粒子聚合修正，不表达具体quad、Restoration/Limit子分支或MaxDistance/Backstop原因；这些记录级active/near-limit仍属于开放D-02工作。
+Tether、Distance与Bending已经进入记录级。Tether记录身份是稳定`vertex/root`，其pass correction天然等于该记录结果；Python按请求派生上下限、ratio、signed error与near/active五态。Distance记录身份是每个phase的有向`record_index/owner/target`；debug请求时C++在临时位置副本重放A/B phase，保存phase前origin、有效rest/current length和经owner记录数平均后的贡献，真实context仍由未改写production函数唯一写入。每个`phase+owner`的记录贡献和必须等于pass粒子correction。Bending记录身份是稳定`record_index + quad四角色`及dihedral/volume类型；请求时C++用生产公式影子重放，将role修正经过相同`int32`量化并除以该vertex的参与记录数，按vertex汇总必须等于Bending pass correction。两者均由native与Blender runner锁定，且debug-off不分配记录buffer。Angle与Motion仍只表达逐pass、逐粒子聚合修正，不表达Restoration/Limit子分支或MaxDistance/Backstop原因；这些记录级active/near-limit仍属于开放D-02工作。
 
 MC2 viewport表达遵守公共物理debug图元语义：fixed/move粒子、Motion BasePosition、Angle Restoration target、self point primitive、Center位点和最终输出端点使用屏幕尺寸圆点；Motion法线、角度恢复修正、Center shift、接触法线和最终输出offset使用箭头；纵横拓扑、triangle、candidate和shape轮廓仍使用普通线。位置点不得再用三轴十字伪装成旋转basis。Blender debug runner当前以Mesh fixture逐个隔离22个开关；substep模式等待下一次真实substep，Teleport两层等待下一new-frame判定，二者都必须捕获匹配帧，禁止复用旧快照冒充覆盖。有非零几何量的模式要求自己的batch颜色语义，速度等零量允许空批次但必须存在该模式的独立只读readback。它已覆盖topology、attributes、step/gravity/velocity/distance/tether/bending、motion/angle、center、Teleport阈值/状态、collision/radius、四种self和output分支，并以只有`show_self_candidates=True`的稀疏请求锁定未声明StepBasic/Motion/Angle键缺失及精确readback增量。BoneCloth/BoneSpring的其余几何语义仍按能力矩阵补齐。
 
