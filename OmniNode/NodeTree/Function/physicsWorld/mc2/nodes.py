@@ -310,6 +310,12 @@ def _profile_presets(fields: tuple[str, ...]) -> tuple[dict, ...]:
 
 
 def _profile_meta(fields: tuple[str, ...], *, label: str, description: str) -> dict:
+    rows = ["字段 | 功能与实现", "--- | ---"]
+    rows.extend(
+        f"{_PROFILE_LABELS[name]} | "
+        f"{_PROFILE_INPUT_INIT[name]['description'].replace(chr(10), '；')}"
+        for name in fields
+    )
     return {
         "enable": True,
         "bl_label": label,
@@ -320,7 +326,7 @@ def _profile_meta(fields: tuple[str, ...], *, label: str, description: str) -> d
         "omni_presets": _profile_presets(fields),
         "_OUTPUT_NAME": ["MC2粒子配置"],
         "mute_passthrough": False,
-        "omni_description": description,
+        "omni_description": description + "\n\n" + "\n".join(rows),
     }
 
 
@@ -595,6 +601,20 @@ def _make_task_parameters(values: dict):
     })
 
 
+def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
+    rows = ["字段 | 功能与实现", "--- | ---"]
+    rows.extend(
+        f"{_TASK_PARAMETER_LABELS[name]} | "
+        f"{_TASK_PARAMETER_INPUT_INIT[name]['description'].replace(chr(10), '；')}"
+        for name in fields
+    )
+    return (
+        f"{setup_label}的对象身份、组件运动修正、Teleport与交互参数。"
+        "这些值属于Task并走parameter hot update，不属于粒子Profile，"
+        "也不改变task id或拓扑。\n\n" + "\n".join(rows)
+    )
+
+
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth任务",
@@ -613,6 +633,9 @@ def _make_task_parameters(values: dict):
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
+    omni_description=_task_long_description(
+        "MeshCloth", _TASK_CLOTH_PARAMETER_FIELDS
+    ),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -681,6 +704,9 @@ def physicsMC2MeshClothTask(
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
+    omni_description=_task_long_description(
+        "BoneCloth", _TASK_CLOTH_PARAMETER_FIELDS
+    ),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -744,6 +770,9 @@ def physicsMC2BoneClothTask(
         "enabled": {"description": "保留任务但不参与模拟"},
     },
     omni_presets=_task_parameter_presets(_TASK_SPRING_PARAMETER_FIELDS),
+    omni_description=_task_long_description(
+        "BoneSpring", _TASK_SPRING_PARAMETER_FIELDS
+    ),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -833,7 +862,7 @@ def physicsMC2Step(
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=[
-        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度",
+        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度", "深度粒子索引",
         "StepBasic参考姿态", "有效重力", "粒子速度", "Distance误差", "Tether范围",
         "Bending约束", "Motion BasePosition", "Motion约束",
         "Angle恢复目标", "Angle限制范围", "Center", "Teleport阈值与方向",
@@ -846,9 +875,14 @@ def physicsMC2Step(
         "show_topology": {"description": "显示真实纵向/横向拓扑连接。"},
         "show_attributes": {"description": "显示Fixed/Move等粒子属性。"},
         "show_depth": {"description": "蓝=近根 橙=远端\n红=非法 粉=Fixed"},
+        "depth_particle_index": {
+            "min_value": -1,
+            "max_value": 1000000,
+            "description": "-1关闭；指定粒子显示完整parent路径",
+        },
         "show_step_basic": {"description": "结构约束的StepBasic姿态。\n不同于Motion基准。"},
-        "show_gravity": {"description": "绿箭头=有效重力。\n长度=加速度x0.02。"},
-        "show_velocity": {"description": "青=保存速度  橙=真实速度\n长度=速度x0.03"},
+        "show_gravity": {"description": "灰=未衰减 绿=有效重力\n每个Move粒子一组"},
+        "show_velocity": {"description": "青=保存 橙=真实 黄=差值\n红=命中粒子限速"},
         "show_distance": {"description": "Distance：绿=正常 红=拉长 蓝=压缩"},
         "show_tether": {"description": "Tether：灰=当前 蓝=最短 黄=最长"},
         "show_bending": {"description": "Bending：紫=角度 青=体积 红=误差"},
@@ -898,6 +932,7 @@ def physicsMC2DebugDraw(
     show_topology: bool = True,
     show_attributes: bool = True,
     show_depth: bool = False,
+    depth_particle_index: int = -1,
     show_step_basic: bool = False,
     show_gravity: bool = False,
     show_velocity: bool = False,
@@ -927,6 +962,7 @@ def physicsMC2DebugDraw(
         show_topology=show_topology,
         show_attributes=show_attributes,
         show_depth=show_depth,
+        depth_particle_index=depth_particle_index,
         show_step_basic=show_step_basic,
         show_gravity=show_gravity,
         show_velocity=show_velocity,

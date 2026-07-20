@@ -55,8 +55,12 @@ _COLORS = {
     "motion_base": (0.20, 0.85, 1.00, 0.90),
     "step_basic": (0.58, 0.72, 1.00, 0.72),
     "gravity": (0.45, 1.00, 0.30, 0.95),
+    "gravity_raw": (0.70, 0.74, 0.80, 0.48),
     "velocity": (0.20, 0.92, 1.00, 0.92),
     "real_velocity": (1.00, 0.52, 0.18, 0.72),
+    "velocity_delta": (1.00, 0.86, 0.16, 0.90),
+    "velocity_clamped": (1.00, 0.06, 0.04, 1.00),
+    "depth_selected_path": (0.82, 0.34, 1.00, 1.00),
     "distance_ok": (0.35, 0.95, 0.42, 0.72),
     "distance_stretch": (1.00, 0.18, 0.12, 0.95),
     "distance_compress": (0.20, 0.48, 1.00, 0.95),
@@ -125,6 +129,7 @@ def update_mc2_debug_draw_store(
     show_topology: bool = True,
     show_attributes: bool = True,
     show_depth: bool = False,
+    depth_particle_index: int = -1,
     show_motion: bool = True,
     show_center: bool = True,
     show_collision: bool = True,
@@ -160,6 +165,7 @@ def update_mc2_debug_draw_store(
         "show_topology": bool(show_topology),
         "show_attributes": bool(show_attributes),
         "show_depth": bool(show_depth),
+        "depth_particle_index": max(-1, int(depth_particle_index)),
         "show_step_basic": bool(show_step_basic),
         "show_gravity": bool(show_gravity),
         "show_velocity": bool(show_velocity),
@@ -321,7 +327,14 @@ def _append_slot_batches(
     if filters["show_attributes"]:
         _append_attribute_batches(point_batches, topology, positions, limit)
     if filters["show_depth"]:
-        _append_depth_batches(batches, point_batches, topology, positions, limit)
+        _append_depth_batches(
+            batches,
+            point_batches,
+            topology,
+            positions,
+            limit,
+            selected_index=filters.get("depth_particle_index", -1),
+        )
     if filters["show_step_basic"]:
         _append_step_basic_batches(
             batches, topology, snapshot.get("motion") or {}, limit
@@ -330,14 +343,16 @@ def _append_slot_batches(
         _append_gravity_batches(
             batches,
             snapshot.get("parameters") or {},
-            snapshot.get("center") or {},
+            topology,
             positions,
+            limit,
         )
     if filters["show_velocity"]:
         _append_velocity_batches(
             batches,
             positions,
             (snapshot.get("native") or {}).get("dynamics") or {},
+            snapshot.get("parameters") or {},
             limit,
         )
     if filters["show_distance"]:
@@ -664,7 +679,9 @@ def _append_attribute_batches(point_batches, topology, positions, limit):
     _point_batch(point_batches, move, "move", 4.0)
 
 
-def _append_depth_batches(batches, point_batches, topology, positions, limit):
+def _append_depth_batches(
+    batches, point_batches, topology, positions, limit, *, selected_index=-1
+):
     attributes = np.asarray(
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     ).reshape((-1,))
@@ -768,6 +785,25 @@ def _append_depth_batches(batches, point_batches, topology, positions, limit):
     _batch(batches, root_boundary_lines, "depth_root_boundary", 1.4)
     _batch(batches, jump_lines, "depth_jump", 2.0)
     _batch(batches, inversion_lines, "depth_inversion", 2.8)
+    selected_index = int(selected_index)
+    if not 0 <= selected_index < count:
+        return
+    path_lines = []
+    path_points = []
+    visited = set()
+    current = selected_index
+    for _step in range(min(count, limit)):
+        if current in visited or not 0 <= current < count:
+            break
+        visited.add(current)
+        add_point(path_points, positions[current])
+        parent = int(parents[current])
+        if parent < 0 or parent >= count:
+            break
+        add_line(path_lines, positions[current], positions[parent])
+        current = parent
+    _batch(batches, path_lines, "depth_selected_path", 3.2)
+    _point_batch(point_batches, path_points, "depth_selected_path", 8.0)
 
 
 def _append_step_basic_batches(batches, topology, motion, limit):
@@ -784,34 +820,47 @@ def _append_step_basic_batches(batches, topology, motion, limit):
     _batch(batches, lines, "step_basic", 1.6)
 
 
-def _append_gravity_batches(batches, parameters, center, positions):
+def _append_gravity_batches(batches, parameters, topology, positions, limit):
     direction = np.asarray(
         _values(parameters.get("gravity_direction")), dtype=np.float32
     ).reshape((-1,))
-    strength = float(parameters.get("gravity_effective_strength", 0.0) or 0.0)
-    if len(direction) != 3 or strength <= 1.0e-8:
+    effective_strength = float(
+        parameters.get("gravity_effective_strength", 0.0) or 0.0
+    )
+    raw_strength = (
+        float(parameters.get("gravity_strength", 0.0) or 0.0)
+        * float(parameters.get("scale_ratio", 1.0) or 1.0)
+    )
+    if len(direction) != 3 or max(raw_strength, effective_strength) <= 1.0e-8:
         return
     direction = vector3(direction)
     if direction.length <= 1.0e-8:
         return
     direction.normalize()
-    frame_pose = center.get("frame_pose") or {}
-    step = center.get("step") or {}
-    origin = step.get("now_world_position") or frame_pose.get(
-        "component_world_position"
-    )
-    if origin is None:
-        if not len(positions):
-            return
-        origin = positions[0]
-    start = vector3(origin)
-    add = direction * strength * 0.02
-    lines = []
-    add_arrow_lines(lines, start, start + add)
-    _batch(batches, lines, "gravity", 2.2)
+    attributes = np.asarray(
+        _values(topology.get("vertex_attributes")), dtype=np.uint8
+    ).reshape((-1,))
+    raw_lines = []
+    effective_lines = []
+    for index, position in enumerate(positions[:limit]):
+        if index < len(attributes) and not (int(attributes[index]) & 0x02):
+            continue
+        start = vector3(position)
+        if raw_strength > 1.0e-8:
+            add_arrow_lines(
+                raw_lines, start, start + direction * raw_strength * 0.02
+            )
+        if effective_strength > 1.0e-8:
+            add_arrow_lines(
+                effective_lines,
+                start,
+                start + direction * effective_strength * 0.02,
+            )
+    _batch(batches, raw_lines, "gravity_raw", 1.0)
+    _batch(batches, effective_lines, "gravity", 2.2)
 
 
-def _append_velocity_batches(batches, positions, dynamics, limit):
+def _append_velocity_batches(batches, positions, dynamics, parameters, limit):
     velocities = dynamics.get("velocities")
     real_velocities = dynamics.get("real_velocities")
     if velocities is None or real_velocities is None:
@@ -820,18 +869,35 @@ def _append_velocity_batches(batches, positions, dynamics, limit):
     real_velocities = np.asarray(real_velocities, dtype=np.float32).reshape((-1, 3))
     stored_lines = []
     real_lines = []
+    delta_lines = []
+    clamped_lines = []
+    speed_limit = float(parameters.get("particle_speed_limit", -1.0) or 0.0)
     for position, velocity, real_velocity in zip(
         positions[:limit], velocities[:limit], real_velocities[:limit]
     ):
         start = vector3(position)
         stored = vector3(velocity) * 0.03
         real = vector3(real_velocity) * 0.03
+        stored_speed = vector3(velocity).length
+        is_clamped = (
+            speed_limit >= 0.0
+            and stored_speed >= max(speed_limit - 1.0e-5, 0.0)
+        )
         if stored.length > 1.0e-7:
-            add_arrow_lines(stored_lines, start, start + stored)
+            add_arrow_lines(
+                clamped_lines if is_clamped else stored_lines,
+                start,
+                start + stored,
+            )
         if real.length > 1.0e-7:
             add_arrow_lines(real_lines, start, start + real)
+        difference = stored - real
+        if difference.length > 1.0e-7:
+            add_arrow_lines(delta_lines, start + real, start + stored)
     _batch(batches, real_lines, "real_velocity", 1.0)
     _batch(batches, stored_lines, "velocity", 1.8)
+    _batch(batches, delta_lines, "velocity_delta", 1.2)
+    _batch(batches, clamped_lines, "velocity_clamped", 2.6)
 
 
 def _append_distance_batches(

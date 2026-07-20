@@ -646,10 +646,14 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         _node, _inputs, _outputs, _defaults, _multi, settings = (
             function_node_core.CheckMetaInfo(profile_node)
         )
+        long_description = profile_node.__meta["omni_description"]
         for identifier in inspect.signature(profile_node).parameters:
             assert settings[identifier].get("description"), (
                 profile_node.__name__, identifier
             )
+            assert settings[identifier]["description"].replace(
+                "\n", "；"
+            ) in long_description, (profile_node.__name__, identifier)
         assert "normal_axis" not in settings
         assert "teleport_mode" not in settings
     for profile_node in cloth_profile_nodes:
@@ -673,6 +677,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         else:
             assert "normal_axis" not in settings
             assert "cloth_mass" not in settings
+        long_description = task_node.__meta["omni_description"]
+        for identifier in mc2_nodes._TASK_PARAMETER_LABELS:
+            if identifier in inspect.signature(task_node).parameters:
+                assert settings[identifier]["description"].replace(
+                    "\n", "；"
+                ) in long_description, (task_node.__name__, identifier)
         if "collided_by_groups" in inputs:
             assert inputs["collided_by_groups"]["type"] == "OmniNodeSocketBitMask"
             assert settings["collided_by_groups"]["mask_length"] == 16

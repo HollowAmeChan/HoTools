@@ -91,7 +91,7 @@ profile + task combination
 
 下表中的setup缩写为`M`=MeshCloth、`C`=BoneCloth、`S`=BoneSpring。“有效”表示当前生产路径存在真实consumer；“固定”表示字段仍存在于统一ABI，但该setup在runtime打包时覆盖为MC2源码固定值；“仅ABI”表示当前能构造或打包，但不改变生产解算结果，不能作为已完成功能理解。
 
-本节各属性表同时是三种粒子配置节点长说明的语义基准。节点的`omni_description`可以使用长文本和表格，并按setup只保留实际公开字段；每项必须同步说明功能、单位/范围、consumer、曲线/depth采样、无效条件和相关debug模式。socket tooltip只承担短摘要及枚举映射，不能代替长说明。实现必须由结构化字段说明或自动一致性测试约束蓝本与三个节点，字段或consumer变更不得只改其中一处。
+本节各属性表同时是三种粒子配置节点长说明的语义基准。Profile与Task节点的`omni_description`现由各setup实际公开字段的label和`input_init.description`自动生成表格；注册测试逐字段约束短说明必须进入长说明，并验证setup字段裁剪。蓝本继续说明更完整的单位/范围、consumer、曲线/depth采样、无效条件和相关debug模式。socket tooltip只承担短摘要及枚举映射，字段或consumer变更不得只改其中一处。
 
 #### 曲线、深度和参考姿态
 
@@ -290,9 +290,9 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | 模式 | 冻结数据源 | 表达 |
 |---|---|---|
 | StepBasic参考姿态 | C++ context的`step_basic_positions`与真实topology edges | Distance、Angle和bone输出共同消费的结构参考姿态；用于和动画Motion BasePosition区分 |
-| 粒子深度 | C++ context已有的`baseline_depths/root_indices/parent_indices`按请求readback | 蓝到橙的0..1色带显示真实曲线采样坐标；粉色=Fixed，紫色=无根Move，黄色=ZeroDistance，白线=至少含一个Move的跨root边，橙线=局部突跳，纯红点/线=parent或深度不变量异常。选中路径、累计长度和归一化分母的数值标注仍待后续实现 |
-| 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 绿色箭头；长度为实际加速度乘`0.02`，已包含Center重力衰减与组件scale |
-| 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分保存速度，橙色为本步真实位移速度，长度均乘`0.03`；用于区分阻尼/摩擦/限速结果和真实运动 |
+| 粒子深度 | C++ context已有的`baseline_depths/root_indices/parent_indices`按请求readback | 蓝到橙的0..1色带显示真实曲线采样坐标；粉色=Fixed，紫色=无根Move，黄色=ZeroDistance，白线=至少含一个Move的跨root边，橙线=局部突跳，纯红点/线=parent或深度不变量异常。`深度粒子索引`以紫色显示选中粒子的完整parent路径；累计长度和归一化分母数值仍待后续实现 |
+| 有效重力 | runtime重力方向/强度与C++ `gravity_ratio/scale_ratio` | 每个Move粒子重复一组组件级箭头：灰色为`gravity * scale_ratio`，绿色为再乘`gravity_ratio`的实际有效重力，长度均乘`0.02`；不表示逐粒子衰减 |
+| 粒子速度 | C++ post后的`state_velocities`与`particle_real_velocities` | 青色为下一步积分速度，橙色为本步实际位移速度，长度均乘`0.03`；黄色连接两者终点表示差值，积分速度命中粒子限速时标红 |
 | Distance误差 | C++ `distance_ranges/targets/rest_signed` + 当前位置 + StepBasic | 绿色接近有效rest，红色拉长，蓝色压缩；有效rest包含scale与animation pose ratio，重复无向pair只画一次 |
 | Tether范围 | C++ `baseline_roots` + StepBasic root rest length + runtime压缩/拉伸限制 | 灰线为当前root距离，蓝环为最短允许距离，黄环为最长允许距离；环是沿当前方向的球面截面 |
 | Bending约束 | C++ `bending_quads/rest/marker` + 当前位置 | 紫色为接近rest的dihedral quad，青色为volume四面体，超过5度或5% volume误差转红；共享边/四面体边来自真实native role顺序 |
@@ -548,7 +548,7 @@ Native readback先形成私有`MC2ResultCandidateV1`。Candidate始终`ready=Fal
 
 Snapshot捕获来自`mc2_context_readback.cpp`和world interaction debug ABI。Renderer只能过滤/绘制冻结数据，不能根据当前节点参数、RNA或最终网格反推中间态。
 
-`粒子深度`是已接通并完成首轮人工视觉复验的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move最终生产depth，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。Mesh色带包含`4:1`的Fixed边界表面距离修正，Bone色带仍是parent-chain depth；实际非均匀减面模型已确认该修正能抑制横向等高线偏移并改善旋转带动。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。选中/抽样路径、两种原始depth分量和归一化分母的数值标注仍是后续能力。
+`粒子深度`是已接通并完成首轮人工视觉复验的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move最终生产depth，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。Mesh色带包含`4:1`的Fixed边界表面距离修正，Bone色带仍是parent-chain depth；实际非均匀减面模型已确认该修正能抑制横向等高线偏移并改善旋转带动。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。`深度粒子索引`只为指定粒子高亮完整parent路径；累计路径长度、两种原始depth分量和归一化分母的数值标注仍是后续能力。
 
 `Center`继续显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。现有逐粒子Teleport阈值球/状态点随实验实现一并废弃；目标debug只表达一组判定基准的类型/index、旧/新姿态、距离/角度阈值、实际测量和task级None/Keep/Reset状态。snapshot仍必须在scheduler前判定完成后捕获，zero-substep帧可观察；仅显式请求时生产，renderer不能从最终位置反推。
 

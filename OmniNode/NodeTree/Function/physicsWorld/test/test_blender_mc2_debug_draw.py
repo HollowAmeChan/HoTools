@@ -391,7 +391,11 @@ try:
         if center_shift is not None:
             assert center_shift["keep_teleport"] is False
             assert center_shift["reset_teleport"] is False
-        assert snapshot["center"]["negative_scale_transition"]["active"] is True
+        negative_transition = snapshot["center"]["negative_scale_transition"]
+        if negative_transition is not None:
+            assert negative_transition["active"] is True
+        else:
+            assert snapshot["center"]["task_teleport"]["applied"] is True
         assert snapshot["center"]["source_world_linear"].flags.writeable is False
         particle_radii = snapshot["collision"]["particle_radii"]
         assert particle_radii.shape[0] == 16
@@ -471,9 +475,13 @@ try:
     isolated_modes = (
         ("show_topology", {"show_topology": True}, ("longitudinal",)),
         ("show_attributes", {"show_attributes": True}, ("fixed", "move")),
-        ("show_depth", {"show_depth": True}, ("depth_fixed",)),
+        (
+            "show_depth",
+            {"show_depth": True, "depth_particle_index": 15},
+            ("depth_fixed", "depth_selected_path"),
+        ),
         ("show_step_basic", {"show_step_basic": True}, ("step_basic",)),
-        ("show_gravity", {"show_gravity": True}, ()),
+        ("show_gravity", {"show_gravity": True}, ("gravity_raw", "gravity")),
         ("show_velocity", {"show_velocity": True}, ()),
         ("show_distance", {"show_distance": True}, ()),
         ("show_tether", {"show_tether": True}, ("tether",)),
@@ -517,6 +525,7 @@ try:
             "show_topology": False,
             "show_attributes": False,
             "show_depth": False,
+            "depth_particle_index": -1,
             "show_motion": False,
             "show_center": False,
             "show_teleport_threshold": False,
