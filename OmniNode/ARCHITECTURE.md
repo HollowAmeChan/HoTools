@@ -596,6 +596,32 @@ debug_compile
 - 编译日志不能在每帧运行时反复打印，除非发生重新编译。
 - 每帧运行使用 `run_frame_cached()` 时，应该复用已有 `CompiledGraph`。
 
+#### 编译流程可视化
+
+树属性：
+
+```text
+show_compile_flow
+compile_flow_cycle_duration
+```
+
+`show_compile_flow` 是独立于命令行 `debug_compile` 的编辑器动画开关。编译器在 `CompiledGraph.compile_flow` 中保存实际编译结果的轻量快照，绘制层不得重新遍历 Blender links 猜测数据流。快照包含：
+
+- 最终 topo 中会运行的节点及顺序；输出节点作为终点保留。
+- 编译输入真正消费的 source socket、target socket 与寄存器号。
+- mute passthrough 展开后的直连边与经过的 muted node 路径。
+- `always_run` 节点标记；cache op 和包含 always-run 子树的 group 同样按常驻运行处理。
+
+动画语义固定如下：
+
+- 一个周期从上游到下游按 topo 顺序播放；同级节点的编号就是实际稳定排序。
+- 普通节点使用青色边缘呼吸；link 流光在目标节点点亮前沿 source → target 前进，并在流光头显示 `rN`。
+- muted 节点不获得运行序号，因为它不生成执行 op；但透传流光必须穿过该节点，并触发同色低亮边缘呼吸，表示“跳过执行、保留寄存器透传”。
+- `always_run` 节点和由其产生的 link 使用循环彩色呼吸，表示它不受普通 lazy skip 控制。
+- 动画只用于解释已缓存的编译结果，不代表当前帧真实执行/skip 状态；真实耗时由“节点运行计时”负责。
+
+性能约定：动画关闭时不得注册 redraw timer。开启后使用单一全局 handler 和单一 24 FPS timer；关闭最后一个可视化树、清除编译缓存或注销插件时必须停止 timer。编译器只生成字符串/整数 tuple 快照，不得为动画保留额外 node/socket 强引用。
+
 ### 2. Debug 运行
 
 树属性：
@@ -957,7 +983,7 @@ solver/domain 自有测试继续由对应模块拥有，例如 `NodeTree/Functio
 
 ### `NodeTree/OmniIR.py`
 
-运行时 IR 定义。该文件不应该依赖 Blender link 结构，也不应该包含执行逻辑。
+运行时 IR 定义。该文件不应该依赖 Blender link 结构，也不应该包含执行逻辑。`CompiledGraph.compile_flow` 只承载编译器生成的不可变字符串/整数可视化快照，不参与执行。
 
 ### `NodeTree/OmniCompiler.py`
 
@@ -968,6 +994,7 @@ solver/domain 自有测试继续由对应模块拥有，例如 `NodeTree/Functio
 - 所有编辑器特殊节点都应在这里归一化。
 - 新增 GraphNode 时，应增加明确 emitter；普通业务节点不应在这里开分支。
 - 不要让没有 `_func` 的节点进入普通函数调用。
+- 编译流程可视化必须在实际分配/消费寄存器的位置记录 link；特殊 emitter 不得绕过 `compile_flow` 合同后让绘制层补猜。
 
 ### `NodeTree/OmniExecutor.py`
 
@@ -1064,7 +1091,7 @@ Python 类型到 Blender socket 类型的映射表，包含 `_OmniCache`、`_Omn
 
 ### `NodeTree/OmniNodeDraw.py`
 
-节点图绘制辅助。负责 bug 文本、overlay、绘制状态同步和清理。
+Node Editor overlay 集中实现。bug/description、socket preview、运行计时和编译流程动画都在这里维护各自 payload、handler、状态同步和清理。编译流程动画的相位数学属于绘制实现，不单独拆模块；动画关闭时不得保留 timer 或持续 redraw。
 
 ### `OmniNodePanel.py`
 

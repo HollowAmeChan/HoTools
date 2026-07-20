@@ -1,7 +1,10 @@
 import bpy
 import blf
+import colorsys
 import gpu
+import math
 import textwrap
+import time
 from gpu_extras.batch import batch_for_shader
 
 from ...PropertyCurve import PropertyCurveDraw
@@ -11,7 +14,48 @@ _HANDLES = {}
 _PAYLOADS = {}
 _WARNED = set()
 _RUNTIME_TIMING_TREES = {}
+_COMPILE_FLOW_TREES = {}
 _RIGHT_OVERLAY_GAP_X = 12
+
+
+def _compile_flow_sequence_position(elapsed, cycle_seconds, node_count):
+    node_count = max(int(node_count), 1)
+    cycle_seconds = max(float(cycle_seconds), 0.25)
+    units = float(node_count * 2)
+    return (max(float(elapsed), 0.0) % cycle_seconds) / cycle_seconds * units
+
+
+def _compile_flow_node_pulse(position, node_index, node_count, width=0.85):
+    node_count = max(int(node_count), 1)
+    total = float(node_count * 2)
+    center = float(int(node_index) * 2)
+    distance = abs(float(position) - center) % total
+    distance = min(distance, total - distance)
+    width = max(float(width), 0.001)
+    if distance >= width:
+        return 0.0
+    return 0.5 + 0.5 * math.cos(math.pi * distance / width)
+
+
+def _compile_flow_link_progress(position, target_index, node_count):
+    node_count = max(int(node_count), 1)
+    total = float(node_count * 2)
+    start = (float(int(target_index) * 2) - 1.0) % total
+    local = (float(position) - start) % total
+    if local > 1.0:
+        return None
+    return local * local * (3.0 - 2.0 * local)
+
+
+def _compile_flow_muted_pulse(progress, path_index, path_count):
+    if progress is None or path_count <= 0:
+        return 0.0
+    center = (int(path_index) + 1.0) / (int(path_count) + 1.0)
+    width = min(0.22, 0.72 / (int(path_count) + 1.0))
+    distance = abs(float(progress) - center)
+    if distance >= width:
+        return 0.0
+    return 0.5 + 0.5 * math.cos(math.pi * distance / width)
 
 
 def _warn_once(key, message):
@@ -674,10 +718,297 @@ class DrawRuntimeTiming:
         DrawRuntimeTiming.tag_tree(tree)
 
 
+class DrawCompileFlow:
+    """Animate the compiled node order and register-transfer links."""
+
+    GLOBAL_OVERLAY_ID = "omni_compile_flow::global"
+    TIMER_INTERVAL = 1.0 / 24.0
+    REGULAR_COLOR = (0.18, 0.78, 1.0)
+    MUTED_LINK_COLOR = (1.0, 0.55, 0.12)
+    MUTED_NODE_COLOR = (1.0, 0.55, 0.12)
+    _timer_running = False
+
+    @staticmethod
+    def _node_bounds(node):
+        left, top = _absolute_location(node)
+        try:
+            width, height = map(float, node.dimensions)
+        except (TypeError, ValueError):
+            width, height = _get_node_width(node, 140.0), 80.0
+        width = max(_get_node_width(node, width), 24.0)
+        height = max(height, 24.0)
+        return left, top - height, left + width, top
+
+    @staticmethod
+    def _socket_anchor(node, identifier, is_output):
+        left, bottom, right, top = DrawCompileFlow._node_bounds(node)
+        if getattr(node, "hide", False):
+            return (right if is_output else left), (top + bottom) * 0.5
+
+        sockets = getattr(node, "outputs" if is_output else "inputs", ())
+        visible = [sock for sock in sockets if not getattr(sock, "hide", False)]
+        index = 0
+        for socket_index, sock in enumerate(visible):
+            if getattr(sock, "identifier", None) == identifier:
+                index = socket_index
+                break
+        available = max((top - bottom) - 38.0, 16.0)
+        spacing = min(22.0, max(14.0, available / max(len(visible), 1)))
+        y = top - 34.0 - index * spacing
+        return (right if is_output else left), max(bottom + 8.0, y)
+
+    @staticmethod
+    def _node_side_anchor(node, is_output):
+        left, bottom, right, top = DrawCompileFlow._node_bounds(node)
+        return (right if is_output else left), (top + bottom) * 0.5
+
+    @staticmethod
+    def _bezier_points(start, end, count=32):
+        count = max(int(count), 2)
+        x0, y0 = start
+        x3, y3 = end
+        handle = max(abs(x3 - x0) * 0.5, 36.0)
+        x1, y1 = x0 + handle, y0
+        x2, y2 = x3 - handle, y3
+        points = []
+        for index in range(count):
+            t = index / float(count - 1)
+            u = 1.0 - t
+            points.append((
+                u * u * u * x0 + 3.0 * u * u * t * x1 + 3.0 * u * t * t * x2 + t * t * t * x3,
+                u * u * u * y0 + 3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t * y3,
+            ))
+        return points
+
+    @staticmethod
+    def _draw_colored_polyline(points, colors, width=2.0):
+        if len(points) < 2 or len(points) != len(colors):
+            return
+        vertices = []
+        vertex_colors = []
+        for index in range(len(points) - 1):
+            vertices.extend(((*points[index], 0.0), (*points[index + 1], 0.0)))
+            vertex_colors.extend((colors[index], colors[index + 1]))
+        try:
+            gpu.state.blend_set('ALPHA')
+            gpu.state.line_width_set(float(width))
+            shader = gpu.shader.from_builtin('SMOOTH_COLOR')
+            batch = batch_for_shader(shader, 'LINES', {"pos": vertices, "color": vertex_colors})
+            shader.bind()
+            batch.draw(shader)
+        finally:
+            gpu.state.line_width_set(1.0)
+            gpu.state.blend_set('NONE')
+
+    @staticmethod
+    def _always_color(elapsed, index):
+        hue = (float(elapsed) * 0.16 + int(index) * 0.13) % 1.0
+        return colorsys.hsv_to_rgb(hue, 0.78, 1.0)
+
+    @staticmethod
+    def _draw_node(node, index, count, position, elapsed, always_run):
+        pulse = _compile_flow_node_pulse(position, index, count)
+        color = (
+            DrawCompileFlow._always_color(elapsed, index)
+            if always_run else DrawCompileFlow.REGULAR_COLOR
+        )
+        left, bottom, right, top = DrawCompileFlow._node_bounds(node)
+        rect = [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)]
+        DrawSocketView.draw_polyline(rect, (*color, 0.16 + pulse * 0.24), width=6.0)
+        DrawSocketView.draw_polyline(rect, (*color, 0.34 + pulse * 0.66), width=2.0)
+        DrawSocketView.draw_label(
+            f"{index + 1:02d}",
+            left + 7.0,
+            top + 8.0,
+            (*color, 0.45 + pulse * 0.55),
+            size=9,
+            align="LEFT",
+        )
+
+    @staticmethod
+    def _draw_link(tree, link, target_index, count, position, elapsed, always_nodes):
+        from_name, from_socket, to_name, to_socket, reg, muted_path = link
+        source = tree.nodes.get(from_name)
+        target = tree.nodes.get(to_name)
+        if source is None or target is None:
+            return
+        anchors = [DrawCompileFlow._socket_anchor(source, from_socket, True)]
+        for muted_name in reversed(muted_path):
+            muted_node = tree.nodes.get(muted_name)
+            if muted_node is None:
+                continue
+            anchors.append(DrawCompileFlow._node_side_anchor(muted_node, False))
+            anchors.append(DrawCompileFlow._node_side_anchor(muted_node, True))
+        anchors.append(DrawCompileFlow._socket_anchor(target, to_socket, False))
+        points = []
+        for index in range(len(anchors) - 1):
+            segment = DrawCompileFlow._bezier_points(anchors[index], anchors[index + 1], count=16)
+            points.extend(segment if not points else segment[1:])
+        if muted_path:
+            color = DrawCompileFlow.MUTED_LINK_COLOR
+        elif from_name in always_nodes:
+            color = DrawCompileFlow._always_color(elapsed, target_index)
+        else:
+            color = DrawCompileFlow.REGULAR_COLOR
+        DrawSocketView.draw_polyline(points, (*color, 0.12), width=2.0)
+
+        progress = _compile_flow_link_progress(position, target_index, count)
+        if progress is None:
+            return None
+        colors = []
+        tail_length = 0.34
+        for index in range(len(points)):
+            t = index / float(len(points) - 1)
+            distance = progress - t
+            if distance < 0.0 or distance > tail_length:
+                alpha = 0.04
+            else:
+                alpha = 0.18 + 0.82 * (1.0 - distance / tail_length) ** 2
+            colors.append((*color, alpha))
+        DrawCompileFlow._draw_colored_polyline(points, colors, width=4.0)
+        head_index = min(int(progress * (len(points) - 1)), len(points) - 1)
+        head_x, head_y = points[head_index]
+        DrawSocketView.draw_label(
+            f"r{reg}",
+            head_x,
+            head_y + 9.0,
+            (*color, 0.92),
+            size=8,
+            align="CENTER",
+        )
+        return progress
+
+    @staticmethod
+    def _draw_muted_node(node, pulse):
+        left, bottom, right, top = DrawCompileFlow._node_bounds(node)
+        rect = [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)]
+        color = DrawCompileFlow.MUTED_NODE_COLOR
+        DrawSocketView.draw_polyline(rect, (*color, 0.08 + pulse * 0.12), width=6.0)
+        DrawSocketView.draw_polyline(rect, (*color, 0.22 + pulse * 0.34), width=2.0)
+
+    @staticmethod
+    def handler():
+        editor = getattr(bpy.context, "space_data", None)
+        if editor is None or editor.type != 'NODE_EDITOR':
+            return
+        tree = getattr(editor, "edit_tree", None) or getattr(editor, "node_tree", None)
+        if tree is None or not getattr(tree, "show_compile_flow", False):
+            return
+        payload = _COMPILE_FLOW_TREES.get(_tree_draw_key(tree))
+        if not payload:
+            return
+
+        flow = payload["flow"]
+        nodes = flow.get("nodes", ())
+        if not nodes:
+            return
+        elapsed = time.perf_counter() - payload["started_at"]
+        cycle = max(float(getattr(tree, "compile_flow_cycle_duration", 4.0)), 1.0)
+        position = _compile_flow_sequence_position(elapsed, cycle, len(nodes))
+        node_indices = {record[0]: index for index, record in enumerate(nodes)}
+        always_nodes = {record[0] for record in nodes if record[2]}
+        muted_pulses = {}
+
+        try:
+            for link in flow.get("links", ()):
+                target_index = node_indices.get(link[2])
+                if target_index is not None:
+                    progress = DrawCompileFlow._draw_link(
+                        tree, link, target_index, len(nodes), position, elapsed, always_nodes
+                    )
+                    muted_path = tuple(reversed(link[5]))
+                    for path_index, muted_name in enumerate(muted_path):
+                        pulse = _compile_flow_muted_pulse(
+                            progress, path_index, len(muted_path)
+                        )
+                        muted_pulses[muted_name] = max(
+                            muted_pulses.get(muted_name, 0.0), pulse
+                        )
+            for muted_name in flow.get("muted_nodes", ()):
+                muted_node = tree.nodes.get(muted_name)
+                if muted_node is not None:
+                    DrawCompileFlow._draw_muted_node(
+                        muted_node,
+                        muted_pulses.get(muted_name, 0.0),
+                    )
+            for index, (node_name, _node_type, always_run) in enumerate(nodes):
+                node = tree.nodes.get(node_name)
+                if node is not None:
+                    DrawCompileFlow._draw_node(
+                        node, index, len(nodes), position, elapsed, bool(always_run)
+                    )
+        except Exception as exc:
+            _warn_once("compile_flow_handler", f"OmniNode compile flow draw failed: {exc}")
+
+    @staticmethod
+    def animation_timer():
+        if not _COMPILE_FLOW_TREES:
+            DrawCompileFlow._timer_running = False
+            return None
+        wm = getattr(bpy.context, "window_manager", None)
+        if wm is not None:
+            for window in wm.windows:
+                for area in window.screen.areas:
+                    if area.type != 'NODE_EDITOR':
+                        continue
+                    space = area.spaces.active
+                    tree = getattr(space, "edit_tree", None) or getattr(space, "node_tree", None)
+                    if tree is not None and _tree_draw_key(tree) in _COMPILE_FLOW_TREES:
+                        area.tag_redraw()
+        return DrawCompileFlow.TIMER_INTERVAL
+
+    @staticmethod
+    def ensure_handler():
+        if DrawCompileFlow.GLOBAL_OVERLAY_ID not in _HANDLES:
+            _PAYLOADS[DrawCompileFlow.GLOBAL_OVERLAY_ID] = {"tree_name": None}
+            _HANDLES[DrawCompileFlow.GLOBAL_OVERLAY_ID] = bpy.types.SpaceNodeEditor.draw_handler_add(
+                DrawCompileFlow.handler,
+                (),
+                'WINDOW',
+                'POST_VIEW',
+            )
+        if not DrawCompileFlow._timer_running:
+            bpy.app.timers.register(DrawCompileFlow.animation_timer, first_interval=0.0)
+            DrawCompileFlow._timer_running = True
+
+    @staticmethod
+    def stop_timer():
+        try:
+            if bpy.app.timers.is_registered(DrawCompileFlow.animation_timer):
+                bpy.app.timers.unregister(DrawCompileFlow.animation_timer)
+        except Exception:
+            pass
+        DrawCompileFlow._timer_running = False
+
+    @staticmethod
+    def update_tree(tree, flow):
+        if not flow or not flow.get("nodes"):
+            DrawCompileFlow.clear_tree(tree)
+            return
+        _COMPILE_FLOW_TREES[_tree_draw_key(tree)] = {
+            "flow": flow,
+            "started_at": time.perf_counter(),
+        }
+        DrawCompileFlow.ensure_handler()
+        DrawCompileFlow.tag_tree(tree)
+
+    @staticmethod
+    def tag_tree(tree):
+        _tag_node_editors(getattr(tree, "name_full", None))
+
+    @staticmethod
+    def clear_tree(tree):
+        _COMPILE_FLOW_TREES.pop(_tree_draw_key(tree), None)
+        DrawCompileFlow.tag_tree(tree)
+        if not _COMPILE_FLOW_TREES:
+            DrawCompileFlow.stop_timer()
+
+
 def clear_tree(tree):
     DrawDescription.clear_tree(tree)
     DrawBug.clear_tree(tree)
     DrawRuntimeTiming.clear_tree(tree)
+    DrawCompileFlow.clear_tree(tree)
 
 
 def register():
@@ -687,6 +1018,8 @@ def register():
 
 def unregister():
     _RUNTIME_TIMING_TREES.clear()
+    _COMPILE_FLOW_TREES.clear()
+    DrawCompileFlow.stop_timer()
     overlay_ids = set(_HANDLES.keys()) | set(_PAYLOADS.keys())
     for overlay_id in list(overlay_ids):
         _clear_overlay(overlay_id)

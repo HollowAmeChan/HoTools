@@ -142,6 +142,8 @@ class CompilerContext:
         self.reachable_nodes = set()
         self.muted_nodes = set()
         self.muted_passthrough_links = {}
+        self.compile_flow_links = []
+        self._compile_flow_link_keys = set()
 
         OmniRuntimeState.ensure_tree_runtime_uids(tree)
 
@@ -375,12 +377,27 @@ class CompilerContext:
         self.reg_id += 1
         return reg
 
+    def _record_compile_flow_link(self, link, target_socket, reg):
+        record = (
+            str(link.from_node.name),
+            str(getattr(link.from_socket, "identifier", "")),
+            str(target_socket.node.name),
+            str(getattr(target_socket, "identifier", "")),
+            int(reg),
+            tuple(str(node.name) for node in getattr(link, "muted_path", ())),
+        )
+        if record in self._compile_flow_link_keys:
+            return
+        self._compile_flow_link_keys.add(record)
+        self.compile_flow_links.append(record)
+
     def compile_single_input(self, sock):
         socket_links = self.sorted_socket_links(sock)
         if socket_links:
             link = socket_links[0]
             key = (link.from_node.name, link.from_socket.identifier)
             reg = self.reg_map[key]
+            self._record_compile_flow_link(link, sock, reg)
             OmniDebug.append_compile_trace(
                 self.graph,
                 f"Use r{reg} bridge {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
@@ -422,6 +439,7 @@ class CompilerContext:
             key = (link.from_node.name, link.from_socket.identifier)
             reg = self.reg_map[key]
             regs.append(reg)
+            self._record_compile_flow_link(link, sock, reg)
             OmniDebug.append_compile_trace(
                 self.graph,
                 f"Use {trace_kind} bridge r{reg} {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
@@ -649,10 +667,12 @@ class CompilerContext:
                 continue
             link = socket_links[0]
             key = (link.from_node.name, link.from_socket.identifier)
-            self.graph.output_regs[sock.identifier] = self.reg_map[key]
+            reg = self.reg_map[key]
+            self.graph.output_regs[sock.identifier] = reg
+            self._record_compile_flow_link(link, sock, reg)
             OmniDebug.append_compile_trace(
                 self.graph,
-                f"Map tree output {sock.identifier} <- r{self.reg_map[key]} from "
+                f"Map tree output {sock.identifier} <- r{reg} from "
                 f"{link.from_node.name}.{OmniDebug.socket_name(link.from_socket)}",
             )
 
@@ -1002,6 +1022,8 @@ class CompilerContext:
         # ── 懒求值：计算 has_always_run_node ──────────────────────────────────
         self.graph.has_always_run_node = self._compute_has_always_run(self.graph)
 
+        self.graph.compile_flow = self._build_compile_flow_snapshot()
+
         # ── 懒求值：计算各子树 ref_count 和 inner_lazy_eval ───────────────────
         self._compute_ref_counts(self.graph)
 
@@ -1011,6 +1033,53 @@ class CompilerContext:
             f"has_always_run_node={self.graph.has_always_run_node}",
         )
         return self.graph
+
+    def _build_compile_flow_snapshot(self):
+        from .OmniIR import (
+            OpCall as _OpCall,
+            SubtreeCall as _SubCall,
+            BatchSubtreeCall as _BSubCall,
+            CacheReadCall as _CacheRead,
+            CacheWriteCall as _CacheWrite,
+            CacheDeleteCall as _CacheDelete,
+            CacheDumpCall as _CacheDump,
+        )
+
+        instruction_nodes = {}
+        always_run_nodes = set()
+        cache_types = (_CacheRead, _CacheWrite, _CacheDelete, _CacheDump)
+        subtree_types = (_SubCall, _BSubCall)
+
+        for op in self.graph.instructions:
+            node = getattr(op, "node", None)
+            node_name = getattr(node, "name", None)
+            if not node_name:
+                continue
+            instruction_nodes[node_name] = node
+            if isinstance(op, _OpCall) and bool(getattr(op, "has_always_run", False)):
+                always_run_nodes.add(node_name)
+            elif isinstance(op, cache_types):
+                always_run_nodes.add(node_name)
+            elif isinstance(op, subtree_types):
+                child = getattr(op, "compiled_graph", None)
+                if bool(getattr(child, "has_always_run_node", False)):
+                    always_run_nodes.add(node_name)
+
+        ordered_nodes = tuple(
+            (
+                str(node.name),
+                str(node.bl_idname),
+                node.name in always_run_nodes or bool(getattr(node, "is_output_node", False)),
+            )
+            for node in self.topo
+            if node.name in instruction_nodes or bool(getattr(node, "is_output_node", False))
+        )
+        return {
+            "schema": 1,
+            "nodes": ordered_nodes,
+            "links": tuple(self.compile_flow_links),
+            "muted_nodes": tuple(sorted(str(node.name) for node in self.muted_nodes)),
+        }
 
     @staticmethod
     def _compute_has_always_run(graph) -> bool:

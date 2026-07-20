@@ -69,6 +69,7 @@ class CompiledGraph:
         self.register_bridges = []
         self.function_catalog = []
         self.debug_enabled   = False
+        self.compile_flow    = None
         self.runtime_cache_contract = None
         self.runtime_namespace_children = ()
         self.runtime_output_contracts = {}

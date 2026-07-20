@@ -208,12 +208,15 @@ try:
     output_io.socket_type = "NodeSocketString"
 
     source = tree.nodes.new("HO_OmniNode_stringInput")
+    muted_upstream = tree.nodes.new("HO_OmniNode_uvLayerRename")
     muted = tree.nodes.new("HO_OmniNode_uvLayerRename")
     output = tree.nodes.new("HO_OmniNode_GroupNode_Outputs")
     output.syncGroupIO()
     source.inputs["v"].default_value = "BypassedName"
+    muted_upstream.mute = True
     muted.mute = True
-    tree.links.new(source.outputs["_OUTPUT0"], muted.inputs["new_name"])
+    tree.links.new(source.outputs["_OUTPUT0"], muted_upstream.inputs["new_name"])
+    tree.links.new(muted_upstream.outputs["_OUTPUT1"], muted.inputs["new_name"])
     tree.links.new(muted.outputs["_OUTPUT1"], output.inputs[output_io.uid])
 
     compiled = OmniCompiler.compile(tree, debug=True)
@@ -224,6 +227,65 @@ try:
     assert "uvLayerRename" not in instruction_names
     assert "stringInput" in instruction_names
     assert len(compiled.output_regs) == 1
+    compile_flow = compiled.compile_flow
+    flow_node_names = [item[0] for item in compile_flow["nodes"]]
+    assert source.name in flow_node_names
+    assert muted_upstream.name not in flow_node_names
+    assert muted.name not in flow_node_names
+    assert output.name in flow_node_names
+    assert flow_node_names.index(source.name) < flow_node_names.index(output.name)
+    flow_node_flags = {item[0]: item[2] for item in compile_flow["nodes"]}
+    assert flow_node_flags[source.name] is False
+    assert flow_node_flags[output.name] is True
+    passthrough_flow = next(
+        item for item in compile_flow["links"]
+        if item[0] == source.name and item[2] == output.name
+    )
+    assert passthrough_flow[1] == source.outputs["_OUTPUT0"].identifier
+    assert passthrough_flow[3] == output.inputs[output_io.uid].identifier
+    assert passthrough_flow[5] == (muted.name, muted_upstream.name)
+    assert compile_flow["muted_nodes"] == tuple(sorted((muted.name, muted_upstream.name)))
+    assert OmniNodeDraw._compile_flow_node_pulse(0.0, 0, 3) == 1.0
+    assert OmniNodeDraw._compile_flow_link_progress(1.0, 1, 3) == 0.0
+    assert OmniNodeDraw._compile_flow_link_progress(1.5, 1, 3) == 0.5
+    assert OmniNodeDraw._compile_flow_link_progress(2.0, 1, 3) == 1.0
+    assert OmniNodeDraw._compile_flow_node_pulse(2.0, 1, 3) == 1.0
+    assert OmniNodeDraw._compile_flow_muted_pulse(0.5, 0, 1) == 1.0
+    assert OmniNodeDraw._compile_flow_muted_pulse(0.0, 0, 1) == 0.0
+
+    drawn_flow = {"colored_points": (), "labels": []}
+    original_polyline = OmniNodeDraw.DrawSocketView.draw_polyline
+    original_label = OmniNodeDraw.DrawSocketView.draw_label
+    original_colored = OmniNodeDraw.DrawCompileFlow._draw_colored_polyline
+
+    def capture_label(text, *args, **kwargs):
+        drawn_flow["labels"].append(text)
+
+    def capture_colored(points, colors, width=2.0):
+        drawn_flow["colored_points"] = tuple(points)
+
+    OmniNodeDraw.DrawSocketView.draw_polyline = staticmethod(lambda *args, **kwargs: None)
+    OmniNodeDraw.DrawSocketView.draw_label = staticmethod(capture_label)
+    OmniNodeDraw.DrawCompileFlow._draw_colored_polyline = staticmethod(capture_colored)
+    try:
+        output_index = flow_node_names.index(output.name)
+        transfer_position = (output_index * 2.0 - 0.5) % (len(flow_node_names) * 2.0)
+        progress = OmniNodeDraw.DrawCompileFlow._draw_link(
+            tree,
+            passthrough_flow,
+            output_index,
+            len(flow_node_names),
+            transfer_position,
+            0.0,
+            {name for name, enabled in flow_node_flags.items() if enabled},
+        )
+    finally:
+        OmniNodeDraw.DrawSocketView.draw_polyline = staticmethod(original_polyline)
+        OmniNodeDraw.DrawSocketView.draw_label = staticmethod(original_label)
+        OmniNodeDraw.DrawCompileFlow._draw_colored_polyline = staticmethod(original_colored)
+    assert progress == 0.5
+    assert len(drawn_flow["colored_points"]) > 32
+    assert f"r{passthrough_flow[4]}" in drawn_flow["labels"]
 
     def state_owner(value, amount):
         return value, amount
@@ -311,6 +373,17 @@ try:
         cache_output.inputs[unrelated_output_io.uid],
     )
     cache_tree.compile_cached(force=True)
+
+    assert cache_tree.show_compile_flow is False
+    assert cache_tree.compile_flow_cycle_duration == 4.0
+    cache_tree.show_compile_flow = True
+    compile_flow_key = int(cache_tree.as_pointer())
+    assert compile_flow_key in OmniNodeDraw._COMPILE_FLOW_TREES
+    cache_tree.compile_flow_cycle_duration = 5.0
+    assert cache_tree.compile_flow_cycle_duration == 5.0
+    cache_tree.show_compile_flow = False
+    assert compile_flow_key not in OmniNodeDraw._COMPILE_FLOW_TREES
+    assert OmniNodeDraw.DrawCompileFlow._timer_running is False
 
     assert cache_tree.debug_runtime_timing is False
     assert cache_tree.show_runtime_timing is False

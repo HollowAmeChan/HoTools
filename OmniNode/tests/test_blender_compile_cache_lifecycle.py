@@ -98,6 +98,15 @@ draw_module.DrawRuntimeTiming = type(
         "update_tree": staticmethod(lambda *args, **kwargs: None),
     },
 )
+draw_module.DrawCompileFlow = type(
+    "DrawCompileFlow",
+    (),
+    {
+        "clear_tree": staticmethod(lambda tree: None),
+        "tag_tree": staticmethod(lambda tree: None),
+        "update_tree": staticmethod(lambda *args, **kwargs: None),
+    },
+)
 sys.modules[draw_module.__name__] = draw_module
 
 operator_module = types.ModuleType(f"{_PACKAGE}.OmniNodeOperator")

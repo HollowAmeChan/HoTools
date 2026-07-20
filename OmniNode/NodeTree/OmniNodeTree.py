@@ -45,6 +45,7 @@ def clear_tree_compile_cache(tree):
     # 清空持久化寄存器，释放 bpy 对象引用，防止悬空指针
     if old is not None:
         old.clear_reg_arrays()
+    OmniNodeDraw.DrawCompileFlow.clear_tree(tree)
 
 
 def _cached_compiled_graph(tree):
@@ -88,6 +89,26 @@ def _show_runtime_timing_update(tree, context):
 
 def _runtime_timing_sample_interval_update(tree, context):
     OmniRuntimeTiming.reset_overlay_schedule(tree)
+
+
+def _show_compile_flow_update(tree, context):
+    if not getattr(tree, "show_compile_flow", False):
+        OmniNodeDraw.DrawCompileFlow.clear_tree(tree)
+        return
+    try:
+        compiled = _cached_compiled_graph(tree)
+        if compiled is None:
+            compiled = tree.compile_cached(force=False)
+        else:
+            OmniNodeDraw.DrawCompileFlow.update_tree(tree, compiled.compile_flow)
+    except Exception as exc:
+        OmniNodeDraw.DrawCompileFlow.clear_tree(tree)
+        print(f"[OmniNode Compile Flow] unavailable for '{tree.name}': {exc}")
+
+
+def _compile_flow_cycle_update(tree, context):
+    if getattr(tree, "show_compile_flow", False):
+        OmniNodeDraw.DrawCompileFlow.tag_tree(tree)
 
 
 @persistent
@@ -211,6 +232,20 @@ class OmniNodeTree(NodeTree):
         description="打印完整编译过程和寄存器桥，只在编译或重编译时输出。",
         default=False,
     )  # type: ignore
+    show_compile_flow: bpy.props.BoolProperty(
+        name="编译流程可视化",
+        description="按实际编译拓扑动画显示节点顺序、寄存器link、mute透传和always-run节点。",
+        default=False,
+        update=_show_compile_flow_update,
+    )  # type: ignore
+    compile_flow_cycle_duration: bpy.props.FloatProperty(
+        name="流动周期",
+        description="从上游到下游播放一次完整编译流程的秒数。",
+        default=4.0,
+        min=1.0,
+        soft_max=12.0,
+        update=_compile_flow_cycle_update,
+    )  # type: ignore
     debug_runtime_trace: bpy.props.BoolProperty(
         name="Debug运行",
         description="打印每次运行的完整指令执行过程。每帧运行时会非常频繁。",
@@ -316,6 +351,9 @@ class OmniNodeTree(NodeTree):
             print("\n".join(OmniDebug.format_runtime_header(self.name)))
             print("\n".join(OmniDebug.format_compile_report(compiled, (SubtreeCall, BatchSubtreeCall))))
             print("\n".join(OmniDebug.format_runtime_separator(self.name)))
+
+        if getattr(self, "show_compile_flow", False):
+            OmniNodeDraw.DrawCompileFlow.update_tree(self, compiled.compile_flow)
 
         return compiled
 
@@ -492,6 +530,10 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     layout.prop(tree, "is_execution_enabled", text="", toggle=True,icon_only=True)
     layout.prop(tree, "debug_compile", text="Debug编译", toggle=True)
+    layout.prop(tree, "show_compile_flow", text="编译流程可视化", toggle=True)
+    compile_flow_row = layout.row()
+    compile_flow_row.enabled = bool(getattr(tree, "show_compile_flow", False))
+    compile_flow_row.prop(tree, "compile_flow_cycle_duration", text="流动周期")
     layout.prop(tree, "debug_runtime_trace", text="Debug运行", toggle=True)
     layout.prop(tree, "debug_runtime_timing", text="Debug运行时长", toggle=True)
     timing_interval_row = layout.row()
