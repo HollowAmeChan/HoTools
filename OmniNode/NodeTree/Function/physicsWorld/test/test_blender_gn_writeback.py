@@ -74,6 +74,23 @@ def _offset_values(obj):
     return values.reshape((-1, 3))
 
 
+def _evaluated_positions(obj):
+    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.to_mesh()
+    try:
+        values = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+        mesh.vertices.foreach_get("co", values)
+        return values.reshape((-1, 3)).copy()
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def _base_positions(obj):
+    values = np.empty(len(obj.data.vertices) * 3, dtype=np.float32)
+    obj.data.vertices.foreach_get("co", values)
+    return values.reshape((-1, 3))
+
+
 def _publish(world, obj, offsets, *, solver="mc2", slot_id="mc2:mesh:one"):
     return commands.publish_gn_offset_writeback(
         world,
@@ -121,6 +138,85 @@ def test_shared_gn_final_offset_contract():
             for node in modifier.node_group.nodes
         )
 
+        # 实际结构是刷新权威：schema 不变时，节点/socket/default/link 的差异也必须
+        # 被 register 使用的统一 refresh 检出并原位修复，不能依赖开发者记得升版本号。
+        managed_group = modifier.node_group
+        managed_pointer = int(managed_group.as_pointer())
+        original_contract = str(managed_group["hotools_physics_offset_contract"])
+        named_attribute = next(
+            node for node in managed_group.nodes
+            if node.bl_idname == "GeometryNodeInputNamedAttribute"
+        )
+        output_node = next(
+            node for node in managed_group.nodes
+            if node.bl_idname == "NodeGroupOutput"
+        )
+        named_attribute.inputs["Name"].default_value = "broken_offset_name"
+        for link in tuple(output_node.inputs["Geometry"].links):
+            managed_group.links.remove(link)
+        managed_group.nodes.new("GeometryNodeJoinGeometry")
+        managed_group.interface.new_socket(
+            name="Unexpected",
+            in_out="INPUT",
+            socket_type="NodeSocketFloat",
+        )
+        assert managed_group["hotools_physics_offset_schema"] == 3
+
+        refresh = gn_offset.refresh_managed_gn_node_groups()
+        assert refresh["refreshed_group_count"] == 1, refresh
+        assert int(managed_group.as_pointer()) == managed_pointer
+        assert str(managed_group["hotools_physics_offset_contract"]) == original_contract
+        assert len(managed_group.nodes) == 4
+        assert [item.name for item in managed_group.interface.items_tree] == [
+            "Geometry", "Geometry"
+        ]
+        named_attribute = next(
+            node for node in managed_group.nodes
+            if node.bl_idname == "GeometryNodeInputNamedAttribute"
+        )
+        assert named_attribute.inputs["Name"].default_value == world_names.GN_OFFSET_ATTRIBUTE_NAME
+        np.testing.assert_allclose(
+            _evaluated_positions(obj),
+            _base_positions(obj) + first,
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        repeated_refresh = gn_offset.refresh_managed_gn_node_groups()
+        assert repeated_refresh["refreshed_group_count"] == 0, repeated_refresh
+
+        # 模拟开发者修改 builder 但忘记提升 schema：期望 contract 必须随当前
+        # builder 自动变化，并把已有同 schema 数据块原位刷新到新结构。
+        original_builder = gn_offset._build_node_group
+        try:
+            def changed_builder(group):
+                original_builder(group)
+                group.nodes.new("GeometryNodeJoinGeometry")
+
+            gn_offset._build_node_group = changed_builder
+            gn_offset._EXPECTED_GROUP_CONTRACTS.clear()
+            builder_refresh = gn_offset.refresh_managed_gn_node_groups()
+            assert builder_refresh["refreshed_group_count"] == 1, builder_refresh
+            assert managed_group["hotools_physics_offset_schema"] == 3
+            assert any(
+                node.bl_idname == "GeometryNodeJoinGeometry"
+                for node in managed_group.nodes
+            )
+        finally:
+            gn_offset._build_node_group = original_builder
+            gn_offset._EXPECTED_GROUP_CONTRACTS.clear()
+        restore_refresh = gn_offset.refresh_managed_gn_node_groups()
+        assert restore_refresh["refreshed_group_count"] == 1, restore_refresh
+        assert len(managed_group.nodes) == 4
+        assert str(managed_group["hotools_physics_offset_contract"]) == original_contract
+
+        # Modifier 引用也由同一刷新入口修复，不要求等到下一次 solver writeback。
+        wrong_group = bpy.data.node_groups.new("GNWritebackWrongGroup", "GeometryNodeTree")
+        modifier.node_group = wrong_group
+        modifier_refresh = gn_offset.refresh_managed_gn_node_groups()
+        assert modifier_refresh["refreshed_modifier_count"] == 1, modifier_refresh
+        assert modifier.node_group == managed_group
+        bpy.data.node_groups.remove(wrong_group)
+
         # 构造已提交版本的 schema 2 组合组，迁移必须保留 Bake node/bake_id。
         legacy_group = modifier.node_group
         set_position = next(
@@ -152,6 +248,21 @@ def test_shared_gn_final_offset_contract():
         migrated_entry = gn_offset.get_gn_offset_bake_entry(cache_modifier)
         assert int(bake_node.as_pointer()) == original_bake_pointer
         assert int(migrated_entry.bake_id) == original_bake_id
+
+        cache_group = cache_modifier.node_group
+        cache_group.nodes.new("GeometryNodeJoinGeometry")
+        bake_node.label = "Broken label"
+        cache_refresh = gn_offset.refresh_managed_gn_node_groups()
+        assert cache_refresh["refreshed_group_count"] == 1, cache_refresh
+        refreshed_bake_node = gn_offset.get_gn_offset_bake_node(cache_group)
+        refreshed_entry = gn_offset.get_gn_offset_bake_entry(cache_modifier)
+        assert int(refreshed_bake_node.as_pointer()) == original_bake_pointer
+        assert int(refreshed_entry.bake_id) == original_bake_id
+        assert refreshed_bake_node.label == "Physics Post-Displacement Cache"
+        assert not any(
+            node.bl_idname == "GeometryNodeJoinGeometry"
+            for node in cache_group.nodes
+        )
 
         gn_offset.set_gn_offset_cache_enabled(obj, False)
         assert gn_offset.is_gn_offset_cache_enabled(obj) is False

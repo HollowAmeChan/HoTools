@@ -11,10 +11,14 @@ _ACTIVE = False
 
 def register() -> None:
     global _ACTIVE
+    from .gn_offset import refresh_managed_gn_node_groups
+
     if _ACTIVE:
+        refresh_managed_gn_node_groups()
         return
     from .ui import register as register_ui
 
+    refresh_managed_gn_node_groups()
     register_physics_world_blender_properties()
     try:
         register_ui()

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import bpy
 import numpy as np
 
@@ -22,6 +24,7 @@ from .names import (
 
 _NODE_GROUP_OWNER_KEY = "hotools_physics_offset_owner"
 _NODE_GROUP_SCHEMA_KEY = "hotools_physics_offset_schema"
+_NODE_GROUP_CONTRACT_KEY = "hotools_physics_offset_contract"
 _MESH_OWNER_KEY = "hotools_physics_offset_owner"
 _MESH_SCHEMA_KEY = "hotools_physics_offset_schema"
 _NODE_GROUP_OWNER = "physicsWorld.writeback"
@@ -30,6 +33,204 @@ _NODE_GROUP_SCHEMA = 3
 _CACHE_GROUP_SCHEMA = 1
 _BAKE_NODE_NAME = "HoTools Physics Bake"
 _BAKE_NODE_LABEL = "Physics Post-Displacement Cache"
+_EXPECTED_GROUP_CONTRACTS = {}
+_NODE_PRESENTATION_PROPERTIES = {
+    "rna_type",
+    "name",
+    "label",
+    "location",
+    "width",
+    "width_hidden",
+    "height",
+    "dimensions",
+    "parent",
+    "select",
+    "show_options",
+    "show_preview",
+    "show_texture",
+    "hide",
+    "use_custom_color",
+    "color",
+    "color_tag",
+    "warning_propagation",
+}
+
+
+def _freeze_rna_value(value):
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        return round(value, 9)
+    if isinstance(value, (tuple, list)):
+        return tuple(_freeze_rna_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_freeze_rna_value(item) for item in value), key=repr))
+    try:
+        return tuple(_freeze_rna_value(item) for item in value)
+    except (TypeError, ReferenceError):
+        return (type(value).__name__, str(getattr(value, "name", "") or ""))
+
+
+def _simple_rna_properties(value, excluded=()) -> tuple:
+    excluded = set(excluded)
+    properties = []
+    for prop in value.bl_rna.properties:
+        name = str(prop.identifier)
+        if (
+            name in excluded
+            or bool(getattr(prop, "is_readonly", False))
+            or str(getattr(prop, "type", "")) not in {
+                "BOOLEAN", "INT", "FLOAT", "STRING", "ENUM",
+            }
+        ):
+            continue
+        try:
+            item = getattr(value, name)
+        except (AttributeError, TypeError, ReferenceError):
+            continue
+        properties.append((name, _freeze_rna_value(item)))
+    return tuple(properties)
+
+
+def _socket_contract(socket):
+    try:
+        default = _freeze_rna_value(socket.default_value)
+    except (AttributeError, TypeError, ReferenceError):
+        default = None
+    return (
+        str(getattr(socket, "name", "") or ""),
+        str(getattr(socket, "bl_idname", "") or ""),
+        default,
+        _simple_rna_properties(
+            socket,
+            {"rna_type", "name", "default_value", "hide", "hide_value"},
+        ),
+    )
+
+
+def _node_contract(node):
+    return (
+        str(getattr(node, "name", "") or ""),
+        str(getattr(node, "bl_idname", "") or ""),
+        str(getattr(node, "label", "") or ""),
+        _simple_rna_properties(node, _NODE_PRESENTATION_PROPERTIES),
+        tuple(sorted(
+            (str(key), _freeze_rna_value(node[key]))
+            for key in node.keys()
+            if str(key) != "_RNA_UI"
+        )),
+        tuple(_socket_contract(socket) for socket in node.inputs),
+        tuple(_socket_contract(socket) for socket in node.outputs),
+    )
+
+
+def _interface_contract(group):
+    interface = getattr(group, "interface", None)
+    if interface is None:
+        return (
+            tuple((socket.name, socket.bl_idname, "INPUT") for socket in group.inputs),
+            tuple((socket.name, socket.bl_idname, "OUTPUT") for socket in group.outputs),
+        )
+    return tuple(
+        (
+            str(getattr(item, "item_type", "") or ""),
+            str(getattr(item, "name", "") or ""),
+            str(getattr(item, "in_out", "") or ""),
+            str(getattr(item, "socket_type", "") or ""),
+            _simple_rna_properties(
+                item,
+                {
+                    "rna_type", "name", "identifier", "item_type", "in_out",
+                    "socket_type", "index", "position", "parent",
+                },
+            ),
+        )
+        for item in interface.items_tree
+    )
+
+
+def _group_contract(group) -> tuple:
+    nodes = tuple(sorted((_node_contract(node) for node in group.nodes), key=repr))
+    links = tuple(sorted((
+        (
+            str(link.from_node.name),
+            str(link.from_socket.name),
+            str(link.to_node.name),
+            str(link.to_socket.name),
+        )
+        for link in group.links
+    )))
+    return _interface_contract(group), nodes, links
+
+
+def _contract_digest(contract: tuple) -> str:
+    return hashlib.sha256(repr(contract).encode("utf-8")).hexdigest()
+
+
+def _expected_group_contract(kind: str) -> tuple[tuple, str]:
+    cached = _EXPECTED_GROUP_CONTRACTS.get(kind)
+    if cached is not None:
+        return cached
+    temporary = bpy.data.node_groups.new(
+        f"__HoTools_Physics_{kind}_Contract__",
+        "GeometryNodeTree",
+    )
+    try:
+        if kind == "offset":
+            _build_node_group(temporary)
+        elif kind == "cache":
+            _build_cache_node_group(temporary)
+        else:
+            raise ValueError(f"未知 GN contract kind: {kind}")
+        contract = _group_contract(temporary)
+        cached = (contract, _contract_digest(contract))
+        _EXPECTED_GROUP_CONTRACTS[kind] = cached
+        return cached
+    finally:
+        bpy.data.node_groups.remove(temporary)
+
+
+def _notify_group_refresh(group) -> None:
+    group.update_tag()
+    for obj in bpy.data.objects:
+        if any(
+            modifier.type == "NODES" and modifier.node_group == group
+            for modifier in obj.modifiers
+        ):
+            obj.update_tag()
+    view_layer = getattr(bpy.context, "view_layer", None)
+    if view_layer is not None:
+        view_layer.update()
+
+
+def _ensure_group_structure(
+    group,
+    kind: str,
+    *,
+    preserve_bake_node=None,
+    force_check: bool = False,
+) -> bool:
+    expected, digest = _expected_group_contract(kind)
+    if not force_check and str(group.get(_NODE_GROUP_CONTRACT_KEY, "") or "") == digest:
+        return False
+    if _group_contract(group) == expected:
+        group[_NODE_GROUP_CONTRACT_KEY] = digest
+        return False
+    if kind == "offset":
+        _build_node_group(group)
+    else:
+        bake_node = preserve_bake_node
+        if bake_node is None:
+            candidate = group.nodes.get(_BAKE_NODE_NAME)
+            if getattr(candidate, "bl_idname", "") == "GeometryNodeBake":
+                bake_node = candidate
+        _build_cache_node_group(group, preserve_bake_node=bake_node)
+    actual = _group_contract(group)
+    if actual != expected:
+        raise RuntimeError(f"受管 GN {kind} 节点组刷新后仍不符合当前 contract")
+    group[_NODE_GROUP_CONTRACT_KEY] = digest
+    _notify_group_refresh(group)
+    return True
 
 
 def _require_mesh_object(obj) -> None:
@@ -126,72 +327,83 @@ def _migrate_combined_v2_group(group):
         target_index = max(0, min(old_index, len(obj.modifiers) - 1))
         if current_index != target_index:
             obj.modifiers.move(current_index, target_index)
+    _ensure_group_structure(group, "cache", preserve_bake_node=bake_node)
+    _ensure_group_structure(offset_group, "offset")
+    _notify_group_refresh(group)
+    _notify_group_refresh(offset_group)
     return offset_group
 
 
-def ensure_gn_offset_node_group():
+def ensure_gn_offset_node_group(*, force_contract_check: bool = False):
     group = bpy.data.node_groups.get(GN_OFFSET_NODE_GROUP_NAME)
     if group is None:
         group = bpy.data.node_groups.new(GN_OFFSET_NODE_GROUP_NAME, "GeometryNodeTree")
         _build_node_group(group)
+        _ensure_group_structure(group, "offset")
         return group
     if getattr(group, "bl_idname", "") != "GeometryNodeTree":
         bpy.data.node_groups.remove(group)
         group = bpy.data.node_groups.new(GN_OFFSET_NODE_GROUP_NAME, "GeometryNodeTree")
         _build_node_group(group)
+        _ensure_group_structure(group, "offset")
         return group
     owner = str(group.get(_NODE_GROUP_OWNER_KEY, "") or "")
     schema = int(group.get(_NODE_GROUP_SCHEMA_KEY, 0) or 0)
     if owner == _NODE_GROUP_OWNER and schema == 2:
         return _migrate_combined_v2_group(group)
-    elif owner != _NODE_GROUP_OWNER or schema < 2:
+    if owner == _NODE_GROUP_OWNER and schema > _NODE_GROUP_SCHEMA:
+        raise RuntimeError(f"共享 GN 物理节点组 schema 来自更高版本：{schema}")
+    if owner != _NODE_GROUP_OWNER or schema < _NODE_GROUP_SCHEMA:
         _build_node_group(group)
-    elif schema != _NODE_GROUP_SCHEMA:
-        raise RuntimeError(f"共享 GN 物理节点组 schema 不受支持：{schema}")
+        _notify_group_refresh(group)
+    _ensure_group_structure(group, "offset", force_check=force_contract_check)
     return group
 
 
-def ensure_gn_cache_node_group():
+def ensure_gn_cache_node_group(*, force_contract_check: bool = False):
     group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
     if group is None:
         group = bpy.data.node_groups.new(GN_CACHE_NODE_GROUP_NAME, "GeometryNodeTree")
         _build_cache_node_group(group)
+        _ensure_group_structure(group, "cache")
         return group
     owner = str(group.get(_NODE_GROUP_OWNER_KEY, "") or "")
     schema = int(group.get(_NODE_GROUP_SCHEMA_KEY, 0) or 0)
-    if (
-        getattr(group, "bl_idname", "") != "GeometryNodeTree"
-        or owner != _CACHE_GROUP_OWNER
-        or schema != _CACHE_GROUP_SCHEMA
-    ):
-        raise RuntimeError("GN 物理缓存节点组所有权或 schema 无效")
+    if getattr(group, "bl_idname", "") != "GeometryNodeTree":
+        bpy.data.node_groups.remove(group)
+        group = bpy.data.node_groups.new(GN_CACHE_NODE_GROUP_NAME, "GeometryNodeTree")
+        _build_cache_node_group(group)
+        _ensure_group_structure(group, "cache")
+        return group
+    if owner == _CACHE_GROUP_OWNER and schema > _CACHE_GROUP_SCHEMA:
+        raise RuntimeError(f"GN 物理缓存节点组 schema 来自更高版本：{schema}")
+    if owner != _CACHE_GROUP_OWNER or schema < _CACHE_GROUP_SCHEMA:
+        _build_cache_node_group(group)
+        _notify_group_refresh(group)
+    _ensure_group_structure(group, "cache", force_check=force_contract_check)
     return group
 
 
 def _place_live_modifier(obj, modifier) -> None:
     cache_modifier = obj.modifiers.get(GN_CACHE_MODIFIER_NAME)
     pc2_modifier = obj.modifiers.get(PC2_CACHE_MODIFIER_NAME)
-    index = obj.modifiers.find(modifier.name)
+    ordered = [modifier]
     if (
         cache_modifier is not None
         and cache_modifier != modifier
         and cache_modifier.type == "NODES"
     ):
-        cache_index = obj.modifiers.find(cache_modifier.name)
-        target_index = cache_index if index > cache_index else cache_index - 1
-        if index != target_index:
-            obj.modifiers.move(index, target_index)
-    elif (
+        ordered.append(cache_modifier)
+    if (
         pc2_modifier is not None
         and pc2_modifier != modifier
         and pc2_modifier.type == "MESH_CACHE"
     ):
-        pc2_index = obj.modifiers.find(pc2_modifier.name)
-        target_index = pc2_index if index > pc2_index else pc2_index - 1
-        if index != target_index:
-            obj.modifiers.move(index, target_index)
-    elif 0 <= index < len(obj.modifiers) - 1:
-        obj.modifiers.move(index, len(obj.modifiers) - 1)
+        ordered.append(pc2_modifier)
+    for item in ordered:
+        index = obj.modifiers.find(item.name)
+        if 0 <= index < len(obj.modifiers) - 1:
+            obj.modifiers.move(index, len(obj.modifiers) - 1)
 
 
 def ensure_gn_offset_modifier(obj):
@@ -390,6 +602,87 @@ def remove_gn_offset_output(obj) -> bool:
     return removed
 
 
+def _group_is_current(group, kind: str, owner: str, schema: int) -> bool:
+    if group is None or getattr(group, "bl_idname", "") != "GeometryNodeTree":
+        return False
+    if str(group.get(_NODE_GROUP_OWNER_KEY, "") or "") != owner:
+        return False
+    if int(group.get(_NODE_GROUP_SCHEMA_KEY, 0) or 0) != schema:
+        return False
+    expected, _digest = _expected_group_contract(kind)
+    return _group_contract(group) == expected
+
+
+def refresh_managed_gn_node_groups() -> dict:
+    """Refresh existing HoTools GN resources after addon/module reload.
+
+    The desired structure is generated from the current builders, so changing a
+    builder is detected even when a developer forgets to bump the integer schema.
+    """
+    live_objects = [
+        obj for obj in bpy.data.objects
+        if obj.type == "MESH" and obj.modifiers.get(GN_OFFSET_MODIFIER_NAME) is not None
+    ]
+    cache_objects = [
+        obj for obj in bpy.data.objects
+        if obj.type == "MESH" and obj.modifiers.get(GN_CACHE_MODIFIER_NAME) is not None
+    ]
+    live_group = bpy.data.node_groups.get(GN_OFFSET_NODE_GROUP_NAME)
+    cache_group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
+    refreshed_groups = 0
+    refreshed_modifiers = 0
+
+    if live_group is not None or live_objects:
+        was_current = _group_is_current(
+            live_group, "offset", _NODE_GROUP_OWNER, _NODE_GROUP_SCHEMA
+        )
+        live_group = ensure_gn_offset_node_group(force_contract_check=True)
+        refreshed_groups += int(not was_current)
+        cache_group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
+        cache_objects = [
+            obj for obj in bpy.data.objects
+            if obj.type == "MESH"
+            and obj.modifiers.get(GN_CACHE_MODIFIER_NAME) is not None
+        ]
+    if cache_group is not None or cache_objects:
+        was_current = _group_is_current(
+            cache_group, "cache", _CACHE_GROUP_OWNER, _CACHE_GROUP_SCHEMA
+        )
+        cache_group = ensure_gn_cache_node_group(force_contract_check=True)
+        refreshed_groups += int(not was_current)
+
+    managed_objects = tuple(dict.fromkeys((*live_objects, *cache_objects)))
+    for obj in managed_objects:
+        before = tuple(
+            (item.name, item.type, item.node_group if item.type == "NODES" else None)
+            for item in obj.modifiers
+        )
+        if obj.modifiers.get(GN_OFFSET_MODIFIER_NAME) is not None:
+            ensure_gn_offset_modifier(obj)
+        if obj.modifiers.get(GN_CACHE_MODIFIER_NAME) is not None:
+            ensure_gn_cache_modifier(obj)
+        after = tuple(
+            (item.name, item.type, item.node_group if item.type == "NODES" else None)
+            for item in obj.modifiers
+        )
+        if before != after:
+            refreshed_modifiers += 1
+            obj.update_tag()
+
+    if refreshed_modifiers:
+        view_layer = getattr(bpy.context, "view_layer", None)
+        if view_layer is not None:
+            view_layer.update()
+    live_group = bpy.data.node_groups.get(GN_OFFSET_NODE_GROUP_NAME)
+    cache_group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
+    return {
+        "group_count": int(live_group is not None) + int(cache_group is not None),
+        "refreshed_group_count": refreshed_groups,
+        "modifier_count": len(managed_objects),
+        "refreshed_modifier_count": refreshed_modifiers,
+    }
+
+
 __all__ = [
     "clear_gn_local_offsets",
     "configure_gn_offset_disk_bake",
@@ -403,6 +696,7 @@ __all__ = [
     "get_gn_offset_bake_node",
     "is_gn_offset_cache_enabled",
     "normalize_local_offsets",
+    "refresh_managed_gn_node_groups",
     "remove_gn_offset_output",
     "set_gn_offset_cache_enabled",
     "write_gn_local_offsets",
