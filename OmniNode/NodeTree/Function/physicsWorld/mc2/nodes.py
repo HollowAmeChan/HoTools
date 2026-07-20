@@ -970,21 +970,21 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     )),
     ("Angle恢复目标", _mc2_debug_help(
         "让父子方向回到StepBasic参考方向，并显示三轮交错迭代中Restoration实际修正。",
-        "粉色是恢复目标；实际修正箭头才表示本步触发。状态输出报告记录、接近和触发数。",
+        "只显示接近或触发的粒子：低饱和粉线指向恢复目标，浅粉小点=接近，亮粉大点+红箭头=本步真实触发。状态输出报告记录、接近和触发数。",
         "自然摆动时局部触发正常；禁用或刚度为0时不应有修正，静止时高频全链触发需检查目标或刚度。",
         "角度恢复(angle_restoration_enabled)、恢复刚度/曲线(angle_restoration_stiffness/angle_restoration_curve)、恢复速度衰减(angle_restoration_velocity_attenuation)、恢复重力衰减(angle_restoration_gravity_falloff)、动画姿态比例(animation_pose_ratio)。",
         "动画、重力、Center惯性、碰撞、Distance/Bending和父粒子运动都可能使当前方向偏离恢复目标。",
     )),
     ("Angle限制范围", _mc2_debug_help(
         "限制父子方向相对层级目标的最大夹角，防止链条过度折叠。",
-        "黄色锥/方向表示允许范围；实际修正箭头表示三轮迭代中的Limit触发。状态输出报告接近和触发数。",
+        "只为接近或触发的粒子显示局部低亮度黄锥：黄色小点=接近，橙色大点+红箭头=三轮迭代中的真实Limit触发。状态输出报告接近和触发数。",
         "角度在锥内不触发；碰撞或快速运动时局部触发正常，长时间卡在边界需检查上限和刚度。",
         "角度限制(angle_limit_enabled)、限制角度/曲线(angle_limit/angle_limit_curve)、限制刚度(angle_limit_stiffness)、baseline父旋转层级。",
         "父子动画、重力、Center惯性、Distance/Bending、外碰、自碰和Angle Restoration交错迭代都可能把角度推到上限。",
     )),
     ("Center", _mc2_debug_help(
         "解释组件/Anchor运动如何被拆成实际施加给粒子的惯性位移与旋转。",
-        "分层向量依次表示raw component delta、Anchor、平滑、World限速后、Local和Depth混合；状态输出明确移动/旋转限速是否触发。",
+        "状态输出先报告帧惯性最终位移、fixed-step有效惯性、对象/Anchor/平滑/World各来源贡献和限速结果；视口分层向量只用于随后审计来源。",
         "最终shift等于各实际层组合且限速只在高速运动时出现即正常；静止仍有大shift需检查Anchor或帧连续性。",
         "Anchor惯性(anchor_inertia)、World惯性(world_inertia)、惯性平滑(movement_inertia_smoothing)、移动/旋转限速(movement_speed_limit/rotation_speed_limit)、Local惯性及其限速(local_inertia/local_movement_speed_limit/local_rotation_speed_limit)、Depth惯性(depth_inertia)。",
         "对象与Anchor平移/旋转、负缩放、跳帧/倒放、Reset/Keep Teleport和帧连续性会改变Center状态。",
@@ -1110,9 +1110,9 @@ def _mc2_debug_long_description() -> str:
         "show_bending": {"description": "Bending：仅突出触发项\n紫=角度 青=体积 红箭头=修正"},
         "show_motion_base": {"description": "高级参考：Motion实际BasePosition/法线轴。"},
         "show_motion": {"description": "结果视图：蓝=MaxDistance 橙=Backstop\n小点=接近 大点+箭头=触发"},
-        "show_angle_restoration": {"description": "粉色箭头显示Angle Restoration目标。"},
-        "show_angle_limit": {"description": "黄锥=Angle Limit范围。\n方向为层级目标。"},
-        "show_center": {"description": "高级参考：组件、Anchor、frame shift与惯性量。"},
+        "show_angle_restoration": {"description": "结果视图：粉点=接近/触发\n低亮度线=恢复目标 红箭头=修正"},
+        "show_angle_limit": {"description": "结果视图：黄点=接近 橙点=触发\n低亮度锥=局部范围 红箭头=修正"},
+        "show_center": {"description": "状态先看最终惯性与来源；视口为高级分层审计。"},
         "show_teleport_threshold": {
             "description": "Teleport阈值与方向\n球=阈值  线=旧到新"
         },

@@ -300,8 +300,8 @@ Debug沿用SpringBone VRM蓝本的隐式请求模型，但覆盖更多阶段：
 | Bending约束 | C++ `bending_quads/rest/marker` + 请求时记录结果 | 只显示本步真实触发的记录：低饱和共享边用于定位，紫点=二面角、青点=体积，红箭头来自该记录各role的真实修正；未触发的全量quad不占据视口 |
 | Motion BasePosition | C++ context的`animated_base_positions/rotations`按请求readback | MaxDistance与Backstop真正使用的中心和法线轴；不得用StepBasic替代 |
 | MaxDistance/Backstop | Motion BasePosition + native逐记录触发状态 | 只在接近或触发时显示低亮度粒子到目标关系线及对应范围；蓝=MaxDistance、橙=Backstop，小点=接近，大点与红箭头=本步真实触发 |
-| Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target | 当前粒子到恢复目标的位置差；不得从最终网格朝向猜测 |
-| Angle限制范围 | C++按最终状态请求时重建的父旋转级联target + 按depth采样的`angle_limit` | 黄色方向锥；它表达Angle kernel实际使用的层级方向，不复用Restoration target，刚度为0时不绘制 |
+| Angle Restoration target | C++基于`step_basic`父子向量和当前parent position输出的target + 逐迭代记录状态 | 三轮记录按child合并为最严重状态，只为接近/触发粒子显示低饱和目标线；浅粉小点=接近，亮粉大点与红箭头=真实触发，不铺满全部恢复目标 |
+| Angle限制范围 | C++按最终状态请求时重建的父旋转级联target + 按depth采样的`angle_limit` + 逐迭代记录状态 | 三轮记录按child合并，只为接近/触发粒子显示局部低亮度锥；黄点=接近，橙点与红箭头=真实触发；它使用Limit层级方向，不复用Restoration target |
 | Final Output Offset | 已冻结result candidate与writeback plan | Mesh实际object-local offset对应的world线段；Bone只显示实际允许平移的target，connected rotation-only骨不伪造位移 |
 | Task External Colliders | 每个runtime item实际上传的`MC2ColliderFrameSpec` | 已经过source排除、group mask、setup type过滤的collider key/type/shape；task过滤必须只画该task参与集合 |
 | 实际接触 | task Point/Edge外碰记录 + world interaction跨owner contact | 外碰只显示命中的真实半径球/变半径胶囊、对应collider和白色接触点；黄色箭头将实际推动固定放大8倍。跨task只纳入enabled且owner不同的EE/PT contact，并为两侧primitive分别显示四轮solve真实累计贡献；同task self不重复绘制 |
@@ -560,7 +560,7 @@ Topology视图以去重后的final proxy edge为唯一常规线段来源：MeshC
 
 `粒子深度`是已接通并完成首轮人工视觉复验的高级中间态。`baseline_depths/root_indices/parent_indices`属于solver已有context状态，只有该模式显式请求时才通过独立native readback复制到冻结快照；关闭时不读取，也不新建常驻副本。当前renderer已用0到1色带表达Move最终生产depth，并独立编码Fixed、root边界、局部逆序/突跳、Move无可达Fixed和ZeroDistance；`max_items`只限制绘制数量，不得改变parent/root有效性判断。Mesh色带包含`4:1`的Fixed边界表面距离修正，Bone色带仍是parent-chain depth；实际非均匀减面模型已确认该修正能抑制横向等高线偏移并改善旋转带动。无Fixed时baseline保持`root=-1/depth=0`，不借用Teleport的物体原点回退。`深度粒子索引`只为指定粒子高亮完整parent路径；累计路径长度、两种原始depth分量和归一化分母的数值标注仍是后续能力。
 
-`Center`显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。World路径发布raw component delta、实际Anchor shift、smoothing shift、World inertia/限速后shift与最终合成量，最终vector必须等于三个实际层之和，并显式发布移动/旋转限速命中；Local路径使用native `step_vector/inertia_vector`，Depth粒子混合遵守`1-depth^1.5`产品合同。现有逐粒子Teleport阈值球/状态点随实验实现一并废弃；目标debug只表达一组判定基准的类型/index、旧/新姿态、距离/角度阈值、实际测量和task级None/Keep/Reset状态。snapshot仍必须在scheduler前判定完成后捕获，zero-substep帧可观察；仅显式请求时生产，renderer不能从最终位置反推。
+`Center`显示组件/Anchor、frame shift与惯性量；只有显式请求`show_center`时才冻结任务帧中的Anchor身份、位置和组件连线，不要求C++生产额外数组。状态输出必须先报告World帧惯性最终位移、Local fixed-step有效惯性、对象/Anchor/平滑/World各来源贡献和移动/旋转限速结果，视口分层向量只作为第二步来源审计。World路径发布raw component delta、实际Anchor shift、smoothing shift、World inertia/限速后shift与最终合成量，最终vector必须等于三个实际层之和；Local路径使用native `step_vector/inertia_vector`，Depth粒子混合遵守`1-depth^1.5`产品合同。现有逐粒子Teleport阈值球/状态点随实验实现一并废弃；目标debug只表达一组判定基准的类型/index、旧/新姿态、距离/角度阈值、实际测量和task级None/Keep/Reset状态。snapshot仍必须在scheduler前判定完成后捕获，zero-substep帧可观察；仅显式请求时生产，renderer不能从最终位置反推。
 
 `碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色半透明低模球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色半透明低模胶囊显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状，并只保留一根中心线；蓝色半透明实体显示本帧实际上传的Sphere/Capsule/Plane/Box collider，并保持正常深度测试以便判断真实遮挡和穿插。所有同色实体合并为单一indexed triangle batch，公共utils保留原线框API并旁路提供实体API。`max_items`默认10000，预算按final proxy连通分量公平分配并在分量内均匀抽样；预算不少于分量数时每个非连通分量至少保留一个形状，禁止再用数组前缀截断让后序分量整块消失。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 

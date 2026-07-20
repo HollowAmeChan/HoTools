@@ -80,8 +80,12 @@ _COLORS = {
     "bending_guide": (0.46, 0.40, 0.54, 0.22),
     "bending_volume": (0.20, 0.90, 0.82, 0.72),
     "bending_correction": (1.00, 0.08, 0.04, 1.00),
-    "angle_target": (1.00, 0.32, 0.72, 0.95),
-    "angle_limit": (1.00, 0.82, 0.20, 0.78),
+    "angle_restoration_guide": (0.58, 0.42, 0.54, 0.22),
+    "angle_restoration_near": (1.00, 0.50, 0.78, 0.72),
+    "angle_restoration_active": (1.00, 0.20, 0.62, 1.00),
+    "angle_limit_range": (1.00, 0.82, 0.20, 0.22),
+    "angle_limit_near": (1.00, 0.82, 0.20, 0.76),
+    "angle_limit_active": (1.00, 0.42, 0.06, 1.00),
     "angle_correction": (1.00, 0.08, 0.04, 1.00),
     "max_distance": (0.30, 0.75, 1.00, 0.36),
     "max_distance_range": (0.30, 0.75, 1.00, 0.24),
@@ -149,6 +153,15 @@ _MC2_DRAW_HANDLE = None
 
 def _values(value):
     return () if value is None else value
+
+
+def _vector_length(value) -> float:
+    if value is None:
+        return 0.0
+    values = np.asarray(_values(value), dtype=np.float32).reshape((-1,))
+    if len(values) < 3:
+        return 0.0
+    return float(np.linalg.norm(values[:3]))
 
 
 def update_mc2_debug_draw_store(
@@ -468,8 +481,17 @@ def _build_slot_status_lines(snapshot: dict, filters: dict) -> list[str]:
         ))
     if filters.get("show_center"):
         shift = (snapshot.get("center") or {}).get("frame_shift") or {}
+        step = (snapshot.get("center") or {}).get("step") or {}
+        frame_final = _vector_length(shift.get("frame_component_shift_vector"))
+        local_final = _vector_length(step.get("inertia_vector"))
         lines.append(
-            "Center：移动限速"
+            "Center：帧惯性最终位移"
+            f"{frame_final:.4g}，fixed-step有效惯性{local_final:.4g}；"
+            "来源[对象"
+            f"{_vector_length(shift.get('raw_component_delta')):.4g} / Anchor"
+            f"{_vector_length(shift.get('anchor_shift_vector')):.4g} / 平滑"
+            f"{_vector_length(shift.get('smoothing_shift_vector')):.4g} / World"
+            f"{_vector_length(shift.get('world_shift_vector')):.4g}]；移动限速"
             f"{'已触发' if shift.get('movement_speed_limited') else '未触发'}，"
             "旋转限速"
             f"{'已触发' if shift.get('rotation_speed_limited') else '未触发'}。"
@@ -701,10 +723,9 @@ def _append_slot_batches(
             batches,
             point_batches,
             snapshot.get("motion") or {},
-            np.asarray(
-                _values((snapshot.get("native") or {}).get("positions")),
-                dtype=np.float32,
-            ).reshape((-1, 3)),
+            ((snapshot.get("constraint_records") or {}).get(
+                "angle_restoration"
+            ) or {}),
             limit,
         )
         _append_constraint_correction_batches(
@@ -717,7 +738,11 @@ def _append_slot_batches(
         )
     if filters["show_angle_limit"]:
         _append_angle_limit_batches(
-            batches, snapshot.get("motion") or {}, limit
+            batches,
+            point_batches,
+            snapshot.get("motion") or {},
+            ((snapshot.get("constraint_records") or {}).get("angle_limit") or {}),
+            limit,
         )
         _append_constraint_correction_batches(
             batches,
@@ -1450,8 +1475,40 @@ def _append_motion_base_batches(batches, point_batches, motion, limit):
     _point_batch(point_batches, points, "motion_base", 5.0)
 
 
+def _visible_angle_records(records, limit):
+    children = records.get("children")
+    origins = records.get("origins")
+    states = records.get("states")
+    iterations = records.get("iterations")
+    if any(value is None for value in (children, origins, states)):
+        return ()
+    children = np.asarray(children, dtype=np.int32).reshape((-1,))
+    origins = np.asarray(origins, dtype=np.float32).reshape((-1, 3))
+    states = np.asarray(states, dtype=np.int8).reshape((-1,))
+    if iterations is None:
+        iterations = np.zeros((len(states),), dtype=np.int8)
+    else:
+        iterations = np.asarray(iterations, dtype=np.int8).reshape((-1,))
+    selected = {}
+    for child, origin, state, iteration in zip(
+        children, origins, states, iterations
+    ):
+        child = int(child)
+        state = int(state)
+        if child < 0 or state == 0:
+            continue
+        score = (abs(state), int(iteration))
+        previous = selected.get(child)
+        if previous is None or score > previous[0]:
+            selected[child] = (score, vector3(origin), state)
+    return tuple(
+        (child, value[1], value[2])
+        for child, value in tuple(selected.items())[:limit]
+    )
+
+
 def _append_angle_restoration_batches(
-    batches, point_batches, motion, current, limit
+    batches, point_batches, motion, records, limit
 ):
     if not bool(motion.get("use_angle_restoration")):
         return
@@ -1461,23 +1518,20 @@ def _append_angle_restoration_batches(
         return
     targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
     valid = np.asarray(valid, dtype=np.uint8)
-    strengths = np.asarray(
-        _values(motion.get("angle_restoration_strengths")), dtype=np.float32
-    )
-    lines = []
-    points = []
-    for index, target in enumerate(targets[:limit]):
-        if index >= len(current) or index >= len(valid) or not valid[index]:
+    guide_lines = []
+    near_points = []
+    active_points = []
+    for child, origin, state in _visible_angle_records(records, limit):
+        if child >= len(targets) or child >= len(valid) or not valid[child]:
             continue
-        if index < len(strengths) and float(strengths[index]) <= 1.0e-8:
-            continue
-        add_arrow_lines(lines, current[index], target)
-        add_point(points, target)
-    _batch(batches, lines, "angle_target", 1.8)
-    _point_batch(point_batches, points, "angle_target", 7.0)
+        add_line(guide_lines, origin, targets[child])
+        add_point(active_points if abs(state) == 2 else near_points, origin)
+    _batch(batches, guide_lines, "angle_restoration_guide", 0.9)
+    _point_batch(point_batches, near_points, "angle_restoration_near", 3.0)
+    _point_batch(point_batches, active_points, "angle_restoration_active", 7.0)
 
 
-def _append_angle_limit_batches(batches, motion, limit):
+def _append_angle_limit_batches(batches, point_batches, motion, records, limit):
     if not bool(motion.get("use_angle_limit")):
         return
     if float(motion.get("angle_limit_stiffness", 0.0) or 0.0) <= 1.0e-8:
@@ -1492,32 +1546,43 @@ def _append_angle_limit_batches(batches, motion, limit):
     vectors = np.asarray(vectors, dtype=np.float32).reshape((-1, 3))
     valid = np.asarray(valid, dtype=np.uint8)
     limits = np.asarray(limits, dtype=np.float32)
-    lines = []
-    for index, (target, raw_vector) in enumerate(
-        zip(targets[:limit], vectors[:limit])
-    ):
-        if index >= len(valid) or not valid[index] or index >= len(limits):
+    range_lines = []
+    near_points = []
+    active_points = []
+    for child, origin, state in _visible_angle_records(records, limit):
+        if (
+            child >= len(targets)
+            or child >= len(vectors)
+            or child >= len(valid)
+            or child >= len(limits)
+            or not valid[child]
+        ):
             continue
-        vector = vector3(raw_vector)
+        target = targets[child]
+        vector = vector3(vectors[child])
         length = vector.length
         if length <= 1.0e-8:
             continue
         direction = vector / length
         parent = vector3(target) - vector
-        angle = math.radians(max(0.0, min(180.0, float(limits[index]))))
+        angle = math.radians(max(0.0, min(180.0, float(limits[child]))))
         if angle >= math.pi - 1.0e-4:
-            _add_axis_sphere(lines, parent, length)
+            _add_axis_sphere(range_lines, parent, length)
+            add_point(active_points if abs(state) == 2 else near_points, origin)
             continue
         cap_center = parent + direction * (math.cos(angle) * length)
         cap_radius = math.sin(angle) * length
         axis_a, axis_b = _plane_axes(direction)
         if cap_radius > 1.0e-7:
-            add_circle_lines(lines, cap_center, axis_a, axis_b, cap_radius)
+            add_circle_lines(range_lines, cap_center, axis_a, axis_b, cap_radius)
             for side in (axis_a, -axis_a, axis_b, -axis_b):
-                add_line(lines, parent, cap_center + side * cap_radius)
+                add_line(range_lines, parent, cap_center + side * cap_radius)
         else:
-            add_line(lines, parent, parent + direction * length)
-    _batch(batches, lines, "angle_limit", 1.4)
+            add_line(range_lines, parent, parent + direction * length)
+        add_point(active_points if abs(state) == 2 else near_points, origin)
+    _batch(batches, range_lines, "angle_limit_range", 0.9)
+    _point_batch(point_batches, near_points, "angle_limit_near", 3.0)
+    _point_batch(point_batches, active_points, "angle_limit_active", 7.0)
 
 
 def _append_task_teleport_batches(

@@ -310,6 +310,8 @@ try:
     assert "放大8倍" in debug_descriptions["自碰4 接触结果"]
     assert "同相位的前两帧" in debug_descriptions["自碰4 接触结果"]
     assert "不是粒子速度" in debug_descriptions["Teleport触发状态"]
+    assert "低饱和粉线" in debug_descriptions["Angle恢复目标"]
+    assert "局部低亮度黄锥" in debug_descriptions["Angle限制范围"]
 
     tether_batches = []
     tether_points = []
@@ -397,6 +399,59 @@ try:
     assert tuple(debug_draw._COLORS["max_distance"]) in motion_point_colors
     assert tuple(debug_draw._COLORS["backstop"]) in motion_point_colors
     assert tuple(debug_draw._COLORS["backstop_active"]) in motion_point_colors
+
+    angle_records = {
+        "children": np.asarray((0, 1, 2), dtype=np.int32),
+        "origins": np.asarray(
+            ((0, 0, 0), (1, 0, 0), (2, 0, 0)), dtype=np.float32
+        ),
+        "iterations": np.asarray((0, 1, 2), dtype=np.int8),
+        "states": np.asarray((0, 1, 2), dtype=np.int8),
+    }
+    angle_motion = {
+        "use_angle_restoration": True,
+        "use_angle_limit": True,
+        "angle_restoration_target_positions": np.asarray(
+            ((0, 1, 0), (1, 1, 0), (2, 1, 0)), dtype=np.float32
+        ),
+        "angle_restoration_target_valid": np.ones(3, dtype=np.uint8),
+        "angle_limit_target_positions": np.asarray(
+            ((0, 1, 0), (1, 1, 0), (2, 1, 0)), dtype=np.float32
+        ),
+        "angle_limit_target_vectors": np.asarray(
+            ((0, 1, 0), (0, 1, 0), (0, 1, 0)), dtype=np.float32
+        ),
+        "angle_limit_target_valid": np.ones(3, dtype=np.uint8),
+        "angle_limits": np.asarray((45, 45, 45), dtype=np.float32),
+        "angle_limit_stiffness": 1.0,
+    }
+    angle_batches = []
+    angle_points = []
+    debug_draw._append_angle_restoration_batches(
+        angle_batches, angle_points, angle_motion, angle_records, 10000
+    )
+    assert sum(len(batch[0]) for batch in angle_points) == 2
+    assert tuple(debug_draw._COLORS["angle_restoration_near"]) in {
+        tuple(batch[1]) for batch in angle_points
+    }
+    assert tuple(debug_draw._COLORS["angle_restoration_active"]) in {
+        tuple(batch[1]) for batch in angle_points
+    }
+    angle_batches = []
+    angle_points = []
+    debug_draw._append_angle_limit_batches(
+        angle_batches, angle_points, angle_motion, angle_records, 10000
+    )
+    assert sum(len(batch[0]) for batch in angle_points) == 2
+    assert tuple(debug_draw._COLORS["angle_limit_range"]) in {
+        tuple(batch[1]) for batch in angle_batches
+    }
+    assert tuple(debug_draw._COLORS["angle_limit_near"]) in {
+        tuple(batch[1]) for batch in angle_points
+    }
+    assert tuple(debug_draw._COLORS["angle_limit_active"]) in {
+        tuple(batch[1]) for batch in angle_points
+    }
 
     teleport_base = {
         "reference_position": (1.0, 0.0, 0.0),
@@ -1306,8 +1361,8 @@ try:
         ("show_bending", {"show_bending": True}, ("bending", "bending_volume")),
         ("show_motion_base", {"show_motion_base": True}, ("motion_base",)),
         ("show_motion", {"show_motion": True}, ("max_distance_active", "backstop_active")),
-        ("show_angle_limit", {"show_angle_limit": True}, ("angle_limit",)),
-        ("show_angle_restoration", {"show_angle_restoration": True}, ("angle_target",)),
+        ("show_angle_limit", {"show_angle_limit": True}, ("angle_limit_range", "angle_limit_active")),
+        ("show_angle_restoration", {"show_angle_restoration": True}, ("angle_restoration_guide", "angle_restoration_active")),
         ("show_center", {"show_center": True}, ("center",)),
         (
             "show_teleport_threshold",
