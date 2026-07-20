@@ -137,7 +137,7 @@ profile + task combination
 
 MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新动画world pose；没有Fixed时比较模拟对象原点，Bone task即Armature Object原点。位移或旋转任一越阈值即处理整个task，基准身份不得随帧改变。
 
-`Reset`必须把整个task的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和碰撞历史对齐本帧动画基准；`Keep`按判定基准的姿态delta整体搬运已有形状，但不得保留由传送本身制造的高速速度。两种模式都要同步处理Center、collider、task内self和跨task interaction历史，后续真实substep再重建；触发发生在scheduler之前，zero-substep帧也立即发布新结果。完整状态清单与复验矩阵见`MC2_MANUAL_VALIDATION_DECISIONS.md`。
+`Reset`把整个task的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和碰撞历史对齐本帧动画基准；`Keep`按判定基准姿态delta整体搬运state、velocity reference、StepBasic、Motion base和rotation，并只旋转已有真实物理速度。两种模式都把old dynamic/component姿态重定基到本帧、把collider old shape重定基为current shape，避免第一substep沿传送路径重复插值或扫掠；摩擦、碰撞法线、外碰debug contact、task内self、bone output和跨task interaction历史失效后由真实substep重建。触发发生在scheduler之前，zero-substep帧也立即发布新结果。完整状态清单与复验矩阵见`MC2_MANUAL_VALIDATION_DECISIONS.md`。
 
 Teleport判定姿态由task帧适配器按首个Fixed或对象原点统一提供；MeshCloth与Bone setup在应用整体Keep/Reset时仍需各自正确转换代理/骨骼世界空间。Anchor抵消、world frame shift与Teleport的先后顺序必须对照MC2 Team Center重审，不能把同一基准delta重复应用到粒子。
 

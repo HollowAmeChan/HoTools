@@ -698,7 +698,6 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         transform_rotations(context->animated_base_rotations);
         rotate_vectors(context->state_velocities);
         rotate_vectors(context->particle_real_velocities);
-        rotate_vectors(context->particle_collision_normals);
         std::fill(context->particle_friction.begin(), context->particle_friction.end(), 0.0f);
         std::fill(
             context->particle_static_friction.begin(),
@@ -707,6 +706,25 @@ PyObject* mc2_context_v0_apply_task_teleport(PyObject*, PyObject* args) {
         );
     }
     if (triggered) {
+        // Teleport is a frame discontinuity. Rebase every interpolation source so
+        // the first post-teleport substep cannot sweep through the skipped space.
+        context->old_dynamic_positions = context->dynamic_positions;
+        context->old_dynamic_rotations = context->dynamic_rotations;
+        if (context->component_pose_ready) {
+            context->old_component_position = context->component_position;
+            context->old_component_rotation = context->component_rotation;
+            context->old_component_scale = context->component_scale;
+        }
+        context->collider_old_centers = context->collider_centers;
+        context->collider_old_segment_a = context->collider_segment_a;
+        context->collider_old_segment_b = context->collider_segment_b;
+        std::fill(
+            context->particle_collision_normals.begin(),
+            context->particle_collision_normals.end(),
+            0.0f
+        );
+        context->external_contact_debug_records.clear();
+        context->external_contact_debug_ready = false;
         ++context->task_teleport_apply_count;
         context->bone_output_positions.clear();
         context->bone_output_rotations.clear();

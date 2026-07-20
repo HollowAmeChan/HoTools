@@ -61,6 +61,23 @@ def _update_dynamic(context, frame, positions, rotations):
     )
 
 
+def _update_dynamic_with_interpolation(
+    context, frame, positions, rotations, frame_interpolation
+):
+    hotools_native.mc2_context_v0_update_dynamic(
+        context,
+        frame,
+        0,
+        positions,
+        rotations,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        frame_interpolation,
+    )
+
+
 def _read(context):
     positions = np.empty((1, 3), dtype=np.float32)
     rotations = np.empty((1, 4), dtype=np.float32)
@@ -381,7 +398,9 @@ def test_task_keep_uses_first_fixed_and_transforms_every_particle():
         current[0, 0] += 2.0
         current[1, 0] -= 5.0
         current[2, 0] += 0.1
-        _update_dynamic(context, 2, current, identity)
+        _update_dynamic_with_interpolation(
+            context, 2, current, identity, 0.25
+        )
         result = hotools_native.mc2_context_v0_apply_task_teleport(context)
         assert result["mode"] == 2
         assert result["trigger_count"] == count
@@ -395,6 +414,16 @@ def test_task_keep_uses_first_fixed_and_transforms_every_particle():
         expected_positions = before_positions + np.array([2.0, 0.0, 0.0], dtype=np.float32)
         np.testing.assert_allclose(positions, expected_positions, atol=1.0e-6)
         np.testing.assert_array_equal(rotations, identity)
+        hotools_native.mc2_context_v0_step(
+            context, 1.0 / 90.0, 1.0, 1.0
+        )
+        motion_positions = np.empty((count, 3), dtype=np.float32)
+        motion_rotations = np.empty((count, 4), dtype=np.float32)
+        hotools_native.mc2_context_v0_read_debug_motion_base(
+            context, motion_positions, motion_rotations
+        )
+        np.testing.assert_allclose(motion_positions, current, atol=1.0e-6)
+        np.testing.assert_array_equal(motion_rotations, identity)
         repeated = hotools_native.mc2_context_v0_apply_task_teleport(context)
         assert repeated == result
         assert hotools_native.mc2_context_v0_inspect(context)[
