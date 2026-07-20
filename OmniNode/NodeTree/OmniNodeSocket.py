@@ -53,6 +53,31 @@ def _mesh_object_poll(self, obj):
     return obj is not None and getattr(obj, "type", None) == "MESH"
 
 
+_PHYSICS_BAKE_POLICY_ITEMS = {
+    "ANIMATION": [
+        ("TRIGGER_FRAME_ONLY", "仅清理帧", "只删除清理帧上的本 Session 关键帧"),
+        ("FROM_CLEAR_FRAME", "清理帧及之后", "删除清理帧及之后的本 Session 关键帧"),
+        ("SESSION_ALL", "整个 Session", "删除本 Session 的专用 Bake Action"),
+    ],
+    "MESH": [
+        ("KEEP", "保留", "完全保留 GN/PC2 工作缓存"),
+        ("INVALIDATE_FROM_CLEAR_FRAME", "标记失效", "保留文件并标记清理帧后缓存失效"),
+        ("DELETE_SESSION", "删除 Session", "删除 manifest 拥有的整个缓存 entry"),
+    ],
+    "FINALIZE": [
+        ("KEEP", "保留", "完全保留最终缓存文件"),
+        ("MARK_STALE", "标记失效", "保留文件但标记不再对应当前工作缓存"),
+        ("DELETE_SESSION", "删除 Session", "删除 manifest 拥有的最终缓存文件"),
+    ],
+}
+
+
+def _physics_bake_policy_items(self, context):
+    del context
+    kind = str(getattr(self, "policy_kind", "ANIMATION") or "ANIMATION")
+    return _PHYSICS_BAKE_POLICY_ITEMS.get(kind, _PHYSICS_BAKE_POLICY_ITEMS["ANIMATION"])
+
+
 def _curve_socket_extend(socket):
     curve = getattr(socket, "curve", None)
     return getattr(curve, "extend", "CLAMP") if curve is not None else "CLAMP"
@@ -606,6 +631,27 @@ class OmniNodeSocketImageFormat(NodeSocket):
         return (0.439216, 0.698039, 1.0, 1.0)
 
 
+class OmniNodeSocketPhysicsBakePolicy(NodeSocket):
+    bl_label = "Physics Bake Policy"
+    bl_idname = "OmniNodeSocketPhysicsBakePolicy"
+
+    policy_kind: bpy.props.StringProperty(default="ANIMATION")  # type: ignore
+    default_value: bpy.props.EnumProperty(  # type: ignore
+        items=_physics_bake_policy_items,
+        name="Bake Policy",
+    )
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.62, 0.32, 0.18, 1.0)
+
+
 class OmniNodeSocketRegex(NodeSocket):
     bl_label = "正则表达式-Omni"
     bl_idname = "OmniNodeSocketRegex"
@@ -883,6 +929,7 @@ socket_cls = [
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
     OmniNodeSocketImageFormat,
+    OmniNodeSocketPhysicsBakePolicy,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,
     OmniNodeSocketDatablock,

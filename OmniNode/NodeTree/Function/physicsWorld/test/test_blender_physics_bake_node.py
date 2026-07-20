@@ -220,6 +220,31 @@ def test_physics_bake_node_mesh_stage() -> None:
             use_mesh_cache=True,
         )
         assert duplicate_count == 2 and "已排队" in duplicate_status
+        _, cleared_animations, cleared_meshes, clear_status = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode="SESSION_ALL",
+            mesh_cache_policy="KEEP",
+            finalize_cache_policy="KEEP",
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert cleared_animations == 0 and cleared_meshes == 0
+        assert "Clear 完成" in clear_status
+        assert physics_bake.run_pending_geometry_bake() is False
+        _, _, target_count, status = physics_nodes.physicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            frame_start=FRAME_START,
+            frame_end=FRAME_END,
+            bake_bones=False,
+            bake_mesh=True,
+            use_mesh_cache=True,
+        )
+        assert target_count == 2 and "已排队" in status
         bpy.app.handlers.frame_change_post.append(execute_tree_on_frame)
         assert physics_bake.run_pending_geometry_bake() is True
         assert physics_bake.geometry_bake_is_active() is False
@@ -239,6 +264,8 @@ def test_physics_bake_node_mesh_stage() -> None:
         manifest_path = cache_root / f"{PREFIX}.hotools-bake.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest["status"] == "COMPLETE"
+        assert manifest["boundary_frame"] == FRAME_START
+        assert manifest["boundary_baseline_revision"] == 1
         assert len(manifest["targets"]) == 2
         assert all(record["status"] == "COMPLETE" for record in manifest["targets"].values())
         files_before = [
@@ -299,6 +326,99 @@ def test_physics_bake_node_mesh_stage() -> None:
         )
         assert enabled_count == 2 and "正在使用" in status
         assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
+
+        bpy.context.scene.frame_set(FRAME_START)
+        payload_files = [path for path in _files(cache_root) if path != manifest_path]
+        payload_snapshot = [
+            (path, path.stat().st_size, path.stat().st_mtime_ns)
+            for path in payload_files
+        ]
+        _, animation_count, mesh_count, status = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode=2,
+            mesh_cache_policy=0,
+            finalize_cache_policy=0,
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert animation_count == 0 and mesh_count == 0 and "Clear 完成" in status
+        assert all(gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
+        assert payload_snapshot == [
+            (path, path.stat().st_size, path.stat().st_mtime_ns)
+            for path in payload_files
+        ]
+
+        _, _, mesh_count, status = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode="SESSION_ALL",
+            mesh_cache_policy="INVALIDATE_FROM_CLEAR_FRAME",
+            finalize_cache_policy="KEEP",
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert mesh_count == 2 and "Mesh 2" in status
+        assert all(not gn_offset.is_gn_offset_cache_enabled(obj) for obj in objects)
+        assert payload_snapshot == [
+            (path, path.stat().st_size, path.stat().st_mtime_ns)
+            for path in payload_files
+        ]
+        stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert stale_manifest["status"] == "STALE"
+        assert all(
+            record["status"] == "STALE"
+            and record["stale_from_frame"] == FRAME_START
+            for record in stale_manifest["targets"].values()
+        )
+        _, _, repeated_count, _ = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode=2,
+            mesh_cache_policy=1,
+            finalize_cache_policy=0,
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert repeated_count == 0
+
+        _, _, deleted_count, status = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode="SESSION_ALL",
+            mesh_cache_policy="DELETE_SESSION",
+            finalize_cache_policy="KEEP",
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert deleted_count == 2 and "Mesh 2" in status
+        assert not [path for path in _files(cache_root) if path != manifest_path]
+        deleted_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert deleted_manifest["status"] == "CLEARED"
+        assert all(
+            record["status"] == "DELETED"
+            for record in deleted_manifest["targets"].values()
+        )
+        _, _, repeated_delete_count, _ = physics_nodes.clearPhysicsBake(
+            world=world,
+            cache_directory=str(cache_root),
+            file_prefix=PREFIX,
+            clear_frame=FRAME_START,
+            animation_clear_mode=2,
+            mesh_cache_policy=2,
+            finalize_cache_policy=0,
+            clear_live_output=False,
+            pause_timeline=False,
+        )
+        assert repeated_delete_count == 0
     finally:
         if execute_tree_on_frame in bpy.app.handlers.frame_change_post:
             bpy.app.handlers.frame_change_post.remove(execute_tree_on_frame)

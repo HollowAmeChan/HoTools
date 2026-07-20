@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bpy
+from mathutils import Matrix
 
 from ..types import PhysicsWorldCache
 from ..writeback_commands import iter_bone_transform_writebacks
@@ -106,7 +107,9 @@ def _key_pose_bone(pose_bone, frame: int) -> bool:
     return inserted
 
 
-def _bone_targets(world: PhysicsWorldCache) -> tuple[tuple[object, str], ...]:
+def current_bone_targets(world: object) -> tuple[tuple[object, str], ...]:
+    if not isinstance(world, PhysicsWorldCache):
+        return ()
     frame_context = world.frame_context
     frame = int(getattr(frame_context, "frame", 0) or 0)
     generation = int(getattr(world, "generation", 0) or 0)
@@ -127,6 +130,60 @@ def _bone_targets(world: PhysicsWorldCache) -> tuple[tuple[object, str], ...]:
             continue
         targets[(int(armature.as_pointer()), bone_name)] = (armature, bone_name)
     return tuple(targets[key] for key in sorted(targets))
+
+
+def _baseline_bones(manifest: dict | None, target_id: str) -> dict:
+    if not isinstance(manifest, dict):
+        return {}
+    baseline = manifest.get("boundary_baseline") or {}
+    bones = baseline.get("bones") or {}
+    record = bones.get(target_id) or {}
+    return record if isinstance(record, dict) else {}
+
+
+def _matrix_from_values(values) -> Matrix | None:
+    try:
+        flat = tuple(float(value) for value in values)
+    except (TypeError, ValueError):
+        return None
+    if len(flat) != 16:
+        return None
+    return Matrix((flat[0:4], flat[4:8], flat[8:12], flat[12:16]))
+
+
+def _apply_boundary_baseline(
+    armature,
+    action,
+    target_id: str,
+    bone_names,
+    frame: int,
+    manifest: dict | None,
+) -> int:
+    if not isinstance(manifest, dict):
+        return 0
+    boundary_frame = int(manifest.get("boundary_frame", frame - 1))
+    revision = int(manifest.get("boundary_baseline_revision", 0) or 0)
+    if revision <= 0 or frame != boundary_frame + 1:
+        return 0
+    if int(action.get("hotools_physics_bake_baseline_revision", 0) or 0) >= revision:
+        return 0
+    baseline_bones = _baseline_bones(manifest, target_id)
+    inserted = 0
+    for bone_name in bone_names:
+        pose_bone = armature.pose.bones.get(bone_name)
+        baseline_matrix = _matrix_from_values(baseline_bones.get(bone_name))
+        if pose_bone is None or baseline_matrix is None:
+            continue
+        current_matrix = pose_bone.matrix_basis.copy()
+        try:
+            pose_bone.matrix_basis = baseline_matrix
+            if _key_pose_bone(pose_bone, boundary_frame):
+                inserted += 1
+        finally:
+            pose_bone.matrix_basis = current_matrix
+    if inserted:
+        action["hotools_physics_bake_baseline_revision"] = revision
+    return inserted
 
 
 def _update_bone_manifest(
@@ -177,7 +234,9 @@ def bake_bone_transforms(
         return 0, 0, "同帧重复求值，跳过 Bone Bake"
     frame = int(getattr(frame_context, "frame", 0) or 0)
     prefix = safe_prefix(prefix)
-    targets = _bone_targets(world)
+    root = resolve_cache_root(cache_directory)
+    manifest = read_manifest(root, prefix)
+    targets = current_bone_targets(world)
     if not targets:
         return 0, 0, "当前帧没有 Bone 写回目标"
 
@@ -188,7 +247,22 @@ def bake_bone_transforms(
     inserted = 0
     action_records = {}
     for armature, bone_names in grouped.items():
+        current_matrices = {
+            bone_name: armature.pose.bones[bone_name].matrix_basis.copy()
+            for bone_name in set(bone_names)
+            if armature.pose.bones.get(bone_name) is not None
+        }
         action, target_id = _ensure_bake_action(armature, prefix)
+        for bone_name, matrix_basis in current_matrices.items():
+            armature.pose.bones[bone_name].matrix_basis = matrix_basis
+        baseline_count = _apply_boundary_baseline(
+            armature,
+            action,
+            target_id,
+            bone_names,
+            frame,
+            manifest,
+        )
         keyed_names = []
         for bone_name in sorted(set(bone_names)):
             pose_bone = armature.pose.bones.get(bone_name)
@@ -201,10 +275,12 @@ def bake_bone_transforms(
                 "action_name": action.name,
                 "source_action_name": str(action.get(_ACTION_SOURCE_KEY, "") or ""),
                 "bone_names": keyed_names,
+                "boundary_key_count": baseline_count,
+                "status": "ACTIVE",
             }
     if action_records:
         _update_bone_manifest(cache_directory, prefix, frame, action_records)
     return inserted, len(action_records), f"Bone Bake：{inserted} 根骨，{len(action_records)} 个 Action"
 
 
-__all__ = ["bake_bone_transforms"]
+__all__ = ["bake_bone_transforms", "current_bone_targets"]

@@ -8,6 +8,7 @@ from .OmniNodeSocket import (
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
     OmniNodeSocketImageFormat,
+    OmniNodeSocketPhysicsBakePolicy,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,
     OmniNodeSocketDatablock,
@@ -62,6 +63,9 @@ class _OmniRegex(str):
     def __init__():
         return
 class _OmniGlob(str):
+    def __init__():
+        return
+class _OmniPhysicsBakePolicy(str):
     def __init__():
         return
 class _OmniCache(str):
@@ -201,6 +205,7 @@ SKT_DIC = {
     _OmniShapeKey: OmniNodeSocketShapeKey,
     _OmniModifierType: OmniNodeSocketModifierType,
     _OmniImageFormat: OmniNodeSocketImageFormat,
+    _OmniPhysicsBakePolicy: OmniNodeSocketPhysicsBakePolicy,
     _OmniRegex: OmniNodeSocketRegex,
     _OmniGlob: OmniNodeSocketGlob,
     _OmniCache: OmniNodeSocketCache,

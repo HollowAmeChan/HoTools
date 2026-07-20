@@ -252,6 +252,19 @@ def rearm_geometry_bake_trigger() -> None:
         _last_trigger_signature = None
 
 
+def cancel_pending_geometry_bake() -> bool:
+    """Cancel a request queued earlier in the same tree evaluation."""
+    global _pending_request, _last_trigger_signature, _last_status
+    if _active_request is not None or _pending_request is None:
+        return False
+    if bpy.app.timers.is_registered(_geometry_bake_timer):
+        bpy.app.timers.unregister(_geometry_bake_timer)
+    _pending_request = None
+    _last_trigger_signature = None
+    _last_status = "Mesh Bake 排队已由 Clear 取消"
+    return True
+
+
 def geometry_bake_status() -> str:
     return str(_last_status)
 
@@ -292,8 +305,17 @@ def _manifest_for_request(request: GeometryBakeRequest) -> dict:
 
 def _write_mesh_manifest(root: Path, prefix: str, manifest: dict) -> None:
     current = _read_manifest(root, prefix)
-    if isinstance(current, dict) and isinstance(current.get("bones"), dict):
-        manifest["bones"] = current["bones"]
+    if isinstance(current, dict):
+        for key in (
+            "bones",
+            "boundary_frame",
+            "boundary_baseline_revision",
+            "boundary_baseline",
+            "last_clear",
+            "finalize",
+        ):
+            if key in current:
+                manifest[key] = current[key]
     _write_manifest(root, prefix, manifest)
 
 
@@ -416,6 +438,7 @@ def reset_geometry_bake_runtime_for_tests() -> None:
 
 
 __all__ = [
+    "cancel_pending_geometry_bake",
     "current_mesh_targets",
     "geometry_bake_is_active",
     "geometry_bake_should_record_actions",

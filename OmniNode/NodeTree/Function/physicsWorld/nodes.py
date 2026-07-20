@@ -8,6 +8,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
   physicsObjectScope           — 构造 PhysicsObjectScope（objects 为多重输入，无需单独合并节点）
   physicsWorldBegin            — 物理世界帧开始
   physicsBake                  — 配置、触发并切换 Physics World Mesh Bake
+  clearPhysicsBake             — 用户控制的 Action/Mesh Bake 清理
   physicsWorldCommit           — 物理世界帧提交
   physicsWorldDebugSnapshot    — 输出 PhysicsWorldCache debug snapshot dict
   physicsWorldResultStream     — 按 channel / solver 读取 world result stream
@@ -17,7 +18,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
 import bpy
 
 from ...FunctionNodeCore import omni
-from ...OmniNodeSocketMapping import _OmniCache
+from ...OmniNodeSocketMapping import _OmniCache, _OmniPhysicsBakePolicy
 from .. import _Color
 
 from .types import PhysicsObjectScope, PhysicsWorldCache
@@ -31,6 +32,7 @@ from .debug import snapshot_to_text, result_items_to_text, validate_world, print
 from .writeback import apply_all_writebacks
 from .bake import (
     bake_bone_transforms,
+    clear_physics_bake,
     geometry_bake_is_active,
     geometry_bake_should_record_actions,
     geometry_bake_status,
@@ -263,7 +265,8 @@ def physicsWorldCommit(
     烘焙Bone 每个连续帧记录当前 bone_transform/batch 中真实出现的 PoseBone，
     首次为每个 Armature 复制/创建专用 Bake Action，绝不遍历整个骨架。
 
-    Object Action Bake 与 Clear Physics Bake 将由后续阶段实现。
+    Object Action Bake 将由后续阶段实现；动画与缓存清理由下游独立
+    “清除物理Bake动画”节点负责。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
@@ -322,6 +325,83 @@ def physicsBake(
         return world, bone_count, count, f"{bone_status}；{status}"
     except Exception as exc:
         return world, 0, 0, f"物理烘焙错误：{exc}"
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="清除物理Bake动画",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "物理世界",
+        "缓存目录",
+        "文件前缀",
+        "清理帧",
+        "动画清理模式",
+        "Mesh缓存策略",
+        "最终缓存策略",
+        "清理实时输出",
+        "暂停时间轴",
+        "启用",
+    ],
+    input_init={
+        "clear_frame": {"min_value": -1048574, "max_value": 1048574},
+        "animation_clear_mode": {
+            "policy_kind": "ANIMATION",
+        },
+        "mesh_cache_policy": {
+            "policy_kind": "MESH",
+        },
+        "finalize_cache_policy": {
+            "policy_kind": "FINALIZE",
+        },
+    },
+    _OUTPUT_NAME=["物理世界", "动画清除数量", "Mesh处理数量", "状态"],
+    omni_description="""
+    只在当前场景帧等于“清理帧”时执行，并且只处理 manifest 明确拥有的
+    Bake Action、Mesh cache 与真实 Physics World 写回目标。
+
+    动画、Mesh 工作缓存和最终缓存使用互相独立的策略。默认只清本 session
+    动画并保留全部缓存文件；清理实时输出只归零真实物理参与者。
+
+    推荐接在“物理烘焙”之后。重置时启用或 unmute，本节点完成后再 mute，
+    从清理帧开始播放。首次下一帧会由 Bake 自动回填无残余关键帧的边界基线。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def clearPhysicsBake(
+    world: object,
+    cache_directory: str = "//physics_bake",
+    file_prefix: str = "PhysicsBake",
+    clear_frame: int = 1,
+    animation_clear_mode: _OmniPhysicsBakePolicy = "SESSION_ALL",
+    mesh_cache_policy: _OmniPhysicsBakePolicy = "KEEP",
+    finalize_cache_policy: _OmniPhysicsBakePolicy = "KEEP",
+    clear_live_output: bool = True,
+    pause_timeline: bool = True,
+    enabled: bool = True,
+) -> tuple[object, int, int, str]:
+    if not isinstance(world, PhysicsWorldCache):
+        return world, 0, 0, f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
+    if geometry_bake_is_active():
+        return world, 0, 0, "Mesh Bake 运行期间抑制 Clear"
+    try:
+        animation_count, mesh_count, status = clear_physics_bake(
+            world,
+            cache_directory,
+            file_prefix,
+            int(clear_frame),
+            animation_clear_mode,
+            mesh_cache_policy,
+            finalize_cache_policy,
+            bool(clear_live_output),
+            bool(pause_timeline),
+            bool(enabled),
+        )
+        return world, animation_count, mesh_count, status
+    except Exception as exc:
+        return world, 0, 0, f"Clear Physics Bake 错误：{exc}"
 
 
 # ---------------------------------------------------------------------------
