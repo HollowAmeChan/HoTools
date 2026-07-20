@@ -131,6 +131,7 @@ from HoTools.OmniNode.NodeTree import OmniNodeRegister
 from HoTools.OmniNode.NodeTree import OmniNodeSocket
 from HoTools.OmniNode.NodeTree import OmniNodeTree
 from HoTools.OmniNode.NodeTree import OmniRuntimeState
+from HoTools.OmniNode.NodeTree.OmniTiming import OmniRuntimeTiming
 from HoTools.OmniNode.NodeTree.OmniCompiler import OmniCompiler
 from HoTools.OmniNode.NodeTree.OmniIR import (
     CacheReadCall,
@@ -309,6 +310,30 @@ try:
         cache_output.inputs[unrelated_output_io.uid],
     )
     cache_tree.compile_cached(force=True)
+
+    assert cache_tree.debug_runtime_timing is False
+    assert cache_tree.show_runtime_timing is False
+    cache_tree.show_runtime_timing = True
+    assert OmniRuntimeTiming.is_enabled(cache_tree)
+    cache_tree.run_compiled()
+    timing_payload = OmniNodeDraw._RUNTIME_TIMING_TREES.get(int(cache_tree.as_pointer()))
+    assert timing_payload
+    assert cache_read.name in timing_payload
+    cache_tree.show_runtime_timing = False
+    assert int(cache_tree.as_pointer()) not in OmniNodeDraw._RUNTIME_TIMING_TREES
+
+    cache_tree.debug_runtime_timing = True
+    assert OmniRuntimeTiming.is_enabled(cache_tree)
+    cache_tree.run_compiled()
+    console_snapshots = [
+        snapshot
+        for snapshot in OmniRuntimeTiming.flush(force=True)
+        if snapshot.consumer == OmniRuntimeTiming.CONSOLE
+    ]
+    assert console_snapshots
+    assert console_snapshots[0].totals.get("total", 0.0) > 0.0
+    cache_tree.debug_runtime_timing = False
+    assert not OmniRuntimeTiming.is_enabled(cache_tree)
 
     class DisposableOwner:
         def __init__(self):

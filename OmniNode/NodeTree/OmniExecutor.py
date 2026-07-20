@@ -11,21 +11,31 @@ from .OmniIR import (
     RuntimeTimingEndCall,
 )
 from .OmniDebug import OmniDebug
+from .OmniTiming import OmniRuntimeTiming
 from . import OmniRuntimeState
 from .OmniTracy import omni_zone, omni_frame_mark, tracy_enabled
 import time
 
 
 class RuntimeObserver:
-    def __init__(self, debug=False, depth=0, trace=None, timing_collector=None):
+    def __init__(
+        self,
+        debug=False,
+        depth=0,
+        trace=None,
+        timing_collector=None,
+        timing_node_collector=None,
+    ):
         self.debug = bool(debug)
         self.depth = int(depth)
         self.trace = [] if trace is None else trace
         self.timing_start = None
         self.timing_stages = None
+        self.timing_node_stages = None
         # 若提供收集器，则顶层 step 明细并入该字典（帧链路报告），
         # 不再单独成一个报告块。子树仍走各自的独立报告。
         self.timing_collector = timing_collector
+        self.timing_node_collector = timing_node_collector
         # Tracy zone 句柄：仅在 Tracy 构建下非 None
         self._tracy_tree_zone = None   # 树级 zone（整棵树执行期间）
         self._tracy_step_zone = None   # 当前 step zone（step_begin→step_end）
@@ -66,16 +76,19 @@ class RuntimeObserver:
 
     def begin_timing(self, op):
         tree_ref = getattr(op, "tree_ref", None)
-        if bool(getattr(tree_ref, "debug_runtime_timing", False)):
+        if OmniRuntimeTiming.is_enabled(tree_ref):
             self.timing_start = time.perf_counter()
             self.timing_stages = {}
+            self.timing_node_stages = (
+                {} if bool(getattr(tree_ref, "show_runtime_timing", False)) else None
+            )
             # 每帧重置懒求值计数器
             self._lazy_nodes_run     = 0
             self._lazy_nodes_skipped = 0
 
     def end_timing(self, compiled, op):
         tree_ref = getattr(op, "tree_ref", None)
-        if self.timing_start is None or not bool(getattr(tree_ref, "debug_runtime_timing", False)):
+        if self.timing_start is None or not OmniRuntimeTiming.is_enabled(tree_ref):
             return
 
         try:
@@ -97,14 +110,20 @@ class RuntimeObserver:
                 self.timing_collector[stage] = (
                     self.timing_collector.get(stage, 0.0) + float(seconds)
                 )
+            if self.timing_node_collector is not None:
+                self.timing_node_collector.update(self.timing_node_stages or {})
             return
 
         stages["total"] = time.perf_counter() - self.timing_start
-        OmniDebug.record_runtime_timing(
+        OmniRuntimeTiming.record(
             getattr(op, "tree_name", compiled.tree_name),
             getattr(compiled, "runtime_timing_tree_key", None),
             stages,
+            tree_ref=tree_ref,
             interval=interval,
+            console_enabled=bool(getattr(tree_ref, "debug_runtime_timing", False)),
+            overlay_enabled=bool(getattr(tree_ref, "show_runtime_timing", False)),
+            node_stages=self.timing_node_stages,
         )
 
     def step_begin(self, step_index, op):
@@ -116,7 +135,11 @@ class RuntimeObserver:
             self._tracy_step_zone.__enter__()
         if self.timing_stages is None:
             return None, None
-        return time.perf_counter(), OmniExecutor.timing_stage_name(step_index, op)
+        stage = OmniExecutor.timing_stage_name(step_index, op)
+        node_name = getattr(getattr(op, "node", None), "name", None)
+        if self.timing_node_stages is not None and stage and node_name:
+            self.timing_node_stages[stage] = node_name
+        return time.perf_counter(), stage
 
     def step_end(self, start_time, stage):
         # Tracy：关闭当前 step zone
@@ -537,6 +560,7 @@ class OmniExecutor:
         runtime_context=None,
         observer=None,
         timing_collector=None,
+        timing_node_collector=None,
     ):
         if runtime_context is None:
             runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
@@ -549,6 +573,7 @@ class OmniExecutor:
                     runtime_context=runtime_context,
                     observer=observer,
                     timing_collector=timing_collector,
+                    timing_node_collector=timing_node_collector,
                 )
             except Exception:
                 runtime_context.mark_failed()
@@ -557,7 +582,12 @@ class OmniExecutor:
                 OmniRuntimeState.finish_run(runtime_context)
 
         if observer is None:
-            observer = RuntimeObserver(debug=debug, depth=depth, timing_collector=timing_collector)
+            observer = RuntimeObserver(
+                debug=debug,
+                depth=depth,
+                timing_collector=timing_collector,
+                timing_node_collector=timing_node_collector,
+            )
 
         return OmniExecutor._execute_core(compiled, provided_inputs, runtime_context, observer)
 
@@ -875,7 +905,7 @@ class OmniExecutor:
         return result, observer.trace
 
     @staticmethod
-    def run(compiled: CompiledGraph, debug=False, phases=None):
+    def run(compiled: CompiledGraph, debug=False, phases=None, timing_node_stages=None):
         t = time.perf_counter()
         runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
         if phases is not None:
@@ -888,6 +918,7 @@ class OmniExecutor:
                 debug=debug,
                 runtime_context=runtime_context,
                 timing_collector=phases,
+                timing_node_collector=timing_node_stages,
             )
         except Exception:
             runtime_context.mark_failed()

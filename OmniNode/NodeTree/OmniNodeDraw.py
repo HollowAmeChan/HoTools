@@ -10,6 +10,7 @@ from ...PropertyCurve import PropertyCurveDraw
 _HANDLES = {}
 _PAYLOADS = {}
 _WARNED = set()
+_RUNTIME_TIMING_TREES = {}
 _RIGHT_OVERLAY_GAP_X = 12
 
 
@@ -22,6 +23,13 @@ def _warn_once(key, message):
 
 def _overlay_id(node, kind):
     return f"omni_{kind}::{node.id_data.name_full}::{node.name}"
+
+
+def _tree_draw_key(tree):
+    try:
+        return int(tree.as_pointer())
+    except Exception:
+        return id(tree)
 
 
 def _wrap_text(text, width=40):
@@ -563,16 +571,123 @@ class DrawSidePanel:
             DrawSidePanel.clear_node(node)
 
 
+class DrawRuntimeTiming:
+    """Draw aggregated execution time above nodes with fixed severity colors."""
+
+    GLOBAL_OVERLAY_ID = "omni_runtime_timing::global"
+    FAST_SECONDS = 0.001
+    SLOW_SECONDS = 0.008
+    FAST_COLOR = (0.32, 0.88, 0.45, 1.0)
+    MEDIUM_COLOR = (1.0, 0.72, 0.18, 1.0)
+    SLOW_COLOR = (1.0, 0.28, 0.22, 1.0)
+
+    @staticmethod
+    def format_seconds(seconds):
+        seconds = max(float(seconds), 0.0)
+        if seconds < 0.001:
+            return f"{seconds * 1_000_000.0:.0f} us"
+        if seconds < 0.1:
+            return f"{seconds * 1000.0:.2f} ms"
+        return f"{seconds * 1000.0:.1f} ms"
+
+    @staticmethod
+    def color(seconds):
+        seconds = max(float(seconds), 0.0)
+        if seconds <= DrawRuntimeTiming.FAST_SECONDS:
+            return DrawRuntimeTiming.FAST_COLOR
+        if seconds < DrawRuntimeTiming.SLOW_SECONDS:
+            return DrawRuntimeTiming.MEDIUM_COLOR
+        return DrawRuntimeTiming.SLOW_COLOR
+
+    @staticmethod
+    def draw_label(node, seconds):
+        text = DrawRuntimeTiming.format_seconds(seconds)
+        x, y = _absolute_location(node)
+        width = _get_node_width(node)
+        ui_scale = bpy.context.preferences.system.ui_scale
+        x = (x + width * 0.5) * ui_scale
+        y = (y + 12.0) * ui_scale
+
+        font_id = 0
+        blf.size(font_id, _get_text_height(0.9))
+        text_width, _ = blf.dimensions(font_id, text)
+        blf.position(font_id, x - text_width * 0.5, y, 0)
+        blf.color(font_id, *DrawRuntimeTiming.color(seconds))
+        blf.enable(font_id, blf.SHADOW)
+        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.5)
+        blf.shadow_offset(font_id, 1, -1)
+        blf.draw(font_id, text)
+        blf.disable(font_id, blf.SHADOW)
+
+    @staticmethod
+    def handler():
+        editor = getattr(bpy.context, "space_data", None)
+        if editor is None or editor.type != 'NODE_EDITOR':
+            return
+        tree = getattr(editor, "edit_tree", None) or getattr(editor, "node_tree", None)
+        if tree is None or not getattr(tree, "show_runtime_timing", False):
+            return
+        payload = _RUNTIME_TIMING_TREES.get(_tree_draw_key(tree))
+        if not payload:
+            return
+
+        for node_name, seconds in payload.items():
+            node = tree.nodes.get(node_name)
+            if node is None:
+                continue
+            try:
+                DrawRuntimeTiming.draw_label(node, seconds)
+            except Exception as exc:
+                _warn_once(
+                    "runtime_timing_handler",
+                    f"OmniNode runtime timing draw failed: {exc}",
+                )
+
+    @staticmethod
+    def ensure_handler():
+        if DrawRuntimeTiming.GLOBAL_OVERLAY_ID in _HANDLES:
+            return
+        _PAYLOADS[DrawRuntimeTiming.GLOBAL_OVERLAY_ID] = {"tree_name": None}
+        _HANDLES[DrawRuntimeTiming.GLOBAL_OVERLAY_ID] = bpy.types.SpaceNodeEditor.draw_handler_add(
+            DrawRuntimeTiming.handler,
+            (),
+            'WINDOW',
+            'POST_VIEW',
+        )
+
+    @staticmethod
+    def update_tree(tree, node_totals, sample_count):
+        sample_count = max(int(sample_count), 1)
+        _RUNTIME_TIMING_TREES[_tree_draw_key(tree)] = {
+            node_name: float(total) / sample_count
+            for node_name, total in node_totals.items()
+        }
+        DrawRuntimeTiming.ensure_handler()
+        DrawRuntimeTiming.tag_tree(tree)
+
+    @staticmethod
+    def tag_tree(tree):
+        _tag_node_editors(getattr(tree, "name_full", None))
+
+    @staticmethod
+    def clear_tree(tree):
+        _RUNTIME_TIMING_TREES.pop(_tree_draw_key(tree), None)
+        DrawRuntimeTiming.tag_tree(tree)
+
+
 def clear_tree(tree):
     DrawDescription.clear_tree(tree)
     DrawBug.clear_tree(tree)
+    DrawRuntimeTiming.clear_tree(tree)
 
 
 def register():
     DrawSidePanel.ensure_handler()
+    DrawRuntimeTiming.ensure_handler()
 
 
 def unregister():
+    _RUNTIME_TIMING_TREES.clear()
     overlay_ids = set(_HANDLES.keys()) | set(_PAYLOADS.keys())
     for overlay_id in list(overlay_ids):
         _clear_overlay(overlay_id)

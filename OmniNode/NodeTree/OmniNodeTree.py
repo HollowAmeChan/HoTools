@@ -7,6 +7,7 @@ from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
 from .OmniIR import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
+from .OmniTiming import OmniRuntimeTiming
 from . import OmniNodeDraw
 from . import OmniRuntimeState
 from .OmniNodeOperator import (
@@ -54,6 +55,38 @@ def _is_omni_node_tree(tree):
     return tree is not None and getattr(tree, "bl_idname", None) == TREE_ID_NAME
 
 
+def _flush_runtime_timing(force=False):
+    for snapshot in OmniRuntimeTiming.flush(force=force):
+        if snapshot.consumer == OmniRuntimeTiming.CONSOLE:
+            print("\n".join(OmniDebug.format_runtime_timing_report(
+                snapshot.tree_name,
+                snapshot.elapsed,
+                snapshot.sample_count,
+                snapshot.totals,
+                frame_level=snapshot.frame_level,
+            )))
+        elif snapshot.tree_ref is not None:
+            OmniNodeDraw.DrawRuntimeTiming.update_tree(
+                snapshot.tree_ref,
+                snapshot.node_totals,
+                snapshot.sample_count,
+            )
+
+
+def _debug_runtime_timing_update(tree, context):
+    if not getattr(tree, "debug_runtime_timing", False):
+        OmniRuntimeTiming.clear_tree(tree, consumer=OmniRuntimeTiming.CONSOLE)
+
+
+def _show_runtime_timing_update(tree, context):
+    if getattr(tree, "show_runtime_timing", False):
+        OmniNodeDraw.DrawRuntimeTiming.ensure_handler()
+        OmniNodeDraw.DrawRuntimeTiming.tag_tree(tree)
+        return
+    OmniRuntimeTiming.clear_tree(tree, consumer=OmniRuntimeTiming.OVERLAY)
+    OmniNodeDraw.DrawRuntimeTiming.clear_tree(tree)
+
+
 @persistent
 def _omni_frame_change_post(scene, depsgraph=None):
     global _FRAME_HANDLER_RUNNING
@@ -82,7 +115,7 @@ def _omni_frame_change_post(scene, depsgraph=None):
                     pass
                 print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
     finally:
-        OmniDebug.flush_runtime_timing()
+        _flush_runtime_timing()
         _FRAME_HANDLER_RUNNING = False
 
 
@@ -182,8 +215,15 @@ class OmniNodeTree(NodeTree):
     )  # type: ignore
     debug_runtime_timing: bpy.props.BoolProperty(
         name="Debug运行时长",
-        description="启用编译期运行时长插桩，并按输出间隔聚合打印。",
+        description="聚合运行时节点计时并按输出间隔打印到命令行。",
         default=False,
+        update=_debug_runtime_timing_update,
+    )  # type: ignore
+    show_runtime_timing: bpy.props.BoolProperty(
+        name="节点运行计时",
+        description="在节点顶部动态显示聚合运行时长，并用颜色提示耗时。",
+        default=False,
+        update=_show_runtime_timing_update,
     )  # type: ignore
     debug_runtime_timing_interval: bpy.props.FloatProperty(
         name="输出间隔",
@@ -270,7 +310,7 @@ class OmniNodeTree(NodeTree):
     def clear_compile_cache(self):
         clear_tree_compile_cache(self)
 
-    def _run_compiled_graph(self, compiled, phases=None):
+    def _run_compiled_graph(self, compiled, phases=None, timing_node_stages=None):
         self._ensure_execution_enabled()
 
         t = time.perf_counter()
@@ -282,7 +322,12 @@ class OmniNodeTree(NodeTree):
         # begin_run/finish_run 及顶层 step 明细作为叶子项并入 phases，
         # 所有叶子项相加即等于 total，避免重复计数。
         debug_enabled = getattr(self, "debug_runtime_trace", False)
-        result = OmniExecutor.run(compiled, debug=debug_enabled, phases=phases)
+        result = OmniExecutor.run(
+            compiled,
+            debug=debug_enabled,
+            phases=phases,
+            timing_node_stages=timing_node_stages,
+        )
 
         return result
 
@@ -296,12 +341,12 @@ class OmniNodeTree(NodeTree):
             return self._run_compiled_graph(compiled)
         finally:
             if not _FRAME_HANDLER_RUNNING:
-                OmniDebug.flush_runtime_timing()
+                _flush_runtime_timing()
 
     def run_frame_cached(self):
         self._ensure_execution_enabled()
 
-        if not bool(getattr(self, "debug_runtime_timing", False)):
+        if not OmniRuntimeTiming.is_enabled(self):
             compiled = self.compile_cached(force=False)
             return self._run_compiled_graph(compiled)
 
@@ -309,6 +354,7 @@ class OmniNodeTree(NodeTree):
         # 外层 phase（compile_check / clear_state / begin_run / finish_run）
         # 与执行器内部 step 明细并入同一份报告，所有叶子项之和即为 total。
         phases = {}
+        node_stages = {} if bool(getattr(self, "show_runtime_timing", False)) else None
         frame_start = time.perf_counter()
 
         t = time.perf_counter()
@@ -316,7 +362,11 @@ class OmniNodeTree(NodeTree):
         phases["[frame] compile_check"] = time.perf_counter() - t
 
         try:
-            return self._run_compiled_graph(compiled, phases=phases)
+            return self._run_compiled_graph(
+                compiled,
+                phases=phases,
+                timing_node_stages=node_stages,
+            )
         finally:
             total = time.perf_counter() - frame_start
             # 残差桶：total 减去所有已插桩叶子项之和，
@@ -331,12 +381,16 @@ class OmniNodeTree(NodeTree):
                 interval = float(getattr(self, "debug_runtime_timing_interval", 1.0))
             except Exception:
                 interval = 1.0
-            OmniDebug.record_runtime_timing(
+            OmniRuntimeTiming.record(
                 self.name,
                 f"frame:{int(self.as_pointer())}",
                 phases,
+                tree_ref=self,
                 interval=interval,
                 frame_level=True,
+                console_enabled=bool(getattr(self, "debug_runtime_timing", False)),
+                overlay_enabled=bool(getattr(self, "show_runtime_timing", False)),
+                node_stages=node_stages,
             )
 
     def run(self):
@@ -405,7 +459,10 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     layout.prop(tree, "debug_compile", text="Debug编译", toggle=True)
     layout.prop(tree, "debug_runtime_trace", text="Debug运行", toggle=True)
     layout.prop(tree, "debug_runtime_timing", text="Debug运行时长", toggle=True)
-    layout.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
+    timing_interval_row = layout.row()
+    timing_interval_row.enabled = bool(getattr(tree, "debug_runtime_timing", False))
+    timing_interval_row.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
+    layout.prop(tree, "show_runtime_timing", text="节点运行计时", toggle=True)
     layout.label(text=tree.compile_cache_status_label())
 
     execution_enabled = bool(getattr(tree, "is_execution_enabled", True))
@@ -457,6 +514,7 @@ def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
     _remove_frame_handler()
     _remove_render_handlers()
+    OmniRuntimeTiming.clear()
     # 清空所有持久化寄存器，释放 bpy 引用后再清 dict
     for graph in _COMPILED_TREE_CACHE.values():
         try:

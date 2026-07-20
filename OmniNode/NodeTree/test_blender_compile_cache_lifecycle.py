@@ -63,14 +63,39 @@ debug_module.OmniDebug = type(
     "OmniDebug",
     (),
     {
-        "flush_runtime_timing": staticmethod(lambda: None),
-        "record_runtime_timing": staticmethod(lambda *args, **kwargs: None),
+        "format_runtime_timing_report": staticmethod(lambda *args, **kwargs: []),
     },
 )
 sys.modules[debug_module.__name__] = debug_module
 
+timing_module = types.ModuleType(f"{_PACKAGE}.OmniTiming")
+timing_module.OmniRuntimeTiming = type(
+    "OmniRuntimeTiming",
+    (),
+    {
+        "CONSOLE": "console",
+        "OVERLAY": "overlay",
+        "is_enabled": staticmethod(lambda tree: False),
+        "record": staticmethod(lambda *args, **kwargs: None),
+        "flush": staticmethod(lambda *args, **kwargs: ()),
+        "clear_tree": staticmethod(lambda *args, **kwargs: None),
+        "clear": staticmethod(lambda: None),
+    },
+)
+sys.modules[timing_module.__name__] = timing_module
+
 draw_module = types.ModuleType(f"{_PACKAGE}.OmniNodeDraw")
 draw_module.clear_tree = lambda tree: None
+draw_module.DrawRuntimeTiming = type(
+    "DrawRuntimeTiming",
+    (),
+    {
+        "ensure_handler": staticmethod(lambda: None),
+        "tag_tree": staticmethod(lambda tree: None),
+        "clear_tree": staticmethod(lambda tree: None),
+        "update_tree": staticmethod(lambda *args, **kwargs: None),
+    },
+)
 sys.modules[draw_module.__name__] = draw_module
 
 operator_module = types.ModuleType(f"{_PACKAGE}.OmniNodeOperator")

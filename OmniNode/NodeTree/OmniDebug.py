@@ -1,13 +1,10 @@
 import os
 import sys
-import time
 
 
 class OmniDebug:
     COLOR_TERMINAL = {"displays_colors": False, "initialized": False}
-    RUNTIME_TIMING_PRINT_INTERVAL = 1.0
     RUNTIME_TIMING_MAX_STAGES = 12
-    _runtime_timing_profiles = {}
 
     @staticmethod
     def node_name(node):
@@ -296,80 +293,3 @@ class OmniDebug:
             trace.append(f"{indent}{message}")
 
         return trace, log
-
-    @staticmethod
-    def runtime_timing_key(tree_name, tree_pointer=None):
-        if tree_pointer is not None:
-            return f"tree:{tree_pointer}"
-        return f"name:{tree_name}"
-
-    @classmethod
-    def record_runtime_timing(cls, tree_name, tree_key, stages, interval=None, frame_level=False):
-        if not stages:
-            return
-
-        now = time.perf_counter()
-        if tree_key is None:
-            key = cls.runtime_timing_key(tree_name)
-        elif isinstance(tree_key, int):
-            key = cls.runtime_timing_key(tree_name, tree_key)
-        else:
-            key = str(tree_key)
-
-        profile = cls._runtime_timing_profiles.setdefault(
-            key,
-            {
-                "last_print": now,
-                "samples": 0,
-                "stages": {},
-                "tree_name": tree_name,
-                "interval": cls.RUNTIME_TIMING_PRINT_INTERVAL,
-                "frame_level": bool(frame_level),
-            },
-        )
-        profile["tree_name"] = tree_name
-        profile["frame_level"] = bool(frame_level)
-        if interval is not None:
-            try:
-                profile["interval"] = max(float(interval), 0.05)
-            except Exception:
-                profile["interval"] = cls.RUNTIME_TIMING_PRINT_INTERVAL
-        profile["samples"] += 1
-
-        totals = profile["stages"]
-        for stage, seconds in stages.items():
-            totals[stage] = totals.get(stage, 0.0) + float(seconds)
-
-    @classmethod
-    def flush_runtime_timing(cls, force=False):
-        now = time.perf_counter()
-
-        for key, profile in list(cls._runtime_timing_profiles.items()):
-            elapsed = now - float(profile["last_print"])
-            interval = max(float(profile.get("interval", cls.RUNTIME_TIMING_PRINT_INTERVAL)), 0.05)
-            if not force and elapsed < interval:
-                continue
-
-            sample_count = int(profile["samples"])
-            if sample_count <= 0:
-                continue
-            totals = profile["stages"]
-            tree_name = profile.get("tree_name", key)
-            frame_level = bool(profile.get("frame_level", False))
-            print("\n".join(cls.format_runtime_timing_report(
-                tree_name, elapsed, sample_count, totals, frame_level=frame_level
-            )))
-
-            cls._runtime_timing_profiles[key] = {
-                "last_print": now,
-                "samples": 0,
-                "stages": {},
-                "tree_name": tree_name,
-                "interval": interval,
-                "frame_level": frame_level,
-            }
-
-    @classmethod
-    def publish_runtime_timing(cls, tree_name, tree_key, stages, interval=None):
-        cls.record_runtime_timing(tree_name, tree_key, stages, interval=interval)
-        cls.flush_runtime_timing()
