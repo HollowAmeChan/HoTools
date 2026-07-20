@@ -26,6 +26,8 @@ from .parameters import (
     MC2CurveSpec,
     MC2ParticleProfileSpec,
     MC2SetupOptionsSpec,
+    MC2TaskParametersSpec,
+    make_mc2_task_parameters,
     thaw_mc2_value,
 )
 
@@ -168,6 +170,7 @@ def _signature(setup_type: str, floats, ints, curves) -> str:
 def make_mc2_runtime_parameters(
     profile: MC2ParticleProfileSpec,
     setup_options: MC2SetupOptionsSpec,
+    task_parameters: MC2TaskParametersSpec | None = None,
     *,
     curve_sampler: CurveSampler | None = None,
 ) -> MC2RuntimeParametersV0:
@@ -176,6 +179,10 @@ def make_mc2_runtime_parameters(
         raise TypeError("profile must be MC2ParticleProfileSpec")
     if not isinstance(setup_options, MC2SetupOptionsSpec):
         raise TypeError("setup_options must be MC2SetupOptionsSpec")
+    if task_parameters is None:
+        task_parameters = make_mc2_task_parameters()
+    if not isinstance(task_parameters, MC2TaskParametersSpec):
+        raise TypeError("task_parameters must be MC2TaskParametersSpec")
 
     setup_type = setup_options.setup_type
     is_spring = setup_type == MC2_SETUP_BONE_SPRING
@@ -194,19 +201,19 @@ def make_mc2_runtime_parameters(
         "root_rotation": setup_options.root_rotation,
         "distance_culling_length": profile.distance_culling_length,
         "distance_culling_fade_ratio": profile.distance_culling_fade_ratio,
-        "anchor_inertia": profile.anchor_inertia,
-        "world_inertia": profile.world_inertia,
-        "movement_inertia_smoothing": profile.movement_inertia_smoothing,
-        "movement_speed_limit": profile.movement_speed_limit,
-        "rotation_speed_limit": profile.rotation_speed_limit,
-        "local_inertia": profile.local_inertia,
-        "local_movement_speed_limit": profile.local_movement_speed_limit,
-        "local_rotation_speed_limit": profile.local_rotation_speed_limit,
-        "depth_inertia": profile.depth_inertia,
-        "centrifugal_acceleration": profile.centrifugal_acceleration,
+        "anchor_inertia": task_parameters.anchor_inertia,
+        "world_inertia": task_parameters.world_inertia,
+        "movement_inertia_smoothing": task_parameters.movement_inertia_smoothing,
+        "movement_speed_limit": task_parameters.movement_speed_limit,
+        "rotation_speed_limit": task_parameters.rotation_speed_limit,
+        "local_inertia": task_parameters.local_inertia,
+        "local_movement_speed_limit": task_parameters.local_movement_speed_limit,
+        "local_rotation_speed_limit": task_parameters.local_rotation_speed_limit,
+        "depth_inertia": task_parameters.depth_inertia,
+        "centrifugal_acceleration": task_parameters.centrifugal_acceleration,
         "particle_speed_limit": profile.particle_speed_limit,
-        "teleport_distance": profile.teleport_distance,
-        "teleport_rotation": profile.teleport_rotation,
+        "teleport_distance": task_parameters.teleport_distance,
+        "teleport_rotation": task_parameters.teleport_rotation,
         "tether_compression_limit": MC2_BONE_SPRING_TETHER_COMPRESSION if is_spring else profile.tether_compression,
         "tether_stretch_limit": MC2_TETHER_STRETCH_LIMIT,
         "distance_velocity_attenuation": MC2_DISTANCE_VELOCITY_ATTENUATION,
@@ -218,7 +225,7 @@ def make_mc2_runtime_parameters(
         "motion_stiffness": profile.motion_stiffness,
         "collision_dynamic_friction": friction,
         "collision_static_friction": friction,
-        "cloth_mass": profile.cloth_mass,
+        "cloth_mass": task_parameters.cloth_mass,
         "wind_influence": profile.wind_influence,
         "wind_frequency": profile.wind_frequency,
         "wind_turbulence": profile.wind_turbulence,
@@ -232,9 +239,9 @@ def make_mc2_runtime_parameters(
         "spring_noise": profile.spring_noise,
     }
     int_map = {
-        "normal_axis": profile.normal_axis,
+        "normal_axis": task_parameters.normal_axis,
         "use_distance_culling": int(profile.distance_culling_enabled),
-        "teleport_mode": profile.teleport_mode,
+        "teleport_mode": task_parameters.teleport_mode,
         "bending_method": 2 if not is_spring and profile.bending_stiffness > 1.0e-8 else 0,
         "use_angle_restoration": int(profile.angle_restoration_enabled),
         "use_angle_limit": int(profile.angle_limit_enabled),

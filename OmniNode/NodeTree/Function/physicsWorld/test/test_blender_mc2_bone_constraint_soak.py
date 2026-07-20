@@ -50,7 +50,6 @@ def _profile(
         backstop_enabled=False,
         self_collision_mode=0,
         spring_enabled=False,
-        teleport_mode=0,
     )
 
 
@@ -385,8 +384,6 @@ def _run_bone_gravity_axes_falloff():
             angle_limit_enabled=False,
             collision_mode=0,
             self_collision_mode=0,
-            world_inertia=0.0,
-            anchor_inertia=0.0,
         )
 
     profiles = tuple(make_profile(direction, 0.0) for direction in directions) + (
@@ -399,6 +396,8 @@ def _run_bone_gravity_axes_falloff():
             [{"armature": armature, "bone": "Root"}],
             profile=profile,
             anchor_object=(anchors[index - 3] if index >= 3 else None),
+            world_inertia=0.0,
+            anchor_inertia=0.0,
             connection_mode=0,
         )
         assert len(product_tasks) == 1
@@ -574,8 +573,6 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
         angle_limit_enabled=False,
         collision_mode=0,
         self_collision_mode=0,
-        world_inertia=0.0,
-        anchor_inertia=0.0,
     )
     source = [{"armature": armature, "bone": "Root"}]
     if setup_type == names.MC2_SETUP_BONE_CLOTH:
@@ -583,6 +580,8 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
             source,
             profile=profile,
             anchor_object=anchor,
+            world_inertia=0.0,
+            anchor_inertia=0.0,
             connection_mode=0,
         )[0][0]
     else:
@@ -590,6 +589,8 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
             source,
             profile=profile,
             anchor_object=anchor,
+            world_inertia=0.0,
+            anchor_inertia=0.0,
         )[0][0]
     topology = topology_module.build_mc2_topology_spec(task)
     initial_basis = {
@@ -743,13 +744,13 @@ def _run_bone_motion():
             backstop_enabled=backstop,
             backstop_radius=0.01,
             backstop_distance=0.005,
-            normal_axis=2,
             motion_stiffness=1.0,
             self_collision_mode=0,
         )
         tasks, _task_names = nodes.physicsMC2BoneClothTask(
             [{"armature": armature, "bone": "Root"}],
             profile=profile,
+            normal_axis=2,
             connection_mode=0,
         )
         assert len(tasks) == 1
@@ -859,7 +860,6 @@ def _run_bone_external_collision(setup_type):
             max_distance_enabled=False,
             backstop_enabled=False,
             self_collision_mode=0,
-            teleport_mode=0,
         )
         source = {"armature": armature, "bone": "Root"}
         if is_spring:
@@ -1761,14 +1761,14 @@ def _bone_self_task(armature, enabled, cloth_mass, teleport_mode=0):
         angle_limit_enabled=False,
         collision_mode=0,
         self_collision_enabled=enabled,
-        cloth_mass=cloth_mass,
-        teleport_mode=teleport_mode,
-        teleport_distance=0.5,
-        teleport_rotation=180.0,
     )
     tasks, _names = nodes.physicsMC2BoneClothTask(
         [{"armature": armature, "bone": "Control"}],
         profile=profile,
+        cloth_mass=cloth_mass,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=180.0,
         connection_mode=1,
     )
     assert len(tasks) == 1

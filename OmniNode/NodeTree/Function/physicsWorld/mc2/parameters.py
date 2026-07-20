@@ -168,25 +168,11 @@ class MC2ParticleProfileSpec:
     gravity_direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
     gravity_falloff: float = 0.0
     stabilization_time_after_reset: float = 0.1
-    normal_axis: int = 1
     animation_pose_ratio: float = 0.0
     distance_culling_enabled: bool = False
     distance_culling_length: float = 30.0
     distance_culling_fade_ratio: float = 0.2
-    anchor_inertia: float = 0.0
-    world_inertia: float = 1.0
-    movement_inertia_smoothing: float = 0.4
-    movement_speed_limit: float = 5.0
-    rotation_speed_limit: float = 720.0
-    local_inertia: float = 1.0
-    local_movement_speed_limit: float = -1.0
-    local_rotation_speed_limit: float = -1.0
-    depth_inertia: float = 0.0
-    centrifugal_acceleration: float = 0.0
     particle_speed_limit: float = 4.0
-    teleport_mode: int = 0
-    teleport_distance: float = 0.5
-    teleport_rotation: float = 90.0
     damping: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.05))
     radius: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.02))
     tether_compression: float = 0.4
@@ -211,7 +197,6 @@ class MC2ParticleProfileSpec:
     self_collision_mode: int = 0
     self_collision_sync_mode: int = 0
     self_collision_thickness: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.005))
-    cloth_mass: float = 0.0
     spring_enabled: bool = True
     spring_power: float = 0.04
     spring_limit_distance: float = 0.1
@@ -240,10 +225,6 @@ class MC2ParticleProfileSpec:
             raise ValueError("self_collision_mode 必须是 0 或 2")
         if self.self_collision_sync_mode not in (0, 2):
             raise ValueError("self_collision_sync_mode 必须是 0 或 2")
-        if self.normal_axis not in range(6):
-            raise ValueError("normal_axis 必须位于 0..5")
-        if self.teleport_mode not in (0, 1, 2):
-            raise ValueError("teleport_mode 必须是 0、1 或 2")
 
     @property
     def signature(self) -> str:
@@ -256,18 +237,43 @@ class MC2ParticleProfileSpec:
         return result
 
 
-def make_mc2_particle_profile(
+@dataclass(frozen=True)
+class MC2TaskParametersSpec:
+    """Per-task corrections and interaction policy, separate from particle material."""
+
+    normal_axis: int = 1
+    anchor_inertia: float = 0.0
+    world_inertia: float = 1.0
+    movement_inertia_smoothing: float = 0.4
+    movement_speed_limit: float = 5.0
+    rotation_speed_limit: float = 720.0
+    local_inertia: float = 1.0
+    local_movement_speed_limit: float = -1.0
+    local_rotation_speed_limit: float = -1.0
+    depth_inertia: float = 0.0
+    centrifugal_acceleration: float = 0.0
+    teleport_mode: int = 0
+    teleport_distance: float = 0.5
+    teleport_rotation: float = 90.0
+    cloth_mass: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.normal_axis not in range(6):
+            raise ValueError("normal_axis 必须位于 0..5")
+        if self.teleport_mode not in (0, 1, 2):
+            raise ValueError("teleport_mode 必须是 0、1 或 2")
+
+    @property
+    def signature(self) -> str:
+        return _signature(self.debug_dict())
+
+    def debug_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def make_mc2_task_parameters(
     *,
-    blend_weight=1.0,
-    gravity=5.0,
-    gravity_direction=(0.0, 0.0, -1.0),
-    gravity_falloff=0.0,
-    stabilization_time_after_reset=0.1,
     normal_axis=1,
-    animation_pose_ratio=0.0,
-    distance_culling_enabled=False,
-    distance_culling_length=30.0,
-    distance_culling_fade_ratio=0.2,
     anchor_inertia=0.0,
     world_inertia=1.0,
     movement_inertia_smoothing=0.4,
@@ -278,10 +284,60 @@ def make_mc2_particle_profile(
     local_rotation_speed_limit=-1.0,
     depth_inertia=0.0,
     centrifugal_acceleration=0.0,
-    particle_speed_limit=4.0,
     teleport_mode=0,
     teleport_distance=0.5,
     teleport_rotation=90.0,
+    cloth_mass=0.0,
+) -> MC2TaskParametersSpec:
+    normal_axis = int(normal_axis)
+    teleport_mode = int(teleport_mode)
+    if normal_axis not in range(6):
+        raise ValueError("normal_axis 必须位于 0..5")
+    if teleport_mode not in (0, 1, 2):
+        raise ValueError("teleport_mode 必须是 0(None)、1(Reset) 或 2(Keep)")
+    return MC2TaskParametersSpec(
+        normal_axis=normal_axis,
+        anchor_inertia=_clamp(anchor_inertia, "anchor_inertia", 0.0, 1.0),
+        world_inertia=_clamp(world_inertia, "world_inertia", 0.0, 1.0),
+        movement_inertia_smoothing=_clamp(
+            movement_inertia_smoothing, "movement_inertia_smoothing", 0.0, 1.0
+        ),
+        movement_speed_limit=_speed_limit(
+            movement_speed_limit, "movement_speed_limit", 10.0
+        ),
+        rotation_speed_limit=_speed_limit(
+            rotation_speed_limit, "rotation_speed_limit", 1440.0
+        ),
+        local_inertia=_clamp(local_inertia, "local_inertia", 0.0, 1.0),
+        local_movement_speed_limit=_speed_limit(
+            local_movement_speed_limit, "local_movement_speed_limit", 10.0
+        ),
+        local_rotation_speed_limit=_speed_limit(
+            local_rotation_speed_limit, "local_rotation_speed_limit", 1440.0
+        ),
+        depth_inertia=_clamp(depth_inertia, "depth_inertia", 0.0, 1.0),
+        centrifugal_acceleration=_clamp(
+            centrifugal_acceleration, "centrifugal_acceleration", 0.0, 1.0
+        ),
+        teleport_mode=teleport_mode,
+        teleport_distance=_non_negative(teleport_distance, "teleport_distance"),
+        teleport_rotation=_non_negative(teleport_rotation, "teleport_rotation"),
+        cloth_mass=_clamp(cloth_mass, "cloth_mass", 0.0, 1.0),
+    )
+
+
+def make_mc2_particle_profile(
+    *,
+    blend_weight=1.0,
+    gravity=5.0,
+    gravity_direction=(0.0, 0.0, -1.0),
+    gravity_falloff=0.0,
+    stabilization_time_after_reset=0.1,
+    animation_pose_ratio=0.0,
+    distance_culling_enabled=False,
+    distance_culling_length=30.0,
+    distance_culling_fade_ratio=0.2,
+    particle_speed_limit=4.0,
     damping=0.05,
     damping_curve=None,
     radius=0.02,
@@ -315,7 +371,6 @@ def make_mc2_particle_profile(
     self_collision_sync_mode=0,
     self_collision_thickness=0.005,
     self_collision_curve=None,
-    cloth_mass=0.0,
     spring_enabled=True,
     spring_power=0.04,
     spring_limit_distance=0.1,
@@ -329,12 +384,6 @@ def make_mc2_particle_profile(
     wind_depth_weight=0.0,
     moving_wind=0.0,
 ) -> MC2ParticleProfileSpec:
-    normal_axis = int(normal_axis)
-    teleport_mode = int(teleport_mode)
-    if normal_axis not in range(6):
-        raise ValueError("normal_axis 必须位于 0..5")
-    if teleport_mode not in (0, 1, 2):
-        raise ValueError("teleport_mode 必须是 0(None)、1(Reset) 或 2(Keep)")
     collision_mode = int(collision_mode)
     if collision_mode not in (0, 1, 2):
         raise ValueError("collision_mode 必须是 0(None)、1(Point) 或 2(Edge)")
@@ -350,25 +399,11 @@ def make_mc2_particle_profile(
         gravity_direction=_vector3(gravity_direction, "gravity_direction"),
         gravity_falloff=_clamp(gravity_falloff, "gravity_falloff", 0.0, 1.0),
         stabilization_time_after_reset=_clamp(stabilization_time_after_reset, "stabilization_time_after_reset", 0.0, 1.0),
-        normal_axis=normal_axis,
         animation_pose_ratio=_clamp(animation_pose_ratio, "animation_pose_ratio", 0.0, 1.0),
         distance_culling_enabled=bool(distance_culling_enabled),
         distance_culling_length=_non_negative(distance_culling_length, "distance_culling_length"),
         distance_culling_fade_ratio=_clamp(distance_culling_fade_ratio, "distance_culling_fade_ratio", 0.0, 1.0),
-        anchor_inertia=_clamp(anchor_inertia, "anchor_inertia", 0.0, 1.0),
-        world_inertia=_clamp(world_inertia, "world_inertia", 0.0, 1.0),
-        movement_inertia_smoothing=_clamp(movement_inertia_smoothing, "movement_inertia_smoothing", 0.0, 1.0),
-        movement_speed_limit=_speed_limit(movement_speed_limit, "movement_speed_limit", 10.0),
-        rotation_speed_limit=_speed_limit(rotation_speed_limit, "rotation_speed_limit", 1440.0),
-        local_inertia=_clamp(local_inertia, "local_inertia", 0.0, 1.0),
-        local_movement_speed_limit=_speed_limit(local_movement_speed_limit, "local_movement_speed_limit", 10.0),
-        local_rotation_speed_limit=_speed_limit(local_rotation_speed_limit, "local_rotation_speed_limit", 1440.0),
-        depth_inertia=_clamp(depth_inertia, "depth_inertia", 0.0, 1.0),
-        centrifugal_acceleration=_clamp(centrifugal_acceleration, "centrifugal_acceleration", 0.0, 1.0),
         particle_speed_limit=_speed_limit(particle_speed_limit, "particle_speed_limit", 10.0),
-        teleport_mode=teleport_mode,
-        teleport_distance=_non_negative(teleport_distance, "teleport_distance"),
-        teleport_rotation=_non_negative(teleport_rotation, "teleport_rotation"),
         damping=make_mc2_curve_spec(damping, damping_curve, minimum=0.0, maximum=1.0, name="damping"),
         radius=make_mc2_curve_spec(radius, radius_curve, minimum=0.001, maximum=1.0, name="radius"),
         tether_compression=_clamp(tether_compression, "tether_compression", 0.0, 1.0),
@@ -393,7 +428,6 @@ def make_mc2_particle_profile(
         self_collision_mode=self_collision_mode,
         self_collision_sync_mode=self_collision_sync_mode,
         self_collision_thickness=make_mc2_curve_spec(self_collision_thickness, self_collision_curve, minimum=0.001, maximum=0.05, name="self_collision_thickness"),
-        cloth_mass=_clamp(cloth_mass, "cloth_mass", 0.0, 1.0),
         spring_enabled=bool(spring_enabled),
         spring_power=_clamp(spring_power, "spring_power", 0.001, 1.0),
         spring_limit_distance=_non_negative(spring_limit_distance, "spring_limit_distance"),
@@ -597,6 +631,7 @@ class MC2EffectiveParametersSpec:
     setup_type: str
     profile_signature: str
     setup_options_signature: str
+    task_parameters_signature: str
     payload: tuple
     parameter_signature: str
 
@@ -607,11 +642,16 @@ class MC2EffectiveParametersSpec:
 def make_mc2_effective_parameters(
     profile: MC2ParticleProfileSpec,
     setup_options: MC2SetupOptionsSpec,
+    task_parameters: MC2TaskParametersSpec | None = None,
 ) -> MC2EffectiveParametersSpec:
     if not isinstance(profile, MC2ParticleProfileSpec):
         raise TypeError("profile 必须是 MC2ParticleProfileSpec")
     if not isinstance(setup_options, MC2SetupOptionsSpec):
         raise TypeError("setup_options 必须是 MC2SetupOptionsSpec")
+    if task_parameters is None:
+        task_parameters = make_mc2_task_parameters()
+    if not isinstance(task_parameters, MC2TaskParametersSpec):
+        raise TypeError("task_parameters 必须是 MC2TaskParametersSpec")
     setup_type = setup_options.setup_type
     is_spring = setup_type == MC2_SETUP_BONE_SPRING
 
@@ -635,25 +675,25 @@ def make_mc2_effective_parameters(
         # Unity GetClothParameters(): damping and angle restoration power use 20%.
         "damping": curve(profile.damping, 0.2),
         "radius": curve(profile.radius),
-        "normal_axis": profile.normal_axis,
+        "normal_axis": task_parameters.normal_axis,
         "animation_pose_ratio": profile.animation_pose_ratio,
         "rotational_interpolation": setup_options.rotational_interpolation,
         "root_rotation": setup_options.root_rotation,
         "inertia": {
-            "anchor_inertia": profile.anchor_inertia,
-            "world_inertia": profile.world_inertia,
-            "movement_inertia_smoothing": profile.movement_inertia_smoothing,
-            "movement_speed_limit": profile.movement_speed_limit,
-            "rotation_speed_limit": profile.rotation_speed_limit,
-            "local_inertia": profile.local_inertia,
-            "local_movement_speed_limit": profile.local_movement_speed_limit,
-            "local_rotation_speed_limit": profile.local_rotation_speed_limit,
-            "depth_inertia": profile.depth_inertia,
-            "centrifugal_acceleration": profile.centrifugal_acceleration,
+            "anchor_inertia": task_parameters.anchor_inertia,
+            "world_inertia": task_parameters.world_inertia,
+            "movement_inertia_smoothing": task_parameters.movement_inertia_smoothing,
+            "movement_speed_limit": task_parameters.movement_speed_limit,
+            "rotation_speed_limit": task_parameters.rotation_speed_limit,
+            "local_inertia": task_parameters.local_inertia,
+            "local_movement_speed_limit": task_parameters.local_movement_speed_limit,
+            "local_rotation_speed_limit": task_parameters.local_rotation_speed_limit,
+            "depth_inertia": task_parameters.depth_inertia,
+            "centrifugal_acceleration": task_parameters.centrifugal_acceleration,
             "particle_speed_limit": profile.particle_speed_limit,
-            "teleport_mode": profile.teleport_mode,
-            "teleport_distance": profile.teleport_distance,
-            "teleport_rotation": profile.teleport_rotation,
+            "teleport_mode": task_parameters.teleport_mode,
+            "teleport_distance": task_parameters.teleport_distance,
+            "teleport_rotation": task_parameters.teleport_rotation,
         },
         "tether": {
             "compression_limit": MC2_BONE_SPRING_TETHER_COMPRESSION if is_spring else profile.tether_compression,
@@ -697,7 +737,7 @@ def make_mc2_effective_parameters(
                 profile.self_collision_thickness
             ),
             "radius_model": setup_options.self_collision_radius_model,
-            "cloth_mass": profile.cloth_mass,
+            "cloth_mass": task_parameters.cloth_mass,
         },
         "wind": {
             "influence": profile.wind_influence,
@@ -720,6 +760,7 @@ def make_mc2_effective_parameters(
         setup_type=setup_type,
         profile_signature=profile.signature,
         setup_options_signature=setup_options.signature,
+        task_parameters_signature=task_parameters.signature,
         payload=frozen,
         parameter_signature=_signature(payload),
     )
@@ -729,11 +770,13 @@ __all__ = [
     "MC2CurveSpec",
     "MC2EffectiveParametersSpec",
     "MC2ParticleProfileSpec",
+    "MC2TaskParametersSpec",
     "MC2SetupOptionsSpec",
     "MC2SolverSettingsSpec",
     "make_mc2_curve_spec",
     "make_mc2_effective_parameters",
     "make_mc2_particle_profile",
+    "make_mc2_task_parameters",
     "make_mc2_setup_options",
     "make_mc2_solver_settings",
     "thaw_mc2_value",

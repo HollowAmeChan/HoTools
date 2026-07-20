@@ -122,9 +122,6 @@ def _task(obj):
         backstop_distance=0.01,
         angle_limit_enabled=True,
         angle_limit=45.0,
-        teleport_mode=2,
-        teleport_distance=0.1,
-        teleport_rotation=30.0,
         self_collision_mode=2,
         self_collision_sync_mode=2,
     )
@@ -132,6 +129,11 @@ def _task(obj):
         "mesh_cloth",
         [obj],
         profile=profile,
+        task_parameters=parameters.make_mc2_task_parameters(
+            teleport_mode=2,
+            teleport_distance=0.1,
+            teleport_rotation=30.0,
+        ),
         setup_options=parameters.make_mc2_setup_options(
             "mesh_cloth", self_collision_radius_model="derived_radius"
         ),

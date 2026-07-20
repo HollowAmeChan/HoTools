@@ -110,10 +110,24 @@ def _task(obj, **profile_overrides):
         "self_collision_mode": 0,
     }
     defaults.update(profile_overrides)
+    task_parameter_names = {
+        "normal_axis", "anchor_inertia", "world_inertia",
+        "movement_inertia_smoothing", "movement_speed_limit",
+        "rotation_speed_limit", "local_inertia",
+        "local_movement_speed_limit", "local_rotation_speed_limit",
+        "depth_inertia", "centrifugal_acceleration", "teleport_mode",
+        "teleport_distance", "teleport_rotation", "cloth_mass",
+    }
+    task_values = {
+        name: defaults.pop(name)
+        for name in tuple(defaults)
+        if name in task_parameter_names
+    }
     return specs.make_mc2_task_spec(
         "mesh_cloth",
         [obj],
         profile=parameters.make_mc2_particle_profile(**defaults),
+        task_parameters=parameters.make_mc2_task_parameters(**task_values),
     )
 
 
@@ -1289,13 +1303,14 @@ def _run_self_interaction_soak(objects):
                 radius=radius,
                 self_collision_mode=2,
                 self_collision_sync_mode=2,
+            )
+            product_tasks, _names = nodes.physicsMC2MeshClothTask(
+                [obj],
+                profile=profile,
                 cloth_mass=0.25 + index * 0.5,
                 teleport_mode=teleport_mode,
                 teleport_distance=0.5,
                 teleport_rotation=180.0,
-            )
-            product_tasks, _names = nodes.physicsMC2MeshClothTask(
-                [obj], profile=profile
             )
             assert len(product_tasks) == 1
             result.append(product_tasks[0])

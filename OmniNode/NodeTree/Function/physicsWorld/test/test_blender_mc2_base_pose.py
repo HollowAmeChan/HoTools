@@ -58,6 +58,28 @@ mc2_specs = importlib.import_module(
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
+
+_TASK_PARAMETER_NAMES = {
+    "normal_axis", "anchor_inertia", "world_inertia",
+    "movement_inertia_smoothing", "movement_speed_limit",
+    "rotation_speed_limit", "local_inertia",
+    "local_movement_speed_limit", "local_rotation_speed_limit",
+    "depth_inertia", "centrifugal_acceleration", "teleport_mode",
+    "teleport_distance", "teleport_rotation", "cloth_mass",
+}
+
+
+def _task_authoring(**values):
+    task_values = {
+        name: values.pop(name)
+        for name in tuple(values)
+        if name in _TASK_PARAMETER_NAMES
+    }
+    return {
+        "profile": mc2_parameters.make_mc2_particle_profile(**values),
+        "task_parameters": mc2_parameters.make_mc2_task_parameters(**task_values),
+    }
+
 mc2_center = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state"
 )
@@ -250,7 +272,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         gravity_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity_direction=(1.0, 0.0, 0.0)
             ),
         )
@@ -426,7 +448,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         soft_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 animation_pose_ratio=0.25,
                 stabilization_time_after_reset=0.0,
@@ -667,7 +689,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         anchor_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=0.25,
@@ -741,7 +763,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         anchor_world_limit_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=0.25,
@@ -842,7 +864,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         smoothing_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=1.0,
@@ -919,7 +941,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         time_scale_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=1.0,
@@ -1082,7 +1104,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         negative_scale_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 animation_pose_ratio=1.0,
                 stabilization_time_after_reset=0.0,
@@ -1290,7 +1312,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         fixed_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 animation_pose_ratio=0.25,
                 stabilization_time_after_reset=0.0,
@@ -1458,7 +1480,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         fixed_animated_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.2,
                 animation_pose_ratio=1.0,
                 stabilization_time_after_reset=0.0,
@@ -1520,7 +1542,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         skip_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 damping=0.0,
                 animation_pose_ratio=0.0,
                 stabilization_time_after_reset=0.0,
@@ -1631,7 +1653,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         keep_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity=0.0,
                 damping=0.0,
                 animation_pose_ratio=0.0,
@@ -1766,7 +1788,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         reset_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity=0.0,
                 damping=0.0,
                 animation_pose_ratio=0.0,
@@ -1879,7 +1901,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         reset_negative_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity=0.0,
                 damping=0.0,
                 animation_pose_ratio=0.0,
@@ -2013,7 +2035,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         keep_negative_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity=0.0,
                 damping=0.0,
                 animation_pose_ratio=0.0,
@@ -2141,7 +2163,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         baseline_negative_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(
+            **_task_authoring(
                 gravity=0.0,
                 damping=0.0,
                 animation_pose_ratio=0.25,

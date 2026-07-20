@@ -151,19 +151,7 @@ def _tasks(
         blend_weight=blend_weight,
         stabilization_time_after_reset=stabilization_time_after_reset,
         self_collision_mode=0,
-        teleport_mode=teleport_mode,
-        teleport_distance=0.5,
-        teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
-        anchor_inertia=anchor_inertia,
-        world_inertia=world_inertia,
-        movement_inertia_smoothing=movement_inertia_smoothing,
-        movement_speed_limit=movement_speed_limit,
-        rotation_speed_limit=rotation_speed_limit,
-        local_inertia=local_inertia,
-        local_movement_speed_limit=local_movement_speed_limit,
-        local_rotation_speed_limit=local_rotation_speed_limit,
-        depth_inertia=depth_inertia,
     )
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity=3.0,
@@ -171,45 +159,36 @@ def _tasks(
         blend_weight=blend_weight,
         stabilization_time_after_reset=stabilization_time_after_reset,
         self_collision_mode=0,
-        teleport_mode=teleport_mode,
-        teleport_distance=0.5,
-        teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
-        anchor_inertia=anchor_inertia,
-        world_inertia=world_inertia,
-        movement_inertia_smoothing=movement_inertia_smoothing,
-        movement_speed_limit=movement_speed_limit,
-        rotation_speed_limit=rotation_speed_limit,
-        local_inertia=local_inertia,
-        local_movement_speed_limit=local_movement_speed_limit,
-        local_rotation_speed_limit=local_rotation_speed_limit,
-        depth_inertia=depth_inertia,
     )
     spring_profile = parameters.make_mc2_particle_profile(
         damping=damping,
         blend_weight=blend_weight,
         stabilization_time_after_reset=stabilization_time_after_reset,
-        teleport_mode=teleport_mode,
-        teleport_distance=0.5,
-        teleport_rotation=teleport_rotation,
         particle_speed_limit=particle_speed_limit,
-        anchor_inertia=anchor_inertia,
-        world_inertia=world_inertia,
-        movement_inertia_smoothing=movement_inertia_smoothing,
-        movement_speed_limit=movement_speed_limit,
-        rotation_speed_limit=rotation_speed_limit,
-        local_inertia=local_inertia,
-        local_movement_speed_limit=local_movement_speed_limit,
-        local_rotation_speed_limit=local_rotation_speed_limit,
-        depth_inertia=depth_inertia,
     )
+    task_values = {
+        "anchor_inertia": anchor_inertia,
+        "world_inertia": world_inertia,
+        "movement_inertia_smoothing": movement_inertia_smoothing,
+        "movement_speed_limit": movement_speed_limit,
+        "rotation_speed_limit": rotation_speed_limit,
+        "local_inertia": local_inertia,
+        "local_movement_speed_limit": local_movement_speed_limit,
+        "local_rotation_speed_limit": local_rotation_speed_limit,
+        "depth_inertia": depth_inertia,
+        "teleport_mode": teleport_mode,
+        "teleport_distance": 0.5,
+        "teleport_rotation": teleport_rotation,
+    }
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
-        [mesh], profile=mesh_profile, anchor_object=anchor_object
+        [mesh], profile=mesh_profile, anchor_object=anchor_object, **task_values
     )
     cloth_tasks, _cloth_names = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Control"}],
         profile=cloth_profile,
         anchor_object=anchor_object,
+        **task_values,
         connection_mode=0,
         collided_by_groups=1,
     )
@@ -217,6 +196,7 @@ def _tasks(
         [{"armature": spring, "bone": "Root"}],
         profile=spring_profile,
         anchor_object=anchor_object,
+        **task_values,
         collided_by_groups=1,
     )
     assert len(mesh_tasks) == len(cloth_tasks) == len(spring_tasks) == 1
@@ -375,7 +355,7 @@ def _assert_subset_teleport(
     )
     measured = np.linalg.norm(base_delta, axis=1)
     threshold = (
-        float(task.profile.teleport_distance)
+        float(task.task_parameters.teleport_distance)
         * float(slot.data["native_context"].inspect()["scale_ratio"])
     )
     np.testing.assert_array_equal(affected, measured >= threshold)
@@ -725,12 +705,12 @@ def _run_scenario():
                     assert info["particle_teleport_apply_count"] == apply_count + 1
                     if frame in (301, 601):
                         assert teleport["max_distance"] >= (
-                            float(task.profile.teleport_distance)
+                            float(task.task_parameters.teleport_distance)
                             * float(info["scale_ratio"])
                         )
                     else:
                         assert teleport["max_rotation_degrees"] >= float(
-                            task.profile.teleport_rotation
+                            task.task_parameters.teleport_rotation
                         )
                 if frame in (351, 401, 651, 701):
                     teleport = slot.data["particle_teleport_result"]

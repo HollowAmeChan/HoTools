@@ -563,12 +563,16 @@ def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
         gravity_falloff=values["gravity_falloff"],
         stabilization_time_after_reset=values["stabilization_time_after_reset"],
         blend_weight=values["parameter_blend_weight"],
+    )
+    task_parameters = parameters.make_mc2_task_parameters(
         local_inertia=values["local_inertia"],
         local_movement_speed_limit=values["local_movement_speed_limit"],
         local_rotation_speed_limit=values["local_rotation_speed_limit"],
     )
     runtime = runtime_parameters.make_mc2_runtime_parameters(
-        profile, parameters.make_mc2_setup_options("mesh_cloth")
+        profile,
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        task_parameters,
     )
     result = center.evaluate_mc2_center_step(
         step,

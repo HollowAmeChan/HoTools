@@ -30,7 +30,7 @@
 | D-02 | **方向已决策** | Debug 一级信息架构 | 一级按“实际触发/钳制/修正”组织，内部 pipeline 作为高级模式 |
 | D-03 | **方向已决策** | 外部碰撞结果表达 | 保留“碰撞形状”，另增“实际接触”模式；正在排斥的 collider 与接触标红 |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
-| D-05 | 待确认 | 参数从 Profile 移到 Task 的规则 | 不批量搬迁；先按是否逐深度、是否可复用、是否属于交互/身份分组 |
+| D-05 | **已决策，代码已迁移** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；无双owner |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
 | D-07 | **确认矛盾** | 无 consumer 参数是否公开 | `centrifugal_acceleration` 当前公开但没有 production consumer；接通前必须隐藏 |
 | D-08 | **人工已验证** | Baseline depth 审计 | Mesh以4:1混入Fixed边界表面距离并单调保护；Depth inertia使用1.5次指数；非均匀减面实测确认旋转带动更自然且横向等高线偏移明显受抑制 |
@@ -283,25 +283,34 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 
 ## P2：参数 Profile/Task 归属 D-05
 
-当前三个 Profile 已经是“每个 task 消费一个统一 profile”，因此把 socket 从 Profile 节点搬到 Task 主要改变复用和 UI 心智，不会天然减少 solver 参数上传。迁移前按以下规则逐字段审计：
+产品决策已经冻结并完成代码迁移。迁移改变authoring owner和UI复用心智，不改变native `ClothParameters` ABI字段顺序，也不把这些值加入task identity或static fingerprint；它们仍通过同一个parameter hot update进入已有slot/context。
 
-### 倾向保留在 Profile
+### 已执行字段表
 
-- 存在逐深度曲线或明确粒子分布：阻尼、半径、Distance 刚度、Angle Restoration、Angle Limit、MaxDistance、Backstop distance、Collision limit、Self thickness。
-- 用户希望在多个 task 间复用一整套材料/动态风格的字段。
+| 分组 | 字段 | 最终owner | 产品节点 | 原因与consumer |
+|---|---|---|---|---|
+| Teleport | `teleport_mode/distance/rotation` | `MC2TaskParametersSpec` | M/C/S Task | 单基准、整task状态转换；不属于逐粒子材料 |
+| 组件World/Anchor惯性 | `anchor_inertia`、`world_inertia`、`movement_inertia_smoothing`、`movement_speed_limit`、`rotation_speed_limit` | `MC2TaskParametersSpec` | M/C/S Task | 处理task整体frame/Anchor运动，Center frame shift消费 |
+| 组件Local/Depth惯性 | `local_inertia`、`local_movement_speed_limit`、`local_rotation_speed_limit`、`depth_inertia` | `MC2TaskParametersSpec` | M/C/S Task | fixed-step Center correction；depth只是该task内修正权重，不是可复用粒子材料曲线 |
+| 离心修正 | `centrifugal_acceleration` | `MC2TaskParametersSpec` | 暂不公开 | 归属组件惯性组，但D-07确认production无consumer；保持ABI默认0直到接通 |
+| Motion法线 | `normal_axis` | `MC2TaskParametersSpec` | M/C Task | task的动画姿态轴约定；BoneSpring关闭Motion所以不显示 |
+| 自碰交互质量 | `cloth_mass` | `MC2TaskParametersSpec` | M/C Task | task内/跨task接触双方修正比例；BoneSpring关闭自碰所以不显示 |
+| 粒子材料与约束 | Gravity、Blend、稳定时间、阻尼、半径、Particle Speed Limit、Distance/Bending/Angle、Motion范围、碰撞摩擦、自碰开关/厚度 | `MC2ParticleProfileSpec` | 按setup裁剪的Profile | 可复用动态风格、逐深度曲线或直接逐粒子/约束consumer |
+| task身份/拓扑/输出 | source、Anchor Object、连接模式、碰撞组、输出旋转、启用 | `MC2TaskSpec`/`MC2SetupOptionsSpec` | 对应Task | 已有task身份、拓扑或输出策略，不进入粒子/修正参数块 |
 
-### 倾向移到 Task
+### 唯一owner与preset合同
 
-- task 身份、交互和输出：对象/骨链、Anchor、连接模式、碰撞组、跨 task 交互、启用、输出旋转。
-- 仅 task/team 统一且与粒子材料无关的字段候选：Teleport、组件惯性、Normal Axis、自碰交互质量。是否移动仍需逐项确认复用需求。
+- `MC2ParticleProfileSpec`不再保存上述Task字段；`MC2TaskSpec.task_parameters`是运行时唯一authoring owner，`make_mc2_runtime_parameters(profile, setup_options, task_parameters)`不得回退偷读Profile。
+- Task参数变化只改变`parameter_signature`并走hot update；不得改变`task_id/source_signature/topology_signature/config_signature`，也不得重建proxy/baseline/self topology。
+- 三种Profile节点不再显示Task字段。MeshCloth/BoneCloth Task显示Normal Axis、组件惯性、Teleport和自碰交互质量；BoneSpring Task只显示真实消费的组件惯性与Teleport。
+- 官方MC2 JSON preset保留同名preset，但按owner拆成Profile部分和Task部分；用户在两个节点应用同名preset即可还原完整源预设。离心力因无consumer不进入公开Task preset。
+- 不增加Profile override、Task override优先级或隐藏迁移副本；避免同一值出现两个可编辑来源。
 
-### 不能作为迁移理由
+### 自动证据
 
-- “没有曲线”本身不够；Gravity direction/strength、Blend、稳定时间等仍可能属于可复用动态 profile。
-- 不能为了缩短节点而复制同一字段到 Profile 和 Task；若需要 override，必须有明确优先级和显示来源。
-- 迁移不能改变 `MC2ParticleProfileSpec` 的统一 native 参数转换，除非同时重写 owner 合同与 preset。
-
-建议先做一张字段表，逐项记录：native consumer、setup、是否 curve、是否 hot update、是否参与 task identity、是否适合 preset、建议 owner。确认后再改节点，不在 debug 修复中夹带 UI 搬迁。
+- `test_task_parameter_ownership.py`锁定Profile无旧字段、runtime唯一读取Task字段、Task参数hot update不改变身份/拓扑/config。
+- Blender property registry锁定三个Profile/Task节点的socket子集、枚举说明、preset裁剪和`MC2TaskSpec` schema version 3。
+- D-05不需要修改或重编native ABI；现有native参数与Center/Teleport/interaction回归继续验证运行语义。
 
 ## P2：重编译保留运行缓存 D-06
 
@@ -340,7 +349,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 
 ## 实施顺序
 
-1. **先冻结决策**：D-04自碰质量与D-08深度已经人工关闭；下一项产品决策是D-05参数归属。D-01/D-02/D-03/D-06/D-09方向已定，D-07已确认。
+1. **已冻结决策**：D-04自碰质量与D-08深度已经人工关闭；D-05参数归属已经决策并完成owner迁移。D-01/D-02/D-03/D-06/D-09方向已定，D-07已确认。
 2. **粒子深度调试（已实现并完成首轮手测）**：以显式按需模式展示真实 depth/root/parent 和异常项；首轮非均匀减面验证已确认4:1边界距离修正与1.5次惯性指数有效，后续继续按consumer矩阵调优。
 3. **重开验收状态**：自碰静置已经按新不变量重新验收；Teleport和debug usability仍保持撤销verified，等待对应反例关闭。
 4. **Teleport 回退（代码已替换，待真实复验）**：任务级首Fixed/对象原点判定、整task Reset/Keep、跨interaction失效和单参考debug已接通；仍需用高速平移/旋转、zero-substep与真实collider关闭反例。
@@ -349,7 +358,7 @@ MC2 solver 本身已有 task id、参数签名和 static fingerprint，可在下
 7. **Debug 基础数据合同**：定义每个 pass 的 active/correction/contact 显式捕获，保持 debug-off 零额外生产。
 8. **一级视图重画**：运动趋势、结构约束、Motion/Backstop、Angle、惯性、实际接触、自碰结果。
 9. **参数长说明同步**：蓝本表与三种 profile 节点长说明保持可校验同步；socket 只保留短摘要。
-10. **参数归属审计**：单独提交字段表和产品决策，不与 debug 改动混在一起。
+10. **参数归属审计（已完成）**：字段表、唯一owner、节点裁剪、preset拆分和hot-update证据已经接通。
 11. **兼容重编译缓存**：作为 OmniNode 通用能力单独设计、测试和提交。
 12. **真实手动复验**：使用本轮截图资产与最小场景，逐项由用户判断可读性；再跑性能和长跑矩阵。
 

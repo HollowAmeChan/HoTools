@@ -305,21 +305,21 @@ def _make_slot_center_frame_shift(
         return None
     if not isinstance(center_state, MC2CenterPersistentState) or not center_state.initialized:
         return None
-    profile = spec.profile
+    task_parameters = spec.task_parameters
     anchor_stable = bool(
         center_state.anchor_identity
         and center_state.anchor_identity == frame_pose.anchor_identity
     )
     anchor_shift_active = (
-        anchor_stable and float(profile.anchor_inertia) < 1.0 - 1.0e-8
+        anchor_stable and float(task_parameters.anchor_inertia) < 1.0 - 1.0e-8
     )
-    world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
-    smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
-    movement_limit_active = float(profile.movement_speed_limit) >= 0.0
-    rotation_limit_active = float(profile.rotation_speed_limit) >= 0.0
+    world_shift_active = float(task_parameters.world_inertia) < 1.0 - 1.0e-8
+    smoothing_active = float(task_parameters.movement_inertia_smoothing) >= 1.0e-6
+    movement_limit_active = float(task_parameters.movement_speed_limit) >= 0.0
+    rotation_limit_active = float(task_parameters.rotation_speed_limit) >= 0.0
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     skip_shift_active = int(skip_count) > 0
-    teleport_mode = int(profile.teleport_mode)
+    teleport_mode = int(task_parameters.teleport_mode)
     configured_teleport_active = False
     old_scale = tuple(float(value) for value in center_state.old_component_world_scale)
     current_scale = tuple(float(value) for value in frame_pose.component_world_scale)
@@ -359,17 +359,17 @@ def _make_slot_center_frame_shift(
         center_pose=center_pose,
         simulation_delta_time=simulation_delta_time,
         frame_delta_time=frame_dt,
-        world_inertia=profile.world_inertia,
-        anchor_inertia=profile.anchor_inertia,
-        movement_inertia_smoothing=profile.movement_inertia_smoothing,
-        movement_speed_limit=profile.movement_speed_limit,
-        rotation_speed_limit=profile.rotation_speed_limit,
+        world_inertia=task_parameters.world_inertia,
+        anchor_inertia=task_parameters.anchor_inertia,
+        movement_inertia_smoothing=task_parameters.movement_inertia_smoothing,
+        movement_speed_limit=task_parameters.movement_speed_limit,
+        rotation_speed_limit=task_parameters.rotation_speed_limit,
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
         skip_count=int(skip_count),
         teleport_mode=0,
-        teleport_distance=profile.teleport_distance,
-        teleport_rotation=profile.teleport_rotation,
+        teleport_distance=task_parameters.teleport_distance,
+        teleport_rotation=task_parameters.teleport_rotation,
         negative_scale_transition=negative_scale_transition,
     )
     return evaluate_mc2_center_frame_shift(shift_input)
@@ -651,7 +651,11 @@ def step_mc2(
                     static_input_fingerprint=static_input_fingerprint,
                     static_input_snapshots=static_input_snapshots,
                 )
-            effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
+            effective = make_mc2_runtime_parameters(
+                spec.profile,
+                spec.setup_options,
+                spec.task_parameters,
+            )
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
                 _validate_mc2_frame_input(spec, topology, frame_input)

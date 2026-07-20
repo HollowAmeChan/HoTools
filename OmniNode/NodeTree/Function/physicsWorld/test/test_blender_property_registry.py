@@ -650,22 +650,33 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
             assert settings[identifier].get("description"), (
                 profile_node.__name__, identifier
             )
-        assert "0:+X" in settings["normal_axis"]["description"]
-        assert "1:Reset" in settings["teleport_mode"]["description"]
+        assert "normal_axis" not in settings
+        assert "teleport_mode" not in settings
     for profile_node in cloth_profile_nodes:
         settings = function_node_core.CheckMetaInfo(profile_node)[5]
         assert "1:Point" in settings["collision_mode"]["description"]
 
     for task_node in (
+        mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
         mc2_nodes.physicsMC2BoneSpringTask,
     ):
         _node, inputs, _outputs, _defaults, _multi, settings = (
             function_node_core.CheckMetaInfo(task_node)
         )
-        assert inputs["collided_by_groups"]["type"] == "OmniNodeSocketBitMask"
-        assert settings["collided_by_groups"]["mask_length"] == 16
-        assert settings["collided_by_groups"]["description"]
+        assert "1:Reset" in settings["teleport_mode"]["description"]
+        assert settings["anchor_inertia"]["description"]
+        assert settings["depth_inertia"]["description"]
+        if task_node is not mc2_nodes.physicsMC2BoneSpringTask:
+            assert "0:+X" in settings["normal_axis"]["description"]
+            assert settings["cloth_mass"]["description"]
+        else:
+            assert "normal_axis" not in settings
+            assert "cloth_mass" not in settings
+        if "collided_by_groups" in inputs:
+            assert inputs["collided_by_groups"]["type"] == "OmniNodeSocketBitMask"
+            assert settings["collided_by_groups"]["mask_length"] == 16
+            assert settings["collided_by_groups"]["description"]
 
     class _FakeData:
         def __init__(self, pointer):
@@ -758,7 +769,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert all(len(task.topology_signature) == 64 for task in tasks)
     assert all(len(task.config_signature) == 64 for task in tasks)
     assert all(len(task.parameter_signature) == 64 for task in tasks)
-    assert all(task.implementation_version == 2 for task in tasks)
+    assert all(task.implementation_version == 3 for task in tasks)
     assert all(not hasattr(task, "backend") for task in tasks)
     rebuilt = tuple(
         mc2_specs.make_mc2_task_spec(setup_type, sources)

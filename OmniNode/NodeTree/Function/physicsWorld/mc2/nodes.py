@@ -20,6 +20,7 @@ from .parameters import (
     make_mc2_particle_profile,
     make_mc2_setup_options,
     make_mc2_solver_settings,
+    make_mc2_task_parameters,
 )
 from .presets import MC2_PARTICLE_PRESETS
 from .specs import make_mc2_task_spec
@@ -29,7 +30,9 @@ def _task_name_output(tasks) -> str:
     return "\n".join(str(task.task_id) for task in tasks)
 
 
-def _mesh_cloth_tasks(mesh_objects, anchor_object, profile, enabled: bool):
+def _mesh_cloth_tasks(
+    mesh_objects, anchor_object, profile, task_parameters, enabled: bool
+):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     sources = _flatten_values(mesh_objects)
@@ -45,6 +48,7 @@ def _mesh_cloth_tasks(mesh_objects, anchor_object, profile, enabled: bool):
                 MC2_SETUP_MESH_CLOTH,
                 self_collision_radius_model="derived_radius",
             ),
+            task_parameters=task_parameters,
             anchor_object=anchor_object,
             enabled=enabled,
         )
@@ -125,7 +129,12 @@ def _owner_key(source: dict) -> tuple[int, int]:
 
 
 def _hotools_bone_tasks(
-    control_bones, anchor_object, profile, enabled: bool, **setup_values
+    control_bones,
+    anchor_object,
+    profile,
+    task_parameters,
+    enabled: bool,
+    **setup_values,
 ):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
@@ -155,6 +164,7 @@ def _hotools_bone_tasks(
                 connection_model="hotools_product",
                 **setup_values,
             ),
+            task_parameters=task_parameters,
             anchor_object=anchor_object,
             enabled=enabled,
         )
@@ -163,7 +173,12 @@ def _hotools_bone_tasks(
 
 
 def _bone_spring_tasks(
-    root_bones, anchor_object, profile, enabled: bool, **setup_values
+    root_bones,
+    anchor_object,
+    profile,
+    task_parameters,
+    enabled: bool,
+    **setup_values,
 ):
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
@@ -184,6 +199,7 @@ def _bone_spring_tasks(
                 MC2_SETUP_BONE_SPRING,
                 **setup_values,
             ),
+            task_parameters=task_parameters,
             anchor_object=anchor_object,
             enabled=enabled,
         )
@@ -198,14 +214,7 @@ def _profile_input(description: str, **settings) -> dict:
 _PROFILE_LABELS = {
     "blend_weight": "混合权重", "gravity_direction": "重力方向", "gravity": "重力强度",
     "gravity_falloff": "重力衰减", "stabilization_time_after_reset": "重置稳定时间",
-    "normal_axis": "法线轴", "animation_pose_ratio": "动画姿态比例",
-    "anchor_inertia": "Anchor惯性", "world_inertia": "World惯性",
-    "movement_inertia_smoothing": "惯性平滑", "movement_speed_limit": "World移动限速",
-    "rotation_speed_limit": "World旋转限速", "local_inertia": "Local惯性",
-    "local_movement_speed_limit": "Local移动限速", "local_rotation_speed_limit": "Local旋转限速",
-    "depth_inertia": "深度惯性", "centrifugal_acceleration": "离心力",
-    "particle_speed_limit": "粒子限速", "teleport_mode": "Teleport模式",
-    "teleport_distance": "Teleport距离", "teleport_rotation": "Teleport旋转",
+    "animation_pose_ratio": "动画姿态比例", "particle_speed_limit": "粒子限速",
     "damping": "阻尼", "damping_curve": "阻尼曲线", "radius": "粒子半径",
     "radius_curve": "半径曲线", "tether_compression": "Tether压缩",
     "distance_stiffness": "距离刚度", "distance_stiffness_curve": "距离刚度曲线",
@@ -221,7 +230,7 @@ _PROFILE_LABELS = {
     "motion_stiffness": "Motion刚度", "collision_mode": "碰撞模式",
     "collision_friction": "碰撞摩擦", "collision_limit_distance": "碰撞限制距离",
     "collision_limit_curve": "碰撞限制曲线", "self_collision_enabled": "自碰撞",
-    "self_collision_interaction": "跨物体自碰撞", "cloth_mass": "布料质量",
+    "self_collision_interaction": "跨物体自碰撞",
 }
 
 _PROFILE_INPUT_INIT = {
@@ -234,22 +243,8 @@ _PROFILE_INPUT_INIT = {
         max_value=1.0,
     ),
     "stabilization_time_after_reset": _profile_input("Reset或Teleport后的稳定时间。\n单位：秒", min_value=0.0, max_value=1.0),
-    "normal_axis": _profile_input("粒子局部法线轴。\n0:+X  1:+Y  2:+Z\n3:-X  4:-Y  5:-Z", min_value=0, max_value=5),
     "animation_pose_ratio": _profile_input("约束参考姿态中动画姿态所占比例。", min_value=0.0, max_value=1.0),
-    "anchor_inertia": _profile_input("Anchor坐标变化保留到粒子运动中的比例。", min_value=0.0, max_value=1.0),
-    "world_inertia": _profile_input("世界空间移动/旋转惯性比例。", min_value=0.0, max_value=1.0),
-    "movement_inertia_smoothing": _profile_input("世界移动惯性的平滑比例。", min_value=0.0, max_value=1.0),
-    "movement_speed_limit": _profile_input("世界移动速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
-    "rotation_speed_limit": _profile_input("世界旋转速度上限（度/秒）；负值禁用。", min_value=-1.0, max_value=1440.0),
-    "local_inertia": _profile_input("局部空间移动/旋转惯性比例。", min_value=0.0, max_value=1.0),
-    "local_movement_speed_limit": _profile_input("局部移动速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
-    "local_rotation_speed_limit": _profile_input("局部旋转速度上限（度/秒）；负值禁用。", min_value=-1.0, max_value=1440.0),
-    "depth_inertia": _profile_input("按深度保留末端惯性。\n权重=1-depth^1.5", min_value=0.0, max_value=1.0),
-    "centrifugal_acceleration": _profile_input("由组件旋转产生的离心加速度比例。", min_value=0.0, max_value=1.0),
     "particle_speed_limit": _profile_input("粒子速度上限；负值禁用。", min_value=-1.0, max_value=10.0),
-    "teleport_mode": _profile_input("0:None\n1:Reset重置\n2:Keep搬运", min_value=0, max_value=2),
-    "teleport_distance": _profile_input("位移阈值=输入xScale。\n与旋转条件为OR。", min_value=0.0),
-    "teleport_rotation": _profile_input("旋转阈值（度）。\n与位移条件为OR。", min_value=0.0),
     "damping": _profile_input("粒子速度阻尼基础值。", min_value=0.0, max_value=1.0),
     "damping_curve": _profile_input("按粒子深度乘到阻尼基础值上的曲线。"),
     "radius": _profile_input("粒子碰撞半径基础值。", min_value=0.001, max_value=1.0),
@@ -281,7 +276,6 @@ _PROFILE_INPUT_INIT = {
     "collision_limit_curve": _profile_input("BoneSpring碰撞距离的深度曲线"),
     "self_collision_enabled": _profile_input("启用FullMesh自碰撞；内部转换为MC2模式2。"),
     "self_collision_interaction": _profile_input("跨任务自碰撞\n范围：同一Physics World"),
-    "cloth_mass": _profile_input("跨布料自碰撞时用于质量比例的参数。", min_value=0.0, max_value=1.0),
 }
 
 _MESH_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
@@ -297,7 +291,7 @@ _SPRING_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
     "max_distance_enabled", "max_distance",
     "max_distance_curve", "backstop_enabled", "backstop_radius", "backstop_distance",
     "backstop_distance_curve", "collision_mode", "collision_friction", "self_collision_enabled",
-    "self_collision_interaction", "cloth_mass",
+    "self_collision_interaction",
 })
 
 
@@ -352,22 +346,8 @@ def physicsMC2MeshClothProfile(
     gravity: float = 5.0,
     gravity_falloff: float = 0.0,
     stabilization_time_after_reset: float = 0.1,
-    normal_axis: int = 1,
     animation_pose_ratio: float = 0.0,
-    anchor_inertia: float = 0.0,
-    world_inertia: float = 1.0,
-    movement_inertia_smoothing: float = 0.4,
-    movement_speed_limit: float = 5.0,
-    rotation_speed_limit: float = 720.0,
-    local_inertia: float = 1.0,
-    local_movement_speed_limit: float = -1.0,
-    local_rotation_speed_limit: float = -1.0,
-    depth_inertia: float = 0.0,
-    centrifugal_acceleration: float = 0.0,
     particle_speed_limit: float = 4.0,
-    teleport_mode: int = 0,
-    teleport_distance: float = 0.5,
-    teleport_rotation: float = 90.0,
     damping: float = 0.05,
     damping_curve: _OmniFloatCurve = None,
     radius: float = 0.02,
@@ -397,7 +377,6 @@ def physicsMC2MeshClothProfile(
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
     self_collision_interaction: bool = False,
-    cloth_mass: float = 0.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_MESH_CLOTH)
@@ -414,22 +393,8 @@ def physicsMC2BoneClothProfile(
     gravity: float = 5.0,
     gravity_falloff: float = 0.0,
     stabilization_time_after_reset: float = 0.1,
-    normal_axis: int = 1,
     animation_pose_ratio: float = 0.0,
-    anchor_inertia: float = 0.0,
-    world_inertia: float = 1.0,
-    movement_inertia_smoothing: float = 0.4,
-    movement_speed_limit: float = 5.0,
-    rotation_speed_limit: float = 720.0,
-    local_inertia: float = 1.0,
-    local_movement_speed_limit: float = -1.0,
-    local_rotation_speed_limit: float = -1.0,
-    depth_inertia: float = 0.0,
-    centrifugal_acceleration: float = 0.0,
     particle_speed_limit: float = 4.0,
-    teleport_mode: int = 0,
-    teleport_distance: float = 0.5,
-    teleport_rotation: float = 90.0,
     damping: float = 0.05,
     damping_curve: _OmniFloatCurve = None,
     radius: float = 0.02,
@@ -458,7 +423,6 @@ def physicsMC2BoneClothProfile(
     collision_mode: int = 1,
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
-    cloth_mass: float = 0.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_BONE_CLOTH)
@@ -472,22 +436,8 @@ def physicsMC2BoneClothProfile(
 def physicsMC2BoneSpringProfile(
     blend_weight: float = 1.0,
     stabilization_time_after_reset: float = 0.1,
-    normal_axis: int = 1,
     animation_pose_ratio: float = 0.0,
-    anchor_inertia: float = 0.0,
-    world_inertia: float = 1.0,
-    movement_inertia_smoothing: float = 0.4,
-    movement_speed_limit: float = 5.0,
-    rotation_speed_limit: float = 720.0,
-    local_inertia: float = 1.0,
-    local_movement_speed_limit: float = -1.0,
-    local_rotation_speed_limit: float = -1.0,
-    depth_inertia: float = 0.0,
-    centrifugal_acceleration: float = 0.0,
     particle_speed_limit: float = 4.0,
-    teleport_mode: int = 0,
-    teleport_distance: float = 0.5,
-    teleport_rotation: float = 90.0,
     damping: float = 0.05,
     damping_curve: _OmniFloatCurve = None,
     radius: float = 0.02,
@@ -509,18 +459,160 @@ def physicsMC2BoneSpringProfile(
     return _make_profile(profile_values, MC2_SETUP_BONE_SPRING)
 
 
+_TASK_PARAMETER_LABELS = {
+    "normal_axis": "法线轴",
+    "anchor_inertia": "Anchor惯性",
+    "world_inertia": "World惯性",
+    "movement_inertia_smoothing": "惯性平滑",
+    "movement_speed_limit": "World移动限速",
+    "rotation_speed_limit": "World旋转限速",
+    "local_inertia": "Local惯性",
+    "local_movement_speed_limit": "Local移动限速",
+    "local_rotation_speed_limit": "Local旋转限速",
+    "depth_inertia": "深度惯性",
+    "teleport_mode": "Teleport模式",
+    "teleport_distance": "Teleport距离",
+    "teleport_rotation": "Teleport旋转",
+    "cloth_mass": "自碰交互质量",
+}
+
+_TASK_PARAMETER_INPUT_INIT = {
+    "normal_axis": {
+        "description": "Motion/Backstop法线轴\n0:+X 1:+Y 2:+Z 3:-X 4:-Y 5:-Z",
+        "min_value": 0,
+        "max_value": 5,
+    },
+    "anchor_inertia": {
+        "description": "Anchor运动保留为惯性的比例",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+    "world_inertia": {
+        "description": "组件World运动保留为惯性的比例",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+    "movement_inertia_smoothing": {
+        "description": "组件World移动惯性平滑",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+    "movement_speed_limit": {
+        "description": "World移动补偿限速；负值关闭",
+        "min_value": -1.0,
+        "max_value": 10.0,
+    },
+    "rotation_speed_limit": {
+        "description": "World旋转补偿限速（度/秒）；负值关闭",
+        "min_value": -1.0,
+        "max_value": 1440.0,
+    },
+    "local_inertia": {
+        "description": "Fixed step内Local运动惯性比例",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+    "local_movement_speed_limit": {
+        "description": "Local移动惯性限速；负值关闭",
+        "min_value": -1.0,
+        "max_value": 10.0,
+    },
+    "local_rotation_speed_limit": {
+        "description": "Local旋转惯性限速（度/秒）；负值关闭",
+        "min_value": -1.0,
+        "max_value": 1440.0,
+    },
+    "depth_inertia": {
+        "description": "按深度保留末端惯性\n权重=1-depth^1.5",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+    "teleport_mode": {
+        "description": "0:None  1:Reset  2:Keep",
+        "min_value": 0,
+        "max_value": 2,
+    },
+    "teleport_distance": {
+        "description": "Task基准位移阈值；实际值乘组件Scale",
+        "min_value": 0.0,
+    },
+    "teleport_rotation": {
+        "description": "Task基准旋转阈值（度）；与位移条件为OR",
+        "min_value": 0.0,
+    },
+    "cloth_mass": {
+        "description": "自碰接触相对质量；影响双方修正比例",
+        "min_value": 0.0,
+        "max_value": 1.0,
+    },
+}
+
+_TASK_INERTIA_FIELDS = (
+    "anchor_inertia",
+    "world_inertia",
+    "movement_inertia_smoothing",
+    "movement_speed_limit",
+    "rotation_speed_limit",
+    "local_inertia",
+    "local_movement_speed_limit",
+    "local_rotation_speed_limit",
+    "depth_inertia",
+)
+_TASK_TELEPORT_FIELDS = (
+    "teleport_mode",
+    "teleport_distance",
+    "teleport_rotation",
+)
+_TASK_CLOTH_PARAMETER_FIELDS = (
+    "normal_axis",
+    *_TASK_INERTIA_FIELDS,
+    *_TASK_TELEPORT_FIELDS,
+    "cloth_mass",
+)
+_TASK_SPRING_PARAMETER_FIELDS = (*_TASK_INERTIA_FIELDS, *_TASK_TELEPORT_FIELDS)
+
+
+def _task_parameter_inputs(fields: tuple[str, ...]) -> dict:
+    return {name: _TASK_PARAMETER_INPUT_INIT[name] for name in fields}
+
+
+def _task_parameter_presets(fields: tuple[str, ...]) -> tuple[dict, ...]:
+    return tuple({
+        **preset,
+        "values": {
+            name: preset["values"][name]
+            for name in fields
+            if name in preset["values"]
+        },
+    } for preset in MC2_PARTICLE_PRESETS)
+
+
+def _make_task_parameters(values: dict):
+    return make_mc2_task_parameters(**{
+        name: values[name]
+        for name in _TASK_PARAMETER_LABELS
+        if name in values
+    })
+
+
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["代理网格", "粒子配置", "Anchor", "启用"],
+    _INPUT_NAME=[
+        "代理网格", "粒子配置", "Anchor",
+        *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
+        "启用",
+    ],
     input_init={
         "mesh_objects": {"description": "MeshCloth网格列表\n每对象一个任务"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 MeshCloth配置\n留空使用默认值"},
+        **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
         "enabled": {"description": "保留任务但不参与模拟"},
     },
+    omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -528,12 +620,28 @@ def physicsMC2MeshClothTask(
     mesh_objects: list[bpy.types.Object],
     profile: typing.Any = None,
     anchor_object: bpy.types.Object = None,
+    normal_axis: int = 1,
+    anchor_inertia: float = 0.0,
+    world_inertia: float = 1.0,
+    movement_inertia_smoothing: float = 0.4,
+    movement_speed_limit: float = 5.0,
+    rotation_speed_limit: float = 720.0,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 0.5,
+    teleport_rotation: float = 90.0,
+    cloth_mass: float = 0.0,
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
+    task_parameters = _make_task_parameters(locals())
     tasks = _mesh_cloth_tasks(
         mesh_objects,
         anchor_object,
         profile,
+        task_parameters,
         enabled,
     )
     return tasks, _task_name_output(tasks)
@@ -544,11 +652,16 @@ def physicsMC2MeshClothTask(
     bl_label="MC2 BoneCloth任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["中控骨", "粒子配置", "Anchor", "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=[
+        "中控骨", "粒子配置", "Anchor",
+        *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
+        "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用",
+    ],
     input_init={
         "control_bones": {"description": "直接子骨生成模拟链\n每个中控骨独立横连"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
+        **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
         "connection_mode": {
             "min_value": 0,
             "max_value": 2,
@@ -567,6 +680,7 @@ def physicsMC2MeshClothTask(
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
+    omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -574,16 +688,32 @@ def physicsMC2BoneClothTask(
     control_bones: list[_OmniBone],
     profile: typing.Any = None,
     anchor_object: bpy.types.Object = None,
+    normal_axis: int = 1,
+    anchor_inertia: float = 0.0,
+    world_inertia: float = 1.0,
+    movement_inertia_smoothing: float = 0.4,
+    movement_speed_limit: float = 5.0,
+    rotation_speed_limit: float = 720.0,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 0.5,
+    teleport_rotation: float = 90.0,
+    cloth_mass: float = 0.0,
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
+    task_parameters = _make_task_parameters(locals())
     tasks = _hotools_bone_tasks(
         control_bones,
         anchor_object,
         profile,
+        task_parameters,
         enabled,
         connection_mode=connection_mode,
         rotational_interpolation=rotational_interpolation,
@@ -598,16 +728,22 @@ def physicsMC2BoneClothTask(
     bl_label="MC2 BoneSpring任务",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["根骨", "粒子配置", "Anchor", "旋转插值", "根旋转", "被碰撞组", "启用"],
+    _INPUT_NAME=[
+        "根骨", "粒子配置", "Anchor",
+        *(_TASK_PARAMETER_LABELS[name] for name in _TASK_SPRING_PARAMETER_FIELDS),
+        "旋转插值", "根旋转", "被碰撞组", "启用",
+    ],
     input_init={
         "root_bones": {"description": "BoneSpring根骨列表\n递归收集后代"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneSpring配置\n留空使用默认值"},
+        **_task_parameter_inputs(_TASK_SPRING_PARAMETER_FIELDS),
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "Move父骨方向比例\n仅影响骨骼旋转"},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "Fixed根骨方向比例\n仅影响骨骼旋转"},
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
         "enabled": {"description": "保留任务但不参与模拟"},
     },
+    omni_presets=_task_parameter_presets(_TASK_SPRING_PARAMETER_FIELDS),
     _OUTPUT_NAME=["MC2任务", "任务名称"],
     mute_passthrough=False,
 )
@@ -615,15 +751,29 @@ def physicsMC2BoneSpringTask(
     root_bones: list[_OmniBone],
     profile: typing.Any = None,
     anchor_object: bpy.types.Object = None,
+    anchor_inertia: float = 0.0,
+    world_inertia: float = 1.0,
+    movement_inertia_smoothing: float = 0.4,
+    movement_speed_limit: float = 5.0,
+    rotation_speed_limit: float = 720.0,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 0.5,
+    teleport_rotation: float = 90.0,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
+    task_parameters = _make_task_parameters(locals())
     tasks = _bone_spring_tasks(
         root_bones,
         anchor_object,
         profile,
+        task_parameters,
         enabled,
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
@@ -718,7 +868,7 @@ def physicsMC2Step(
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
         "show_self_grid": {"description": "自碰2：灰=空间网格占用"},
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
-        "show_self_contacts": {"description": "自碰4：红=接触 灰=禁用\n洋红=最终确认的几何穿插"},
+        "show_self_contacts": {"description": "自碰4：红=接触 灰=禁用\n洋红=确认穿插"},
         "show_output": {"description": "显示实际写回的最终输出偏移。"},
         "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},
