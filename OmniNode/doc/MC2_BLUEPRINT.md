@@ -560,6 +560,8 @@ Topology视图以去重后的final proxy edge为唯一常规线段来源：MeshC
 
 `碰撞情况`是外碰的单一用户视图，只在当前模式与collider scope真实有效时绘制双方。Point模式用绿色半透明低模球显示实际可移动且未Ignore的粒子碰撞形状；Edge模式用橙色半透明低模胶囊显示全部有效final proxy段按两端粒子半径线性插值得到的布料碰撞形状，并只保留一根中心线；蓝色半透明实体显示本帧实际上传的Sphere/Capsule/Plane/Box collider，并保持正常深度测试以便判断真实遮挡和穿插。所有同色实体合并为单一indexed triangle batch，公共utils保留原线框API并旁路提供实体API。`max_items`默认10000，预算按final proxy连通分量公平分配并在分量内均匀抽样；预算不少于分量数时每个非连通分量至少保留一个形状，禁止再用数组前缀截断让后序分量整块消失。该视图不区分Edge来自Mesh、纵向骨链、显式横边还是triangle补边；producer来源属于拓扑审计，用户碰撞视图只表达最终什么形状与什么形状相碰。独立`粒子半径`仅用于参数审计，不表示该粒子在当前碰撞模式与scope中必然参与外碰。
 
+`实际接触`的外碰时间层只比较连续显式捕获帧中的真实kernel记录，稳定身份为`primitive kind + primitive index + collider index`。当前/持续接触为红色，新增为黄色，上一捕获帧失效为灰色；冻结snapshot同时发布active/new/persistent/lost/churn计数及失效记录的上一位置/法线。首个样本只建立基线；帧不连续、generation变化、task/setup过滤变化或关闭模式必须清空历史，因此观察空档不能制造事件。该身份差分属于按需debug派生，不改变C++ solver、接触缓存或debug-off零明细生产合同。self contact与geometric intersection的对应时间层仍待完成。
+
 ## Python模块所有权
 
 | 文件 | 唯一主要职责 |

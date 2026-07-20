@@ -42,6 +42,8 @@ _COLORS = {
     "collider_surface": (0.03, 0.58, 1.00, 0.42),
     "active_collider_surface": (1.00, 0.04, 0.02, 0.62),
     "external_contact": (1.00, 0.08, 0.04, 1.00),
+    "external_contact_new": (1.00, 0.88, 0.08, 1.00),
+    "external_contact_lost": (0.58, 0.64, 0.70, 0.68),
     "external_contact_normal": (1.00, 0.82, 0.12, 0.96),
     "external_contact_correction": (1.00, 0.28, 0.04, 1.00),
     "fixed": (0.95, 0.25, 0.20, 0.95),
@@ -1691,6 +1693,9 @@ def _append_external_contact_batches(
     corrections = np.asarray(
         _values(contacts.get("corrections")), dtype=np.float32
     ).reshape((-1, 3))
+    temporal_states = np.asarray(
+        _values(contacts.get("temporal_states")), dtype=np.uint8
+    ).reshape((-1,))
     count = min(
         limit,
         len(kinds),
@@ -1715,23 +1720,29 @@ def _append_external_contact_batches(
         _values(topology.get("edges")), dtype=np.int32
     ).reshape((-1, 2))
     points = []
+    new_points = []
+    lost_points = []
     primitive_lines = []
+    new_lines = []
     normal_lines = []
     correction_lines = []
-    for kind, primitive, contact, normal, correction in zip(
+    for index, (kind, primitive, contact, normal, correction) in enumerate(zip(
         kinds[:count],
         primitive_indices[:count],
         contact_positions[:count],
         normals[:count],
         corrections[:count],
-    ):
-        add_point(points, contact)
+    )):
+        is_new = index < len(temporal_states) and temporal_states[index] == 1
+        target_points = new_points if is_new else points
+        target_primitives = new_lines if is_new else primitive_lines
+        add_point(target_points, contact)
         kind = int(kind)
         primitive = int(primitive)
         if kind == 0 and 0 <= primitive < len(positions):
-            add_point(points, positions[primitive])
+            add_point(target_points, positions[primitive])
         elif kind == 1 and 0 <= primitive < len(edges):
-            _add_index_line(primitive_lines, positions, edges[primitive])
+            _add_index_line(target_primitives, positions, edges[primitive])
         correction_vector = vector3(correction)
         normal_vector = vector3(normal)
         if normal_vector.length > 1.0e-8:
@@ -1748,8 +1759,29 @@ def _append_external_contact_batches(
                 contact,
                 vector3(contact) + correction_vector,
             )
+    lost_positions = np.asarray(
+        _values(contacts.get("lost_positions")), dtype=np.float32
+    ).reshape((-1, 3))
+    lost_normals = np.asarray(
+        _values(contacts.get("lost_normals")), dtype=np.float32
+    ).reshape((-1, 3))
+    lost_lines = []
+    for contact, normal in zip(lost_positions[:limit], lost_normals[:limit]):
+        add_point(lost_points, contact)
+        normal_vector = vector3(normal)
+        if normal_vector.length > 1.0e-8:
+            normal_vector.normalize()
+            add_line(
+                lost_lines,
+                contact,
+                vector3(contact) + normal_vector * 0.025,
+            )
     _point_batch(point_batches, points, "external_contact", 7.0)
+    _point_batch(point_batches, new_points, "external_contact_new", 8.0)
+    _point_batch(point_batches, lost_points, "external_contact_lost", 6.0)
     _batch(batches, primitive_lines, "external_contact", 2.2)
+    _batch(batches, new_lines, "external_contact_new", 2.4)
+    _batch(batches, lost_lines, "external_contact_lost", 1.2)
     _batch(batches, normal_lines, "external_contact_normal", 1.4)
     _batch(batches, correction_lines, "external_contact_correction", 2.2)
 

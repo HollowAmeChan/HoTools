@@ -113,6 +113,101 @@ def _readonly(values, dtype=None) -> np.ndarray:
     return result
 
 
+def _annotate_external_contact_temporal(
+    contacts: dict,
+    history: dict,
+    *,
+    frame: int,
+    generation: int,
+) -> None:
+    kinds = np.asarray(contacts.get("primitive_kinds"), dtype=np.int32).reshape((-1,))
+    primitives = np.asarray(
+        contacts.get("primitive_indices"), dtype=np.int32
+    ).reshape((-1,))
+    colliders = np.asarray(
+        contacts.get("collider_indices"), dtype=np.int32
+    ).reshape((-1,))
+    positions = np.asarray(contacts.get("positions"), dtype=np.float32).reshape((-1, 3))
+    normals = np.asarray(contacts.get("normals"), dtype=np.float32).reshape((-1, 3))
+    corrections = np.asarray(
+        contacts.get("corrections"), dtype=np.float32
+    ).reshape((-1, 3))
+    count = min(
+        len(kinds),
+        len(primitives),
+        len(colliders),
+        len(positions),
+        len(normals),
+        len(corrections),
+    )
+    previous_records = history.get("records") or {}
+    history_valid = bool(
+        "records" in history
+        and int(history.get("frame", frame - 1)) == frame - 1
+        and int(history.get("generation", generation)) == generation
+    )
+    current_records = {}
+    states = np.zeros((count,), dtype=np.uint8)
+    for index in range(count):
+        key = (int(kinds[index]), int(primitives[index]), int(colliders[index]))
+        current_records[key] = (
+            key,
+            tuple(map(float, positions[index])),
+            tuple(map(float, normals[index])),
+            tuple(map(float, corrections[index])),
+        )
+        if history_valid:
+            states[index] = 2 if key in previous_records else 1
+    lost_records = (
+        [
+            previous_records[key]
+            for key in sorted(previous_records.keys() - current_records.keys())
+        ]
+        if history_valid
+        else []
+    )
+    persistent_count = (
+        len(previous_records.keys() & current_records.keys()) if history_valid else 0
+    )
+    new_count = len(current_records) - persistent_count if history_valid else 0
+    lost_count = len(lost_records)
+    contacts["temporal_states"] = _readonly(states)
+    contacts["lost_primitive_kinds"] = _readonly(
+        [record[0][0] for record in lost_records], np.int32
+    )
+    contacts["lost_primitive_indices"] = _readonly(
+        [record[0][1] for record in lost_records], np.int32
+    )
+    contacts["lost_collider_indices"] = _readonly(
+        [record[0][2] for record in lost_records], np.int32
+    )
+    contacts["lost_positions"] = _readonly(
+        [record[1] for record in lost_records], np.float32
+    ).reshape((-1, 3))
+    contacts["lost_normals"] = _readonly(
+        [record[2] for record in lost_records], np.float32
+    ).reshape((-1, 3))
+    contacts["lost_corrections"] = _readonly(
+        [record[3] for record in lost_records], np.float32
+    ).reshape((-1, 3))
+    contacts["temporal"] = {
+        "history_valid": history_valid,
+        "active_count": len(current_records),
+        "new_count": new_count,
+        "persistent_count": persistent_count,
+        "lost_count": lost_count,
+        "churn_count": new_count + lost_count,
+        "previous_frame": int(history.get("frame", -1)) if history_valid else -1,
+        "frame": int(frame),
+    }
+    history.clear()
+    history.update({
+        "frame": int(frame),
+        "generation": int(generation),
+        "records": current_records,
+    })
+
+
 def _freeze_value(value):
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -163,9 +258,15 @@ def request_mc2_debug_capture(
         spec = slot.data.get("spec")
         if spec is None:
             continue
-        if not _matches_task_filter(spec.task_id, task_filters):
+        matches_task = _matches_task_filter(spec.task_id, task_filters)
+        matches_setup = setup_filter in ("", "all", str(spec.setup_type).lower())
+        if not filters.get("show_collision_contacts", False) or not (
+            matches_task and matches_setup
+        ):
+            slot.data.pop("_debug_external_contact_history", None)
+        if not matches_task:
             continue
-        if setup_filter not in ("", "all", str(spec.setup_type).lower()):
+        if not matches_setup:
             continue
         state = slot.data.setdefault("_debug_capture_state", {})
         if not has_modes:
@@ -1050,6 +1151,17 @@ def capture_requested_mc2_debug(
                         filters.get("show_self_contacts", False)
                     ),
                 )
+                external_contacts = native_snapshot.get("external_contacts")
+                if isinstance(external_contacts, dict):
+                    history = slot.data.setdefault(
+                        "_debug_external_contact_history", {}
+                    )
+                    _annotate_external_contact_temporal(
+                        external_contacts,
+                        history,
+                        frame=frame,
+                        generation=generation,
+                    )
             include_topology = bool(
                 filters.get("show_topology", False)
                 or filters.get("show_attributes", False)

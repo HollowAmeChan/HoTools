@@ -899,7 +899,7 @@ def physicsMC2Step(
         },
         "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
         "show_collision_contacts": {
-            "description": "本帧真实外碰接触\n红=接触/修正/活动碰撞体"
+            "description": "真实外碰接触\n红=当前 黄=新增 灰=失效"
         },
         "show_radii": {"description": "全部粒子半径（仅参数审计）。"},
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},

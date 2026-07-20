@@ -276,6 +276,52 @@ try:
 
     assert mc2_nodes.physicsMC2DebugDraw.__defaults__[1] == 10000
 
+    contact_history = {}
+    first_contacts = {
+        "primitive_kinds": np.asarray((0, 1), dtype=np.int32),
+        "primitive_indices": np.asarray((3, 4), dtype=np.int32),
+        "collider_indices": np.asarray((5, 6), dtype=np.int32),
+        "positions": np.asarray(((1, 0, 0), (2, 0, 0)), dtype=np.float32),
+        "normals": np.asarray(((0, 1, 0), (0, 1, 0)), dtype=np.float32),
+        "corrections": np.asarray(((0, 0.1, 0), (0, 0.2, 0)), dtype=np.float32),
+    }
+    debug_module._annotate_external_contact_temporal(
+        first_contacts, contact_history, frame=10, generation=2
+    )
+    assert first_contacts["temporal"] == {
+        "history_valid": False,
+        "active_count": 2,
+        "new_count": 0,
+        "persistent_count": 0,
+        "lost_count": 0,
+        "churn_count": 0,
+        "previous_frame": -1,
+        "frame": 10,
+    }
+    second_contacts = {
+        "primitive_kinds": np.asarray((0, 0), dtype=np.int32),
+        "primitive_indices": np.asarray((3, 8), dtype=np.int32),
+        "collider_indices": np.asarray((5, 9), dtype=np.int32),
+        "positions": np.asarray(((1, 0, 0), (3, 0, 0)), dtype=np.float32),
+        "normals": np.asarray(((0, 1, 0), (1, 0, 0)), dtype=np.float32),
+        "corrections": np.asarray(((0, 0.1, 0), (0.1, 0, 0)), dtype=np.float32),
+    }
+    debug_module._annotate_external_contact_temporal(
+        second_contacts, contact_history, frame=11, generation=2
+    )
+    np.testing.assert_array_equal(second_contacts["temporal_states"], (2, 1))
+    assert second_contacts["temporal"]["persistent_count"] == 1
+    assert second_contacts["temporal"]["new_count"] == 1
+    assert second_contacts["temporal"]["lost_count"] == 1
+    assert second_contacts["temporal"]["churn_count"] == 2
+    np.testing.assert_array_equal(second_contacts["lost_primitive_kinds"], (1,))
+    assert second_contacts["lost_positions"].flags.writeable is False
+    debug_module._annotate_external_contact_temporal(
+        second_contacts, contact_history, frame=13, generation=2
+    )
+    assert second_contacts["temporal"]["history_valid"] is False
+    assert second_contacts["temporal"]["churn_count"] == 0
+
     for task_function in (
         mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
