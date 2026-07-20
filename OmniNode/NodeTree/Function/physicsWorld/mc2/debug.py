@@ -247,6 +247,9 @@ def request_mc2_debug_capture(
             "show_self_contacts",
         )
     )
+    filters["show_interaction_contacts"] = bool(
+        filters.get("show_collision_contacts", False)
+    )
     has_modes = any(bool(filters.get(name, False)) for name in MC2_DEBUG_FILTER_KEYS)
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
@@ -280,7 +283,9 @@ def request_mc2_debug_capture(
         requested += 1
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
     if isinstance(interaction, MC2NativeInteractionV0):
-        if has_modes and requested and filters["show_self"]:
+        if has_modes and requested and (
+            filters["show_self"] or filters["show_interaction_contacts"]
+        ):
             interaction.request_debug_capture(frame, filters)
         else:
             interaction.cancel_debug_capture(filters)
@@ -1289,7 +1294,10 @@ def capture_requested_mc2_debug(
             started = time.perf_counter()
             try:
                 filters = dict(state.get("filters") or {})
-                if bool(filters.get("show_self", False)):
+                if bool(
+                    filters.get("show_self", False)
+                    or filters.get("show_interaction_contacts", False)
+                ):
                     interaction.refresh_debug_draw_snapshot(
                         include_primitives=bool(
                             filters.get("show_self_primitives", False)
@@ -1300,6 +1308,7 @@ def capture_requested_mc2_debug(
                         ),
                         include_contacts=bool(
                             filters.get("show_self_contacts", False)
+                            or filters.get("show_interaction_contacts", False)
                         ),
                     )
                     captured += 1

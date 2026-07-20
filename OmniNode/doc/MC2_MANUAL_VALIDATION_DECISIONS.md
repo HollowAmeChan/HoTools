@@ -28,7 +28,7 @@
 |---|---|---|---|
 | D-01 | **代码已关闭，待最终手测** | Teleport 判定模型 | 整task统一触发；首Fixed/物体原点；Reset/Keep重定基全部动画与collider插值历史，清理接触状态 |
 | D-02 | **分段实施中** | Debug 一级信息架构 | 重力、速度、选中深度、五类约束记录、Center分层量及外碰时间层已接通；self contact/intersection时间层仍待实施 |
-| D-03 | **代码已实现，待手测** | 外部碰撞结果表达 | “碰撞情况”保留形状；“实际接触”按需捕获真实Point/Edge contact、修正与活动collider |
+| D-03 | **代码已实现，待手测** | 碰撞结果表达 | “碰撞情况”保留外碰形状；“实际接触”按需捕获task外碰Point/Edge contact及world interaction跨task EE/PT contact |
 | D-04 | **人工已验证** | 自碰静置质量标准 | 单层布料无final几何穿插且扰动完全收敛；剩余contact只位于代理真实拥挤区，接触区域保持静止 |
 | D-05 | **已决策，代码已迁移** | 参数从 Profile 移到 Task 的规则 | Teleport、组件惯性、Normal Axis、自碰交互质量归Task；粒子材料/逐深度约束留Profile；无双owner |
 | D-06 | **方向已决策** | 重编译后的运行缓存保留 | 只在可证明 namespace/owner 合同时保留；不能只比较数组范围 |
@@ -280,6 +280,8 @@ MC2 `cloth_mass` 只影响自碰/跨布料接触的 inverse mass 权重，不是
 ## P1：外部碰撞“实际接触”模式 D-03
 
 `碰撞情况`继续只画可参与碰撞的Point/Edge proxy与collider形状；独立`实际接触`已经接通真实kernel结果，不再从最终normal或位置差反推。
+
+`实际接触`同时覆盖两个真实owner：task context中的外部collider Point/Edge contact，以及world interaction中的跨task EE/PT contact。后者只绘制`enabled != 0`且两端primitive `owner_indices`不同的记录；红线连接primitive中心，黄色箭头显示native contact normal。任务筛选保留任一端属于所选task的跨task记录。同task self contact继续只由`自碰4 接触结果`表达，避免两个一级视图重复描边。
 
 新增反例 D-10：同一个 MeshCloth task 含多个互不连通的网格分量时，`碰撞情况`只画出部分分量，截图中约缺少一半碰撞代理。审计确认final proxy、位置、属性、半径和全局边数组均完整；renderer却在Point模式取前`max_items`个顶点、Edge模式取前`max_items`条边。分量按索引连续排列时，前一分量会吃完预算，后序分量整块消失。当前renderer先从完整final proxy建立连通分量，再保证预算足够时每个分量至少一个样本，并把剩余预算按候选数量分配后在各分量内部均匀抽样。Blender debug runner已覆盖双分量Point/Edge预算分配，真实多分量模型也已人工确认完整显示，D-10关闭。
 

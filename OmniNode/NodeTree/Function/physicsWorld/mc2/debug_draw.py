@@ -46,6 +46,8 @@ _COLORS = {
     "external_contact_lost": (0.58, 0.64, 0.70, 0.68),
     "external_contact_normal": (1.00, 0.82, 0.12, 0.96),
     "external_contact_correction": (1.00, 0.28, 0.04, 1.00),
+    "cross_task_contact": (1.00, 0.12, 0.04, 1.00),
+    "cross_task_contact_normal": (1.00, 0.84, 0.10, 0.96),
     "fixed": (0.95, 0.25, 0.20, 0.95),
     "move": (0.25, 0.95, 0.40, 0.85),
     "depth_fixed": (1.00, 0.18, 0.62, 1.00),
@@ -294,6 +296,10 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
     if isinstance(interaction, MC2NativeInteractionV0):
         snapshot = interaction.debug_draw_snapshot()
         if isinstance(snapshot, dict):
+            if filters["show_collision_contacts"]:
+                _append_interaction_contact_batches(
+                    batches, snapshot, filters
+                )
             _append_self_batches(
                 batches, point_batches, snapshot, filters, interaction=True
             )
@@ -1921,6 +1927,76 @@ def _append_self_batches(
         _batch(batches, enabled_lines, "contact", 2.2)
         _batch(batches, disabled_lines, "disabled_contact")
         _batch(batches, intersections, "intersection", 2.6)
+
+
+def _append_interaction_contact_batches(batches, state, filters):
+    positions = np.asarray(
+        _values(state.get("positions")), dtype=np.float32
+    ).reshape((-1, 3))
+    primitives = np.asarray(
+        _values(state.get("particle_indices")), dtype=np.int32
+    ).reshape((-1, 3))
+    owners = np.asarray(
+        _values(state.get("owner_indices")), dtype=np.int32
+    ).reshape((-1,))
+    contacts = np.asarray(
+        _values(state.get("contact_indices")), dtype=np.int32
+    ).reshape((-1, 2))
+    enabled = np.asarray(
+        _values(state.get("contact_enabled")), dtype=np.uint8
+    ).reshape((-1,))
+    normals = np.asarray(
+        _values(state.get("contact_normals")), dtype=np.float32
+    ).reshape((-1, 3))
+    thickness = np.asarray(
+        _values(state.get("contact_thickness")), dtype=np.float32
+    ).reshape((-1,))
+    if not len(contacts) or len(owners) != len(primitives):
+        return
+    participants = tuple(state.get("participants") or ())
+    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
+    allowed_owners = None
+    if task_filters:
+        allowed_owners = {
+            index
+            for index, participant in enumerate(participants)
+            if any(
+                token in str(participant.get("task_id") or "")
+                for token in task_filters
+            )
+        }
+    centers = [_primitive_center(positions, primitive) for primitive in primitives]
+    contact_lines = []
+    normal_lines = []
+    for index, (first, second) in enumerate(contacts[:filters["max_items"]]):
+        first = int(first)
+        second = int(second)
+        if (
+            index >= len(enabled)
+            or not enabled[index]
+            or not (0 <= first < len(owners) and 0 <= second < len(owners))
+            or int(owners[first]) == int(owners[second])
+        ):
+            continue
+        if allowed_owners is not None and not (
+            int(owners[first]) in allowed_owners
+            or int(owners[second]) in allowed_owners
+        ):
+            continue
+        _add_center_line(contact_lines, centers, first, second)
+        if first >= len(centers) or centers[first] is None or index >= len(normals):
+            continue
+        normal = vector3(normals[index])
+        if normal.length <= 1.0e-8:
+            continue
+        length = float(thickness[index]) if index < len(thickness) else 0.04
+        add_arrow_lines(
+            normal_lines,
+            centers[first],
+            vector3(centers[first]) + normal * max(length, 0.02),
+        )
+    _batch(batches, contact_lines, "cross_task_contact", 2.4)
+    _batch(batches, normal_lines, "cross_task_contact_normal", 1.6)
 
 
 def _append_output_batches(batches, point_batches, snapshot, limit):

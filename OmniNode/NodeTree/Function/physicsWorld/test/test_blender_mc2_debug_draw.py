@@ -335,6 +335,42 @@ try:
     assert second_contacts["temporal"]["history_valid"] is False
     assert second_contacts["temporal"]["churn_count"] == 0
 
+    interaction_contact_state = {
+        "positions": np.asarray(
+            ((0, 0, 0), (1, 0, 0), (2, 0, 0)), dtype=np.float32
+        ),
+        "particle_indices": np.asarray(
+            ((0, -1, -1), (1, -1, -1), (2, -1, -1)), dtype=np.int32
+        ),
+        "owner_indices": np.asarray((0, 1, 0), dtype=np.int32),
+        "contact_indices": np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32),
+        "contact_enabled": np.asarray((1, 1, 0), dtype=np.uint8),
+        "contact_normals": np.asarray(
+            ((1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float32
+        ),
+        "contact_thickness": np.asarray((0.1, 0.1, 0.1), dtype=np.float32),
+        "participants": ({"task_id": "cloth-a"}, {"task_id": "cloth-b"}),
+    }
+    interaction_batches = []
+    debug_draw._append_interaction_contact_batches(
+        interaction_batches,
+        interaction_contact_state,
+        {"max_items": 10000, "task_filter": "cloth-a"},
+    )
+    cross_contact_batch = next(
+        batch
+        for batch in interaction_batches
+        if batch[1] == debug_draw._COLORS["cross_task_contact"]
+    )
+    assert len(cross_contact_batch[0]) == 2
+    hidden_interaction_batches = []
+    debug_draw._append_interaction_contact_batches(
+        hidden_interaction_batches,
+        interaction_contact_state,
+        {"max_items": 10000, "task_filter": "missing-task"},
+    )
+    assert hidden_interaction_batches == []
+
     for task_function in (
         mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
@@ -805,6 +841,7 @@ try:
         assert snapshot["filters"] == {
             "show_self_candidates": True,
             "show_self": True,
+            "show_interaction_contacts": False,
         }
         assert not any(
             snapshot.get(name)
@@ -1180,6 +1217,28 @@ try:
             assert contacts["normals"].flags.writeable is False
             assert contacts["corrections"].flags.writeable is False
             assert len(contacts["positions"]) > 0
+            interaction_state = interaction.debug_draw_snapshot() or {}
+            assert "contact_indices" in interaction_state
+            assert "owner_indices" in interaction_state
+            assert "candidates" not in interaction_state
+            assert "primitive_grids" not in interaction_state
+            interaction_contacts = np.asarray(
+                interaction_state["contact_indices"], dtype=np.int32
+            ).reshape((-1, 2))
+            interaction_enabled = np.asarray(
+                interaction_state["contact_enabled"], dtype=np.uint8
+            )
+            interaction_owners = np.asarray(
+                interaction_state["owner_indices"], dtype=np.int32
+            )
+            assert any(
+                index < len(interaction_enabled)
+                and interaction_enabled[index]
+                and interaction_owners[int(first)]
+                != interaction_owners[int(second)]
+                for index, (first, second) in enumerate(interaction_contacts)
+            )
+            assert tuple(debug_draw._COLORS["cross_task_contact"]) in colors
         elif mode_name.startswith("show_self_"):
             self_state = captured_snapshot.get("self_collision") or {}
             assert "particle_indices" in self_state

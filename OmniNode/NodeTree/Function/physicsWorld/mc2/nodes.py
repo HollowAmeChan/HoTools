@@ -877,7 +877,7 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     ("Teleport阈值与方向", "显示task唯一判定基准（首个Fixed或对象原点）的旧/新姿态、位移方向、距离阈值和旋转阈值。它是scheduler前的新帧判定，可在zero-substep帧捕获，不是逐粒子阈值球。"),
     ("Teleport触发状态", "显示task级判定结果：绿色为None/未触发，黄色为Keep，红色为Reset，并区分距离或旋转阈值命中。整个task统一处理，不存在只重置部分粒子的状态。"),
     ("碰撞情况", "显示当前模式下真正可参与外碰的双方。Point模式用绿色半透明球表示可移动且未Ignore的粒子；Edge模式用橙色半透明胶囊表示final proxy段及两端插值半径；蓝色实体为本帧实际上传并通过source、group/mask和setup过滤的外部collider。"),
-    ("实际接触", "只显示Point/Edge kernel在显式请求后记录的真实外碰：红色为当前/持续接触及active primitive，黄色点/线为新增接触，灰色为上一连续捕获帧已失效的接触；黄色箭头为法线，橙色箭头为实际correction，命中的collider表面变红。首帧或捕获中断只建立新基线，不制造churn；snapshot同时统计active/new/persistent/lost。"),
+    ("实际接触", "同时显示两类真实接触。task与外部collider的Point/Edge接触中，红色为当前/持续接触及active primitive，黄色点/线为新增，灰色为上一连续捕获帧失效，黄色箭头为法线，橙色箭头为实际correction，命中的collider表面变红；首帧或捕获中断只建立新基线。world interaction中只绘制两端owner不同且已启用的跨task EE/PT contact，红线连接两个primitive中心，黄色箭头显示法线；同task self contact仍归“自碰4”，不会在此重复。"),
     ("粒子半径", "用线框球显示每个粒子按生产baseline depth、Profile曲线和对象radius权重得到的实际外碰半径。该模式用于参数审计；显示半径不表示粒子在当前Point/Edge模式、Ignore状态和group scope下必然参与碰撞。"),
     ("自碰1 几何单元", "显示真正注册到self static/dynamic的Point、Edge和Triangle primitive：紫色点、边和三角形轮廓。它回答哪些几何进入检测，缺失时应先检查粒子属性、final proxy和self static构建。"),
     ("自碰2 空间网格", "显示native broadphase中primitive占用的灰色空间格及实际grid size。它用于判断分桶尺度、占用密度和潜在性能问题，不表示格内primitive已经接触。"),
@@ -942,7 +942,7 @@ def _mc2_debug_long_description() -> str:
         },
         "show_collision": {"description": "碰撞：绿=Point 橙=Edge 蓝=外部体"},
         "show_collision_contacts": {
-            "description": "真实外碰接触\n红=当前 黄=新增 灰=失效"
+            "description": "外碰与跨Task真实接触\n红=当前 黄=新增 灰=失效"
         },
         "show_radii": {"description": "全部粒子半径（仅参数审计）。"},
         "show_self_primitives": {"description": "自碰1：紫=实际点/边/三角形"},
