@@ -844,6 +844,13 @@ class MC2CenterFrameShiftResult:
     frame_moving_direction: tuple[float, float, float]
     frame_moving_speed: float
     smoothing_velocity: tuple[float, float, float]
+    raw_component_delta: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    anchor_shift_vector: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    smoothing_shift_vector: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    world_shift_vector: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    pre_limit_moving_speed: float = 0.0
+    movement_speed_limited: bool = False
+    rotation_speed_limited: bool = False
     keep_teleport: bool = False
     reset_teleport: bool = False
     teleport_mode: int = 0
@@ -1173,6 +1180,7 @@ def evaluate_mc2_center_frame_shift(
     component_rotation = _f32_vector(
         frame.component_world_rotation_xyzw, 4, "component_world_rotation_xyzw"
     )
+    raw_component_delta = np.asarray(component - old_component, dtype=np.float32)
     frame_world_position = (
         component
         if frame.frame_world_position is None
@@ -1319,6 +1327,10 @@ def evaluate_mc2_center_frame_shift(
             frame_moving_direction=(0.0, 0.0, 0.0),
             frame_moving_speed=0.0,
             smoothing_velocity=(0.0, 0.0, 0.0),
+            raw_component_delta=tuple(
+                float(value) for value in raw_component_delta
+            ),
+            anchor_shift_vector=(0.0, 0.0, 0.0),
             keep_teleport=False,
             reset_teleport=True,
             **teleport_debug,
@@ -1387,8 +1399,12 @@ def evaluate_mc2_center_frame_shift(
 
     delta_vector = np.asarray(component - work_old_component, dtype=np.float32)
     frame_speed = _f32(np.linalg.norm(delta_vector)) / frame_dt
+    pre_limit_moving_speed = frame_speed
     movement_limit = _f32(frame.movement_speed_limit)
-    if frame_speed > movement_limit and movement_limit >= 0.0:
+    movement_speed_limited = bool(
+        frame_speed > movement_limit and movement_limit >= 0.0
+    )
+    if movement_speed_limited:
         limit_ratio = np.clip(
             (frame_speed - movement_limit) / frame_speed,
             _f32(0.0),
@@ -1405,7 +1421,10 @@ def evaluate_mc2_center_frame_shift(
     delta_angle = _f32(2.0) * _f32(np.arccos(rotation_cosine))
     rotation_speed = _f32(np.degrees(delta_angle)) / frame_dt
     rotation_limit = _f32(frame.rotation_speed_limit)
-    if rotation_speed > rotation_limit and rotation_limit >= 0.0:
+    rotation_speed_limited = bool(
+        rotation_speed > rotation_limit and rotation_limit >= 0.0
+    )
+    if rotation_speed_limited:
         limit_ratio = np.clip(
             (rotation_speed - rotation_limit) / rotation_speed,
             _f32(0.0),
@@ -1456,8 +1475,12 @@ def evaluate_mc2_center_frame_shift(
             other_shift_ratio,
         )
 
+    world_shift_vector = np.asarray(
+        full_shift_vector * move_shift_ratio,
+        dtype=np.float32,
+    )
     shift_vector = np.asarray(
-        full_shift_vector * move_shift_ratio
+        world_shift_vector
         + anchor_shift_vector
         + smooth_shift_vector,
         dtype=np.float32,
@@ -1523,6 +1546,13 @@ def evaluate_mc2_center_frame_shift(
         frame_moving_direction=tuple(float(value) for value in moving_direction),
         frame_moving_speed=float(moving_speed),
         smoothing_velocity=tuple(float(value) for value in smoothing_velocity),
+        raw_component_delta=tuple(float(value) for value in raw_component_delta),
+        anchor_shift_vector=tuple(float(value) for value in anchor_shift_vector),
+        smoothing_shift_vector=tuple(float(value) for value in smooth_shift_vector),
+        world_shift_vector=tuple(float(value) for value in world_shift_vector),
+        pre_limit_moving_speed=float(pre_limit_moving_speed),
+        movement_speed_limited=movement_speed_limited,
+        rotation_speed_limited=rotation_speed_limited,
         keep_teleport=keep_teleport,
         reset_teleport=reset_teleport,
         **teleport_debug,

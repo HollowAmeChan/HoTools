@@ -638,6 +638,22 @@ try:
         if center_shift is not None:
             assert center_shift["keep_teleport"] is False
             assert center_shift["reset_teleport"] is False
+            for name in (
+                "raw_component_delta",
+                "anchor_shift_vector",
+                "smoothing_shift_vector",
+                "world_shift_vector",
+            ):
+                assert center_shift[name].flags.writeable is False
+            np.testing.assert_allclose(
+                center_shift["frame_component_shift_vector"],
+                np.asarray(center_shift["anchor_shift_vector"])
+                + np.asarray(center_shift["smoothing_shift_vector"])
+                + np.asarray(center_shift["world_shift_vector"]),
+                atol=1.0e-7,
+            )
+            assert isinstance(center_shift["movement_speed_limited"], bool)
+            assert isinstance(center_shift["rotation_speed_limited"], bool)
         negative_transition = snapshot["center"]["negative_scale_transition"]
         if negative_transition is not None:
             assert negative_transition["active"] is True

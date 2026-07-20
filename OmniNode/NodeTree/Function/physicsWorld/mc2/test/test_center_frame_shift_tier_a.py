@@ -235,6 +235,23 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         np.testing.assert_allclose(
             getattr(result, field), expected_value, rtol=1.0e-6, atol=1.0e-6
         )
+    np.testing.assert_allclose(
+        result.frame_component_shift_vector,
+        np.asarray(result.anchor_shift_vector, dtype=np.float32)
+        + np.asarray(result.smoothing_shift_vector, dtype=np.float32)
+        + np.asarray(result.world_shift_vector, dtype=np.float32),
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    np.testing.assert_allclose(
+        result.raw_component_delta,
+        np.asarray(values["component_world_position"], dtype=np.float32)
+        - np.asarray(values["old_component_world_position"], dtype=np.float32),
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    assert isinstance(result.movement_speed_limited, bool)
+    assert isinstance(result.rotation_speed_limited, bool)
 
     # Retain an independent formula check so the fixture does not only test itself
     # through the production evaluator.

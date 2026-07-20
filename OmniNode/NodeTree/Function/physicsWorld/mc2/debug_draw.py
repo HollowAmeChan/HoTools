@@ -86,6 +86,11 @@ _COLORS = {
     "shift": (1.00, 0.38, 0.08, 0.94),
     "center_step": (0.22, 0.78, 1.00, 0.92),
     "center_inertia": (0.72, 0.32, 1.00, 0.92),
+    "center_raw": (0.72, 0.72, 0.72, 0.72),
+    "center_anchor_shift": (0.20, 0.88, 0.62, 0.88),
+    "center_smoothing": (0.96, 0.76, 0.20, 0.88),
+    "center_world_shift": (0.24, 0.64, 1.00, 0.92),
+    "center_limited": (1.00, 0.18, 0.12, 0.98),
     "teleport_threshold": (0.32, 0.70, 1.00, 0.32),
     "teleport_direction": (0.62, 0.84, 1.00, 0.48),
     "teleport_measure": (0.28, 0.95, 0.42, 0.94),
@@ -1399,6 +1404,11 @@ def _append_center_batches(batches, point_batches, center):
     anchor_lines = []
     frame_lines = []
     shift_lines = []
+    raw_lines = []
+    anchor_shift_lines = []
+    smoothing_lines = []
+    world_shift_lines = []
+    limited_lines = []
     step_lines = []
     inertia_lines = []
     teleport_threshold_lines = []
@@ -1443,6 +1453,25 @@ def _append_center_batches(batches, point_batches, center):
             shift_origin,
             vector3(shift_origin) + vector3(shift_vector),
         )
+        for field, target in (
+            ("raw_component_delta", raw_lines),
+            ("anchor_shift_vector", anchor_shift_lines),
+            ("smoothing_shift_vector", smoothing_lines),
+            ("world_shift_vector", world_shift_lines),
+        ):
+            value = shift.get(field)
+            if value is not None and vector3(value).length > 1.0e-8:
+                add_arrow_lines(
+                    target,
+                    shift_origin,
+                    vector3(shift_origin) + vector3(value),
+                )
+        if bool(shift.get("movement_speed_limited")):
+            add_arrow_lines(
+                limited_lines,
+                shift_origin,
+                vector3(shift_origin) + vector3(shift_vector),
+            )
     step_now = step.get("now_world_position")
     step_vector = step.get("step_vector")
     inertia_vector = step.get("inertia_vector")
@@ -1511,6 +1540,11 @@ def _append_center_batches(batches, point_batches, center):
     _batch(batches, anchor_lines, "center_anchor", 1.4)
     _batch(batches, frame_lines, "center_now", 1.2)
     _batch(batches, shift_lines, "shift", 1.8)
+    _batch(batches, raw_lines, "center_raw", 1.0)
+    _batch(batches, anchor_shift_lines, "center_anchor_shift", 1.4)
+    _batch(batches, smoothing_lines, "center_smoothing", 1.4)
+    _batch(batches, world_shift_lines, "center_world_shift", 1.8)
+    _batch(batches, limited_lines, "center_limited", 2.6)
     _batch(batches, step_lines, "center_step", 1.5)
     _batch(batches, inertia_lines, "center_inertia", 1.5)
     _batch(batches, teleport_threshold_lines, "teleport_threshold", 1.2)
