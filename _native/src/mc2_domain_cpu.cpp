@@ -1033,6 +1033,84 @@ void DomainV1::step_motion(
     ++step_count_;
 }
 
+void DomainV1::step_external_collision(
+    const float* base_positions,
+    const float* collision_radii,
+    const float* friction,
+    std::int32_t collided_by_groups,
+    const std::int32_t* collider_types,
+    const std::int32_t* collider_group_bits,
+    const float* collider_centers,
+    const float* collider_segment_a,
+    const float* collider_segment_b,
+    const float* collider_old_centers,
+    const float* collider_old_segment_a,
+    const float* collider_old_segment_b,
+    const float* collider_radii,
+    std::size_t collider_count
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU external collision step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU external collision step requires particle configuration");
+    }
+    require_finite(base_positions, particle_count_ * 3, "collision base positions");
+    require_finite(collision_radii, particle_count_, "collision radii");
+    require_finite(friction, particle_count_, "collision friction");
+    if ((collider_count != 0 &&
+         (collider_types == nullptr || collider_group_bits == nullptr ||
+          collider_centers == nullptr || collider_segment_a == nullptr || collider_segment_b == nullptr ||
+          collider_old_centers == nullptr || collider_old_segment_a == nullptr ||
+          collider_old_segment_b == nullptr || collider_radii == nullptr))) {
+        throw std::invalid_argument("MC2 CPU collider arrays cannot be null");
+    }
+    require_finite(collider_centers, collider_count * 3, "collider centers");
+    require_finite(collider_segment_a, collider_count * 3, "collider segment A");
+    require_finite(collider_segment_b, collider_count * 3, "collider segment B");
+    require_finite(collider_old_centers, collider_count * 3, "collider old centers");
+    require_finite(collider_old_segment_a, collider_count * 3, "collider old segment A");
+    require_finite(collider_old_segment_b, collider_count * 3, "collider old segment B");
+    require_finite(collider_radii, collider_count, "collider radii");
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (collision_radii[vertex] < 0.0f || friction[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU collision particle values are out of range");
+        }
+    }
+    for (std::size_t collider = 0; collider < collider_count; ++collider) {
+        if (collider_types[collider] < 0 || collider_types[collider] > 3 ||
+            collider_group_bits[collider] <= 0 || collider_radii[collider] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU collider values are out of range");
+        }
+    }
+    collision_friction_.assign(friction, friction + particle_count_);
+    hotools::Mc2CollisionView view;
+    view.positions = world_positions_.data();
+    view.base_positions = base_positions;
+    view.velocity_positions = nullptr;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.collision_radii = collision_radii;
+    view.max_lengths = nullptr;
+    view.collision_normals = world_normals_.data();
+    view.friction = collision_friction_.data();
+    view.collider_types = collider_types;
+    view.collider_group_bits = collider_group_bits;
+    view.collider_centers = collider_centers;
+    view.collider_segment_a = collider_segment_a;
+    view.collider_segment_b = collider_segment_b;
+    view.collider_old_centers = collider_old_centers;
+    view.collider_old_segment_a = collider_old_segment_a;
+    view.collider_old_segment_b = collider_old_segment_b;
+    view.collider_radii = collider_radii;
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.collider_count = static_cast<std::int64_t>(collider_count);
+    view.collided_by_groups = collided_by_groups;
+    view.soft_sphere = false;
+    hotools::project_collisions_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_bending(
     const std::int32_t* dihedral_pairs,
     const float* dihedral_rest_angles,
@@ -1271,6 +1349,7 @@ void DomainV1::dispose() noexcept {
     inertia_inv_masses_.clear();
     inertia_ready_ = false;
     integration_damping_values_.clear();
+    collision_friction_.clear();
     integration_ready_ = false;
     center_shift_vectors_.clear();
     center_shift_rotations_.clear();

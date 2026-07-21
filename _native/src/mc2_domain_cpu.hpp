@@ -96,6 +96,22 @@ public:
         bool max_distance_enabled,
         bool backstop_enabled
     );
+    void step_external_collision(
+        const float* base_positions,
+        const float* collision_radii,
+        const float* friction,
+        std::int32_t collided_by_groups,
+        const std::int32_t* collider_types,
+        const std::int32_t* collider_group_bits,
+        const float* collider_centers,
+        const float* collider_segment_a,
+        const float* collider_segment_b,
+        const float* collider_old_centers,
+        const float* collider_old_segment_a,
+        const float* collider_old_segment_b,
+        const float* collider_radii,
+        std::size_t collider_count
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(
@@ -331,6 +347,7 @@ private:
     bool inertia_ready_ = false;
     std::vector<float> integration_damping_values_;
     bool integration_ready_ = false;
+    std::vector<float> collision_friction_;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
     float frame_delta_time_ = 0.0f;
