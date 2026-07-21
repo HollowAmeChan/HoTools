@@ -678,25 +678,22 @@ bool predict_particles(
             std::copy_n(rotated_velocity, 3, context.state_velocities.data() + offset);
             ++context.particle_inertia_count;
         }
-        const float damping = sample_curve16(
-            context.curve_values,
-            kDampingCurve,
-            context.baseline_depths[vertex]
-        );
-        const float damping_factor = std::max(
-            0.0f,
-            std::min(1.0f, 1.0f - damping * simulation_power_z)
-        );
-        context.state_velocities[offset + 0] *= context.velocity_weight * damping_factor;
-        context.state_velocities[offset + 1] *= context.velocity_weight * damping_factor;
-        context.state_velocities[offset + 2] *= context.velocity_weight * damping_factor;
-        context.state_velocities[offset + 0] += gravity_x * dt;
-        context.state_velocities[offset + 1] += gravity_y * dt;
-        context.state_velocities[offset + 2] += gravity_z * dt;
-        context.state_positions[offset + 0] += context.state_velocities[offset + 0] * dt;
-        context.state_positions[offset + 1] += context.state_velocities[offset + 1] * dt;
-        context.state_positions[offset + 2] += context.state_velocities[offset + 2] * dt;
     }
+    Mc2ParticleIntegrationView integration_view;
+    integration_view.positions = context.state_positions.data();
+    integration_view.velocities = context.state_velocities.data();
+    integration_view.depths = context.baseline_depths.data();
+    integration_view.attributes = context.proxy_attributes.data();
+    integration_view.damping_curve16 = context.curve_values.data() + kDampingCurve * 16;
+    integration_view.vertex_count = context.vertex_count;
+    integration_view.move_attribute_mask = 0x02u;
+    integration_view.dt = dt;
+    integration_view.simulation_power = simulation_power_z;
+    integration_view.velocity_weight = context.velocity_weight;
+    integration_view.gravity[0] = gravity_x;
+    integration_view.gravity[1] = gravity_y;
+    integration_view.gravity[2] = gravity_z;
+    integrate_particles_mc2(integration_view);
     if (!rebuild_baseline_step_pose(context)) return false;
     ++context.particle_prediction_count;
     return true;

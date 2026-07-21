@@ -57,6 +57,13 @@ public:
         const float* inertia_rotation,
         float depth_inertia
     );
+    void configure_integration(const float* damping_values);
+    void step_integration(
+        float dt,
+        float simulation_power,
+        float velocity_weight,
+        const float* gravity
+    );
     void dispose() noexcept;
 
     bool disposed() const noexcept { return disposed_; }
@@ -90,6 +97,8 @@ private:
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
     bool inertia_ready_ = false;
+    std::vector<float> integration_damping_values_;
+    bool integration_ready_ = false;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
     std::int64_t step_count_ = 0;

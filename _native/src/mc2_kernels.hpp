@@ -240,6 +240,22 @@ struct Mc2SubstepInertiaView {
     float depth_inertia = 0.0f;
 };
 
+struct Mc2ParticleIntegrationView {
+    float* positions = nullptr;
+    float* velocities = nullptr;
+    const float* depths = nullptr;
+    const float* inv_masses = nullptr;
+    const std::uint8_t* attributes = nullptr;
+    const float* damping_values = nullptr;
+    const float* damping_curve16 = nullptr;
+    std::int64_t vertex_count = 0;
+    std::uint8_t move_attribute_mask = 0;
+    float dt = 0.0f;
+    float simulation_power = 0.0f;
+    float velocity_weight = 1.0f;
+    float gravity[3] = {};
+};
+
 struct Mc2CentrifugalView {
     const float* positions = nullptr;
     float* velocities = nullptr;
@@ -274,6 +290,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
 void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
+void integrate_particles_mc2(Mc2ParticleIntegrationView& view);
 void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);
 void calculate_display_positions_mc2(Mc2DisplayPredictionView& view);
 

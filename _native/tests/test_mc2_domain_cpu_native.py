@@ -198,6 +198,51 @@ def test_domain_cpu_native_inertia_slice_uses_existing_kernel():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_integration_slice_uses_shared_kernel():
+    handle = _create()
+    try:
+        positions, normals = _frame(0.0)
+        hotools_native.mc2_domain_cpu_v1_update_frame(
+            handle, "domain:test", "layout:test", 3, 1, positions, normals
+        )
+        depths = np.zeros(3, dtype=np.float32)
+        inv_masses = np.asarray((0.0, 1.0, 1.0), dtype=np.float32)
+        damping = np.zeros(3, dtype=np.float32)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, depths, inv_masses
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_integration(handle, damping)
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle,
+            0.5,
+            1.0,
+            1.0,
+            np.asarray((0.0, -2.0, 0.0), dtype=np.float32),
+        )
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        assert np.array_equal(output["world_positions"][0], positions[0])
+        np.testing.assert_allclose(
+            output["world_positions"][1:],
+            positions[1:] + np.asarray((0.0, -0.5, 0.0), dtype=np.float32),
+        )
+        damping.fill(0.5)
+        hotools_native.mc2_domain_cpu_v1_configure_integration(handle, damping)
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle,
+            0.5,
+            1.0,
+            1.0,
+            np.zeros(3, dtype=np.float32),
+        )
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        np.testing.assert_allclose(
+            output["world_positions"][1:],
+            positions[1:] + np.asarray((0.0, -0.75, 0.0), dtype=np.float32),
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, value)

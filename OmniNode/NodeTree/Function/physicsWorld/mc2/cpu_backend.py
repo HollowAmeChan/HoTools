@@ -151,6 +151,18 @@ class MC2CPUBackendDomainV1:
         if not isinstance(scheduler_settings, Mapping):
             raise TypeError("scheduler_settings must be a mapping")
         settings = dict(scheduler_settings)
+        if settings.get("integration_slice") is True:
+            step_integration = getattr(self._kernel, "step_integration", None)
+            if not callable(step_integration):
+                raise RuntimeError("CPU kernel does not expose the integration slice")
+            settings.pop("integration_slice")
+            if settings.pop("data_path_only", False) is not True:
+                raise RuntimeError("integration_slice requires data_path_only=True")
+            if collider_snapshot is not None:
+                raise RuntimeError("integration_slice does not consume colliders")
+            step_integration(self._handle, settings)
+            self._step_count += 1
+            return
         if settings.get("inertia_slice") is True:
             step_inertia = getattr(self._kernel, "step_inertia", None)
             if not callable(step_inertia):

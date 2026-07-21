@@ -218,6 +218,40 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit Center inertia kernel slice using the existing native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_integration",
+        [](std::uint64_t handle, cf32_1d damping_values) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(damping_values.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU damping values must match particle_count");
+            }
+            domain->configure_integration(damping_values.data());
+        },
+        nb::arg("handle"),
+        nb::arg("damping_values"),
+        "Configure the explicit E3 particle integration kernel slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_integration",
+        [](std::uint64_t handle,
+           float dt,
+           float simulation_power,
+           float velocity_weight,
+           cf32_1d gravity) {
+            if (gravity.shape(0) != 3) {
+                throw nb::value_error("MC2 CPU integration gravity must have length 3");
+            }
+            require_domain(handle)->step_integration(
+                dt, simulation_power, velocity_weight, gravity.data()
+            );
+        },
+        nb::arg("handle"),
+        nb::arg("dt"),
+        nb::arg("simulation_power"),
+        nb::arg("velocity_weight"),
+        nb::arg("gravity"),
+        "Run the explicit particle integration slice using the shared native kernel."
+    );
+    module.def(
         "mc2_domain_cpu_v1_read",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);

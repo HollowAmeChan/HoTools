@@ -210,6 +210,52 @@ void DomainV1::step_inertia(
     ++step_count_;
 }
 
+void DomainV1::configure_integration(const float* damping_values) {
+    ensure_live();
+    require_finite(damping_values, particle_count_, "integration damping values");
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        if (damping_values[index] < 0.0f || damping_values[index] > 1.0f) {
+            throw std::invalid_argument("MC2 CPU integration damping must be in 0..1");
+        }
+    }
+    std::vector<float> next(damping_values, damping_values + particle_count_);
+    integration_damping_values_.swap(next);
+    integration_ready_ = true;
+}
+
+void DomainV1::step_integration(
+    float dt,
+    float simulation_power,
+    float velocity_weight,
+    const float* gravity
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU integration step requires update_frame");
+    }
+    if (!inertia_ready_ || !integration_ready_) {
+        throw std::logic_error("MC2 CPU integration step requires particle configuration");
+    }
+    require_finite(gravity, 3, "integration gravity");
+    if (!std::isfinite(dt) || dt < 0.0f || !std::isfinite(simulation_power) ||
+        simulation_power < 0.0f || !std::isfinite(velocity_weight) ||
+        velocity_weight < 0.0f || velocity_weight > 1.0f) {
+        throw std::invalid_argument("MC2 CPU integration scalars are invalid");
+    }
+    hotools::Mc2ParticleIntegrationView view;
+    view.positions = world_positions_.data();
+    view.velocities = velocity_positions_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.damping_values = integration_damping_values_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.dt = dt;
+    view.simulation_power = simulation_power;
+    view.velocity_weight = velocity_weight;
+    std::copy_n(gravity, 3, view.gravity);
+    hotools::integrate_particles_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::dispose() noexcept {
     disposed_ = true;
     bind_positions_.clear();
@@ -226,6 +272,8 @@ void DomainV1::dispose() noexcept {
     inertia_depths_.clear();
     inertia_inv_masses_.clear();
     inertia_ready_ = false;
+    integration_damping_values_.clear();
+    integration_ready_ = false;
 }
 
 void DomainV1::ensure_live() const {

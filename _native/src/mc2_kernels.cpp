@@ -45,6 +45,15 @@ float clamp_float(float value, float lo, float hi) {
     return std::max(lo, std::min(hi, value));
 }
 
+float sample_curve16_values(const float* values, float depth) {
+    depth = clamp_float(depth, 0.0f, 1.0f);
+    const float scaled = depth * 15.0f;
+    const auto lower = static_cast<std::int32_t>(std::floor(scaled));
+    const auto upper = std::min(lower + 1, 15);
+    const float ratio = scaled - static_cast<float>(lower);
+    return values[lower] * (1.0f - ratio) + values[upper] * ratio;
+}
+
 void safe_normal_or_z(float x, float y, float z, float& out_x, float& out_y, float& out_z) {
     const float length = std::sqrt(x * x + y * y + z * z);
     if (length > kMc2Epsilon) {
@@ -2936,6 +2945,40 @@ void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
         view.velocities[offset + 0] = rotated_x;
         view.velocities[offset + 1] = rotated_y;
         view.velocities[offset + 2] = rotated_z;
+    }
+}
+
+void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
+    if (view.vertex_count <= 0 || view.positions == nullptr || view.velocities == nullptr) {
+        return;
+    }
+    if (view.inv_masses == nullptr &&
+        (view.attributes == nullptr || view.move_attribute_mask == 0)) {
+        return;
+    }
+    if (view.damping_values == nullptr &&
+        (view.damping_curve16 == nullptr || view.depths == nullptr)) {
+        return;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const bool movable = view.inv_masses != nullptr
+            ? view.inv_masses[vertex] > kMc2Epsilon
+            : (view.attributes[vertex] & view.move_attribute_mask) != 0u;
+        if (!movable) continue;
+        const float damping = view.damping_values != nullptr
+            ? view.damping_values[vertex]
+            : sample_curve16_values(view.damping_curve16, view.depths[vertex]);
+        const float damping_factor = clamp_float(
+            1.0f - damping * view.simulation_power, 0.0f, 1.0f
+        );
+        const auto offset = vertex * 3;
+        for (std::int64_t component = 0; component < 3; ++component) {
+            float velocity = view.velocities[offset + component] *
+                view.velocity_weight * damping_factor;
+            velocity += view.gravity[component] * view.dt;
+            view.velocities[offset + component] = velocity;
+            view.positions[offset + component] += velocity * view.dt;
+        }
     }
 }
 

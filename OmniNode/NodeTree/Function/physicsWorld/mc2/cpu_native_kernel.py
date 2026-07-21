@@ -26,6 +26,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_configure_inertia",
     "mc2_domain_cpu_v1_step_inertia",
+    "mc2_domain_cpu_v1_configure_integration",
+    "mc2_domain_cpu_v1_step_integration",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -74,6 +76,7 @@ class MC2NativeCPUKernelV1:
         try:
             self._configure_distance(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
+            self._configure_integration(handle, parameters)
         except Exception:
             self._module.mc2_domain_cpu_v1_dispose(handle)
             raise
@@ -153,6 +156,23 @@ class MC2NativeCPUKernelV1:
             float(settings["depth_inertia"]),
         )
 
+    def step_integration(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"dt", "simulation_power", "velocity_weight", "gravity"}
+        if set(settings) != required:
+            raise ValueError("integration slice requires exactly its explicit step inputs")
+        gravity = np.ascontiguousarray(settings["gravity"], dtype=np.float32)
+        if gravity.shape != (3,):
+            raise ValueError("gravity must be a flat vector of length 3")
+        gravity.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_integration(
+            key,
+            float(settings["dt"]),
+            float(settings["simulation_power"]),
+            float(settings["velocity_weight"]),
+            gravity,
+        )
+
     def read_output(self, handle):
         key = self._require_handle(handle)
         frame_packet = self._frames.get(key)
@@ -175,6 +195,7 @@ class MC2NativeCPUKernelV1:
             "data_path_only": True,
             "distance_slice_ready": True,
             "inertia_slice_ready": True,
+            "integration_slice_ready": True,
         })
         return result
 
@@ -263,6 +284,19 @@ class MC2NativeCPUKernelV1:
         depths.flags.writeable = False
         inv_masses.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_inertia(handle, depths, inv_masses)
+
+    def _configure_integration(
+        self,
+        handle: int,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        table = parameters.particle_parameters
+        fields = {name: index for index, name in enumerate(table.fields)}
+        if "damping" not in fields:
+            raise ValueError("particle parameter table lacks damping")
+        damping = np.asarray(table.values[:, fields["damping"]], dtype=np.float32)
+        damping.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_integration(handle, damping)
 
 
 __all__ = ["MC2NativeCPUKernelV1"]

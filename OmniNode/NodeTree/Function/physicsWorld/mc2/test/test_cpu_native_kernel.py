@@ -152,6 +152,35 @@ def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_integration_slice_only_when_requested():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    try:
+        domain.update_frame(frame)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.5,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -2.0, 0.0),
+        })
+        output = domain.read_output()
+        assert np.array_equal(
+            output.world_positions[0], frame.animated_base_world_positions[0]
+        )
+        np.testing.assert_allclose(
+            output.world_positions[1:, 1],
+            frame.animated_base_world_positions[1:, 1] - np.float32(0.5),
+        )
+        assert domain.inspect()["kernel"]["integration_slice_ready"] is True
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -159,3 +188,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
     test_native_cpu_kernel_exposes_inertia_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")
+    test_native_cpu_kernel_exposes_integration_slice_only_when_requested()
+    print("PASS test_native_cpu_kernel_exposes_integration_slice_only_when_requested")
