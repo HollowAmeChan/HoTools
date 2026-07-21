@@ -76,6 +76,7 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_ir", "field_count"),
     ("mc2.domain_compile", "compile_mc2_mesh_static_fragment"),
     ("mc2.cpu_backend", "create_mc2_cpu_backend_domain"),
+    ("mc2.frame_compile", "vertex_count"),
     ("mc2.setups.mesh_cloth.static_fragment", "_matrix_columns"),
     ("mc2.shadow_pipeline", "compatible"),
     ("mc2.shadow_pipeline", "_array_equal"),
@@ -539,6 +540,7 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.domain_compile",
             "mc2.shadow_pipeline",
             "mc2.cpu_backend",
+            "mc2.frame_compile",
         )),
         "mc2.domain_capabilities": frozenset(("mc2.cpu_backend",)),
     }
