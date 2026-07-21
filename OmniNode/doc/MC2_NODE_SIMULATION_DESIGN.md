@@ -740,7 +740,7 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 退出条件：D-01 至 D-10 已验收行为不回退；相同输入下旧/新 CPU 输出误差在既定 tolerance 内；debug-off 无新增 readback；dispose/reset/rewind 无泄漏和悬空状态。
 
-实现状态（2026-07-21）：E3 的 backend ABI/lifecycle slice 已完成，真实数值 kernel 尚未接入产品。`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`update_frame`/`step`/`read_output` 严格检查 domain/layout/frame/generation identity，physical output 会在 adapter 内归一化为 logical output，`dispose` 幂等且 kernel 创建失败会回滚。fake-kernel 双版本测试覆盖能力拒绝、history、physical reorder 和资源释放。当前 V0 solver、slot、Physics World 和 writeback 不导入该适配器；下一步是 C++ CPU kernel 实现与单 source 数值 oracle，对照通过前不得接产品路径。
+实现状态（2026-07-21）：E3 的 backend ABI/lifecycle slice 已完成，真实数值 kernel 尚未接入产品。`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`update_frame`/`step`/`read_output` 严格检查 domain/layout/frame/generation identity，physical output 会在 adapter 内归一化为 logical output，`dispose` 幂等且 kernel 创建失败会回滚。fake-kernel 双版本测试覆盖能力拒绝、history、physical reorder 和资源释放。现有 `_native/src/mc2_context_*` 仍是 `PyObject*` 驱动的 `Mc2ContextV0` V0 ABI，不能作为新域 kernel 的隐式实现；下一步必须新增独立 C++ domain owner/POD view/handle，不得给 V0 context 叠加第二种输入。单 source 数值 oracle 对照通过前，V0 solver、slot、Physics World 和 writeback 不导入该适配器。
 
 ### E4：多 source fused CPU execution
 
