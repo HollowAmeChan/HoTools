@@ -51,7 +51,7 @@ E3 的 CPU backend 生命周期边界已冻结为独立适配器：`cpu_backend.
 
 E3 的 frame IO 也已保持独立：`frame_compile.py` 只接收冻结 partition snapshot，校验统一 frame/generation、顶点覆盖和 transform identity，再按 compiled logical index view 生成 `MC2DomainFramePacketV1`；它不读取 Blender，不保留跨帧状态，不把 object reference 传入 backend。
 
-E3 native data-path slice 已真实编译并通过 py311/py313 headless smoke：`mc2_domain_cpu.cpp` 是不依赖 V0/Python 的独立 owner，复制 bind/frame POD、校验 domain/layout identity、保留 pass-through positions/normals，并用 live-handle registry 保证重复 dispose 安全；`cpu_native_kernel.py` 只有在显式 `data_path_only=True` 时才调用它。该 slice 证明 ABI、frame ownership 和生命周期，不代表 integration/Distance/Center 数值 solver 已完成。
+E3 native data-path slice 已真实编译并通过 py311/py313 headless smoke：`mc2_domain_cpu.cpp` 是不依赖 V0/Python 的独立 owner，复制 bind/frame POD、校验 domain/layout identity、保留 pass-through positions/normals，并用 live-handle registry 保证重复 dispose 安全；现有 `project_neighbor_constraints_mc2` 已通过 `configure_distance/step_distance` 接入显式 Distance slice，`cpu_native_kernel.py` 只有在 `data_path_only=True` 且明确请求 `distance_slice=True` 时才调用它。该 slice 证明 ABI、frame ownership、生命周期和一段复用现有 kernel 的数值路径，不代表 integration/Center/Teleport 或完整 tolerance oracle 已完成。
 
 E3 native 实施顺序已冻结：新增独立 C++ domain owner/POD view/handle，静态 SoA 和 constraint/primitive/filter 表在 allocation 时校验并拥有；每帧只接收 frame packet view；先提取 integration/Distance/Center 的 native 数值 slice，以 V0 作为 reference；binding 只做 ndarray/view 与 handle 生命周期。新 owner 不得 include `mc2_context_internal.hpp`、接收 `PyObject*` 或注册 Physics World slot。无 Blender headless fixture 的 create/update/step/read/dispose、失败回滚、V0 tolerance 和 debug-off readback 门禁未通过前，Python adapter 只能接测试 kernel。
 
