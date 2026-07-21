@@ -241,7 +241,7 @@ MC2 MeshCloth任务
 
 因此融合不是 `sources` 数组长度从 1 变成 N，而是引入一个独立的 domain compile/execute/output 流水线。旧 V0 context 在迁移期继续只接受单 source，不得被扩成含混的双模式对象。
 
-当前已完成的只有 authoring 数据层第一块：`partition_specs.py` 已提供 immutable entry、sparse patch、显式/隐式 merge、字段 provenance 和纯 collector plan。它尚未连接产品节点，也不生成 task、拓扑、slot 或 native state。下一项工作是 E0 的 IO/schema 冻结，不是把该 plan 直接翻译成多 source 旧 task。
+当前已完成的只有 E0 纯数据层：`partition_specs.py` 提供 immutable entry、sparse patch、显式/隐式 merge、字段 provenance 和纯 collector plan；`domain_ir.py` 提供 static snapshot、logical domain program、parameter/frame/output envelope 与 logical/physical index map。它们尚未连接产品节点，也不生成 task、拓扑、slot、runtime cache owner 或 native state。下一项仍是完成 E0 的固定夹具目录和逐字段合同审计，不是把这些对象直接翻译成多 source 旧 task。
 
 ## 统一粒子场流水线
 
@@ -537,6 +537,7 @@ layout 不变时允许原地上传/更新：
 | `partition_world_position` | f32[P,3] | component world translation。 |
 | `partition_world_rotation` | f32[P,4] | unit xyzw。 |
 | `partition_world_scale` | f32[P,3] | signed scale。 |
+| `partition_world_linear` | f32[P,3,3] | exact source world linear matrix，用于非均匀/负缩放回写和可逆性校验。 |
 | `anchor_world_position/rotation` | f32[P,3]/f32[P,4] | 无 Anchor 时由 flags 标记。 |
 | `partition_frame_flags` | u32[P] | reset/keep/disable/anchor-present 等。 |
 | `velocity_weight/gravity_ratio` | f32[P] | partition 级 frame control。 |
