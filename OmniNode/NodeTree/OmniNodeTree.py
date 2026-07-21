@@ -466,7 +466,7 @@ class OmniNodeTree(NodeTree):
 
 
 def draw_OmniTreeInputs(layout, tree):
-    layout.label(text="Omni树输入:")
+    layout.label(text="输入")
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -490,7 +490,7 @@ def draw_OmniTreeInputs(layout, tree):
     moveDown.is_Down = True
 
 def draw_OmniTreeOutputs(layout, tree):
-    layout.label(text="Omni树输出:")
+    layout.label(text="输出")
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -525,72 +525,48 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     run_box = layout.box()
     run_box.use_property_split = False
-    run_box.label(text="运行控制", icon="PLAY")
+    run_row = run_box.row(align=True)
+    run_row.prop(tree, "is_execution_enabled", text="执行", toggle=True)
 
-    enabled_row = run_box.row(align=True)
-    enabled_row.scale_y = 1.15
-    enabled_icon = "CHECKMARK" if execution_enabled else "CANCEL"
-    enabled_row.prop(tree, "is_execution_enabled", text="启用执行", toggle=True, icon=enabled_icon)
-
-    frame_row = run_box.row(align=True)
+    frame_row = run_row.row(align=True)
     frame_row.enabled = execution_enabled
-    frame_row.scale_y = 1.1
-    frame_row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
+    frame_row.prop(tree, "is_frame_run_enabled", text="逐帧", toggle=True)
 
-    auto_row = run_box.row(align=True)
+    auto_row = run_row.row(align=True)
     auto_row.enabled = execution_enabled
-    auto_row.scale_y = 1.1
     if tree.is_auto_update:
         auto_row.alert = True
-        auto_row.prop(tree, "is_auto_update", text="树自动更新", toggle=True, icon="DECORATE_LINKED")
+        auto_row.prop(tree, "is_auto_update", text="自动", toggle=True)
     else:
-        auto_row.prop(tree, "is_auto_update", text="树自动更新", toggle=True, icon="UNLINKED")
-
-    run_box.separator()
-    status_icon = "CHECKMARK" if _cached_compiled_graph(tree) is not None else "RADIOBUT_OFF"
-    run_box.label(text=f"编译状态：{tree.compile_cache_status_label()}", icon=status_icon)
+        auto_row.prop(tree, "is_auto_update", text="自动", toggle=True)
 
     debug_box = layout.box()
     debug_box.use_property_split = False
-    debug_box.label(text="调试与性能", icon="TOOL_SETTINGS")
-
-    compile_label = debug_box.row()
-    compile_label.label(text="编译调试", icon="FILE_TICK")
-    compile_debug_row = debug_box.row(align=True)
-    compile_debug_row.prop(tree, "debug_compile", text="打印编译日志", toggle=True)
-    compile_flow_row = debug_box.row(align=True)
-    compile_flow_row.prop(tree, "show_compile_flow", text="编译流程可视化", toggle=True)
-
-    debug_box.separator()
-    runtime_label = debug_box.row()
-    runtime_label.label(text="运行调试", icon="CONSOLE")
-    trace_row = debug_box.row(align=True)
+    debug_row = debug_box.row(align=True)
+    debug_row.prop(tree, "debug_compile", text="编译日志", toggle=True)
+    debug_row.prop(tree, "show_compile_flow", text="编译流程", toggle=True)
+    trace_row = debug_row.row(align=True)
     trace_row.enabled = execution_enabled
-    trace_row.prop(tree, "debug_runtime_trace", text="运行追踪日志", toggle=True)
-    console_timing_row = debug_box.row(align=True)
-    console_timing_row.enabled = execution_enabled
-    console_timing_row.prop(tree, "debug_runtime_timing", text="控制台性能统计", toggle=True)
-    timing_interval_row = debug_box.row(align=True)
-    timing_interval_row.use_property_split = True
-    timing_interval_row.use_property_decorate = False
-    timing_interval_row.enabled = execution_enabled and bool(getattr(tree, "debug_runtime_timing", False))
-    timing_interval_row.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
+    trace_row.prop(tree, "debug_runtime_trace", text="运行追踪", toggle=True)
 
-    debug_box.separator()
-    overlay_label = debug_box.row()
-    overlay_label.label(text="节点计时叠加", icon="TIME")
+    console_row = debug_box.row(align=True)
+    console_toggle = console_row.row(align=True)
+    console_toggle.enabled = execution_enabled
+    console_toggle.prop(tree, "debug_runtime_timing", text="性能统计", toggle=True)
+    timing_interval_row = console_row.row(align=True)
+    timing_interval_row.enabled = execution_enabled and bool(getattr(tree, "debug_runtime_timing", False))
+    timing_interval_row.prop(tree, "debug_runtime_timing_interval", text="输出")
+
     overlay_row = debug_box.row(align=True)
-    overlay_row.enabled = execution_enabled
-    overlay_row.prop(tree, "show_runtime_timing", text="显示节点计时", toggle=True)
-    sample_interval_row = debug_box.row(align=True)
-    sample_interval_row.use_property_split = True
-    sample_interval_row.use_property_decorate = False
+    overlay_toggle = overlay_row.row(align=True)
+    overlay_toggle.enabled = execution_enabled
+    overlay_toggle.prop(tree, "show_runtime_timing", text="节点计时", toggle=True)
+    sample_interval_row = overlay_row.row(align=True)
     sample_interval_row.enabled = execution_enabled and bool(getattr(tree, "show_runtime_timing", False))
-    sample_interval_row.prop(tree, "runtime_timing_sample_interval", text="采样间隔")
+    sample_interval_row.prop(tree, "runtime_timing_sample_interval", text="采样")
 
     io_box = layout.box()
     io_box.use_property_split = False
-    io_box.label(text="树接口", icon="NODETREE")
     draw_OmniTreeInputs(io_box, tree)
     draw_OmniTreeOutputs(io_box, tree)
 
