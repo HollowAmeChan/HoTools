@@ -459,6 +459,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["center_inertia_vectors"] = owned_array_2d<float>(
                 std::vector<float>(domain->center_inertia_vectors()), domain->partition_count(), 3
             );
+            result["center_frame_world_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_frame_world_positions()),
+                domain->partition_count(), 3
+            );
+            result["center_frame_world_rotations"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_frame_world_rotations()),
+                domain->partition_count(), 4
+            );
             result["center_step_count"] = domain->center_step_count();
             return result;
         },

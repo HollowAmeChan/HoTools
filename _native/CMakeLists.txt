@@ -132,9 +132,22 @@ nanobind_add_module(hotools_native
     src/mc2_self_collision.cpp
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
+    src/mc2_domain_cpu.hpp
+    src/mc2_kernels.hpp
     src/spring_bone_vrm.cpp
     src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp
+)
+
+# These translation units construct shared native view structs. Keep their
+# object files tied to the headers so ABI/layout edits cannot leave a stale
+# producer paired with a freshly compiled kernel consumer.
+set_source_files_properties(
+    src/mc2_context_frame_step.cpp
+    src/mc2_domain_cpu.cpp
+    src/mc2_domain_cpu_bindings.cpp
+    PROPERTIES OBJECT_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
 )
 
 target_include_directories(hotools_native PRIVATE

@@ -479,6 +479,29 @@ def test_domain_cpu_native_center_slice_uses_partition_history():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_center_pose_uses_fixed_particle_frame():
+    handle = _create(partition_count=1, particle_attributes=(1, 0, 0))
+    try:
+        positions, normals = _frame(4.0)
+        _update_frame(
+            handle,
+            positions,
+            normals,
+            frame=1,
+            generation=1,
+            partition_positions=((100.0, 0.0, 0.0),),
+        )
+        info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        np.testing.assert_allclose(
+            info["center_frame_world_positions"], ((4.0, 0.0, 0.0),)
+        )
+        np.testing.assert_allclose(
+            info["center_frame_world_rotations"], ((0.0, 0.0, 0.0, 1.0),)
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, value)

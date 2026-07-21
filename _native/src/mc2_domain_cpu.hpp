@@ -130,6 +130,12 @@ public:
     const std::vector<float>& center_inertia_vectors() const noexcept {
         return center_inertia_vectors_;
     }
+    const std::vector<float>& center_frame_world_positions() const noexcept {
+        return center_frame_world_positions_;
+    }
+    const std::vector<float>& center_frame_world_rotations() const noexcept {
+        return center_frame_world_rotations_;
+    }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }
 
 private:
@@ -156,6 +162,7 @@ private:
     std::vector<float> partition_previous_world_positions_;
     std::vector<float> partition_world_rotations_;
     std::vector<float> partition_previous_world_rotations_;
+    std::vector<float> partition_previous_world_scales_;
     std::vector<float> partition_world_scales_;
     std::vector<float> partition_world_linear_;
     std::vector<float> anchor_world_positions_;
@@ -175,6 +182,10 @@ private:
     std::vector<float> center_initial_scales_;
     std::vector<float> center_old_world_positions_;
     std::vector<float> center_old_world_rotations_;
+    std::vector<float> center_previous_frame_world_positions_;
+    std::vector<float> center_previous_frame_world_rotations_;
+    std::vector<float> center_frame_world_positions_;
+    std::vector<float> center_frame_world_rotations_;
     std::vector<float> center_now_world_positions_;
     std::vector<float> center_now_world_rotations_;
     std::vector<float> center_step_vectors_;

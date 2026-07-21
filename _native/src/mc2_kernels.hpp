@@ -281,6 +281,24 @@ struct Mc2CenterStepView {
     float output_blend_weight = 1.0f;
 };
 
+struct Mc2CenterPoseView {
+    const float* world_positions = nullptr;
+    const float* world_rotations = nullptr;
+    const float* bind_rotations = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* particle_attribute_flags = nullptr;
+    const std::int32_t* fixed_particle_indices = nullptr;
+    std::int64_t fixed_particle_count = 0;
+    bool use_fixed_particle_indices = false;
+    std::int64_t particle_count = 0;
+    std::int64_t partition_index = 0;
+    float component_position[3] = {};
+    float component_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float component_scale[3] = {1.0f, 1.0f, 1.0f};
+    float center_position[3] = {};
+    float center_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+};
+
 struct Mc2ParticleIntegrationView {
     float* positions = nullptr;
     float* velocities = nullptr;
@@ -350,6 +368,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
 void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
+bool derive_center_world_pose_mc2(Mc2CenterPoseView& view);
 bool evaluate_center_step_mc2(Mc2CenterStepView& view);
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view);
 void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view);

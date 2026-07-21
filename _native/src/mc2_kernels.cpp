@@ -2979,6 +2979,76 @@ void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
 
 namespace {
 
+void center_rotate_vector(
+    const float* rotation,
+    const float* value,
+    float* output
+);
+
+void center_quaternion_from_forward_up(
+    const float* forward,
+    const float* up,
+    float* output
+) {
+    const float forward_length = std::sqrt(
+        forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]
+    );
+    const float f[3] = {
+        forward[0] / forward_length,
+        forward[1] / forward_length,
+        forward[2] / forward_length,
+    };
+    float right[3] = {
+        up[1] * f[2] - up[2] * f[1],
+        up[2] * f[0] - up[0] * f[2],
+        up[0] * f[1] - up[1] * f[0],
+    };
+    const float right_length = std::sqrt(
+        right[0] * right[0] + right[1] * right[1] + right[2] * right[2]
+    );
+    right[0] /= right_length;
+    right[1] /= right_length;
+    right[2] /= right_length;
+    const float corrected_up[3] = {
+        f[1] * right[2] - f[2] * right[1],
+        f[2] * right[0] - f[0] * right[2],
+        f[0] * right[1] - f[1] * right[0],
+    };
+    const float matrix[9] = {
+        right[0], corrected_up[0], f[0],
+        right[1], corrected_up[1], f[1],
+        right[2], corrected_up[2], f[2],
+    };
+    const float trace = matrix[0] + matrix[4] + matrix[8];
+    float raw[4];
+    if (trace > 0.0f) {
+        const float s = std::sqrt(trace + 1.0f) * 2.0f;
+        raw[0] = (matrix[7] - matrix[5]) / s;
+        raw[1] = (matrix[2] - matrix[6]) / s;
+        raw[2] = (matrix[3] - matrix[1]) / s;
+        raw[3] = 0.25f * s;
+    } else if (matrix[0] > matrix[4] && matrix[0] > matrix[8]) {
+        const float s = std::sqrt(1.0f + matrix[0] - matrix[4] - matrix[8]) * 2.0f;
+        raw[0] = 0.25f * s;
+        raw[1] = (matrix[1] + matrix[3]) / s;
+        raw[2] = (matrix[2] + matrix[6]) / s;
+        raw[3] = (matrix[7] - matrix[5]) / s;
+    } else if (matrix[4] > matrix[8]) {
+        const float s = std::sqrt(1.0f + matrix[4] - matrix[0] - matrix[8]) * 2.0f;
+        raw[0] = (matrix[1] + matrix[3]) / s;
+        raw[1] = 0.25f * s;
+        raw[2] = (matrix[5] + matrix[7]) / s;
+        raw[3] = (matrix[2] - matrix[6]) / s;
+    } else {
+        const float s = std::sqrt(1.0f + matrix[8] - matrix[0] - matrix[4]) * 2.0f;
+        raw[0] = (matrix[2] + matrix[6]) / s;
+        raw[1] = (matrix[5] + matrix[7]) / s;
+        raw[2] = 0.25f * s;
+        raw[3] = (matrix[3] - matrix[1]) / s;
+    }
+    quat_normalize(raw, output);
+}
+
 void center_slerp_xyzw(
     const float* first,
     const float* second,
@@ -3031,6 +3101,100 @@ void center_rotate_vector(
 }
 
 }  // namespace
+
+bool derive_center_world_pose_mc2(Mc2CenterPoseView& view) {
+    if (view.particle_count <= 0 || view.world_positions == nullptr ||
+        view.world_rotations == nullptr || view.partition_index < 0 ||
+        (!view.use_fixed_particle_indices &&
+         (view.particle_partition_index == nullptr || view.particle_attribute_flags == nullptr))) {
+        return false;
+    }
+    std::int64_t fixed_count = 0;
+    float position_sum[3] = {};
+    float normal_sum[3] = {};
+    float tangent_sum[3] = {};
+    const bool has_negative_scale = view.component_scale[0] < 0.0f ||
+        view.component_scale[1] < 0.0f || view.component_scale[2] < 0.0f;
+    const auto visit_particle = [&](std::int64_t particle) {
+        if (particle < 0 || particle >= view.particle_count) return false;
+        const auto position_offset = particle * 3;
+        const auto rotation_offset = particle * 4;
+        for (std::size_t component = 0; component < 3; ++component) {
+            position_sum[component] += view.world_positions[position_offset + component];
+        }
+        float frame_rotation[4] = {
+            view.world_rotations[rotation_offset + 0],
+            view.world_rotations[rotation_offset + 1],
+            view.world_rotations[rotation_offset + 2],
+            view.world_rotations[rotation_offset + 3],
+        };
+        if (has_negative_scale) {
+            const float normal_input[3] = {0.0f, 1.0f, 0.0f};
+            const float tangent_input[3] = {0.0f, 0.0f, 1.0f};
+            float normal[3] {};
+            float tangent[3] {};
+            center_rotate_vector(frame_rotation, normal_input, normal);
+            center_rotate_vector(frame_rotation, tangent_input, tangent);
+            const float neg_tangent[3] = {-tangent[0], -tangent[1], -tangent[2]};
+            const float neg_normal[3] = {-normal[0], -normal[1], -normal[2]};
+            center_quaternion_from_forward_up(neg_tangent, neg_normal, frame_rotation);
+        }
+        float corrected[4];
+        quat_multiply(frame_rotation, view.bind_rotations + rotation_offset, corrected);
+        const float normal_input[3] = {0.0f, 1.0f, 0.0f};
+        const float tangent_input[3] = {0.0f, 0.0f, 1.0f};
+        float normal[3] {};
+        float tangent[3] {};
+        center_rotate_vector(corrected, normal_input, normal);
+        center_rotate_vector(corrected, tangent_input, tangent);
+        for (std::size_t component = 0; component < 3; ++component) {
+            normal_sum[component] += normal[component];
+            tangent_sum[component] += tangent[component];
+        }
+        ++fixed_count;
+        return true;
+    };
+    if (view.use_fixed_particle_indices) {
+        if (view.fixed_particle_count > 0 && view.fixed_particle_indices == nullptr) return false;
+        if (view.fixed_particle_count > 0 && view.bind_rotations == nullptr) return false;
+        for (std::int64_t index = 0; index < view.fixed_particle_count; ++index) {
+            if (!visit_particle(view.fixed_particle_indices[index])) return false;
+        }
+    } else {
+        if (view.bind_rotations == nullptr) return false;
+        for (std::int64_t particle = 0; particle < view.particle_count; ++particle) {
+            if (static_cast<std::int64_t>(view.particle_partition_index[particle]) != view.partition_index ||
+                (view.particle_attribute_flags[particle] & 1u) == 0u) {
+                continue;
+            }
+            if (!visit_particle(particle)) return false;
+        }
+    }
+    if (fixed_count == 0) {
+        std::copy_n(view.component_position, 3, view.center_position);
+        std::copy_n(view.component_rotation, 4, view.center_rotation);
+        return true;
+    }
+    const float inverse_count = 1.0f / static_cast<float>(fixed_count);
+    for (std::size_t component = 0; component < 3; ++component) {
+        view.center_position[component] = position_sum[component] * inverse_count;
+    }
+    if (view.component_scale[0] < 0.0f || view.component_scale[2] < 0.0f) {
+        for (float& value : normal_sum) value = -value;
+    }
+    if (view.component_scale[0] < 0.0f || view.component_scale[1] < 0.0f) {
+        for (float& value : tangent_sum) value = -value;
+    }
+    const float normal_length = std::sqrt(
+        normal_sum[0] * normal_sum[0] + normal_sum[1] * normal_sum[1] + normal_sum[2] * normal_sum[2]
+    );
+    const float tangent_length = std::sqrt(
+        tangent_sum[0] * tangent_sum[0] + tangent_sum[1] * tangent_sum[1] + tangent_sum[2] * tangent_sum[2]
+    );
+    if (normal_length <= kMc2Epsilon || tangent_length <= kMc2Epsilon) return false;
+    center_quaternion_from_forward_up(tangent_sum, normal_sum, view.center_rotation);
+    return true;
+}
 
 bool evaluate_center_step_mc2(Mc2CenterStepView& view) {
     if (view.dt <= kMc2Epsilon) return false;

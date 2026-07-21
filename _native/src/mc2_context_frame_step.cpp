@@ -849,67 +849,34 @@ PyObject* build_raw_center_pose(
     const float* component_rotation,
     const float* component_scale
 ) {
-    Vec3 position {
-        component_position[0], component_position[1], component_position[2]
-    };
-    std::array<float, 4> rotation {
-        component_rotation[0], component_rotation[1],
-        component_rotation[2], component_rotation[3]
-    };
-    const bool has_negative_scale =
-        component_scale[0] < 0.0f || component_scale[1] < 0.0f || component_scale[2] < 0.0f;
-    if (!context.center_fixed_indices.empty()) {
-        if (context.bone_vertex_bind_pose_rotations.size() !=
+    if (!context.center_fixed_indices.empty() &&
+        context.bone_vertex_bind_pose_rotations.size() !=
             static_cast<std::size_t>(context.vertex_count) * 4) {
-            PyErr_SetString(PyExc_RuntimeError, "raw Center producer has no bind rotations");
-            return nullptr;
-        }
-        position = {};
-        Vec3 normal_sum {};
-        Vec3 tangent_sum {};
-        for (const auto raw_index : context.center_fixed_indices) {
-            if (raw_index < 0 || raw_index >= context.vertex_count) {
-                PyErr_SetString(PyExc_RuntimeError, "raw Center fixed index is invalid");
-                return nullptr;
-            }
-            const auto index = static_cast<std::size_t>(raw_index);
-            position = add(position, load_vector3(context.dynamic_positions, index));
-            auto frame_rotation = load_quaternion(context.dynamic_rotations, index);
-            if (has_negative_scale) {
-                const Vec3 normal = rotate_vector(frame_rotation, {0.0f, 1.0f, 0.0f});
-                const Vec3 tangent = rotate_vector(frame_rotation, {0.0f, 0.0f, 1.0f});
-                frame_rotation = quaternion_from_forward_up(
-                    mul(tangent, -1.0f), mul(normal, -1.0f)
-                );
-            }
-            auto corrected = quaternion_multiply(
-                frame_rotation,
-                load_quaternion(context.bone_vertex_bind_pose_rotations, index)
-            );
-            normalize_quaternion(corrected);
-            normal_sum = add(normal_sum, rotate_vector(corrected, {0.0f, 1.0f, 0.0f}));
-            tangent_sum = add(tangent_sum, rotate_vector(corrected, {0.0f, 0.0f, 1.0f}));
-        }
-        position = mul(
-            position,
-            1.0f / static_cast<float>(context.center_fixed_indices.size())
-        );
-        if (component_scale[0] < 0.0f || component_scale[2] < 0.0f) {
-            normal_sum = mul(normal_sum, -1.0f);
-        }
-        if (component_scale[0] < 0.0f || component_scale[1] < 0.0f) {
-            tangent_sum = mul(tangent_sum, -1.0f);
-        }
-        if (length(normal_sum) <= kMc2Epsilon || length(tangent_sum) <= kMc2Epsilon) {
-            PyErr_SetString(PyExc_ValueError, "raw Center orientation is degenerate");
-            return nullptr;
-        }
-        rotation = quaternion_from_forward_up(tangent_sum, normal_sum);
+        PyErr_SetString(PyExc_RuntimeError, "raw Center producer has no bind rotations");
+        return nullptr;
+    }
+    hotools::Mc2CenterPoseView view;
+    view.world_positions = context.dynamic_positions.data();
+    view.world_rotations = context.dynamic_rotations.data();
+    view.bind_rotations = context.bone_vertex_bind_pose_rotations.empty()
+        ? nullptr : context.bone_vertex_bind_pose_rotations.data();
+    view.fixed_particle_indices = context.center_fixed_indices.data();
+    view.fixed_particle_count = static_cast<std::int64_t>(context.center_fixed_indices.size());
+    view.use_fixed_particle_indices = true;
+    view.particle_count = context.vertex_count;
+    view.partition_index = 0;
+    std::copy_n(component_position, 3, view.component_position);
+    std::copy_n(component_rotation, 4, view.component_rotation);
+    std::copy_n(component_scale, 3, view.component_scale);
+    if (!hotools::derive_center_world_pose_mc2(view)) {
+        PyErr_SetString(PyExc_ValueError, "raw Center orientation is degenerate");
+        return nullptr;
     }
     return Py_BuildValue(
         "(ffffffffff)",
-        position.x, position.y, position.z,
-        rotation[0], rotation[1], rotation[2], rotation[3],
+        view.center_position[0], view.center_position[1], view.center_position[2],
+        view.center_rotation[0], view.center_rotation[1],
+        view.center_rotation[2], view.center_rotation[3],
         component_scale[0], component_scale[1], component_scale[2]
     );
 }

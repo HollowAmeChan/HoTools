@@ -63,6 +63,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       partition_previous_world_positions_(program.partition_count * 3, 0.0f),
       partition_world_rotations_(program.partition_count * 4, 0.0f),
       partition_previous_world_rotations_(program.partition_count * 4, 0.0f),
+      partition_previous_world_scales_(program.partition_count * 3, 1.0f),
       partition_world_scales_(program.partition_count * 3, 1.0f),
       partition_world_linear_(program.partition_count * 9, 0.0f),
       anchor_world_positions_(program.partition_count * 3, 0.0f),
@@ -82,6 +83,10 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       center_initial_scales_(program.partition_count * 3, 1.0f),
       center_old_world_positions_(program.partition_count * 3, 0.0f),
       center_old_world_rotations_(program.partition_count * 4, 0.0f),
+      center_previous_frame_world_positions_(program.partition_count * 3, 0.0f),
+      center_previous_frame_world_rotations_(program.partition_count * 4, 0.0f),
+      center_frame_world_positions_(program.partition_count * 3, 0.0f),
+      center_frame_world_rotations_(program.partition_count * 4, 0.0f),
       center_now_world_positions_(program.partition_count * 3, 0.0f),
       center_now_world_rotations_(program.partition_count * 4, 0.0f),
       center_step_vectors_(program.partition_count * 3, 0.0f),
@@ -241,6 +246,8 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     std::vector<float> next_partition_linear(
         frame.partition_world_linear, frame.partition_world_linear + partition_count_ * 9
     );
+    std::vector<float> next_center_frame_positions(partition_count_ * 3, 0.0f);
+    std::vector<float> next_center_frame_rotations(partition_count_ * 4, 0.0f);
     std::vector<float> next_anchor_positions(
         frame.anchor_world_positions, frame.anchor_world_positions + partition_count_ * 3
     );
@@ -270,6 +277,44 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         }
     }
     const bool reset_history = frame_ < 0 || generation_ != frame.generation;
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        hotools::Mc2CenterPoseView center_view;
+        center_view.world_positions = next_animated_positions.data();
+        center_view.world_rotations = next_animated_rotations.data();
+        center_view.bind_rotations = bind_rotations_.data();
+        center_view.particle_partition_index = particle_partition_index_.data();
+        center_view.particle_attribute_flags = particle_attribute_flags_.data();
+        center_view.particle_count = static_cast<std::int64_t>(particle_count_);
+        center_view.partition_index = static_cast<std::int64_t>(partition);
+        std::copy_n(
+            next_partition_positions.data() + partition * 3,
+            3,
+            center_view.component_position
+        );
+        std::copy_n(
+            next_partition_rotations.data() + partition * 4,
+            4,
+            center_view.component_rotation
+        );
+        std::copy_n(
+            next_partition_scales.data() + partition * 3,
+            3,
+            center_view.component_scale
+        );
+        if (!hotools::derive_center_world_pose_mc2(center_view)) {
+            throw std::invalid_argument("MC2 CPU Center frame pose is degenerate");
+        }
+        std::copy_n(
+            center_view.center_position,
+            3,
+            next_center_frame_positions.data() + partition * 3
+        );
+        std::copy_n(
+            center_view.center_rotation,
+            4,
+            next_center_frame_rotations.data() + partition * 4
+        );
+    }
     for (std::size_t particle = 0; particle < particle_count_; ++particle) {
         const auto partition = particle_partition_index_[particle];
         const bool fixed = (particle_attribute_flags_[particle] & 1u) != 0u;
@@ -310,6 +355,12 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         ? next_partition_positions : partition_world_positions_;
     std::vector<float> next_previous_rotations = reset_history
         ? next_partition_rotations : partition_world_rotations_;
+    std::vector<float> next_previous_scales = reset_history
+        ? next_partition_scales : partition_world_scales_;
+    std::vector<float> next_center_previous_positions = reset_history
+        ? next_center_frame_positions : center_frame_world_positions_;
+    std::vector<float> next_center_previous_rotations = reset_history
+        ? next_center_frame_rotations : center_frame_world_rotations_;
     world_positions_.swap(next_positions);
     world_rotations_.swap(next_rotations);
     velocity_positions_.swap(next_velocity_positions);
@@ -318,10 +369,15 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     world_normals_.swap(next_normals);
     partition_previous_world_positions_.swap(next_previous_positions);
     partition_previous_world_rotations_.swap(next_previous_rotations);
+    partition_previous_world_scales_.swap(next_previous_scales);
     partition_world_positions_.swap(next_partition_positions);
     partition_world_rotations_.swap(next_partition_rotations);
     partition_world_scales_.swap(next_partition_scales);
     partition_world_linear_.swap(next_partition_linear);
+    center_previous_frame_world_positions_.swap(next_center_previous_positions);
+    center_previous_frame_world_rotations_.swap(next_center_previous_rotations);
+    center_frame_world_positions_.swap(next_center_frame_positions);
+    center_frame_world_rotations_.swap(next_center_frame_rotations);
     anchor_world_positions_.swap(next_anchor_positions);
     anchor_world_rotations_.swap(next_anchor_rotations);
     anchor_present_.swap(next_anchor_present);
@@ -330,10 +386,10 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     gravity_ratios_.swap(next_gravity_ratios);
     if (reset_history) {
         center_initial_scales_ = partition_world_scales_;
-        center_old_world_positions_ = partition_world_positions_;
-        center_now_world_positions_ = partition_world_positions_;
-        center_old_world_rotations_ = partition_world_rotations_;
-        center_now_world_rotations_ = partition_world_rotations_;
+        center_old_world_positions_ = center_frame_world_positions_;
+        center_now_world_positions_ = center_frame_world_positions_;
+        center_old_world_rotations_ = center_frame_world_rotations_;
+        center_now_world_rotations_ = center_frame_world_rotations_;
         center_velocity_weights_ = velocity_weights_;
         center_ready_ = true;
     }
@@ -412,22 +468,22 @@ void DomainV1::step_center(
         const auto position_offset = partition * 3;
         const auto rotation_offset = partition * 4;
         std::copy_n(
-            partition_previous_world_positions_.data() + position_offset,
+            center_previous_frame_world_positions_.data() + position_offset,
             3,
             view.old_frame_world_position
         );
         std::copy_n(
-            partition_world_positions_.data() + position_offset,
+            center_frame_world_positions_.data() + position_offset,
             3,
             view.frame_world_position
         );
         std::copy_n(
-            partition_previous_world_rotations_.data() + rotation_offset,
+            center_previous_frame_world_rotations_.data() + rotation_offset,
             4,
             view.old_frame_world_rotation
         );
         std::copy_n(
-            partition_world_rotations_.data() + rotation_offset,
+            center_frame_world_rotations_.data() + rotation_offset,
             4,
             view.frame_world_rotation
         );
@@ -435,6 +491,11 @@ void DomainV1::step_center(
             partition_world_scales_.data() + position_offset,
             3,
             view.frame_world_scale
+        );
+        std::copy_n(
+            partition_previous_world_scales_.data() + position_offset,
+            3,
+            view.old_frame_world_scale
         );
         std::copy_n(
             center_initial_scales_.data() + position_offset,
