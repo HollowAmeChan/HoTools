@@ -387,6 +387,35 @@ void quat_inverse(const float q[4], float out_q[4]) {
     out_q[3] = normalized[3];
 }
 
+void quat_multiply(const float a[4], const float b[4], float out_q[4]) {
+    const float raw[4] = {
+        a[3] * b[0] + b[3] * a[0] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] + b[3] * a[1] + a[2] * b[0] - a[0] * b[2],
+        a[3] * b[2] + b[3] * a[2] + a[0] * b[1] - a[1] * b[0],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    };
+    quat_normalize(raw, out_q);
+}
+
+bool inverse_matrix3(const float matrix[9], float inverse[9]) {
+    const float determinant =
+        matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7]) -
+        matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6]) +
+        matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6]);
+    if (std::fabs(determinant) <= kMc2Epsilon) return false;
+    const float scale = 1.0f / determinant;
+    inverse[0] = (matrix[4] * matrix[8] - matrix[5] * matrix[7]) * scale;
+    inverse[1] = (matrix[2] * matrix[7] - matrix[1] * matrix[8]) * scale;
+    inverse[2] = (matrix[1] * matrix[5] - matrix[2] * matrix[4]) * scale;
+    inverse[3] = (matrix[5] * matrix[6] - matrix[3] * matrix[8]) * scale;
+    inverse[4] = (matrix[0] * matrix[8] - matrix[2] * matrix[6]) * scale;
+    inverse[5] = (matrix[2] * matrix[3] - matrix[0] * matrix[5]) * scale;
+    inverse[6] = (matrix[3] * matrix[7] - matrix[4] * matrix[6]) * scale;
+    inverse[7] = (matrix[1] * matrix[6] - matrix[0] * matrix[7]) * scale;
+    inverse[8] = (matrix[0] * matrix[4] - matrix[1] * matrix[3]) * scale;
+    return true;
+}
+
 void quat_rotate(const float quat[4], float vx, float vy, float vz, float& out_x, float& out_y, float& out_z) {
     float q[4];
     quat_normalize(quat, q);
@@ -2979,6 +3008,73 @@ void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
             view.velocities[offset + component] = velocity;
             view.positions[offset + component] += velocity * view.dt;
         }
+    }
+}
+
+void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view) {
+    if (view.particle_count <= 0 || view.partition_count <= 0 ||
+        view.positions == nullptr || view.velocities == nullptr ||
+        view.particle_partition_index == nullptr || view.particle_attribute_flags == nullptr ||
+        view.partition_frame_flags == nullptr || view.old_partition_positions == nullptr ||
+        view.old_partition_rotations == nullptr || view.old_partition_linear == nullptr ||
+        view.new_partition_positions == nullptr || view.new_partition_rotations == nullptr ||
+        view.new_partition_linear == nullptr) {
+        return;
+    }
+    std::vector<float> inverse_linear(static_cast<std::size_t>(view.partition_count) * 9);
+    std::vector<float> delta_rotations(static_cast<std::size_t>(view.partition_count) * 4);
+    std::vector<std::uint8_t> active(static_cast<std::size_t>(view.partition_count), 0u);
+    for (std::int64_t partition = 0; partition < view.partition_count; ++partition) {
+        if ((view.partition_frame_flags[partition] & view.keep_frame_mask) == 0u) continue;
+        float* inverse = inverse_linear.data() + partition * 9;
+        if (!inverse_matrix3(view.old_partition_linear + partition * 9, inverse)) continue;
+        float old_inverse[4];
+        quat_inverse(view.old_partition_rotations + partition * 4, old_inverse);
+        quat_multiply(
+            view.new_partition_rotations + partition * 4,
+            old_inverse,
+            delta_rotations.data() + partition * 4
+        );
+        active[partition] = 1u;
+    }
+    for (std::int64_t particle = 0; particle < view.particle_count; ++particle) {
+        if ((view.particle_attribute_flags[particle] & view.fixed_attribute_mask) != 0u) continue;
+        const auto partition = static_cast<std::int64_t>(view.particle_partition_index[particle]);
+        if (partition < 0 || partition >= view.partition_count || !active[partition]) continue;
+        const auto offset = particle * 3;
+        const float* old_position = view.old_partition_positions + partition * 3;
+        const float* new_position = view.new_partition_positions + partition * 3;
+        const float* inverse = inverse_linear.data() + partition * 9;
+        const float* linear = view.new_partition_linear + partition * 9;
+        const float relative[3] = {
+            view.positions[offset + 0] - old_position[0],
+            view.positions[offset + 1] - old_position[1],
+            view.positions[offset + 2] - old_position[2],
+        };
+        const float local[3] = {
+            inverse[0] * relative[0] + inverse[1] * relative[1] + inverse[2] * relative[2],
+            inverse[3] * relative[0] + inverse[4] * relative[1] + inverse[5] * relative[2],
+            inverse[6] * relative[0] + inverse[7] * relative[1] + inverse[8] * relative[2],
+        };
+        view.positions[offset + 0] = new_position[0] +
+            linear[0] * local[0] + linear[1] * local[1] + linear[2] * local[2];
+        view.positions[offset + 1] = new_position[1] +
+            linear[3] * local[0] + linear[4] * local[1] + linear[5] * local[2];
+        view.positions[offset + 2] = new_position[2] +
+            linear[6] * local[0] + linear[7] * local[1] + linear[8] * local[2];
+        float velocity_x = 0.0f;
+        float velocity_y = 0.0f;
+        float velocity_z = 0.0f;
+        quat_rotate(
+            delta_rotations.data() + partition * 4,
+            view.velocities[offset + 0],
+            view.velocities[offset + 1],
+            view.velocities[offset + 2],
+            velocity_x, velocity_y, velocity_z
+        );
+        view.velocities[offset + 0] = velocity_x;
+        view.velocities[offset + 1] = velocity_y;
+        view.velocities[offset + 2] = velocity_z;
     }
 }
 

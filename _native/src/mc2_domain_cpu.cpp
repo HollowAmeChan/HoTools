@@ -208,9 +208,13 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     );
     std::vector<std::int64_t> next_reset_counts = partition_reset_counts_;
     std::vector<std::int64_t> next_keep_counts = partition_keep_counts_;
+    bool has_keep = false;
     for (std::size_t index = 0; index < partition_count_; ++index) {
         if ((frame.partition_frame_flags[index] & 1u) != 0u) ++next_reset_counts[index];
-        if ((frame.partition_frame_flags[index] & 2u) != 0u) ++next_keep_counts[index];
+        if ((frame.partition_frame_flags[index] & 2u) != 0u) {
+            ++next_keep_counts[index];
+            has_keep = true;
+        }
     }
     const bool reset_history = frame_ < 0 || generation_ != frame.generation;
     for (std::size_t particle = 0; particle < particle_count_; ++particle) {
@@ -224,6 +228,23 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
             next_positions[offset + component] = next_animated_positions[offset + component];
             next_velocity_positions[offset + component] = 0.0f;
         }
+    }
+    if (!reset_history && has_keep) {
+        hotools::Mc2PartitionKeepTransformView keep_view;
+        keep_view.positions = next_positions.data();
+        keep_view.velocities = next_velocity_positions.data();
+        keep_view.particle_partition_index = particle_partition_index_.data();
+        keep_view.particle_attribute_flags = particle_attribute_flags_.data();
+        keep_view.partition_frame_flags = next_frame_flags.data();
+        keep_view.old_partition_positions = partition_world_positions_.data();
+        keep_view.old_partition_rotations = partition_world_rotations_.data();
+        keep_view.old_partition_linear = partition_world_linear_.data();
+        keep_view.new_partition_positions = next_partition_positions.data();
+        keep_view.new_partition_rotations = next_partition_rotations.data();
+        keep_view.new_partition_linear = next_partition_linear.data();
+        keep_view.particle_count = static_cast<std::int64_t>(particle_count_);
+        keep_view.partition_count = static_cast<std::int64_t>(partition_count_);
+        hotools::apply_partition_keep_transform_mc2(keep_view);
     }
     std::vector<float> next_previous_positions = reset_history
         ? next_partition_positions : partition_world_positions_;

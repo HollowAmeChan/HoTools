@@ -256,6 +256,24 @@ struct Mc2ParticleIntegrationView {
     float gravity[3] = {};
 };
 
+struct Mc2PartitionKeepTransformView {
+    float* positions = nullptr;
+    float* velocities = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* particle_attribute_flags = nullptr;
+    const std::uint32_t* partition_frame_flags = nullptr;
+    const float* old_partition_positions = nullptr;
+    const float* old_partition_rotations = nullptr;
+    const float* old_partition_linear = nullptr;
+    const float* new_partition_positions = nullptr;
+    const float* new_partition_rotations = nullptr;
+    const float* new_partition_linear = nullptr;
+    std::int64_t particle_count = 0;
+    std::int64_t partition_count = 0;
+    std::uint32_t fixed_attribute_mask = 1u;
+    std::uint32_t keep_frame_mask = 2u;
+};
+
 struct Mc2CentrifugalView {
     const float* positions = nullptr;
     float* velocities = nullptr;
@@ -291,6 +309,7 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
 void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view);
+void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view);
 void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);
 void calculate_display_positions_mc2(Mc2DisplayPredictionView& view);
 

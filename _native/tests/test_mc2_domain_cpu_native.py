@@ -68,10 +68,16 @@ def _update_frame(
     domain_signature="domain:test",
     partition_positions=((0.0, 0.0, 0.0),),
     partition_flags=None,
+    partition_rotations=None,
+    partition_linear=None,
 ):
     count = len(partition_positions)
     if partition_flags is None:
         partition_flags = (0,) * count
+    if partition_rotations is None:
+        partition_rotations = ((0.0, 0.0, 0.0, 1.0),) * count
+    if partition_linear is None:
+        partition_linear = (np.eye(3, dtype=np.float32),) * count
     return hotools_native.mc2_domain_cpu_v1_update_frame(
         handle,
         domain_signature,
@@ -81,9 +87,9 @@ def _update_frame(
         positions,
         normals,
         np.asarray(partition_positions, dtype=np.float32),
-        np.asarray(((0.0, 0.0, 0.0, 1.0),) * count, dtype=np.float32),
+        np.asarray(partition_rotations, dtype=np.float32),
         np.ones((count, 3), dtype=np.float32),
-        np.asarray((np.eye(3, dtype=np.float32),) * count, dtype=np.float32),
+        np.asarray(partition_linear, dtype=np.float32),
         np.zeros((count, 3), dtype=np.float32),
         np.asarray(((0.0, 0.0, 0.0, 1.0),) * count, dtype=np.float32),
         np.zeros(count, dtype=np.uint32),
@@ -212,6 +218,54 @@ def test_domain_cpu_native_preserves_state_and_resets_one_partition():
         np.testing.assert_allclose(output[0], next_positions[0])
         np.testing.assert_allclose(output[1], moved[1])
         np.testing.assert_allclose(output[2], next_positions[2])
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_applies_keep_pose_to_one_partition():
+    handle = _create(partition_count=2, particle_attributes=(1, 0, 0))
+    try:
+        positions, normals = _frame(0.0)
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            partition_positions=((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        )
+        zeros = np.zeros(3, dtype=np.float32)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, zeros, np.asarray((0.0, 1.0, 1.0), dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_integration(handle, zeros)
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 1.0, 1.0, 1.0,
+            np.asarray((1.0, 0.0, 0.0), dtype=np.float32),
+        )
+        before_keep = hotools_native.mc2_domain_cpu_v1_read(handle)[
+            "world_positions"
+        ].copy()
+        half = np.float32(np.sqrt(0.5))
+        rotation = (0.0, 0.0, float(half), float(half))
+        linear = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+        next_positions, next_normals = _frame(5.0)
+        _update_frame(
+            handle, next_positions, next_normals, frame=2, generation=1,
+            partition_positions=((5.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            partition_flags=(2, 0),
+            partition_rotations=(rotation, (0.0, 0.0, 0.0, 1.0)),
+            partition_linear=(linear, np.eye(3, dtype=np.float32)),
+        )
+        after_keep = hotools_native.mc2_domain_cpu_v1_read(handle)[
+            "world_positions"
+        ].copy()
+        np.testing.assert_allclose(after_keep[0], next_positions[0], atol=1e-6)
+        np.testing.assert_allclose(after_keep[1], (5.0, 2.0, 0.0), atol=1e-6)
+        np.testing.assert_allclose(after_keep[2], before_keep[2], atol=1e-6)
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 1.0, 1.0, 1.0, np.zeros(3, dtype=np.float32)
+        )
+        after_velocity = hotools_native.mc2_domain_cpu_v1_read(handle)[
+            "world_positions"
+        ]
+        np.testing.assert_allclose(after_velocity[1], (5.0, 3.0, 0.0), atol=1e-5)
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
