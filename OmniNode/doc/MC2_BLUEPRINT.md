@@ -39,13 +39,15 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 当前公开范围是restricted realtime。Bake/export、通用力场、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
 
-## E0统一粒子域合同状态
+## 统一粒子域迁移状态
 
 `MC2_NODE_SIMULATION_DESIGN.md` 定义了未来多 Mesh 统一粒子域的架构和 E0-E7 执行/验收目录。E0 后端中立合同已经冻结：`mc2/domain_ir.py` 定义只读 static/program/parameter/frame/output/index envelope，`mc2/domain_capabilities.py` 在资源分配前检查 CPU/GPU 声明，`mc2/test/fixtures/domain_pipeline/` 固定单 Mesh、双 Mesh 静态域和双帧输入。碰撞 `group/mask` 是可热更新的 `uint32` partition SoA；参数表结构另有 `parameter_layout_signature`，不与数值变化或 program topology layout 混淆。
 
-这些 E0 模块不被生产节点、solver、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。架构审计将该隔离作为失败门禁；E0 完成只表示 IO/schema 与固定 oracle 可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
+E1 单 source shadow pipeline 已完成，但它是迁移期验证工具，不是第二个 solver：`source_capture.py` 对真实 Mesh 只做一次静态读取，`static_fragment.py` 和 `domain_compile.py` 只处理冻结 POD，`shadow_pipeline.py` 将新 compiled domain 与 V0 静态构建逐项比较并可采集阶段耗时。只有 `step_mc2` 的内部 `shadow_compile=True` 才会显式启用；默认关闭时不导入、不捕获、不编译、不分配对照数据。V0 context、solve、result 和 writeback 仍是产品唯一权威，shadow report 不进入 Physics World 持久 state。
 
-当前生产行为仍保持本蓝本的既有事实：每个 Mesh Object 生成一个单 source `MC2TaskSpec`、独立 static/frame adapter、独立 slot/context，并由 world-owned interaction 处理跨 task self collision。只有 E0 schema/fixture 验收完成且后续 E1-E5 逐阶段通过，才允许改变这条生产数据流。
+E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
+
+当前生产行为仍保持本蓝本的既有事实：每个 Mesh Object 生成一个单 source `MC2TaskSpec`、独立 static/frame adapter、独立 slot/context，并由 world-owned interaction 处理跨 task self collision。只有 E0 schema/fixture 与 E1 单 source shadow 验收完成，并且 E2-E5 逐阶段通过，才允许改变这条生产数据流。
 
 ## 一句话数据流
 
@@ -649,6 +651,8 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `partition_specs.py` | backend-neutral partition entry、稀疏patch、字段来源、显式/隐式合并与collector plan；当前不创建task/slot/native state |
 | `domain_ir.py` | E0后端中立POD合同：static snapshot、logical domain program、热更新parameter packet、frame packet、output envelope与logical/physical index map；不读Blender/Physics World，不拥有backend资源 |
 | `domain_capabilities.py` | E0资源分配前的后端schema/setup/capability/容量门禁；只读domain program，不加载或分配backend |
+| `domain_compile.py` | E1单source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
+| `shadow_pipeline.py` | E1显式影子对照与阶段计时；不解算、不写回、不拥有backend，禁止演变为shadow solver |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |
 | `solver.py` | prepare、slot同步、all-task step和result事务唯一orchestrator |

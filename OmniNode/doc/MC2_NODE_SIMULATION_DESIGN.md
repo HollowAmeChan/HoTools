@@ -241,7 +241,7 @@ MC2 MeshCloth任务
 
 因此融合不是 `sources` 数组长度从 1 变成 N，而是引入一个独立的 domain compile/execute/output 流水线。旧 V0 context 在迁移期继续只接受单 source，不得被扩成含混的双模式对象。
 
-当前 E0 合同冻结已经完成：`partition_specs.py` 提供 immutable entry、sparse patch、显式/隐式 merge、字段 provenance 和纯 collector plan；`domain_ir.py` 提供 static snapshot、logical domain program、typed parameter/frame/output envelope 与 logical/physical index map；`domain_capabilities.py` 提供不加载后端的 allocation 前能力门。固定夹具覆盖单 Mesh、两个独立 Mesh 静态分区、两帧独立 transform/Anchor/Teleport、collision filter、output map 及 CPU/GPU capability 声明。它们尚未连接产品节点，也不生成 task、拓扑、slot、runtime cache owner 或 native state。下一阶段是 E1 单 source shadow pipeline，不是把这些对象直接翻译成多 source 旧 task。
+E0 合同冻结已经完成：`partition_specs.py` 提供 immutable entry、sparse patch、显式/隐式 merge、字段 provenance 和纯 collector plan；`domain_ir.py` 提供 static snapshot、logical domain program、typed parameter/frame/output envelope 与 logical/physical index map；`domain_capabilities.py` 提供不加载后端的 allocation 前能力门。固定夹具覆盖单 Mesh、两个独立 Mesh 静态分区、两帧独立 transform/Anchor/Teleport、collision filter、output map 及 CPU/GPU capability 声明。E1 单 source shadow pipeline 已完成：真实 Mesh 只做一次静态 capture，纯 host fragment 和单域 compile 与旧静态构建逐项对照；它仍未创建 fused task、slot、runtime cache owner 或 native state。下一阶段是 E2 多 source 静态 domain compile，不是把这些对象直接翻译成多 source 旧 task。
 
 ## 统一粒子场流水线
 
@@ -600,6 +600,7 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 | `domain_ir.py` | 后端中立 compiled domain、index view、output map 数据合同。 |
 | `domain_capabilities.py` | allocation 前schema/setup/capability/容量检查；不加载或拥有backend。 |
 | `domain_compile.py` | fragment 索引重定位、参数 SoA、collision/output table 编译。 |
+| `shadow_pipeline.py` | E1 显式 opt-in 的 capture -> fragment -> compile 与旧静态结果对照、阶段计时；不解算、不写回、不拥有 backend。 |
 | `domain_parameters.py` | resolved 参数 -> 热更新 parameter packet；不改变 topology layout。 |
 | `frame_capture.py` 及 setup adapter | Blender 主线程逐 partition frame snapshot。 |
 | `frame_compile.py` | snapshots -> domain frame packet；纯数据校验与 pack plan。 |
@@ -708,6 +709,8 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 退出条件：代表资产上的单 source 粒子数、结构约束、自碰 primitive、半径、深度和参数数组逐项一致；shadow 关闭时没有额外 capture/compile 成本。
 
+实现状态（2026-07-21）：E1 已完成。`run_mc2_mesh_shadow_compile` 只接受已捕获的 source snapshot，依次生成纯 host fragment、compiled domain，并与现有完整静态构建比较 topology、Distance/Bending/Tether、self primitive、粒子属性、depth/radius 和 effective parameter signature。`step_mc2(..., shadow_compile=True)` 是迁移期内部显式开关；默认值为 `False`，关闭时不导入 shadow 模块、不读取 Mesh、不分配对照数组。开启时只追加调用方提供的临时 report，V0 context/solve/writeback 仍是唯一产品路径；不兼容报告在 slot 安装前失败并沿用既有清理事务。Python 3.11/3.13 单元测试与 Blender 4.5 无头真实 Mesh 验收均通过。
+
 ### E2：多 source 静态 domain compile
 
 范围：只实现多 partition 静态合并，不创建 fused native context，不运行模拟。
@@ -794,9 +797,10 @@ mc2/test/
   test_domain_ir.py                # E0 已有
   test_domain_contract.py
   test_domain_collect.py
-  test_partition_capture.py
-  test_partition_static_fragment.py
-  test_domain_compile.py
+  test_partition_capture.py       # E1 已有
+  test_partition_static_fragment.py # E1 已有
+  test_domain_compile.py           # E1 已有
+  test_shadow_pipeline.py          # E1 已有
   test_domain_frame_packet.py
   test_domain_backend_cpu.py
   test_domain_output.py
@@ -804,6 +808,8 @@ mc2/test/
   benchmark_domain_pipeline.py
   acceptance_assets_v2.json
 ```
+
+Blender 主线程验收：`physicsWorld/test/test_blender_mc2_domain_shadow.py`（E1，真实 Mesh/World/Task，验证 opt-in report 与旧静态路径一致）。
 
 固定 JSON/NPZ fixture 只保存 POD、schema version、signature 和 tolerance，不保存 Blender 指针。需要真实 Blender IO 的 capture/writeback 验收由 `acceptance_assets_v2.json` 指向版本化 `.blend` 资产，并输出机器可读报告。CPU/GPU 共用同一组 compiled-domain/frame fixtures；后端不得各自维护不同的“正确答案”。
 
