@@ -316,6 +316,40 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the explicit E3 Tether topology slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_angle",
+        [](std::uint64_t handle,
+           cf32_2d step_basic_positions,
+           cf32_2d step_basic_rotations,
+           cf32_1d restoration_values,
+           cf32_1d limit_values,
+           float restoration_velocity_attenuation,
+           float restoration_gravity_falloff,
+           float limit_stiffness,
+           bool restoration_enabled,
+           bool limit_enabled) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(step_basic_positions.shape(0)) != domain->particle_count() ||
+                step_basic_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(step_basic_rotations.shape(0)) != domain->particle_count() ||
+                step_basic_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(restoration_values.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(limit_values.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU Angle arrays have incompatible shapes");
+            }
+            domain->step_angle(
+                step_basic_positions.data(), step_basic_rotations.data(),
+                restoration_values.data(), limit_values.data(),
+                restoration_velocity_attenuation, restoration_gravity_falloff,
+                limit_stiffness, restoration_enabled, limit_enabled
+            );
+        },
+        nb::arg("handle"), nb::arg("step_basic_positions"), nb::arg("step_basic_rotations"),
+        nb::arg("restoration_values"), nb::arg("limit_values"),
+        nb::arg("restoration_velocity_attenuation"), nb::arg("restoration_gravity_falloff"),
+        nb::arg("limit_stiffness"), nb::arg("restoration_enabled"), nb::arg("limit_enabled"),
+        "Run the explicit native Angle restoration/limit slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_tether",
         [](std::uint64_t handle, cf32_2d step_basic_positions, float compression, float stretch) {
             auto* domain = require_domain(handle);

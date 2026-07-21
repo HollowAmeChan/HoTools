@@ -180,6 +180,33 @@ def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    try:
+        domain.update_frame(frame)
+        domain.step({
+            "data_path_only": True,
+            "angle_slice": True,
+            "step_basic_positions": frame.animated_base_world_positions,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "restoration_values": np.ones(compiled.program.particle_count, dtype=np.float32),
+            "limit_values": np.ones(compiled.program.particle_count, dtype=np.float32),
+            "restoration_velocity_attenuation": 0.0,
+            "restoration_gravity_falloff": 0.0,
+            "limit_stiffness": 0.2,
+            "restoration_enabled": True,
+            "limit_enabled": True,
+        })
+        output = domain.read_output().world_positions
+        assert np.isfinite(output).all()
+        assert domain.inspect()["kernel"]["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -370,6 +397,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
     test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths()
     print("PASS test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths")
+    test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction()
+    print("PASS test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction")
     test_native_cpu_kernel_exposes_inertia_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")
     test_native_cpu_kernel_exposes_integration_slice_only_when_requested()

@@ -74,6 +74,17 @@ public:
         const std::int32_t* line_data,
         std::size_t data_count
     );
+    void step_angle(
+        const float* step_basic_positions,
+        const float* step_basic_rotations,
+        const float* restoration_values,
+        const float* limit_values,
+        float restoration_velocity_attenuation,
+        float restoration_gravity_falloff,
+        float limit_stiffness,
+        bool restoration_enabled,
+        bool limit_enabled
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(

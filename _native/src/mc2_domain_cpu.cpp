@@ -927,6 +927,59 @@ void DomainV1::step_tether(
     ++step_count_;
 }
 
+void DomainV1::step_angle(
+    const float* step_basic_positions,
+    const float* step_basic_rotations,
+    const float* restoration_values,
+    const float* limit_values,
+    float restoration_velocity_attenuation,
+    float restoration_gravity_falloff,
+    float limit_stiffness,
+    bool restoration_enabled,
+    bool limit_enabled
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU Angle step requires update_frame");
+    }
+    if (!baseline_ready_ || !inertia_ready_) {
+        throw std::logic_error("MC2 CPU Angle step requires baseline and particle configuration");
+    }
+    require_finite(step_basic_positions, particle_count_ * 3, "Angle StepBasic positions");
+    require_unit_quaternions(step_basic_rotations, particle_count_, "Angle StepBasic rotations");
+    require_finite(restoration_values, particle_count_, "Angle restoration values");
+    require_finite(limit_values, particle_count_, "Angle limit values");
+    if (!std::isfinite(restoration_velocity_attenuation) ||
+        !std::isfinite(restoration_gravity_falloff) ||
+        !std::isfinite(limit_stiffness) || restoration_velocity_attenuation < 0.0f ||
+        restoration_gravity_falloff < 0.0f || limit_stiffness < 0.0f || limit_stiffness > 1.0f) {
+        throw std::invalid_argument("MC2 CPU Angle scalars are invalid");
+    }
+    hotools::Mc2AngleConstraintView view;
+    view.positions = world_positions_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.parent_indices = baseline_parent_indices_.data();
+    view.baseline_start = baseline_line_starts_.data();
+    view.baseline_count = baseline_line_counts_.data();
+    view.baseline_data = baseline_line_data_.data();
+    view.step_basic_positions = step_basic_positions;
+    view.step_basic_rotations = step_basic_rotations;
+    view.restoration_values = restoration_values;
+    view.limit_values = limit_values;
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.line_count = static_cast<std::int64_t>(baseline_line_starts_.size());
+    view.baseline_data_count = static_cast<std::int64_t>(baseline_line_data_.size());
+    view.restoration_velocity_attenuation = restoration_velocity_attenuation;
+    view.restoration_gravity_falloff = restoration_gravity_falloff;
+    view.limit_stiffness = limit_stiffness;
+    view.explicit_enable_flags = true;
+    view.restoration_enabled = restoration_enabled;
+    view.limit_enabled = limit_enabled;
+    hotools::project_angle_constraints_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_bending(
     const std::int32_t* dihedral_pairs,
     const float* dihedral_rest_angles,

@@ -25,6 +25,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_distance",
     "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_configure_baseline",
+    "mc2_domain_cpu_v1_step_angle",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
     "mc2_domain_cpu_v1_configure_bending",
@@ -147,6 +148,7 @@ class MC2NativeCPUKernelV1:
         distance_slice = settings.pop("distance_slice", False) is True
         tether_slice = settings.pop("tether_slice", False) is True
         bending_slice = settings.pop("bending_slice", False) is True
+        angle_slice = settings.pop("angle_slice", False) is True
         data_path_only = settings.pop("data_path_only", False) is True
         if not data_path_only:
             raise RuntimeError(
@@ -157,7 +159,7 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native MC2 CPU data-path slice does not consume colliders")
         if self._frames.get(key) is not frame_packet:
             raise ValueError("native MC2 CPU step frame is not the published frame packet")
-        if sum((distance_slice, tether_slice, bending_slice)) > 1:
+        if sum((distance_slice, tether_slice, bending_slice, angle_slice)) > 1:
             raise ValueError("constraint slices are mutually exclusive")
         if tether_slice:
             self.step_tether(key, settings)
@@ -165,6 +167,8 @@ class MC2NativeCPUKernelV1:
             if settings:
                 raise ValueError("bending_slice does not accept additional inputs")
             self._module.mc2_domain_cpu_v1_step_bending(key)
+        elif angle_slice:
+            self.step_angle(key, settings)
         elif distance_slice:
             if settings:
                 raise ValueError("distance_slice does not accept additional inputs")
@@ -195,6 +199,41 @@ class MC2NativeCPUKernelV1:
     def step_bending(self, handle) -> None:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_bending(key)
+
+    def step_angle(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "step_basic_positions", "step_basic_rotations", "restoration_values",
+            "limit_values", "restoration_velocity_attenuation",
+            "restoration_gravity_falloff", "limit_stiffness",
+            "restoration_enabled", "limit_enabled",
+        }
+        if set(settings) != required:
+            raise ValueError("angle slice requires exactly its explicit step inputs")
+        program = self._programs[key]
+        arrays = {}
+        for name, width in (
+            ("step_basic_positions", 3), ("step_basic_rotations", 4),
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=np.float32)
+            if array.shape != (program.particle_count, width):
+                raise ValueError(f"{name} must match particle_count x {width}")
+            array.flags.writeable = False
+            arrays[name] = array
+        for name in ("restoration_values", "limit_values"):
+            array = np.ascontiguousarray(settings[name], dtype=np.float32)
+            if array.shape != (program.particle_count,):
+                raise ValueError(f"{name} must match particle_count")
+            array.flags.writeable = False
+            arrays[name] = array
+        self._module.mc2_domain_cpu_v1_step_angle(
+            key, arrays["step_basic_positions"], arrays["step_basic_rotations"],
+            arrays["restoration_values"], arrays["limit_values"],
+            float(settings["restoration_velocity_attenuation"]),
+            float(settings["restoration_gravity_falloff"]),
+            float(settings["limit_stiffness"]), bool(settings["restoration_enabled"]),
+            bool(settings["limit_enabled"]),
+        )
 
     def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
