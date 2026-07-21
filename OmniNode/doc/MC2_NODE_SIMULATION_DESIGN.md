@@ -600,6 +600,7 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 | `domain_ir.py` | 后端中立 compiled domain、index view、output map 数据合同。 |
 | `domain_capabilities.py` | allocation 前schema/setup/capability/容量检查；不加载或拥有backend。 |
 | `domain_compile.py` | 有序 fragment 的 partition-local -> logical 索引重定位、分级参数 SoA、collision/output table 编译与纯 cache-reuse 报告。 |
+| `cpu_backend.py` | E3 单 source CPU domain 生命周期适配器；能力门、frame/step/output identity、physical->logical 归一化、partition history 与 dispose 所有权；kernel 通过窄协议注入。 |
 | `shadow_pipeline.py` | E1 显式 opt-in 的 capture -> fragment -> compile 与旧静态结果对照、阶段计时；不解算、不写回、不拥有 backend。 |
 | `domain_parameters.py` | resolved 参数 -> 热更新 parameter packet；不改变 topology layout。 |
 | `frame_capture.py` 及 setup adapter | Blender 主线程逐 partition frame snapshot。 |
@@ -739,6 +740,8 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 退出条件：D-01 至 D-10 已验收行为不回退；相同输入下旧/新 CPU 输出误差在既定 tolerance 内；debug-off 无新增 readback；dispose/reset/rewind 无泄漏和悬空状态。
 
+实现状态（2026-07-21）：E3 的 backend ABI/lifecycle slice 已完成，真实数值 kernel 尚未接入产品。`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`update_frame`/`step`/`read_output` 严格检查 domain/layout/frame/generation identity，physical output 会在 adapter 内归一化为 logical output，`dispose` 幂等且 kernel 创建失败会回滚。fake-kernel 双版本测试覆盖能力拒绝、history、physical reorder 和资源释放。当前 V0 solver、slot、Physics World 和 writeback 不导入该适配器；下一步是 C++ CPU kernel 实现与单 source 数值 oracle，对照通过前不得接产品路径。
+
 ### E4：多 source fused CPU execution
 
 范围：让 E2 compiled domain 在一个 CPU backend context 中执行，打开同域跨 partition self collision。
@@ -803,6 +806,7 @@ mc2/test/
   test_partition_static_fragment.py # E1 已有
   test_domain_compile.py           # E1/E2 已有
   test_shadow_pipeline.py          # E1 已有
+  test_cpu_backend.py               # E3 ABI/lifecycle 已有
   test_domain_frame_packet.py
   test_domain_backend_cpu.py
   test_domain_output.py
