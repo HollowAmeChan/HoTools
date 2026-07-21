@@ -170,6 +170,34 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_inertia_slice_uses_existing_kernel():
+    handle = _create()
+    try:
+        positions, normals = _frame(0.0)
+        hotools_native.mc2_domain_cpu_v1_update_frame(
+            handle, "domain:test", "layout:test", 2, 1, positions, normals
+        )
+        depths = np.asarray((0.0, 0.5, 1.0), dtype=np.float32)
+        inv_masses = np.ones(3, dtype=np.float32)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(handle, depths, inv_masses)
+        vectors = [
+            np.asarray((0.0, 0.0, 0.0), dtype=np.float32),
+            np.asarray((1.0, 0.0, 0.0), dtype=np.float32),
+            np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32),
+            np.asarray((0.0, 0.0, 0.0), dtype=np.float32),
+            np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32),
+        ]
+        hotools_native.mc2_domain_cpu_v1_step_inertia(
+            handle, *vectors, 1.0
+        )
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        assert np.isclose(output["world_positions"][0, 0], 1.0)
+        assert np.isclose(output["world_positions"][1, 0], 1.6464466, atol=1e-5)
+        assert np.isclose(output["world_positions"][2, 0], 0.0)
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, value)

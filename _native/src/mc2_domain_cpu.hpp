@@ -45,6 +45,18 @@ public:
         std::size_t neighbor_count
     );
     void step_distance();
+    void configure_inertia(
+        const float* depths,
+        const float* inv_masses
+    );
+    void step_inertia(
+        const float* old_world_position,
+        const float* step_vector,
+        const float* step_rotation,
+        const float* inertia_vector,
+        const float* inertia_rotation,
+        float depth_inertia
+    );
     void dispose() noexcept;
 
     bool disposed() const noexcept { return disposed_; }
@@ -75,6 +87,9 @@ private:
     std::vector<float> distance_rest_lengths_;
     std::vector<float> distance_stiffness_values_;
     bool distance_ready_ = false;
+    std::vector<float> inertia_depths_;
+    std::vector<float> inertia_inv_masses_;
+    bool inertia_ready_ = false;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
     std::int64_t step_count_ = 0;

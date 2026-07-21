@@ -155,6 +155,61 @@ void DomainV1::step_distance() {
     ++step_count_;
 }
 
+void DomainV1::configure_inertia(const float* depths, const float* inv_masses) {
+    ensure_live();
+    require_finite(depths, particle_count_, "inertia depths");
+    require_finite(inv_masses, particle_count_, "inertia inverse masses");
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        if (depths[index] < 0.0f || depths[index] > 1.0f || inv_masses[index] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU inertia values are out of range");
+        }
+    }
+    std::vector<float> next_depths(depths, depths + particle_count_);
+    std::vector<float> next_inv_masses(inv_masses, inv_masses + particle_count_);
+    inertia_depths_.swap(next_depths);
+    inertia_inv_masses_.swap(next_inv_masses);
+    inertia_ready_ = true;
+}
+
+void DomainV1::step_inertia(
+    const float* old_world_position,
+    const float* step_vector,
+    const float* step_rotation,
+    const float* inertia_vector,
+    const float* inertia_rotation,
+    float depth_inertia
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU inertia step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU inertia step requires configure_inertia");
+    }
+    require_finite(old_world_position, 3, "inertia old world position");
+    require_finite(step_vector, 3, "inertia step vector");
+    require_finite(step_rotation, 4, "inertia step rotation");
+    require_finite(inertia_vector, 3, "inertia vector");
+    require_finite(inertia_rotation, 4, "inertia rotation");
+    if (!std::isfinite(depth_inertia)) {
+        throw std::invalid_argument("inertia depth factor must be finite");
+    }
+    hotools::Mc2SubstepInertiaView view;
+    view.old_positions = world_positions_.data();
+    view.velocities = velocity_positions_.data();
+    view.depths = inertia_depths_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    std::copy_n(old_world_position, 3, view.old_world_position);
+    std::copy_n(step_vector, 3, view.step_vector);
+    std::copy_n(step_rotation, 4, view.step_rotation);
+    std::copy_n(inertia_vector, 3, view.inertia_vector);
+    std::copy_n(inertia_rotation, 4, view.inertia_rotation);
+    view.depth_inertia = depth_inertia;
+    hotools::apply_substep_inertia_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::dispose() noexcept {
     disposed_ = true;
     bind_positions_.clear();
@@ -168,6 +223,9 @@ void DomainV1::dispose() noexcept {
     distance_rest_lengths_.clear();
     distance_stiffness_values_.clear();
     distance_ready_ = false;
+    inertia_depths_.clear();
+    inertia_inv_masses_.clear();
+    inertia_ready_ = false;
 }
 
 void DomainV1::ensure_live() const {

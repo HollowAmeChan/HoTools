@@ -174,6 +174,50 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_inertia",
+        [](std::uint64_t handle, cf32_1d depths, cf32_1d inv_masses) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(depths.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(inv_masses.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU inertia arrays must match particle_count");
+            }
+            domain->configure_inertia(depths.data(), inv_masses.data());
+        },
+        nb::arg("handle"),
+        nb::arg("depths"),
+        nb::arg("inv_masses"),
+        "Configure the explicit E3 Center inertia kernel slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_inertia",
+        [](std::uint64_t handle,
+           cf32_1d old_world_position,
+           cf32_1d step_vector,
+           cf32_1d step_rotation,
+           cf32_1d inertia_vector,
+           cf32_1d inertia_rotation,
+           float depth_inertia) {
+            auto* domain = require_domain(handle);
+            if (old_world_position.shape(0) != 3 || step_vector.shape(0) != 3 ||
+                step_rotation.shape(0) != 4 || inertia_vector.shape(0) != 3 ||
+                inertia_rotation.shape(0) != 4) {
+                throw nb::value_error("MC2 CPU inertia vectors have invalid lengths");
+            }
+            domain->step_inertia(
+                old_world_position.data(), step_vector.data(), step_rotation.data(),
+                inertia_vector.data(), inertia_rotation.data(), depth_inertia
+            );
+        },
+        nb::arg("handle"),
+        nb::arg("old_world_position"),
+        nb::arg("step_vector"),
+        nb::arg("step_rotation"),
+        nb::arg("inertia_vector"),
+        nb::arg("inertia_rotation"),
+        nb::arg("depth_inertia"),
+        "Run the explicit Center inertia kernel slice using the existing native kernel."
+    );
+    module.def(
         "mc2_domain_cpu_v1_read",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);

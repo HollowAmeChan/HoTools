@@ -121,8 +121,41 @@ def test_native_cpu_kernel_exposes_distance_slice_only_when_requested():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    try:
+        domain.update_frame(frame)
+        domain.step({
+            "data_path_only": True,
+            "inertia_slice": True,
+            "old_world_position": (0.0, 0.0, 0.0),
+            "step_vector": (1.0, 0.0, 0.0),
+            "step_rotation": (0.0, 0.0, 0.0, 1.0),
+            "inertia_vector": (0.25, 0.0, 0.0),
+            "inertia_rotation": (0.0, 0.0, 0.0, 1.0),
+            "depth_inertia": 1.0,
+        })
+        output = domain.read_output()
+        assert output.world_positions.shape == (compiled.program.particle_count, 3)
+        assert np.array_equal(
+            output.world_positions[0], frame.animated_base_world_positions[0]
+        )
+        assert np.any(
+            output.world_positions[1:] != frame.animated_base_world_positions[1:]
+        )
+        assert domain.inspect()["kernel"]["inertia_slice_ready"] is True
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
     test_native_cpu_kernel_exposes_distance_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
+    test_native_cpu_kernel_exposes_inertia_slice_only_when_requested()
+    print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")

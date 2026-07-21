@@ -151,6 +151,18 @@ class MC2CPUBackendDomainV1:
         if not isinstance(scheduler_settings, Mapping):
             raise TypeError("scheduler_settings must be a mapping")
         settings = dict(scheduler_settings)
+        if settings.get("inertia_slice") is True:
+            step_inertia = getattr(self._kernel, "step_inertia", None)
+            if not callable(step_inertia):
+                raise RuntimeError("CPU kernel does not expose the inertia slice")
+            settings.pop("inertia_slice")
+            if settings.pop("data_path_only", False) is not True:
+                raise RuntimeError("inertia_slice requires data_path_only=True")
+            if collider_snapshot is not None:
+                raise RuntimeError("inertia_slice does not consume colliders")
+            step_inertia(self._handle, settings)
+            self._step_count += 1
+            return
         if settings.get("distance_slice") is True:
             step_distance = getattr(self._kernel, "step_distance", None)
             if not callable(step_distance):

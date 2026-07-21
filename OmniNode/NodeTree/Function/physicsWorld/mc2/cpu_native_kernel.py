@@ -1,8 +1,8 @@
 """Native E3 data-path kernel for ``MC2CPUBackendDomainV1``.
 
-The current native owner validates and transports compiled/frame data but does
-not yet run numerical integration or constraints.  ``data_path_only`` is
-therefore mandatory so this kernel cannot be mistaken for the product solver.
+The default product step remains unavailable.  Explicit data-path, Distance,
+and Center inertia slices are opt-in so they cannot be mistaken for the
+product solver.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step",
     "mc2_domain_cpu_v1_configure_distance",
     "mc2_domain_cpu_v1_step_distance",
+    "mc2_domain_cpu_v1_configure_inertia",
+    "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -71,6 +73,7 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native CPU domain returned an invalid handle")
         try:
             self._configure_distance(handle, program, parameters)
+            self._configure_inertia(handle, program, parameters)
         except Exception:
             self._module.mc2_domain_cpu_v1_dispose(handle)
             raise
@@ -121,6 +124,35 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_distance(key)
 
+    def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "old_world_position", "step_vector", "step_rotation",
+            "inertia_vector", "inertia_rotation", "depth_inertia",
+        }
+        if set(settings) != required:
+            raise ValueError("inertia slice requires exactly its explicit frame inputs")
+        arrays = {
+            name: np.ascontiguousarray(settings[name], dtype=np.float32)
+            for name in required - {"depth_inertia"}
+        }
+        for name, expected in (
+            ("old_world_position", 3), ("step_vector", 3), ("step_rotation", 4),
+            ("inertia_vector", 3), ("inertia_rotation", 4),
+        ):
+            if arrays[name].shape != (expected,):
+                raise ValueError(f"{name} must be a flat vector of length {expected}")
+            arrays[name].flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_inertia(
+            key,
+            arrays["old_world_position"],
+            arrays["step_vector"],
+            arrays["step_rotation"],
+            arrays["inertia_vector"],
+            arrays["inertia_rotation"],
+            float(settings["depth_inertia"]),
+        )
+
     def read_output(self, handle):
         key = self._require_handle(handle)
         frame_packet = self._frames.get(key)
@@ -142,6 +174,7 @@ class MC2NativeCPUKernelV1:
             "numerical_kernel_ready": False,
             "data_path_only": True,
             "distance_slice_ready": True,
+            "inertia_slice_ready": True,
         })
         return result
 
@@ -213,6 +246,23 @@ class MC2NativeCPUKernelV1:
             rest_array,
             stiffness_array,
         )
+
+    def _configure_inertia(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        table = parameters.particle_parameters
+        fields = {name: index for index, name in enumerate(table.fields)}
+        if "depth" not in fields:
+            raise ValueError("particle parameter table lacks depth")
+        depths = np.asarray(table.values[:, fields["depth"]], dtype=np.float32)
+        fixed = (np.asarray(program.particle_attribute_flags, dtype=np.uint32) & 1) != 0
+        inv_masses = np.where(fixed, 0.0, 1.0).astype(np.float32)
+        depths.flags.writeable = False
+        inv_masses.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_inertia(handle, depths, inv_masses)
 
 
 __all__ = ["MC2NativeCPUKernelV1"]
