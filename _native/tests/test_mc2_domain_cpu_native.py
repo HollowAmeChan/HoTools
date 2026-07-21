@@ -72,6 +72,7 @@ def _update_frame(
     partition_flags=None,
     partition_rotations=None,
     partition_linear=None,
+    particle_rotations=None,
 ):
     count = len(partition_positions)
     if partition_flags is None:
@@ -80,6 +81,8 @@ def _update_frame(
         partition_rotations = ((0.0, 0.0, 0.0, 1.0),) * count
     if partition_linear is None:
         partition_linear = (np.eye(3, dtype=np.float32),) * count
+    if particle_rotations is None:
+        particle_rotations = ((0.0, 0.0, 0.0, 1.0),) * len(positions)
     return hotools_native.mc2_domain_cpu_v1_update_frame(
         handle,
         domain_signature,
@@ -87,6 +90,7 @@ def _update_frame(
         frame,
         generation,
         positions,
+        np.asarray(particle_rotations, dtype=np.float32),
         normals,
         np.asarray(partition_positions, dtype=np.float32),
         np.asarray(partition_rotations, dtype=np.float32),
@@ -150,6 +154,36 @@ def test_domain_cpu_native_rejects_identity_without_mutating_published_frame():
         output = hotools_native.mc2_domain_cpu_v1_read(handle)
         assert output["frame"] == 4
         assert np.array_equal(output["world_positions"], positions)
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_rejects_particle_rotation_atomically():
+    handle = _create()
+    try:
+        positions, normals = _frame(1.0)
+        _update_frame(handle, positions, normals, frame=4, generation=2)
+        bad_positions, bad_normals = _frame(9.0)
+        try:
+            _update_frame(
+                handle,
+                bad_positions,
+                bad_normals,
+                frame=5,
+                generation=2,
+                particle_rotations=((0.0, 0.0, 0.0, 0.0),) * 3,
+            )
+        except ValueError as exc:
+            assert "world_rotations" in str(exc)
+        else:
+            raise AssertionError("non-unit particle rotations were accepted")
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        assert output["frame"] == 4
+        np.testing.assert_allclose(output["world_positions"], positions)
+        np.testing.assert_allclose(
+            output["world_rotations_xyzw"],
+            ((0.0, 0.0, 0.0, 1.0),) * 3,
+        )
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
@@ -262,9 +296,16 @@ def test_domain_cpu_native_applies_keep_pose_to_one_partition():
         after_keep = hotools_native.mc2_domain_cpu_v1_read(handle)[
             "world_positions"
         ].copy()
+        after_keep_rotations = hotools_native.mc2_domain_cpu_v1_read(handle)[
+            "world_rotations_xyzw"
+        ]
         np.testing.assert_allclose(after_keep[0], next_positions[0], atol=1e-6)
         np.testing.assert_allclose(after_keep[1], (5.0, 2.0, 0.0), atol=1e-6)
         np.testing.assert_allclose(after_keep[2], before_keep[2], atol=1e-6)
+        np.testing.assert_allclose(after_keep_rotations[1], rotation, atol=1e-6)
+        np.testing.assert_allclose(
+            after_keep_rotations[2], (0.0, 0.0, 0.0, 1.0), atol=1e-6
+        )
         hotools_native.mc2_domain_cpu_v1_step_integration(
             handle, 1.0, 1.0, 1.0, np.zeros(3, dtype=np.float32)
         )

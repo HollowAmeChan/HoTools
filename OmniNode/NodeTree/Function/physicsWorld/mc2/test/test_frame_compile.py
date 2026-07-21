@@ -73,6 +73,8 @@ def _snapshot(partition_id, count, frame=8, generation=2):
     positions = np.arange(count * 3, dtype=np.float32).reshape((count, 3))
     normals = np.zeros((count, 3), dtype=np.float32)
     normals[:, 2] = 1.0
+    rotations = np.zeros((count, 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
     linear = np.eye(3, dtype=np.float32)
     for array in (positions, normals, linear):
         array.flags.writeable = False
@@ -81,6 +83,7 @@ def _snapshot(partition_id, count, frame=8, generation=2):
         frame=frame,
         generation=generation,
         animated_base_world_positions=positions,
+        animated_base_world_rotations=rotations,
         animated_base_world_normals=normals,
         partition_world_position=(float(len(partition_id)), 0.0, 0.0),
         partition_world_rotation=(0.0, 0.0, 0.0, 1.0),
@@ -103,6 +106,7 @@ def test_frame_compile_relocates_partition_snapshots_to_logical_indices():
         [0.0, 1.0, 2.0], [3.0, 4.0, 5.0],
     ]
     assert packet.velocity_weight.tolist() == [0.5, 0.5]
+    assert packet.animated_base_world_rotations[:, 3].tolist() == [1.0] * 5
     assert not packet.animated_base_world_positions.flags.writeable
 
 

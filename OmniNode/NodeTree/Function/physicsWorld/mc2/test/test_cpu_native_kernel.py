@@ -92,6 +92,7 @@ def _frame(program):
         frame=6,
         generation=2,
         animated_base_world_positions=program.particle_bind_position + np.float32(2.0),
+        animated_base_world_rotations=program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float32),
         partition_world_position=((2.0, 0.0, 0.0),),
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
@@ -117,6 +118,9 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
         output = domain.read_output()
         assert output.frame == frame.frame and output.generation == frame.generation
         assert np.array_equal(output.world_positions, frame.animated_base_world_positions)
+        assert np.array_equal(
+            output.world_rotations_xyzw, frame.animated_base_world_rotations
+        )
         inspection = domain.inspect()
         assert inspection["kernel"]["numerical_kernel_ready"] is False
         assert inspection["step_count"] == 1
@@ -211,6 +215,7 @@ def test_native_cpu_kernel_tracks_multi_partition_frame_history():
         frame=9,
         generation=4,
         animated_base_world_positions=compiled.program.particle_bind_position,
+        animated_base_world_rotations=compiled.program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(
             ((0.0, 0.0, 1.0),) * count, dtype=np.float32
         ),

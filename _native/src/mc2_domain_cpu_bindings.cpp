@@ -141,6 +141,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            std::int64_t frame,
            std::int64_t generation,
            cf32_2d world_positions,
+           cf32_2d world_rotations,
            cf32_2d world_normals,
            cf32_2d partition_world_positions,
            cf32_2d partition_world_rotations,
@@ -155,9 +156,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             auto* domain = require_domain(handle);
             if (static_cast<std::size_t>(world_positions.shape(0)) != domain->particle_count() ||
                 world_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(world_rotations.shape(0)) != domain->particle_count() ||
+                world_rotations.shape(1) != 4 ||
                 static_cast<std::size_t>(world_normals.shape(0)) != domain->particle_count() ||
                 world_normals.shape(1) != 3) {
-                throw nb::value_error("MC2 CPU frame arrays must be [particle_count,3]");
+                throw nb::value_error("MC2 CPU particle frame arrays have incompatible shapes");
             }
             const auto partition_count = domain->partition_count();
             if (static_cast<std::size_t>(partition_world_positions.shape(0)) != partition_count ||
@@ -182,6 +185,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 domain->particle_count(),
                 partition_count,
                 world_positions.data(),
+                world_rotations.data(),
                 world_normals.data(),
                 partition_world_positions.data(),
                 partition_world_rotations.data(),
@@ -205,6 +209,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("frame"),
         nb::arg("generation"),
         nb::arg("world_positions"),
+        nb::arg("world_rotations"),
         nb::arg("world_normals"),
         nb::arg("partition_world_positions"),
         nb::arg("partition_world_rotations"),
@@ -344,6 +349,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             nb::dict result;
             result["world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->world_positions()), domain->particle_count(), 3
+            );
+            result["world_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->world_rotations()), domain->particle_count(), 4
             );
             result["world_normals"] = owned_array_2d<float>(
                 std::vector<float>(domain->world_normals()), domain->particle_count(), 3

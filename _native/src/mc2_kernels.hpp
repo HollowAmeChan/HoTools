@@ -258,6 +258,7 @@ struct Mc2ParticleIntegrationView {
 
 struct Mc2PartitionKeepTransformView {
     float* positions = nullptr;
+    float* rotations = nullptr;
     float* velocities = nullptr;
     const std::uint32_t* particle_partition_index = nullptr;
     const std::uint32_t* particle_attribute_flags = nullptr;

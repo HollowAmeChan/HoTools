@@ -100,6 +100,7 @@ class MC2NativeCPUKernelV1:
             frame_packet.frame,
             frame_packet.generation,
             frame_packet.animated_base_world_positions,
+            frame_packet.animated_base_world_rotations,
             frame_packet.animated_base_world_normals,
             frame_packet.partition_world_position,
             frame_packet.partition_world_rotation,
@@ -198,6 +199,7 @@ class MC2NativeCPUKernelV1:
             self._programs[key],
             frame_packet,
             world_positions=raw["world_positions"],
+            world_rotations_xyzw=raw["world_rotations_xyzw"],
             backend_revision=1,
             backend_kind=str(raw["backend_kind"]),
         )

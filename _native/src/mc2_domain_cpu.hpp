@@ -25,6 +25,7 @@ struct FrameViewV1 {
     std::size_t particle_count = 0;
     std::size_t partition_count = 0;
     const float* world_positions = nullptr;
+    const float* world_rotations = nullptr;
     const float* world_normals = nullptr;
     const float* partition_world_positions = nullptr;
     const float* partition_world_rotations = nullptr;
@@ -91,6 +92,7 @@ public:
     const std::string& domain_signature() const noexcept { return domain_signature_; }
     const std::string& layout_signature() const noexcept { return layout_signature_; }
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
+    const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
@@ -123,7 +125,9 @@ private:
     std::vector<float> partition_center_local_positions_;
     std::vector<float> partition_initial_local_gravity_directions_;
     std::vector<float> animated_base_world_positions_;
+    std::vector<float> animated_base_world_rotations_;
     std::vector<float> world_positions_;
+    std::vector<float> world_rotations_;
     std::vector<float> world_normals_;
     std::vector<float> velocity_positions_;
     std::vector<float> partition_world_positions_;

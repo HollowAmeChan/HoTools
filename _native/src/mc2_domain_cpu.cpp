@@ -54,7 +54,9 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       partition_center_local_positions_(program.partition_count * 3),
       partition_initial_local_gravity_directions_(program.partition_count * 3),
       animated_base_world_positions_(program.particle_count * 3),
+      animated_base_world_rotations_(program.particle_count * 4),
       world_positions_(program.particle_count * 3),
+      world_rotations_(program.particle_count * 4),
       world_normals_(program.particle_count * 3, 0.0f),
       velocity_positions_(program.particle_count * 3, 0.0f),
       partition_world_positions_(program.partition_count * 3, 0.0f),
@@ -133,7 +135,9 @@ DomainV1::DomainV1(const ProgramViewV1& program)
         partition_initial_local_gravity_directions_.begin()
     );
     animated_base_world_positions_ = bind_positions_;
+    animated_base_world_rotations_ = bind_rotations_;
     world_positions_ = bind_positions_;
+    world_rotations_ = bind_rotations_;
 }
 
 void DomainV1::update_frame(const FrameViewV1& frame) {
@@ -149,6 +153,9 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     }
     validate_identity(frame.domain_signature, frame.layout_signature);
     require_finite(frame.world_positions, particle_count_ * 3, "world_positions");
+    require_unit_quaternions(
+        frame.world_rotations, particle_count_, "world_rotations"
+    );
     require_finite(frame.world_normals, particle_count_ * 3, "world_normals");
     require_finite(
         frame.partition_world_positions, partition_count_ * 3,
@@ -193,7 +200,11 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     std::vector<float> next_animated_positions(
         frame.world_positions, frame.world_positions + particle_count_ * 3
     );
+    std::vector<float> next_animated_rotations(
+        frame.world_rotations, frame.world_rotations + particle_count_ * 4
+    );
     std::vector<float> next_positions = world_positions_;
+    std::vector<float> next_rotations = world_rotations_;
     std::vector<float> next_velocity_positions = velocity_positions_;
     std::vector<float> next_normals(
         frame.world_normals, frame.world_normals + particle_count_ * 3
@@ -250,10 +261,17 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
             next_positions[offset + component] = next_animated_positions[offset + component];
             next_velocity_positions[offset + component] = 0.0f;
         }
+        const auto rotation_offset = particle * 4;
+        std::copy_n(
+            next_animated_rotations.data() + rotation_offset,
+            4,
+            next_rotations.data() + rotation_offset
+        );
     }
     if (!reset_history && has_keep) {
         hotools::Mc2PartitionKeepTransformView keep_view;
         keep_view.positions = next_positions.data();
+        keep_view.rotations = next_rotations.data();
         keep_view.velocities = next_velocity_positions.data();
         keep_view.particle_partition_index = particle_partition_index_.data();
         keep_view.particle_attribute_flags = particle_attribute_flags_.data();
@@ -273,8 +291,10 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     std::vector<float> next_previous_rotations = reset_history
         ? next_partition_rotations : partition_world_rotations_;
     world_positions_.swap(next_positions);
+    world_rotations_.swap(next_rotations);
     velocity_positions_.swap(next_velocity_positions);
     animated_base_world_positions_.swap(next_animated_positions);
+    animated_base_world_rotations_.swap(next_animated_rotations);
     world_normals_.swap(next_normals);
     partition_previous_world_positions_.swap(next_previous_positions);
     partition_previous_world_rotations_.swap(next_previous_rotations);

@@ -69,6 +69,7 @@ def _frame(program, frame=1, generation=1):
         frame=frame,
         generation=generation,
         animated_base_world_positions=program.particle_bind_position,
+        animated_base_world_rotations=program.particle_bind_rotation,
         partition_world_position=((0.0, 0.0, 0.0),),
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
         partition_world_scale=((1.0, 1.0, 1.0),),

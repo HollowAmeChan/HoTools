@@ -3013,7 +3013,7 @@ void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
 
 void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view) {
     if (view.particle_count <= 0 || view.partition_count <= 0 ||
-        view.positions == nullptr || view.velocities == nullptr ||
+        view.positions == nullptr || view.rotations == nullptr || view.velocities == nullptr ||
         view.particle_partition_index == nullptr || view.particle_attribute_flags == nullptr ||
         view.partition_frame_flags == nullptr || view.old_partition_positions == nullptr ||
         view.old_partition_rotations == nullptr || view.old_partition_linear == nullptr ||
@@ -3075,6 +3075,14 @@ void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view) {
         view.velocities[offset + 0] = velocity_x;
         view.velocities[offset + 1] = velocity_y;
         view.velocities[offset + 2] = velocity_z;
+        const auto rotation_offset = particle * 4;
+        float transformed_rotation[4];
+        quat_multiply(
+            delta_rotations.data() + partition * 4,
+            view.rotations + rotation_offset,
+            transformed_rotation
+        );
+        std::copy_n(transformed_rotation, 4, view.rotations + rotation_offset);
     }
 }
 

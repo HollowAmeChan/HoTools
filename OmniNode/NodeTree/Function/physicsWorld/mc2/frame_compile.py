@@ -28,6 +28,7 @@ class MC2PartitionFrameSnapshotV1:
     frame: int
     generation: int
     animated_base_world_positions: np.ndarray
+    animated_base_world_rotations: np.ndarray
     animated_base_world_normals: np.ndarray
     partition_world_position: tuple[float, float, float]
     partition_world_rotation: tuple[float, float, float, float]
@@ -55,6 +56,19 @@ class MC2PartitionFrameSnapshotV1:
         positions = _readonly(
             positions, np.float32, positions.shape, "animated_base_world_positions"
         )
+        rotations = _readonly(
+            self.animated_base_world_rotations,
+            np.float32,
+            (len(positions), 4),
+            "animated_base_world_rotations",
+        )
+        if not np.allclose(
+            np.linalg.norm(rotations, axis=1),
+            1.0,
+            rtol=1.0e-5,
+            atol=1.0e-6,
+        ):
+            raise ValueError("animated_base_world_rotations must be unit quaternions")
         normals = _readonly(
             self.animated_base_world_normals,
             np.float32,
@@ -95,6 +109,7 @@ class MC2PartitionFrameSnapshotV1:
             if not np.isfinite(float(value)):
                 raise ValueError(f"{name} must be finite")
         object.__setattr__(self, "animated_base_world_positions", positions)
+        object.__setattr__(self, "animated_base_world_rotations", rotations)
         object.__setattr__(self, "animated_base_world_normals", normals)
         object.__setattr__(self, "partition_world_linear", linear)
 
@@ -121,6 +136,7 @@ def compile_mc2_domain_frame_packet(
         raise ValueError("all partition frame snapshots must share frame/generation")
 
     positions = np.zeros((program.particle_count, 3), dtype=np.float32)
+    rotations = np.zeros((program.particle_count, 4), dtype=np.float32)
     normals = np.zeros((program.particle_count, 3), dtype=np.float32)
     partition_position = []
     partition_rotation = []
@@ -139,6 +155,7 @@ def compile_mc2_domain_frame_packet(
                 f"frame snapshot particle count mismatch for {snapshot.partition_id}"
             )
         positions[logical_indices] = snapshot.animated_base_world_positions
+        rotations[logical_indices] = snapshot.animated_base_world_rotations
         normals[logical_indices] = snapshot.animated_base_world_normals
         partition_position.append(snapshot.partition_world_position)
         partition_rotation.append(snapshot.partition_world_rotation)
@@ -156,6 +173,7 @@ def compile_mc2_domain_frame_packet(
         frame=next(iter(frame_generation))[0],
         generation=next(iter(frame_generation))[1],
         animated_base_world_positions=positions,
+        animated_base_world_rotations=rotations,
         animated_base_world_normals=normals,
         partition_world_position=partition_position,
         partition_world_rotation=partition_rotation,

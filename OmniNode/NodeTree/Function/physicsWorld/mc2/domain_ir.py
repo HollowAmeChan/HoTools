@@ -1094,6 +1094,7 @@ class MC2DomainFramePacketV1:
     frame: int
     generation: int
     animated_base_world_positions: np.ndarray
+    animated_base_world_rotations: np.ndarray
     animated_base_world_normals: np.ndarray
     partition_world_position: np.ndarray
     partition_world_rotation: np.ndarray
@@ -1123,6 +1124,12 @@ class MC2DomainFramePacketV1:
             np.float32,
             (particle_count, 3),
             "animated_base_world_positions",
+        )
+        _validate_array(
+            self.animated_base_world_rotations,
+            np.float32,
+            (particle_count, 4),
+            "animated_base_world_rotations",
         )
         normal_shape = self.animated_base_world_normals.shape
         if normal_shape not in ((particle_count, 3), (0, 3)):
@@ -1200,6 +1207,10 @@ class MC2DomainFramePacketV1:
         )
         _unit_quaternion_check(self.partition_world_rotation, "partition_world_rotation")
         _unit_quaternion_check(self.anchor_world_rotation, "anchor_world_rotation")
+        _unit_quaternion_check(
+            self.animated_base_world_rotations,
+            "animated_base_world_rotations",
+        )
         if np.any(np.abs(self.partition_world_scale) <= 1.0e-12):
             raise ValueError("partition_world_scale must be non-zero")
         determinants = np.linalg.det(self.partition_world_linear.astype(np.float64))
@@ -1234,6 +1245,7 @@ def make_mc2_domain_frame_packet(
     frame: int,
     generation: int,
     animated_base_world_positions,
+    animated_base_world_rotations,
     animated_base_world_normals=None,
     partition_world_position,
     partition_world_rotation,
@@ -1263,6 +1275,11 @@ def make_mc2_domain_frame_packet(
             animated_base_world_positions,
             (particle_count, 3),
             "animated_base_world_positions",
+        ),
+        animated_base_world_rotations=_readonly_float(
+            animated_base_world_rotations,
+            (particle_count, 4),
+            "animated_base_world_rotations",
         ),
         animated_base_world_normals=_readonly_float(
             ()
