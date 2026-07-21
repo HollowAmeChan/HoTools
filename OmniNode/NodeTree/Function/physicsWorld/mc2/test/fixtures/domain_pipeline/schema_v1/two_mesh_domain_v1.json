@@ -1,0 +1,200 @@
+{
+  "case_id": "two_mesh_domain_v1",
+  "schema_version": 1,
+  "oracle_tier": "E0",
+  "scope": "Backend-neutral logical domain contract; no Blender pointers, native handles, or solver slots.",
+  "static_snapshots": [
+    {
+      "partition_id": "sleeve",
+      "source_identity": "source:sleeve",
+      "source_revision": "revision:sleeve:v1",
+      "output_target_id": "mesh:sleeve",
+      "local_positions": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+      "local_normals": [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+      "edges": [[0, 1], [1, 2], [2, 0]],
+      "triangles": [[0, 1, 2]],
+      "triangle_loops": [[0, 1, 2]],
+      "loop_vertices": [0, 1, 2],
+      "loop_uvs": [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+      "pin_weights": [1.0, 0.0, 0.0],
+      "pin_present": true,
+      "radius_multipliers": [1.0, 1.0, 0.8],
+      "source_bind_matrix": [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "source_element_ids": [0, 1, 2],
+      "has_uv": true
+    },
+    {
+      "partition_id": "coat",
+      "source_identity": "source:coat",
+      "source_revision": "revision:coat:v1",
+      "output_target_id": "mesh:coat",
+      "local_positions": [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+      "local_normals": [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+      "edges": [[0, 1]],
+      "triangles": [],
+      "triangle_loops": [],
+      "loop_vertices": [0, 1],
+      "loop_uvs": [],
+      "pin_weights": [],
+      "pin_present": false,
+      "radius_multipliers": [1.0, 1.0],
+      "source_bind_matrix": [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "source_element_ids": [0, 1],
+      "has_uv": false
+    }
+  ],
+  "program": {
+    "domain_id": "mc2.domain:two_mesh_fixture",
+    "setup_type": "mesh_cloth",
+    "partition_ids": ["sleeve", "coat"],
+    "partition_flags": [3, 3],
+    "partition_particle_views": [
+      {"kind": "span", "start": 0, "stop": 3},
+      {"kind": "span", "start": 3, "stop": 5}
+    ],
+    "particle_partition_index": [0, 0, 0, 1, 1],
+    "particle_source_element": [0, 1, 2, 0, 1],
+    "particle_bind_position": [
+      [0.0, 0.0, 0.0],
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0]
+    ],
+    "particle_bind_rotation": [
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0]
+    ],
+    "particle_attribute_flags": [1, 0, 0, 1, 0],
+    "constraint_tables": [
+      {
+        "kind": "distance",
+        "indices": [[0, 1], [1, 2], [3, 4]],
+        "owner_partition_index": [0, 0, 1],
+        "flags": [0, 0, 0]
+      },
+      {
+        "kind": "tether",
+        "indices": [[0, 2]],
+        "owner_partition_index": [0],
+        "flags": [0]
+      }
+    ],
+    "primitive_tables": [
+      {
+        "kind": "point",
+        "indices": [[0], [1], [2], [3], [4]],
+        "owner_partition_index": [0, 0, 0, 1, 1]
+      },
+      {
+        "kind": "edge",
+        "indices": [[0, 1], [1, 2], [3, 4]],
+        "owner_partition_index": [0, 0, 1]
+      },
+      {
+        "kind": "triangle",
+        "indices": [[0, 1, 2]],
+        "owner_partition_index": [0]
+      }
+    ],
+    "output_targets": [
+      {
+        "target_id": "mesh:sleeve",
+        "partition_index": 0,
+        "element_count": 3,
+        "space_kind": "mesh_object_local_offset"
+      },
+      {
+        "target_id": "mesh:coat",
+        "partition_index": 1,
+        "element_count": 2,
+        "space_kind": "mesh_object_local_offset"
+      }
+    ],
+    "output_target_index": [0, 0, 0, 1, 1],
+    "output_source_element": [0, 1, 2, 0, 1],
+    "required_capabilities": ["mesh_cloth", "self_collision"]
+  },
+  "parameters": {
+    "domain_scalars": {
+      "fields": ["gravity", "time_scale"],
+      "values": [[-1.0, 1.0]]
+    },
+    "partition_parameters": {
+      "fields": ["gravity_ratio", "velocity_weight"],
+      "values": [[1.0, 1.0], [0.75, 0.5]]
+    },
+    "particle_parameters": {
+      "fields": ["damping", "radius"],
+      "values": [
+        [0.2, 0.02],
+        [0.2, 0.02],
+        [0.3, 0.02],
+        [0.1, 0.03],
+        [0.1, 0.03]
+      ]
+    },
+    "constraint_parameters": [
+      {
+        "name": "distance",
+        "fields": ["rest_length", "stiffness"],
+        "values": [[1.0, 0.8], [1.0, 0.8], [1.0, 0.7]]
+      },
+      {
+        "name": "tether",
+        "fields": ["max_distance", "stiffness"],
+        "values": [[1.0, 0.5]]
+      }
+    ]
+  },
+  "frame": {
+    "frame": 12,
+    "generation": 4,
+    "animated_base_world_positions": [
+      [1.0, 0.0, 0.0],
+      [2.0, 0.0, 0.0],
+      [1.0, 1.0, 0.0],
+      [-2.0, 0.0, 0.0],
+      [-2.0, -1.0, 0.0]
+    ],
+    "animated_base_world_normals": [
+      [0.0, 0.0, 1.0],
+      [0.0, 0.0, 1.0],
+      [0.0, 0.0, 1.0],
+      [0.0, 0.0, 1.0],
+      [0.0, 0.0, 1.0]
+    ],
+    "partition_world_position": [[1.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
+    "partition_world_rotation": [
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0]
+    ],
+    "partition_world_scale": [[1.0, 1.0, 1.0], [1.0, -1.0, 1.0]],
+    "partition_world_linear": [
+      [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+      [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]]
+    ],
+    "anchor_world_position": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+    "anchor_world_rotation": [
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0]
+    ],
+    "anchor_present": [1, 0],
+    "partition_frame_flags": [0, 1],
+    "velocity_weight": [1.0, 0.5],
+    "gravity_ratio": [1.0, 0.75]
+  }
+}
