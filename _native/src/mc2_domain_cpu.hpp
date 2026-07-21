@@ -121,6 +121,23 @@ public:
         const float* friction,
         float surface_thickness
     );
+    void step_external_edge_collision(
+        const float* collision_radii,
+        const std::int32_t* edges,
+        std::size_t edge_count,
+        const float* friction,
+        std::int32_t collided_by_groups,
+        const std::int32_t* collider_types,
+        const std::int32_t* collider_group_bits,
+        const float* collider_centers,
+        const float* collider_segment_a,
+        const float* collider_segment_b,
+        const float* collider_old_centers,
+        const float* collider_old_segment_a,
+        const float* collider_old_segment_b,
+        const float* collider_radii,
+        std::size_t collider_count
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(

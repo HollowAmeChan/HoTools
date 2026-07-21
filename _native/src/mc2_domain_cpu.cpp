@@ -1168,6 +1168,99 @@ void DomainV1::step_self_collision(
     ++step_count_;
 }
 
+void DomainV1::step_external_edge_collision(
+    const float* collision_radii,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const float* friction,
+    std::int32_t collided_by_groups,
+    const std::int32_t* collider_types,
+    const std::int32_t* collider_group_bits,
+    const float* collider_centers,
+    const float* collider_segment_a,
+    const float* collider_segment_b,
+    const float* collider_old_centers,
+    const float* collider_old_segment_a,
+    const float* collider_old_segment_b,
+    const float* collider_radii,
+    std::size_t collider_count
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU external edge collision requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU external edge collision requires particle configuration");
+    }
+    require_finite(collision_radii, particle_count_, "edge collision radii");
+    require_finite(friction, particle_count_, "edge collision friction");
+    if (!std::isfinite(static_cast<float>(collided_by_groups)) ||
+        (edge_count != 0 && edges == nullptr) ||
+        (collider_count != 0 && (collider_types == nullptr || collider_group_bits == nullptr ||
+         collider_centers == nullptr || collider_segment_a == nullptr || collider_segment_b == nullptr ||
+         collider_old_centers == nullptr || collider_old_segment_a == nullptr ||
+         collider_old_segment_b == nullptr || collider_radii == nullptr))) {
+        throw std::invalid_argument("MC2 CPU external edge collision inputs are invalid");
+    }
+    require_finite(collider_centers, collider_count * 3, "edge collider centers");
+    require_finite(collider_segment_a, collider_count * 3, "edge collider segment A");
+    require_finite(collider_segment_b, collider_count * 3, "edge collider segment B");
+    require_finite(collider_old_centers, collider_count * 3, "edge collider old centers");
+    require_finite(collider_old_segment_a, collider_count * 3, "edge collider old segment A");
+    require_finite(collider_old_segment_b, collider_count * 3, "edge collider old segment B");
+    require_finite(collider_radii, collider_count, "edge collider radii");
+    auto validate_indices = [&](const std::int32_t* values, std::size_t count) {
+        for (std::size_t index = 0; index < count; ++index) {
+            if (values[index] < 0 || static_cast<std::size_t>(values[index]) >= particle_count_) {
+                throw std::invalid_argument("MC2 CPU external edge topology is out of range");
+            }
+        }
+    };
+    validate_indices(edges, edge_count * 2);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (collision_radii[vertex] < 0.0f || friction[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU edge collision particle values are out of range");
+        }
+    }
+    for (std::size_t collider = 0; collider < collider_count; ++collider) {
+        if (collider_types[collider] < 0 || collider_types[collider] > 3 ||
+            collider_group_bits[collider] <= 0 || collider_radii[collider] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU edge collider values are out of range");
+        }
+    }
+    collision_friction_.assign(friction, friction + particle_count_);
+    std::vector<std::uint8_t> attributes(particle_count_, 0u);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
+            attributes[vertex] = 1u << 2u;
+        }
+    }
+    hotools::Mc2EdgeCollisionView view;
+    view.positions = world_positions_.data();
+    view.edges = edges;
+    view.attributes = attributes.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.collision_radii = collision_radii;
+    view.collision_normals = world_normals_.data();
+    view.friction = collision_friction_.data();
+    view.collider_types = collider_types;
+    view.collider_group_bits = collider_group_bits;
+    view.collider_centers = collider_centers;
+    view.collider_segment_a = collider_segment_a;
+    view.collider_segment_b = collider_segment_b;
+    view.collider_old_centers = collider_old_centers;
+    view.collider_old_segment_a = collider_old_segment_a;
+    view.collider_old_segment_b = collider_old_segment_b;
+    view.collider_radii = collider_radii;
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.edge_count = static_cast<std::int64_t>(edge_count);
+    view.collider_count = static_cast<std::int64_t>(collider_count);
+    view.collided_by_groups = collided_by_groups;
+    view.move_attribute_mask = 1u << 2u;
+    hotools::project_edge_collisions_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_bending(
     const std::int32_t* dihedral_pairs,
     const float* dihedral_rest_angles,

@@ -514,6 +514,37 @@ def test_native_cpu_kernel_exposes_self_collision_slice():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_external_edge_collision_slice():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    edge_table = next((table for table in compiled.program.primitive_tables if table.kind == "edge"), None)
+    edges = np.asarray(edge_table.indices if edge_table is not None else np.empty((0, 2)), dtype=np.int32)
+    center = np.asarray(((1.0, 2.0, 2.0),), dtype=np.float32)
+    try:
+        domain.update_frame(frame)
+        domain.step_external_edge_collision({
+            "collision_radii": np.full(compiled.program.particle_count, 0.1, dtype=np.float32),
+            "edges": edges,
+            "friction": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "collided_by_groups": 1,
+            "collider_types": np.asarray((0,), dtype=np.int32),
+            "collider_group_bits": np.asarray((1,), dtype=np.int32),
+            "collider_centers": center,
+            "collider_segment_a": center,
+            "collider_segment_b": center,
+            "collider_old_centers": center,
+            "collider_old_segment_a": center,
+            "collider_old_segment_b": center,
+            "collider_radii": np.asarray((0.5,), dtype=np.float32),
+        })
+        assert np.isfinite(domain.read_output().world_positions).all()
+        assert domain.inspect()["kernel"]["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -543,3 +574,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_external_point_collision_slice")
     test_native_cpu_kernel_exposes_self_collision_slice()
     print("PASS test_native_cpu_kernel_exposes_self_collision_slice")
+    test_native_cpu_kernel_exposes_external_edge_collision_slice()
+    print("PASS test_native_cpu_kernel_exposes_external_edge_collision_slice")

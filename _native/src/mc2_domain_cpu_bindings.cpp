@@ -502,6 +502,55 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit native self-collision slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_external_edge_collision",
+        [](std::uint64_t handle,
+           cf32_1d collision_radii,
+           ci32_2d edges,
+           cf32_1d friction,
+           std::int32_t collided_by_groups,
+           ci32_1d collider_types,
+           ci32_1d collider_group_bits,
+           cf32_2d collider_centers,
+           cf32_2d collider_segment_a,
+           cf32_2d collider_segment_b,
+           cf32_2d collider_old_centers,
+           cf32_2d collider_old_segment_a,
+           cf32_2d collider_old_segment_b,
+           cf32_1d collider_radii) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(collision_radii.shape(0)) != count ||
+                static_cast<std::size_t>(friction.shape(0)) != count || edges.shape(1) != 2 ||
+                collider_centers.shape(1) != 3 || collider_segment_a.shape(1) != 3 ||
+                collider_segment_b.shape(1) != 3 || collider_old_centers.shape(1) != 3 ||
+                collider_old_segment_a.shape(1) != 3 || collider_old_segment_b.shape(1) != 3 ||
+                collider_types.shape(0) != collider_group_bits.shape(0) ||
+                collider_types.shape(0) != collider_radii.shape(0) ||
+                collider_centers.shape(0) != collider_types.shape(0) ||
+                collider_segment_a.shape(0) != collider_types.shape(0) ||
+                collider_segment_b.shape(0) != collider_types.shape(0) ||
+                collider_old_centers.shape(0) != collider_types.shape(0) ||
+                collider_old_segment_a.shape(0) != collider_types.shape(0) ||
+                collider_old_segment_b.shape(0) != collider_types.shape(0)) {
+                throw nb::value_error("MC2 CPU external edge collision arrays have incompatible shapes");
+            }
+            domain->step_external_edge_collision(
+                collision_radii.data(), edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                friction.data(), collided_by_groups, collider_types.data(), collider_group_bits.data(),
+                collider_centers.data(), collider_segment_a.data(), collider_segment_b.data(),
+                collider_old_centers.data(), collider_old_segment_a.data(), collider_old_segment_b.data(),
+                collider_radii.data(), static_cast<std::size_t>(collider_types.shape(0))
+            );
+        },
+        nb::arg("handle"), nb::arg("collision_radii"), nb::arg("edges"),
+        nb::arg("friction"), nb::arg("collided_by_groups"), nb::arg("collider_types"),
+        nb::arg("collider_group_bits"), nb::arg("collider_centers"),
+        nb::arg("collider_segment_a"), nb::arg("collider_segment_b"),
+        nb::arg("collider_old_centers"), nb::arg("collider_old_segment_a"),
+        nb::arg("collider_old_segment_b"), nb::arg("collider_radii"),
+        "Run the explicit native edge external-collision slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_bending",
         [](std::uint64_t handle) { require_domain(handle)->step_bending(); },
         nb::arg("handle"),

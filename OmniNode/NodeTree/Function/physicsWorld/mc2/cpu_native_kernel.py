@@ -29,6 +29,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_motion",
     "mc2_domain_cpu_v1_step_external_collision",
     "mc2_domain_cpu_v1_step_self_collision",
+    "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
     "mc2_domain_cpu_v1_configure_bending",
@@ -339,6 +340,48 @@ class MC2NativeCPUKernelV1:
         self._module.mc2_domain_cpu_v1_step_self_collision(
             key, old_positions, edges, triangles, friction,
             float(settings["surface_thickness"]),
+        )
+
+    def step_external_edge_collision(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "collision_radii", "edges", "friction", "collided_by_groups", "collider_types",
+            "collider_group_bits", "collider_centers", "collider_segment_a", "collider_segment_b",
+            "collider_old_centers", "collider_old_segment_a", "collider_old_segment_b", "collider_radii",
+        }
+        if set(settings) != required:
+            raise ValueError("external edge collision slice requires exactly its explicit inputs")
+        program = self._programs[key]
+        particle_radii = np.ascontiguousarray(settings["collision_radii"], dtype=np.float32)
+        friction = np.ascontiguousarray(settings["friction"], dtype=np.float32)
+        edges = np.ascontiguousarray(settings["edges"], dtype=np.int32)
+        if particle_radii.shape != (program.particle_count,) or friction.shape != (program.particle_count,):
+            raise ValueError("collision_radii/friction must match particle_count")
+        if edges.ndim != 2 or edges.shape[1] != 2:
+            raise ValueError("edges must have shape [E,2]")
+        collider_types = np.ascontiguousarray(settings["collider_types"], dtype=np.int32)
+        collider_group_bits = np.ascontiguousarray(settings["collider_group_bits"], dtype=np.int32)
+        collider_radii = np.ascontiguousarray(settings["collider_radii"], dtype=np.float32)
+        if collider_group_bits.shape != collider_types.shape or collider_radii.shape != collider_types.shape:
+            raise ValueError("collider metadata must match collider count")
+        arrays = {
+            "collider_centers": np.ascontiguousarray(settings["collider_centers"], dtype=np.float32),
+            "collider_segment_a": np.ascontiguousarray(settings["collider_segment_a"], dtype=np.float32),
+            "collider_segment_b": np.ascontiguousarray(settings["collider_segment_b"], dtype=np.float32),
+            "collider_old_centers": np.ascontiguousarray(settings["collider_old_centers"], dtype=np.float32),
+            "collider_old_segment_a": np.ascontiguousarray(settings["collider_old_segment_a"], dtype=np.float32),
+            "collider_old_segment_b": np.ascontiguousarray(settings["collider_old_segment_b"], dtype=np.float32),
+        }
+        for name, array in arrays.items():
+            if array.shape != (len(collider_types), 3):
+                raise ValueError(f"{name} has invalid shape")
+        for array in (particle_radii, friction, edges, collider_types, collider_group_bits, collider_radii, *arrays.values()):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_external_edge_collision(
+            key, particle_radii, edges, friction, int(settings["collided_by_groups"]),
+            collider_types, collider_group_bits, arrays["collider_centers"], arrays["collider_segment_a"],
+            arrays["collider_segment_b"], arrays["collider_old_centers"], arrays["collider_old_segment_a"],
+            arrays["collider_old_segment_b"], collider_radii,
         )
 
     def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
