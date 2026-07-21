@@ -17,8 +17,10 @@ namespace hotools {
 namespace {
 
 using cf32_2d = nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using cf32_3d = nb::ndarray<const float, nb::ndim<3>, nb::c_contig, nb::device::cpu>;
 using cf32_1d = nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using cu32_1d = nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
 std::mutex domain_registry_mutex;
 std::unordered_set<mc2_domain_cpu::DomainV1*> live_domains;
@@ -55,6 +57,15 @@ nb::ndarray<nb::numpy, T> owned_array_2d(
     );
 }
 
+template<typename T>
+nb::ndarray<nb::numpy, T> owned_array_1d(std::vector<T>&& values) {
+    auto* owner_data = new std::vector<T>(std::move(values));
+    nb::capsule owner(owner_data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    return nb::ndarray<nb::numpy, T>(owner_data->data(), {owner_data->size()}, owner);
+}
+
 }  // namespace
 
 void bind_mc2_domain_cpu(nb::module_& module) {
@@ -62,6 +73,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "mc2_domain_cpu_v1_create",
         [](std::uint32_t schema_version,
            std::size_t particle_count,
+           std::size_t partition_count,
            const std::string& domain_signature,
            const std::string& layout_signature,
            cf32_2d bind_positions,
@@ -77,6 +89,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             mc2_domain_cpu::ProgramViewV1 program {
                 schema_version,
                 particle_count,
+                partition_count,
                 bind_positions.data(),
                 bind_rotations.data(),
                 domain_signature.c_str(),
@@ -91,6 +104,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         },
         nb::arg("schema_version"),
         nb::arg("particle_count"),
+        nb::arg("partition_count"),
         nb::arg("domain_signature"),
         nb::arg("layout_signature"),
         nb::arg("bind_positions"),
@@ -105,7 +119,17 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            std::int64_t frame,
            std::int64_t generation,
            cf32_2d world_positions,
-           cf32_2d world_normals) {
+           cf32_2d world_normals,
+           cf32_2d partition_world_positions,
+           cf32_2d partition_world_rotations,
+           cf32_2d partition_world_scales,
+           cf32_3d partition_world_linear,
+           cf32_2d anchor_world_positions,
+           cf32_2d anchor_world_rotations,
+           cu32_1d anchor_present,
+           cu32_1d partition_frame_flags,
+           cf32_1d velocity_weights,
+           cf32_1d gravity_ratios) {
             auto* domain = require_domain(handle);
             if (static_cast<std::size_t>(world_positions.shape(0)) != domain->particle_count() ||
                 world_positions.shape(1) != 3 ||
@@ -113,10 +137,40 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 world_normals.shape(1) != 3) {
                 throw nb::value_error("MC2 CPU frame arrays must be [particle_count,3]");
             }
+            const auto partition_count = domain->partition_count();
+            if (static_cast<std::size_t>(partition_world_positions.shape(0)) != partition_count ||
+                partition_world_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(partition_world_rotations.shape(0)) != partition_count ||
+                partition_world_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(partition_world_scales.shape(0)) != partition_count ||
+                partition_world_scales.shape(1) != 3 ||
+                static_cast<std::size_t>(partition_world_linear.shape(0)) != partition_count ||
+                partition_world_linear.shape(1) != 3 || partition_world_linear.shape(2) != 3 ||
+                static_cast<std::size_t>(anchor_world_positions.shape(0)) != partition_count ||
+                anchor_world_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(anchor_world_rotations.shape(0)) != partition_count ||
+                anchor_world_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(anchor_present.shape(0)) != partition_count ||
+                static_cast<std::size_t>(partition_frame_flags.shape(0)) != partition_count ||
+                static_cast<std::size_t>(velocity_weights.shape(0)) != partition_count ||
+                static_cast<std::size_t>(gravity_ratios.shape(0)) != partition_count) {
+                throw nb::value_error("MC2 CPU partition frame arrays have incompatible shapes");
+            }
             domain->update_frame({
                 domain->particle_count(),
+                partition_count,
                 world_positions.data(),
                 world_normals.data(),
+                partition_world_positions.data(),
+                partition_world_rotations.data(),
+                partition_world_scales.data(),
+                partition_world_linear.data(),
+                anchor_world_positions.data(),
+                anchor_world_rotations.data(),
+                anchor_present.data(),
+                partition_frame_flags.data(),
+                velocity_weights.data(),
+                gravity_ratios.data(),
                 frame,
                 generation,
                 domain_signature.c_str(),
@@ -130,6 +184,16 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("generation"),
         nb::arg("world_positions"),
         nb::arg("world_normals"),
+        nb::arg("partition_world_positions"),
+        nb::arg("partition_world_rotations"),
+        nb::arg("partition_world_scales"),
+        nb::arg("partition_world_linear"),
+        nb::arg("anchor_world_positions"),
+        nb::arg("anchor_world_rotations"),
+        nb::arg("anchor_present"),
+        nb::arg("partition_frame_flags"),
+        nb::arg("velocity_weights"),
+        nb::arg("gravity_ratios"),
         "Update one validated frame without touching Blender state."
     );
     module.def(
@@ -277,12 +341,23 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             auto* domain = require_domain(handle);
             nb::dict result;
             result["particle_count"] = domain->particle_count();
+            result["partition_count"] = domain->partition_count();
             result["domain_signature"] = domain->domain_signature();
             result["layout_signature"] = domain->layout_signature();
             result["frame"] = domain->frame();
             result["generation"] = domain->generation();
             result["step_count"] = domain->step_count();
             result["disposed"] = domain->disposed();
+            result["partition_world_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->partition_world_positions()),
+                domain->partition_count(), 3
+            );
+            result["partition_reset_counts"] = owned_array_1d<std::int64_t>(
+                std::vector<std::int64_t>(domain->partition_reset_counts())
+            );
+            result["partition_keep_counts"] = owned_array_1d<std::int64_t>(
+                std::vector<std::int64_t>(domain->partition_keep_counts())
+            );
             return result;
         },
         nb::arg("handle"),

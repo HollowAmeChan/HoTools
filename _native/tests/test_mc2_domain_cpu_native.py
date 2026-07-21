@@ -19,7 +19,7 @@ sys.path.insert(0, os.environ.get(
 import hotools_native  # noqa: E402
 
 
-def _create():
+def _create(partition_count=1):
     bind_positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
         dtype=np.float32,
@@ -33,6 +33,7 @@ def _create():
     return hotools_native.mc2_domain_cpu_v1_create(
         1,
         3,
+        partition_count,
         "domain:test",
         "layout:test",
         bind_positions,
@@ -51,6 +52,39 @@ def _frame(offset=0.0):
     return positions, normals
 
 
+def _update_frame(
+    handle,
+    positions,
+    normals,
+    *,
+    frame,
+    generation,
+    domain_signature="domain:test",
+    partition_positions=((0.0, 0.0, 0.0),),
+    partition_flags=(0,),
+):
+    count = len(partition_positions)
+    return hotools_native.mc2_domain_cpu_v1_update_frame(
+        handle,
+        domain_signature,
+        "layout:test",
+        frame,
+        generation,
+        positions,
+        normals,
+        np.asarray(partition_positions, dtype=np.float32),
+        np.asarray(((0.0, 0.0, 0.0, 1.0),) * count, dtype=np.float32),
+        np.ones((count, 3), dtype=np.float32),
+        np.asarray((np.eye(3, dtype=np.float32),) * count, dtype=np.float32),
+        np.zeros((count, 3), dtype=np.float32),
+        np.asarray(((0.0, 0.0, 0.0, 1.0),) * count, dtype=np.float32),
+        np.zeros(count, dtype=np.uint32),
+        np.asarray(partition_flags, dtype=np.uint32),
+        np.ones(count, dtype=np.float32),
+        np.ones(count, dtype=np.float32),
+    )
+
+
 def test_domain_cpu_native_lifecycle_and_owned_frame_output():
     before = hotools_native.mc2_domain_cpu_v1_stats()["live_domain_count"]
     handle = _create()
@@ -61,15 +95,7 @@ def test_domain_cpu_native_lifecycle_and_owned_frame_output():
         assert info["frame"] == -1
         positions, normals = _frame(2.0)
         expected_positions = positions.copy()
-        hotools_native.mc2_domain_cpu_v1_update_frame(
-            handle,
-            "domain:test",
-            "layout:test",
-            8,
-            3,
-            positions,
-            normals,
-        )
+        _update_frame(handle, positions, normals, frame=8, generation=3)
         positions.flags.writeable = True
         positions[:] = -100.0
         hotools_native.mc2_domain_cpu_v1_step(handle)
@@ -90,25 +116,12 @@ def test_domain_cpu_native_rejects_identity_without_mutating_published_frame():
     handle = _create()
     try:
         positions, normals = _frame(1.0)
-        hotools_native.mc2_domain_cpu_v1_update_frame(
-            handle,
-            "domain:test",
-            "layout:test",
-            4,
-            2,
-            positions,
-            normals,
-        )
+        _update_frame(handle, positions, normals, frame=4, generation=2)
         bad_positions, bad_normals = _frame(9.0)
         try:
-            hotools_native.mc2_domain_cpu_v1_update_frame(
-                handle,
-                "domain:wrong",
-                "layout:test",
-                5,
-                2,
-                bad_positions,
-                bad_normals,
+            _update_frame(
+                handle, bad_positions, bad_normals,
+                frame=5, generation=2, domain_signature="domain:wrong"
             )
         except ValueError as exc:
             assert "signature mismatch" in str(exc)
@@ -117,6 +130,48 @@ def test_domain_cpu_native_rejects_identity_without_mutating_published_frame():
         output = hotools_native.mc2_domain_cpu_v1_read(handle)
         assert output["frame"] == 4
         assert np.array_equal(output["world_positions"], positions)
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_tracks_partition_history_atomically():
+    handle = _create(partition_count=2)
+    try:
+        positions, normals = _frame(0.0)
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            partition_positions=((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)),
+            partition_flags=(0, 0),
+        )
+        _update_frame(
+            handle, positions, normals, frame=2, generation=1,
+            partition_positions=((1.0, 0.0, 0.0), (20.0, 0.0, 0.0)),
+            partition_flags=(1, 2),
+        )
+        info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        np.testing.assert_array_equal(info["partition_reset_counts"], (1, 0))
+        np.testing.assert_array_equal(info["partition_keep_counts"], (0, 1))
+        np.testing.assert_allclose(
+            info["partition_world_positions"],
+            ((1.0, 0.0, 0.0), (20.0, 0.0, 0.0)),
+        )
+        try:
+            _update_frame(
+                handle, positions, normals, frame=3, generation=1,
+                partition_positions=((99.0, 0.0, 0.0), (99.0, 0.0, 0.0)),
+                partition_flags=(3, 0),
+            )
+        except ValueError as exc:
+            assert "partition frame values" in str(exc)
+        else:
+            raise AssertionError("invalid partition flags were accepted")
+        after = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert after["frame"] == 2
+        np.testing.assert_array_equal(after["partition_reset_counts"], (1, 0))
+        np.testing.assert_array_equal(after["partition_keep_counts"], (0, 1))
+        np.testing.assert_allclose(
+            after["partition_world_positions"], info["partition_world_positions"]
+        )
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
@@ -144,9 +199,7 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
         normals = np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float32)
         positions.flags.writeable = False
         normals.flags.writeable = False
-        hotools_native.mc2_domain_cpu_v1_update_frame(
-            handle, "domain:test", "layout:test", 1, 1, positions, normals
-        )
+        _update_frame(handle, positions, normals, frame=1, generation=1)
         starts = np.asarray((0, 1, 3), dtype=np.int32)
         counts = np.asarray((1, 2, 1), dtype=np.int32)
         neighbors = np.asarray((1, 0, 2, 1), dtype=np.int32)
@@ -174,9 +227,7 @@ def test_domain_cpu_native_inertia_slice_uses_existing_kernel():
     handle = _create()
     try:
         positions, normals = _frame(0.0)
-        hotools_native.mc2_domain_cpu_v1_update_frame(
-            handle, "domain:test", "layout:test", 2, 1, positions, normals
-        )
+        _update_frame(handle, positions, normals, frame=2, generation=1)
         depths = np.asarray((0.0, 0.5, 1.0), dtype=np.float32)
         inv_masses = np.ones(3, dtype=np.float32)
         hotools_native.mc2_domain_cpu_v1_configure_inertia(handle, depths, inv_masses)
@@ -202,9 +253,7 @@ def test_domain_cpu_native_integration_slice_uses_shared_kernel():
     handle = _create()
     try:
         positions, normals = _frame(0.0)
-        hotools_native.mc2_domain_cpu_v1_update_frame(
-            handle, "domain:test", "layout:test", 3, 1, positions, normals
-        )
+        _update_frame(handle, positions, normals, frame=3, generation=1)
         depths = np.zeros(3, dtype=np.float32)
         inv_masses = np.asarray((0.0, 1.0, 1.0), dtype=np.float32)
         damping = np.zeros(3, dtype=np.float32)

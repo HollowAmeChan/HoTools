@@ -10,6 +10,7 @@ namespace hotools::mc2_domain_cpu {
 struct ProgramViewV1 {
     std::uint32_t schema_version = 0;
     std::size_t particle_count = 0;
+    std::size_t partition_count = 0;
     const float* bind_positions = nullptr;
     const float* bind_rotations = nullptr;
     const char* domain_signature = nullptr;
@@ -18,8 +19,19 @@ struct ProgramViewV1 {
 
 struct FrameViewV1 {
     std::size_t particle_count = 0;
+    std::size_t partition_count = 0;
     const float* world_positions = nullptr;
     const float* world_normals = nullptr;
+    const float* partition_world_positions = nullptr;
+    const float* partition_world_rotations = nullptr;
+    const float* partition_world_scales = nullptr;
+    const float* partition_world_linear = nullptr;
+    const float* anchor_world_positions = nullptr;
+    const float* anchor_world_rotations = nullptr;
+    const std::uint32_t* anchor_present = nullptr;
+    const std::uint32_t* partition_frame_flags = nullptr;
+    const float* velocity_weights = nullptr;
+    const float* gravity_ratios = nullptr;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     const char* domain_signature = nullptr;
@@ -68,6 +80,7 @@ public:
 
     bool disposed() const noexcept { return disposed_; }
     std::size_t particle_count() const noexcept { return particle_count_; }
+    std::size_t partition_count() const noexcept { return partition_count_; }
     std::int64_t frame() const noexcept { return frame_; }
     std::int64_t generation() const noexcept { return generation_; }
     std::int64_t step_count() const noexcept { return step_count_; }
@@ -75,12 +88,22 @@ public:
     const std::string& layout_signature() const noexcept { return layout_signature_; }
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& partition_world_positions() const noexcept {
+        return partition_world_positions_;
+    }
+    const std::vector<std::int64_t>& partition_reset_counts() const noexcept {
+        return partition_reset_counts_;
+    }
+    const std::vector<std::int64_t>& partition_keep_counts() const noexcept {
+        return partition_keep_counts_;
+    }
 
 private:
     void ensure_live() const;
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
 
     std::size_t particle_count_ = 0;
+    std::size_t partition_count_ = 0;
     std::string domain_signature_;
     std::string layout_signature_;
     std::vector<float> bind_positions_;
@@ -88,6 +111,20 @@ private:
     std::vector<float> world_positions_;
     std::vector<float> world_normals_;
     std::vector<float> velocity_positions_;
+    std::vector<float> partition_world_positions_;
+    std::vector<float> partition_previous_world_positions_;
+    std::vector<float> partition_world_rotations_;
+    std::vector<float> partition_previous_world_rotations_;
+    std::vector<float> partition_world_scales_;
+    std::vector<float> partition_world_linear_;
+    std::vector<float> anchor_world_positions_;
+    std::vector<float> anchor_world_rotations_;
+    std::vector<std::uint32_t> anchor_present_;
+    std::vector<std::uint32_t> partition_frame_flags_;
+    std::vector<float> velocity_weights_;
+    std::vector<float> gravity_ratios_;
+    std::vector<std::int64_t> partition_reset_counts_;
+    std::vector<std::int64_t> partition_keep_counts_;
     std::vector<std::int32_t> distance_starts_;
     std::vector<std::int32_t> distance_counts_;
     std::vector<std::int32_t> distance_neighbors_;

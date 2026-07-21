@@ -66,6 +66,26 @@ def _compiled():
     return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
 
 
+def _compiled_multi():
+    with open(FIXTURE, "r", encoding="utf-8") as handle:
+        payloads = json.load(handle)["static_snapshots"]
+    fragments = tuple(
+        fragment_module.build_mc2_mesh_static_fragment(
+            ir.make_mc2_mesh_partition_static_snapshot(**payload)
+        )
+        for payload in payloads
+    )
+    effectives = tuple(
+        runtime.make_mc2_runtime_parameters(
+            parameters.make_mc2_particle_profile(self_collision_mode=2),
+            parameters.make_mc2_setup_options("mesh_cloth"),
+            parameters.make_mc2_task_parameters(),
+        )
+        for _fragment in fragments
+    )
+    return compiler.compile_mc2_mesh_static_fragments(fragments, effectives)
+
+
 def _frame(program):
     return ir.make_mc2_domain_frame_packet(
         program,
@@ -181,6 +201,40 @@ def test_native_cpu_kernel_exposes_integration_slice_only_when_requested():
         domain.dispose()
 
 
+def test_native_cpu_kernel_tracks_multi_partition_frame_history():
+    compiled = _compiled_multi()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    count = compiled.program.particle_count
+    frame = ir.make_mc2_domain_frame_packet(
+        compiled.program,
+        frame=9,
+        generation=4,
+        animated_base_world_positions=compiled.program.particle_bind_position,
+        animated_base_world_normals=np.asarray(
+            ((0.0, 0.0, 1.0),) * count, dtype=np.float32
+        ),
+        partition_world_position=((1.0, 0.0, 0.0), (8.0, 0.0, 0.0)),
+        partition_world_rotation=((0.0, 0.0, 0.0, 1.0),) * 2,
+        partition_world_scale=((1.0, 1.0, 1.0),) * 2,
+        partition_world_linear=(
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        ) * 2,
+        partition_frame_flags=(1, 2),
+    )
+    try:
+        domain.update_frame(frame)
+        kernel_state = domain.inspect()["kernel"]
+        np.testing.assert_array_equal(kernel_state["partition_reset_counts"], (1, 0))
+        np.testing.assert_array_equal(kernel_state["partition_keep_counts"], (0, 1))
+        np.testing.assert_allclose(
+            kernel_state["partition_world_positions"],
+            frame.partition_world_position,
+        )
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -190,3 +244,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")
     test_native_cpu_kernel_exposes_integration_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_integration_slice_only_when_requested")
+    test_native_cpu_kernel_tracks_multi_partition_frame_history()
+    print("PASS test_native_cpu_kernel_tracks_multi_partition_frame_history")

@@ -26,22 +26,54 @@ void require_identity(const char* value, const char* name) {
     }
 }
 
+void require_unit_quaternions(const float* values, std::size_t count, const char* name) {
+    require_finite(values, count * 4, name);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto offset = index * 4;
+        float length_squared = 0.0f;
+        for (std::size_t component = 0; component < 4; ++component) {
+            length_squared += values[offset + component] * values[offset + component];
+        }
+        if (std::fabs(length_squared - 1.0f) > 0.00002f) {
+            throw std::invalid_argument(std::string(name) + " must be unit quaternions");
+        }
+    }
+}
+
 }  // namespace
 
 DomainV1::DomainV1(const ProgramViewV1& program)
     : particle_count_(program.particle_count),
+      partition_count_(program.partition_count),
       domain_signature_(program.domain_signature != nullptr ? program.domain_signature : ""),
       layout_signature_(program.layout_signature != nullptr ? program.layout_signature : ""),
       bind_positions_(program.particle_count * 3),
       bind_rotations_(program.particle_count * 4),
       world_positions_(program.particle_count * 3),
       world_normals_(program.particle_count * 3, 0.0f),
-      velocity_positions_(program.particle_count * 3, 0.0f) {
+      velocity_positions_(program.particle_count * 3, 0.0f),
+      partition_world_positions_(program.partition_count * 3, 0.0f),
+      partition_previous_world_positions_(program.partition_count * 3, 0.0f),
+      partition_world_rotations_(program.partition_count * 4, 0.0f),
+      partition_previous_world_rotations_(program.partition_count * 4, 0.0f),
+      partition_world_scales_(program.partition_count * 3, 1.0f),
+      partition_world_linear_(program.partition_count * 9, 0.0f),
+      anchor_world_positions_(program.partition_count * 3, 0.0f),
+      anchor_world_rotations_(program.partition_count * 4, 0.0f),
+      anchor_present_(program.partition_count, 0u),
+      partition_frame_flags_(program.partition_count, 0u),
+      velocity_weights_(program.partition_count, 1.0f),
+      gravity_ratios_(program.partition_count, 1.0f),
+      partition_reset_counts_(program.partition_count, 0),
+      partition_keep_counts_(program.partition_count, 0) {
     if (program.schema_version != 1) {
         throw std::invalid_argument("unsupported MC2 CPU domain schema version");
     }
     if (particle_count_ == 0) {
         throw std::invalid_argument("MC2 CPU domain requires particles");
+    }
+    if (partition_count_ == 0) {
+        throw std::invalid_argument("MC2 CPU domain requires partitions");
     }
     require_identity(program.domain_signature, "domain_signature");
     require_identity(program.layout_signature, "layout_signature");
@@ -65,20 +97,118 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     if (frame.particle_count != particle_count_) {
         throw std::invalid_argument("MC2 CPU frame particle count mismatch");
     }
+    if (frame.partition_count != partition_count_) {
+        throw std::invalid_argument("MC2 CPU frame partition count mismatch");
+    }
     if (frame.frame < 0 || frame.generation < 0) {
         throw std::invalid_argument("MC2 CPU frame identity must be non-negative");
     }
     validate_identity(frame.domain_signature, frame.layout_signature);
     require_finite(frame.world_positions, particle_count_ * 3, "world_positions");
     require_finite(frame.world_normals, particle_count_ * 3, "world_normals");
+    require_finite(
+        frame.partition_world_positions, partition_count_ * 3,
+        "partition_world_positions"
+    );
+    require_unit_quaternions(
+        frame.partition_world_rotations, partition_count_,
+        "partition_world_rotations"
+    );
+    require_finite(frame.partition_world_scales, partition_count_ * 3, "partition_world_scales");
+    require_finite(frame.partition_world_linear, partition_count_ * 9, "partition_world_linear");
+    require_finite(frame.anchor_world_positions, partition_count_ * 3, "anchor_world_positions");
+    require_unit_quaternions(
+        frame.anchor_world_rotations, partition_count_, "anchor_world_rotations"
+    );
+    require_finite(frame.velocity_weights, partition_count_, "velocity_weights");
+    require_finite(frame.gravity_ratios, partition_count_, "gravity_ratios");
+    if (frame.anchor_present == nullptr || frame.partition_frame_flags == nullptr) {
+        throw std::invalid_argument("MC2 CPU partition flags cannot be null");
+    }
+    for (std::size_t index = 0; index < partition_count_; ++index) {
+        if (frame.anchor_present[index] > 1u ||
+            (frame.partition_frame_flags[index] & 3u) == 3u ||
+            frame.velocity_weights[index] < 0.0f || frame.velocity_weights[index] > 1.0f ||
+            frame.gravity_ratios[index] < 0.0f || frame.gravity_ratios[index] > 1.0f) {
+            throw std::invalid_argument("MC2 CPU partition frame values are invalid");
+        }
+        for (std::size_t component = 0; component < 3; ++component) {
+            if (std::fabs(frame.partition_world_scales[index * 3 + component]) <= 0.000000000001f) {
+                throw std::invalid_argument("MC2 CPU partition scale cannot contain zero");
+            }
+        }
+        const float* linear = frame.partition_world_linear + index * 9;
+        const float determinant =
+            linear[0] * (linear[4] * linear[8] - linear[5] * linear[7]) -
+            linear[1] * (linear[3] * linear[8] - linear[5] * linear[6]) +
+            linear[2] * (linear[3] * linear[7] - linear[4] * linear[6]);
+        if (std::fabs(determinant) <= 0.000000000001f) {
+            throw std::invalid_argument("MC2 CPU partition linear transform is singular");
+        }
+    }
     std::vector<float> next_positions(
         frame.world_positions, frame.world_positions + particle_count_ * 3
     );
     std::vector<float> next_normals(
         frame.world_normals, frame.world_normals + particle_count_ * 3
     );
+    std::vector<float> next_partition_positions(
+        frame.partition_world_positions, frame.partition_world_positions + partition_count_ * 3
+    );
+    std::vector<float> next_partition_rotations(
+        frame.partition_world_rotations, frame.partition_world_rotations + partition_count_ * 4
+    );
+    std::vector<float> next_partition_scales(
+        frame.partition_world_scales, frame.partition_world_scales + partition_count_ * 3
+    );
+    std::vector<float> next_partition_linear(
+        frame.partition_world_linear, frame.partition_world_linear + partition_count_ * 9
+    );
+    std::vector<float> next_anchor_positions(
+        frame.anchor_world_positions, frame.anchor_world_positions + partition_count_ * 3
+    );
+    std::vector<float> next_anchor_rotations(
+        frame.anchor_world_rotations, frame.anchor_world_rotations + partition_count_ * 4
+    );
+    std::vector<std::uint32_t> next_anchor_present(
+        frame.anchor_present, frame.anchor_present + partition_count_
+    );
+    std::vector<std::uint32_t> next_frame_flags(
+        frame.partition_frame_flags, frame.partition_frame_flags + partition_count_
+    );
+    std::vector<float> next_velocity_weights(
+        frame.velocity_weights, frame.velocity_weights + partition_count_
+    );
+    std::vector<float> next_gravity_ratios(
+        frame.gravity_ratios, frame.gravity_ratios + partition_count_
+    );
+    std::vector<std::int64_t> next_reset_counts = partition_reset_counts_;
+    std::vector<std::int64_t> next_keep_counts = partition_keep_counts_;
+    for (std::size_t index = 0; index < partition_count_; ++index) {
+        if ((frame.partition_frame_flags[index] & 1u) != 0u) ++next_reset_counts[index];
+        if ((frame.partition_frame_flags[index] & 2u) != 0u) ++next_keep_counts[index];
+    }
+    const bool reset_history = frame_ < 0 || generation_ != frame.generation;
+    std::vector<float> next_previous_positions = reset_history
+        ? next_partition_positions : partition_world_positions_;
+    std::vector<float> next_previous_rotations = reset_history
+        ? next_partition_rotations : partition_world_rotations_;
     world_positions_.swap(next_positions);
     world_normals_.swap(next_normals);
+    partition_previous_world_positions_.swap(next_previous_positions);
+    partition_previous_world_rotations_.swap(next_previous_rotations);
+    partition_world_positions_.swap(next_partition_positions);
+    partition_world_rotations_.swap(next_partition_rotations);
+    partition_world_scales_.swap(next_partition_scales);
+    partition_world_linear_.swap(next_partition_linear);
+    anchor_world_positions_.swap(next_anchor_positions);
+    anchor_world_rotations_.swap(next_anchor_rotations);
+    anchor_present_.swap(next_anchor_present);
+    partition_frame_flags_.swap(next_frame_flags);
+    velocity_weights_.swap(next_velocity_weights);
+    gravity_ratios_.swap(next_gravity_ratios);
+    partition_reset_counts_.swap(next_reset_counts);
+    partition_keep_counts_.swap(next_keep_counts);
     frame_ = frame.frame;
     generation_ = frame.generation;
 }
@@ -263,6 +393,20 @@ void DomainV1::dispose() noexcept {
     world_positions_.clear();
     world_normals_.clear();
     velocity_positions_.clear();
+    partition_world_positions_.clear();
+    partition_previous_world_positions_.clear();
+    partition_world_rotations_.clear();
+    partition_previous_world_rotations_.clear();
+    partition_world_scales_.clear();
+    partition_world_linear_.clear();
+    anchor_world_positions_.clear();
+    anchor_world_rotations_.clear();
+    anchor_present_.clear();
+    partition_frame_flags_.clear();
+    velocity_weights_.clear();
+    gravity_ratios_.clear();
+    partition_reset_counts_.clear();
+    partition_keep_counts_.clear();
     distance_starts_.clear();
     distance_counts_.clear();
     distance_neighbors_.clear();

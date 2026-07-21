@@ -66,6 +66,7 @@ class MC2NativeCPUKernelV1:
         handle = int(self._module.mc2_domain_cpu_v1_create(
             program.schema_version,
             program.particle_count,
+            program.partition_count,
             program.domain_signature,
             program.layout_signature,
             program.particle_bind_position,
@@ -96,6 +97,16 @@ class MC2NativeCPUKernelV1:
             frame_packet.generation,
             frame_packet.animated_base_world_positions,
             frame_packet.animated_base_world_normals,
+            frame_packet.partition_world_position,
+            frame_packet.partition_world_rotation,
+            frame_packet.partition_world_scale,
+            frame_packet.partition_world_linear,
+            frame_packet.anchor_world_position,
+            frame_packet.anchor_world_rotation,
+            frame_packet.anchor_present,
+            frame_packet.partition_frame_flags,
+            frame_packet.velocity_weight,
+            frame_packet.gravity_ratio,
         )
         self._frames[key] = frame_packet
 
