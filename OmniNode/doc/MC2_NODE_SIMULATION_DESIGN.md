@@ -19,7 +19,7 @@
 7. 分阶段执行计划与变更门禁
 8. 验收目录、固定产物与性能门槛
 
-本文中的执行顺序是强约束。未通过上一阶段的合同和固定夹具验收，不进入下一阶段实现；尤其不能先把多个 `Object` 塞进旧 `MC2TaskSpec.sources`，再让旧的单对象静态构建、Center 和 writeback 路径猜测其含义。
+E0-E5 的数据依赖和验收门禁是强约束。未通过上一阶段的合同和固定夹具验收，不进入依赖它的产品实现；尤其不能先把多个 `Object` 塞进旧 `MC2TaskSpec.sources`，再让旧的单对象静态构建、Center 和 writeback 路径猜测其含义。E6 是未来 GPU 分支，不是当前 CPU 统一域上线的前置条件；E7 中只依赖 E5 的 CPU 迁移清理可以先完成，GPU 专属清理留到 E6 真正立项后。
 
 ## 设计结论
 
@@ -682,6 +682,37 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 ## 分阶段执行计划
 
+### 当前主线与真实混合执行顺序
+
+本轮架构工作的起点不是抽象地“重写 solver”，也不是先追求 CPU 极限性能，而是解决 MeshCloth 多代理自碰的结构性重复：多个 task 开启跨 task 碰撞时，既各自运行内部 self 流水，又复制 primitive 到 aggregate 再做一次 grid/candidate/contact。产品需要的是多个代理在同一个 MeshCloth 粒子域中自然互碰，而不是更快地维护两套碰撞流水。
+
+因此因果链固定为：
+
+```text
+MeshCloth 多代理自碰重复
+  -> 多 Object 编译为一个统一粒子域
+  -> partition 参数、Center/Anchor/Teleport 与输出所有权显式化
+  -> 同域 self collision 和多目标原子写回
+  -> 后端中立 SoA、pass 依赖、容量和 IO 合同
+  -> 未来 GPU persistent domain / dispatch
+```
+
+E 阶段描述功能门禁，P 阶段描述穿插其中的性能与后端工作；它们不是两条做完一条再做另一条的队列。真实实施顺序如下：
+
+| 顺序 | 合并阶段 | 当前交付 | 明确不做 |
+|---:|---|---|---|
+| 1 | E0-E2 + P1-A 前半 | 冻结 partition、capture、compile、logical/physical identity、参数 SoA 和 output map；已完成。 | 不创建 fused runtime，不改产品 task。 |
+| 2 | E3 + P2 分区状态 + P3 + P6-A | 用同一 compiled domain 建立纯 native、单线程 CPU reference；补齐每 partition Center/Anchor/Teleport、完整 pass 顺序和单 source V0 tolerance。这里同时冻结 GPU 将复用的数据/pass 边界。 | 不建 CPU worker/job DAG，不做产品切换。 |
+| 3 | E3 收口 + P0 | 完整 step 骨架成立后接入原生固定槽阶段计时，先得到 constraint、collision、self 各段证据；计时关闭必须零时钟读取和零诊断分配。 | 不依据尚未拆开的总时长猜优化项。 |
+| 4 | P1-B | 建立保守失效的 source observation cache，消除普通热帧静态全量扫描。它不改变数值语义，可在 E4 前独立验收。 | 不把不可靠 depsgraph 标志伪装成完整 revision。 |
+| 5 | E4 + P2 + 证据驱动的 P5 | 执行多 source fused CPU domain，一次 whole-domain self 流水覆盖同/跨 partition；接入差异化粒子与约束参数。只做 P0 已证明的低风险布局/容量优化。 | 不保留普通多代理的 aggregate 双流水，不做粒子域 CPU 并发。 |
+| 6 | E5 + P1-A 后半 | 先闭环多目标结果事务，再接产品 collector、隐式/显式覆盖和可读 fusion report；通过 soak 后切换 MeshCloth 主路径。 | 不静默回退为 `N Object -> N task`。 |
+| 7 | E7-CPU | 删除已经被新 CPU 路径替代的 MeshCloth 隐式拆 task、aggregate 常规路径和 V0 兼容层；保留有证据需要的显式 fallback。 | 不等待 GPU 才清理已经失去所有权的 CPU 旧路径。 |
+| 8 | P6-B（贯穿 2-7，最终收口） | 把已落地的 SoA、pass 读写集、buffer 容量/溢出、增量上传、CPU tolerance 和单向 writeback 汇成 GPU implementation package。 | 不因此创建 GPU runtime，也不让 CPU 为 GPU 准备发生不可解释退化。 |
+| 9 | E6（未来独立里程碑） | 在统一域产品路径和规模基准稳定后，实现最小 GPU 原型并测 `2k/10k/50k/100k` 收益曲线，再决定完整覆盖顺序。GPU 是既定长期方向，但不是当前 E3-E5 的交付时限。 | 不以单个 1760 粒子样本或只报 kernel 时间宣称成功。 |
+
+P4 CPU 并发不在默认实施序列。只有未来平台约束使 GPU 路线不可用、并且 P0 证明某个无写冲突 kernel 的收益足以覆盖长期维护成本时，才允许作为单独决策重新打开；当前实现不得为它预埋 worker object、grain threshold 或调度 DAG。
+
 ### E0：合同冻结与固定夹具
 
 范围：只改文档、纯 dataclass/schema、fixture generator 和合同测试，不改生产节点或 native ABI。
@@ -781,11 +812,11 @@ E3 native 合入门禁：新 owner 能在无 Blender 对象的 C++/headless fixt
 
 退出条件：多 Mesh 每帧各自写回正确 Object local offsets；任一 target 失效时整批不发布；collector 显示真实 fusion 状态，不存在静默 `N Object -> N task` 回退。
 
-### E6：GPU backend 原型与收益门禁
+### E6：未来 GPU backend 原型与收益门禁
 
-范围：复用同一 `MC2CompiledDomain` 和 frame/output contract，实现最小 GPU backend；不先追求全部算法覆盖。
+E6 是确定的长期方向，但作为独立后续里程碑排期；它不阻塞 E3-E5 的统一域产品交付，也不要求当前立即实现 GPU solver。当前阶段只完成 P6-A/P6-B 的后端中立准备：同一 `MC2CompiledDomain`、frame/output contract、pass 读写集、buffer 容量/溢出、增量上传边界和 CPU reference tolerance。
 
-优先原型：integration + Distance + whole-domain self-collision 的代表热点，保留 CPU reference 对照。
+未来进入 E6 时，先实现 integration + Distance + whole-domain self-collision 的最小代表原型，保留 CPU reference 对照；通过规模曲线和传输成本决定剩余 pass 的覆盖顺序，而不是一开始复制完整 CPU solver。
 
 退出条件：
 
@@ -796,7 +827,7 @@ E3 native 合入门禁：新 owner 能在无 Blender 对象的 C++/headless fixt
 
 ### E7：迁移收尾
 
-完成 BoneCloth/BoneSpring collector 迁移评估、删除 MeshCloth 旧隐式拆 task 路径、更新蓝本和声明、清理 V0 兼容层。只有新路径通过长期资产回归后才允许删除旧实现。
+E7 按所有权分两次收口。E5 通过长期资产回归后立即执行 E7-CPU：完成 BoneCloth/BoneSpring collector 迁移评估、删除 MeshCloth 旧隐式拆 task 路径、更新蓝本和声明、清理已被统一 CPU domain 替代的 V0 兼容层；这部分不等待 E6。未来 GPU 产品化后再执行 E7-GPU，删除原型适配、临时 readback/fallback 和已经被正式 backend owner 取代的资源路径。任何旧实现都只能在替代路径有长期证据后删除。
 
 ## 验收目录
 

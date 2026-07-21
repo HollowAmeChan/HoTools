@@ -12,20 +12,23 @@
 2. native 单线程求解在 1760 粒子、6 个 substep、495 个 collider 的样本中占用约 `25-39 ms`，但现有计时只看到整个 native group，尚不能判断约束、外碰和 self collision 各自比例。
 3. 两个 MeshCloth task 开启跨 task self collision 后，native 求解增至约 `88-91 ms`。当前实现会先运行各 context 的内部 self 流水，再把所有 self primitive 复制进 aggregate context，重新建 grid、候选和 contact，最后散回；这不是低成本的跨岛接触。
 
+当前主线由产品问题逐层推出，而不是三个并列目标：MeshCloth 多代理跨 task 自碰重复，要求真正的同域粒子场；同域粒子场要求 partition 参数、状态和多目标 IO 显式化；这些边界完成后，才自然成为未来 GPU backend 的输入。CPU 小样本极限优化和 CPU 粒子域并发都不是主目的。
+
 因此实施顺序固定为：
 
 ```text
-可靠测量
-  -> partition entry / sparse override / setup collector 节点合同
-  -> 消除热帧静态全量扫描
-  -> 多 Object 编译为一个 fused MeshCloth context
-  -> backend-neutral 数据与 pass 合同
-  -> native 纯计算边界与释放 GIL
-  -> 可选的 context Batch 或 GPU backend 评估
-  -> 数据布局、SIMD和目标 backend 验证
+E0-E2：partition / compile / output 合同
+  -> E3：单 source 纯 native CPU reference + GPU 可复用 pass 边界
+  -> P0：完整 step 的原生分段计时
+  -> P1-B：热帧静态观察缓存
+  -> E4/P2：多 Object fused MeshCloth + 一次 whole-domain self
+  -> E5：多目标事务、覆盖与产品 collector
+  -> E7-CPU：删除被替代的拆 task / aggregate / V0 路径
+  -> P6-B：整理已验证的 GPU implementation package
+  -> E6：未来独立 GPU 原型与规模曲线里程碑
 ```
 
-不能先用多线程掩盖重复工作。多线程也不能替代 fused context；它只能加速仍然必要的工作。
+P1-A、P2、P3、P5 和 P6 并非排在 E 阶段之后，而是按上述门禁穿插交付；精确映射以 `MC2_NODE_SIMULATION_DESIGN.md` 的“当前主线与真实混合执行顺序”为准。不能先用多线程掩盖重复工作。多线程也不能替代 fused context；当前默认路线不实施 CPU 并发。
 
 ## CPU并行与GPU前置的路线决策
 
@@ -34,8 +37,8 @@
 | 路线 | 初始难度 | 即时收益 | 数值/维护风险 | 决策 |
 |---|---:|---:|---:|---|
 | 静态观察缓存 | 中 | 高，直接回收 `16-18 ms` 热帧扫描 | 失效遗漏风险，可用保守审计控制 | 立即做 |
-| 独立 context 粗粒度 Batch | 中 | 中，适合互不交互的 task | GIL、context所有权、共享 collider 快照 | 作为有限候选 |
-| 粒子域 CPU Split Job | 高到很高 | 中，取决于可并行 kernel 占比 | 写冲突、迭代顺序、确定性、任务图和调试复杂度 | 暂缓，默认不做 |
+| 独立 context 粗粒度 Batch | 中 | 中，适合互不交互的 task | GIL、context所有权、共享 collider 快照 | 不进入当前实施序列；仅保留研究记录 |
+| 粒子域 CPU Split Job | 高到很高 | 中，取决于可并行 kernel 占比 | 写冲突、迭代顺序、确定性、任务图和调试复杂度 | 当前不做，不预埋调度抽象 |
 | backend-neutral SoA/pass 合同 | 中到高 | CPU即时收益低 | 主要是边界设计风险 | 优先做，服务 CPU/GPU |
 | 真正 GPU backend | 很高 | 足够大规模时可能很高 | 上传/同步、容量、驱动、数值差异、双后端维护 | 通过门槛后再做 |
 
@@ -367,18 +370,20 @@ Blender主线程 + GIL:
 
 单独释放 GIL不会让一个单线程 step 自动变快；它只是安全 worker pool、并发独立 context 和避免阻塞其他 Python 线程的必要边界。完成这一步后默认仍保持单线程 context solve，直到 P0 的内部计时证明需要更激进的方案。
 
-### P4：保守的 CPU 并发边界
+### P4：CPU 并发非目标与重新开启门槛
 
 原版 MagicaCloth2 v2.14+ 的公开性能说明采用混合调度：小 cloth 用一个组件一个 Batch Job；重 cloth 使用阶段内 Split Job；超过约 300 proxy vertex 或启用 self/mutual collision 时倾向 Split Job。这个事实证明原版有内部 Split Job，但不构成 OmniMC2 必须复制该复杂度的理由；我们只借鉴“按负载选择调度粒度”的原则，不照搬 Unity Job API。
 
-OmniMC2 的目标调度：
+OmniMC2 当前没有 CPU 并发交付目标。单线程 fused CPU domain 是长期保留的正确性 reference；只要 GPU-ready 重构没有造成无法由工作量解释的显著 CPU 回归，就不为小样本最低延迟引入 worker pool、job DAG、grain threshold、颜色组归并或并发 debug 协议。
+
+以下仅记录若未来必须重新评估时允许触碰的边界，不是待办清单：
 
 - 多个互不交互的小 context：作为 Batch Job 并行。
 - 一个较大的 fused MeshCloth context：默认仍按单线程 reference 顺序运行；只有独立 kernel 经过计时和数值验证后才局部并行。
 - self collision 或未来仍存在的跨 context barrier：显式依赖栅栏，但不因此自动引入粒子级 job DAG。
 - 小数组低于 grain threshold 时保持单线程，避免调度成本大于计算。
 
-若最终采用 context 级 Batch Job，使用 native 持久 worker pool，线程数量按物理核心、平台和场景阈值配置。禁止每帧 `std::async`/创建线程；禁止 worker 存活后异步访问已释放 context；world dispose、undo/load 和 addon unregister 必须先排空队列。
+P4 只有在未来目标平台无法使用 GPU，且 P0/P5 的固定基准同时证明 CPU 是阻塞项、候选 kernel 无共享写冲突、收益显著高于串行、维护预算已被明确接受时才可重新立项。届时也必须使用独立 RFC 和提交序列；禁止借“GPU 前置”名义提前加入线程对象。若最终采用 context 级 Batch Job，使用 native 持久 worker pool，线程数量按物理核心、平台和场景阈值配置。禁止每帧 `std::async`/创建线程；禁止 worker 存活后异步访问已释放 context；world dispose、undo/load 和 addon unregister 必须先排空队列。
 
 ### 可直接并行与有写冲突的阶段
 
@@ -411,7 +416,7 @@ native 分阶段计时完成后，优先检查以下代码形态：
 
 这些项目很可能有收益，但在 native 内部计时出现前只属于候选，不预先指定优先级。
 
-### P6：GPU 前置准备与决策门槛
+### P6：GPU 前置准备与未来实施包
 
 fused context、连续 partition ranges、显式 particle/constraint SoA、明确的 pass 依赖和无 Python inner-loop 是 GPU 化的前置条件，但不代表应立即实现 GPU solver。这里的前置工作应避免引入 CPU 专用的 worker object、线程亲和性和每粒子 callback；它只定义数据、资源和阶段合同。
 
@@ -433,7 +438,7 @@ GPU 之前必须成立：
 - Blender写回不要求 GPU 每 substep 同步到 CPU；
 - CPU reference 与 GPU tolerance/确定性等级已经定义。
 
-真正 GPU backend 只有在 CPU fused、静态缓存和单线程 reference 仍无法达到目标资产预算，且 profiling 显示足够大的可并行 kernel 占比、可接受的上传/同步比例时才立项。GPU 仍需自己的冲突处理（例如约束 coloring、Jacobi 或分阶段 reduction），但这应作为 GPU 数值设计单独评估，而不是先在 CPU 侧建一套长期 job 抽象。否则 PCIe/driver 同步、双实现维护和调试成本可能高于收益。
+GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限内。P6 当前要交付的是足以让未来实现直接开工的 implementation package，而不是一个藏在 CPU 路径里的半成品 GPU runtime。统一 CPU domain、静态缓存和 P0 profiling 用来选择 GPU pass 覆盖顺序、容量策略与同步预算，不用来决定“永远做不做 GPU”。GPU 仍需自己的冲突处理（例如约束 coloring、Jacobi 或分阶段 reduction），这必须作为 GPU 数值设计单独评估，不能先在 CPU 侧建一套长期 job 抽象。
 
 ## 性能与正确性门禁
 
@@ -456,27 +461,25 @@ GPU 之前必须成立：
 | P1-A | partition entry、sparse patch、implicit/explicit merge、collector fusion report 和来源可观察性先闭环，不能出现隐藏 source-to-task 拆分。 |
 | P1-B | 代表资产热帧静态准备 p95 低于 `2 ms`，失效矩阵通过。 |
 | P2 | 多 source fused 与手工 join 的求解成本同量级，且保留独立配置/变换/写回；明显快于跨 task aggregate。 |
-| P3/P4 | 独立 context 的 2/4 worker Batch 只有在实测超过串行且小任务不退化时才启用；fused context 默认保持 reference 语义。 |
+| P3 | 纯 native step 不访问 Python/Blender，单线程 fused context 长期作为 reference；释放 GIL 只代表边界正确，不承诺并发。 |
+| P4 | 当前验收是没有引入 worker/job DAG；只有满足独立重新立项目槛时才允许出现 CPU 并发实现。 |
 | P5 | 每项优化由内部阶段计时证明，输出合同不变。 |
-| P6 | backend-neutral 数据/pass 合同先闭环；只有 CPU 路线仍不达标且可并行占比、上传和同步预算都支持时才立项 GPU backend，并以规模收益曲线而非单个 1760 粒子样本决定是否成功。 |
+| P6 | backend-neutral 数据/pass、容量、增量上传、output 和 CPU tolerance 合同先闭环，形成可直接实施的 GPU package；未来 backend 以规模收益曲线而非单个 1760 粒子样本决定覆盖顺序和成功标准。 |
 
-## 建议的实施提交序列
+## 真实混合实施提交序列
 
-1. `perf(mc2): add native solve stage counters`
-2. `refactor(mc2): add partition entry and sparse patch specs`
-3. `feat(mc2): add mesh object override and task collector nodes`
-4. `feat(mc2): merge implicit mesh cloth registry entries`
-5. `perf(mc2): cache observed static source snapshots`
-6. `feat(mc2): build fused multi-source mesh contexts`
-7. `feat(mc2): add partition center teleport and writeback`
-8. `feat(mc2): compile particle and constraint overrides`
-9. `refactor(mc2): define backend-neutral execution passes`
-10. `refactor(mc2): isolate pure native step from Python errors`
-11. `perf(mc2): prototype gpu-compatible particle and broadphase buffers`
-12. `perf(mc2): add optional native context batch scheduler`
-13. `perf(mc2): evaluate optional cpu particle split kernels`
+1. E0-E2 已完成：partition entry、sparse patch、capture/compile、参数 SoA、logical/physical identity 和 output map。
+2. E3 当前：逐段复用/提取现有 kernel，完成 per-partition Center/Anchor/Teleport history、完整单线程 step 和 V0 tolerance；同时为每个 pass 固定 backend-neutral IO/读写集。
+3. E3 step 骨架完整后接 P0 native stage counters；计时实现与数值 pass 分提交。
+4. E4 前完成 P1-B source observation cache 与失效矩阵。
+5. E4/P2 合并多 source context、whole-domain self 和差异化参数；每个子交付独立做单/双 source oracle。
+6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
+7. E5 先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
+8. soak 通过后执行 E7-CPU，删除已失去所有权的拆 task、普通 aggregate 和 V0 兼容路径。
+9. 贯穿 2-8 累积 P6 证据，最后单独提交 GPU implementation package；不创建运行时 backend。
+10. E6 作为未来独立里程碑提交最小 GPU prototype、规模曲线、tolerance 和 fallback，再按证据扩展 pass。
 
-每个提交都应可独立基准、回归和回滚。fused context 与多线程不得合并成一个无法区分收益和数值变化的大提交。
+P4 不在提交序列中。每个提交都应可独立基准、回归和回滚；fused context、算法优化与未来 GPU 原型不得合并成一个无法区分收益和数值变化的大提交。
 
 ## 外部依据
 
