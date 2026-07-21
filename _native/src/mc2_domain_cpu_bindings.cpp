@@ -562,8 +562,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
     );
     module.def(
         "mc2_domain_cpu_v1_step_bending",
-        [](std::uint64_t handle) { require_domain(handle)->step_bending(); },
+        [](std::uint64_t handle, float simulation_power) {
+            require_domain(handle)->step_bending(simulation_power);
+        },
         nb::arg("handle"),
+        nb::arg("simulation_power") = 1.0f,
         "Run the explicit native Bending kernel slice."
     );
     module.def(
@@ -580,6 +583,18 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("depths"),
         nb::arg("inv_masses"),
         "Configure the explicit E3 Center inertia kernel slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_configure_constraint_friction",
+        [](std::uint64_t handle, cf32_1d friction_values) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(friction_values.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU constraint friction must match particle_count");
+            }
+            domain->configure_constraint_friction(friction_values.data());
+        },
+        nb::arg("handle"), nb::arg("friction_values"),
+        "Configure the explicit native Angle/Bending friction mass slice."
     );
     module.def(
         "mc2_domain_cpu_v1_step_inertia",

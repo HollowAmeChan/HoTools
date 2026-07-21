@@ -35,6 +35,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_bending",
     "mc2_domain_cpu_v1_step_bending",
     "mc2_domain_cpu_v1_configure_inertia",
+    "mc2_domain_cpu_v1_configure_constraint_friction",
     "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_configure_center",
     "mc2_domain_cpu_v1_step_center",
@@ -99,6 +100,7 @@ class MC2NativeCPUKernelV1:
             self._configure_tether(handle, program)
             self._configure_bending(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
+            self._configure_constraint_friction(handle, parameters)
             self._configure_center(handle, parameters)
             self._configure_center_frame_shift(handle, parameters)
             self._configure_integration(handle, parameters)
@@ -203,9 +205,9 @@ class MC2NativeCPUKernelV1:
             key, positions, float(settings["compression"]), float(settings["stretch"])
         )
 
-    def step_bending(self, handle) -> None:
+    def step_bending(self, handle, simulation_power: float = 1.0) -> None:
         key = self._require_handle(handle)
-        self._module.mc2_domain_cpu_v1_step_bending(key)
+        self._module.mc2_domain_cpu_v1_step_bending(key, float(simulation_power))
 
     def step_angle(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -493,6 +495,7 @@ class MC2NativeCPUKernelV1:
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "distance_simulation_power",
+            "bending_simulation_power",
             "velocity_weight", "gravity",
             "step_basic_positions", "tether_compression", "tether_stretch",
             "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
@@ -534,7 +537,7 @@ class MC2NativeCPUKernelV1:
             "limit_enabled": settings["angle_limit_enabled"],
         })
         if any(table.kind == "bending" for table in program.constraint_tables):
-            self.step_bending(key)
+            self.step_bending(key, settings["bending_simulation_power"])
         self.step_distance(key, settings["distance_simulation_power"])
         self.step_motion(key, {
             "base_positions": settings["motion_base_positions"],
@@ -560,6 +563,7 @@ class MC2NativeCPUKernelV1:
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "distance_simulation_power",
+            "bending_simulation_power",
             "velocity_weight", "gravity",
             "step_basic_positions", "tether_compression", "tether_stretch",
             "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
@@ -606,7 +610,7 @@ class MC2NativeCPUKernelV1:
             "limit_enabled": structural["angle_limit_enabled"],
         })
         if any(table.kind == "bending" for table in self._programs[key].constraint_tables):
-            self.step_bending(key)
+            self.step_bending(key, structural["bending_simulation_power"])
         point_collision = settings["point_collision"]
         if point_collision is not None:
             if not isinstance(point_collision, Mapping):
@@ -938,6 +942,23 @@ class MC2NativeCPUKernelV1:
         damping = np.asarray(table.values[:, fields["damping"]], dtype=np.float32)
         damping.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_integration(handle, damping)
+
+    def _configure_constraint_friction(
+        self,
+        handle: int,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        fields = {
+            name: index for index, name in enumerate(parameters.particle_parameters.fields)
+        }
+        if "collision_friction" not in fields:
+            raise ValueError("particle parameter table lacks collision_friction")
+        values = np.asarray(
+            parameters.particle_parameters.values[:, fields["collision_friction"]],
+            dtype=np.float32,
+        )
+        values.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_constraint_friction(handle, values)
 
     def _configure_center(
         self,

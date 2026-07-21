@@ -980,7 +980,9 @@ void DomainV1::step_angle(
     }
     hotools::Mc2AngleConstraintView view;
     view.positions = world_positions_.data();
-    view.inv_masses = inertia_inv_masses_.data();
+    view.inv_masses = constraint_friction_ready_
+        ? angle_inverse_masses_.data()
+        : inertia_inv_masses_.data();
     view.parent_indices = baseline_parent_indices_.data();
     view.baseline_start = baseline_line_starts_.data();
     view.baseline_count = baseline_line_counts_.data();
@@ -1340,7 +1342,7 @@ void DomainV1::configure_bending(
     bending_ready_ = dihedral_count != 0 || volume_count != 0;
 }
 
-void DomainV1::step_bending() {
+void DomainV1::step_bending(float simulation_power) {
     ensure_live();
     if (frame_ < 0 || generation_ < 0) {
         throw std::logic_error("MC2 CPU bending step requires update_frame");
@@ -1348,9 +1350,14 @@ void DomainV1::step_bending() {
     if (!bending_ready_ || !inertia_ready_) {
         throw std::logic_error("MC2 CPU bending step requires topology and particle configuration");
     }
+    if (!std::isfinite(simulation_power) || simulation_power < 0.0f) {
+        throw std::invalid_argument("MC2 CPU bending simulation power is invalid");
+    }
     hotools::Mc2TriangleBendingView view;
     view.positions = world_positions_.data();
-    view.inv_masses = inertia_inv_masses_.data();
+    view.inv_masses = constraint_friction_ready_
+        ? bending_inverse_masses_.data()
+        : inertia_inv_masses_.data();
     view.stiffness_values = bending_stiffness_values_.data();
     view.dihedral_pairs = bending_dihedral_pairs_.data();
     view.dihedral_rest_angles = bending_dihedral_rest_angles_.data();
@@ -1360,6 +1367,7 @@ void DomainV1::step_bending() {
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.dihedral_count = static_cast<std::int64_t>(bending_dihedral_rest_angles_.size());
     view.volume_count = static_cast<std::int64_t>(bending_volume_rest_.size());
+    view.simulation_power = simulation_power;
     hotools::project_triangle_bending_mc2(view);
     ++step_count_;
 }
@@ -1378,6 +1386,32 @@ void DomainV1::configure_inertia(const float* depths, const float* inv_masses) {
     inertia_depths_.swap(next_depths);
     inertia_inv_masses_.swap(next_inv_masses);
     inertia_ready_ = true;
+}
+
+void DomainV1::configure_constraint_friction(const float* friction_values) {
+    ensure_live();
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU constraint friction requires configure_inertia");
+    }
+    require_finite(friction_values, particle_count_, "constraint friction values");
+    angle_inverse_masses_.resize(particle_count_);
+    bending_inverse_masses_.resize(particle_count_);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (friction_values[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU constraint friction must be non-negative");
+        }
+        const bool fixed = (particle_attribute_flags_[vertex] & 0x01u) != 0u;
+        const float friction_mass = 1.0f / (1.0f + friction_values[vertex] * 3.0f);
+        angle_inverse_masses_[vertex] = fixed ? 0.0f : friction_mass;
+        const float depth_offset = 1.0f - inertia_depths_[vertex];
+        bending_inverse_masses_[vertex] = fixed
+            ? 0.01f
+            : 1.0f / (
+                1.0f + friction_values[vertex] * 3.0f +
+                depth_offset * depth_offset * 5.0f
+            );
+    }
+    constraint_friction_ready_ = true;
 }
 
 void DomainV1::step_inertia(

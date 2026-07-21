@@ -160,6 +160,7 @@ struct Mc2TriangleBendingView {
     std::int64_t vertex_count = 0;
     std::int64_t dihedral_count = 0;
     std::int64_t volume_count = 0;
+    float simulation_power = 1.0f;
 };
 
 struct Mc2AngleConstraintView {

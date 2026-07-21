@@ -157,11 +157,12 @@ public:
         std::size_t volume_count,
         const float* stiffness_values
     );
-    void step_bending();
+    void step_bending(float simulation_power = 1.0f);
     void configure_inertia(
         const float* depths,
         const float* inv_masses
     );
+    void configure_constraint_friction(const float* friction_values);
     void configure_center(
         const float* local_inertia,
         const float* local_movement_speed_limits,
@@ -374,6 +375,9 @@ private:
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
     bool inertia_ready_ = false;
+    std::vector<float> angle_inverse_masses_;
+    std::vector<float> bending_inverse_masses_;
+    bool constraint_friction_ready_ = false;
     std::vector<float> integration_damping_values_;
     bool integration_ready_ = false;
     std::vector<float> collision_friction_;

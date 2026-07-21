@@ -703,7 +703,7 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
 
     bool has_stiffness = false;
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
-        if (view.stiffness_values[vertex] > kMc2Epsilon) {
+        if (view.stiffness_values[vertex] * view.simulation_power > kMc2Epsilon) {
             has_stiffness = true;
             break;
         }
@@ -2062,7 +2062,11 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         float inv_mass_buffer[4];
         float inv_mass_sum = 0.0f;
         for (int local = 0; local < 4; ++local) {
-            local_stiffness += clamp_float(view.stiffness_values[vertices[local]], 0.0f, 1.0f);
+            local_stiffness += clamp_float(
+                view.stiffness_values[vertices[local]] * view.simulation_power,
+                0.0f,
+                1.0f
+            );
             const float raw_inv_mass = view.inv_masses[vertices[local]];
             inv_mass_buffer[local] =
                 raw_inv_mass <= kMc2Epsilon ? kTriangleBendingFixedInverseMass : raw_inv_mass;
@@ -2206,7 +2210,11 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         float inv_mass_buffer[4];
         float inv_mass_sum = 0.0f;
         for (int local = 0; local < 4; ++local) {
-            local_stiffness += clamp_float(view.stiffness_values[vertices[local]], 0.0f, 1.0f);
+            local_stiffness += clamp_float(
+                view.stiffness_values[vertices[local]] * view.simulation_power,
+                0.0f,
+                1.0f
+            );
             const float raw_inv_mass = view.inv_masses[vertices[local]];
             inv_mass_buffer[local] =
                 raw_inv_mass <= kMc2Epsilon ? kTriangleBendingFixedInverseMass : raw_inv_mass;
