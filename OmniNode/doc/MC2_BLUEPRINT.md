@@ -51,7 +51,7 @@ E3 的 CPU backend 生命周期边界已冻结为独立适配器：`cpu_backend.
 
 E3 的 frame IO 也已保持独立：`frame_compile.py` 只接收冻结 partition snapshot，校验统一 frame/generation、顶点覆盖和 transform identity，再按 compiled logical index view 生成 `MC2DomainFramePacketV1`；它不读取 Blender，不保留跨帧状态，不把 object reference 传入 backend。
 
-E3 native owner 已真实编译并通过 py311/py313 headless smoke：`mc2_domain_cpu.cpp` 不依赖 V0/Python，复制 bind/frame POD、校验 domain/layout identity、保留 owner state，并用 live-handle registry 保证重复 dispose 安全；现有 `project_neighbor_constraints_mc2` 通过 `configure_distance/step_distance` 接入显式 Distance slice，现有 `apply_substep_inertia_mc2` 通过 `configure_inertia/step_inertia` 接入 depth-weighted Center inertia slice。后者按 compiled `particle_attribute_flags` 使用 Fixed=0、Move=1 的逆质量；自碰交互参数 `cloth_mass` 不参与粒子积分。`cpu_native_kernel.py` 只有在 `data_path_only=True` 且明确请求对应 slice 时才调用数值路径。该阶段证明 ABI、frame ownership、生命周期和两段复用既有 kernel 的数值路径，不代表完整 prediction/integration、partition Center/Teleport history 或 V0 tolerance oracle 已完成。
+E3 native owner 已真实编译并通过 py311/py313 headless smoke：`mc2_domain_cpu.cpp` 不依赖 V0/Python，复制 bind/frame POD、校验 domain/layout identity、保留 owner state，并用 live-handle registry 保证重复 dispose 安全；现有 `project_neighbor_constraints_mc2` 通过 `configure_distance/step_distance` 接入显式 Distance slice，现有 `apply_substep_inertia_mc2` 通过 `configure_inertia/step_inertia` 接入 depth-weighted Center inertia slice。后者按 compiled `particle_attribute_flags` 使用 Fixed=0、Move=1 的逆质量；自碰交互参数 `cloth_mass` 不参与粒子积分。V0 原有 damping/velocity weight/gravity/position prediction 循环已提取为纯 `integrate_particles_mc2`，V0 与新 owner 分别用 curve view 和 compiled particle SoA 调用同一个 kernel；`cpu_native_kernel.py` 只有在 `data_path_only=True` 且明确请求对应 slice 时才调用数值路径。双 ABI 完整 native 27/27、owner 6/6 和 adapter 4/4 通过。该阶段证明 ABI、frame ownership、生命周期和三段共享/复用既有 kernel 的数值路径，不代表 partition Center/Teleport history、完整 substep 编排或端到端 V0 tolerance oracle 已完成。
 
 E3 native 实施顺序已冻结：新增独立 C++ domain owner/POD view/handle，静态 SoA 和 constraint/primitive/filter 表在 allocation 时校验并拥有；每帧只接收 frame packet view；先提取 integration/Distance/Center 的 native 数值 slice，以 V0 作为 reference；binding 只做 ndarray/view 与 handle 生命周期。新 owner 不得 include `mc2_context_internal.hpp`、接收 `PyObject*` 或注册 Physics World slot。无 Blender headless fixture 的 create/update/step/read/dispose、失败回滚、V0 tolerance 和 debug-off readback 门禁未通过前，Python adapter 只能接测试 kernel。
 
@@ -664,7 +664,7 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `domain_compile.py` | E1单source与E2多source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
 | `shadow_pipeline.py` | E1显式影子对照与阶段计时；不解算、不写回、不拥有backend，禁止演变为shadow solver |
 | `cpu_backend.py` | E3后端生命周期适配器与kernel协议；只拥有编译域的后端句柄、physical map和分区history，不接管V0 slot/Physics World |
-| `cpu_native_kernel.py` | E3 Python到独立C++ owner的显式适配；仅开放已验证的 Distance/Center inertia slice，完整数值 kernel 未就绪时拒绝普通模拟步 |
+| `cpu_native_kernel.py` | E3 Python到独立C++ owner的显式适配；仅开放已验证的 integration/Distance/Center inertia slice，完整数值 kernel 未就绪时拒绝普通模拟步 |
 | `frame_compile.py` | E3 frame snapshot到logical domain packet的纯编译；不读取Blender，不拥有backend/history |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |
