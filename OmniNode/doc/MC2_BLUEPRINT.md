@@ -14,6 +14,7 @@
 - 物理世界公共架构：`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - 各domain当前完成度：`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - OmniNode通用架构：`../ARCHITECTURE.md`
+- MC2性能热点、多代理融合、native并行与GPU前置策略：`MC2_DEEP_OPTIMIZATION_STRATEGY.md`
 - 人工验收反例与已吸收决策：见本文“Debug收尾与产品踩坑”及对应能力章节；不再维护独立推进文档。
 
 代码事实源优先级：`mc2/declaration.py`、`mc2/capabilities.py`、生产solver/native owner、自动化测试、本文。
@@ -754,7 +755,7 @@ Python 3.11 + Blender 4.5是主门禁。Python 3.13 + Blender 5.1用于ABI兼容
 | Mesh 1600粒子 | 19.87ms | 4.79/5.26ms | 4.27ms | 19.41ms | 5.34ms | 464KB |
 | Bone 384粒子 | 18.24ms | 6.40/7.04ms | 6.21ms | 19.01ms | 6.87ms | 531KB |
 
-large热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group step约0.60ms；Bone frame prepare约2.07ms、result build约1.60ms、raw snapshot约1.18ms、writeback约0.73ms。说明当前优化优先级在Blender snapshot/frame/result适配，不在native group step。数字不作为跨机器绝对目标；重新基线必须使用同一环境、fixture和脚本。
+上述large fixture热帧热点：Mesh raw snapshot约2.47ms、frame prepare约0.83ms、group step约0.60ms；Bone frame prepare约2.07ms、result build约1.60ms、raw snapshot约1.18ms、writeback约0.73ms。这组微型维护fixture只证明对应输入规模的适配成本，不能外推为重资产的native优先级。2026-07-21代表资产捕获在1760粒子、6 substep、495 collider下测得热帧静态准备约16-18ms、native group约25-39ms；两个MeshCloth task开启一个跨task pair后native group约88-91ms。稳定事实是必须同时分解静态观察和native内部阶段，具体优化顺序、fused MeshCloth设计与并行门槛见`MC2_DEEP_OPTIMIZATION_STRATEGY.md`。数字不作为跨机器绝对目标；重新基线必须使用同一环境、fixture和脚本。
 
 ## 验收与自动审计
 
