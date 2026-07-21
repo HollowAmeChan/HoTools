@@ -77,7 +77,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            const std::string& domain_signature,
            const std::string& layout_signature,
            cf32_2d bind_positions,
-           cf32_2d bind_rotations) {
+           cf32_2d bind_rotations,
+           cu32_1d particle_partition_index,
+           cu32_1d particle_attribute_flags) {
             if (static_cast<std::size_t>(bind_positions.shape(0)) != particle_count ||
                 bind_positions.shape(1) != 3) {
                 throw nb::value_error("bind_positions must be [particle_count,3]");
@@ -86,12 +88,18 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 bind_rotations.shape(1) != 4) {
                 throw nb::value_error("bind_rotations must be [particle_count,4]");
             }
+            if (static_cast<std::size_t>(particle_partition_index.shape(0)) != particle_count ||
+                static_cast<std::size_t>(particle_attribute_flags.shape(0)) != particle_count) {
+                throw nb::value_error("particle metadata must match particle_count");
+            }
             mc2_domain_cpu::ProgramViewV1 program {
                 schema_version,
                 particle_count,
                 partition_count,
                 bind_positions.data(),
                 bind_rotations.data(),
+                particle_partition_index.data(),
+                particle_attribute_flags.data(),
                 domain_signature.c_str(),
                 layout_signature.c_str(),
             };
@@ -109,6 +117,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("layout_signature"),
         nb::arg("bind_positions"),
         nb::arg("bind_rotations"),
+        nb::arg("particle_partition_index"),
+        nb::arg("particle_attribute_flags"),
         "Create an independent E3 MC2 CPU domain data-path owner."
     );
     module.def(

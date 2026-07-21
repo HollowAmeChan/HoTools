@@ -13,6 +13,8 @@ struct ProgramViewV1 {
     std::size_t partition_count = 0;
     const float* bind_positions = nullptr;
     const float* bind_rotations = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* particle_attribute_flags = nullptr;
     const char* domain_signature = nullptr;
     const char* layout_signature = nullptr;
 };
@@ -108,6 +110,9 @@ private:
     std::string layout_signature_;
     std::vector<float> bind_positions_;
     std::vector<float> bind_rotations_;
+    std::vector<std::uint32_t> particle_partition_index_;
+    std::vector<std::uint32_t> particle_attribute_flags_;
+    std::vector<float> animated_base_world_positions_;
     std::vector<float> world_positions_;
     std::vector<float> world_normals_;
     std::vector<float> velocity_positions_;

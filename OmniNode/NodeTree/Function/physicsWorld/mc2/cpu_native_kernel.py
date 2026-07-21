@@ -71,6 +71,8 @@ class MC2NativeCPUKernelV1:
             program.layout_signature,
             program.particle_bind_position,
             program.particle_bind_rotation,
+            program.particle_partition_index,
+            program.particle_attribute_flags,
         ))
         if handle <= 0:
             raise RuntimeError("native CPU domain returned an invalid handle")

@@ -19,7 +19,7 @@ sys.path.insert(0, os.environ.get(
 import hotools_native  # noqa: E402
 
 
-def _create(partition_count=1):
+def _create(partition_count=1, particle_attributes=(0, 0, 0)):
     bind_positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
         dtype=np.float32,
@@ -30,6 +30,10 @@ def _create(partition_count=1):
     )
     bind_positions.flags.writeable = False
     bind_rotations.flags.writeable = False
+    particle_partitions = np.asarray(
+        (0, 0, 0) if partition_count == 1 else (0, 0, 1), dtype=np.uint32
+    )
+    particle_attributes = np.asarray(particle_attributes, dtype=np.uint32)
     return hotools_native.mc2_domain_cpu_v1_create(
         1,
         3,
@@ -38,6 +42,8 @@ def _create(partition_count=1):
         "layout:test",
         bind_positions,
         bind_rotations,
+        particle_partitions,
+        particle_attributes,
     )
 
 
@@ -61,9 +67,11 @@ def _update_frame(
     generation,
     domain_signature="domain:test",
     partition_positions=((0.0, 0.0, 0.0),),
-    partition_flags=(0,),
+    partition_flags=None,
 ):
     count = len(partition_positions)
+    if partition_flags is None:
+        partition_flags = (0,) * count
     return hotools_native.mc2_domain_cpu_v1_update_frame(
         handle,
         domain_signature,
@@ -172,6 +180,38 @@ def test_domain_cpu_native_tracks_partition_history_atomically():
         np.testing.assert_allclose(
             after["partition_world_positions"], info["partition_world_positions"]
         )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_preserves_state_and_resets_one_partition():
+    handle = _create(partition_count=2, particle_attributes=(1, 0, 0))
+    try:
+        positions, normals = _frame(0.0)
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            partition_positions=((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        )
+        zeros = np.zeros(3, dtype=np.float32)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, zeros, np.ones(3, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_integration(handle, zeros)
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 0.5, 1.0, 1.0,
+            np.asarray((2.0, 0.0, 0.0), dtype=np.float32),
+        )
+        moved = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"].copy()
+        next_positions, next_normals = _frame(10.0)
+        _update_frame(
+            handle, next_positions, next_normals, frame=2, generation=1,
+            partition_positions=((1.0, 0.0, 0.0), (10.0, 0.0, 0.0)),
+            partition_flags=(0, 1),
+        )
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
+        np.testing.assert_allclose(output[0], next_positions[0])
+        np.testing.assert_allclose(output[1], moved[1])
+        np.testing.assert_allclose(output[2], next_positions[2])
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 

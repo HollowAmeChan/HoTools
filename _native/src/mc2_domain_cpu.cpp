@@ -49,6 +49,9 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       layout_signature_(program.layout_signature != nullptr ? program.layout_signature : ""),
       bind_positions_(program.particle_count * 3),
       bind_rotations_(program.particle_count * 4),
+      particle_partition_index_(program.particle_count),
+      particle_attribute_flags_(program.particle_count),
+      animated_base_world_positions_(program.particle_count * 3),
       world_positions_(program.particle_count * 3),
       world_normals_(program.particle_count * 3, 0.0f),
       velocity_positions_(program.particle_count * 3, 0.0f),
@@ -79,6 +82,14 @@ DomainV1::DomainV1(const ProgramViewV1& program)
     require_identity(program.layout_signature, "layout_signature");
     require_finite(program.bind_positions, particle_count_ * 3, "bind_positions");
     require_finite(program.bind_rotations, particle_count_ * 4, "bind_rotations");
+    if (program.particle_partition_index == nullptr || program.particle_attribute_flags == nullptr) {
+        throw std::invalid_argument("MC2 CPU particle metadata cannot be null");
+    }
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        if (program.particle_partition_index[index] >= partition_count_) {
+            throw std::invalid_argument("MC2 CPU particle partition is out of range");
+        }
+    }
     std::copy(
         program.bind_positions,
         program.bind_positions + particle_count_ * 3,
@@ -89,6 +100,17 @@ DomainV1::DomainV1(const ProgramViewV1& program)
         program.bind_rotations + particle_count_ * 4,
         bind_rotations_.begin()
     );
+    std::copy(
+        program.particle_partition_index,
+        program.particle_partition_index + particle_count_,
+        particle_partition_index_.begin()
+    );
+    std::copy(
+        program.particle_attribute_flags,
+        program.particle_attribute_flags + particle_count_,
+        particle_attribute_flags_.begin()
+    );
+    animated_base_world_positions_ = bind_positions_;
     world_positions_ = bind_positions_;
 }
 
@@ -146,9 +168,11 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
             throw std::invalid_argument("MC2 CPU partition linear transform is singular");
         }
     }
-    std::vector<float> next_positions(
+    std::vector<float> next_animated_positions(
         frame.world_positions, frame.world_positions + particle_count_ * 3
     );
+    std::vector<float> next_positions = world_positions_;
+    std::vector<float> next_velocity_positions = velocity_positions_;
     std::vector<float> next_normals(
         frame.world_normals, frame.world_normals + particle_count_ * 3
     );
@@ -189,11 +213,25 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         if ((frame.partition_frame_flags[index] & 2u) != 0u) ++next_keep_counts[index];
     }
     const bool reset_history = frame_ < 0 || generation_ != frame.generation;
+    for (std::size_t particle = 0; particle < particle_count_; ++particle) {
+        const auto partition = particle_partition_index_[particle];
+        const bool fixed = (particle_attribute_flags_[particle] & 1u) != 0u;
+        const bool partition_reset =
+            (frame.partition_frame_flags[partition] & 1u) != 0u;
+        if (!reset_history && !partition_reset && !fixed) continue;
+        const auto offset = particle * 3;
+        for (std::size_t component = 0; component < 3; ++component) {
+            next_positions[offset + component] = next_animated_positions[offset + component];
+            next_velocity_positions[offset + component] = 0.0f;
+        }
+    }
     std::vector<float> next_previous_positions = reset_history
         ? next_partition_positions : partition_world_positions_;
     std::vector<float> next_previous_rotations = reset_history
         ? next_partition_rotations : partition_world_rotations_;
     world_positions_.swap(next_positions);
+    velocity_positions_.swap(next_velocity_positions);
+    animated_base_world_positions_.swap(next_animated_positions);
     world_normals_.swap(next_normals);
     partition_previous_world_positions_.swap(next_previous_positions);
     partition_previous_world_rotations_.swap(next_previous_rotations);
@@ -390,6 +428,9 @@ void DomainV1::dispose() noexcept {
     disposed_ = true;
     bind_positions_.clear();
     bind_rotations_.clear();
+    particle_partition_index_.clear();
+    particle_attribute_flags_.clear();
+    animated_base_world_positions_.clear();
     world_positions_.clear();
     world_normals_.clear();
     velocity_positions_.clear();
