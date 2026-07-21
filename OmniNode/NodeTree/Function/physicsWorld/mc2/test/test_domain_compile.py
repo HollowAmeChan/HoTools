@@ -111,6 +111,12 @@ def test_compiler_preserves_local_constraint_partition_and_output_identity() -> 
     assert compiled.program.output_source_element.tolist() == [0, 1, 2]
 
 
+def test_bending_marker_encoding_preserves_volume_marker_for_native_domain() -> None:
+    assert compiler._bending_marker_flag(-1) == 1
+    assert compiler._bending_marker_flag(1) == 0
+    assert compiler._bending_marker_flag(100) == 100
+
+
 def test_collision_mask_is_parameter_hot_update_not_program_rebuild() -> None:
     fragment = _fragment()
     effective = _effective()

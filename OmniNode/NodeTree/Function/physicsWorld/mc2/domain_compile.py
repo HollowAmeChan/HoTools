@@ -137,6 +137,12 @@ def _sample_curve(values, depths, *, square_depth: bool = False) -> np.ndarray:
     return result
 
 
+def _bending_marker_flag(sign: int) -> int:
+    """Encode MC2's signed dihedral/volume marker losslessly in uint flags."""
+    value = int(sign)
+    return 100 if value == 100 else (1 if value < 0 else 0)
+
+
 def _runtime_maps(effective: MC2RuntimeParametersV0) -> tuple[dict, dict, dict]:
     if not isinstance(effective, MC2RuntimeParametersV0):
         raise TypeError("effective must be MC2RuntimeParametersV0")
@@ -227,7 +233,7 @@ def _program_for_fragments(
                 constraint_rows["bending"].append(
                     tuple(offset + int(value) for value in row)
                 )
-                constraint_flags["bending"].append(1 if sign < 0 else 0)
+                constraint_flags["bending"].append(_bending_marker_flag(sign))
                 constraint_owners["bending"].append(partition_index)
 
     constraint_tables = tuple(

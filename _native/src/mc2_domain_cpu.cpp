@@ -878,6 +878,86 @@ void DomainV1::step_tether(
     ++step_count_;
 }
 
+void DomainV1::configure_bending(
+    const std::int32_t* dihedral_pairs,
+    const float* dihedral_rest_angles,
+    const std::int32_t* dihedral_signs,
+    std::size_t dihedral_count,
+    const std::int32_t* volume_pairs,
+    const float* volume_rest,
+    std::size_t volume_count,
+    const float* stiffness_values
+) {
+    ensure_live();
+    if ((dihedral_count != 0 &&
+         (dihedral_pairs == nullptr || dihedral_rest_angles == nullptr || dihedral_signs == nullptr)) ||
+        (volume_count != 0 && (volume_pairs == nullptr || volume_rest == nullptr)) ||
+        stiffness_values == nullptr) {
+        throw std::invalid_argument("MC2 CPU bending arrays cannot be null");
+    }
+    const auto validate_pairs = [&](const std::int32_t* pairs, std::size_t count) {
+        for (std::size_t record = 0; record < count * 4; ++record) {
+            if (pairs[record] < 0 || static_cast<std::size_t>(pairs[record]) >= particle_count_) {
+                throw std::invalid_argument("MC2 CPU bending vertex is out of range");
+            }
+        }
+    };
+    validate_pairs(dihedral_pairs, dihedral_count);
+    validate_pairs(volume_pairs, volume_count);
+    require_finite(dihedral_rest_angles, dihedral_count, "bending dihedral rest angles");
+    require_finite(volume_rest, volume_count, "bending volume rest values");
+    require_finite(stiffness_values, particle_count_, "bending stiffness values");
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (stiffness_values[vertex] < 0.0f || stiffness_values[vertex] > 1.0f) {
+            throw std::invalid_argument("MC2 CPU bending stiffness must be in 0..1");
+        }
+    }
+    if (dihedral_count != 0) {
+        bending_dihedral_pairs_.assign(dihedral_pairs, dihedral_pairs + dihedral_count * 4);
+        bending_dihedral_rest_angles_.assign(
+            dihedral_rest_angles, dihedral_rest_angles + dihedral_count
+        );
+        bending_dihedral_signs_.assign(dihedral_signs, dihedral_signs + dihedral_count);
+    } else {
+        bending_dihedral_pairs_.clear();
+        bending_dihedral_rest_angles_.clear();
+        bending_dihedral_signs_.clear();
+    }
+    if (volume_count != 0) {
+        bending_volume_pairs_.assign(volume_pairs, volume_pairs + volume_count * 4);
+        bending_volume_rest_.assign(volume_rest, volume_rest + volume_count);
+    } else {
+        bending_volume_pairs_.clear();
+        bending_volume_rest_.clear();
+    }
+    bending_stiffness_values_.assign(stiffness_values, stiffness_values + particle_count_);
+    bending_ready_ = dihedral_count != 0 || volume_count != 0;
+}
+
+void DomainV1::step_bending() {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU bending step requires update_frame");
+    }
+    if (!bending_ready_ || !inertia_ready_) {
+        throw std::logic_error("MC2 CPU bending step requires topology and particle configuration");
+    }
+    hotools::Mc2TriangleBendingView view;
+    view.positions = world_positions_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.stiffness_values = bending_stiffness_values_.data();
+    view.dihedral_pairs = bending_dihedral_pairs_.data();
+    view.dihedral_rest_angles = bending_dihedral_rest_angles_.data();
+    view.dihedral_signs = bending_dihedral_signs_.data();
+    view.volume_pairs = bending_volume_pairs_.data();
+    view.volume_rest = bending_volume_rest_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.dihedral_count = static_cast<std::int64_t>(bending_dihedral_rest_angles_.size());
+    view.volume_count = static_cast<std::int64_t>(bending_volume_rest_.size());
+    hotools::project_triangle_bending_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_inertia(const float* depths, const float* inv_masses) {
     ensure_live();
     require_finite(depths, particle_count_, "inertia depths");
@@ -1019,6 +1099,13 @@ void DomainV1::dispose() noexcept {
     distance_stiffness_values_.clear();
     tether_root_indices_.clear();
     tether_ready_ = false;
+    bending_dihedral_pairs_.clear();
+    bending_dihedral_rest_angles_.clear();
+    bending_dihedral_signs_.clear();
+    bending_volume_pairs_.clear();
+    bending_volume_rest_.clear();
+    bending_stiffness_values_.clear();
+    bending_ready_ = false;
     distance_ready_ = false;
     inertia_depths_.clear();
     inertia_inv_masses_.clear();

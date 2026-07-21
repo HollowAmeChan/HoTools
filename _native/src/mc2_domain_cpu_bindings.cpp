@@ -21,6 +21,7 @@ using cf32_2d = nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::
 using cf32_3d = nb::ndarray<const float, nb::ndim<3>, nb::c_contig, nb::device::cpu>;
 using cf32_1d = nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using ci32_2d = nb::ndarray<const std::int32_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cu32_1d = nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
 std::mutex domain_registry_mutex;
@@ -305,6 +306,41 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("handle"), nb::arg("step_basic_positions"),
         nb::arg("compression"), nb::arg("stretch"),
         "Run the explicit Tether kernel slice using StepBasic rest lengths."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_configure_bending",
+        [](std::uint64_t handle,
+           ci32_2d dihedral_pairs,
+           cf32_1d dihedral_rest_angles,
+           ci32_1d dihedral_signs,
+           ci32_2d volume_pairs,
+           cf32_1d volume_rest,
+           cf32_1d stiffness_values) {
+            auto* domain = require_domain(handle);
+            if (dihedral_pairs.shape(1) != 4 || volume_pairs.shape(1) != 4 ||
+                dihedral_pairs.shape(0) != dihedral_rest_angles.shape(0) ||
+                dihedral_pairs.shape(0) != dihedral_signs.shape(0) ||
+                volume_pairs.shape(0) != volume_rest.shape(0) ||
+                static_cast<std::size_t>(stiffness_values.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU bending arrays have incompatible shapes");
+            }
+            domain->configure_bending(
+                dihedral_pairs.data(), dihedral_rest_angles.data(), dihedral_signs.data(),
+                static_cast<std::size_t>(dihedral_pairs.shape(0)), volume_pairs.data(),
+                volume_rest.data(), static_cast<std::size_t>(volume_pairs.shape(0)),
+                stiffness_values.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("dihedral_pairs"), nb::arg("dihedral_rest_angles"),
+        nb::arg("dihedral_signs"), nb::arg("volume_pairs"), nb::arg("volume_rest"),
+        nb::arg("stiffness_values"),
+        "Configure the explicit Bending topology and per-particle stiffness slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_bending",
+        [](std::uint64_t handle) { require_domain(handle)->step_bending(); },
+        nb::arg("handle"),
+        "Run the explicit native Bending kernel slice."
     );
     module.def(
         "mc2_domain_cpu_v1_configure_inertia",

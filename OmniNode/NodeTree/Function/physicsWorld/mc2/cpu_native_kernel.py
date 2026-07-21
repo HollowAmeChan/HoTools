@@ -26,6 +26,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
+    "mc2_domain_cpu_v1_configure_bending",
+    "mc2_domain_cpu_v1_step_bending",
     "mc2_domain_cpu_v1_configure_inertia",
     "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_configure_center",
@@ -88,6 +90,7 @@ class MC2NativeCPUKernelV1:
         try:
             self._configure_distance(handle, program, parameters)
             self._configure_tether(handle, program)
+            self._configure_bending(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
             self._configure_center(handle, parameters)
             self._configure_center_frame_shift(handle, parameters)
@@ -141,6 +144,7 @@ class MC2NativeCPUKernelV1:
         settings = dict(scheduler_settings)
         distance_slice = settings.pop("distance_slice", False) is True
         tether_slice = settings.pop("tether_slice", False) is True
+        bending_slice = settings.pop("bending_slice", False) is True
         data_path_only = settings.pop("data_path_only", False) is True
         if not data_path_only:
             raise RuntimeError(
@@ -151,10 +155,14 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native MC2 CPU data-path slice does not consume colliders")
         if self._frames.get(key) is not frame_packet:
             raise ValueError("native MC2 CPU step frame is not the published frame packet")
-        if distance_slice and tether_slice:
-            raise ValueError("distance_slice and tether_slice are mutually exclusive")
+        if sum((distance_slice, tether_slice, bending_slice)) > 1:
+            raise ValueError("constraint slices are mutually exclusive")
         if tether_slice:
             self.step_tether(key, settings)
+        elif bending_slice:
+            if settings:
+                raise ValueError("bending_slice does not accept additional inputs")
+            self._module.mc2_domain_cpu_v1_step_bending(key)
         elif distance_slice:
             if settings:
                 raise ValueError("distance_slice does not accept additional inputs")
@@ -181,6 +189,10 @@ class MC2NativeCPUKernelV1:
         self._module.mc2_domain_cpu_v1_step_tether(
             key, positions, float(settings["compression"]), float(settings["stretch"])
         )
+
+    def step_bending(self, handle) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_step_bending(key)
 
     def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -283,6 +295,8 @@ class MC2NativeCPUKernelV1:
                 "stretch": settings["tether_stretch"],
             })
         self.step_distance(key)
+        if any(table.kind == "bending" for table in program.constraint_tables):
+            self.step_bending(key)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
@@ -362,6 +376,9 @@ class MC2NativeCPUKernelV1:
             "distance_slice_ready": True,
             "tether_slice_ready": any(
                 table.kind == "tether" for table in self._programs[key].constraint_tables
+            ),
+            "bending_slice_ready": any(
+                table.kind == "bending" for table in self._programs[key].constraint_tables
             ),
             "inertia_slice_ready": True,
             "integration_slice_ready": True,
@@ -458,6 +475,65 @@ class MC2NativeCPUKernelV1:
             roots[vertex] = root
         roots.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_tether(handle, roots)
+
+    def _configure_bending(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        bending_table = next(
+            (table for table in program.constraint_tables if table.kind == "bending"),
+            None,
+        )
+        if bending_table is None:
+            return
+        parameter_table = next(
+            (table for table in parameters.constraint_parameters if table.name == "bending"),
+            None,
+        )
+        if parameter_table is None or parameter_table.row_count != bending_table.record_count:
+            raise ValueError("bending topology has no matching parameter table")
+        fields = {name: index for index, name in enumerate(parameter_table.fields)}
+        if "rest_value" not in fields or "stiffness" not in fields:
+            raise ValueError("bending parameter table lacks rest_value/stiffness")
+        dihedral_pairs = []
+        dihedral_rest = []
+        dihedral_signs = []
+        volume_pairs = []
+        volume_rest = []
+        stiffness = np.zeros(program.particle_count, dtype=np.float32)
+        stiffness_counts = np.zeros(program.particle_count, dtype=np.int32)
+        for record, row in enumerate(bending_table.indices):
+            quad = tuple(int(value) for value in row)
+            rest = float(parameter_table.values[record, fields["rest_value"]])
+            value = float(parameter_table.values[record, fields["stiffness"]])
+            marker = int(bending_table.flags[record])
+            if marker == 100:
+                volume_pairs.extend(quad)
+                volume_rest.append(rest)
+            else:
+                dihedral_pairs.extend(quad)
+                dihedral_rest.append(rest)
+                dihedral_signs.append(-1 if marker == 1 else 1)
+            for vertex in quad:
+                stiffness[vertex] += value
+                stiffness_counts[vertex] += 1
+        nonzero = stiffness_counts != 0
+        stiffness[nonzero] /= stiffness_counts[nonzero]
+        dihedral_pairs_array = np.asarray(dihedral_pairs, dtype=np.int32).reshape((len(dihedral_rest), 4))
+        volume_pairs_array = np.asarray(volume_pairs, dtype=np.int32).reshape((len(volume_rest), 4))
+        arrays = (
+            dihedral_pairs_array,
+            np.asarray(dihedral_rest, dtype=np.float32),
+            np.asarray(dihedral_signs, dtype=np.int32),
+            volume_pairs_array,
+            np.asarray(volume_rest, dtype=np.float32),
+            stiffness,
+        )
+        for array in arrays:
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_bending(handle, *arrays)
 
     def _configure_inertia(
         self,

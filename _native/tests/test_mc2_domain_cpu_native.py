@@ -49,6 +49,19 @@ def _create(partition_count=1, particle_attributes=(0, 0, 0)):
     )
 
 
+def _create_quad():
+    bind_positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float32,
+    )
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    return hotools_native.mc2_domain_cpu_v1_create(
+        1, 4, 1, "domain:quad", "layout:test", bind_positions, bind_rotations,
+        np.zeros(4, dtype=np.uint32), np.asarray((1, 0, 0, 0), dtype=np.uint32),
+        np.zeros((1, 3), dtype=np.float32), np.asarray(((0.0, -1.0, 0.0),), dtype=np.float32),
+    )
+
+
 def _frame(offset=0.0):
     positions = np.asarray(
         ((offset, 0.0, 0.0), (1.0 + offset, 0.0, 0.0), (offset, 1.0, 0.0)),
@@ -400,6 +413,38 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
                 dtype=np.float32,
             ),
         )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_bending_slice_uses_dihedral_kernel():
+    handle = _create_quad()
+    try:
+        positions = np.asarray(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.35, 0.94)),
+            dtype=np.float32,
+        )
+        normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+        _update_frame(
+            handle, positions, normals, frame=2, generation=1,
+            domain_signature="domain:quad",
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(4, dtype=np.float32), np.asarray((0.0, 1.0, 1.0, 1.0), dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_bending(
+            handle,
+            np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+            np.asarray((1.5707964,), dtype=np.float32),
+            np.asarray((1,), dtype=np.int32),
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.ones(4, dtype=np.float32),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_bending(handle)
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        assert output["step_count"] == 1
+        assert np.isfinite(output["world_positions"]).all()
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 

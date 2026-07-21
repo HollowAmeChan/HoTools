@@ -73,6 +73,17 @@ public:
         float compression,
         float stretch
     );
+    void configure_bending(
+        const std::int32_t* dihedral_pairs,
+        const float* dihedral_rest_angles,
+        const std::int32_t* dihedral_signs,
+        std::size_t dihedral_count,
+        const std::int32_t* volume_pairs,
+        const float* volume_rest,
+        std::size_t volume_count,
+        const float* stiffness_values
+    );
+    void step_bending();
     void configure_inertia(
         const float* depths,
         const float* inv_masses
@@ -270,6 +281,13 @@ private:
     bool distance_ready_ = false;
     std::vector<std::int32_t> tether_root_indices_;
     bool tether_ready_ = false;
+    std::vector<std::int32_t> bending_dihedral_pairs_;
+    std::vector<float> bending_dihedral_rest_angles_;
+    std::vector<std::int32_t> bending_dihedral_signs_;
+    std::vector<std::int32_t> bending_volume_pairs_;
+    std::vector<float> bending_volume_rest_;
+    std::vector<float> bending_stiffness_values_;
+    bool bending_ready_ = false;
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
     bool inertia_ready_ = false;
