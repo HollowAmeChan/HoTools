@@ -1003,4 +1003,4 @@ Distance contract correction: DomainV1 now stores V0-compatible per-particle dis
 
 Bending uses the same explicit power boundary: `bending_simulation_power` is passed into the native bending view and scales both dihedral and volume stiffness without Python-side buffer copies.
 
-E3 evidence update (2026-07-22): same-source prediction and constraint-prefix tolerance pass on py311/py313. The compiler keeps signed Distance rest values for the V0 horizontal-stiffness marker, and reference pipelines conditionally skip unavailable topology passes. Angle/Motion and collision/self full tolerance remain explicit open gates; do not switch the product owner or delete V0 on the basis of slice availability alone.
+E3 evidence update (2026-07-22): same-source prediction and full-reference no-collision tolerance pass on py311/py313. The compiler keeps signed Distance rest values for the V0 horizontal-stiffness marker, and reference pipelines conditionally skip unavailable topology passes. Angle/Motion and collision/self full tolerance remain explicit open gates; do not switch the product owner or delete V0 on the basis of slice availability alone.

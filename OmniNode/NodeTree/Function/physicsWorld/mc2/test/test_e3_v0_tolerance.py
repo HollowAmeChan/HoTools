@@ -224,7 +224,7 @@ def test_e3_prediction_matches_same_source_v0_and_domain():
         v0.dispose()
 
 
-def test_e3_constraint_prefix_matches_same_source_v0_and_domain():
+def test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain():
     snapshot, fragment, compiled, effective = _same_source_constraints()
     frame = _frame(compiled.program)
     v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
@@ -252,7 +252,7 @@ def test_e3_constraint_prefix_matches_same_source_v0_and_domain():
         simulation_power_y = frequency_ratio ** 0.5 if frequency_ratio > 1.0 else frequency_ratio
         v0.step_no_collision(dt)
         v0_positions, _ = v0.read()
-        domain.step_reference_pipeline({
+        domain.step_reference_pipeline_full({
             "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
             "dt": dt,
             "frame_interpolation": 1.0,
@@ -282,6 +282,9 @@ def test_e3_constraint_prefix_matches_same_source_v0_and_domain():
             "motion_normal_axis": 1,
             "motion_max_distance_enabled": False,
             "motion_backstop_enabled": False,
+            "point_collision": None,
+            "edge_collision": None,
+            "self_collision": None,
         })
         domain_positions = domain.read_output().world_positions
         np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
@@ -293,5 +296,5 @@ def test_e3_constraint_prefix_matches_same_source_v0_and_domain():
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
-    test_e3_constraint_prefix_matches_same_source_v0_and_domain()
-    print("PASS E3 same-source V0/Domain constraint prefix tolerance")
+    test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain()
+    print("PASS E3 same-source V0/Domain full no-collision tolerance")
