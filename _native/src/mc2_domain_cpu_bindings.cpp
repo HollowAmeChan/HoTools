@@ -393,6 +393,40 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the explicit Bending topology and per-particle stiffness slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_motion",
+        [](std::uint64_t handle,
+           cf32_2d base_positions,
+           cf32_2d base_rotations,
+           cf32_1d max_distances,
+           cf32_1d stiffness_values,
+           cf32_1d backstop_radii,
+           cf32_1d backstop_distances,
+           std::int32_t normal_axis,
+           bool max_distance_enabled,
+           bool backstop_enabled) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(base_positions.shape(0)) != count || base_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(base_rotations.shape(0)) != count || base_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(max_distances.shape(0)) != count ||
+                static_cast<std::size_t>(stiffness_values.shape(0)) != count ||
+                static_cast<std::size_t>(backstop_radii.shape(0)) != count ||
+                static_cast<std::size_t>(backstop_distances.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU Motion arrays have incompatible shapes");
+            }
+            domain->step_motion(
+                base_positions.data(), base_rotations.data(), max_distances.data(),
+                stiffness_values.data(), backstop_radii.data(), backstop_distances.data(),
+                normal_axis, max_distance_enabled, backstop_enabled
+            );
+        },
+        nb::arg("handle"), nb::arg("base_positions"), nb::arg("base_rotations"),
+        nb::arg("max_distances"), nb::arg("stiffness_values"), nb::arg("backstop_radii"),
+        nb::arg("backstop_distances"), nb::arg("normal_axis"),
+        nb::arg("max_distance_enabled"), nb::arg("backstop_enabled"),
+        "Run the explicit native Motion max-distance/backstop slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_bending",
         [](std::uint64_t handle) { require_domain(handle)->step_bending(); },
         nb::arg("handle"),

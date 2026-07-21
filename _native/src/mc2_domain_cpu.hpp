@@ -85,6 +85,17 @@ public:
         bool restoration_enabled,
         bool limit_enabled
     );
+    void step_motion(
+        const float* base_positions,
+        const float* base_rotations,
+        const float* max_distances,
+        const float* stiffness_values,
+        const float* backstop_radii,
+        const float* backstop_distances,
+        std::int32_t normal_axis,
+        bool max_distance_enabled,
+        bool backstop_enabled
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(

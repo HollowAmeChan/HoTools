@@ -980,6 +980,59 @@ void DomainV1::step_angle(
     ++step_count_;
 }
 
+void DomainV1::step_motion(
+    const float* base_positions,
+    const float* base_rotations,
+    const float* max_distances,
+    const float* stiffness_values,
+    const float* backstop_radii,
+    const float* backstop_distances,
+    std::int32_t normal_axis,
+    bool max_distance_enabled,
+    bool backstop_enabled
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU Motion step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU Motion step requires particle configuration");
+    }
+    require_finite(base_positions, particle_count_ * 3, "Motion base positions");
+    require_unit_quaternions(base_rotations, particle_count_, "Motion base rotations");
+    require_finite(max_distances, particle_count_, "Motion max distances");
+    require_finite(stiffness_values, particle_count_, "Motion stiffness values");
+    require_finite(backstop_radii, particle_count_, "Motion backstop radii");
+    require_finite(backstop_distances, particle_count_, "Motion backstop distances");
+    if (normal_axis < 0 || normal_axis > 2) {
+        throw std::invalid_argument("MC2 CPU Motion normal_axis must be 0, 1, or 2");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (max_distances[vertex] < 0.0f || stiffness_values[vertex] < 0.0f ||
+            stiffness_values[vertex] > 1.0f || backstop_radii[vertex] < 0.0f ||
+            backstop_distances[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU Motion values are out of range");
+        }
+    }
+    hotools::Mc2MotionConstraintView view;
+    view.positions = world_positions_.data();
+    view.base_positions = base_positions;
+    view.base_rotations = base_rotations;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.max_distances = max_distances;
+    view.stiffness_values = stiffness_values;
+    view.backstop_radii = backstop_radii;
+    view.backstop_distances = backstop_distances;
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.normal_axis = normal_axis;
+    view.explicit_enable_flags = true;
+    view.max_distance_enabled = max_distance_enabled;
+    view.backstop_enabled = backstop_enabled;
+    hotools::project_motion_constraints_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_bending(
     const std::int32_t* dihedral_pairs,
     const float* dihedral_rest_angles,
