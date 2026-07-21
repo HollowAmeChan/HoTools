@@ -788,6 +788,17 @@ E3 native handoff 的执行顺序固定为：
 4. 第一个数值 slice 只提取现有 C++ integration/Distance/Center 路径到新 owner，保留 V0 context 作为同输入 reference；禁止在 Python 侧复制 solver 公式。
 5. native binding 只负责 ndarray -> POD view、handle 生命周期和 output envelope，不负责 authoring merge、Blender IO、slot 注册或 writeback。
 
+E3 剩余 Center 验收目录固定为以下四个小段，后一段不得替代前一段：
+
+| 小段 | 执行内容 | 必须留下的证据 | 明确不做 |
+|---|---|---|---|
+| E3-B frame-shift contract | 扩展 `MC2DomainFramePacketV1`/`FrameViewV1` 的 frame delta、simulation delta、time scale、skip count、running 状态和每 partition Center frame-shift 参数；增加独立 `Mc2CenterFrameShiftView`，输入/输出必须是 backend-neutral POD。 | ABI layout/signature 更新、非法输入整帧回滚、Reset/Keep/zero-substep 原子计数、同一 frame 的 old/current pose 对照。 | 不把 Python `center_state.py` 公式复制到 owner；不让 frame shift 读取 Blender 或 slot。 |
+| E3-C Center ordering | 以同一 native kernel 固定 `anchor -> teleport 判定 -> Reset/Keep 分支 -> smoothing -> world inertia/speed limit -> frame pose shift -> Center evaluator` 顺序；所有历史在 scheduler 前提交，失败不发布半帧。 | `test_center_frame_shift_tier_a.py`、`test_center_anchor_shift_tier_a.py`、Teleport raw native tests 与 DomainV1 双 ABI 对照；debug-off readback 计数保持零。 | 不实现完整粒子 substep、collision 或 product slot 切换。 |
+| E3-D single-source tolerance | 同一冻结 frame/parameter fixture 同时喂 V0 和 DomainV1，比较 Center frame pose、shift、rotation、velocity history、Reset/Keep、paused/catch-up 和零子步结果。 | 固定 tolerance 摘要、有限性/确定性重复跑、端到端 V0 oracle；误差来源必须按 pass 标注。 | 不用更新后的产品差异 fixture 掩盖旧/新差异；不在 tolerance 之前删除 V0。 |
+| E3-E performance gate | 关闭所有 Center/debug 请求时确认无额外 frame-shift scratch、时钟读取或 readback；打开显式 slice 时只测该 slice。 | py311/py313 headless、Blender 4.5 debug-off soak、native allocation/readback counters。 | 不在 E3 内做 CPU worker/job DAG 或 GPU runtime。 |
+
+E3-B 的字段进入顺序也固定：先更新 domain IR 与 frame compiler，再更新 native ABI/binding，随后才接 DomainV1；任何只改 binding 或只改 Python 的临时兼容字段都不得进入提交。E3-C 的历史提交必须把 Center frame、anchor、teleport 和 smoothing 的 old/current state 作为一个事务交换，不能由 renderer 或 debug snapshot 重建。
+
 E3 native 合入门禁：新 owner 能在无 Blender 对象的 C++/headless fixture 中 create/update/step/read/dispose；创建或 frame 校验失败时资源计数归零；单 source 与 V0 的位置/旋转、Center/Teleport、Distance 结果在固定 tolerance 内一致；debug-off 不触发额外 readback；V0 生产路径和 C++ API 数量不因兼容分支增加。未满足这些条件前，`cpu_backend.py` 只能接测试 kernel。
 
 ### E4：多 source fused CPU execution
