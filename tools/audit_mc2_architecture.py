@@ -82,6 +82,10 @@ ALLOWED_FORWARDERS = {
     ("mc2.parameters", "signature"),
     ("mc2.parameters", "_default_curve"),
     ("mc2.parameters", "debug_dict"),
+    ("mc2.partition_specs", "signature"),
+    ("mc2.partition_specs", "make_mc2_partition_patch"),
+    ("mc2.partition_specs", "field_source"),
+    ("mc2.partition_specs", "active_partitions"),
     ("mc2.results", "particle_count"),
     ("mc2.runtime_parameters", "_multiply_float32"),
     ("mc2.scheduler", "_f32"),
@@ -94,6 +98,7 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.mesh_cloth.final_proxy", "_tuple_vectors"),
     ("mc2.setups.mesh_cloth.frame_input", "vertex_count"),
     ("mc2.static_data", "vertex_count"),
+    ("mc2.timing", "_metric"),
     ("mc2.topology", "build_mc2_mesh_source_topology"),
     ("mc2.topology", "build_mc2_bone_source_topology"),
 }

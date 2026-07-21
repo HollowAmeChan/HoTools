@@ -638,6 +638,7 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `presets.py` | 官方JSON预设到统一词汇转换；Profile/Task节点按owner和真实输入裁剪 |
 | `parameters.py` | Profile/Task parameters/setup/settings/effective参数合同 |
 | `specs.py` | task/source identity与task list规范化 |
+| `partition_specs.py` | backend-neutral partition entry、稀疏patch、字段来源、显式/隐式合并与collector plan；当前不创建task/slot/native state |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |
 | `solver.py` | prepare、slot同步、all-task step和result事务唯一orchestrator |
