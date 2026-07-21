@@ -601,6 +601,7 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 | `domain_capabilities.py` | allocation 前schema/setup/capability/容量检查；不加载或拥有backend。 |
 | `domain_compile.py` | 有序 fragment 的 partition-local -> logical 索引重定位、分级参数 SoA、collision/output table 编译与纯 cache-reuse 报告。 |
 | `cpu_backend.py` | E3 单 source CPU domain 生命周期适配器；能力门、frame/step/output identity、physical->logical 归一化、partition history 与 dispose 所有权；kernel 通过窄协议注入。 |
+| `cpu_native_kernel.py` | E3 显式 native data-path kernel adapter；只允许 `data_path_only=True`，把 compiled/frame POD 交给独立 C++ owner；数值 solver 未就绪时拒绝 product step。 |
 | `frame_compile.py` | 各 partition 冻结 frame snapshot 的纯校验与 logical index view 打包；不读取 Blender、不拥有历史或 backend。 |
 | `shadow_pipeline.py` | E1 显式 opt-in 的 capture -> fragment -> compile 与旧静态结果对照、阶段计时；不解算、不写回、不拥有 backend。 |
 | `domain_parameters.py` | resolved 参数 -> 热更新 parameter packet；不改变 topology layout。 |
@@ -741,7 +742,7 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 退出条件：D-01 至 D-10 已验收行为不回退；相同输入下旧/新 CPU 输出误差在既定 tolerance 内；debug-off 无新增 readback；dispose/reset/rewind 无泄漏和悬空状态。
 
-实现状态（2026-07-21）：E3 的 backend ABI/lifecycle slice 已完成，真实数值 kernel 尚未接入产品。`frame_compile.py` 先把按 partition 捕获的只读 frame snapshot 校验为同一 frame/generation，再按 compiled logical index view 生成统一 packet；`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`update_frame`/`step`/`read_output` 严格检查 domain/layout/frame/generation identity，physical output 会在 adapter 内归一化为 logical output，`dispose` 幂等且 kernel 创建失败会回滚。fake-kernel 双版本测试覆盖能力拒绝、history、physical reorder、frame pack 和资源释放。现有 `_native/src/mc2_context_*` 仍是 `PyObject*` 驱动的 `Mc2ContextV0` V0 ABI，不能作为新域 kernel 的隐式实现；下一步必须新增独立 C++ domain owner/POD view/handle，不得给 V0 context 叠加第二种输入。单 source 数值 oracle 对照通过前，V0 solver、slot、Physics World 和 writeback 不导入该适配器。
+实现状态（2026-07-21）：E3 的 backend ABI/lifecycle 与 native data-path owner slice 已完成，真实数值 kernel 尚未接入产品。`frame_compile.py` 先把按 partition 捕获的只读 frame snapshot 校验为同一 frame/generation，再按 compiled logical index view 生成统一 packet；`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`cpu_native_kernel.py` 只允许显式 `data_path_only=True`，普通 product step 会失败。独立 `_native/src/mc2_domain_cpu.cpp` 不 include V0/Python，复制 bind/frame POD、校验 signature、维护 frame/generation/step state，并通过 live-handle registry 保证重复 dispose 安全；py311/py313 headless native 测试覆盖输入 ownership、签名失败不污染已发布 frame、未 update 禁止 step、资源计数和 output。现有 `_native/src/mc2_context_*` 仍是 `PyObject*` 驱动的 `Mc2ContextV0` V0 ABI，不能作为新域 kernel 的隐式实现；下一步必须提取 integration/Distance/Center 数值 slice 并与 V0 建立 tolerance oracle，不得给 V0 context 叠加第二种输入。该 oracle 通过前，V0 solver、slot、Physics World 和 writeback 不导入该适配器。
 
 E3 native handoff 的执行顺序固定为：
 
@@ -819,6 +820,7 @@ mc2/test/
   test_shadow_pipeline.py          # E1 已有
   test_cpu_backend.py               # E3 ABI/lifecycle 已有
   test_frame_compile.py              # E3 frame pack 已有
+  test_cpu_native_kernel.py          # E3 Python/native data-path 已有
   test_domain_frame_packet.py
   test_domain_backend_cpu.py
   test_domain_output.py

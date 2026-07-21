@@ -51,6 +51,8 @@ E3 的 CPU backend 生命周期边界已冻结为独立适配器：`cpu_backend.
 
 E3 的 frame IO 也已保持独立：`frame_compile.py` 只接收冻结 partition snapshot，校验统一 frame/generation、顶点覆盖和 transform identity，再按 compiled logical index view 生成 `MC2DomainFramePacketV1`；它不读取 Blender，不保留跨帧状态，不把 object reference 传入 backend。
 
+E3 native data-path slice 已真实编译并通过 py311/py313 headless smoke：`mc2_domain_cpu.cpp` 是不依赖 V0/Python 的独立 owner，复制 bind/frame POD、校验 domain/layout identity、保留 pass-through positions/normals，并用 live-handle registry 保证重复 dispose 安全；`cpu_native_kernel.py` 只有在显式 `data_path_only=True` 时才调用它。该 slice 证明 ABI、frame ownership 和生命周期，不代表 integration/Distance/Center 数值 solver 已完成。
+
 E3 native 实施顺序已冻结：新增独立 C++ domain owner/POD view/handle，静态 SoA 和 constraint/primitive/filter 表在 allocation 时校验并拥有；每帧只接收 frame packet view；先提取 integration/Distance/Center 的 native 数值 slice，以 V0 作为 reference；binding 只做 ndarray/view 与 handle 生命周期。新 owner 不得 include `mc2_context_internal.hpp`、接收 `PyObject*` 或注册 Physics World slot。无 Blender headless fixture 的 create/update/step/read/dispose、失败回滚、V0 tolerance 和 debug-off readback 门禁未通过前，Python adapter 只能接测试 kernel。
 
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
@@ -662,6 +664,7 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `domain_compile.py` | E1单source与E2多source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
 | `shadow_pipeline.py` | E1显式影子对照与阶段计时；不解算、不写回、不拥有backend，禁止演变为shadow solver |
 | `cpu_backend.py` | E3后端生命周期适配器与kernel协议；只拥有编译域的后端句柄、physical map和分区history，不接管V0 slot/Physics World |
+| `cpu_native_kernel.py` | E3 Python到独立C++ data-path owner的显式适配；数值 kernel 未就绪时拒绝普通模拟步 |
 | `frame_compile.py` | E3 frame snapshot到logical domain packet的纯编译；不读取Blender，不拥有backend/history |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |
