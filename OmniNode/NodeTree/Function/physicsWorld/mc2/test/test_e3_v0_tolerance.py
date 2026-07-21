@@ -79,7 +79,27 @@ def _same_source():
         parameters.make_mc2_particle_profile(
             gravity=1.0,
             gravity_direction=(0.0, -1.0, 0.0),
+            collision_friction=0.0,
             distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    return snapshot, fragment, compiler.compile_mc2_mesh_static_fragment(fragment, effective), effective
+
+
+def _same_source_constraints():
+    snapshot = _source()
+    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=1.0,
+            gravity_direction=(0.0, -1.0, 0.0),
+            collision_friction=0.0,
             bending_stiffness=0.0,
             angle_restoration_enabled=False,
             angle_limit_enabled=False,
@@ -96,10 +116,10 @@ def _frame(program):
         program,
         frame=6,
         generation=2,
-        animated_base_world_positions=program.particle_bind_position + np.float32(2.0),
+        animated_base_world_positions=program.particle_bind_position,
         animated_base_world_rotations=program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(((0.0, 0.0, 1.0),) * program.particle_count, dtype=np.float32),
-        partition_world_position=((2.0, 0.0, 0.0),),
+        partition_world_position=((0.0, 0.0, 0.0),),
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
         partition_world_scale=((1.0, 1.0, 1.0),),
         partition_world_linear=(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),),
@@ -204,6 +224,74 @@ def test_e3_prediction_matches_same_source_v0_and_domain():
         v0.dispose()
 
 
+def test_e3_constraint_prefix_matches_same_source_v0_and_domain():
+    snapshot, fragment, compiled, effective = _same_source_constraints()
+    frame = _frame(compiled.program)
+    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        domain.update_frame(frame)
+        domain_before = domain.read_output().world_positions.copy()
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=frame.frame,
+            generation=frame.generation,
+            world_positions=domain_before,
+            world_rotations_xyzw=frame.animated_base_world_rotations,
+        ))
+        v0.reset()
+        dt = 0.1
+        frequency_ratio = 90.0 * dt
+        simulation_power_z = frequency_ratio if frequency_ratio <= 1.0 else frequency_ratio ** 0.3
+        simulation_power_y = frequency_ratio ** 0.5 if frequency_ratio > 1.0 else frequency_ratio
+        v0.step_no_collision(dt)
+        v0_positions, _ = v0.read()
+        domain.step_reference_pipeline({
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": dt,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": simulation_power_z,
+            "distance_simulation_power": simulation_power_y,
+            "bending_simulation_power": simulation_power_y,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -1.0, 0.0),
+            "step_basic_positions": domain_before,
+            "tether_compression": 0.4,
+            "tether_stretch": 0.03,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "angle_restoration_values": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "angle_limit_values": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.0,
+            "angle_restoration_enabled": False,
+            "angle_limit_enabled": False,
+            "motion_base_positions": domain_before,
+            "motion_base_rotations": frame.animated_base_world_rotations,
+            "motion_max_distances": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "motion_stiffness_values": np.ones(compiled.program.particle_count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "motion_normal_axis": 1,
+            "motion_max_distance_enabled": False,
+            "motion_backstop_enabled": False,
+        })
+        domain_positions = domain.read_output().world_positions
+        np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
+    test_e3_constraint_prefix_matches_same_source_v0_and_domain()
+    print("PASS E3 same-source V0/Domain constraint prefix tolerance")

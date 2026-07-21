@@ -400,7 +400,7 @@ def _parameter_packet_for_fragments(
         for vertex, (start, length) in enumerate(fragment.distance.distance_ranges):
             for record in range(start, start + length):
                 constraint_values["distance"].append((
-                    abs(float(fragment.distance.distance_rest_signed[record])),
+                    float(fragment.distance.distance_rest_signed[record]),
                     float(distance_stiffness[vertex]),
                 ))
 
