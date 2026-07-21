@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import json
 import os
@@ -34,14 +35,38 @@ for package_name, package_path in (
 ir = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_ir"
 )
+domain_capabilities = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_capabilities"
+)
 
 
 FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "fixtures",
     "domain_pipeline",
-    "schema_v1",
+    "two_mesh_static",
     "two_mesh_domain_v1.json",
+)
+SINGLE_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
+    "domain_pipeline",
+    "single_mesh",
+    "single_mesh_domain_v1.json",
+)
+FRAME_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
+    "domain_pipeline",
+    "two_mesh_frames",
+    "two_mesh_frames_v1.json",
+)
+MANIFEST_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
+    "domain_pipeline",
+    "schema_v1",
+    "manifest.json",
 )
 
 
@@ -50,6 +75,32 @@ def _load_fixture() -> dict:
         fixture = json.load(handle)
     assert fixture["schema_version"] == ir.MC2_DOMAIN_IR_SCHEMA_VERSION
     return fixture
+
+
+def _load_single_fixture() -> dict:
+    with open(SINGLE_FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    assert fixture["schema_version"] == ir.MC2_DOMAIN_IR_SCHEMA_VERSION
+    return fixture
+
+
+def _load_frame_fixture() -> dict:
+    with open(FRAME_FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    assert fixture["schema_version"] == ir.MC2_DOMAIN_IR_SCHEMA_VERSION
+    return fixture
+
+
+def test_fixture_manifest_resolves_every_e0_asset() -> None:
+    with open(MANIFEST_PATH, "r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    assert manifest["schema_version"] == ir.MC2_DOMAIN_IR_SCHEMA_VERSION
+    base = os.path.dirname(MANIFEST_PATH)
+    assert all(
+        os.path.isfile(os.path.normpath(os.path.join(base, relative)))
+        for relative in manifest["fixtures"].values()
+    )
+    assert "MC2BackendCapabilitiesV1" in manifest["contracts"]
 
 
 def _build_program(fixture: dict):
@@ -115,6 +166,11 @@ def _build_parameters(fixture: dict, program):
         payload["partition_parameters"]["fields"],
         payload["partition_parameters"]["values"],
     )
+    partition_uints = ir.make_mc2_uint_soa_table(
+        "partition_uint",
+        payload["partition_uint_parameters"]["fields"],
+        payload["partition_uint_parameters"]["values"],
+    )
     particles = ir.make_mc2_float_soa_table(
         "particle",
         payload["particle_parameters"]["fields"],
@@ -130,13 +186,17 @@ def _build_parameters(fixture: dict, program):
         program,
         domain_scalars=domain,
         partition_parameters=partitions,
+        partition_uint_parameters=partition_uints,
         particle_parameters=particles,
         constraint_parameters=constraints,
     )
 
 
-def _build_frame(fixture: dict, program):
-    return ir.make_mc2_domain_frame_packet(program, **fixture["frame"])
+def _build_frame(program, frame_index: int = 0):
+    fixture = _load_frame_fixture()
+    return ir.make_mc2_domain_frame_packet(
+        program, **fixture["frames"][frame_index]
+    )
 
 
 def test_fixture_builds_one_logical_domain_with_ordered_partitions() -> None:
@@ -153,6 +213,26 @@ def test_fixture_builds_one_logical_domain_with_ordered_partitions() -> None:
     ]
     assert program.domain_signature == _build_program(fixture).domain_signature
     assert program.layout_signature == _build_program(fixture).layout_signature
+
+
+def test_single_mesh_fixture_uses_the_same_program_contract() -> None:
+    fixture = _load_single_fixture()
+    snapshots = _build_static_snapshots(fixture)
+    program = _build_program(fixture)
+    assert len(snapshots) == program.partition_count == 1
+    assert snapshots[0].partition_id == program.partition_ids[0] == "single"
+    assert snapshots[0].vertex_count == program.particle_count == 3
+    assert program.output_targets[0].target_id == snapshots[0].output_target_id
+
+
+def test_unknown_program_schema_is_rejected_before_backend_allocation() -> None:
+    program = _build_program(_load_single_fixture())
+    try:
+        replace(program, schema_version=99)
+    except ValueError as exc:
+        assert "schema version" in str(exc)
+    else:
+        raise AssertionError("unknown domain schema was accepted")
 
 
 def test_static_snapshot_fixture_is_source_local_and_read_only() -> None:
@@ -249,14 +329,89 @@ def test_parameter_packet_hot_update_keeps_layout_signature() -> None:
     changed_fixture["parameters"]["particle_parameters"]["values"][0][1] = 0.04
     second = _build_parameters(changed_fixture, program)
     assert first.layout_signature == second.layout_signature == program.layout_signature
+    assert first.parameter_layout_signature == second.parameter_layout_signature
     assert first.parameter_signature != second.parameter_signature
     assert first.particle_parameters.row_count == program.particle_count
+
+
+def test_collision_filters_are_typed_hot_update_parameters() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    first = _build_parameters(fixture, program)
+    assert first.partition_uint_parameters.fields == (
+        "collision_group",
+        "collision_mask",
+    )
+    assert first.partition_uint_parameters.values.tolist() == [[1, 2], [2, 1]]
+    assert not first.partition_uint_parameters.values.flags.writeable
+
+    changed_fixture = json.loads(json.dumps(fixture))
+    changed_fixture["parameters"]["partition_uint_parameters"]["values"][1][1] = 0
+    second = _build_parameters(changed_fixture, program)
+    assert first.layout_signature == second.layout_signature
+    assert first.parameter_layout_signature == second.parameter_layout_signature
+    assert first.parameter_signature != second.parameter_signature
+
+
+def test_parameter_field_schema_has_its_own_layout_signature() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    first = _build_parameters(fixture, program)
+    changed_fixture = json.loads(json.dumps(fixture))
+    changed_fixture["parameters"]["partition_uint_parameters"]["fields"][1] = (
+        "collision_layer_mask"
+    )
+    second = _build_parameters(changed_fixture, program)
+    assert first.layout_signature == second.layout_signature == program.layout_signature
+    assert first.parameter_layout_signature != second.parameter_layout_signature
+    assert first.parameter_signature != second.parameter_signature
+
+
+def test_backend_capability_gate_runs_without_loading_a_backend() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    declarations = tuple(
+        domain_capabilities.MC2BackendCapabilitiesV1(**payload)
+        for payload in fixture["backend_capabilities"]
+    )
+    cpu = domain_capabilities.evaluate_mc2_backend_capabilities(
+        program, declarations[0]
+    )
+    gpu = domain_capabilities.evaluate_mc2_backend_capabilities(
+        program, declarations[1]
+    )
+    assert cpu.compatible is True and cpu.blockers == ()
+    assert gpu.compatible is False
+    assert gpu.blockers == ("capability:self_collision",)
+
+
+def test_backend_capability_declaration_rejects_non_integer_limits() -> None:
+    valid = {
+        "backend_id": "invalid",
+        "schema_versions": (1,),
+        "setup_types": ("mesh_cloth",),
+        "capabilities": ("mesh_cloth",),
+        "max_particles": 100,
+    }
+    for field, value in (
+        ("schema_versions", (1.0,)),
+        ("max_particles", True),
+        ("index_width_bits", 32.0),
+    ):
+        payload = dict(valid)
+        payload[field] = value
+        try:
+            domain_capabilities.MC2BackendCapabilitiesV1(**payload)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"non-integer capability field accepted: {field}")
 
 
 def test_frame_packet_preserves_per_partition_transform_and_signed_scale() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
-    frame = _build_frame(fixture, program)
+    frame = _build_frame(program)
     assert frame.partition_world_position[0].tolist() == [1.0, 0.0, 0.0]
     assert frame.partition_world_position[1].tolist() == [-2.0, 0.0, 0.0]
     assert frame.partition_world_scale[1].tolist() == [1.0, -1.0, 1.0]
@@ -264,17 +419,41 @@ def test_frame_packet_preserves_per_partition_transform_and_signed_scale() -> No
     assert not frame.partition_world_linear.flags.writeable
 
 
+def test_two_frame_fixture_keeps_partition_teleport_and_motion_independent() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    first = _build_frame(program)
+    second = _build_frame(program, 1)
+    assert (first.frame, second.frame, first.generation, second.generation) == (
+        12, 13, 4, 4
+    )
+    assert first.partition_frame_flags.tolist() == [
+        0,
+        ir.MC2_PARTITION_FRAME_RESET,
+    ]
+    assert second.partition_frame_flags.tolist() == [
+        ir.MC2_PARTITION_FRAME_KEEP,
+        0,
+    ]
+    assert second.partition_world_position[0].tolist() == [5.0, 0.0, 0.0]
+    assert (
+        second.partition_world_position[1].tolist()
+        == first.partition_world_position[1].tolist()
+    )
+    assert second.velocity_weight.tolist() == [0.0, 0.5]
+
+
 def test_optional_frame_normals_and_output_rotations_are_explicitly_empty() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
-    frame_payload = json.loads(json.dumps(fixture["frame"]))
+    frame_payload = json.loads(json.dumps(_load_frame_fixture()["frames"][0]))
     frame_payload.pop("animated_base_world_normals")
     frame = ir.make_mc2_domain_frame_packet(program, **frame_payload)
     assert frame.animated_base_world_normals.shape == (0, 3)
     output = ir.make_mc2_domain_frame_output(
         program,
         frame,
-        world_positions=fixture["frame"]["animated_base_world_positions"],
+        world_positions=frame_payload["animated_base_world_positions"],
         backend_revision=3,
         backend_kind="cpu_reference",
     )
@@ -284,10 +463,10 @@ def test_optional_frame_normals_and_output_rotations_are_explicitly_empty() -> N
 def test_frame_packet_rejects_singular_source_transform() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
-    bad_fixture = json.loads(json.dumps(fixture))
-    bad_fixture["frame"]["partition_world_linear"][1][1][1] = 0.0
+    bad_frame = json.loads(json.dumps(_load_frame_fixture()["frames"][0]))
+    bad_frame["partition_world_linear"][1][1][1] = 0.0
     try:
-        _build_frame(bad_fixture, program)
+        ir.make_mc2_domain_frame_packet(program, **bad_frame)
     except ValueError as exc:
         assert "invertible" in str(exc)
     else:
@@ -308,10 +487,11 @@ def test_physical_permutation_is_separate_from_logical_program() -> None:
 def test_output_envelope_accepts_physical_order_with_explicit_map() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
-    frame = _build_frame(fixture, program)
+    frame_fixture = _load_frame_fixture()["frames"][0]
+    frame = _build_frame(program)
     physical_to_logical = [3, 4, 0, 1, 2]
     physical_positions = [
-        fixture["frame"]["animated_base_world_positions"][index]
+        frame_fixture["animated_base_world_positions"][index]
         for index in physical_to_logical
     ]
     output = ir.make_mc2_domain_frame_output(
@@ -331,11 +511,12 @@ def test_output_envelope_accepts_physical_order_with_explicit_map() -> None:
 def test_output_timing_token_is_optional_and_not_implicit() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
-    frame = _build_frame(fixture, program)
+    frame_fixture = _load_frame_fixture()["frames"][0]
+    frame = _build_frame(program)
     output = ir.make_mc2_domain_frame_output(
         program,
         frame,
-        world_positions=fixture["frame"]["animated_base_world_positions"],
+        world_positions=frame_fixture["animated_base_world_positions"],
         backend_revision=2,
         backend_kind="cpu_reference",
         timing_token="hotspot:frame-12",

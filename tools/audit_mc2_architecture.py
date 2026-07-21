@@ -166,6 +166,20 @@ WORLD_SCOPE_CONTRACT_FILES = (
     REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "scope.py",
     REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "types.py",
 )
+E0_DOMAIN_MODULE_IMPORTS = {
+    "mc2.domain_ir": frozenset((
+        "__future__",
+        "dataclasses",
+        "hashlib",
+        "json",
+        "numpy",
+    )),
+    "mc2.domain_capabilities": frozenset((
+        "__future__",
+        "dataclasses",
+        "mc2.domain_ir",
+    )),
+}
 
 
 def _module_name(path: Path) -> str:
@@ -490,6 +504,61 @@ def _python_facts() -> dict:
     }
 
 
+def _e0_domain_boundary_hits() -> list[dict]:
+    hits = []
+    for module_name, allowed_imports in E0_DOMAIN_MODULE_IMPORTS.items():
+        path = MC2_ROOT / f"{module_name.rpartition('.')[2]}.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.ImportFrom):
+                resolved = _resolved_import_name(module_name, path, node)
+                if resolved is not None:
+                    names.append(resolved)
+            elif isinstance(node, ast.Import):
+                names.extend(alias.name for alias in node.names)
+            for imported in names:
+                if imported not in allowed_imports:
+                    hits.append({
+                        "module": module_name,
+                        "line": node.lineno,
+                        "kind": "unexpected_import",
+                        "dependency": imported,
+                    })
+
+    allowed_consumers = {
+        "mc2.domain_ir": frozenset(("mc2.domain_capabilities",)),
+        "mc2.domain_capabilities": frozenset(),
+    }
+    for path in _production_python_files():
+        module_name = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            dependencies = []
+            if isinstance(node, ast.ImportFrom):
+                dependency = _resolve_import(module_name, path, node)
+                if dependency is not None:
+                    dependencies.append(dependency)
+            elif isinstance(node, ast.Import):
+                dependencies.extend(alias.name for alias in node.names)
+            for dependency in dependencies:
+                if dependency not in allowed_consumers or module_name == dependency:
+                    continue
+                if module_name not in allowed_consumers[dependency]:
+                    hits.append({
+                        "module": module_name,
+                        "line": node.lineno,
+                        "kind": "premature_production_consumer",
+                        "dependency": dependency,
+                    })
+    return sorted(
+        hits,
+        key=lambda item: (
+            item["module"], item["line"], item["kind"], item["dependency"]
+        ),
+    )
+
+
 def _cpp_facts() -> dict:
     files = {}
     include_pattern = re.compile(r'^#include\s+"([^"]+)"', re.MULTILINE)
@@ -599,6 +668,7 @@ def build_report() -> dict:
         "cpp": _cpp_facts(),
         "legacy_hits": _legacy_hits(),
         "world_scope_product_hits": _world_scope_product_hits(),
+        "e0_domain_boundary_hits": _e0_domain_boundary_hits(),
     }
 
 
@@ -626,6 +696,7 @@ def _print_summary(report: dict) -> None:
         )
     print(f"Legacy production hits: {len(report['legacy_hits'])}")
     print(f"Physics World scope product violations: {len(report['world_scope_product_hits'])}")
+    print(f"E0 domain boundary violations: {len(report['e0_domain_boundary_hits'])}")
     print(
         f"C++ API definitions: {cpp['api_symbol_count']} symbols, "
         f"{len(cpp['api_definition_violations'])} ownership violations"
@@ -670,6 +741,7 @@ def main() -> None:
             report["cpp"]["pure_native_violations"],
             report["legacy_hits"],
             report["world_scope_product_hits"],
+            report["e0_domain_boundary_hits"],
         )
         if any(failures):
             raise SystemExit(1)

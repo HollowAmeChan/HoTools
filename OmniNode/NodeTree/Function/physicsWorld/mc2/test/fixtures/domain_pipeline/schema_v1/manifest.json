@@ -1,0 +1,27 @@
+{
+  "schema": "mc2_domain_ir_fixture_manifest_v1",
+  "schema_version": 1,
+  "oracle_tier": "E0",
+  "contracts": [
+    "MC2MeshPartitionStaticSnapshotV1",
+    "MC2CompiledDomainProgramV1",
+    "MC2DomainParameterPacketV1",
+    "MC2UIntSoATableV1",
+    "MC2DomainFramePacketV1",
+    "MC2DomainFrameOutputV1",
+    "MC2BackendCapabilitiesV1",
+    "MC2BackendCompatibilityReportV1"
+  ],
+  "fixtures": {
+    "single_mesh": "../single_mesh/single_mesh_domain_v1.json",
+    "two_mesh_static": "../two_mesh_static/two_mesh_domain_v1.json",
+    "two_mesh_frames": "../two_mesh_frames/two_mesh_frames_v1.json"
+  },
+  "forbidden_dependencies": [
+    "bpy",
+    "PhysicsWorldCache",
+    "solver slot",
+    "native handle",
+    "runtime cache owner"
+  ]
+}

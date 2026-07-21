@@ -16,6 +16,9 @@ import numpy as np
 
 
 MC2_DOMAIN_IR_SCHEMA_VERSION = 1
+MC2_PARTITION_FRAME_RESET = 1 << 0
+MC2_PARTITION_FRAME_KEEP = 1 << 1
+MC2_PARTITION_FRAME_DISABLED = 1 << 2
 _SETUP_TYPES = frozenset(("mesh_cloth", "bone_cloth", "bone_spring"))
 _INDEX_VIEW_KINDS = frozenset(("span", "indices"))
 _CONSTRAINT_WIDTHS = {
@@ -896,13 +899,52 @@ def make_mc2_float_soa_table(name: str, fields, values) -> MC2FloatSoATableV1:
 
 
 @dataclass(frozen=True)
+class MC2UIntSoATableV1:
+    name: str
+    fields: tuple[str, ...]
+    values: np.ndarray
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _text(self.name, "SoA table name"))
+        fields = _unique(self.fields, "SoA fields")
+        object.__setattr__(self, "fields", fields)
+        if self.values.ndim != 2 or self.values.shape[1] != len(fields):
+            raise ValueError("SoA values shape must match fields")
+        _validate_array(self.values, np.uint32, self.values.shape, f"{self.name} values")
+
+    @property
+    def row_count(self) -> int:
+        return int(self.values.shape[0])
+
+    @property
+    def field_count(self) -> int:
+        return len(self.fields)
+
+    def debug_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "fields": list(self.fields),
+            "row_count": self.row_count,
+            "field_count": self.field_count,
+        }
+
+
+def make_mc2_uint_soa_table(name: str, fields, values) -> MC2UIntSoATableV1:
+    field_tuple = tuple(_text(value, "SoA field") for value in fields)
+    array = _readonly_uint(values, (len(values), len(field_tuple)), f"{name} values")
+    return MC2UIntSoATableV1(name=name, fields=field_tuple, values=array)
+
+
+@dataclass(frozen=True)
 class MC2DomainParameterPacketV1:
     layout_signature: str
     domain_scalars: MC2FloatSoATableV1
     partition_parameters: MC2FloatSoATableV1
+    partition_uint_parameters: MC2UIntSoATableV1
     particle_parameters: MC2FloatSoATableV1
     constraint_parameters: tuple[MC2FloatSoATableV1, ...]
     schema_version: int = MC2_DOMAIN_IR_SCHEMA_VERSION
+    parameter_layout_signature: str = field(init=False)
     parameter_signature: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -916,6 +958,10 @@ class MC2DomainParameterPacketV1:
         ):
             if not isinstance(table, MC2FloatSoATableV1):
                 raise TypeError("parameter packet tables must be MC2FloatSoATableV1")
+        if not isinstance(self.partition_uint_parameters, MC2UIntSoATableV1):
+            raise TypeError(
+                "partition_uint_parameters must be MC2UIntSoATableV1"
+            )
         if self.domain_scalars.row_count != 1:
             raise ValueError("domain_scalars must contain exactly one row")
         if not isinstance(self.constraint_parameters, tuple) or any(
@@ -924,19 +970,29 @@ class MC2DomainParameterPacketV1:
         ):
             raise TypeError("constraint_parameters must contain SoA tables")
         object.__setattr__(self, "layout_signature", layout_signature)
+        parameter_layout_signature = _digest((
+            self.schema_version,
+            self.layout_signature,
+            self.domain_scalars.debug_dict(),
+            self.partition_parameters.debug_dict(),
+            self.partition_uint_parameters.debug_dict(),
+            self.particle_parameters.debug_dict(),
+            tuple(table.debug_dict() for table in self.constraint_parameters),
+        ))
+        object.__setattr__(
+            self, "parameter_layout_signature", parameter_layout_signature
+        )
         object.__setattr__(
             self,
             "parameter_signature",
             _digest((
                 self.schema_version,
                 self.layout_signature,
-                self.domain_scalars.debug_dict(),
+                self.parameter_layout_signature,
                 self.domain_scalars.values,
-                self.partition_parameters.debug_dict(),
                 self.partition_parameters.values,
-                self.particle_parameters.debug_dict(),
+                self.partition_uint_parameters.values,
                 self.particle_parameters.values,
-                tuple(table.debug_dict() for table in self.constraint_parameters),
                 tuple(table.values for table in self.constraint_parameters),
             )),
         )
@@ -945,9 +1001,11 @@ class MC2DomainParameterPacketV1:
         return {
             "schema_version": self.schema_version,
             "layout_signature": self.layout_signature,
+            "parameter_layout_signature": self.parameter_layout_signature,
             "parameter_signature": self.parameter_signature,
             "domain_scalars": self.domain_scalars.debug_dict(),
             "partition_parameters": self.partition_parameters.debug_dict(),
+            "partition_uint_parameters": self.partition_uint_parameters.debug_dict(),
             "particle_parameters": self.particle_parameters.debug_dict(),
             "constraint_parameters": [
                 table.debug_dict() for table in self.constraint_parameters
@@ -960,6 +1018,7 @@ def make_mc2_domain_parameter_packet(
     *,
     domain_scalars: MC2FloatSoATableV1,
     partition_parameters: MC2FloatSoATableV1,
+    partition_uint_parameters: MC2UIntSoATableV1,
     particle_parameters: MC2FloatSoATableV1,
     constraint_parameters=(),
 ) -> MC2DomainParameterPacketV1:
@@ -967,6 +1026,8 @@ def make_mc2_domain_parameter_packet(
         raise TypeError("program must be MC2CompiledDomainProgramV1")
     if partition_parameters.row_count != program.partition_count:
         raise ValueError("partition parameter rows must match partition count")
+    if partition_uint_parameters.row_count != program.partition_count:
+        raise ValueError("partition uint parameter rows must match partition count")
     if particle_parameters.row_count != program.particle_count:
         raise ValueError("particle parameter rows must match particle count")
     expected_kinds = tuple(table.kind for table in program.constraint_tables)
@@ -982,6 +1043,7 @@ def make_mc2_domain_parameter_packet(
         layout_signature=program.layout_signature,
         domain_scalars=domain_scalars,
         partition_parameters=partition_parameters,
+        partition_uint_parameters=partition_uint_parameters,
         particle_parameters=particle_parameters,
         constraint_parameters=values,
     )
@@ -1090,6 +1152,9 @@ class MC2DomainFramePacketV1:
             (partition_count,),
             "partition_frame_flags",
         )
+        reset_keep = MC2_PARTITION_FRAME_RESET | MC2_PARTITION_FRAME_KEEP
+        if np.any((self.partition_frame_flags & reset_keep) == reset_keep):
+            raise ValueError("partition frame cannot request Reset and Keep together")
         _validate_array(
             self.velocity_weight,
             np.float32,
@@ -1416,6 +1481,9 @@ def make_mc2_domain_frame_output(
 
 __all__ = [
     "MC2_DOMAIN_IR_SCHEMA_VERSION",
+    "MC2_PARTITION_FRAME_DISABLED",
+    "MC2_PARTITION_FRAME_KEEP",
+    "MC2_PARTITION_FRAME_RESET",
     "MC2CompiledDomainProgramV1",
     "MC2ConstraintTopologyTableV1",
     "MC2DomainFrameOutputV1",
@@ -1427,6 +1495,7 @@ __all__ = [
     "MC2OutputTargetV1",
     "MC2PhysicalIndexMapV1",
     "MC2PrimitiveTopologyTableV1",
+    "MC2UIntSoATableV1",
     "make_mc2_compiled_domain_program",
     "make_mc2_constraint_topology_table",
     "make_mc2_domain_frame_output",
@@ -1438,4 +1507,5 @@ __all__ = [
     "make_mc2_physical_index_map",
     "make_mc2_primitive_topology_table",
     "make_mc2_span_view",
+    "make_mc2_uint_soa_table",
 ]

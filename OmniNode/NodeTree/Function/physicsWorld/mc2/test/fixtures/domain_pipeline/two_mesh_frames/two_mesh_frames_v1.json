@@ -1,0 +1,82 @@
+{
+  "case_id": "two_mesh_frames_v1",
+  "schema_version": 1,
+  "oracle_tier": "E0",
+  "domain_fixture": "../two_mesh_static/two_mesh_domain_v1.json",
+  "frames": [
+    {
+      "frame": 12,
+      "generation": 4,
+      "animated_base_world_positions": [
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [-2.0, 0.0, 0.0],
+        [-2.0, -1.0, 0.0]
+      ],
+      "animated_base_world_normals": [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0]
+      ],
+      "partition_world_position": [[1.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
+      "partition_world_rotation": [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "partition_world_scale": [[1.0, 1.0, 1.0], [1.0, -1.0, 1.0]],
+      "partition_world_linear": [
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]]
+      ],
+      "anchor_world_position": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+      "anchor_world_rotation": [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "anchor_present": [1, 0],
+      "partition_frame_flags": [0, 1],
+      "velocity_weight": [1.0, 0.5],
+      "gravity_ratio": [1.0, 0.75]
+    },
+    {
+      "frame": 13,
+      "generation": 4,
+      "animated_base_world_positions": [
+        [5.0, 0.0, 0.0],
+        [6.0, 0.0, 0.0],
+        [5.0, 1.0, 0.0],
+        [-2.0, 0.0, 0.0],
+        [-2.0, -1.0, 0.0]
+      ],
+      "animated_base_world_normals": [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0]
+      ],
+      "partition_world_position": [[5.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
+      "partition_world_rotation": [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "partition_world_scale": [[1.0, 1.0, 1.0], [1.0, -1.0, 1.0]],
+      "partition_world_linear": [
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]]
+      ],
+      "anchor_world_position": [[5.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+      "anchor_world_rotation": [
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "anchor_present": [1, 0],
+      "partition_frame_flags": [2, 0],
+      "velocity_weight": [0.0, 0.5],
+      "gravity_ratio": [1.0, 0.75]
+    }
+  ]
+}

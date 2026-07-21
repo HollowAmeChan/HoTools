@@ -1,0 +1,86 @@
+{
+  "case_id": "single_mesh_domain_v1",
+  "schema_version": 1,
+  "oracle_tier": "E0",
+  "scope": "Single-source reference for the backend-neutral logical domain contract.",
+  "static_snapshots": [
+    {
+      "partition_id": "single",
+      "source_identity": "source:single",
+      "source_revision": "revision:single:v1",
+      "output_target_id": "mesh:single",
+      "local_positions": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+      "local_normals": [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+      "edges": [[0, 1], [1, 2], [2, 0]],
+      "triangles": [[0, 1, 2]],
+      "triangle_loops": [[0, 1, 2]],
+      "loop_vertices": [0, 1, 2],
+      "loop_uvs": [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+      "pin_weights": [1.0, 0.0, 0.0],
+      "pin_present": true,
+      "radius_multipliers": [1.0, 1.0, 1.0],
+      "source_bind_matrix": [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "source_element_ids": [0, 1, 2],
+      "has_uv": true
+    }
+  ],
+  "program": {
+    "domain_id": "mc2.domain:single_mesh_fixture",
+    "setup_type": "mesh_cloth",
+    "partition_ids": ["single"],
+    "partition_flags": [3],
+    "partition_particle_views": [
+      {"kind": "span", "start": 0, "stop": 3}
+    ],
+    "particle_partition_index": [0, 0, 0],
+    "particle_source_element": [0, 1, 2],
+    "particle_bind_position": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    "particle_bind_rotation": [
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0],
+      [0.0, 0.0, 0.0, 1.0]
+    ],
+    "particle_attribute_flags": [1, 0, 0],
+    "constraint_tables": [
+      {
+        "kind": "distance",
+        "indices": [[0, 1], [1, 2]],
+        "owner_partition_index": [0, 0],
+        "flags": [0, 0]
+      }
+    ],
+    "primitive_tables": [
+      {
+        "kind": "point",
+        "indices": [[0], [1], [2]],
+        "owner_partition_index": [0, 0, 0]
+      },
+      {
+        "kind": "edge",
+        "indices": [[0, 1], [1, 2], [2, 0]],
+        "owner_partition_index": [0, 0, 0]
+      },
+      {
+        "kind": "triangle",
+        "indices": [[0, 1, 2]],
+        "owner_partition_index": [0]
+      }
+    ],
+    "output_targets": [
+      {
+        "target_id": "mesh:single",
+        "partition_index": 0,
+        "element_count": 3,
+        "space_kind": "mesh_object_local_offset"
+      }
+    ],
+    "output_target_index": [0, 0, 0],
+    "output_source_element": [0, 1, 2],
+    "required_capabilities": ["mesh_cloth"]
+  }
+}

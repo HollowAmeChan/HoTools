@@ -137,6 +137,10 @@
       "fields": ["gravity_ratio", "velocity_weight"],
       "values": [[1.0, 1.0], [0.75, 0.5]]
     },
+    "partition_uint_parameters": {
+      "fields": ["collision_group", "collision_mask"],
+      "values": [[1, 2], [2, 1]]
+    },
     "particle_parameters": {
       "fields": ["damping", "radius"],
       "values": [
@@ -160,41 +164,24 @@
       }
     ]
   },
-  "frame": {
-    "frame": 12,
-    "generation": 4,
-    "animated_base_world_positions": [
-      [1.0, 0.0, 0.0],
-      [2.0, 0.0, 0.0],
-      [1.0, 1.0, 0.0],
-      [-2.0, 0.0, 0.0],
-      [-2.0, -1.0, 0.0]
-    ],
-    "animated_base_world_normals": [
-      [0.0, 0.0, 1.0],
-      [0.0, 0.0, 1.0],
-      [0.0, 0.0, 1.0],
-      [0.0, 0.0, 1.0],
-      [0.0, 0.0, 1.0]
-    ],
-    "partition_world_position": [[1.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
-    "partition_world_rotation": [
-      [0.0, 0.0, 0.0, 1.0],
-      [0.0, 0.0, 0.0, 1.0]
-    ],
-    "partition_world_scale": [[1.0, 1.0, 1.0], [1.0, -1.0, 1.0]],
-    "partition_world_linear": [
-      [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-      [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]]
-    ],
-    "anchor_world_position": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-    "anchor_world_rotation": [
-      [0.0, 0.0, 0.0, 1.0],
-      [0.0, 0.0, 0.0, 1.0]
-    ],
-    "anchor_present": [1, 0],
-    "partition_frame_flags": [0, 1],
-    "velocity_weight": [1.0, 0.5],
-    "gravity_ratio": [1.0, 0.75]
-  }
+  "backend_capabilities": [
+    {
+      "backend_id": "cpu_reference",
+      "schema_versions": [1],
+      "setup_types": ["mesh_cloth"],
+      "capabilities": ["mesh_cloth", "self_collision"],
+      "max_particles": 1000000,
+      "index_width_bits": 32,
+      "supports_physical_reorder": true
+    },
+    {
+      "backend_id": "gpu_prototype_missing_self",
+      "schema_versions": [1],
+      "setup_types": ["mesh_cloth"],
+      "capabilities": ["mesh_cloth"],
+      "max_particles": 10000000,
+      "index_width_bits": 32,
+      "supports_physical_reorder": true
+    }
+  ]
 }
