@@ -557,6 +557,8 @@ class MC2CompiledDomainProgramV1:
     partition_ids: tuple[str, ...]
     partition_flags: np.ndarray
     partition_particle_views: tuple[MC2IndexViewV1, ...]
+    partition_center_local_position: np.ndarray
+    partition_initial_local_gravity_direction: np.ndarray
     particle_partition_index: np.ndarray
     particle_source_element: np.ndarray
     particle_bind_position: np.ndarray
@@ -596,6 +598,18 @@ class MC2CompiledDomainProgramV1:
             raise ValueError("partition_particle_views must match partition_ids")
         if any(not isinstance(view, MC2IndexViewV1) for view in self.partition_particle_views):
             raise TypeError("partition_particle_views must contain MC2IndexViewV1")
+        _validate_array(
+            self.partition_center_local_position,
+            np.float32,
+            (partition_count, 3),
+            "partition_center_local_position",
+        )
+        _validate_array(
+            self.partition_initial_local_gravity_direction,
+            np.float32,
+            (partition_count, 3),
+            "partition_initial_local_gravity_direction",
+        )
         if any(
             not isinstance(table, MC2ConstraintTopologyTableV1)
             for table in self.constraint_tables
@@ -785,7 +799,12 @@ class MC2CompiledDomainProgramV1:
             self.required_capabilities,
         ]
         if include_values:
-            parts.extend((self.particle_bind_position, self.particle_bind_rotation))
+            parts.extend((
+                self.partition_center_local_position,
+                self.partition_initial_local_gravity_direction,
+                self.particle_bind_position,
+                self.particle_bind_rotation,
+            ))
         return tuple(parts)
 
     def debug_dict(self) -> dict:
@@ -811,6 +830,8 @@ def make_mc2_compiled_domain_program(
     partition_ids,
     partition_flags,
     partition_particle_views,
+    partition_center_local_position,
+    partition_initial_local_gravity_direction,
     particle_partition_index,
     particle_source_element,
     particle_bind_position,
@@ -833,6 +854,16 @@ def make_mc2_compiled_domain_program(
             partition_flags, (len(partition_ids),), "partition_flags"
         ),
         partition_particle_views=tuple(partition_particle_views),
+        partition_center_local_position=_readonly_float(
+            partition_center_local_position,
+            (len(partition_ids), 3),
+            "partition_center_local_position",
+        ),
+        partition_initial_local_gravity_direction=_readonly_float(
+            partition_initial_local_gravity_direction,
+            (len(partition_ids), 3),
+            "partition_initial_local_gravity_direction",
+        ),
         particle_partition_index=_readonly_uint(
             particle_partition_index, (particle_count,), "particle_partition_index"
         ),

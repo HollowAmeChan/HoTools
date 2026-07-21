@@ -51,6 +51,8 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       bind_rotations_(program.particle_count * 4),
       particle_partition_index_(program.particle_count),
       particle_attribute_flags_(program.particle_count),
+      partition_center_local_positions_(program.partition_count * 3),
+      partition_initial_local_gravity_directions_(program.partition_count * 3),
       animated_base_world_positions_(program.particle_count * 3),
       world_positions_(program.particle_count * 3),
       world_normals_(program.particle_count * 3, 0.0f),
@@ -85,6 +87,16 @@ DomainV1::DomainV1(const ProgramViewV1& program)
     if (program.particle_partition_index == nullptr || program.particle_attribute_flags == nullptr) {
         throw std::invalid_argument("MC2 CPU particle metadata cannot be null");
     }
+    require_finite(
+        program.partition_center_local_positions,
+        partition_count_ * 3,
+        "partition_center_local_positions"
+    );
+    require_finite(
+        program.partition_initial_local_gravity_directions,
+        partition_count_ * 3,
+        "partition_initial_local_gravity_directions"
+    );
     for (std::size_t index = 0; index < particle_count_; ++index) {
         if (program.particle_partition_index[index] >= partition_count_) {
             throw std::invalid_argument("MC2 CPU particle partition is out of range");
@@ -109,6 +121,16 @@ DomainV1::DomainV1(const ProgramViewV1& program)
         program.particle_attribute_flags,
         program.particle_attribute_flags + particle_count_,
         particle_attribute_flags_.begin()
+    );
+    std::copy(
+        program.partition_center_local_positions,
+        program.partition_center_local_positions + partition_count_ * 3,
+        partition_center_local_positions_.begin()
+    );
+    std::copy(
+        program.partition_initial_local_gravity_directions,
+        program.partition_initial_local_gravity_directions + partition_count_ * 3,
+        partition_initial_local_gravity_directions_.begin()
     );
     animated_base_world_positions_ = bind_positions_;
     world_positions_ = bind_positions_;

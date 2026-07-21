@@ -284,6 +284,12 @@ def _program_for_fragments(
             make_mc2_span_view(start, start + count)
             for start, count in zip(starts, counts)
         ),
+        partition_center_local_position=tuple(
+            fragment.center.local_center_position for fragment in fragments
+        ),
+        partition_initial_local_gravity_direction=tuple(
+            fragment.center.initial_local_gravity_direction for fragment in fragments
+        ),
         particle_partition_index=particle_partition,
         particle_source_element=source_elements,
         particle_bind_position=bind_positions,

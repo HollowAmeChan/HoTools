@@ -44,6 +44,8 @@ def _create(partition_count=1, particle_attributes=(0, 0, 0)):
         bind_rotations,
         particle_partitions,
         particle_attributes,
+        np.zeros((partition_count, 3), dtype=np.float32),
+        np.asarray(((0.0, -1.0, 0.0),) * partition_count, dtype=np.float32),
     )
 
 
@@ -107,6 +109,10 @@ def test_domain_cpu_native_lifecycle_and_owned_frame_output():
         info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
         assert info["particle_count"] == 3
         assert info["frame"] == -1
+        np.testing.assert_allclose(
+            info["partition_initial_local_gravity_directions"],
+            ((0.0, -1.0, 0.0),),
+        )
         positions, normals = _frame(2.0)
         expected_positions = positions.copy()
         _update_frame(handle, positions, normals, frame=8, generation=3)

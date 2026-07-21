@@ -135,6 +135,10 @@ def _build_program(fixture: dict):
         partition_ids=payload["partition_ids"],
         partition_flags=payload["partition_flags"],
         partition_particle_views=views,
+        partition_center_local_position=payload["partition_center_local_position"],
+        partition_initial_local_gravity_direction=(
+            payload["partition_initial_local_gravity_direction"]
+        ),
         particle_partition_index=payload["particle_partition_index"],
         particle_source_element=payload["particle_source_element"],
         particle_bind_position=payload["particle_bind_position"],

@@ -79,7 +79,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            cf32_2d bind_positions,
            cf32_2d bind_rotations,
            cu32_1d particle_partition_index,
-           cu32_1d particle_attribute_flags) {
+           cu32_1d particle_attribute_flags,
+           cf32_2d partition_center_local_positions,
+           cf32_2d partition_initial_local_gravity_directions) {
             if (static_cast<std::size_t>(bind_positions.shape(0)) != particle_count ||
                 bind_positions.shape(1) != 3) {
                 throw nb::value_error("bind_positions must be [particle_count,3]");
@@ -92,6 +94,12 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 static_cast<std::size_t>(particle_attribute_flags.shape(0)) != particle_count) {
                 throw nb::value_error("particle metadata must match particle_count");
             }
+            if (static_cast<std::size_t>(partition_center_local_positions.shape(0)) != partition_count ||
+                partition_center_local_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(partition_initial_local_gravity_directions.shape(0)) != partition_count ||
+                partition_initial_local_gravity_directions.shape(1) != 3) {
+                throw nb::value_error("partition Center static arrays must be [partition_count,3]");
+            }
             mc2_domain_cpu::ProgramViewV1 program {
                 schema_version,
                 particle_count,
@@ -100,6 +108,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 bind_rotations.data(),
                 particle_partition_index.data(),
                 particle_attribute_flags.data(),
+                partition_center_local_positions.data(),
+                partition_initial_local_gravity_directions.data(),
                 domain_signature.c_str(),
                 layout_signature.c_str(),
             };
@@ -119,6 +129,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("bind_rotations"),
         nb::arg("particle_partition_index"),
         nb::arg("particle_attribute_flags"),
+        nb::arg("partition_center_local_positions"),
+        nb::arg("partition_initial_local_gravity_directions"),
         "Create an independent E3 MC2 CPU domain data-path owner."
     );
     module.def(
@@ -360,6 +372,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["disposed"] = domain->disposed();
             result["partition_world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->partition_world_positions()),
+                domain->partition_count(), 3
+            );
+            result["partition_center_local_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->partition_center_local_positions()),
+                domain->partition_count(), 3
+            );
+            result["partition_initial_local_gravity_directions"] = owned_array_2d<float>(
+                std::vector<float>(domain->partition_initial_local_gravity_directions()),
                 domain->partition_count(), 3
             );
             result["partition_reset_counts"] = owned_array_1d<std::int64_t>(

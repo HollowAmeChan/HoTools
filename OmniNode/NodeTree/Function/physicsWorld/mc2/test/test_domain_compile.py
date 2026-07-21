@@ -87,6 +87,10 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
     assert compiled.program.particle_count == compiled.fragment.final_proxy.vertex_count
     assert compiled.program.partition_particle_views[0].resolved_indices().tolist() == [0, 1, 2]
     assert compiled.program.required_capabilities == ("mesh_cloth", "self_collision")
+    assert compiled.program.partition_center_local_position.shape == (1, 3)
+    assert compiled.program.partition_initial_local_gravity_direction.tolist() == [
+        [0.0, -1.0, 0.0]
+    ]
     assert compiled.parameters.partition_uint_parameters.fields[-2:] == (
         "collision_group",
         "collision_mask",
@@ -153,6 +157,12 @@ def test_multi_compiler_merges_particles_and_keeps_structural_constraints_local(
         assert set(int(owner) for owner in table.owner_partition_index) <= {0, 1}
     assert compiled.parameters.particle_parameters.row_count == 5
     assert compiled.parameters.partition_parameters.row_count == 2
+    assert compiled.program.partition_center_local_position.tolist() == [
+        [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+    ]
+    assert compiled.program.partition_initial_local_gravity_direction.tolist() == [
+        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0]
+    ]
 
 
 def test_multi_compiler_preserves_partition_parameter_differences_and_filters() -> None:

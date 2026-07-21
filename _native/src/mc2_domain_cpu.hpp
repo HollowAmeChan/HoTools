@@ -15,6 +15,8 @@ struct ProgramViewV1 {
     const float* bind_rotations = nullptr;
     const std::uint32_t* particle_partition_index = nullptr;
     const std::uint32_t* particle_attribute_flags = nullptr;
+    const float* partition_center_local_positions = nullptr;
+    const float* partition_initial_local_gravity_directions = nullptr;
     const char* domain_signature = nullptr;
     const char* layout_signature = nullptr;
 };
@@ -93,6 +95,12 @@ public:
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
     }
+    const std::vector<float>& partition_center_local_positions() const noexcept {
+        return partition_center_local_positions_;
+    }
+    const std::vector<float>& partition_initial_local_gravity_directions() const noexcept {
+        return partition_initial_local_gravity_directions_;
+    }
     const std::vector<std::int64_t>& partition_reset_counts() const noexcept {
         return partition_reset_counts_;
     }
@@ -112,6 +120,8 @@ private:
     std::vector<float> bind_rotations_;
     std::vector<std::uint32_t> particle_partition_index_;
     std::vector<std::uint32_t> particle_attribute_flags_;
+    std::vector<float> partition_center_local_positions_;
+    std::vector<float> partition_initial_local_gravity_directions_;
     std::vector<float> animated_base_world_positions_;
     std::vector<float> world_positions_;
     std::vector<float> world_normals_;

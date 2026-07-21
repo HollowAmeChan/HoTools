@@ -37,6 +37,8 @@
     "partition_particle_views": [
       {"kind": "span", "start": 0, "stop": 3}
     ],
+    "partition_center_local_position": [[0.0, 0.0, 0.0]],
+    "partition_initial_local_gravity_direction": [[0.0, -1.0, 0.0]],
     "particle_partition_index": [0, 0, 0],
     "particle_source_element": [0, 1, 2],
     "particle_bind_position": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
