@@ -75,6 +75,8 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_ir", "row_count"),
     ("mc2.domain_ir", "field_count"),
     ("mc2.setups.mesh_cloth.static_fragment", "_matrix_columns"),
+    ("mc2.shadow_pipeline", "compatible"),
+    ("mc2.shadow_pipeline", "_array_equal"),
     ("mc2.frame_state", "particle_count"),
     ("mc2.frame_state", "make_mc2_frame_input"),
     ("mc2.interaction_scope", "_mesh_collision_properties"),
@@ -533,6 +535,7 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.setups.mesh_cloth.source_capture",
             "mc2.setups.mesh_cloth.static_fragment",
             "mc2.domain_compile",
+            "mc2.shadow_pipeline",
         )),
         "mc2.domain_capabilities": frozenset(),
     }

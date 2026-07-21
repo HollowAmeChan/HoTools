@@ -29,6 +29,7 @@ class MC2MeshCompiledDomainV1:
     fragment: MC2MeshStaticFragmentV1
     program: MC2CompiledDomainProgramV1
     parameters: MC2DomainParameterPacketV1
+    effective_parameter_signature: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.fragment, MC2MeshStaticFragmentV1):
@@ -37,6 +38,8 @@ class MC2MeshCompiledDomainV1:
             raise TypeError("program must be MC2CompiledDomainProgramV1")
         if not isinstance(self.parameters, MC2DomainParameterPacketV1):
             raise TypeError("parameters must be MC2DomainParameterPacketV1")
+        if not str(self.effective_parameter_signature or ""):
+            raise ValueError("effective_parameter_signature cannot be empty")
         if self.program.partition_count != 1:
             raise ValueError("E1 Mesh compiled domain must contain one partition")
         if self.parameters.layout_signature != self.program.layout_signature:
@@ -48,6 +51,7 @@ class MC2MeshCompiledDomainV1:
             "layout_signature": self.program.layout_signature,
             "parameter_layout_signature": self.parameters.parameter_layout_signature,
             "parameter_signature": self.parameters.parameter_signature,
+            "effective_parameter_signature": self.effective_parameter_signature,
             "fragment": self.fragment.debug_dict(),
             "program": self.program.debug_dict(),
         }
@@ -314,6 +318,7 @@ def compile_mc2_mesh_static_fragment(
         fragment=fragment,
         program=program,
         parameters=parameters,
+        effective_parameter_signature=effective.parameter_signature,
     )
 
 

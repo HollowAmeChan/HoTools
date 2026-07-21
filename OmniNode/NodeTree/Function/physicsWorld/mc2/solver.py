@@ -592,6 +592,8 @@ def step_mc2(
     dt: float = 0.0,
     enabled: bool = True,
     timing: _MC2TimingSink | None = None,
+    shadow_compile: bool = False,
+    shadow_reports: list | None = None,
 ) -> tuple[object, bool, str]:
     """Sync MC2 slots, run the no-collision Mesh slice, and publish results."""
     if timing is not None:
@@ -603,6 +605,10 @@ def step_mc2(
         raise TypeError("settings 必须是 MC2SolverSettingsSpec")
     if not enabled:
         return world, False, "MC2 模拟步已禁用"
+    if type(shadow_compile) is not bool:
+        raise TypeError("shadow_compile 必须是 bool")
+    if shadow_compile and shadow_reports is not None and not hasattr(shadow_reports, "append"):
+        raise TypeError("shadow_reports 必须支持 append")
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 模拟步需要 PhysicsWorldCache"
     automatic_frame_inputs = frame_inputs is None and int(world.generation) > 0
@@ -773,6 +779,34 @@ def step_mc2(
                     raw_snapshots=static_input_snapshots,
                     native_context=staged_native_context,
                 )
+            if (
+                shadow_compile
+                and rebuild_reason
+                and mesh_static_supported
+                and static_input_snapshots
+            ):
+                from .shadow_pipeline import run_mc2_mesh_shadow_compile
+
+                shadow_report = run_mc2_mesh_shadow_compile(
+                    spec.sources[0],
+                    spec,
+                    topology,
+                    static_input_snapshots[0],
+                    shadow_enabled=True,
+                    timing=timing,
+                )
+                if shadow_report is None:
+                    raise RuntimeError("MC2 shadow compile unexpectedly returned no report")
+                if shadow_reports is not None:
+                    shadow_reports.append(shadow_report)
+                if not shadow_report.compatible:
+                    failed_checks = tuple(
+                        item.name for item in shadow_report.checks if not item.matched
+                    )
+                    raise RuntimeError(
+                        "MC2 E1 shadow comparison failed: "
+                        f"{failed_checks!r}"
+                    )
             if frame_input is None and automatic_frame_inputs and mesh_static_supported:
                 active_mesh_static = mesh_static
                 if active_mesh_static is None:
