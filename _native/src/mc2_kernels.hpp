@@ -240,6 +240,47 @@ struct Mc2SubstepInertiaView {
     float depth_inertia = 0.0f;
 };
 
+struct Mc2CenterStepView {
+    float old_frame_world_position[3] = {};
+    float frame_world_position[3] = {};
+    float old_frame_world_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float frame_world_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float old_frame_world_scale[3] = {1.0f, 1.0f, 1.0f};
+    float frame_world_scale[3] = {1.0f, 1.0f, 1.0f};
+    float old_world_position[3] = {};
+    float old_world_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float initial_scale[3] = {1.0f, 1.0f, 1.0f};
+    float negative_scale_direction[3] = {1.0f, 1.0f, 1.0f};
+    float initial_local_gravity_direction[3] = {0.0f, -1.0f, 0.0f};
+    float world_gravity[3] = {0.0f, -1.0f, 0.0f};
+    float dt = 0.0f;
+    float frame_interpolation = 0.0f;
+    float distance_weight = 1.0f;
+    float velocity_weight = 1.0f;
+    float local_inertia = 0.0f;
+    float local_movement_speed_limit = -1.0f;
+    float local_rotation_speed_limit = -1.0f;
+    float gravity = 0.0f;
+    float gravity_falloff = 0.0f;
+    float stabilization_time = 0.0f;
+    float blend_weight = 1.0f;
+    float now_world_position[3] = {};
+    float now_world_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float step_vector[3] = {};
+    float step_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float inertia_vector[3] = {};
+    float inertia_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float rotation_axis[3] = {};
+    float move_inertia_ratio = 1.0f;
+    float rotation_inertia_ratio = 1.0f;
+    float angular_velocity = 0.0f;
+    float scale_ratio = 1.0f;
+    float gravity_dot = 1.0f;
+    float gravity_ratio = 1.0f;
+    float output_velocity_weight = 1.0f;
+    float output_blend_weight = 1.0f;
+};
+
 struct Mc2ParticleIntegrationView {
     float* positions = nullptr;
     float* velocities = nullptr;
@@ -309,6 +350,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
 void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
+bool evaluate_center_step_mc2(Mc2CenterStepView& view);
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view);
 void apply_partition_keep_transform_mc2(Mc2PartitionKeepTransformView& view);
 void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);

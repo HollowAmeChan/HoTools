@@ -1370,141 +1370,52 @@ bool evaluate_center_step(Mc2ContextV0& context, float dt) {
         dt <= kMc2Epsilon) {
         return false;
     }
-    const float ratio = context.frame_interpolation;
-    for (std::size_t component = 0; component < 3; ++component) {
-        context.center_now_world_position[component] =
-            context.center_old_frame_world_position[component] * (1.0f - ratio) +
-            context.center_frame_world_position[component] * ratio;
-        context.center_step_vector[component] =
-            context.center_now_world_position[component] -
-            context.center_old_world_position[component];
-    }
-    slerp_xyzw(
-        context.center_old_frame_world_rotation.data(),
-        context.center_frame_world_rotation.data(),
-        ratio,
-        context.center_now_world_rotation.data()
-    );
-    const std::array<float, 4> inverse_old {
-        -context.center_old_world_rotation[0],
-        -context.center_old_world_rotation[1],
-        -context.center_old_world_rotation[2],
-        context.center_old_world_rotation[3],
-    };
-    context.center_step_rotation = quaternion_multiply(
-        context.center_now_world_rotation,
-        inverse_old
-    );
-    normalize_quaternion(context.center_step_rotation);
-    float rotation_cosine = 0.0f;
-    for (std::size_t component = 0; component < 4; ++component) {
-        rotation_cosine += context.center_old_world_rotation[component] *
-            context.center_now_world_rotation[component];
-    }
-    const float step_angle = 2.0f * std::acos(
-        std::max(0.0f, std::min(1.0f, std::fabs(rotation_cosine)))
-    );
-
-    float move_inertia = 1.0f - context.float_values[kLocalInertia];
-    const Vec3 step_vector {
-        context.center_step_vector[0],
-        context.center_step_vector[1],
-        context.center_step_vector[2],
-    };
-    const float local_speed = length(mul(step_vector, 1.0f - move_inertia)) / dt;
-    const float movement_limit = context.float_values[kLocalMovementSpeedLimit];
-    if (local_speed > movement_limit && movement_limit >= 0.0f) {
-        const float limit_ratio = movement_limit / local_speed;
-        move_inertia = 1.0f + (move_inertia - 1.0f) * limit_ratio;
-    }
-    float rotation_inertia = 1.0f - context.float_values[kLocalInertia];
-    const float local_angle_speed =
-        step_angle * (1.0f - rotation_inertia) / dt * 57.29577951308232f;
-    const float rotation_limit = context.float_values[kLocalRotationSpeedLimit];
-    if (local_angle_speed > rotation_limit && rotation_limit >= 0.0f) {
-        const float limit_ratio = rotation_limit / local_angle_speed;
-        rotation_inertia = 1.0f + (rotation_inertia - 1.0f) * limit_ratio;
-    }
-    context.center_step_move_inertia_ratio = move_inertia;
-    context.center_step_rotation_inertia_ratio = rotation_inertia;
-    for (std::size_t component = 0; component < 3; ++component) {
-        context.center_inertia_vector[component] =
-            context.center_step_vector[component] * move_inertia;
-    }
-    const std::array<float, 4> identity {0.0f, 0.0f, 0.0f, 1.0f};
-    slerp_xyzw(
-        identity.data(),
-        context.center_step_rotation.data(),
-        rotation_inertia,
-        context.center_inertia_rotation.data()
-    );
-    context.center_angular_velocity = step_angle / dt;
-    const float axis_length = std::sqrt(
-        context.center_step_rotation[0] * context.center_step_rotation[0] +
-        context.center_step_rotation[1] * context.center_step_rotation[1] +
-        context.center_step_rotation[2] * context.center_step_rotation[2]
+    hotools::Mc2CenterStepView view;
+    std::copy_n(context.center_old_frame_world_position.data(), 3, view.old_frame_world_position);
+    std::copy_n(context.center_frame_world_position.data(), 3, view.frame_world_position);
+    std::copy_n(context.center_old_frame_world_rotation.data(), 4, view.old_frame_world_rotation);
+    std::copy_n(context.center_frame_world_rotation.data(), 4, view.frame_world_rotation);
+    std::copy_n(context.center_old_frame_world_scale.data(), 3, view.old_frame_world_scale);
+    std::copy_n(context.center_frame_world_scale.data(), 3, view.frame_world_scale);
+    std::copy_n(context.center_old_world_position.data(), 3, view.old_world_position);
+    std::copy_n(context.center_old_world_rotation.data(), 4, view.old_world_rotation);
+    std::copy_n(context.center_initial_scale.data(), 3, view.initial_scale);
+    std::copy_n(context.center_negative_scale_direction.data(), 3, view.negative_scale_direction);
+    std::copy_n(
+        context.center_initial_local_gravity_direction.data(),
+        3,
+        view.initial_local_gravity_direction
     );
     for (std::size_t component = 0; component < 3; ++component) {
-        context.center_rotation_axis[component] =
-            context.center_angular_velocity > kMc2Epsilon && axis_length > kMc2Epsilon
-            ? context.center_step_rotation[component] / axis_length
-            : 0.0f;
+        view.world_gravity[component] = context.float_values[kGravityDirection + component];
     }
-
-    std::array<float, 3> world_scale {};
-    for (std::size_t component = 0; component < 3; ++component) {
-        world_scale[component] =
-            context.center_old_frame_world_scale[component] * (1.0f - ratio) +
-            context.center_frame_world_scale[component] * ratio;
-    }
-    const float world_scale_length = std::sqrt(
-        world_scale[0] * world_scale[0] +
-        world_scale[1] * world_scale[1] +
-        world_scale[2] * world_scale[2]
-    );
-    const float initial_scale_length = std::sqrt(
-        context.center_initial_scale[0] * context.center_initial_scale[0] +
-        context.center_initial_scale[1] * context.center_initial_scale[1] +
-        context.center_initial_scale[2] * context.center_initial_scale[2]
-    );
-    context.scale_ratio = std::max(world_scale_length / initial_scale_length, 1.0e-6f);
-
-    Vec3 initial_gravity {
-        context.center_initial_local_gravity_direction[0],
-        context.center_initial_local_gravity_direction[1] *
-            context.center_negative_scale_direction[1],
-        context.center_initial_local_gravity_direction[2],
-    };
-    const Vec3 world_gravity {
-        context.float_values[kGravityDirection + 0],
-        context.float_values[kGravityDirection + 1],
-        context.float_values[kGravityDirection + 2],
-    };
-    float gravity_dot = 1.0f;
-    if (length_squared(world_gravity) > kMc2Epsilon) {
-        gravity_dot = saturate(
-            dot(rotate_vector(context.center_now_world_rotation, initial_gravity), world_gravity) *
-            0.5f + 0.5f
-        );
-    }
-    context.center_gravity_dot = gravity_dot;
-    context.gravity_ratio = 1.0f;
-    const float gravity_falloff = context.float_values[kGravityFalloff];
-    if (context.float_values[kGravity] > 1.0e-6f && gravity_falloff > 1.0e-6f) {
-        context.gravity_ratio =
-            saturate(1.0f - gravity_falloff) +
-            (1.0f - saturate(1.0f - gravity_falloff)) *
-            saturate(1.0f - gravity_dot);
-    }
-    if (context.velocity_weight < 1.0f) {
-        const float stabilization = context.float_values[kStabilizationTime];
-        const float added = stabilization > 1.0e-6f ? dt / stabilization : 1.0f;
-        context.velocity_weight = saturate(context.velocity_weight + added);
-    }
-    context.center_blend_weight = saturate(
-        context.velocity_weight * context.float_values[kBlendWeight] *
-        context.center_distance_weight
-    );
+    view.dt = dt;
+    view.frame_interpolation = context.frame_interpolation;
+    view.distance_weight = context.center_distance_weight;
+    view.velocity_weight = context.velocity_weight;
+    view.local_inertia = context.float_values[kLocalInertia];
+    view.local_movement_speed_limit = context.float_values[kLocalMovementSpeedLimit];
+    view.local_rotation_speed_limit = context.float_values[kLocalRotationSpeedLimit];
+    view.gravity = context.float_values[kGravity];
+    view.gravity_falloff = context.float_values[kGravityFalloff];
+    view.stabilization_time = context.float_values[kStabilizationTime];
+    view.blend_weight = context.float_values[kBlendWeight];
+    if (!hotools::evaluate_center_step_mc2(view)) return false;
+    std::copy_n(view.now_world_position, 3, context.center_now_world_position.data());
+    std::copy_n(view.now_world_rotation, 4, context.center_now_world_rotation.data());
+    std::copy_n(view.step_vector, 3, context.center_step_vector.data());
+    std::copy_n(view.step_rotation, 4, context.center_step_rotation.data());
+    std::copy_n(view.inertia_vector, 3, context.center_inertia_vector.data());
+    std::copy_n(view.inertia_rotation, 4, context.center_inertia_rotation.data());
+    std::copy_n(view.rotation_axis, 3, context.center_rotation_axis.data());
+    context.center_step_move_inertia_ratio = view.move_inertia_ratio;
+    context.center_step_rotation_inertia_ratio = view.rotation_inertia_ratio;
+    context.center_angular_velocity = view.angular_velocity;
+    context.scale_ratio = view.scale_ratio;
+    context.center_gravity_dot = view.gravity_dot;
+    context.gravity_ratio = view.gravity_ratio;
+    context.velocity_weight = view.output_velocity_weight;
+    context.center_blend_weight = view.output_blend_weight;
     context.center_dynamic_ready = false;
     context.center_result_ready = true;
     ++context.center_step_count;

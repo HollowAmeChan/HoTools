@@ -2977,6 +2977,182 @@ void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
     }
 }
 
+namespace {
+
+void center_slerp_xyzw(
+    const float* first,
+    const float* second,
+    float ratio,
+    float* output
+) {
+    float target[4] = {second[0], second[1], second[2], second[3]};
+    float cosine = first[0] * target[0] + first[1] * target[1] +
+        first[2] * target[2] + first[3] * target[3];
+    if (cosine < 0.0f) {
+        cosine = -cosine;
+        for (float& value : target) value = -value;
+    }
+    float first_weight = 1.0f - ratio;
+    float second_weight = ratio;
+    if (cosine < 0.9995f) {
+        const float angle = std::acos(std::max(-1.0f, std::min(1.0f, cosine)));
+        const float sine = std::sin(angle);
+        first_weight = std::sin((1.0f - ratio) * angle) / sine;
+        second_weight = std::sin(ratio * angle) / sine;
+    }
+    float length_squared = 0.0f;
+    for (int component = 0; component < 4; ++component) {
+        output[component] = first[component] * first_weight + target[component] * second_weight;
+        length_squared += output[component] * output[component];
+    }
+    const float inverse_length = length_squared > kMc2Epsilon
+        ? 1.0f / std::sqrt(length_squared)
+        : 1.0f;
+    for (int component = 0; component < 4; ++component) output[component] *= inverse_length;
+}
+
+void center_rotate_vector(
+    const float* rotation,
+    const float* value,
+    float* output
+) {
+    const float cross_x = rotation[1] * value[2] - rotation[2] * value[1];
+    const float cross_y = rotation[2] * value[0] - rotation[0] * value[2];
+    const float cross_z = rotation[0] * value[1] - rotation[1] * value[0];
+    const float twice_cross_x = 2.0f * cross_x;
+    const float twice_cross_y = 2.0f * cross_y;
+    const float twice_cross_z = 2.0f * cross_z;
+    output[0] = value[0] + rotation[3] * twice_cross_x +
+        (rotation[1] * twice_cross_z - rotation[2] * twice_cross_y);
+    output[1] = value[1] + rotation[3] * twice_cross_y +
+        (rotation[2] * twice_cross_x - rotation[0] * twice_cross_z);
+    output[2] = value[2] + rotation[3] * twice_cross_z +
+        (rotation[0] * twice_cross_y - rotation[1] * twice_cross_x);
+}
+
+}  // namespace
+
+bool evaluate_center_step_mc2(Mc2CenterStepView& view) {
+    if (view.dt <= kMc2Epsilon) return false;
+    const float ratio = view.frame_interpolation;
+    for (std::size_t component = 0; component < 3; ++component) {
+        view.now_world_position[component] =
+            view.old_frame_world_position[component] * (1.0f - ratio) +
+            view.frame_world_position[component] * ratio;
+        view.step_vector[component] =
+            view.now_world_position[component] - view.old_world_position[component];
+    }
+    center_slerp_xyzw(
+        view.old_frame_world_rotation,
+        view.frame_world_rotation,
+        ratio,
+        view.now_world_rotation
+    );
+    float inverse_old[4];
+    quat_inverse(view.old_world_rotation, inverse_old);
+    quat_multiply(view.now_world_rotation, inverse_old, view.step_rotation);
+    float rotation_cosine = 0.0f;
+    for (std::size_t component = 0; component < 4; ++component) {
+        rotation_cosine += view.old_world_rotation[component] *
+            view.now_world_rotation[component];
+    }
+    const float step_angle = 2.0f * std::acos(
+        std::max(0.0f, std::min(1.0f, std::fabs(rotation_cosine)))
+    );
+
+    float move_inertia = 1.0f - view.local_inertia;
+    float rotation_inertia = 1.0f - view.local_inertia;
+    const float local_speed = std::sqrt(
+        view.step_vector[0] * view.step_vector[0] +
+        view.step_vector[1] * view.step_vector[1] +
+        view.step_vector[2] * view.step_vector[2]
+    ) * (1.0f - move_inertia) / view.dt;
+    if (local_speed > view.local_movement_speed_limit && view.local_movement_speed_limit >= 0.0f) {
+        const float limit_ratio = view.local_movement_speed_limit / local_speed;
+        move_inertia = 1.0f + (move_inertia - 1.0f) * limit_ratio;
+    }
+    const float local_angle_speed =
+        step_angle * (1.0f - rotation_inertia) / view.dt * 57.29577951308232f;
+    if (local_angle_speed > view.local_rotation_speed_limit && view.local_rotation_speed_limit >= 0.0f) {
+        const float limit_ratio = view.local_rotation_speed_limit / local_angle_speed;
+        rotation_inertia = 1.0f + (rotation_inertia - 1.0f) * limit_ratio;
+    }
+    view.move_inertia_ratio = move_inertia;
+    view.rotation_inertia_ratio = rotation_inertia;
+    for (std::size_t component = 0; component < 3; ++component) {
+        view.inertia_vector[component] = view.step_vector[component] * move_inertia;
+    }
+    const float identity[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    quat_slerp(identity, view.step_rotation, rotation_inertia, view.inertia_rotation);
+    view.angular_velocity = step_angle / view.dt;
+    const float axis_length = std::sqrt(
+        view.step_rotation[0] * view.step_rotation[0] +
+        view.step_rotation[1] * view.step_rotation[1] +
+        view.step_rotation[2] * view.step_rotation[2]
+    );
+    for (std::size_t component = 0; component < 3; ++component) {
+        view.rotation_axis[component] =
+            view.angular_velocity > kMc2Epsilon && axis_length > kMc2Epsilon
+            ? view.step_rotation[component] / axis_length
+            : 0.0f;
+    }
+
+    float world_scale[3] {};
+    float world_scale_length_squared = 0.0f;
+    float initial_scale_length_squared = 0.0f;
+    for (std::size_t component = 0; component < 3; ++component) {
+        world_scale[component] =
+            view.old_frame_world_scale[component] * (1.0f - ratio) +
+            view.frame_world_scale[component] * ratio;
+        world_scale_length_squared += world_scale[component] * world_scale[component];
+        initial_scale_length_squared += view.initial_scale[component] * view.initial_scale[component];
+    }
+    view.scale_ratio = std::max(
+        std::sqrt(world_scale_length_squared / initial_scale_length_squared),
+        1.0e-6f
+    );
+
+    float initial_gravity[3] = {
+        view.initial_local_gravity_direction[0],
+        view.initial_local_gravity_direction[1] * view.negative_scale_direction[1],
+        view.initial_local_gravity_direction[2],
+    };
+    float world_falloff[3] {};
+    center_rotate_vector(view.now_world_rotation, initial_gravity, world_falloff);
+    const float gravity_length_squared =
+        view.world_gravity[0] * view.world_gravity[0] +
+        view.world_gravity[1] * view.world_gravity[1] +
+        view.world_gravity[2] * view.world_gravity[2];
+    view.gravity_dot = 1.0f;
+    if (gravity_length_squared > kMc2Epsilon) {
+        const float dot = world_falloff[0] * view.world_gravity[0] +
+            world_falloff[1] * view.world_gravity[1] +
+            world_falloff[2] * view.world_gravity[2];
+        view.gravity_dot = clamp_float(dot * 0.5f + 0.5f, 0.0f, 1.0f);
+    }
+    view.gravity_ratio = 1.0f;
+    if (view.gravity > 1.0e-6f && view.gravity_falloff > 1.0e-6f) {
+        const float minimum = clamp_float(1.0f - view.gravity_falloff, 0.0f, 1.0f);
+        view.gravity_ratio = minimum + (1.0f - minimum) *
+            clamp_float(1.0f - view.gravity_dot, 0.0f, 1.0f);
+    }
+    view.output_velocity_weight = view.velocity_weight;
+    if (view.output_velocity_weight < 1.0f) {
+        const float added = view.stabilization_time > 1.0e-6f
+            ? view.dt / view.stabilization_time
+            : 1.0f;
+        view.output_velocity_weight = clamp_float(
+            view.output_velocity_weight + added, 0.0f, 1.0f
+        );
+    }
+    view.output_blend_weight = clamp_float(
+        view.output_velocity_weight * view.blend_weight * view.distance_weight,
+        0.0f,
+        1.0f
+    );
+    return true;
+}
+
 void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
     if (view.vertex_count <= 0 || view.positions == nullptr || view.velocities == nullptr) {
         return;
