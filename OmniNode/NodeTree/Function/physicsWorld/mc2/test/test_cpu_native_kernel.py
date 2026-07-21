@@ -127,6 +127,9 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
         )
         inspection = domain.inspect()
         assert inspection["kernel"]["numerical_kernel_ready"] is False
+        assert inspection["kernel"]["baseline_ready"] is True
+        assert inspection["kernel"]["baseline_line_count"] == 1
+        assert inspection["kernel"]["baseline_data_count"] == 3
         assert inspection["step_count"] == 1
     finally:
         domain.dispose()

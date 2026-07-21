@@ -66,6 +66,14 @@ public:
         const float* stiffness_values,
         std::size_t neighbor_count
     );
+    void configure_baseline(
+        const std::int32_t* parent_indices,
+        const std::int32_t* line_starts,
+        const std::int32_t* line_counts,
+        std::size_t line_count,
+        const std::int32_t* line_data,
+        std::size_t data_count
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(
@@ -191,6 +199,9 @@ public:
     }
     std::int64_t center_shift_count() const noexcept { return center_shift_count_; }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }
+    bool baseline_ready() const noexcept { return baseline_ready_; }
+    std::size_t baseline_line_count() const noexcept { return baseline_line_starts_.size(); }
+    std::size_t baseline_data_count() const noexcept { return baseline_line_data_.size(); }
 
 private:
     void ensure_live() const;
@@ -279,6 +290,11 @@ private:
     std::vector<float> distance_rest_lengths_;
     std::vector<float> distance_stiffness_values_;
     bool distance_ready_ = false;
+    std::vector<std::int32_t> baseline_parent_indices_;
+    std::vector<std::int32_t> baseline_line_starts_;
+    std::vector<std::int32_t> baseline_line_counts_;
+    std::vector<std::int32_t> baseline_line_data_;
+    bool baseline_ready_ = false;
     std::vector<std::int32_t> tether_root_indices_;
     bool tether_ready_ = false;
     std::vector<std::int32_t> bending_dihedral_pairs_;

@@ -24,6 +24,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step",
     "mc2_domain_cpu_v1_configure_distance",
     "mc2_domain_cpu_v1_step_distance",
+    "mc2_domain_cpu_v1_configure_baseline",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
     "mc2_domain_cpu_v1_configure_bending",
@@ -89,6 +90,7 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native CPU domain returned an invalid handle")
         try:
             self._configure_distance(handle, program, parameters)
+            self._configure_baseline(handle, program)
             self._configure_tether(handle, program)
             self._configure_bending(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
@@ -373,6 +375,7 @@ class MC2NativeCPUKernelV1:
         result.update({
             "numerical_kernel_ready": False,
             "data_path_only": True,
+            "baseline_slice_ready": bool(result.get("baseline_ready", False)),
             "distance_slice_ready": True,
             "tether_slice_ready": any(
                 table.kind == "tether" for table in self._programs[key].constraint_tables
@@ -455,6 +458,23 @@ class MC2NativeCPUKernelV1:
             rest_array,
             stiffness_array,
         )
+
+    def _configure_baseline(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+    ) -> None:
+        if program.baseline_parent_indices is None:
+            return
+        arrays = (
+            np.asarray(program.baseline_parent_indices, dtype=np.int32),
+            np.asarray(program.baseline_line_start, dtype=np.int32),
+            np.asarray(program.baseline_line_count, dtype=np.int32),
+            np.asarray(program.baseline_line_data, dtype=np.int32),
+        )
+        for array in arrays:
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_baseline(handle, *arrays)
 
     def _configure_tether(
         self,

@@ -282,6 +282,28 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_baseline",
+        [](std::uint64_t handle,
+           ci32_1d parent_indices,
+           ci32_1d line_starts,
+           ci32_1d line_counts,
+           ci32_1d line_data) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(parent_indices.shape(0)) != domain->particle_count() ||
+                line_starts.shape(0) != line_counts.shape(0)) {
+                throw nb::value_error("MC2 CPU baseline arrays have incompatible lengths");
+            }
+            domain->configure_baseline(
+                parent_indices.data(), line_starts.data(), line_counts.data(),
+                static_cast<std::size_t>(line_starts.shape(0)), line_data.data(),
+                static_cast<std::size_t>(line_data.shape(0))
+            );
+        },
+        nb::arg("handle"), nb::arg("parent_indices"), nb::arg("line_starts"),
+        nb::arg("line_counts"), nb::arg("line_data"),
+        "Configure the explicit backend-neutral baseline line SoA."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_tether",
         [](std::uint64_t handle, ci32_1d root_indices) {
             auto* domain = require_domain(handle);
@@ -571,6 +593,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["is_running"] = domain->is_running();
             result["step_count"] = domain->step_count();
             result["disposed"] = domain->disposed();
+            result["baseline_ready"] = domain->baseline_ready();
+            result["baseline_line_count"] = domain->baseline_line_count();
+            result["baseline_data_count"] = domain->baseline_data_count();
             result["partition_world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->partition_world_positions()),
                 domain->partition_count(), 3

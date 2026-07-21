@@ -821,6 +821,55 @@ void DomainV1::step_distance() {
     ++step_count_;
 }
 
+void DomainV1::configure_baseline(
+    const std::int32_t* parent_indices,
+    const std::int32_t* line_starts,
+    const std::int32_t* line_counts,
+    std::size_t line_count,
+    const std::int32_t* line_data,
+    std::size_t data_count
+) {
+    ensure_live();
+    if (parent_indices == nullptr ||
+        (line_count != 0 && (line_starts == nullptr || line_counts == nullptr)) ||
+        (data_count != 0 && line_data == nullptr)) {
+        throw std::invalid_argument("MC2 CPU baseline arrays cannot be null");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const auto parent = parent_indices[vertex];
+        if (parent < -1 || (parent >= 0 && static_cast<std::size_t>(parent) >= particle_count_)) {
+            throw std::invalid_argument("MC2 CPU baseline parent is out of range");
+        }
+    }
+    for (std::size_t line = 0; line < line_count; ++line) {
+        const auto start = line_starts[line];
+        const auto count = line_counts[line];
+        if (start < 0 || count < 0 ||
+            static_cast<std::size_t>(start) + static_cast<std::size_t>(count) > data_count) {
+            throw std::invalid_argument("MC2 CPU baseline line range is invalid");
+        }
+    }
+    for (std::size_t index = 0; index < data_count; ++index) {
+        if (line_data[index] < 0 || static_cast<std::size_t>(line_data[index]) >= particle_count_) {
+            throw std::invalid_argument("MC2 CPU baseline line vertex is out of range");
+        }
+    }
+    baseline_parent_indices_.assign(parent_indices, parent_indices + particle_count_);
+    if (line_count != 0) {
+        baseline_line_starts_.assign(line_starts, line_starts + line_count);
+        baseline_line_counts_.assign(line_counts, line_counts + line_count);
+    } else {
+        baseline_line_starts_.clear();
+        baseline_line_counts_.clear();
+    }
+    if (data_count != 0) {
+        baseline_line_data_.assign(line_data, line_data + data_count);
+    } else {
+        baseline_line_data_.clear();
+    }
+    baseline_ready_ = true;
+}
+
 void DomainV1::configure_tether(const std::int32_t* root_indices) {
     ensure_live();
     if (root_indices == nullptr) {
@@ -1099,6 +1148,11 @@ void DomainV1::dispose() noexcept {
     distance_stiffness_values_.clear();
     tether_root_indices_.clear();
     tether_ready_ = false;
+    baseline_parent_indices_.clear();
+    baseline_line_starts_.clear();
+    baseline_line_counts_.clear();
+    baseline_line_data_.clear();
+    baseline_ready_ = false;
     bending_dihedral_pairs_.clear();
     bending_dihedral_rest_angles_.clear();
     bending_dihedral_signs_.clear();
