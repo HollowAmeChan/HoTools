@@ -45,6 +45,8 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 E1 单 source shadow pipeline 已完成，但它是迁移期验证工具，不是第二个 solver：`source_capture.py` 对真实 Mesh 只做一次静态读取，`static_fragment.py` 和 `domain_compile.py` 只处理冻结 POD，`shadow_pipeline.py` 将新 compiled domain 与 V0 静态构建逐项比较并可采集阶段耗时。只有 `step_mc2` 的内部 `shadow_compile=True` 才会显式启用；默认关闭时不导入、不捕获、不编译、不分配对照数据。V0 context、solve、result 和 writeback 仍是产品唯一权威，shadow report 不进入 Physics World 持久 state。
 
+E2 静态统一域编译核心已完成：有序 Mesh fragment 合并为一个 logical particle field，constraint/primitive 索引在 compiler 内重定位，多个 output target 显式映射；不同 partition 的 runtime 参数保留在统一 SoA，`collision_group/mask` 是可热更新的 uint32 过滤表。`compare_mc2_domain_compile_cache` 只给出 program/layout/parameter 的复用资格和 partition 增删/重排信息，不拥有缓存、task、slot 或 backend。E2 仍未改变当前每对象一个 V0 task 的生产行为，也未运行 fused simulation。
+
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
 当前生产行为仍保持本蓝本的既有事实：每个 Mesh Object 生成一个单 source `MC2TaskSpec`、独立 static/frame adapter、独立 slot/context，并由 world-owned interaction 处理跨 task self collision。只有 E0 schema/fixture 与 E1 单 source shadow 验收完成，并且 E2-E5 逐阶段通过，才允许改变这条生产数据流。
@@ -651,7 +653,7 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `partition_specs.py` | backend-neutral partition entry、稀疏patch、字段来源、显式/隐式合并与collector plan；当前不创建task/slot/native state |
 | `domain_ir.py` | E0后端中立POD合同：static snapshot、logical domain program、热更新parameter packet、frame packet、output envelope与logical/physical index map；不读Blender/Physics World，不拥有backend资源 |
 | `domain_capabilities.py` | E0资源分配前的后端schema/setup/capability/容量门禁；只读domain program，不加载或分配backend |
-| `domain_compile.py` | E1单source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
+| `domain_compile.py` | E1单source与E2多source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
 | `shadow_pipeline.py` | E1显式影子对照与阶段计时；不解算、不写回、不拥有backend，禁止演变为shadow solver |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |

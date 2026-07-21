@@ -599,7 +599,7 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 | `setups/mesh_cloth/static_fragment.py` | 单 partition Mesh 拓扑/约束 fragment 构建；不注册 context。 |
 | `domain_ir.py` | 后端中立 compiled domain、index view、output map 数据合同。 |
 | `domain_capabilities.py` | allocation 前schema/setup/capability/容量检查；不加载或拥有backend。 |
-| `domain_compile.py` | fragment 索引重定位、参数 SoA、collision/output table 编译。 |
+| `domain_compile.py` | 有序 fragment 的 partition-local -> logical 索引重定位、分级参数 SoA、collision/output table 编译与纯 cache-reuse 报告。 |
 | `shadow_pipeline.py` | E1 显式 opt-in 的 capture -> fragment -> compile 与旧静态结果对照、阶段计时；不解算、不写回、不拥有 backend。 |
 | `domain_parameters.py` | resolved 参数 -> 热更新 parameter packet；不改变 topology layout。 |
 | `frame_capture.py` 及 setup adapter | Blender 主线程逐 partition frame snapshot。 |
@@ -725,6 +725,8 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 退出条件：两个 Mesh 编译成一个 domain；无跨 source Distance/Bending/Tether 记录；跨 partition self-collision 仅由过滤表决定；输入顺序、显式稳定顺序和 source 删除的 identity 行为符合合同。
 
+实现状态（2026-07-21）：E2 已完成静态编译部分。`compile_mc2_mesh_static_fragments` 保留调用方的显式 fragment 顺序，为每个 partition 生成连续但仅作为 `MC2IndexView` 的物理视图，并将所有 constraint/primitive 索引按偏移重定位；结构表的 endpoint owner 校验确保不存在跨 source Distance/Bending/Tether。输出 target、logical source element 和 partition owner 全部显式写入 program。每个 partition 的 runtime floats、uint32 group/mask、particle curve 采样和 constraint 参数独立进入统一 SoA，空的 domain scalar 表表示当前字段没有可安全提升到 world-scope 的值。`compare_mc2_domain_compile_cache` 只生成复用资格报告，不持有缓存或 backend；可区分 exact、layout/program 复用、纯参数值更新、重排和 source 删除。E2 仍不创建 native context，不运行模拟。
+
 ### E3：新 CPU backend 单 source 等价
 
 范围：建立新的 domain backend ABI，先只运行一个 partition。旧 `MC2NativeContextV0` 保留作为 reference，不在原类上叠加双模式。
@@ -799,7 +801,7 @@ mc2/test/
   test_domain_collect.py
   test_partition_capture.py       # E1 已有
   test_partition_static_fragment.py # E1 已有
-  test_domain_compile.py           # E1 已有
+  test_domain_compile.py           # E1/E2 已有
   test_shadow_pipeline.py          # E1 已有
   test_domain_frame_packet.py
   test_domain_backend_cpu.py
