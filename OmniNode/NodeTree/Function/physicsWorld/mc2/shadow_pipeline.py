@@ -88,11 +88,12 @@ def compare_mc2_mesh_static_to_compiled(
     if not isinstance(compiled, MC2MeshCompiledDomainV1):
         raise TypeError("compiled must be MC2MeshCompiledDomainV1")
     legacy_proxy = legacy_static.final_proxy
-    compiled_proxy = compiled.fragment.final_proxy
+    fragment = compiled.single_fragment
+    compiled_proxy = fragment.final_proxy
     legacy_baseline = legacy_static.baseline.baseline
-    compiled_baseline = compiled.fragment.baseline.baseline
+    compiled_baseline = fragment.baseline.baseline
     legacy_distance = legacy_static.distance
-    compiled_distance = compiled.fragment.distance
+    compiled_distance = fragment.distance
     checks = [
         MC2ShadowComparisonItemV1(
             "particle_count",
@@ -151,35 +152,38 @@ def compare_mc2_mesh_static_to_compiled(
         MC2ShadowComparisonItemV1(
             "bending_signature",
             getattr(legacy_static.bending, "bending_signature", None)
-            == getattr(compiled.fragment.bending, "bending_signature", None),
+            == getattr(fragment.bending, "bending_signature", None),
             getattr(legacy_static.bending, "record_count", 0),
-            getattr(compiled.fragment.bending, "record_count", 0),
+            getattr(fragment.bending, "record_count", 0),
         ),
         MC2ShadowComparisonItemV1(
             "self_collision_signature",
             legacy_static.self_collision.static_signature
-            == compiled.fragment.self_collision.static_signature,
+            == fragment.self_collision.static_signature,
             legacy_static.self_collision.primitive_count,
-            compiled.fragment.self_collision.primitive_count,
+            fragment.self_collision.primitive_count,
         ),
         MC2ShadowComparisonItemV1(
             "radius_multipliers",
-            _array_equal(legacy_static.radius_multipliers, compiled.fragment.radius_multipliers),
+            _array_equal(legacy_static.radius_multipliers, fragment.radius_multipliers),
             len(legacy_static.radius_multipliers),
-            len(compiled.fragment.radius_multipliers),
+            len(fragment.radius_multipliers),
         ),
         MC2ShadowComparisonItemV1(
             "effective_parameter_signature",
             (
-                compiled.effective_parameter_signature
-                == (effective_parameter_signature or compiled.effective_parameter_signature)
+                compiled.single_effective_parameter_signature
+                == (
+                    effective_parameter_signature
+                    or compiled.single_effective_parameter_signature
+                )
             ),
-            effective_parameter_signature or compiled.effective_parameter_signature,
-            compiled.effective_parameter_signature,
+            effective_parameter_signature or compiled.single_effective_parameter_signature,
+            compiled.single_effective_parameter_signature,
         ),
     ]
     return MC2MeshShadowComparisonReportV1(
-        task_id=compiled.fragment.partition_id,
+        task_id=fragment.partition_id,
         compiled_domain_signature=compiled.program.domain_signature,
         checks=tuple(checks),
         timing_seconds={},

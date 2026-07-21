@@ -74,6 +74,7 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_ir", "partition_count"),
     ("mc2.domain_ir", "row_count"),
     ("mc2.domain_ir", "field_count"),
+    ("mc2.domain_compile", "compile_mc2_mesh_static_fragment"),
     ("mc2.setups.mesh_cloth.static_fragment", "_matrix_columns"),
     ("mc2.shadow_pipeline", "compatible"),
     ("mc2.shadow_pipeline", "_array_equal"),
