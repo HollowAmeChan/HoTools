@@ -481,6 +481,8 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 
 P4 不在提交序列中。每个提交都应可独立基准、回归和回滚；fused context、算法优化与未来 GPU 原型不得合并成一个无法区分收益和数值变化的大提交。
 
+E7 的目标是单一 whole-domain C++ owner，不长期保留“单 task V0”和“fused domain V1”两套求解器。单对象只是单 partition domain；setup 差异停留在 capture/static/output adapter。删除前复用既有 Tier A oracle、逐 pass native tests、capability matrix 与 Blender soak 对同一输入双跑，删除时把仍有价值的断言迁到共享 kernel/DomainV1，而不是为了测试继续保留旧 ABI。完整删除清单与门禁见 `MC2_NODE_SIMULATION_DESIGN.md` 的 E7。
+
 ## 外部依据
 
 - Blender Python API, `Python Threads are Not Supported`: <https://docs.blender.org/api/current/info_gotchas_threading.html>
