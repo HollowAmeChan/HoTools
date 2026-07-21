@@ -240,6 +240,49 @@ def test_native_cpu_kernel_tracks_multi_partition_frame_history():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_center_frame_shift_slice():
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    identity3 = (0.0, 0.0, 0.0)
+    identity4 = (0.0, 0.0, 0.0, 1.0)
+    result = kernel.evaluate_center_frame_shift({
+        "old_component_position": identity3,
+        "component_position": (2.0, 0.0, 0.0),
+        "old_component_rotation": identity4,
+        "component_rotation": identity4,
+        "component_scale": (1.0, 1.0, 1.0),
+        "initial_scale": (1.0, 1.0, 1.0),
+        "frame_world_position": (2.0, 0.0, 0.0),
+        "frame_world_rotation": identity4,
+        "old_frame_world_position": (1.0, 0.0, 0.0),
+        "old_frame_world_rotation": identity4,
+        "now_world_position": (2.0, 0.0, 0.0),
+        "now_world_rotation": identity4,
+        "old_anchor_position": identity3,
+        "old_anchor_rotation": identity4,
+        "anchor_position": identity3,
+        "anchor_rotation": identity4,
+        "anchor_component_local_position": identity3,
+        "smoothing_velocity": identity3,
+        "use_anchor": False,
+        "is_running": True,
+        "anchor_inertia": 0.0,
+        "world_inertia": 0.25,
+        "movement_speed_limit": -1.0,
+        "rotation_speed_limit": -1.0,
+        "movement_inertia_smoothing": 0.0,
+        "frame_delta_time": 0.1,
+        "simulation_delta_time": 0.1,
+        "time_scale": 1.0,
+        "skip_count": 0,
+        "velocity_weight": 1.0,
+        "teleport_mode": 0,
+        "teleport_distance": 0.5,
+        "teleport_rotation": 90.0,
+    })
+    np.testing.assert_allclose(result["world_shift_vector"], (1.5, 0.0, 0.0))
+    assert result["teleport_triggered"] is False
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -251,3 +294,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_integration_slice_only_when_requested")
     test_native_cpu_kernel_tracks_multi_partition_frame_history()
     print("PASS test_native_cpu_kernel_tracks_multi_partition_frame_history")
+    test_native_cpu_kernel_exposes_center_frame_shift_slice()
+    print("PASS test_native_cpu_kernel_exposes_center_frame_shift_slice")

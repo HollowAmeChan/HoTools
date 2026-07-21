@@ -144,6 +144,7 @@ nanobind_add_module(hotools_native
 # producer paired with a freshly compiled kernel consumer.
 set_source_files_properties(
     src/mc2_context_frame_step.cpp
+    src/mc2_kernels.cpp
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     PROPERTIES OBJECT_DEPENDS

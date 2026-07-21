@@ -1,4 +1,5 @@
 #include "mc2_domain_cpu.hpp"
+#include "mc2_kernels.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -512,6 +513,108 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         },
         nb::arg("handle"),
         "Dispose an independent E3 MC2 CPU domain owner."
+    );
+    module.def(
+        "mc2_center_frame_shift_v1_evaluate",
+        [](cf32_1d old_component_position, cf32_1d component_position,
+           cf32_1d old_component_rotation, cf32_1d component_rotation,
+           cf32_1d component_scale, cf32_1d initial_scale,
+           cf32_1d frame_world_position, cf32_1d frame_world_rotation,
+           cf32_1d old_frame_world_position, cf32_1d old_frame_world_rotation,
+           cf32_1d now_world_position, cf32_1d now_world_rotation,
+           cf32_1d old_anchor_position, cf32_1d old_anchor_rotation,
+           cf32_1d anchor_position, cf32_1d anchor_rotation,
+           cf32_1d anchor_component_local_position, cf32_1d smoothing_velocity,
+           bool use_anchor, bool is_running, float anchor_inertia, float world_inertia,
+           float movement_speed_limit, float rotation_speed_limit,
+           float movement_inertia_smoothing, float frame_delta_time,
+           float simulation_delta_time, float time_scale, std::int64_t skip_count,
+           float velocity_weight, std::int32_t teleport_mode,
+           float teleport_distance, float teleport_rotation) {
+            const auto require_shape = [](const auto& array, std::size_t size) {
+                if (static_cast<std::size_t>(array.shape(0)) != size) {
+                    throw nb::value_error("Center frame-shift vector has an invalid width");
+                }
+            };
+            require_shape(old_component_position, 3); require_shape(component_position, 3);
+            require_shape(old_component_rotation, 4); require_shape(component_rotation, 4);
+            require_shape(component_scale, 3); require_shape(initial_scale, 3);
+            require_shape(frame_world_position, 3); require_shape(frame_world_rotation, 4);
+            require_shape(old_frame_world_position, 3); require_shape(old_frame_world_rotation, 4);
+            require_shape(now_world_position, 3); require_shape(now_world_rotation, 4);
+            require_shape(old_anchor_position, 3); require_shape(old_anchor_rotation, 4);
+            require_shape(anchor_position, 3); require_shape(anchor_rotation, 4);
+            require_shape(anchor_component_local_position, 3); require_shape(smoothing_velocity, 3);
+            Mc2CenterFrameShiftView view;
+            view.old_component_position = old_component_position.data();
+            view.component_position = component_position.data();
+            view.old_component_rotation = old_component_rotation.data();
+            view.component_rotation = component_rotation.data();
+            view.component_scale = component_scale.data(); view.initial_scale = initial_scale.data();
+            view.frame_world_position = frame_world_position.data(); view.frame_world_rotation = frame_world_rotation.data();
+            view.old_frame_world_position = old_frame_world_position.data(); view.old_frame_world_rotation = old_frame_world_rotation.data();
+            view.now_world_position = now_world_position.data(); view.now_world_rotation = now_world_rotation.data();
+            view.old_anchor_position = old_anchor_position.data(); view.old_anchor_rotation = old_anchor_rotation.data();
+            view.anchor_position = anchor_position.data(); view.anchor_rotation = anchor_rotation.data();
+            view.anchor_component_local_position = anchor_component_local_position.data(); view.smoothing_velocity = smoothing_velocity.data();
+            view.use_anchor = use_anchor; view.is_running = is_running;
+            view.anchor_inertia = anchor_inertia; view.world_inertia = world_inertia;
+            view.movement_speed_limit = movement_speed_limit; view.rotation_speed_limit = rotation_speed_limit;
+            view.movement_inertia_smoothing = movement_inertia_smoothing;
+            view.frame_delta_time = frame_delta_time; view.simulation_delta_time = simulation_delta_time;
+            view.time_scale = time_scale; view.skip_count = skip_count; view.velocity_weight = velocity_weight;
+            view.teleport_mode = teleport_mode; view.teleport_distance = teleport_distance; view.teleport_rotation = teleport_rotation;
+            if (!evaluate_center_frame_shift_mc2(view)) {
+                throw nb::value_error("MC2 Center frame-shift input is invalid or degenerate");
+            }
+            nb::dict result;
+            const auto output3 = [](const float* values) {
+                return owned_array_1d<float>(std::vector<float>(values, values + 3));
+            };
+            const auto output4 = [](const float* values) {
+                return owned_array_1d<float>(std::vector<float>(values, values + 4));
+            };
+            result["frame_component_shift_vector"] = output3(view.frame_component_shift_vector);
+            result["frame_component_shift_rotation_xyzw"] = output4(view.frame_component_shift_rotation);
+            result["old_frame_world_position"] = output3(view.shifted_old_frame_position);
+            result["old_frame_world_rotation_xyzw"] = output4(view.shifted_old_frame_rotation);
+            result["now_world_position"] = output3(view.shifted_now_position);
+            result["now_world_rotation_xyzw"] = output4(view.shifted_now_rotation);
+            result["smoothing_velocity"] = output3(view.smoothing_velocity_output);
+            result["frame_moving_direction"] = output3(view.frame_moving_direction);
+            result["raw_component_delta"] = output3(view.raw_component_delta);
+            result["anchor_shift_vector"] = output3(view.anchor_shift_vector);
+            result["smoothing_shift_vector"] = output3(view.smoothing_shift_vector);
+            result["world_shift_vector"] = output3(view.world_shift_vector);
+            result["teleport_rotation_axis"] = output3(view.teleport_rotation_axis);
+            result["frame_moving_speed"] = view.frame_moving_speed;
+            result["pre_limit_moving_speed"] = view.pre_limit_moving_speed;
+            result["teleport_measured_distance"] = view.teleport_measured_distance;
+            result["teleport_distance_threshold"] = view.teleport_distance_threshold;
+            result["teleport_measured_rotation_degrees"] = view.teleport_measured_rotation_degrees;
+            result["movement_speed_limited"] = view.movement_speed_limited;
+            result["rotation_speed_limited"] = view.rotation_speed_limited;
+            result["teleport_triggered"] = view.teleport_triggered;
+            result["keep_teleport"] = view.keep_teleport;
+            result["reset_teleport"] = view.reset_teleport;
+            return result;
+        },
+        nb::arg("old_component_position"), nb::arg("component_position"),
+        nb::arg("old_component_rotation"), nb::arg("component_rotation"),
+        nb::arg("component_scale"), nb::arg("initial_scale"),
+        nb::arg("frame_world_position"), nb::arg("frame_world_rotation"),
+        nb::arg("old_frame_world_position"), nb::arg("old_frame_world_rotation"),
+        nb::arg("now_world_position"), nb::arg("now_world_rotation"),
+        nb::arg("old_anchor_position"), nb::arg("old_anchor_rotation"),
+        nb::arg("anchor_position"), nb::arg("anchor_rotation"),
+        nb::arg("anchor_component_local_position"), nb::arg("smoothing_velocity"),
+        nb::arg("use_anchor"), nb::arg("is_running"), nb::arg("anchor_inertia"),
+        nb::arg("world_inertia"), nb::arg("movement_speed_limit"),
+        nb::arg("rotation_speed_limit"), nb::arg("movement_inertia_smoothing"),
+        nb::arg("frame_delta_time"), nb::arg("simulation_delta_time"),
+        nb::arg("time_scale"), nb::arg("skip_count"), nb::arg("velocity_weight"),
+        nb::arg("teleport_mode"), nb::arg("teleport_distance"), nb::arg("teleport_rotation"),
+        "Evaluate the explicit native Center frame-shift data path."
     );
     module.def(
         "mc2_domain_cpu_v1_stats",

@@ -33,6 +33,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
+    "mc2_center_frame_shift_v1_evaluate",
 )
 
 
@@ -211,6 +212,60 @@ class MC2NativeCPUKernelV1:
             key, float(settings["dt"]), float(settings["frame_interpolation"]), weights
         )
 
+    def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
+        """Run the explicit native Center frame-shift slice only."""
+        key_set = {
+            "old_component_position", "component_position",
+            "old_component_rotation", "component_rotation", "component_scale",
+            "initial_scale", "frame_world_position", "frame_world_rotation",
+            "old_frame_world_position", "old_frame_world_rotation",
+            "now_world_position", "now_world_rotation", "old_anchor_position",
+            "old_anchor_rotation", "anchor_position", "anchor_rotation",
+            "anchor_component_local_position", "smoothing_velocity", "use_anchor",
+            "is_running", "anchor_inertia", "world_inertia", "movement_speed_limit",
+            "rotation_speed_limit", "movement_inertia_smoothing", "frame_delta_time",
+            "simulation_delta_time", "time_scale", "skip_count", "velocity_weight",
+            "teleport_mode", "teleport_distance", "teleport_rotation",
+        }
+        if set(settings) != key_set:
+            raise ValueError("Center frame-shift slice requires exactly its explicit inputs")
+        arrays = {}
+        for name, width in (
+            ("old_component_position", 3), ("component_position", 3),
+            ("old_component_rotation", 4), ("component_rotation", 4),
+            ("component_scale", 3), ("initial_scale", 3),
+            ("frame_world_position", 3), ("frame_world_rotation", 4),
+            ("old_frame_world_position", 3), ("old_frame_world_rotation", 4),
+            ("now_world_position", 3), ("now_world_rotation", 4),
+            ("old_anchor_position", 3), ("old_anchor_rotation", 4),
+            ("anchor_position", 3), ("anchor_rotation", 4),
+            ("anchor_component_local_position", 3), ("smoothing_velocity", 3),
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=np.float32)
+            if array.shape != (width,):
+                raise ValueError(f"{name} must be a flat vector of length {width}")
+            array.flags.writeable = False
+            arrays[name] = array
+        return dict(self._module.mc2_center_frame_shift_v1_evaluate(
+            *(arrays[name] for name in (
+                "old_component_position", "component_position",
+                "old_component_rotation", "component_rotation", "component_scale",
+                "initial_scale", "frame_world_position", "frame_world_rotation",
+                "old_frame_world_position", "old_frame_world_rotation",
+                "now_world_position", "now_world_rotation", "old_anchor_position",
+                "old_anchor_rotation", "anchor_position", "anchor_rotation",
+                "anchor_component_local_position", "smoothing_velocity",
+            )),
+            bool(settings["use_anchor"]), bool(settings["is_running"]),
+            float(settings["anchor_inertia"]), float(settings["world_inertia"]),
+            float(settings["movement_speed_limit"]), float(settings["rotation_speed_limit"]),
+            float(settings["movement_inertia_smoothing"]), float(settings["frame_delta_time"]),
+            float(settings["simulation_delta_time"]), float(settings["time_scale"]),
+            int(settings["skip_count"]), float(settings["velocity_weight"]),
+            int(settings["teleport_mode"]), float(settings["teleport_distance"]),
+            float(settings["teleport_rotation"]),
+        ))
+
     def read_output(self, handle):
         key = self._require_handle(handle)
         frame_packet = self._frames.get(key)
@@ -236,6 +291,7 @@ class MC2NativeCPUKernelV1:
             "inertia_slice_ready": True,
             "integration_slice_ready": True,
             "center_slice_ready": True,
+            "center_frame_shift_slice_ready": True,
         })
         return result
 

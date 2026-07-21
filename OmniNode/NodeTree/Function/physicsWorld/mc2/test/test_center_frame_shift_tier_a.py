@@ -17,6 +17,10 @@ FUNCTION = PHYSICS_WORLD.parent
 NODETREE = FUNCTION.parent
 OMNINODE = NODETREE.parent
 HOTOOLS = OMNINODE.parent
+NATIVE_PACKAGE = HOTOOLS / "_Lib" / (
+    "py313" if sys.version_info >= (3, 13) else "py311"
+) / "HotoolsPackage"
+sys.path.insert(0, str(NATIVE_PACKAGE))
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
@@ -32,6 +36,7 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
+import hotools_native  # noqa: E402
 
 
 FIXTURES = tuple(
@@ -252,6 +257,84 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
     )
     assert isinstance(result.movement_speed_limited, bool)
     assert isinstance(result.rotation_speed_limited, bool)
+
+    component_scale = np.asarray(
+        values.get("component_world_scale", (1.0, 1.0, 1.0)),
+        dtype=np.float32,
+    )
+    initial_scale = np.asarray(
+        values.get("initial_scale", (1.0, 1.0, 1.0)),
+        dtype=np.float32,
+    )
+    native_result = hotools_native.mc2_center_frame_shift_v1_evaluate(
+        np.ascontiguousarray(old_component),
+        np.ascontiguousarray(component),
+        np.ascontiguousarray(old_rotation),
+        np.ascontiguousarray(component_rotation),
+        np.ascontiguousarray(component_scale),
+        np.ascontiguousarray(initial_scale),
+        np.ascontiguousarray(frame_world_position),
+        np.ascontiguousarray(frame_world_rotation),
+        np.ascontiguousarray(values["old_frame_world_position"], dtype=np.float32),
+        np.ascontiguousarray(values["old_frame_world_rotation_xyzw"], dtype=np.float32),
+        np.ascontiguousarray(values["now_world_position"], dtype=np.float32),
+        np.ascontiguousarray(values["now_world_rotation_xyzw"], dtype=np.float32),
+        np.ascontiguousarray(values.get("old_anchor_world_position", (0.0, 0.0, 0.0)), dtype=np.float32),
+        np.ascontiguousarray(values.get("old_anchor_world_rotation_xyzw", (0.0, 0.0, 0.0, 1.0)), dtype=np.float32),
+        np.ascontiguousarray(values.get("anchor_world_position", (0.0, 0.0, 0.0)), dtype=np.float32),
+        np.ascontiguousarray(anchor_rotation),
+        np.ascontiguousarray(values.get("anchor_component_local_position", (0.0, 0.0, 0.0)), dtype=np.float32),
+        np.ascontiguousarray(values.get("smoothing_velocity", (0.0, 0.0, 0.0)), dtype=np.float32),
+        use_anchor,
+        values.get("is_running", True),
+        float(values.get("anchor_inertia", 0.0)),
+        float(values["world_inertia"]),
+        float(values["movement_speed_limit"]),
+        float(values["rotation_speed_limit"]),
+        float(values.get("movement_inertia_smoothing", 0.0)),
+        float(values["frame_delta_time"]),
+        float(values["simulation_delta_time"]),
+        float(values["now_time_scale"]),
+        int(values.get("skip_count", 0)),
+        float(values["velocity_weight"]),
+        int(values.get("teleport_mode", 0)),
+        float(values.get("teleport_distance", 0.5)),
+        float(values.get("teleport_rotation", 90.0)),
+    )
+    native_field_map = {
+        "frame_component_shift_vector": "frame_component_shift_vector",
+        "frame_component_shift_rotation_xyzw": "frame_component_shift_rotation_xyzw",
+        "old_frame_world_position": "old_frame_world_position",
+        "old_frame_world_rotation_xyzw": "old_frame_world_rotation_xyzw",
+        "now_world_position": "now_world_position",
+        "now_world_rotation_xyzw": "now_world_rotation_xyzw",
+        "smoothing_velocity": "smoothing_velocity",
+        "frame_moving_direction": "frame_moving_direction",
+        "raw_component_delta": "raw_component_delta",
+        "anchor_shift_vector": "anchor_shift_vector",
+        "smoothing_shift_vector": "smoothing_shift_vector",
+        "world_shift_vector": "world_shift_vector",
+        "frame_moving_speed": "frame_moving_speed",
+        "pre_limit_moving_speed": "pre_limit_moving_speed",
+        "teleport_measured_distance": "teleport_measured_distance",
+        "teleport_distance_threshold": "teleport_distance_threshold",
+        "teleport_measured_rotation_degrees": "teleport_measured_rotation_degrees",
+        "movement_speed_limited": "movement_speed_limited",
+        "rotation_speed_limited": "rotation_speed_limited",
+        "teleport_triggered": "teleport_triggered",
+        "keep_teleport": "keep_teleport",
+        "reset_teleport": "reset_teleport",
+    }
+    for native_name, result_name in native_field_map.items():
+        if isinstance(getattr(result, result_name), bool):
+            assert native_result[native_name] is getattr(result, result_name)
+        else:
+            np.testing.assert_allclose(
+                native_result[native_name],
+                getattr(result, result_name),
+                rtol=2.0e-5,
+                atol=2.0e-5,
+            )
 
     # Retain an independent formula check so the fixture does not only test itself
     # through the production evaluator.

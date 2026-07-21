@@ -3196,6 +3196,320 @@ bool derive_center_world_pose_mc2(Mc2CenterPoseView& view) {
     return true;
 }
 
+// E3-C keeps the verified frame-shift order in one backend-neutral kernel.
+bool evaluate_center_frame_shift_mc2(Mc2CenterFrameShiftView& view) {
+    if (view.old_component_position == nullptr || view.component_position == nullptr ||
+        view.old_component_rotation == nullptr || view.component_rotation == nullptr ||
+        view.component_scale == nullptr || view.initial_scale == nullptr ||
+        view.frame_world_position == nullptr || view.frame_world_rotation == nullptr ||
+        view.old_frame_world_position == nullptr || view.old_frame_world_rotation == nullptr ||
+        view.now_world_position == nullptr || view.now_world_rotation == nullptr ||
+        view.smoothing_velocity == nullptr || view.frame_delta_time <= kMc2Epsilon ||
+        view.frame_delta_time < 0.0f ||
+        view.simulation_delta_time < 0.0f || view.time_scale < 0.0f || view.skip_count < 0 ||
+        view.velocity_weight < 0.0f || view.velocity_weight > 1.0f ||
+        view.anchor_inertia < 0.0f || view.anchor_inertia > 1.0f ||
+        view.world_inertia < 0.0f || view.world_inertia > 1.0f ||
+        view.movement_inertia_smoothing < 0.0f || view.movement_inertia_smoothing > 1.0f ||
+        view.teleport_mode < 0 || view.teleport_mode > 2 ||
+        view.teleport_distance < 0.0f || view.teleport_rotation < 0.0f ||
+        !std::isfinite(view.frame_delta_time) || !std::isfinite(view.simulation_delta_time) ||
+        !std::isfinite(view.time_scale) || !std::isfinite(view.anchor_inertia) ||
+        !std::isfinite(view.world_inertia) || !std::isfinite(view.movement_speed_limit) ||
+        !std::isfinite(view.rotation_speed_limit) ||
+        !std::isfinite(view.movement_inertia_smoothing) ||
+        !std::isfinite(view.velocity_weight) || !std::isfinite(view.teleport_distance) ||
+        !std::isfinite(view.teleport_rotation)) {
+        return false;
+    }
+    const auto finite_values = [](const float* values, std::size_t count) {
+        for (std::size_t index = 0; index < count; ++index) {
+            if (!std::isfinite(values[index])) return false;
+        }
+        return true;
+    };
+    const auto unit_quaternion = [&](const float* values) {
+        const float length = length3(values[0], values[1], values[2]);
+        return finite_values(values, 4) && std::fabs(length * length + values[3] * values[3] - 1.0f) <= 2.0e-4f;
+    };
+    for (const auto* values : {
+        view.old_component_position, view.component_position, view.frame_world_position,
+        view.old_frame_world_position, view.now_world_position, view.smoothing_velocity,
+    }) {
+        if (!finite_values(values, 3)) return false;
+    }
+    if (!unit_quaternion(view.old_component_rotation) ||
+        !unit_quaternion(view.component_rotation) ||
+        !unit_quaternion(view.frame_world_rotation) ||
+        !unit_quaternion(view.old_frame_world_rotation) ||
+        !unit_quaternion(view.now_world_rotation)) {
+        return false;
+    }
+    for (int component = 0; component < 3; ++component) {
+        if (!std::isfinite(view.component_scale[component]) ||
+            std::fabs(view.component_scale[component]) <= kMc2Epsilon ||
+            !std::isfinite(view.initial_scale[component]) ||
+            std::fabs(view.initial_scale[component]) <= kMc2Epsilon) {
+            return false;
+        }
+    }
+    const float identity[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float old_component[3] {};
+    float component[3] {};
+    float old_component_rotation[4] {};
+    float component_rotation[4] {};
+    std::copy_n(view.old_component_position, 3, old_component);
+    std::copy_n(view.component_position, 3, component);
+    std::copy_n(view.old_component_rotation, 4, old_component_rotation);
+    std::copy_n(view.component_rotation, 4, component_rotation);
+    float raw_component_delta[3] {};
+    for (int axis = 0; axis < 3; ++axis) {
+        raw_component_delta[axis] = component[axis] - old_component[axis];
+        view.raw_component_delta[axis] = raw_component_delta[axis];
+    }
+    float frame_world_position[3] {};
+    float frame_world_rotation[4] {};
+    std::copy_n(view.frame_world_position, 3, frame_world_position);
+    std::copy_n(view.frame_world_rotation, 4, frame_world_rotation);
+    float adjusted_old_component[3] {};
+    float adjusted_old_component_rotation[4] {};
+    std::copy_n(old_component, 3, adjusted_old_component);
+    std::copy_n(old_component_rotation, 4, adjusted_old_component_rotation);
+    std::fill_n(view.anchor_shift_vector, 3, 0.0f);
+    float anchor_shift_rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    if (view.use_anchor) {
+        if (view.old_anchor_position == nullptr || view.old_anchor_rotation == nullptr ||
+            view.anchor_position == nullptr || view.anchor_rotation == nullptr ||
+            view.anchor_component_local_position == nullptr) {
+            return false;
+        }
+        if (!finite_values(view.old_anchor_position, 3) ||
+            !finite_values(view.anchor_position, 3) ||
+            !finite_values(view.anchor_component_local_position, 3) ||
+            !unit_quaternion(view.old_anchor_rotation) ||
+            !unit_quaternion(view.anchor_rotation)) {
+            return false;
+        }
+        float anchor_local_world[3] {};
+        center_rotate_vector(
+            view.anchor_rotation,
+            view.anchor_component_local_position,
+            anchor_local_world
+        );
+        float anchor_center[3] {};
+        for (int axis = 0; axis < 3; ++axis) {
+            anchor_center[axis] = view.anchor_position[axis] + anchor_local_world[axis];
+            view.anchor_shift_vector[axis] =
+                (anchor_center[axis] - old_component[axis]) * (1.0f - view.anchor_inertia);
+            adjusted_old_component[axis] += view.anchor_shift_vector[axis];
+        }
+        float old_anchor_inverse[4] {};
+        quat_inverse(view.old_anchor_rotation, old_anchor_inverse);
+        float full_anchor_rotation[4] {};
+        quat_multiply(view.anchor_rotation, old_anchor_inverse, full_anchor_rotation);
+        center_slerp_xyzw(identity, full_anchor_rotation, 1.0f - view.anchor_inertia, anchor_shift_rotation);
+        quat_multiply(anchor_shift_rotation, adjusted_old_component_rotation, adjusted_old_component_rotation);
+    }
+    const float component_scale_length = length3(
+        view.component_scale[0], view.component_scale[1], view.component_scale[2]
+    );
+    const float initial_scale_length = length3(
+        view.initial_scale[0], view.initial_scale[1], view.initial_scale[2]
+    );
+    if (initial_scale_length <= kMc2Epsilon) return false;
+    const float component_scale_ratio = component_scale_length / initial_scale_length;
+    const float teleport_delta[3] = {
+        component[0] - adjusted_old_component[0],
+        component[1] - adjusted_old_component[1],
+        component[2] - adjusted_old_component[2],
+    };
+    const float teleport_measured_distance = length3(
+        teleport_delta[0], teleport_delta[1], teleport_delta[2]
+    );
+    const float teleport_distance_threshold = view.teleport_distance * component_scale_ratio;
+    float teleport_cosine = std::fabs(quat_dot_abs(adjusted_old_component_rotation, component_rotation));
+    teleport_cosine = clamp_float(teleport_cosine, 0.0f, 1.0f);
+    const float teleport_angle = 2.0f * std::acos(teleport_cosine);
+    const float teleport_measured_rotation_degrees = teleport_angle * 180.0f / kPi;
+    float old_component_inverse[4] {};
+    quat_inverse(adjusted_old_component_rotation, old_component_inverse);
+    float teleport_rotation_delta[4] {};
+    quat_multiply(component_rotation, old_component_inverse, teleport_rotation_delta);
+    if (teleport_rotation_delta[3] < 0.0f) {
+        for (float& value : teleport_rotation_delta) value = -value;
+    }
+    const float teleport_axis_length = length3(
+        teleport_rotation_delta[0], teleport_rotation_delta[1], teleport_rotation_delta[2]
+    );
+    if (teleport_axis_length > kMc2Epsilon) {
+        for (int axis = 0; axis < 3; ++axis) {
+            view.teleport_rotation_axis[axis] = teleport_rotation_delta[axis] / teleport_axis_length;
+        }
+    } else {
+        std::copy_n(identity, 3, view.teleport_rotation_axis);
+        view.teleport_rotation_axis[2] = 1.0f;
+    }
+    view.teleport_measured_distance = teleport_measured_distance;
+    view.teleport_distance_threshold = teleport_distance_threshold;
+    view.teleport_measured_rotation_degrees = teleport_measured_rotation_degrees;
+    view.teleport_triggered = view.teleport_mode != 0 &&
+        (teleport_measured_distance >= teleport_distance_threshold ||
+         teleport_measured_rotation_degrees >= view.teleport_rotation);
+    view.keep_teleport = view.teleport_triggered && view.teleport_mode == 2;
+    view.reset_teleport = view.teleport_triggered && view.teleport_mode == 1;
+    if (view.reset_teleport) {
+        std::copy_n(frame_world_position, 3, view.shifted_old_frame_position);
+        std::copy_n(frame_world_position, 3, view.shifted_now_position);
+        std::copy_n(frame_world_rotation, 4, view.shifted_old_frame_rotation);
+        std::copy_n(frame_world_rotation, 4, view.shifted_now_rotation);
+        std::fill_n(view.frame_component_shift_vector, 3, 0.0f);
+        std::copy_n(identity, 4, view.frame_component_shift_rotation);
+        std::fill_n(view.smoothing_velocity_output, 3, 0.0f);
+        std::fill_n(view.frame_moving_direction, 3, 0.0f);
+        view.frame_moving_speed = 0.0f;
+        return true;
+    }
+    float smooth_shift[3] = {};
+    float smoothing_velocity[3] {};
+    std::copy_n(view.smoothing_velocity, 3, smoothing_velocity);
+    if (view.movement_inertia_smoothing >= 1.0e-6f && !view.keep_teleport) {
+        if (view.is_running) {
+            float frame_delta_velocity[3] {};
+            for (int axis = 0; axis < 3; ++axis) {
+                frame_delta_velocity[axis] =
+                    (component[axis] - adjusted_old_component[axis]) / view.frame_delta_time;
+            }
+            const float frame_delta_speed = length3(
+                frame_delta_velocity[0], frame_delta_velocity[1], frame_delta_velocity[2]
+            );
+            if (view.movement_speed_limit >= 0.0f && frame_delta_speed > view.movement_speed_limit) {
+                const float ratio = view.movement_speed_limit / frame_delta_speed;
+                for (float& value : frame_delta_velocity) value *= ratio;
+            }
+            const float one_minus_smoothing = 1.0f - view.movement_inertia_smoothing;
+            const float average_ratio = clamp_float(
+                one_minus_smoothing * one_minus_smoothing * one_minus_smoothing * 0.99f + 0.01f,
+                0.0f, 1.0f
+            );
+            for (int axis = 0; axis < 3; ++axis) {
+                smoothing_velocity[axis] +=
+                    (frame_delta_velocity[axis] - smoothing_velocity[axis]) * average_ratio;
+            }
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            const float smooth_position = component[axis] - smoothing_velocity[axis] * view.frame_delta_time;
+            smooth_shift[axis] = smooth_position - adjusted_old_component[axis];
+            adjusted_old_component[axis] = smooth_position;
+        }
+    }
+    std::copy_n(smooth_shift, 3, view.smoothing_shift_vector);
+    float full_shift[3] {};
+    for (int axis = 0; axis < 3; ++axis) full_shift[axis] = component[axis] - adjusted_old_component[axis];
+    float full_shift_rotation[4] {};
+    float adjusted_old_inverse[4] {};
+    quat_inverse(adjusted_old_component_rotation, adjusted_old_inverse);
+    quat_multiply(component_rotation, adjusted_old_inverse, full_shift_rotation);
+    float move_shift_ratio = view.keep_teleport ? 1.0f : 1.0f - view.world_inertia;
+    float rotation_shift_ratio = move_shift_ratio;
+    float work_old_component[3] {};
+    for (int axis = 0; axis < 3; ++axis) {
+        work_old_component[axis] = adjusted_old_component[axis] + full_shift[axis] * move_shift_ratio;
+    }
+    float work_old_rotation[4] {};
+    center_slerp_xyzw(adjusted_old_component_rotation, component_rotation, rotation_shift_ratio, work_old_rotation);
+    float delta_vector[3] {};
+    for (int axis = 0; axis < 3; ++axis) delta_vector[axis] = component[axis] - work_old_component[axis];
+    const float frame_speed = length3(delta_vector[0], delta_vector[1], delta_vector[2]) / view.frame_delta_time;
+    view.pre_limit_moving_speed = frame_speed;
+    view.movement_speed_limited = view.movement_speed_limit >= 0.0f && frame_speed > view.movement_speed_limit;
+    if (view.movement_speed_limited) {
+        const float limit_ratio = clamp_float(
+            (frame_speed - view.movement_speed_limit) / frame_speed, 0.0f, 1.0f
+        );
+        move_shift_ratio += (1.0f - move_shift_ratio) * limit_ratio;
+        for (int axis = 0; axis < 3; ++axis) {
+            work_old_component[axis] += (component[axis] - work_old_component[axis]) * limit_ratio;
+        }
+    }
+    const float rotation_cosine = clamp_float(
+        std::fabs(quat_dot_abs(work_old_rotation, component_rotation)), 0.0f, 1.0f
+    );
+    const float rotation_speed = (2.0f * std::acos(rotation_cosine) * 180.0f / kPi) /
+        view.frame_delta_time;
+    view.rotation_speed_limited = view.rotation_speed_limit >= 0.0f && rotation_speed > view.rotation_speed_limit;
+    if (view.rotation_speed_limited) {
+        const float limit_ratio = clamp_float(
+            (rotation_speed - view.rotation_speed_limit) / rotation_speed, 0.0f, 1.0f
+        );
+        rotation_shift_ratio += (1.0f - rotation_shift_ratio) * limit_ratio;
+        center_slerp_xyzw(work_old_rotation, component_rotation, limit_ratio, work_old_rotation);
+    }
+    float other_shift_ratio = 0.0f;
+    if (view.skip_count > 0) {
+        const float denominator = view.frame_delta_time * view.time_scale;
+        const float skip_ratio = denominator <= kMc2Epsilon
+            ? 1.0f
+            : clamp_float((static_cast<float>(view.skip_count) * view.simulation_delta_time) / denominator, 0.0f, 1.0f);
+        other_shift_ratio += (1.0f - other_shift_ratio) * skip_ratio;
+    }
+    if (view.velocity_weight < 1.0f) {
+        const float ratio = 1.0f - view.velocity_weight;
+        other_shift_ratio += (1.0f - other_shift_ratio) * ratio;
+    }
+    if (view.time_scale < 1.0f) {
+        const float ratio = 1.0f - view.time_scale;
+        other_shift_ratio += (1.0f - other_shift_ratio) * ratio;
+    }
+    if (other_shift_ratio > 0.0f) {
+        move_shift_ratio += (1.0f - move_shift_ratio) * other_shift_ratio;
+        rotation_shift_ratio += (1.0f - rotation_shift_ratio) * other_shift_ratio;
+        for (int axis = 0; axis < 3; ++axis) {
+            work_old_component[axis] += (component[axis] - work_old_component[axis]) * other_shift_ratio;
+        }
+        center_slerp_xyzw(work_old_rotation, component_rotation, other_shift_ratio, work_old_rotation);
+    }
+    float world_shift[3] {};
+    for (int axis = 0; axis < 3; ++axis) world_shift[axis] = full_shift[axis] * move_shift_ratio;
+    std::copy_n(world_shift, 3, view.world_shift_vector);
+    for (int axis = 0; axis < 3; ++axis) {
+        view.frame_component_shift_vector[axis] =
+            world_shift[axis] + view.anchor_shift_vector[axis] + smooth_shift[axis];
+    }
+    float world_shift_rotation[4] {};
+    center_slerp_xyzw(identity, full_shift_rotation, rotation_shift_ratio, world_shift_rotation);
+    quat_multiply(anchor_shift_rotation, world_shift_rotation, view.frame_component_shift_rotation);
+    auto shift_position = [&](const float* position, float* output) {
+        float relative[3] {};
+        for (int axis = 0; axis < 3; ++axis) relative[axis] = position[axis] - old_component[axis];
+        float rotated[3] {};
+        center_rotate_vector(view.frame_component_shift_rotation, relative, rotated);
+        for (int axis = 0; axis < 3; ++axis) {
+            output[axis] = old_component[axis] + rotated[axis] + view.frame_component_shift_vector[axis];
+        }
+    };
+    shift_position(view.old_frame_world_position, view.shifted_old_frame_position);
+    shift_position(view.now_world_position, view.shifted_now_position);
+    quat_multiply(view.frame_component_shift_rotation, view.old_frame_world_rotation, view.shifted_old_frame_rotation);
+    quat_multiply(view.frame_component_shift_rotation, view.now_world_rotation, view.shifted_now_rotation);
+    for (int axis = 0; axis < 3; ++axis) {
+        const float moving = component[axis] - work_old_component[axis];
+        view.frame_moving_direction[axis] = moving;
+    }
+    const float moving_length = length3(
+        view.frame_moving_direction[0], view.frame_moving_direction[1], view.frame_moving_direction[2]
+    );
+    if (moving_length > kMc2Epsilon) {
+        for (float& value : view.frame_moving_direction) value /= moving_length;
+    } else {
+        std::fill_n(view.frame_moving_direction, 3, 0.0f);
+    }
+    view.frame_moving_speed = moving_length / view.frame_delta_time;
+    if (view.time_scale > kMc2Epsilon) view.frame_moving_speed /= view.time_scale;
+    else view.frame_moving_speed = 0.0f;
+    std::copy_n(smoothing_velocity, 3, view.smoothing_velocity_output);
+    return true;
+}
+
 bool evaluate_center_step_mc2(Mc2CenterStepView& view) {
     if (view.dt <= kMc2Epsilon) return false;
     const float ratio = view.frame_interpolation;
