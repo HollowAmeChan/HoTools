@@ -238,6 +238,17 @@ class MC2CPUBackendDomainV1:
         run_collision(self._handle, settings)
         self._step_count += 1
 
+    def step_self_collision(self, settings: Mapping[str, object]) -> None:
+        """Run the explicit native self-collision slice."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("self collision requires update_frame first")
+        run_collision = getattr(self._kernel, "step_self_collision", None)
+        if not callable(run_collision):
+            raise RuntimeError("CPU kernel does not expose self collision")
+        run_collision(self._handle, settings)
+        self._step_count += 1
+
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()
         if self._latest_frame is None:

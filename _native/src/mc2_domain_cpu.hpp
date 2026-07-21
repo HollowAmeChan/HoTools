@@ -112,6 +112,15 @@ public:
         const float* collider_radii,
         std::size_t collider_count
     );
+    void step_self_collision(
+        const float* old_positions,
+        const std::int32_t* edges,
+        std::size_t edge_count,
+        const std::int32_t* triangles,
+        std::size_t triangle_count,
+        const float* friction,
+        float surface_thickness
+    );
     void step_distance();
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(

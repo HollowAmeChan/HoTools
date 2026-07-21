@@ -477,6 +477,31 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit native point external-collision slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_self_collision",
+        [](std::uint64_t handle,
+           cf32_2d old_positions,
+           ci32_2d edges,
+           ci32_2d triangles,
+           cf32_1d friction,
+           float surface_thickness) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(old_positions.shape(0)) != count || old_positions.shape(1) != 3 ||
+                edges.shape(1) != 2 || triangles.shape(1) != 3 ||
+                static_cast<std::size_t>(friction.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU self collision arrays have incompatible shapes");
+            }
+            domain->step_self_collision(
+                old_positions.data(), edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                triangles.data(), static_cast<std::size_t>(triangles.shape(0)),
+                friction.data(), surface_thickness
+            );
+        },
+        nb::arg("handle"), nb::arg("old_positions"), nb::arg("edges"),
+        nb::arg("triangles"), nb::arg("friction"), nb::arg("surface_thickness"),
+        "Run the explicit native self-collision slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_bending",
         [](std::uint64_t handle) { require_domain(handle)->step_bending(); },
         nb::arg("handle"),

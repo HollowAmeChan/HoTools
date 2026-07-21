@@ -1111,6 +1111,63 @@ void DomainV1::step_external_collision(
     ++step_count_;
 }
 
+void DomainV1::step_self_collision(
+    const float* old_positions,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const float* friction,
+    float surface_thickness
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU self collision step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU self collision step requires particle configuration");
+    }
+    require_finite(old_positions, particle_count_ * 3, "self collision old positions");
+    require_finite(friction, particle_count_, "self collision friction");
+    if (!std::isfinite(surface_thickness) || surface_thickness <= 0.0f) {
+        throw std::invalid_argument("MC2 CPU self collision thickness must be positive");
+    }
+    if ((edge_count != 0 && edges == nullptr) || (triangle_count != 0 && triangles == nullptr)) {
+        throw std::invalid_argument("MC2 CPU self collision topology cannot be null");
+    }
+    auto validate_indices = [&](const std::int32_t* values, std::size_t count) {
+        for (std::size_t index = 0; index < count; ++index) {
+            if (values[index] < 0 || static_cast<std::size_t>(values[index]) >= particle_count_) {
+                throw std::invalid_argument("MC2 CPU self collision topology is out of range");
+            }
+        }
+    };
+    validate_indices(edges, edge_count * 2);
+    validate_indices(triangles, triangle_count * 3);
+    collision_friction_.assign(friction, friction + particle_count_);
+    std::vector<std::uint8_t> attributes(particle_count_, 0u);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
+            attributes[vertex] = 1u << 2u;
+        }
+    }
+    hotools::Mc2SelfCollisionView view;
+    view.positions = world_positions_.data();
+    view.old_positions = old_positions;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.edges = edges;
+    view.triangles = triangles;
+    view.attributes = attributes.data();
+    view.collision_normals = world_normals_.data();
+    view.friction = collision_friction_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.edge_count = static_cast<std::int64_t>(edge_count);
+    view.triangle_count = static_cast<std::int64_t>(triangle_count);
+    view.surface_thickness = surface_thickness;
+    hotools::project_self_collisions_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_bending(
     const std::int32_t* dihedral_pairs,
     const float* dihedral_rest_angles,

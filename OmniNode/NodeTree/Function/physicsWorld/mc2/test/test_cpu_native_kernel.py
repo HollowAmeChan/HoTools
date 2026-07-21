@@ -490,6 +490,30 @@ def test_native_cpu_kernel_exposes_external_point_collision_slice():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_self_collision_slice():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    edge_table = next((table for table in compiled.program.primitive_tables if table.kind == "edge"), None)
+    triangle_table = next((table for table in compiled.program.primitive_tables if table.kind == "triangle"), None)
+    edges = np.asarray(edge_table.indices if edge_table is not None else np.empty((0, 2)), dtype=np.int32)
+    triangles = np.asarray(triangle_table.indices if triangle_table is not None else np.empty((0, 3)), dtype=np.int32)
+    try:
+        domain.update_frame(frame)
+        domain.step_self_collision({
+            "old_positions": frame.animated_base_world_positions,
+            "edges": edges,
+            "triangles": triangles,
+            "friction": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "surface_thickness": 0.02,
+        })
+        assert np.isfinite(domain.read_output().world_positions).all()
+        assert domain.inspect()["kernel"]["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -517,3 +541,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_pipeline_runs_structural_order_through_motion")
     test_native_cpu_kernel_exposes_external_point_collision_slice()
     print("PASS test_native_cpu_kernel_exposes_external_point_collision_slice")
+    test_native_cpu_kernel_exposes_self_collision_slice()
+    print("PASS test_native_cpu_kernel_exposes_self_collision_slice")

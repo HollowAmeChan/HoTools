@@ -28,6 +28,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_angle",
     "mc2_domain_cpu_v1_step_motion",
     "mc2_domain_cpu_v1_step_external_collision",
+    "mc2_domain_cpu_v1_step_self_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
     "mc2_domain_cpu_v1_configure_bending",
@@ -313,6 +314,31 @@ class MC2NativeCPUKernelV1:
             arrays["collider_segment_a"], arrays["collider_segment_b"],
             arrays["collider_old_centers"], arrays["collider_old_segment_a"],
             arrays["collider_old_segment_b"], arrays["collider_radii"],
+        )
+
+    def step_self_collision(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"old_positions", "edges", "triangles", "friction", "surface_thickness"}
+        if set(settings) != required:
+            raise ValueError("self collision slice requires exactly its explicit inputs")
+        program = self._programs[key]
+        old_positions = np.ascontiguousarray(settings["old_positions"], dtype=np.float32)
+        if old_positions.shape != (program.particle_count, 3):
+            raise ValueError("old_positions must match particle_count x 3")
+        edges = np.ascontiguousarray(settings["edges"], dtype=np.int32)
+        triangles = np.ascontiguousarray(settings["triangles"], dtype=np.int32)
+        if edges.ndim != 2 or edges.shape[1] != 2:
+            raise ValueError("edges must have shape [E,2]")
+        if triangles.ndim != 2 or triangles.shape[1] != 3:
+            raise ValueError("triangles must have shape [T,3]")
+        friction = np.ascontiguousarray(settings["friction"], dtype=np.float32)
+        if friction.shape != (program.particle_count,):
+            raise ValueError("friction must match particle_count")
+        for array in (old_positions, edges, triangles, friction):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_self_collision(
+            key, old_positions, edges, triangles, friction,
+            float(settings["surface_thickness"]),
         )
 
     def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
