@@ -468,6 +468,10 @@ class MC2NativeCPUKernelV1:
         if set(settings) != required:
             raise ValueError("reference slices require exactly their explicit pass inputs")
         key = self._require_handle(handle)
+        has_distance = any(table.kind == "distance" for table in program.constraint_tables)
+        has_bending = any(table.kind == "bending" for table in program.constraint_tables)
+        has_tether = any(table.kind == "tether" for table in program.constraint_tables)
+        has_angle = program.baseline_parent_indices is not None
         self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": settings["dt"],
@@ -486,8 +490,9 @@ class MC2NativeCPUKernelV1:
                 "compression": settings["tether_compression"],
                 "stretch": settings["tether_stretch"],
             })
-        self.step_distance(key)
-        if any(table.kind == "bending" for table in program.constraint_tables):
+        if has_distance:
+            self.step_distance(key)
+        if has_bending:
             self.step_bending(key)
 
     def step_reference_pipeline(self, handle, settings: Mapping[str, object]) -> None:
@@ -509,8 +514,10 @@ class MC2NativeCPUKernelV1:
             raise ValueError("reference pipeline requires exactly its explicit pass inputs")
         key = self._require_handle(handle)
         program = self._programs[key]
-        if program.baseline_parent_indices is None:
-            raise RuntimeError("reference pipeline requires baseline line SoA")
+        has_distance = any(table.kind == "distance" for table in program.constraint_tables)
+        has_bending = any(table.kind == "bending" for table in program.constraint_tables)
+        has_tether = any(table.kind == "tether" for table in program.constraint_tables)
+        has_angle = program.baseline_parent_indices is not None
         self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
@@ -520,25 +527,29 @@ class MC2NativeCPUKernelV1:
             "dt": settings["dt"], "simulation_power": settings["simulation_power"],
             "velocity_weight": settings["velocity_weight"], "gravity": settings["gravity"],
         })
-        self.step_tether(key, {
-            "step_basic_positions": settings["step_basic_positions"],
-            "compression": settings["tether_compression"], "stretch": settings["tether_stretch"],
-        })
-        self.step_distance(key, settings["distance_simulation_power"])
-        self.step_angle(key, {
-            "step_basic_positions": settings["step_basic_positions"],
-            "step_basic_rotations": settings["step_basic_rotations"],
-            "restoration_values": settings["angle_restoration_values"],
-            "limit_values": settings["angle_limit_values"],
-            "restoration_velocity_attenuation": settings["angle_restoration_velocity_attenuation"],
-            "restoration_gravity_falloff": settings["angle_restoration_gravity_falloff"],
-            "limit_stiffness": settings["angle_limit_stiffness"],
-            "restoration_enabled": settings["angle_restoration_enabled"],
-            "limit_enabled": settings["angle_limit_enabled"],
-        })
-        if any(table.kind == "bending" for table in program.constraint_tables):
+        if has_tether:
+            self.step_tether(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "compression": settings["tether_compression"], "stretch": settings["tether_stretch"],
+            })
+        if has_distance:
+            self.step_distance(key, settings["distance_simulation_power"])
+        if has_angle:
+            self.step_angle(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "step_basic_rotations": settings["step_basic_rotations"],
+                "restoration_values": settings["angle_restoration_values"],
+                "limit_values": settings["angle_limit_values"],
+                "restoration_velocity_attenuation": settings["angle_restoration_velocity_attenuation"],
+                "restoration_gravity_falloff": settings["angle_restoration_gravity_falloff"],
+                "limit_stiffness": settings["angle_limit_stiffness"],
+                "restoration_enabled": settings["angle_restoration_enabled"],
+                "limit_enabled": settings["angle_limit_enabled"],
+            })
+        if has_bending:
             self.step_bending(key, settings["bending_simulation_power"])
-        self.step_distance(key, settings["distance_simulation_power"])
+        if has_distance:
+            self.step_distance(key, settings["distance_simulation_power"])
         self.step_motion(key, {
             "base_positions": settings["motion_base_positions"],
             "base_rotations": settings["motion_base_rotations"],
@@ -581,6 +592,11 @@ class MC2NativeCPUKernelV1:
             name: settings[name] for name in required
             if name not in {"point_collision", "edge_collision", "self_collision"}
         }
+        program = self._programs[key]
+        has_distance = any(table.kind == "distance" for table in program.constraint_tables)
+        has_bending = any(table.kind == "bending" for table in program.constraint_tables)
+        has_tether = any(table.kind == "tether" for table in program.constraint_tables)
+        has_angle = program.baseline_parent_indices is not None
         # Keep the same explicit structural prefix as step_reference_pipeline,
         # then insert V0 collision passes before Distance B and self after Motion.
         self.step_center_frame_shift(key, structural["anchor_component_local_positions"])
@@ -592,24 +608,27 @@ class MC2NativeCPUKernelV1:
             "dt": structural["dt"], "simulation_power": structural["simulation_power"],
             "velocity_weight": structural["velocity_weight"], "gravity": structural["gravity"],
         })
-        self.step_tether(key, {
-            "step_basic_positions": structural["step_basic_positions"],
-            "compression": structural["tether_compression"],
-            "stretch": structural["tether_stretch"],
-        })
-        self.step_distance(key, structural["distance_simulation_power"])
-        self.step_angle(key, {
-            "step_basic_positions": structural["step_basic_positions"],
-            "step_basic_rotations": structural["step_basic_rotations"],
-            "restoration_values": structural["angle_restoration_values"],
-            "limit_values": structural["angle_limit_values"],
-            "restoration_velocity_attenuation": structural["angle_restoration_velocity_attenuation"],
-            "restoration_gravity_falloff": structural["angle_restoration_gravity_falloff"],
-            "limit_stiffness": structural["angle_limit_stiffness"],
-            "restoration_enabled": structural["angle_restoration_enabled"],
-            "limit_enabled": structural["angle_limit_enabled"],
-        })
-        if any(table.kind == "bending" for table in self._programs[key].constraint_tables):
+        if has_tether:
+            self.step_tether(key, {
+                "step_basic_positions": structural["step_basic_positions"],
+                "compression": structural["tether_compression"],
+                "stretch": structural["tether_stretch"],
+            })
+        if has_distance:
+            self.step_distance(key, structural["distance_simulation_power"])
+        if has_angle:
+            self.step_angle(key, {
+                "step_basic_positions": structural["step_basic_positions"],
+                "step_basic_rotations": structural["step_basic_rotations"],
+                "restoration_values": structural["angle_restoration_values"],
+                "limit_values": structural["angle_limit_values"],
+                "restoration_velocity_attenuation": structural["angle_restoration_velocity_attenuation"],
+                "restoration_gravity_falloff": structural["angle_restoration_gravity_falloff"],
+                "limit_stiffness": structural["angle_limit_stiffness"],
+                "restoration_enabled": structural["angle_restoration_enabled"],
+                "limit_enabled": structural["angle_limit_enabled"],
+            })
+        if has_bending:
             self.step_bending(key, structural["bending_simulation_power"])
         point_collision = settings["point_collision"]
         if point_collision is not None:
@@ -621,7 +640,8 @@ class MC2NativeCPUKernelV1:
             if not isinstance(edge_collision, Mapping):
                 raise TypeError("edge_collision must be a mapping or None")
             self.step_external_edge_collision(key, edge_collision)
-        self.step_distance(key, structural["distance_simulation_power"])
+        if has_distance:
+            self.step_distance(key, structural["distance_simulation_power"])
         self.step_motion(key, {
             "base_positions": structural["motion_base_positions"],
             "base_rotations": structural["motion_base_rotations"],
