@@ -15,6 +15,7 @@
 - 各domain当前完成度：`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - OmniNode通用架构：`../ARCHITECTURE.md`
 - MC2性能热点、多代理融合、native并行与GPU前置策略：`MC2_DEEP_OPTIMIZATION_STRATEGY.md`
+- MC2新一代partition/覆盖/collector节点数据流：`MC2_NODE_SIMULATION_DESIGN.md`
 - 人工验收反例与已吸收决策：见本文“Debug收尾与产品踩坑”及对应能力章节；不再维护独立推进文档。
 
 代码事实源优先级：`mc2/declaration.py`、`mc2/capabilities.py`、生产solver/native owner、自动化测试、本文。
