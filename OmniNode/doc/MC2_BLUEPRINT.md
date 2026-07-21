@@ -51,6 +51,8 @@ E3 的 CPU backend 生命周期边界已冻结为独立适配器：`cpu_backend.
 
 E3 的 frame IO 也已保持独立：`frame_compile.py` 只接收冻结 partition snapshot，校验统一 frame/generation、顶点覆盖和 transform identity，再按 compiled logical index view 生成 `MC2DomainFramePacketV1`；它不读取 Blender，不保留跨帧状态，不把 object reference 传入 backend。
 
+E3 native 实施顺序已冻结：新增独立 C++ domain owner/POD view/handle，静态 SoA 和 constraint/primitive/filter 表在 allocation 时校验并拥有；每帧只接收 frame packet view；先提取 integration/Distance/Center 的 native 数值 slice，以 V0 作为 reference；binding 只做 ndarray/view 与 handle 生命周期。新 owner 不得 include `mc2_context_internal.hpp`、接收 `PyObject*` 或注册 Physics World slot。无 Blender headless fixture 的 create/update/step/read/dispose、失败回滚、V0 tolerance 和 debug-off readback 门禁未通过前，Python adapter 只能接测试 kernel。
+
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
 当前生产行为仍保持本蓝本的既有事实：每个 Mesh Object 生成一个单 source `MC2TaskSpec`、独立 static/frame adapter、独立 slot/context，并由 world-owned interaction 处理跨 task self collision。只有 E0 schema/fixture 与 E1 单 source shadow 验收完成，并且 E2-E5 逐阶段通过，才允许改变这条生产数据流。

@@ -743,6 +743,16 @@ collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC
 
 实现状态（2026-07-21）：E3 的 backend ABI/lifecycle slice 已完成，真实数值 kernel 尚未接入产品。`frame_compile.py` 先把按 partition 捕获的只读 frame snapshot 校验为同一 frame/generation，再按 compiled logical index view 生成统一 packet；`MC2CPUBackendDomainV1` 在 allocation 前调用 capability gate，创建后只持有 compiled program、私有 physical index map、每 partition history 和 kernel handle；`update_frame`/`step`/`read_output` 严格检查 domain/layout/frame/generation identity，physical output 会在 adapter 内归一化为 logical output，`dispose` 幂等且 kernel 创建失败会回滚。fake-kernel 双版本测试覆盖能力拒绝、history、physical reorder、frame pack 和资源释放。现有 `_native/src/mc2_context_*` 仍是 `PyObject*` 驱动的 `Mc2ContextV0` V0 ABI，不能作为新域 kernel 的隐式实现；下一步必须新增独立 C++ domain owner/POD view/handle，不得给 V0 context 叠加第二种输入。单 source 数值 oracle 对照通过前，V0 solver、slot、Physics World 和 writeback 不导入该适配器。
 
+E3 native handoff 的执行顺序固定为：
+
+1. 新增独立 `mc2_domain_cpu.hpp/.cpp` owner，只依赖后端中立的 `ProgramView`、`ParameterView`、`FrameView` 和 output view；不得 include `mc2_context_internal.hpp`，不得把 `PyObject*` 带入 kernel 核心。
+2. owner allocation 一次复制或绑定经过 schema 校验的静态 SoA、constraint/primitive table 和 partition filter；所有数组记录 domain/layout signature 与 physical layout revision。
+3. 每帧只接收 `MC2DomainFramePacketV1` 的 native view，先验证 domain/layout/frame/generation，再更新 per-partition Center/Teleport history；失败不能发布半更新 frame。
+4. 第一个数值 slice 只提取现有 C++ integration/Distance/Center 路径到新 owner，保留 V0 context 作为同输入 reference；禁止在 Python 侧复制 solver 公式。
+5. native binding 只负责 ndarray -> POD view、handle 生命周期和 output envelope，不负责 authoring merge、Blender IO、slot 注册或 writeback。
+
+E3 native 合入门禁：新 owner 能在无 Blender 对象的 C++/headless fixture 中 create/update/step/read/dispose；创建或 frame 校验失败时资源计数归零；单 source 与 V0 的位置/旋转、Center/Teleport、Distance 结果在固定 tolerance 内一致；debug-off 不触发额外 readback；V0 生产路径和 C++ API 数量不因兼容分支增加。未满足这些条件前，`cpu_backend.py` 只能接测试 kernel。
+
 ### E4：多 source fused CPU execution
 
 范围：让 E2 compiled domain 在一个 CPU backend context 中执行，打开同域跨 partition self collision。
