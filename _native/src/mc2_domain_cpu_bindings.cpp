@@ -382,6 +382,54 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit per-partition Center evaluator slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_center_frame_shift",
+        [](std::uint64_t handle,
+           cf32_1d anchor_inertia,
+           cf32_1d world_inertia,
+           cf32_1d movement_inertia_smoothing,
+           cf32_1d movement_speed_limits,
+           cf32_1d rotation_speed_limits,
+           ci32_1d teleport_modes,
+           cf32_1d teleport_distances,
+           cf32_1d teleport_rotations) {
+            auto* domain = require_domain(handle);
+            const auto partition_count = domain->partition_count();
+            if (static_cast<std::size_t>(anchor_inertia.shape(0)) != partition_count ||
+                static_cast<std::size_t>(world_inertia.shape(0)) != partition_count ||
+                static_cast<std::size_t>(movement_inertia_smoothing.shape(0)) != partition_count ||
+                static_cast<std::size_t>(movement_speed_limits.shape(0)) != partition_count ||
+                static_cast<std::size_t>(rotation_speed_limits.shape(0)) != partition_count ||
+                static_cast<std::size_t>(teleport_modes.shape(0)) != partition_count ||
+                static_cast<std::size_t>(teleport_distances.shape(0)) != partition_count ||
+                static_cast<std::size_t>(teleport_rotations.shape(0)) != partition_count) {
+                throw nb::value_error("MC2 CPU Center frame-shift arrays have incompatible shapes");
+            }
+            domain->configure_center_frame_shift(
+                anchor_inertia.data(), world_inertia.data(), movement_inertia_smoothing.data(),
+                movement_speed_limits.data(), rotation_speed_limits.data(), teleport_modes.data(),
+                teleport_distances.data(), teleport_rotations.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("anchor_inertia"), nb::arg("world_inertia"),
+        nb::arg("movement_inertia_smoothing"), nb::arg("movement_speed_limits"),
+        nb::arg("rotation_speed_limits"), nb::arg("teleport_modes"),
+        nb::arg("teleport_distances"), nb::arg("teleport_rotations"),
+        "Configure the explicit per-partition Center frame-shift slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_center_frame_shift",
+        [](std::uint64_t handle, cf32_2d anchor_component_local_positions) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(anchor_component_local_positions.shape(0)) != domain->partition_count() ||
+                anchor_component_local_positions.shape(1) != 3) {
+                throw nb::value_error("MC2 CPU Center anchor local positions have incompatible shape");
+            }
+            domain->step_center_frame_shift(anchor_component_local_positions.data());
+        },
+        nb::arg("handle"), nb::arg("anchor_component_local_positions"),
+        "Run the explicit per-partition Center frame-shift slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_integration",
         [](std::uint64_t handle, cf32_1d damping_values) {
             auto* domain = require_domain(handle);
@@ -493,6 +541,26 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 std::vector<float>(domain->center_frame_world_rotations()),
                 domain->partition_count(), 4
             );
+            result["center_shift_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_vectors()),
+                domain->partition_count(), 3
+            );
+            result["center_shift_rotations"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_rotations()),
+                domain->partition_count(), 4
+            );
+            result["center_shift_now_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_now_positions()),
+                domain->partition_count(), 3
+            );
+            result["center_shift_now_rotations"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_now_rotations()),
+                domain->partition_count(), 4
+            );
+            result["center_shift_teleport_flags"] = owned_array_1d<std::uint32_t>(
+                std::vector<std::uint32_t>(domain->center_shift_teleport_flags())
+            );
+            result["center_shift_count"] = domain->center_shift_count();
             result["center_step_count"] = domain->center_step_count();
             return result;
         },

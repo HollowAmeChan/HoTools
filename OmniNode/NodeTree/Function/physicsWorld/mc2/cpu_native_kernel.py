@@ -28,6 +28,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_configure_center",
     "mc2_domain_cpu_v1_step_center",
+    "mc2_domain_cpu_v1_configure_center_frame_shift",
+    "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
     "mc2_domain_cpu_v1_read",
@@ -85,6 +87,7 @@ class MC2NativeCPUKernelV1:
             self._configure_distance(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
             self._configure_center(handle, parameters)
+            self._configure_center_frame_shift(handle, parameters)
             self._configure_integration(handle, parameters)
         except Exception:
             self._module.mc2_domain_cpu_v1_dispose(handle)
@@ -211,6 +214,15 @@ class MC2NativeCPUKernelV1:
         self._module.mc2_domain_cpu_v1_step_center(
             key, float(settings["dt"]), float(settings["frame_interpolation"]), weights
         )
+
+    def step_center_frame_shift(self, handle, anchor_component_local_positions) -> None:
+        key = self._require_handle(handle)
+        values = np.ascontiguousarray(anchor_component_local_positions, dtype=np.float32)
+        program = self._programs[key]
+        if values.shape != (program.partition_count, 3):
+            raise ValueError("anchor_component_local_positions must match partition_count x 3")
+        values.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_center_frame_shift(key, values)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
@@ -435,6 +447,50 @@ class MC2NativeCPUKernelV1:
             scalar["gravity_falloff"],
             scalar["stabilization_time_after_reset"],
             scalar["blend_weight"],
+        )
+
+    def _configure_center_frame_shift(
+        self,
+        handle: int,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        table = parameters.partition_parameters
+        fields = {name: index for index, name in enumerate(table.fields)}
+        required_float = {
+            "anchor_inertia", "world_inertia", "movement_inertia_smoothing",
+            "movement_speed_limit", "rotation_speed_limit", "teleport_distance",
+            "teleport_rotation",
+        }
+        missing = required_float - set(fields)
+        uint_table = parameters.partition_uint_parameters
+        uint_fields = {name: index for index, name in enumerate(uint_table.fields)}
+        if "teleport_mode" not in uint_fields:
+            missing.add("teleport_mode")
+        if missing:
+            raise ValueError(
+                "partition parameter table lacks Center frame-shift fields: "
+                + ", ".join(sorted(missing))
+            )
+        values = table.values
+        arrays = {
+            name: np.asarray(values[:, fields[name]], dtype=np.float32)
+            for name in required_float
+        }
+        teleport_modes = np.asarray(
+            uint_table.values[:, uint_fields["teleport_mode"]], dtype=np.int32
+        )
+        for array in (*arrays.values(), teleport_modes):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_center_frame_shift(
+            handle,
+            arrays["anchor_inertia"],
+            arrays["world_inertia"],
+            arrays["movement_inertia_smoothing"],
+            arrays["movement_speed_limit"],
+            arrays["rotation_speed_limit"],
+            teleport_modes,
+            arrays["teleport_distance"],
+            arrays["teleport_rotation"],
         )
 
 

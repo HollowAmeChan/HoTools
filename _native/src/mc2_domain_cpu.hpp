@@ -81,6 +81,17 @@ public:
         const float* stabilization_time,
         const float* blend_weight
     );
+    void configure_center_frame_shift(
+        const float* anchor_inertia,
+        const float* world_inertia,
+        const float* movement_inertia_smoothing,
+        const float* movement_speed_limits,
+        const float* rotation_speed_limits,
+        const std::int32_t* teleport_modes,
+        const float* teleport_distances,
+        const float* teleport_rotations
+    );
+    void step_center_frame_shift(const float* anchor_component_local_positions);
     void step_center(
         float dt,
         float frame_interpolation,
@@ -146,6 +157,22 @@ public:
     const std::vector<float>& center_frame_world_rotations() const noexcept {
         return center_frame_world_rotations_;
     }
+    const std::vector<float>& center_shift_vectors() const noexcept {
+        return center_shift_vectors_;
+    }
+    const std::vector<float>& center_shift_rotations() const noexcept {
+        return center_shift_rotations_;
+    }
+    const std::vector<float>& center_shift_now_positions() const noexcept {
+        return center_shift_now_positions_;
+    }
+    const std::vector<float>& center_shift_now_rotations() const noexcept {
+        return center_shift_now_rotations_;
+    }
+    const std::vector<std::uint32_t>& center_shift_teleport_flags() const noexcept {
+        return center_shift_teleport_flags_;
+    }
+    std::int64_t center_shift_count() const noexcept { return center_shift_count_; }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }
 
 private:
@@ -177,6 +204,8 @@ private:
     std::vector<float> partition_world_linear_;
     std::vector<float> anchor_world_positions_;
     std::vector<float> anchor_world_rotations_;
+    std::vector<float> anchor_previous_world_positions_;
+    std::vector<float> anchor_previous_world_rotations_;
     std::vector<std::uint32_t> anchor_present_;
     std::vector<std::uint32_t> partition_frame_flags_;
     std::vector<float> velocity_weights_;
@@ -198,6 +227,24 @@ private:
     std::vector<float> center_frame_world_rotations_;
     std::vector<float> center_now_world_positions_;
     std::vector<float> center_now_world_rotations_;
+    std::vector<float> center_shift_vectors_;
+    std::vector<float> center_shift_rotations_;
+    std::vector<float> center_shift_old_frame_positions_;
+    std::vector<float> center_shift_old_frame_rotations_;
+    std::vector<float> center_shift_now_positions_;
+    std::vector<float> center_shift_now_rotations_;
+    std::vector<float> center_shift_smoothing_velocities_;
+    std::vector<std::uint32_t> center_shift_teleport_flags_;
+    std::vector<float> center_anchor_inertia_;
+    std::vector<float> center_world_inertia_;
+    std::vector<float> center_movement_inertia_smoothing_;
+    std::vector<float> center_movement_speed_limits_;
+    std::vector<float> center_rotation_speed_limits_;
+    std::vector<std::int32_t> center_teleport_modes_;
+    std::vector<float> center_teleport_distances_;
+    std::vector<float> center_teleport_rotations_;
+    bool center_frame_shift_ready_ = false;
+    std::int64_t center_shift_count_ = 0;
     std::vector<float> center_step_vectors_;
     std::vector<float> center_step_rotations_;
     std::vector<float> center_inertia_vectors_;

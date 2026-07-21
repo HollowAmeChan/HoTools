@@ -68,6 +68,8 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       partition_world_linear_(program.partition_count * 9, 0.0f),
       anchor_world_positions_(program.partition_count * 3, 0.0f),
       anchor_world_rotations_(program.partition_count * 4, 0.0f),
+      anchor_previous_world_positions_(program.partition_count * 3, 0.0f),
+      anchor_previous_world_rotations_(program.partition_count * 4, 0.0f),
       anchor_present_(program.partition_count, 0u),
       partition_frame_flags_(program.partition_count, 0u),
       velocity_weights_(program.partition_count, 1.0f),
@@ -89,6 +91,22 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       center_frame_world_rotations_(program.partition_count * 4, 0.0f),
       center_now_world_positions_(program.partition_count * 3, 0.0f),
       center_now_world_rotations_(program.partition_count * 4, 0.0f),
+      center_shift_vectors_(program.partition_count * 3, 0.0f),
+      center_shift_rotations_(program.partition_count * 4, 0.0f),
+      center_shift_old_frame_positions_(program.partition_count * 3, 0.0f),
+      center_shift_old_frame_rotations_(program.partition_count * 4, 0.0f),
+      center_shift_now_positions_(program.partition_count * 3, 0.0f),
+      center_shift_now_rotations_(program.partition_count * 4, 0.0f),
+      center_shift_smoothing_velocities_(program.partition_count * 3, 0.0f),
+      center_shift_teleport_flags_(program.partition_count, 0u),
+      center_anchor_inertia_(program.partition_count, 0.0f),
+      center_world_inertia_(program.partition_count, 0.0f),
+      center_movement_inertia_smoothing_(program.partition_count, 0.0f),
+      center_movement_speed_limits_(program.partition_count, -1.0f),
+      center_rotation_speed_limits_(program.partition_count, -1.0f),
+      center_teleport_modes_(program.partition_count, 0),
+      center_teleport_distances_(program.partition_count, 0.5f),
+      center_teleport_rotations_(program.partition_count, 90.0f),
       center_step_vectors_(program.partition_count * 3, 0.0f),
       center_step_rotations_(program.partition_count * 4, 0.0f),
       center_inertia_vectors_(program.partition_count * 3, 0.0f),
@@ -228,6 +246,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
             throw std::invalid_argument("MC2 CPU partition linear transform is singular");
         }
     }
+    const bool reset_history = frame_ < 0 || generation_ != frame.generation;
     std::vector<float> next_animated_positions(
         frame.world_positions, frame.world_positions + particle_count_ * 3
     );
@@ -260,6 +279,10 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     std::vector<float> next_anchor_rotations(
         frame.anchor_world_rotations, frame.anchor_world_rotations + partition_count_ * 4
     );
+    std::vector<float> next_previous_anchor_positions = reset_history
+        ? next_anchor_positions : anchor_world_positions_;
+    std::vector<float> next_previous_anchor_rotations = reset_history
+        ? next_anchor_rotations : anchor_world_rotations_;
     std::vector<std::uint32_t> next_anchor_present(
         frame.anchor_present, frame.anchor_present + partition_count_
     );
@@ -282,7 +305,6 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
             has_keep = true;
         }
     }
-    const bool reset_history = frame_ < 0 || generation_ != frame.generation;
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         hotools::Mc2CenterPoseView center_view;
         center_view.world_positions = next_animated_positions.data();
@@ -386,10 +408,13 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     center_frame_world_rotations_.swap(next_center_frame_rotations);
     anchor_world_positions_.swap(next_anchor_positions);
     anchor_world_rotations_.swap(next_anchor_rotations);
+    anchor_previous_world_positions_.swap(next_previous_anchor_positions);
+    anchor_previous_world_rotations_.swap(next_previous_anchor_rotations);
     anchor_present_.swap(next_anchor_present);
     partition_frame_flags_.swap(next_frame_flags);
     velocity_weights_.swap(next_velocity_weights);
     gravity_ratios_.swap(next_gravity_ratios);
+    center_frame_shift_ready_ = false;
     frame_delta_time_ = frame.frame_delta_time;
     simulation_delta_time_ = frame.simulation_delta_time;
     time_scale_ = frame.time_scale;
@@ -401,6 +426,8 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         center_now_world_positions_ = center_frame_world_positions_;
         center_old_world_rotations_ = center_frame_world_rotations_;
         center_now_world_rotations_ = center_frame_world_rotations_;
+        std::fill(center_shift_smoothing_velocities_.begin(), center_shift_smoothing_velocities_.end(), 0.0f);
+        std::fill(center_shift_teleport_flags_.begin(), center_shift_teleport_flags_.end(), 0u);
         center_velocity_weights_ = velocity_weights_;
         center_ready_ = true;
     }
@@ -460,6 +487,157 @@ void DomainV1::configure_center(
     center_ready_ = true;
 }
 
+void DomainV1::configure_center_frame_shift(
+    const float* anchor_inertia,
+    const float* world_inertia,
+    const float* movement_inertia_smoothing,
+    const float* movement_speed_limits,
+    const float* rotation_speed_limits,
+    const std::int32_t* teleport_modes,
+    const float* teleport_distances,
+    const float* teleport_rotations
+) {
+    ensure_live();
+    require_finite(anchor_inertia, partition_count_, "Center anchor inertia");
+    require_finite(world_inertia, partition_count_, "Center world inertia");
+    require_finite(
+        movement_inertia_smoothing, partition_count_, "Center movement smoothing"
+    );
+    require_finite(movement_speed_limits, partition_count_, "Center movement speed limits");
+    require_finite(rotation_speed_limits, partition_count_, "Center rotation speed limits");
+    require_finite(teleport_distances, partition_count_, "Center teleport distances");
+    require_finite(teleport_rotations, partition_count_, "Center teleport rotations");
+    if (anchor_inertia == nullptr || world_inertia == nullptr ||
+        movement_inertia_smoothing == nullptr || movement_speed_limits == nullptr ||
+        rotation_speed_limits == nullptr || teleport_modes == nullptr ||
+        teleport_distances == nullptr || teleport_rotations == nullptr) {
+        throw std::invalid_argument("MC2 CPU Center frame-shift parameters cannot be null");
+    }
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        if (anchor_inertia[partition] < 0.0f || anchor_inertia[partition] > 1.0f ||
+            world_inertia[partition] < 0.0f || world_inertia[partition] > 1.0f ||
+            movement_inertia_smoothing[partition] < 0.0f ||
+            movement_inertia_smoothing[partition] > 1.0f ||
+            teleport_modes[partition] < 0 || teleport_modes[partition] > 2 ||
+            teleport_distances[partition] < 0.0f || teleport_rotations[partition] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU Center frame-shift parameters are invalid");
+        }
+    }
+    std::copy(anchor_inertia, anchor_inertia + partition_count_, center_anchor_inertia_.begin());
+    std::copy(world_inertia, world_inertia + partition_count_, center_world_inertia_.begin());
+    std::copy(
+        movement_inertia_smoothing,
+        movement_inertia_smoothing + partition_count_,
+        center_movement_inertia_smoothing_.begin()
+    );
+    std::copy(
+        movement_speed_limits,
+        movement_speed_limits + partition_count_,
+        center_movement_speed_limits_.begin()
+    );
+    std::copy(
+        rotation_speed_limits,
+        rotation_speed_limits + partition_count_,
+        center_rotation_speed_limits_.begin()
+    );
+    std::copy(teleport_modes, teleport_modes + partition_count_, center_teleport_modes_.begin());
+    std::copy(
+        teleport_distances,
+        teleport_distances + partition_count_,
+        center_teleport_distances_.begin()
+    );
+    std::copy(
+        teleport_rotations,
+        teleport_rotations + partition_count_,
+        center_teleport_rotations_.begin()
+    );
+}
+
+void DomainV1::step_center_frame_shift(const float* anchor_component_local_positions) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0 || !center_ready_) {
+        throw std::logic_error("MC2 CPU Center frame shift requires frame and configuration");
+    }
+    require_finite(
+        anchor_component_local_positions,
+        partition_count_ * 3,
+        "Center anchor component local positions"
+    );
+    if (anchor_component_local_positions == nullptr) {
+        throw std::invalid_argument("MC2 CPU Center anchor local positions cannot be null");
+    }
+    std::vector<float> next_shift_vectors(partition_count_ * 3, 0.0f);
+    std::vector<float> next_shift_rotations(partition_count_ * 4, 0.0f);
+    std::vector<float> next_shift_old_frame_positions(partition_count_ * 3, 0.0f);
+    std::vector<float> next_shift_old_frame_rotations(partition_count_ * 4, 0.0f);
+    std::vector<float> next_shift_now_positions(partition_count_ * 3, 0.0f);
+    std::vector<float> next_shift_now_rotations(partition_count_ * 4, 0.0f);
+    std::vector<float> next_smoothing_velocities = center_shift_smoothing_velocities_;
+    std::vector<std::uint32_t> next_teleport_flags(partition_count_, 0u);
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        const auto position_offset = partition * 3;
+        const auto rotation_offset = partition * 4;
+        hotools::Mc2CenterFrameShiftView view;
+        view.old_component_position = partition_previous_world_positions_.data() + position_offset;
+        view.component_position = partition_world_positions_.data() + position_offset;
+        view.old_component_rotation = partition_previous_world_rotations_.data() + rotation_offset;
+        view.component_rotation = partition_world_rotations_.data() + rotation_offset;
+        view.component_scale = partition_world_scales_.data() + position_offset;
+        view.initial_scale = center_initial_scales_.data() + position_offset;
+        view.frame_world_position = center_frame_world_positions_.data() + position_offset;
+        view.frame_world_rotation = center_frame_world_rotations_.data() + rotation_offset;
+        view.old_frame_world_position = center_previous_frame_world_positions_.data() + position_offset;
+        view.old_frame_world_rotation = center_previous_frame_world_rotations_.data() + rotation_offset;
+        view.now_world_position = center_now_world_positions_.data() + position_offset;
+        view.now_world_rotation = center_now_world_rotations_.data() + rotation_offset;
+        view.old_anchor_position = anchor_previous_world_positions_.data() + position_offset;
+        view.old_anchor_rotation = anchor_previous_world_rotations_.data() + rotation_offset;
+        view.anchor_position = anchor_world_positions_.data() + position_offset;
+        view.anchor_rotation = anchor_world_rotations_.data() + rotation_offset;
+        view.anchor_component_local_position = anchor_component_local_positions + position_offset;
+        view.smoothing_velocity = center_shift_smoothing_velocities_.data() + position_offset;
+        view.use_anchor = anchor_present_[partition] != 0u;
+        view.is_running = is_running_;
+        view.anchor_inertia = center_anchor_inertia_[partition];
+        view.world_inertia = center_world_inertia_[partition];
+        view.movement_speed_limit = center_movement_speed_limits_[partition];
+        view.rotation_speed_limit = center_rotation_speed_limits_[partition];
+        view.movement_inertia_smoothing = center_movement_inertia_smoothing_[partition];
+        view.frame_delta_time = frame_delta_time_;
+        view.simulation_delta_time = simulation_delta_time_;
+        view.time_scale = time_scale_;
+        view.skip_count = skip_count_;
+        view.velocity_weight = velocity_weights_[partition];
+        view.teleport_mode = center_teleport_modes_[partition];
+        view.teleport_distance = center_teleport_distances_[partition];
+        view.teleport_rotation = center_teleport_rotations_[partition];
+        if (!hotools::evaluate_center_frame_shift_mc2(view)) {
+            throw std::runtime_error("MC2 CPU Center frame shift rejected the frame");
+        }
+        std::copy_n(view.frame_component_shift_vector, 3, next_shift_vectors.data() + position_offset);
+        std::copy_n(view.frame_component_shift_rotation, 4, next_shift_rotations.data() + rotation_offset);
+        std::copy_n(view.shifted_old_frame_position, 3, next_shift_old_frame_positions.data() + position_offset);
+        std::copy_n(view.shifted_old_frame_rotation, 4, next_shift_old_frame_rotations.data() + rotation_offset);
+        std::copy_n(view.shifted_now_position, 3, next_shift_now_positions.data() + position_offset);
+        std::copy_n(view.shifted_now_rotation, 4, next_shift_now_rotations.data() + rotation_offset);
+        std::copy_n(view.smoothing_velocity_output, 3, next_smoothing_velocities.data() + position_offset);
+        next_teleport_flags[partition] =
+            (view.teleport_triggered ? 1u : 0u) |
+            (view.keep_teleport ? 2u : 0u) |
+            (view.reset_teleport ? 4u : 0u);
+    }
+    center_shift_vectors_.swap(next_shift_vectors);
+    center_shift_rotations_.swap(next_shift_rotations);
+    center_shift_old_frame_positions_.swap(next_shift_old_frame_positions);
+    center_shift_old_frame_rotations_.swap(next_shift_old_frame_rotations);
+    center_shift_now_positions_.swap(next_shift_now_positions);
+    center_shift_now_rotations_.swap(next_shift_now_rotations);
+    center_shift_smoothing_velocities_.swap(next_smoothing_velocities);
+    center_shift_teleport_flags_.swap(next_teleport_flags);
+    center_frame_shift_ready_ = true;
+    ++center_shift_count_;
+}
+
 void DomainV1::step_center(
     float dt,
     float frame_interpolation,
@@ -479,7 +657,9 @@ void DomainV1::step_center(
         const auto position_offset = partition * 3;
         const auto rotation_offset = partition * 4;
         std::copy_n(
-            center_previous_frame_world_positions_.data() + position_offset,
+            (center_frame_shift_ready_
+                ? center_shift_old_frame_positions_.data()
+                : center_previous_frame_world_positions_.data()) + position_offset,
             3,
             view.old_frame_world_position
         );
@@ -489,7 +669,9 @@ void DomainV1::step_center(
             view.frame_world_position
         );
         std::copy_n(
-            center_previous_frame_world_rotations_.data() + rotation_offset,
+            (center_frame_shift_ready_
+                ? center_shift_old_frame_rotations_.data()
+                : center_previous_frame_world_rotations_.data()) + rotation_offset,
             4,
             view.old_frame_world_rotation
         );
@@ -514,12 +696,16 @@ void DomainV1::step_center(
             view.initial_scale
         );
         std::copy_n(
-            center_old_world_positions_.data() + position_offset,
+            (center_frame_shift_ready_
+                ? center_shift_now_positions_.data()
+                : center_old_world_positions_.data()) + position_offset,
             3,
             view.old_world_position
         );
         std::copy_n(
-            center_old_world_rotations_.data() + rotation_offset,
+            (center_frame_shift_ready_
+                ? center_shift_now_rotations_.data()
+                : center_old_world_rotations_.data()) + rotation_offset,
             4,
             view.old_world_rotation
         );
@@ -559,6 +745,7 @@ void DomainV1::step_center(
     }
     center_old_world_positions_ = center_now_world_positions_;
     center_old_world_rotations_ = center_now_world_rotations_;
+    center_frame_shift_ready_ = false;
     ++center_step_count_;
 }
 
@@ -760,6 +947,8 @@ void DomainV1::dispose() noexcept {
     partition_world_linear_.clear();
     anchor_world_positions_.clear();
     anchor_world_rotations_.clear();
+    anchor_previous_world_positions_.clear();
+    anchor_previous_world_rotations_.clear();
     anchor_present_.clear();
     partition_frame_flags_.clear();
     velocity_weights_.clear();
@@ -777,6 +966,16 @@ void DomainV1::dispose() noexcept {
     inertia_ready_ = false;
     integration_damping_values_.clear();
     integration_ready_ = false;
+    center_shift_vectors_.clear();
+    center_shift_rotations_.clear();
+    center_shift_old_frame_positions_.clear();
+    center_shift_old_frame_rotations_.clear();
+    center_shift_now_positions_.clear();
+    center_shift_now_rotations_.clear();
+    center_shift_smoothing_velocities_.clear();
+    center_shift_teleport_flags_.clear();
+    center_frame_shift_ready_ = false;
+    center_shift_count_ = 0;
 }
 
 void DomainV1::ensure_live() const {

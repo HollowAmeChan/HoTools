@@ -195,6 +195,16 @@ class MC2CPUBackendDomainV1:
             )
         self._step_count += 1
 
+    def step_center_frame_shift(self, anchor_component_local_positions) -> None:
+        """Run only the explicit native Center frame-shift data path."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("Center frame shift requires update_frame first")
+        step_frame_shift = getattr(self._kernel, "step_center_frame_shift", None)
+        if not callable(step_frame_shift):
+            raise RuntimeError("CPU kernel does not expose the Center frame-shift slice")
+        step_frame_shift(self._handle, anchor_component_local_positions)
+
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()
         if self._latest_frame is None:

@@ -98,6 +98,10 @@ def _frame(program):
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
         partition_world_scale=((1.0, 1.0, 1.0),),
         partition_world_linear=(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),),
+        frame_delta_time=0.1,
+        simulation_delta_time=0.1,
+        time_scale=1.0,
+        is_running=True,
     )
 
 
@@ -283,6 +287,23 @@ def test_native_cpu_kernel_exposes_center_frame_shift_slice():
     assert result["teleport_triggered"] is False
 
 
+def test_native_cpu_domain_commits_center_frame_shift_transaction():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    try:
+        domain.update_frame(_frame(compiled.program))
+        domain.step_center_frame_shift(np.zeros((1, 3), dtype=np.float32))
+        state = domain.inspect()["kernel"]
+        assert state["center_shift_count"] == 1
+        assert state["center_shift_vectors"].shape == (1, 3)
+        assert state["center_shift_rotations"].shape == (1, 4)
+        assert state["center_shift_teleport_flags"].shape == (1,)
+        assert np.isfinite(state["center_shift_vectors"]).all()
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -296,3 +317,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_tracks_multi_partition_frame_history")
     test_native_cpu_kernel_exposes_center_frame_shift_slice()
     print("PASS test_native_cpu_kernel_exposes_center_frame_shift_slice")
+    test_native_cpu_domain_commits_center_frame_shift_transaction()
+    print("PASS test_native_cpu_domain_commits_center_frame_shift_transaction")
