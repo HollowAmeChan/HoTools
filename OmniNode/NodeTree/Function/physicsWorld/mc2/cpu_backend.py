@@ -238,6 +238,16 @@ class MC2CPUBackendDomainV1:
         run_reference(self._handle, settings)
         self._step_count += 1
 
+    def prepare_step_basic_pose(self, animation_pose_ratio: float = 0.0) -> dict:
+        """Build native StepBasic pose input from the compiled baseline topology."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("StepBasic pose requires update_frame first")
+        prepare_pose = getattr(self._kernel, "prepare_step_basic_pose", None)
+        if not callable(prepare_pose):
+            raise RuntimeError("CPU kernel does not expose StepBasic pose preparation")
+        return prepare_pose(self._handle, float(animation_pose_ratio))
+
     def step_external_collision(self, settings: Mapping[str, object]) -> None:
         """Run the explicit native point external-collision slice."""
         self._ensure_live()

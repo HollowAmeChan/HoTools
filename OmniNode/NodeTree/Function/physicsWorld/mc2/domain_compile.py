@@ -197,6 +197,14 @@ def _program_for_fragments(
         np.asarray(fragment.finalizer.vertex_bind_pose_rotations, dtype=np.float32)
         for fragment in fragments
     ))
+    baseline_local_positions = np.concatenate(tuple(
+        np.asarray(fragment.baseline.baseline.vertex_local_positions, dtype=np.float32)
+        for fragment in fragments
+    ))
+    baseline_local_rotations = np.concatenate(tuple(
+        np.asarray(fragment.baseline.baseline.vertex_local_rotations, dtype=np.float32)
+        for fragment in fragments
+    ))
     attributes = np.concatenate(tuple(
         np.asarray(fragment.final_proxy.vertex_attributes, dtype=np.uint32)
         for fragment in fragments
@@ -337,6 +345,8 @@ def _program_for_fragments(
         baseline_line_start=np.asarray(baseline_starts, dtype=np.int32),
         baseline_line_count=np.asarray(baseline_counts, dtype=np.int32),
         baseline_line_data=np.asarray(baseline_data, dtype=np.int32),
+        baseline_vertex_local_position=baseline_local_positions,
+        baseline_vertex_local_rotation=baseline_local_rotations,
     )
 
 

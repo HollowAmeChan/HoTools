@@ -76,6 +76,11 @@ public:
         const std::int32_t* line_data,
         std::size_t data_count
     );
+    void configure_baseline_pose(
+        const float* vertex_local_positions,
+        const float* vertex_local_rotations
+    );
+    void prepare_step_basic_pose(float animation_pose_ratio);
     void step_angle(
         const float* step_basic_positions,
         const float* step_basic_rotations,
@@ -269,6 +274,13 @@ public:
     bool baseline_ready() const noexcept { return baseline_ready_; }
     std::size_t baseline_line_count() const noexcept { return baseline_line_starts_.size(); }
     std::size_t baseline_data_count() const noexcept { return baseline_line_data_.size(); }
+    bool baseline_pose_ready() const noexcept { return baseline_pose_ready_; }
+    const std::vector<float>& step_basic_positions() const noexcept {
+        return step_basic_positions_;
+    }
+    const std::vector<float>& step_basic_rotations() const noexcept {
+        return step_basic_rotations_;
+    }
 
 private:
     void ensure_live() const;
@@ -363,6 +375,11 @@ private:
     std::vector<std::int32_t> baseline_line_counts_;
     std::vector<std::int32_t> baseline_line_data_;
     bool baseline_ready_ = false;
+    std::vector<float> baseline_vertex_local_positions_;
+    std::vector<float> baseline_vertex_local_rotations_;
+    std::vector<float> step_basic_positions_;
+    std::vector<float> step_basic_rotations_;
+    bool baseline_pose_ready_ = false;
     std::vector<std::int32_t> tether_root_indices_;
     bool tether_ready_ = false;
     std::vector<std::int32_t> bending_dihedral_pairs_;

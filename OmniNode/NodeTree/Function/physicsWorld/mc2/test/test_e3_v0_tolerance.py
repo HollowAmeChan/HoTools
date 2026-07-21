@@ -293,8 +293,105 @@ def test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain(
         v0.dispose()
 
 
+def test_e3_native_step_basic_pose_matches_v0_angle_reference():
+    snapshot, fragment, compiled, _unused_effective = _same_source_constraints()
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=1.0,
+            gravity_direction=(0.0, -1.0, 0.0),
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=True,
+            angle_restoration_stiffness=0.2,
+            angle_limit_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    frame = _frame(compiled.program)
+    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        v0.set_debug_constraint_results(native_context.MC2_DEBUG_CONSTRAINT_ANGLE)
+        domain.update_frame(frame)
+        domain_before = domain.read_output().world_positions.copy()
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=frame.frame,
+            generation=frame.generation,
+            world_positions=domain_before,
+            world_rotations_xyzw=frame.animated_base_world_rotations,
+        ))
+        v0.reset()
+        v0.step_no_collision(0.1)
+        debug = v0.refresh_debug_draw_snapshot(
+            include_step_basic=True,
+            include_angle_restoration=True,
+            include_constraint_results=True,
+        )
+        pose = domain.prepare_step_basic_pose(0.0)
+        np.testing.assert_allclose(
+            np.asarray(pose["positions"], dtype=np.float32),
+            np.asarray(debug["step_basic_positions"], dtype=np.float32),
+            rtol=2.0e-5,
+            atol=2.0e-5,
+        )
+        np.testing.assert_allclose(
+            np.asarray(pose["rotations"], dtype=np.float32),
+            np.asarray(debug["step_basic_rotations_xyzw"], dtype=np.float32),
+            rtol=2.0e-5,
+            atol=2.0e-5,
+        )
+        frequency_ratio = 90.0 * 0.1
+        simulation_power_z = frequency_ratio ** 0.3
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": simulation_power_z,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -1.0, 0.0),
+        })
+        domain.step({
+            "data_path_only": True,
+            "angle_slice": True,
+            "step_basic_positions": pose["positions"],
+            "step_basic_rotations": pose["rotations"],
+            "restoration_values": np.full(
+                compiled.program.particle_count,
+                np.float32(0.2 * (9.0 ** 1.8)),
+                dtype=np.float32,
+            ),
+            "limit_values": np.zeros(compiled.program.particle_count, dtype=np.float32),
+            "restoration_velocity_attenuation": 0.0,
+            "restoration_gravity_falloff": 0.0,
+            "limit_stiffness": 0.0,
+            "restoration_enabled": True,
+            "limit_enabled": False,
+        })
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            np.asarray(v0.read()[0], dtype=np.float32),
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
     test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain full no-collision tolerance")
+    test_e3_native_step_basic_pose_matches_v0_angle_reference()
+    print("PASS E3 native StepBasic pose matches V0 Angle reference")

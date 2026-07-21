@@ -574,6 +574,8 @@ class MC2CompiledDomainProgramV1:
     baseline_line_start: np.ndarray | None = None
     baseline_line_count: np.ndarray | None = None
     baseline_line_data: np.ndarray | None = None
+    baseline_vertex_local_position: np.ndarray | None = None
+    baseline_vertex_local_rotation: np.ndarray | None = None
     schema_version: int = MC2_DOMAIN_IR_SCHEMA_VERSION
     domain_signature: str = field(init=False)
     layout_signature: str = field(init=False)
@@ -689,6 +691,37 @@ class MC2CompiledDomainProgramV1:
                 raise ValueError("baseline line range exceeds baseline_line_data")
             if len(data) and (np.any(data < 0) or np.any(data >= particle_count)):
                 raise ValueError("baseline_line_data is out of range")
+        baseline_pose_values = (
+            self.baseline_vertex_local_position,
+            self.baseline_vertex_local_rotation,
+        )
+        if any(value is not None for value in baseline_pose_values):
+            if any(value is None for value in baseline_pose_values):
+                raise ValueError(
+                    "baseline vertex local pose arrays must be provided as a complete group"
+                )
+            _validate_array(
+                self.baseline_vertex_local_position,
+                np.float32,
+                (particle_count, 3),
+                "baseline_vertex_local_position",
+            )
+            _validate_array(
+                self.baseline_vertex_local_rotation,
+                np.float32,
+                (particle_count, 4),
+                "baseline_vertex_local_rotation",
+            )
+            if self.baseline_line_data is None:
+                raise ValueError(
+                    "baseline vertex local pose requires baseline line topology"
+                )
+            active = np.unique(self.baseline_line_data)
+            if len(active):
+                _unit_quaternion_check(
+                    self.baseline_vertex_local_rotation[active],
+                    "active baseline_vertex_local_rotation",
+                )
         if particle_count == 0:
             raise ValueError("compiled domain must contain at least one particle")
         if np.any(self.particle_partition_index >= partition_count):
@@ -831,6 +864,8 @@ class MC2CompiledDomainProgramV1:
             self.baseline_line_start,
             self.baseline_line_count,
             self.baseline_line_data,
+            self.baseline_vertex_local_position,
+            self.baseline_vertex_local_rotation,
         ]
         if include_values:
             parts.extend((
@@ -855,6 +890,7 @@ class MC2CompiledDomainProgramV1:
             "output_targets": [target.debug_dict() for target in self.output_targets],
             "required_capabilities": list(self.required_capabilities),
             "baseline_lines_ready": self.baseline_parent_indices is not None,
+            "baseline_pose_ready": self.baseline_vertex_local_position is not None,
         }
 
 
@@ -882,6 +918,8 @@ def make_mc2_compiled_domain_program(
     baseline_line_start=None,
     baseline_line_count=None,
     baseline_line_data=None,
+    baseline_vertex_local_position=None,
+    baseline_vertex_local_rotation=None,
 ) -> MC2CompiledDomainProgramV1:
     partition_ids = tuple(_text(value, "partition_id") for value in partition_ids)
     particle_count = len(particle_partition_index)
@@ -946,6 +984,22 @@ def make_mc2_compiled_domain_program(
         baseline_line_data=(
             None if baseline_line_data is None else _readonly_array(
                 baseline_line_data, np.int32, (len(baseline_line_data),), "baseline_line_data"
+            )
+        ),
+        baseline_vertex_local_position=(
+            None if baseline_vertex_local_position is None else _readonly_array(
+                baseline_vertex_local_position,
+                np.float32,
+                (particle_count, 3),
+                "baseline_vertex_local_position",
+            )
+        ),
+        baseline_vertex_local_rotation=(
+            None if baseline_vertex_local_rotation is None else _readonly_array(
+                baseline_vertex_local_rotation,
+                np.float32,
+                (particle_count, 4),
+                "baseline_vertex_local_rotation",
             )
         ),
     )

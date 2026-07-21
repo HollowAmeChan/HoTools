@@ -314,6 +314,47 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the explicit backend-neutral baseline line SoA."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_baseline_pose",
+        [](std::uint64_t handle,
+           cf32_2d vertex_local_positions,
+           cf32_2d vertex_local_rotations) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(vertex_local_positions.shape(0)) != domain->particle_count() ||
+                vertex_local_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(vertex_local_rotations.shape(0)) != domain->particle_count() ||
+                vertex_local_rotations.shape(1) != 4) {
+                throw nb::value_error(
+                    "MC2 CPU baseline local pose arrays must match particle_count"
+                );
+            }
+            domain->configure_baseline_pose(
+                vertex_local_positions.data(), vertex_local_rotations.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("vertex_local_positions"),
+        nb::arg("vertex_local_rotations"),
+        "Configure baseline-local pose data used by the native StepBasic preparation."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_prepare_step_basic_pose",
+        [](std::uint64_t handle, float animation_pose_ratio) {
+            auto* domain = require_domain(handle);
+            domain->prepare_step_basic_pose(animation_pose_ratio);
+            nb::dict result;
+            result["positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->step_basic_positions()),
+                domain->particle_count(), 3
+            );
+            result["rotations"] = owned_array_2d<float>(
+                std::vector<float>(domain->step_basic_rotations()),
+                domain->particle_count(), 4
+            );
+            return result;
+        },
+        nb::arg("handle"), nb::arg("animation_pose_ratio") = 0.0f,
+        "Prepare StepBasic positions and rotations through the native baseline kernel."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_tether",
         [](std::uint64_t handle, ci32_1d root_indices) {
             auto* domain = require_domain(handle);
@@ -813,6 +854,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["baseline_ready"] = domain->baseline_ready();
             result["baseline_line_count"] = domain->baseline_line_count();
             result["baseline_data_count"] = domain->baseline_data_count();
+            result["baseline_pose_ready"] = domain->baseline_pose_ready();
             result["partition_world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->partition_world_positions()),
                 domain->partition_count(), 3

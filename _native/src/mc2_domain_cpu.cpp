@@ -51,6 +51,10 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       layout_signature_(program.layout_signature != nullptr ? program.layout_signature : ""),
       bind_positions_(program.particle_count * 3),
       bind_rotations_(program.particle_count * 4),
+      baseline_vertex_local_positions_(program.particle_count * 3, 0.0f),
+      baseline_vertex_local_rotations_(program.particle_count * 4, 0.0f),
+      step_basic_positions_(program.particle_count * 3, 0.0f),
+      step_basic_rotations_(program.particle_count * 4, 0.0f),
       particle_partition_index_(program.particle_count),
       particle_attribute_flags_(program.particle_count),
       partition_center_local_positions_(program.partition_count * 3),
@@ -893,6 +897,77 @@ void DomainV1::configure_baseline(
     baseline_ready_ = true;
 }
 
+void DomainV1::configure_baseline_pose(
+    const float* vertex_local_positions,
+    const float* vertex_local_rotations
+) {
+    ensure_live();
+    require_finite(
+        vertex_local_positions, particle_count_ * 3,
+        "baseline vertex local positions"
+    );
+    require_finite(
+        vertex_local_rotations, particle_count_ * 4,
+        "baseline vertex local rotations"
+    );
+    if (!baseline_ready_) {
+        throw std::logic_error(
+            "MC2 CPU baseline local pose requires baseline topology first"
+        );
+    }
+    for (const auto vertex : baseline_line_data_) {
+        const float* rotation = vertex_local_rotations + static_cast<std::size_t>(vertex) * 4;
+        const float length_squared =
+            rotation[0] * rotation[0] + rotation[1] * rotation[1] +
+            rotation[2] * rotation[2] + rotation[3] * rotation[3];
+        if (!std::isfinite(length_squared) || std::fabs(length_squared - 1.0f) > 1.0e-4f) {
+            throw std::invalid_argument(
+                "active baseline vertex local rotations must be unit quaternions"
+            );
+        }
+    }
+    baseline_vertex_local_positions_.assign(
+        vertex_local_positions, vertex_local_positions + particle_count_ * 3
+    );
+    baseline_vertex_local_rotations_.assign(
+        vertex_local_rotations, vertex_local_rotations + particle_count_ * 4
+    );
+    baseline_pose_ready_ = true;
+}
+
+void DomainV1::prepare_step_basic_pose(float animation_pose_ratio) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU StepBasic pose requires update_frame");
+    }
+    if (!baseline_ready_ || !baseline_pose_ready_) {
+        throw std::logic_error(
+            "MC2 CPU StepBasic pose requires baseline topology and local pose"
+        );
+    }
+    if (!std::isfinite(animation_pose_ratio) ||
+        animation_pose_ratio < 0.0f || animation_pose_ratio > 1.0f) {
+        throw std::invalid_argument("MC2 CPU animation pose ratio is invalid");
+    }
+    hotools::Mc2StepBasicPoseView view;
+    view.base_positions = animated_base_world_positions_.data();
+    view.base_rotations = animated_base_world_rotations_.data();
+    view.parent_indices = baseline_parent_indices_.data();
+    view.baseline_start = baseline_line_starts_.data();
+    view.baseline_count = baseline_line_counts_.data();
+    view.baseline_data = baseline_line_data_.data();
+    view.vertex_local_positions = baseline_vertex_local_positions_.data();
+    view.vertex_local_rotations = baseline_vertex_local_rotations_.data();
+    view.step_positions = step_basic_positions_.data();
+    view.step_rotations = step_basic_rotations_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.line_count = static_cast<std::int64_t>(baseline_line_starts_.size());
+    view.baseline_data_count = static_cast<std::int64_t>(baseline_line_data_.size());
+    view.animation_pose_ratio = animation_pose_ratio;
+    hotools::update_step_basic_pose_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_tether(const std::int32_t* root_indices) {
     ensure_live();
     if (root_indices == nullptr) {
@@ -1543,6 +1618,11 @@ void DomainV1::dispose() noexcept {
     baseline_line_starts_.clear();
     baseline_line_counts_.clear();
     baseline_line_data_.clear();
+    baseline_vertex_local_positions_.clear();
+    baseline_vertex_local_rotations_.clear();
+    step_basic_positions_.clear();
+    step_basic_rotations_.clear();
+    baseline_pose_ready_ = false;
     baseline_ready_ = false;
     bending_dihedral_pairs_.clear();
     bending_dihedral_rest_angles_.clear();

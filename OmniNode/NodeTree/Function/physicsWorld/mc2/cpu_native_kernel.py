@@ -25,6 +25,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_distance",
     "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_configure_baseline",
+    "mc2_domain_cpu_v1_configure_baseline_pose",
+    "mc2_domain_cpu_v1_prepare_step_basic_pose",
     "mc2_domain_cpu_v1_step_angle",
     "mc2_domain_cpu_v1_step_motion",
     "mc2_domain_cpu_v1_step_external_collision",
@@ -855,6 +857,24 @@ class MC2NativeCPUKernelV1:
         for array in arrays:
             array.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_baseline(handle, *arrays)
+        if program.baseline_vertex_local_position is not None:
+            pose_arrays = (
+                np.asarray(program.baseline_vertex_local_position, dtype=np.float32),
+                np.asarray(program.baseline_vertex_local_rotation, dtype=np.float32),
+            )
+            for array in pose_arrays:
+                array.flags.writeable = False
+            self._module.mc2_domain_cpu_v1_configure_baseline_pose(handle, *pose_arrays)
+
+    def prepare_step_basic_pose(self, handle, animation_pose_ratio: float = 0.0) -> dict:
+        key = self._require_handle(handle)
+        result = self._module.mc2_domain_cpu_v1_prepare_step_basic_pose(
+            key, float(animation_pose_ratio)
+        )
+        return {
+            "positions": np.asarray(result["positions"], dtype=np.float32),
+            "rotations": np.asarray(result["rotations"], dtype=np.float32),
+        }
 
     def _configure_tether(
         self,

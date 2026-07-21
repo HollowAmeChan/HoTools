@@ -101,6 +101,9 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
     assert compiled.program.baseline_line_start.shape == (1,)
     assert compiled.program.baseline_line_count.tolist() == [3]
     assert compiled.program.baseline_line_data.tolist() == [0, 1, 2]
+    assert compiled.program.baseline_vertex_local_position.shape == (3, 3)
+    assert compiled.program.baseline_vertex_local_rotation.shape == (3, 4)
+    assert compiled.program.debug_dict()["baseline_pose_ready"] is True
 
 
 def test_compiler_preserves_local_constraint_partition_and_output_identity() -> None:
