@@ -527,7 +527,10 @@ def _e0_domain_boundary_hits() -> list[dict]:
                     })
 
     allowed_consumers = {
-        "mc2.domain_ir": frozenset(("mc2.domain_capabilities",)),
+        "mc2.domain_ir": frozenset((
+            "mc2.domain_capabilities",
+            "mc2.setups.mesh_cloth.source_capture",
+        )),
         "mc2.domain_capabilities": frozenset(),
     }
     for path in _production_python_files():
