@@ -272,6 +272,29 @@ def _program_for_fragments(
         if primitive_rows[kind]
     )
 
+    baseline_parents = []
+    baseline_starts = []
+    baseline_counts = []
+    baseline_data = []
+    for fragment, offset in zip(fragments, starts):
+        baseline = fragment.baseline.baseline
+        parents = np.asarray(baseline.parent_indices, dtype=np.int32)
+        ranges = np.asarray(baseline.baseline_ranges, dtype=np.int32)
+        if ranges.size == 0:
+            ranges = np.empty((0, 2), dtype=np.int32)
+        data = np.asarray(baseline.baseline_data, dtype=np.int32)
+        if parents.shape != (len(fragment.final_proxy.local_positions),):
+            raise ValueError("Mesh baseline parent_indices must cover every particle")
+        if ranges.ndim != 2 or ranges.shape[1] != 2:
+            raise ValueError("Mesh baseline ranges must be int32 pairs")
+        baseline_parents.extend(
+            int(parent) + offset if int(parent) >= 0 else -1 for parent in parents
+        )
+        data_offset = len(baseline_data)
+        baseline_starts.extend(data_offset + int(row[0]) for row in ranges)
+        baseline_counts.extend(int(row[1]) for row in ranges)
+        baseline_data.extend(int(value) + offset for value in data)
+
     output_targets = tuple(
         MC2OutputTargetV1(
             target_id=fragment.output_target_id,
@@ -310,6 +333,10 @@ def _program_for_fragments(
         )),
         output_source_element=source_elements,
         required_capabilities=tuple(required_capabilities),
+        baseline_parent_indices=np.asarray(baseline_parents, dtype=np.int32),
+        baseline_line_start=np.asarray(baseline_starts, dtype=np.int32),
+        baseline_line_count=np.asarray(baseline_counts, dtype=np.int32),
+        baseline_line_data=np.asarray(baseline_data, dtype=np.int32),
     )
 
 

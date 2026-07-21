@@ -570,6 +570,10 @@ class MC2CompiledDomainProgramV1:
     output_target_index: np.ndarray
     output_source_element: np.ndarray
     required_capabilities: tuple[str, ...] = ()
+    baseline_parent_indices: np.ndarray | None = None
+    baseline_line_start: np.ndarray | None = None
+    baseline_line_count: np.ndarray | None = None
+    baseline_line_data: np.ndarray | None = None
     schema_version: int = MC2_DOMAIN_IR_SCHEMA_VERSION
     domain_signature: str = field(init=False)
     layout_signature: str = field(init=False)
@@ -659,6 +663,32 @@ class MC2CompiledDomainProgramV1:
             (particle_count,),
             "particle_attribute_flags",
         )
+        baseline_values = (
+            self.baseline_parent_indices,
+            self.baseline_line_start,
+            self.baseline_line_count,
+            self.baseline_line_data,
+        )
+        if any(value is not None for value in baseline_values):
+            if any(value is None for value in baseline_values):
+                raise ValueError("baseline line arrays must be provided as a complete group")
+            parent = self.baseline_parent_indices
+            starts = self.baseline_line_start
+            counts = self.baseline_line_count
+            data = self.baseline_line_data
+            _validate_array(parent, np.int32, (particle_count,), "baseline_parent_indices")
+            line_count = len(starts)
+            _validate_array(starts, np.int32, (line_count,), "baseline_line_start")
+            _validate_array(counts, np.int32, (line_count,), "baseline_line_count")
+            _validate_array(data, np.int32, (len(data),), "baseline_line_data")
+            if np.any(parent < -1) or np.any(parent >= particle_count):
+                raise ValueError("baseline_parent_indices is out of range")
+            if np.any(starts < 0) or np.any(counts < 0):
+                raise ValueError("baseline line ranges cannot be negative")
+            if np.any(starts.astype(np.int64) + counts.astype(np.int64) > len(data)):
+                raise ValueError("baseline line range exceeds baseline_line_data")
+            if len(data) and (np.any(data < 0) or np.any(data >= particle_count)):
+                raise ValueError("baseline_line_data is out of range")
         if particle_count == 0:
             raise ValueError("compiled domain must contain at least one particle")
         if np.any(self.particle_partition_index >= partition_count):
@@ -797,6 +827,10 @@ class MC2CompiledDomainProgramV1:
             self.output_target_index,
             self.output_source_element,
             self.required_capabilities,
+            self.baseline_parent_indices,
+            self.baseline_line_start,
+            self.baseline_line_count,
+            self.baseline_line_data,
         ]
         if include_values:
             parts.extend((
@@ -820,6 +854,7 @@ class MC2CompiledDomainProgramV1:
             "primitive_tables": [table.debug_dict() for table in self.primitive_tables],
             "output_targets": [target.debug_dict() for target in self.output_targets],
             "required_capabilities": list(self.required_capabilities),
+            "baseline_lines_ready": self.baseline_parent_indices is not None,
         }
 
 
@@ -843,6 +878,10 @@ def make_mc2_compiled_domain_program(
     output_target_index,
     output_source_element,
     required_capabilities=(),
+    baseline_parent_indices=None,
+    baseline_line_start=None,
+    baseline_line_count=None,
+    baseline_line_data=None,
 ) -> MC2CompiledDomainProgramV1:
     partition_ids = tuple(_text(value, "partition_id") for value in partition_ids)
     particle_count = len(particle_partition_index)
@@ -889,6 +928,26 @@ def make_mc2_compiled_domain_program(
             output_source_element, (particle_count,), "output_source_element"
         ),
         required_capabilities=tuple(required_capabilities),
+        baseline_parent_indices=(
+            None if baseline_parent_indices is None else _readonly_array(
+                baseline_parent_indices, np.int32, (particle_count,), "baseline_parent_indices"
+            )
+        ),
+        baseline_line_start=(
+            None if baseline_line_start is None else _readonly_array(
+                baseline_line_start, np.int32, (len(baseline_line_start),), "baseline_line_start"
+            )
+        ),
+        baseline_line_count=(
+            None if baseline_line_count is None else _readonly_array(
+                baseline_line_count, np.int32, (len(baseline_line_count),), "baseline_line_count"
+            )
+        ),
+        baseline_line_data=(
+            None if baseline_line_data is None else _readonly_array(
+                baseline_line_data, np.int32, (len(baseline_line_data),), "baseline_line_data"
+            )
+        ),
     )
 
 

@@ -97,6 +97,10 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
     )
     assert compiled.parameters.constraint_parameters
     assert compiled.parameters.layout_signature == compiled.program.layout_signature
+    assert compiled.program.baseline_parent_indices.shape == (3,)
+    assert compiled.program.baseline_line_start.shape == (1,)
+    assert compiled.program.baseline_line_count.tolist() == [3]
+    assert compiled.program.baseline_line_data.tolist() == [0, 1, 2]
 
 
 def test_compiler_preserves_local_constraint_partition_and_output_identity() -> None:
