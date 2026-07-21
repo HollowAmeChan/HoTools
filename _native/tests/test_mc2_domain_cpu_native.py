@@ -178,6 +178,19 @@ def test_domain_cpu_native_rejects_identity_without_mutating_published_frame():
             assert "signature mismatch" in str(exc)
         else:
             raise AssertionError("mismatched domain signature was accepted")
+        try:
+            _update_frame(
+                handle,
+                bad_positions,
+                bad_normals,
+                frame=5,
+                generation=2,
+                frame_delta_time=-1.0,
+            )
+        except ValueError as exc:
+            assert "timing values" in str(exc)
+        else:
+            raise AssertionError("invalid frame timing was accepted")
         output = hotools_native.mc2_domain_cpu_v1_read(handle)
         assert output["frame"] == 4
         assert np.array_equal(output["world_positions"], positions)
