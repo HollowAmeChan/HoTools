@@ -875,3 +875,5 @@ V0 ordering is fixed as `Tether -> Distance A -> Angle -> Bending -> point colli
 The Distance slice now carries V0-compatible depth/friction-derived inverse masses and a separate per-pass simulation-power input. This closes a known numerical gap in the reference owner, but does not by itself close E3 tolerance.
 
 Bending now carries an explicit `bending_simulation_power` into the native view for both dihedral and volume records; default power remains `1.0` for existing slice callers.
+
+E3 evidence update (2026-07-22): same-source prediction and constraint-prefix tolerance pass on py311/py313. Domain compilation preserves signed Distance rest values so V0 horizontal constraints retain their reduced-stiffness marker, and reference orchestration skips Tether, Distance, Angle, and Bending only when the compiled domain has no corresponding topology/baseline. Angle/Motion branch-level and collision/self full tolerance remain open gates; these tests must use the exact final-proxy/StepBasic coordinate source before any product-owner switch.
