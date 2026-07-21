@@ -224,6 +224,29 @@ class MC2NativeCPUKernelV1:
         values.flags.writeable = False
         self._module.mc2_domain_cpu_v1_step_center_frame_shift(key, values)
 
+    def step_reference_slices(self, handle, settings: Mapping[str, object]) -> None:
+        """Run the currently landed native reference pass prefix in fixed order."""
+        required = {
+            "anchor_component_local_positions", "dt", "frame_interpolation",
+            "distance_weights", "simulation_power", "velocity_weight", "gravity",
+        }
+        if set(settings) != required:
+            raise ValueError("reference slices require exactly their explicit pass inputs")
+        key = self._require_handle(handle)
+        self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
+        self.step_center(key, {
+            "dt": settings["dt"],
+            "frame_interpolation": settings["frame_interpolation"],
+            "distance_weights": settings["distance_weights"],
+        })
+        self.step_integration(key, {
+            "dt": settings["dt"],
+            "simulation_power": settings["simulation_power"],
+            "velocity_weight": settings["velocity_weight"],
+            "gravity": settings["gravity"],
+        })
+        self.step_distance(key)
+
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
         key_set = {

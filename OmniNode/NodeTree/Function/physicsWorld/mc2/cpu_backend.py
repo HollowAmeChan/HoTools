@@ -205,6 +205,17 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose the Center frame-shift slice")
         step_frame_shift(self._handle, anchor_component_local_positions)
 
+    def step_reference_slices(self, settings: Mapping[str, object]) -> None:
+        """Run only the explicit landed native reference pass prefix."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("reference slices require update_frame first")
+        run_reference = getattr(self._kernel, "step_reference_slices", None)
+        if not callable(run_reference):
+            raise RuntimeError("CPU kernel does not expose reference slices")
+        run_reference(self._handle, settings)
+        self._step_count += 1
+
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()
         if self._latest_frame is None:

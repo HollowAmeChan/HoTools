@@ -304,6 +304,30 @@ def test_native_cpu_domain_commits_center_frame_shift_transaction():
         domain.dispose()
 
 
+def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    try:
+        domain.update_frame(_frame(compiled.program))
+        domain.step_reference_slices({
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -1.0, 0.0),
+        })
+        state = domain.inspect()["kernel"]
+        assert state["center_shift_count"] == 1
+        assert state["center_step_count"] == 1
+        assert state["step_count"] == 2
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -319,3 +343,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_center_frame_shift_slice")
     test_native_cpu_domain_commits_center_frame_shift_transaction()
     print("PASS test_native_cpu_domain_commits_center_frame_shift_transaction")
+    test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order()
+    print("PASS test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order")
