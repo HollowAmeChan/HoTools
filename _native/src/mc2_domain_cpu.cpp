@@ -71,6 +71,26 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       partition_frame_flags_(program.partition_count, 0u),
       velocity_weights_(program.partition_count, 1.0f),
       gravity_ratios_(program.partition_count, 1.0f),
+      center_local_inertia_(program.partition_count, 0.0f),
+      center_local_movement_speed_limits_(program.partition_count, -1.0f),
+      center_local_rotation_speed_limits_(program.partition_count, -1.0f),
+      center_gravity_(program.partition_count, 0.0f),
+      center_gravity_directions_(program.partition_count * 3, 0.0f),
+      center_gravity_falloff_(program.partition_count, 0.0f),
+      center_stabilization_time_(program.partition_count, 0.0f),
+      center_blend_weight_(program.partition_count, 1.0f),
+      center_initial_scales_(program.partition_count * 3, 1.0f),
+      center_old_world_positions_(program.partition_count * 3, 0.0f),
+      center_old_world_rotations_(program.partition_count * 4, 0.0f),
+      center_now_world_positions_(program.partition_count * 3, 0.0f),
+      center_now_world_rotations_(program.partition_count * 4, 0.0f),
+      center_step_vectors_(program.partition_count * 3, 0.0f),
+      center_step_rotations_(program.partition_count * 4, 0.0f),
+      center_inertia_vectors_(program.partition_count * 3, 0.0f),
+      center_inertia_rotations_(program.partition_count * 4, 0.0f),
+      center_rotation_axes_(program.partition_count * 3, 0.0f),
+      center_gravity_ratios_(program.partition_count, 1.0f),
+      center_velocity_weights_(program.partition_count, 1.0f),
       partition_reset_counts_(program.partition_count, 0),
       partition_keep_counts_(program.partition_count, 0) {
     if (program.schema_version != 1) {
@@ -308,10 +328,166 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     partition_frame_flags_.swap(next_frame_flags);
     velocity_weights_.swap(next_velocity_weights);
     gravity_ratios_.swap(next_gravity_ratios);
+    if (reset_history) {
+        center_initial_scales_ = partition_world_scales_;
+        center_old_world_positions_ = partition_world_positions_;
+        center_now_world_positions_ = partition_world_positions_;
+        center_old_world_rotations_ = partition_world_rotations_;
+        center_now_world_rotations_ = partition_world_rotations_;
+        center_velocity_weights_ = velocity_weights_;
+        center_ready_ = true;
+    }
     partition_reset_counts_.swap(next_reset_counts);
     partition_keep_counts_.swap(next_keep_counts);
     frame_ = frame.frame;
     generation_ = frame.generation;
+}
+
+void DomainV1::configure_center(
+    const float* local_inertia,
+    const float* local_movement_speed_limits,
+    const float* local_rotation_speed_limits,
+    const float* gravity,
+    const float* gravity_directions,
+    const float* gravity_falloff,
+    const float* stabilization_time,
+    const float* blend_weight
+) {
+    ensure_live();
+    require_finite(local_inertia, partition_count_, "local_inertia");
+    require_finite(local_movement_speed_limits, partition_count_, "local_movement_speed_limits");
+    require_finite(local_rotation_speed_limits, partition_count_, "local_rotation_speed_limits");
+    require_finite(gravity, partition_count_, "gravity");
+    require_finite(gravity_directions, partition_count_ * 3, "gravity_directions");
+    require_finite(gravity_falloff, partition_count_, "gravity_falloff");
+    require_finite(stabilization_time, partition_count_, "stabilization_time");
+    require_finite(blend_weight, partition_count_, "blend_weight");
+    for (std::size_t index = 0; index < partition_count_; ++index) {
+        if (local_inertia[index] < 0.0f || local_inertia[index] > 1.0f ||
+            gravity[index] < 0.0f || gravity_falloff[index] < 0.0f ||
+            stabilization_time[index] < 0.0f || blend_weight[index] < 0.0f ||
+            blend_weight[index] > 1.0f) {
+            throw std::invalid_argument("MC2 CPU Center parameters are invalid");
+        }
+    }
+    std::copy(local_inertia, local_inertia + partition_count_, center_local_inertia_.begin());
+    std::copy(
+        local_movement_speed_limits,
+        local_movement_speed_limits + partition_count_,
+        center_local_movement_speed_limits_.begin()
+    );
+    std::copy(
+        local_rotation_speed_limits,
+        local_rotation_speed_limits + partition_count_,
+        center_local_rotation_speed_limits_.begin()
+    );
+    std::copy(gravity, gravity + partition_count_, center_gravity_.begin());
+    std::copy(
+        gravity_directions,
+        gravity_directions + partition_count_ * 3,
+        center_gravity_directions_.begin()
+    );
+    std::copy(gravity_falloff, gravity_falloff + partition_count_, center_gravity_falloff_.begin());
+    std::copy(stabilization_time, stabilization_time + partition_count_, center_stabilization_time_.begin());
+    std::copy(blend_weight, blend_weight + partition_count_, center_blend_weight_.begin());
+    center_ready_ = true;
+}
+
+void DomainV1::step_center(
+    float dt,
+    float frame_interpolation,
+    const float* distance_weights
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0 || !center_ready_) {
+        throw std::logic_error("MC2 CPU Center step requires frame and configuration");
+    }
+    if (!std::isfinite(dt) || dt <= 0.0f || !std::isfinite(frame_interpolation) ||
+        frame_interpolation < 0.0f || frame_interpolation > 1.0f) {
+        throw std::invalid_argument("MC2 CPU Center step values are invalid");
+    }
+    require_finite(distance_weights, partition_count_, "distance_weights");
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        hotools::Mc2CenterStepView view;
+        const auto position_offset = partition * 3;
+        const auto rotation_offset = partition * 4;
+        std::copy_n(
+            partition_previous_world_positions_.data() + position_offset,
+            3,
+            view.old_frame_world_position
+        );
+        std::copy_n(
+            partition_world_positions_.data() + position_offset,
+            3,
+            view.frame_world_position
+        );
+        std::copy_n(
+            partition_previous_world_rotations_.data() + rotation_offset,
+            4,
+            view.old_frame_world_rotation
+        );
+        std::copy_n(
+            partition_world_rotations_.data() + rotation_offset,
+            4,
+            view.frame_world_rotation
+        );
+        std::copy_n(
+            partition_world_scales_.data() + position_offset,
+            3,
+            view.frame_world_scale
+        );
+        std::copy_n(
+            center_initial_scales_.data() + position_offset,
+            3,
+            view.initial_scale
+        );
+        std::copy_n(
+            center_old_world_positions_.data() + position_offset,
+            3,
+            view.old_world_position
+        );
+        std::copy_n(
+            center_old_world_rotations_.data() + rotation_offset,
+            4,
+            view.old_world_rotation
+        );
+        std::copy_n(
+            partition_initial_local_gravity_directions_.data() + position_offset,
+            3,
+            view.initial_local_gravity_direction
+        );
+        std::copy_n(
+            center_gravity_directions_.data() + position_offset,
+            3,
+            view.world_gravity
+        );
+        view.dt = dt;
+        view.frame_interpolation = frame_interpolation;
+        view.distance_weight = distance_weights[partition];
+        view.velocity_weight = center_velocity_weights_[partition];
+        view.local_inertia = center_local_inertia_[partition];
+        view.local_movement_speed_limit = center_local_movement_speed_limits_[partition];
+        view.local_rotation_speed_limit = center_local_rotation_speed_limits_[partition];
+        view.gravity = center_gravity_[partition];
+        view.gravity_falloff = center_gravity_falloff_[partition];
+        view.stabilization_time = center_stabilization_time_[partition];
+        view.blend_weight = center_blend_weight_[partition];
+        if (!hotools::evaluate_center_step_mc2(view)) {
+            throw std::runtime_error("MC2 CPU Center evaluator rejected the frame");
+        }
+        std::copy_n(view.now_world_position, 3, center_now_world_positions_.data() + position_offset);
+        std::copy_n(view.now_world_rotation, 4, center_now_world_rotations_.data() + rotation_offset);
+        std::copy_n(view.step_vector, 3, center_step_vectors_.data() + position_offset);
+        std::copy_n(view.step_rotation, 4, center_step_rotations_.data() + rotation_offset);
+        std::copy_n(view.inertia_vector, 3, center_inertia_vectors_.data() + position_offset);
+        std::copy_n(view.inertia_rotation, 4, center_inertia_rotations_.data() + rotation_offset);
+        std::copy_n(view.rotation_axis, 3, center_rotation_axes_.data() + position_offset);
+        center_gravity_ratios_[partition] = view.gravity_ratio;
+        center_velocity_weights_[partition] = view.output_velocity_weight;
+    }
+    center_old_world_positions_ = center_now_world_positions_;
+    center_old_world_rotations_ = center_now_world_rotations_;
+    ++center_step_count_;
 }
 
 void DomainV1::step() {

@@ -433,6 +433,52 @@ def test_domain_cpu_native_integration_slice_uses_shared_kernel():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_center_slice_uses_partition_history():
+    handle = _create()
+    try:
+        zeros = np.zeros(1, dtype=np.float32)
+        limits = np.full(1, -1.0, dtype=np.float32)
+        gravity = np.asarray((5.0,), dtype=np.float32)
+        gravity_direction = np.asarray(((0.0, -1.0, 0.0),), dtype=np.float32)
+        falloff = np.zeros(1, dtype=np.float32)
+        stabilization = np.zeros(1, dtype=np.float32)
+        blend = np.ones(1, dtype=np.float32)
+        hotools_native.mc2_domain_cpu_v1_configure_center(
+            handle,
+            np.asarray((0.5,), dtype=np.float32),
+            limits,
+            limits,
+            gravity,
+            gravity_direction,
+            falloff,
+            stabilization,
+            blend,
+        )
+        positions, normals = _frame(0.0)
+        _update_frame(handle, positions, normals, frame=1, generation=1)
+        next_positions, next_normals = _frame(2.0)
+        _update_frame(
+            handle,
+            next_positions,
+            next_normals,
+            frame=2,
+            generation=1,
+            partition_positions=((2.0, 0.0, 0.0),),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_center(
+            handle,
+            1.0,
+            1.0,
+            np.ones(1, dtype=np.float32),
+        )
+        info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        np.testing.assert_allclose(info["center_step_vectors"], ((2.0, 0.0, 0.0),))
+        np.testing.assert_allclose(info["center_inertia_vectors"], ((1.0, 0.0, 0.0),))
+        assert info["center_step_count"] == 1
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, value)

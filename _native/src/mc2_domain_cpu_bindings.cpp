@@ -309,6 +309,63 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit Center inertia kernel slice using the existing native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_center",
+        [](std::uint64_t handle,
+           cf32_1d local_inertia,
+           cf32_1d local_movement_speed_limits,
+           cf32_1d local_rotation_speed_limits,
+           cf32_1d gravity,
+           cf32_2d gravity_directions,
+           cf32_1d gravity_falloff,
+           cf32_1d stabilization_time,
+           cf32_1d blend_weight) {
+            auto* domain = require_domain(handle);
+            const auto partition_count = domain->partition_count();
+            if (static_cast<std::size_t>(local_inertia.shape(0)) != partition_count ||
+                static_cast<std::size_t>(local_movement_speed_limits.shape(0)) != partition_count ||
+                static_cast<std::size_t>(local_rotation_speed_limits.shape(0)) != partition_count ||
+                static_cast<std::size_t>(gravity.shape(0)) != partition_count ||
+                static_cast<std::size_t>(gravity_directions.shape(0)) != partition_count ||
+                gravity_directions.shape(1) != 3 ||
+                static_cast<std::size_t>(gravity_falloff.shape(0)) != partition_count ||
+                static_cast<std::size_t>(stabilization_time.shape(0)) != partition_count ||
+                static_cast<std::size_t>(blend_weight.shape(0)) != partition_count) {
+                throw nb::value_error("MC2 CPU Center parameter arrays have incompatible shapes");
+            }
+            domain->configure_center(
+                local_inertia.data(), local_movement_speed_limits.data(),
+                local_rotation_speed_limits.data(), gravity.data(),
+                gravity_directions.data(), gravity_falloff.data(),
+                stabilization_time.data(), blend_weight.data()
+            );
+        },
+        nb::arg("handle"),
+        nb::arg("local_inertia"),
+        nb::arg("local_movement_speed_limits"),
+        nb::arg("local_rotation_speed_limits"),
+        nb::arg("gravity"),
+        nb::arg("gravity_directions"),
+        nb::arg("gravity_falloff"),
+        nb::arg("stabilization_time"),
+        nb::arg("blend_weight"),
+        "Configure the explicit per-partition Center evaluator slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_center",
+        [](std::uint64_t handle, float dt, float frame_interpolation, cf32_1d distance_weights) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(distance_weights.shape(0)) != domain->partition_count()) {
+                throw nb::value_error("MC2 CPU Center distance_weights must match partition_count");
+            }
+            domain->step_center(dt, frame_interpolation, distance_weights.data());
+        },
+        nb::arg("handle"),
+        nb::arg("dt"),
+        nb::arg("frame_interpolation"),
+        nb::arg("distance_weights"),
+        "Run the explicit per-partition Center evaluator slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_integration",
         [](std::uint64_t handle, cf32_1d damping_values) {
             auto* domain = require_domain(handle);
@@ -396,6 +453,13 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["partition_keep_counts"] = owned_array_1d<std::int64_t>(
                 std::vector<std::int64_t>(domain->partition_keep_counts())
             );
+            result["center_step_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_step_vectors()), domain->partition_count(), 3
+            );
+            result["center_inertia_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_inertia_vectors()), domain->partition_count(), 3
+            );
+            result["center_step_count"] = domain->center_step_count();
             return result;
         },
         nb::arg("handle"),

@@ -66,6 +66,21 @@ public:
         const float* depths,
         const float* inv_masses
     );
+    void configure_center(
+        const float* local_inertia,
+        const float* local_movement_speed_limits,
+        const float* local_rotation_speed_limits,
+        const float* gravity,
+        const float* gravity_directions,
+        const float* gravity_falloff,
+        const float* stabilization_time,
+        const float* blend_weight
+    );
+    void step_center(
+        float dt,
+        float frame_interpolation,
+        const float* distance_weights
+    );
     void step_inertia(
         const float* old_world_position,
         const float* step_vector,
@@ -109,6 +124,13 @@ public:
     const std::vector<std::int64_t>& partition_keep_counts() const noexcept {
         return partition_keep_counts_;
     }
+    const std::vector<float>& center_step_vectors() const noexcept {
+        return center_step_vectors_;
+    }
+    const std::vector<float>& center_inertia_vectors() const noexcept {
+        return center_inertia_vectors_;
+    }
+    std::int64_t center_step_count() const noexcept { return center_step_count_; }
 
 private:
     void ensure_live() const;
@@ -142,6 +164,28 @@ private:
     std::vector<std::uint32_t> partition_frame_flags_;
     std::vector<float> velocity_weights_;
     std::vector<float> gravity_ratios_;
+    std::vector<float> center_local_inertia_;
+    std::vector<float> center_local_movement_speed_limits_;
+    std::vector<float> center_local_rotation_speed_limits_;
+    std::vector<float> center_gravity_;
+    std::vector<float> center_gravity_directions_;
+    std::vector<float> center_gravity_falloff_;
+    std::vector<float> center_stabilization_time_;
+    std::vector<float> center_blend_weight_;
+    std::vector<float> center_initial_scales_;
+    std::vector<float> center_old_world_positions_;
+    std::vector<float> center_old_world_rotations_;
+    std::vector<float> center_now_world_positions_;
+    std::vector<float> center_now_world_rotations_;
+    std::vector<float> center_step_vectors_;
+    std::vector<float> center_step_rotations_;
+    std::vector<float> center_inertia_vectors_;
+    std::vector<float> center_inertia_rotations_;
+    std::vector<float> center_rotation_axes_;
+    std::vector<float> center_gravity_ratios_;
+    std::vector<float> center_velocity_weights_;
+    bool center_ready_ = false;
+    std::int64_t center_step_count_ = 0;
     std::vector<std::int64_t> partition_reset_counts_;
     std::vector<std::int64_t> partition_keep_counts_;
     std::vector<std::int32_t> distance_starts_;

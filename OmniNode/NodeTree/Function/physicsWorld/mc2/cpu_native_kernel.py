@@ -26,6 +26,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_configure_inertia",
     "mc2_domain_cpu_v1_step_inertia",
+    "mc2_domain_cpu_v1_configure_center",
+    "mc2_domain_cpu_v1_step_center",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
     "mc2_domain_cpu_v1_read",
@@ -81,6 +83,7 @@ class MC2NativeCPUKernelV1:
         try:
             self._configure_distance(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
+            self._configure_center(handle, parameters)
             self._configure_integration(handle, parameters)
         except Exception:
             self._module.mc2_domain_cpu_v1_dispose(handle)
@@ -189,6 +192,20 @@ class MC2NativeCPUKernelV1:
             gravity,
         )
 
+    def step_center(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"dt", "frame_interpolation", "distance_weights"}
+        if set(settings) != required:
+            raise ValueError("Center slice requires exactly dt/frame_interpolation/distance_weights")
+        weights = np.ascontiguousarray(settings["distance_weights"], dtype=np.float32)
+        program = self._programs[key]
+        if weights.shape != (program.partition_count,):
+            raise ValueError("distance_weights must match partition_count")
+        weights.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_center(
+            key, float(settings["dt"]), float(settings["frame_interpolation"]), weights
+        )
+
     def read_output(self, handle):
         key = self._require_handle(handle)
         frame_packet = self._frames.get(key)
@@ -213,6 +230,7 @@ class MC2NativeCPUKernelV1:
             "distance_slice_ready": True,
             "inertia_slice_ready": True,
             "integration_slice_ready": True,
+            "center_slice_ready": True,
         })
         return result
 
@@ -314,6 +332,49 @@ class MC2NativeCPUKernelV1:
         damping = np.asarray(table.values[:, fields["damping"]], dtype=np.float32)
         damping.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_integration(handle, damping)
+
+    def _configure_center(
+        self,
+        handle: int,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        table = parameters.partition_parameters
+        fields = {name: index for index, name in enumerate(table.fields)}
+        required = {
+            "local_inertia", "local_movement_speed_limit", "local_rotation_speed_limit",
+            "gravity", "gravity_direction_x", "gravity_direction_y", "gravity_direction_z",
+            "gravity_falloff", "stabilization_time_after_reset", "blend_weight",
+        }
+        missing = required - set(fields)
+        if missing:
+            raise ValueError("partition parameter table lacks Center fields: " + ", ".join(sorted(missing)))
+        values = table.values
+        scalar = {
+            name: np.asarray(values[:, fields[name]], dtype=np.float32)
+            for name in (
+                "local_inertia", "local_movement_speed_limit", "local_rotation_speed_limit",
+                "gravity", "gravity_falloff", "stabilization_time_after_reset", "blend_weight",
+            )
+        }
+        directions = np.column_stack((
+            values[:, fields["gravity_direction_x"]],
+            values[:, fields["gravity_direction_y"]],
+            values[:, fields["gravity_direction_z"]],
+        )).astype(np.float32, copy=False)
+        arrays = tuple(scalar.values()) + (directions,)
+        for array in arrays:
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_center(
+            handle,
+            scalar["local_inertia"],
+            scalar["local_movement_speed_limit"],
+            scalar["local_rotation_speed_limit"],
+            scalar["gravity"],
+            directions,
+            scalar["gravity_falloff"],
+            scalar["stabilization_time_after_reset"],
+            scalar["blend_weight"],
+        )
 
 
 __all__ = ["MC2NativeCPUKernelV1"]
