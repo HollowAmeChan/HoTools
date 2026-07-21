@@ -215,7 +215,7 @@ class OmniNodeTree(NodeTree):
         default=True,
     )  # type: ignore
     is_auto_update: bpy.props.BoolProperty(
-        description="是否实时刷新",
+        description="是否实时刷新,每次节点参数变化后自动运行。你需要真的知道自己在做什么才建议开启这个选项。",
         default=False,
     )  # type: ignore
     is_frame_run_enabled: BoolProperty(
@@ -247,8 +247,11 @@ class OmniNodeTree(NodeTree):
     )  # type: ignore
     show_runtime_timing: bpy.props.BoolProperty(
         name="显示节点运行计时",
-        description="在节点顶部显示低频采样的单次运行时长；复杂节点可同时显示内部阶段。",
-        default=False,
+        description="""
+        在节点顶部显示低频采样的单次运行时长；复杂节点可同时显示内部阶段。
+        开启此功能可能会影响nodetree视图性能
+        """,
+        default=True,
         update=_show_runtime_timing_update,
     )  # type: ignore
     runtime_timing_sample_interval: bpy.props.FloatProperty(
@@ -526,7 +529,7 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     run_box = layout.box()
     run_box.use_property_split = False
     run_row = run_box.row(align=True)
-    run_row.prop(tree, "is_execution_enabled", text="执行", toggle=True)
+    run_row.prop(tree, "is_execution_enabled", text="",icon="CHECKMARK", toggle=True)
 
     frame_row = run_row.row(align=True)
     frame_row.enabled = execution_enabled
@@ -542,14 +545,15 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     debug_box = layout.box()
     debug_box.use_property_split = False
-    debug_row = debug_box.row(align=True)
+    debug_box_col = debug_box.column(align=True)
+    debug_row = debug_box_col.row(align=True)
     debug_row.prop(tree, "debug_compile", text="编译日志", toggle=True)
     debug_row.prop(tree, "show_compile_flow", text="编译流程", toggle=True)
     trace_row = debug_row.row(align=True)
     trace_row.enabled = execution_enabled
     trace_row.prop(tree, "debug_runtime_trace", text="运行追踪", toggle=True)
 
-    console_row = debug_box.row(align=True)
+    console_row = debug_box_col.row(align=True)
     console_toggle = console_row.row(align=True)
     console_toggle.enabled = execution_enabled
     console_toggle.prop(tree, "debug_runtime_timing", text="性能统计", toggle=True)
@@ -557,7 +561,7 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     timing_interval_row.enabled = execution_enabled and bool(getattr(tree, "debug_runtime_timing", False))
     timing_interval_row.prop(tree, "debug_runtime_timing_interval", text="输出")
 
-    overlay_row = debug_box.row(align=True)
+    overlay_row = debug_box_col.row(align=True)
     overlay_toggle = overlay_row.row(align=True)
     overlay_toggle.enabled = execution_enabled
     overlay_toggle.prop(tree, "show_runtime_timing", text="节点计时", toggle=True)
