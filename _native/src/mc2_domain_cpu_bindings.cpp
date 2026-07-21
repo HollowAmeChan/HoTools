@@ -152,7 +152,12 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            cu32_1d anchor_present,
            cu32_1d partition_frame_flags,
            cf32_1d velocity_weights,
-           cf32_1d gravity_ratios) {
+           cf32_1d gravity_ratios,
+           float frame_delta_time,
+           float simulation_delta_time,
+           float time_scale,
+           std::int64_t skip_count,
+           bool is_running) {
             auto* domain = require_domain(handle);
             if (static_cast<std::size_t>(world_positions.shape(0)) != domain->particle_count() ||
                 world_positions.shape(1) != 3 ||
@@ -201,6 +206,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 generation,
                 domain_signature.c_str(),
                 layout_signature.c_str(),
+                frame_delta_time,
+                simulation_delta_time,
+                time_scale,
+                skip_count,
+                is_running,
             });
         },
         nb::arg("handle"),
@@ -221,6 +231,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("partition_frame_flags"),
         nb::arg("velocity_weights"),
         nb::arg("gravity_ratios"),
+        nb::arg("frame_delta_time") = 0.0f,
+        nb::arg("simulation_delta_time") = 0.0f,
+        nb::arg("time_scale") = 1.0f,
+        nb::arg("skip_count") = 0,
+        nb::arg("is_running") = false,
         "Update one validated frame without touching Blender state."
     );
     module.def(
@@ -415,6 +430,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["frame"] = domain->frame();
             result["generation"] = domain->generation();
+            result["frame_delta_time"] = domain->frame_delta_time();
+            result["simulation_delta_time"] = domain->simulation_delta_time();
+            result["time_scale"] = domain->time_scale();
+            result["skip_count"] = domain->skip_count();
+            result["is_running"] = domain->is_running();
             result["step_count"] = domain->step_count();
             result["backend_kind"] = "mc2_domain_cpu_v1_datapath";
             return result;
@@ -433,6 +453,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["layout_signature"] = domain->layout_signature();
             result["frame"] = domain->frame();
             result["generation"] = domain->generation();
+            result["frame_delta_time"] = domain->frame_delta_time();
+            result["simulation_delta_time"] = domain->simulation_delta_time();
+            result["time_scale"] = domain->time_scale();
+            result["skip_count"] = domain->skip_count();
+            result["is_running"] = domain->is_running();
             result["step_count"] = domain->step_count();
             result["disposed"] = domain->disposed();
             result["partition_world_positions"] = owned_array_2d<float>(
@@ -471,7 +496,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             return result;
         },
         nb::arg("handle"),
-        "Inspect the read-only E3 data-path owner state."
+        "Inspect the read-only E3 data-path owner state, including frame timing contract."
     );
     module.def(
         "mc2_domain_cpu_v1_dispose",

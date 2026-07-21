@@ -115,6 +115,11 @@ class MC2NativeCPUKernelV1:
             frame_packet.partition_frame_flags,
             frame_packet.velocity_weight,
             frame_packet.gravity_ratio,
+            frame_packet.frame_delta_time,
+            frame_packet.simulation_delta_time,
+            frame_packet.time_scale,
+            frame_packet.skip_count,
+            frame_packet.is_running,
         )
         self._frames[key] = frame_packet
 

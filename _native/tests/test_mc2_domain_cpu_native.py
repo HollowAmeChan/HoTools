@@ -73,6 +73,11 @@ def _update_frame(
     partition_rotations=None,
     partition_linear=None,
     particle_rotations=None,
+    frame_delta_time=0.0,
+    simulation_delta_time=0.0,
+    time_scale=1.0,
+    skip_count=0,
+    is_running=False,
 ):
     count = len(partition_positions)
     if partition_flags is None:
@@ -102,6 +107,11 @@ def _update_frame(
         np.asarray(partition_flags, dtype=np.uint32),
         np.ones(count, dtype=np.float32),
         np.ones(count, dtype=np.float32),
+        frame_delta_time,
+        simulation_delta_time,
+        time_scale,
+        skip_count,
+        is_running,
     )
 
 
@@ -119,7 +129,24 @@ def test_domain_cpu_native_lifecycle_and_owned_frame_output():
         )
         positions, normals = _frame(2.0)
         expected_positions = positions.copy()
-        _update_frame(handle, positions, normals, frame=8, generation=3)
+        _update_frame(
+            handle,
+            positions,
+            normals,
+            frame=8,
+            generation=3,
+            frame_delta_time=1.0 / 60.0,
+            simulation_delta_time=1.0 / 90.0,
+            time_scale=0.5,
+            skip_count=2,
+            is_running=True,
+        )
+        info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert info["frame_delta_time"] == np.float32(1.0 / 60.0)
+        assert info["simulation_delta_time"] == np.float32(1.0 / 90.0)
+        assert info["time_scale"] == np.float32(0.5)
+        assert info["skip_count"] == 2
+        assert info["is_running"] is True
         positions.flags.writeable = True
         positions[:] = -100.0
         hotools_native.mc2_domain_cpu_v1_step(handle)

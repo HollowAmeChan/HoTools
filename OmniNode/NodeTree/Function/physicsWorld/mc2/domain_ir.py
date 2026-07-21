@@ -1107,6 +1107,11 @@ class MC2DomainFramePacketV1:
     velocity_weight: np.ndarray
     gravity_ratio: np.ndarray
     schema_version: int = MC2_DOMAIN_IR_SCHEMA_VERSION
+    frame_delta_time: float = 0.0
+    simulation_delta_time: float = 0.0
+    time_scale: float = 1.0
+    skip_count: int = 0
+    is_running: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1117,6 +1122,17 @@ class MC2DomainFramePacketV1:
         )
         if self.schema_version != MC2_DOMAIN_IR_SCHEMA_VERSION:
             raise ValueError("unsupported MC2 frame schema version")
+        for value, name, minimum in (
+            (self.frame_delta_time, "frame_delta_time", 0.0),
+            (self.simulation_delta_time, "simulation_delta_time", 0.0),
+            (self.time_scale, "time_scale", 0.0),
+        ):
+            if not np.isfinite(float(value)) or float(value) < minimum:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if isinstance(self.skip_count, bool) or int(self.skip_count) < 0:
+            raise ValueError("skip_count must be a non-negative integer")
+        if not isinstance(self.is_running, (bool, np.bool_)):
+            raise TypeError("is_running must be boolean")
         particle_count = len(self.animated_base_world_positions)
         partition_count = len(self.partition_world_position)
         _validate_array(
@@ -1236,6 +1252,11 @@ class MC2DomainFramePacketV1:
             "generation": int(self.generation),
             "particle_count": len(self.animated_base_world_positions),
             "partition_count": len(self.partition_world_position),
+            "frame_delta_time": float(self.frame_delta_time),
+            "simulation_delta_time": float(self.simulation_delta_time),
+            "time_scale": float(self.time_scale),
+            "skip_count": int(self.skip_count),
+            "is_running": bool(self.is_running),
         }
 
 
@@ -1257,6 +1278,11 @@ def make_mc2_domain_frame_packet(
     partition_frame_flags=None,
     velocity_weight=None,
     gravity_ratio=None,
+    frame_delta_time: float = 0.0,
+    simulation_delta_time: float = 0.0,
+    time_scale: float = 1.0,
+    skip_count: int = 0,
+    is_running: bool = False,
 ) -> MC2DomainFramePacketV1:
     if not isinstance(program, MC2CompiledDomainProgramV1):
         raise TypeError("program must be MC2CompiledDomainProgramV1")
@@ -1338,6 +1364,11 @@ def make_mc2_domain_frame_packet(
             (partition_count,),
             "gravity_ratio",
         ),
+        frame_delta_time=float(frame_delta_time),
+        simulation_delta_time=float(simulation_delta_time),
+        time_scale=float(time_scale),
+        skip_count=int(skip_count),
+        is_running=bool(is_running),
     )
 
 

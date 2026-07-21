@@ -176,6 +176,12 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     if (frame.frame < 0 || frame.generation < 0) {
         throw std::invalid_argument("MC2 CPU frame identity must be non-negative");
     }
+    if (!std::isfinite(frame.frame_delta_time) || frame.frame_delta_time < 0.0f ||
+        !std::isfinite(frame.simulation_delta_time) || frame.simulation_delta_time < 0.0f ||
+        !std::isfinite(frame.time_scale) || frame.time_scale < 0.0f ||
+        frame.skip_count < 0) {
+        throw std::invalid_argument("MC2 CPU frame timing values are invalid");
+    }
     validate_identity(frame.domain_signature, frame.layout_signature);
     require_finite(frame.world_positions, particle_count_ * 3, "world_positions");
     require_unit_quaternions(
@@ -384,6 +390,11 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     partition_frame_flags_.swap(next_frame_flags);
     velocity_weights_.swap(next_velocity_weights);
     gravity_ratios_.swap(next_gravity_ratios);
+    frame_delta_time_ = frame.frame_delta_time;
+    simulation_delta_time_ = frame.simulation_delta_time;
+    time_scale_ = frame.time_scale;
+    skip_count_ = frame.skip_count;
+    is_running_ = frame.is_running;
     if (reset_history) {
         center_initial_scales_ = partition_world_scales_;
         center_old_world_positions_ = center_frame_world_positions_;
@@ -726,6 +737,13 @@ void DomainV1::step_integration(
 
 void DomainV1::dispose() noexcept {
     disposed_ = true;
+    frame_ = -1;
+    generation_ = -1;
+    frame_delta_time_ = 0.0f;
+    simulation_delta_time_ = 0.0f;
+    time_scale_ = 1.0f;
+    skip_count_ = 0;
+    is_running_ = false;
     bind_positions_.clear();
     bind_rotations_.clear();
     particle_partition_index_.clear();

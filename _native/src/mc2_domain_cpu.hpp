@@ -41,6 +41,11 @@ struct FrameViewV1 {
     std::int64_t generation = 0;
     const char* domain_signature = nullptr;
     const char* layout_signature = nullptr;
+    float frame_delta_time = 0.0f;
+    float simulation_delta_time = 0.0f;
+    float time_scale = 1.0f;
+    std::int64_t skip_count = 0;
+    bool is_running = false;
 };
 
 class DomainV1 {
@@ -103,6 +108,11 @@ public:
     std::size_t partition_count() const noexcept { return partition_count_; }
     std::int64_t frame() const noexcept { return frame_; }
     std::int64_t generation() const noexcept { return generation_; }
+    float frame_delta_time() const noexcept { return frame_delta_time_; }
+    float simulation_delta_time() const noexcept { return simulation_delta_time_; }
+    float time_scale() const noexcept { return time_scale_; }
+    std::int64_t skip_count() const noexcept { return skip_count_; }
+    bool is_running() const noexcept { return is_running_; }
     std::int64_t step_count() const noexcept { return step_count_; }
     const std::string& domain_signature() const noexcept { return domain_signature_; }
     const std::string& layout_signature() const noexcept { return layout_signature_; }
@@ -212,6 +222,11 @@ private:
     bool integration_ready_ = false;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
+    float frame_delta_time_ = 0.0f;
+    float simulation_delta_time_ = 0.0f;
+    float time_scale_ = 1.0f;
+    std::int64_t skip_count_ = 0;
+    bool is_running_ = false;
     std::int64_t step_count_ = 0;
     bool disposed_ = false;
 };
