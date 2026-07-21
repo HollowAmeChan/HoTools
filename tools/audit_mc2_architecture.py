@@ -30,6 +30,8 @@ NATIVE_FILES = (
     "mc2_kernels.cpp",
     "mc2_static_build.cpp",
     "mc2_self_collision.cpp",
+    "mc2_domain_cpu.cpp",
+    "mc2_domain_cpu_bindings.cpp",
 )
 LEGACY_TERMS = (
     "HOTOOLS_ENABLE_LEGACY_MC2",
@@ -48,6 +50,8 @@ PURE_NATIVE_FILES = (
     "mc2_self_collision.cpp",
     "mc2_static_build.cpp",
     "mc2_static_build.hpp",
+    "mc2_domain_cpu.hpp",
+    "mc2_domain_cpu.cpp",
 )
 PYTHON_NATIVE_TERMS = ("Python.h", "PyObject", "nanobind")
 ALLOWED_FORWARDERS = {
@@ -541,6 +545,7 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.shadow_pipeline",
             "mc2.cpu_backend",
             "mc2.frame_compile",
+            "mc2.cpu_native_kernel",
         )),
         "mc2.domain_capabilities": frozenset(("mc2.cpu_backend",)),
     }
@@ -592,7 +597,11 @@ def _cpp_facts() -> dict:
         }
     api_source = (NATIVE_ROOT / "mc2_api.hpp").read_text(encoding="utf-8")
     api_symbols = pyobject_pattern.findall(api_source)
-    binding_symbols = files["mc2_bindings.cpp"]["python_bindings"]
+    binding_symbols = [
+        symbol
+        for facts in files.values()
+        for symbol in facts["python_bindings"]
+    ]
     native_tree = ast.parse((MC2_ROOT / "native.py").read_text(encoding="utf-8"))
     required_symbols = []
     for node in native_tree.body:

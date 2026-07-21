@@ -165,4 +165,5 @@ NB_MODULE(hotools_native, module) {
     );
 
     hotools::bind_mc2(module);
+    hotools::bind_mc2_domain_cpu(module);
 }
