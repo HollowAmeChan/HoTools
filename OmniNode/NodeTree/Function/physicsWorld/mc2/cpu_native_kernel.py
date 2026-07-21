@@ -735,7 +735,9 @@ class MC2NativeCPUKernelV1:
             "numerical_kernel_ready": False,
             "data_path_only": True,
             "baseline_slice_ready": bool(result.get("baseline_ready", False)),
-            "distance_slice_ready": True,
+            "distance_slice_ready": any(
+                table.kind == "distance" for table in self._programs[key].constraint_tables
+            ),
             "tether_slice_ready": any(
                 table.kind == "tether" for table in self._programs[key].constraint_tables
             ),
