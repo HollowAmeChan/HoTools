@@ -416,6 +416,51 @@ def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
         domain.dispose()
 
 
+def test_native_cpu_reference_pipeline_runs_structural_order_through_motion():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    count = compiled.program.particle_count
+    try:
+        domain.update_frame(frame)
+        domain.step_reference_pipeline({
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -1.0, 0.0),
+            "step_basic_positions": frame.animated_base_world_positions,
+            "tether_compression": 0.4,
+            "tether_stretch": 0.03,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "angle_restoration_values": np.ones(count, dtype=np.float32),
+            "angle_limit_values": np.ones(count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.2,
+            "angle_restoration_enabled": True,
+            "angle_limit_enabled": True,
+            "motion_base_positions": frame.animated_base_world_positions,
+            "motion_base_rotations": frame.animated_base_world_rotations,
+            "motion_max_distances": np.zeros(count, dtype=np.float32),
+            "motion_stiffness_values": np.ones(count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(count, dtype=np.float32),
+            "motion_normal_axis": 1,
+            "motion_max_distance_enabled": True,
+            "motion_backstop_enabled": False,
+        })
+        state = domain.inspect()["kernel"]
+        assert state["step_count"] == 6
+        assert domain.inspect()["step_count"] == 1
+        assert np.isfinite(domain.read_output().world_positions).all()
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
@@ -439,3 +484,5 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_domain_commits_center_frame_shift_transaction")
     test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order()
     print("PASS test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order")
+    test_native_cpu_reference_pipeline_runs_structural_order_through_motion()
+    print("PASS test_native_cpu_reference_pipeline_runs_structural_order_through_motion")

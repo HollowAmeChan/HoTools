@@ -216,6 +216,17 @@ class MC2CPUBackendDomainV1:
         run_reference(self._handle, settings)
         self._step_count += 1
 
+    def step_reference_pipeline(self, settings: Mapping[str, object]) -> None:
+        """Run the explicit native structural reference order through Motion."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("reference pipeline requires update_frame first")
+        run_reference = getattr(self._kernel, "step_reference_pipeline", None)
+        if not callable(run_reference):
+            raise RuntimeError("CPU kernel does not expose reference pipeline")
+        run_reference(self._handle, settings)
+        self._step_count += 1
+
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()
         if self._latest_frame is None:

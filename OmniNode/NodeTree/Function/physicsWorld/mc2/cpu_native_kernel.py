@@ -374,6 +374,65 @@ class MC2NativeCPUKernelV1:
         if any(table.kind == "bending" for table in program.constraint_tables):
             self.step_bending(key)
 
+    def step_reference_pipeline(self, handle, settings: Mapping[str, object]) -> None:
+        """Run the landed native structural reference order through Motion."""
+        required = {
+            "anchor_component_local_positions", "dt", "frame_interpolation",
+            "distance_weights", "simulation_power", "velocity_weight", "gravity",
+            "step_basic_positions", "tether_compression", "tether_stretch",
+            "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
+            "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
+            "angle_limit_stiffness", "angle_restoration_enabled", "angle_limit_enabled",
+            "motion_base_positions", "motion_base_rotations", "motion_max_distances",
+            "motion_stiffness_values", "motion_backstop_radii", "motion_backstop_distances",
+            "motion_normal_axis", "motion_max_distance_enabled", "motion_backstop_enabled",
+        }
+        if set(settings) != required:
+            raise ValueError("reference pipeline requires exactly its explicit pass inputs")
+        key = self._require_handle(handle)
+        program = self._programs[key]
+        if program.baseline_parent_indices is None:
+            raise RuntimeError("reference pipeline requires baseline line SoA")
+        self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
+        self.step_center(key, {
+            "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
+            "distance_weights": settings["distance_weights"],
+        })
+        self.step_integration(key, {
+            "dt": settings["dt"], "simulation_power": settings["simulation_power"],
+            "velocity_weight": settings["velocity_weight"], "gravity": settings["gravity"],
+        })
+        self.step_tether(key, {
+            "step_basic_positions": settings["step_basic_positions"],
+            "compression": settings["tether_compression"], "stretch": settings["tether_stretch"],
+        })
+        self.step_distance(key)
+        self.step_angle(key, {
+            "step_basic_positions": settings["step_basic_positions"],
+            "step_basic_rotations": settings["step_basic_rotations"],
+            "restoration_values": settings["angle_restoration_values"],
+            "limit_values": settings["angle_limit_values"],
+            "restoration_velocity_attenuation": settings["angle_restoration_velocity_attenuation"],
+            "restoration_gravity_falloff": settings["angle_restoration_gravity_falloff"],
+            "limit_stiffness": settings["angle_limit_stiffness"],
+            "restoration_enabled": settings["angle_restoration_enabled"],
+            "limit_enabled": settings["angle_limit_enabled"],
+        })
+        if any(table.kind == "bending" for table in program.constraint_tables):
+            self.step_bending(key)
+        self.step_distance(key)
+        self.step_motion(key, {
+            "base_positions": settings["motion_base_positions"],
+            "base_rotations": settings["motion_base_rotations"],
+            "max_distances": settings["motion_max_distances"],
+            "stiffness_values": settings["motion_stiffness_values"],
+            "backstop_radii": settings["motion_backstop_radii"],
+            "backstop_distances": settings["motion_backstop_distances"],
+            "normal_axis": settings["motion_normal_axis"],
+            "max_distance_enabled": settings["motion_max_distance_enabled"],
+            "backstop_enabled": settings["motion_backstop_enabled"],
+        })
+
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
         key_set = {
