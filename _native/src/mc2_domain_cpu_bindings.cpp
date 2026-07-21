@@ -17,6 +17,8 @@ namespace hotools {
 namespace {
 
 using cf32_2d = nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using cf32_1d = nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
 std::mutex domain_registry_mutex;
 std::unordered_set<mc2_domain_cpu::DomainV1*> live_domains;
@@ -135,6 +137,41 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         [](std::uint64_t handle) { require_domain(handle)->step(); },
         nb::arg("handle"),
         "Run the E3 data-path step slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_configure_distance",
+        [](std::uint64_t handle,
+           ci32_1d starts,
+           ci32_1d counts,
+           ci32_1d neighbors,
+           cf32_1d rest_lengths,
+           cf32_1d stiffness_values) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(starts.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(counts.shape(0)) != domain->particle_count() ||
+                neighbors.shape(0) != rest_lengths.shape(0) ||
+                neighbors.shape(0) != stiffness_values.shape(0)) {
+                throw nb::value_error("MC2 CPU distance arrays have incompatible lengths");
+            }
+            domain->configure_distance(
+                starts.data(), counts.data(), neighbors.data(),
+                rest_lengths.data(), stiffness_values.data(),
+                static_cast<std::size_t>(neighbors.shape(0))
+            );
+        },
+        nb::arg("handle"),
+        nb::arg("starts"),
+        nb::arg("counts"),
+        nb::arg("neighbors"),
+        nb::arg("rest_lengths"),
+        nb::arg("stiffness_values"),
+        "Configure the explicit E3 Distance kernel slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_distance",
+        [](std::uint64_t handle) { require_domain(handle)->step_distance(); },
+        nb::arg("handle"),
+        "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
         "mc2_domain_cpu_v1_read",

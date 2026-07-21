@@ -150,12 +150,25 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU backend step requires update_frame first")
         if not isinstance(scheduler_settings, Mapping):
             raise TypeError("scheduler_settings must be a mapping")
-        self._kernel.step(
-            self._handle,
-            self._latest_frame,
-            dict(scheduler_settings),
-            collider_snapshot,
-        )
+        settings = dict(scheduler_settings)
+        if settings.get("distance_slice") is True:
+            step_distance = getattr(self._kernel, "step_distance", None)
+            if not callable(step_distance):
+                raise RuntimeError("CPU kernel does not expose the distance slice")
+            if settings.pop("distance_slice") is not True:
+                raise RuntimeError("distance_slice must be true when requested")
+            if settings != {"data_path_only": True} or collider_snapshot is not None:
+                raise RuntimeError(
+                    "distance_slice requires data_path_only=True and no colliders"
+                )
+            step_distance(self._handle)
+        else:
+            self._kernel.step(
+                self._handle,
+                self._latest_frame,
+                settings,
+                collider_snapshot,
+            )
         self._step_count += 1
 
     def read_output(self) -> MC2DomainFrameOutputV1:

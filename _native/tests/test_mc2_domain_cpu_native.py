@@ -134,6 +134,42 @@ def test_domain_cpu_native_requires_frame_before_step():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_distance_slice_uses_existing_kernel():
+    handle = _create()
+    try:
+        positions = np.asarray(
+            ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (4.0, 0.0, 0.0)),
+            dtype=np.float32,
+        )
+        normals = np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float32)
+        positions.flags.writeable = False
+        normals.flags.writeable = False
+        hotools_native.mc2_domain_cpu_v1_update_frame(
+            handle, "domain:test", "layout:test", 1, 1, positions, normals
+        )
+        starts = np.asarray((0, 1, 3), dtype=np.int32)
+        counts = np.asarray((1, 2, 1), dtype=np.int32)
+        neighbors = np.asarray((1, 0, 2, 1), dtype=np.int32)
+        rest = np.ones(4, dtype=np.float32)
+        stiffness = np.ones(4, dtype=np.float32)
+        for array in (starts, counts, neighbors, rest, stiffness):
+            array.flags.writeable = False
+        hotools_native.mc2_domain_cpu_v1_configure_distance(
+            handle, starts, counts, neighbors, rest, stiffness
+        )
+        hotools_native.mc2_domain_cpu_v1_step_distance(handle)
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)
+        assert np.allclose(
+            output["world_positions"],
+            np.asarray(
+                ((0.5, 0.0, 0.0), (2.125, 0.0, 0.0), (3.5625, 0.0, 0.0)),
+                dtype=np.float32,
+            ),
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, value)

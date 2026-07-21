@@ -105,6 +105,24 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
     assert domain.disposed
 
 
+def test_native_cpu_kernel_exposes_distance_slice_only_when_requested():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    try:
+        domain.update_frame(frame)
+        domain.step({"data_path_only": True, "distance_slice": True})
+        output = domain.read_output()
+        assert output.world_positions.shape == (compiled.program.particle_count, 3)
+        assert domain.inspect()["kernel"]["distance_slice_ready"] is True
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
+    test_native_cpu_kernel_exposes_distance_slice_only_when_requested()
+    print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")

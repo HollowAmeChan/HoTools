@@ -36,6 +36,15 @@ public:
 
     void update_frame(const FrameViewV1& frame);
     void step();
+    void configure_distance(
+        const std::int32_t* starts,
+        const std::int32_t* counts,
+        const std::int32_t* neighbors,
+        const float* rest_lengths,
+        const float* stiffness_values,
+        std::size_t neighbor_count
+    );
+    void step_distance();
     void dispose() noexcept;
 
     bool disposed() const noexcept { return disposed_; }
@@ -59,6 +68,13 @@ private:
     std::vector<float> bind_rotations_;
     std::vector<float> world_positions_;
     std::vector<float> world_normals_;
+    std::vector<float> velocity_positions_;
+    std::vector<std::int32_t> distance_starts_;
+    std::vector<std::int32_t> distance_counts_;
+    std::vector<std::int32_t> distance_neighbors_;
+    std::vector<float> distance_rest_lengths_;
+    std::vector<float> distance_stiffness_values_;
+    bool distance_ready_ = false;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
     std::int64_t step_count_ = 0;

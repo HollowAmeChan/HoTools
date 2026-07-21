@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import numpy as np
+
 from .domain_ir import MC2CompiledDomainProgramV1
 from .domain_ir import MC2DomainFramePacketV1
 from .domain_ir import MC2DomainParameterPacketV1
@@ -20,6 +22,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_create",
     "mc2_domain_cpu_v1_update_frame",
     "mc2_domain_cpu_v1_step",
+    "mc2_domain_cpu_v1_configure_distance",
+    "mc2_domain_cpu_v1_step_distance",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -41,6 +45,7 @@ class MC2NativeCPUKernelV1:
                 + ", ".join(missing)
             )
         self._programs: dict[int, MC2CompiledDomainProgramV1] = {}
+        self._parameters: dict[int, MC2DomainParameterPacketV1] = {}
         self._frames: dict[int, MC2DomainFramePacketV1] = {}
 
     def create_domain(
@@ -64,7 +69,13 @@ class MC2NativeCPUKernelV1:
         ))
         if handle <= 0:
             raise RuntimeError("native CPU domain returned an invalid handle")
+        try:
+            self._configure_distance(handle, program, parameters)
+        except Exception:
+            self._module.mc2_domain_cpu_v1_dispose(handle)
+            raise
         self._programs[handle] = program
+        self._parameters[handle] = parameters
         return handle
 
     def update_frame(self, handle, frame_packet: MC2DomainFramePacketV1) -> None:
@@ -90,7 +101,9 @@ class MC2NativeCPUKernelV1:
         collider_snapshot,
     ) -> None:
         key = self._require_handle(handle)
-        if dict(scheduler_settings) != {"data_path_only": True}:
+        settings = dict(scheduler_settings)
+        distance_slice = settings.pop("distance_slice", False) is True
+        if settings != {"data_path_only": True}:
             raise RuntimeError(
                 "native MC2 CPU numerical kernel is not ready; "
                 "only data_path_only=True is accepted"
@@ -99,7 +112,14 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native MC2 CPU data-path slice does not consume colliders")
         if self._frames.get(key) is not frame_packet:
             raise ValueError("native MC2 CPU step frame is not the published frame packet")
-        self._module.mc2_domain_cpu_v1_step(key)
+        if distance_slice:
+            self._module.mc2_domain_cpu_v1_step_distance(key)
+        else:
+            self._module.mc2_domain_cpu_v1_step(key)
+
+    def step_distance(self, handle) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_step_distance(key)
 
     def read_output(self, handle):
         key = self._require_handle(handle)
@@ -121,6 +141,7 @@ class MC2NativeCPUKernelV1:
         result.update({
             "numerical_kernel_ready": False,
             "data_path_only": True,
+            "distance_slice_ready": True,
         })
         return result
 
@@ -132,6 +153,7 @@ class MC2NativeCPUKernelV1:
             self._module.mc2_domain_cpu_v1_dispose(key)
         finally:
             self._programs.pop(key, None)
+            self._parameters.pop(key, None)
             self._frames.pop(key, None)
 
     def _require_handle(self, handle) -> int:
@@ -139,6 +161,58 @@ class MC2NativeCPUKernelV1:
         if key <= 0 or key not in self._programs:
             raise RuntimeError("native MC2 CPU domain handle is not owned by this kernel")
         return key
+
+    def _configure_distance(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        distance_table = next(
+            (table for table in program.constraint_tables if table.kind == "distance"),
+            None,
+        )
+        if distance_table is None:
+            return
+        parameter_table = next(
+            (table for table in parameters.constraint_parameters if table.name == "distance"),
+            None,
+        )
+        if parameter_table is None:
+            raise ValueError("distance topology has no distance parameter table")
+        fields = {name: index for index, name in enumerate(parameter_table.fields)}
+        if "rest_length" not in fields or "stiffness" not in fields:
+            raise ValueError("distance parameter table lacks rest_length/stiffness")
+        rows = [[] for _ in range(program.particle_count)]
+        for row in distance_table.indices:
+            vertex, neighbor = (int(row[0]), int(row[1]))
+            rows[vertex].append(neighbor)
+        starts = []
+        counts = []
+        neighbors = []
+        for values in rows:
+            starts.append(len(neighbors))
+            counts.append(len(values))
+            neighbors.extend(values)
+        rest = parameter_table.values[:, fields["rest_length"]]
+        stiffness = parameter_table.values[:, fields["stiffness"]]
+        starts_array = np.asarray(starts, dtype=np.int32)
+        counts_array = np.asarray(counts, dtype=np.int32)
+        neighbors_array = np.asarray(neighbors, dtype=np.int32)
+        rest_array = np.asarray(rest, dtype=np.float32)
+        stiffness_array = np.asarray(stiffness, dtype=np.float32)
+        for array in (
+            starts_array, counts_array, neighbors_array, rest_array, stiffness_array
+        ):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_distance(
+            handle,
+            starts_array,
+            counts_array,
+            neighbors_array,
+            rest_array,
+            stiffness_array,
+        )
 
 
 __all__ = ["MC2NativeCPUKernelV1"]

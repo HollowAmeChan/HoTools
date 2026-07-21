@@ -1,5 +1,7 @@
 #include "mc2_domain_cpu.hpp"
 
+#include "mc2_kernels.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -33,7 +35,8 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       bind_positions_(program.particle_count * 3),
       bind_rotations_(program.particle_count * 4),
       world_positions_(program.particle_count * 3),
-      world_normals_(program.particle_count * 3, 0.0f) {
+      world_normals_(program.particle_count * 3, 0.0f),
+      velocity_positions_(program.particle_count * 3, 0.0f) {
     if (program.schema_version != 1) {
         throw std::invalid_argument("unsupported MC2 CPU domain schema version");
     }
@@ -90,12 +93,81 @@ void DomainV1::step() {
     ++step_count_;
 }
 
+void DomainV1::configure_distance(
+    const std::int32_t* starts,
+    const std::int32_t* counts,
+    const std::int32_t* neighbors,
+    const float* rest_lengths,
+    const float* stiffness_values,
+    std::size_t neighbor_count
+) {
+    ensure_live();
+    if (starts == nullptr || counts == nullptr ||
+        (neighbor_count != 0 && (neighbors == nullptr || rest_lengths == nullptr || stiffness_values == nullptr))) {
+        throw std::invalid_argument("MC2 CPU distance arrays cannot be null");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (starts[vertex] < 0 || counts[vertex] < 0 ||
+            static_cast<std::size_t>(starts[vertex]) + static_cast<std::size_t>(counts[vertex]) > neighbor_count) {
+            throw std::invalid_argument("MC2 CPU distance CSR range is invalid");
+        }
+    }
+    for (std::size_t index = 0; index < neighbor_count; ++index) {
+        if (neighbors[index] < 0 || static_cast<std::size_t>(neighbors[index]) >= particle_count_) {
+            throw std::invalid_argument("MC2 CPU distance neighbor is out of range");
+        }
+        if (!std::isfinite(rest_lengths[index]) || !std::isfinite(stiffness_values[index])) {
+            throw std::invalid_argument("MC2 CPU distance values must be finite");
+        }
+    }
+    distance_starts_.assign(starts, starts + particle_count_);
+    distance_counts_.assign(counts, counts + particle_count_);
+    distance_neighbors_.assign(neighbors, neighbors + neighbor_count);
+    distance_rest_lengths_.assign(rest_lengths, rest_lengths + neighbor_count);
+    distance_stiffness_values_.assign(stiffness_values, stiffness_values + neighbor_count);
+    distance_ready_ = true;
+}
+
+void DomainV1::step_distance() {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU distance step requires update_frame");
+    }
+    if (!distance_ready_) {
+        throw std::logic_error("MC2 CPU distance step requires configure_distance");
+    }
+    const std::vector<float> base_positions = world_positions_;
+    hotools::Mc2NeighborConstraintView view;
+    view.positions = world_positions_.data();
+    view.base_positions = base_positions.data();
+    view.inv_masses = nullptr;
+    std::vector<float> inv_masses(particle_count_, 1.0f);
+    view.inv_masses = inv_masses.data();
+    view.starts = distance_starts_.data();
+    view.counts = distance_counts_.data();
+    view.neighbors = distance_neighbors_.data();
+    view.rest_lengths = distance_rest_lengths_.data();
+    view.stiffness_values = distance_stiffness_values_.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.neighbor_count = static_cast<std::int64_t>(distance_neighbors_.size());
+    hotools::project_neighbor_constraints_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::dispose() noexcept {
     disposed_ = true;
     bind_positions_.clear();
     bind_rotations_.clear();
     world_positions_.clear();
     world_normals_.clear();
+    velocity_positions_.clear();
+    distance_starts_.clear();
+    distance_counts_.clear();
+    distance_neighbors_.clear();
+    distance_rest_lengths_.clear();
+    distance_stiffness_values_.clear();
+    distance_ready_ = false;
 }
 
 void DomainV1::ensure_live() const {
