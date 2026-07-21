@@ -821,6 +821,63 @@ void DomainV1::step_distance() {
     ++step_count_;
 }
 
+void DomainV1::configure_tether(const std::int32_t* root_indices) {
+    ensure_live();
+    if (root_indices == nullptr) {
+        throw std::invalid_argument("MC2 CPU tether root indices cannot be null");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const auto root = root_indices[vertex];
+        if (root < -1 || (root >= 0 && static_cast<std::size_t>(root) >= particle_count_)) {
+            throw std::invalid_argument("MC2 CPU tether root index is out of range");
+        }
+    }
+    tether_root_indices_.assign(root_indices, root_indices + particle_count_);
+    tether_ready_ = true;
+}
+
+void DomainV1::step_tether(
+    const float* step_basic_positions,
+    float compression,
+    float stretch
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU tether step requires update_frame");
+    }
+    if (!tether_ready_ || !inertia_ready_) {
+        throw std::logic_error("MC2 CPU tether step requires topology and particle configuration");
+    }
+    require_finite(step_basic_positions, particle_count_ * 3, "tether StepBasic positions");
+    if (!std::isfinite(compression) || compression < 0.0f || compression > 1.0f ||
+        !std::isfinite(stretch) || stretch < 0.0f) {
+        throw std::invalid_argument("MC2 CPU tether limits are invalid");
+    }
+    std::vector<float> rest_lengths(particle_count_, 0.0f);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const auto root = tether_root_indices_[vertex];
+        if (root < 0) continue;
+        const auto offset = vertex * 3;
+        const auto root_offset = static_cast<std::size_t>(root) * 3;
+        const float dx = step_basic_positions[root_offset + 0] - step_basic_positions[offset + 0];
+        const float dy = step_basic_positions[root_offset + 1] - step_basic_positions[offset + 1];
+        const float dz = step_basic_positions[root_offset + 2] - step_basic_positions[offset + 2];
+        rest_lengths[vertex] = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    hotools::Mc2TetherConstraintView view;
+    view.positions = world_positions_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.root_indices = tether_root_indices_.data();
+    view.root_rest_lengths = rest_lengths.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.stiffness = 1.0f;
+    view.compression = compression;
+    view.stretch = stretch;
+    hotools::project_tether_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::configure_inertia(const float* depths, const float* inv_masses) {
     ensure_live();
     require_finite(depths, particle_count_, "inertia depths");
@@ -960,6 +1017,8 @@ void DomainV1::dispose() noexcept {
     distance_neighbors_.clear();
     distance_rest_lengths_.clear();
     distance_stiffness_values_.clear();
+    tether_root_indices_.clear();
+    tether_ready_ = false;
     distance_ready_ = false;
     inertia_depths_.clear();
     inertia_inv_masses_.clear();

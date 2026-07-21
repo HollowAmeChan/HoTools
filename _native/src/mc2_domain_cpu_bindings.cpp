@@ -281,6 +281,32 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_tether",
+        [](std::uint64_t handle, ci32_1d root_indices) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(root_indices.shape(0)) != domain->particle_count()) {
+                throw nb::value_error("MC2 CPU tether root_indices must match particle_count");
+            }
+            domain->configure_tether(root_indices.data());
+        },
+        nb::arg("handle"), nb::arg("root_indices"),
+        "Configure the explicit E3 Tether topology slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_tether",
+        [](std::uint64_t handle, cf32_2d step_basic_positions, float compression, float stretch) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(step_basic_positions.shape(0)) != domain->particle_count() ||
+                step_basic_positions.shape(1) != 3) {
+                throw nb::value_error("MC2 CPU tether StepBasic positions have incompatible shape");
+            }
+            domain->step_tether(step_basic_positions.data(), compression, stretch);
+        },
+        nb::arg("handle"), nb::arg("step_basic_positions"),
+        nb::arg("compression"), nb::arg("stretch"),
+        "Run the explicit Tether kernel slice using StepBasic rest lengths."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_inertia",
         [](std::uint64_t handle, cf32_1d depths, cf32_1d inv_masses) {
             auto* domain = require_domain(handle);

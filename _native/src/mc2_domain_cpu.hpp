@@ -67,6 +67,12 @@ public:
         std::size_t neighbor_count
     );
     void step_distance();
+    void configure_tether(const std::int32_t* root_indices);
+    void step_tether(
+        const float* step_basic_positions,
+        float compression,
+        float stretch
+    );
     void configure_inertia(
         const float* depths,
         const float* inv_masses
@@ -262,6 +268,8 @@ private:
     std::vector<float> distance_rest_lengths_;
     std::vector<float> distance_stiffness_values_;
     bool distance_ready_ = false;
+    std::vector<std::int32_t> tether_root_indices_;
+    bool tether_ready_ = false;
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
     bool inertia_ready_ = false;

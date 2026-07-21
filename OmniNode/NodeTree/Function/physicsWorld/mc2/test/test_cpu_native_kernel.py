@@ -149,6 +149,34 @@ def test_native_cpu_kernel_exposes_distance_slice_only_when_requested():
         domain.dispose()
 
 
+def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    try:
+        domain.update_frame(frame)
+        before = domain.read_output().world_positions.copy()
+        domain.step({
+            "data_path_only": True,
+            "tether_slice": True,
+            "step_basic_positions": np.asarray(
+                ((2.0, 2.0, 2.0), (1.5, 2.0, 2.0), (2.0, 1.5, 2.0)),
+                dtype=np.float32,
+            ),
+            "compression": 0.0,
+            "stretch": 0.03,
+        })
+        after = domain.read_output().world_positions
+        assert np.array_equal(after[0], before[0])
+        assert after[1, 0] > before[1, 0]
+        assert after[2, 1] > before[2, 1]
+        assert domain.inspect()["kernel"]["tether_slice_ready"] is True
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -308,8 +336,9 @@ def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
     try:
-        domain.update_frame(_frame(compiled.program))
+        domain.update_frame(frame)
         domain.step_reference_slices({
             "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
             "dt": 0.1,
@@ -318,11 +347,14 @@ def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
             "simulation_power": 1.0,
             "velocity_weight": 1.0,
             "gravity": (0.0, -1.0, 0.0),
+            "step_basic_positions": frame.animated_base_world_positions,
+            "tether_compression": 0.4,
+            "tether_stretch": 0.03,
         })
         state = domain.inspect()["kernel"]
         assert state["center_shift_count"] == 1
         assert state["center_step_count"] == 1
-        assert state["step_count"] == 2
+        assert state["step_count"] == 3
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
@@ -333,6 +365,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
     test_native_cpu_kernel_exposes_distance_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
+    test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths()
+    print("PASS test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths")
     test_native_cpu_kernel_exposes_inertia_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")
     test_native_cpu_kernel_exposes_integration_slice_only_when_requested()

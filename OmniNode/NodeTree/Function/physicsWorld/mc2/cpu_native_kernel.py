@@ -24,6 +24,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step",
     "mc2_domain_cpu_v1_configure_distance",
     "mc2_domain_cpu_v1_step_distance",
+    "mc2_domain_cpu_v1_configure_tether",
+    "mc2_domain_cpu_v1_step_tether",
     "mc2_domain_cpu_v1_configure_inertia",
     "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_configure_center",
@@ -85,6 +87,7 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native CPU domain returned an invalid handle")
         try:
             self._configure_distance(handle, program, parameters)
+            self._configure_tether(handle, program)
             self._configure_inertia(handle, program, parameters)
             self._configure_center(handle, parameters)
             self._configure_center_frame_shift(handle, parameters)
@@ -137,7 +140,9 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         settings = dict(scheduler_settings)
         distance_slice = settings.pop("distance_slice", False) is True
-        if settings != {"data_path_only": True}:
+        tether_slice = settings.pop("tether_slice", False) is True
+        data_path_only = settings.pop("data_path_only", False) is True
+        if not data_path_only:
             raise RuntimeError(
                 "native MC2 CPU numerical kernel is not ready; "
                 "only data_path_only=True is accepted"
@@ -146,14 +151,36 @@ class MC2NativeCPUKernelV1:
             raise RuntimeError("native MC2 CPU data-path slice does not consume colliders")
         if self._frames.get(key) is not frame_packet:
             raise ValueError("native MC2 CPU step frame is not the published frame packet")
-        if distance_slice:
+        if distance_slice and tether_slice:
+            raise ValueError("distance_slice and tether_slice are mutually exclusive")
+        if tether_slice:
+            self.step_tether(key, settings)
+        elif distance_slice:
+            if settings:
+                raise ValueError("distance_slice does not accept additional inputs")
             self._module.mc2_domain_cpu_v1_step_distance(key)
         else:
+            if settings:
+                raise ValueError("data_path_only step does not accept additional inputs")
             self._module.mc2_domain_cpu_v1_step(key)
 
     def step_distance(self, handle) -> None:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_distance(key)
+
+    def step_tether(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"step_basic_positions", "compression", "stretch"}
+        if set(settings) != required:
+            raise ValueError("tether slice requires exactly its explicit step inputs")
+        positions = np.ascontiguousarray(settings["step_basic_positions"], dtype=np.float32)
+        program = self._programs[key]
+        if positions.shape != (program.particle_count, 3):
+            raise ValueError("step_basic_positions must match particle_count x 3")
+        positions.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_tether(
+            key, positions, float(settings["compression"]), float(settings["stretch"])
+        )
 
     def step_inertia(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -230,6 +257,10 @@ class MC2NativeCPUKernelV1:
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "velocity_weight", "gravity",
         }
+        program = self._programs[self._require_handle(handle)]
+        has_tether = any(table.kind == "tether" for table in program.constraint_tables)
+        if has_tether:
+            required.update({"step_basic_positions", "tether_compression", "tether_stretch"})
         if set(settings) != required:
             raise ValueError("reference slices require exactly their explicit pass inputs")
         key = self._require_handle(handle)
@@ -245,6 +276,12 @@ class MC2NativeCPUKernelV1:
             "velocity_weight": settings["velocity_weight"],
             "gravity": settings["gravity"],
         })
+        if has_tether:
+            self.step_tether(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "compression": settings["tether_compression"],
+                "stretch": settings["tether_stretch"],
+            })
         self.step_distance(key)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
@@ -323,6 +360,9 @@ class MC2NativeCPUKernelV1:
             "numerical_kernel_ready": False,
             "data_path_only": True,
             "distance_slice_ready": True,
+            "tether_slice_ready": any(
+                table.kind == "tether" for table in self._programs[key].constraint_tables
+            ),
             "inertia_slice_ready": True,
             "integration_slice_ready": True,
             "center_slice_ready": True,
@@ -398,6 +438,26 @@ class MC2NativeCPUKernelV1:
             rest_array,
             stiffness_array,
         )
+
+    def _configure_tether(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+    ) -> None:
+        tether_table = next(
+            (table for table in program.constraint_tables if table.kind == "tether"),
+            None,
+        )
+        if tether_table is None:
+            return
+        roots = np.full(program.particle_count, -1, dtype=np.int32)
+        for row in tether_table.indices:
+            vertex, root = int(row[0]), int(row[1])
+            if roots[vertex] != -1 and int(roots[vertex]) != root:
+                raise ValueError("tether topology assigns multiple roots to one vertex")
+            roots[vertex] = root
+        roots.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_tether(handle, roots)
 
     def _configure_inertia(
         self,
