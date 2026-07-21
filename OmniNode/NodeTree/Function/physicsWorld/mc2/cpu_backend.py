@@ -227,6 +227,17 @@ class MC2CPUBackendDomainV1:
         run_reference(self._handle, settings)
         self._step_count += 1
 
+    def step_reference_pipeline_full(self, settings: Mapping[str, object]) -> None:
+        """Run the explicit V0 order with optional collision passes."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("full reference pipeline requires update_frame first")
+        run_reference = getattr(self._kernel, "step_reference_pipeline_full", None)
+        if not callable(run_reference):
+            raise RuntimeError("CPU kernel does not expose full reference pipeline")
+        run_reference(self._handle, settings)
+        self._step_count += 1
+
     def step_external_collision(self, settings: Mapping[str, object]) -> None:
         """Run the explicit native point external-collision slice."""
         self._ensure_live()

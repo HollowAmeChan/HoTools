@@ -547,6 +547,92 @@ class MC2NativeCPUKernelV1:
             "backstop_enabled": settings["motion_backstop_enabled"],
         })
 
+    def step_reference_pipeline_full(self, handle, settings: Mapping[str, object]) -> None:
+        """Run the V0 pass order, with collision passes supplied explicitly.
+
+        Collision inputs are nested so the caller cannot accidentally mix a
+        Physics World snapshot with the structural pass inputs.  ``None`` is
+        an explicit disabled pass; a mapping invokes that pass at its V0
+        position.  This is a reference transaction only and does not replace
+        the product solver path.
+        """
+        required = {
+            "anchor_component_local_positions", "dt", "frame_interpolation",
+            "distance_weights", "simulation_power", "velocity_weight", "gravity",
+            "step_basic_positions", "tether_compression", "tether_stretch",
+            "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
+            "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
+            "angle_limit_stiffness", "angle_restoration_enabled", "angle_limit_enabled",
+            "motion_base_positions", "motion_base_rotations", "motion_max_distances",
+            "motion_stiffness_values", "motion_backstop_radii", "motion_backstop_distances",
+            "motion_normal_axis", "motion_max_distance_enabled", "motion_backstop_enabled",
+            "point_collision", "edge_collision", "self_collision",
+        }
+        if set(settings) != required:
+            raise ValueError("full reference pipeline requires exactly its explicit pass inputs")
+        key = self._require_handle(handle)
+        structural = {
+            name: settings[name] for name in required
+            if name not in {"point_collision", "edge_collision", "self_collision"}
+        }
+        # Keep the same explicit structural prefix as step_reference_pipeline,
+        # then insert V0 collision passes before Distance B and self after Motion.
+        self.step_center_frame_shift(key, structural["anchor_component_local_positions"])
+        self.step_center(key, {
+            "dt": structural["dt"], "frame_interpolation": structural["frame_interpolation"],
+            "distance_weights": structural["distance_weights"],
+        })
+        self.step_integration(key, {
+            "dt": structural["dt"], "simulation_power": structural["simulation_power"],
+            "velocity_weight": structural["velocity_weight"], "gravity": structural["gravity"],
+        })
+        self.step_tether(key, {
+            "step_basic_positions": structural["step_basic_positions"],
+            "compression": structural["tether_compression"],
+            "stretch": structural["tether_stretch"],
+        })
+        self.step_distance(key)
+        self.step_angle(key, {
+            "step_basic_positions": structural["step_basic_positions"],
+            "step_basic_rotations": structural["step_basic_rotations"],
+            "restoration_values": structural["angle_restoration_values"],
+            "limit_values": structural["angle_limit_values"],
+            "restoration_velocity_attenuation": structural["angle_restoration_velocity_attenuation"],
+            "restoration_gravity_falloff": structural["angle_restoration_gravity_falloff"],
+            "limit_stiffness": structural["angle_limit_stiffness"],
+            "restoration_enabled": structural["angle_restoration_enabled"],
+            "limit_enabled": structural["angle_limit_enabled"],
+        })
+        if any(table.kind == "bending" for table in self._programs[key].constraint_tables):
+            self.step_bending(key)
+        point_collision = settings["point_collision"]
+        if point_collision is not None:
+            if not isinstance(point_collision, Mapping):
+                raise TypeError("point_collision must be a mapping or None")
+            self.step_external_collision(key, point_collision)
+        edge_collision = settings["edge_collision"]
+        if edge_collision is not None:
+            if not isinstance(edge_collision, Mapping):
+                raise TypeError("edge_collision must be a mapping or None")
+            self.step_external_edge_collision(key, edge_collision)
+        self.step_distance(key)
+        self.step_motion(key, {
+            "base_positions": structural["motion_base_positions"],
+            "base_rotations": structural["motion_base_rotations"],
+            "max_distances": structural["motion_max_distances"],
+            "stiffness_values": structural["motion_stiffness_values"],
+            "backstop_radii": structural["motion_backstop_radii"],
+            "backstop_distances": structural["motion_backstop_distances"],
+            "normal_axis": structural["motion_normal_axis"],
+            "max_distance_enabled": structural["motion_max_distance_enabled"],
+            "backstop_enabled": structural["motion_backstop_enabled"],
+        })
+        self_collision = settings["self_collision"]
+        if self_collision is not None:
+            if not isinstance(self_collision, Mapping):
+                raise TypeError("self_collision must be a mapping or None")
+            self.step_self_collision(key, self_collision)
+
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
         key_set = {

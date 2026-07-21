@@ -461,6 +461,122 @@ def test_native_cpu_reference_pipeline_runs_structural_order_through_motion():
         domain.dispose()
 
 
+def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    count = compiled.program.particle_count
+    try:
+        domain.update_frame(frame)
+        domain.step_reference_pipeline_full({
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -1.0, 0.0),
+            "step_basic_positions": frame.animated_base_world_positions,
+            "tether_compression": 0.4,
+            "tether_stretch": 0.03,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "angle_restoration_values": np.ones(count, dtype=np.float32),
+            "angle_limit_values": np.ones(count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.2,
+            "angle_restoration_enabled": True,
+            "angle_limit_enabled": True,
+            "motion_base_positions": frame.animated_base_world_positions,
+            "motion_base_rotations": frame.animated_base_world_rotations,
+            "motion_max_distances": np.zeros(count, dtype=np.float32),
+            "motion_stiffness_values": np.ones(count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(count, dtype=np.float32),
+            "motion_normal_axis": 1,
+            "motion_max_distance_enabled": True,
+            "motion_backstop_enabled": False,
+            "point_collision": None,
+            "edge_collision": None,
+            "self_collision": None,
+        })
+        assert np.isfinite(domain.read_output().world_positions).all()
+        assert domain.inspect()["kernel"]["step_count"] == 6
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
+def test_native_cpu_reference_pipeline_full_sequences_collision_passes():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    count = compiled.program.particle_count
+    edge_table = next((table for table in compiled.program.primitive_tables if table.kind == "edge"), None)
+    triangle_table = next((table for table in compiled.program.primitive_tables if table.kind == "triangle"), None)
+    edges = np.asarray(edge_table.indices if edge_table is not None else np.empty((0, 2)), dtype=np.int32)
+    triangles = np.asarray(triangle_table.indices if triangle_table is not None else np.empty((0, 3)), dtype=np.int32)
+    center = np.asarray(((1.0, 2.0, 2.0),), dtype=np.float32)
+    point = {
+        "base_positions": frame.animated_base_world_positions,
+        "collision_radii": np.full(count, 0.1, dtype=np.float32),
+        "friction": np.zeros(count, dtype=np.float32),
+        "collided_by_groups": 1,
+        "collider_types": np.asarray((0,), dtype=np.int32),
+        "collider_group_bits": np.asarray((1,), dtype=np.int32),
+        "collider_centers": center,
+        "collider_segment_a": center,
+        "collider_segment_b": center,
+        "collider_old_centers": center,
+        "collider_old_segment_a": center,
+        "collider_old_segment_b": center,
+        "collider_radii": np.asarray((0.5,), dtype=np.float32),
+    }
+    edge = {key: value for key, value in point.items() if key != "base_positions"}
+    edge["edges"] = edges
+    self_collision = {
+        "old_positions": frame.animated_base_world_positions,
+        "edges": edges,
+        "triangles": triangles,
+        "friction": np.zeros(count, dtype=np.float32),
+        "surface_thickness": 0.02,
+    }
+    try:
+        domain.update_frame(frame)
+        settings = {
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1, "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0, "velocity_weight": 1.0, "gravity": (0.0, -1.0, 0.0),
+            "step_basic_positions": frame.animated_base_world_positions,
+            "tether_compression": 0.4, "tether_stretch": 0.03,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "angle_restoration_values": np.ones(count, dtype=np.float32),
+            "angle_limit_values": np.ones(count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.2,
+            "angle_restoration_enabled": True, "angle_limit_enabled": True,
+            "motion_base_positions": frame.animated_base_world_positions,
+            "motion_base_rotations": frame.animated_base_world_rotations,
+            "motion_max_distances": np.zeros(count, dtype=np.float32),
+            "motion_stiffness_values": np.ones(count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(count, dtype=np.float32),
+            "motion_normal_axis": 1, "motion_max_distance_enabled": True,
+            "motion_backstop_enabled": False,
+            "point_collision": point, "edge_collision": edge,
+            "self_collision": self_collision,
+        }
+        domain.step_reference_pipeline_full(settings)
+        assert np.isfinite(domain.read_output().world_positions).all()
+        assert domain.inspect()["kernel"]["step_count"] == 9
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_kernel_exposes_external_point_collision_slice():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -570,6 +686,10 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order")
     test_native_cpu_reference_pipeline_runs_structural_order_through_motion()
     print("PASS test_native_cpu_reference_pipeline_runs_structural_order_through_motion")
+    test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots()
+    print("PASS test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots")
+    test_native_cpu_reference_pipeline_full_sequences_collision_passes()
+    print("PASS test_native_cpu_reference_pipeline_full_sequences_collision_passes")
     test_native_cpu_kernel_exposes_external_point_collision_slice()
     print("PASS test_native_cpu_kernel_exposes_external_point_collision_slice")
     test_native_cpu_kernel_exposes_self_collision_slice()
