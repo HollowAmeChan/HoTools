@@ -49,6 +49,8 @@ E2 静态统一域编译核心已完成：有序 Mesh fragment 合并为一个 l
 
 E3 的 CPU backend 生命周期边界已冻结为独立适配器：`cpu_backend.py` 先执行无资源 capability gate，再由显式 kernel 协议承接 domain allocation、frame、step、output 和 dispose；适配器拥有 physical index map 与每 partition history，但不读取 Blender、不导入 V0 context、不承担 Physics World slot 或 writeback。当前完成的是 ABI/lifecycle slice 和 fake-kernel 验收，不是数值 kernel。现有 `_native/src/mc2_context_*` 是 `PyObject*` 驱动的 `Mc2ContextV0` V0 ABI；新 CPU 实现必须新增独立 C++ domain owner/POD view/handle，不得把 compiled domain 伪装成 V0 输入。C++ CPU 实现及旧/新单 source tolerance 对照通过前，生产路径继续只走 V0。
 
+E3 的 frame IO 也已保持独立：`frame_compile.py` 只接收冻结 partition snapshot，校验统一 frame/generation、顶点覆盖和 transform identity，再按 compiled logical index view 生成 `MC2DomainFramePacketV1`；它不读取 Blender，不保留跨帧状态，不把 object reference 传入 backend。
+
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
 当前生产行为仍保持本蓝本的既有事实：每个 Mesh Object 生成一个单 source `MC2TaskSpec`、独立 static/frame adapter、独立 slot/context，并由 world-owned interaction 处理跨 task self collision。只有 E0 schema/fixture 与 E1 单 source shadow 验收完成，并且 E2-E5 逐阶段通过，才允许改变这条生产数据流。
@@ -658,6 +660,7 @@ Self时间层是冻结snapshot上的Python派生，不改变native cache。enabl
 | `domain_compile.py` | E1单source与E2多source静态fragment到compiled domain的纯数据编译；不创建task、slot或backend |
 | `shadow_pipeline.py` | E1显式影子对照与阶段计时；不解算、不写回、不拥有backend，禁止演变为shadow solver |
 | `cpu_backend.py` | E3后端生命周期适配器与kernel协议；只拥有编译域的后端句柄、physical map和分区history，不接管V0 slot/Physics World |
+| `frame_compile.py` | E3 frame snapshot到logical domain packet的纯编译；不读取Blender，不拥有backend/history |
 | `runtime_parameters.py` | Profile + Task parameters到固定native N2 ABI采样/打包 |
 | `scheduler.py` | all-task step共享的固定步长调度 |
 | `solver.py` | prepare、slot同步、all-task step和result事务唯一orchestrator |
