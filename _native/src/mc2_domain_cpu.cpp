@@ -9,6 +9,8 @@
 namespace hotools::mc2_domain_cpu {
 namespace {
 
+constexpr float kDistanceFrictionMass = 3.0f;
+
 void require_finite(const float* values, std::size_t count, const char* name) {
     if (values == nullptr && count != 0) {
         throw std::invalid_argument(std::string(name) + " cannot be null");
@@ -765,10 +767,13 @@ void DomainV1::configure_distance(
     const std::int32_t* neighbors,
     const float* rest_lengths,
     const float* stiffness_values,
+    const float* depth_values,
+    const float* friction_values,
     std::size_t neighbor_count
 ) {
     ensure_live();
-    if (starts == nullptr || counts == nullptr ||
+    if (starts == nullptr || counts == nullptr || depth_values == nullptr ||
+        friction_values == nullptr ||
         (neighbor_count != 0 && (neighbors == nullptr || rest_lengths == nullptr || stiffness_values == nullptr))) {
         throw std::invalid_argument("MC2 CPU distance arrays cannot be null");
     }
@@ -786,6 +791,22 @@ void DomainV1::configure_distance(
             throw std::invalid_argument("MC2 CPU distance values must be finite");
         }
     }
+    distance_inverse_masses_.resize(particle_count_);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const float depth = depth_values[vertex];
+        const float friction = friction_values[vertex];
+        if (!std::isfinite(depth) || depth < 0.0f || depth > 1.0f ||
+            !std::isfinite(friction) || friction < 0.0f) {
+            throw std::invalid_argument("MC2 CPU distance particle values are invalid");
+        }
+        if ((particle_attribute_flags_[vertex] & 0x01u) != 0u) {
+            distance_inverse_masses_[vertex] = 0.0f;
+            continue;
+        }
+        const float depth_delta = 1.0f - depth;
+        distance_inverse_masses_[vertex] = 1.0f /
+            (1.0f + friction * kDistanceFrictionMass + depth_delta * depth_delta * 5.0f);
+    }
     distance_starts_.assign(starts, starts + particle_count_);
     distance_counts_.assign(counts, counts + particle_count_);
     distance_neighbors_.assign(neighbors, neighbors + neighbor_count);
@@ -794,7 +815,7 @@ void DomainV1::configure_distance(
     distance_ready_ = true;
 }
 
-void DomainV1::step_distance() {
+void DomainV1::step_distance(float simulation_power) {
     ensure_live();
     if (frame_ < 0 || generation_ < 0) {
         throw std::logic_error("MC2 CPU distance step requires update_frame");
@@ -802,13 +823,14 @@ void DomainV1::step_distance() {
     if (!distance_ready_) {
         throw std::logic_error("MC2 CPU distance step requires configure_distance");
     }
+    if (!std::isfinite(simulation_power) || simulation_power < 0.0f) {
+        throw std::invalid_argument("MC2 CPU distance simulation power is invalid");
+    }
     const std::vector<float> base_positions = world_positions_;
     hotools::Mc2NeighborConstraintView view;
     view.positions = world_positions_.data();
     view.base_positions = base_positions.data();
-    view.inv_masses = nullptr;
-    std::vector<float> inv_masses(particle_count_, 1.0f);
-    view.inv_masses = inv_masses.data();
+    view.inv_masses = distance_inverse_masses_.data();
     view.starts = distance_starts_.data();
     view.counts = distance_counts_.data();
     view.neighbors = distance_neighbors_.data();
@@ -817,6 +839,7 @@ void DomainV1::step_distance() {
     view.velocity_positions = velocity_positions_.data();
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.neighbor_count = static_cast<std::int64_t>(distance_neighbors_.size());
+    view.simulation_power = simulation_power;
     hotools::project_neighbor_constraints_mc2(view);
     ++step_count_;
 }

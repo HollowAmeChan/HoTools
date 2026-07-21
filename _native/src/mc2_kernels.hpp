@@ -30,6 +30,7 @@ struct Mc2NeighborConstraintView {
     std::int64_t neighbor_count = 0;
     float velocity_attenuation = 0.0f;
     float animation_pose_ratio = 0.0f;
+    float simulation_power = 1.0f;
 };
 
 struct Mc2TetherConstraintView {

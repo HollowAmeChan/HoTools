@@ -64,6 +64,8 @@ public:
         const std::int32_t* neighbors,
         const float* rest_lengths,
         const float* stiffness_values,
+        const float* depth_values,
+        const float* friction_values,
         std::size_t neighbor_count
     );
     void configure_baseline(
@@ -138,7 +140,7 @@ public:
         const float* collider_radii,
         std::size_t collider_count
     );
-    void step_distance();
+    void step_distance(float simulation_power = 1.0f);
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(
         const float* step_basic_positions,
@@ -353,6 +355,7 @@ private:
     std::vector<std::int32_t> distance_neighbors_;
     std::vector<float> distance_rest_lengths_;
     std::vector<float> distance_stiffness_values_;
+    std::vector<float> distance_inverse_masses_;
     bool distance_ready_ = false;
     std::vector<std::int32_t> baseline_parent_indices_;
     std::vector<std::int32_t> baseline_line_starts_;

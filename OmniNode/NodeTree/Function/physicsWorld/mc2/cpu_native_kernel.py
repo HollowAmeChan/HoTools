@@ -185,9 +185,9 @@ class MC2NativeCPUKernelV1:
                 raise ValueError("data_path_only step does not accept additional inputs")
             self._module.mc2_domain_cpu_v1_step(key)
 
-    def step_distance(self, handle) -> None:
+    def step_distance(self, handle, simulation_power: float = 1.0) -> None:
         key = self._require_handle(handle)
-        self._module.mc2_domain_cpu_v1_step_distance(key)
+        self._module.mc2_domain_cpu_v1_step_distance(key, float(simulation_power))
 
     def step_tether(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -492,7 +492,8 @@ class MC2NativeCPUKernelV1:
         """Run the landed native structural reference order through Motion."""
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
-            "distance_weights", "simulation_power", "velocity_weight", "gravity",
+            "distance_weights", "simulation_power", "distance_simulation_power",
+            "velocity_weight", "gravity",
             "step_basic_positions", "tether_compression", "tether_stretch",
             "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
             "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
@@ -520,7 +521,7 @@ class MC2NativeCPUKernelV1:
             "step_basic_positions": settings["step_basic_positions"],
             "compression": settings["tether_compression"], "stretch": settings["tether_stretch"],
         })
-        self.step_distance(key)
+        self.step_distance(key, settings["distance_simulation_power"])
         self.step_angle(key, {
             "step_basic_positions": settings["step_basic_positions"],
             "step_basic_rotations": settings["step_basic_rotations"],
@@ -534,7 +535,7 @@ class MC2NativeCPUKernelV1:
         })
         if any(table.kind == "bending" for table in program.constraint_tables):
             self.step_bending(key)
-        self.step_distance(key)
+        self.step_distance(key, settings["distance_simulation_power"])
         self.step_motion(key, {
             "base_positions": settings["motion_base_positions"],
             "base_rotations": settings["motion_base_rotations"],
@@ -558,7 +559,8 @@ class MC2NativeCPUKernelV1:
         """
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
-            "distance_weights", "simulation_power", "velocity_weight", "gravity",
+            "distance_weights", "simulation_power", "distance_simulation_power",
+            "velocity_weight", "gravity",
             "step_basic_positions", "tether_compression", "tether_stretch",
             "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
             "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
@@ -591,7 +593,7 @@ class MC2NativeCPUKernelV1:
             "compression": structural["tether_compression"],
             "stretch": structural["tether_stretch"],
         })
-        self.step_distance(key)
+        self.step_distance(key, structural["distance_simulation_power"])
         self.step_angle(key, {
             "step_basic_positions": structural["step_basic_positions"],
             "step_basic_rotations": structural["step_basic_rotations"],
@@ -615,7 +617,7 @@ class MC2NativeCPUKernelV1:
             if not isinstance(edge_collision, Mapping):
                 raise TypeError("edge_collision must be a mapping or None")
             self.step_external_edge_collision(key, edge_collision)
-        self.step_distance(key)
+        self.step_distance(key, structural["distance_simulation_power"])
         self.step_motion(key, {
             "base_positions": structural["motion_base_positions"],
             "base_rotations": structural["motion_base_rotations"],
@@ -774,13 +776,30 @@ class MC2NativeCPUKernelV1:
             neighbors.extend(values)
         rest = parameter_table.values[:, fields["rest_length"]]
         stiffness = parameter_table.values[:, fields["stiffness"]]
+        particle_fields = {
+            name: index for index, name in enumerate(parameters.particle_parameters.fields)
+        }
+        missing_particle = {"depth", "collision_friction"} - set(particle_fields)
+        if missing_particle:
+            raise ValueError(
+                "particle parameter table lacks Distance mass fields: "
+                + ", ".join(sorted(missing_particle))
+            )
+        particle_values = parameters.particle_parameters.values
+        depth_array = np.asarray(
+            particle_values[:, particle_fields["depth"]], dtype=np.float32
+        )
+        friction_array = np.asarray(
+            particle_values[:, particle_fields["collision_friction"]], dtype=np.float32
+        )
         starts_array = np.asarray(starts, dtype=np.int32)
         counts_array = np.asarray(counts, dtype=np.int32)
         neighbors_array = np.asarray(neighbors, dtype=np.int32)
         rest_array = np.asarray(rest, dtype=np.float32)
         stiffness_array = np.asarray(stiffness, dtype=np.float32)
         for array in (
-            starts_array, counts_array, neighbors_array, rest_array, stiffness_array
+            starts_array, counts_array, neighbors_array, rest_array, stiffness_array,
+            depth_array, friction_array,
         ):
             array.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_distance(
@@ -790,6 +809,8 @@ class MC2NativeCPUKernelV1:
             neighbors_array,
             rest_array,
             stiffness_array,
+            depth_array,
+            friction_array,
         )
 
     def _configure_baseline(

@@ -718,7 +718,11 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
             continue;
         }
 
-        const float local_stiffness = clamp_float(view.stiffness_values[vertex], 0.0f, 1.0f);
+        const float local_stiffness = clamp_float(
+            view.stiffness_values[vertex] * view.simulation_power,
+            0.0f,
+            1.0f
+        );
         if (local_stiffness <= kMc2Epsilon) {
             continue;
         }

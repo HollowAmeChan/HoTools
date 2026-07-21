@@ -399,10 +399,12 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
         neighbors = np.asarray((1, 0, 2, 1), dtype=np.int32)
         rest = np.ones(4, dtype=np.float32)
         stiffness = np.ones(4, dtype=np.float32)
-        for array in (starts, counts, neighbors, rest, stiffness):
+        depths = np.zeros(3, dtype=np.float32)
+        friction = np.zeros(3, dtype=np.float32)
+        for array in (starts, counts, neighbors, rest, stiffness, depths, friction):
             array.flags.writeable = False
         hotools_native.mc2_domain_cpu_v1_configure_distance(
-            handle, starts, counts, neighbors, rest, stiffness
+            handle, starts, counts, neighbors, rest, stiffness, depths, friction
         )
         hotools_native.mc2_domain_cpu_v1_step_distance(handle)
         output = hotools_native.mc2_domain_cpu_v1_read(handle)

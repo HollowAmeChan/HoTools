@@ -253,10 +253,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            ci32_1d counts,
            ci32_1d neighbors,
            cf32_1d rest_lengths,
-           cf32_1d stiffness_values) {
+           cf32_1d stiffness_values,
+           cf32_1d depth_values,
+           cf32_1d friction_values) {
             auto* domain = require_domain(handle);
             if (static_cast<std::size_t>(starts.shape(0)) != domain->particle_count() ||
                 static_cast<std::size_t>(counts.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(depth_values.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(friction_values.shape(0)) != domain->particle_count() ||
                 neighbors.shape(0) != rest_lengths.shape(0) ||
                 neighbors.shape(0) != stiffness_values.shape(0)) {
                 throw nb::value_error("MC2 CPU distance arrays have incompatible lengths");
@@ -264,6 +268,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             domain->configure_distance(
                 starts.data(), counts.data(), neighbors.data(),
                 rest_lengths.data(), stiffness_values.data(),
+                depth_values.data(), friction_values.data(),
                 static_cast<std::size_t>(neighbors.shape(0))
             );
         },
@@ -273,12 +278,17 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("neighbors"),
         nb::arg("rest_lengths"),
         nb::arg("stiffness_values"),
+        nb::arg("depth_values"),
+        nb::arg("friction_values"),
         "Configure the explicit E3 Distance kernel slice."
     );
     module.def(
         "mc2_domain_cpu_v1_step_distance",
-        [](std::uint64_t handle) { require_domain(handle)->step_distance(); },
+        [](std::uint64_t handle, float simulation_power) {
+            require_domain(handle)->step_distance(simulation_power);
+        },
         nb::arg("handle"),
+        nb::arg("simulation_power") = 1.0f,
         "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
