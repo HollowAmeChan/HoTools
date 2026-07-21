@@ -52,6 +52,25 @@
 
 GPU 对 prediction、primitive生成、grid/candidate 和大规模约束 pass 可能获得远高于 CPU worker 的吞吐，但 1760 粒子是否足以摊薄 dispatch、上传和同步尚未证明。GPU 路线的优势首先是规模上限和数据并行模型更匹配，不是对当前资产预先承诺固定倍数。
 
+### 规模收益曲线优先于小样本极限
+
+MC2 后续优化不以“把当前 1760 粒子的单帧毫秒数压到最低”为主要目标。更有产品价值的目标是：当代理数量、粒子数量和 self candidate 增长时，GPU 路线的成本曲线显著优于 CPU 逐粒子/逐 task 路线。小规模 GPU 可能受到 dispatch、上传和同步固定成本影响，不能用它否定面向大规模模拟的 backend 设计。
+
+以下是 GPU persistent buffer + fused context 的规划性目标，不是跨机器性能合同：
+
+| 粒子量 | 纯模拟目标 |
+|---:|---:|
+| `2k` | `3-8 ms` |
+| `10k` | `5-10 ms` |
+| `50k` | `10-18 ms` |
+| `100k` | `15-30 ms` |
+
+目标的重点不是每一行都达到表中下限，而是曲线在粒子规模增加后仍保持可控斜率。与其把当前 `25 ms` 的 1760 粒子样本局部优化到 `12 ms`，更值得接受在小场景仍有固定 GPU 开销，换取几十万粒子仍能保持可用帧时长。
+
+验收必须同时记录 `2k/10k/50k/100k` 的 `ms/frame`、`ms/substep`、每粒子/每约束吞吐、candidate/contact峰值、GPU占用以及CPU/GPU同步比例。任何只改善 1760 粒子而使规模曲线变差的优化，不应成为主路线；反之，只要大规模曲线明显改善，即使小样本绝对毫秒数不占优，也可以接受。
+
+规模曲线的主要风险是 self collision 候选数量而非粒子积分本身。grid、candidate、contact buffer 必须有容量、溢出统计和过密 cell 处理，避免局部拥挤把整帧从近线性拖成不可控增长。最终位置回读到 Blender 的数据量通常远小于中间 contact 数据，真正需要避免的是 substep 中间同步和逐元素 Python 处理。
+
 ### 为什么粒子域 CPU Split Job 是危险项
 
 当前 native step 不是若干互不相关的数组循环，而是一个有明确顺序的可变状态流水：
@@ -419,7 +438,7 @@ GPU 之前必须成立：
 | P2 | 多 source fused 与手工 join 的求解成本同量级，且保留独立配置/变换/写回；明显快于跨 task aggregate。 |
 | P3/P4 | 独立 context 的 2/4 worker Batch 只有在实测超过串行且小任务不退化时才启用；fused context 默认保持 reference 语义。 |
 | P5 | 每项优化由内部阶段计时证明，输出合同不变。 |
-| P6 | backend-neutral 数据/pass 合同先闭环；只有 CPU 路线仍不达标且可并行占比、上传和同步预算都支持时才立项 GPU backend。 |
+| P6 | backend-neutral 数据/pass 合同先闭环；只有 CPU 路线仍不达标且可并行占比、上传和同步预算都支持时才立项 GPU backend，并以规模收益曲线而非单个 1760 粒子样本决定是否成功。 |
 
 ## 建议的实施提交序列
 
