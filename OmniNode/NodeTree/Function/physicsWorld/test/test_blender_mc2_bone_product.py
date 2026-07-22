@@ -218,7 +218,7 @@ product_world = None
 spring_product_world = None
 multi_request_world = None
 try:
-    tasks, task_names = nodes.physicsMC2BoneClothTask(
+    tasks, task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [
             {"armature": rig_a, "bone": "Parent"},
             {"armature": rig_b, "bone": "Parent"},
@@ -235,7 +235,7 @@ try:
     assert tuple(len(task.sources) for task in tasks) == (3, 2)
     assert all(task.profile.spring_enabled is False for task in tasks)
 
-    independent_control_tasks, independent_task_names = nodes.physicsMC2BoneClothTask(
+    independent_control_tasks, independent_task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [
             {"armature": rig_c, "bone": "Parent0"},
             {"armature": rig_c, "bone": "Parent1"},
@@ -442,7 +442,7 @@ try:
     zero_world.frame_context.generation = 1
     zero_world.frame_context.dt = 1.0 / 60.0
     zero_world.frame_context.raw_dt = 1.0 / 60.0
-    zero_task = nodes.physicsMC2BoneClothTask(
+    zero_task = nodes._physicsMC2BoneClothTaskV0Oracle(
         [{"armature": rig_e, "bone": "Parent"}],
         profile=parameters.make_mc2_particle_profile(
             gravity=0.0,
@@ -517,7 +517,7 @@ try:
     free_world.frame_context.generation = 1
     free_world.frame_context.dt = 1.0 / 60.0
     free_world.frame_context.raw_dt = 1.0 / 60.0
-    free_task = nodes.physicsMC2BoneClothTask([
+    free_task = nodes._physicsMC2BoneClothTaskV0Oracle([
         {"armature": rig_d, "bone": "Parent"},
     ])[0][0]
     try:
@@ -559,7 +559,7 @@ try:
     finally:
         free_world.omni_cache_dispose("bone_free_translation_complete")
 
-    spring_tasks, spring_task_names = nodes.physicsMC2BoneSpringTask([
+    spring_tasks, spring_task_names = nodes._physicsMC2BoneSpringTaskV0Oracle([
         {"armature": rig_a, "bone": "Chain0_0"},
         {"armature": rig_b, "bone": "Chain0_0"},
     ])
@@ -710,12 +710,12 @@ try:
         "root_bone": "Chain2_0",
         "bones": [f"Chain2_{depth}" for depth in range(3)],
     }]
-    first_group_task = nodes.physicsMC2BoneClothTask(
+    first_group_task = nodes._physicsMC2BoneClothTaskV0Oracle(
         first_group_sources,
         profile=parameters.make_mc2_particle_profile(damping=0.1),
         connection_mode=1,
     )[0][0]
-    second_group_task = nodes.physicsMC2BoneClothTask(
+    second_group_task = nodes._physicsMC2BoneClothTaskV0Oracle(
         second_group_sources,
         profile=parameters.make_mc2_particle_profile(damping=0.4),
         connection_mode=1,
@@ -741,7 +741,7 @@ try:
         channel: tuple(id(item) for item in items)
         for channel, items in world.result_streams.items()
     }
-    overlapping_task = nodes.physicsMC2BoneClothTask(
+    overlapping_task = nodes._physicsMC2BoneClothTaskV0Oracle(
         [first_group_sources[1], second_group_sources[0]],
         profile=parameters.make_mc2_particle_profile(damping=0.7),
         connection_mode=1,
@@ -761,7 +761,7 @@ try:
         for channel, items in world.result_streams.items()
     } == stable_result_ids
 
-    product_request = product_authoring.make_mc2_bone_cloth_product_request(
+    product_requests, product_names = nodes.physicsMC2BoneClothTask(
         [
             {"armature": rig_c, "bone": "Parent0"},
             {"armature": rig_c, "bone": "Parent1"},
@@ -770,12 +770,40 @@ try:
             gravity_direction=(1.0, 0.0, 0.0),
             wind_influence=0.0,
         ),
-        setup_options=parameters.make_mc2_setup_options(
-            "bone_cloth",
-            connection_mode=1,
-        ),
+        connection_mode=1,
     )
+    assert len(product_requests) == 1
+    product_request = product_requests[0]
     assert len(product_request.plan.active_partitions) == 2
+    assert product_names == product_slot.make_mc2_product_slot_id(
+        product_request.setup_type,
+        product_request.domain_signature,
+    )
+    assert all(
+        partition.setup_options.connection_model == "hotools_product"
+        and partition.setup_options.self_collision_radius_model == "derived_radius"
+        for partition in product_request.plan.active_partitions
+    )
+    cross_armature_requests, cross_armature_names = nodes.physicsMC2BoneClothTask(
+        [
+            {"armature": rig_a, "bone": "Parent"},
+            {"armature": rig_b, "bone": "Parent"},
+        ],
+        connection_mode=1,
+    )
+    assert len(cross_armature_requests) == 2
+    assert cross_armature_names.splitlines() == [
+        product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        for request in cross_armature_requests
+    ]
+    disabled_requests, disabled_names = nodes.physicsMC2BoneClothTask(
+        [{"armature": rig_c, "bone": "Parent0"}],
+        enabled=False,
+    )
+    assert disabled_requests == [] and disabled_names == ""
     product_world = world_types.PhysicsWorldCache()
     product_world.generation = 1
     product_world.frame_context.frame = 1
@@ -784,9 +812,9 @@ try:
     product_world.frame_context.raw_dt = 1.0 / 60.0
     product_world.frame_context.time_scale = 1.0
     product_world.collider_snapshot = {"frame": 1, "colliders": []}
-    returned, ready, _status = product_solver.step_mc2_product(
+    returned, ready, _status = nodes.physicsMC2Step(
         product_world,
-        product_request,
+        product_requests,
     )
     assert returned is product_world and ready is True
     product_slot_id = product_slot.make_mc2_product_slot_id(
@@ -834,9 +862,9 @@ try:
     product_world.frame_context.dt = 1.0 / 30.0
     product_world.frame_context.raw_dt = 1.0 / 30.0
     product_world.collider_snapshot["frame"] = 2
-    returned, ready, _status = product_solver.step_mc2_product(
+    returned, ready, _status = nodes.physicsMC2Step(
         product_world,
-        product_request,
+        product_requests,
     )
     assert returned is product_world and ready is True
     assert product_world.solver_slots[product_slot_id] is unified_slot
@@ -850,17 +878,19 @@ try:
     assert len(product_world.result_streams["bone_transform"]) == 1
     assert writeback.writeback_bone_transforms(product_world) == 12
 
-    spring_product_request = product_authoring.make_mc2_bone_spring_product_request(
+    spring_product_requests, spring_product_names = nodes.physicsMC2BoneSpringTask(
         [{
             "armature": rig_a,
             "root_bone": "Chain0_0",
             "bones": tuple(f"Chain0_{depth}" for depth in range(3)),
         }],
-        setup_options=parameters.make_mc2_setup_options(
-            "bone_spring",
-            connection_mode=0,
-            collided_by_groups=1,
-        ),
+        collided_by_groups=1,
+    )
+    assert len(spring_product_requests) == 1
+    spring_product_request = spring_product_requests[0]
+    assert spring_product_names == product_slot.make_mc2_product_slot_id(
+        spring_product_request.setup_type,
+        spring_product_request.domain_signature,
     )
     spring_product_world = world_types.PhysicsWorldCache()
     spring_product_world.generation = 1
@@ -888,9 +918,9 @@ try:
             },
         ],
     }
-    returned, ready, _status = product_solver.step_mc2_product(
+    returned, ready, _status = nodes.physicsMC2Step(
         spring_product_world,
-        spring_product_request,
+        spring_product_requests,
     )
     assert returned is spring_product_world and ready is True
     spring_product_slot_id = product_slot.make_mc2_product_slot_id(

@@ -531,21 +531,25 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
     assert solver_declarations.validate_solver_declaration(declaration) == []
-    assert declaration["implementation_status"] == "mesh_e5_product_enabled_e7_cpu_pending"
-    assert declaration["stage"] == "mesh_fused_domain_product_bone_v0_migration"
+    assert declaration["implementation_status"] == (
+        "mesh_and_bone_product_nodes_enabled_e7_cpu_pending"
+    )
+    assert declaration["stage"] == "mesh_bone_e5b_product_nodes_multi_request"
     assert tuple(declaration["setup_types"]) == (
         mc2_names.MC2_SETUP_MESH_CLOTH,
         mc2_names.MC2_SETUP_BONE_CLOTH,
         mc2_names.MC2_SETUP_BONE_SPRING,
     )
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
-    assert declaration["native_strategy"] == "mesh_one_fused_domain_v1_bone_v0_until_e7"
+    assert declaration["native_strategy"] == (
+        "one_domain_v1_per_explicit_product_collector"
+    )
     assert declaration["update_policy"]["framework"] == (
-        "mesh_request_uses_one_fused_domain_bone_and_legacy_tasks_use_v0_until_e7"
+        "product_requests_use_dynamic_domain_v1_legacy_tasks_are_v0_oracle_until_e7"
     )
     assert declaration["update_policy"]["node_execution"].startswith("always_run")
     assert declaration["update_policy"]["bone_cloth_partition"] == (
-        "one_control_bone_per_task_and_lateral_topology_group"
+        "one_control_bone_per_partition_same_armature_per_explicit_collector"
     )
     assert declaration["update_policy"]["bone_frame_feedback"] == (
         "mc2_owned_restore_read_barrier_preserves_current_animation_override"
@@ -561,7 +565,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "consumes"
     ]
     assert declaration["update_policy"]["native_backend"] == (
-        "mesh_one_domain_v1_no_python_fallback"
+        "one_domain_v1_per_explicit_collector_no_python_fallback"
     )
     assert declaration["export"]["result_channels"] == [
         mc2_names.MC2_STATS_CHANNEL,

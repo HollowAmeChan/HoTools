@@ -184,7 +184,7 @@ def _tasks(
     mesh_tasks, _mesh_names = nodes.physicsMC2MeshClothTask(
         [mesh], profile=mesh_profile, anchor_object=anchor_object, **task_values
     )
-    cloth_tasks, _cloth_names = nodes.physicsMC2BoneClothTask(
+    cloth_tasks, _cloth_names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [{"armature": cloth, "bone": "Control"}],
         profile=cloth_profile,
         anchor_object=anchor_object,
@@ -192,7 +192,7 @@ def _tasks(
         connection_mode=0,
         collided_by_groups=1,
     )
-    spring_tasks, _spring_names = nodes.physicsMC2BoneSpringTask(
+    spring_tasks, _spring_names = nodes._physicsMC2BoneSpringTaskV0Oracle(
         [{"armature": spring, "bone": "Root"}],
         profile=spring_profile,
         anchor_object=anchor_object,

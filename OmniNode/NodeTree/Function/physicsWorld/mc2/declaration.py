@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_e5_bone_e5b_unified_domain_product",
+    "stage": "mesh_bone_e5b_product_nodes_multi_request",
     "native_strategy": "one_domain_v1_per_explicit_product_collector",
-    "implementation_status": "mesh_and_bone_product_enabled_nodes_pending",
+    "implementation_status": "mesh_and_bone_product_nodes_enabled_e7_cpu_pending",
     "slot_kinds": [
         MC2_SLOT_KIND,
         "mc2_fused_cpu_product_v1",
@@ -47,8 +47,8 @@ MC2_SOLVER_DECLARATION = {
     "consumes": [
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
-        "list[MC2TaskSpec] containing three setup types",
-        "one MC2ProductRequestV1 for one explicit unified domain",
+        "one or more explicit MC2ProductRequestV1 domains",
+        "list[MC2TaskSpec] only through explicit pre-E7 V0 oracle paths",
         "PhysicsWorldCache implicit tag mc2.mesh_partition.v1",
         "optional task.anchor_object evaluated world transform",
         "MC2 step time_scale/simulation_frequency/max_simulation_count_per_frame",
@@ -87,14 +87,14 @@ MC2_SOLVER_DECLARATION = {
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
         "node_execution": "always_run_then_frame_context_decides_step_reset_pause_or_same_frame",
-        "framework": "mesh_request_uses_one_fused_domain_bone_and_legacy_tasks_use_v0_until_e7",
-        "solver_core": "mesh_domain_v1_fixed_full_pass_order",
-        "setup_dispatch": "mesh_product_request_or_explicit_legacy_task_path_never_implicit_fallback",
-        "bone_cloth_partition": "one_control_bone_per_task_and_lateral_topology_group",
+        "framework": "product_requests_use_dynamic_domain_v1_legacy_tasks_are_v0_oracle_until_e7",
+        "solver_core": "all_product_domains_v1_fixed_full_pass_order",
+        "setup_dispatch": "explicit_product_request_batch_or_explicit_v0_oracle_never_implicit_fallback",
+        "bone_cloth_partition": "one_control_bone_per_partition_same_armature_per_explicit_collector",
         "bone_frame_feedback": "mc2_owned_restore_read_barrier_preserves_current_animation_override",
         "bone_motion_mapping": "connected_rotation_only_disconnected_position_rotation",
         "anchor_frame": "optional_object_evaluated_each_frame_no_static_rebuild",
-        "native_backend": "mesh_one_domain_v1_no_python_fallback",
+        "native_backend": "one_domain_v1_per_explicit_collector_no_python_fallback",
     },
     "capabilities": MC2_CAPABILITIES,
     "consumes_capabilities": [

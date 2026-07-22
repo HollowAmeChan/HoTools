@@ -67,13 +67,13 @@ def _task(
     )
     source = {"armature": armature, "bone": "Root"}
     if setup_type == names.MC2_SETUP_BONE_CLOTH:
-        tasks, _task_names = nodes.physicsMC2BoneClothTask(
+        tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
             [source],
             profile=profile,
             connection_mode=0,
         )
     elif setup_type == names.MC2_SETUP_BONE_SPRING:
-        tasks, _task_names = nodes.physicsMC2BoneSpringTask(
+        tasks, _task_names = nodes._physicsMC2BoneSpringTaskV0Oracle(
             [source],
             profile=profile,
         )
@@ -392,7 +392,7 @@ def _run_bone_gravity_axes_falloff():
     )
     tasks = []
     for index, (armature, profile) in enumerate(zip(armatures, profiles)):
-        product_tasks, _names = nodes.physicsMC2BoneClothTask(
+        product_tasks, _names = nodes._physicsMC2BoneClothTaskV0Oracle(
             [{"armature": armature, "bone": "Root"}],
             profile=profile,
             anchor_object=(anchors[index - 3] if index >= 3 else None),
@@ -576,7 +576,7 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
     )
     source = [{"armature": armature, "bone": "Root"}]
     if setup_type == names.MC2_SETUP_BONE_CLOTH:
-        task = nodes.physicsMC2BoneClothTask(
+        task = nodes._physicsMC2BoneClothTaskV0Oracle(
             source,
             profile=profile,
             anchor_object=anchor,
@@ -585,7 +585,7 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
             connection_mode=0,
         )[0][0]
     else:
-        task = nodes.physicsMC2BoneSpringTask(
+        task = nodes._physicsMC2BoneSpringTaskV0Oracle(
             source,
             profile=profile,
             anchor_object=anchor,
@@ -663,7 +663,8 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
         info = slot.data["native_context"].inspect()
         assert info["angle_solve_count"] == 599
         assert info["debug_capture_count"] == 1
-        assert info["debug_readback_count"] == 4
+        # 姿态、StepBasic、恢复目标、约束汇总、angle record 明细。
+        assert info["debug_readback_count"] == 5
         runtime = slot.data["effective_parameters"].debug_dict()
         np.testing.assert_allclose(
             runtime["float_values"]["angle_restoration_gravity_falloff"],
@@ -748,7 +749,7 @@ def _run_bone_motion():
             motion_stiffness=1.0,
             self_collision_mode=0,
         )
-        tasks, _task_names = nodes.physicsMC2BoneClothTask(
+        tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
             [{"armature": armature, "bone": "Root"}],
             profile=profile,
             normal_axis=2,
@@ -864,13 +865,13 @@ def _run_bone_external_collision(setup_type):
         )
         source = {"armature": armature, "bone": "Root"}
         if is_spring:
-            tasks, _task_names = nodes.physicsMC2BoneSpringTask(
+            tasks, _task_names = nodes._physicsMC2BoneSpringTaskV0Oracle(
                 [source],
                 profile=profile,
                 collided_by_groups=1,
             )
         else:
-            tasks, _task_names = nodes.physicsMC2BoneClothTask(
+            tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
                 [source],
                 profile=profile,
                 connection_mode=0,
@@ -1079,7 +1080,7 @@ def _run_bone_cloth_friction(friction):
         radius=0.02,
         self_collision_mode=0,
     )
-    tasks, _task_names = nodes.physicsMC2BoneClothTask(
+    tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [{"armature": armature, "bone": "Root"}],
         profile=profile,
         connection_mode=0,
@@ -1193,7 +1194,7 @@ def _run_bone_distance_tether():
             collision_mode=0,
             self_collision_mode=0,
         )
-        tasks, _task_names = nodes.physicsMC2BoneClothTask(
+        tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
             [{"armature": armature, "bone": "Root"}],
             profile=profile,
             connection_mode=0,
@@ -1422,11 +1423,11 @@ def _run_bone_angle_limit(setup_type):
         )
         source = {"armature": armature, "bone": "Root"}
         if setup_type == names.MC2_SETUP_BONE_CLOTH:
-            tasks, _task_names = nodes.physicsMC2BoneClothTask(
+            tasks, _task_names = nodes._physicsMC2BoneClothTaskV0Oracle(
                 [source], profile=profile, connection_mode=0
             )
         else:
-            tasks, _task_names = nodes.physicsMC2BoneSpringTask(
+            tasks, _task_names = nodes._physicsMC2BoneSpringTaskV0Oracle(
                 [source], profile=profile
             )
         assert len(tasks) == 1
@@ -1596,7 +1597,7 @@ def _bending_task(armature, stiffness):
         collision_mode=0,
         self_collision_mode=0,
     )
-    tasks, _names = nodes.physicsMC2BoneClothTask(
+    tasks, _names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [{"armature": armature, "bone": "Control"}],
         profile=profile,
         connection_mode=1,
@@ -1763,7 +1764,7 @@ def _bone_self_task(armature, enabled, cloth_mass, teleport_mode=0):
         collision_mode=0,
         self_collision_enabled=enabled,
     )
-    tasks, _names = nodes.physicsMC2BoneClothTask(
+    tasks, _names = nodes._physicsMC2BoneClothTaskV0Oracle(
         [{"armature": armature, "bone": "Control"}],
         profile=profile,
         cloth_mass=cloth_mass,
@@ -1968,7 +1969,7 @@ def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
     )
     source = [{"armature": armature, "bone": "Root"}]
     if setup_type == names.MC2_SETUP_BONE_CLOTH:
-        task = nodes.physicsMC2BoneClothTask(
+        task = nodes._physicsMC2BoneClothTaskV0Oracle(
             source,
             profile=profile,
             connection_mode=0,
@@ -1977,7 +1978,7 @@ def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
             collided_by_groups=1,
         )[0][0]
     else:
-        task = nodes.physicsMC2BoneSpringTask(
+        task = nodes._physicsMC2BoneSpringTaskV0Oracle(
             source,
             profile=profile,
             rotational_interpolation=interpolation,

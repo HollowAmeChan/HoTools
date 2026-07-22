@@ -1,5 +1,6 @@
 """Unified MC2 parameters, setup tasks, and simulation-step nodes."""
 
+import inspect
 import typing
 
 import bpy
@@ -33,10 +34,22 @@ from .product_authoring import (
     register_mc2_mesh_partition_entries,
 )
 from .product_request import MC2ProductRequestV1
+from .product_bone_authoring import (
+    make_mc2_bone_cloth_product_request,
+    make_mc2_bone_spring_product_request,
+)
+from .product_slot import make_mc2_product_slot_id
 
 
 def _task_name_output(tasks) -> str:
     return "\n".join(str(task.task_id) for task in tasks)
+
+
+def _product_name_output(requests) -> str:
+    return "\n".join(
+        make_mc2_product_slot_id(request.setup_type, request.domain_signature)
+        for request in requests
+    )
 
 
 def _mesh_cloth_tasks(
@@ -135,6 +148,23 @@ def _owner_key(source: dict) -> tuple[int, int]:
     owner_id = int(pointer()) if callable(pointer) else id(armature)
     data_id = int(data_pointer()) if callable(data_pointer) else id(data)
     return owner_id, data_id
+
+
+def _group_bone_product_sources(values) -> tuple[tuple[object, ...], ...]:
+    """按 Armature 首次出现顺序形成多个显式 collector 输入。"""
+
+    grouped: dict[tuple[int, int], list[object]] = {}
+    for source in _flatten_values(values):
+        if isinstance(source, dict):
+            armature = source.get("armature")
+        elif isinstance(source, tuple) and len(source) == 2:
+            armature = source[0]
+        else:
+            raise TypeError("Bone 产品 source 必须是 Bone socket 或显式 chain")
+        if armature is None:
+            raise ValueError("Bone 产品 source 缺少 Armature")
+        grouped.setdefault(_owner_key({"armature": armature}), []).append(source)
+    return tuple(tuple(group) for group in grouped.values())
 
 
 def _hotools_bone_tasks(
@@ -902,7 +932,7 @@ def physicsMC2MeshClothTask(
         "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用",
     ],
     input_init={
-        "control_bones": {"description": "直接子骨生成模拟链\n每个中控骨独立横连"},
+        "control_bones": {"description": "直接子骨生成显式分区\n每个Armature一个统一域"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
         **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
@@ -922,7 +952,7 @@ def physicsMC2MeshClothTask(
             "description": "Fixed根骨方向比例\nTriangle会覆盖",
         },
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
-        "enabled": {"description": "保留任务但不参与模拟"},
+        "enabled": {"description": "关闭时不产生统一域request"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=_task_long_description(
@@ -956,18 +986,28 @@ def physicsMC2BoneClothTask(
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
-    tasks = _hotools_bone_tasks(
-        control_bones,
-        anchor_object,
-        profile,
-        task_parameters,
-        enabled,
+    if not bool(enabled):
+        return [], ""
+    setup_options = make_mc2_setup_options(
+        MC2_SETUP_BONE_CLOTH,
         connection_mode=connection_mode,
+        connection_model="hotools_product",
+        self_collision_radius_model="derived_radius",
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
         collided_by_groups=collided_by_groups,
     )
-    return tasks, _task_name_output(tasks)
+    requests = tuple(
+        make_mc2_bone_cloth_product_request(
+            list(group),
+            profile=profile,
+            task_parameters=task_parameters,
+            setup_options=setup_options,
+            anchor_object=anchor_object,
+        )
+        for group in _group_bone_product_sources(control_bones)
+    )
+    return list(requests), _product_name_output(requests)
 
 
 @omni(
@@ -981,14 +1021,14 @@ def physicsMC2BoneClothTask(
         "旋转插值", "根旋转", "被碰撞组", "启用",
     ],
     input_init={
-        "root_bones": {"description": "BoneSpring根骨列表\n递归收集后代"},
+        "root_bones": {"description": "BoneSpring根骨显式分区\n每个Armature一个统一域"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneSpring配置\n留空使用默认值"},
         **_task_parameter_inputs(_TASK_SPRING_PARAMETER_FIELDS),
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "Move父骨方向比例\n仅影响骨骼旋转"},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "Fixed根骨方向比例\n仅影响骨骼旋转"},
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
-        "enabled": {"description": "保留任务但不参与模拟"},
+        "enabled": {"description": "关闭时不产生统一域request"},
     },
     omni_presets=_task_parameter_presets(_TASK_SPRING_PARAMETER_FIELDS),
     omni_description=_task_long_description(
@@ -1019,15 +1059,66 @@ def physicsMC2BoneSpringTask(
     enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
-    tasks = _bone_spring_tasks(
-        root_bones,
-        anchor_object,
-        profile,
-        task_parameters,
-        enabled,
+    if not bool(enabled):
+        return [], ""
+    setup_options = make_mc2_setup_options(
+        MC2_SETUP_BONE_SPRING,
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
         collided_by_groups=collided_by_groups,
+    )
+    requests = tuple(
+        make_mc2_bone_spring_product_request(
+            list(group),
+            profile=profile,
+            task_parameters=task_parameters,
+            setup_options=setup_options,
+            anchor_object=anchor_object,
+        )
+        for group in _group_bone_product_sources(root_bones)
+    )
+    return list(requests), _product_name_output(requests)
+
+
+def _oracle_node_arguments(node, args, kwargs) -> dict:
+    bound = inspect.signature(node).bind(*args, **kwargs)
+    bound.apply_defaults()
+    return dict(bound.arguments)
+
+
+def _physicsMC2BoneClothTaskV0Oracle(*args, **kwargs):
+    """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
+
+    values = _oracle_node_arguments(physicsMC2BoneClothTask, args, kwargs)
+    task_parameters = _make_task_parameters(values)
+    tasks = _hotools_bone_tasks(
+        values["control_bones"],
+        values["anchor_object"],
+        values["profile"],
+        task_parameters,
+        values["enabled"],
+        connection_mode=values["connection_mode"],
+        rotational_interpolation=values["rotational_interpolation"],
+        root_rotation=values["root_rotation"],
+        collided_by_groups=values["collided_by_groups"],
+    )
+    return tasks, _task_name_output(tasks)
+
+
+def _physicsMC2BoneSpringTaskV0Oracle(*args, **kwargs):
+    """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
+
+    values = _oracle_node_arguments(physicsMC2BoneSpringTask, args, kwargs)
+    task_parameters = _make_task_parameters(values)
+    tasks = _bone_spring_tasks(
+        values["root_bones"],
+        values["anchor_object"],
+        values["profile"],
+        task_parameters,
+        values["enabled"],
+        rotational_interpolation=values["rotational_interpolation"],
+        root_rotation=values["root_rotation"],
+        collided_by_groups=values["collided_by_groups"],
     )
     return tasks, _task_name_output(tasks)
 
@@ -1045,7 +1136,7 @@ def physicsMC2BoneSpringTask(
     input_init={
         "world": {"description": "Physics World统一时间源"},
         "mc2_tasks": {
-            "description": "连接一个或多个显式MC2统一域\n不得与旧task混用",
+            "description": "连接显式MC2统一域\n不得与旧task混用",
         },
         "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "MC2局部时间倍率\n缩放统一dt"},
         "simulation_frequency": {"min_value": 30, "max_value": 150, "description": "MC2固定步频率（Hz）"},
