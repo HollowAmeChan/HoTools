@@ -23,14 +23,16 @@ E0-E2：partition / compile / output 合同
   -> P1-B：热帧静态观察缓存（已完成）
   -> E4/P2：多 Object fused MeshCloth + 一次 whole-domain self
   -> E5：多目标事务、覆盖与产品 collector（已完成）
-  -> E7-CPU：删除被替代的拆 task / aggregate / V0 路径
+  -> E5-B：BoneCloth/BoneSpring 薄包装接入统一 DomainV1
+  -> E7-CPU：删除三种 setup 被替代的拆 task / aggregate / V0 路径
+  -> E7-S：专项 review 并删除迁移期兼容处理
   -> P6-B：整理已验证的 GPU implementation package
   -> E6：未来独立 GPU 原型与规模曲线里程碑
 ```
 
 P1-A、P2、P3、P5 和 P6 并非排在 E 阶段之后，而是按上述门禁穿插交付；精确映射以 `MC2_NODE_SIMULATION_DESIGN.md` 的“当前主线与真实混合执行顺序”为准。不能先用多线程掩盖重复工作。多线程也不能替代 fused context；当前默认路线不实施 CPU 并发。
 
-实现状态（2026-07-23）：E5已把统一域logical output接成带共同事务身份的多目标公共结果；Physics World在实际GN mutation前完成全target预检，并对第二目标写失败执行双目标回滚。显式对象/覆盖、隐式registry和Require-Fusion collector已进入产品节点，`MC2模拟步`只创建一个fused slot并拒绝旧task混输。Blender 5.2/py313的120帧双跑soak逐float32相等，E5后P2复跑D/B p50=`0.79823`且self数值门禁保持通过。当前入口转为E7-CPU删除审计和P6可实施合同；不实施P4 CPU并发，也不提前实现E6。
+实现状态（2026-07-23）：E5已把统一域logical output接成带共同事务身份的多目标公共结果；Physics World在实际GN mutation前完成全target预检，并对第二目标写失败执行双目标回滚。显式对象/覆盖、隐式registry和Require-Fusion collector已进入产品节点，`MC2模拟步`只创建一个fused slot并拒绝旧task混输。Blender 4.5/py311与5.2/py313的120帧双跑soak均通过，E5后P2复跑D/B p50=`0.79823`且self数值门禁保持通过。当前入口转为E5-B：BoneCloth/BoneSpring只补setup包装并复用同一DomainV1；之后执行E7-CPU与E7-S，再收口P6。不实施P4 CPU并发，也不提前实现E6。
 
 ## CPU并行与GPU前置的路线决策
 
@@ -432,7 +434,7 @@ P0之后的优先级是：先由E4 whole-domain self删除多context + aggregate
 
 #### E4/P2 当前证据与下一门禁
 
-当前验收环境固定为 Blender 5.2 / Python 3.13，但源码和原生产物来自本工作树；基准启动时必须清除 Blender 5.2 默认加载的 HoTools 备份模块，显式绑定 `_Lib/py313/HotoolsPackage`，并打印实际加载的原生模块路径。用户正在使用 Blender 4.5，因此本阶段禁止启动 Blender 4.5，也禁止编译或覆盖 py311 产物。
+当前性能验收固定为Blender 5.2/Python 3.13，源码和原生产物来自本工作树；基准启动时必须清除Blender 5.2默认加载的HoTools备份模块，显式绑定`_Lib/py313/HotoolsPackage`并打印实际原生模块路径。双ABI正确性门禁已在临时窗口补跑：py311 native `27/27`，Blender 4.5的属性声明、GN事务、双source和120帧产品soak全过。后续是否启动4.5仍服从用户占用状态，不能因已有证据擅自覆盖正在使用的产物。
 
 首版通用 whole-domain self 在 1764 粒子夹具上产生了候选爆炸和不稳定输出，不能作为 P2 实现。Domain现持有后端中立opaque whole-domain self engine，由桥接实现复用成熟V0 primitive/grid/candidate/contact/四轮求解流程；Domain owner本身不依赖旧context internal。该改动把候选量恢复到手工join同一数量级；随后按P5证据把每子步重新分配的scaled thickness与partition scale改为Domain持久scratch，数值结果逐位不变。
 
@@ -496,14 +498,16 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 4. P1-B source observation cache、失效矩阵与性能门禁已完成。
 5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic、compiled external、compiled whole-domain self、native-owned完整pass和Physics World单次domain collider capture已由双ABI关闭。完整Tier A fragment现按快照签名与重力方向两阶段缓存，并持有逐帧旋转所需的native-ready topology/adjacency/corner UV；失败stage不发布、commit才裁剪离域条目。纯host fused CPU owner已把该提交点与native staged replacement合并，exact输入复用handle，参数或静态变化在缺少原子热更新ABI时换建handle，失败保留旧域。产品collector/slot现可按全部BasePose/Anchor生成一个logical frame packet，并与一次whole-domain collider POD原子发布；旋转生产与V0共用同一native核心，无静态热帧repack。A5-04已把Tether/Angle/Motion/Post的partition SoA按particle owner展开，Integration/Post直接复用native Center输出，六轴Motion与标量E3 oracle均由双ABI锁定；slot scheduler/timing/Anchor历史也已具备可回滚的staged/committed state。Center frame shift进一步成为per-frame one-shot事务，不会因多substep重复应用，而其余solver pass仍逐substep完整运行；staged slot 现在真实调用 compiled full endpoint，成功后才提交 scheduler revision。下一优化门禁转为 Blender oracle、性能门禁与 E5 多目标事务；在产品路径启用前不把settings临时数组开销解释为CPU回归，也不做推测性缓存，启用前必须用P0同fixture复测并按证据决定是否预展开或缓存。
 6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
-7. E5 先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
-8. soak 通过后执行 E7-CPU，删除已失去所有权的拆 task、普通 aggregate 和 V0 兼容路径。
-9. 贯穿 2-8 累积 P6 证据，最后单独提交 GPU implementation package；不创建运行时 backend。
-10. E6 作为未来独立里程碑提交最小 GPU prototype、规模曲线、tolerance 和 fallback，再按证据扩展 pass。
+7. E5 已先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
+8. E5-B把BoneCloth/BoneSpring现有capture/static/frame/output限制包装到setup-neutral product request与DomainV1；同Armature多链可融合，跨Armature不隐式拆task。
+9. 三种setup soak通过后执行E7-CPU，删除已失去所有权的拆task、普通aggregate、V0产品owner和binding。
+10. E7-CPU之后立即执行E7-S，逐项review并删除迁移期legacy/compat/fallback/shadow、双schema和结果翻译层；简化前后复跑双ABI与P0/P2。
+11. 贯穿2-10累积P6证据，最后单独提交GPU implementation package；不创建运行时backend。
+12. E6作为未来独立里程碑提交最小GPU prototype、规模曲线、tolerance和fallback，再按证据扩展pass。
 
 P4 不在提交序列中。每个提交都应可独立基准、回归和回滚；fused context、算法优化与未来 GPU 原型不得合并成一个无法区分收益和数值变化的大提交。
 
-E7 的目标是单一 whole-domain C++ owner，不长期保留“单 task V0”和“fused domain V1”两套求解器。单对象只是单 partition domain；setup 差异停留在 capture/static/output adapter。删除前复用既有 Tier A oracle、逐 pass native tests、capability matrix 与 Blender soak 对同一输入双跑，删除时把仍有价值的断言迁到共享 kernel/DomainV1，而不是为了测试继续保留旧 ABI。完整删除清单与门禁见 `MC2_NODE_SIMULATION_DESIGN.md` 的 E7。
+E7 的目标是三种setup共用单一whole-domain C++ owner，不长期保留“单task V0”和“fused domain V1”两套求解器。单对象或单骨链只是单partition domain；setup差异停留在capture/static/frame/output adapter。删除前复用既有Tier A oracle、逐pass native tests、capability matrix与Blender soak对同一输入双跑，删除时把仍有价值的断言迁到共享kernel/DomainV1。删除后E7-S再清除为了迁移而存在的命名、overload、schema和翻译层；完整清单与门禁见`MC2_NODE_SIMULATION_DESIGN.md`的E7/E7-S。
 
 ## 外部依据
 
