@@ -806,6 +806,30 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit particle integration slice using the shared native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_post",
+        [](std::uint64_t handle,
+           cf32_2d old_positions,
+           float dt,
+           float dynamic_friction,
+           float static_friction_speed,
+           float particle_speed_limit,
+           float velocity_weight) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(old_positions.shape(0)) != domain->particle_count() ||
+                old_positions.shape(1) != 3) {
+                throw nb::value_error("MC2 CPU post old_positions must be [particle_count,3]");
+            }
+            domain->step_post(
+                old_positions.data(), dt, dynamic_friction,
+                static_friction_speed, particle_speed_limit, velocity_weight
+            );
+        },
+        nb::arg("handle"), nb::arg("old_positions"), nb::arg("dt"),
+        nb::arg("dynamic_friction"), nb::arg("static_friction_speed"),
+        nb::arg("particle_speed_limit"), nb::arg("velocity_weight"),
+        "Run the explicit V0 post-step velocity/friction transaction."
+    );
+    module.def(
         "mc2_domain_cpu_v1_read",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);
@@ -818,6 +842,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["world_normals"] = owned_array_2d<float>(
                 std::vector<float>(domain->world_normals()), domain->particle_count(), 3
+            );
+            result["real_velocities"] = owned_array_2d<float>(
+                std::vector<float>(domain->real_velocities()), domain->particle_count(), 3
             );
             result["frame"] = domain->frame();
             result["generation"] = domain->generation();

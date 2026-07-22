@@ -209,6 +209,14 @@ public:
         float velocity_weight,
         const float* gravity
     );
+    void step_post(
+        const float* old_positions,
+        float dt,
+        float dynamic_friction,
+        float static_friction_speed,
+        float particle_speed_limit,
+        float velocity_weight
+    );
     void dispose() noexcept;
 
     bool disposed() const noexcept { return disposed_; }
@@ -227,6 +235,7 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
     }
@@ -302,6 +311,10 @@ private:
     std::vector<float> world_rotations_;
     std::vector<float> world_normals_;
     std::vector<float> velocity_positions_;
+    std::vector<float> post_velocities_;
+    std::vector<float> real_velocities_;
+    std::vector<float> static_friction_;
+    std::vector<float> post_old_positions_;
     std::vector<float> partition_world_positions_;
     std::vector<float> partition_previous_world_positions_;
     std::vector<float> partition_world_rotations_;

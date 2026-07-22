@@ -352,6 +352,69 @@ def test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain(
         v0.dispose()
 
 
+def test_e3_full_reference_post_history_matches_same_source_v0():
+    """The explicit transaction must commit V0 real-velocity history too."""
+    snapshot, fragment, compiled, effective = _same_source_constraints()
+    frame = _frame(compiled.program)
+    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        domain.update_frame(frame)
+        domain_before = domain.read_output().world_positions.copy()
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=frame.frame,
+            generation=frame.generation,
+            world_positions=domain_before,
+            world_rotations_xyzw=frame.animated_base_world_rotations,
+        ))
+        v0.reset()
+        dt = 0.1
+        frequency_ratio = 90.0 * dt
+        simulation_power_z = frequency_ratio ** 0.3
+        simulation_power_y = frequency_ratio ** 0.5
+        v0.step_no_collision(dt)
+        v0_positions, _ = v0.read()
+        v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
+        domain.step_reference_pipeline_full({
+            **_full_reference_settings(
+                compiled.program,
+                domain_before,
+                frame.animated_base_world_rotations,
+            ),
+            "simulation_power": simulation_power_z,
+            "distance_simulation_power": simulation_power_y,
+            "bending_simulation_power": simulation_power_y,
+            "gravity": (0.0, -1.0, 0.0),
+            "post_step": {
+                "old_positions": domain_before,
+                "dt": dt,
+                "dynamic_friction": 0.0,
+                "static_friction_speed": 0.0,
+                "particle_speed_limit": effective.debug_dict()["float_values"]["particle_speed_limit"],
+                "velocity_weight": 1.0,
+            },
+        })
+        domain_positions = domain.read_output().world_positions
+        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
+        np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
+        np.testing.assert_allclose(
+            domain_real_velocities,
+            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 def test_e3_native_step_basic_pose_matches_v0_angle_reference():
     snapshot, fragment, compiled, _unused_effective = _same_source_constraints()
     effective = runtime.make_mc2_runtime_parameters(
@@ -949,6 +1012,8 @@ if __name__ == "__main__":
     print("PASS E3 same-source V0/Domain prediction tolerance")
     test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain full no-collision tolerance")
+    test_e3_full_reference_post_history_matches_same_source_v0()
+    print("PASS E3 same-source V0/Domain post velocity history tolerance")
     test_e3_native_step_basic_pose_matches_v0_angle_reference()
     print("PASS E3 native StepBasic pose matches V0 Angle reference")
     test_e3_native_motion_branch_matches_v0_after_tether()

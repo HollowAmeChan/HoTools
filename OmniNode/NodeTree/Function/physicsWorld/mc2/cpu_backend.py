@@ -281,6 +281,17 @@ class MC2CPUBackendDomainV1:
         run_collision(self._handle, settings)
         self._step_count += 1
 
+    def step_post(self, settings: Mapping[str, object]) -> None:
+        """Run the explicit native V0 post-step velocity/history slice."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("post step requires update_frame first")
+        run_post = getattr(self._kernel, "step_post", None)
+        if not callable(run_post):
+            raise RuntimeError("CPU kernel does not expose post step")
+        run_post(self._handle, settings)
+        self._step_count += 1
+
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()
         if self._latest_frame is None:

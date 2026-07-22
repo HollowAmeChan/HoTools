@@ -65,6 +65,10 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       world_rotations_(program.particle_count * 4),
       world_normals_(program.particle_count * 3, 0.0f),
       velocity_positions_(program.particle_count * 3, 0.0f),
+      post_velocities_(program.particle_count * 3, 0.0f),
+      real_velocities_(program.particle_count * 3, 0.0f),
+      static_friction_(program.particle_count, 0.0f),
+      post_old_positions_(program.particle_count * 3, 0.0f),
       partition_world_positions_(program.partition_count * 3, 0.0f),
       partition_previous_world_positions_(program.partition_count * 3, 0.0f),
       partition_world_rotations_(program.partition_count * 4, 0.0f),
@@ -1471,6 +1475,7 @@ void DomainV1::configure_constraint_friction(const float* friction_values) {
     require_finite(friction_values, particle_count_, "constraint friction values");
     angle_inverse_masses_.resize(particle_count_);
     bending_inverse_masses_.resize(particle_count_);
+    collision_friction_.assign(friction_values, friction_values + particle_count_);
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if (friction_values[vertex] < 0.0f) {
             throw std::invalid_argument("MC2 CPU constraint friction must be non-negative");
@@ -1574,6 +1579,54 @@ void DomainV1::step_integration(
     ++step_count_;
 }
 
+void DomainV1::step_post(
+    const float* old_positions,
+    float dt,
+    float dynamic_friction,
+    float static_friction_speed,
+    float particle_speed_limit,
+    float velocity_weight
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU post step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU post step requires particle configuration");
+    }
+    require_finite(old_positions, particle_count_ * 3, "post old positions");
+    if (!std::isfinite(dt) || dt <= 0.0f ||
+        !std::isfinite(dynamic_friction) || dynamic_friction < 0.0f || dynamic_friction > 1.0f ||
+        !std::isfinite(static_friction_speed) || static_friction_speed < 0.0f ||
+        !std::isfinite(particle_speed_limit) ||
+        !std::isfinite(velocity_weight) || velocity_weight < 0.0f || velocity_weight > 1.0f) {
+        throw std::invalid_argument("MC2 CPU post step scalars are invalid");
+    }
+    std::copy(
+        old_positions,
+        old_positions + particle_count_ * 3,
+        post_old_positions_.begin()
+    );
+    hotools::Mc2PostStepView view;
+    view.positions = world_positions_.data();
+    view.old_positions = post_old_positions_.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.velocities = post_velocities_.data();
+    view.real_velocities = real_velocities_.data();
+    view.friction = collision_friction_.data();
+    view.static_friction = static_friction_.data();
+    view.collision_normals = world_normals_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.step_dt = dt;
+    view.dynamic_friction = dynamic_friction;
+    view.static_friction_speed = static_friction_speed;
+    view.particle_speed_limit = particle_speed_limit;
+    view.velocity_weight = velocity_weight;
+    hotools::apply_post_step_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::dispose() noexcept {
     disposed_ = true;
     frame_ = -1;
@@ -1591,6 +1644,10 @@ void DomainV1::dispose() noexcept {
     world_positions_.clear();
     world_normals_.clear();
     velocity_positions_.clear();
+    post_velocities_.clear();
+    real_velocities_.clear();
+    static_friction_.clear();
+    post_old_positions_.clear();
     partition_world_positions_.clear();
     partition_previous_world_positions_.clear();
     partition_world_rotations_.clear();

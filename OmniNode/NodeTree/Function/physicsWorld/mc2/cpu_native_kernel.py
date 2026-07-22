@@ -45,6 +45,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
+    "mc2_domain_cpu_v1_step_post",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -275,6 +276,29 @@ class MC2NativeCPUKernelV1:
             arrays["backstop_radii"], arrays["backstop_distances"],
             int(settings["normal_axis"]), bool(settings["max_distance_enabled"]),
             bool(settings["backstop_enabled"]),
+        )
+
+    def step_post(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "old_positions", "dt", "dynamic_friction", "static_friction_speed",
+            "particle_speed_limit", "velocity_weight",
+        }
+        if set(settings) != required:
+            raise ValueError("post slice requires exactly its explicit inputs")
+        program = self._programs[key]
+        old_positions = np.ascontiguousarray(settings["old_positions"], dtype=np.float32)
+        if old_positions.shape != (program.particle_count, 3):
+            raise ValueError("post old_positions must match particle_count x 3")
+        old_positions.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_post(
+            key,
+            old_positions,
+            float(settings["dt"]),
+            float(settings["dynamic_friction"]),
+            float(settings["static_friction_speed"]),
+            float(settings["particle_speed_limit"]),
+            float(settings["velocity_weight"]),
         )
 
     def step_external_collision(self, handle, settings: Mapping[str, object]) -> None:
@@ -573,6 +597,8 @@ class MC2NativeCPUKernelV1:
         position.  This is a reference transaction only and does not replace
         the product solver path.
         """
+        settings = dict(settings)
+        post_step = settings.pop("post_step", None)
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "distance_simulation_power",
@@ -660,6 +686,10 @@ class MC2NativeCPUKernelV1:
             if not isinstance(self_collision, Mapping):
                 raise TypeError("self_collision must be a mapping or None")
             self.step_self_collision(key, self_collision)
+        if post_step is not None:
+            if not isinstance(post_step, Mapping):
+                raise TypeError("post_step must be a mapping or None")
+            self.step_post(key, post_step)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""
@@ -733,6 +763,8 @@ class MC2NativeCPUKernelV1:
     def inspect(self, handle) -> dict:
         key = self._require_handle(handle)
         result = dict(self._module.mc2_domain_cpu_v1_inspect(key))
+        raw = self._module.mc2_domain_cpu_v1_read(key)
+        result["real_velocities"] = np.asarray(raw["real_velocities"], dtype=np.float32)
         result.update({
             "numerical_kernel_ready": False,
             "data_path_only": True,
