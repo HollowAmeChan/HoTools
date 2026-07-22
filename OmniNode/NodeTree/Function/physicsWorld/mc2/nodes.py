@@ -27,12 +27,12 @@ from .parameters import (
 from .presets import MC2_PARTICLE_PRESETS
 from .specs import make_mc2_task_spec
 from .product_authoring import (
-    MC2MeshProductRequestV1,
     make_mc2_mesh_partition_entries,
     make_mc2_mesh_product_request,
     override_mc2_mesh_partition_entries,
     register_mc2_mesh_partition_entries,
 )
+from .product_request import MC2ProductRequestV1
 
 
 def _task_name_output(tasks) -> str:
@@ -1087,20 +1087,20 @@ def physicsMC2Step(
         )
     flattened = _flatten_values(mc2_tasks)
     product_requests = tuple(
-        value for value in flattened if isinstance(value, MC2MeshProductRequestV1)
+        value for value in flattened if isinstance(value, MC2ProductRequestV1)
     )
     if product_requests:
         legacy_values = tuple(
-            value for value in flattened if not isinstance(value, MC2MeshProductRequestV1)
+            value for value in flattened if not isinstance(value, MC2ProductRequestV1)
         )
         if len(product_requests) != 1 or legacy_values:
             raise ValueError(
-                "MC2模拟步一次只接受一个明确Mesh统一域；"
+                "MC2模拟步一次只接受一个明确统一域；"
                 "不得与旧task混用或隐式拆成多个domain"
             )
-        from .product_solver import step_mc2_mesh_product
+        from .product_solver import step_mc2_product
 
-        return step_mc2_mesh_product(
+        return step_mc2_product(
             world,
             product_requests[0],
             settings=settings,

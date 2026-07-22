@@ -44,7 +44,7 @@ MC2_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
         "list[MC2TaskSpec] containing three setup types",
-        "one MC2MeshProductRequestV1 for the fused Mesh product path",
+        "one MC2ProductRequestV1 for one explicit unified domain",
         "PhysicsWorldCache implicit tag mc2.mesh_partition.v1",
         "optional task.anchor_object evaluated world transform",
         "MC2 step time_scale/simulation_frequency/max_simulation_count_per_frame",

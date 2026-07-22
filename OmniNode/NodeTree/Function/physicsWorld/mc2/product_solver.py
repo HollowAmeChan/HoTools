@@ -1,9 +1,10 @@
-"""MC2 Mesh collector request 的统一域产品执行编排。"""
+"""MC2 setup 中立产品请求的统一域执行编排。"""
 
 from __future__ import annotations
 
+from .names import MC2_SETUP_MESH_CLOTH
 from .parameters import MC2SolverSettingsSpec, make_mc2_solver_settings
-from .product_authoring import MC2MeshProductRequestV1
+from .product_request import MC2ProductRequestV1
 from .product_collect import (
     collect_mc2_mesh_product_plan,
     validate_mc2_mesh_product_targets,
@@ -18,7 +19,7 @@ from .product_slot import (
 from ..types import PhysicsWorldCache
 
 
-def _initialize_product_base_poses(request: MC2MeshProductRequestV1) -> int:
+def _initialize_product_base_poses(request: MC2ProductRequestV1) -> int:
     from .setups.mesh_cloth.base_pose import initialize_base_pose_proxy_if_missing
 
     created_count = 0
@@ -28,9 +29,9 @@ def _initialize_product_base_poses(request: MC2MeshProductRequestV1) -> int:
     return created_count
 
 
-def step_mc2_mesh_product(
+def _step_mc2_mesh_product(
     world,
-    request: MC2MeshProductRequestV1,
+    request: MC2ProductRequestV1,
     *,
     settings: MC2SolverSettingsSpec | None = None,
     enabled: bool = True,
@@ -42,8 +43,8 @@ def step_mc2_mesh_product(
         timing.restart()
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 Mesh统一域需要PhysicsWorldCache"
-    if not isinstance(request, MC2MeshProductRequestV1):
-        raise TypeError("request must be MC2MeshProductRequestV1")
+    if request.setup_type != MC2_SETUP_MESH_CLOTH:
+        raise ValueError("Mesh 产品执行器收到不匹配的 setup")
     if settings is None:
         settings = make_mc2_solver_settings()
     if not isinstance(settings, MC2SolverSettingsSpec):
@@ -109,4 +110,29 @@ def step_mc2_mesh_product(
     return world, True, status
 
 
-__all__ = ["step_mc2_mesh_product"]
+def step_mc2_product(
+    world,
+    request: MC2ProductRequestV1,
+    *,
+    settings: MC2SolverSettingsSpec | None = None,
+    enabled: bool = True,
+    timing=None,
+) -> tuple[object, bool, str]:
+    """按 setup 执行一个显式统一域请求；绝不回落到旧 task owner。"""
+
+    if not isinstance(request, MC2ProductRequestV1):
+        raise TypeError("request 必须是 MC2ProductRequestV1")
+    if request.setup_type == MC2_SETUP_MESH_CLOTH:
+        return _step_mc2_mesh_product(
+            world,
+            request,
+            settings=settings,
+            enabled=enabled,
+            timing=timing,
+        )
+    raise NotImplementedError(
+        f"MC2 {request.setup_type} 产品统一域尚未完成 E5-B 接线"
+    )
+
+
+__all__ = ["step_mc2_product"]

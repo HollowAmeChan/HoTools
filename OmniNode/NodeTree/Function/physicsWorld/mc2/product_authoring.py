@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from .names import MC2_SETUP_MESH_CLOTH
 from .parameters import (
@@ -20,10 +20,10 @@ from .partition_specs import (
     collect_mc2_partition_entries,
     make_mc2_partition_entry,
 )
+from .product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
 
 
 MC2_MESH_PARTITION_IMPLICIT_TAG = "mc2.mesh_partition.v1"
-MC2_MESH_FUSION_REQUIRE = "REQUIRE_FUSION"
 
 
 def _flatten_entries(values) -> tuple[MC2PartitionEntry, ...]:
@@ -218,42 +218,6 @@ def _collector_report_text(plan: MC2PartitionCollectorPlan) -> str:
     return "\n".join(lines)
 
 
-@dataclass(frozen=True)
-class MC2MeshProductRequestV1:
-    """collector 节点输出的一个明确 fused Mesh domain 请求。"""
-
-    plan: MC2PartitionCollectorPlan
-    fusion_policy: str
-    report_text: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.plan, MC2PartitionCollectorPlan):
-            raise TypeError("plan must be MC2PartitionCollectorPlan")
-        if self.plan.setup_type != MC2_SETUP_MESH_CLOTH:
-            raise ValueError("Mesh product request setup type mismatch")
-        if self.fusion_policy != MC2_MESH_FUSION_REQUIRE:
-            raise ValueError("当前产品 collector 只允许 Require Fusion")
-        if not self.plan.active_partitions:
-            raise ValueError("Mesh product request requires active partitions")
-        if not str(self.report_text or "").strip():
-            raise ValueError("Mesh product request requires a readable report")
-
-    @property
-    def domain_signature(self) -> str:
-        return self.plan.report.domain_signature
-
-    def debug_dict(self) -> dict:
-        return {
-            "schema": "mc2_mesh_product_request_v1",
-            "fusion_policy": self.fusion_policy,
-            "report_text": self.report_text,
-            "plan": self.plan.report.debug_dict(),
-            "partitions": [
-                partition.debug_dict() for partition in self.plan.partitions
-            ],
-        }
-
-
 def make_mc2_mesh_product_request(
     world,
     explicit_entries=(),
@@ -266,7 +230,7 @@ def make_mc2_mesh_product_request(
     default_enabled: bool = True,
     default_collision_group: int | None = None,
     default_collision_mask: int = 0xFFFFFFFF,
-) -> MC2MeshProductRequestV1:
+) -> MC2ProductRequestV1:
     """解析显式/隐式输入并生成唯一 Require-Fusion domain request。"""
 
     if default_profile is None:
@@ -294,17 +258,15 @@ def make_mc2_mesh_product_request(
     )
     if not plan.active_partitions:
         raise ValueError("MC2 Mesh collector 没有启用的分区")
-    return MC2MeshProductRequestV1(
+    return MC2ProductRequestV1(
         plan=plan,
-        fusion_policy=MC2_MESH_FUSION_REQUIRE,
+        fusion_policy=MC2_FUSION_REQUIRE,
         report_text=_collector_report_text(plan),
     )
 
 
 __all__ = [
-    "MC2_MESH_FUSION_REQUIRE",
     "MC2_MESH_PARTITION_IMPLICIT_TAG",
-    "MC2MeshProductRequestV1",
     "collect_implicit_mc2_mesh_partition_entries",
     "make_mc2_mesh_partition_entries",
     "make_mc2_mesh_product_request",

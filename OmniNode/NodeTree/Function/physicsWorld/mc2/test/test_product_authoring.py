@@ -30,6 +30,9 @@ for package_name, package_path in (
 authoring = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring"
 )
+request_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"
+)
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
@@ -77,6 +80,9 @@ def test_explicit_override_and_implicit_registry_merge_into_one_domain():
 
     explicit = authoring.make_mc2_mesh_partition_entries((sleeve, coat))
     request = authoring.make_mc2_mesh_product_request(world, explicit)
+    assert isinstance(request, request_module.MC2ProductRequestV1)
+    assert request.setup_type == "mesh_cloth"
+    assert request.debug_dict()["schema"] == "mc2_product_request_v1"
     assert len(request.plan.active_partitions) == 2
     assert request.plan.report.merged_partition_count == 1
     assert request.plan.report.explicit_input_count == 2
