@@ -40,6 +40,9 @@ ir = importlib.import_module(
 compiler = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_compile"
 )
+collector = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect"
+)
 fragment_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.static_fragment"
 )
@@ -48,6 +51,9 @@ parameters = importlib.import_module(
 )
 runtime = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"
+)
+partition_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs"
 )
 
 FIXTURE = os.path.join(
@@ -80,6 +86,60 @@ def _effective(*, gravity=5.0, damping=0.05, cloth_mass=0.0, animation_pose_rati
 
 def _fragments():
     return (_fragment(0), _fragment(1))
+
+
+class _FakeData:
+    def __init__(self, pointer):
+        self._pointer = pointer
+
+    def as_pointer(self):
+        return self._pointer
+
+
+class _FakeSource:
+    type = "MESH"
+
+    def __init__(self, pointer):
+        self._pointer = pointer
+        self.name = self.name_full = f"Mesh{pointer}"
+        self.data = _FakeData(pointer + 1000)
+
+    def as_pointer(self):
+        return self._pointer
+
+
+def _domain_draft():
+    entries = (
+        partition_specs.make_mc2_partition_entry(
+            _FakeSource(1),
+            setup_type="mesh_cloth",
+            stable_id="sleeve",
+            profile=parameters.make_mc2_particle_profile(
+                gravity=5.0, damping=0.1, self_collision_mode=2
+            ),
+            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.2),
+            collision_mask=3,
+        ),
+        partition_specs.make_mc2_partition_entry(
+            _FakeSource(2),
+            setup_type="mesh_cloth",
+            stable_id="coat",
+            profile=parameters.make_mc2_particle_profile(
+                gravity=8.0, damping=0.3, self_collision_mode=2
+            ),
+            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.8),
+            collision_group=8,
+            collision_mask=8,
+        ),
+    )
+    plan = partition_specs.collect_mc2_partition_entries(
+        setup_type="mesh_cloth",
+        explicit_entries=entries,
+    )
+    return collector.build_mc2_mesh_domain_draft(
+        plan,
+        domain_id="mc2.domain:test-two",
+    )
 
 
 def test_compiler_builds_one_program_and_parameter_packet() -> None:
@@ -198,6 +258,26 @@ def test_multi_compiler_preserves_partition_parameter_differences_and_filters() 
     assert uint[:, -2:].tolist() == [[1, 1], [2, 2]]
     assert not (int(uint[0, -1]) & int(uint[1, -2]))
     assert not (int(uint[1, -1]) & int(uint[0, -2]))
+
+
+def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
+    draft = _domain_draft()
+    compiled = compiler.compile_mc2_mesh_domain_draft(draft, _fragments())
+    assert compiled.program.partition_ids == draft.partition_ids
+    table = compiled.parameters.particle_parameters
+    mass = table.fields.index("cloth_mass")
+    assert all(abs(float(value) - 0.2) < 1.0e-6 for value in table.values[:3, mass])
+    assert all(abs(float(value) - 0.8) < 1.0e-6 for value in table.values[3:, mass])
+    assert compiled.parameters.partition_uint_parameters.values[:, -2:].tolist() == [
+        [1, 3],
+        [8, 8],
+    ]
+    try:
+        compiler.compile_mc2_mesh_domain_draft(draft, tuple(reversed(_fragments())))
+    except ValueError as exc:
+        assert "fragment order" in str(exc)
+    else:
+        raise AssertionError("fragment/partition row mismatch must fail")
 
 
 def test_compiler_carries_animation_pose_ratio_outside_the_v0_native_abi() -> None:

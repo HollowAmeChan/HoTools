@@ -45,7 +45,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 E1 单 source shadow pipeline 已完成，但它是迁移期验证工具，不是第二个 solver：`source_capture.py` 对真实 Mesh 只做一次静态读取，`static_fragment.py` 和 `domain_compile.py` 只处理冻结 POD，`shadow_pipeline.py` 将新 compiled domain 与 V0 静态构建逐项比较并可采集阶段耗时。只有 `step_mc2` 的内部 `shadow_compile=True` 才会显式启用；默认关闭时不导入、不捕获、不编译、不分配对照数据。V0 context、solve、result 和 writeback 仍是产品唯一权威，shadow report 不进入 Physics World 持久 state。
 
-E2 静态统一域编译核心已完成：有序 Mesh fragment 合并为一个 logical particle field，constraint/primitive 索引在 compiler 内重定位，多个 output target 显式映射；不同 partition 的 runtime 参数保留在统一 SoA，`collision_group/mask` 是可热更新的 uint32 过滤表。`compare_mc2_domain_compile_cache` 只给出 program/layout/parameter 的复用资格和 partition 增删/重排信息，不拥有缓存、task、slot 或 backend。E2 仍未改变当前每对象一个 V0 task 的生产行为，也未运行 fused simulation。
+E2 静态统一域编译核心已完成：有序 Mesh fragment 合并为一个 logical particle field，constraint/primitive 索引在 compiler 内重定位，多个 output target 显式映射；不同 partition 的 runtime 参数保留在统一 SoA，`collision_group/mask` 是可热更新的 uint32 过滤表。resolved partition现在通过`domain_collect.py`生成不含Blender/backend的domain draft，保留逐字段owner/history，并由正式入口校验stable partition与fragment顺序后编译dense参数；参数变化不改变collector domain identity。`compare_mc2_domain_compile_cache`只给出program/layout/parameter复用资格和partition增删/重排信息，不拥有缓存、task、slot或backend。E2仍未改变当前每对象一个V0 task的生产行为，也未运行fused simulation。
 
 E3 单 source CPU reference 已完成。`cpu_backend.py` 先执行无资源 capability gate，再由显式 kernel 协议承接 domain allocation、frame、step、output 和 dispose；适配器拥有 physical index map 与每 partition history，但不读取 Blender、不导入 V0 context、不承担 Physics World slot 或 writeback。`frame_compile.py` 只把冻结 partition snapshot 编译为 `MC2DomainFramePacketV1`，不保留跨帧状态或 object reference。
 

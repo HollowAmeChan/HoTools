@@ -178,6 +178,8 @@ collector domain defaults
 4. 合并结果必须保留来源链和字段 owner，供 debug/status 报告“这个参数来自哪里”。
 5. collector 只生成 resolved intent；完整 particle/constraint runtime arrays 只能由 domain compiler 生成一次，不能由每个 node 或 partition fragment 各复制一份。
 
+实现状态（2026-07-22）：`partition_specs.py`保留`unset`、implicit/explicit优先级、ordered patch、逐字段最终owner与覆盖历史；partition级`collision_group/mask`进入resolved intent，未指定group由domain draft避开显式bit后稳定分配。`domain_collect.py`只把active resolved partitions编成domain identity、per-partition effective参数和过滤draft，不读Blender、不建task/backend；`compile_mc2_mesh_domain_draft`在dense compile前严格校验fragment顺序等于stable partition顺序。不同gravity/damping/cloth mass/filter已证明进入同一个compiled domain，参数修改保持collector domain identity并只改变draft/parameter signature。产品节点、implicit registry读取和fusion policy报告仍属于E5。
+
 ## TaskSpec 与 runtime 编译目标
 
 `MC2TaskSpec` 是 collector 交给 `MC2模拟步` 的已归一化 domain intent，不是编译产物。它可以保留 Blender source/owner 引用供主线程 capture，但不得持有 dense particle arrays、constraint buffers、physical ranges、native handle 或 GPU 资源：
@@ -241,7 +243,7 @@ MC2 MeshCloth任务
 
 因此融合不是 `sources` 数组长度从 1 变成 N，而是引入一个独立的 domain compile/execute/output 流水线。旧 V0 context 在迁移期继续只接受单 source，不得被扩成含混的双模式对象。
 
-E0-E3、P0与P1-B已完成：后端中立合同、单 source shadow、多 source静态compile、单 source CPU reference、原生阶段计时和Mesh source observation cache均有固定证据。它们仍未创建产品fused task或替换Physics World owner。当前执行入口是粒子级隐式/显式覆盖合同，随后进入E4多source fused CPU domain；不能把已编译的多个source翻译成多个旧task来冒充统一域。
+E0-E3、P0与P1-B已完成：后端中立合同、单 source shadow、多 source静态compile、单 source CPU reference、原生阶段计时和Mesh source observation cache均有固定证据。粒子级隐式/显式覆盖的resolved intent、逐字段provenance、collision group/mask和domain draft到dense parameter编译入口也已闭环，但尚未创建产品collector或fused task。当前执行入口是E4多source capture/fragment cache与fused CPU domain；不能把已编译的多个source翻译成多个旧task来冒充统一域。
 
 ## 统一粒子场流水线
 

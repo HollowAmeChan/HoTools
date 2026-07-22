@@ -561,6 +561,33 @@ def compile_mc2_mesh_static_fragment(
     )
 
 
+def compile_mc2_mesh_domain_draft(
+    draft,
+    fragments,
+) -> MC2MeshCompiledDomainV1:
+    """Compile fragments only when their order matches resolved authoring intent."""
+
+    from .domain_collect import MC2MeshDomainDraftV1
+
+    if not isinstance(draft, MC2MeshDomainDraftV1):
+        raise TypeError("draft must be MC2MeshDomainDraftV1")
+    fragments = tuple(fragments)
+    fragment_ids = tuple(
+        str(getattr(fragment, "partition_id", "")) for fragment in fragments
+    )
+    if fragment_ids != draft.partition_ids:
+        raise ValueError(
+            "Mesh domain fragment order does not match resolved partition ids"
+        )
+    return compile_mc2_mesh_static_fragments(
+        fragments,
+        draft.effectives,
+        domain_id=draft.domain_id,
+        collision_groups=draft.collision_groups,
+        collision_masks=draft.collision_masks,
+    )
+
+
 def compare_mc2_domain_compile_cache(
     previous: MC2MeshCompiledDomainV1 | None,
     current: MC2MeshCompiledDomainV1,
@@ -606,6 +633,7 @@ __all__ = [
     "MC2DomainCompileCacheReportV1",
     "MC2MeshCompiledDomainV1",
     "compare_mc2_domain_compile_cache",
+    "compile_mc2_mesh_domain_draft",
     "compile_mc2_mesh_static_fragment",
     "compile_mc2_mesh_static_fragments",
 ]

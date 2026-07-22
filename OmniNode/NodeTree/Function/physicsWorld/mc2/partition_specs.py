@@ -32,7 +32,12 @@ _TASK_FIELDS = frozenset(field.name for field in fields(MC2TaskParametersSpec))
 _SETUP_FIELDS = frozenset(
     field.name for field in fields(MC2SetupOptionsSpec) if field.name != "setup_type"
 )
-_PARTITION_FIELDS = frozenset(("anchor_object", "enabled"))
+_PARTITION_FIELDS = frozenset((
+    "anchor_object",
+    "enabled",
+    "collision_group",
+    "collision_mask",
+))
 _ENTRY_ORIGINS = frozenset(("explicit", "implicit"))
 _PROFILE_CURVE_FIELDS = frozenset((
     "damping",
@@ -111,10 +116,36 @@ def _normalize_task_patch(
 def _normalize_partition_patch(
     values: tuple[tuple[str, object], ...],
 ) -> tuple[tuple[str, object], ...]:
+    normalized = []
     for name, value in values:
         if name == "enabled" and type(value) is not bool:
             raise TypeError("partition.enabled patch 必须是 bool")
-    return values
+        if name == "collision_group":
+            value = _collision_group(value)
+        elif name == "collision_mask":
+            value = _collision_mask(value)
+        normalized.append((name, value))
+    return tuple(normalized)
+
+
+def _collision_group(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("partition.collision_group 必须是单个uint32 bit或None")
+    result = int(value)
+    if not 1 <= result <= 0x80000000 or result & (result - 1):
+        raise ValueError("partition.collision_group 必须是单个正uint32 bit")
+    return result
+
+
+def _collision_mask(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("partition.collision_mask 必须是uint32")
+    result = int(value)
+    if not 0 <= result <= 0xFFFFFFFF:
+        raise ValueError("partition.collision_mask 必须位于0..0xFFFFFFFF")
+    return result
 
 
 def _debug_value(value):
@@ -223,6 +254,8 @@ class MC2PartitionEntry:
     setup_options: object = MC2_UNSET
     anchor_object: object = MC2_UNSET
     enabled: object = MC2_UNSET
+    collision_group: object = MC2_UNSET
+    collision_mask: object = MC2_UNSET
     patches: tuple[MC2PartitionPatchSpec, ...] = ()
 
     def __post_init__(self) -> None:
@@ -260,6 +293,10 @@ class MC2PartitionEntry:
                 raise ValueError("MC2 partition setup_options 与 setup_type 不一致")
         if self.enabled is not MC2_UNSET and type(self.enabled) is not bool:
             raise TypeError("MC2 partition enabled 必须是 bool 或 unset")
+        if self.collision_group is not MC2_UNSET:
+            _collision_group(self.collision_group)
+        if self.collision_mask is not MC2_UNSET:
+            _collision_mask(self.collision_mask)
         if not isinstance(self.patches, tuple) or any(
             not isinstance(value, MC2PartitionPatchSpec) for value in self.patches
         ):
@@ -279,6 +316,8 @@ class MC2PartitionEntry:
             "setup_options": _debug_value(self.setup_options),
             "anchor_object": _debug_value(self.anchor_object),
             "enabled": _debug_value(self.enabled),
+            "collision_group": _debug_value(self.collision_group),
+            "collision_mask": _debug_value(self.collision_mask),
             "patches": [patch.debug_dict() for patch in self.patches],
         })
 
@@ -300,6 +339,8 @@ def make_mc2_partition_entry(
     setup_options=MC2_UNSET,
     anchor_object=MC2_UNSET,
     enabled=MC2_UNSET,
+    collision_group=MC2_UNSET,
+    collision_mask=MC2_UNSET,
     patches=(),
 ) -> MC2PartitionEntry:
     normalized_setup = normalize_mc2_setup_type(setup_type)
@@ -314,6 +355,8 @@ def make_mc2_partition_entry(
         setup_options=setup_options,
         anchor_object=anchor_object,
         enabled=enabled,
+        collision_group=collision_group,
+        collision_mask=collision_mask,
         patches=tuple(patches),
     )
 
@@ -340,8 +383,11 @@ class MC2ResolvedPartitionSpec:
     setup_options: MC2SetupOptionsSpec
     anchor_object: object | None
     enabled: bool
+    collision_group: int | None
+    collision_mask: int
     origins: tuple[str, ...]
     field_sources: tuple[tuple[str, str], ...]
+    field_history: tuple[tuple[str, tuple[str, ...]], ...]
 
     def __post_init__(self) -> None:
         if self.partition_index < 0:
@@ -354,9 +400,22 @@ class MC2ResolvedPartitionSpec:
             raise TypeError("resolved setup_options 类型错误")
         if type(self.enabled) is not bool:
             raise TypeError("resolved enabled 必须是 bool")
+        _collision_group(self.collision_group)
+        _collision_mask(self.collision_mask)
 
     def field_source(self, path: str) -> str | None:
-        return dict(self.field_sources).get(str(path))
+        target = str(path)
+        for field_path, owner in self.field_sources:
+            if field_path == target:
+                return owner
+        return None
+
+    def field_source_history(self, path: str) -> tuple[str, ...]:
+        target = str(path)
+        for field_path, owners in self.field_history:
+            if field_path == target:
+                return owners
+        return ()
 
     def debug_dict(self) -> dict:
         return {
@@ -369,8 +428,13 @@ class MC2ResolvedPartitionSpec:
             "setup_options_signature": self.setup_options.signature,
             "anchor": _debug_value(self.anchor_object),
             "enabled": self.enabled,
+            "collision_group": self.collision_group,
+            "collision_mask": self.collision_mask,
             "origins": list(self.origins),
             "field_sources": dict(self.field_sources),
+            "field_history": {
+                path: list(owners) for path, owners in self.field_history
+            },
         }
 
 
@@ -441,10 +505,21 @@ def _index_unique(entries: list[MC2PartitionEntry]) -> tuple[dict[str, MC2Partit
             order.append(entry.stable_id)
             continue
         if previous.signature != entry.signature:
+            previous_values = _entry_field_assignments(previous)
+            current_values = _entry_field_assignments(entry)
+            differing_paths = sorted(
+                path
+                for path in set(previous_values) | set(current_values)
+                if previous_values.get(path, MC2_UNSET)
+                != current_values.get(path, MC2_UNSET)
+            )
+            if not differing_paths:
+                differing_paths = ["entry"]
             raise MC2PartitionConflictError(
                 "duplicate_explicit" if entry.origin == "explicit" else "duplicate_implicit",
                 entry.stable_id,
-                f"{previous.producer!r} 与 {entry.producer!r} 提供不同定义",
+                f"字段 {differing_paths!r} 由 {previous.producer!r} 与 "
+                f"{entry.producer!r} 重复定义",
             )
     return indexed, order
 
@@ -454,43 +529,103 @@ def _source_tuple(source) -> tuple:
     return tuple(sorted(token.items()))
 
 
+def _entry_field_assignments(entry: MC2PartitionEntry) -> dict[str, object]:
+    result = {}
+    if entry.profile is not MC2_UNSET:
+        result.update({
+            f"profile.{field.name}": _debug_value(getattr(entry.profile, field.name))
+            for field in fields(MC2ParticleProfileSpec)
+        })
+    if entry.task_parameters is not MC2_UNSET:
+        result.update({
+            f"task.{field.name}": _debug_value(
+                getattr(entry.task_parameters, field.name)
+            )
+            for field in fields(MC2TaskParametersSpec)
+        })
+    if entry.setup_options is not MC2_UNSET:
+        result.update({
+            f"setup.{field.name}": _debug_value(
+                getattr(entry.setup_options, field.name)
+            )
+            for field in fields(MC2SetupOptionsSpec)
+            if field.name != "setup_type"
+        })
+    for name in _PARTITION_FIELDS:
+        value = getattr(entry, name)
+        if value is not MC2_UNSET:
+            result[f"partition.{name}"] = _debug_value(value)
+    for patch in entry.patches:
+        for namespace, values in (
+            ("profile", patch.profile_values),
+            ("task", patch.task_values),
+            ("setup", patch.setup_values),
+            ("partition", patch.partition_values),
+        ):
+            for name, value in values:
+                result[f"{namespace}.{name}"] = _debug_value(value)
+    return result
+
+
+def _record_field_owner(
+    field_sources: dict[str, str],
+    field_history: dict[str, list[str]],
+    path: str,
+    owner: str,
+) -> None:
+    field_sources[path] = owner
+    field_history.setdefault(path, []).append(owner)
+
+
 def _apply_entry(
     state: dict,
     field_sources: dict[str, str],
+    field_history: dict[str, list[str]],
     entry: MC2PartitionEntry,
 ) -> None:
     owner = f"{entry.origin}:{entry.producer}"
     if entry.profile is not MC2_UNSET:
         state["profile"] = entry.profile
         for name in _PROFILE_FIELDS:
-            field_sources[f"profile.{name}"] = owner
+            _record_field_owner(
+                field_sources, field_history, f"profile.{name}", owner
+            )
     if entry.task_parameters is not MC2_UNSET:
         state["task_parameters"] = entry.task_parameters
         for name in _TASK_FIELDS:
-            field_sources[f"task.{name}"] = owner
+            _record_field_owner(
+                field_sources, field_history, f"task.{name}", owner
+            )
     if entry.setup_options is not MC2_UNSET:
         state["setup_options"] = entry.setup_options
         for name in _SETUP_FIELDS:
-            field_sources[f"setup.{name}"] = owner
-    if entry.anchor_object is not MC2_UNSET:
-        state["anchor_object"] = entry.anchor_object
-        field_sources["partition.anchor_object"] = owner
-    if entry.enabled is not MC2_UNSET:
-        state["enabled"] = entry.enabled
-        field_sources["partition.enabled"] = owner
+            _record_field_owner(
+                field_sources, field_history, f"setup.{name}", owner
+            )
+    for name in _PARTITION_FIELDS:
+        value = getattr(entry, name)
+        if value is not MC2_UNSET:
+            state[name] = value
+            _record_field_owner(
+                field_sources, field_history, f"partition.{name}", owner
+            )
 
     for patch in entry.patches:
         patch_owner = f"override:{patch.producer}"
         if patch.profile_values:
             state["profile"] = replace(state["profile"], **dict(patch.profile_values))
             for name, _value in patch.profile_values:
-                field_sources[f"profile.{name}"] = patch_owner
+                _record_field_owner(
+                    field_sources, field_history, f"profile.{name}", patch_owner
+                )
         if patch.task_values:
             state["task_parameters"] = replace(
                 state["task_parameters"], **dict(patch.task_values)
             )
             for name, _value in patch.task_values:
-                field_sources[f"task.{name}"] = patch_owner
+                _record_field_owner(
+                    field_sources, field_history, f"task.{name}", patch_owner
+                )
         if patch.setup_values:
             setup_values = state["setup_options"].debug_dict()
             setup_values.update(dict(patch.setup_values))
@@ -500,10 +635,14 @@ def _apply_entry(
                 **setup_values,
             )
             for name, _value in patch.setup_values:
-                field_sources[f"setup.{name}"] = patch_owner
+                _record_field_owner(
+                    field_sources, field_history, f"setup.{name}", patch_owner
+                )
         for name, value in patch.partition_values:
             state[name] = value
-            field_sources[f"partition.{name}"] = patch_owner
+            _record_field_owner(
+                field_sources, field_history, f"partition.{name}", patch_owner
+            )
 
 
 def collect_mc2_partition_entries(
@@ -516,6 +655,8 @@ def collect_mc2_partition_entries(
     default_setup_options: MC2SetupOptionsSpec | None = None,
     default_anchor_object=None,
     default_enabled: bool = True,
+    default_collision_group: int | None = None,
+    default_collision_mask: int = 0xFFFFFFFF,
 ) -> MC2PartitionCollectorPlan:
     """Resolve collector inputs without creating tasks, slots, or native state."""
 
@@ -536,6 +677,8 @@ def collect_mc2_partition_entries(
         raise ValueError("default_setup_options 与 collector setup_type 不一致")
     if type(default_enabled) is not bool:
         raise TypeError("default_enabled 必须是 bool")
+    default_collision_group = _collision_group(default_collision_group)
+    default_collision_mask = _collision_mask(default_collision_mask)
 
     implicit = _flatten_entries(implicit_entries, expected_origin="implicit")
     explicit = _flatten_entries(explicit_entries, expected_origin="explicit")
@@ -575,6 +718,8 @@ def collect_mc2_partition_entries(
             "setup_options": default_setup_options,
             "anchor_object": default_anchor_object,
             "enabled": default_enabled,
+            "collision_group": default_collision_group,
+            "collision_mask": default_collision_mask,
         }
         field_sources = {
             **{f"profile.{name}": "collector.default" for name in _PROFILE_FIELDS},
@@ -582,9 +727,14 @@ def collect_mc2_partition_entries(
             **{f"setup.{name}": "collector.default" for name in _SETUP_FIELDS},
             "partition.anchor_object": "collector.default",
             "partition.enabled": "collector.default",
+            "partition.collision_group": "collector.default",
+            "partition.collision_mask": "collector.default",
+        }
+        field_history = {
+            path: [owner] for path, owner in field_sources.items()
         }
         for entry in entries:
-            _apply_entry(state, field_sources, entry)
+            _apply_entry(state, field_sources, field_history, entry)
         if state["setup_options"].setup_type != normalized_setup:
             raise MC2PartitionConflictError(
                 "setup_mismatch", stable_id, "patch 产生了不匹配的 setup options"
@@ -602,8 +752,16 @@ def collect_mc2_partition_entries(
             setup_options=state["setup_options"],
             anchor_object=state["anchor_object"],
             enabled=state["enabled"],
+            collision_group=_collision_group(state["collision_group"]),
+            collision_mask=_collision_mask(state["collision_mask"]),
             origins=tuple(f"{entry.origin}:{entry.producer}" for entry in entries),
             field_sources=tuple(sorted(field_sources.items())),
+            field_history=tuple(
+                sorted(
+                    (path, tuple(owners))
+                    for path, owners in field_history.items()
+                )
+            ),
         ))
 
     domain_signature = _signature({

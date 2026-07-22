@@ -108,6 +108,11 @@ def test_unset_keeps_implicit_values_and_sparse_patch_tracks_owner() -> None:
     assert resolved.profile.collision_friction == 0.2
     assert resolved.field_source("profile.gravity") == "override:gravity_override"
     assert resolved.field_source("profile.collision_friction") == "implicit:panel"
+    assert resolved.field_source_history("profile.gravity") == (
+        "collector.default",
+        "implicit:panel",
+        "override:gravity_override",
+    )
     assert plan.report.merged_partition_count == 1
 
 
@@ -181,6 +186,8 @@ def test_duplicate_explicit_definition_is_rejected() -> None:
     except partitions.MC2PartitionConflictError as exc:
         assert exc.kind == "duplicate_explicit"
         assert exc.stable_id == "duplicate"
+        assert "partition.enabled" in exc.detail
+        assert "first" in exc.detail and "second" in exc.detail
     else:
         raise AssertionError("different explicit definitions must conflict")
 
@@ -264,6 +271,46 @@ def test_sparse_patch_uses_existing_parameter_normalization() -> None:
     assert resolved.profile.gravity == 0.0
     assert resolved.task_parameters.world_inertia == 1.0
     assert resolved.setup_options.collided_by_groups == 0xFFFF
+
+
+def test_partition_collision_filter_supports_auto_group_and_sparse_override() -> None:
+    first = _entry(FakeMeshSource(801), stable_id="auto")
+    second = _entry(
+        FakeMeshSource(802),
+        stable_id="explicit",
+        collision_group=8,
+        collision_mask=8,
+    ).with_patch(partitions.make_mc2_partition_patch(
+        partition_values={"collision_mask": 9},
+        producer="self_filter",
+    ))
+    plan = partitions.collect_mc2_partition_entries(
+        setup_type=names.MC2_SETUP_MESH_CLOTH,
+        explicit_entries=(first, second),
+    )
+    assert plan.partitions[0].collision_group is None
+    assert plan.partitions[0].collision_mask == 0xFFFFFFFF
+    assert plan.partitions[1].collision_group == 8
+    assert plan.partitions[1].collision_mask == 9
+    assert plan.partitions[1].field_source_history("partition.collision_mask") == (
+        "collector.default",
+        "explicit:mc2.partition_source",
+        "override:self_filter",
+    )
+
+
+def test_partition_collision_filter_rejects_non_bit_group_and_invalid_mask() -> None:
+    for values in (
+        {"collision_group": 3},
+        {"collision_mask": -1},
+        {"collision_mask": True},
+    ):
+        try:
+            _entry(FakeMeshSource(803), **values)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError(f"invalid partition filter must fail: {values!r}")
 
 
 if __name__ == "__main__":
