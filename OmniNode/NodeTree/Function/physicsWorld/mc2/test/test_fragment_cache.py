@@ -97,6 +97,22 @@ def test_gravity_is_part_of_fragment_cache_identity():
     assert changed.hit_count == 0 and changed.build_count == 2
 
 
+def test_partition_gravity_directions_invalidate_only_changed_fragment():
+    snapshots = _snapshots()
+    builder = _CountingBuilder()
+    cache = cache_module.MC2MeshFragmentCacheV1(builder)
+    first = cache.stage(
+        snapshots,
+        world_gravity_directions=((0.0, -1.0, 0.0), (0.0, -1.0, 0.0)),
+    )
+    cache.commit(first)
+    changed = cache.stage(
+        snapshots,
+        world_gravity_directions=((0.0, -1.0, 0.0), (1.0, 0.0, 0.0)),
+    )
+    assert changed.hit_count == 1 and changed.build_count == 1
+
+
 def test_failed_stage_does_not_publish_partial_fragments():
     snapshots = _snapshots()
     builder = _CountingBuilder()

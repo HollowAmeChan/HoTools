@@ -111,6 +111,7 @@ class MC2MeshFusedCPUOwnerV1:
         snapshots,
         *,
         world_gravity_direction=(0.0, -1.0, 0.0),
+        world_gravity_directions=None,
     ) -> MC2FusedCPUOwnerSyncReportV1:
         if not isinstance(draft, MC2MeshDomainDraftV1):
             raise TypeError("draft must be MC2MeshDomainDraftV1")
@@ -126,6 +127,7 @@ class MC2MeshFusedCPUOwnerV1:
         batch = self._fragment_cache.stage(
             snapshots,
             world_gravity_direction=world_gravity_direction,
+            world_gravity_directions=world_gravity_directions,
         )
         current = compile_mc2_mesh_domain_draft(draft, batch.fragments)
         cache_report = compare_mc2_domain_compile_cache(self._compiled, current)

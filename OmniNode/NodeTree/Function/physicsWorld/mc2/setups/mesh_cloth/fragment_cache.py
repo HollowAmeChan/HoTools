@@ -78,6 +78,7 @@ class MC2MeshFragmentCacheV1:
         snapshots,
         *,
         world_gravity_direction=(0.0, -1.0, 0.0),
+        world_gravity_directions=None,
     ) -> MC2MeshFragmentCacheBatchV1:
         snapshots = tuple(snapshots)
         if not snapshots:
@@ -91,12 +92,22 @@ class MC2MeshFragmentCacheV1:
         if len(set(partition_ids)) != len(partition_ids):
             raise ValueError("Mesh fragment cache batch partition ids must be unique")
 
-        gravity = _gravity_key(world_gravity_direction)
+        if world_gravity_directions is None:
+            gravities = tuple(
+                _gravity_key(world_gravity_direction) for _snapshot in snapshots
+            )
+        else:
+            values = tuple(world_gravity_directions)
+            if len(values) != len(snapshots):
+                raise ValueError(
+                    "world_gravity_directions must match the snapshot count"
+                )
+            gravities = tuple(_gravity_key(value) for value in values)
         fragments = []
         keys = []
         hits = []
         pending: dict[FragmentCacheKey, MC2MeshStaticFragmentV1] = {}
-        for snapshot in snapshots:
+        for snapshot, gravity in zip(snapshots, gravities):
             key = (snapshot.static_signature, gravity)
             fragment = self._entries.get(key)
             hit = fragment is not None

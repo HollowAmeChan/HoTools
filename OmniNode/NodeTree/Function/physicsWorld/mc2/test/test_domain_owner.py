@@ -222,6 +222,23 @@ def test_parameter_change_stages_replacement_until_hot_update_abi_exists():
     assert len(kernel.created) == 2 and len(kernel.disposed) == 1
 
 
+def test_partition_gravity_direction_change_rebuilds_only_its_fragment():
+    kernel = _FakeKernel()
+    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    snapshots = _snapshots()
+    owner.sync(
+        _draft(), snapshots,
+        world_gravity_directions=((0.0, -1.0, 0.0), (0.0, -1.0, 0.0)),
+    )
+    report = owner.sync(
+        _draft(), snapshots,
+        world_gravity_directions=((1.0, 0.0, 0.0), (0.0, -1.0, 0.0)),
+    )
+    assert report.action == "replaced"
+    assert report.fragment_cache_hits == 1 and report.fragment_builds == 1
+    assert not report.compile_cache.program_cache_hit
+
+
 def test_native_create_failure_preserves_live_domain_and_cache_commit():
     kernel = _FakeKernel()
     owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
