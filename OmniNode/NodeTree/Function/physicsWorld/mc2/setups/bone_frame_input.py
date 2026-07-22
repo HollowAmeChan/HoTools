@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import bpy
 import mathutils
 import numpy as np
@@ -18,6 +20,41 @@ from ..topology import MC2TopologySpec, thaw_mc2_topology_payload
 _TRANSFORM_EPSILON = 1.0e-8
 _WRITEBACK_MATCH_EPSILON = 1.0e-6
 MC2_BONE_FRAME_STATE_KEY = "_mc2_bone_frame_state_v0"
+
+
+@dataclass(frozen=True)
+class _MC2BoneFrameIntentV1:
+    partition_id: str
+    setup_type: str
+    sources: tuple[object, ...]
+    anchor_owner: object
+
+
+def _task_frame_intent(task: MC2TaskSpec) -> _MC2BoneFrameIntentV1:
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task must be MC2TaskSpec")
+    return _MC2BoneFrameIntentV1(
+        partition_id=task.task_id,
+        setup_type=task.setup_type,
+        sources=task.sources,
+        anchor_owner=task,
+    )
+
+
+def _partition_frame_intent(partition) -> _MC2BoneFrameIntentV1:
+    from ..partition_specs import MC2ResolvedPartitionSpec
+    from ..product_bone_authoring import MC2BonePartitionSourceV1
+
+    if not isinstance(partition, MC2ResolvedPartitionSpec):
+        raise TypeError("partition must be MC2ResolvedPartitionSpec")
+    if not isinstance(partition.source, MC2BonePartitionSourceV1):
+        raise TypeError("Bone product partition source is invalid")
+    return _MC2BoneFrameIntentV1(
+        partition_id=partition.stable_id,
+        setup_type=partition.setup_type,
+        sources=partition.source.task_sources,
+        anchor_owner=partition,
+    )
 
 
 def _matrix_matches(left, right, epsilon: float = _WRITEBACK_MATCH_EPSILON) -> bool:
@@ -157,7 +194,10 @@ def _bone_armature_component_pose(armature):
         zero_epsilon=_TRANSFORM_EPSILON,
     )
     position = tuple(float(matrix_world[row][3]) for row in range(3))
-    return position, rotation_xyzw, signed_scale
+    return position, rotation_xyzw, signed_scale, np.ascontiguousarray(
+        linear,
+        dtype=np.float32,
+    )
 
 
 def build_mc2_bone_frame_input(
@@ -168,24 +208,62 @@ def build_mc2_bone_frame_input(
     generation: int,
     world=None,
 ) -> MC2FrameInputSpec:
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
+    return _build_mc2_bone_frame_input(
+        _task_frame_intent(task),
+        topology,
+        frame=frame,
+        generation=generation,
+        world=world,
+    )
+
+
+def build_mc2_bone_partition_frame_input(
+    partition,
+    topology: MC2TopologySpec,
+    *,
+    frame: int,
+    generation: int,
+    world=None,
+) -> MC2FrameInputSpec:
+    """读取 resolved Bone partition，且不创建 MC2TaskSpec 或 V0 context。"""
+
+    return _build_mc2_bone_frame_input(
+        _partition_frame_intent(partition),
+        topology,
+        frame=frame,
+        generation=generation,
+        world=world,
+    )
+
+
+def _build_mc2_bone_frame_input(
+    intent: _MC2BoneFrameIntentV1,
+    topology: MC2TopologySpec,
+    *,
+    frame: int,
+    generation: int,
+    world=None,
+) -> MC2FrameInputSpec:
     if not isinstance(topology, MC2TopologySpec):
         raise TypeError("topology must be MC2TopologySpec")
-    if task.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+    if intent.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
         raise ValueError("bone frame input requires BoneCloth or BoneSpring")
-    if topology.task_id != task.task_id or topology.setup_type != task.setup_type:
+    if (
+        topology.task_id != intent.partition_id
+        or topology.setup_type != intent.setup_type
+    ):
         raise ValueError("bone frame task/topology identity mismatch")
 
     positions = []
     pose_matrices = []
     component_pose = None
+    component_world_linear = None
     component_poses = {}
     resolved_pose_matrices = {}
     reconstructed_bones = set()
     for source_topology in topology.sources:
         source_index = int(source_topology.source_index)
-        armature = _armature_from_source(task.sources[source_index])
+        armature = _armature_from_source(intent.sources[source_index])
         if not _live_armature(armature):
             raise ValueError("bone frame source armature is unavailable")
         armature_key = int(armature.as_pointer())
@@ -193,7 +271,12 @@ def build_mc2_bone_frame_input(
         if component_values is None:
             component_values = _bone_armature_component_pose(armature)
             component_poses[armature_key] = component_values
-        component_position, component_rotation_xyzw, component_scale = component_values
+        (
+            component_position,
+            component_rotation_xyzw,
+            component_scale,
+            source_world_linear,
+        ) = component_values
         source_component_pose = MC2CenterFramePoseSpec(
             frame=int(frame),
             generation=int(generation),
@@ -204,7 +287,13 @@ def build_mc2_bone_frame_input(
         )
         if component_pose is not None and component_pose != source_component_pose:
             raise ValueError("bone frame sources do not share one component pose")
+        if component_world_linear is not None and not np.array_equal(
+            component_world_linear,
+            source_world_linear,
+        ):
+            raise ValueError("bone frame sources do not share one component linear transform")
         component_pose = source_component_pose
+        component_world_linear = source_world_linear
         names = source_topology.bone_names
         if not names:
             payload = thaw_mc2_topology_payload(source_topology.payload)
@@ -271,17 +360,18 @@ def build_mc2_bone_frame_input(
             pass
         component_pose = attach_mc2_task_anchor(
             component_pose,
-            task,
+            intent.anchor_owner,
             depsgraph=depsgraph,
         )
     return make_mc2_frame_input(
-        task_id=task.task_id,
+        task_id=intent.partition_id,
         topology_signature=topology.topology_signature,
         frame=frame,
         generation=generation,
         world_positions=np.asarray(positions, dtype=np.float32),
         world_rotations_xyzw=None,
         raw_pose_matrices=np.asarray(pose_matrices, dtype=np.float32),
+        source_world_linear=component_world_linear,
         center_frame_pose=component_pose,
         negative_scale_sign=(
             -1.0
@@ -295,6 +385,7 @@ def build_mc2_bone_frame_input(
 __all__ = [
     "MC2_BONE_FRAME_STATE_KEY",
     "build_mc2_bone_frame_input",
+    "build_mc2_bone_partition_frame_input",
     "clear_mc2_bone_frame_state",
     "stage_mc2_bone_writeback_expectations",
 ]

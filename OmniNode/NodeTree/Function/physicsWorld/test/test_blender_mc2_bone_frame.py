@@ -15,6 +15,24 @@ HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\script
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
+PYTHON_ABI = "py313" if sys.version_info >= (3, 13) else "py311"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
+
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+        or module_name == "hotools_native"
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+sys.path[:] = [
+    value
+    for value in sys.path
+    if os.path.normcase(os.path.abspath(value or os.curdir))
+    != os.path.normcase(os.path.abspath(NATIVE_PACKAGE))
+]
+sys.path.insert(0, NATIVE_PACKAGE)
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
@@ -31,11 +49,33 @@ for package_name, package_path in (
 names = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names")
 specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
 topology_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology")
+parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
+product_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+)
+domain_collect = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect"
+)
+domain_compile = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_compile"
+)
+bone_fragment = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.static_fragment"
+)
+product_bone_frame = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_frame"
+)
 bone_frame = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
 )
 solver = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver")
 world_types = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.types")
+hotools_native = importlib.import_module("hotools_native")
+
+print(f"MC2 current source: {bone_frame.__file__}")
+print(f"MC2 current native: {hotools_native.__file__}")
 
 
 def _armature():
@@ -102,6 +142,75 @@ try:
             slot.data["native_context"].read()[0],
             frame_input.world_positions,
         )
+
+    product_request = product_authoring.make_mc2_bone_cloth_product_request(
+        [{
+            "armature": armature,
+            "root_bone": "Root",
+            "bones": ("Root", "Child"),
+        }],
+        setup_options=parameters.make_mc2_setup_options(
+            names.MC2_SETUP_BONE_CLOTH,
+            connection_mode=0,
+        ),
+    )
+    partition = product_request.plan.active_partitions[0]
+    fingerprint, raw_snapshots = topology_module.prepare_static_inputs_for_partition(
+        partition
+    )
+    product_topology = topology_module.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=raw_snapshots,
+    )
+    fragment = bone_fragment.build_mc2_bone_static_fragment(
+        partition,
+        fingerprint,
+        product_topology,
+        raw_snapshots,
+    )
+    draft = domain_collect.build_mc2_domain_draft(product_request.plan)
+    compiled = domain_compile.compile_mc2_domain_draft(draft, (fragment,))
+    product_input = bone_frame.build_mc2_bone_partition_frame_input(
+        partition,
+        product_topology,
+        frame=12,
+        generation=4,
+    )
+    oracle_task = specs.make_mc2_task_spec(
+        names.MC2_SETUP_BONE_CLOTH,
+        partition.source.task_sources,
+        profile=partition.profile,
+        setup_options=partition.setup_options,
+        task_parameters=partition.task_parameters,
+    )
+    oracle_topology = topology_module.build_mc2_topology_spec(oracle_task)
+    oracle_input = bone_frame.build_mc2_bone_frame_input(
+        oracle_task,
+        oracle_topology,
+        frame=12,
+        generation=4,
+    )
+    np.testing.assert_allclose(
+        product_input.world_positions,
+        oracle_input.world_positions,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        product_input.raw_pose_matrices,
+        oracle_input.raw_pose_matrices,
+        rtol=0.0,
+        atol=0.0,
+    )
+    packet, product_snapshots = product_bone_frame.compile_mc2_bone_product_frame(
+        compiled,
+        (product_input,),
+    )
+    assert packet.frame == 12 and packet.generation == 4
+    assert packet.animated_base_world_positions.shape == (2, 3)
+    assert packet.animated_base_world_rotations.shape == (2, 4)
+    assert len(product_snapshots) == 1
 
     task = specs.make_mc2_task_spec(
         names.MC2_SETUP_BONE_CLOTH,

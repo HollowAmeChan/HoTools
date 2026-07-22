@@ -60,6 +60,15 @@ domain_owner = importlib.import_module(
 cpu_kernel = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
 )
+center_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state"
+)
+frame_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
+)
+product_bone_frame = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_frame"
+)
 
 
 IDENTITY = (
@@ -390,6 +399,45 @@ def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
     assert compiled.program.particle_count == 4
     assert compiled.program.partition_ids == draft.partition_ids
     assert len({target.target_id for target in compiled.program.output_targets}) == 2
+
+    frame_inputs = []
+    for fragment in fragments:
+        particle_count = fragment.final_proxy.vertex_count
+        frame_inputs.append(frame_state.make_mc2_frame_input(
+            task_id=fragment.partition_id,
+            topology_signature=fragment.topology.topology_signature,
+            frame=12,
+            generation=3,
+            world_positions=fragment.final_proxy.local_positions,
+            world_rotations_xyzw=None,
+            raw_pose_matrices=np.tile(
+                np.eye(3, dtype=np.float32),
+                (particle_count, 1, 1),
+            ),
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=center_state.MC2CenterFramePoseSpec(
+                frame=12,
+                generation=3,
+                component_identity=f"object:{armature.as_pointer()}",
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        ))
+    packet, frame_snapshots = product_bone_frame.compile_mc2_bone_product_frame(
+        compiled,
+        frame_inputs,
+    )
+    assert packet.frame == 12 and packet.generation == 3
+    assert packet.animated_base_world_positions.shape == (4, 3)
+    assert packet.animated_base_world_rotations.shape == (4, 4)
+    assert len(frame_snapshots) == 2
+    np.testing.assert_allclose(
+        np.linalg.norm(packet.animated_base_world_rotations, axis=1),
+        np.ones(4),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    )
 
     owner = domain_owner.MC2FusedCPUOwnerV1(cpu_kernel.MC2NativeCPUKernelV1())
     try:
