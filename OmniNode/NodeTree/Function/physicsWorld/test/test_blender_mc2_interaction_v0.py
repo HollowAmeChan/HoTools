@@ -48,6 +48,9 @@ static_build = importlib.import_module(
 frame_state = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
+center_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state"
+)
 native_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context"
 )
@@ -62,8 +65,24 @@ world_types = importlib.import_module(
 )
 
 
-def _grid(name: str, z: float, *, size: int = 4, spacing: float = 0.02):
-    vertices = [(x * spacing, y * spacing, z) for y in range(size) for x in range(size)]
+def _grid(
+    name: str,
+    z: float,
+    *,
+    size: int = 4,
+    spacing: float = 0.02,
+    x_slope: float = 0.0,
+):
+    center_x = (size - 1) * 0.5
+    vertices = [
+        (
+            x * spacing,
+            y * spacing,
+            z + (x - center_x) * spacing * x_slope,
+        )
+        for y in range(size)
+        for x in range(size)
+    ]
     faces = []
     for y in range(size - 1):
         for x in range(size - 1):
@@ -146,24 +165,82 @@ def _frame_input(bundle, frame):
         world_positions=positions,
         world_rotations_xyzw=rotations,
         source_world_linear=np.eye(3, dtype=np.float32),
+        center_frame_pose=center_state.MC2CenterFramePoseSpec(
+            frame=frame,
+            generation=1,
+            component_identity=task.task_id,
+            component_world_position=(0.0, 0.0, 0.0),
+            component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            component_world_scale=(1.0, 1.0, 1.0),
+        ),
     )
 
 
-objects = (_grid("MC2InteractionA", 0.0), _grid("MC2InteractionB", 0.008))
+class _TimingProbe:
+    def __init__(self):
+        self.native = []
+
+    def restart(self):
+        pass
+
+    def checkpoint(self, _stage):
+        return 0.0
+
+    def detail_restart(self):
+        pass
+
+    def detail_checkpoint(self, _stage):
+        return 0.0
+
+    def detail_native_checkpoint(self, native_timing):
+        self.native.append(dict(native_timing))
+        return 0.0
+
+    def finish(self, _context):
+        pass
+
+
+objects = (
+    _grid("MC2InteractionA", 0.0),
+    _grid("MC2InteractionB", 0.008, x_slope=1.0),
+)
 contexts = []
 interaction = native_module.MC2NativeInteractionV0()
+capture_native_timing = os.environ.get("MC2_TEST_CAPTURE_NATIVE_TIMING", "1") != "0"
 try:
     bundles = [_context(obj, 1) for obj in objects]
     contexts = [bundle[0] for bundle in bundles]
     before = [context.read()[0].copy() for context in contexts]
-    interaction.step_group(contexts, (1, 2), (0, 0), 1.0 / 90.0)
+    native_timing = interaction.step_group(
+        contexts,
+        (1, 2),
+        (0, 0),
+        1.0 / 90.0,
+        capture_timing=capture_native_timing,
+    )
     info = interaction.inspect()
     after = [context.read()[0].copy() for context in contexts]
     assert info["participant_count"] == 2
     assert info["candidate_count"] > 0
     assert info["contact_count"] > 0
+    if capture_native_timing:
+        assert native_timing["clock_reads"] == 2 * sum(native_timing["calls"].values())
+        for stage in (
+            "native · 跨任务聚合构建",
+            "native · 自碰网格排序构建",
+            "native · 自碰候选生成去重",
+            "native · 自碰接触构建更新",
+            "native · 自碰求解第1轮",
+            "native · 自碰求解第2轮",
+            "native · 自碰求解第3轮",
+            "native · 自碰求解第4轮",
+            "native · 跨任务结果分发",
+        ):
+            assert stage in native_timing["stages"], stage
+    else:
+        assert native_timing is None
     assert not np.array_equal(before[0], after[0]) or not np.array_equal(before[1], after[1])
-    print("[PASS] automatic cross-owner contact")
+    print("[PASS] automatic cross-owner contact and native stage timing")
 
     blocked = native_module.MC2NativeInteractionV0()
     blocked_contexts = []
@@ -205,6 +282,7 @@ try:
     world = world_types.PhysicsWorldCache()
     try:
         tasks = [bundle[1] for bundle in bundles]
+        timing_probe = _TimingProbe()
         solver_module.step_mc2(
             world,
             tasks,
@@ -216,6 +294,7 @@ try:
             tasks,
             frame_inputs={bundle[1].task_id: _frame_input(bundle, 2) for bundle in bundles},
             dt=1.0 / 90.0,
+            timing=timing_probe,
         )
         production_interaction = world.backend_resources[
             native_module.MC2_INTERACTION_RESOURCE_KEY
@@ -228,7 +307,12 @@ try:
             world.solver_slots[task.task_id].data["native_context"].inspect()["step_count"] == 1
             for task in tasks
         )
-        print("[PASS] production solver lockstep interaction")
+        assert timing_probe.native
+        assert any(
+            "native · 自碰网格排序构建" in sample["stages"]
+            for sample in timing_probe.native
+        )
+        print("[PASS] production solver lockstep interaction and timing bridge")
     finally:
         world.omni_cache_dispose("mc2_interaction_acceptance")
 finally:

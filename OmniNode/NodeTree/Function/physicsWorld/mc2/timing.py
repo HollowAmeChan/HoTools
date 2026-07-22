@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 
 
@@ -302,6 +303,30 @@ class MC2HotspotTimingSession:
         self._details[stage] = self._details.get(stage, 0.0) + seconds
         self._detail_cursor = now
         return seconds
+
+    def detail_native_checkpoint(self, native_timing: dict) -> float:
+        now = self._clock()
+        if self._detail_cursor is None:
+            self._detail_cursor = now
+            return 0.0
+        elapsed = max(now - self._detail_cursor, 0.0)
+        stages = native_timing.get("stages") if isinstance(native_timing, dict) else None
+        if not isinstance(stages, dict):
+            raise ValueError("MC2 native detail timing must provide stage values")
+        native_total = 0.0
+        for raw_stage, raw_seconds in stages.items():
+            stage = str(raw_stage or "").strip()
+            seconds = float(raw_seconds)
+            if not stage or not math.isfinite(seconds) or seconds < 0.0:
+                raise ValueError("MC2 native detail timing contains an invalid sample")
+            self._details[stage] = self._details.get(stage, 0.0) + seconds
+            native_total += seconds
+        residual = max(elapsed - native_total, 0.0)
+        if residual > 0.0:
+            stage = "native · 边界与未归类"
+            self._details[stage] = self._details.get(stage, 0.0) + residual
+        self._detail_cursor = now
+        return elapsed
 
     def finish(self, context: dict) -> None:
         now = self._clock()

@@ -3242,19 +3242,31 @@ void add_wrapped_int32(std::int32_t& destination, std::int32_t value) {
     std::memcpy(&destination, &sum, sizeof(destination));
 }
 
-void solve_self_collision_contacts(Mc2ContextV0& context) {
+void solve_self_collision_contacts(
+    Mc2ContextV0& context,
+    Mc2NativeStepTimingV0* timing
+) {
     if (!context.self_contact_ready) return;
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
     const auto contact_count = context.self_contact_types.size();
     const bool capture_debug = context.self_contact_debug_requested;
-    context.self_contact_debug_ready = false;
-    if (capture_debug) {
-        context.debug_self_contact_corrections.assign(contact_count * 2 * 3, 0.0f);
-    } else {
-        context.debug_self_contact_corrections.clear();
+    std::vector<std::int32_t> counts;
+    std::vector<std::int32_t> sums;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::SelfSolvePrepare
+        );
+        context.self_contact_debug_ready = false;
+        if (capture_debug) {
+            context.debug_self_contact_corrections.assign(
+                contact_count * 2 * 3, 0.0f
+            );
+        } else {
+            context.debug_self_contact_corrections.clear();
+        }
+        counts.assign(vertex_count, 0);
+        sums.assign(vertex_count * 3, 0);
     }
-    std::vector<std::int32_t> counts(vertex_count, 0);
-    std::vector<std::int32_t> sums(vertex_count * 3, 0);
     struct DebugContribution {
         std::size_t contact;
         std::size_t side;
@@ -3299,7 +3311,15 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
     };
 
     constexpr int kSolverIterations = 4;
+    constexpr std::array<Mc2NativeTimingStageV0, kSolverIterations>
+        kIterationStages {
+            Mc2NativeTimingStageV0::SelfSolveRound1,
+            Mc2NativeTimingStageV0::SelfSolveRound2,
+            Mc2NativeTimingStageV0::SelfSolveRound3,
+            Mc2NativeTimingStageV0::SelfSolveRound4,
+        };
     for (int iteration = 0; iteration < kSolverIterations; ++iteration) {
+        Mc2NativeTimingScopeV0 stage(timing, kIterationStages[iteration]);
         for (std::size_t contact = 0; contact < contact_count; ++contact) {
             if (context.self_contact_enabled[contact] == 0) continue;
             const auto primitive0 = static_cast<std::size_t>(
@@ -3433,7 +3453,8 @@ void solve_self_collision_contacts(Mc2ContextV0& context) {
 
 void update_self_collision_primitives_once(
     Mc2ContextV0& context,
-    const std::vector<float>& old_positions
+    const std::vector<float>& old_positions,
+    Mc2NativeStepTimingV0* timing
 ) {
     const auto primitive_count = context.self_primitive_flags.size();
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
@@ -3462,123 +3483,154 @@ void update_self_collision_primitives_once(
         context.self_primitive_frame == context.frame &&
         context.self_primitive_generation == context.generation) {
         if (internal_self_enabled) {
-            update_self_collision_contacts(context, old_positions);
-            solve_self_collision_contacts(context);
+            {
+                Mc2NativeTimingScopeV0 stage(
+                    timing, Mc2NativeTimingStageV0::SelfContactBuild
+                );
+                update_self_collision_contacts(context, old_positions);
+            }
+            solve_self_collision_contacts(context, timing);
         }
         return;
     }
-    if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
-        context.curve_values.size() != static_cast<std::size_t>(kCurveRows * kCurveColumns) ||
-        context.state_positions.size() != vertex_count * 3 ||
-        old_positions.size() != vertex_count * 3 ||
-        context.particle_friction.size() != vertex_count ||
-        context.self_particle_indices.size() != primitive_count * 3 ||
-        context.self_primitive_depths.size() != primitive_count) {
-        context.self_primitive_dynamic_ready = false;
-        context.self_grid_dynamic_ready = false;
-        context.self_point_grid_count = 0;
-        context.self_edge_grid_count = 0;
-        context.self_triangle_grid_count = 0;
-        context.self_contact_candidates.clear();
-        context.self_candidate_ready = false;
-        clear_self_collision_contacts(context);
-        context.self_max_primitive_size = 0.0f;
-        context.self_grid_size = 0.0f;
-        return;
-    }
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::SelfPrimitiveUpdate
+        );
+        if (context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+            context.curve_values.size() != static_cast<std::size_t>(kCurveRows * kCurveColumns) ||
+            context.state_positions.size() != vertex_count * 3 ||
+            old_positions.size() != vertex_count * 3 ||
+            context.particle_friction.size() != vertex_count ||
+            context.self_particle_indices.size() != primitive_count * 3 ||
+            context.self_primitive_depths.size() != primitive_count) {
+            context.self_primitive_dynamic_ready = false;
+            context.self_grid_dynamic_ready = false;
+            context.self_point_grid_count = 0;
+            context.self_edge_grid_count = 0;
+            context.self_triangle_grid_count = 0;
+            context.self_contact_candidates.clear();
+            context.self_candidate_ready = false;
+            clear_self_collision_contacts(context);
+            context.self_max_primitive_size = 0.0f;
+            context.self_grid_size = 0.0f;
+            return;
+        }
 
-    context.self_primitive_inverse_masses.assign(primitive_count * 3, 0.0f);
-    context.self_primitive_aabb_min.assign(primitive_count * 3, 0.0f);
-    context.self_primitive_aabb_max.assign(primitive_count * 3, 0.0f);
-    context.self_primitive_thickness.assign(primitive_count, 0.0f);
-    float edge_max_size = 0.0f;
-    const float cloth_mass = context.float_values[kClothMass];
-    for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
-        auto flag = context.self_primitive_flags[primitive] & ~kSelfIntersectMask;
-        const auto kind = static_cast<std::size_t>((flag >> 24u) & 0x03u);
-        const auto axis_count = kind + 1;
-        for (std::size_t axis = 0; axis < axis_count; ++axis) {
-            const auto vertex = static_cast<std::size_t>(
-                context.self_particle_indices[primitive * 3 + axis]
-            );
-            if (vertex < context.self_particle_intersect_flags.size() &&
-                context.self_particle_intersect_flags[vertex] != 0) {
-                flag |= 1u << axis;
+        context.self_primitive_inverse_masses.assign(primitive_count * 3, 0.0f);
+        context.self_primitive_aabb_min.assign(primitive_count * 3, 0.0f);
+        context.self_primitive_aabb_max.assign(primitive_count * 3, 0.0f);
+        context.self_primitive_thickness.assign(primitive_count, 0.0f);
+        float edge_max_size = 0.0f;
+        const float cloth_mass = context.float_values[kClothMass];
+        for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
+            auto flag = context.self_primitive_flags[primitive] & ~kSelfIntersectMask;
+            const auto kind = static_cast<std::size_t>((flag >> 24u) & 0x03u);
+            const auto axis_count = kind + 1;
+            for (std::size_t axis = 0; axis < axis_count; ++axis) {
+                const auto vertex = static_cast<std::size_t>(
+                    context.self_particle_indices[primitive * 3 + axis]
+                );
+                if (vertex < context.self_particle_intersect_flags.size() &&
+                    context.self_particle_intersect_flags[vertex] != 0) {
+                    flag |= 1u << axis;
+                }
             }
-        }
-        context.self_primitive_flags[primitive] = flag;
-        if ((flag & kSelfIgnore) != 0u) continue;
-        std::array<float, 3> minimum {
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-            std::numeric_limits<float>::max(),
-        };
-        std::array<float, 3> maximum {
-            std::numeric_limits<float>::lowest(),
-            std::numeric_limits<float>::lowest(),
-            std::numeric_limits<float>::lowest(),
-        };
-        for (std::size_t axis = 0; axis < axis_count; ++axis) {
-            const auto vertex = static_cast<std::size_t>(
-                context.self_particle_indices[primitive * 3 + axis]
-            );
-            const bool fixed = (flag & (kSelfFix0 << axis)) != 0u;
-            float mass = fixed
-                ? 100.0f
-                : 1.0f + context.particle_friction[vertex] * 10.0f;
-            mass += cloth_mass * 50.0f;
-            context.self_primitive_inverse_masses[primitive * 3 + axis] = 1.0f / mass;
+            context.self_primitive_flags[primitive] = flag;
+            if ((flag & kSelfIgnore) != 0u) continue;
+            std::array<float, 3> minimum {
+                std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max(),
+            };
+            std::array<float, 3> maximum {
+                std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest(),
+            };
+            for (std::size_t axis = 0; axis < axis_count; ++axis) {
+                const auto vertex = static_cast<std::size_t>(
+                    context.self_particle_indices[primitive * 3 + axis]
+                );
+                const bool fixed = (flag & (kSelfFix0 << axis)) != 0u;
+                float mass = fixed
+                    ? 100.0f
+                    : 1.0f + context.particle_friction[vertex] * 10.0f;
+                mass += cloth_mass * 50.0f;
+                context.self_primitive_inverse_masses[primitive * 3 + axis] =
+                    1.0f / mass;
+                for (std::size_t component = 0; component < 3; ++component) {
+                    const auto offset = vertex * 3 + component;
+                    minimum[component] = std::min(
+                        minimum[component],
+                        std::min(context.state_positions[offset], old_positions[offset])
+                    );
+                    maximum[component] = std::max(
+                        maximum[component],
+                        std::max(context.state_positions[offset], old_positions[offset])
+                    );
+                }
+            }
+            const float unexpanded_size = std::max({
+                maximum[0] - minimum[0],
+                maximum[1] - minimum[1],
+                maximum[2] - minimum[2],
+            });
+            if (kind == 1) {
+                edge_max_size = std::max(edge_max_size, unexpanded_size);
+            }
+            float primitive_radius_multiplier = 0.0f;
+            for (std::size_t axis = 0; axis < axis_count; ++axis) {
+                const auto vertex = static_cast<std::size_t>(
+                    context.self_particle_indices[primitive * 3 + axis]
+                );
+                if (vertex < context.proxy_radius_multipliers.size()) {
+                    primitive_radius_multiplier +=
+                        context.proxy_radius_multipliers[vertex];
+                }
+            }
+            primitive_radius_multiplier /= static_cast<float>(axis_count);
+            const float thickness = sample_curve16(
+                context.curve_values,
+                kSelfCollisionThicknessCurve,
+                context.self_primitive_depths[primitive]
+            ) * primitive_radius_multiplier * context.scale_ratio;
+            context.self_primitive_thickness[primitive] = thickness;
             for (std::size_t component = 0; component < 3; ++component) {
-                const auto offset = vertex * 3 + component;
-                minimum[component] = std::min(
-                    minimum[component],
-                    std::min(context.state_positions[offset], old_positions[offset])
-                );
-                maximum[component] = std::max(
-                    maximum[component],
-                    std::max(context.state_positions[offset], old_positions[offset])
-                );
+                context.self_primitive_aabb_min[primitive * 3 + component] =
+                    minimum[component] - thickness;
+                context.self_primitive_aabb_max[primitive * 3 + component] =
+                    maximum[component] + thickness;
             }
         }
-        const float unexpanded_size = std::max({
-            maximum[0] - minimum[0],
-            maximum[1] - minimum[1],
-            maximum[2] - minimum[2],
-        });
-        if (kind == 1) edge_max_size = std::max(edge_max_size, unexpanded_size);
-        float primitive_radius_multiplier = 0.0f;
-        for (std::size_t axis = 0; axis < axis_count; ++axis) {
-            const auto vertex = static_cast<std::size_t>(
-                context.self_particle_indices[primitive * 3 + axis]
-            );
-            if (vertex < context.proxy_radius_multipliers.size()) {
-                primitive_radius_multiplier += context.proxy_radius_multipliers[vertex];
-            }
-        }
-        primitive_radius_multiplier /= static_cast<float>(axis_count);
-        const float thickness = sample_curve16(
-            context.curve_values,
-            kSelfCollisionThicknessCurve,
-            context.self_primitive_depths[primitive]
-        ) * primitive_radius_multiplier * context.scale_ratio;
-        context.self_primitive_thickness[primitive] = thickness;
-        for (std::size_t component = 0; component < 3; ++component) {
-            context.self_primitive_aabb_min[primitive * 3 + component] =
-                minimum[component] - thickness;
-            context.self_primitive_aabb_max[primitive * 3 + component] =
-                maximum[component] + thickness;
-        }
+        context.self_max_primitive_size = edge_max_size;
+        context.self_grid_size = edge_max_size * 3.0f;
+        context.self_primitive_frame = context.frame;
+        context.self_primitive_generation = context.generation;
+        context.self_primitive_dynamic_ready = true;
+        ++context.self_primitive_update_count;
     }
-    context.self_max_primitive_size = edge_max_size;
-    context.self_grid_size = edge_max_size * 3.0f;
-    context.self_primitive_frame = context.frame;
-    context.self_primitive_generation = context.generation;
-    context.self_primitive_dynamic_ready = true;
-    ++context.self_primitive_update_count;
-    if (update_self_collision_grid(context) && internal_self_enabled) {
-        update_self_collision_candidates(context);
-        build_self_collision_contacts(context, old_positions);
-        solve_self_collision_contacts(context);
+    bool grid_ready = false;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::SelfGrid
+        );
+        grid_ready = update_self_collision_grid(context);
+    }
+    if (grid_ready && internal_self_enabled) {
+        {
+            Mc2NativeTimingScopeV0 stage(
+                timing, Mc2NativeTimingStageV0::SelfCandidates
+            );
+            update_self_collision_candidates(context);
+        }
+        {
+            Mc2NativeTimingScopeV0 stage(
+                timing, Mc2NativeTimingStageV0::SelfContactBuild
+            );
+            build_self_collision_contacts(context, old_positions);
+        }
+        solve_self_collision_contacts(context, timing);
     } else {
         clear_self_collision_contacts(context);
     }
@@ -3764,179 +3816,244 @@ bool begin_mc2_context_step(
     float simulation_power_y,
     float simulation_power_z,
     float simulation_power_w,
-    Mc2ContextStepStateV0& state
+    Mc2ContextStepStateV0& state,
+    Mc2NativeStepTimingV0* timing
 ) {
     state.context = &context;
-    context.debug_constraint_ready_mask = 0;
-    context.debug_constraint_origins.clear();
-    context.debug_constraint_corrections.clear();
-    context.debug_distance_record_phase_mask = 0;
-    context.debug_distance_record_ready = false;
-    context.debug_distance_record_origins.clear();
-    context.debug_distance_record_corrections.clear();
-    context.debug_distance_record_lengths.clear();
-    context.debug_distance_record_rests.clear();
-    context.debug_distance_record_valid.clear();
-    context.debug_bending_record_ready = false;
-    context.debug_bending_record_origins.clear();
-    context.debug_bending_record_corrections.clear();
-    context.debug_bending_record_valid.clear();
-    context.debug_motion_record_ready = false;
-    context.debug_motion_record_origins.clear();
-    context.debug_motion_record_corrections.clear();
-    context.debug_motion_record_valid.clear();
-    context.debug_angle_record_ready = false;
-    context.debug_angle_record_origins.clear();
-    context.debug_angle_record_corrections.clear();
-    context.debug_angle_record_currents.clear();
-    context.debug_angle_record_limits.clear();
-    context.debug_angle_record_children.clear();
-    context.debug_angle_record_parents.clear();
-    context.debug_angle_record_valid.clear();
-    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
-        const auto record_count = context.distance_targets.size();
-        context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
-        context.debug_distance_record_corrections.assign(record_count * 2 * 3, 0.0f);
-        context.debug_distance_record_lengths.assign(record_count * 2, 0.0f);
-        context.debug_distance_record_rests.assign(record_count * 2, 0.0f);
-        context.debug_distance_record_valid.assign(
-            record_count * 2, static_cast<std::uint8_t>(0)
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::ContextPrepare
         );
+        context.debug_constraint_ready_mask = 0;
+        context.debug_constraint_origins.clear();
+        context.debug_constraint_corrections.clear();
+        context.debug_distance_record_phase_mask = 0;
+        context.debug_distance_record_ready = false;
+        context.debug_distance_record_origins.clear();
+        context.debug_distance_record_corrections.clear();
+        context.debug_distance_record_lengths.clear();
+        context.debug_distance_record_rests.clear();
+        context.debug_distance_record_valid.clear();
+        context.debug_bending_record_ready = false;
+        context.debug_bending_record_origins.clear();
+        context.debug_bending_record_corrections.clear();
+        context.debug_bending_record_valid.clear();
+        context.debug_motion_record_ready = false;
+        context.debug_motion_record_origins.clear();
+        context.debug_motion_record_corrections.clear();
+        context.debug_motion_record_valid.clear();
+        context.debug_angle_record_ready = false;
+        context.debug_angle_record_origins.clear();
+        context.debug_angle_record_corrections.clear();
+        context.debug_angle_record_currents.clear();
+        context.debug_angle_record_limits.clear();
+        context.debug_angle_record_children.clear();
+        context.debug_angle_record_parents.clear();
+        context.debug_angle_record_valid.clear();
+        if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+            const auto record_count = context.distance_targets.size();
+            context.debug_distance_record_origins.assign(record_count * 2 * 3, 0.0f);
+            context.debug_distance_record_corrections.assign(record_count * 2 * 3, 0.0f);
+            context.debug_distance_record_lengths.assign(record_count * 2, 0.0f);
+            context.debug_distance_record_rests.assign(record_count * 2, 0.0f);
+            context.debug_distance_record_valid.assign(
+                record_count * 2, static_cast<std::uint8_t>(0)
+            );
+        }
+        if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+            const auto record_count = context.bending_rest_angle_or_volume.size();
+            context.debug_bending_record_origins.assign(record_count * 4 * 3, 0.0f);
+            context.debug_bending_record_corrections.assign(record_count * 4 * 3, 0.0f);
+            context.debug_bending_record_valid.assign(
+                record_count, static_cast<std::uint8_t>(0)
+            );
+        }
+        if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+            const auto record_count = static_cast<std::size_t>(context.vertex_count) * 2;
+            context.debug_motion_record_origins.assign(record_count * 3, 0.0f);
+            context.debug_motion_record_corrections.assign(record_count * 3, 0.0f);
+            context.debug_motion_record_valid.assign(
+                record_count, static_cast<std::uint8_t>(0)
+            );
+        }
+        if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+            const auto record_count = context.baseline_data.size() *
+                static_cast<std::size_t>(kMc2AngleIterationCount) * 2;
+            context.debug_angle_record_origins.assign(record_count * 2 * 3, 0.0f);
+            context.debug_angle_record_corrections.assign(record_count * 2 * 3, 0.0f);
+            context.debug_angle_record_currents.assign(record_count, 0.0f);
+            context.debug_angle_record_limits.assign(record_count, 0.0f);
+            context.debug_angle_record_children.assign(record_count, -1);
+            context.debug_angle_record_parents.assign(record_count, -1);
+            context.debug_angle_record_valid.assign(
+                record_count, static_cast<std::uint8_t>(0)
+            );
+        }
+        if (context.external_contact_debug_requested) {
+            context.external_contact_debug_records.clear();
+            context.external_contact_debug_ready = false;
+        }
     }
-    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
-        const auto record_count = context.bending_rest_angle_or_volume.size();
-        context.debug_bending_record_origins.assign(record_count * 4 * 3, 0.0f);
-        context.debug_bending_record_corrections.assign(record_count * 4 * 3, 0.0f);
-        context.debug_bending_record_valid.assign(
-            record_count, static_cast<std::uint8_t>(0)
-        );
-    }
-    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
-        const auto record_count = static_cast<std::size_t>(context.vertex_count) * 2;
-        context.debug_motion_record_origins.assign(record_count * 3, 0.0f);
-        context.debug_motion_record_corrections.assign(record_count * 3, 0.0f);
-        context.debug_motion_record_valid.assign(
-            record_count, static_cast<std::uint8_t>(0)
-        );
-    }
-    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
-        const auto record_count = context.baseline_data.size() *
-            static_cast<std::size_t>(kMc2AngleIterationCount) * 2;
-        context.debug_angle_record_origins.assign(record_count * 2 * 3, 0.0f);
-        context.debug_angle_record_corrections.assign(record_count * 2 * 3, 0.0f);
-        context.debug_angle_record_currents.assign(record_count, 0.0f);
-        context.debug_angle_record_limits.assign(record_count, 0.0f);
-        context.debug_angle_record_children.assign(record_count, -1);
-        context.debug_angle_record_parents.assign(record_count, -1);
-        context.debug_angle_record_valid.assign(
-            record_count, static_cast<std::uint8_t>(0)
-        );
-    }
-    if (context.external_contact_debug_requested) {
-        context.external_contact_debug_records.clear();
-        context.external_contact_debug_ready = false;
-    }
-    state.center_step_active = context.center_dynamic_ready;
-    if (state.center_step_active && !evaluate_center_step(context, dt)) {
-        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
-        return false;
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Center);
+        state.center_step_active = context.center_dynamic_ready;
+        if (state.center_step_active && !evaluate_center_step(context, dt)) {
+            PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
+            return false;
+        }
     }
     if (!context.proxy_static_ready) return true;
-    detect_self_collision_intersections_once(context);
-    state.previous_positions = context.state_positions;
-    if (!predict_particles(context, dt, simulation_power_z, state.center_step_active)) {
-        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
-        return false;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::PreviousIntersection
+        );
+        detect_self_collision_intersections_once(context);
+    }
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::Prediction
+        );
+        state.previous_positions = context.state_positions;
+        if (!predict_particles(
+                context, dt, simulation_power_z, state.center_step_active
+            )) {
+            PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
+            return false;
+        }
     }
     std::vector<float> debug_before;
-    begin_constraint_debug_pass(context, kDebugConstraintTether, debug_before);
-    solve_tether_once(context);
-    finish_constraint_debug_pass(
-        context, kDebugConstraintTether, 0, debug_before
-    );
-    begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
-    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
-        capture_distance_records_once(context, simulation_power_y, 0);
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Tether);
+        begin_constraint_debug_pass(context, kDebugConstraintTether, debug_before);
+        solve_tether_once(context);
+        finish_constraint_debug_pass(
+            context, kDebugConstraintTether, 0, debug_before
+        );
     }
-    solve_distance_once(context, simulation_power_y);
-    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
-        context.debug_distance_record_phase_mask |= 1u;
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Distance1);
+        begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
+        if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+            capture_distance_records_once(context, simulation_power_y, 0);
+        }
+        solve_distance_once(context, simulation_power_y);
+        if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+            context.debug_distance_record_phase_mask |= 1u;
+        }
+        finish_constraint_debug_pass(
+            context, kDebugConstraintDistance, 1, debug_before
+        );
     }
-    finish_constraint_debug_pass(
-        context, kDebugConstraintDistance, 1, debug_before
-    );
-    begin_constraint_debug_pass(context, kDebugConstraintAngle, debug_before);
-    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
-        capture_angle_records_once(context, simulation_power_w);
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Angle);
+        begin_constraint_debug_pass(context, kDebugConstraintAngle, debug_before);
+        if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+            capture_angle_records_once(context, simulation_power_w);
+        }
+        solve_angle_once(context, simulation_power_w);
+        if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
+            context.debug_angle_record_ready = true;
+        }
+        finish_constraint_debug_pass(
+            context, kDebugConstraintAngle, 2, debug_before
+        );
     }
-    solve_angle_once(context, simulation_power_w);
-    if ((context.debug_constraint_request_mask & kDebugConstraintAngle) != 0) {
-        context.debug_angle_record_ready = true;
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Bending);
+        begin_constraint_debug_pass(context, kDebugConstraintBending, debug_before);
+        if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+            capture_bending_records_once(context, simulation_power_y);
+        }
+        solve_bending_once(context, simulation_power_y);
+        if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
+            context.debug_bending_record_ready = true;
+        }
+        finish_constraint_debug_pass(
+            context, kDebugConstraintBending, 3, debug_before
+        );
     }
-    finish_constraint_debug_pass(
-        context, kDebugConstraintAngle, 2, debug_before
-    );
-    begin_constraint_debug_pass(context, kDebugConstraintBending, debug_before);
-    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
-        capture_bending_records_once(context, simulation_power_y);
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::PointCollision
+        );
+        solve_point_collision_once(context);
     }
-    solve_bending_once(context, simulation_power_y);
-    if ((context.debug_constraint_request_mask & kDebugConstraintBending) != 0) {
-        context.debug_bending_record_ready = true;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::EdgeCollision
+        );
+        solve_edge_collision_once(context);
     }
-    finish_constraint_debug_pass(
-        context, kDebugConstraintBending, 3, debug_before
-    );
-    solve_point_collision_once(context);
-    solve_edge_collision_once(context);
-    begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
-    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
-        capture_distance_records_once(context, simulation_power_y, 1);
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Distance2);
+        begin_constraint_debug_pass(context, kDebugConstraintDistance, debug_before);
+        if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+            capture_distance_records_once(context, simulation_power_y, 1);
+        }
+        solve_distance_once(context, simulation_power_y);
+        if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
+            context.debug_distance_record_phase_mask |= 2u;
+            context.debug_distance_record_ready =
+                context.debug_distance_record_phase_mask == 3u;
+        }
+        finish_constraint_debug_pass(
+            context, kDebugConstraintDistance, 4, debug_before
+        );
     }
-    solve_distance_once(context, simulation_power_y);
-    if ((context.debug_constraint_request_mask & kDebugConstraintDistance) != 0) {
-        context.debug_distance_record_phase_mask |= 2u;
-        context.debug_distance_record_ready =
-            context.debug_distance_record_phase_mask == 3u;
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::Motion);
+        begin_constraint_debug_pass(context, kDebugConstraintMotion, debug_before);
+        if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+            capture_motion_records_once(context);
+        }
+        solve_motion_once(context);
+        if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
+            context.debug_motion_record_ready = true;
+        }
+        finish_constraint_debug_pass(
+            context, kDebugConstraintMotion, 5, debug_before
+        );
     }
-    finish_constraint_debug_pass(
-        context, kDebugConstraintDistance, 4, debug_before
-    );
-    begin_constraint_debug_pass(context, kDebugConstraintMotion, debug_before);
-    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
-        capture_motion_records_once(context);
-    }
-    solve_motion_once(context);
-    if ((context.debug_constraint_request_mask & kDebugConstraintMotion) != 0) {
-        context.debug_motion_record_ready = true;
-    }
-    finish_constraint_debug_pass(
-        context, kDebugConstraintMotion, 5, debug_before
-    );
-    update_self_collision_primitives_once(context, state.previous_positions);
+    update_self_collision_primitives_once(context, state.previous_positions, timing);
     return true;
 }
 
 void finish_mc2_context_step(
     Mc2ContextStepStateV0& state,
     float dt,
-    bool is_final_substep
+    bool is_final_substep,
+    Mc2NativeStepTimingV0* timing
 ) {
     auto& context = *state.context;
     if (context.proxy_static_ready) {
-        commit_particle_post(context, dt, state.previous_positions);
-        if (is_final_substep) solve_self_collision_intersections_final(context);
+        {
+            Mc2NativeTimingScopeV0 stage(
+                timing, Mc2NativeTimingStageV0::ParticlePost
+            );
+            commit_particle_post(context, dt, state.previous_positions);
+        }
+        if (is_final_substep) {
+            Mc2NativeTimingScopeV0 stage(
+                timing, Mc2NativeTimingStageV0::FinalIntersection
+            );
+            solve_self_collision_intersections_final(context);
+        }
     }
-    if (context.external_contact_debug_requested && is_final_substep) {
-        context.external_contact_debug_ready = true;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::ResultFinalize
+        );
+        if (context.external_contact_debug_requested && is_final_substep) {
+            context.external_contact_debug_ready = true;
+        }
+        if (state.center_step_active) {
+            context.center_old_world_position = context.center_now_world_position;
+            context.center_old_world_rotation = context.center_now_world_rotation;
+        }
+        context.bone_output_positions.clear();
+        context.bone_output_rotations.clear();
+        ++context.step_count;
     }
-    if (state.center_step_active) {
-        context.center_old_world_position = context.center_now_world_position;
-        context.center_old_world_rotation = context.center_now_world_rotation;
-    }
-    context.bone_output_positions.clear();
-    context.bone_output_rotations.clear();
-    ++context.step_count;
 }
 
 void clear_interaction_scope_state(Mc2InteractionV0& interaction) {
@@ -4017,105 +4134,138 @@ void append_interaction_primitives(
 
 bool build_and_solve_interaction(
     Mc2InteractionV0& interaction,
-    const std::vector<Mc2ContextStepStateV0>& states
+    const std::vector<Mc2ContextStepStateV0>& states,
+    Mc2NativeStepTimingV0* timing
 ) {
     auto& aggregate = interaction.aggregate;
-    aggregate.self_primitive_flags.clear();
-    aggregate.self_particle_indices.clear();
-    aggregate.self_primitive_depths.clear();
-    aggregate.self_topology_neighbor_keys.clear();
-    aggregate.self_primitive_inverse_masses.clear();
-    aggregate.self_primitive_aabb_min.clear();
-    aggregate.self_primitive_aabb_max.clear();
-    aggregate.self_primitive_thickness.clear();
-    aggregate.self_primitive_owner_indices.clear();
-    aggregate.self_owner_primary_group_bits.clear();
-    aggregate.self_owner_collided_by_groups.clear();
-    aggregate.state_positions.clear();
-    interaction.old_positions.clear();
-    aggregate.vertex_count = 0;
-    aggregate.self_max_primitive_size = 0.0f;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::InteractionAggregateBuild
+        );
+        aggregate.self_primitive_flags.clear();
+        aggregate.self_particle_indices.clear();
+        aggregate.self_primitive_depths.clear();
+        aggregate.self_topology_neighbor_keys.clear();
+        aggregate.self_primitive_inverse_masses.clear();
+        aggregate.self_primitive_aabb_min.clear();
+        aggregate.self_primitive_aabb_max.clear();
+        aggregate.self_primitive_thickness.clear();
+        aggregate.self_primitive_owner_indices.clear();
+        aggregate.self_owner_primary_group_bits.clear();
+        aggregate.self_owner_collided_by_groups.clear();
+        aggregate.state_positions.clear();
+        interaction.old_positions.clear();
+        aggregate.vertex_count = 0;
+        aggregate.self_max_primitive_size = 0.0f;
 
-    std::size_t vertex_offset = 0;
-    for (auto& participant : interaction.participants) {
-        participant.vertex_offset = vertex_offset;
-        auto& context = *participant.context;
-        const auto& previous_positions = states[participant.step_index].previous_positions;
-        aggregate.state_positions.insert(
-            aggregate.state_positions.end(),
-            context.state_positions.begin(),
-            context.state_positions.end()
-        );
-        interaction.old_positions.insert(
-            interaction.old_positions.end(),
-            previous_positions.begin(),
-            previous_positions.end()
-        );
-        aggregate.self_owner_primary_group_bits.push_back(
-            participant.primary_group_bit
-        );
-        aggregate.self_owner_collided_by_groups.push_back(
-            participant.collided_by_groups
-        );
-        aggregate.self_max_primitive_size = std::max(
-            aggregate.self_max_primitive_size,
-            context.self_max_primitive_size
-        );
-        vertex_offset += static_cast<std::size_t>(context.vertex_count);
+        std::size_t vertex_offset = 0;
+        for (auto& participant : interaction.participants) {
+            participant.vertex_offset = vertex_offset;
+            auto& context = *participant.context;
+            const auto& previous_positions =
+                states[participant.step_index].previous_positions;
+            aggregate.state_positions.insert(
+                aggregate.state_positions.end(),
+                context.state_positions.begin(),
+                context.state_positions.end()
+            );
+            interaction.old_positions.insert(
+                interaction.old_positions.end(),
+                previous_positions.begin(),
+                previous_positions.end()
+            );
+            aggregate.self_owner_primary_group_bits.push_back(
+                participant.primary_group_bit
+            );
+            aggregate.self_owner_collided_by_groups.push_back(
+                participant.collided_by_groups
+            );
+            aggregate.self_max_primitive_size = std::max(
+                aggregate.self_max_primitive_size,
+                context.self_max_primitive_size
+            );
+            vertex_offset += static_cast<std::size_t>(context.vertex_count);
+        }
+        aggregate.vertex_count = static_cast<std::int64_t>(vertex_offset);
+        aggregate.self_point_primitive_count = 0;
+        aggregate.self_edge_primitive_count = 0;
+        aggregate.self_triangle_primitive_count = 0;
+        for (const auto& participant : interaction.participants) {
+            aggregate.self_point_primitive_count +=
+                participant.context->self_point_primitive_count;
+            aggregate.self_edge_primitive_count +=
+                participant.context->self_edge_primitive_count;
+            aggregate.self_triangle_primitive_count +=
+                participant.context->self_triangle_primitive_count;
+        }
+        append_interaction_primitives(interaction, 0);
+        append_interaction_primitives(interaction, 1);
+        append_interaction_primitives(interaction, 2);
+        aggregate.self_grid_size = aggregate.self_max_primitive_size * 3.0f;
+        aggregate.self_collision_static_ready = true;
+        aggregate.self_primitive_dynamic_ready = true;
+        aggregate.setup_kind = 0;
+        aggregate.int_values.assign(static_cast<std::size_t>(kIntCount), 0);
+        aggregate.int_values[kSelfCollisionMode] = 2;
+        if (!interaction.participants.empty()) {
+            aggregate.frame = interaction.participants.front().context->frame;
+            aggregate.generation = interaction.participants.front().context->generation;
+        }
     }
-    aggregate.vertex_count = static_cast<std::int64_t>(vertex_offset);
-    aggregate.self_point_primitive_count = 0;
-    aggregate.self_edge_primitive_count = 0;
-    aggregate.self_triangle_primitive_count = 0;
-    for (const auto& participant : interaction.participants) {
-        aggregate.self_point_primitive_count +=
-            participant.context->self_point_primitive_count;
-        aggregate.self_edge_primitive_count +=
-            participant.context->self_edge_primitive_count;
-        aggregate.self_triangle_primitive_count +=
-            participant.context->self_triangle_primitive_count;
+    bool grid_ready = false;
+    {
+        Mc2NativeTimingScopeV0 stage(timing, Mc2NativeTimingStageV0::SelfGrid);
+        grid_ready = update_self_collision_grid(aggregate);
     }
-    append_interaction_primitives(interaction, 0);
-    append_interaction_primitives(interaction, 1);
-    append_interaction_primitives(interaction, 2);
-    aggregate.self_grid_size = aggregate.self_max_primitive_size * 3.0f;
-    aggregate.self_collision_static_ready = true;
-    aggregate.self_primitive_dynamic_ready = true;
-    aggregate.setup_kind = 0;
-    aggregate.int_values.assign(static_cast<std::size_t>(kIntCount), 0);
-    aggregate.int_values[kSelfCollisionMode] = 2;
-    if (!interaction.participants.empty()) {
-        aggregate.frame = interaction.participants.front().context->frame;
-        aggregate.generation = interaction.participants.front().context->generation;
-    }
-    if (!update_self_collision_grid(aggregate)) {
+    if (!grid_ready) {
         clear_self_collision_contacts(aggregate);
         interaction.candidate_count = 0;
         interaction.contact_count = 0;
         return false;
     }
-    update_self_collision_candidates(aggregate);
-    build_self_collision_contacts(aggregate, interaction.old_positions);
-    solve_self_collision_contacts(aggregate);
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::SelfCandidates
+        );
+        update_self_collision_candidates(aggregate);
+    }
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::SelfContactBuild
+        );
+        build_self_collision_contacts(aggregate, interaction.old_positions);
+    }
+    solve_self_collision_contacts(aggregate, timing);
     interaction.candidate_count = static_cast<std::int64_t>(
         aggregate.self_contact_candidates.size() / 3
     );
     interaction.contact_count = static_cast<std::int64_t>(
         aggregate.self_contact_types.size()
     );
-    for (const auto& participant : interaction.participants) {
-        auto& context = *participant.context;
-        const auto offset = participant.vertex_offset * 3;
-        std::copy_n(
-            aggregate.state_positions.data() + offset,
-            context.state_positions.size(),
-            context.state_positions.data()
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing, Mc2NativeTimingStageV0::InteractionScatter
         );
+        for (const auto& participant : interaction.participants) {
+            auto& context = *participant.context;
+            const auto offset = participant.vertex_offset * 3;
+            std::copy_n(
+                aggregate.state_positions.data() + offset,
+                context.state_positions.size(),
+                context.state_positions.data()
+            );
+        }
     }
     return true;
 }
 
-void finish_interaction_intersections(Mc2InteractionV0& interaction) {
+void finish_interaction_intersections(
+    Mc2InteractionV0& interaction,
+    Mc2NativeStepTimingV0* timing
+) {
+    Mc2NativeTimingScopeV0 stage(
+        timing, Mc2NativeTimingStageV0::FinalIntersection
+    );
     auto& aggregate = interaction.aggregate;
     if (interaction.participants.empty()) return;
     aggregate.state_positions.clear();

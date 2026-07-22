@@ -151,7 +151,11 @@ void hotools::bind_mc2(nb::module_& m) {
     m.def("mc2_interaction_v0_invalidate",
         [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_invalidate, a); });
     m.def("mc2_interaction_v0_step_group",
-        [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_step_group, a); });
+        [](nb::args a) {
+            return steal_or_throw(
+                hotools::mc2_interaction_v0_step_group(nullptr, a.ptr())
+            );
+        });
     m.def("mc2_interaction_v0_read_debug",
         [](nb::args a) { call_pyobject_api(hotools::mc2_interaction_v0_read_debug, a); });
     m.def("mc2_interaction_v0_free",

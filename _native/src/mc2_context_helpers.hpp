@@ -163,17 +163,23 @@ bool begin_mc2_context_step(
     float simulation_power_y,
     float simulation_power_z,
     float simulation_power_w,
-    Mc2ContextStepStateV0& state
+    Mc2ContextStepStateV0& state,
+    Mc2NativeStepTimingV0* timing = nullptr
 );
 void finish_mc2_context_step(
     Mc2ContextStepStateV0& state,
     float dt,
-    bool is_final_substep
+    bool is_final_substep,
+    Mc2NativeStepTimingV0* timing = nullptr
 );
 bool build_and_solve_interaction(
     Mc2InteractionV0& interaction,
-    const std::vector<Mc2ContextStepStateV0>& states
+    const std::vector<Mc2ContextStepStateV0>& states,
+    Mc2NativeStepTimingV0* timing = nullptr
 );
-void finish_interaction_intersections(Mc2InteractionV0& interaction);
+void finish_interaction_intersections(
+    Mc2InteractionV0& interaction,
+    Mc2NativeStepTimingV0* timing = nullptr
+);
 
 }  // namespace hotools::mc2_internal

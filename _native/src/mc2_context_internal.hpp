@@ -3,6 +3,7 @@
 #include "mc2_kernels.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -25,6 +26,79 @@ constexpr std::array<std::uint32_t, kDebugConstraintPassCount>
         kDebugConstraintDistance,
         kDebugConstraintMotion,
     };
+
+enum class Mc2NativeTimingStageV0 : std::size_t {
+    Dispatch,
+    ContextPrepare,
+    Center,
+    PreviousIntersection,
+    Prediction,
+    Tether,
+    Distance1,
+    Angle,
+    Bending,
+    PointCollision,
+    EdgeCollision,
+    Distance2,
+    Motion,
+    SelfPrimitiveUpdate,
+    SelfGrid,
+    SelfCandidates,
+    SelfContactBuild,
+    SelfSolvePrepare,
+    SelfSolveRound1,
+    SelfSolveRound2,
+    SelfSolveRound3,
+    SelfSolveRound4,
+    InteractionAggregateBuild,
+    InteractionScatter,
+    ParticlePost,
+    FinalIntersection,
+    ResultFinalize,
+    Count,
+};
+
+constexpr std::size_t kMc2NativeTimingStageCount =
+    static_cast<std::size_t>(Mc2NativeTimingStageV0::Count);
+
+struct Mc2NativeStepTimingV0 {
+    std::array<double, kMc2NativeTimingStageCount> seconds {};
+    std::array<std::uint64_t, kMc2NativeTimingStageCount> calls {};
+    std::uint64_t clock_reads = 0;
+};
+
+class Mc2NativeTimingScopeV0 {
+public:
+    Mc2NativeTimingScopeV0(
+        Mc2NativeStepTimingV0* timing,
+        Mc2NativeTimingStageV0 stage
+    ) : timing_(timing), stage_(stage) {
+        if (timing_ != nullptr) {
+            started_ = Clock::now();
+            ++timing_->clock_reads;
+        }
+    }
+
+    ~Mc2NativeTimingScopeV0() {
+        if (timing_ == nullptr) return;
+        const auto finished = Clock::now();
+        ++timing_->clock_reads;
+        const auto index = static_cast<std::size_t>(stage_);
+        timing_->seconds[index] += std::chrono::duration<double>(
+            finished - started_
+        ).count();
+        ++timing_->calls[index];
+    }
+
+    Mc2NativeTimingScopeV0(const Mc2NativeTimingScopeV0&) = delete;
+    Mc2NativeTimingScopeV0& operator=(const Mc2NativeTimingScopeV0&) = delete;
+
+private:
+    using Clock = std::chrono::steady_clock;
+    Mc2NativeStepTimingV0* timing_ = nullptr;
+    Mc2NativeTimingStageV0 stage_ = Mc2NativeTimingStageV0::Dispatch;
+    Clock::time_point started_ {};
+};
 
 constexpr std::size_t debug_constraint_pass_count(std::uint32_t mask) {
     std::size_t count = 0;

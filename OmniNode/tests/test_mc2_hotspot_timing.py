@@ -138,6 +138,31 @@ def test_profile_aggregates_until_interval_and_reports_ranges():
     assert "01. native组求解 = 13.500ms" in report
 
 
+def test_native_details_replace_full_bridge_time_with_stages_and_residual():
+    profile = MC2HotspotTimingProfile(clock=lambda: 0.0, printer=lambda _text: None)
+    clock = _Clock(1.0, 1.010)
+    session = MC2HotspotTimingSession(profile, clock=clock)
+
+    session.detail_restart()
+    elapsed = session.detail_native_checkpoint({
+        "stages": {
+            "native · 粒子预测": 0.004,
+            "native · 自碰网格排序构建": 0.003,
+        },
+    })
+
+    assert abs(elapsed - 0.010) < 1e-12
+    assert clock.reads == 2
+    assert set(session._details) == {
+        "native · 粒子预测",
+        "native · 自碰网格排序构建",
+        "native · 边界与未归类",
+    }
+    assert abs(session._details["native · 粒子预测"] - 0.004) < 1e-12
+    assert abs(session._details["native · 自碰网格排序构建"] - 0.003) < 1e-12
+    assert abs(session._details["native · 边界与未归类"] - 0.003) < 1e-12
+
+
 def test_world_factory_reuses_owned_profile_and_rejects_key_collision():
     world = _World()
     first = make_mc2_hotspot_timing(world)
@@ -180,6 +205,7 @@ def main():
     tests = (
         test_session_measures_once_and_fans_out_to_overlay_and_console,
         test_profile_aggregates_until_interval_and_reports_ranges,
+        test_native_details_replace_full_bridge_time_with_stages_and_residual,
         test_world_factory_reuses_owned_profile_and_rejects_key_collision,
         test_inactive_gap_discards_partial_window_before_reenable,
     )

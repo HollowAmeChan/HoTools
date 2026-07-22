@@ -69,6 +69,8 @@ class _MC2TimingSink(Protocol):
 
     def detail_checkpoint(self, stage: str) -> float: ...
 
+    def detail_native_checkpoint(self, native_timing: dict) -> float: ...
+
     def finish(self, context: dict) -> None: ...
 
 
@@ -1254,6 +1256,7 @@ def step_mc2(
             timing.checkpoint("帧与调度准备")
         detail_restart = getattr(timing, "detail_restart", None)
         detail_checkpoint = getattr(timing, "detail_checkpoint", None)
+        detail_native_checkpoint = getattr(timing, "detail_native_checkpoint", None)
         if callable(detail_restart):
             detail_restart()
         for update_index in range(max_substeps):
@@ -1363,14 +1366,17 @@ def step_mc2(
                     ))
                 if callable(detail_checkpoint):
                     detail_checkpoint("任务同步与调试配置")
-                interaction.step_group(
+                native_timing = interaction.step_group(
                     contexts,
                     primary_group_bits,
                     collided_by_groups,
                     substep_dt,
                     is_final_substep=is_final_substep,
+                    capture_timing=timing is not None,
                 )
-                if callable(detail_checkpoint):
+                if native_timing is not None and callable(detail_native_checkpoint):
+                    detail_native_checkpoint(native_timing)
+                elif callable(detail_checkpoint):
                     detail_checkpoint("native组求解")
 
         if timing is not None:

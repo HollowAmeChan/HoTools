@@ -48,6 +48,63 @@ MC2_DEBUG_CONSTRAINT_BENDING = 1 << 3
 MC2_DEBUG_CONSTRAINT_MOTION = 1 << 4
 MC2_DEBUG_CONSTRAINT_ALL = (1 << 5) - 1
 
+_MC2_NATIVE_TIMING_LABELS = {
+    "dispatch": "native · 任务与作用域准备",
+    "context_prepare": "native · 上下文与调试准备",
+    "center": "native · Center惯性",
+    "previous_intersection": "native · 上帧交叉检测",
+    "prediction": "native · 粒子预测",
+    "tether": "native · Tether牵引",
+    "distance_1": "native · Distance第1轮",
+    "angle": "native · Angle恢复与限制",
+    "bending": "native · Bending约束",
+    "point_collision": "native · 点碰撞",
+    "edge_collision": "native · 边碰撞",
+    "distance_2": "native · Distance第2轮",
+    "motion": "native · Motion约束",
+    "self_primitive_update": "native · 自碰图元更新",
+    "self_grid": "native · 自碰网格排序构建",
+    "self_candidates": "native · 自碰候选生成去重",
+    "self_contact_build": "native · 自碰接触构建更新",
+    "self_solve_prepare": "native · 自碰求解准备",
+    "self_solve_round_1": "native · 自碰求解第1轮",
+    "self_solve_round_2": "native · 自碰求解第2轮",
+    "self_solve_round_3": "native · 自碰求解第3轮",
+    "self_solve_round_4": "native · 自碰求解第4轮",
+    "interaction_aggregate_build": "native · 跨任务聚合构建",
+    "interaction_scatter": "native · 跨任务结果分发",
+    "particle_post": "native · 粒子Post",
+    "final_intersection": "native · 最终交叉检测处理",
+    "result_finalize": "native · 结果与历史收尾",
+}
+
+
+def _normalize_mc2_native_timing(value) -> dict:
+    if not isinstance(value, dict) or value.get("schema") != "mc2_native_step_timing_v0":
+        raise RuntimeError("MC2 native timing returned an unsupported schema")
+    raw_stages = value.get("stages")
+    raw_calls = value.get("calls")
+    if not isinstance(raw_stages, dict) or not isinstance(raw_calls, dict):
+        raise RuntimeError("MC2 native timing payload is incomplete")
+    stages = {}
+    calls = {}
+    for key, raw_seconds in raw_stages.items():
+        key = str(key)
+        seconds = float(raw_seconds)
+        call_count = int(raw_calls.get(key, 0))
+        if not math.isfinite(seconds) or seconds < 0.0 or call_count <= 0:
+            raise RuntimeError("MC2 native timing contains an invalid stage sample")
+        label = _MC2_NATIVE_TIMING_LABELS.get(key, f"native · {key}")
+        stages[label] = stages.get(label, 0.0) + seconds
+        calls[label] = calls.get(label, 0) + call_count
+    return {
+        "schema": "mc2_native_step_timing_v0",
+        "stages": stages,
+        "calls": calls,
+        "clock_reads": int(value.get("clock_reads", 0)),
+        "covered_seconds": float(value.get("covered_seconds", 0.0)),
+    }
+
 
 class MC2NativeContextV0:
     """The slot-owned resource; the capsule never leaves this object."""
@@ -1374,7 +1431,8 @@ class MC2NativeInteractionV0:
         dt: float,
         *,
         is_final_substep: bool = True,
-    ) -> None:
+        capture_timing: bool = False,
+    ) -> dict | None:
         self._ensure_live()
         contexts = tuple(contexts)
         primary_group_bits = tuple(int(value) for value in primary_group_bits)
@@ -1397,7 +1455,7 @@ class MC2NativeInteractionV0:
                     "Center step simulation_delta_time does not match native group step dt"
                 )
         powers = derive_mc2_simulation_powers(dt)
-        self._module.mc2_interaction_v0_step_group(
+        native_timing = self._module.mc2_interaction_v0_step_group(
             self._handle,
             tuple(context._handle for context in contexts),
             primary_group_bits,
@@ -1418,9 +1476,15 @@ class MC2NativeInteractionV0:
                     )
                 )
             ),
+            bool(capture_timing),
         )
         for context in contexts:
             context._center_step_dt = None
+        if not capture_timing:
+            if native_timing is not None:
+                raise RuntimeError("MC2 native timing was published while disabled")
+            return None
+        return _normalize_mc2_native_timing(native_timing)
 
     def inspect(self) -> dict:
         if self._handle is None:

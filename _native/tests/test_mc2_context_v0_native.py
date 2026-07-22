@@ -2772,6 +2772,63 @@ def test_particle_inertia_uses_omnimc2_depth_exponent():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_interaction_native_timing_is_strictly_opt_in():
+    context = hotools_native.mc2_context_v0_create(0, 2)
+    interaction = hotools_native.mc2_interaction_v0_create(0)
+    try:
+        proxy, baseline = static_arrays(2)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((2, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        floats, ints, curves = parameters()
+        hotools_native.mc2_context_v0_update_parameters(
+            context, floats, ints, curves
+        )
+        positions, rotations = frame(2)
+        update_dynamic(context, 1, 0, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+
+        args = (
+            interaction,
+            (context,),
+            (1,),
+            (0,),
+            1.0 / 90.0,
+            1.0,
+            1.0,
+            1.0,
+            True,
+            False,
+        )
+        assert hotools_native.mc2_interaction_v0_step_group(*args, False) is None
+
+        result = hotools_native.mc2_interaction_v0_step_group(*args, True)
+        assert result["schema"] == "mc2_native_step_timing_v0"
+        assert result["stage_count"] == len(result["stages"])
+        assert result["stages"].keys() == result["calls"].keys()
+        assert "prediction" in result["stages"]
+        assert "particle_post" in result["stages"]
+        assert "self_grid" not in result["stages"]
+        assert result["clock_reads"] == 2 * sum(result["calls"].values())
+        assert abs(
+            result["covered_seconds"] - sum(result["stages"].values())
+        ) < 1.0e-12
+    finally:
+        hotools_native.mc2_interaction_v0_free(interaction)
+        hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_debug_baseline_readback_is_exact_and_validated()
     print("PASS debug baseline readback")
@@ -2817,3 +2874,5 @@ if __name__ == "__main__":
     print("PASS Center step Tier A fixture")
     test_particle_inertia_uses_omnimc2_depth_exponent()
     print("PASS OmniMC2 particle inertia depth exponent")
+    test_interaction_native_timing_is_strictly_opt_in()
+    print("PASS interaction native timing opt-in gate")

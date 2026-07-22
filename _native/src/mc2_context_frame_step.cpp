@@ -1573,10 +1573,13 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
             static_cast<float>(simulation_power_y),
             static_cast<float>(simulation_power_z),
             static_cast<float>(simulation_power_w),
-            state)) {
+            state,
+            nullptr)) {
         return nullptr;
     }
-    finish_mc2_context_step(state, static_cast<float>(dt), is_final_substep);
+    finish_mc2_context_step(
+        state, static_cast<float>(dt), is_final_substep, nullptr
+    );
     Py_RETURN_NONE;
 }
 

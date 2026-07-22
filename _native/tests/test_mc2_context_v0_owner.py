@@ -200,6 +200,38 @@ class _RecordingModule:
         self.freed = True
 
 
+class _TimingRecordingModule(_RecordingModule):
+    def __init__(self) -> None:
+        super().__init__()
+        self.interaction_calls = []
+
+    def mc2_interaction_v0_create(self, schema):
+        assert schema == 0
+        return object()
+
+    def mc2_interaction_v0_step_group(self, *args):
+        self.interaction_calls.append(args)
+        if not args[-1]:
+            return None
+        return {
+            "schema": "mc2_native_step_timing_v0",
+            "clock_reads": 4,
+            "stage_count": 2,
+            "covered_seconds": 0.003,
+            "stages": {
+                "prediction": 0.001,
+                "self_grid": 0.002,
+            },
+            "calls": {
+                "prediction": 1,
+                "self_grid": 1,
+            },
+        }
+
+    def mc2_interaction_v0_free(self, _handle):
+        pass
+
+
 def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     module = _RecordingModule()
     owner = native.MC2NativeContextV0(1, module=module)
@@ -271,6 +303,36 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     assert module.freed and owner.disposed
 
 
+def test_interaction_timing_is_opt_in_and_node_labels_native_slots() -> None:
+    module = _TimingRecordingModule()
+    owner = native.MC2NativeContextV0(1, module=module)
+    interaction = native.MC2NativeInteractionV0(module=module)
+    try:
+        assert interaction.step_group((owner,), (1,), (0,), 1.0 / 60.0) is None
+        assert module.interaction_calls[-1][-1] is False
+
+        result = interaction.step_group(
+            (owner,),
+            (1,),
+            (0,),
+            1.0 / 60.0,
+            capture_timing=True,
+        )
+        assert module.interaction_calls[-1][-1] is True
+        assert result["clock_reads"] == 4
+        assert result["stages"] == {
+            "native · 粒子预测": 0.001,
+            "native · 自碰网格排序构建": 0.002,
+        }
+        assert result["calls"] == {
+            "native · 粒子预测": 1,
+            "native · 自碰网格排序构建": 1,
+        }
+    finally:
+        interaction.dispose()
+        owner.dispose()
+
+
 if __name__ == "__main__":
     test_owner_static_fingerprint_classification()
     print("PASS MC2 context V0 static fingerprint classification")
@@ -282,3 +344,5 @@ if __name__ == "__main__":
     print("PASS MC2 interaction V0 invalidation")
     test_owner_center_step_packing_dt_guard_and_readback()
     print("PASS MC2 context V0 Center wrapper")
+    test_interaction_timing_is_opt_in_and_node_labels_native_slots()
+    print("PASS MC2 interaction V0 opt-in native timing")

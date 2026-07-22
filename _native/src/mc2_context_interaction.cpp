@@ -3,16 +3,102 @@
 #include "mc2_context_internal.hpp"
 #include "mc2_context_helpers.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 namespace hotools {
 
 using namespace mc2_internal;
 using namespace py;
+
+constexpr std::array<const char*, kMc2NativeTimingStageCount>
+    kMc2NativeTimingStageKeys {
+        "dispatch",
+        "context_prepare",
+        "center",
+        "previous_intersection",
+        "prediction",
+        "tether",
+        "distance_1",
+        "angle",
+        "bending",
+        "point_collision",
+        "edge_collision",
+        "distance_2",
+        "motion",
+        "self_primitive_update",
+        "self_grid",
+        "self_candidates",
+        "self_contact_build",
+        "self_solve_prepare",
+        "self_solve_round_1",
+        "self_solve_round_2",
+        "self_solve_round_3",
+        "self_solve_round_4",
+        "interaction_aggregate_build",
+        "interaction_scatter",
+        "particle_post",
+        "final_intersection",
+        "result_finalize",
+    };
+
+bool dict_double(PyObject* dict, const char* key, double value) {
+    PyObject* item = PyFloat_FromDouble(value);
+    if (item == nullptr) return false;
+    const int status = PyDict_SetItemString(dict, key, item);
+    Py_DECREF(item);
+    return status == 0;
+}
+
+PyObject* build_native_timing_result(const Mc2NativeStepTimingV0& timing) {
+    PyObject* result = PyDict_New();
+    PyObject* stages = PyDict_New();
+    PyObject* calls = PyDict_New();
+    if (result == nullptr || stages == nullptr || calls == nullptr) {
+        Py_XDECREF(result);
+        Py_XDECREF(stages);
+        Py_XDECREF(calls);
+        return nullptr;
+    }
+    double covered_seconds = 0.0;
+    std::int64_t published_stage_count = 0;
+    for (std::size_t index = 0; index < kMc2NativeTimingStageCount; ++index) {
+        if (timing.calls[index] == 0) continue;
+        const auto* key = kMc2NativeTimingStageKeys[index];
+        covered_seconds += timing.seconds[index];
+        ++published_stage_count;
+        if (!dict_double(stages, key, timing.seconds[index]) ||
+            !dict_i64(
+                calls, key, static_cast<std::int64_t>(timing.calls[index])
+            )) {
+            Py_DECREF(result);
+            Py_DECREF(stages);
+            Py_DECREF(calls);
+            return nullptr;
+        }
+    }
+    if (!dict_string(result, "schema", "mc2_native_step_timing_v0") ||
+        !dict_i64(
+            result, "clock_reads", static_cast<std::int64_t>(timing.clock_reads)
+        ) ||
+        !dict_i64(result, "stage_count", published_stage_count) ||
+        !dict_double(result, "covered_seconds", covered_seconds) ||
+        PyDict_SetItemString(result, "stages", stages) < 0 ||
+        PyDict_SetItemString(result, "calls", calls) < 0) {
+        Py_DECREF(result);
+        Py_DECREF(stages);
+        Py_DECREF(calls);
+        return nullptr;
+    }
+    Py_DECREF(stages);
+    Py_DECREF(calls);
+    return result;
+}
 
 // World-owned interaction ABI; per-slot state remains in Mc2ContextV0.
 PyObject* mc2_interaction_v0_create(PyObject*, PyObject* args) {
@@ -149,12 +235,19 @@ PyObject* mc2_interaction_v0_invalidate(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 10) {
-        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_step_group expects 10 arguments");
+    if (PyTuple_GET_SIZE(args) != 11) {
+        PyErr_SetString(PyExc_TypeError, "mc2_interaction_v0_step_group expects 11 arguments");
         return nullptr;
     }
     auto* interaction = interaction_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(interaction)) return nullptr;
+    const int capture_timing = PyObject_IsTrue(PyTuple_GET_ITEM(args, 10));
+    if (capture_timing < 0) return nullptr;
+    std::optional<Mc2NativeStepTimingV0> timing;
+    if (capture_timing != 0) timing.emplace();
+    auto* timing_ptr = timing.has_value() ? &timing.value() : nullptr;
+    std::optional<Mc2NativeTimingScopeV0> dispatch_stage;
+    dispatch_stage.emplace(timing_ptr, Mc2NativeTimingStageV0::Dispatch);
     PyObject* context_sequence = PySequence_Fast(
         PyTuple_GET_ITEM(args, 1), "contexts must be a sequence"
     );
@@ -211,6 +304,8 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
         Py_DECREF(context_sequence);
         Py_DECREF(group_sequence);
         Py_DECREF(mask_sequence);
+        dispatch_stage.reset();
+        if (timing.has_value()) return build_native_timing_result(timing.value());
         Py_RETURN_NONE;
     }
 
@@ -271,8 +366,12 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
     Py_DECREF(mask_sequence);
 
     const bool same_scope = interaction_scope_matches(*interaction, scope_identity);
+    dispatch_stage.reset();
     if (same_scope && !interaction->participants.empty() &&
         interaction->aggregate.self_grid_dynamic_ready) {
+        Mc2NativeTimingScopeV0 stage(
+            timing_ptr, Mc2NativeTimingStageV0::PreviousIntersection
+        );
         interaction->aggregate.frame = interaction->participants.front().context->frame;
         interaction->aggregate.generation =
             interaction->participants.front().context->generation;
@@ -287,42 +386,52 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
                 static_cast<float>(simulation_power_y),
                 static_cast<float>(simulation_power_z),
                 static_cast<float>(simulation_power_w),
-                states[index])) {
+                states[index],
+                timing_ptr)) {
             return nullptr;
         }
     }
 
-    interaction->participants.clear();
-    for (std::size_t index = 0; index < contexts.size(); ++index) {
-        auto* context = contexts[index];
-        const bool interactive = context->setup_kind == 0 &&
-            context->int_values.size() == static_cast<std::size_t>(kIntCount) &&
-            context->int_values[kSelfCollisionSyncMode] != 0 &&
-            context->self_primitive_dynamic_ready;
-        if (!interactive) continue;
-        interaction->participants.push_back(Mc2InteractionParticipantV0 {
-            context,
-            primary_group_bits[index],
-            collided_by_groups[index],
-            0,
-            index,
-        });
-    }
-    interaction->pair_count = 0;
-    for (std::size_t left = 0; left < interaction->participants.size(); ++left) {
-        for (std::size_t right = left + 1; right < interaction->participants.size(); ++right) {
-            const auto& a = interaction->participants[left];
-            const auto& b = interaction->participants[right];
-            const bool allows_a = a.collided_by_groups == 0 ||
-                (a.collided_by_groups & b.primary_group_bit) != 0;
-            const bool allows_b = b.collided_by_groups == 0 ||
-                (b.collided_by_groups & a.primary_group_bit) != 0;
-            if (allows_a && allows_b) ++interaction->pair_count;
+    {
+        Mc2NativeTimingScopeV0 stage(
+            timing_ptr, Mc2NativeTimingStageV0::Dispatch
+        );
+        interaction->participants.clear();
+        for (std::size_t index = 0; index < contexts.size(); ++index) {
+            auto* context = contexts[index];
+            const bool interactive = context->setup_kind == 0 &&
+                context->int_values.size() == static_cast<std::size_t>(kIntCount) &&
+                context->int_values[kSelfCollisionSyncMode] != 0 &&
+                context->self_primitive_dynamic_ready;
+            if (!interactive) continue;
+            interaction->participants.push_back(Mc2InteractionParticipantV0 {
+                context,
+                primary_group_bits[index],
+                collided_by_groups[index],
+                0,
+                index,
+            });
+        }
+        interaction->pair_count = 0;
+        for (std::size_t left = 0; left < interaction->participants.size(); ++left) {
+            for (
+                std::size_t right = left + 1;
+                right < interaction->participants.size();
+                ++right
+            ) {
+                const auto& a = interaction->participants[left];
+                const auto& b = interaction->participants[right];
+                const bool allows_a = a.collided_by_groups == 0 ||
+                    (a.collided_by_groups & b.primary_group_bit) != 0;
+                const bool allows_b = b.collided_by_groups == 0 ||
+                    (b.collided_by_groups & a.primary_group_bit) != 0;
+                if (allows_a && allows_b) ++interaction->pair_count;
+            }
         }
     }
     if (interaction->participants.size() >= 2) {
         interaction->aggregate.self_contact_debug_requested = debug_self_contacts != 0;
-        build_and_solve_interaction(*interaction, states);
+        build_and_solve_interaction(*interaction, states, timing_ptr);
     } else {
         interaction->candidate_count = 0;
         interaction->contact_count = 0;
@@ -331,12 +440,15 @@ PyObject* mc2_interaction_v0_step_group(PyObject*, PyObject* args) {
 
     const bool is_final_substep = final_substep_value != 0;
     for (auto& state : states) {
-        finish_mc2_context_step(state, static_cast<float>(dt), is_final_substep);
+        finish_mc2_context_step(
+            state, static_cast<float>(dt), is_final_substep, timing_ptr
+        );
     }
     if (is_final_substep && interaction->participants.size() >= 2) {
-        finish_interaction_intersections(*interaction);
+        finish_interaction_intersections(*interaction, timing_ptr);
     }
     ++interaction->step_count;
+    if (timing.has_value()) return build_native_timing_result(timing.value());
     Py_RETURN_NONE;
 }
 
