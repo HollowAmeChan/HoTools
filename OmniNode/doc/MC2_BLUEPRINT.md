@@ -887,5 +887,6 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - 旧 reference 只做到位置提交，漏掉了 V0 post 的速度/摩擦历史。现在 post 是显式事务尾段，写入 real velocity、velocity history 和 old position；没有 post 证据就不能声称完整 V0 等价。
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
+- `inspect()` 只返回 metadata；`real_velocities/world_normals` 只能由显式 `read_debug_state()` 请求。任何 debug-off 或普通结果路径都不得为了可观察性隐式 readback。
 
 当前仍未关闭的 E3 门禁是：scheduler 到 Domain 的碰撞模式/pass enablement 与参数 packet handoff、最终 writeback 等价，以及在这些证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。

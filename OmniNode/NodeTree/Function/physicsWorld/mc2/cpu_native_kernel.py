@@ -781,8 +781,6 @@ class MC2NativeCPUKernelV1:
     def inspect(self, handle) -> dict:
         key = self._require_handle(handle)
         result = dict(self._module.mc2_domain_cpu_v1_inspect(key))
-        raw = self._module.mc2_domain_cpu_v1_read(key)
-        result["real_velocities"] = np.asarray(raw["real_velocities"], dtype=np.float32)
         result.update({
             "numerical_kernel_ready": False,
             "data_path_only": True,
@@ -802,6 +800,15 @@ class MC2NativeCPUKernelV1:
             "center_frame_shift_slice_ready": True,
         })
         return result
+
+    def read_debug_state(self, handle) -> dict:
+        """Read native dynamics/debug arrays only when explicitly requested."""
+        key = self._require_handle(handle)
+        raw = self._module.mc2_domain_cpu_v1_read(key)
+        return {
+            "real_velocities": np.asarray(raw["real_velocities"], dtype=np.float32),
+            "world_normals": np.asarray(raw["world_normals"], dtype=np.float32),
+        }
 
     def dispose(self, handle) -> None:
         key = int(handle or 0)

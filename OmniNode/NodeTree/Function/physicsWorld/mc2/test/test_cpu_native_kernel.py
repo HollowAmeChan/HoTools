@@ -130,6 +130,11 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
         assert inspection["kernel"]["baseline_ready"] is True
         assert inspection["kernel"]["baseline_line_count"] == 1
         assert inspection["kernel"]["baseline_data_count"] == 3
+        assert "real_velocities" not in inspection["kernel"]
+        debug_state = domain.read_debug_state()
+        assert debug_state["real_velocities"].shape == (
+            compiled.program.particle_count, 3
+        )
         assert inspection["step_count"] == 1
     finally:
         domain.dispose()

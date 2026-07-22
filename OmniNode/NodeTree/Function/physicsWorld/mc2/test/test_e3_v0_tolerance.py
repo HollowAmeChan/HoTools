@@ -426,7 +426,7 @@ def test_e3_full_reference_post_history_matches_same_source_v0():
             },
         })
         domain_positions = domain.read_output().world_positions
-        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
+        domain_real_velocities = domain.read_debug_state()["real_velocities"]
         np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
         np.testing.assert_allclose(
             domain_real_velocities,
@@ -782,7 +782,7 @@ def test_e3_native_mesh_point_collision_matches_v0():
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
-        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
+        domain_real_velocities = domain.read_debug_state()["real_velocities"]
         assert v0_positions[2, 1] < -1.1
         np.testing.assert_allclose(
             domain_positions,
@@ -904,7 +904,7 @@ def test_e3_native_mesh_edge_collision_matches_v0():
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
-        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
+        domain_real_velocities = domain.read_debug_state()["real_velocities"]
         assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
         np.testing.assert_allclose(
             domain_positions,
@@ -1042,7 +1042,7 @@ def test_e3_native_mesh_self_collision_matches_v0():
         domain.step_reference_pipeline_full(settings)
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
-        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
+        domain_real_velocities = domain.read_debug_state()["real_velocities"]
         assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
         np.testing.assert_allclose(
             domain_positions,

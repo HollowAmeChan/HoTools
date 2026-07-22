@@ -329,6 +329,16 @@ class MC2CPUBackendDomainV1:
         self._last_output = normalized
         return normalized
 
+    def read_debug_state(self) -> Mapping[str, object]:
+        """Read native dynamics only when a caller explicitly requests it."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("CPU backend debug state requires update_frame first")
+        read_state = getattr(self._kernel, "read_debug_state", None)
+        if not callable(read_state):
+            raise RuntimeError("CPU kernel does not expose explicit debug state")
+        return read_state(self._handle)
+
     def inspect(self) -> dict:
         self._ensure_live()
         kernel_state = self._kernel.inspect(self._handle)
