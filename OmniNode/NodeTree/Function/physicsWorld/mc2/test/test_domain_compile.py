@@ -118,6 +118,9 @@ def _domain_draft():
                 gravity=5.0, damping=0.1, self_collision_mode=2
             ),
             task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.2),
+            setup_options=parameters.make_mc2_setup_options(
+                "mesh_cloth", collided_by_groups=1,
+            ),
             collision_mask=3,
         ),
         partition_specs.make_mc2_partition_entry(
@@ -128,6 +131,9 @@ def _domain_draft():
                 gravity=8.0, damping=0.3, self_collision_mode=2
             ),
             task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.8),
+            setup_options=parameters.make_mc2_setup_options(
+                "mesh_cloth", collided_by_groups=2,
+            ),
             collision_group=8,
             collision_mask=8,
         ),
@@ -152,9 +158,10 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
     assert compiled.program.partition_initial_local_gravity_direction.tolist() == [
         [0.0, -1.0, 0.0]
     ]
-    assert compiled.parameters.partition_uint_parameters.fields[-2:] == (
+    assert compiled.parameters.partition_uint_parameters.fields[-3:] == (
         "collision_group",
         "collision_mask",
+        "collided_by_groups",
     )
     assert compiled.parameters.constraint_parameters
     assert compiled.parameters.layout_signature == compiled.program.layout_signature
@@ -246,6 +253,7 @@ def test_multi_compiler_preserves_partition_parameter_differences_and_filters() 
          _effective(gravity=9.0, damping=0.3, cloth_mass=0.8)),
         collision_groups=(1, 2),
         collision_masks=(1, 2),
+        external_collision_masks=(4, 8),
     )
     partition = compiled.parameters.partition_parameters
     gravity_index = partition.fields.index("gravity")
@@ -255,9 +263,9 @@ def test_multi_compiler_preserves_partition_parameter_differences_and_filters() 
     assert all(abs(float(value) - 0.1) < 1.0e-6 for value in particle.values[:3, mass_index])
     assert all(abs(float(value) - 0.8) < 1.0e-6 for value in particle.values[3:, mass_index])
     uint = compiled.parameters.partition_uint_parameters.values
-    assert uint[:, -2:].tolist() == [[1, 1], [2, 2]]
-    assert not (int(uint[0, -1]) & int(uint[1, -2]))
-    assert not (int(uint[1, -1]) & int(uint[0, -2]))
+    assert uint[:, -3:].tolist() == [[1, 1, 4], [2, 2, 8]]
+    assert not (int(uint[0, -2]) & int(uint[1, -3]))
+    assert not (int(uint[1, -2]) & int(uint[0, -3]))
 
 
 def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
@@ -268,9 +276,9 @@ def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
     mass = table.fields.index("cloth_mass")
     assert all(abs(float(value) - 0.2) < 1.0e-6 for value in table.values[:3, mass])
     assert all(abs(float(value) - 0.8) < 1.0e-6 for value in table.values[3:, mass])
-    assert compiled.parameters.partition_uint_parameters.values[:, -2:].tolist() == [
-        [1, 3],
-        [8, 8],
+    assert compiled.parameters.partition_uint_parameters.values[:, -3:].tolist() == [
+        [1, 3, 1],
+        [8, 8, 2],
     ]
     try:
         compiler.compile_mc2_mesh_domain_draft(draft, tuple(reversed(_fragments())))

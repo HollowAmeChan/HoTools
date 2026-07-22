@@ -359,6 +359,7 @@ def _parameter_packet_for_fragments(
     *,
     collision_groups: tuple[int, ...],
     collision_masks: tuple[int, ...],
+    external_collision_masks: tuple[int, ...],
 ) -> MC2DomainParameterPacketV1:
     runtime_maps = tuple(_runtime_maps(effective) for effective in effectives)
     partition_fields = MC2_RUNTIME_FLOAT_FIELDS + ("animation_pose_ratio",)
@@ -366,15 +367,22 @@ def _parameter_packet_for_fragments(
         [floats[name] for name in partition_fields]
         for floats, _ints, _curves in runtime_maps
     ]
-    uint_fields = MC2_RUNTIME_INT_FIELDS + ("collision_group", "collision_mask")
+    uint_fields = MC2_RUNTIME_INT_FIELDS + (
+        "collision_group", "collision_mask", "collided_by_groups",
+    )
     uint_values = [
         [
             *(ints[name] for name in MC2_RUNTIME_INT_FIELDS),
             collision_group,
             collision_mask,
+            external_collision_mask,
         ]
-        for (_floats, ints, _curves), collision_group, collision_mask in zip(
-            runtime_maps, collision_groups, collision_masks
+        for (
+            (_floats, ints, _curves), collision_group, collision_mask,
+            external_collision_mask,
+        ) in zip(
+            runtime_maps, collision_groups, collision_masks,
+            external_collision_masks,
         )
     ]
 
@@ -488,6 +496,18 @@ def _validated_collision_masks(count: int, values) -> tuple[int, ...]:
     return tuple(int(value) for value in result)
 
 
+def _validated_external_collision_masks(count: int, values) -> tuple[int, ...]:
+    result = (0,) * count if values is None else tuple(values)
+    if len(result) != count:
+        raise ValueError("external_collision_masks must match fragment count")
+    for value in result:
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise TypeError("external_collision_mask values must be integers")
+        if not 0 <= int(value) <= 0xFFFF:
+            raise ValueError("external_collision_mask must fit the Physics World 16 groups")
+    return tuple(int(value) for value in result)
+
+
 def compile_mc2_mesh_static_fragments(
     fragments,
     effectives,
@@ -495,6 +515,7 @@ def compile_mc2_mesh_static_fragments(
     domain_id: str | None = None,
     collision_groups=None,
     collision_masks=None,
+    external_collision_masks=None,
 ) -> MC2MeshCompiledDomainV1:
     fragments = tuple(fragments)
     effectives = tuple(effectives)
@@ -514,6 +535,9 @@ def compile_mc2_mesh_static_fragments(
         raise ValueError("Mesh domain output target ids must be unique")
     groups = _validated_collision_groups(len(fragments), collision_groups)
     masks = _validated_collision_masks(len(fragments), collision_masks)
+    external_masks = _validated_external_collision_masks(
+        len(fragments), external_collision_masks,
+    )
     resolved_domain_id = domain_id or f"mc2.domain:{'|'.join(partition_ids)}"
 
     required = ["mesh_cloth"]
@@ -535,6 +559,7 @@ def compile_mc2_mesh_static_fragments(
         program,
         collision_groups=groups,
         collision_masks=masks,
+        external_collision_masks=external_masks,
     )
     return MC2MeshCompiledDomainV1(
         fragments=fragments,
@@ -552,12 +577,14 @@ def compile_mc2_mesh_static_fragment(
     *,
     collision_group: int = 1,
     collision_mask: int = 0xFFFF,
+    external_collision_mask: int = 0,
 ) -> MC2MeshCompiledDomainV1:
     return compile_mc2_mesh_static_fragments(
         (fragment,),
         (effective,),
         collision_groups=(collision_group,),
         collision_masks=(collision_mask,),
+        external_collision_masks=(external_collision_mask,),
     )
 
 
@@ -585,6 +612,10 @@ def compile_mc2_mesh_domain_draft(
         domain_id=draft.domain_id,
         collision_groups=draft.collision_groups,
         collision_masks=draft.collision_masks,
+        external_collision_masks=tuple(
+            partition.setup_options.collided_by_groups
+            for partition in draft.partitions
+        ),
     )
 
 
