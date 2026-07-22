@@ -753,6 +753,8 @@ A5-04已关闭whole-domain参数隔离：Tether、Angle、Motion和Post不再读
 
 ## 构建与性能边界
 
+V0 raw native revalidation (2026-07-22): this supersedes the access-violation note above. Clean, probe-free py311/py313 rebuilds pass the complete V0 native contract and all E3 V0/Domain tolerance cases. Treat the old failure as an inconsistent incremental artifact; never relax Domain tolerance to mask it. Future P0/E4 native changes require the same dual-ABI clean rebuild and regression set before Blender oracle.
+
 日常MC2 C++验证固定使用：
 
 ```text
