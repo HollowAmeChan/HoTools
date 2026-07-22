@@ -35,7 +35,7 @@ class OP_SnapMatchingBoneHeads(Operator):
     bl_idname = "ho.mod_weight_snap_matching_bone_heads"
     bl_label = "吸附同名骨骼Head"
     bl_description = (
-        "将移动骨架中所有同名骨骼的Head吸附到参考骨架；"
+        "按当前姿态的视觉位置，将移动骨架中所有同名骨骼的Head吸附到参考骨架；"
         "只平移骨骼并保持原有长度、方向和Roll"
     )
     bl_options = {'REGISTER', 'UNDO'}
@@ -72,6 +72,16 @@ class OP_SnapMatchingBoneHeads(Operator):
             except RuntimeError:
                 pass
 
+    @staticmethod
+    def _collect_pose_heads_world(obj, depsgraph):
+        """读取依赖图评估后的姿态骨骼Head世界坐标。"""
+        evaluated = obj.evaluated_get(depsgraph)
+        world = evaluated.matrix_world
+        return {
+            pose_bone.name: world @ pose_bone.head
+            for pose_bone in evaluated.pose.bones
+        }
+
     def execute(self, context):
         scene = context.scene
         reference = scene.ho_mod_weight_reference_armature
@@ -106,15 +116,22 @@ class OP_SnapMatchingBoneHeads(Operator):
             if active is not None and active.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
 
-            reference_world = reference.matrix_world.copy()
-            reference_heads_world = {
-                bone.name: reference_world @ bone.head_local
-                for bone in reference.data.bones
-            }
+            depsgraph = context.evaluated_depsgraph_get()
+            reference_heads_world = self._collect_pose_heads_world(
+                reference,
+                depsgraph,
+            )
+            moving_heads_world = self._collect_pose_heads_world(
+                moving,
+                depsgraph,
+            )
             matching_names = {
                 bone.name
                 for bone in moving.data.bones
-                if bone.name in reference_heads_world
+                if (
+                    bone.name in reference_heads_world
+                    and bone.name in moving_heads_world
+                )
             }
 
             if not matching_names:
@@ -146,16 +163,21 @@ class OP_SnapMatchingBoneHeads(Operator):
                     disconnected_count += 1
 
             moving_world_inv = moving.matrix_world.inverted_safe()
+            moving_world_inv_3x3 = moving_world_inv.to_3x3()
 
             for bone in edit_bones:
                 target_head_world = reference_heads_world.get(bone.name)
-                if target_head_world is None:
+                current_head_world = moving_heads_world.get(bone.name)
+                if target_head_world is None or current_head_world is None:
                     unmatched_count += 1
                     continue
 
-                target_head = moving_world_inv @ target_head_world
+                # 用姿态下的视觉位置差平移编辑骨，而不是把姿态坐标
+                # 直接当作静置坐标，避免已有Pose变换被重复叠加。
+                offset_world = target_head_world - current_head_world
+                offset = moving_world_inv_3x3 @ offset_world
                 bone_vector = bone.tail - bone.head
-                offset = target_head - bone.head
+                target_head = bone.head + offset
 
                 bone.head = target_head
                 bone.tail = target_head + bone_vector
@@ -211,30 +233,26 @@ class OP_SnapMatchingBoneHeads(Operator):
 
 def drawWeightPanel(layout, context):
     column = layout.column(align=True)
-    column.operator(
-        OP_MoveHumanoidBonesToCollection.bl_idname,
-        icon='GROUP_BONE',
-    )
+    column.operator(OP_MoveHumanoidBonesToCollection.bl_idname,)
     column.operator(
         OP_ApplyRestPose.bl_idname,
         text="强制应用姿态与Mesh",
-        icon='ARMATURE_DATA',
     )
     column.operator(
         OP_SimpleDissolveBone.bl_idname,
         text="简单融并",
-        icon='BONE_DATA',
     )
 
     layout.separator()
     box = layout.box()
-    box.label(text="同名骨骼Head吸附", icon='SNAP_ON')
-    box.prop(
+    box.label(text="同名骨骼Head吸附")
+    row = box.row(align=True)
+    row.prop(
         context.scene,
         "ho_mod_weight_reference_armature",
         text="参考骨架",
     )
-    box.prop(
+    row.prop(
         context.scene,
         "ho_mod_weight_moving_armature",
         text="移动骨架",
@@ -242,7 +260,6 @@ def drawWeightPanel(layout, context):
     box.operator(
         OP_SnapMatchingBoneHeads.bl_idname,
         text="吸附同名骨骼Head",
-        icon='SNAP_ON',
     )
 
 
