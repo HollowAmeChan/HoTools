@@ -112,11 +112,20 @@ def _same_source_constraints():
 
 
 def _frame(program):
-    return ir.make_mc2_domain_frame_packet(
+    return _frame_at(
         program,
         frame=6,
         generation=2,
-        animated_base_world_positions=program.particle_bind_position,
+        positions=program.particle_bind_position,
+    )
+
+
+def _frame_at(program, *, frame, generation, positions):
+    return ir.make_mc2_domain_frame_packet(
+        program,
+        frame=frame,
+        generation=generation,
+        animated_base_world_positions=positions,
         animated_base_world_rotations=program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(((0.0, 0.0, 1.0),) * program.particle_count, dtype=np.float32),
         partition_world_position=((0.0, 0.0, 0.0),),
@@ -388,6 +397,151 @@ def test_e3_native_step_basic_pose_matches_v0_angle_reference():
         v0.dispose()
 
 
+def test_e3_native_motion_branch_matches_v0_after_tether():
+    snapshot, fragment, _compiled, _effective = _same_source_constraints()
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            max_distance_enabled=True,
+            max_distance=0.3,
+            backstop_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        first_frame = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=1,
+            generation=1,
+            world_positions=base_positions,
+            world_rotations_xyzw=base_rotations,
+        ))
+        v0.reset()
+        domain.update_frame(first_frame)
+        v0.step_no_collision(0.1)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+        })
+
+        moved_base = base_positions + np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+        second_frame = _frame_at(
+            program,
+            frame=2,
+            generation=1,
+            positions=moved_base,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=2,
+            generation=1,
+            world_positions=moved_base,
+            world_rotations_xyzw=base_rotations,
+        ))
+        v0.step_no_collision(0.1)
+        domain.update_frame(second_frame)
+        step_basic = domain.prepare_step_basic_pose(0.0)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+        })
+
+        partition_fields = {
+            name: index
+            for index, name in enumerate(compiled.parameters.partition_parameters.fields)
+        }
+        particle_fields = {
+            name: index
+            for index, name in enumerate(compiled.parameters.particle_parameters.fields)
+        }
+        uint_fields = {
+            name: index
+            for index, name in enumerate(compiled.parameters.partition_uint_parameters.fields)
+        }
+        partition_values = compiled.parameters.partition_parameters.values[0]
+        particle_values = compiled.parameters.particle_parameters.values
+        domain.step({
+            "data_path_only": True,
+            "tether_slice": True,
+            "step_basic_positions": step_basic["positions"],
+            "compression": float(
+                partition_values[partition_fields["tether_compression_limit"]]
+            ),
+            "stretch": float(
+                partition_values[partition_fields["tether_stretch_limit"]]
+            ),
+        })
+        domain.step({
+            "data_path_only": True,
+            "motion_slice": True,
+            "base_positions": moved_base,
+            "base_rotations": base_rotations,
+            "max_distances": particle_values[:, particle_fields["max_distance"]],
+            "stiffness_values": np.full(
+                program.particle_count,
+                partition_values[partition_fields["motion_stiffness"]],
+                dtype=np.float32,
+            ),
+            "backstop_radii": np.full(
+                program.particle_count,
+                partition_values[partition_fields["backstop_radius"]],
+                dtype=np.float32,
+            ),
+            "backstop_distances": particle_values[:, particle_fields["backstop_distance"]],
+            "normal_axis": int(
+                compiled.parameters.partition_uint_parameters.values[
+                    0, uint_fields["normal_axis"]
+                ]
+            ),
+            "max_distance_enabled": True,
+            "backstop_enabled": False,
+        })
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            np.asarray(v0.read()[0], dtype=np.float32),
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
@@ -395,3 +549,5 @@ if __name__ == "__main__":
     print("PASS E3 same-source V0/Domain full no-collision tolerance")
     test_e3_native_step_basic_pose_matches_v0_angle_reference()
     print("PASS E3 native StepBasic pose matches V0 Angle reference")
+    test_e3_native_motion_branch_matches_v0_after_tether()
+    print("PASS E3 native Tether-to-Motion branch matches V0")
