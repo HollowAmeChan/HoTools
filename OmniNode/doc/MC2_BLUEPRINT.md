@@ -874,16 +874,16 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 
 `Center frame-shift -> Center -> integration/predict -> StepBasic/Tether -> Distance A -> Angle -> Bending -> point collision -> edge collision -> Distance B -> Motion -> self collision -> post/history`。
 
-本阶段已经有 py311/py313 的 V0 对照证据：StepBasic 姿态、Tether 到 Motion 的连续两帧、Mesh point collision、Mesh edge collision、Mesh self collision、无碰撞完整事务，以及 post 后 `real_velocities` 历史。每个碰撞槽都必须显式传入 mapping 或 `None`；self collision 还必须携带上一状态位置。point 与 edge 是 V0 的互斥模式，不能把两者同时打开当作“完整模式”。
+本阶段已经有 py311/py313 的 V0 对照证据：StepBasic 姿态、Tether 到 Motion 的连续两帧、Mesh point collision、Mesh edge collision、Mesh self collision、无碰撞完整事务，以及无碰撞/point/edge/self 各分支 post 后的 `real_velocities` 历史。每个碰撞槽都必须显式传入 mapping 或 `None`；self collision 还必须携带上一状态位置。point 与 edge 是 V0 的互斥模式，不能把两者同时打开当作“完整模式”。
 
 特殊处理与踩坑点：
 
 - StepBasic 不是 Angle 的附属输入。早期 Angle 偏差来自缺少 baseline local pose 和 parent-first 重建，不是 Angle 投影公式；因此 compiled IR 显式保存 baseline local positions/rotations，由 native 共享 kernel 生成 StepBasic。
 - Tether 是否启用不能由“拓扑表存在”推断。测试曾用 V0 的 test-only disable gate，而 Domain 按拓扑无条件执行，造成假性差异；正式 collector/parameter packet 必须携带显式 enablement 和 provenance。
 - MeshCloth point collision 使用零 base position；animated base pose 仅属于 BoneSpring soft-sphere 语义。V0 对照必须注册 source radius multipliers，不能让测试 harness 静默回退为全 1。
-- self collision 的厚度是两个 primitive side 的总和；双三角 fixture 要传 `0.04` 而不是单侧 `0.02`。V0 持久接触参数使用半精度量化，Domain 共享 kernel 保持 float32，因此该分支容差固定为 `1e-4`。
+- self collision 的厚度是两个 primitive side 的总和；双三角 fixture 要传 `0.04` 而不是单侧 `0.02`。V0 持久接触参数使用半精度量化，Domain 共享 kernel 保持 float32，因此位置容差固定为 `1e-4`；post 用 `dt` 求速度会放大这项量化差，self 的速度历史单独使用 `1e-3` 绝对容差，point/edge 不放宽。
 - Distance inverse mass 必须从 depth 与 collision friction 生成，Fixed 粒子为零；Distance/Bending 的 simulation power 是每次 pass 的显式输入，不能在 Python 侧复制缩放 buffer。
 - 旧 reference 只做到位置提交，漏掉了 V0 post 的速度/摩擦历史。现在 post 是显式事务尾段，写入 real velocity、velocity history 和 old position；没有 post 证据就不能声称完整 V0 等价。
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 
-当前仍未关闭的 E3 门禁是：产品 scheduler 的 mode/parameter handoff、完整碰撞模式选择、最终 post/writeback 等价，以及在这些证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
+当前仍未关闭的 E3 门禁是：产品 scheduler 的 mode/parameter handoff、最终 writeback 等价，以及在这些证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。

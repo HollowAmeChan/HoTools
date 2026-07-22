@@ -150,9 +150,10 @@ def _full_reference_settings(
     point_collision=None,
     edge_collision=None,
     self_collision=None,
+    post_step=None,
 ):
     count = program.particle_count
-    return {
+    settings = {
         "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
         "dt": 0.1,
         "frame_interpolation": 1.0,
@@ -185,6 +186,21 @@ def _full_reference_settings(
         "point_collision": point_collision,
         "edge_collision": edge_collision,
         "self_collision": self_collision,
+    }
+    if post_step is not None:
+        settings["post_step"] = post_step
+    return settings
+
+
+def _post_step_settings(effective, old_positions, dt=0.1):
+    floats = effective.debug_dict()["float_values"]
+    return {
+        "old_positions": old_positions,
+        "dt": dt,
+        "dynamic_friction": floats["collision_dynamic_friction"],
+        "static_friction_speed": floats["collision_static_friction"],
+        "particle_speed_limit": floats["particle_speed_limit"],
+        "velocity_weight": 1.0,
     }
 
 
@@ -722,6 +738,7 @@ def test_e3_native_mesh_point_collision_matches_v0():
         v0.reset()
         domain.update_frame(frame)
         v0.step_no_collision(0.1)
+        v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
         particle_fields = {
             name: index
             for index, name in enumerate(compiled.parameters.particle_parameters.fields)
@@ -752,13 +769,21 @@ def test_e3_native_mesh_point_collision_matches_v0():
                 "collider_old_segment_b": center,
                 "collider_radii": collider_radii,
             },
+            post_step=_post_step_settings(effective, base_positions),
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
+        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
         assert v0_positions[2, 1] < -1.1
         np.testing.assert_allclose(
             domain_positions,
             v0_positions,
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+        np.testing.assert_allclose(
+            domain_real_velocities,
+            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
             rtol=4.0e-5,
             atol=4.0e-5,
         )
@@ -834,6 +859,7 @@ def test_e3_native_mesh_edge_collision_matches_v0():
         v0.reset()
         domain.update_frame(frame)
         v0.step_no_collision(0.1)
+        v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
         edge_table = next(table for table in program.primitive_tables if table.kind == "edge")
         edges = np.asarray(edge_table.indices, dtype=np.int32)
         particle_fields = {
@@ -863,15 +889,23 @@ def test_e3_native_mesh_edge_collision_matches_v0():
                 "collider_old_segment_b": center,
                 "collider_radii": collider_radii,
             },
+            post_step=_post_step_settings(effective, base_positions),
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
+        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
         assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
         np.testing.assert_allclose(
             domain_positions,
             v0_positions,
             # V0 quantizes persistent self-contact parameters to half precision;
             # the shared native Domain kernel keeps the same ordered solve in float32.
+            rtol=1.0e-4,
+            atol=1.0e-4,
+        )
+        np.testing.assert_allclose(
+            domain_real_velocities,
+            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
             rtol=1.0e-4,
             atol=1.0e-4,
         )
@@ -945,6 +979,7 @@ def test_e3_native_mesh_self_collision_matches_v0():
         v0.reset()
         domain.update_frame(frame)
         v0.step_no_collision(0.1)
+        v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
         edge_table = next(table for table in program.primitive_tables if table.kind == "edge")
         triangle_table = next(
             table for table in program.primitive_tables if table.kind == "triangle"
@@ -989,10 +1024,12 @@ def test_e3_native_mesh_self_collision_matches_v0():
                 "friction": np.zeros(program.particle_count, dtype=np.float32),
                 "surface_thickness": 0.04,
             },
+            "post_step": _post_step_settings(effective, base_positions),
         }
         domain.step_reference_pipeline_full(settings)
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
+        domain_real_velocities = domain.inspect()["kernel"]["real_velocities"]
         assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
         np.testing.assert_allclose(
             domain_positions,
@@ -1001,6 +1038,13 @@ def test_e3_native_mesh_self_collision_matches_v0():
             # the shared native Domain kernel keeps the same ordered solve in float32.
             rtol=1.0e-4,
             atol=1.0e-4,
+        )
+        np.testing.assert_allclose(
+            domain_real_velocities,
+            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
+            # The self-position quantization delta is divided by dt in post.
+            rtol=3.0e-3,
+            atol=1.0e-3,
         )
     finally:
         domain.dispose()
