@@ -1013,6 +1013,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - scheduler 统一负责从 `simulation_delta_time` 生成 V0 的 Y/Z/W power（Distance/Bending、integration、Angle），并通过 `MC2SubstepPlan` 一次交接 dt、frame interpolation、final 标记和 powers；单 context、interaction group 与 Domain reference 不得各自复制 `90 * dt` 公式。该生产者只交接 substep 数值，不拥有 setup 的碰撞模式或粒子参数。
 - `animation_pose_ratio` 会影响 StepBasic、Tether 和 Angle，但不属于既有 V0 native 固定 float 数组。它作为 host/domain 元数据参与 effective parameter signature，并进入 compiled partition SoA；不得为接通 Domain 而扩写或重排 V0 ABI，也不得在 reference harness 中继续写死为 0。
 - MC2 源码 oracle 与产品 effective 参数必须分层保存。BoneSpring 源码 fixture 仍忠实保留序列化的 bending stiffness/method，产品因 Line topology 没有 triangle 而将两者归零；测试以显式 product override 记录这项有意差异，禁止篡改源码 fixture 或让旧矩阵倒逼无效 pass 回归。
+- `reference_step.py` 只把 scheduler 的 substep plan、frame 权重和 compiled 参数表编译成 native reference settings；它暂时严格限制单 partition，动态 collider mapping 由 Physics World 提供，参数 mode 不匹配时在 native 前拒绝，不能静默关闭碰撞。
 - 旧 reference 只做到位置提交，漏掉了 V0 post 的速度/摩擦历史。现在 post 是显式事务尾段，写入 real velocity、velocity history 和 old position；没有 post 证据就不能声称完整 V0 等价。
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
