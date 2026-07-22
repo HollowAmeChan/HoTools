@@ -46,6 +46,9 @@ cpu_backend = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physic
 native_kernel = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
 )
+native_module_api = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -139,6 +142,43 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
     finally:
         domain.dispose()
     assert domain.disposed
+
+
+def test_native_debug_off_inspect_does_not_readback_dynamics():
+    compiled = _compiled()
+    real_module = native_module_api.native_module()
+
+    class _CountingModule:
+        def __init__(self):
+            self.read_count = 0
+
+        def __getattr__(self, name):
+            value = getattr(real_module, name)
+            if name != "mc2_domain_cpu_v1_read":
+                return value
+
+            def counted(*args, **kwargs):
+                self.read_count += 1
+                return value(*args, **kwargs)
+
+            return counted
+
+    module = _CountingModule()
+    kernel = native_kernel.MC2NativeCPUKernelV1(module=module)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    try:
+        domain.update_frame(_frame(compiled.program))
+        domain.inspect()
+        assert module.read_count == 0
+        domain.step({"data_path_only": True})
+        domain.inspect()
+        assert module.read_count == 0
+        domain.read_debug_state()
+        assert module.read_count == 1
+        domain.read_output()
+        assert module.read_count == 2
+    finally:
+        domain.dispose()
 
 
 def test_native_cpu_kernel_exposes_distance_slice_only_when_requested():
@@ -683,6 +723,8 @@ def test_native_cpu_kernel_exposes_external_edge_collision_slice():
 if __name__ == "__main__":
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
+    test_native_debug_off_inspect_does_not_readback_dynamics()
+    print("PASS test_native_debug_off_inspect_does_not_readback_dynamics")
     test_native_cpu_kernel_exposes_distance_slice_only_when_requested()
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
     test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths()

@@ -1015,6 +1015,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - MC2 源码 oracle 与产品 effective 参数必须分层保存。BoneSpring 源码 fixture 仍忠实保留序列化的 bending stiffness/method，产品因 Line topology 没有 triangle 而将两者归零；测试以显式 product override 记录这项有意差异，禁止篡改源码 fixture 或让旧矩阵倒逼无效 pass 回归。
 - `reference_step.py` 只把 scheduler 的 substep plan、frame 权重和 compiled 参数表编译成 native reference settings；它暂时严格限制单 partition，动态 collider mapping 由 Physics World 提供，参数 mode 不匹配时在 native 前拒绝，不能静默关闭碰撞。
 - DomainV1 `prepare_step_basic_pose()` 默认从 compiled partition SoA 读取 `animation_pose_ratio`；显式传值只用于 reference fixture/诊断 override。多 partition 在统一的 per-partition StepBasic 调用合同落地前不得把不同 ratio 压成单值。
+- E3-E 的 native 计数证据要求 `inspect()` 和 debug-off data-path 不调用 `mc2_domain_cpu_v1_read`；只有显式 `read_debug_state()` 或 `read_output()` 才允许 readback。该计数在 py311/py313 adapter 测试中保持 0/1/2 的明确序列。
 - 旧 reference 只做到位置提交，漏掉了 V0 post 的速度/摩擦历史。现在 post 是显式事务尾段，写入 real velocity、velocity history 和 old position；没有 post 证据就不能声称完整 V0 等价。
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
