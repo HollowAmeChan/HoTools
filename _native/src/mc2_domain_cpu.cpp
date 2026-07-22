@@ -431,6 +431,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     velocity_weights_.swap(next_velocity_weights);
     gravity_ratios_.swap(next_gravity_ratios);
     center_frame_shift_ready_ = false;
+    center_frame_shift_consumed_ = false;
     center_inertia_pending_ = false;
     prediction_state_ready_ = false;
     substep_snapshot_ready_ = false;
@@ -590,6 +591,9 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     if (anchor_component_local_positions == nullptr) {
         throw std::invalid_argument("MC2 CPU Center anchor local positions cannot be null");
     }
+    if (center_frame_shift_consumed_) {
+        return;
+    }
     std::vector<float> next_shift_vectors(partition_count_ * 3, 0.0f);
     std::vector<float> next_shift_rotations(partition_count_ * 4, 0.0f);
     std::vector<float> next_shift_old_frame_positions(partition_count_ * 3, 0.0f);
@@ -710,6 +714,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     center_shift_smoothing_velocities_.swap(next_smoothing_velocities);
     center_shift_teleport_flags_.swap(next_teleport_flags);
     center_frame_shift_ready_ = true;
+    center_frame_shift_consumed_ = true;
     ++center_shift_count_;
 }
 
@@ -2507,6 +2512,7 @@ void DomainV1::dispose() noexcept {
     center_shift_smoothing_velocities_.clear();
     center_shift_teleport_flags_.clear();
     center_frame_shift_ready_ = false;
+    center_frame_shift_consumed_ = false;
     center_inertia_pending_ = false;
     prediction_state_ready_ = false;
     substep_snapshot_ready_ = false;

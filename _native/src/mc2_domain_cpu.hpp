@@ -477,6 +477,7 @@ private:
     std::vector<float> center_teleport_distances_;
     std::vector<float> center_teleport_rotations_;
     bool center_frame_shift_ready_ = false;
+    bool center_frame_shift_consumed_ = false;
     std::int64_t center_shift_count_ = 0;
     std::vector<float> center_step_vectors_;
     std::vector<float> center_step_rotations_;

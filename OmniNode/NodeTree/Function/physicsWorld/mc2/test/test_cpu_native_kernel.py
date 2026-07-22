@@ -639,7 +639,7 @@ def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
     count = compiled.program.particle_count
     try:
         domain.update_frame(frame)
-        domain.step_reference_pipeline_full({
+        settings = {
             "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
             "dt": 0.1,
             "frame_interpolation": 1.0,
@@ -672,10 +672,16 @@ def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
             "point_collision": None,
             "edge_collision": None,
             "self_collision": None,
-        })
+        }
+        domain.step_reference_pipeline_full(settings)
         assert np.isfinite(domain.read_output().world_positions).all()
         assert domain.inspect()["kernel"]["step_count"] == 7
         assert domain.inspect()["step_count"] == 1
+        domain.step_reference_pipeline_full(settings)
+        state = domain.inspect()
+        assert state["kernel"]["center_shift_count"] == 1
+        assert state["kernel"]["step_count"] == 14
+        assert state["step_count"] == 2
     finally:
         domain.dispose()
 
