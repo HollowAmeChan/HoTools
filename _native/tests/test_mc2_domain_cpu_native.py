@@ -308,9 +308,16 @@ def test_domain_cpu_native_preserves_state_and_resets_one_partition():
             partition_flags=(0, 1),
         )
         output = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
-        np.testing.assert_allclose(output[0], next_positions[0])
+        np.testing.assert_allclose(output[0], moved[0])
         np.testing.assert_allclose(output[1], moved[1])
         np.testing.assert_allclose(output[2], next_positions[2])
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 0.0, 1.0, 1.0, np.zeros(3, dtype=np.float32)
+        )
+        predicted = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
+        np.testing.assert_allclose(predicted[0], next_positions[0])
+        np.testing.assert_allclose(predicted[1], moved[1])
+        np.testing.assert_allclose(predicted[2], next_positions[2])
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
@@ -352,7 +359,7 @@ def test_domain_cpu_native_applies_keep_pose_to_one_partition():
         after_keep_rotations = hotools_native.mc2_domain_cpu_v1_read(handle)[
             "world_rotations_xyzw"
         ]
-        np.testing.assert_allclose(after_keep[0], next_positions[0], atol=1e-6)
+        np.testing.assert_allclose(after_keep[0], before_keep[0], atol=1e-6)
         np.testing.assert_allclose(after_keep[1], (5.0, 2.0, 0.0), atol=1e-6)
         np.testing.assert_allclose(after_keep[2], before_keep[2], atol=1e-6)
         np.testing.assert_allclose(after_keep_rotations[1], rotation, atol=1e-6)
@@ -365,6 +372,7 @@ def test_domain_cpu_native_applies_keep_pose_to_one_partition():
         after_velocity = hotools_native.mc2_domain_cpu_v1_read(handle)[
             "world_positions"
         ]
+        np.testing.assert_allclose(after_velocity[0], next_positions[0], atol=1e-6)
         np.testing.assert_allclose(after_velocity[1], (5.0, 3.0, 0.0), atol=1e-5)
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)

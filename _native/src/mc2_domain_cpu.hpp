@@ -296,6 +296,7 @@ public:
 private:
     void ensure_live() const;
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
+    void prepare_prediction_state();
 
     std::size_t particle_count_ = 0;
     std::size_t partition_count_ = 0;
@@ -378,6 +379,7 @@ private:
     std::vector<float> center_velocity_weights_;
     bool center_ready_ = false;
     bool center_inertia_pending_ = false;
+    bool prediction_state_ready_ = false;
     std::int64_t center_step_count_ = 0;
     std::vector<std::int64_t> partition_reset_counts_;
     std::vector<std::int64_t> partition_keep_counts_;

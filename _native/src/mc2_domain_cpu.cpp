@@ -359,10 +359,9 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     }
     for (std::size_t particle = 0; particle < particle_count_; ++particle) {
         const auto partition = particle_partition_index_[particle];
-        const bool fixed = (particle_attribute_flags_[particle] & 1u) != 0u;
         const bool partition_reset =
             (frame.partition_frame_flags[partition] & 1u) != 0u;
-        if (!reset_history && !partition_reset && !fixed) continue;
+        if (!reset_history && !partition_reset) continue;
         const auto offset = particle * 3;
         for (std::size_t component = 0; component < 3; ++component) {
             next_positions[offset + component] = next_animated_positions[offset + component];
@@ -432,6 +431,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     gravity_ratios_.swap(next_gravity_ratios);
     center_frame_shift_ready_ = false;
     center_inertia_pending_ = false;
+    prediction_state_ready_ = false;
     frame_delta_time_ = frame.frame_delta_time;
     simulation_delta_time_ = frame.simulation_delta_time;
     time_scale_ = frame.time_scale;
@@ -846,8 +846,7 @@ void DomainV1::step_center_inertia() {
         );
     }
 
-    // V0 snapshots the pre-prediction position at the start of every substep.
-    velocity_positions_ = world_positions_;
+    prepare_prediction_state();
     hotools::Mc2PartitionedSubstepInertiaView view;
     view.positions = world_positions_.data();
     view.velocity_positions = velocity_positions_.data();
@@ -868,6 +867,33 @@ void DomainV1::step_center_inertia() {
     }
     center_inertia_pending_ = false;
     ++step_count_;
+}
+
+void DomainV1::prepare_prediction_state() {
+    // V0 snapshots the pre-prediction position at the start of every substep.
+    velocity_positions_ = world_positions_;
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if ((particle_attribute_flags_[vertex] & 0x01u) == 0u) continue;
+        const auto position_offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            world_positions_.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            velocity_positions_.data() + position_offset
+        );
+        std::fill_n(state_velocities_.data() + position_offset, 3, 0.0f);
+        std::copy_n(
+            animated_base_world_rotations_.data() + rotation_offset,
+            4,
+            world_rotations_.data() + rotation_offset
+        );
+    }
+    prediction_state_ready_ = true;
 }
 
 void DomainV1::step() {
@@ -1676,6 +1702,7 @@ void DomainV1::step_integration(
         velocity_weight < 0.0f || velocity_weight > 1.0f) {
         throw std::invalid_argument("MC2 CPU integration scalars are invalid");
     }
+    if (!prediction_state_ready_) prepare_prediction_state();
     hotools::Mc2ParticleIntegrationView view;
     view.positions = world_positions_.data();
     view.velocities = state_velocities_.data();
@@ -1687,6 +1714,7 @@ void DomainV1::step_integration(
     view.velocity_weight = velocity_weight;
     std::copy_n(gravity, 3, view.gravity);
     hotools::integrate_particles_mc2(view);
+    prediction_state_ready_ = false;
     ++step_count_;
 }
 
@@ -1816,6 +1844,7 @@ void DomainV1::dispose() noexcept {
     center_shift_teleport_flags_.clear();
     center_frame_shift_ready_ = false;
     center_inertia_pending_ = false;
+    prediction_state_ready_ = false;
     center_shift_count_ = 0;
 }
 

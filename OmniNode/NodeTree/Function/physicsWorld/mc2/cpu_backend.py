@@ -225,6 +225,16 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose Center inertia")
         step_inertia(self._handle)
 
+    def step_distance(self, simulation_power: float = 1.0) -> None:
+        """Run one explicit native Distance pass with scheduler-owned power."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("Distance step requires update_frame first")
+        step_distance = getattr(self._kernel, "step_distance", None)
+        if not callable(step_distance):
+            raise RuntimeError("CPU kernel does not expose the Distance slice")
+        step_distance(self._handle, simulation_power)
+
     def step_reference_slices(self, settings: Mapping[str, object]) -> None:
         """Run only the explicit landed native reference pass prefix."""
         self._ensure_live()

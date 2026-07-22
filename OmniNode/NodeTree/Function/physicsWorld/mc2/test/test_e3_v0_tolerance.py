@@ -815,7 +815,6 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
     """Compare a real component move through V0 and Domain Center history."""
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payload = json.load(handle)["static_snapshots"][0]
-    payload.update({"pin_weights": (), "pin_present": False})
     snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
     task_parameters = parameters.make_mc2_task_parameters(
@@ -833,7 +832,7 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
             gravity=0.0,
             damping=0.0,
             collision_friction=0.0,
-            distance_stiffness=0.0,
+            distance_stiffness=0.5,
             bending_stiffness=0.0,
             angle_restoration_enabled=False,
             angle_limit_enabled=False,
@@ -844,6 +843,16 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
     )
     compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
     program = compiled.program
+    partition_fields = {
+        name: index for index, name in enumerate(compiled.parameters.partition_parameters.fields)
+    }
+    partition_values = compiled.parameters.partition_parameters.values[0]
+    tether_compression = float(
+        partition_values[partition_fields["tether_compression_limit"]]
+    )
+    tether_stretch = float(
+        partition_values[partition_fields["tether_stretch_limit"]]
+    )
     v0 = native_context.MC2NativeContextV0(program.particle_count)
     domain = cpu_backend.create_mc2_cpu_backend_domain(
         compiled,
@@ -889,16 +898,21 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
         ))
         v0.step_no_collision(0.1)
         domain.update_frame(frame_one)
+        frame_one_powers = scheduler.derive_mc2_simulation_powers(0.1)
         prefix_settings = {
             "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
             "dt": 0.1,
             "frame_interpolation": 1.0,
             "distance_weights": np.ones(1, dtype=np.float32),
-            "simulation_power": 1.0,
+            "simulation_power": frame_one_powers.integration,
             "velocity_weight": 1.0,
             "gravity": (0.0, 0.0, 0.0),
+            "step_basic_positions": base_positions,
+            "tether_compression": tether_compression,
+            "tether_stretch": tether_stretch,
         }
         domain.step_reference_slices(prefix_settings)
+        domain.step_distance(frame_one_powers.distance_bending)
         domain.step_post(_post_step_settings(effective, base_positions))
         np.testing.assert_allclose(
             domain.read_output().world_positions,
@@ -1005,14 +1019,30 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
                 "distance_weights": np.ones(1, dtype=np.float32),
             })
             domain.step_center_inertia()
+            powers = scheduler.derive_mc2_simulation_powers(simulation_delta_time)
             domain.step({
                 "integration_slice": True,
                 "data_path_only": True,
                 "dt": simulation_delta_time,
-                "simulation_power": 1.0,
+                "simulation_power": powers.integration,
                 "velocity_weight": 1.0,
                 "gravity": (0.0, 0.0, 0.0),
             })
+            domain_after_integration = domain.read_output().world_positions.copy()
+            domain.step({
+                "tether_slice": True,
+                "data_path_only": True,
+                "step_basic_positions": moved_positions,
+                "compression": tether_compression,
+                "stretch": tether_stretch,
+            })
+            domain.step_distance(powers.distance_bending)
+            domain.step_distance(powers.distance_bending)
+            if teleport_mode == 0 and is_running:
+                assert np.any(
+                    np.abs(domain.read_output().world_positions - domain_after_integration)
+                    > 1.0e-5
+                )
             domain.step_post(_post_step_settings(effective, v0_after_shift))
             v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
             np.testing.assert_allclose(
