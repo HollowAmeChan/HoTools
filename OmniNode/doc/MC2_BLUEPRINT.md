@@ -891,6 +891,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - `reference_step.py` 只把 scheduler 的 substep plan、frame 权重和 compiled 参数表编译成 native reference settings；它暂时严格限制单 partition，动态 collider mapping 由 Physics World 提供，参数 mode 不匹配时在 native 前拒绝，不能静默关闭碰撞。
 - DomainV1 `prepare_step_basic_pose()` 默认从 compiled partition SoA 读取 `animation_pose_ratio`；显式传值只用于 reference fixture/诊断 override。多 partition 在统一的 per-partition StepBasic 调用合同落地前不得把不同 ratio 压成单值。
 - E3-E 的 native 计数证据要求 `inspect()` 和 debug-off data-path 不调用 `mc2_domain_cpu_v1_read`；只有显式 `read_debug_state()` 或 `read_output()` 才允许 readback。该计数在 py311/py313 adapter 测试中保持 0/1/2 的明确序列。
+- 产品节点入口的 Blender 合同测试已证明：`热点时长调试=False` 时不创建 MC2 timing session；即使 socket 为 True，只要模拟步 `启用=False` 也不创建 session。通用 OmniNode 计时端口关闭时同样不读取 `perf_counter`，而 solver 的阶段 checkpoint、求解明细和聚合上下文只在显式 session 存在时执行。关闭态因此只有常数级布尔判断，不创建 profile、不读取计时时钟、不构造分步诊断。
 - 旧 reference 只做到位置提交，漏掉了 V0 post 的速度/摩擦历史。现在 post 是显式事务尾段，写入 real velocity、velocity history 和 old position；没有 post 证据就不能声称完整 V0 等价。
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
@@ -898,4 +899,4 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
 - 单 partition 退化时，Domain writeback command 与 V0 `MC2ResultCandidateV1` 对同一 frame linear/world positions 生成逐 float32 相同的 object-local offsets；这关闭 E3 输出数学等价，不代表 E5 多 target 发布事务已完成。
 
-当前仍未关闭的 E3 门禁是：同一冻结 fixture 的 V0 全分支矩阵与 Blender debug-off 性能 gate；scheduler/参数 handoff 和单 partition 最终 writeback 数学等价已经关闭。多 target 原子发布属于 E5，不得拿它继续阻塞 E3，也不得提前混入 E3。在剩余证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
+当前仍未关闭的 E3 门禁是同一冻结 fixture 的 V0 全分支矩阵。Blender 4.5 已验证 debug 关闭时 native readback 为零、默认 debug 节点惰性、稀疏请求只捕获声明状态；产品入口与通用计时测试也已验证热点计时关闭/模拟步禁用时不创建 session 且不读取时钟，因此 E3-E 的关闭态性能门禁已经关闭。scheduler/参数 handoff 和单 partition 最终 writeback 数学等价也已关闭。多 target 原子发布属于 E5，不得拿它继续阻塞 E3，也不得提前混入 E3。在剩余证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。

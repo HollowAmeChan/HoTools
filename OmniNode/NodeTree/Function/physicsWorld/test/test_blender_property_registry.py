@@ -476,6 +476,13 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         timing_world = world_types.PhysicsWorldCache()
         mc2_nodes.physicsMC2Step(timing_world, [], hotspot_timing=False)
         assert timing_factory_calls == []
+        mc2_nodes.physicsMC2Step(
+            timing_world,
+            [],
+            enabled=False,
+            hotspot_timing=True,
+        )
+        assert timing_factory_calls == []
         mc2_nodes.physicsMC2Step(timing_world, [], hotspot_timing=True)
         assert timing_factory_calls == [(timing_world, None)]
         assert timing_probe.stages == [
