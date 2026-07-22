@@ -144,6 +144,26 @@ public:
     );
     void step_whole_domain_self(const float* old_positions);
     void step_whole_domain_self_owned();
+    void configure_compiled_external_collision(
+        const std::int32_t* edges,
+        std::size_t edge_count,
+        const std::uint32_t* partition_collision_modes,
+        const std::uint32_t* partition_collided_by_groups,
+        const float* particle_radii,
+        const float* particle_friction
+    );
+    void step_compiled_external_collision(
+        const std::int32_t* collider_types,
+        const std::int32_t* collider_group_bits,
+        const float* collider_centers,
+        const float* collider_segment_a,
+        const float* collider_segment_b,
+        const float* collider_old_centers,
+        const float* collider_old_segment_a,
+        const float* collider_old_segment_b,
+        const float* collider_radii,
+        std::size_t collider_count
+    );
     void step_external_edge_collision(
         const float* collision_radii,
         const std::int32_t* edges,
@@ -310,6 +330,13 @@ public:
     std::size_t baseline_data_count() const noexcept { return baseline_line_data_.size(); }
     bool baseline_pose_ready() const noexcept { return baseline_pose_ready_; }
     bool whole_domain_self_ready() const noexcept { return whole_domain_self_ready_; }
+    bool compiled_external_ready() const noexcept { return compiled_external_ready_; }
+    std::size_t compiled_external_edge_count() const noexcept {
+        return compiled_external_edges_.size() / 2;
+    }
+    std::int64_t compiled_external_step_count() const noexcept {
+        return compiled_external_step_count_;
+    }
     std::size_t whole_domain_self_edge_count() const noexcept {
         return whole_domain_self_edges_.size() / 2;
     }
@@ -339,6 +366,7 @@ private:
     void ensure_live() const;
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
     void prepare_prediction_state();
+    void step_whole_domain_self_impl(const float* old_positions, bool reset_friction);
 
     std::size_t particle_count_ = 0;
     std::size_t partition_count_ = 0;
@@ -462,6 +490,14 @@ private:
     std::vector<float> integration_damping_values_;
     bool integration_ready_ = false;
     std::vector<float> collision_friction_;
+    bool collision_state_ready_ = false;
+    std::vector<std::int32_t> compiled_external_edges_;
+    std::vector<std::uint32_t> compiled_external_modes_;
+    std::vector<std::uint32_t> compiled_external_masks_;
+    std::vector<float> compiled_external_radii_;
+    std::vector<float> compiled_external_friction_;
+    bool compiled_external_ready_ = false;
+    std::int64_t compiled_external_step_count_ = 0;
     std::vector<std::int32_t> whole_domain_self_edges_;
     std::vector<std::int32_t> whole_domain_self_points_;
     std::vector<std::int32_t> whole_domain_self_triangles_;

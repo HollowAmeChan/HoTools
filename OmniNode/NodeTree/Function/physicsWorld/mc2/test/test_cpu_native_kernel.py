@@ -75,6 +75,8 @@ def _compiled_multi(
     *,
     collision_groups=None,
     collision_masks=None,
+    collision_modes=(1, 1),
+    external_collision_masks=None,
 ):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
@@ -89,12 +91,13 @@ def _compiled_multi(
             parameters.make_mc2_particle_profile(
                 self_collision_mode=2,
                 animation_pose_ratio=animation_pose_ratio,
+                collision_mode=collision_mode,
             ),
             parameters.make_mc2_setup_options("mesh_cloth"),
             parameters.make_mc2_task_parameters(),
         )
-        for _fragment, animation_pose_ratio in zip(
-            fragments, animation_pose_ratios, strict=True
+        for _fragment, animation_pose_ratio, collision_mode in zip(
+            fragments, animation_pose_ratios, collision_modes, strict=True
         )
     )
     return compiler.compile_mc2_mesh_static_fragments(
@@ -102,7 +105,22 @@ def _compiled_multi(
         effectives,
         collision_groups=collision_groups,
         collision_masks=collision_masks,
+        external_collision_masks=external_collision_masks,
     )
+
+
+def _empty_collider_table():
+    return {
+        "collider_types": np.empty((0,), dtype=np.int32),
+        "collider_group_bits": np.empty((0,), dtype=np.int32),
+        "collider_centers": np.empty((0, 3), dtype=np.float32),
+        "collider_segment_a": np.empty((0, 3), dtype=np.float32),
+        "collider_segment_b": np.empty((0, 3), dtype=np.float32),
+        "collider_old_centers": np.empty((0, 3), dtype=np.float32),
+        "collider_old_segment_a": np.empty((0, 3), dtype=np.float32),
+        "collider_old_segment_b": np.empty((0, 3), dtype=np.float32),
+        "collider_radii": np.empty((0,), dtype=np.float32),
+    }
 
 
 def _frame(program):
@@ -691,6 +709,7 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             "motion_normal_axis": 1,
             "motion_max_distance_enabled": False,
             "motion_backstop_enabled": False,
+            "external_collision": _empty_collider_table(),
             "post_step": {
                 "dt": 0.1,
                 "dynamic_friction": 0.0,
@@ -709,14 +728,82 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             raise AssertionError("compiled domain pipeline accepted invalid post scalars")
         assert domain.inspect()["kernel"]["step_count"] == 0
 
+        order = []
+        ordered_methods = (
+            "step_center_frame_shift", "step_center", "step_center_inertia",
+            "step_integration", "step_tether", "step_distance", "step_angle",
+            "step_bending", "_run_compiled_external_collision", "step_motion",
+            "step_whole_domain_self_owned", "step_post_owned",
+        )
+        for name in ordered_methods:
+            original = getattr(kernel, name)
+
+            def record(*args, _name=name, _original=original, **kwargs):
+                order.append(_name)
+                return _original(*args, **kwargs)
+
+            setattr(kernel, name, record)
         domain.step_compiled_domain_pipeline_full(settings)
+        assert order == [
+            "step_center_frame_shift", "step_center", "step_center_inertia",
+            "step_integration", "step_tether", "step_distance", "step_angle",
+            "_run_compiled_external_collision", "step_distance",
+            "step_motion", "step_whole_domain_self_owned", "step_post_owned",
+        ], order
         output = domain.read_output().world_positions
         state = domain.inspect()["kernel"]
         assert np.any(np.abs(output - positions) > np.float32(1.0e-6))
         assert state["whole_domain_self_step_count"] == 1
         assert state["whole_domain_self_last_contact_count"] > 0
+        assert state["compiled_external_ready"] is True
+        assert state["compiled_external_step_count"] == 1
         assert np.any(np.abs(domain.read_debug_state()["real_velocities"]) > 1.0e-6)
         assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
+def test_native_cpu_compiled_external_collision_filters_each_partition():
+    compiled = _compiled_multi(
+        collision_modes=(1, 1), external_collision_masks=(1, 2)
+    )
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    original = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    collider = {
+        "collider_types": np.asarray((0,), dtype=np.int32),
+        "collider_group_bits": np.asarray((1,), dtype=np.int32),
+        "collider_centers": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_segment_a": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_segment_b": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_old_centers": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_old_segment_a": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_old_segment_b": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
+        "collider_radii": np.asarray((2.0,), dtype=np.float32),
+    }
+    try:
+        domain.update_frame(frame)
+        invalid = dict(collider, collider_centers=np.asarray(((np.nan, 2.0, 2.0),)))
+        try:
+            domain.step_compiled_external_collision(invalid)
+        except ValueError as exc:
+            assert "finite" in str(exc)
+        else:
+            raise AssertionError("compiled external collision accepted a non-finite table")
+        assert domain.inspect()["kernel"]["step_count"] == 0
+
+        domain.step_compiled_external_collision(collider)
+        output = domain.read_output().world_positions
+        partition_index = compiled.program.particle_partition_index
+        first = partition_index == 0
+        second = partition_index == 1
+        assert np.any(np.abs(output[first] - original[first]) > np.float32(1.0e-6))
+        np.testing.assert_array_equal(output[second], original[second])
+        state = domain.inspect()["kernel"]
+        assert state["compiled_external_ready"] is True
+        assert state["compiled_external_edge_count"] == 4
+        assert state["compiled_external_step_count"] == 1
     finally:
         domain.dispose()
 
@@ -921,6 +1008,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots")
     test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post()
     print("PASS test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post")
+    test_native_cpu_compiled_external_collision_filters_each_partition()
+    print("PASS test_native_cpu_compiled_external_collision_filters_each_partition")
     test_native_cpu_reference_pipeline_full_sequences_collision_passes()
     print("PASS test_native_cpu_reference_pipeline_full_sequences_collision_passes")
     test_native_cpu_kernel_exposes_external_point_collision_slice()

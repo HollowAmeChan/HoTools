@@ -35,6 +35,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self_owned",
+    "mc2_domain_cpu_v1_configure_compiled_external_collision",
+    "mc2_domain_cpu_v1_step_compiled_external_collision",
     "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
@@ -111,6 +113,7 @@ class MC2NativeCPUKernelV1:
             self._configure_inertia(handle, program, parameters)
             self._configure_constraint_friction(handle, parameters)
             self._configure_whole_domain_self(handle, program, parameters)
+            self._configure_compiled_external_collision(handle, program, parameters)
             self._configure_center(handle, parameters)
             self._configure_center_frame_shift(handle, parameters)
             self._configure_integration(handle, parameters)
@@ -409,6 +412,77 @@ class MC2NativeCPUKernelV1:
         """Run E4 whole-domain self from the native-owned substep snapshot."""
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_whole_domain_self_owned(key)
+
+    def _prepare_compiled_external_collision(
+        self,
+        handle: int,
+        settings: Mapping[str, object],
+    ) -> dict[str, np.ndarray]:
+        required = {
+            "collider_types", "collider_group_bits", "collider_centers",
+            "collider_segment_a", "collider_segment_b", "collider_old_centers",
+            "collider_old_segment_a", "collider_old_segment_b", "collider_radii",
+        }
+        if set(settings) != required:
+            raise ValueError(
+                "compiled external collision requires exactly one public collider table"
+            )
+        self._require_handle(handle)
+        collider_types = np.ascontiguousarray(settings["collider_types"], dtype=np.int32)
+        collider_group_bits = np.ascontiguousarray(
+            settings["collider_group_bits"], dtype=np.int32
+        )
+        collider_radii = np.ascontiguousarray(settings["collider_radii"], dtype=np.float32)
+        if collider_types.ndim != 1:
+            raise ValueError("collider_types must be one-dimensional")
+        if (
+            collider_group_bits.shape != collider_types.shape
+            or collider_radii.shape != collider_types.shape
+        ):
+            raise ValueError("compiled collider metadata must match collider count")
+        arrays = {
+            "collider_types": collider_types,
+            "collider_group_bits": collider_group_bits,
+            "collider_radii": collider_radii,
+        }
+        for name in (
+            "collider_centers", "collider_segment_a", "collider_segment_b",
+            "collider_old_centers", "collider_old_segment_a", "collider_old_segment_b",
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=np.float32)
+            if array.shape != (len(collider_types), 3):
+                raise ValueError(f"{name} has invalid shape")
+            arrays[name] = array
+        if not all(np.all(np.isfinite(array)) for array in arrays.values()):
+            raise ValueError("compiled external collider table must be finite")
+        for array in arrays.values():
+            array.flags.writeable = False
+        return arrays
+
+    def _run_compiled_external_collision(
+        self,
+        handle: int,
+        arrays: Mapping[str, np.ndarray],
+    ) -> None:
+        self._module.mc2_domain_cpu_v1_step_compiled_external_collision(
+            handle,
+            arrays["collider_types"], arrays["collider_group_bits"],
+            arrays["collider_centers"], arrays["collider_segment_a"],
+            arrays["collider_segment_b"], arrays["collider_old_centers"],
+            arrays["collider_old_segment_a"], arrays["collider_old_segment_b"],
+            arrays["collider_radii"],
+        )
+
+    def step_compiled_external_collision(
+        self,
+        handle,
+        settings: Mapping[str, object],
+    ) -> None:
+        key = self._require_handle(handle)
+        if not isinstance(settings, Mapping):
+            raise TypeError("compiled external collision must be a mapping")
+        arrays = self._prepare_compiled_external_collision(key, settings)
+        self._run_compiled_external_collision(key, arrays)
 
     def step_external_edge_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -760,13 +834,13 @@ class MC2NativeCPUKernelV1:
         handle,
         settings: Mapping[str, object],
     ) -> None:
-        """Run the E4 structural order, compiled self, and owned post/history.
-
-        External collider packets are intentionally not accepted by this
-        endpoint yet.  They remain on the explicit E3 oracle until their
-        per-partition compiled contract lands.
-        """
+        """Run the fixed E4 structural, external, self, and post order."""
         settings = dict(settings)
+        if "external_collision" not in settings:
+            raise ValueError("compiled domain pipeline requires external_collision")
+        external_collision = settings.pop("external_collision")
+        if not isinstance(external_collision, Mapping):
+            raise TypeError("external_collision must be a public collider-table mapping")
         if "post_step" not in settings:
             raise ValueError("compiled domain pipeline requires post_step")
         post_step = settings.pop("post_step")
@@ -788,7 +862,77 @@ class MC2NativeCPUKernelV1:
         ):
             raise ValueError("compiled domain post_step scalars are invalid")
         key = self._require_handle(handle)
-        self.step_reference_pipeline(key, settings)
+        collider_arrays = self._prepare_compiled_external_collision(key, external_collision)
+        required = {
+            "anchor_component_local_positions", "dt", "frame_interpolation",
+            "distance_weights", "simulation_power", "distance_simulation_power",
+            "bending_simulation_power", "velocity_weight", "gravity",
+            "step_basic_positions", "tether_compression", "tether_stretch",
+            "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
+            "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
+            "angle_limit_stiffness", "angle_restoration_enabled", "angle_limit_enabled",
+            "motion_base_positions", "motion_base_rotations", "motion_max_distances",
+            "motion_stiffness_values", "motion_backstop_radii", "motion_backstop_distances",
+            "motion_normal_axis", "motion_max_distance_enabled", "motion_backstop_enabled",
+        }
+        if set(settings) != required:
+            raise ValueError("compiled domain pipeline requires exactly its structural inputs")
+        program = self._programs[key]
+        has_distance = any(table.kind == "distance" for table in program.constraint_tables)
+        has_bending = any(table.kind == "bending" for table in program.constraint_tables)
+        has_tether = any(table.kind == "tether" for table in program.constraint_tables)
+        has_angle = program.baseline_parent_indices is not None
+
+        self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
+        self.step_center(key, {
+            "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
+            "distance_weights": settings["distance_weights"],
+        })
+        self.step_center_inertia(key)
+        self.step_integration(key, {
+            "dt": settings["dt"], "simulation_power": settings["simulation_power"],
+            "velocity_weight": settings["velocity_weight"], "gravity": settings["gravity"],
+        })
+        if has_tether:
+            self.step_tether(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "compression": settings["tether_compression"],
+                "stretch": settings["tether_stretch"],
+            })
+        if has_distance:
+            self.step_distance(key, settings["distance_simulation_power"])
+        if has_angle:
+            self.step_angle(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "step_basic_rotations": settings["step_basic_rotations"],
+                "restoration_values": settings["angle_restoration_values"],
+                "limit_values": settings["angle_limit_values"],
+                "restoration_velocity_attenuation": settings[
+                    "angle_restoration_velocity_attenuation"
+                ],
+                "restoration_gravity_falloff": settings[
+                    "angle_restoration_gravity_falloff"
+                ],
+                "limit_stiffness": settings["angle_limit_stiffness"],
+                "restoration_enabled": settings["angle_restoration_enabled"],
+                "limit_enabled": settings["angle_limit_enabled"],
+            })
+        if has_bending:
+            self.step_bending(key, settings["bending_simulation_power"])
+        self._run_compiled_external_collision(key, collider_arrays)
+        if has_distance:
+            self.step_distance(key, settings["distance_simulation_power"])
+        self.step_motion(key, {
+            "base_positions": settings["motion_base_positions"],
+            "base_rotations": settings["motion_base_rotations"],
+            "max_distances": settings["motion_max_distances"],
+            "stiffness_values": settings["motion_stiffness_values"],
+            "backstop_radii": settings["motion_backstop_radii"],
+            "backstop_distances": settings["motion_backstop_distances"],
+            "normal_axis": settings["motion_normal_axis"],
+            "max_distance_enabled": settings["motion_max_distance_enabled"],
+            "backstop_enabled": settings["motion_backstop_enabled"],
+        })
         self.step_whole_domain_self_owned(key)
         self.step_post_owned(key, scalars)
 
@@ -1226,6 +1370,61 @@ class MC2NativeCPUKernelV1:
             array.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_whole_domain_self(
             handle, points, edges, triangles, modes, groups, masks, friction, thickness
+        )
+
+    def _configure_compiled_external_collision(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        primitive_tables = {table.kind: table for table in program.primitive_tables}
+        edge_table = primitive_tables.get("edge")
+        edges = np.asarray(
+            edge_table.indices if edge_table is not None else np.empty((0, 2)),
+            dtype=np.int32,
+        ).reshape((-1, 2))
+        partition_fields = {
+            name: index
+            for index, name in enumerate(parameters.partition_uint_parameters.fields)
+        }
+        required_partition = {"collision_mode", "collided_by_groups"}
+        missing_partition = required_partition - set(partition_fields)
+        if missing_partition:
+            raise ValueError(
+                "partition uint parameter table lacks compiled external collision fields: "
+                + ", ".join(sorted(missing_partition))
+            )
+        partition_values = parameters.partition_uint_parameters.values
+        modes = np.asarray(
+            partition_values[:, partition_fields["collision_mode"]], dtype=np.uint32
+        )
+        masks = np.asarray(
+            partition_values[:, partition_fields["collided_by_groups"]], dtype=np.uint32
+        )
+        particle_fields = {
+            name: index for index, name in enumerate(parameters.particle_parameters.fields)
+        }
+        required_particle = {"radius_multiplier", "radius", "collision_friction"}
+        missing_particle = required_particle - set(particle_fields)
+        if missing_particle:
+            raise ValueError(
+                "particle parameter table lacks compiled external collision fields: "
+                + ", ".join(sorted(missing_particle))
+            )
+        particle_values = parameters.particle_parameters.values
+        radii = np.asarray(
+            particle_values[:, particle_fields["radius"]]
+            * particle_values[:, particle_fields["radius_multiplier"]],
+            dtype=np.float32,
+        )
+        friction = np.asarray(
+            particle_values[:, particle_fields["collision_friction"]], dtype=np.float32
+        )
+        for array in (edges, modes, masks, radii, friction):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_compiled_external_collision(
+            handle, edges, modes, masks, radii, friction
         )
 
     def _configure_center(

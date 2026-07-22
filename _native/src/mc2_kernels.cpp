@@ -1235,16 +1235,32 @@ void apply_post_step_mc2(Mc2PostStepView& view) {
 }
 
 void project_collisions_mc2(Mc2CollisionView& view) {
+    const bool partitioned = view.particle_partition_index != nullptr &&
+                             view.partition_collision_modes != nullptr &&
+                             view.partition_collided_by_groups != nullptr &&
+                             view.partition_count > 0;
     if (view.vertex_count <= 0 || view.collider_count <= 0 || view.positions == nullptr ||
         view.base_positions == nullptr || view.inv_masses == nullptr || view.collision_radii == nullptr ||
         view.collision_normals == nullptr || view.collider_types == nullptr ||
         view.collider_group_bits == nullptr || view.collider_centers == nullptr ||
         view.collider_segment_a == nullptr || view.collider_segment_b == nullptr ||
-        view.collider_radii == nullptr || view.collided_by_groups == 0) {
+        view.collider_radii == nullptr || (!partitioned && view.collided_by_groups == 0)) {
         return;
     }
 
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        std::uint32_t collision_mask = static_cast<std::uint32_t>(view.collided_by_groups);
+        if (partitioned) {
+            const std::uint32_t partition = view.particle_partition_index[vertex];
+            if (partition >= static_cast<std::uint32_t>(view.partition_count) ||
+                view.partition_collision_modes[partition] != 1u) {
+                continue;
+            }
+            collision_mask = view.partition_collided_by_groups[partition];
+        }
+        if (collision_mask == 0u) {
+            continue;
+        }
         if (view.inv_masses[vertex] <= kMc2Epsilon) {
             continue;
         }
@@ -1278,7 +1294,7 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         const float friction_range = std::max(hit_radius, kMc2Epsilon);
 
         for (std::int64_t collider = 0; collider < view.collider_count; ++collider) {
-            if ((view.collided_by_groups & view.collider_group_bits[collider]) == 0) {
+            if ((collision_mask & static_cast<std::uint32_t>(view.collider_group_bits[collider])) == 0u) {
                 continue;
             }
 
@@ -1897,11 +1913,15 @@ bool edge_box_detection(const Mc2EdgeCollisionView& view,
 }
 
 void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
+    const bool partitioned = view.particle_partition_index != nullptr &&
+                             view.partition_collision_modes != nullptr &&
+                             view.partition_collided_by_groups != nullptr &&
+                             view.partition_count > 0;
     if (view.vertex_count <= 0 || view.edge_count <= 0 || view.collider_count <= 0 || view.positions == nullptr ||
         view.edges == nullptr || view.attributes == nullptr || view.collision_radii == nullptr ||
         view.collision_normals == nullptr || view.collider_types == nullptr || view.collider_group_bits == nullptr ||
         view.collider_centers == nullptr || view.collider_segment_a == nullptr || view.collider_segment_b == nullptr ||
-        view.collider_radii == nullptr || view.collided_by_groups == 0) {
+        view.collider_radii == nullptr || (!partitioned && view.collided_by_groups == 0)) {
         return;
     }
     std::vector<float> add_positions(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
@@ -1915,6 +1935,20 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
         const std::int32_t v1 = view.edges[edge_index * 2 + 1];
         if (v0 < 0 || v1 < 0 || static_cast<std::int64_t>(v0) >= view.vertex_count ||
             static_cast<std::int64_t>(v1) >= view.vertex_count || v0 == v1) {
+            continue;
+        }
+        std::uint32_t collision_mask = static_cast<std::uint32_t>(view.collided_by_groups);
+        if (partitioned) {
+            const std::uint32_t partition0 = view.particle_partition_index[v0];
+            const std::uint32_t partition1 = view.particle_partition_index[v1];
+            if (partition0 != partition1 ||
+                partition0 >= static_cast<std::uint32_t>(view.partition_count) ||
+                view.partition_collision_modes[partition0] != 2u) {
+                continue;
+            }
+            collision_mask = view.partition_collided_by_groups[partition0];
+        }
+        if (collision_mask == 0u) {
             continue;
         }
         const bool move0 = (view.attributes[v0] & view.move_attribute_mask) != 0;
@@ -1945,7 +1979,7 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
         float collision_normal[3] = {};
 
         for (std::int64_t collider = 0; collider < view.collider_count; ++collider) {
-            if ((view.collided_by_groups & view.collider_group_bits[collider]) == 0) {
+            if ((collision_mask & static_cast<std::uint32_t>(view.collider_group_bits[collider])) == 0u) {
                 continue;
             }
             float dist = 0.0f;

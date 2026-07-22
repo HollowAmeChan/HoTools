@@ -115,8 +115,12 @@ struct Mc2CollisionView {
     const float* collider_old_segment_a = nullptr;
     const float* collider_old_segment_b = nullptr;
     const float* collider_radii = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* partition_collision_modes = nullptr;
+    const std::uint32_t* partition_collided_by_groups = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t collider_count = 0;
+    std::int64_t partition_count = 0;
     std::int32_t collided_by_groups = 0;
     bool soft_sphere = false;
     std::vector<Mc2ExternalCollisionDebugRecord>* debug_contacts = nullptr;
@@ -139,9 +143,13 @@ struct Mc2EdgeCollisionView {
     const float* collider_old_segment_a = nullptr;
     const float* collider_old_segment_b = nullptr;
     const float* collider_radii = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* partition_collision_modes = nullptr;
+    const std::uint32_t* partition_collided_by_groups = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t edge_count = 0;
     std::int64_t collider_count = 0;
+    std::int64_t partition_count = 0;
     std::int32_t collided_by_groups = 0;
     std::uint8_t move_attribute_mask = 1u << 2u;
     std::vector<Mc2ExternalCollisionDebugRecord>* debug_contacts = nullptr;

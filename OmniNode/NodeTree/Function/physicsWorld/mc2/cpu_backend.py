@@ -269,7 +269,7 @@ class MC2CPUBackendDomainV1:
         self._step_count += 1
 
     def step_compiled_domain_pipeline_full(self, settings: Mapping[str, object]) -> None:
-        """Run the E4 compiled structural/self/post order in one domain owner."""
+        """Run the E4 compiled structural/external/self/post order in one owner."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("compiled domain pipeline requires update_frame first")
@@ -335,6 +335,17 @@ class MC2CPUBackendDomainV1:
         if not callable(run_collision):
             raise RuntimeError("CPU kernel does not expose whole-domain self collision")
         run_collision(self._handle, old_positions)
+        self._step_count += 1
+
+    def step_compiled_external_collision(self, settings: Mapping[str, object]) -> None:
+        """Run the E4 external pass once over the compiled particle domain."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("compiled external collision requires update_frame first")
+        run_collision = getattr(self._kernel, "step_compiled_external_collision", None)
+        if not callable(run_collision):
+            raise RuntimeError("CPU kernel does not expose compiled external collision")
+        run_collision(self._handle, settings)
         self._step_count += 1
 
     def step_external_edge_collision(self, settings: Mapping[str, object]) -> None:

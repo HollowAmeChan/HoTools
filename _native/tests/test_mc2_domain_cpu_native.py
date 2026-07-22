@@ -78,6 +78,20 @@ def _create_two_pose_chains():
     )
 
 
+def _create_compiled_external_case():
+    positions = np.asarray(
+        ((-0.5, 0.5, 0.0), (0.5, 0.5, 0.0)) * 2, dtype=np.float32
+    )
+    rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    return hotools_native.mc2_domain_cpu_v1_create(
+        1, 4, 2, "domain:external", "layout:test", positions, rotations,
+        np.asarray((0, 0, 1, 1), dtype=np.uint32),
+        np.full(4, 2, dtype=np.uint32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.asarray(((0.0, -1.0, 0.0),) * 2, dtype=np.float32),
+    )
+
+
 def _create_whole_domain_self_case():
     bind_positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
@@ -446,6 +460,90 @@ def test_domain_cpu_native_whole_domain_self_honors_partition_policy():
     np.testing.assert_array_equal(no_points, original)
     assert info["whole_domain_self_point_count"] == 0
     assert info["whole_domain_self_last_contact_count"] == 0
+
+
+def test_domain_cpu_native_compiled_external_filters_point_and_edge_modes():
+    positions = np.asarray(
+        ((-0.5, 0.5, 0.0), (0.5, 0.5, 0.0)) * 2, dtype=np.float32
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    collider_types = np.asarray((0,), dtype=np.int32)
+    collider_groups = np.asarray((1,), dtype=np.int32)
+    collider_vectors = np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32)
+    collider_radii = np.asarray((1.0,), dtype=np.float32)
+
+    def run(modes):
+        handle = _create_compiled_external_case()
+        try:
+            _update_frame(
+                handle, positions, normals, frame=1, generation=1,
+                domain_signature="domain:external",
+                partition_positions=((0.0, 0.0, 0.0),) * 2,
+            )
+            hotools_native.mc2_domain_cpu_v1_configure_inertia(
+                handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
+            )
+            hotools_native.mc2_domain_cpu_v1_configure_compiled_external_collision(
+                handle, np.asarray(((0, 1), (2, 3)), dtype=np.int32),
+                np.asarray(modes, dtype=np.uint32),
+                np.asarray((1, 2), dtype=np.uint32),
+                np.full(4, 0.1, dtype=np.float32),
+                np.full(4, 0.25, dtype=np.float32),
+            )
+            hotools_native.mc2_domain_cpu_v1_step_compiled_external_collision(
+                handle, collider_types, collider_groups, collider_vectors,
+                collider_vectors, collider_vectors, collider_vectors,
+                collider_vectors, collider_vectors, collider_radii,
+            )
+            return (
+                hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"].copy(),
+                dict(hotools_native.mc2_domain_cpu_v1_inspect(handle)),
+            )
+        finally:
+            hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+    for modes in ((1, 1), (2, 2)):
+        output, info = run(modes)
+        assert np.any(np.abs(output[:2] - positions[:2]) > np.float32(1.0e-6)), (
+            modes, output, positions
+        )
+        np.testing.assert_array_equal(output[2:], positions[2:])
+        assert info["compiled_external_ready"] is True
+        assert info["compiled_external_edge_count"] == 2
+        assert info["compiled_external_step_count"] == 1
+        assert info["step_count"] == 1
+
+
+def test_domain_cpu_native_compiled_external_configuration_is_atomic():
+    handle = _create_compiled_external_case()
+    valid = (
+        np.asarray(((0, 1), (2, 3)), dtype=np.int32),
+        np.asarray((1, 2), dtype=np.uint32),
+        np.asarray((1, 2), dtype=np.uint32),
+        np.full(4, 0.1, dtype=np.float32),
+        np.full(4, 0.25, dtype=np.float32),
+    )
+    try:
+        hotools_native.mc2_domain_cpu_v1_configure_compiled_external_collision(
+            handle, *valid
+        )
+        before = dict(hotools_native.mc2_domain_cpu_v1_inspect(handle))
+        invalid = list(valid)
+        invalid[-2] = np.asarray((0.1, np.nan, 0.1, 0.1), dtype=np.float32)
+        try:
+            hotools_native.mc2_domain_cpu_v1_configure_compiled_external_collision(
+                handle, *invalid
+            )
+        except ValueError as exc:
+            assert "finite" in str(exc)
+        else:
+            raise AssertionError("non-finite compiled external radii were accepted")
+        after = dict(hotools_native.mc2_domain_cpu_v1_inspect(handle))
+        assert after["compiled_external_ready"] == before["compiled_external_ready"]
+        assert after["compiled_external_edge_count"] == before["compiled_external_edge_count"]
+        assert after["compiled_external_step_count"] == before["compiled_external_step_count"]
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
 def test_domain_cpu_native_whole_domain_self_triangle_with_edges_moves():

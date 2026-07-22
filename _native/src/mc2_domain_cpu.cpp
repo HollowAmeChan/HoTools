@@ -434,6 +434,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     center_inertia_pending_ = false;
     prediction_state_ready_ = false;
     substep_snapshot_ready_ = false;
+    collision_state_ready_ = false;
     frame_delta_time_ = frame.frame_delta_time;
     simulation_delta_time_ = frame.simulation_delta_time;
     time_scale_ = frame.time_scale;
@@ -1517,7 +1518,7 @@ void DomainV1::configure_whole_domain_self(
     whole_domain_self_last_candidate_count_ = 0;
 }
 
-void DomainV1::step_whole_domain_self(const float* old_positions) {
+void DomainV1::step_whole_domain_self_impl(const float* old_positions, bool reset_friction) {
     ensure_live();
     if (frame_ < 0 || generation_ < 0) {
         throw std::logic_error("MC2 whole-domain self step requires update_frame");
@@ -1529,7 +1530,9 @@ void DomainV1::step_whole_domain_self(const float* old_positions) {
         throw std::logic_error("MC2 whole-domain self step requires configuration");
     }
     require_finite(old_positions, particle_count_ * 3, "whole-domain self old positions");
-    collision_friction_ = whole_domain_self_friction_;
+    if (reset_friction || !collision_state_ready_) {
+        collision_friction_ = whole_domain_self_friction_;
+    }
     std::vector<float> scaled_thickness(particle_count_, 0.0f);
     std::vector<float> partition_scale_ratios(partition_count_, 1.0f);
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
@@ -1579,8 +1582,13 @@ void DomainV1::step_whole_domain_self(const float* old_positions) {
     view.contact_count = &whole_domain_self_last_contact_count_;
     view.candidate_count = &whole_domain_self_last_candidate_count_;
     hotools::project_self_collisions_mc2(view);
+    collision_state_ready_ = true;
     ++whole_domain_self_step_count_;
     ++step_count_;
+}
+
+void DomainV1::step_whole_domain_self(const float* old_positions) {
+    step_whole_domain_self_impl(old_positions, true);
 }
 
 void DomainV1::step_whole_domain_self_owned() {
@@ -1590,7 +1598,190 @@ void DomainV1::step_whole_domain_self_owned() {
             "MC2 whole-domain self owned step requires the substep snapshot"
         );
     }
-    step_whole_domain_self(substep_old_positions_.data());
+    step_whole_domain_self_impl(substep_old_positions_.data(), false);
+}
+
+void DomainV1::configure_compiled_external_collision(
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::uint32_t* partition_collision_modes,
+    const std::uint32_t* partition_collided_by_groups,
+    const float* particle_radii,
+    const float* particle_friction
+) {
+    ensure_live();
+    if ((edge_count != 0 && edges == nullptr) || partition_collision_modes == nullptr ||
+        partition_collided_by_groups == nullptr) {
+        throw std::invalid_argument("MC2 compiled external collision policy cannot be null");
+    }
+    require_finite(particle_radii, particle_count_, "compiled external collision radii");
+    require_finite(particle_friction, particle_count_, "compiled external collision friction");
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        if (partition_collision_modes[partition] > 2u) {
+            throw std::invalid_argument("MC2 compiled external collision mode must be 0, 1, or 2");
+        }
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (particle_radii[vertex] < 0.0f || particle_friction[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 compiled external particle values cannot be negative");
+        }
+    }
+    for (std::size_t edge = 0; edge < edge_count; ++edge) {
+        const std::int32_t v0 = edges[edge * 2];
+        const std::int32_t v1 = edges[edge * 2 + 1];
+        if (v0 < 0 || v1 < 0 || static_cast<std::size_t>(v0) >= particle_count_ ||
+            static_cast<std::size_t>(v1) >= particle_count_ || v0 == v1 ||
+            particle_partition_index_[static_cast<std::size_t>(v0)] !=
+                particle_partition_index_[static_cast<std::size_t>(v1)]) {
+            throw std::invalid_argument(
+                "MC2 compiled external edge must be valid and stay inside one partition"
+            );
+        }
+    }
+
+    std::vector<std::int32_t> next_edges;
+    if (edge_count != 0) {
+        next_edges.assign(edges, edges + edge_count * 2);
+    }
+    std::vector<std::uint32_t> next_modes(
+        partition_collision_modes, partition_collision_modes + partition_count_
+    );
+    std::vector<std::uint32_t> next_masks(
+        partition_collided_by_groups, partition_collided_by_groups + partition_count_
+    );
+    std::vector<float> next_radii(particle_radii, particle_radii + particle_count_);
+    std::vector<float> next_friction(particle_friction, particle_friction + particle_count_);
+    compiled_external_edges_.swap(next_edges);
+    compiled_external_modes_.swap(next_modes);
+    compiled_external_masks_.swap(next_masks);
+    compiled_external_radii_.swap(next_radii);
+    compiled_external_friction_.swap(next_friction);
+    compiled_external_ready_ = true;
+    compiled_external_step_count_ = 0;
+}
+
+void DomainV1::step_compiled_external_collision(
+    const std::int32_t* collider_types,
+    const std::int32_t* collider_group_bits,
+    const float* collider_centers,
+    const float* collider_segment_a,
+    const float* collider_segment_b,
+    const float* collider_old_centers,
+    const float* collider_old_segment_a,
+    const float* collider_old_segment_b,
+    const float* collider_radii,
+    std::size_t collider_count
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 compiled external collision requires update_frame");
+    }
+    if (!inertia_ready_ || !compiled_external_ready_) {
+        throw std::logic_error("MC2 compiled external collision requires configuration");
+    }
+    if (collider_count != 0 &&
+        (collider_types == nullptr || collider_group_bits == nullptr || collider_centers == nullptr ||
+         collider_segment_a == nullptr || collider_segment_b == nullptr ||
+         collider_old_centers == nullptr || collider_old_segment_a == nullptr ||
+         collider_old_segment_b == nullptr || collider_radii == nullptr)) {
+        throw std::invalid_argument("MC2 compiled external collider arrays cannot be null");
+    }
+    require_finite(collider_centers, collider_count * 3, "compiled collider centers");
+    require_finite(collider_segment_a, collider_count * 3, "compiled collider segment A");
+    require_finite(collider_segment_b, collider_count * 3, "compiled collider segment B");
+    require_finite(collider_old_centers, collider_count * 3, "compiled collider old centers");
+    require_finite(collider_old_segment_a, collider_count * 3, "compiled collider old segment A");
+    require_finite(collider_old_segment_b, collider_count * 3, "compiled collider old segment B");
+    require_finite(collider_radii, collider_count, "compiled collider radii");
+    for (std::size_t collider = 0; collider < collider_count; ++collider) {
+        if (collider_types[collider] < 0 || collider_types[collider] > 3 ||
+            collider_group_bits[collider] <= 0 || collider_radii[collider] < 0.0f) {
+            throw std::invalid_argument("MC2 compiled external collider values are out of range");
+        }
+    }
+
+    std::vector<float> partition_scale_ratios(partition_count_, 1.0f);
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        const auto offset = partition * 3;
+        const float current_length = std::sqrt(
+            partition_world_scales_[offset] * partition_world_scales_[offset] +
+            partition_world_scales_[offset + 1] * partition_world_scales_[offset + 1] +
+            partition_world_scales_[offset + 2] * partition_world_scales_[offset + 2]
+        );
+        const float initial_length = std::sqrt(
+            center_initial_scales_[offset] * center_initial_scales_[offset] +
+            center_initial_scales_[offset + 1] * center_initial_scales_[offset + 1] +
+            center_initial_scales_[offset + 2] * center_initial_scales_[offset + 2]
+        );
+        partition_scale_ratios[partition] = std::max(
+            current_length / std::max(initial_length, 0.00000001f), 0.000001f
+        );
+    }
+    std::vector<float> scaled_radii(particle_count_, 0.0f);
+    std::vector<std::uint8_t> attributes(particle_count_, 0u);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        scaled_radii[vertex] = compiled_external_radii_[vertex] *
+            partition_scale_ratios[particle_partition_index_[vertex]];
+        if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
+            attributes[vertex] = 1u << 2u;
+        }
+    }
+    collision_friction_ = compiled_external_friction_;
+    std::fill(world_normals_.begin(), world_normals_.end(), 0.0f);
+
+    hotools::Mc2CollisionView point_view;
+    point_view.positions = world_positions_.data();
+    point_view.base_positions = animated_base_world_positions_.data();
+    point_view.inv_masses = inertia_inv_masses_.data();
+    point_view.collision_radii = scaled_radii.data();
+    point_view.collision_normals = world_normals_.data();
+    point_view.friction = collision_friction_.data();
+    point_view.collider_types = collider_types;
+    point_view.collider_group_bits = collider_group_bits;
+    point_view.collider_centers = collider_centers;
+    point_view.collider_segment_a = collider_segment_a;
+    point_view.collider_segment_b = collider_segment_b;
+    point_view.collider_old_centers = collider_old_centers;
+    point_view.collider_old_segment_a = collider_old_segment_a;
+    point_view.collider_old_segment_b = collider_old_segment_b;
+    point_view.collider_radii = collider_radii;
+    point_view.particle_partition_index = particle_partition_index_.data();
+    point_view.partition_collision_modes = compiled_external_modes_.data();
+    point_view.partition_collided_by_groups = compiled_external_masks_.data();
+    point_view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    point_view.collider_count = static_cast<std::int64_t>(collider_count);
+    point_view.partition_count = static_cast<std::int64_t>(partition_count_);
+    hotools::project_collisions_mc2(point_view);
+
+    hotools::Mc2EdgeCollisionView edge_view;
+    edge_view.positions = world_positions_.data();
+    edge_view.edges = compiled_external_edges_.data();
+    edge_view.attributes = attributes.data();
+    edge_view.inv_masses = inertia_inv_masses_.data();
+    edge_view.collision_radii = scaled_radii.data();
+    edge_view.collision_normals = world_normals_.data();
+    edge_view.friction = collision_friction_.data();
+    edge_view.collider_types = collider_types;
+    edge_view.collider_group_bits = collider_group_bits;
+    edge_view.collider_centers = collider_centers;
+    edge_view.collider_segment_a = collider_segment_a;
+    edge_view.collider_segment_b = collider_segment_b;
+    edge_view.collider_old_centers = collider_old_centers;
+    edge_view.collider_old_segment_a = collider_old_segment_a;
+    edge_view.collider_old_segment_b = collider_old_segment_b;
+    edge_view.collider_radii = collider_radii;
+    edge_view.particle_partition_index = particle_partition_index_.data();
+    edge_view.partition_collision_modes = compiled_external_modes_.data();
+    edge_view.partition_collided_by_groups = compiled_external_masks_.data();
+    edge_view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    edge_view.edge_count = static_cast<std::int64_t>(compiled_external_edges_.size() / 2);
+    edge_view.collider_count = static_cast<std::int64_t>(collider_count);
+    edge_view.partition_count = static_cast<std::int64_t>(partition_count_);
+    hotools::project_edge_collisions_mc2(edge_view);
+
+    collision_state_ready_ = true;
+    ++compiled_external_step_count_;
+    ++step_count_;
 }
 
 void DomainV1::step_external_edge_collision(
@@ -1948,6 +2139,7 @@ void DomainV1::step_post(
     view.velocity_weight = velocity_weight;
     hotools::apply_post_step_mc2(view);
     substep_snapshot_ready_ = false;
+    collision_state_ready_ = false;
     ++step_count_;
 }
 
@@ -2002,6 +2194,14 @@ void DomainV1::dispose() noexcept {
     whole_domain_self_step_count_ = 0;
     whole_domain_self_last_contact_count_ = 0;
     whole_domain_self_last_candidate_count_ = 0;
+    compiled_external_edges_.clear();
+    compiled_external_modes_.clear();
+    compiled_external_masks_.clear();
+    compiled_external_radii_.clear();
+    compiled_external_friction_.clear();
+    compiled_external_ready_ = false;
+    compiled_external_step_count_ = 0;
+    collision_state_ready_ = false;
     partition_world_positions_.clear();
     partition_previous_world_positions_.clear();
     partition_world_rotations_.clear();

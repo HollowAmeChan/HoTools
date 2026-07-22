@@ -818,9 +818,9 @@ E3 native 合入门禁已经满足：新 owner 能在无 Blender 对象的 C++/h
 
 实现进度（2026-07-22）：多partition frame、Center/Anchor/Teleport history和统一particle owner已有E3/E2合同；StepBasic通过独立partitioned native ABI按`particle_partition_index`消费编译后的`animation_pose_ratio`。`DomainV1`现进一步直接配置compiled point/edge/triangle、逐partition self mode/group/mask和逐粒子thickness/friction，并在一次whole-domain broadphase/contact pass中处理同partition与跨partition self。跨partition要求双方group/mask握手，`mask == 0`按auto-all解释；粒子厚度按当前/初始partition scale更新，point-triangle与edge-edge均按两侧primitive平均厚度求和，保持V0的双方总厚度语义。显式空point表与E3旧ABI“所有顶点均为point”已用不同哨兵区分，不能互相退化。
 
-上述配置、失败原子性、primitive计数、candidate/contact计数、允许/阻断跨partition以及双source edge-edge真实位移均由py311/py313 raw ABI和adapter夹具锁定；单source标量self endpoint继续只作为E3 oracle，不是第二个产品owner。统一context现另有compiled full endpoint，按既定结构顺序执行到Motion后调用一次whole-domain self，再执行post/history；substep起点由native owner独立冻结，self与post不要求Python回读位置，post后snapshot立即失效。双partition真实接触、real velocity history和非法post标量零pass执行均有双ABI证据。
+上述配置、失败原子性、primitive计数、candidate/contact计数、允许/阻断跨partition以及双source edge-edge真实位移均由py311/py313 raw ABI和adapter夹具锁定；单source标量self endpoint继续只作为E3 oracle，不是第二个产品owner。统一context的compiled full endpoint现在固定执行`Center frame shift -> Center -> Center inertia -> Integration -> Tether -> Distance A -> Angle -> Bending -> External -> Distance B -> Motion -> Whole Self -> Post`。External只接收一份公共collider数组，静态edge、partition collision mode、独立`collided_by_groups`、particle radius/friction由domain编译并持有；point只消费mode 1，edge只消费mode 2且primitive不得跨partition。substep起点由native owner独立冻结，self继承External已经累积的摩擦状态，post后snapshot与碰撞状态立即失效。双partitionpoint/edge过滤、真实接触、real velocity history、非法collider/post零pass执行及E3旧标量ABI均有双ABI证据。
 
-E4尚未关闭：该endpoint有意拒绝尚未编译的外部collider packet。下一门禁是接通compiled external collision，并把多source capture/fragment cache接入这个统一context，随后完成产品切换前的多source oracle与性能门禁；在此之前不切产品slot，也不删除V0或普通aggregate路径。
+E4尚未关闭：native/adapter的compiled external子门槛已关闭，但产品侧尚未把Physics World公共snapshot一次性捕获为whole-domain collider table，也未把多source fragment cache接入统一context。下一门禁是完成这两个host边界及对应多source oracle/性能验收；在此之前不切产品slot，也不删除V0或普通aggregate路径。
 
 ### E5：多目标结果事务与产品节点
 

@@ -640,6 +640,79 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run compiled whole-domain self collision from the owned substep snapshot."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_compiled_external_collision",
+        [](std::uint64_t handle,
+           ci32_2d edges,
+           cu32_1d partition_collision_modes,
+           cu32_1d partition_collided_by_groups,
+           cf32_1d particle_radii,
+           cf32_1d particle_friction) {
+            auto* domain = require_domain(handle);
+            if (edges.shape(1) != 2 ||
+                static_cast<std::size_t>(partition_collision_modes.shape(0)) !=
+                    domain->partition_count() ||
+                static_cast<std::size_t>(partition_collided_by_groups.shape(0)) !=
+                    domain->partition_count() ||
+                static_cast<std::size_t>(particle_radii.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(particle_friction.shape(0)) != domain->particle_count()) {
+                throw nb::value_error(
+                    "MC2 compiled external collision configuration arrays have incompatible shapes"
+                );
+            }
+            domain->configure_compiled_external_collision(
+                edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                partition_collision_modes.data(), partition_collided_by_groups.data(),
+                particle_radii.data(), particle_friction.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("edges"), nb::arg("partition_collision_modes"),
+        nb::arg("partition_collided_by_groups"), nb::arg("particle_radii"),
+        nb::arg("particle_friction"),
+        "Configure the compiled whole-domain external collision pass."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_compiled_external_collision",
+        [](std::uint64_t handle,
+           ci32_1d collider_types,
+           ci32_1d collider_group_bits,
+           cf32_2d collider_centers,
+           cf32_2d collider_segment_a,
+           cf32_2d collider_segment_b,
+           cf32_2d collider_old_centers,
+           cf32_2d collider_old_segment_a,
+           cf32_2d collider_old_segment_b,
+           cf32_1d collider_radii) {
+            const auto collider_count = static_cast<std::size_t>(collider_types.shape(0));
+            if (static_cast<std::size_t>(collider_group_bits.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_centers.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_segment_a.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_segment_b.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_old_centers.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_old_segment_a.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_old_segment_b.shape(0)) != collider_count ||
+                static_cast<std::size_t>(collider_radii.shape(0)) != collider_count ||
+                collider_centers.shape(1) != 3 || collider_segment_a.shape(1) != 3 ||
+                collider_segment_b.shape(1) != 3 || collider_old_centers.shape(1) != 3 ||
+                collider_old_segment_a.shape(1) != 3 || collider_old_segment_b.shape(1) != 3) {
+                throw nb::value_error(
+                    "MC2 compiled external collider arrays have incompatible shapes"
+                );
+            }
+            require_domain(handle)->step_compiled_external_collision(
+                collider_types.data(), collider_group_bits.data(), collider_centers.data(),
+                collider_segment_a.data(), collider_segment_b.data(), collider_old_centers.data(),
+                collider_old_segment_a.data(), collider_old_segment_b.data(), collider_radii.data(),
+                collider_count
+            );
+        },
+        nb::arg("handle"), nb::arg("collider_types"), nb::arg("collider_group_bits"),
+        nb::arg("collider_centers"), nb::arg("collider_segment_a"),
+        nb::arg("collider_segment_b"), nb::arg("collider_old_centers"),
+        nb::arg("collider_old_segment_a"), nb::arg("collider_old_segment_b"),
+        nb::arg("collider_radii"),
+        "Run one compiled whole-domain external collision pass."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_external_edge_collision",
         [](std::uint64_t handle,
            cf32_1d collision_radii,
@@ -1007,6 +1080,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 domain->whole_domain_self_last_contact_count();
             result["whole_domain_self_last_candidate_count"] =
                 domain->whole_domain_self_last_candidate_count();
+            result["compiled_external_ready"] = domain->compiled_external_ready();
+            result["compiled_external_edge_count"] = domain->compiled_external_edge_count();
+            result["compiled_external_step_count"] = domain->compiled_external_step_count();
             result["partition_world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->partition_world_positions()),
                 domain->partition_count(), 3
