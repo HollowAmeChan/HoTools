@@ -885,6 +885,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - self collision 的厚度是两个 primitive side 的总和；双三角 fixture 要传 `0.04` 而不是单侧 `0.02`。V0 持久接触参数使用半精度量化，Domain 共享 kernel 保持 float32，因此位置容差固定为 `1e-4`；post 用 `dt` 求速度会放大这项量化差，self 的速度历史单独使用 `1e-3` 绝对容差，point/edge 不放宽。
 - Distance inverse mass 必须从 depth 与 collision friction 生成，Fixed 粒子为零；Distance/Bending 的 simulation power 是每次 pass 的显式输入，不能在 Python 侧复制缩放 buffer。
 - scheduler 统一负责从 `simulation_delta_time` 生成 V0 的 Y/Z/W power（Distance/Bending、integration、Angle），并通过 `MC2SubstepPlan` 一次交接 dt、frame interpolation、final 标记和 powers；单 context、interaction group 与 Domain reference 不得各自复制 `90 * dt` 公式。该生产者只交接 substep 数值，不拥有 setup 的碰撞模式或粒子参数。
+- 三类 power 的 endpoint 形态不同：integration、Distance/Bending 接收独立 scalar power，Angle 接收已经乘过 `powers.angle` 的逐粒子 restoration/limit 值。早期独立 Angle 测试手工缩放掩盖了 compiled handoff 缺口；现在 `reference_step.py` 统一缩放，并以 full Angle+Motion V0 tolerance 锁定。
 - `animation_pose_ratio` 会影响 StepBasic、Tether 和 Angle，但不属于既有 V0 native 固定 float 数组。它作为 host/domain 元数据参与 effective parameter signature，并进入 compiled partition SoA；不得为接通 Domain 而扩写或重排 V0 ABI，也不得在 reference harness 中继续写死为 0。
 - MC2 源码 oracle 与产品 effective 参数必须分层保存。BoneSpring 源码 fixture 仍忠实保留序列化的 bending stiffness/method，产品因 Line topology 没有 triangle 而将两者归零；测试以显式 product override 记录这项有意差异，禁止篡改源码 fixture 或让旧矩阵倒逼无效 pass 回归。
 - `reference_step.py` 只把 scheduler 的 substep plan、frame 权重和 compiled 参数表编译成 native reference settings；它暂时严格限制单 partition，动态 collider mapping 由 Physics World 提供，参数 mode 不匹配时在 native 前拒绝，不能静默关闭碰撞。

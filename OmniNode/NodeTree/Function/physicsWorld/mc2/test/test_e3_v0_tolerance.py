@@ -65,6 +65,9 @@ collider_frame = importlib.import_module(
 scheduler = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
 )
+reference_step = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.reference_step"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -678,6 +681,94 @@ def test_e3_native_motion_branch_matches_v0_after_tether():
         v0.dispose()
 
 
+def test_e3_native_full_angle_motion_pipeline_matches_v0():
+    snapshot, fragment, _compiled, _unused_effective = _same_source_constraints()
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=1.0,
+            gravity_direction=(0.0, -1.0, 0.0),
+            damping=0.0,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=True,
+            angle_restoration_stiffness=0.2,
+            angle_limit_enabled=False,
+            max_distance_enabled=True,
+            max_distance=0.3,
+            backstop_enabled=False,
+            collision_mode=0,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        base_positions = program.particle_bind_position.copy()
+        frame = _frame_at(program, frame=1, generation=1, positions=base_positions)
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=frame.frame,
+            generation=frame.generation,
+            world_positions=base_positions,
+            world_rotations_xyzw=frame.animated_base_world_rotations,
+        ))
+        v0.reset()
+        v0.step_no_collision(0.1)
+        v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
+        v0_debug = v0.refresh_debug_draw_snapshot(
+            include_step_basic=True,
+            include_dynamics=True,
+        )
+
+        domain.update_frame(frame)
+        step_basic = domain.prepare_step_basic_pose()
+        settings = reference_step.make_mc2_reference_pipeline_settings(
+            compiled,
+            frame,
+            scheduler.MC2SubstepPlan(
+                update_index=0,
+                simulation_delta_time=0.1,
+                frame_interpolation=1.0,
+                is_final_substep=True,
+                powers=scheduler.derive_mc2_simulation_powers(0.1),
+            ),
+            anchor_component_local_positions=np.zeros((1, 3), dtype=np.float32),
+            step_basic_positions=step_basic["positions"],
+            step_basic_rotations=step_basic["rotations"],
+            motion_base_positions=base_positions,
+            motion_base_rotations=frame.animated_base_world_rotations,
+            distance_weights=np.ones(1, dtype=np.float32),
+            old_positions=base_positions,
+        )
+        domain.step_reference_pipeline_full(settings)
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            v0_positions,
+            rtol=5.0e-4,
+            atol=5.0e-4,
+        )
+        np.testing.assert_allclose(
+            domain.read_debug_state()["real_velocities"],
+            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
+            rtol=5.0e-3,
+            atol=2.0e-3,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 def test_e3_native_mesh_point_collision_matches_v0():
     snapshot, fragment, _compiled, _effective = _same_source_constraints()
     effective = runtime.make_mc2_runtime_parameters(
@@ -1075,6 +1166,8 @@ if __name__ == "__main__":
     print("PASS E3 native StepBasic pose matches V0 Angle reference")
     test_e3_native_motion_branch_matches_v0_after_tether()
     print("PASS E3 native Tether-to-Motion branch matches V0")
+    test_e3_native_full_angle_motion_pipeline_matches_v0()
+    print("PASS E3 native full Angle/Motion pipeline matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()

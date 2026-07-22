@@ -38,6 +38,20 @@ def _partition_vector(table, fields: Mapping[str, int], names: tuple[str, ...]) 
     return tuple(_partition_scalar(table, fields, name) for name in names)
 
 
+def _scaled_particle_column(
+    table,
+    fields: Mapping[str, int],
+    name: str,
+    scale: float,
+) -> np.ndarray:
+    if name not in fields:
+        raise ValueError(f"particle parameter table lacks {name}")
+    values = np.asarray(table.values[:, fields[name]], dtype=np.float32)
+    values = np.ascontiguousarray(values * np.float32(scale), dtype=np.float32)
+    values.flags.writeable = False
+    return values
+
+
 def _require_single_partition(compiled: MC2MeshCompiledDomainV1) -> None:
     if not isinstance(compiled, MC2MeshCompiledDomainV1):
         raise TypeError("compiled must be MC2MeshCompiledDomainV1")
@@ -145,10 +159,18 @@ def make_mc2_reference_pipeline_settings(
             compiled.parameters.partition_parameters, partition_fields, "tether_stretch_limit"
         ),
         "step_basic_rotations": step_rotations,
-        "angle_restoration_values": _particle_column(
-            particle_values, particle_fields, "angle_restoration_stiffness"
+        "angle_restoration_values": _scaled_particle_column(
+            particle_values,
+            particle_fields,
+            "angle_restoration_stiffness",
+            substep_plan.powers.angle,
         ),
-        "angle_limit_values": _particle_column(particle_values, particle_fields, "angle_limit"),
+        "angle_limit_values": _scaled_particle_column(
+            particle_values,
+            particle_fields,
+            "angle_limit",
+            substep_plan.powers.angle,
+        ),
         "angle_restoration_velocity_attenuation": _partition_scalar(
             compiled.parameters.partition_parameters,
             partition_fields,
