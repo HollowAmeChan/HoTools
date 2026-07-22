@@ -11,6 +11,7 @@ from .center_state import mc2_anchor_component_local_position
 from .domain_ir import MC2DomainFramePacketV1
 from .parameters import MC2SolverSettingsSpec
 from .scheduler import MC2FrameSchedule
+from .scheduler import MC2SubstepPlan
 from .scheduler import MC2TimeSchedulerState
 
 
@@ -76,6 +77,22 @@ class MC2MeshProductScheduledFrameV1:
                 "next_anchor_component_local_positions",
             ),
         )
+
+
+@dataclass(frozen=True)
+class MC2MeshProductScheduledSubstepV1:
+    plan: MC2SubstepPlan
+    base_revision: int
+    _owner_token: object
+    _staged_scheduler: MC2TimeSchedulerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan, MC2SubstepPlan):
+            raise TypeError("plan must be MC2SubstepPlan")
+        if self.base_revision < 0:
+            raise ValueError("base_revision cannot be negative")
+        if not isinstance(self._staged_scheduler, MC2TimeSchedulerState):
+            raise TypeError("staged scheduler must be MC2TimeSchedulerState")
 
 
 class MC2MeshProductSchedulerStateV1:
@@ -178,6 +195,32 @@ class MC2MeshProductSchedulerStateV1:
         )
         self._revision += 1
 
+    def stage_substep(self, update_index: int) -> MC2MeshProductScheduledSubstepV1:
+        staged_scheduler = self._time_scheduler.clone()
+        plan = staged_scheduler.advance_substep(update_index)
+        return MC2MeshProductScheduledSubstepV1(
+            plan=plan,
+            base_revision=self._revision,
+            _owner_token=self._owner_token,
+            _staged_scheduler=staged_scheduler,
+        )
+
+    def validate_substep_commit(
+        self,
+        staged: MC2MeshProductScheduledSubstepV1,
+    ) -> None:
+        if not isinstance(staged, MC2MeshProductScheduledSubstepV1):
+            raise TypeError("staged must be MC2MeshProductScheduledSubstepV1")
+        if staged._owner_token is not self._owner_token:
+            raise ValueError("scheduled substep belongs to another scheduler state")
+        if staged.base_revision != self._revision:
+            raise RuntimeError("scheduled substep is stale")
+
+    def commit_substep(self, staged: MC2MeshProductScheduledSubstepV1) -> None:
+        self.validate_substep_commit(staged)
+        self._time_scheduler = staged._staged_scheduler
+        self._revision += 1
+
     def debug_dict(self) -> dict:
         return {
             "schema": "mc2_mesh_product_scheduler_state_v1",
@@ -192,5 +235,6 @@ class MC2MeshProductSchedulerStateV1:
 
 __all__ = [
     "MC2MeshProductScheduledFrameV1",
+    "MC2MeshProductScheduledSubstepV1",
     "MC2MeshProductSchedulerStateV1",
 ]

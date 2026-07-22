@@ -188,6 +188,11 @@ class MC2MeshFusedCPUOwnerV1:
 
         self._require_domain().step_compiled_domain_pipeline_full(settings)
 
+    def prepare_step_basic_pose(self) -> dict:
+        """Build the partition-aware StepBasic pose through the live owner."""
+
+        return self._require_domain().prepare_step_basic_pose()
+
     def read_output(self):
         """Read one logical-order domain result from the live native owner."""
 

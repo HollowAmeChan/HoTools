@@ -46,6 +46,9 @@ product_frame_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_frame"
 )
 collider_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame")
+native_kernel_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -112,8 +115,11 @@ class _Kernel:
         self.created = []
         self.disposed = []
         self.frames = []
+        self.poses = []
+        self.full_steps = []
         self.fail_create = False
         self.fail_update = False
+        self.fail_step = False
 
     def create_domain(self, program, packet):
         if self.fail_create:
@@ -126,6 +132,16 @@ class _Kernel:
         if self.fail_update:
             raise RuntimeError("injected frame update failure")
         self.frames.append((handle, frame))
+    def prepare_step_basic_pose(self, handle, _ratios):
+        self.poses.append(handle)
+        return {
+            "positions": handle["program"].particle_bind_position,
+            "rotations": handle["program"].particle_bind_rotation,
+        }
+    def step_compiled_domain_pipeline_full(self, handle, settings):
+        if self.fail_step:
+            raise RuntimeError("injected fused substep failure")
+        self.full_steps.append((handle, settings))
     def step(self, handle, frame, settings, colliders): pass
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
@@ -421,6 +437,127 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
     assert report.update_count > 0 and report.skip_count == 0
     assert slot.data["partition_frame_snapshots"] == ("first", "second")
     assert slot.data["scheduler_state"].revision == 1
+
+
+def test_slot_executes_and_commits_compiled_substeps_sequentially():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(slot, _domain_frame(program, frame=10))
+    slot_module.publish_mc2_mesh_fused_frame(
+        world, slot, scheduled, _empty_collider_frame(10),
+    )
+    results = tuple(
+        slot_module.step_mc2_mesh_fused_substep(world, slot)
+        for _ in range(scheduled.schedule.update_count)
+    )
+    assert tuple(result.update_index for result in results) == tuple(
+        range(scheduled.schedule.update_count)
+    )
+    assert all(not result.is_final_substep for result in results[:-1])
+    assert results[-1].is_final_substep
+    assert slot.data["completed_substeps"] == scheduled.schedule.update_count
+    assert slot.data["frame_complete"] is True
+    assert slot.data["scheduler_state"].revision == 1 + len(results)
+    assert len(kernel.poses) == len(results) == len(kernel.full_steps)
+    for _handle, settings in kernel.full_steps:
+        np.testing.assert_array_equal(
+            settings["distance_weights"],
+            np.ones(program.partition_count, dtype=np.float32),
+        )
+        assert settings["external_collision"]["collider_types"].shape == (0,)
+    try:
+        slot_module.step_mc2_mesh_fused_substep(world, slot)
+    except RuntimeError as exc:
+        assert "no pending substeps" in str(exc)
+    else:
+        raise AssertionError("completed fused frame accepted an extra substep")
+
+
+def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(slot, _domain_frame(program, frame=11))
+    slot_module.publish_mc2_mesh_fused_frame(
+        world, slot, scheduled, _empty_collider_frame(11),
+    )
+    revision = slot.data["scheduler_state"].revision
+    kernel.fail_step = True
+    try:
+        slot_module.step_mc2_mesh_fused_substep(world, slot)
+    except RuntimeError as exc:
+        assert "injected fused substep failure" in str(exc)
+    else:
+        raise AssertionError("fused substep failure was accepted")
+    assert slot.data["scheduler_state"].revision == revision
+    assert (
+        slot.data["scheduler_state"].debug_dict()["time_scheduler"]["next_step_index"]
+        == 0
+    )
+    assert slot.data["completed_substeps"] == 0
+    assert "injected fused substep failure" in slot.data["last_step_failure"]
+    kernel.fail_step = False
+    result = slot_module.step_mc2_mesh_fused_substep(world, slot)
+    assert result.update_index == 0
+    assert slot.data["scheduler_state"].revision == revision + 1
+    assert "last_step_failure" not in slot.data
+
+
+def test_paused_fused_frame_has_no_product_substeps():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(
+        slot, _domain_frame(program, frame=12), world_time_scale=0.0,
+    )
+    assert scheduled.schedule.update_count == 0
+    slot_module.publish_mc2_mesh_fused_frame(
+        world, slot, scheduled, _empty_collider_frame(12),
+    )
+    assert slot.data["frame_complete"] is True
+    try:
+        slot_module.step_mc2_mesh_fused_substep(world, slot)
+    except RuntimeError as exc:
+        assert "no pending substeps" in str(exc)
+    else:
+        raise AssertionError("paused fused frame accepted a substep")
+    assert kernel.poses == [] and kernel.full_steps == []
+
+
+def test_slot_native_executes_complete_compiled_frame():
+    world = _world()
+    kernel = native_kernel_module.MC2NativeCPUKernelV1()
+    try:
+        slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+        slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+        owner = slot.data["owner"]
+        frame = _domain_frame(owner.compiled.program, frame=13)
+        scheduled = _scheduled(slot, frame)
+        slot_module.publish_mc2_mesh_fused_frame(
+            world, slot, scheduled, _empty_collider_frame(13),
+        )
+        results = tuple(
+            slot_module.step_mc2_mesh_fused_substep(world, slot)
+            for _ in range(scheduled.schedule.update_count)
+        )
+        assert tuple(result.update_index for result in results) == tuple(
+            range(scheduled.schedule.update_count)
+        )
+        assert results[-1].is_final_substep
+        output = owner.read_output()
+        assert output.frame == 13 and output.generation == 1
+        assert np.isfinite(output.world_positions).all()
+        assert slot.data["scheduler_state"].revision == 1 + len(results)
+        assert slot.data["frame_complete"] is True
+    finally:
+        world.omni_cache_dispose("native_substep_test_complete")
 
 
 TESTS = tuple(
