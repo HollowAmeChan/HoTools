@@ -824,7 +824,7 @@ E4尚未关闭：native/adapter的compiled external和纯host的whole-domain col
 
 A5-04分区参数隔离已关闭：compiled full settings按`particle_partition_index`把Tether、Angle、Motion和Post的partition SoA展开为逐粒子只读数组，Integration/Post直接消费native-owned Center重力与稳定化输出；标量endpoint只保留为E3单partition oracle。Motion继续支持公开合同的`normal_axis=0..5`六个有向轴。统一full endpoint的混合顺序不变，双ABI已覆盖异构partition映射、六轴Motion、失败前零pass和旧标量reference。
 
-该slot当前仍明确`product_enabled=False`且未挂入普通V0 step，避免验收前双求解。下一门禁不是再次编译参数，而是让slot正式拥有scheduler frame timing、跨帧Anchor component-local历史和Center producer状态，以现有compiled settings compiler消费已发布frame/collider并执行真实子步；随后完成Blender多source oracle与性能验收。在此之前不切普通产品求解，也不删除V0或aggregate路径。
+该slot当前仍明确`product_enabled=False`且未挂入普通V0 step，避免验收前双求解。scheduler frame timing、跨帧Anchor component-local历史和Center producer状态现由slot-owned staged/committed state正式拥有，并在frame/collider共同发布成功后提交；下一门禁是消费staged schedule、逐substep调用现有compiled settings compiler并在成功后advance scheduler，再完成Blender多source oracle与性能验收。在此之前不切普通产品求解，也不删除V0或aggregate路径。
 
 ### E5：多目标结果事务与产品节点
 

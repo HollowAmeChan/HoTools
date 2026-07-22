@@ -12,6 +12,8 @@ from .domain_ir import MC2DomainFramePacketV1
 from .domain_owner import MC2FusedCPUOwnerSyncReportV1
 from .domain_owner import MC2MeshFusedCPUOwnerV1
 from .product_collect import MC2MeshProductCollectionV1
+from .product_scheduler import MC2MeshProductScheduledFrameV1
+from .product_scheduler import MC2MeshProductSchedulerStateV1
 
 
 MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
@@ -52,6 +54,8 @@ class MC2FusedMeshFramePublishResultV1:
     generation: int
     partition_ids: tuple[str, ...]
     collider_count: int
+    update_count: int
+    skip_count: int
 
     def debug_dict(self) -> dict:
         return {
@@ -60,6 +64,8 @@ class MC2FusedMeshFramePublishResultV1:
             "generation": self.generation,
             "partition_ids": list(self.partition_ids),
             "collider_count": self.collider_count,
+            "update_count": self.update_count,
+            "skip_count": self.skip_count,
         }
 
 
@@ -72,6 +78,7 @@ def _dispose_slot_owner(slot: PhysicsSolverSlot, _reason: str) -> None:
 def _slot_debug_snapshot(slot: PhysicsSolverSlot) -> dict:
     owner = slot.data.get("owner")
     collection = slot.data.get("collection")
+    scheduler_state = slot.data.get("scheduler_state")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -80,6 +87,11 @@ def _slot_debug_snapshot(slot: PhysicsSolverSlot) -> dict:
         "collection": (
             collection.debug_dict()
             if isinstance(collection, MC2MeshProductCollectionV1)
+            else None
+        ),
+        "scheduler_state": (
+            scheduler_state.debug_dict()
+            if isinstance(scheduler_state, MC2MeshProductSchedulerStateV1)
             else None
         ),
     }
@@ -95,6 +107,9 @@ def _make_slot(world, owner, collection, report) -> PhysicsSolverSlot:
         "owner": owner,
         "collection": collection,
         "last_sync": report,
+        "scheduler_state": MC2MeshProductSchedulerStateV1(
+            owner.compiled.program.partition_ids
+        ),
         "product_enabled": False,
         "frame_ready": False,
         "_dispose": lambda reason, slot=slot: _dispose_slot_owner(slot, reason),
@@ -135,6 +150,18 @@ def sync_mc2_mesh_fused_slot(
             )
             existing.data["collection"] = collection
             existing.data["last_sync"] = report
+            if not report.native_domain_reused:
+                existing.data["scheduler_state"] = MC2MeshProductSchedulerStateV1(
+                    existing.data["owner"].compiled.program.partition_ids
+                )
+                existing.data["frame_ready"] = False
+                for name in (
+                    "frame_packet",
+                    "partition_frame_snapshots",
+                    "collider_frame",
+                    "scheduled_frame",
+                ):
+                    existing.data.pop(name, None)
         finally:
             world.release_write(_MC2_FUSED_MESH_WRITER)
         return MC2FusedMeshSlotSyncResultV1(
@@ -179,7 +206,7 @@ def sync_mc2_mesh_fused_slot(
 def publish_mc2_mesh_fused_frame(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot,
-    frame_packet: MC2DomainFramePacketV1,
+    scheduled_frame: MC2MeshProductScheduledFrameV1,
     collider_frame: MC2DomainColliderFrameSpec,
     *,
     partition_snapshots=(),
@@ -190,26 +217,33 @@ def publish_mc2_mesh_fused_frame(
         raise TypeError("world must be PhysicsWorldCache")
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_MESH_SLOT_KIND:
         raise TypeError("slot must be the fused Mesh PhysicsSolverSlot")
-    if not isinstance(frame_packet, MC2DomainFramePacketV1):
-        raise TypeError("frame_packet must be MC2DomainFramePacketV1")
+    if not isinstance(scheduled_frame, MC2MeshProductScheduledFrameV1):
+        raise TypeError("scheduled_frame must be MC2MeshProductScheduledFrameV1")
+    frame_packet = scheduled_frame.frame_packet
     if not isinstance(collider_frame, MC2DomainColliderFrameSpec):
         raise TypeError("collider_frame must be MC2DomainColliderFrameSpec")
     if collider_frame.frame != frame_packet.frame:
         raise ValueError("fused Mesh frame and collider frame numbers must match")
     owner = slot.data.get("owner")
     collection = slot.data.get("collection")
+    scheduler_state = slot.data.get("scheduler_state")
     if not isinstance(owner, MC2MeshFusedCPUOwnerV1) or not isinstance(
         collection, MC2MeshProductCollectionV1
     ):
         raise RuntimeError("fused Mesh slot is incomplete")
     if owner.compiled is None:
         raise RuntimeError("fused Mesh owner has no compiled program")
+    if not isinstance(scheduler_state, MC2MeshProductSchedulerStateV1):
+        raise RuntimeError("fused Mesh slot has no product scheduler state")
     program = owner.compiled.program
     if (
         frame_packet.domain_signature != program.domain_signature
         or frame_packet.layout_signature != program.layout_signature
     ):
         raise ValueError("fused Mesh frame identity does not match the live owner")
+    if scheduler_state.partition_ids != tuple(program.partition_ids):
+        raise ValueError("fused Mesh scheduler partition identity is stale")
+    scheduler_state.validate_commit(scheduled_frame)
 
     world.acquire_write(_MC2_FUSED_MESH_WRITER)
     try:
@@ -219,8 +253,11 @@ def publish_mc2_mesh_fused_frame(
             or slot.data.get("owner") is not owner
         ):
             raise RuntimeError("fused Mesh slot changed while its frame was captured")
+        scheduler_state.validate_commit(scheduled_frame)
         owner.update_frame(frame_packet)
+        scheduler_state.commit(scheduled_frame)
         slot.data["frame_packet"] = frame_packet
+        slot.data["scheduled_frame"] = scheduled_frame
         slot.data["partition_frame_snapshots"] = tuple(partition_snapshots)
         slot.data["collider_frame"] = collider_frame
         slot.data["frame_ready"] = True
@@ -231,12 +268,15 @@ def publish_mc2_mesh_fused_frame(
         generation=int(frame_packet.generation),
         partition_ids=tuple(program.partition_ids),
         collider_count=int(collider_frame.collider_count),
+        update_count=int(scheduled_frame.schedule.update_count),
+        skip_count=int(scheduled_frame.schedule.skip_count),
     )
 
 
 def capture_and_publish_mc2_mesh_fused_frame(
     world: PhysicsWorldCache,
     *,
+    settings=None,
     depsgraph=None,
     partition_frame_flags=None,
     velocity_weights=None,
@@ -255,6 +295,16 @@ def capture_and_publish_mc2_mesh_fused_frame(
         collection, MC2MeshProductCollectionV1
     ):
         raise RuntimeError("fused Mesh slot is incomplete")
+    scheduler_state = slot.data.get("scheduler_state")
+    if not isinstance(scheduler_state, MC2MeshProductSchedulerStateV1):
+        raise RuntimeError("fused Mesh slot has no product scheduler state")
+    from .parameters import MC2SolverSettingsSpec
+    from .parameters import make_mc2_solver_settings
+
+    if settings is None:
+        settings = make_mc2_solver_settings()
+    if not isinstance(settings, MC2SolverSettingsSpec):
+        raise TypeError("settings must be MC2SolverSettingsSpec")
     from .product_frame import capture_mc2_mesh_product_frame
 
     frame_packet, partition_snapshots = capture_mc2_mesh_product_frame(
@@ -266,11 +316,29 @@ def capture_and_publish_mc2_mesh_fused_frame(
         velocity_weights=velocity_weights,
         gravity_ratios=gravity_ratios,
     )
+    frame_context = getattr(world, "frame_context", None)
+    if frame_context is None:
+        raise RuntimeError("Physics World has no active frame context")
+    world_time_scale = float(getattr(frame_context, "time_scale", 0.0) or 0.0)
+    frame_delta_time = float(getattr(frame_context, "raw_dt", 0.0) or 0.0)
+    effective_time_scale = world_time_scale * float(settings.time_scale)
+    if frame_delta_time <= 0.0 and effective_time_scale > 0.0:
+        effective_dt = (
+            float(getattr(frame_context, "dt", 0.0) or 0.0)
+            * float(settings.time_scale)
+        )
+        frame_delta_time = effective_dt / effective_time_scale
+    scheduled_frame = scheduler_state.stage_frame(
+        frame_packet,
+        settings,
+        frame_delta_time=frame_delta_time,
+        world_time_scale=world_time_scale,
+    )
     collider_frame = build_mc2_mesh_domain_collider_frame(world, collection.draft)
     return publish_mc2_mesh_fused_frame(
         world,
         slot,
-        frame_packet,
+        scheduled_frame,
         collider_frame,
         partition_snapshots=partition_snapshots,
     )

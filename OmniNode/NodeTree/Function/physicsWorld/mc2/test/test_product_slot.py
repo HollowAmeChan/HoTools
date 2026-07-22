@@ -42,6 +42,9 @@ parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physics
 partitions = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
 product = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
 slot_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
+product_frame_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_frame"
+)
 collider_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame")
 
 FIXTURE = os.path.join(
@@ -110,6 +113,7 @@ class _Kernel:
         self.disposed = []
         self.frames = []
         self.fail_create = False
+        self.fail_update = False
 
     def create_domain(self, program, packet):
         if self.fail_create:
@@ -118,7 +122,10 @@ class _Kernel:
         self.created.append(handle)
         return handle
 
-    def update_frame(self, handle, frame): self.frames.append((handle, frame))
+    def update_frame(self, handle, frame):
+        if self.fail_update:
+            raise RuntimeError("injected frame update failure")
+        self.frames.append((handle, frame))
     def step(self, handle, frame, settings, colliders): pass
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
@@ -137,11 +144,13 @@ def test_slot_create_update_and_world_dispose_own_one_handle():
     created = slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     owner = slot.data["owner"]
+    scheduler_state = slot.data["scheduler_state"]
     updated = slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
     assert created.action == "created" and updated.action == "updated"
     assert updated.owner_report.action == "reused"
     assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
     assert slot.data["owner"] is owner and len(kernel.created) == 1
+    assert slot.data["scheduler_state"] is scheduler_state
     assert slot.data["product_enabled"] is False
     world.omni_cache_dispose("test_complete")
     assert len(kernel.disposed) == 1 and world.solver_slots == {}
@@ -199,6 +208,23 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
     assert world._current_writer is None
 
 
+def test_same_generation_native_replacement_resets_product_scheduler_state():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(
+        world, _collection(gravity=5.0), kernel=kernel,
+    )
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    old_scheduler = slot.data["scheduler_state"]
+    updated = slot_module.sync_mc2_mesh_fused_slot(
+        world, _collection(gravity=6.0), kernel=kernel,
+    )
+    assert updated.owner_report.action == "replaced"
+    assert slot.data["scheduler_state"] is not old_scheduler
+    assert slot.data["scheduler_state"].revision == 0
+    assert slot.data["frame_ready"] is False
+
+
 def _empty_collider_frame(frame):
     return collider_module.MC2DomainColliderFrameSpec(
         frame=frame,
@@ -217,52 +243,184 @@ def _empty_collider_frame(frame):
     )
 
 
+def _domain_frame(program, *, frame=7, component_positions=None, anchors=None):
+    partition_count = program.partition_count
+    normals = np.zeros((program.particle_count, 3), dtype=np.float32)
+    normals[:, 2] = 1.0
+    if component_positions is None:
+        component_positions = np.zeros((partition_count, 3), dtype=np.float32)
+    if anchors is None:
+        anchors = np.zeros((partition_count, 3), dtype=np.float32)
+        anchor_present = np.zeros(partition_count, dtype=np.uint32)
+    else:
+        anchor_present = np.ones(partition_count, dtype=np.uint32)
+    return ir.make_mc2_domain_frame_packet(
+        program,
+        frame=frame,
+        generation=1,
+        animated_base_world_positions=program.particle_bind_position,
+        animated_base_world_rotations=program.particle_bind_rotation,
+        animated_base_world_normals=normals,
+        partition_world_position=component_positions,
+        partition_world_rotation=np.asarray(
+            ((0.0, 0.0, 0.0, 1.0),) * partition_count,
+            dtype=np.float32,
+        ),
+        partition_world_scale=np.ones((partition_count, 3), dtype=np.float32),
+        partition_world_linear=np.asarray(
+            (np.eye(3, dtype=np.float32),) * partition_count,
+            dtype=np.float32,
+        ),
+        anchor_world_position=anchors,
+        anchor_world_rotation=np.asarray(
+            ((0.0, 0.0, 0.0, 1.0),) * partition_count,
+            dtype=np.float32,
+        ),
+        anchor_present=anchor_present,
+    )
+
+
+def _scheduled(slot, frame, *, frame_delta_time=0.1, world_time_scale=1.0):
+    return slot.data["scheduler_state"].stage_frame(
+        frame,
+        parameters.make_mc2_solver_settings(),
+        frame_delta_time=frame_delta_time,
+        world_time_scale=world_time_scale,
+    )
+
+
 def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
     world = _world()
     kernel = _Kernel()
     slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
-    normals = np.zeros((program.particle_count, 3), dtype=np.float32)
-    normals[:, 2] = 1.0
-    frame = ir.make_mc2_domain_frame_packet(
-        program,
-        frame=7,
-        generation=1,
-        animated_base_world_positions=program.particle_bind_position,
-        animated_base_world_rotations=program.particle_bind_rotation,
-        animated_base_world_normals=normals,
-        partition_world_position=np.zeros((program.partition_count, 3), dtype=np.float32),
-        partition_world_rotation=np.asarray(
-            ((0.0, 0.0, 0.0, 1.0),) * program.partition_count,
-            dtype=np.float32,
-        ),
-        partition_world_scale=np.ones((program.partition_count, 3), dtype=np.float32),
-        partition_world_linear=np.asarray(
-            (np.eye(3, dtype=np.float32),) * program.partition_count,
-            dtype=np.float32,
-        ),
-    )
+    frame = _domain_frame(program)
+    scheduled = _scheduled(slot, frame)
     try:
         slot_module.publish_mc2_mesh_fused_frame(
-            world, slot, frame, _empty_collider_frame(8),
+            world, slot, scheduled, _empty_collider_frame(8),
         )
     except ValueError as exc:
         assert "frame numbers" in str(exc)
     else:
         raise AssertionError("mismatched collider frame was accepted")
     assert kernel.frames == [] and "frame_packet" not in slot.data
+    assert slot.data["scheduler_state"].revision == 0
 
     report = slot_module.publish_mc2_mesh_fused_frame(
-        world, slot, frame, _empty_collider_frame(7),
+        world, slot, scheduled, _empty_collider_frame(7),
     )
     assert report.partition_ids == program.partition_ids
     assert report.collider_count == 0 and len(kernel.frames) == 1
-    assert slot.data["frame_packet"] is frame
+    assert slot.data["frame_packet"] is scheduled.frame_packet
+    assert slot.data["frame_packet"].is_running is True
+    assert slot.data["frame_packet"].simulation_delta_time > 0.0
+    assert report.update_count == scheduled.schedule.update_count
+    assert report.skip_count == scheduled.schedule.skip_count
     assert slot.data["collider_frame"].frame == 7
     assert slot.data["frame_ready"] is True
     assert slot.data["product_enabled"] is False
     assert world._current_writer is None
+
+
+def test_slot_commits_anchor_history_only_after_native_frame_publish():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    components = np.asarray(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)), dtype=np.float32)
+    anchors = np.asarray(((10.0, 0.0, 0.0), (0.0, 10.0, 0.0)), dtype=np.float32)
+    first = _scheduled(
+        slot,
+        _domain_frame(
+            program, frame=7, component_positions=components, anchors=anchors,
+        ),
+        world_time_scale=0.0,
+    )
+    np.testing.assert_array_equal(first.anchor_component_local_positions, 0.0)
+    expected_first = components - anchors
+    np.testing.assert_array_equal(
+        first.next_anchor_component_local_positions, expected_first,
+    )
+
+    kernel.fail_update = True
+    try:
+        slot_module.publish_mc2_mesh_fused_frame(
+            world, slot, first, _empty_collider_frame(7),
+        )
+    except RuntimeError as exc:
+        assert "injected frame update failure" in str(exc)
+    else:
+        raise AssertionError("native frame update failure was accepted")
+    state = slot.data["scheduler_state"]
+    assert state.revision == 0
+    np.testing.assert_array_equal(state.anchor_component_local_positions, 0.0)
+    assert "frame_packet" not in slot.data
+
+    kernel.fail_update = False
+    slot_module.publish_mc2_mesh_fused_frame(
+        world, slot, first, _empty_collider_frame(7),
+    )
+    assert state.revision == 1
+    np.testing.assert_array_equal(
+        state.anchor_component_local_positions, expected_first,
+    )
+    second = _scheduled(
+        slot,
+        _domain_frame(
+            program,
+            frame=8,
+            component_positions=components + np.float32(1.0),
+            anchors=anchors + np.float32(2.0),
+        ),
+        world_time_scale=0.0,
+    )
+    np.testing.assert_array_equal(
+        second.anchor_component_local_positions, expected_first,
+    )
+
+
+def test_capture_path_publishes_world_and_solver_timing_atomically():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    frame = _domain_frame(program, frame=9)
+    world.frame_context.frame = 9
+    world.frame_context.generation = 1
+    world.frame_context.raw_dt = 0.1
+    world.frame_context.dt = 0.05
+    world.frame_context.time_scale = 0.5
+    original_capture = product_frame_module.capture_mc2_mesh_product_frame
+    original_collider = slot_module.build_mc2_mesh_domain_collider_frame
+    product_frame_module.capture_mc2_mesh_product_frame = (
+        lambda *_args, **_kwargs: (frame, ("first", "second"))
+    )
+    slot_module.build_mc2_mesh_domain_collider_frame = (
+        lambda *_args, **_kwargs: _empty_collider_frame(9)
+    )
+    try:
+        report = slot_module.capture_and_publish_mc2_mesh_fused_frame(
+            world,
+            settings=parameters.make_mc2_solver_settings(
+                time_scale=0.5,
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            ),
+        )
+    finally:
+        product_frame_module.capture_mc2_mesh_product_frame = original_capture
+        slot_module.build_mc2_mesh_domain_collider_frame = original_collider
+    packet = slot.data["frame_packet"]
+    assert packet.frame == 9 and packet.frame_delta_time == np.float32(0.1)
+    assert packet.time_scale == np.float32(0.25)
+    assert packet.is_running is True and packet.simulation_delta_time > 0.0
+    assert report.update_count > 0 and report.skip_count == 0
+    assert slot.data["partition_frame_snapshots"] == ("first", "second")
+    assert slot.data["scheduler_state"].revision == 1
 
 
 TESTS = tuple(

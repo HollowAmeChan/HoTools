@@ -1024,6 +1024,22 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
     return rotate_vector_unit_quaternion_f32(quaternion_conjugate_f32(rotation), position - origin)
 
 
+def mc2_anchor_component_local_position(
+    component_world_position,
+    anchor_world_position,
+    anchor_world_rotation_xyzw,
+) -> tuple[float, float, float]:
+    """Return the V0-compatible component position in Anchor local space."""
+    return tuple(
+        float(value)
+        for value in _inverse_transform_point_unit_scale_f32(
+            component_world_position,
+            anchor_world_position,
+            anchor_world_rotation_xyzw,
+        )
+    )
+
+
 def _trs_matrix_f32(position, rotation, scale) -> np.ndarray:
     result = np.eye(4, dtype=np.float32)
     result[:3, :3] = quaternion_matrix_unit_f32(
@@ -1701,5 +1717,6 @@ __all__ = [
     "derive_mc2_center_world_pose",
     "evaluate_mc2_center_frame_shift",
     "evaluate_mc2_center_step",
+    "mc2_anchor_component_local_position",
     "pack_mc2_center_static",
 ]

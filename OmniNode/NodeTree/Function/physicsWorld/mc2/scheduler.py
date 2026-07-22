@@ -108,6 +108,13 @@ class MC2TimeSchedulerState:
         self._active_schedule: MC2FrameSchedule | None = None
         self._next_step_index = 0
 
+    def clone(self) -> "MC2TimeSchedulerState":
+        """Copy scheduler state so callers can stage a frame transactionally."""
+        result = MC2TimeSchedulerState()
+        for name in self.__slots__:
+            setattr(result, name, getattr(self, name))
+        return result
+
     def plan_frame(
         self,
         *,
