@@ -916,6 +916,65 @@ bool validate_component_pose(
     return true;
 }
 
+bool derive_bone_frame_orientations(
+    const float* matrix_values,
+    const float* component_rotation_values,
+    const float* vertex_to_transform_values,
+    std::size_t vertex_count,
+    float* output_values,
+    const char* matrix_name
+) {
+    const std::array<float, 4> component_quaternion {
+        component_rotation_values[0], component_rotation_values[1],
+        component_rotation_values[2], component_rotation_values[3]
+    };
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const float* matrix = matrix_values + vertex * 9;
+        Vec3 x {matrix[0], matrix[3], matrix[6]};
+        Vec3 y {matrix[1], matrix[4], matrix[7]};
+        Vec3 z {matrix[2], matrix[5], matrix[8]};
+        const float x_length = length(x), y_length = length(y), z_length = length(z);
+        if (x_length <= kMc2Epsilon || y_length <= kMc2Epsilon ||
+            z_length <= kMc2Epsilon) {
+            PyErr_Format(PyExc_ValueError, "%s contains zero scale", matrix_name);
+            return false;
+        }
+        x = mul(x, 1.0f / x_length);
+        y = mul(y, 1.0f / y_length);
+        z = mul(z, 1.0f / z_length);
+        const float determinant = dot(cross(x, y), z);
+        if (std::abs(dot(x, y)) > 1.0e-4f ||
+            std::abs(dot(x, z)) > 1.0e-4f ||
+            std::abs(dot(y, z)) > 1.0e-4f ||
+            std::abs(determinant - 1.0f) > 1.0e-4f) {
+            PyErr_Format(
+                PyExc_ValueError,
+                "%s must be proper and shear-free",
+                matrix_name
+            );
+            return false;
+        }
+        const auto transform_rotation = quaternion_multiply(
+            component_quaternion,
+            quaternion_from_forward_up(z, y)
+        );
+        const float* vertex_rotation = vertex_to_transform_values + vertex * 4;
+        const std::array<float, 4> transform_to_vertex {
+            -vertex_rotation[0],
+            -vertex_rotation[1],
+            -vertex_rotation[2],
+            vertex_rotation[3],
+        };
+        auto proxy_rotation = quaternion_multiply(
+            transform_rotation,
+            transform_to_vertex
+        );
+        normalize_quaternion(proxy_rotation);
+        std::copy(proxy_rotation.begin(), proxy_rotation.end(), output_values + vertex * 4);
+    }
+    return true;
+}
+
 PyObject* mc2_context_v0_update_mesh_dynamic_raw(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 12) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_mesh_dynamic_raw expects 12 arguments");
@@ -1090,6 +1149,106 @@ PyObject* mc2_mesh_frame_orientations_v1(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_bone_frame_orientations_v1(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_bone_frame_orientations_v1 expects 4 arguments"
+        );
+        return nullptr;
+    }
+    Buffer matrices, component_rotation, vertex_to_transform, output;
+    if (!matrices.get(
+            PyTuple_GET_ITEM(args, 0),
+            PyBUF_FORMAT | PyBUF_ND,
+            "pose_matrices"
+        ) ||
+        !component_rotation.get(
+            PyTuple_GET_ITEM(args, 1),
+            PyBUF_FORMAT | PyBUF_ND,
+            "component_rotation_xyzw"
+        ) ||
+        !vertex_to_transform.get(
+            PyTuple_GET_ITEM(args, 2),
+            PyBUF_FORMAT | PyBUF_ND,
+            "vertex_to_transform_rotations"
+        ) ||
+        !output.get(
+            PyTuple_GET_ITEM(args, 3),
+            PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_rotations"
+        )) {
+        return nullptr;
+    }
+    if (!expect_float32(matrices, "pose_matrices") ||
+        matrices.view.ndim != 3 || matrices.view.shape == nullptr ||
+        matrices.view.shape[0] <= 0 || matrices.view.shape[1] != 3 ||
+        matrices.view.shape[2] != 3) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_ValueError, "pose_matrices must be float32[N,3,3]");
+        }
+        return nullptr;
+    }
+    const auto count = matrices.view.shape[0];
+    if (!expect_float32(component_rotation, "component_rotation_xyzw") ||
+        !expect_1d_array(
+            component_rotation,
+            "component_rotation_xyzw",
+            4
+        ) ||
+        !expect_float32(vertex_to_transform, "vertex_to_transform_rotations") ||
+        !expect_2d(
+            vertex_to_transform,
+            "vertex_to_transform_rotations",
+            count,
+            4
+        ) ||
+        !expect_float32(output, "out_rotations") ||
+        !expect_2d(output, "out_rotations", count, 4) ||
+        !finite_floats(matrices, "pose_matrices") ||
+        !finite_floats(component_rotation, "component_rotation_xyzw") ||
+        !finite_floats(vertex_to_transform, "vertex_to_transform_rotations") ||
+        !validate_quaternions(
+            vertex_to_transform,
+            "vertex_to_transform_rotations"
+        )) {
+        return nullptr;
+    }
+    const auto* component_values = static_cast<const float*>(
+        component_rotation.view.buf
+    );
+    double component_length_squared = 0.0;
+    for (std::size_t component = 0; component < 4; ++component) {
+        component_length_squared +=
+            static_cast<double>(component_values[component]) *
+            component_values[component];
+    }
+    if (std::abs(component_length_squared - 1.0) > 2.0e-5) {
+        PyErr_SetString(
+            PyExc_ValueError,
+            "component_rotation_xyzw must be a unit quaternion"
+        );
+        return nullptr;
+    }
+    std::vector<float> staged_rotations(static_cast<std::size_t>(count) * 4);
+    if (!derive_bone_frame_orientations(
+            static_cast<const float*>(matrices.view.buf),
+            component_values,
+            static_cast<const float*>(vertex_to_transform.view.buf),
+            static_cast<std::size_t>(count),
+            staged_rotations.data(),
+            "bone frame pose matrix"
+        )) {
+        return nullptr;
+    }
+    std::copy(
+        staged_rotations.begin(),
+        staged_rotations.end(),
+        static_cast<float*>(output.view.buf)
+    );
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 13) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bone_dynamic_raw expects 13 arguments");
@@ -1139,49 +1298,15 @@ PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
     std::vector<float> next_rotations(static_cast<std::size_t>(context->vertex_count) * 4);
     const auto* matrix_values = static_cast<const float*>(matrices.view.buf);
     const auto* component_rotation_values = static_cast<const float*>(component_rotation.view.buf);
-    const std::array<float, 4> component_quaternion {
-        component_rotation_values[0], component_rotation_values[1],
-        component_rotation_values[2], component_rotation_values[3]
-    };
-    for (std::size_t vertex = 0; vertex < static_cast<std::size_t>(context->vertex_count); ++vertex) {
-        const float* matrix = matrix_values + vertex * 9;
-        Vec3 x {matrix[0], matrix[3], matrix[6]};
-        Vec3 y {matrix[1], matrix[4], matrix[7]};
-        Vec3 z {matrix[2], matrix[5], matrix[8]};
-        const float x_length = length(x), y_length = length(y), z_length = length(z);
-        if (x_length <= kMc2Epsilon || y_length <= kMc2Epsilon || z_length <= kMc2Epsilon) {
-            PyErr_SetString(PyExc_ValueError, "raw Bone pose matrix contains zero scale");
-            return nullptr;
-        }
-        x = mul(x, 1.0f / x_length);
-        y = mul(y, 1.0f / y_length);
-        z = mul(z, 1.0f / z_length);
-        const float determinant = dot(cross(x, y), z);
-        if (std::abs(dot(x, y)) > 1.0e-4f || std::abs(dot(x, z)) > 1.0e-4f ||
-            std::abs(dot(y, z)) > 1.0e-4f || std::abs(determinant - 1.0f) > 1.0e-4f) {
-            PyErr_SetString(PyExc_ValueError, "raw Bone pose matrix must be proper and shear-free");
-            return nullptr;
-        }
-        const auto transform_rotation = quaternion_multiply(
-            component_quaternion,
-            quaternion_from_forward_up(z, y)
-        );
-        const auto vertex_to_transform = load_quaternion(
-            context->bone_vertex_to_transform_rotations,
-            vertex
-        );
-        const std::array<float, 4> transform_to_vertex {
-            -vertex_to_transform[0],
-            -vertex_to_transform[1],
-            -vertex_to_transform[2],
-            vertex_to_transform[3],
-        };
-        auto proxy_rotation = quaternion_multiply(
-            transform_rotation,
-            transform_to_vertex
-        );
-        normalize_quaternion(proxy_rotation);
-        store_quaternion(next_rotations, vertex, proxy_rotation);
+    if (!derive_bone_frame_orientations(
+            matrix_values,
+            component_rotation_values,
+            context->bone_vertex_to_transform_rotations.data(),
+            static_cast<std::size_t>(context->vertex_count),
+            next_rotations.data(),
+            "raw Bone pose matrix"
+        )) {
+        return nullptr;
     }
     commit_dynamic_values(
         *context, frame, generation, std::move(next_positions), std::move(next_rotations),

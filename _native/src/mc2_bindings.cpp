@@ -220,6 +220,8 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_mesh_dynamic_raw(nullptr, a.ptr())); });
     m.def("mc2_mesh_frame_orientations_v1",
         [](nb::args a) { call_pyobject_api(hotools::mc2_mesh_frame_orientations_v1, a); });
+    m.def("mc2_bone_frame_orientations_v1",
+        [](nb::args a) { call_pyobject_api(hotools::mc2_bone_frame_orientations_v1, a); });
     m.def("mc2_context_v0_update_bone_dynamic_raw",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_update_bone_dynamic_raw(nullptr, a.ptr())); });
     m.def("mc2_context_v0_update_colliders",

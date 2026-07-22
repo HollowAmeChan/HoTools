@@ -45,6 +45,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_derive_center_pose_raw",
     "mc2_context_v0_update_mesh_dynamic_raw",
     "mc2_mesh_frame_orientations_v1",
+    "mc2_bone_frame_orientations_v1",
     "mc2_domain_cpu_v1_step_tether_partitioned",
     "mc2_domain_cpu_v1_step_angle_partitioned",
     "mc2_domain_cpu_v1_step_motion_partitioned",
