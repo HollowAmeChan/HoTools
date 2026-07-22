@@ -484,7 +484,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 2. E3 已完成：逐段复用/提取现有 kernel，完成 per-partition Center/Anchor/Teleport history、完整单线程 step 和 V0 tolerance；同时为每个 pass 固定 backend-neutral IO/读写集。
 3. E3 step 骨架完整后接 P0 native stage counters；已完成，计时实现、基准与结论分提交。
 4. P1-B source observation cache、失效矩阵与性能门禁已完成。
-5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic、compiled external、compiled whole-domain self、native-owned完整pass和Physics World单次domain collider capture已由双ABI关闭。完整Tier A fragment现按快照签名与重力方向两阶段缓存，失败stage不发布、commit才裁剪离域条目；纯host fused CPU owner已把该提交点与native staged replacement合并，exact输入复用handle，参数或静态变化在缺少原子热更新ABI时换建handle，失败保留旧域。当前把该owner接入Physics World产品collector/slot；每个子交付独立做单/双source oracle，产品slot仍保持V0。
+5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic、compiled external、compiled whole-domain self、native-owned完整pass和Physics World单次domain collider capture已由双ABI关闭。完整Tier A fragment现按快照签名与重力方向两阶段缓存，并持有逐帧旋转所需的native-ready topology/adjacency/corner UV；失败stage不发布、commit才裁剪离域条目。纯host fused CPU owner已把该提交点与native staged replacement合并，exact输入复用handle，参数或静态变化在缺少原子热更新ABI时换建handle，失败保留旧域。产品collector/slot现可按全部BasePose/Anchor生成一个logical frame packet，并与一次whole-domain collider POD原子发布；旋转生产与V0共用同一native核心，无静态热帧repack。下一优化门禁只测真实full-step和多目标事务，不在尚未切换的产品slot上做推测性微优化。
 6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
 7. E5 先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
 8. soak 通过后执行 E7-CPU，删除已失去所有权的拆 task、普通 aggregate 和 V0 兼容路径。

@@ -976,6 +976,120 @@ PyObject* mc2_context_v0_update_mesh_dynamic_raw(PyObject*, PyObject* args) {
     );
 }
 
+PyObject* mc2_mesh_frame_orientations_v1(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_mesh_frame_orientations_v1 expects 6 arguments"
+        );
+        return nullptr;
+    }
+    Buffer positions, triangles, triangle_uvs, ranges, records, output;
+    if (!positions.get(
+            PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "world_positions"
+        ) ||
+        !triangles.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "triangles"
+        ) ||
+        !triangle_uvs.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "triangle_uvs"
+        ) ||
+        !ranges.get(
+            PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND,
+            "vertex_to_triangle_ranges"
+        ) ||
+        !records.get(
+            PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND,
+            "vertex_to_triangle_data"
+        ) ||
+        !output.get(
+            PyTuple_GET_ITEM(args, 5),
+            PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_rotations"
+        )) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    Py_ssize_t triangle_count = 0;
+    Py_ssize_t range_count = 0;
+    Py_ssize_t record_count = 0;
+    if (!expect_vector3_array(positions, "world_positions", &vertex_count) ||
+        vertex_count <= 0 ||
+        !finite_floats(positions, "world_positions") ||
+        !expect_int32_triple_array(triangles, "triangles", &triangle_count) ||
+        !expect_triple_indices_in_range(triangles, "triangles", vertex_count) ||
+        !expect_float32(triangle_uvs, "triangle_uvs") ||
+        !expect_2d(triangle_uvs, "triangle_uvs", triangle_count, 6) ||
+        !finite_floats(triangle_uvs, "triangle_uvs") ||
+        !expect_int32_pair_array(
+            ranges, "vertex_to_triangle_ranges", &range_count
+        ) ||
+        range_count != vertex_count ||
+        !expect_int32_pair_array(
+            records, "vertex_to_triangle_data", &record_count
+        ) ||
+        !validate_dense_ranges(
+            ranges, record_count, "vertex_to_triangle_ranges"
+        ) ||
+        !expect_float32(output, "out_rotations") ||
+        !expect_2d(output, "out_rotations", vertex_count, 4)) {
+        return nullptr;
+    }
+
+    const auto* range_values = static_cast<const std::int32_t*>(ranges.view.buf);
+    const auto* record_values = static_cast<const std::int32_t*>(records.view.buf);
+    for (Py_ssize_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto start = range_values[vertex * 2];
+        const auto count = range_values[vertex * 2 + 1];
+        if (count <= 0 || count > 7) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "mesh frame orientation requires 1..7 triangle records per vertex"
+            );
+            return nullptr;
+        }
+        for (std::int32_t offset = 0; offset < count; ++offset) {
+            const auto* record = record_values + (start + offset) * 2;
+            if (record[0] < 0 || record[0] > 3 ||
+                record[1] < 0 || record[1] >= triangle_count) {
+                PyErr_SetString(
+                    PyExc_ValueError,
+                    "mesh frame orientation triangle record is invalid"
+                );
+                return nullptr;
+            }
+        }
+    }
+
+    auto* output_values = static_cast<float*>(output.view.buf);
+    std::fill_n(output_values, static_cast<std::size_t>(vertex_count) * 4, 0.0f);
+    for (Py_ssize_t vertex = 0; vertex < vertex_count; ++vertex) {
+        output_values[static_cast<std::size_t>(vertex) * 4 + 3] = 1.0f;
+    }
+    const Mc2MeshFrameOrientationView view {
+        static_cast<std::size_t>(vertex_count),
+        static_cast<const float*>(positions.view.buf),
+        static_cast<const std::int32_t*>(triangles.view.buf),
+        static_cast<std::size_t>(triangle_count),
+        nullptr,
+        0,
+        static_cast<const float*>(triangle_uvs.view.buf),
+        static_cast<std::size_t>(triangle_count) * 6,
+        static_cast<const std::int32_t*>(ranges.view.buf),
+        static_cast<std::size_t>(vertex_count) * 2,
+        static_cast<const std::int32_t*>(records.view.buf),
+        static_cast<std::size_t>(record_count) * 2,
+        nullptr,
+        output_values,
+    };
+    if (!derive_mesh_frame_orientations(view)) {
+        PyErr_SetString(PyExc_RuntimeError, "mesh frame orientation producer failed");
+        return nullptr;
+    }
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 13) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bone_dynamic_raw expects 13 arguments");

@@ -11,11 +11,10 @@ MC2 MeshCloth BasePose 只读对象的集中管理模块。
 frame_input.py 负责，其余步骤由新 physicsWorld.mc2 slot/native 路径负责。
 """
 
-import hashlib
-
 import bpy
 import numpy as np
 
+from ...mesh_topology_identity import mesh_topology_signature_from_arrays
 from ....gn_offset import remove_gn_offset_output
 from .delta_output import PhysicsDeltaOutputSpec
 from .delta_output import ensure_delta_output as _ensure_delta_output
@@ -72,34 +71,6 @@ def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
     if not _is_live_mesh_object(obj) or mesh is None:
         return (0, 0, 0)
     return (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
-
-
-def mesh_topology_signature_from_arrays(
-    vertex_count: int,
-    edges,
-    polygon_loop_totals,
-    loop_vertices,
-    triangles,
-) -> str:
-    canonical_edges = np.asarray(edges, dtype="<i4").reshape((-1, 2)).copy()
-    canonical_edges.sort(axis=1)
-    if len(canonical_edges):
-        order = np.lexsort((canonical_edges[:, 1], canonical_edges[:, 0]))
-        canonical_edges = np.ascontiguousarray(canonical_edges[order])
-
-    arrays = (
-        canonical_edges,
-        np.asarray(polygon_loop_totals, dtype="<i4").reshape((-1,)),
-        np.asarray(loop_vertices, dtype="<i4").reshape((-1,)),
-        np.asarray(triangles, dtype="<i4").reshape((-1, 3)),
-    )
-    digest = hashlib.sha256(b"mc2_mesh_topology_v1\0")
-    digest.update(np.asarray((int(vertex_count),), dtype="<i8").tobytes())
-    for values in arrays:
-        contiguous = np.ascontiguousarray(values, dtype="<i4")
-        digest.update(np.asarray(contiguous.shape, dtype="<i8").tobytes())
-        digest.update(contiguous.tobytes())
-    return digest.hexdigest()
 
 
 def mesh_topology_signature(obj: bpy.types.Object) -> str:

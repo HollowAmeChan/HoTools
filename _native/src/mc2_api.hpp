@@ -40,6 +40,7 @@ PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_derive_center_pose_raw(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_mesh_dynamic_raw(PyObject*, PyObject* args);
+PyObject* mc2_mesh_frame_orientations_v1(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_bone_dynamic_raw(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_colliders(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_reset(PyObject*, PyObject* args);

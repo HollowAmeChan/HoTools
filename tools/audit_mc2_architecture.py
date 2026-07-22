@@ -549,8 +549,14 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.cpu_native_kernel",
             "mc2.domain_output",
             "mc2.reference_step",
+            "mc2.product_collect",
+            "mc2.product_slot",
+            "mc2.setups.mesh_cloth.fragment_cache",
         )),
-        "mc2.domain_capabilities": frozenset(("mc2.cpu_backend",)),
+        "mc2.domain_capabilities": frozenset((
+            "mc2.cpu_backend",
+            "mc2.domain_owner",
+        )),
     }
     for path in _production_python_files():
         module_name = _module_name(path)

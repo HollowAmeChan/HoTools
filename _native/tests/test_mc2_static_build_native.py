@@ -210,6 +210,15 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
         owned["_frame_bind_rotations_owner"],
         owned["_frame_triangle_uvs_owner"],
     )
+    domain_rotations = np.empty((4, 4), dtype=np.float32)
+    hotools_native.mc2_mesh_frame_orientations_v1(
+        positions.astype(np.float32),
+        owned["proxy_triangles"],
+        owned["frame_triangle_uvs"],
+        owned["frame_triangle_ranges"],
+        owned["frame_triangle_records"],
+        domain_rotations,
+    )
     context = hotools_native.mc2_context_v0_create(0, 4)
     try:
         hotools_native.mc2_context_v0_update_proxy_static(
@@ -253,6 +262,11 @@ def test_mesh_final_proxy_owned_context_transfer() -> None:
         for index in range(4):
             if np.dot(dynamic_rotations[index], expected_rotations[index]) < 0.0:
                 dynamic_rotations[index] *= -1.0
+            if np.dot(domain_rotations[index], dynamic_rotations[index]) < 0.0:
+                domain_rotations[index] *= -1.0
+        np.testing.assert_allclose(
+            domain_rotations, dynamic_rotations, rtol=1.0e-7, atol=1.0e-7
+        )
         np.testing.assert_allclose(
             dynamic_rotations, expected_rotations, rtol=1.0e-6, atol=1.0e-6
         )

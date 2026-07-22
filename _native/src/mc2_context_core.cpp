@@ -962,34 +962,49 @@ std::array<float, 4> quaternion_slerp(
     return output;
 }
 
-bool apply_bone_triangle_output(
-    Mc2ContextV0& context,
-    const std::vector<float>& positions,
-    std::vector<float>& work_rotations,
-    bool count_bone_output = true
-) {
-    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
-    const auto triangle_count = context.proxy_triangles.size() / 3;
+bool derive_mesh_frame_orientations(const Mc2MeshFrameOrientationView& view) {
+    const auto vertex_count = view.vertex_count;
+    const auto triangle_count = view.triangle_count;
     if (triangle_count == 0) return true;
-    const bool has_corner_uvs = context.frame_triangle_uvs.size() == triangle_count * 6;
-    if ((!has_corner_uvs && context.proxy_uvs.size() != vertex_count * 2) ||
-        positions.size() != vertex_count * 3 ||
-        work_rotations.size() != vertex_count * 4 ||
-        context.bone_vertex_to_triangle_ranges.size() != vertex_count * 2 ||
-        context.bone_vertex_to_triangle_data.size() % 2 != 0 ||
-        context.bone_normal_adjustment_rotations.size() != vertex_count * 4) {
+    const bool has_corner_uvs = view.triangle_uv_count == triangle_count * 6;
+    if (view.positions == nullptr || view.triangles == nullptr ||
+        view.triangle_ranges == nullptr || view.output_rotations == nullptr ||
+        (!has_corner_uvs &&
+         (view.proxy_uvs == nullptr || view.proxy_uv_count != vertex_count * 2)) ||
+        (has_corner_uvs && view.triangle_uvs == nullptr) ||
+        view.triangle_range_count != vertex_count * 2 ||
+        (view.triangle_record_count != 0 && view.triangle_records == nullptr)) {
         return false;
     }
+
+    const auto load_position = [&](std::size_t vertex) {
+        const auto offset = vertex * 3;
+        return Vec3 {
+            view.positions[offset + 0],
+            view.positions[offset + 1],
+            view.positions[offset + 2],
+        };
+    };
+    const auto store_output = [&](std::size_t vertex, std::array<float, 4> rotation) {
+        normalize_quaternion(rotation);
+        const auto offset = vertex * 4;
+        for (std::size_t component = 0; component < 4; ++component) {
+            view.output_rotations[offset + component] = rotation[component];
+        }
+    };
 
     std::vector<Vec3> triangle_normals(triangle_count);
     std::vector<Vec3> triangle_tangents(triangle_count);
     for (std::size_t triangle = 0; triangle < triangle_count; ++triangle) {
-        const auto vertex0 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3]);
-        const auto vertex1 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 1]);
-        const auto vertex2 = static_cast<std::size_t>(context.proxy_triangles[triangle * 3 + 2]);
-        const Vec3 position0 = load_vector3(positions, vertex0);
-        const Vec3 position1 = load_vector3(positions, vertex1);
-        const Vec3 position2 = load_vector3(positions, vertex2);
+        const auto vertex0 = static_cast<std::size_t>(view.triangles[triangle * 3]);
+        const auto vertex1 = static_cast<std::size_t>(view.triangles[triangle * 3 + 1]);
+        const auto vertex2 = static_cast<std::size_t>(view.triangles[triangle * 3 + 2]);
+        if (vertex0 >= vertex_count || vertex1 >= vertex_count || vertex2 >= vertex_count) {
+            return false;
+        }
+        const Vec3 position0 = load_position(vertex0);
+        const Vec3 position1 = load_position(vertex1);
+        const Vec3 position2 = load_position(vertex2);
         const Vec3 edge_ba = sub(position1, position0);
         const Vec3 edge_ca = sub(position2, position0);
         const Vec3 triangle_cross = cross(edge_ba, edge_ca);
@@ -1000,8 +1015,8 @@ bool apply_bone_triangle_output(
 
         const auto uv_value = [&](std::size_t corner, std::size_t vertex, std::size_t component) {
             return has_corner_uvs
-                ? context.frame_triangle_uvs[triangle * 6 + corner * 2 + component]
-                : context.proxy_uvs[vertex * 2 + component];
+                ? view.triangle_uvs[triangle * 6 + corner * 2 + component]
+                : view.proxy_uvs[vertex * 2 + component];
         };
         const float uv_ba_x = uv_value(1, vertex1, 0) - uv_value(0, vertex0, 0);
         const float uv_ba_y = uv_value(1, vertex1, 1) - uv_value(0, vertex0, 1);
@@ -1020,10 +1035,10 @@ bool apply_bone_triangle_output(
         }
     }
 
-    const auto record_count = context.bone_vertex_to_triangle_data.size() / 2;
+    const auto record_count = view.triangle_record_count / 2;
     for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-        const auto start = context.bone_vertex_to_triangle_ranges[vertex * 2];
-        const auto count = context.bone_vertex_to_triangle_ranges[vertex * 2 + 1];
+        const auto start = view.triangle_ranges[vertex * 2];
+        const auto count = view.triangle_ranges[vertex * 2 + 1];
         if (start < 0 || count < 0 ||
             static_cast<std::size_t>(start + count) > record_count) {
             return false;
@@ -1033,8 +1048,8 @@ bool apply_bone_triangle_output(
         Vec3 tangent {};
         for (std::int32_t offset = 0; offset < count; ++offset) {
             const auto record = static_cast<std::size_t>(start + offset);
-            const auto flip = context.bone_vertex_to_triangle_data[record * 2];
-            const auto triangle = context.bone_vertex_to_triangle_data[record * 2 + 1];
+            const auto flip = view.triangle_records[record * 2];
+            const auto triangle = view.triangle_records[record * 2 + 1];
             if (triangle < 0 || static_cast<std::size_t>(triangle) >= triangle_count) {
                 return false;
             }
@@ -1057,11 +1072,52 @@ bool apply_bone_triangle_output(
         const float alignment = dot(normal, tangent);
         if (alignment == 1.0f || alignment == -1.0f) continue;
         const Vec3 binormal = normalize(cross(normal, tangent));
-        auto rotation = quaternion_multiply(
-            quaternion_from_forward_up(binormal, normal),
-            load_quaternion(context.bone_normal_adjustment_rotations, vertex)
+        std::array<float, 4> adjustment {0.0f, 0.0f, 0.0f, 1.0f};
+        if (view.normal_adjustment_rotations != nullptr) {
+            const auto offset = vertex * 4;
+            adjustment = {
+                view.normal_adjustment_rotations[offset + 0],
+                view.normal_adjustment_rotations[offset + 1],
+                view.normal_adjustment_rotations[offset + 2],
+                view.normal_adjustment_rotations[offset + 3],
+            };
+            normalize_quaternion(adjustment);
+        }
+        store_output(
+            vertex,
+            quaternion_multiply(quaternion_from_forward_up(binormal, normal), adjustment)
         );
-        store_quaternion(work_rotations, vertex, rotation);
+    }
+    return true;
+}
+
+bool apply_bone_triangle_output(
+    Mc2ContextV0& context,
+    const std::vector<float>& positions,
+    std::vector<float>& work_rotations,
+    bool count_bone_output = true
+) {
+    const Mc2MeshFrameOrientationView view {
+        static_cast<std::size_t>(context.vertex_count),
+        positions.data(),
+        context.proxy_triangles.data(),
+        context.proxy_triangles.size() / 3,
+        context.proxy_uvs.data(),
+        context.proxy_uvs.size(),
+        context.frame_triangle_uvs.data(),
+        context.frame_triangle_uvs.size(),
+        context.bone_vertex_to_triangle_ranges.data(),
+        context.bone_vertex_to_triangle_ranges.size(),
+        context.bone_vertex_to_triangle_data.data(),
+        context.bone_vertex_to_triangle_data.size(),
+        context.bone_normal_adjustment_rotations.data(),
+        work_rotations.data(),
+    };
+    if (positions.size() != view.vertex_count * 3 ||
+        work_rotations.size() != view.vertex_count * 4 ||
+        context.bone_normal_adjustment_rotations.size() != view.vertex_count * 4 ||
+        !derive_mesh_frame_orientations(view)) {
+        return false;
     }
     if (count_bone_output) ++context.bone_triangle_output_count;
     return true;

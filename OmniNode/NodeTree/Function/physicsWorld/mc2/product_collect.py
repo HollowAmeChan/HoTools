@@ -9,6 +9,7 @@ from .domain_collect import MC2MeshDomainDraftV1
 from .domain_collect import build_mc2_mesh_domain_draft
 from .domain_ir import MC2MeshPartitionStaticSnapshotV1
 from .names import MC2_SETUP_MESH_CLOTH
+from .mesh_topology_identity import mesh_topology_signature_from_arrays
 from .partition_specs import collect_mc2_partition_entries
 from .partition_specs import make_mc2_partition_entry
 from .specs import MC2TaskSpec
@@ -58,12 +59,17 @@ class MC2MeshProductCollectionV1:
     task_ids: tuple[str, ...]
     observation_identities: tuple[tuple, ...]
     observation_statuses: tuple[str, ...]
+    mesh_topology_signatures: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.draft, MC2MeshDomainDraftV1):
             raise TypeError("draft must be MC2MeshDomainDraftV1")
         count = len(self.static_snapshots)
-        if count != len(self.task_ids) or count != len(self.observation_statuses):
+        if (
+            count != len(self.task_ids)
+            or count != len(self.observation_statuses)
+            or count != len(self.mesh_topology_signatures)
+        ):
             raise ValueError("Mesh product collection rows must match")
         if count != len(self.draft.partition_ids):
             raise ValueError("Mesh product collection must cover every partition")
@@ -76,6 +82,8 @@ class MC2MeshProductCollectionV1:
             self.draft.partition_ids
         ):
             raise ValueError("Mesh product snapshots must follow draft partition order")
+        if any(len(str(value or "")) != 64 for value in self.mesh_topology_signatures):
+            raise ValueError("Mesh product topology signatures are invalid")
 
     @property
     def world_gravity_directions(self) -> tuple[tuple[float, float, float], ...]:
@@ -91,6 +99,7 @@ class MC2MeshProductCollectionV1:
             "partition_ids": list(self.draft.partition_ids),
             "observation_statuses": list(self.observation_statuses),
             "observation_identity_count": len(self.observation_identities),
+            "mesh_topology_signatures": list(self.mesh_topology_signatures),
             "draft": self.draft.debug_dict(),
             "static_snapshots": [
                 snapshot.debug_dict() for snapshot in self.static_snapshots
@@ -124,6 +133,7 @@ def collect_mc2_mesh_product_domain(
     entries = []
     identities = []
     statuses = []
+    topology_signatures = []
     for spec in specs:
         source = spec.sources[0]
         observation = _prepare_observed_static_inputs(
@@ -135,15 +145,23 @@ def collect_mc2_mesh_product_domain(
             observation.snapshots[0], MC2MeshRawSnapshot
         ):
             raise ValueError("Mesh product source observation did not resolve")
+        raw_snapshot = observation.snapshots[0]
         snapshot = capture_mc2_mesh_partition_static_snapshot(
             source,
-            observation.snapshots[0],
+            raw_snapshot,
             partition_id=spec.task_id,
             source_identity=_canonical_source_identity(source),
             source_revision=observation.fingerprint.overall,
             output_target_id=_output_target_id(source),
         )
         rows.append(snapshot)
+        topology_signatures.append(mesh_topology_signature_from_arrays(
+            len(raw_snapshot.positions),
+            raw_snapshot.edges,
+            raw_snapshot.polygon_loop_totals,
+            raw_snapshot.loop_vertices,
+            raw_snapshot.triangles,
+        ))
         identities.extend(observation.identities)
         statuses.extend(observation.statuses)
         entries.append(make_mc2_partition_entry(
@@ -169,6 +187,7 @@ def collect_mc2_mesh_product_domain(
         task_ids=tuple(spec.task_id for spec in specs),
         observation_identities=tuple(identities),
         observation_statuses=tuple(statuses),
+        mesh_topology_signatures=tuple(topology_signatures),
     )
 
 

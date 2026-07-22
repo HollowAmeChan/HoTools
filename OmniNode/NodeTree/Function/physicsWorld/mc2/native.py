@@ -44,6 +44,7 @@ MC2_REQUIRED_NATIVE_SYMBOLS = (
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_derive_center_pose_raw",
     "mc2_context_v0_update_mesh_dynamic_raw",
+    "mc2_mesh_frame_orientations_v1",
     "mc2_context_v0_update_bone_dynamic_raw",
     "mc2_context_v0_update_colliders",
     "mc2_context_v0_reset",

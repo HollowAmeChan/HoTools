@@ -36,6 +36,10 @@ class MC2MeshStaticFragmentV1:
     center: MC2CenterStaticSpec
     self_collision: MC2SelfCollisionStaticSpec
     radius_multipliers: np.ndarray
+    frame_triangles: np.ndarray
+    frame_triangle_ranges: np.ndarray
+    frame_triangle_records: np.ndarray
+    frame_triangle_uvs: np.ndarray
 
     def __post_init__(self) -> None:
         if not self.snapshot_signature or not self.partition_id or not self.output_target_id:
@@ -68,6 +72,48 @@ class MC2MeshStaticFragmentV1:
             raise ValueError("radius_multipliers must be float32[V]")
         if self.radius_multipliers.flags.writeable or not self.radius_multipliers.flags.c_contiguous:
             raise ValueError("radius_multipliers must be contiguous and read-only")
+        if (
+            not isinstance(self.frame_triangles, np.ndarray)
+            or self.frame_triangles.dtype != np.int32
+            or self.frame_triangles.shape != (len(proxy.triangles), 3)
+            or self.frame_triangles.flags.writeable
+            or not self.frame_triangles.flags.c_contiguous
+        ):
+            raise ValueError(
+                "frame_triangles must be contiguous read-only int32[T,3]: "
+                f"dtype={getattr(self.frame_triangles, 'dtype', None)} "
+                f"shape={getattr(self.frame_triangles, 'shape', None)} "
+                f"expected={(len(proxy.triangles), 3)}"
+            )
+        if (
+            not isinstance(self.frame_triangle_ranges, np.ndarray)
+            or self.frame_triangle_ranges.dtype != np.int32
+            or self.frame_triangle_ranges.shape != (proxy.vertex_count, 2)
+            or self.frame_triangle_ranges.flags.writeable
+            or not self.frame_triangle_ranges.flags.c_contiguous
+        ):
+            raise ValueError(
+                "frame_triangle_ranges must be contiguous read-only int32[V,2]"
+            )
+        if (
+            not isinstance(self.frame_triangle_records, np.ndarray)
+            or self.frame_triangle_records.dtype != np.int32
+            or self.frame_triangle_records.ndim != 2
+            or self.frame_triangle_records.shape[1:] != (2,)
+            or self.frame_triangle_records.flags.writeable
+            or not self.frame_triangle_records.flags.c_contiguous
+        ):
+            raise ValueError(
+                "frame_triangle_records must be contiguous read-only int32[R,2]"
+            )
+        if (
+            not isinstance(self.frame_triangle_uvs, np.ndarray)
+            or self.frame_triangle_uvs.dtype != np.float32
+            or self.frame_triangle_uvs.shape != (len(proxy.triangles), 6)
+            or self.frame_triangle_uvs.flags.writeable
+            or not self.frame_triangle_uvs.flags.c_contiguous
+        ):
+            raise ValueError("frame_triangle_uvs must be contiguous read-only float32[T,6]")
 
     @property
     def final_proxy(self):
@@ -109,6 +155,50 @@ def _fallback_tangents(normals: np.ndarray) -> np.ndarray:
     tangents = np.empty(values.shape, dtype=np.float64)
     native_module().mc2_build_mesh_fallback_tangents_v0(values, tangents)
     return tangents
+
+
+def _final_frame_triangle_uvs(
+    original_triangles: np.ndarray,
+    final_triangles,
+    triangle_uvs: np.ndarray,
+) -> np.ndarray:
+    result = np.empty((len(original_triangles), 3, 2), dtype=np.float32)
+    for triangle_index, (original, final) in enumerate(
+        zip(original_triangles, final_triangles)
+    ):
+        corner_uvs = {
+            int(vertex): triangle_uvs[triangle_index, corner]
+            for corner, vertex in enumerate(original)
+        }
+        if len(corner_uvs) != 3 or any(int(vertex) not in corner_uvs for vertex in final):
+            raise ValueError("final proxy changed triangle membership")
+        for corner, vertex in enumerate(final):
+            result[triangle_index, corner] = corner_uvs[int(vertex)]
+    result = np.ascontiguousarray(result.reshape((-1, 6)), dtype=np.float32)
+    result.flags.writeable = False
+    return result
+
+
+def _frame_triangle_adjacency(finalizer) -> tuple[np.ndarray, np.ndarray]:
+    ranges = getattr(finalizer, "vertex_to_triangle_ranges", None)
+    data = getattr(finalizer, "vertex_to_triangle_data", None)
+    if ranges is not None and data is not None:
+        return (
+            np.ascontiguousarray(ranges, dtype=np.int32).reshape((-1, 2)),
+            np.ascontiguousarray(data, dtype=np.int32).reshape((-1, 2)),
+        )
+    nested = tuple(finalizer.vertex_to_triangle_records)
+    dense_ranges = np.empty((len(nested), 2), dtype=np.int32)
+    dense_records = []
+    cursor = 0
+    for vertex, records in enumerate(nested):
+        records = tuple(records)
+        dense_ranges[vertex] = (cursor, len(records))
+        dense_records.extend(records)
+        cursor += len(records)
+    return dense_ranges, np.ascontiguousarray(
+        dense_records, dtype=np.int32
+    ).reshape((-1, 2))
 
 
 def _vertex_attributes(snapshot: MC2MeshPartitionStaticSnapshotV1) -> tuple[int, ...]:
@@ -175,6 +265,19 @@ def build_mc2_mesh_static_fragment(
     )
     radius = np.array(snapshot.radius_multipliers, dtype=np.float32, order="C", copy=True)
     radius.setflags(write=False)
+    frame_triangles = np.ascontiguousarray(
+        finalizer.proxy.triangles, dtype=np.int32
+    ).reshape((-1, 3))
+    frame_triangle_ranges, frame_triangle_records = _frame_triangle_adjacency(
+        finalizer.finalizer
+    )
+    for value in (frame_triangles, frame_triangle_ranges, frame_triangle_records):
+        value.flags.writeable = False
+    frame_triangle_uvs = _final_frame_triangle_uvs(
+        snapshot.triangles,
+        finalizer.proxy.triangles,
+        triangle_uvs,
+    )
     return MC2MeshStaticFragmentV1(
         snapshot_signature=snapshot.static_signature,
         partition_id=snapshot.partition_id,
@@ -186,6 +289,10 @@ def build_mc2_mesh_static_fragment(
         center=center,
         self_collision=self_collision,
         radius_multipliers=radius,
+        frame_triangles=frame_triangles,
+        frame_triangle_ranges=frame_triangle_ranges,
+        frame_triangle_records=frame_triangle_records,
+        frame_triangle_uvs=frame_triangle_uvs,
     )
 
 

@@ -8,6 +8,8 @@ import os
 import sys
 import types
 
+import numpy as np
+
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
@@ -40,6 +42,7 @@ parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physics
 partitions = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
 product = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
 slot_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
+collider_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame")
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -97,6 +100,7 @@ def _collection(*, gravity=5.0):
         task_ids=("task:sleeve", "task:coat"),
         observation_identities=((1, "mesh_cloth", 1, 1001), (1, "mesh_cloth", 2, 1002)),
         observation_statuses=("hit", "hit"),
+        mesh_topology_signatures=("1" * 64, "2" * 64),
     )
 
 
@@ -104,6 +108,7 @@ class _Kernel:
     def __init__(self):
         self.created = []
         self.disposed = []
+        self.frames = []
         self.fail_create = False
 
     def create_domain(self, program, packet):
@@ -113,7 +118,7 @@ class _Kernel:
         self.created.append(handle)
         return handle
 
-    def update_frame(self, handle, frame): pass
+    def update_frame(self, handle, frame): self.frames.append((handle, frame))
     def step(self, handle, frame, settings, colliders): pass
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
@@ -191,6 +196,72 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
         raise AssertionError("owner replacement failure was accepted")
     assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
     assert slot.data["owner"] is owner and owner.compiled is compiled
+    assert world._current_writer is None
+
+
+def _empty_collider_frame(frame):
+    return collider_module.MC2DomainColliderFrameSpec(
+        frame=frame,
+        source_pointers=(1, 2),
+        collider_keys=(),
+        collider_types=np.empty(0, dtype=np.int32),
+        collider_group_bits=np.empty(0, dtype=np.int32),
+        collider_centers=np.empty((0, 3), dtype=np.float32),
+        collider_segment_a=np.empty((0, 3), dtype=np.float32),
+        collider_segment_b=np.empty((0, 3), dtype=np.float32),
+        collider_old_centers=np.empty((0, 3), dtype=np.float32),
+        collider_old_segment_a=np.empty((0, 3), dtype=np.float32),
+        collider_old_segment_b=np.empty((0, 3), dtype=np.float32),
+        collider_radii=np.empty(0, dtype=np.float32),
+        frame_signature="e" * 64,
+    )
+
+
+def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    normals = np.zeros((program.particle_count, 3), dtype=np.float32)
+    normals[:, 2] = 1.0
+    frame = ir.make_mc2_domain_frame_packet(
+        program,
+        frame=7,
+        generation=1,
+        animated_base_world_positions=program.particle_bind_position,
+        animated_base_world_rotations=program.particle_bind_rotation,
+        animated_base_world_normals=normals,
+        partition_world_position=np.zeros((program.partition_count, 3), dtype=np.float32),
+        partition_world_rotation=np.asarray(
+            ((0.0, 0.0, 0.0, 1.0),) * program.partition_count,
+            dtype=np.float32,
+        ),
+        partition_world_scale=np.ones((program.partition_count, 3), dtype=np.float32),
+        partition_world_linear=np.asarray(
+            (np.eye(3, dtype=np.float32),) * program.partition_count,
+            dtype=np.float32,
+        ),
+    )
+    try:
+        slot_module.publish_mc2_mesh_fused_frame(
+            world, slot, frame, _empty_collider_frame(8),
+        )
+    except ValueError as exc:
+        assert "frame numbers" in str(exc)
+    else:
+        raise AssertionError("mismatched collider frame was accepted")
+    assert kernel.frames == [] and "frame_packet" not in slot.data
+
+    report = slot_module.publish_mc2_mesh_fused_frame(
+        world, slot, frame, _empty_collider_frame(7),
+    )
+    assert report.partition_ids == program.partition_ids
+    assert report.collider_count == 0 and len(kernel.frames) == 1
+    assert slot.data["frame_packet"] is frame
+    assert slot.data["collider_frame"].frame == 7
+    assert slot.data["frame_ready"] is True
+    assert slot.data["product_enabled"] is False
     assert world._current_writer is None
 
 
