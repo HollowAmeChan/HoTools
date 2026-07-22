@@ -16,7 +16,8 @@ import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", "py313", "HotoolsPackage")
+PYTHON_ABI = f"py{sys.version_info.major}{sys.version_info.minor}"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
@@ -29,7 +30,7 @@ for module_name in tuple(sys.modules):
     ):
         sys.modules.pop(module_name, None)
 os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
-for path in (NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS)):
+for path in reversed((NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS))):
     if path not in sys.path:
         sys.path.insert(0, path)
 

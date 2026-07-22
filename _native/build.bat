@@ -172,13 +172,11 @@ echo [%LABEL%] Configure preset: %CONFIG_PRESET%
 echo [%LABEL%] Build preset:     %BUILD_PRESET%
 echo [%LABEL%] Build dir:        %BUILD_DIR%
 
-if not exist "%BUILD_DIR%\CMakeCache.txt" (
-    echo [%LABEL%] CMakeCache.txt not found; configuring first...
-    "%CMAKE_EXE%" --preset "%CONFIG_PRESET%" -S "%SOURCE_DIR%"
-    if errorlevel 1 (
-        echo [ERROR] %LABEL% configure failed.
-        exit /b 1
-    )
+echo [%LABEL%] Refreshing preset cache and runtime output path...
+"%CMAKE_EXE%" --preset "%CONFIG_PRESET%" -S "%SOURCE_DIR%"
+if errorlevel 1 (
+    echo [ERROR] %LABEL% configure failed.
+    exit /b 1
 )
 
 if /I "%BUILD_TARGET%"=="hotools_native" (
