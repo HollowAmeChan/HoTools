@@ -92,6 +92,23 @@ def test_scheduler_matches_fixed_mc2_oracle() -> None:
     assert state.step_revision == frame.update_count
 
 
+def test_scheduler_publishes_complete_substep_plan() -> None:
+    state = scheduler.MC2TimeSchedulerState()
+    frame = state.plan_frame(
+        frame_delta_time=0.1,
+        now_time_scale=1.0,
+        simulation_delta_time=0.02,
+        max_simulation_count_per_frame=3,
+    )
+    plans = [state.advance_substep(index) for index in range(frame.update_count)]
+    assert plans
+    assert plans[0].update_index == 0
+    assert plans[0].simulation_delta_time == frame.simulation_delta_time
+    assert plans[-1].is_final_substep is True
+    assert all(plan.is_final_substep is (index == len(plans) - 1) for index, plan in enumerate(plans))
+    assert all(plan.powers.integration > 0.0 for plan in plans)
+
+
 def test_scheduler_rejects_overlapping_frames() -> None:
     state = scheduler.MC2TimeSchedulerState()
     frame = state.plan_frame(
@@ -173,6 +190,7 @@ def test_substep_powers_freeze_the_v0_scheduler_handoff() -> None:
 
 if __name__ == "__main__":
     test_scheduler_matches_fixed_mc2_oracle()
+    test_scheduler_publishes_complete_substep_plan()
     test_scheduler_rejects_overlapping_frames()
     test_solver_settings_expose_source_scheduler_bounds()
     test_substep_powers_freeze_the_v0_scheduler_handoff()

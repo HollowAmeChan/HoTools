@@ -28,6 +28,15 @@ class MC2SimulationPowers:
     angle: float
 
 
+@dataclass(frozen=True)
+class MC2SubstepPlan:
+    update_index: int
+    simulation_delta_time: float
+    frame_interpolation: float
+    is_final_substep: bool
+    powers: MC2SimulationPowers
+
+
 def derive_mc2_simulation_powers(simulation_delta_time: float) -> MC2SimulationPowers:
     """Derive the source MC2 Y/Z/W powers for one fixed substep."""
     dt = float(simulation_delta_time)
@@ -219,6 +228,20 @@ class MC2TimeSchedulerState:
         self.step_revision += 1
         return float(_f32(ratio))
 
+    def advance_substep(self, update_index: int) -> MC2SubstepPlan:
+        """Publish one complete scheduler-to-backend substep handoff."""
+        schedule = self._active_schedule
+        if schedule is None:
+            raise RuntimeError("MC2 frame must be planned before advancing a substep")
+        ratio = self.advance_step(update_index)
+        return MC2SubstepPlan(
+            update_index=int(update_index),
+            simulation_delta_time=float(schedule.simulation_delta_time),
+            frame_interpolation=ratio,
+            is_final_substep=int(update_index) == schedule.update_count - 1,
+            powers=derive_mc2_simulation_powers(schedule.simulation_delta_time),
+        )
+
     def debug_dict(self) -> dict:
         return {
             "time": self.time,
@@ -248,6 +271,7 @@ __all__ = [
     "MC2_REFERENCE_SIMULATION_FREQUENCY",
     "MC2FrameSchedule",
     "MC2SimulationPowers",
+    "MC2SubstepPlan",
     "MC2TimeSchedulerState",
     "derive_mc2_simulation_powers",
 ]
