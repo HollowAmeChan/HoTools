@@ -151,15 +151,26 @@ struct Mc2SelfCollisionView {
     float* positions = nullptr;
     const float* old_positions = nullptr;
     const float* inv_masses = nullptr;
+    const std::int32_t* points = nullptr;
     const std::int32_t* edges = nullptr;
     const std::int32_t* triangles = nullptr;
     const std::uint8_t* attributes = nullptr;
+    const float* particle_thickness = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* partition_self_collision_modes = nullptr;
+    const std::uint32_t* partition_collision_groups = nullptr;
+    const std::uint32_t* partition_collision_masks = nullptr;
     float* collision_normals = nullptr;
     float* friction = nullptr;
     std::int64_t vertex_count = 0;
+    // Negative means the legacy E3 path where every vertex is a point.
+    std::int64_t point_count = -1;
     std::int64_t edge_count = 0;
     std::int64_t triangle_count = 0;
+    std::int64_t partition_count = 0;
     float surface_thickness = 0.0f;
+    std::int64_t* contact_count = nullptr;
+    std::int64_t* candidate_count = nullptr;
 };
 
 struct Mc2TriangleBendingView {

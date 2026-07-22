@@ -315,6 +315,17 @@ class MC2CPUBackendDomainV1:
         run_collision(self._handle, settings)
         self._step_count += 1
 
+    def step_whole_domain_self(self, old_positions) -> None:
+        """Run the E4 self pass over every compiled partition in one native call."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("whole-domain self collision requires update_frame first")
+        run_collision = getattr(self._kernel, "step_whole_domain_self", None)
+        if not callable(run_collision):
+            raise RuntimeError("CPU kernel does not expose whole-domain self collision")
+        run_collision(self._handle, old_positions)
+        self._step_count += 1
+
     def step_external_edge_collision(self, settings: Mapping[str, object]) -> None:
         """Run the explicit native edge external-collision slice."""
         self._ensure_live()

@@ -129,6 +129,20 @@ public:
         const float* friction,
         float surface_thickness
     );
+    void configure_whole_domain_self(
+        const std::int32_t* points,
+        std::size_t point_count,
+        const std::int32_t* edges,
+        std::size_t edge_count,
+        const std::int32_t* triangles,
+        std::size_t triangle_count,
+        const std::uint32_t* partition_self_collision_modes,
+        const std::uint32_t* partition_collision_groups,
+        const std::uint32_t* partition_collision_masks,
+        const float* particle_friction,
+        const float* particle_thickness
+    );
+    void step_whole_domain_self(const float* old_positions);
     void step_external_edge_collision(
         const float* collision_radii,
         const std::int32_t* edges,
@@ -287,6 +301,25 @@ public:
     std::size_t baseline_line_count() const noexcept { return baseline_line_starts_.size(); }
     std::size_t baseline_data_count() const noexcept { return baseline_line_data_.size(); }
     bool baseline_pose_ready() const noexcept { return baseline_pose_ready_; }
+    bool whole_domain_self_ready() const noexcept { return whole_domain_self_ready_; }
+    std::size_t whole_domain_self_edge_count() const noexcept {
+        return whole_domain_self_edges_.size() / 2;
+    }
+    std::size_t whole_domain_self_point_count() const noexcept {
+        return whole_domain_self_points_.size();
+    }
+    std::size_t whole_domain_self_triangle_count() const noexcept {
+        return whole_domain_self_triangles_.size() / 3;
+    }
+    std::int64_t whole_domain_self_step_count() const noexcept {
+        return whole_domain_self_step_count_;
+    }
+    std::int64_t whole_domain_self_last_contact_count() const noexcept {
+        return whole_domain_self_last_contact_count_;
+    }
+    std::int64_t whole_domain_self_last_candidate_count() const noexcept {
+        return whole_domain_self_last_candidate_count_;
+    }
     const std::vector<float>& step_basic_positions() const noexcept {
         return step_basic_positions_;
     }
@@ -419,6 +452,18 @@ private:
     std::vector<float> integration_damping_values_;
     bool integration_ready_ = false;
     std::vector<float> collision_friction_;
+    std::vector<std::int32_t> whole_domain_self_edges_;
+    std::vector<std::int32_t> whole_domain_self_points_;
+    std::vector<std::int32_t> whole_domain_self_triangles_;
+    std::vector<std::uint32_t> whole_domain_self_modes_;
+    std::vector<std::uint32_t> whole_domain_collision_groups_;
+    std::vector<std::uint32_t> whole_domain_collision_masks_;
+    std::vector<float> whole_domain_self_friction_;
+    std::vector<float> whole_domain_self_thickness_;
+    bool whole_domain_self_ready_ = false;
+    std::int64_t whole_domain_self_step_count_ = 0;
+    std::int64_t whole_domain_self_last_contact_count_ = 0;
+    std::int64_t whole_domain_self_last_candidate_count_ = 0;
     std::int64_t frame_ = -1;
     std::int64_t generation_ = -1;
     float frame_delta_time_ = 0.0f;

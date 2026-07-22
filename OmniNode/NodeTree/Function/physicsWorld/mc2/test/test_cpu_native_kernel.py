@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import types
+from dataclasses import replace
 
 import numpy as np
 
@@ -69,7 +70,12 @@ def _compiled():
     return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
 
 
-def _compiled_multi(animation_pose_ratios=(0.0, 0.0)):
+def _compiled_multi(
+    animation_pose_ratios=(0.0, 0.0),
+    *,
+    collision_groups=None,
+    collision_masks=None,
+):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
     fragments = tuple(
@@ -91,7 +97,12 @@ def _compiled_multi(animation_pose_ratios=(0.0, 0.0)):
             fragments, animation_pose_ratios, strict=True
         )
     )
-    return compiler.compile_mc2_mesh_static_fragments(fragments, effectives)
+    return compiler.compile_mc2_mesh_static_fragments(
+        fragments,
+        effectives,
+        collision_groups=collision_groups,
+        collision_masks=collision_masks,
+    )
 
 
 def _frame(program):
@@ -129,6 +140,57 @@ def test_native_cpu_backend_uses_partitioned_animation_pose_ratio():
         owners = compiled.program.particle_partition_index
         np.testing.assert_allclose(implicit[owners == 0], reconstructed[owners == 0])
         np.testing.assert_allclose(implicit[owners == 1], animated[owners == 1])
+    finally:
+        domain.dispose()
+
+
+def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
+    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    edge_midpoint = (positions[0] + positions[1]) / np.float32(2.0)
+    positions[3] = edge_midpoint + np.asarray((0.0, -0.5, 0.001), dtype=np.float32)
+    positions[4] = edge_midpoint + np.asarray((0.0, 0.5, 0.001), dtype=np.float32)
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    try:
+        domain.update_frame(frame)
+        np.testing.assert_array_equal(domain.read_output().world_positions, positions)
+        domain.step_whole_domain_self(positions)
+        output = domain.read_output().world_positions
+        assert np.any(np.abs(output - positions) > np.float32(1.0e-6))
+        state = domain.inspect()["kernel"]
+        assert state["whole_domain_self_ready"] is True
+        assert state["whole_domain_self_point_count"] == 3
+        assert state["whole_domain_self_edge_count"] == 4
+        assert state["whole_domain_self_triangle_count"] == 1
+        assert state["whole_domain_self_step_count"] == 1
+        assert state["whole_domain_self_last_candidate_count"] > 0
+        assert state["whole_domain_self_last_contact_count"] > 0
+        assert state["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
+def test_native_cpu_backend_blocks_compiled_whole_domain_self_pair():
+    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(2, 2))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    edge_midpoint = (positions[0] + positions[1]) / np.float32(2.0)
+    positions[3] = edge_midpoint + np.asarray((0.0, -0.5, 0.001), dtype=np.float32)
+    positions[4] = edge_midpoint + np.asarray((0.0, 0.5, 0.001), dtype=np.float32)
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    try:
+        domain.update_frame(frame)
+        domain.step_whole_domain_self(positions)
+        np.testing.assert_array_equal(domain.read_output().world_positions, positions)
+        assert domain.inspect()["kernel"]["whole_domain_self_step_count"] == 1
+        assert domain.inspect()["kernel"]["whole_domain_self_last_contact_count"] == 0
     finally:
         domain.dispose()
 
@@ -748,6 +810,10 @@ def test_native_cpu_kernel_exposes_external_edge_collision_slice():
 if __name__ == "__main__":
     test_native_cpu_backend_uses_partitioned_animation_pose_ratio()
     print("PASS test_native_cpu_backend_uses_partitioned_animation_pose_ratio")
+    test_native_cpu_backend_runs_compiled_whole_domain_self_policy()
+    print("PASS test_native_cpu_backend_runs_compiled_whole_domain_self_policy")
+    test_native_cpu_backend_blocks_compiled_whole_domain_self_pair()
+    print("PASS test_native_cpu_backend_blocks_compiled_whole_domain_self_pair")
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
     test_native_debug_off_inspect_does_not_readback_dynamics()

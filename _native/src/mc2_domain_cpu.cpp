@@ -1425,6 +1425,160 @@ void DomainV1::step_self_collision(
     ++step_count_;
 }
 
+void DomainV1::configure_whole_domain_self(
+    const std::int32_t* points,
+    std::size_t point_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const std::uint32_t* partition_self_collision_modes,
+    const std::uint32_t* partition_collision_groups,
+    const std::uint32_t* partition_collision_masks,
+    const float* particle_friction,
+    const float* particle_thickness
+) {
+    ensure_live();
+    if ((point_count != 0 && points == nullptr) ||
+        (edge_count != 0 && edges == nullptr) ||
+        (triangle_count != 0 && triangles == nullptr)) {
+        throw std::invalid_argument("MC2 whole-domain self topology cannot be null");
+    }
+    if (partition_self_collision_modes == nullptr || partition_collision_groups == nullptr ||
+        partition_collision_masks == nullptr) {
+        throw std::invalid_argument("MC2 whole-domain self partition policy cannot be null");
+    }
+    require_finite(particle_friction, particle_count_, "whole-domain self friction");
+    require_finite(particle_thickness, particle_count_, "whole-domain self thickness");
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        if (partition_self_collision_modes[partition] != 0u &&
+            partition_self_collision_modes[partition] != 2u) {
+            throw std::invalid_argument("MC2 whole-domain self mode must be 0 or 2");
+        }
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (particle_friction[vertex] < 0.0f || particle_thickness[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 whole-domain self particle values cannot be negative");
+        }
+    }
+    auto validate_primitive = [&](const std::int32_t* values, std::size_t count, std::size_t width) {
+        for (std::size_t primitive = 0; primitive < count; ++primitive) {
+            const std::int32_t first = values[primitive * width];
+            if (first < 0 || static_cast<std::size_t>(first) >= particle_count_) {
+                throw std::invalid_argument("MC2 whole-domain self topology is out of range");
+            }
+            const auto owner = particle_partition_index_[static_cast<std::size_t>(first)];
+            for (std::size_t axis = 1; axis < width; ++axis) {
+                const std::int32_t vertex = values[primitive * width + axis];
+                if (vertex < 0 || static_cast<std::size_t>(vertex) >= particle_count_ ||
+                    particle_partition_index_[static_cast<std::size_t>(vertex)] != owner) {
+                    throw std::invalid_argument(
+                        "MC2 whole-domain self primitive must stay inside one partition"
+                    );
+                }
+            }
+        }
+    };
+    validate_primitive(points, point_count, 1);
+    validate_primitive(edges, edge_count, 2);
+    validate_primitive(triangles, triangle_count, 3);
+
+    whole_domain_self_points_.clear();
+    whole_domain_self_edges_.clear();
+    whole_domain_self_triangles_.clear();
+    if (point_count != 0) {
+        whole_domain_self_points_.assign(points, points + point_count);
+    }
+    if (edge_count != 0) {
+        whole_domain_self_edges_.assign(edges, edges + edge_count * 2);
+    }
+    if (triangle_count != 0) {
+        whole_domain_self_triangles_.assign(triangles, triangles + triangle_count * 3);
+    }
+    whole_domain_self_modes_.assign(
+        partition_self_collision_modes,
+        partition_self_collision_modes + partition_count_
+    );
+    whole_domain_collision_groups_.assign(
+        partition_collision_groups, partition_collision_groups + partition_count_
+    );
+    whole_domain_collision_masks_.assign(
+        partition_collision_masks, partition_collision_masks + partition_count_
+    );
+    whole_domain_self_friction_.assign(particle_friction, particle_friction + particle_count_);
+    whole_domain_self_thickness_.assign(particle_thickness, particle_thickness + particle_count_);
+    whole_domain_self_ready_ = true;
+    whole_domain_self_step_count_ = 0;
+    whole_domain_self_last_contact_count_ = 0;
+    whole_domain_self_last_candidate_count_ = 0;
+}
+
+void DomainV1::step_whole_domain_self(const float* old_positions) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 whole-domain self step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 whole-domain self step requires particle configuration");
+    }
+    if (!whole_domain_self_ready_) {
+        throw std::logic_error("MC2 whole-domain self step requires configuration");
+    }
+    require_finite(old_positions, particle_count_ * 3, "whole-domain self old positions");
+    collision_friction_ = whole_domain_self_friction_;
+    std::vector<float> scaled_thickness(particle_count_, 0.0f);
+    std::vector<float> partition_scale_ratios(partition_count_, 1.0f);
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        const auto offset = partition * 3;
+        const float current_length = std::sqrt(
+            partition_world_scales_[offset] * partition_world_scales_[offset] +
+            partition_world_scales_[offset + 1] * partition_world_scales_[offset + 1] +
+            partition_world_scales_[offset + 2] * partition_world_scales_[offset + 2]
+        );
+        const float initial_length = std::sqrt(
+            center_initial_scales_[offset] * center_initial_scales_[offset] +
+            center_initial_scales_[offset + 1] * center_initial_scales_[offset + 1] +
+            center_initial_scales_[offset + 2] * center_initial_scales_[offset + 2]
+        );
+        partition_scale_ratios[partition] = std::max(
+            current_length / std::max(initial_length, 0.00000001f), 0.000001f
+        );
+    }
+    std::vector<std::uint8_t> attributes(particle_count_, 0u);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        scaled_thickness[vertex] = whole_domain_self_thickness_[vertex] *
+            partition_scale_ratios[particle_partition_index_[vertex]];
+        if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
+            attributes[vertex] = 1u << 2u;
+        }
+    }
+    hotools::Mc2SelfCollisionView view;
+    view.positions = world_positions_.data();
+    view.old_positions = old_positions;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.points = whole_domain_self_points_.data();
+    view.edges = whole_domain_self_edges_.data();
+    view.triangles = whole_domain_self_triangles_.data();
+    view.attributes = attributes.data();
+    view.particle_thickness = scaled_thickness.data();
+    view.particle_partition_index = particle_partition_index_.data();
+    view.partition_self_collision_modes = whole_domain_self_modes_.data();
+    view.partition_collision_groups = whole_domain_collision_groups_.data();
+    view.partition_collision_masks = whole_domain_collision_masks_.data();
+    view.collision_normals = world_normals_.data();
+    view.friction = collision_friction_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.point_count = static_cast<std::int64_t>(whole_domain_self_points_.size());
+    view.edge_count = static_cast<std::int64_t>(whole_domain_self_edges_.size() / 2);
+    view.triangle_count = static_cast<std::int64_t>(whole_domain_self_triangles_.size() / 3);
+    view.partition_count = static_cast<std::int64_t>(partition_count_);
+    view.contact_count = &whole_domain_self_last_contact_count_;
+    view.candidate_count = &whole_domain_self_last_candidate_count_;
+    hotools::project_self_collisions_mc2(view);
+    ++whole_domain_self_step_count_;
+    ++step_count_;
+}
+
 void DomainV1::step_external_edge_collision(
     const float* collision_radii,
     const std::int32_t* edges,
@@ -1803,6 +1957,18 @@ void DomainV1::dispose() noexcept {
     real_velocities_.clear();
     static_friction_.clear();
     post_old_positions_.clear();
+    whole_domain_self_points_.clear();
+    whole_domain_self_edges_.clear();
+    whole_domain_self_triangles_.clear();
+    whole_domain_self_modes_.clear();
+    whole_domain_collision_groups_.clear();
+    whole_domain_collision_masks_.clear();
+    whole_domain_self_friction_.clear();
+    whole_domain_self_thickness_.clear();
+    whole_domain_self_ready_ = false;
+    whole_domain_self_step_count_ = 0;
+    whole_domain_self_last_contact_count_ = 0;
+    whole_domain_self_last_candidate_count_ = 0;
     partition_world_positions_.clear();
     partition_previous_world_positions_.clear();
     partition_world_rotations_.clear();

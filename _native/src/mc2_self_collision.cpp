@@ -292,17 +292,61 @@ struct SelfContact {
     float a = 0.0f;
     float b = 0.0f;
     float c = 0.0f;
+    float thickness = 0.0f;
     float normal[3] = {};
 };
 
 }  // namespace
 
 void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
+    if (view.contact_count != nullptr) *view.contact_count = 0;
+    if (view.candidate_count != nullptr) *view.candidate_count = 0;
     if (view.vertex_count <= 0 || view.positions == nullptr || view.old_positions == nullptr ||
         view.inv_masses == nullptr || view.attributes == nullptr || view.collision_normals == nullptr ||
-        view.surface_thickness <= kMc2Epsilon || (view.edge_count <= 0 && view.triangle_count <= 0)) {
+        (view.particle_thickness == nullptr && view.surface_thickness <= kMc2Epsilon) ||
+        (view.edge_count <= 0 && view.triangle_count <= 0)) {
         return;
     }
+
+    const bool partitioned = view.particle_partition_index != nullptr;
+    if (partitioned &&
+        (view.partition_count <= 0 || view.partition_self_collision_modes == nullptr ||
+         view.partition_collision_groups == nullptr || view.partition_collision_masks == nullptr)) {
+        return;
+    }
+
+    auto partition_enabled = [&](std::uint32_t partition) {
+        return !partitioned ||
+            (partition < static_cast<std::uint32_t>(view.partition_count) &&
+             view.partition_self_collision_modes[partition] == 2u);
+    };
+    auto owner_pair_allowed = [&](std::int32_t vertex0, std::int32_t vertex1) {
+        if (!partitioned) return true;
+        const std::uint32_t owner0 = view.particle_partition_index[vertex0];
+        const std::uint32_t owner1 = view.particle_partition_index[vertex1];
+        if (!partition_enabled(owner0) || !partition_enabled(owner1)) return false;
+        if (owner0 == owner1) return true;
+        const std::uint32_t mask0 = view.partition_collision_masks[owner0];
+        const std::uint32_t mask1 = view.partition_collision_masks[owner1];
+        const bool allows0 = mask0 == 0u ||
+            (mask0 & view.partition_collision_groups[owner1]) != 0u;
+        const bool allows1 = mask1 == 0u ||
+            (mask1 & view.partition_collision_groups[owner0]) != 0u;
+        return allows0 && allows1;
+    };
+    auto particle_side_thickness = [&](std::int32_t vertex) {
+        return view.particle_thickness == nullptr
+            ? view.surface_thickness
+            : std::max(view.particle_thickness[vertex], 0.0f);
+    };
+    auto primitive_side_thickness = [&](const std::int32_t* vertices, int count) {
+        if (view.particle_thickness == nullptr) return view.surface_thickness;
+        float total = 0.0f;
+        for (int index = 0; index < count; ++index) {
+            total += particle_side_thickness(vertices[index]);
+        }
+        return total / static_cast<float>(count);
+    };
 
     bool has_movable = false;
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
@@ -315,7 +359,16 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
         return;
     }
 
-    const float thickness = std::max(view.surface_thickness, 0.0f);
+    float broadphase_thickness = std::max(view.surface_thickness, 0.0f);
+    if (view.particle_thickness != nullptr) {
+        broadphase_thickness = 0.0f;
+        for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+            broadphase_thickness = std::max(
+                broadphase_thickness, particle_side_thickness(static_cast<std::int32_t>(vertex))
+            );
+        }
+    }
+    if (broadphase_thickness <= kMc2Epsilon) return;
     constexpr float kSelfCollisionGridScale = 3.0f;
 
     struct GridCell {
@@ -386,7 +439,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
     std::vector<PrimitiveBounds> triangle_bounds(triangle_count);
     std::unordered_map<GridCell, std::vector<std::int32_t>, GridCellHash> edge_cells;
     std::unordered_map<GridCell, std::vector<std::int32_t>, GridCellHash> triangle_cells;
-    float max_primitive_size = thickness;
+    float max_primitive_size = broadphase_thickness;
 
     if (view.edges != nullptr && view.edge_count > 0) {
         for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
@@ -399,6 +452,9 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
             if ((view.attributes[a] & kMc2AttrInvalid) != 0 || (view.attributes[b] & kMc2AttrInvalid) != 0) {
                 continue;
             }
+            if (!partition_enabled(partitioned ? view.particle_partition_index[a] : 0u)) continue;
+            const std::int32_t edge_vertices[] = {a, b};
+            const float primitive_thickness = primitive_side_thickness(edge_vertices, 2);
             const std::int64_t ao = static_cast<std::int64_t>(a) * 3;
             const std::int64_t bo = static_cast<std::int64_t>(b) * 3;
             const float cur_a_x = view.positions[ao + 0];
@@ -417,12 +473,12 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                                         length3(old_b_x - old_a_x, old_b_y - old_a_y, old_b_z - old_a_z));
             max_primitive_size = std::max(max_primitive_size, size);
             PrimitiveBounds bounds;
-            bounds.min_x = std::min(std::min(cur_a_x, cur_b_x), std::min(old_a_x, old_b_x)) - thickness;
-            bounds.min_y = std::min(std::min(cur_a_y, cur_b_y), std::min(old_a_y, old_b_y)) - thickness;
-            bounds.min_z = std::min(std::min(cur_a_z, cur_b_z), std::min(old_a_z, old_b_z)) - thickness;
-            bounds.max_x = std::max(std::max(cur_a_x, cur_b_x), std::max(old_a_x, old_b_x)) + thickness;
-            bounds.max_y = std::max(std::max(cur_a_y, cur_b_y), std::max(old_a_y, old_b_y)) + thickness;
-            bounds.max_z = std::max(std::max(cur_a_z, cur_b_z), std::max(old_a_z, old_b_z)) + thickness;
+            bounds.min_x = std::min(std::min(cur_a_x, cur_b_x), std::min(old_a_x, old_b_x)) - primitive_thickness;
+            bounds.min_y = std::min(std::min(cur_a_y, cur_b_y), std::min(old_a_y, old_b_y)) - primitive_thickness;
+            bounds.min_z = std::min(std::min(cur_a_z, cur_b_z), std::min(old_a_z, old_b_z)) - primitive_thickness;
+            bounds.max_x = std::max(std::max(cur_a_x, cur_b_x), std::max(old_a_x, old_b_x)) + primitive_thickness;
+            bounds.max_y = std::max(std::max(cur_a_y, cur_b_y), std::max(old_a_y, old_b_y)) + primitive_thickness;
+            bounds.max_z = std::max(std::max(cur_a_z, cur_b_z), std::max(old_a_z, old_b_z)) + primitive_thickness;
             bounds.valid = true;
             edge_bounds[static_cast<std::size_t>(edge_index)] = bounds;
         }
@@ -441,6 +497,9 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 (view.attributes[c] & kMc2AttrInvalid) != 0) {
                 continue;
             }
+            if (!partition_enabled(partitioned ? view.particle_partition_index[a] : 0u)) continue;
+            const std::int32_t triangle_vertices[] = {a, b, c};
+            const float primitive_thickness = primitive_side_thickness(triangle_vertices, 3);
             const std::int64_t ao = static_cast<std::int64_t>(a) * 3;
             const std::int64_t bo = static_cast<std::int64_t>(b) * 3;
             const std::int64_t co = static_cast<std::int64_t>(c) * 3;
@@ -471,19 +530,19 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                                            length3(old_c_x - old_b_x, old_c_y - old_b_y, old_c_z - old_b_z)))));
             max_primitive_size = std::max(max_primitive_size, size);
             PrimitiveBounds bounds;
-            bounds.min_x = std::min(std::min(std::min(cur_a_x, cur_b_x), cur_c_x), std::min(std::min(old_a_x, old_b_x), old_c_x)) - thickness;
-            bounds.min_y = std::min(std::min(std::min(cur_a_y, cur_b_y), cur_c_y), std::min(std::min(old_a_y, old_b_y), old_c_y)) - thickness;
-            bounds.min_z = std::min(std::min(std::min(cur_a_z, cur_b_z), cur_c_z), std::min(std::min(old_a_z, old_b_z), old_c_z)) - thickness;
-            bounds.max_x = std::max(std::max(std::max(cur_a_x, cur_b_x), cur_c_x), std::max(std::max(old_a_x, old_b_x), old_c_x)) + thickness;
-            bounds.max_y = std::max(std::max(std::max(cur_a_y, cur_b_y), cur_c_y), std::max(std::max(old_a_y, old_b_y), old_c_y)) + thickness;
-            bounds.max_z = std::max(std::max(std::max(cur_a_z, cur_b_z), cur_c_z), std::max(std::max(old_a_z, old_b_z), old_c_z)) + thickness;
+            bounds.min_x = std::min(std::min(std::min(cur_a_x, cur_b_x), cur_c_x), std::min(std::min(old_a_x, old_b_x), old_c_x)) - primitive_thickness;
+            bounds.min_y = std::min(std::min(std::min(cur_a_y, cur_b_y), cur_c_y), std::min(std::min(old_a_y, old_b_y), old_c_y)) - primitive_thickness;
+            bounds.min_z = std::min(std::min(std::min(cur_a_z, cur_b_z), cur_c_z), std::min(std::min(old_a_z, old_b_z), old_c_z)) - primitive_thickness;
+            bounds.max_x = std::max(std::max(std::max(cur_a_x, cur_b_x), cur_c_x), std::max(std::max(old_a_x, old_b_x), old_c_x)) + primitive_thickness;
+            bounds.max_y = std::max(std::max(std::max(cur_a_y, cur_b_y), cur_c_y), std::max(std::max(old_a_y, old_b_y), old_c_y)) + primitive_thickness;
+            bounds.max_z = std::max(std::max(std::max(cur_a_z, cur_b_z), cur_c_z), std::max(std::max(old_a_z, old_b_z), old_c_z)) + primitive_thickness;
             bounds.valid = true;
             triangle_bounds[static_cast<std::size_t>(tri_index)] = bounds;
         }
     }
 
     float cell_size = max_primitive_size * kSelfCollisionGridScale;
-    cell_size = std::max(cell_size, thickness);
+    cell_size = std::max(cell_size, broadphase_thickness);
     cell_size = std::max(cell_size, kMc2Epsilon);
 
     for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
@@ -514,18 +573,29 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
     if (view.triangles != nullptr && view.triangle_count > 0) {
         std::unordered_set<std::int32_t> candidate_triangles;
         candidate_triangles.reserve(64);
-        for (std::int64_t point = 0; point < view.vertex_count; ++point) {
+        const bool has_explicit_points = view.point_count >= 0;
+        if (has_explicit_points && view.point_count > 0 && view.points == nullptr) {
+            return;
+        }
+        const std::int64_t point_count = has_explicit_points
+            ? view.point_count : view.vertex_count;
+        for (std::int64_t point_record = 0; point_record < point_count; ++point_record) {
+            const std::int64_t point = has_explicit_points
+                ? static_cast<std::int64_t>(view.points[point_record]) : point_record;
+            if (point < 0 || point >= view.vertex_count) continue;
             if ((view.attributes[point] & kMc2AttrInvalid) != 0) {
                 continue;
             }
+            if (!partition_enabled(partitioned ? view.particle_partition_index[point] : 0u)) continue;
             const std::int64_t po = point * 3;
             candidate_triangles.clear();
-            const float point_min_x = std::min(view.positions[po + 0], view.old_positions[po + 0]) - thickness;
-            const float point_min_y = std::min(view.positions[po + 1], view.old_positions[po + 1]) - thickness;
-            const float point_min_z = std::min(view.positions[po + 2], view.old_positions[po + 2]) - thickness;
-            const float point_max_x = std::max(view.positions[po + 0], view.old_positions[po + 0]) + thickness;
-            const float point_max_y = std::max(view.positions[po + 1], view.old_positions[po + 1]) + thickness;
-            const float point_max_z = std::max(view.positions[po + 2], view.old_positions[po + 2]) + thickness;
+            const float point_thickness = particle_side_thickness(static_cast<std::int32_t>(point));
+            const float point_min_x = std::min(view.positions[po + 0], view.old_positions[po + 0]) - point_thickness;
+            const float point_min_y = std::min(view.positions[po + 1], view.old_positions[po + 1]) - point_thickness;
+            const float point_min_z = std::min(view.positions[po + 2], view.old_positions[po + 2]) - point_thickness;
+            const float point_max_x = std::max(view.positions[po + 0], view.old_positions[po + 0]) + point_thickness;
+            const float point_max_y = std::max(view.positions[po + 1], view.old_positions[po + 1]) + point_thickness;
+            const float point_max_z = std::max(view.positions[po + 2], view.old_positions[po + 2]) + point_thickness;
             for_grid_cells(point_min_x, point_min_y, point_min_z, point_max_x, point_max_y, point_max_z, cell_size,
                            [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
                                const auto found = triangle_cells.find(GridCell{grid_x, grid_y, grid_z});
@@ -551,6 +621,13 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                     (view.attributes[tc] & kMc2AttrInvalid) != 0) {
                     continue;
                 }
+                if (!owner_pair_allowed(static_cast<std::int32_t>(point), ta)) continue;
+                if (view.candidate_count != nullptr) ++*view.candidate_count;
+                const std::int32_t triangle_vertices[] = {ta, tb, tc};
+                const float contact_thickness = view.particle_thickness == nullptr
+                    ? view.surface_thickness
+                    : point_thickness + primitive_side_thickness(triangle_vertices, 3);
+                if (contact_thickness <= kMc2Epsilon) continue;
                 const std::int64_t ao = static_cast<std::int64_t>(ta) * 3;
                 const std::int64_t bo = static_cast<std::int64_t>(tb) * 3;
                 const std::int64_t co = static_cast<std::int64_t>(tc) * 3;
@@ -605,7 +682,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                                   (view.positions[bo + 2] - view.old_positions[bo + 2]) * v +
                                   (view.positions[co + 2] - view.old_positions[co + 2]) * w;
                 const float current_dist = delta_len - dot3(nx, ny, nz, dpx, dpy, dpz) + dot3(nx, ny, nz, dtx, dty, dtz);
-                if (current_dist >= thickness + thickness * kSelfCollisionScr) {
+                if (current_dist >= contact_thickness + contact_thickness * kSelfCollisionScr) {
                     continue;
                 }
 
@@ -614,7 +691,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 const float tri_z = view.positions[ao + 2] * u + view.positions[bo + 2] * v + view.positions[co + 2] * w;
                 const float signed_dist = dot3(nx, ny, nz, view.positions[po + 0] - tri_x, view.positions[po + 1] - tri_y,
                                                view.positions[po + 2] - tri_z);
-                if (signed_dist >= thickness) {
+                if (signed_dist >= contact_thickness) {
                     continue;
                 }
                 const float denom = view.inv_masses[point] + view.inv_masses[ta] * u * u + view.inv_masses[tb] * v * v +
@@ -631,6 +708,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 contact.a = u;
                 contact.b = v;
                 contact.c = w;
+                contact.thickness = contact_thickness;
                 contact.normal[0] = nx;
                 contact.normal[1] = ny;
                 contact.normal[2] = nz;
@@ -685,6 +763,15 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 if ((view.attributes[b0] & kMc2AttrInvalid) != 0 || (view.attributes[b1] & kMc2AttrInvalid) != 0) {
                     continue;
                 }
+                if (!owner_pair_allowed(a0, b0)) continue;
+                if (view.candidate_count != nullptr) ++*view.candidate_count;
+                const std::int32_t edge_a_vertices[] = {a0, a1};
+                const std::int32_t edge_b_vertices[] = {b0, b1};
+                const float contact_thickness = view.particle_thickness == nullptr
+                    ? view.surface_thickness
+                    : primitive_side_thickness(edge_a_vertices, 2) +
+                      primitive_side_thickness(edge_b_vertices, 2);
+                if (contact_thickness <= kMc2Epsilon) continue;
                 const std::int64_t b0o = static_cast<std::int64_t>(b0) * 3;
                 const std::int64_t b1o = static_cast<std::int64_t>(b1) * 3;
                 float s = 0.0f;
@@ -717,7 +804,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 const float db_z = (view.positions[b0o + 2] - view.old_positions[b0o + 2]) * (1.0f - t) +
                                    (view.positions[b1o + 2] - view.old_positions[b1o + 2]) * t;
                 const float movement_adjusted = dist + dot3(nx, ny, nz, da_x, da_y, da_z) - dot3(nx, ny, nz, db_x, db_y, db_z);
-                if (movement_adjusted > thickness + thickness * kSelfCollisionScr) {
+                if (movement_adjusted > contact_thickness + contact_thickness * kSelfCollisionScr) {
                     continue;
                 }
                 const float cur_ax = view.positions[a0o + 0] * (1.0f - s) + view.positions[a1o + 0] * s;
@@ -727,7 +814,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 const float cur_by = view.positions[b0o + 1] * (1.0f - t) + view.positions[b1o + 1] * t;
                 const float cur_bz = view.positions[b0o + 2] * (1.0f - t) + view.positions[b1o + 2] * t;
                 const float current_dist = dot3(nx, ny, nz, cur_ax - cur_bx, cur_ay - cur_by, cur_az - cur_bz);
-                if (current_dist >= thickness) {
+                if (current_dist >= contact_thickness) {
                     continue;
                 }
                 const float b0w = 1.0f - s;
@@ -747,6 +834,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 contact.v[3] = b1;
                 contact.a = s;
                 contact.b = t;
+                contact.thickness = contact_thickness;
                 contact.normal[0] = nx;
                 contact.normal[1] = ny;
                 contact.normal[2] = nz;
@@ -757,6 +845,9 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
 
     if (contacts.empty()) {
         return;
+    }
+    if (view.contact_count != nullptr) {
+        *view.contact_count = static_cast<std::int64_t>(contacts.size());
     }
 
     std::vector<float> add_positions(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
@@ -773,6 +864,7 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
         std::fill(friction_values.begin(), friction_values.end(), 0.0f);
 
         for (const SelfContact& contact : contacts) {
+            const float thickness = contact.thickness;
             if (contact.type == 1) {
                 const std::int32_t point = contact.v[0];
                 const std::int32_t ta = contact.v[1];

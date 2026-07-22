@@ -578,6 +578,60 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit native self-collision slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_whole_domain_self",
+        [](std::uint64_t handle,
+           ci32_1d points,
+           ci32_2d edges,
+           ci32_2d triangles,
+           cu32_1d partition_self_collision_modes,
+           cu32_1d partition_collision_groups,
+           cu32_1d partition_collision_masks,
+           cf32_1d particle_friction,
+           cf32_1d particle_thickness) {
+            auto* domain = require_domain(handle);
+            const auto particle_count = domain->particle_count();
+            const auto partition_count = domain->partition_count();
+            if (edges.shape(1) != 2 || triangles.shape(1) != 3 ||
+                static_cast<std::size_t>(partition_self_collision_modes.shape(0)) != partition_count ||
+                static_cast<std::size_t>(partition_collision_groups.shape(0)) != partition_count ||
+                static_cast<std::size_t>(partition_collision_masks.shape(0)) != partition_count ||
+                static_cast<std::size_t>(particle_friction.shape(0)) != particle_count ||
+                static_cast<std::size_t>(particle_thickness.shape(0)) != particle_count) {
+                throw nb::value_error(
+                    "MC2 whole-domain self configuration arrays have incompatible shapes"
+                );
+            }
+            domain->configure_whole_domain_self(
+                points.data(), static_cast<std::size_t>(points.shape(0)),
+                edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                triangles.data(), static_cast<std::size_t>(triangles.shape(0)),
+                partition_self_collision_modes.data(), partition_collision_groups.data(),
+                partition_collision_masks.data(), particle_friction.data(),
+                particle_thickness.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("points"), nb::arg("edges"), nb::arg("triangles"),
+        nb::arg("partition_self_collision_modes"),
+        nb::arg("partition_collision_groups"), nb::arg("partition_collision_masks"),
+        nb::arg("particle_friction"), nb::arg("particle_thickness"),
+        "Configure the compiled whole-domain self-collision pass."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_whole_domain_self",
+        [](std::uint64_t handle, cf32_2d old_positions) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(old_positions.shape(0)) != domain->particle_count() ||
+                old_positions.shape(1) != 3) {
+                throw nb::value_error(
+                    "MC2 whole-domain self old positions must match particle_count x 3"
+                );
+            }
+            domain->step_whole_domain_self(old_positions.data());
+        },
+        nb::arg("handle"), nb::arg("old_positions"),
+        "Run one compiled whole-domain self-collision pass."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_external_edge_collision",
         [](std::uint64_t handle,
            cf32_1d collision_radii,
@@ -918,6 +972,15 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["baseline_line_count"] = domain->baseline_line_count();
             result["baseline_data_count"] = domain->baseline_data_count();
             result["baseline_pose_ready"] = domain->baseline_pose_ready();
+            result["whole_domain_self_ready"] = domain->whole_domain_self_ready();
+            result["whole_domain_self_point_count"] = domain->whole_domain_self_point_count();
+            result["whole_domain_self_edge_count"] = domain->whole_domain_self_edge_count();
+            result["whole_domain_self_triangle_count"] = domain->whole_domain_self_triangle_count();
+            result["whole_domain_self_step_count"] = domain->whole_domain_self_step_count();
+            result["whole_domain_self_last_contact_count"] =
+                domain->whole_domain_self_last_contact_count();
+            result["whole_domain_self_last_candidate_count"] =
+                domain->whole_domain_self_last_candidate_count();
             result["partition_world_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->partition_world_positions()),
                 domain->partition_count(), 3

@@ -78,6 +78,74 @@ def _create_two_pose_chains():
     )
 
 
+def _create_whole_domain_self_case():
+    bind_positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.01)),
+        dtype=np.float32,
+    )
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    return hotools_native.mc2_domain_cpu_v1_create(
+        1, 4, 2, "domain:self", "layout:test", bind_positions, bind_rotations,
+        np.asarray((0, 0, 0, 1), dtype=np.uint32),
+        np.asarray((2, 2, 2, 2), dtype=np.uint32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.asarray(((0.0, -1.0, 0.0),) * 2, dtype=np.float32),
+    )
+
+
+def _create_whole_domain_self_five_case():
+    bind_positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.001), (4.0, 4.0, 4.0)), dtype=np.float32
+    )
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 5, dtype=np.float32)
+    return hotools_native.mc2_domain_cpu_v1_create(
+        1, 5, 2, "domain:self5", "layout:test", bind_positions, bind_rotations,
+        np.asarray((0, 0, 0, 1, 1), dtype=np.uint32),
+        np.asarray((129, 130, 130, 2, 2), dtype=np.uint32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.asarray(((0.0, -1.0, 0.0),) * 2, dtype=np.float32),
+    )
+
+
+def _run_whole_domain_self_case(modes, groups, masks, *, points=(3,)):
+    handle = _create_whole_domain_self_case()
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.01)),
+        dtype=np.float32,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    try:
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            domain_signature="domain:self",
+            partition_positions=((0.0, 0.0, 0.0),) * 2,
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(
+            handle,
+            np.asarray(points, dtype=np.int32),
+            np.empty((0, 2), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+            np.asarray(modes, dtype=np.uint32),
+            np.asarray(groups, dtype=np.uint32),
+            np.asarray(masks, dtype=np.uint32),
+            np.asarray((0.1, 0.2, 0.3, 0.4), dtype=np.float32),
+            np.asarray((0.01, 0.01, 0.01, 0.03), dtype=np.float32),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_whole_domain_self(handle, positions)
+        return (
+            hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"].copy(),
+            dict(hotools_native.mc2_domain_cpu_v1_inspect(handle)),
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 def _frame(offset=0.0):
     positions = np.asarray(
         ((offset, 0.0, 0.0), (1.0 + offset, 0.0, 0.0), (offset, 1.0, 0.0)),
@@ -345,6 +413,135 @@ def test_domain_cpu_native_prepares_step_basic_with_partition_ratios():
             raise AssertionError("non-finite partition pose ratio was accepted")
         after = hotools_native.mc2_domain_cpu_v1_inspect(handle)["step_count"]
         assert after == before
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_whole_domain_self_honors_partition_policy():
+    original = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.01)),
+        dtype=np.float32,
+    )
+    allowed, info = _run_whole_domain_self_case((2, 2), (1, 2), (2, 1))
+    assert np.any(np.abs(allowed - original) > np.float32(1.0e-6))
+    assert info["whole_domain_self_ready"] is True
+    assert info["whole_domain_self_edge_count"] == 0
+    assert info["whole_domain_self_triangle_count"] == 1
+    assert info["whole_domain_self_step_count"] == 1
+    assert info["step_count"] == 1
+
+    auto_allowed, _ = _run_whole_domain_self_case((2, 2), (1, 2), (0, 0))
+    assert np.any(np.abs(auto_allowed - original) > np.float32(1.0e-6))
+
+    one_sided_blocked, _ = _run_whole_domain_self_case((2, 2), (1, 2), (2, 2))
+    np.testing.assert_array_equal(one_sided_blocked, original)
+
+    disabled, _ = _run_whole_domain_self_case((2, 0), (1, 2), (2, 1))
+    np.testing.assert_array_equal(disabled, original)
+
+    no_points, info = _run_whole_domain_self_case(
+        (2, 2), (1, 2), (0, 0), points=(),
+    )
+    np.testing.assert_array_equal(no_points, original)
+    assert info["whole_domain_self_point_count"] == 0
+    assert info["whole_domain_self_last_contact_count"] == 0
+
+
+def test_domain_cpu_native_whole_domain_self_triangle_with_edges_moves():
+    handle = _create_whole_domain_self_case()
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.001)),
+        dtype=np.float32,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    try:
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            domain_signature="domain:self",
+            partition_positions=((0.0, 0.0, 0.0),) * 2,
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(
+            handle,
+            np.asarray((3,), dtype=np.int32),
+            np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+            np.asarray((2, 2), dtype=np.uint32),
+            np.asarray((1, 2), dtype=np.uint32),
+            np.asarray((0, 0), dtype=np.uint32),
+            np.zeros(4, dtype=np.float32),
+            np.full(4, 0.02, dtype=np.float32),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_whole_domain_self(handle, positions)
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
+        assert np.any(np.abs(output - positions) > np.float32(1.0e-6)), output - positions
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_whole_domain_self_five_compiled_shape_moves():
+    handle = _create_whole_domain_self_five_case()
+    positions = np.asarray(
+        ((2.0, 2.0, 2.0), (3.0, 2.0, 2.0), (2.0, 3.0, 2.0),
+         (2.5, 1.5, 2.001), (2.5, 2.5, 2.001)), dtype=np.float32
+    )
+    try:
+        normals = np.asarray(((0.0, 0.0, 1.0),) * 5, dtype=np.float32)
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            domain_signature="domain:self5", partition_positions=((2.0, 0.0, 0.0),) * 2,
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(5, dtype=np.float32),
+            np.asarray((0.0, 1.0, 1.0, 1.0, 1.0), dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(
+            handle,
+            np.asarray((0, 1, 2), dtype=np.int32),
+            np.asarray(((0, 1), (0, 2), (1, 2), (3, 4)), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+            np.asarray((2, 2), dtype=np.uint32), np.asarray((1, 2), dtype=np.uint32),
+            np.asarray((0, 0), dtype=np.uint32), np.full(5, 0.05, dtype=np.float32),
+            np.asarray((0.005, 0.005, 0.004, 0.005, 0.005), dtype=np.float32),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_whole_domain_self(handle, positions)
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
+        assert np.any(np.abs(output - positions) > np.float32(1.0e-6)), output - positions
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_whole_domain_self_configuration_is_atomic():
+    handle = _create_whole_domain_self_case()
+    try:
+        valid = (
+            np.asarray((3,), dtype=np.int32),
+            np.empty((0, 2), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+            np.asarray((2, 2), dtype=np.uint32),
+            np.asarray((1, 2), dtype=np.uint32),
+            np.asarray((2, 1), dtype=np.uint32),
+            np.zeros(4, dtype=np.float32),
+            np.full(4, 0.02, dtype=np.float32),
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(handle, *valid)
+        before = dict(hotools_native.mc2_domain_cpu_v1_inspect(handle))
+        invalid = list(valid)
+        invalid[-1] = np.asarray((0.02, np.nan, 0.02, 0.02), dtype=np.float32)
+        try:
+            hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(handle, *invalid)
+        except ValueError as exc:
+            assert "finite" in str(exc)
+        else:
+            raise AssertionError("non-finite whole-domain self thickness was accepted")
+        after = dict(hotools_native.mc2_domain_cpu_v1_inspect(handle))
+        assert after["whole_domain_self_ready"] == before["whole_domain_self_ready"]
+        assert after["whole_domain_self_triangle_count"] == before["whole_domain_self_triangle_count"]
+        assert after["whole_domain_self_step_count"] == before["whole_domain_self_step_count"]
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 

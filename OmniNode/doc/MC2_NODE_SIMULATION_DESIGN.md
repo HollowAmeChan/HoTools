@@ -816,7 +816,9 @@ E3 native 合入门禁已经满足：新 owner 能在无 Blender 对象的 C++/h
 
 退出条件：两个原本独立的 MeshCloth 对象在一个 context 中稳定碰撞；关闭跨 partition filter 后退化为互不碰撞但仍共享 context；不同粒子参数通过 SoA 生效，不要求拆 task。
 
-实现进度（2026-07-22）：多partition frame、Center/Anchor/Teleport history和统一particle owner已有E3/E2合同；StepBasic现通过独立partitioned native ABI按`particle_partition_index`消费编译后的`animation_pose_ratio`，py311/py313均以单source标量ABI和双partition数组ABI对照。下一门禁是把compiled primitive/filter/particle参数配置进owner，并以一次whole-domain self broadphase验证同partition、跨partition握手和关闭过滤三种结果；在此之前不切产品slot。
+实现进度（2026-07-22）：多partition frame、Center/Anchor/Teleport history和统一particle owner已有E3/E2合同；StepBasic通过独立partitioned native ABI按`particle_partition_index`消费编译后的`animation_pose_ratio`。`DomainV1`现进一步直接配置compiled point/edge/triangle、逐partition self mode/group/mask和逐粒子thickness/friction，并在一次whole-domain broadphase/contact pass中处理同partition与跨partition self。跨partition要求双方group/mask握手，`mask == 0`按auto-all解释；粒子厚度按当前/初始partition scale更新，point-triangle与edge-edge均按两侧primitive平均厚度求和，保持V0的双方总厚度语义。显式空point表与E3旧ABI“所有顶点均为point”已用不同哨兵区分，不能互相退化。
+
+上述配置、失败原子性、primitive计数、candidate/contact计数、允许/阻断跨partition以及双source edge-edge真实位移均由py311/py313 raw ABI和adapter夹具锁定；单source标量self endpoint继续只作为E3 oracle，不是第二个产品owner。E4尚未关闭：下一门禁是把多source capture/fragment cache和完整固定pass顺序接入这个统一context，并完成产品切换前的多source oracle与性能门禁；在此之前不切产品slot，也不删除V0或普通aggregate路径。
 
 ### E5：多目标结果事务与产品节点
 
@@ -1030,7 +1032,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
 - 单 partition 退化时，Domain writeback command 与 V0 `MC2ResultCandidateV1` 对同一 frame linear/world positions 生成逐 float32 相同的 object-local offsets；这关闭 E3 输出数学等价，不代表 E5 多 target 发布事务已完成。
 
-E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/Keep/Reset/catch-up、零子步暂停、非零 inertia + Tether + Distance 组合、post/history、scheduler/参数 handoff、单 target writeback 数学、debug-off readback 和热点计时关闭态均已有固定证据。该结论只证明 CPU reference 的单 source 全功能等价，不代表多 source 已在同一 owner 中运行，也不授权切换 Physics World 产品 owner。P0与P1-B也已关闭；下一执行入口是粒子级覆盖合同与E4 whole-domain self，多target原子发布仍属于E5。后续每完成一个大阶段，只增加整理后的决策与踩坑结论，不记录逐提交过程。
+E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/Keep/Reset/catch-up、零子步暂停、非零 inertia + Tether + Distance 组合、post/history、scheduler/参数 handoff、单 target writeback数学、debug-off readback和热点计时关闭态均已有固定证据。P0、P1-B、粒子级覆盖合同、partitioned StepBasic和E4的whole-domain self子门槛也已关闭。当前执行入口是多source capture/fragment cache、统一context内的完整固定pass顺序及其oracle/性能门禁；多target原子发布仍属于E5。完成这些门槛前不授权切换Physics World产品owner。后续每完成一个大阶段，只增加整理后的决策与踩坑结论，不记录逐提交过程。
 
 ### P0阶段归档：原生热点计时的边界与决策
 

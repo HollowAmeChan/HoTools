@@ -32,6 +32,8 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_motion",
     "mc2_domain_cpu_v1_step_external_collision",
     "mc2_domain_cpu_v1_step_self_collision",
+    "mc2_domain_cpu_v1_configure_whole_domain_self",
+    "mc2_domain_cpu_v1_step_whole_domain_self",
     "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
@@ -106,6 +108,7 @@ class MC2NativeCPUKernelV1:
             self._configure_bending(handle, program, parameters)
             self._configure_inertia(handle, program, parameters)
             self._configure_constraint_friction(handle, parameters)
+            self._configure_whole_domain_self(handle, program, parameters)
             self._configure_center(handle, parameters)
             self._configure_center_frame_shift(handle, parameters)
             self._configure_integration(handle, parameters)
@@ -371,6 +374,16 @@ class MC2NativeCPUKernelV1:
             key, old_positions, edges, triangles, friction,
             float(settings["surface_thickness"]),
         )
+
+    def step_whole_domain_self(self, handle, old_positions) -> None:
+        """Run the configured E4 whole-domain self pass once."""
+        key = self._require_handle(handle)
+        program = self._programs[key]
+        positions = np.ascontiguousarray(old_positions, dtype=np.float32)
+        if positions.shape != (program.particle_count, 3):
+            raise ValueError("old_positions must match particle_count x 3")
+        positions.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_whole_domain_self(key, positions)
 
     def step_external_edge_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -1078,6 +1091,80 @@ class MC2NativeCPUKernelV1:
         )
         values.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_constraint_friction(handle, values)
+
+    def _configure_whole_domain_self(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        primitive_tables = {table.kind: table for table in program.primitive_tables}
+        point_table = primitive_tables.get("point")
+        edge_table = primitive_tables.get("edge")
+        triangle_table = primitive_tables.get("triangle")
+        points = np.asarray(
+            point_table.indices[:, 0] if point_table is not None else np.empty((0,)),
+            dtype=np.int32,
+        ).reshape((-1,))
+        edges = np.asarray(
+            edge_table.indices if edge_table is not None else np.empty((0, 2)),
+            dtype=np.int32,
+        ).reshape((-1, 2))
+        triangles = np.asarray(
+            triangle_table.indices if triangle_table is not None else np.empty((0, 3)),
+            dtype=np.int32,
+        ).reshape((-1, 3))
+
+        partition_fields = {
+            name: index
+            for index, name in enumerate(parameters.partition_uint_parameters.fields)
+        }
+        required_partition = {
+            "self_collision_mode", "collision_group", "collision_mask",
+        }
+        missing_partition = required_partition - set(partition_fields)
+        if missing_partition:
+            raise ValueError(
+                "partition uint parameter table lacks whole-domain self fields: "
+                + ", ".join(sorted(missing_partition))
+            )
+        partition_values = parameters.partition_uint_parameters.values
+        modes = np.asarray(
+            partition_values[:, partition_fields["self_collision_mode"]], dtype=np.uint32
+        )
+        groups = np.asarray(
+            partition_values[:, partition_fields["collision_group"]], dtype=np.uint32
+        )
+        masks = np.asarray(
+            partition_values[:, partition_fields["collision_mask"]], dtype=np.uint32
+        )
+
+        particle_fields = {
+            name: index for index, name in enumerate(parameters.particle_parameters.fields)
+        }
+        required_particle = {
+            "radius_multiplier", "self_collision_thickness", "collision_friction",
+        }
+        missing_particle = required_particle - set(particle_fields)
+        if missing_particle:
+            raise ValueError(
+                "particle parameter table lacks whole-domain self fields: "
+                + ", ".join(sorted(missing_particle))
+            )
+        particle_values = parameters.particle_parameters.values
+        friction = np.asarray(
+            particle_values[:, particle_fields["collision_friction"]], dtype=np.float32
+        )
+        thickness = np.asarray(
+            particle_values[:, particle_fields["self_collision_thickness"]]
+            * particle_values[:, particle_fields["radius_multiplier"]],
+            dtype=np.float32,
+        )
+        for array in (points, edges, triangles, modes, groups, masks, friction, thickness):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_whole_domain_self(
+            handle, points, edges, triangles, modes, groups, masks, friction, thickness
+        )
 
     def _configure_center(
         self,
