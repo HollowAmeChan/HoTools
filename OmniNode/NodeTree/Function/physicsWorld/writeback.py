@@ -25,6 +25,10 @@ import mathutils
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
 from .gn_offset import clear_gn_local_offsets, normalize_local_offsets, write_gn_local_offsets
+from .source_revisions import (
+    cancel_internal_geometry_update,
+    reserve_internal_geometry_update,
+)
 from .utils.values import matrix_from_16
 from .writeback_commands import iter_bone_transform_writebacks, iter_gn_offset_writebacks
 
@@ -94,6 +98,27 @@ def _ensure_cleanup_resource(world) -> None:
         )
 
 
+def _write_gn_local_offsets(obj, values) -> None:
+    reservation = reserve_internal_geometry_update(obj)
+    try:
+        write_gn_local_offsets(obj, values)
+    except Exception:
+        cancel_internal_geometry_update(reservation)
+        raise
+
+
+def _clear_gn_local_offsets(obj) -> bool:
+    reservation = reserve_internal_geometry_update(obj)
+    try:
+        changed = clear_gn_local_offsets(obj)
+    except Exception:
+        cancel_internal_geometry_update(reservation)
+        raise
+    if not changed:
+        cancel_internal_geometry_update(reservation)
+    return changed
+
+
 def _reset_rigid_objects(touched) -> None:
     if not touched:
         return
@@ -151,7 +176,7 @@ def _reset_gn_objects(touched) -> None:
     values = list(touched.values()) if isinstance(touched, dict) else list(touched)
     for obj in values:
         try:
-            clear_gn_local_offsets(obj)
+            _clear_gn_local_offsets(obj)
         except Exception:
             pass
     try:
@@ -635,7 +660,7 @@ def writeback_gn_attributes(world) -> int:
                 _gn_writeback_error(diagnostics, result, message)
                 _set_gn_slot_error(world, result, message)
             old_obj = touched.pop(target_key, None)
-            if old_obj is not None and clear_gn_local_offsets(old_obj):
+            if old_obj is not None and _clear_gn_local_offsets(old_obj):
                 diagnostics["cleared_count"] += 1
             continue
 
@@ -657,7 +682,7 @@ def writeback_gn_attributes(world) -> int:
                 raise ValueError(
                     f"GN offset 拓扑已变化：result={vertex_count} target={len(obj.data.vertices)}"
                 )
-            write_gn_local_offsets(obj, values)
+            _write_gn_local_offsets(obj, values)
             touched[target_key] = obj
             written_targets.add(target_key)
             diagnostics["written_count"] += 1
@@ -669,7 +694,7 @@ def writeback_gn_attributes(world) -> int:
     for target_key, obj in list(touched.items()):
         if target_key in written_targets:
             continue
-        if clear_gn_local_offsets(obj):
+        if _clear_gn_local_offsets(obj):
             diagnostics["cleared_count"] += 1
         touched.pop(target_key, None)
     return int(diagnostics["written_count"])
