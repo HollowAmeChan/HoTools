@@ -69,6 +69,12 @@ frame_state = importlib.import_module(
 product_bone_frame = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_frame"
 )
+product_bone_collect = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_collect"
+)
+bone_fragment_cache = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.fragment_cache"
+)
 
 
 IDENTITY = (
@@ -453,6 +459,65 @@ def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
         owner.dispose()
 
 
+def test_bone_product_collection_and_fragment_cache_are_transactional() -> None:
+    armature = _armature()
+    request = product_authoring.make_mc2_bone_cloth_product_request(
+        [(armature, "A0"), (armature, "B0")],
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_cloth",
+            connection_mode=0,
+        ),
+    )
+    collection = product_bone_collect.collect_mc2_bone_product_plan(
+        object(),
+        request.plan,
+    )
+    assert collection.draft.partition_ids == tuple(
+        value.partition.stable_id for value in collection.static_inputs
+    )
+    assert collection.armature is armature
+    assert collection.armature_pointer == armature.as_pointer()
+    assert len(collection.static_inputs) == 2
+
+    cache = bone_fragment_cache.MC2BoneFragmentCacheV1()
+    first = cache.stage(collection.static_inputs)
+    assert first.hit_count == 0 and first.build_count == 2
+    assert cache.inspect()["entry_count"] == 0
+    cache.commit(first)
+    assert cache.revision == 1
+    assert cache.inspect()["partition_ids"] == list(collection.draft.partition_ids)
+
+    second = cache.stage(collection.static_inputs)
+    assert second.hit_count == 2 and second.build_count == 0
+    assert second.fragments == first.fragments
+    cache.commit(second)
+    assert cache.revision == 2
+
+    build_count = 0
+
+    def fail_second(partition, fingerprint, product_topology, snapshots):
+        nonlocal build_count
+        build_count += 1
+        if build_count == 2:
+            raise RuntimeError("injected Bone fragment failure")
+        return bone_fragment.build_mc2_bone_static_fragment(
+            partition,
+            fingerprint,
+            product_topology,
+            snapshots,
+        )
+
+    failing_cache = bone_fragment_cache.MC2BoneFragmentCacheV1(fail_second)
+    try:
+        failing_cache.stage(collection.static_inputs)
+    except RuntimeError as exc:
+        assert "injected Bone fragment failure" in str(exc)
+    else:
+        raise AssertionError("Bone fragment stage unexpectedly succeeded")
+    assert failing_cache.revision == 0
+    assert failing_cache.inspect()["entry_count"] == 0
+
+
 TESTS = (
     (
         "multi-chain product topology and static",
@@ -470,6 +535,10 @@ TESTS = (
     (
         "same Armature partitions compile into one domain",
         test_same_armature_bone_cloth_partitions_compile_into_one_domain,
+    ),
+    (
+        "Bone product collection and fragment cache are transactional",
+        test_bone_product_collection_and_fragment_cache_are_transactional,
     ),
 )
 

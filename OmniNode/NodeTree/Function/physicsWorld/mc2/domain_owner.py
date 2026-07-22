@@ -63,14 +63,17 @@ class MC2FusedCPUOwnerV1:
         kernel: MC2CPUKernelV1,
         *,
         capabilities: MC2BackendCapabilitiesV1 = MC2_CPU_REFERENCE_CAPABILITIES,
-        fragment_cache: MC2MeshFragmentCacheV1 | None = None,
+        fragment_cache=None,
     ) -> None:
         if not isinstance(capabilities, MC2BackendCapabilitiesV1):
             raise TypeError("capabilities must be MC2BackendCapabilitiesV1")
         if fragment_cache is None:
             fragment_cache = MC2MeshFragmentCacheV1()
-        if not isinstance(fragment_cache, MC2MeshFragmentCacheV1):
-            raise TypeError("fragment_cache must be MC2MeshFragmentCacheV1")
+        if any(
+            not callable(getattr(fragment_cache, name, None))
+            for name in ("inspect", "clear")
+        ):
+            raise TypeError("fragment_cache must implement inspect/clear")
         self._kernel = kernel
         self._capabilities = capabilities
         self._fragment_cache = fragment_cache
@@ -94,7 +97,7 @@ class MC2FusedCPUOwnerV1:
         return self._draft
 
     @property
-    def fragment_cache(self) -> MC2MeshFragmentCacheV1:
+    def fragment_cache(self):
         return self._fragment_cache
 
     @property
