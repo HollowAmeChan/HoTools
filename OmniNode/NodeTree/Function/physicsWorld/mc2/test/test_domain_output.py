@@ -97,6 +97,8 @@ def test_domain_output_splits_logical_particles_and_unscales_offsets():
     assert commands[1].source_elements.tolist() == [0, 1]
     assert commands[0].logical_particle_indices.tolist() == [0, 1, 2]
     assert commands[1].logical_particle_indices.tolist() == [3, 4]
+    assert all(command.domain_signature == program.domain_signature for command in commands)
+    assert all(command.layout_signature == program.layout_signature for command in commands)
 
 
 def test_domain_output_rejects_frame_identity_mismatch():

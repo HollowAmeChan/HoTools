@@ -21,6 +21,8 @@ class MC2MeshWritebackCommandV1:
     """One target's world result converted to object-local vertex offsets."""
 
     target_id: str
+    domain_signature: str
+    layout_signature: str
     partition_index: int
     frame: int
     generation: int
@@ -46,6 +48,8 @@ class MC2MeshWritebackCommandV1:
             raise ValueError("writeback command positions must be finite")
         if int(self.partition_index) < 0:
             raise ValueError("writeback partition_index must be non-negative")
+        if not self.target_id or not self.domain_signature or not self.layout_signature:
+            raise ValueError("writeback identity fields must be non-empty")
         if int(self.frame) < 0 or int(self.generation) < 0:
             raise ValueError("writeback frame/generation must be non-negative")
         if self.space_kind != "mesh_object_local_offset":
@@ -108,13 +112,18 @@ def make_mc2_mesh_writeback_commands(
             inverse_linear = np.linalg.inv(linear)
         except np.linalg.LinAlgError as exc:
             raise ValueError("partition world linear is not invertible") from exc
-        world_delta = world_positions - base_positions
+        world_delta = (
+            world_positions.astype(np.float64) - base_positions.astype(np.float64)
+        )
         object_local_offsets = np.asarray(
-            world_delta @ inverse_linear.astype(np.float32).T,
+            world_delta @ inverse_linear.T,
             dtype=np.float32,
+            order="C",
         )
         commands.append(MC2MeshWritebackCommandV1(
             target_id=target.target_id,
+            domain_signature=program.domain_signature,
+            layout_signature=program.layout_signature,
             partition_index=target.partition_index,
             frame=frame_packet.frame,
             generation=frame_packet.generation,
