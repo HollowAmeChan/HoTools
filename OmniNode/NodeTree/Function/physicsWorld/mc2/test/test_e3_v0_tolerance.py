@@ -662,6 +662,249 @@ def test_e3_native_mesh_point_collision_matches_v0():
         v0.dispose()
 
 
+def test_e3_native_mesh_edge_collision_matches_v0():
+    snapshot, fragment, _compiled, _effective = _same_source_constraints()
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            collision_mode=2,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    center = np.asarray(((0.0, -0.5, 0.0),), dtype=np.float32)
+    collider_types = np.asarray((0,), dtype=np.int32)
+    collider_groups = np.asarray((1,), dtype=np.int32)
+    collider_radii = np.asarray((0.5,), dtype=np.float32)
+    collider = collider_frame.MC2ColliderFrameSpec(
+        1,
+        1,
+        0,
+        ("sphere",),
+        collider_types,
+        collider_groups,
+        center,
+        center,
+        center,
+        center,
+        center,
+        center,
+        collider_radii,
+        "e3-edge-sphere",
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        v0.update_colliders(collider)
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        frame = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=1,
+            generation=1,
+            world_positions=base_positions,
+            world_rotations_xyzw=base_rotations,
+        ))
+        v0.reset()
+        domain.update_frame(frame)
+        v0.step_no_collision(0.1)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+        })
+        edge_table = next(table for table in program.primitive_tables if table.kind == "edge")
+        edges = np.asarray(edge_table.indices, dtype=np.int32)
+        particle_fields = {
+            name: index
+            for index, name in enumerate(compiled.parameters.particle_parameters.fields)
+        }
+        particle_values = compiled.parameters.particle_parameters.values
+        domain.step_external_edge_collision({
+            "collision_radii": (
+                particle_values[:, particle_fields["radius"]]
+                * particle_values[:, particle_fields["radius_multiplier"]]
+            ),
+            "edges": edges,
+            "friction": particle_values[:, particle_fields["collision_friction"]],
+            "collided_by_groups": 1,
+            "collider_types": collider_types,
+            "collider_group_bits": collider_groups,
+            "collider_centers": center,
+            "collider_segment_a": center,
+            "collider_segment_b": center,
+            "collider_old_centers": center,
+            "collider_old_segment_a": center,
+            "collider_old_segment_b": center,
+            "collider_radii": collider_radii,
+        })
+        v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
+        domain_positions = domain.read_output().world_positions
+        assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
+        np.testing.assert_allclose(
+            domain_positions,
+            v0_positions,
+            # V0 quantizes persistent self-contact parameters to half precision;
+            # the shared native Domain kernel keeps the same ordered solve in float32.
+            rtol=1.0e-4,
+            atol=1.0e-4,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
+def test_e3_native_mesh_self_collision_matches_v0():
+    with open(FIXTURE, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)["static_snapshots"][0]
+    payload.update({
+        "local_positions": (
+            (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+            (0.1, 0.1, 0.0), (1.1, 0.1, 0.0), (0.1, 1.1, 0.0),
+        ),
+        "local_normals": ((0.0, 0.0, 1.0),) * 6,
+        "edges": ((0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)),
+        "triangles": ((0, 1, 2), (3, 4, 5)),
+        "triangle_loops": ((0, 1, 2), (3, 4, 5)),
+        "loop_vertices": (0, 1, 2, 3, 4, 5),
+        "loop_uvs": ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)) * 2,
+        "pin_weights": (1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        "source_element_ids": (0, 1, 2, 3, 4, 5),
+        "radius_multipliers": (1.0,) * 6,
+    })
+    snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
+    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            radius=0.05,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            self_collision_mode=2,
+            self_collision_thickness=0.02,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        frame = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=1,
+            generation=1,
+            world_positions=base_positions,
+            world_rotations_xyzw=base_rotations,
+        ))
+        v0.reset()
+        domain.update_frame(frame)
+        v0.step_no_collision(0.1)
+        edge_table = next(table for table in program.primitive_tables if table.kind == "edge")
+        triangle_table = next(
+            table for table in program.primitive_tables if table.kind == "triangle"
+        )
+        settings = {
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0,
+            "distance_simulation_power": 1.0,
+            "bending_simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+            "step_basic_positions": base_positions,
+            "tether_compression": 0.4,
+            "tether_stretch": 0.03,
+            "step_basic_rotations": base_rotations,
+            "angle_restoration_values": np.zeros(program.particle_count, dtype=np.float32),
+            "angle_limit_values": np.zeros(program.particle_count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.0,
+            "angle_restoration_enabled": False,
+            "angle_limit_enabled": False,
+            "motion_base_positions": base_positions,
+            "motion_base_rotations": base_rotations,
+            "motion_max_distances": np.zeros(program.particle_count, dtype=np.float32),
+            "motion_stiffness_values": np.ones(program.particle_count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(program.particle_count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(program.particle_count, dtype=np.float32),
+            "motion_normal_axis": 1,
+            "motion_max_distance_enabled": False,
+            "motion_backstop_enabled": False,
+            "point_collision": None,
+            "edge_collision": None,
+            "self_collision": {
+                # V0 sums the two primitive-side thickness values before solving.
+                "old_positions": base_positions,
+                "edges": np.asarray(edge_table.indices, dtype=np.int32),
+                "triangles": np.asarray(triangle_table.indices, dtype=np.int32),
+                "friction": np.zeros(program.particle_count, dtype=np.float32),
+                "surface_thickness": 0.04,
+            },
+        }
+        domain.step_reference_pipeline_full(settings)
+        v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
+        domain_positions = domain.read_output().world_positions
+        assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
+        np.testing.assert_allclose(
+            domain_positions,
+            v0_positions,
+            # V0 quantizes persistent self-contact parameters to half precision;
+            # the shared native Domain kernel keeps the same ordered solve in float32.
+            rtol=1.0e-4,
+            atol=1.0e-4,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
@@ -673,3 +916,7 @@ if __name__ == "__main__":
     print("PASS E3 native Tether-to-Motion branch matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
+    test_e3_native_mesh_edge_collision_matches_v0()
+    print("PASS E3 native Mesh edge collision matches V0")
+    test_e3_native_mesh_self_collision_matches_v0()
+    print("PASS E3 native Mesh self collision matches V0")
