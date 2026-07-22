@@ -59,6 +59,9 @@ frame_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physic
 native_context = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native_context")
 cpu_backend = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_backend")
 native_kernel = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel")
+collider_frame = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -157,6 +160,7 @@ def _register_v0_static(context, snapshot, fragment):
     context.update_proxy_finalizer_derived(
         proxy=proxy.proxy,
         finalizer=proxy.finalizer,
+        radius_multipliers=fragment.radius_multipliers,
     )
     baseline = baseline_module.build_mc2_mesh_baseline(proxy.proxy, native_context=context)
     context.update_baseline_derived({
@@ -542,6 +546,122 @@ def test_e3_native_motion_branch_matches_v0_after_tether():
         v0.dispose()
 
 
+def test_e3_native_mesh_point_collision_matches_v0():
+    snapshot, fragment, _compiled, _effective = _same_source_constraints()
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            collision_mode=1,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        parameters.make_mc2_task_parameters(),
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    center = np.asarray(((0.0, -1.0, 0.0),), dtype=np.float32)
+    collider_types = np.asarray((0,), dtype=np.int32)
+    collider_groups = np.asarray((1,), dtype=np.int32)
+    collider_radii = np.asarray((0.5,), dtype=np.float32)
+    collider = collider_frame.MC2ColliderFrameSpec(
+        1,
+        1,
+        0,
+        ("sphere",),
+        collider_types,
+        collider_groups,
+        center,
+        center,
+        center,
+        center,
+        center,
+        center,
+        collider_radii,
+        "e3-point-sphere",
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        v0.update_colliders(collider)
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        frame = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=1,
+            generation=1,
+            world_positions=base_positions,
+            world_rotations_xyzw=base_rotations,
+        ))
+        v0.reset()
+        domain.update_frame(frame)
+        v0.step_no_collision(0.1)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+        })
+
+        particle_fields = {
+            name: index
+            for index, name in enumerate(compiled.parameters.particle_parameters.fields)
+        }
+        particle_values = compiled.parameters.particle_parameters.values
+        collision_radii_values = (
+            particle_values[:, particle_fields["radius"]]
+            * particle_values[:, particle_fields["radius_multiplier"]]
+        )
+        domain.step_external_collision({
+            # Mesh point collision has no soft-sphere base pose. BoneSpring is
+            # the only setup that supplies animated base positions here.
+            "base_positions": np.zeros_like(base_positions),
+            "collision_radii": collision_radii_values,
+            "friction": particle_values[:, particle_fields["collision_friction"]],
+            "collided_by_groups": 1,
+            "collider_types": collider_types,
+            "collider_group_bits": collider_groups,
+            "collider_centers": center,
+            "collider_segment_a": center,
+            "collider_segment_b": center,
+            "collider_old_centers": center,
+            "collider_old_segment_a": center,
+            "collider_old_segment_b": center,
+            "collider_radii": collider_radii,
+        })
+        v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
+        domain_positions = domain.read_output().world_positions
+        assert v0_positions[2, 1] < -1.1
+        np.testing.assert_allclose(
+            domain_positions,
+            v0_positions,
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 if __name__ == "__main__":
     test_e3_prediction_matches_same_source_v0_and_domain()
     print("PASS E3 same-source V0/Domain prediction tolerance")
@@ -551,3 +671,5 @@ if __name__ == "__main__":
     print("PASS E3 native StepBasic pose matches V0 Angle reference")
     test_e3_native_motion_branch_matches_v0_after_tether()
     print("PASS E3 native Tether-to-Motion branch matches V0")
+    test_e3_native_mesh_point_collision_matches_v0()
+    print("PASS E3 native Mesh point collision matches V0")
