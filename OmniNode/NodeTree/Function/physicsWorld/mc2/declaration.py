@@ -20,10 +20,14 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_fused_domain_product_bone_v0_migration",
-    "native_strategy": "mesh_one_fused_domain_v1_bone_v0_until_e7",
-    "implementation_status": "mesh_e5_product_enabled_e7_cpu_pending",
-    "slot_kinds": [MC2_SLOT_KIND, "mc2_fused_mesh_cpu_v1"],
+    "stage": "mesh_e5_bone_e5b_unified_domain_product",
+    "native_strategy": "one_domain_v1_per_explicit_product_collector",
+    "implementation_status": "mesh_and_bone_product_enabled_nodes_pending",
+    "slot_kinds": [
+        MC2_SLOT_KIND,
+        "mc2_fused_cpu_product_v1",
+        "mc2_fused_mesh_cpu_v1",
+    ],
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2 MeshCloth粒子配置",

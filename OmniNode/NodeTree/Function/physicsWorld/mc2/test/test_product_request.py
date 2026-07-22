@@ -85,16 +85,34 @@ def test_one_request_contract_carries_all_three_setup_types():
         assert payload["setup_type"] == setup_type
 
 
-def test_bone_request_never_falls_back_to_v0_owner_before_e5b_wiring():
+def test_bone_request_dispatches_to_domain_product_without_v0_fallback():
     world = world_types.PhysicsWorldCache()
     world.generation = 1
-    for setup_type in (names.MC2_SETUP_BONE_CLOTH, names.MC2_SETUP_BONE_SPRING):
-        try:
-            solver.step_mc2_product(world, _request(setup_type))
-        except NotImplementedError as exc:
-            assert "E5-B" in str(exc)
-        else:
-            raise AssertionError("未接线 Bone 产品请求回落到了旧 owner")
+    calls = []
+    original = solver._step_mc2_bone_product
+
+    def _record(current_world, request, **kwargs):
+        calls.append((request.setup_type, kwargs))
+        return current_world, True, "domain product"
+
+    solver._step_mc2_bone_product = _record
+    try:
+        for setup_type in (
+            names.MC2_SETUP_BONE_CLOTH,
+            names.MC2_SETUP_BONE_SPRING,
+        ):
+            returned, ready, status = solver.step_mc2_product(
+                world,
+                _request(setup_type),
+            )
+            assert returned is world and ready is True
+            assert status == "domain product"
+    finally:
+        solver._step_mc2_bone_product = original
+    assert tuple(value[0] for value in calls) == (
+        names.MC2_SETUP_BONE_CLOTH,
+        names.MC2_SETUP_BONE_SPRING,
+    )
     assert world.solver_slots == {}
 
 

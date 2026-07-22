@@ -72,6 +72,12 @@ product_bone_frame = importlib.import_module(
 product_bone_collect = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_collect"
 )
+product_slot = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot"
+)
+world_types = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+)
 bone_fragment_cache = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.fragment_cache"
 )
@@ -518,6 +524,101 @@ def test_bone_product_collection_and_fragment_cache_are_transactional() -> None:
     assert failing_cache.inspect()["entry_count"] == 0
 
 
+class _ProductKernel:
+    def __init__(self):
+        self.created = []
+        self.disposed = []
+
+    def create_domain(self, program, packet):
+        handle = {"program": program, "packet": packet}
+        self.created.append(handle)
+        return handle
+
+    def update_frame(self, handle, frame):
+        raise AssertionError("not used")
+
+    def prepare_step_basic_pose(self, handle, ratios):
+        raise AssertionError("not used")
+
+    def step_compiled_domain_pipeline_full(self, handle, settings):
+        raise AssertionError("not used")
+
+    def step(self, handle, frame, settings, colliders):
+        raise AssertionError("not used")
+
+    def read_output(self, handle):
+        raise AssertionError("not used")
+
+    def inspect(self, handle):
+        return {"particle_count": handle["program"].particle_count}
+
+    def dispose(self, handle):
+        self.disposed.append(handle)
+
+
+def test_bone_product_slots_reuse_owner_and_allow_explicit_collectors() -> None:
+    armature = _armature()
+    options = parameters.make_mc2_setup_options(
+        "bone_cloth",
+        connection_mode=0,
+    )
+    request_a = product_authoring.make_mc2_bone_cloth_product_request(
+        [(armature, "A0")],
+        setup_options=options,
+    )
+    request_b = product_authoring.make_mc2_bone_cloth_product_request(
+        [(armature, "B0")],
+        setup_options=options,
+    )
+    collection_a = product_bone_collect.collect_mc2_bone_product_plan(
+        object(), request_a.plan,
+    )
+    collection_b = product_bone_collect.collect_mc2_bone_product_plan(
+        object(), request_b.plan,
+    )
+    slot_a_id = product_slot.make_mc2_product_slot_id(
+        request_a.setup_type,
+        request_a.domain_signature,
+    )
+    slot_b_id = product_slot.make_mc2_product_slot_id(
+        request_b.setup_type,
+        request_b.domain_signature,
+    )
+    assert slot_a_id != slot_b_id
+
+    world = world_types.PhysicsWorldCache()
+    world.generation = 4
+    kernel = _ProductKernel()
+    first = product_slot.sync_mc2_product_slot(
+        world,
+        collection_a,
+        slot_id=slot_a_id,
+        kernel=kernel,
+    )
+    owner_a = world.solver_slots[slot_a_id].data["owner"]
+    second = product_slot.sync_mc2_product_slot(
+        world,
+        collection_a,
+        slot_id=slot_a_id,
+        kernel=kernel,
+    )
+    assert first.action == "created" and second.action == "updated"
+    assert second.owner_report.native_domain_reused
+    assert second.owner_report.fragment_cache_hits == 1
+    assert world.solver_slots[slot_a_id].data["owner"] is owner_a
+
+    product_slot.sync_mc2_product_slot(
+        world,
+        collection_b,
+        slot_id=slot_b_id,
+        kernel=kernel,
+    )
+    assert set(world.solver_slots) == {slot_a_id, slot_b_id}
+    assert len(kernel.created) == 2
+    world.omni_cache_dispose("test_complete")
+    assert len(kernel.disposed) == 2
+
+
 TESTS = (
     (
         "multi-chain product topology and static",
@@ -539,6 +640,10 @@ TESTS = (
     (
         "Bone product collection and fragment cache are transactional",
         test_bone_product_collection_and_fragment_cache_are_transactional,
+    ),
+    (
+        "Bone product slots reuse owner and allow explicit collectors",
+        test_bone_product_slots_reuse_owner_and_allow_explicit_collectors,
     ),
 )
 

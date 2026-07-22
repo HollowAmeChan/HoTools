@@ -1,4 +1,4 @@
-"""Transactional scheduler and Anchor history for the fused Mesh product slot."""
+"""统一粒子域产品 slot 的事务调度器与 Anchor 历史。"""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _next_anchor_component_local_positions(
 
 
 @dataclass(frozen=True)
-class MC2MeshProductScheduledFrameV1:
+class MC2ProductScheduledFrameV1:
     frame_packet: MC2DomainFramePacketV1
     schedule: MC2FrameSchedule
     anchor_component_local_positions: np.ndarray
@@ -80,7 +80,7 @@ class MC2MeshProductScheduledFrameV1:
 
 
 @dataclass(frozen=True)
-class MC2MeshProductScheduledSubstepV1:
+class MC2ProductScheduledSubstepV1:
     plan: MC2SubstepPlan
     base_revision: int
     _owner_token: object
@@ -95,7 +95,7 @@ class MC2MeshProductScheduledSubstepV1:
             raise TypeError("staged scheduler must be MC2TimeSchedulerState")
 
 
-class MC2MeshProductSchedulerStateV1:
+class MC2ProductSchedulerStateV1:
     """Own committed time and per-partition Anchor local history."""
 
     __slots__ = (
@@ -136,7 +136,7 @@ class MC2MeshProductSchedulerStateV1:
         frame_delta_time: float,
         world_time_scale: float,
         initialize_only: bool = False,
-    ) -> MC2MeshProductScheduledFrameV1:
+    ) -> MC2ProductScheduledFrameV1:
         if not isinstance(frame_packet, MC2DomainFramePacketV1):
             raise TypeError("frame_packet must be MC2DomainFramePacketV1")
         if not isinstance(settings, MC2SolverSettingsSpec):
@@ -191,7 +191,7 @@ class MC2MeshProductSchedulerStateV1:
             skip_count=schedule.skip_count,
             is_running=running,
         )
-        return MC2MeshProductScheduledFrameV1(
+        return MC2ProductScheduledFrameV1(
             frame_packet=packet,
             schedule=schedule,
             anchor_component_local_positions=self._anchor_component_local_positions,
@@ -203,15 +203,15 @@ class MC2MeshProductSchedulerStateV1:
             _staged_scheduler=staged_scheduler,
         )
 
-    def validate_commit(self, staged: MC2MeshProductScheduledFrameV1) -> None:
-        if not isinstance(staged, MC2MeshProductScheduledFrameV1):
-            raise TypeError("staged must be MC2MeshProductScheduledFrameV1")
+    def validate_commit(self, staged: MC2ProductScheduledFrameV1) -> None:
+        if not isinstance(staged, MC2ProductScheduledFrameV1):
+            raise TypeError("staged must be MC2ProductScheduledFrameV1")
         if staged._owner_token is not self._owner_token:
             raise ValueError("scheduled frame belongs to another scheduler state")
         if staged.base_revision != self._revision:
             raise RuntimeError("scheduled frame is stale")
 
-    def commit(self, staged: MC2MeshProductScheduledFrameV1) -> None:
+    def commit(self, staged: MC2ProductScheduledFrameV1) -> None:
         self.validate_commit(staged)
         self._time_scheduler = staged._staged_scheduler
         self._anchor_component_local_positions = (
@@ -219,10 +219,10 @@ class MC2MeshProductSchedulerStateV1:
         )
         self._revision += 1
 
-    def stage_substep(self, update_index: int) -> MC2MeshProductScheduledSubstepV1:
+    def stage_substep(self, update_index: int) -> MC2ProductScheduledSubstepV1:
         staged_scheduler = self._time_scheduler.clone()
         plan = staged_scheduler.advance_substep(update_index)
-        return MC2MeshProductScheduledSubstepV1(
+        return MC2ProductScheduledSubstepV1(
             plan=plan,
             base_revision=self._revision,
             _owner_token=self._owner_token,
@@ -231,23 +231,23 @@ class MC2MeshProductSchedulerStateV1:
 
     def validate_substep_commit(
         self,
-        staged: MC2MeshProductScheduledSubstepV1,
+        staged: MC2ProductScheduledSubstepV1,
     ) -> None:
-        if not isinstance(staged, MC2MeshProductScheduledSubstepV1):
-            raise TypeError("staged must be MC2MeshProductScheduledSubstepV1")
+        if not isinstance(staged, MC2ProductScheduledSubstepV1):
+            raise TypeError("staged must be MC2ProductScheduledSubstepV1")
         if staged._owner_token is not self._owner_token:
             raise ValueError("scheduled substep belongs to another scheduler state")
         if staged.base_revision != self._revision:
             raise RuntimeError("scheduled substep is stale")
 
-    def commit_substep(self, staged: MC2MeshProductScheduledSubstepV1) -> None:
+    def commit_substep(self, staged: MC2ProductScheduledSubstepV1) -> None:
         self.validate_substep_commit(staged)
         self._time_scheduler = staged._staged_scheduler
         self._revision += 1
 
     def debug_dict(self) -> dict:
         return {
-            "schema": "mc2_mesh_product_scheduler_state_v1",
+            "schema": "mc2_product_scheduler_state_v1",
             "partition_ids": list(self.partition_ids),
             "revision": self._revision,
             "anchor_component_local_positions": (
@@ -257,7 +257,15 @@ class MC2MeshProductSchedulerStateV1:
         }
 
 
+MC2MeshProductScheduledFrameV1 = MC2ProductScheduledFrameV1
+MC2MeshProductScheduledSubstepV1 = MC2ProductScheduledSubstepV1
+MC2MeshProductSchedulerStateV1 = MC2ProductSchedulerStateV1
+
+
 __all__ = [
+    "MC2ProductScheduledFrameV1",
+    "MC2ProductScheduledSubstepV1",
+    "MC2ProductSchedulerStateV1",
     "MC2MeshProductScheduledFrameV1",
     "MC2MeshProductScheduledSubstepV1",
     "MC2MeshProductSchedulerStateV1",

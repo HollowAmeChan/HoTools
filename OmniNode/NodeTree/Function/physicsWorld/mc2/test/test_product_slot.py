@@ -398,6 +398,54 @@ def test_slot_commits_anchor_history_only_after_native_frame_publish():
     )
 
 
+def test_product_frame_feedback_stage_commits_only_after_native_publish():
+    world = _world()
+    kernel = _Kernel()
+    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    scheduled = _scheduled(slot, _domain_frame(slot.data["owner"].compiled.program))
+
+    class _Stage:
+        def __init__(self):
+            self.validations = 0
+            self.commits = 0
+
+        def validate(self, value):
+            assert value is world
+            self.validations += 1
+
+        def commit(self, value):
+            assert value is world
+            self.commits += 1
+
+    stage = _Stage()
+    kernel.fail_update = True
+    try:
+        slot_module.publish_mc2_product_frame(
+            world,
+            slot,
+            scheduled,
+            _empty_collider_frame(7),
+            frame_state_stage=stage,
+        )
+    except RuntimeError as exc:
+        assert "injected frame update failure" in str(exc)
+    else:
+        raise AssertionError("native frame failure committed feedback stage")
+    assert stage.validations == 1 and stage.commits == 0
+    assert slot.data["scheduler_state"].revision == 0
+
+    kernel.fail_update = False
+    slot_module.publish_mc2_product_frame(
+        world,
+        slot,
+        scheduled,
+        _empty_collider_frame(7),
+        frame_state_stage=stage,
+    )
+    assert stage.validations == 2 and stage.commits == 1
+
+
 def test_capture_path_publishes_world_and_solver_timing_atomically():
     world = _world()
     kernel = _Kernel()

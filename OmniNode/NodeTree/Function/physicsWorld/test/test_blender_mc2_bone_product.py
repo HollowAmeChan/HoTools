@@ -16,10 +16,24 @@ HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\script
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
+PYTHON_ABI = "py313" if sys.version_info >= (3, 13) else "py311"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+        or module_name == "hotools_native"
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+sys.path[:] = [
+    value
+    for value in sys.path
+    if os.path.normcase(os.path.abspath(value or os.curdir))
+    != os.path.normcase(os.path.abspath(NATIVE_PACKAGE))
+]
+sys.path.insert(0, NATIVE_PACKAGE)
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
@@ -46,8 +60,23 @@ topology_module = importlib.import_module(
 bone_frame_input = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
 )
+product_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+)
+product_solver = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_solver"
+)
+product_slot = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot"
+)
 world_types = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.types")
 writeback = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback")
+hotools_native = importlib.import_module("hotools_native")
+
+print(f"MC2 current source: {product_solver.__file__}")
+print(f"MC2 current native: {hotools_native.__file__}")
+assert os.path.commonpath((HOTOOLS, os.path.abspath(product_solver.__file__))) == HOTOOLS
+assert os.path.commonpath((NATIVE_PACKAGE, os.path.abspath(hotools_native.__file__))) == NATIVE_PACKAGE
 
 
 def _product_armature(
@@ -184,6 +213,8 @@ rig_e.rotation_mode = "XYZ"
 rig_e.rotation_euler = (0.45, -0.3, 0.65)
 bpy.context.view_layer.update()
 world = None
+product_world = None
+spring_product_world = None
 try:
     tasks, task_names = nodes.physicsMC2BoneClothTask(
         [
@@ -727,9 +758,165 @@ try:
         channel: tuple(id(item) for item in items)
         for channel, items in world.result_streams.items()
     } == stable_result_ids
+
+    product_request = product_authoring.make_mc2_bone_cloth_product_request(
+        [
+            {"armature": rig_c, "bone": "Parent0"},
+            {"armature": rig_c, "bone": "Parent1"},
+        ],
+        profile=parameters.make_mc2_particle_profile(
+            gravity_direction=(1.0, 0.0, 0.0),
+            wind_influence=0.0,
+        ),
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_cloth",
+            connection_mode=1,
+        ),
+    )
+    assert len(product_request.plan.active_partitions) == 2
+    product_world = world_types.PhysicsWorldCache()
+    product_world.generation = 1
+    product_world.frame_context.frame = 1
+    product_world.frame_context.generation = 1
+    product_world.frame_context.dt = 1.0 / 60.0
+    product_world.frame_context.raw_dt = 1.0 / 60.0
+    product_world.frame_context.time_scale = 1.0
+    product_world.collider_snapshot = {"frame": 1, "colliders": []}
+    returned, ready, _status = product_solver.step_mc2_product(
+        product_world,
+        product_request,
+    )
+    assert returned is product_world and ready is True
+    product_slot_id = product_slot.make_mc2_product_slot_id(
+        product_request.setup_type,
+        product_request.domain_signature,
+    )
+    unified_slot = product_world.solver_slots[product_slot_id]
+    unified_owner = unified_slot.data["owner"]
+    assert unified_owner.compiled.program.partition_count == 2
+    assert unified_owner.compiled.program.particle_count == 12
+    assert unified_owner.inspect()["fragment_cache"]["schema"] == (
+        "mc2_bone_fragment_cache_v1"
+    )
+    assert "spec" not in unified_slot.data
+    assert "native_context" not in unified_slot.data
+    assert "bone_static" not in unified_slot.data
+    unified_result = product_world.result_streams["bone_transform"][0]
+    assert unified_result["setup_type"] == "bone_cloth"
+    assert unified_result["bone_count"] == 12
+    assert unified_result["component_count"] == 2
+    assert unified_result["rotation_only_connected_count"] == 8
+    assert unified_result["position_rotation_count"] == 4
+    assert unified_result["domain_signature"] == (
+        unified_owner.compiled.program.domain_signature
+    )
+    unified_plan = unified_slot.data["writeback_plan"]
+    assert unified_plan["component_count"] == 2
+    assert len(unified_plan["batches"]) == 2
+    assert all(
+        matrix_basis.translation.length <= 1.0e-8
+        for batch in unified_plan["batches"]
+        for record, matrix_basis in zip(batch["records"], batch["matrix_bases"])
+        if record["motion_mode"] == "rotation_only_connected"
+    )
+    assert len(
+        product_world.backend_resources[
+            bone_frame_input.MC2_BONE_FRAME_STATE_KEY
+        ]["bones"]
+    ) == 12
+    assert writeback.writeback_bone_transforms(product_world) == 12
+
+    product_world.frame_context.frame = 2
+    product_world.frame_context.restart_required = False
+    product_world.frame_context.reset_requested = False
+    product_world.frame_context.dt = 1.0 / 30.0
+    product_world.frame_context.raw_dt = 1.0 / 30.0
+    product_world.collider_snapshot["frame"] = 2
+    returned, ready, _status = product_solver.step_mc2_product(
+        product_world,
+        product_request,
+    )
+    assert returned is product_world and ready is True
+    assert product_world.solver_slots[product_slot_id] is unified_slot
+    assert unified_slot.data["owner"] is unified_owner
+    assert unified_slot.data["last_sync"].native_domain_reused
+    assert unified_slot.data["last_sync"].fragment_cache_hits == 2
+    assert unified_slot.data["scheduled_frame"].schedule.update_count > 0
+    assert unified_slot.data["completed_substeps"] == (
+        unified_slot.data["scheduled_frame"].schedule.update_count
+    )
+    assert len(product_world.result_streams["bone_transform"]) == 1
+    assert writeback.writeback_bone_transforms(product_world) == 12
+
+    spring_product_request = product_authoring.make_mc2_bone_spring_product_request(
+        [{
+            "armature": rig_a,
+            "root_bone": "Chain0_0",
+            "bones": tuple(f"Chain0_{depth}" for depth in range(3)),
+        }],
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_spring",
+            connection_mode=0,
+            collided_by_groups=1,
+        ),
+    )
+    spring_product_world = world_types.PhysicsWorldCache()
+    spring_product_world.generation = 1
+    spring_product_world.frame_context.frame = 3
+    spring_product_world.frame_context.generation = 1
+    spring_product_world.frame_context.dt = 1.0 / 60.0
+    spring_product_world.frame_context.raw_dt = 1.0 / 60.0
+    spring_product_world.frame_context.time_scale = 1.0
+    spring_product_world.collider_snapshot = {
+        "frame": 3,
+        "colliders": [
+            {
+                "key": "product-sphere",
+                "type": "SPHERE",
+                "primary_group": 1,
+                "center": (100.0, 0.0, 0.0),
+                "radius": 1.0,
+            },
+            {
+                "key": "product-plane",
+                "type": "PLANE",
+                "primary_group": 1,
+                "center": (0.0, 0.0, -100.0),
+                "normal": (0.0, 0.0, 1.0),
+            },
+        ],
+    }
+    returned, ready, _status = product_solver.step_mc2_product(
+        spring_product_world,
+        spring_product_request,
+    )
+    assert returned is spring_product_world and ready is True
+    spring_product_slot_id = product_slot.make_mc2_product_slot_id(
+        spring_product_request.setup_type,
+        spring_product_request.domain_signature,
+    )
+    spring_unified_slot = spring_product_world.solver_slots[
+        spring_product_slot_id
+    ]
+    assert spring_unified_slot.data["collider_frame"].collider_count == 1
+    spring_product_result = spring_product_world.result_streams[
+        "bone_transform"
+    ][0]
+    assert spring_product_result["setup_type"] == "bone_spring"
+    assert spring_product_result["bone_count"] == 3
+    assert spring_unified_slot.data["writeback_plan"]["batches"][0][
+        "source_kind"
+    ] == "bone_spring"
+    assert writeback.writeback_bone_transforms(spring_product_world) == 3
 finally:
     if world is not None:
         world.omni_cache_dispose("bone_product_test_cleanup")
+    if product_world is not None:
+        product_world.omni_cache_dispose("bone_domain_product_test_cleanup")
+    if spring_product_world is not None:
+        spring_product_world.omni_cache_dispose(
+            "bone_spring_domain_product_test_cleanup"
+        )
     _dispose_armature(rig_a)
     _dispose_armature(rig_b)
     _dispose_armature(rig_c)

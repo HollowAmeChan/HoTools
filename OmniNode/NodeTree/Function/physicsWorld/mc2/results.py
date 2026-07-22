@@ -399,53 +399,74 @@ def _bone_target(spec):
     return armature, armature_ptr, armature_data_ptr
 
 
-def make_mc2_bone_result(
+def _make_mc2_bone_result_values(
     *,
-    spec,
-    slot,
-    candidate: MC2ResultCandidateV1,
+    setup_type: str,
+    task_id: str,
+    slot_id: str,
+    armature,
+    armature_ptr: int,
+    armature_data_ptr: int,
+    identities,
+    world_positions,
+    world_rotations_xyzw,
+    component_world_rotation_xyzw,
     frame: int,
     world_generation: int,
+    topology_signature: str,
+    revision: int,
+    result_metadata=None,
 ) -> tuple[dict, dict]:
-    """Build a public Bone Line envelope and its staged live writeback plan."""
-    if not isinstance(candidate, MC2ResultCandidateV1):
-        raise TypeError("candidate must be MC2ResultCandidateV1")
-    if candidate.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
-        raise ValueError("MC2 public Bone result requires a Bone candidate")
-    if candidate.task_id != getattr(spec, "task_id", None):
-        raise ValueError("MC2 public result task identity mismatch")
-    if candidate.slot_id != getattr(slot, "slot_id", None):
-        raise ValueError("MC2 public result slot identity mismatch")
-    if candidate.frame != int(frame):
-        raise ValueError("MC2 public result frame identity mismatch")
-    if candidate.world_generation != int(world_generation) or int(world_generation) <= 0:
-        raise ValueError("MC2 public result world generation mismatch")
+    """把已校验的 Bone 世界姿态转换为现有单向 writeback 合同。"""
 
-    bone_static = slot.data.get("bone_static")
-    identities = tuple(
-        getattr(getattr(bone_static, "final_proxy", None), "vertex_identities", ()) or ()
-    )
-    if len(identities) != candidate.particle_count:
-        raise ValueError("MC2 Bone result identity count mismatch")
-    armature, armature_ptr, armature_data_ptr = _bone_target(spec)
+    if setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+        raise ValueError("MC2 Bone result setup type is invalid")
+    stable_task_id = str(task_id or "").strip()
+    stable_slot_id = str(slot_id or "").strip()
+    if not stable_task_id or not stable_slot_id:
+        raise ValueError("MC2 Bone result identity cannot be empty")
+    positions = np.asarray(world_positions, dtype=np.float32)
+    rotations = np.asarray(world_rotations_xyzw, dtype=np.float32)
+    identities = tuple(str(value or "") for value in identities)
+    if (
+        positions.ndim != 2
+        or positions.shape[1:] != (3,)
+        or rotations.shape != (len(positions), 4)
+        or len(identities) != len(positions)
+        or any(not value for value in identities)
+    ):
+        raise ValueError("MC2 Bone result pose rows do not match stable identities")
+    if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
+        raise ValueError("MC2 Bone result pose contains NaN/Inf")
+    if len(rotations) and not np.allclose(
+        np.linalg.norm(rotations, axis=1),
+        1.0,
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    ):
+        raise ValueError("MC2 Bone result rotations must be unit quaternions")
+    if int(frame) < 0 or int(world_generation) <= 0 or int(revision) <= 0:
+        raise ValueError("MC2 Bone result frame/revision identity is invalid")
+    if getattr(armature, "type", None) != "ARMATURE":
+        raise ValueError("MC2 Bone result target is not an Armature")
     pose_bones = armature.pose.bones
     pose_indices = {pose_bone.name: index for index, pose_bone in enumerate(pose_bones)}
 
     import mathutils
 
     inverse_armature = armature.matrix_world.inverted()
-    component_xyzw = candidate.bone_component_world_rotation_xyzw
-    if component_xyzw is None:
-        raise ValueError("MC2 Bone result is missing its component rotation snapshot")
-    cx, cy, cz, cw = component_xyzw
+    component = np.asarray(component_world_rotation_xyzw, dtype=np.float64)
+    if (
+        component.shape != (4,)
+        or not np.isfinite(component).all()
+        or not np.isclose(np.linalg.norm(component), 1.0, rtol=1.0e-5, atol=1.0e-6)
+    ):
+        raise ValueError("MC2 Bone result requires a unit component rotation")
+    cx, cy, cz, cw = (float(value) for value in component)
     inverse_component_rotation = mathutils.Quaternion((cw, cx, cy, cz)).inverted()
     target_pose_matrices = {}
     records = []
-    for name, position, rotation_xyzw in zip(
-        identities,
-        candidate.world_positions,
-        candidate.world_rotations_xyzw,
-    ):
+    for name, position, rotation_xyzw in zip(identities, positions, rotations):
         pose_bone = pose_bones.get(name)
         pose_index = pose_indices.get(name, -1)
         if pose_bone is None or pose_index < 0:
@@ -481,7 +502,7 @@ def make_mc2_bone_result(
         "rotation_only_connected_count": connected_count,
         "position_rotation_count": free_count,
         "batches": ({
-            "source_kind": candidate.setup_type,
+            "source_kind": setup_type,
             "source_root": identities[0] if identities else "",
             "records": tuple(records),
             "matrix_bases": matrix_bases,
@@ -493,11 +514,11 @@ def make_mc2_bone_result(
     }
     result = make_bone_transform_batch_writeback(
         solver=MC2_SOLVER_ID,
-        slot_id=candidate.slot_id,
-        armature_ptr=armature_ptr,
-        armature_data_ptr=armature_data_ptr,
-        frame=candidate.frame,
-        generation=candidate.world_generation,
+        slot_id=stable_slot_id,
+        armature_ptr=int(armature_ptr),
+        armature_data_ptr=int(armature_data_ptr),
+        frame=int(frame),
+        generation=int(world_generation),
         bone_count=len(records),
         backend="mc2",
         plan_schema=plan["schema"],
@@ -505,20 +526,188 @@ def make_mc2_bone_result(
     result.update({
         "mc2_result_schema": MC2_PUBLIC_RESULT_SCHEMA_VERSION,
         "ready": True,
-        "setup_type": candidate.setup_type,
-        "task_id": candidate.task_id,
-        "frame_generation": candidate.generation,
-        "world_generation": candidate.world_generation,
-        "topology_signature": candidate.topology_signature,
-        "revision": candidate.revision,
-        "native_reset_count": candidate.native_reset_count,
-        "native_step_count": candidate.native_step_count,
-        "native_dynamic_revision": candidate.native_dynamic_revision,
-        "target_key": f"{armature_ptr}:{armature_data_ptr}",
+        "setup_type": setup_type,
+        "task_id": stable_task_id,
+        "frame_generation": int(world_generation),
+        "world_generation": int(world_generation),
+        "topology_signature": str(topology_signature or ""),
+        "revision": int(revision),
+        "target_key": f"{int(armature_ptr)}:{int(armature_data_ptr)}",
         "rotation_only_connected_count": connected_count,
         "position_rotation_count": free_count,
     })
+    result.update(dict(result_metadata or {}))
     return result, plan
+
+
+def make_mc2_bone_result(
+    *,
+    spec,
+    slot,
+    candidate: MC2ResultCandidateV1,
+    frame: int,
+    world_generation: int,
+) -> tuple[dict, dict]:
+    """Build a public Bone Line envelope and its staged live writeback plan."""
+    if not isinstance(candidate, MC2ResultCandidateV1):
+        raise TypeError("candidate must be MC2ResultCandidateV1")
+    if candidate.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
+        raise ValueError("MC2 public Bone result requires a Bone candidate")
+    if candidate.task_id != getattr(spec, "task_id", None):
+        raise ValueError("MC2 public result task identity mismatch")
+    if candidate.slot_id != getattr(slot, "slot_id", None):
+        raise ValueError("MC2 public result slot identity mismatch")
+    if candidate.frame != int(frame):
+        raise ValueError("MC2 public result frame identity mismatch")
+    if candidate.world_generation != int(world_generation) or int(world_generation) <= 0:
+        raise ValueError("MC2 public result world generation mismatch")
+
+    bone_static = slot.data.get("bone_static")
+    identities = tuple(
+        getattr(getattr(bone_static, "final_proxy", None), "vertex_identities", ()) or ()
+    )
+    if len(identities) != candidate.particle_count:
+        raise ValueError("MC2 Bone result identity count mismatch")
+    component_xyzw = candidate.bone_component_world_rotation_xyzw
+    if component_xyzw is None:
+        raise ValueError("MC2 Bone result is missing its component rotation snapshot")
+    armature, armature_ptr, armature_data_ptr = _bone_target(spec)
+    return _make_mc2_bone_result_values(
+        setup_type=candidate.setup_type,
+        task_id=candidate.task_id,
+        slot_id=candidate.slot_id,
+        armature=armature,
+        armature_ptr=armature_ptr,
+        armature_data_ptr=armature_data_ptr,
+        identities=identities,
+        world_positions=candidate.world_positions,
+        world_rotations_xyzw=candidate.world_rotations_xyzw,
+        component_world_rotation_xyzw=component_xyzw,
+        frame=candidate.frame,
+        world_generation=candidate.world_generation,
+        topology_signature=candidate.topology_signature,
+        revision=candidate.revision,
+        result_metadata={
+            "frame_generation": candidate.generation,
+            "native_reset_count": candidate.native_reset_count,
+            "native_step_count": candidate.native_step_count,
+            "native_dynamic_revision": candidate.native_dynamic_revision,
+        },
+    )
+
+
+def make_mc2_bone_domain_results(
+    *,
+    collection,
+    compiled,
+    frame_packet,
+    output,
+    slot_id: str,
+    world_generation: int,
+    revision: int,
+) -> tuple[tuple[dict, ...], dict[str, dict]]:
+    """直接消费 DomainV1 logical output，构造同 Armature 的 Bone 结果事务。"""
+
+    from .domain_compile import MC2CompiledDomainV1
+    from .domain_ir import MC2DomainFrameOutputV1, MC2DomainFramePacketV1
+    from .product_bone_collect import MC2BoneProductCollectionV1
+    from .setups.bone_cloth.static_fragment import MC2BoneStaticFragmentV1
+
+    if not isinstance(collection, MC2BoneProductCollectionV1):
+        raise TypeError("collection must be MC2BoneProductCollectionV1")
+    if not isinstance(compiled, MC2CompiledDomainV1):
+        raise TypeError("compiled must be MC2CompiledDomainV1")
+    if not isinstance(frame_packet, MC2DomainFramePacketV1):
+        raise TypeError("frame_packet must be MC2DomainFramePacketV1")
+    if not isinstance(output, MC2DomainFrameOutputV1):
+        raise TypeError("output must be MC2DomainFrameOutputV1")
+    program = compiled.program
+    if (
+        program.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
+        or collection.draft.partition_ids != program.partition_ids
+        or len(compiled.fragments) != program.partition_count
+    ):
+        raise ValueError("Bone domain result collection/program identity mismatch")
+    if (
+        output.index_order != "logical"
+        or output.domain_signature != program.domain_signature
+        or output.layout_signature != program.layout_signature
+        or frame_packet.domain_signature != program.domain_signature
+        or frame_packet.layout_signature != program.layout_signature
+    ):
+        raise ValueError("Bone domain output identity does not match compiled program")
+    if (
+        output.frame != frame_packet.frame
+        or output.generation != frame_packet.generation
+        or int(world_generation) != output.generation
+        or int(world_generation) <= 0
+    ):
+        raise ValueError("Bone domain output frame/generation is stale")
+    if (
+        len(output.world_positions) != program.particle_count
+        or output.world_rotations_xyzw.shape != (program.particle_count, 4)
+    ):
+        raise ValueError("Bone domain output must contain complete positions/rotations")
+
+    entries = []
+    for partition_index, (static_input, fragment) in enumerate(zip(
+        collection.static_inputs,
+        compiled.fragments,
+    )):
+        if not isinstance(fragment, MC2BoneStaticFragmentV1):
+            raise TypeError("Bone compiled domain contains a non-Bone fragment")
+        target_indices = tuple(
+            index
+            for index, target in enumerate(program.output_targets)
+            if int(target.partition_index) == partition_index
+        )
+        if len(target_indices) != 1:
+            raise ValueError("Bone partition must map to exactly one output target")
+        target_index = target_indices[0]
+        logical_indices = np.flatnonzero(
+            program.output_target_index == target_index
+        ).astype(np.uint32, copy=False)
+        source_elements = program.output_source_element[logical_indices]
+        order = np.argsort(source_elements, kind="stable")
+        logical_indices = logical_indices[order]
+        source_elements = source_elements[order]
+        identities = tuple(fragment.final_proxy.vertex_identities)
+        if (
+            len(logical_indices) != len(identities)
+            or not np.array_equal(
+                source_elements,
+                np.arange(len(identities), dtype=np.uint32),
+            )
+        ):
+            raise ValueError("Bone compiled output map does not cover stable identities")
+        entries.append(_make_mc2_bone_result_values(
+            setup_type=program.setup_type,
+            task_id=static_input.partition.stable_id,
+            slot_id=slot_id,
+            armature=collection.armature,
+            armature_ptr=collection.armature_pointer,
+            armature_data_ptr=collection.armature_data_pointer,
+            identities=identities,
+            world_positions=output.world_positions[logical_indices],
+            world_rotations_xyzw=output.world_rotations_xyzw[logical_indices],
+            component_world_rotation_xyzw=(
+                frame_packet.partition_world_rotation[partition_index]
+            ),
+            frame=output.frame,
+            world_generation=world_generation,
+            topology_signature=static_input.topology.topology_signature,
+            revision=revision,
+            result_metadata={
+                "frame_generation": frame_packet.generation,
+                "domain_signature": program.domain_signature,
+                "layout_signature": program.layout_signature,
+                "partition_index": partition_index,
+                "target_id": program.output_targets[target_index].target_id,
+                "backend_revision": output.backend_revision,
+                "backend_kind": output.backend_kind,
+            },
+        ))
+    return merge_mc2_bone_results(entries)
 
 
 def merge_mc2_bone_results(entries) -> tuple[tuple[dict, ...], dict[str, dict]]:
@@ -852,6 +1041,7 @@ __all__ = [
     "iter_mc2_results",
     "iter_mc2_stats_results",
     "mc2_bone_motion_mode",
+    "make_mc2_bone_domain_results",
     "make_mc2_bone_result",
     "make_mc2_mesh_result",
     "make_mc2_mesh_domain_results",

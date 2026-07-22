@@ -30,6 +30,65 @@ class _MC2BoneFrameIntentV1:
     anchor_owner: object
 
 
+@dataclass(frozen=True)
+class MC2BoneFrameStateStageV1:
+    generation: int
+    base_present: bool
+    base_state: object
+    staged_state: dict
+
+    def validate(self, world) -> None:
+        if int(getattr(world, "generation", 0) or 0) != self.generation:
+            raise RuntimeError("Bone frame state stage belongs to another generation")
+        resources = world.backend_resources
+        if self.base_present:
+            if resources.get(MC2_BONE_FRAME_STATE_KEY) is not self.base_state:
+                raise RuntimeError("Bone frame state changed while capture was staged")
+        elif MC2_BONE_FRAME_STATE_KEY in resources:
+            raise RuntimeError("Bone frame state appeared while capture was staged")
+
+    def commit(self, world) -> None:
+        self.validate(world)
+        world.backend_resources[MC2_BONE_FRAME_STATE_KEY] = self.staged_state
+
+
+def _copy_state_value(value):
+    copier = getattr(value, "copy", None)
+    if callable(copier):
+        try:
+            return copier()
+        except (ReferenceError, RuntimeError, TypeError):
+            pass
+    return value
+
+
+def _clone_mc2_bone_frame_state(state, generation: int) -> dict:
+    if not isinstance(state, dict) or state.get("generation") != generation:
+        return {"generation": generation, "bones": {}}
+    bones = {}
+    for key, entry in dict(state.get("bones") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        cloned = dict(entry)
+        for name in ("source_basis", "expected_writeback_basis"):
+            cloned[name] = _copy_state_value(entry.get(name))
+        bones[key] = cloned
+    return {"generation": generation, "bones": bones}
+
+
+def _stage_mc2_bone_frame_state(world) -> MC2BoneFrameStateStageV1:
+    resources = world.backend_resources
+    generation = int(getattr(world, "generation", 0) or 0)
+    base_present = MC2_BONE_FRAME_STATE_KEY in resources
+    base_state = resources.get(MC2_BONE_FRAME_STATE_KEY)
+    return MC2BoneFrameStateStageV1(
+        generation=generation,
+        base_present=base_present,
+        base_state=base_state,
+        staged_state=_clone_mc2_bone_frame_state(base_state, generation),
+    )
+
+
 def _task_frame_intent(task: MC2TaskSpec) -> _MC2BoneFrameIntentV1:
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
@@ -148,6 +207,28 @@ def stage_mc2_bone_writeback_expectations(world, plans) -> None:
                 "expected_writeback_basis": None,
             })
             entry["expected_writeback_basis"] = canonical_basis.copy()
+
+
+def prepare_mc2_bone_writeback_expectations(
+    world,
+    plans,
+) -> MC2BoneFrameStateStageV1:
+    """在隔离副本上准备下一帧反馈指纹，由结果事务决定是否提交。"""
+
+    stage = _stage_mc2_bone_frame_state(world)
+    stage.validate(world)
+    resources = world.backend_resources
+    resources[MC2_BONE_FRAME_STATE_KEY] = stage.staged_state
+    try:
+        stage_mc2_bone_writeback_expectations(world, plans)
+    finally:
+        if resources.get(MC2_BONE_FRAME_STATE_KEY) is not stage.staged_state:
+            raise RuntimeError("Bone frame state changed while writeback was staged")
+        if stage.base_present:
+            resources[MC2_BONE_FRAME_STATE_KEY] = stage.base_state
+        else:
+            resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
+    return stage
 
 
 def _armature_from_source(source):
@@ -382,10 +463,52 @@ def _build_mc2_bone_frame_input(
     )
 
 
+def capture_mc2_bone_product_frame_inputs(
+    world,
+    static_inputs,
+    *,
+    frame: int,
+    generation: int,
+) -> tuple[tuple[MC2FrameInputSpec, ...], MC2BoneFrameStateStageV1]:
+    """在隔离反馈副本上采集所有 Bone partition，等待 frame publish 后提交。"""
+
+    rows = tuple(static_inputs)
+    if not rows:
+        raise ValueError("Bone product frame capture requires static inputs")
+    stage = _stage_mc2_bone_frame_state(world)
+    if int(generation) != stage.generation:
+        raise ValueError("Bone product frame generation does not match Physics World")
+    stage.validate(world)
+    resources = world.backend_resources
+    resources[MC2_BONE_FRAME_STATE_KEY] = stage.staged_state
+    try:
+        inputs = tuple(
+            build_mc2_bone_partition_frame_input(
+                row.partition,
+                row.topology,
+                frame=int(frame),
+                generation=int(generation),
+                world=world,
+            )
+            for row in rows
+        )
+    finally:
+        if resources.get(MC2_BONE_FRAME_STATE_KEY) is not stage.staged_state:
+            raise RuntimeError("Bone frame state changed during isolated capture")
+        if stage.base_present:
+            resources[MC2_BONE_FRAME_STATE_KEY] = stage.base_state
+        else:
+            resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
+    return inputs, stage
+
+
 __all__ = [
     "MC2_BONE_FRAME_STATE_KEY",
+    "MC2BoneFrameStateStageV1",
     "build_mc2_bone_frame_input",
     "build_mc2_bone_partition_frame_input",
+    "capture_mc2_bone_product_frame_inputs",
     "clear_mc2_bone_frame_state",
+    "prepare_mc2_bone_writeback_expectations",
     "stage_mc2_bone_writeback_expectations",
 ]
