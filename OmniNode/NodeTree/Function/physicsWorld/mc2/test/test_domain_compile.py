@@ -66,11 +66,12 @@ def _fragment(index=0):
     return fragment_module.build_mc2_mesh_static_fragment(snapshot)
 
 
-def _effective(*, gravity=5.0, damping=0.05, cloth_mass=0.0):
+def _effective(*, gravity=5.0, damping=0.05, cloth_mass=0.0, animation_pose_ratio=0.0):
     profile = parameters.make_mc2_particle_profile(
         self_collision_mode=2,
         gravity=gravity,
         damping=damping,
+        animation_pose_ratio=animation_pose_ratio,
     )
     options = parameters.make_mc2_setup_options("mesh_cloth")
     task = parameters.make_mc2_task_parameters(cloth_mass=cloth_mass)
@@ -197,6 +198,17 @@ def test_multi_compiler_preserves_partition_parameter_differences_and_filters() 
     assert uint[:, -2:].tolist() == [[1, 1], [2, 2]]
     assert not (int(uint[0, -1]) & int(uint[1, -2]))
     assert not (int(uint[1, -1]) & int(uint[0, -2]))
+
+
+def test_compiler_carries_animation_pose_ratio_outside_the_v0_native_abi() -> None:
+    compiled = compiler.compile_mc2_mesh_static_fragments(
+        _fragments(),
+        (_effective(animation_pose_ratio=0.25), _effective(animation_pose_ratio=0.75)),
+    )
+    table = compiled.parameters.partition_parameters
+    ratio_index = table.fields.index("animation_pose_ratio")
+    assert table.values[:, ratio_index].tolist() == [0.25, 0.75]
+    assert len(compiled.fragments) == 2
 
 
 def test_multi_compile_cache_report_distinguishes_reuse_parameter_update_and_reorder() -> None:

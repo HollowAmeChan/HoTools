@@ -146,8 +146,10 @@ def _bending_marker_flag(sign: int) -> int:
 def _runtime_maps(effective: MC2RuntimeParametersV0) -> tuple[dict, dict, dict]:
     if not isinstance(effective, MC2RuntimeParametersV0):
         raise TypeError("effective must be MC2RuntimeParametersV0")
+    floats = dict(zip(MC2_RUNTIME_FLOAT_FIELDS, effective.float_values))
+    floats["animation_pose_ratio"] = float(effective.animation_pose_ratio)
     return (
-        dict(zip(MC2_RUNTIME_FLOAT_FIELDS, effective.float_values)),
+        floats,
         dict(zip(MC2_RUNTIME_INT_FIELDS, effective.int_values)),
         dict(zip(MC2_RUNTIME_CURVE_FIELDS, effective.curve_values)),
     )
@@ -359,7 +361,7 @@ def _parameter_packet_for_fragments(
     collision_masks: tuple[int, ...],
 ) -> MC2DomainParameterPacketV1:
     runtime_maps = tuple(_runtime_maps(effective) for effective in effectives)
-    partition_fields = MC2_RUNTIME_FLOAT_FIELDS
+    partition_fields = MC2_RUNTIME_FLOAT_FIELDS + ("animation_pose_ratio",)
     partition_values = [
         [floats[name] for name in partition_fields]
         for floats, _ints, _curves in runtime_maps

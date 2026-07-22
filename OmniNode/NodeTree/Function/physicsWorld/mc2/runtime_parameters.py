@@ -128,6 +128,7 @@ class MC2RuntimeParametersV0:
     int_values: tuple[int, ...]
     curve_values: tuple[tuple[float, ...], ...]
     parameter_signature: str
+    animation_pose_ratio: float = 0.0
 
     def __post_init__(self) -> None:
         if len(self.float_values) != len(MC2_RUNTIME_FLOAT_FIELDS):
@@ -138,6 +139,8 @@ class MC2RuntimeParametersV0:
             raise ValueError("invalid MC2 runtime curve field count")
         if any(len(values) != MC2_CURVE_SAMPLE_COUNT for values in self.curve_values):
             raise ValueError("every MC2 runtime curve must contain 16 values")
+        if not 0.0 <= float(self.animation_pose_ratio) <= 1.0:
+            raise ValueError("animation_pose_ratio must be in 0..1")
 
     def debug_dict(self) -> dict:
         return {
@@ -149,10 +152,13 @@ class MC2RuntimeParametersV0:
                 name: list(values)
                 for name, values in zip(MC2_RUNTIME_CURVE_FIELDS, self.curve_values)
             },
+            "domain_values": {
+                "animation_pose_ratio": float(self.animation_pose_ratio),
+            },
         }
 
 
-def _signature(setup_type: str, floats, ints, curves) -> str:
+def _signature(setup_type: str, floats, ints, curves, animation_pose_ratio: float) -> str:
     payload = {
         "abi": MC2_RUNTIME_PARAMETERS_ABI,
         "setup_type": setup_type,
@@ -162,6 +168,9 @@ def _signature(setup_type: str, floats, ints, curves) -> str:
         "int_values": ints,
         "curve_fields": MC2_RUNTIME_CURVE_FIELDS,
         "curve_values": curves,
+        "domain_values": {
+            "animation_pose_ratio": float(animation_pose_ratio),
+        },
     }
     encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
@@ -277,12 +286,16 @@ def make_mc2_runtime_parameters(
         sample_mc2_curve16(curve_specs[name][0], scale=curve_specs[name][1], curve_sampler=curve_sampler)
         for name in MC2_RUNTIME_CURVE_FIELDS
     )
+    animation_pose_ratio = _float32(profile.animation_pose_ratio)
     return MC2RuntimeParametersV0(
         setup_type=setup_type,
         float_values=floats,
         int_values=ints,
         curve_values=curves,
-        parameter_signature=_signature(setup_type, floats, ints, curves),
+        parameter_signature=_signature(
+            setup_type, floats, ints, curves, animation_pose_ratio
+        ),
+        animation_pose_ratio=animation_pose_ratio,
     )
 
 

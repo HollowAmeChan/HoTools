@@ -51,15 +51,27 @@ def _fixture(case_id):
     return fixture
 
 
-def _assert_matches_oracle(spec, case_id):
+def _assert_matches_oracle(
+    spec,
+    case_id,
+    *,
+    product_float_overrides=None,
+    product_int_overrides=None,
+):
     expected = _fixture(case_id)["expected"]
     assert expected["abi_version"] == runtime.MC2_RUNTIME_PARAMETERS_ABI
     assert tuple(expected["float_fields"]) == runtime.MC2_RUNTIME_FLOAT_FIELDS
     assert tuple(expected["int_fields"]) == runtime.MC2_RUNTIME_INT_FIELDS
     assert tuple(expected["curve_fields"]) == runtime.MC2_RUNTIME_CURVE_FIELDS
     packed = runtime.pack_mc2_runtime_parameters(spec)
-    np.testing.assert_array_equal(packed["float_values"], np.asarray(expected["float_values"], dtype=np.float32))
-    np.testing.assert_array_equal(packed["int_values"], np.asarray(expected["int_values"], dtype=np.int32))
+    expected_floats = np.asarray(expected["float_values"], dtype=np.float32).copy()
+    for name, value in (product_float_overrides or {}).items():
+        expected_floats[runtime.MC2_RUNTIME_FLOAT_FIELDS.index(name)] = np.float32(value)
+    np.testing.assert_array_equal(packed["float_values"], expected_floats)
+    expected_ints = np.asarray(expected["int_values"], dtype=np.int32).copy()
+    for name, value in (product_int_overrides or {}).items():
+        expected_ints[runtime.MC2_RUNTIME_INT_FIELDS.index(name)] = np.int32(value)
+    np.testing.assert_array_equal(packed["int_values"], expected_ints)
     expected_curves = np.asarray(expected["curve_values"], dtype=np.float32).reshape(expected["curve_shape"])
     np.testing.assert_array_equal(packed["curve_values"], expected_curves)
 
@@ -115,7 +127,15 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
     assert ints["use_max_distance"] == ints["use_backstop"] == 0
     assert curves["distance_stiffness"] == (0.5,) * 16
     assert curves["collision_limit_distance"] == (0.125,) * 16
-    _assert_matches_oracle(spec, "runtime_parameters_bone_spring_001")
+    # MC2 serializes the authoring bending value for BoneSpring even though its
+    # Line topology cannot consume it.  The product effective block normalizes
+    # that dead value to zero and keeps the source fixture unchanged.
+    _assert_matches_oracle(
+        spec,
+        "runtime_parameters_bone_spring_001",
+        product_float_overrides={"bending_stiffness": 0.0},
+        product_int_overrides={"bending_method": 0},
+    )
 
 
 def test_mesh_runtime_full_block_matches_unity_oracle() -> None:
@@ -176,6 +196,22 @@ def test_bending_method_uses_mc2_epsilon_and_scheduler_is_not_in_abi() -> None:
     spring = runtime.make_mc2_runtime_parameters(enabled_profile, spring_options)
     assert _field(spring.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "bending_method") == 0
     assert _field(spring.float_values, runtime.MC2_RUNTIME_FLOAT_FIELDS, "bending_stiffness") == 0.0
+
+
+def test_animation_pose_ratio_is_domain_metadata_not_v0_float_abi() -> None:
+    profile = parameters.make_mc2_particle_profile(animation_pose_ratio=0.25)
+    changed = parameters.make_mc2_particle_profile(animation_pose_ratio=0.75)
+    options = parameters.make_mc2_setup_options("mesh_cloth")
+    first = runtime.make_mc2_runtime_parameters(profile, options)
+    second = runtime.make_mc2_runtime_parameters(changed, options)
+    assert first.animation_pose_ratio == 0.25
+    assert second.animation_pose_ratio == 0.75
+    assert first.parameter_signature != second.parameter_signature
+    assert len(first.float_values) == len(runtime.MC2_RUNTIME_FLOAT_FIELDS)
+    assert "animation_pose_ratio" not in runtime.MC2_RUNTIME_FLOAT_FIELDS
+    assert runtime.pack_mc2_runtime_parameters(first)["float_values"].shape == (
+        len(runtime.MC2_RUNTIME_FLOAT_FIELDS),
+    )
 
 
 def test_cross_task_self_collision_is_mesh_only() -> None:
