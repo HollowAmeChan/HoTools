@@ -8,6 +8,55 @@ from typing import Callable
 
 MC2_SOURCE_OBSERVATION_SCHEMA_VERSION = 1
 MC2_SOURCE_OBSERVATION_CACHE_KEY = "mc2.source_observation.v1"
+_MC2_SOURCE_REVISION_STRIDE = 1 << 32
+
+
+class MC2SourceRevisionTracker:
+    """MC2-owned raw revision counters fed by Blender depsgraph batches."""
+
+    def __init__(self) -> None:
+        self._epoch = 1
+        self._source_revisions: dict[int, int] = {}
+        self._data_revisions: dict[int, int] = {}
+
+    def revisions(self, source_pointer: int, data_pointer: int) -> tuple[int, int]:
+        source_pointer = self._pointer(source_pointer)
+        data_pointer = self._pointer(data_pointer)
+        base = self._epoch * _MC2_SOURCE_REVISION_STRIDE
+        return (
+            base + self._source_revisions.get(source_pointer, 0),
+            base + self._data_revisions.get(data_pointer, 0),
+        )
+
+    def process_geometry_updates(self, *, source_pointers=(), data_pointers=()) -> None:
+        for pointer in set(int(value) for value in source_pointers):
+            if pointer > 0:
+                self._source_revisions[pointer] = (
+                    self._source_revisions.get(pointer, 0) + 1
+                )
+        for pointer in set(int(value) for value in data_pointers):
+            if pointer > 0:
+                self._data_revisions[pointer] = self._data_revisions.get(pointer, 0) + 1
+
+    def invalidate_all(self) -> None:
+        self._epoch += 1
+        self._source_revisions.clear()
+        self._data_revisions.clear()
+
+    def inspect(self) -> dict:
+        return {
+            "schema": "mc2_source_revisions_v1",
+            "epoch": self._epoch,
+            "source_count": len(self._source_revisions),
+            "data_count": len(self._data_revisions),
+        }
+
+    @staticmethod
+    def _pointer(value: int) -> int:
+        pointer = int(value)
+        if pointer <= 0:
+            raise ValueError("MC2 Blender ID pointer must be positive")
+        return pointer
 
 
 @dataclass(frozen=True)

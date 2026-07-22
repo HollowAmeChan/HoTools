@@ -2,7 +2,9 @@
 
 from .registry import (
     register_physics_world_blender_properties,
+    register_solver_blender_lifecycles,
     unregister_physics_world_blender_properties,
+    unregister_solver_blender_lifecycles,
 )
 
 
@@ -14,16 +16,13 @@ def register() -> None:
     if _ACTIVE:
         return
     from .ui import register as register_ui
-    from .source_revisions import register as register_source_revisions
 
     register_physics_world_blender_properties()
     try:
-        register_source_revisions()
+        register_solver_blender_lifecycles()
         register_ui()
     except Exception:
-        from .source_revisions import unregister as unregister_source_revisions
-
-        unregister_source_revisions()
+        unregister_solver_blender_lifecycles()
         unregister_physics_world_blender_properties()
         raise
     _ACTIVE = True
@@ -35,11 +34,10 @@ def unregister() -> None:
         return
     from .ui import unregister as unregister_ui
     from .bake import shutdown_geometry_bake_runtime
-    from .source_revisions import unregister as unregister_source_revisions
 
     shutdown_geometry_bake_runtime()
     unregister_ui()
-    unregister_source_revisions()
+    unregister_solver_blender_lifecycles()
     unregister_physics_world_blender_properties()
     _ACTIVE = False
 

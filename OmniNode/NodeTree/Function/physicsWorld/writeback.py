@@ -25,10 +25,6 @@ import mathutils
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
 from .gn_offset import clear_gn_local_offsets, normalize_local_offsets, write_gn_local_offsets
-from .source_revisions import (
-    cancel_internal_geometry_update,
-    reserve_internal_geometry_update,
-)
 from .utils.values import matrix_from_16
 from .writeback_commands import iter_bone_transform_writebacks, iter_gn_offset_writebacks
 
@@ -42,6 +38,7 @@ _TOUCHED_POSE_BONES_KEY  = "_writeback_touched_pose_bones"
 _TOUCHED_GN_OBJECTS_KEY  = "_writeback_touched_gn_objects"
 _CLEANUP_RESOURCE_KEY    = "_writeback_cleanup"
 _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
+_GN_RECEIPT_SERIAL_KEY   = "_writeback_gn_receipt_serial"
 _EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
 
 
@@ -96,27 +93,6 @@ def _ensure_cleanup_resource(world) -> None:
             _get_touched_pose_bones(world),
             _get_touched_gn_objects(world),
         )
-
-
-def _write_gn_local_offsets(obj, values) -> None:
-    reservation = reserve_internal_geometry_update(obj)
-    try:
-        write_gn_local_offsets(obj, values)
-    except Exception:
-        cancel_internal_geometry_update(reservation)
-        raise
-
-
-def _clear_gn_local_offsets(obj) -> bool:
-    reservation = reserve_internal_geometry_update(obj)
-    try:
-        changed = clear_gn_local_offsets(obj)
-    except Exception:
-        cancel_internal_geometry_update(reservation)
-        raise
-    if not changed:
-        cancel_internal_geometry_update(reservation)
-    return changed
 
 
 def _reset_rigid_objects(touched) -> None:
@@ -176,7 +152,7 @@ def _reset_gn_objects(touched) -> None:
     values = list(touched.values()) if isinstance(touched, dict) else list(touched)
     for obj in values:
         try:
-            _clear_gn_local_offsets(obj)
+            clear_gn_local_offsets(obj)
         except Exception:
             pass
     try:
@@ -601,7 +577,33 @@ def get_gn_writeback_diagnostics(world) -> dict:
     source = getattr(world, "runtime_caches", {}).get(_GN_DIAGNOSTICS_KEY, {})
     snapshot = dict(source) if isinstance(source, dict) else {}
     snapshot["errors"] = [dict(item) for item in snapshot.get("errors", ())]
+    snapshot["receipts"] = [dict(item) for item in snapshot.get("receipts", ())]
     return snapshot
+
+
+def get_gn_writeback_receipts(world) -> tuple[dict, ...]:
+    """Return immutable-by-copy receipts for successful GN target mutations."""
+
+    source = getattr(world, "runtime_caches", {}).get(_GN_DIAGNOSTICS_KEY, {})
+    receipts = source.get("receipts", ()) if isinstance(source, dict) else ()
+    return tuple(dict(item) for item in receipts if isinstance(item, dict))
+
+
+def _append_gn_writeback_receipt(world, diagnostics: dict, result) -> None:
+    serial = int(world.runtime_caches.get(_GN_RECEIPT_SERIAL_KEY, 0) or 0) + 1
+    world.runtime_caches[_GN_RECEIPT_SERIAL_KEY] = serial
+    diagnostics["receipts"].append({
+        "schema": "gn_writeback_receipt_v1",
+        "serial": serial,
+        "frame": int(diagnostics["frame"]),
+        "generation": int(diagnostics["generation"]),
+        "solver": str(result.get("solver") or ""),
+        "slot_id": str(result.get("slot_id") or ""),
+        "writer_id": str(result.get("writer_id") or ""),
+        "target_key": str(result.get("target_key") or ""),
+        "object_ptr": int(result.get("object_ptr", 0) or 0),
+        "object_data_ptr": int(result.get("object_data_ptr", 0) or 0),
+    })
 
 
 def writeback_gn_attributes(world) -> int:
@@ -624,6 +626,7 @@ def writeback_gn_attributes(world) -> int:
         "written_count": 0,
         "cleared_count": 0,
         "errors": [],
+        "receipts": [],
     }
     world.runtime_caches[_GN_DIAGNOSTICS_KEY] = diagnostics
     touched = _get_touched_gn_objects(world)
@@ -660,7 +663,7 @@ def writeback_gn_attributes(world) -> int:
                 _gn_writeback_error(diagnostics, result, message)
                 _set_gn_slot_error(world, result, message)
             old_obj = touched.pop(target_key, None)
-            if old_obj is not None and _clear_gn_local_offsets(old_obj):
+            if old_obj is not None and clear_gn_local_offsets(old_obj):
                 diagnostics["cleared_count"] += 1
             continue
 
@@ -682,10 +685,11 @@ def writeback_gn_attributes(world) -> int:
                 raise ValueError(
                     f"GN offset 拓扑已变化：result={vertex_count} target={len(obj.data.vertices)}"
                 )
-            _write_gn_local_offsets(obj, values)
+            write_gn_local_offsets(obj, values)
             touched[target_key] = obj
             written_targets.add(target_key)
             diagnostics["written_count"] += 1
+            _append_gn_writeback_receipt(world, diagnostics, result)
             _set_gn_slot_error(world, result, None)
         except Exception as exc:
             _gn_writeback_error(diagnostics, result, exc)
@@ -694,7 +698,7 @@ def writeback_gn_attributes(world) -> int:
     for target_key, obj in list(touched.items()):
         if target_key in written_targets:
             continue
-        if _clear_gn_local_offsets(obj):
+        if clear_gn_local_offsets(obj):
             diagnostics["cleared_count"] += 1
         touched.pop(target_key, None)
     return int(diagnostics["written_count"])

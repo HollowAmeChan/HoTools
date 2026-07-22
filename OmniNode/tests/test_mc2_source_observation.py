@@ -15,6 +15,7 @@ SPEC.loader.exec_module(MODULE)
 Token = MODULE.MC2SourceObservationToken
 Value = MODULE.MC2SourceObservationValue
 Cache = MODULE.MC2SourceObservationCache
+RevisionTracker = MODULE.MC2SourceRevisionTracker
 
 
 def _token(**overrides):
@@ -96,11 +97,27 @@ def test_forced_audit_detects_missed_revision_without_changing_token():
     assert cache.inspect()["audit_mismatches"] == 1
 
 
+def test_mc2_revision_tracker_is_local_and_epoch_invalidates_all_sources():
+    tracker = RevisionTracker()
+    initial = tracker.revisions(101, 202)
+    tracker.process_geometry_updates(source_pointers=(101, 101))
+    assert tracker.revisions(101, 202) == (initial[0] + 1, initial[1])
+    tracker.process_geometry_updates(data_pointers=(202, 202))
+    changed = tracker.revisions(101, 202)
+    assert changed == (initial[0] + 1, initial[1] + 1)
+    tracker.invalidate_all()
+    invalidated = tracker.revisions(101, 202)
+    assert invalidated[0] > changed[0] and invalidated[1] > changed[1]
+    assert tracker.inspect()["source_count"] == 0
+    assert tracker.inspect()["data_count"] == 0
+
+
 def main():
     tests = (
         test_identity_revision_config_and_generation_matrix,
         test_uncacheable_source_evicts_and_always_scans,
         test_forced_audit_detects_missed_revision_without_changing_token,
+        test_mc2_revision_tracker_is_local_and_epoch_invalidates_all_sources,
     )
     for test in tests:
         test()

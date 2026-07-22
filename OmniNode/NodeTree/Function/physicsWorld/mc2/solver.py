@@ -46,12 +46,16 @@ from .results import (
     publish_mc2_result_transaction,
 )
 from .scheduler import MC2TimeSchedulerState
+from .source_observation_blender import (
+    prepare_observed_static_inputs,
+    prune_source_observation_cache,
+)
 from .setups.bone_frame_input import (
     clear_mc2_bone_frame_state,
     stage_mc2_bone_writeback_expectations,
 )
 from .specs import build_mc2_task_specs
-from .topology import build_mc2_topology_spec, prepare_static_inputs_for_task
+from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
@@ -646,9 +650,13 @@ def step_mc2(
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
     staged_native_contexts = []
+    active_observation_identities = []
     try:
         for spec in active_specs:
-            static_input_fingerprint, static_input_snapshots = prepare_static_inputs_for_task(spec)
+            observation = prepare_observed_static_inputs(world, spec)
+            static_input_fingerprint = observation.fingerprint
+            static_input_snapshots = observation.snapshots
+            active_observation_identities.extend(observation.identities)
             existing_slot = world.solver_slots.get(spec.task_id)
             existing_native_context = (
                 existing_slot.data.get("native_context")
@@ -925,6 +933,12 @@ def step_mc2(
                 f"MC2 Bone components overlap on target bones: {sorted(overlap)!r}"
             )
         bone_targets[target_key].update(identities)
+    try:
+        prune_source_observation_cache(world, active_observation_identities)
+    except Exception:
+        for context in staged_native_contexts:
+            context.dispose()
+        raise
     if timing is not None:
         timing.checkpoint("静态准备")
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}

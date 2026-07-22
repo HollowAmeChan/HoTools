@@ -396,6 +396,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert descriptor["solver_id"] == "mc2"
     assert descriptor["menu_name"] == "MC2"
     assert descriptor["nodes"] == (".nodes",)
+    assert descriptor["blender_lifecycle"] == ".source_observation_blender"
     assert tuple(
         node.__meta["bl_label"]
         for node in (

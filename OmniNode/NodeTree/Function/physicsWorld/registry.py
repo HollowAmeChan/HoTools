@@ -19,8 +19,10 @@ _BUILTIN_COMPONENT_DOMAINS = ("collision", "mc2")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
 _REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []
 _REGISTERED_SOLVER_PROPERTY_DOMAINS: list[str] = []
+_REGISTERED_SOLVER_BLENDER_LIFECYCLES: list[tuple[str, object]] = []
 _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE = False
 _SOLVER_BLENDER_PROPERTIES_ACTIVE = False
+_SOLVER_BLENDER_LIFECYCLES_ACTIVE = False
 
 
 def builtin_solver_domains() -> tuple[str, ...]:
@@ -121,6 +123,7 @@ def _default_descriptor(domain: str) -> dict:
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "blender_lifecycle": None,
     }
 
 
@@ -148,12 +151,12 @@ def register_solver_module(domain: str, descriptor: dict) -> dict:
         data.update(descriptor)
     data["domain"] = key
     _RUNTIME_SOLVER_MODULES[key] = data
-    if _SOLVER_BLENDER_PROPERTIES_ACTIVE:
-        declaration = resolve_solver_blender_properties(key)
-        if declaration.get("classes") or declaration.get("bindings"):
-            from .blender_registry import register_blender_property_domain
+    try:
+        if _SOLVER_BLENDER_PROPERTIES_ACTIVE:
+            declaration = resolve_solver_blender_properties(key)
+            if declaration.get("classes") or declaration.get("bindings"):
+                from .blender_registry import register_blender_property_domain
 
-            try:
                 register_blender_property_domain(
                     key,
                     declaration,
@@ -161,14 +164,22 @@ def register_solver_module(domain: str, descriptor: dict) -> dict:
                 )
                 if key not in _REGISTERED_SOLVER_PROPERTY_DOMAINS:
                     _REGISTERED_SOLVER_PROPERTY_DOMAINS.append(key)
-            except Exception:
-                _RUNTIME_SOLVER_MODULES.pop(key, None)
-                raise
+        if _SOLVER_BLENDER_LIFECYCLES_ACTIVE:
+            _register_solver_blender_lifecycle(key, data)
+    except Exception:
+        if key in _REGISTERED_SOLVER_PROPERTY_DOMAINS:
+            from .blender_registry import unregister_blender_property_domain
+
+            unregister_blender_property_domain(key)
+            _REGISTERED_SOLVER_PROPERTY_DOMAINS.remove(key)
+        _RUNTIME_SOLVER_MODULES.pop(key, None)
+        raise
     return dict(data)
 
 
 def unregister_solver_module(domain: str) -> None:
     key = str(domain or "").strip()
+    _unregister_solver_blender_lifecycle(key)
     if key in _REGISTERED_SOLVER_PROPERTY_DOMAINS:
         from .blender_registry import unregister_blender_property_domain
 
@@ -336,6 +347,71 @@ def resolve_solver_blender_properties(domain: str) -> dict:
     ref = descriptor.get("blender_properties")
     value = _resolve_ref(domain, ref)
     return value if isinstance(value, dict) else {}
+
+
+def register_solver_blender_lifecycles() -> None:
+    """Activate Blender handlers owned and declared by individual solvers."""
+
+    global _SOLVER_BLENDER_LIFECYCLES_ACTIVE
+    if _SOLVER_BLENDER_LIFECYCLES_ACTIVE:
+        return
+    try:
+        for domain, descriptor in all_solver_module_descriptors().items():
+            _register_solver_blender_lifecycle(domain, descriptor)
+    except Exception:
+        unregister_solver_blender_lifecycles()
+        raise
+    _SOLVER_BLENDER_LIFECYCLES_ACTIVE = True
+
+
+def _register_solver_blender_lifecycle(domain: str, descriptor: dict) -> None:
+    key = str(domain)
+    if any(item[0] == key for item in _REGISTERED_SOLVER_BLENDER_LIFECYCLES):
+        return
+    lifecycle_ref = descriptor.get("blender_lifecycle")
+    module = (
+        _resolve_module_ref(key, lifecycle_ref)
+        if isinstance(lifecycle_ref, str)
+        else lifecycle_ref
+    )
+    if module is None:
+        return
+    register_callback = getattr(module, "register", None)
+    unregister_callback = getattr(module, "unregister", None)
+    if not callable(register_callback) or not callable(unregister_callback):
+        raise RuntimeError(
+            f"solver {key} Blender lifecycle must define register/unregister"
+        )
+    register_callback()
+    _REGISTERED_SOLVER_BLENDER_LIFECYCLES.append((key, module))
+
+
+def _unregister_solver_blender_lifecycle(domain: str) -> None:
+    key = str(domain)
+    for index in range(len(_REGISTERED_SOLVER_BLENDER_LIFECYCLES) - 1, -1, -1):
+        registered_domain, module = _REGISTERED_SOLVER_BLENDER_LIFECYCLES[index]
+        if registered_domain != key:
+            continue
+        module.unregister()
+        _REGISTERED_SOLVER_BLENDER_LIFECYCLES.pop(index)
+        return
+
+
+def unregister_solver_blender_lifecycles() -> None:
+    global _SOLVER_BLENDER_LIFECYCLES_ACTIVE
+    _SOLVER_BLENDER_LIFECYCLES_ACTIVE = False
+    errors = []
+    while _REGISTERED_SOLVER_BLENDER_LIFECYCLES:
+        _domain, module = _REGISTERED_SOLVER_BLENDER_LIFECYCLES.pop()
+        try:
+            module.unregister()
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise RuntimeError(
+            "solver Blender lifecycle cleanup failed: "
+            + "; ".join(str(error) for error in errors)
+        )
 
 
 def resolve_component_blender_properties(domain: str) -> dict:

@@ -244,7 +244,12 @@ def _optimize_triangle_direction(
 ):
     if len(triangles) == 0:
         return triangles, []
-    final_triangles = np.ascontiguousarray(triangles, dtype=np.int32)
+    final_triangles = np.array(
+        triangles,
+        dtype=np.int32,
+        order="C",
+        copy=True,
+    )
     normals = np.empty((len(triangles), 3), dtype=np.float64)
     from ...native import native_module
 
@@ -775,7 +780,6 @@ def build_blender_mesh_final_proxy(
         or int(getattr(raw_snapshot, "mesh_pointer", 0)) != int(mesh.as_pointer())
     ):
         raise ValueError("Mesh raw snapshot identity does not match the proxy object")
-    mesh.update()
     vertex_count = len(mesh.vertices)
     if raw_snapshot is not None:
         triangles = raw_snapshot.triangles

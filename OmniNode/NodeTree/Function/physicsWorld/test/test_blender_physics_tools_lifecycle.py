@@ -49,11 +49,14 @@ base_pose = importlib.import_module(
 blender_registry = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender_registry"
 )
+solver_registry = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.registry"
+)
 physics_panels = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.ui.panels"
 )
-source_revisions = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.source_revisions"
+mc2_source_observation = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.source_observation_blender"
 )
 def main() -> None:
     physics_blender.register()
@@ -67,10 +70,22 @@ def main() -> None:
         assert hasattr(bpy.types.Object, "hotools_mesh_collision")
         assert hasattr(bpy.types.Object, "hotools_rigid_body")
         assert hasattr(bpy.types.Object, "hotools_rigid_constraint")
-        assert source_revisions._depsgraph_update_post in bpy.app.handlers.depsgraph_update_post
-        assert source_revisions._invalidate_source_revisions in bpy.app.handlers.undo_post
-        assert source_revisions._invalidate_source_revisions in bpy.app.handlers.redo_post
-        assert source_revisions._invalidate_source_revisions in bpy.app.handlers.load_post
+        assert (
+            mc2_source_observation._mc2_depsgraph_update_post
+            in bpy.app.handlers.depsgraph_update_post
+        )
+        lifecycle_events = []
+        dynamic_lifecycle = types.SimpleNamespace(
+            register=lambda: lifecycle_events.append("register"),
+            unregister=lambda: lifecycle_events.append("unregister"),
+        )
+        solver_registry.register_solver_module(
+            "test_blender_lifecycle",
+            {"blender_lifecycle": dynamic_lifecycle},
+        )
+        assert lifecycle_events == ["register"]
+        solver_registry.unregister_solver_module("test_blender_lifecycle")
+        assert lifecycle_events == ["register", "unregister"]
         assert delta_output.PhysicsDeltaOutputSpec is type(base_pose.MC2_DELTA_SPEC)
 
         mesh = bpy.data.meshes.new("PW_MeshClothIOContractMesh")
@@ -105,10 +120,10 @@ def main() -> None:
         assert not hasattr(bpy.types.Object, "hotools_mesh_collision")
         assert not hasattr(bpy.types.Object, "hotools_rigid_body")
         assert not hasattr(bpy.types.Object, "hotools_rigid_constraint")
-        assert source_revisions._depsgraph_update_post not in bpy.app.handlers.depsgraph_update_post
-        assert source_revisions._invalidate_source_revisions not in bpy.app.handlers.undo_post
-        assert source_revisions._invalidate_source_revisions not in bpy.app.handlers.redo_post
-        assert source_revisions._invalidate_source_revisions not in bpy.app.handlers.load_post
+        assert (
+            mc2_source_observation._mc2_depsgraph_update_post
+            not in bpy.app.handlers.depsgraph_update_post
+        )
         physics_blender.register()
         assert physics_blender.is_registered()
         physics_blender.unregister()

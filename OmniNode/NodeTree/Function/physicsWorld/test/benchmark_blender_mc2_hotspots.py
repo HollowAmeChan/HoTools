@@ -88,11 +88,19 @@ base_pose = importlib.import_module(
 )
 
 
+_HOT_FRAMES_OVERRIDE = int(os.environ.get("MC2_BENCH_HOT_FRAMES", "0") or 0)
+
+
 CASES = (
     {"name": "small", "grid": 10, "chains": 4, "chain_length": 8, "hot_frames": 8},
     {"name": "medium", "grid": 24, "chains": 12, "chain_length": 12, "hot_frames": 7},
     {"name": "large", "grid": 40, "chains": 24, "chain_length": 16, "hot_frames": 6},
 )
+if _HOT_FRAMES_OVERRIDE > 0:
+    CASES = tuple(
+        {**case, "hot_frames": _HOT_FRAMES_OVERRIDE}
+        for case in CASES
+    )
 
 CEILINGS = {
     "small": {"cold_ms": 40.0, "hot_ms": 12.0, "change_ms": 40.0, "debug_ms": 30.0, "allocation_bytes": 4_000_000},
@@ -148,7 +156,7 @@ class StageRecorder:
 
 def _install_stage_probes() -> StageRecorder:
     recorder = StageRecorder()
-    recorder.patch(solver, "prepare_static_inputs_for_task", "raw_snapshot")
+    recorder.patch(solver, "prepare_observed_static_inputs", "static_observation")
     recorder.patch(solver, "build_mc2_topology_spec", "topology_fingerprint")
     recorder.patch(mesh_static, "build_mc2_mesh_cloth_static_for_task", "static_build")
     recorder.patch(bone_static, "build_mc2_bone_cloth_static_for_task", "static_build")
@@ -288,6 +296,8 @@ def _run_step(recorder, world, tasks, frame, previous, domain) -> dict:
         written = writeback.writeback_bone_transforms(world)
     writeback_ms = (time.perf_counter_ns() - write_started) / 1.0e6
     assert written > 0
+    # 提交本帧写回产生的 depsgraph 更新；下一项 authoring 修改属于下一安全批次。
+    bpy.context.view_layer.update()
     stages = recorder.delta(before)
     stages.update({
         "solver_total": solver_ms,
@@ -327,10 +337,10 @@ def _assert_stage_coverage(result: dict) -> None:
     config = result["config"]
     change = result["change"]
     debug_result = result["debug"]
-    assert cold["raw_snapshot"] > 0.0
+    assert cold["static_observation"] > 0.0
     assert cold["topology_fingerprint"] > 0.0
     assert cold["static_build"] > 0.0
-    assert hot["raw_snapshot"]["mean_ms"] > 0.0
+    assert hot["static_observation"]["mean_ms"] > 0.0
     assert hot["frame_prepare"]["mean_ms"] > 0.0
     assert hot["all_task_group_step"]["mean_ms"] > 0.0
     assert hot["result_build"]["mean_ms"] > 0.0
@@ -372,6 +382,8 @@ def _benchmark_mesh(case, recorder) -> dict:
         config = _run_step(recorder, world, (config_task,), previous + 1, previous, "mesh_cloth")
         previous += 1
         pin.add((case["grid"],), 1.0, "REPLACE")
+        obj.update_tag()
+        bpy.context.view_layer.update()
         change = _run_step(recorder, world, (config_task,), previous + 1, previous, "mesh_cloth")
         previous += 1
         assert debug.request_mc2_debug_capture(

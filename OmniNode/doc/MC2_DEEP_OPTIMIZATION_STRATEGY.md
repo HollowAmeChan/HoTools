@@ -8,7 +8,7 @@
 
 当前重资产的主要损耗不是 Blender 写回，也不是 Python 批次编组，而是三个相互独立的问题：
 
-1. 每个热帧仍完整读取 Blender Mesh 静态数据并重新计算 fingerprint，稳定占用约 `16-18 ms`。
+1. P1-B 已消除普通 Mesh 热帧的完整静态读取；Blender 5.2 / Python 3.13 的1600粒子固定夹具在120个稳定样本中，`static_observation` mean/p95/max为`0.112/0.171/0.267 ms`。旧代表资产约`16-18 ms`的静态扫描预算已不再属于普通连续帧，真实authoring失效仍执行全量扫描与重建。
 2. native 单线程求解在 1760 粒子、6 个 substep、495 个 collider 的样本中占用约 `25-39 ms`。P0 已接通完整 native step 的固定槽计时；持续活跃接触的 1764 粒子合成夹具显示，交叉历史、候选/contact构建和四轮contact solve是主要 self 热点，约束与外碰仍需在用户代表资产上按同一槽位复测。
 3. 两个 MeshCloth task 开启跨 task self collision 后，native 求解增至约 `88-91 ms`。当前实现会先运行各 context 的内部 self 流水，再把所有 self primitive 复制进 aggregate context，重新建 grid、候选和 contact，最后散回；这不是低成本的跨岛接触。
 
@@ -20,7 +20,7 @@
 E0-E2：partition / compile / output 合同
   -> E3：单 source 纯 native CPU reference + GPU 可复用 pass 边界
   -> P0：完整 step 的原生分段计时
-  -> P1-B：热帧静态观察缓存
+  -> P1-B：热帧静态观察缓存（已完成）
   -> E4/P2：多 Object fused MeshCloth + 一次 whole-domain self
   -> E5：多目标事务、覆盖与产品 collector
   -> E7-CPU：删除被替代的拆 task / aggregate / V0 路径
@@ -327,7 +327,7 @@ Blender 5.2 / py313 Release、4个`21x21` MeshCloth context、1764粒子、9924 
 
 这里不先扩展旧 `MC2TaskSpec.sources` 或 topology range。`partition_id` 是 authoring/state identity，physical particle span 是某次 CPU/GPU compile 的布局结果；两者通过 logical index view 和 output map 关联。否则一次看似简单的 range 改动会同时绑死静态构建、Center/Teleport、GPU 重排和多目标写回。
 
-### P1-B：消除热帧静态全量扫描
+### P1-B：消除热帧静态全量扫描（已完成）
 
 这是最高置信度、最小数值风险的第一项实现工作。目标是普通连续帧不再执行 `mesh.update()`、`calc_loop_triangles()`、完整 `foreach_get`、顶点组遍历和全 buffer hash。
 
@@ -339,7 +339,9 @@ Blender 5.2 / py313 Release、4个`21x21` MeshCloth context、1764粒子、9924 
 - 提供显式“保守审计模式”，低频或手动重新扫描并比较 fingerprint，用于发现漏失效；
 - 无法证明 revision 完整时宁可针对该 source 退回扫描，不能全局假定不变。
 
-验收目标：代表资产热帧 `静态准备 p95 < 2 ms`，且 topology/config/surface/geometry 各类修改仍在同帧或明确下一安全帧重建。当前约 `16-18 ms` 是可直接回收的预算，但实现前不承诺最终绝对帧率。
+实现只缓存Mesh raw snapshot与source fingerprint；Bone保持保守全扫，直到Armature/Pose revision矩阵单独成立。观察器不调用`mesh.update()`：谁修改坐标、拓扑、UV、权重或attribute，谁负责在写入事务尾部提交update。MC2自己的depsgraph handler只记录原始Mesh Object/Data revision；`depsgraph.updates[].id`必须先还原到`original`，不能用evaluated ID指针作为source identity。成功GN写回由通用writeback发布target receipt，MC2只在下一安全depsgraph批次消费一次，以排除自身offset attribute更新；用户authoring若与写回被Blender合并到同一批则无法严格区分，默认低频审计与显式强制审计负责重新扫描并报告`audit_mismatch`，不能声称revision完全可靠。
+
+Blender 5.2 / Python 3.13固定夹具覆盖坐标、拓扑、UV、Pin/radius权重与字段、Object Data替换、transform不失效、连续GN写回、强制审计和world generation/lifecycle。1600粒子Mesh在丢弃2帧后取120个稳定样本，`static_observation` mean/p95/max为`0.112/0.171/0.267 ms`，冷扫描约`3.50 ms`，Pin变更扫描约`3.16 ms`且static build真实重跑；达到`p95 < 2 ms`门禁。384粒子Bone保持全扫时p95为`1.436 ms`，不作为Mesh缓存正确性的替代证据。
 
 ### P2：实现 fused MeshCloth context
 
@@ -469,7 +471,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 |---|---|
 | P0（已完成） | native solve 的稳定阶段覆盖`99%+`；计时关闭的前后均值差`+0.34%`且p95未回归。 |
 | P1-A | partition entry、sparse patch、implicit/explicit merge、collector fusion report 和来源可观察性先闭环，不能出现隐藏 source-to-task 拆分。 |
-| P1-B | 代表资产热帧静态准备 p95 低于 `2 ms`，失效矩阵通过。 |
+| P1-B（已完成） | 1600粒子固定夹具120个稳定样本p95为`0.171 ms`；Mesh失效矩阵、GN receipt、安全帧与审计fallback通过。 |
 | P2 | 多 source fused 与手工 join 的求解成本同量级，且保留独立配置/变换/写回；明显快于跨 task aggregate。 |
 | P3 | 纯 native step 不访问 Python/Blender，单线程 fused context 长期作为 reference；释放 GIL 只代表边界正确，不承诺并发。 |
 | P4 | 当前验收是没有引入 worker/job DAG；只有满足独立重新立项目槛时才允许出现 CPU 并发实现。 |
@@ -479,10 +481,10 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 ## 真实混合实施提交序列
 
 1. E0-E2 已完成：partition entry、sparse patch、capture/compile、参数 SoA、logical/physical identity 和 output map。
-2. E3 当前：逐段复用/提取现有 kernel，完成 per-partition Center/Anchor/Teleport history、完整单线程 step 和 V0 tolerance；同时为每个 pass 固定 backend-neutral IO/读写集。
+2. E3 已完成：逐段复用/提取现有 kernel，完成 per-partition Center/Anchor/Teleport history、完整单线程 step 和 V0 tolerance；同时为每个 pass 固定 backend-neutral IO/读写集。
 3. E3 step 骨架完整后接 P0 native stage counters；已完成，计时实现、基准与结论分提交。
-4. 当前入口：E4 前完成 P1-B source observation cache 与失效矩阵。
-5. E4/P2 合并多 source context、whole-domain self 和差异化参数；每个子交付独立做单/双 source oracle。
+4. P1-B source observation cache、失效矩阵与性能门禁已完成。
+5. 当前入口：先闭环粒子级隐式/显式覆盖合同，再由E4/P2合并多 source context、whole-domain self和差异化参数；每个子交付独立做单/双 source oracle。
 6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
 7. E5 先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
 8. soak 通过后执行 E7-CPU，删除已失去所有权的拆 task、普通 aggregate 和 V0 兼容路径。

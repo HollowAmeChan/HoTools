@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import json
@@ -153,7 +154,6 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
     mesh = getattr(source, "data", None)
     if (
         mesh is None
-        or not callable(getattr(mesh, "update", None))
         or not hasattr(mesh, "vertices")
         or not hasattr(mesh, "edges")
         or not hasattr(mesh, "polygons")
@@ -161,7 +161,6 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
         or not callable(getattr(mesh, "calc_loop_triangles", None))
     ):
         return None
-    mesh.update()
     positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     normals = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
     edges = np.empty(len(mesh.edges) * 2, dtype=np.int32)
@@ -215,6 +214,20 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
                         0.0, min(1.0, float(assignment.weight))
                     )
                     break
+    arrays = (
+        positions,
+        normals,
+        edges,
+        triangles,
+        triangle_loops,
+        polygon_loop_totals,
+        loop_vertices,
+        uvs,
+        weights,
+        radius_multipliers,
+    )
+    for values in arrays:
+        values.flags.writeable = False
     return MC2MeshRawSnapshot(
         source_pointer=_pointer(source),
         mesh_pointer=_pointer(mesh),
@@ -263,28 +276,50 @@ def _mesh_input_fingerprint(
     ))
 
 
-def prepare_static_inputs_for_task(
+def read_mc2_static_source_observation(
     task: "MC2TaskSpec",
+    source,
+    *,
+    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
+) -> tuple[
+    dict[str, str],
+    MC2MeshRawSnapshot | MC2BoneRawSnapshot | None,
+]:
+    """Read one source once and derive its topology/geometry/surface hashes."""
+
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task 必须是 MC2TaskSpec")
+    if task.setup_type == "mesh_cloth":
+        snapshot = _read_mesh_raw_snapshot(source)
+        return _mesh_input_fingerprint(source, snapshot), snapshot
+    shared_rest = armature_rest_snapshots
+    if shared_rest is None:
+        shared_rest = {}
+    snapshot = _read_bone_raw_snapshot(source, shared_rest)
+    return _bone_input_fingerprint(source, snapshot), snapshot
+
+
+def compose_mc2_static_inputs(
+    task: "MC2TaskSpec",
+    source_fingerprints,
+    raw_snapshots,
 ) -> tuple[
     MC2StaticInputFingerprint,
     tuple[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...],
 ]:
-    """Read each source once and derive the native static fingerprint."""
+    """Compose one task fingerprint from already observed source snapshots."""
 
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
-    sources = []
-    raw_snapshots: list[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None] = []
-    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
-    for source in task.sources:
-        if task.setup_type == "mesh_cloth":
-            snapshot = _read_mesh_raw_snapshot(source)
-            raw_snapshots.append(snapshot)
-            sources.append(_mesh_input_fingerprint(source, snapshot))
-        else:
-            snapshot = _read_bone_raw_snapshot(source, armature_rest_snapshots)
-            raw_snapshots.append(snapshot)
-            sources.append(_bone_input_fingerprint(source, snapshot))
+    sources = tuple(source_fingerprints)
+    snapshots = tuple(raw_snapshots)
+    if len(sources) != len(task.sources) or len(snapshots) != len(task.sources):
+        raise ValueError("MC2 static source observation count does not match task sources")
+    for source in sources:
+        if not isinstance(source, Mapping) or any(
+            key not in source for key in ("topology", "geometry", "surface")
+        ):
+            raise TypeError("MC2 static source fingerprint is invalid")
     topology = _compact_signature((
         "mc2_task_topology_v1",
         task.setup_type,
@@ -316,7 +351,35 @@ def prepare_static_inputs_for_task(
         source=source,
         overall=overall,
     )
-    return fingerprint, tuple(raw_snapshots)
+    return fingerprint, snapshots
+
+
+def prepare_static_inputs_for_task(
+    task: "MC2TaskSpec",
+) -> tuple[
+    MC2StaticInputFingerprint,
+    tuple[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...],
+]:
+    """Read each source once and derive the native static fingerprint."""
+
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task 必须是 MC2TaskSpec")
+    sources = []
+    raw_snapshots: list[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None] = []
+    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
+    for source in task.sources:
+        source_fingerprint, snapshot = read_mc2_static_source_observation(
+            task,
+            source,
+            armature_rest_snapshots=armature_rest_snapshots,
+        )
+        sources.append(source_fingerprint)
+        raw_snapshots.append(snapshot)
+    return compose_mc2_static_inputs(
+        task,
+        sources,
+        raw_snapshots,
+    )
 
 
 def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
@@ -943,7 +1006,9 @@ __all__ = [
     "build_mc2_bone_source_topology",
     "build_mc2_mesh_source_topology",
     "build_mc2_topology_spec",
+    "compose_mc2_static_inputs",
     "prepare_static_inputs_for_task",
+    "read_mc2_static_source_observation",
     "static_input_fingerprint_for_task",
     "thaw_mc2_topology_payload",
 ]
