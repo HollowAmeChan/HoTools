@@ -613,7 +613,7 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 | `backends/contracts.py` | create/update/step/read/inspect/dispose 接口。 |
 | `backends/cpu.py` | 新 CPU domain ABI 的薄适配；不读 Blender。 |
 | `backends/gpu.py` | 将同一 IR 转成 GPU 资源和 dispatch；不改变 authoring 合同。 |
-| `domain_output.py` | domain output + output map -> 多 target writeback commands。 |
+| `domain_output.py` | 纯 host domain output + output map -> target-local offset commands；不读 Blender、不发布事务。 |
 | `solver.py` | staged prepare/execute/publish 事务编排，不构造 Mesh 拓扑细节。 |
 | `results.py` | 公共 result envelope 与事务校验，不推断 source 切片。 |
 | `native_context.py` | 旧 V0 单 source context 兼容层；新 domain backend 不继续堆入该类。 |
@@ -1015,5 +1015,6 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - 测试应通过 `step_reference_pipeline_full` 验证顺序，不得用手写 integration 后再单独调用碰撞 endpoint 伪造完整流水线。
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
 - `inspect()` 只返回 metadata；`real_velocities/world_normals` 只能由显式 `read_debug_state()` 请求。任何 debug-off 或普通结果路径都不得为了可观察性隐式 readback。
+- `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
 
 当前仍未关闭的 E3 门禁是：scheduler 到 Domain 的碰撞模式/pass enablement 与参数 packet handoff、最终 writeback 等价，以及在这些证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。

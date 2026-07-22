@@ -546,6 +546,7 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.cpu_backend",
             "mc2.frame_compile",
             "mc2.cpu_native_kernel",
+            "mc2.domain_output",
         )),
         "mc2.domain_capabilities": frozenset(("mc2.cpu_backend",)),
     }
