@@ -143,6 +143,14 @@ def test_reference_settings_use_compiled_parameters_and_substep_plan() -> None:
     assert settings["tether_compression"] == np.float32(0.4).item()
     assert settings["angle_restoration_enabled"] is True
     assert settings["angle_restoration_values"].shape == (compiled.program.particle_count,)
+    particle_fields = {
+        name: index
+        for index, name in enumerate(compiled.parameters.particle_parameters.fields)
+    }
+    np.testing.assert_allclose(
+        settings["angle_limit_values"],
+        compiled.parameters.particle_parameters.values[:, particle_fields["angle_limit"]],
+    )
     assert settings["post_step"]["old_positions"].shape == positions.shape
     assert settings["collision_mode"] == 0
     assert settings["self_collision_enabled"] is False

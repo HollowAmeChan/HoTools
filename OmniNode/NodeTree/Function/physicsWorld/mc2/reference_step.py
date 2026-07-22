@@ -165,11 +165,12 @@ def make_mc2_reference_pipeline_settings(
             "angle_restoration_stiffness",
             substep_plan.powers.angle,
         ),
-        "angle_limit_values": _scaled_particle_column(
+        # V0 scales restoration strength by the substep angle power, but
+        # samples the angle-limit curve as an instantaneous bound.
+        "angle_limit_values": _particle_column(
             particle_values,
             particle_fields,
             "angle_limit",
-            substep_plan.powers.angle,
         ),
         "angle_restoration_velocity_attenuation": _partition_scalar(
             compiled.parameters.partition_parameters,

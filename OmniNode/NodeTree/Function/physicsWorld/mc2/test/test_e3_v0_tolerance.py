@@ -549,7 +549,9 @@ def test_e3_native_motion_branch_matches_v0_after_tether():
             angle_limit_enabled=False,
             max_distance_enabled=True,
             max_distance=0.3,
-            backstop_enabled=False,
+            backstop_enabled=True,
+            backstop_radius=0.5,
+            backstop_distance=0.1,
             self_collision_mode=0,
         ),
         parameters.make_mc2_setup_options("mesh_cloth"),
@@ -693,10 +695,14 @@ def test_e3_native_full_angle_motion_pipeline_matches_v0():
             bending_stiffness=0.0,
             angle_restoration_enabled=True,
             angle_restoration_stiffness=0.2,
-            angle_limit_enabled=False,
+            angle_limit_enabled=True,
+            angle_limit=15.0,
+            angle_limit_stiffness=0.2,
             max_distance_enabled=True,
             max_distance=0.3,
-            backstop_enabled=False,
+            backstop_enabled=True,
+            backstop_radius=0.5,
+            backstop_distance=0.1,
             collision_mode=0,
             self_collision_mode=0,
         ),
@@ -1167,7 +1173,7 @@ if __name__ == "__main__":
     test_e3_native_motion_branch_matches_v0_after_tether()
     print("PASS E3 native Tether-to-Motion branch matches V0")
     test_e3_native_full_angle_motion_pipeline_matches_v0()
-    print("PASS E3 native full Angle/Motion pipeline matches V0")
+    print("PASS E3 native full Angle Limit + Motion/Backstop pipeline matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()
