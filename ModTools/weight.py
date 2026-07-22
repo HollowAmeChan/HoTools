@@ -1,6 +1,7 @@
 import bpy
 from bpy.props import PointerProperty
 from bpy.types import Operator
+from mathutils import Vector
 
 from ..BoneTools.boneHumanoid import OP_MoveHumanoidBonesToCollection
 from ..BoneTools.boneOperators import OP_ApplyRestPose
@@ -40,6 +41,9 @@ class OP_SnapMatchingBoneHeads(Operator):
     )
     bl_options = {'REGISTER', 'UNDO'}
 
+    _MAX_CORRECTION_PASSES = 4
+    _WORLD_TOLERANCE = 1e-5
+
     @classmethod
     def poll(cls, context):
         scene = context.scene
@@ -73,14 +77,67 @@ class OP_SnapMatchingBoneHeads(Operator):
                 pass
 
     @staticmethod
-    def _collect_pose_heads_world(obj, depsgraph):
-        """读取依赖图评估后的姿态骨骼Head世界坐标。"""
+    def _collect_pose_snapshot(obj, depsgraph):
+        """读取依赖图评估后的姿态Head世界坐标和姿态矩阵。"""
         evaluated = obj.evaluated_get(depsgraph)
         world = evaluated.matrix_world
-        return {
+        heads_world = {
             pose_bone.name: world @ pose_bone.head
             for pose_bone in evaluated.pose.bones
         }
+        pose_matrices = {
+            pose_bone.name: pose_bone.matrix.copy()
+            for pose_bone in evaluated.pose.bones
+        }
+        return heads_world, pose_matrices
+
+    @staticmethod
+    def _bone_depth(bone):
+        depth = 0
+        parent = bone.parent
+        while parent is not None:
+            depth += 1
+            parent = parent.parent
+        return depth
+
+    @staticmethod
+    def _enter_edit_mode(context, moving):
+        active = context.view_layer.objects.active
+        if active is not None and active.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        for obj in context.view_layer.objects:
+            if obj.select_get():
+                obj.select_set(False)
+
+        moving.select_set(True)
+        context.view_layer.objects.active = moving
+        bpy.ops.object.mode_set(mode='EDIT')
+
+    @staticmethod
+    def _pose_residual_to_edit_offset(
+        moving,
+        parent_name,
+        residual_world,
+        pose_matrices,
+        moving_world_inv_3x3,
+    ):
+        residual_armature = moving_world_inv_3x3 @ residual_world
+        if parent_name is None:
+            return residual_armature
+
+        parent_pose_matrix = pose_matrices.get(parent_name)
+        parent_bone = moving.data.bones.get(parent_name)
+        if parent_pose_matrix is None or parent_bone is None:
+            return residual_armature
+
+        # 子骨静置坐标会先经过父骨当前的姿态形变；反变换后才能得到
+        # 真正应写入EditBone的位移，尤其用于父骨已有旋转/缩放的情况。
+        parent_deform = (
+            parent_pose_matrix
+            @ parent_bone.matrix_local.inverted_safe()
+        )
+        return parent_deform.to_3x3().inverted_safe() @ residual_armature
 
     def execute(self, context):
         scene = context.scene
@@ -107,7 +164,10 @@ class OP_SnapMatchingBoneHeads(Operator):
         moved_count = 0
         unchanged_count = 0
         unmatched_count = 0
+        inherited_count = 0
         disconnected_count = 0
+        correction_passes = 0
+        max_world_error = 0.0
         original_edit_state = {}
         operation_error = None
 
@@ -117,13 +177,17 @@ class OP_SnapMatchingBoneHeads(Operator):
                 bpy.ops.object.mode_set(mode='OBJECT')
 
             depsgraph = context.evaluated_depsgraph_get()
-            reference_heads_world = self._collect_pose_heads_world(
-                reference,
-                depsgraph,
+            reference_heads_world, _reference_pose_matrices = (
+                self._collect_pose_snapshot(
+                    reference,
+                    depsgraph,
+                )
             )
-            moving_heads_world = self._collect_pose_heads_world(
-                moving,
-                depsgraph,
+            moving_heads_world, _moving_pose_matrices = (
+                self._collect_pose_snapshot(
+                    moving,
+                    depsgraph,
+                )
             )
             matching_names = {
                 bone.name
@@ -138,13 +202,16 @@ class OP_SnapMatchingBoneHeads(Operator):
                 self.report({'WARNING'}, "两个骨架中没有同名骨骼")
                 return {'CANCELLED'}
 
-            for obj in context.view_layer.objects:
-                if obj.select_get():
-                    obj.select_set(False)
+            parent_names = {
+                bone.name: bone.parent.name if bone.parent else None
+                for bone in moving.data.bones
+            }
+            bones_by_depth = {}
+            for bone in moving.data.bones:
+                depth = self._bone_depth(bone)
+                bones_by_depth.setdefault(depth, []).append(bone.name)
 
-            moving.select_set(True)
-            context.view_layer.objects.active = moving
-            bpy.ops.object.mode_set(mode='EDIT')
+            self._enter_edit_mode(context, moving)
 
             edit_bones = moving.data.edit_bones
             original_edit_state = {
@@ -162,47 +229,130 @@ class OP_SnapMatchingBoneHeads(Operator):
                     bone.use_connect = False
                     disconnected_count += 1
 
-            moving_world_inv = moving.matrix_world.inverted_safe()
-            moving_world_inv_3x3 = moving_world_inv.to_3x3()
-
-            for bone in edit_bones:
-                target_head_world = reference_heads_world.get(bone.name)
-                current_head_world = moving_heads_world.get(bone.name)
-                if target_head_world is None or current_head_world is None:
-                    unmatched_count += 1
-                    continue
-
-                # 用姿态下的视觉位置差平移编辑骨，而不是把姿态坐标
-                # 直接当作静置坐标，避免已有Pose变换被重复叠加。
-                offset_world = target_head_world - current_head_world
-                offset = moving_world_inv_3x3 @ offset_world
-                bone_vector = bone.tail - bone.head
-                target_head = bone.head + offset
-
-                bone.head = target_head
-                bone.tail = target_head + bone_vector
-
-                aligned_count += 1
-                if offset.length_squared > 1e-12:
-                    moved_count += 1
-                else:
-                    unchanged_count += 1
-
             bpy.ops.object.mode_set(mode='OBJECT')
+
+            moving_world_inv_3x3 = (
+                moving.matrix_world.inverted_safe().to_3x3()
+            )
+            total_offsets = {
+                bone.name: Vector((0.0, 0.0, 0.0))
+                for bone in moving.data.bones
+            }
+            inherited_names = set()
+
+            for pass_index in range(self._MAX_CORRECTION_PASSES):
+                pass_offsets = {}
+
+                for depth in sorted(bones_by_depth):
+                    context.view_layer.update()
+                    depsgraph = context.evaluated_depsgraph_get()
+                    moving_heads_world, moving_pose_matrices = (
+                        self._collect_pose_snapshot(
+                            moving,
+                            depsgraph,
+                        )
+                    )
+
+                    depth_offsets = {}
+                    for bone_name in bones_by_depth[depth]:
+                        parent_name = parent_names[bone_name]
+
+                        if bone_name in matching_names:
+                            target_head_world = reference_heads_world[bone_name]
+                            current_head_world = moving_heads_world.get(bone_name)
+                            if current_head_world is None:
+                                continue
+
+                            residual_world = (
+                                target_head_world - current_head_world
+                            )
+                            offset = self._pose_residual_to_edit_offset(
+                                moving,
+                                parent_name,
+                                residual_world,
+                                moving_pose_matrices,
+                                moving_world_inv_3x3,
+                            )
+                        else:
+                            # 无同名目标时，沿层级继承父骨本轮使用的同一offset。
+                            offset = pass_offsets.get(parent_name)
+                            if offset is None:
+                                offset = Vector((0.0, 0.0, 0.0))
+                            elif offset.length_squared > 1e-20:
+                                inherited_names.add(bone_name)
+
+                        pass_offsets[bone_name] = offset.copy()
+                        if offset.length_squared > 1e-20:
+                            depth_offsets[bone_name] = offset
+
+                    if not depth_offsets:
+                        continue
+
+                    self._enter_edit_mode(context, moving)
+                    for bone_name, offset in depth_offsets.items():
+                        bone = moving.data.edit_bones.get(bone_name)
+                        if bone is None:
+                            continue
+
+                        bone_vector = bone.tail - bone.head
+                        target_head = bone.head + offset
+                        bone.head = target_head
+                        bone.tail = target_head + bone_vector
+                        total_offsets[bone_name] += offset
+
+                    bpy.ops.object.mode_set(mode='OBJECT')
+
+                correction_passes = pass_index + 1
+                context.view_layer.update()
+                depsgraph = context.evaluated_depsgraph_get()
+                moving_heads_world, _moving_pose_matrices = (
+                    self._collect_pose_snapshot(
+                        moving,
+                        depsgraph,
+                    )
+                )
+                errors = [
+                    (
+                        reference_heads_world[bone_name]
+                        - moving_heads_world[bone_name]
+                    ).length
+                    for bone_name in matching_names
+                    if bone_name in moving_heads_world
+                ]
+                max_world_error = max(errors, default=0.0)
+                if max_world_error <= self._WORLD_TOLERANCE:
+                    break
+
+            aligned_count = len(matching_names)
+            moved_count = sum(
+                1
+                for bone_name in matching_names
+                if total_offsets[bone_name].length_squared > 1e-20
+            )
+            unchanged_count = aligned_count - moved_count
+            unmatched_count = len(moving.data.bones) - aligned_count
+            inherited_count = len(inherited_names)
 
         except Exception as error:
             operation_error = error
 
-            if (
-                context.view_layer.objects.active == moving
-                and moving.mode == 'EDIT'
-                and original_edit_state
-            ):
+            if original_edit_state:
+                try:
+                    self._enter_edit_mode(context, moving)
+                except Exception:
+                    pass
+
+            if moving.mode == 'EDIT' and original_edit_state:
                 for bone_name, state in original_edit_state.items():
                     bone = moving.data.edit_bones.get(bone_name)
                     if bone is None:
                         continue
                     bone.head, bone.tail, bone.use_connect = state
+
+                try:
+                    bpy.ops.object.mode_set(mode='OBJECT')
+                except Exception:
+                    pass
 
         finally:
             try:
@@ -226,7 +376,9 @@ class OP_SnapMatchingBoneHeads(Operator):
             {'INFO'},
             f"同名骨骼Head吸附完成：对齐 {aligned_count}，"
             f"移动 {moved_count}，未变化 {unchanged_count}，"
-            f"无同名 {unmatched_count}，断开连接 {disconnected_count}",
+            f"子级跟随 {inherited_count}，无同名 {unmatched_count}，"
+            f"断开连接 {disconnected_count}，校正 {correction_passes} 轮，"
+            f"最大视觉误差 {max_world_error:.6g}",
         )
         return {'FINISHED'}
 
