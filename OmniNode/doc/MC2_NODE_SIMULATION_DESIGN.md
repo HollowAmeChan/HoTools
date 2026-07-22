@@ -1022,4 +1022,4 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - `inspect()` 只返回 metadata；`real_velocities/world_normals` 只能由显式 `read_debug_state()` 请求。任何 debug-off 或普通结果路径都不得为了可观察性隐式 readback。
 - `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
 
-当前仍未关闭的 E3 门禁是：scheduler 到 Domain 的碰撞模式/pass enablement 与参数 packet handoff、最终 writeback 等价，以及在这些证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
+当前仍未关闭的 E3 门禁是：同一冻结 fixture 的 V0 全量容差、最终 writeback 等价、Blender debug-off 性能 gate；scheduler 到 Domain 的碰撞模式/pass enablement 与参数 packet handoff 已由 `reference_step.py`、双 ABI smoke 和 native mode rejection 证据关闭。在剩余证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
