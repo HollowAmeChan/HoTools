@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import types
+from types import SimpleNamespace
 
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -149,6 +150,28 @@ def test_domain_draft_rejects_no_active_partitions() -> None:
         assert "no active partitions" in str(exc)
     else:
         raise AssertionError("empty active domain must fail")
+
+
+def test_domain_draft_captures_one_unfiltered_collider_table() -> None:
+    draft = collect.build_mc2_mesh_domain_draft(_plan())
+    external = FakeMeshSource(501)
+    world = SimpleNamespace(
+        collider_snapshot={
+            "frame": 12,
+            "colliders": [
+                {"key": "self_sleeve", "type": "SPHERE", "owner": draft.partitions[0].source, "primary_group": 1, "center": (0, 0, 0), "radius": 1},
+                {"key": "self_coat", "type": "SPHERE", "owner": draft.partitions[1].source, "primary_group": 2, "center": (0, 0, 0), "radius": 1},
+                {"key": "external_1", "type": "SPHERE", "owner": external, "primary_group": 1, "center": (1, 0, 0), "radius": 1},
+                {"key": "external_3", "type": "SPHERE", "owner": external, "primary_group": 3, "center": (3, 0, 0), "radius": 1},
+            ],
+        },
+        previous_collider_snapshot=None,
+    )
+    frame = collect.build_mc2_mesh_domain_collider_frame(world, draft)
+    assert frame.frame == 12
+    assert frame.source_pointers == (101, 102)
+    assert frame.collider_keys == ("external_1", "external_3")
+    assert frame.collider_group_bits.tolist() == [1, 4]
 
 
 if __name__ == "__main__":

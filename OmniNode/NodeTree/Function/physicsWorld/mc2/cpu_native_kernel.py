@@ -15,6 +15,7 @@ from .domain_ir import MC2CompiledDomainProgramV1
 from .domain_ir import MC2DomainFramePacketV1
 from .domain_ir import MC2DomainParameterPacketV1
 from .domain_ir import make_mc2_domain_frame_output
+from .collider_frame import MC2DomainColliderFrameSpec
 from .native import native_module
 
 
@@ -416,8 +417,14 @@ class MC2NativeCPUKernelV1:
     def _prepare_compiled_external_collision(
         self,
         handle: int,
-        settings: Mapping[str, object],
+        settings: Mapping[str, object] | MC2DomainColliderFrameSpec,
     ) -> dict[str, np.ndarray]:
+        if isinstance(settings, MC2DomainColliderFrameSpec):
+            settings = settings.native_mapping()
+        elif not isinstance(settings, Mapping):
+            raise TypeError(
+                "compiled external collision must be a domain collider POD or mapping"
+            )
         required = {
             "collider_types", "collider_group_bits", "collider_centers",
             "collider_segment_a", "collider_segment_b", "collider_old_centers",
@@ -479,8 +486,6 @@ class MC2NativeCPUKernelV1:
         settings: Mapping[str, object],
     ) -> None:
         key = self._require_handle(handle)
-        if not isinstance(settings, Mapping):
-            raise TypeError("compiled external collision must be a mapping")
         arrays = self._prepare_compiled_external_collision(key, settings)
         self._run_compiled_external_collision(key, arrays)
 
@@ -839,8 +844,8 @@ class MC2NativeCPUKernelV1:
         if "external_collision" not in settings:
             raise ValueError("compiled domain pipeline requires external_collision")
         external_collision = settings.pop("external_collision")
-        if not isinstance(external_collision, Mapping):
-            raise TypeError("external_collision must be a public collider-table mapping")
+        if not isinstance(external_collision, (Mapping, MC2DomainColliderFrameSpec)):
+            raise TypeError("external_collision must be a public domain collider table")
         if "post_step" not in settings:
             raise ValueError("compiled domain pipeline requires post_step")
         post_step = settings.pop("post_step")

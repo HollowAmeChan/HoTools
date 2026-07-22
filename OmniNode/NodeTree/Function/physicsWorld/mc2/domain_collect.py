@@ -163,4 +163,24 @@ def build_mc2_mesh_domain_draft(
     )
 
 
-__all__ = ["MC2MeshDomainDraftV1", "build_mc2_mesh_domain_draft"]
+def build_mc2_mesh_domain_collider_frame(
+    world,
+    draft: MC2MeshDomainDraftV1,
+):
+    """Capture one public Physics World collider table for an entire draft."""
+
+    if not isinstance(draft, MC2MeshDomainDraftV1):
+        raise TypeError("draft must be MC2MeshDomainDraftV1")
+    from .collider_frame import build_mc2_domain_collider_frame
+
+    return build_mc2_domain_collider_frame(
+        world,
+        (partition.source for partition in draft.partitions),
+    )
+
+
+__all__ = [
+    "MC2MeshDomainDraftV1",
+    "build_mc2_mesh_domain_draft",
+    "build_mc2_mesh_domain_collider_frame",
+]

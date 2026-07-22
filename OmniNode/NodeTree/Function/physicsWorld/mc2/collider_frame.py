@@ -13,7 +13,7 @@ _EPSILON = 1.0e-8
 
 
 def _array(values, dtype, shape) -> np.ndarray:
-    result = np.ascontiguousarray(values, dtype=dtype).reshape(shape)
+    result = np.array(values, dtype=dtype, order="C", copy=True).reshape(shape)
     result.flags.writeable = False
     return result
 
@@ -85,6 +85,96 @@ class MC2ColliderFrameSpec:
         }
 
 
+@dataclass(frozen=True)
+class MC2DomainColliderFrameSpec:
+    """One unfiltered external collider table for a compiled particle domain."""
+
+    frame: int
+    source_pointers: tuple[int, ...]
+    collider_keys: tuple[str, ...]
+    collider_types: np.ndarray
+    collider_group_bits: np.ndarray
+    collider_centers: np.ndarray
+    collider_segment_a: np.ndarray
+    collider_segment_b: np.ndarray
+    collider_old_centers: np.ndarray
+    collider_old_segment_a: np.ndarray
+    collider_old_segment_b: np.ndarray
+    collider_radii: np.ndarray
+    frame_signature: str
+
+    def __post_init__(self) -> None:
+        if type(self.frame) is not int:
+            raise TypeError("domain collider frame must be an integer")
+        pointers = tuple(int(value) for value in self.source_pointers)
+        if (
+            not pointers
+            or pointers != tuple(sorted(set(pointers)))
+            or any(value <= 0 for value in pointers)
+        ):
+            raise ValueError("domain collider source pointers must be sorted unique positives")
+        keys = tuple(str(value) for value in self.collider_keys)
+        count = len(keys)
+        arrays = (
+            _array(self.collider_types, np.int32, (count,)),
+            _array(self.collider_group_bits, np.int32, (count,)),
+            _array(self.collider_centers, np.float32, (count, 3)),
+            _array(self.collider_segment_a, np.float32, (count, 3)),
+            _array(self.collider_segment_b, np.float32, (count, 3)),
+            _array(self.collider_old_centers, np.float32, (count, 3)),
+            _array(self.collider_old_segment_a, np.float32, (count, 3)),
+            _array(self.collider_old_segment_b, np.float32, (count, 3)),
+            _array(self.collider_radii, np.float32, (count,)),
+        )
+        if not all(np.all(np.isfinite(value)) for value in arrays):
+            raise ValueError("domain collider arrays must be finite")
+        types, groups, *_vectors, radii = arrays
+        if np.any((types < 0) | (types > 3)):
+            raise ValueError("domain collider types must be in 0..3")
+        if np.any((groups <= 0) | ((groups & (groups - 1)) != 0)):
+            raise ValueError("domain collider groups must contain one positive bit")
+        if np.any(radii < 0.0):
+            raise ValueError("domain collider radii cannot be negative")
+        signature = str(self.frame_signature or "")
+        if len(signature) != 64:
+            raise ValueError("domain collider frame signature must contain 64 characters")
+        object.__setattr__(self, "source_pointers", pointers)
+        object.__setattr__(self, "collider_keys", keys)
+        object.__setattr__(self, "frame_signature", signature)
+        for name, value in zip((
+            "collider_types", "collider_group_bits", "collider_centers",
+            "collider_segment_a", "collider_segment_b", "collider_old_centers",
+            "collider_old_segment_a", "collider_old_segment_b", "collider_radii",
+        ), arrays):
+            object.__setattr__(self, name, value)
+
+    @property
+    def collider_count(self) -> int:
+        return int(self.collider_types.shape[0])
+
+    def native_mapping(self) -> dict[str, np.ndarray]:
+        return {
+            "collider_types": self.collider_types,
+            "collider_group_bits": self.collider_group_bits,
+            "collider_centers": self.collider_centers,
+            "collider_segment_a": self.collider_segment_a,
+            "collider_segment_b": self.collider_segment_b,
+            "collider_old_centers": self.collider_old_centers,
+            "collider_old_segment_a": self.collider_old_segment_a,
+            "collider_old_segment_b": self.collider_old_segment_b,
+            "collider_radii": self.collider_radii,
+        }
+
+    def debug_dict(self) -> dict:
+        return {
+            "frame": self.frame,
+            "source_pointers": self.source_pointers,
+            "collider_keys": self.collider_keys,
+            "collider_count": self.collider_count,
+            "frame_signature": self.frame_signature,
+        }
+
+
 def _source_owner(source):
     if isinstance(source, dict):
         return source.get("armature") or source.get("proxy_obj") or source.get("object")
@@ -93,24 +183,14 @@ def _source_owner(source):
     return source
 
 
-def build_mc2_collider_frame(
-    world,
-    source_obj,
+def _pack_colliders(
+    snapshot: dict,
+    previous: dict,
     *,
-    collided_by_groups: int | None = None,
-    allowed_types: frozenset[str] | None = None,
-) -> MC2ColliderFrameSpec:
-    snapshot = getattr(world, "collider_snapshot", None)
-    snapshot = snapshot if isinstance(snapshot, dict) else {}
-    previous = getattr(world, "previous_collider_snapshot", None)
-    previous = previous.get("colliders", {}) if isinstance(previous, dict) else {}
-    previous = previous if isinstance(previous, dict) else {}
-    if collided_by_groups is None:
-        properties = getattr(source_obj, "hotools_mesh_collision", None)
-        collided_by_groups = getattr(properties, "collided_by_groups", 0)
-    collided_by_groups = max(0, min(0xFFFF, int(collided_by_groups or 0)))
-    source_pointer = _pointer(_source_owner(source_obj))
-
+    excluded_pointers: frozenset[int],
+    collided_by_groups: int | None,
+    allowed_types: frozenset[str] | None,
+):
     types = []
     group_bits = []
     centers = []
@@ -122,7 +202,9 @@ def build_mc2_collider_frame(
     radii = []
     keys = []
     for collider in snapshot.get("colliders") or ():
-        if not isinstance(collider, dict) or _pointer(collider.get("owner")) == source_pointer:
+        if not isinstance(collider, dict):
+            continue
+        if _pointer(collider.get("owner")) in excluded_pointers:
             continue
         collider_type = str(collider.get("type", "SPHERE") or "SPHERE").upper()
         if allowed_types is not None and collider_type not in allowed_types:
@@ -133,7 +215,7 @@ def build_mc2_collider_frame(
             continue
         group = max(1, min(16, int(collider.get("primary_group", 1) or 1)))
         group_bit = 1 << (group - 1)
-        if collided_by_groups & group_bit == 0:
+        if collided_by_groups is not None and collided_by_groups & group_bit == 0:
             continue
 
         radius = max(0.0, float(collider.get("radius", 0.0) or 0.0))
@@ -194,6 +276,34 @@ def build_mc2_collider_frame(
         _array(old_segment_b_values, np.float32, (count, 3)),
         _array(radii, np.float32, (count,)),
     )
+    return tuple(keys), arrays
+
+
+def build_mc2_collider_frame(
+    world,
+    source_obj,
+    *,
+    collided_by_groups: int | None = None,
+    allowed_types: frozenset[str] | None = None,
+) -> MC2ColliderFrameSpec:
+    snapshot = getattr(world, "collider_snapshot", None)
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    previous = getattr(world, "previous_collider_snapshot", None)
+    previous = previous.get("colliders", {}) if isinstance(previous, dict) else {}
+    previous = previous if isinstance(previous, dict) else {}
+    if collided_by_groups is None:
+        properties = getattr(source_obj, "hotools_mesh_collision", None)
+        collided_by_groups = getattr(properties, "collided_by_groups", 0)
+    collided_by_groups = max(0, min(0xFFFF, int(collided_by_groups or 0)))
+    source_pointer = _pointer(_source_owner(source_obj))
+
+    keys, arrays = _pack_colliders(
+        snapshot,
+        previous,
+        excluded_pointers=frozenset((source_pointer,)),
+        collided_by_groups=collided_by_groups,
+        allowed_types=allowed_types,
+    )
     digest = hashlib.sha256()
     digest.update(np.asarray(
         (int(snapshot.get("frame", -1) or -1), collided_by_groups, source_pointer),
@@ -212,4 +322,48 @@ def build_mc2_collider_frame(
     )
 
 
-__all__ = ["MC2ColliderFrameSpec", "build_mc2_collider_frame"]
+def build_mc2_domain_collider_frame(
+    world,
+    partition_sources,
+) -> MC2DomainColliderFrameSpec:
+    """Pack one World snapshot for all partitions without per-source mask filtering."""
+
+    snapshot = getattr(world, "collider_snapshot", None)
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    previous = getattr(world, "previous_collider_snapshot", None)
+    previous = previous.get("colliders", {}) if isinstance(previous, dict) else {}
+    previous = previous if isinstance(previous, dict) else {}
+    sources = tuple(partition_sources)
+    source_pointers = tuple(sorted({
+        pointer
+        for source in sources
+        if (pointer := _pointer(_source_owner(source))) > 0
+    }))
+    keys, arrays = _pack_colliders(
+        snapshot,
+        previous,
+        excluded_pointers=frozenset(source_pointers),
+        collided_by_groups=None,
+        allowed_types=None,
+    )
+    frame = int(snapshot.get("frame", -1) or -1)
+    digest = hashlib.sha256()
+    digest.update(np.asarray((frame, *source_pointers), dtype=np.int64).tobytes())
+    digest.update("\0".join(keys).encode("utf-8"))
+    for value in arrays:
+        digest.update(value.tobytes())
+    return MC2DomainColliderFrameSpec(
+        frame,
+        source_pointers,
+        keys,
+        *arrays,
+        digest.hexdigest(),
+    )
+
+
+__all__ = [
+    "MC2ColliderFrameSpec",
+    "MC2DomainColliderFrameSpec",
+    "build_mc2_collider_frame",
+    "build_mc2_domain_collider_frame",
+]

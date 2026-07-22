@@ -820,7 +820,7 @@ E3 native 合入门禁已经满足：新 owner 能在无 Blender 对象的 C++/h
 
 上述配置、失败原子性、primitive计数、candidate/contact计数、允许/阻断跨partition以及双source edge-edge真实位移均由py311/py313 raw ABI和adapter夹具锁定；单source标量self endpoint继续只作为E3 oracle，不是第二个产品owner。统一context的compiled full endpoint现在固定执行`Center frame shift -> Center -> Center inertia -> Integration -> Tether -> Distance A -> Angle -> Bending -> External -> Distance B -> Motion -> Whole Self -> Post`。External只接收一份公共collider数组，静态edge、partition collision mode、独立`collided_by_groups`、particle radius/friction由domain编译并持有；point只消费mode 1，edge只消费mode 2且primitive不得跨partition。substep起点由native owner独立冻结，self继承External已经累积的摩擦状态，post后snapshot与碰撞状态立即失效。双partitionpoint/edge过滤、真实接触、real velocity history、非法collider/post零pass执行及E3旧标量ABI均有双ABI证据。
 
-E4尚未关闭：native/adapter的compiled external子门槛已关闭，但产品侧尚未把Physics World公共snapshot一次性捕获为whole-domain collider table，也未把多source fragment cache接入统一context。下一门禁是完成这两个host边界及对应多source oracle/性能验收；在此之前不切产品slot，也不删除V0或普通aggregate路径。
+E4尚未关闭：native/adapter的compiled external和纯host的whole-domain collider capture子门槛已关闭。`MC2DomainColliderFrameSpec`拥有独立只读SoA，按collector draft的全部resolved source一次排除域内owner，不做partition mask预筛选，并可直接被compiled full endpoint消费；source重排不改变capture signature。下一门禁是把既有source observation/fragment cache、domain frame和该collider POD接入产品fused owner，完成多source oracle与性能验收；在此之前不切产品slot，也不删除V0或普通aggregate路径。
 
 ### E5：多目标结果事务与产品节点
 
@@ -1034,7 +1034,7 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
 - 单 partition 退化时，Domain writeback command 与 V0 `MC2ResultCandidateV1` 对同一 frame linear/world positions 生成逐 float32 相同的 object-local offsets；这关闭 E3 输出数学等价，不代表 E5 多 target 发布事务已完成。
 
-E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/Keep/Reset/catch-up、零子步暂停、非零 inertia + Tether + Distance 组合、post/history、scheduler/参数 handoff、单 target writeback数学、debug-off readback和热点计时关闭态均已有固定证据。P0、P1-B、粒子级覆盖合同、partitioned StepBasic、whole-domain self及其native-owned snapshot到post的完整结构段也已关闭。当前执行入口是compiled external collision、多source capture/fragment cache和产品切换前的oracle/性能门禁；多target原子发布仍属于E5。完成这些门槛前不授权切换Physics World产品owner。后续每完成一个大阶段，只增加整理后的决策与踩坑结论，不记录逐提交过程。
+E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/Keep/Reset/catch-up、零子步暂停、非零 inertia + Tether + Distance 组合、post/history、scheduler/参数 handoff、单 target writeback数学、debug-off readback和热点计时关闭态均已有固定证据。P0、P1-B、粒子级覆盖合同、partitioned StepBasic、whole-domain self/external、native-owned完整pass和单次domain collider capture也已关闭。当前执行入口是把多source observation/fragment cache与这些合同接入产品fused owner，并完成切换前oracle/性能门禁；多target原子发布仍属于E5。完成这些门槛前不授权切换Physics World产品owner。后续每完成一个大阶段，只增加整理后的决策与踩坑结论，不记录逐提交过程。
 
 ### P0阶段归档：原生热点计时的边界与决策
 

@@ -50,6 +50,9 @@ native_kernel = importlib.import_module(
 native_module_api = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
 )
+collider_frame = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -771,20 +774,28 @@ def test_native_cpu_compiled_external_collision_filters_each_partition():
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     original = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
-    collider = {
-        "collider_types": np.asarray((0,), dtype=np.int32),
-        "collider_group_bits": np.asarray((1,), dtype=np.int32),
-        "collider_centers": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_segment_a": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_segment_b": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_old_centers": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_old_segment_a": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_old_segment_b": np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32),
-        "collider_radii": np.asarray((2.0,), dtype=np.float32),
-    }
+    center = np.asarray(((2.0, 2.0, 2.0),), dtype=np.float32)
+    collider = collider_frame.MC2DomainColliderFrameSpec(
+        frame=frame.frame,
+        source_pointers=(10, 11),
+        collider_keys=("sphere",),
+        collider_types=np.asarray((0,), dtype=np.int32),
+        collider_group_bits=np.asarray((1,), dtype=np.int32),
+        collider_centers=center,
+        collider_segment_a=center,
+        collider_segment_b=center,
+        collider_old_centers=center,
+        collider_old_segment_a=center,
+        collider_old_segment_b=center,
+        collider_radii=np.asarray((2.0,), dtype=np.float32),
+        frame_signature="0" * 64,
+    )
     try:
         domain.update_frame(frame)
-        invalid = dict(collider, collider_centers=np.asarray(((np.nan, 2.0, 2.0),)))
+        invalid = dict(
+            collider.native_mapping(),
+            collider_centers=np.asarray(((np.nan, 2.0, 2.0),)),
+        )
         try:
             domain.step_compiled_external_collision(invalid)
         except ValueError as exc:
