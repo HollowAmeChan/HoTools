@@ -53,7 +53,7 @@ E3 单 source CPU reference 已完成。`cpu_backend.py` 先执行无资源 capa
 
 E3 的 py311/py313 固定证据覆盖创建/更新/失败回滚/释放、normal/Keep/Reset/catch-up/paused Center、非零 depth inertia + Fixed 根 + Tether + Distance A/B、Angle Limit + Motion/Backstop、point/edge/self、post 速度历史、scheduler 参数交接、单 target writeback 数学和 debug-off 零 readback。V0 与 Domain 的单 source 全功能等价门禁已经关闭；多 source 同域、whole-domain self、多 target 原子发布和产品 collector 分别属于 E4/E5，不能由 E3 结论代替。
 
-E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E4/E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。下一执行入口是 `MC2_NODE_SIMULATION_DESIGN.md` 中的 P0 原生阶段证据、P1-B source observation cache，以及随后服务 E4 的粒子级覆盖合同。
+E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E4/E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。P0 原生阶段计时已经闭环，下一执行入口是 `MC2_NODE_SIMULATION_DESIGN.md` 中的 P1-B source observation cache，以及随后服务 E4 的粒子级覆盖合同。
 
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
@@ -417,7 +417,9 @@ C++ production kernel是唯一位置、速度和接触状态写入者。C++ debu
 - **最重组合**：允许按需付出多个模式的记录/readback，但共享positions、primitive indices和interaction owner数据每帧只复制一次；未打开的兄弟模式键必须缺失。
 - native setter只在请求状态改变时跨Python/C++调用；capture完成后立即清除，避免普通substep反复设置debug位。
 - self contact debug的逐贡献归因只在`self_contact_debug_requested`时构造；关闭时仍执行真实self求解，但不构造debug临时记录。
-- `MC2模拟步`拥有默认关闭的`热点时长调试`socket。关闭时向solver传入`timing=None`，不读取分步墙钟、不创建聚合字典、不复制诊断上下文，也不在节点浮层显示内部阶段。开启后MC2逐次切分“输入与任务、静态准备、帧与调度准备、模拟求解、结果构建、调试捕获、结果发布”七个连续阶段：同一次测量既写入world自有的约1秒控制台聚合器，也在当前节点恰好取得通用`OmniNodeTiming`低频采样session时写入浮层。文字与阶段边界由MC2拥有，通用renderer只提供空槽、排序与绘制；MC2不读取树RNA、不调用绘制模块。控制台格式沿用NodeTree聚合耗时报告的Summary/Scope/State/Slow Stages结构，列出阶段均值、占比和窗口峰值，并把任务类型、粒子量、dt、实际substep/native batch、collider/interaction任务范围、创建/重建/更新/复用、Reset/Teleport、debug capture和写回情况放在同一窗口。控制台另列`Solve Detail`嵌套段，只对真实可分割的Python调度边界统计“批次编组、任务同步与调试配置、native组求解”；它明确以`模拟求解`为分母且不与外层七段相加。native当前没有公开约束/碰撞各自时长，禁止用推测值冒充内部阶段。该socket只控制观察，不进入settings、static fingerprint或slot重建判定。
+- `MC2模拟步`拥有默认关闭的`热点时长调试`socket。关闭时向solver传入`timing=None`，native binding只接收一个false gate；固定槽记录器不构造、不读取`steady_clock`、不创建阶段dict或格式化标签，返回`None`。该socket只控制观察，不进入settings、static fingerprint或slot重建判定。
+- 开启后MC2逐次切分“输入与任务、静态准备、帧与调度准备、模拟求解、结果构建、调试捕获、结果发布”七个连续产品阶段；它们写入world自有控制台聚合器，并在当前节点取得通用`OmniNodeTiming`低频采样session时写入浮层。文字与阶段边界由MC2拥有，通用renderer只提供空槽、排序与绘制；MC2不读取树RNA、不调用绘制模块。
+- `模拟求解`内部由一次`step_group`栈上固定槽继续拆分：任务/作用域、context/debug准备、Center、预测、Tether、Distance A、Angle、Bending、Point/Edge、Distance B、Motion、self primitive、grid、候选、contact构建、四轮contact solve、跨task aggregate构建/分发、最终交叉与post/history。native只发布稳定ASCII stage key、秒数、调用数和clock-read计数；MC2 Python adapter拥有中文标签，通用renderer不硬编码MC2阶段。控制台`Solve Detail`显示这些真实分段及Python/native边界残差，不与外层七段相加；节点浮层继续显示适合轻量观察的产品聚合阶段。
 
 当前自动证据包括：native MC2 context全套debug/生命周期回归、Blender隔离28模式、debug-off零readback、默认节点惰性、过滤切换取消旧request、未请求键缺失和冻结snapshot只读性；热点benchmark另行分开raw/frame/group/result/writeback/debug capture。绝对毫秒只作为同机同资产回归，不作为跨机器合同。
 

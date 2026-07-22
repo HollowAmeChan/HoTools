@@ -59,6 +59,14 @@ interaction_scope = importlib.import_module(
 )
 
 
+BENCH_NATIVE_STAGES = os.environ.get("MC2_BENCH_NATIVE_STAGES", "0") == "1"
+BENCH_FORCE_CONTACTS = os.environ.get("MC2_BENCH_FORCE_CONTACTS", "0") == "1"
+BENCH_GRID_SIZE = int(os.environ.get("MC2_BENCH_GRID_SIZE", "10"))
+BENCH_FRAMES = int(os.environ.get("MC2_BENCH_FRAMES", "35"))
+if BENCH_GRID_SIZE < 2 or BENCH_FRAMES < 7:
+    raise ValueError("MC2 interaction benchmark requires grid >= 2 and frames >= 7")
+
+
 def _explicit_partner_pairs(partners):
     pairs = set()
     for task_id, values in partners.items():
@@ -152,7 +160,14 @@ def _masks_from_pairs(task_ids, pairs):
     return tuple(masks)
 
 
-def _run_case(objects, label, *, partner_graph=None, frames=35):
+def _run_case(
+    objects,
+    label,
+    *,
+    partner_graph=None,
+    frames=BENCH_FRAMES,
+    capture_timing=False,
+):
     bundles = [_bundle(obj) for obj in objects]
     contexts = [bundle[0] for bundle in bundles]
     task_ids = tuple(bundle[1].task_id for bundle in bundles)
@@ -162,10 +177,13 @@ def _run_case(objects, label, *, partner_graph=None, frames=35):
     resolver_samples = []
     candidate_counts = []
     contact_counts = []
+    native_samples = []
     try:
         for frame in range(1, frames + 1):
             for bundle in bundles:
                 _advance(bundle, frame)
+                if BENCH_FORCE_CONTACTS:
+                    bundle[0].reset()
             if partner_graph is None:
                 masks = (0,) * len(bundles)
             else:
@@ -174,14 +192,22 @@ def _run_case(objects, label, *, partner_graph=None, frames=35):
                 masks = _masks_from_pairs(task_ids, pairs)
                 resolver_samples.append((time.perf_counter_ns() - resolver_start) / 1.0e6)
             start = time.perf_counter_ns()
-            interaction.step_group(contexts, group_bits, masks, 1.0 / 90.0)
+            native_timing = interaction.step_group(
+                contexts,
+                group_bits,
+                masks,
+                1.0 / 90.0,
+                capture_timing=capture_timing,
+            )
             samples.append((time.perf_counter_ns() - start) / 1.0e6)
+            if capture_timing:
+                native_samples.append(native_timing)
             frame_info = interaction.inspect()
             candidate_counts.append(frame_info["candidate_count"])
             contact_counts.append(frame_info["contact_count"])
         stable = samples[5:]
         info = interaction.inspect()
-        return {
+        result = {
             "model": label,
             "mean_ms": statistics.fmean(stable),
             "p95_ms": sorted(stable)[max(0, int(len(stable) * 0.95) - 1)],
@@ -192,6 +218,34 @@ def _run_case(objects, label, *, partner_graph=None, frames=35):
             "contact_peak": max(contact_counts, default=0),
             **info,
         }
+        if capture_timing:
+            stable_native = native_samples[5:]
+            stage_totals = {}
+            call_totals = {}
+            covered_ms = 0.0
+            for sample in stable_native:
+                covered_ms += float(sample["covered_seconds"]) * 1000.0
+                for stage, seconds in sample["stages"].items():
+                    stage_totals[stage] = stage_totals.get(stage, 0.0) + (
+                        float(seconds) * 1000.0
+                    )
+                for stage, count in sample["calls"].items():
+                    call_totals[stage] = call_totals.get(stage, 0) + int(count)
+            wall_ms = sum(stable)
+            sample_count = len(stable_native)
+            result.update({
+                "native_covered_mean_ms": covered_ms / sample_count,
+                "native_coverage_ratio": covered_ms / wall_ms,
+                "native_stage_mean_ms": {
+                    stage: total / sample_count
+                    for stage, total in sorted(stage_totals.items())
+                },
+                "native_stage_call_mean": {
+                    stage: total / sample_count
+                    for stage, total in sorted(call_totals.items())
+                },
+            })
+        return result
     finally:
         interaction.dispose()
         for context in contexts:
@@ -231,7 +285,11 @@ def _run_dynamic_scope(objects):
 
 
 objects = tuple(
-    _grid(f"MC2InteractionBenchmark{index}", index * 0.006)
+    _grid(
+        f"MC2InteractionBenchmark{index}",
+        index * 0.006,
+        size=BENCH_GRID_SIZE,
+    )
     for index in range(4)
 )
 try:
@@ -247,19 +305,36 @@ try:
         task_ids[index]: (task_ids[index + 1],)
         for index in range(len(task_ids) - 1)
     }
-    results = (
-        _run_case(objects, "automatic_wildcard"),
-        _run_case(objects, "listobj_all_pairs", partner_graph=all_partner_graph),
-        _run_case(objects, "listobj_sparse_chain", partner_graph=chain_partner_graph),
-    )
+    if BENCH_NATIVE_STAGES:
+        results = (
+            _run_case(objects, "automatic_wildcard_timing_off"),
+            _run_case(
+                objects,
+                "automatic_wildcard_timing_on",
+                capture_timing=True,
+            ),
+        )
+    else:
+        results = (
+            _run_case(objects, "automatic_wildcard"),
+            _run_case(objects, "listobj_all_pairs", partner_graph=all_partner_graph),
+            _run_case(objects, "listobj_sparse_chain", partner_graph=chain_partner_graph),
+        )
     for result in results:
         print("MC2_INTERACTION_SCOPE_BENCH", result)
-    dynamic_result = _run_dynamic_scope(objects)
-    print("MC2_INTERACTION_SCOPE_DYNAMIC", dynamic_result)
-    assert results[0]["pair_count"] == results[1]["pair_count"] == 6
-    assert results[0]["candidate_peak"] == results[1]["candidate_peak"] > 0
-    assert results[0]["contact_peak"] == results[1]["contact_peak"] > 0
-    assert results[2]["pair_count"] == 3
+    if BENCH_NATIVE_STAGES:
+        assert results[0]["pair_count"] == results[1]["pair_count"] == 6
+        assert results[0]["candidate_peak"] == results[1]["candidate_peak"] > 0
+        assert results[0]["contact_peak"] == results[1]["contact_peak"] > 0
+        assert results[1]["native_coverage_ratio"] >= 0.90
+        print("MC2_NATIVE_STAGE_OVERHEAD_RATIO", results[1]["mean_ms"] / results[0]["mean_ms"])
+    else:
+        dynamic_result = _run_dynamic_scope(objects)
+        print("MC2_INTERACTION_SCOPE_DYNAMIC", dynamic_result)
+        assert results[0]["pair_count"] == results[1]["pair_count"] == 6
+        assert results[0]["candidate_peak"] == results[1]["candidate_peak"] > 0
+        assert results[0]["contact_peak"] == results[1]["contact_peak"] > 0
+        assert results[2]["pair_count"] == 3
 finally:
     for obj in objects:
         mesh = obj.data
