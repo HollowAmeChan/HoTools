@@ -41,6 +41,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_inertia",
     "mc2_domain_cpu_v1_configure_center",
     "mc2_domain_cpu_v1_step_center",
+    "mc2_domain_cpu_v1_step_center_inertia",
     "mc2_domain_cpu_v1_configure_center_frame_shift",
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
@@ -472,6 +473,9 @@ class MC2NativeCPUKernelV1:
             key, float(settings["dt"]), float(settings["frame_interpolation"]), weights
         )
 
+    def step_center_inertia(self, handle) -> None:
+        self._module.mc2_domain_cpu_v1_step_center_inertia(self._require_handle(handle))
+
     def step_center_frame_shift(self, handle, anchor_component_local_positions) -> None:
         key = self._require_handle(handle)
         values = np.ascontiguousarray(anchor_component_local_positions, dtype=np.float32)
@@ -504,6 +508,7 @@ class MC2NativeCPUKernelV1:
             "frame_interpolation": settings["frame_interpolation"],
             "distance_weights": settings["distance_weights"],
         })
+        self.step_center_inertia(key)
         self.step_integration(key, {
             "dt": settings["dt"],
             "simulation_power": settings["simulation_power"],
@@ -549,6 +554,7 @@ class MC2NativeCPUKernelV1:
             "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
             "distance_weights": settings["distance_weights"],
         })
+        self.step_center_inertia(key)
         self.step_integration(key, {
             "dt": settings["dt"], "simulation_power": settings["simulation_power"],
             "velocity_weight": settings["velocity_weight"], "gravity": settings["gravity"],
@@ -653,6 +659,7 @@ class MC2NativeCPUKernelV1:
             "dt": structural["dt"], "frame_interpolation": structural["frame_interpolation"],
             "distance_weights": structural["distance_weights"],
         })
+        self.step_center_inertia(key)
         self.step_integration(key, {
             "dt": structural["dt"], "simulation_power": structural["simulation_power"],
             "velocity_weight": structural["velocity_weight"], "gravity": structural["gravity"],
@@ -1068,6 +1075,7 @@ class MC2NativeCPUKernelV1:
         fields = {name: index for index, name in enumerate(table.fields)}
         required = {
             "local_inertia", "local_movement_speed_limit", "local_rotation_speed_limit",
+            "depth_inertia",
             "gravity", "gravity_direction_x", "gravity_direction_y", "gravity_direction_z",
             "gravity_falloff", "stabilization_time_after_reset", "blend_weight",
         }
@@ -1079,6 +1087,7 @@ class MC2NativeCPUKernelV1:
             name: np.asarray(values[:, fields[name]], dtype=np.float32)
             for name in (
                 "local_inertia", "local_movement_speed_limit", "local_rotation_speed_limit",
+                "depth_inertia",
                 "gravity", "gravity_falloff", "stabilization_time_after_reset", "blend_weight",
             )
         }
@@ -1095,6 +1104,7 @@ class MC2NativeCPUKernelV1:
             scalar["local_inertia"],
             scalar["local_movement_speed_limit"],
             scalar["local_rotation_speed_limit"],
+            scalar["depth_inertia"],
             scalar["gravity"],
             directions,
             scalar["gravity_falloff"],

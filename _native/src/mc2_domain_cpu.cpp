@@ -65,7 +65,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       world_rotations_(program.particle_count * 4),
       world_normals_(program.particle_count * 3, 0.0f),
       velocity_positions_(program.particle_count * 3, 0.0f),
-      post_velocities_(program.particle_count * 3, 0.0f),
+      state_velocities_(program.particle_count * 3, 0.0f),
       real_velocities_(program.particle_count * 3, 0.0f),
       static_friction_(program.particle_count, 0.0f),
       post_old_positions_(program.particle_count * 3, 0.0f),
@@ -87,6 +87,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       center_local_inertia_(program.partition_count, 0.0f),
       center_local_movement_speed_limits_(program.partition_count, -1.0f),
       center_local_rotation_speed_limits_(program.partition_count, -1.0f),
+      center_depth_inertia_(program.partition_count, 0.0f),
       center_gravity_(program.partition_count, 0.0f),
       center_gravity_directions_(program.partition_count * 3, 0.0f),
       center_gravity_falloff_(program.partition_count, 0.0f),
@@ -95,6 +96,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       center_initial_scales_(program.partition_count * 3, 1.0f),
       center_old_world_positions_(program.partition_count * 3, 0.0f),
       center_old_world_rotations_(program.partition_count * 4, 0.0f),
+      center_inertia_old_world_positions_(program.partition_count * 3, 0.0f),
       center_previous_frame_world_positions_(program.partition_count * 3, 0.0f),
       center_previous_frame_world_rotations_(program.partition_count * 4, 0.0f),
       center_frame_world_positions_(program.partition_count * 3, 0.0f),
@@ -191,6 +193,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
     animated_base_world_rotations_ = bind_rotations_;
     world_positions_ = bind_positions_;
     world_rotations_ = bind_rotations_;
+    velocity_positions_ = world_positions_;
 }
 
 void DomainV1::update_frame(const FrameViewV1& frame) {
@@ -266,6 +269,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     std::vector<float> next_positions = world_positions_;
     std::vector<float> next_rotations = world_rotations_;
     std::vector<float> next_velocity_positions = velocity_positions_;
+    std::vector<float> next_state_velocities = state_velocities_;
     std::vector<float> next_normals(
         frame.world_normals, frame.world_normals + particle_count_ * 3
     );
@@ -362,7 +366,8 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         const auto offset = particle * 3;
         for (std::size_t component = 0; component < 3; ++component) {
             next_positions[offset + component] = next_animated_positions[offset + component];
-            next_velocity_positions[offset + component] = 0.0f;
+            next_velocity_positions[offset + component] = next_animated_positions[offset + component];
+            next_state_velocities[offset + component] = 0.0f;
         }
         const auto rotation_offset = particle * 4;
         std::copy_n(
@@ -375,7 +380,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
         hotools::Mc2PartitionKeepTransformView keep_view;
         keep_view.positions = next_positions.data();
         keep_view.rotations = next_rotations.data();
-        keep_view.velocities = next_velocity_positions.data();
+        keep_view.velocities = next_state_velocities.data();
         keep_view.particle_partition_index = particle_partition_index_.data();
         keep_view.particle_attribute_flags = particle_attribute_flags_.data();
         keep_view.partition_frame_flags = next_frame_flags.data();
@@ -402,6 +407,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     world_positions_.swap(next_positions);
     world_rotations_.swap(next_rotations);
     velocity_positions_.swap(next_velocity_positions);
+    state_velocities_.swap(next_state_velocities);
     animated_base_world_positions_.swap(next_animated_positions);
     animated_base_world_rotations_.swap(next_animated_rotations);
     world_normals_.swap(next_normals);
@@ -425,6 +431,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     velocity_weights_.swap(next_velocity_weights);
     gravity_ratios_.swap(next_gravity_ratios);
     center_frame_shift_ready_ = false;
+    center_inertia_pending_ = false;
     frame_delta_time_ = frame.frame_delta_time;
     simulation_delta_time_ = frame.simulation_delta_time;
     time_scale_ = frame.time_scale;
@@ -451,6 +458,7 @@ void DomainV1::configure_center(
     const float* local_inertia,
     const float* local_movement_speed_limits,
     const float* local_rotation_speed_limits,
+    const float* depth_inertia,
     const float* gravity,
     const float* gravity_directions,
     const float* gravity_falloff,
@@ -461,6 +469,7 @@ void DomainV1::configure_center(
     require_finite(local_inertia, partition_count_, "local_inertia");
     require_finite(local_movement_speed_limits, partition_count_, "local_movement_speed_limits");
     require_finite(local_rotation_speed_limits, partition_count_, "local_rotation_speed_limits");
+    require_finite(depth_inertia, partition_count_, "depth_inertia");
     require_finite(gravity, partition_count_, "gravity");
     require_finite(gravity_directions, partition_count_ * 3, "gravity_directions");
     require_finite(gravity_falloff, partition_count_, "gravity_falloff");
@@ -468,6 +477,7 @@ void DomainV1::configure_center(
     require_finite(blend_weight, partition_count_, "blend_weight");
     for (std::size_t index = 0; index < partition_count_; ++index) {
         if (local_inertia[index] < 0.0f || local_inertia[index] > 1.0f ||
+            depth_inertia[index] < 0.0f || depth_inertia[index] > 1.0f ||
             gravity[index] < 0.0f || gravity_falloff[index] < 0.0f ||
             stabilization_time[index] < 0.0f || blend_weight[index] < 0.0f ||
             blend_weight[index] > 1.0f) {
@@ -485,6 +495,7 @@ void DomainV1::configure_center(
         local_rotation_speed_limits + partition_count_,
         center_local_rotation_speed_limits_.begin()
     );
+    std::copy(depth_inertia, depth_inertia + partition_count_, center_depth_inertia_.begin());
     std::copy(gravity, gravity + partition_count_, center_gravity_.begin());
     std::copy(
         gravity_directions,
@@ -639,7 +650,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     std::vector<float> next_world_positions = world_positions_;
     std::vector<float> next_world_rotations = world_rotations_;
     std::vector<float> next_velocity_positions = velocity_positions_;
-    std::vector<float> next_post_velocities = post_velocities_;
+    std::vector<float> next_state_velocities = state_velocities_;
     std::vector<std::uint8_t> partition_apply_flags(partition_count_, 1u);
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         if ((next_teleport_flags[partition] & 4u) != 0u) {
@@ -650,7 +661,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     particle_shift.positions = next_world_positions.data();
     particle_shift.rotations = next_world_rotations.data();
     particle_shift.velocity_positions = next_velocity_positions.data();
-    particle_shift.velocities = next_post_velocities.data();
+    particle_shift.velocities = next_state_velocities.data();
     particle_shift.particle_partition_index = particle_partition_index_.data();
     particle_shift.partition_apply_flags = partition_apply_flags.data();
     particle_shift.pivots = partition_previous_world_positions_.data();
@@ -676,7 +687,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
             3,
             next_velocity_positions.data() + position_offset
         );
-        std::fill_n(next_post_velocities.data() + position_offset, 3, 0.0f);
+        std::fill_n(next_state_velocities.data() + position_offset, 3, 0.0f);
         std::copy_n(
             animated_base_world_rotations_.data() + rotation_offset,
             4,
@@ -686,7 +697,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     world_positions_.swap(next_world_positions);
     world_rotations_.swap(next_world_rotations);
     velocity_positions_.swap(next_velocity_positions);
-    post_velocities_.swap(next_post_velocities);
+    state_velocities_.swap(next_state_velocities);
     center_shift_vectors_.swap(next_shift_vectors);
     center_shift_rotations_.swap(next_shift_rotations);
     center_shift_old_frame_positions_.swap(next_shift_old_frame_positions);
@@ -717,8 +728,12 @@ void DomainV1::step_center(
         hotools::Mc2CenterStepView view;
         const auto position_offset = partition * 3;
         const auto rotation_offset = partition * 4;
+        const bool reset_teleport = center_frame_shift_ready_ &&
+            (center_shift_teleport_flags_[partition] & 4u) != 0u;
         std::copy_n(
-            (center_frame_shift_ready_
+            (reset_teleport
+                ? center_frame_world_positions_.data()
+                : center_frame_shift_ready_
                 ? center_shift_old_frame_positions_.data()
                 : center_previous_frame_world_positions_.data()) + position_offset,
             3,
@@ -730,7 +745,9 @@ void DomainV1::step_center(
             view.frame_world_position
         );
         std::copy_n(
-            (center_frame_shift_ready_
+            (reset_teleport
+                ? center_frame_world_rotations_.data()
+                : center_frame_shift_ready_
                 ? center_shift_old_frame_rotations_.data()
                 : center_previous_frame_world_rotations_.data()) + rotation_offset,
             4,
@@ -757,18 +774,27 @@ void DomainV1::step_center(
             view.initial_scale
         );
         std::copy_n(
-            (center_frame_shift_ready_
+            (reset_teleport
+                ? center_frame_world_positions_.data()
+                : center_frame_shift_ready_
                 ? center_shift_now_positions_.data()
                 : center_old_world_positions_.data()) + position_offset,
             3,
             view.old_world_position
         );
         std::copy_n(
-            (center_frame_shift_ready_
+            (reset_teleport
+                ? center_frame_world_rotations_.data()
+                : center_frame_shift_ready_
                 ? center_shift_now_rotations_.data()
                 : center_old_world_rotations_.data()) + rotation_offset,
             4,
             view.old_world_rotation
+        );
+        std::copy_n(
+            view.old_world_position,
+            3,
+            center_inertia_old_world_positions_.data() + position_offset
         );
         std::copy_n(
             partition_initial_local_gravity_directions_.data() + position_offset,
@@ -807,7 +833,41 @@ void DomainV1::step_center(
     center_old_world_positions_ = center_now_world_positions_;
     center_old_world_rotations_ = center_now_world_rotations_;
     center_frame_shift_ready_ = false;
+    center_inertia_pending_ = true;
     ++center_step_count_;
+}
+
+void DomainV1::step_center_inertia() {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0 || !center_ready_ || !inertia_ready_ ||
+        !center_inertia_pending_) {
+        throw std::logic_error(
+            "MC2 CPU Center inertia requires frame, Center, particle, and Center-step state"
+        );
+    }
+
+    // V0 snapshots the pre-prediction position at the start of every substep.
+    velocity_positions_ = world_positions_;
+    hotools::Mc2PartitionedSubstepInertiaView view;
+    view.positions = world_positions_.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.velocities = state_velocities_.data();
+    view.depths = inertia_depths_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.particle_partition_index = particle_partition_index_.data();
+    view.old_world_positions = center_inertia_old_world_positions_.data();
+    view.step_vectors = center_step_vectors_.data();
+    view.step_rotations = center_step_rotations_.data();
+    view.inertia_vectors = center_inertia_vectors_.data();
+    view.inertia_rotations = center_inertia_rotations_.data();
+    view.depth_inertia = center_depth_inertia_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.partition_count = static_cast<std::int64_t>(partition_count_);
+    if (!hotools::apply_partitioned_substep_inertia_mc2(view)) {
+        throw std::runtime_error("MC2 CPU Center inertia rejected the domain state");
+    }
+    center_inertia_pending_ = false;
+    ++step_count_;
 }
 
 void DomainV1::step() {
@@ -1570,7 +1630,7 @@ void DomainV1::step_inertia(
     }
     hotools::Mc2SubstepInertiaView view;
     view.old_positions = world_positions_.data();
-    view.velocities = velocity_positions_.data();
+    view.velocities = state_velocities_.data();
     view.depths = inertia_depths_.data();
     view.inv_masses = inertia_inv_masses_.data();
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
@@ -1618,7 +1678,7 @@ void DomainV1::step_integration(
     }
     hotools::Mc2ParticleIntegrationView view;
     view.positions = world_positions_.data();
-    view.velocities = velocity_positions_.data();
+    view.velocities = state_velocities_.data();
     view.inv_masses = inertia_inv_masses_.data();
     view.damping_values = integration_damping_values_.data();
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
@@ -1662,7 +1722,7 @@ void DomainV1::step_post(
     view.positions = world_positions_.data();
     view.old_positions = post_old_positions_.data();
     view.velocity_positions = velocity_positions_.data();
-    view.velocities = post_velocities_.data();
+    view.velocities = state_velocities_.data();
     view.real_velocities = real_velocities_.data();
     view.friction = collision_friction_.data();
     view.static_friction = static_friction_.data();
@@ -1695,7 +1755,7 @@ void DomainV1::dispose() noexcept {
     world_positions_.clear();
     world_normals_.clear();
     velocity_positions_.clear();
-    post_velocities_.clear();
+    state_velocities_.clear();
     real_velocities_.clear();
     static_friction_.clear();
     post_old_positions_.clear();
@@ -1755,6 +1815,7 @@ void DomainV1::dispose() noexcept {
     center_shift_smoothing_velocities_.clear();
     center_shift_teleport_flags_.clear();
     center_frame_shift_ready_ = false;
+    center_inertia_pending_ = false;
     center_shift_count_ = 0;
 }
 

@@ -672,6 +672,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            cf32_1d local_inertia,
            cf32_1d local_movement_speed_limits,
            cf32_1d local_rotation_speed_limits,
+           cf32_1d depth_inertia,
            cf32_1d gravity,
            cf32_2d gravity_directions,
            cf32_1d gravity_falloff,
@@ -682,6 +683,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             if (static_cast<std::size_t>(local_inertia.shape(0)) != partition_count ||
                 static_cast<std::size_t>(local_movement_speed_limits.shape(0)) != partition_count ||
                 static_cast<std::size_t>(local_rotation_speed_limits.shape(0)) != partition_count ||
+                static_cast<std::size_t>(depth_inertia.shape(0)) != partition_count ||
                 static_cast<std::size_t>(gravity.shape(0)) != partition_count ||
                 static_cast<std::size_t>(gravity_directions.shape(0)) != partition_count ||
                 gravity_directions.shape(1) != 3 ||
@@ -692,7 +694,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             }
             domain->configure_center(
                 local_inertia.data(), local_movement_speed_limits.data(),
-                local_rotation_speed_limits.data(), gravity.data(),
+                local_rotation_speed_limits.data(), depth_inertia.data(), gravity.data(),
                 gravity_directions.data(), gravity_falloff.data(),
                 stabilization_time.data(), blend_weight.data()
             );
@@ -701,6 +703,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("local_inertia"),
         nb::arg("local_movement_speed_limits"),
         nb::arg("local_rotation_speed_limits"),
+        nb::arg("depth_inertia"),
         nb::arg("gravity"),
         nb::arg("gravity_directions"),
         nb::arg("gravity_falloff"),
@@ -722,6 +725,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("frame_interpolation"),
         nb::arg("distance_weights"),
         "Run the explicit per-partition Center evaluator slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_center_inertia",
+        [](std::uint64_t handle) {
+            require_domain(handle)->step_center_inertia();
+        },
+        nb::arg("handle"),
+        "Apply the per-partition Center result to the unified particle state."
     );
     module.def(
         "mc2_domain_cpu_v1_configure_center_frame_shift",

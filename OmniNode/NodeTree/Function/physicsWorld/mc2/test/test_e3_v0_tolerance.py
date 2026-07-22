@@ -820,6 +820,7 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
     task_parameters = parameters.make_mc2_task_parameters(
         world_inertia=0.25,
+        depth_inertia=1.0,
         movement_inertia_smoothing=0.0,
         movement_speed_limit=-1.0,
         rotation_speed_limit=-1.0,
@@ -976,6 +977,56 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
             rtol=2.0e-5,
             atol=2.0e-5,
         )
+        if simulation_delta_time > 0.0:
+            if teleport_mode == 1:
+                center_state.reset(
+                    frame_two_pose,
+                    center_pose_two.position,
+                    center_pose_two.rotation_xyzw,
+                    velocity_weight=1.0,
+                )
+                center_step_shift = None
+            else:
+                center_step_shift = shift
+            v0.update_center_dynamic(center_state.make_step_input(
+                frame_two_pose,
+                center_pose_two,
+                simulation_delta_time=simulation_delta_time,
+                frame_interpolation=1.0,
+                frame_shift=center_step_shift,
+            ))
+            v0.step_no_collision(simulation_delta_time)
+            v0_after_step = np.asarray(v0.read()[0], dtype=np.float32)
+            if teleport_mode == 0 and is_running:
+                assert np.any(np.abs(v0_after_step - v0_after_shift) > 1.0e-5)
+            domain.step_center({
+                "dt": simulation_delta_time,
+                "frame_interpolation": 1.0,
+                "distance_weights": np.ones(1, dtype=np.float32),
+            })
+            domain.step_center_inertia()
+            domain.step({
+                "integration_slice": True,
+                "data_path_only": True,
+                "dt": simulation_delta_time,
+                "simulation_power": 1.0,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, 0.0, 0.0),
+            })
+            domain.step_post(_post_step_settings(effective, v0_after_shift))
+            v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
+            np.testing.assert_allclose(
+                domain.read_output().world_positions,
+                v0_after_step,
+                rtol=4.0e-5,
+                atol=4.0e-5,
+            )
+            np.testing.assert_allclose(
+                domain.read_debug_state()["real_velocities"],
+                np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
+                rtol=4.0e-5,
+                atol=4.0e-5,
+            )
     finally:
         domain.dispose()
         v0.dispose()
@@ -1381,11 +1432,11 @@ if __name__ == "__main__":
     test_e3_native_full_angle_motion_pipeline_matches_v0()
     print("PASS E3 native full Angle Limit + Motion/Backstop pipeline matches V0")
     test_e3_center_frame_shift_two_frame_transaction_matches_v0()
-    print("PASS E3 Center frame-shift two-frame transaction matches V0")
+    print("PASS E3 Center frame-shift + inertia/post two-frame transaction matches V0")
     test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=2)
-    print("PASS E3 Center Keep teleport two-frame transaction matches V0")
+    print("PASS E3 Center Keep teleport + inertia/post transaction matches V0")
     test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=1)
-    print("PASS E3 Center Reset teleport two-frame transaction matches V0")
+    print("PASS E3 Center Reset teleport + inertia/post transaction matches V0")
     test_e3_center_frame_shift_two_frame_transaction_matches_v0(
         is_running=False,
         simulation_delta_time=0.0,
@@ -1396,7 +1447,7 @@ if __name__ == "__main__":
         simulation_delta_time=0.1,
         skip_count=2,
     )
-    print("PASS E3 Center catch-up transaction matches V0")
+    print("PASS E3 Center catch-up + inertia/post transaction matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()

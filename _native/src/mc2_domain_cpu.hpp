@@ -172,6 +172,7 @@ public:
         const float* local_inertia,
         const float* local_movement_speed_limits,
         const float* local_rotation_speed_limits,
+        const float* depth_inertia,
         const float* gravity,
         const float* gravity_directions,
         const float* gravity_falloff,
@@ -194,6 +195,7 @@ public:
         float frame_interpolation,
         const float* distance_weights
     );
+    void step_center_inertia();
     void step_inertia(
         const float* old_world_position,
         const float* step_vector,
@@ -311,7 +313,7 @@ private:
     std::vector<float> world_rotations_;
     std::vector<float> world_normals_;
     std::vector<float> velocity_positions_;
-    std::vector<float> post_velocities_;
+    std::vector<float> state_velocities_;
     std::vector<float> real_velocities_;
     std::vector<float> static_friction_;
     std::vector<float> post_old_positions_;
@@ -333,6 +335,7 @@ private:
     std::vector<float> center_local_inertia_;
     std::vector<float> center_local_movement_speed_limits_;
     std::vector<float> center_local_rotation_speed_limits_;
+    std::vector<float> center_depth_inertia_;
     std::vector<float> center_gravity_;
     std::vector<float> center_gravity_directions_;
     std::vector<float> center_gravity_falloff_;
@@ -341,6 +344,7 @@ private:
     std::vector<float> center_initial_scales_;
     std::vector<float> center_old_world_positions_;
     std::vector<float> center_old_world_rotations_;
+    std::vector<float> center_inertia_old_world_positions_;
     std::vector<float> center_previous_frame_world_positions_;
     std::vector<float> center_previous_frame_world_rotations_;
     std::vector<float> center_frame_world_positions_;
@@ -373,6 +377,7 @@ private:
     std::vector<float> center_gravity_ratios_;
     std::vector<float> center_velocity_weights_;
     bool center_ready_ = false;
+    bool center_inertia_pending_ = false;
     std::int64_t center_step_count_ = 0;
     std::vector<std::int64_t> partition_reset_counts_;
     std::vector<std::int64_t> partition_keep_counts_;

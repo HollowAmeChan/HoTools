@@ -205,6 +205,26 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose the Center frame-shift slice")
         step_frame_shift(self._handle, anchor_component_local_positions)
 
+    def step_center(self, settings: Mapping[str, object]) -> None:
+        """Evaluate one explicit native Center substep."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("Center step requires update_frame first")
+        step_center = getattr(self._kernel, "step_center", None)
+        if not callable(step_center):
+            raise RuntimeError("CPU kernel does not expose the Center slice")
+        step_center(self._handle, settings)
+
+    def step_center_inertia(self) -> None:
+        """Consume the latest Center result on the unified particle state."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("Center inertia requires update_frame first")
+        step_inertia = getattr(self._kernel, "step_center_inertia", None)
+        if not callable(step_inertia):
+            raise RuntimeError("CPU kernel does not expose Center inertia")
+        step_inertia(self._handle)
+
     def step_reference_slices(self, settings: Mapping[str, object]) -> None:
         """Run only the explicit landed native reference pass prefix."""
         self._ensure_live()

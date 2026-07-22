@@ -3059,6 +3059,84 @@ void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
     }
 }
 
+bool apply_partitioned_substep_inertia_mc2(Mc2PartitionedSubstepInertiaView& view) {
+    if (view.vertex_count < 0 || view.partition_count <= 0 ||
+        view.positions == nullptr || view.velocity_positions == nullptr ||
+        view.velocities == nullptr || view.depths == nullptr ||
+        view.inv_masses == nullptr || view.particle_partition_index == nullptr ||
+        view.old_world_positions == nullptr || view.step_vectors == nullptr ||
+        view.step_rotations == nullptr || view.inertia_vectors == nullptr ||
+        view.inertia_rotations == nullptr || view.depth_inertia == nullptr) {
+        return false;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.particle_partition_index[vertex] >= static_cast<std::uint32_t>(view.partition_count)) {
+            return false;
+        }
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.inv_masses[vertex] <= kMc2Epsilon) continue;
+        const auto partition = static_cast<std::int64_t>(view.particle_partition_index[vertex]);
+        const auto position_offset = vertex * 3;
+        const auto partition_position_offset = partition * 3;
+        const auto partition_rotation_offset = partition * 4;
+        const float depth = clamp_float(view.depths[vertex], 0.0f, 1.0f);
+        const float ratio = clamp_float(view.depth_inertia[partition], 0.0f, 1.0f) *
+            (1.0f - depth * std::sqrt(depth));
+        const float inertia_vector_x =
+            view.inertia_vectors[partition_position_offset + 0] * (1.0f - ratio) +
+            view.step_vectors[partition_position_offset + 0] * ratio;
+        const float inertia_vector_y =
+            view.inertia_vectors[partition_position_offset + 1] * (1.0f - ratio) +
+            view.step_vectors[partition_position_offset + 1] * ratio;
+        const float inertia_vector_z =
+            view.inertia_vectors[partition_position_offset + 2] * (1.0f - ratio) +
+            view.step_vectors[partition_position_offset + 2] * ratio;
+        float inertia_rotation[4] = {};
+        quat_slerp(
+            view.inertia_rotations + partition_rotation_offset,
+            view.step_rotations + partition_rotation_offset,
+            ratio,
+            inertia_rotation
+        );
+        const float local_x = view.positions[position_offset + 0] -
+            view.old_world_positions[partition_position_offset + 0];
+        const float local_y = view.positions[position_offset + 1] -
+            view.old_world_positions[partition_position_offset + 1];
+        const float local_z = view.positions[position_offset + 2] -
+            view.old_world_positions[partition_position_offset + 2];
+        float rotated_x = 0.0f;
+        float rotated_y = 0.0f;
+        float rotated_z = 0.0f;
+        quat_rotate(inertia_rotation, local_x, local_y, local_z, rotated_x, rotated_y, rotated_z);
+        const float world_x = view.old_world_positions[partition_position_offset + 0] +
+            rotated_x + inertia_vector_x;
+        const float world_y = view.old_world_positions[partition_position_offset + 1] +
+            rotated_y + inertia_vector_y;
+        const float world_z = view.old_world_positions[partition_position_offset + 2] +
+            rotated_z + inertia_vector_z;
+        view.velocity_positions[position_offset + 0] += world_x - view.positions[position_offset + 0];
+        view.velocity_positions[position_offset + 1] += world_y - view.positions[position_offset + 1];
+        view.velocity_positions[position_offset + 2] += world_z - view.positions[position_offset + 2];
+        view.positions[position_offset + 0] = world_x;
+        view.positions[position_offset + 1] = world_y;
+        view.positions[position_offset + 2] = world_z;
+        quat_rotate(
+            inertia_rotation,
+            view.velocities[position_offset + 0],
+            view.velocities[position_offset + 1],
+            view.velocities[position_offset + 2],
+            rotated_x,
+            rotated_y,
+            rotated_z
+        );
+        view.velocities[position_offset + 0] = rotated_x;
+        view.velocities[position_offset + 1] = rotated_y;
+        view.velocities[position_offset + 2] = rotated_z;
+    }
+    return true;
+}
+
 namespace {
 
 void center_rotate_vector(

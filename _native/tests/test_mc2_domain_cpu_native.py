@@ -535,6 +535,7 @@ def test_domain_cpu_native_center_slice_uses_partition_history():
             np.asarray((0.5,), dtype=np.float32),
             limits,
             limits,
+            np.zeros(1, dtype=np.float32),
             gravity,
             gravity_direction,
             falloff,

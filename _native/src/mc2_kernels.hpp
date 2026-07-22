@@ -256,6 +256,23 @@ struct Mc2SubstepInertiaView {
     float depth_inertia = 0.0f;
 };
 
+struct Mc2PartitionedSubstepInertiaView {
+    float* positions = nullptr;
+    float* velocity_positions = nullptr;
+    float* velocities = nullptr;
+    const float* depths = nullptr;
+    const float* inv_masses = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const float* old_world_positions = nullptr;
+    const float* step_vectors = nullptr;
+    const float* step_rotations = nullptr;
+    const float* inertia_vectors = nullptr;
+    const float* inertia_rotations = nullptr;
+    const float* depth_inertia = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t partition_count = 0;
+};
+
 struct Mc2CenterStepView {
     float old_frame_world_position[3] = {};
     float frame_world_position[3] = {};
@@ -444,6 +461,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
 void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
+bool apply_partitioned_substep_inertia_mc2(Mc2PartitionedSubstepInertiaView& view);
 bool derive_center_world_pose_mc2(Mc2CenterPoseView& view);
 bool evaluate_center_frame_shift_mc2(Mc2CenterFrameShiftView& view);
 bool evaluate_center_step_mc2(Mc2CenterStepView& view);
