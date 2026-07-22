@@ -30,6 +30,9 @@ for package_name, package_path in (
 authoring = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
 )
+domain_collect = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect"
+)
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
@@ -149,6 +152,53 @@ def test_bone_spring_merges_roots_and_enforces_line():
         ),
     )
     assert normalized.plan.active_partitions[0].setup_options.connection_mode == 0
+
+
+def test_bone_plan_builds_same_domain_draft_and_spring_filters_colliders():
+    armature = _Armature(351, "SpringRig")
+    request = authoring.make_mc2_bone_spring_product_request([
+        _chain(armature, "Hair", "Hair.001"),
+    ])
+    draft = domain_collect.build_mc2_domain_draft(request.plan)
+    assert isinstance(draft, domain_collect.MC2DomainDraftV1)
+    assert draft.setup_type == "bone_spring"
+    assert draft.partition_ids == request.plan.report.ordered_stable_ids
+    external = _Armature(352, "ColliderOwner")
+    world = types.SimpleNamespace(
+        collider_snapshot={
+            "frame": 7,
+            "colliders": [
+                {
+                    "key": "self",
+                    "type": "SPHERE",
+                    "owner": armature,
+                    "primary_group": 1,
+                    "center": (0, 0, 0),
+                    "radius": 1,
+                },
+                {
+                    "key": "sphere",
+                    "type": "SPHERE",
+                    "owner": external,
+                    "primary_group": 1,
+                    "center": (1, 0, 0),
+                    "radius": 1,
+                },
+                {
+                    "key": "box",
+                    "type": "BOX",
+                    "owner": external,
+                    "primary_group": 1,
+                    "center": (2, 0, 0),
+                    "size": (1, 1, 1),
+                },
+            ],
+        },
+        previous_collider_snapshot=None,
+    )
+    frame = domain_collect.build_mc2_domain_collider_frame_for_draft(world, draft)
+    assert frame.source_pointers == (351,)
+    assert frame.collider_keys == ("sphere",)
 
 
 def test_require_fusion_rejects_cross_armature_without_hidden_split():

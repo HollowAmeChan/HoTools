@@ -1,4 +1,4 @@
-"""Pure resolved-partition to Mesh domain draft assembly."""
+"""Pure resolved-partition to setup-neutral domain draft assembly."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 
-from .names import MC2_SETUP_MESH_CLOTH
+from .names import MC2_SETUP_TYPES
 from .partition_specs import (
     MC2PartitionCollectorPlan,
     MC2ResolvedPartitionSpec,
@@ -55,7 +55,8 @@ def _resolved_collision_groups(
 
 
 @dataclass(frozen=True)
-class MC2MeshDomainDraftV1:
+class MC2DomainDraftV1:
+    setup_type: str
     domain_id: str
     collector_domain_signature: str
     partitions: tuple[MC2ResolvedPartitionSpec, ...]
@@ -66,30 +67,32 @@ class MC2MeshDomainDraftV1:
 
     def __post_init__(self) -> None:
         if not self.domain_id or not self.collector_domain_signature:
-            raise ValueError("MC2 Mesh domain draft identity cannot be empty")
+            raise ValueError("MC2 domain draft identity cannot be empty")
+        if self.setup_type not in MC2_SETUP_TYPES:
+            raise ValueError("MC2 domain draft setup_type 无效")
         count = len(self.partitions)
         if count <= 0:
-            raise ValueError("MC2 Mesh domain draft requires active partitions")
+            raise ValueError("MC2 domain draft requires active partitions")
         if len(self.effectives) != count:
-            raise ValueError("MC2 Mesh domain draft effective count mismatch")
+            raise ValueError("MC2 domain draft effective count mismatch")
         if len(self.collision_groups) != count or len(self.collision_masks) != count:
-            raise ValueError("MC2 Mesh domain draft filter count mismatch")
+            raise ValueError("MC2 domain draft filter count mismatch")
         if any(
             not isinstance(partition, MC2ResolvedPartitionSpec)
-            or partition.setup_type != MC2_SETUP_MESH_CLOTH
+            or partition.setup_type != self.setup_type
             or not partition.enabled
             for partition in self.partitions
         ):
-            raise TypeError("MC2 Mesh domain draft requires active Mesh partitions")
+            raise TypeError("MC2 domain draft requires one setup type of active partitions")
         if any(
             not isinstance(effective, MC2RuntimeParametersV0)
             for effective in self.effectives
         ):
-            raise TypeError("MC2 Mesh domain draft effectives are invalid")
+            raise TypeError("MC2 domain draft effectives are invalid")
         if len(set(partition.stable_id for partition in self.partitions)) != count:
-            raise ValueError("MC2 Mesh domain draft partition ids must be unique")
+            raise ValueError("MC2 domain draft partition ids must be unique")
         if len(self.draft_signature) != 64:
-            raise ValueError("MC2 Mesh domain draft signature is invalid")
+            raise ValueError("MC2 domain draft signature is invalid")
 
     @property
     def partition_ids(self) -> tuple[str, ...]:
@@ -97,7 +100,8 @@ class MC2MeshDomainDraftV1:
 
     def debug_dict(self) -> dict:
         return {
-            "schema": "mc2_mesh_domain_draft_v1",
+            "schema": "mc2_domain_draft_v1",
+            "setup_type": self.setup_type,
             "domain_id": self.domain_id,
             "collector_domain_signature": self.collector_domain_signature,
             "draft_signature": self.draft_signature,
@@ -111,20 +115,18 @@ class MC2MeshDomainDraftV1:
         }
 
 
-def build_mc2_mesh_domain_draft(
+def build_mc2_domain_draft(
     plan: MC2PartitionCollectorPlan,
     *,
     domain_id: str | None = None,
-) -> MC2MeshDomainDraftV1:
+) -> MC2DomainDraftV1:
     """Compile resolved authoring intent without Blender IO or dense buffers."""
 
     if not isinstance(plan, MC2PartitionCollectorPlan):
         raise TypeError("plan must be MC2PartitionCollectorPlan")
-    if plan.setup_type != MC2_SETUP_MESH_CLOTH:
-        raise ValueError("Mesh domain draft only accepts mesh_cloth plans")
     partitions = plan.active_partitions
     if not partitions:
-        raise ValueError("Mesh domain draft has no active partitions")
+        raise ValueError("MC2 domain draft has no active partitions")
     effectives = tuple(
         make_mc2_runtime_parameters(
             partition.profile,
@@ -139,7 +141,8 @@ def build_mc2_mesh_domain_draft(
         domain_id or f"mc2.domain:{plan.report.domain_signature[:24]}"
     ).strip()
     payload = {
-        "schema": "mc2_mesh_domain_draft_v1",
+        "schema": "mc2_domain_draft_v1",
+        "setup_type": plan.setup_type,
         "domain_id": resolved_domain_id,
         "collector_domain_signature": plan.report.domain_signature,
         "partition_ids": [partition.stable_id for partition in partitions],
@@ -152,7 +155,8 @@ def build_mc2_mesh_domain_draft(
             dict(partition.field_sources) for partition in partitions
         ],
     }
-    return MC2MeshDomainDraftV1(
+    return MC2DomainDraftV1(
+        setup_type=plan.setup_type,
         domain_id=resolved_domain_id,
         collector_domain_signature=plan.report.domain_signature,
         partitions=partitions,
@@ -163,24 +167,51 @@ def build_mc2_mesh_domain_draft(
     )
 
 
-def build_mc2_mesh_domain_collider_frame(
+def build_mc2_domain_collider_frame_for_draft(
     world,
-    draft: MC2MeshDomainDraftV1,
+    draft: MC2DomainDraftV1,
 ):
     """Capture one public Physics World collider table for an entire draft."""
 
-    if not isinstance(draft, MC2MeshDomainDraftV1):
-        raise TypeError("draft must be MC2MeshDomainDraftV1")
+    if not isinstance(draft, MC2DomainDraftV1):
+        raise TypeError("draft must be MC2DomainDraftV1")
     from .collider_frame import build_mc2_domain_collider_frame
 
     return build_mc2_domain_collider_frame(
         world,
-        (partition.source for partition in draft.partitions),
+        (
+            getattr(partition.source, "armature", partition.source)
+            for partition in draft.partitions
+        ),
+        allowed_types=(
+            frozenset(("SPHERE",))
+            if draft.setup_type == "bone_spring"
+            else None
+        ),
     )
 
 
+# E5-B 迁移包装；E7-S 在产品调用点全部切换后删除。
+MC2MeshDomainDraftV1 = MC2DomainDraftV1
+
+
+def build_mc2_mesh_domain_draft(
+    plan: MC2PartitionCollectorPlan,
+    *,
+    domain_id: str | None = None,
+) -> MC2DomainDraftV1:
+    return build_mc2_domain_draft(plan, domain_id=domain_id)
+
+
+def build_mc2_mesh_domain_collider_frame(world, draft: MC2DomainDraftV1):
+    return build_mc2_domain_collider_frame_for_draft(world, draft)
+
+
 __all__ = [
+    "MC2DomainDraftV1",
     "MC2MeshDomainDraftV1",
+    "build_mc2_domain_draft",
+    "build_mc2_domain_collider_frame_for_draft",
     "build_mc2_mesh_domain_draft",
     "build_mc2_mesh_domain_collider_frame",
 ]

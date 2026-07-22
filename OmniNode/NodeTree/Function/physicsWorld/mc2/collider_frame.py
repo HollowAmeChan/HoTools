@@ -325,6 +325,8 @@ def build_mc2_collider_frame(
 def build_mc2_domain_collider_frame(
     world,
     partition_sources,
+    *,
+    allowed_types: frozenset[str] | None = None,
 ) -> MC2DomainColliderFrameSpec:
     """Pack one World snapshot for all partitions without per-source mask filtering."""
 
@@ -344,7 +346,7 @@ def build_mc2_domain_collider_frame(
         previous,
         excluded_pointers=frozenset(source_pointers),
         collided_by_groups=None,
-        allowed_types=None,
+        allowed_types=allowed_types,
     )
     frame = int(snapshot.get("frame", -1) or -1)
     digest = hashlib.sha256()
