@@ -801,7 +801,7 @@ def test_e3_native_full_angle_motion_pipeline_matches_v0():
         v0.dispose()
 
 
-def test_e3_center_frame_shift_two_frame_transaction_matches_v0():
+def test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=0):
     """Compare a real component move through V0 and Domain Center history."""
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payload = json.load(handle)["static_snapshots"][0]
@@ -813,7 +813,9 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0():
         movement_inertia_smoothing=0.0,
         movement_speed_limit=-1.0,
         rotation_speed_limit=-1.0,
-        teleport_mode=0,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=90.0,
     )
     effective = runtime.make_mc2_runtime_parameters(
         parameters.make_mc2_particle_profile(
@@ -929,9 +931,15 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0():
                 rotation_speed_limit=-1.0,
                 movement_inertia_smoothing=0.0,
                 is_running=True,
+                teleport_mode=teleport_mode,
+                teleport_distance=0.5,
+                teleport_rotation=90.0,
             )
         )
-        v0.apply_center_frame_shift(center_state.old_frame_world_position, shift)
+        if teleport_mode == 1:
+            v0.reset()
+        else:
+            v0.apply_center_frame_shift(center_state.old_component_world_position, shift)
         v0_after_shift = np.asarray(v0.read()[0], dtype=np.float32).copy()
         v0.update_center_dynamic(center_state.make_step_input(
             frame_two_pose,
@@ -945,6 +953,8 @@ def test_e3_center_frame_shift_two_frame_transaction_matches_v0():
         domain.update_frame(frame_two)
         domain.step_center_frame_shift(np.zeros((1, 3), dtype=np.float32))
         kernel_state = domain.inspect()["kernel"]
+        expected_teleport_flags = {0: 0, 1: 5, 2: 3}[teleport_mode]
+        assert int(kernel_state["center_shift_teleport_flags"][0]) == expected_teleport_flags
         np.testing.assert_allclose(
             kernel_state["center_shift_vectors"],
             (shift.frame_component_shift_vector,),
@@ -1363,6 +1373,10 @@ if __name__ == "__main__":
     print("PASS E3 native full Angle Limit + Motion/Backstop pipeline matches V0")
     test_e3_center_frame_shift_two_frame_transaction_matches_v0()
     print("PASS E3 Center frame-shift two-frame transaction matches V0")
+    test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=2)
+    print("PASS E3 Center Keep teleport two-frame transaction matches V0")
+    test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=1)
+    print("PASS E3 Center Reset teleport two-frame transaction matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()
