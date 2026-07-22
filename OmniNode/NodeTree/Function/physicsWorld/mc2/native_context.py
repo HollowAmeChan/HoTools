@@ -6,6 +6,8 @@ import math
 
 import numpy as np
 
+from .scheduler import derive_mc2_simulation_powers
+
 from .center_state import (
     MC2CenterStaticMetadata,
     MC2CenterFrameShiftResult,
@@ -721,24 +723,13 @@ class MC2NativeContextV0:
             dt, self._center_step_dt, rel_tol=0.0, abs_tol=1.0e-9
         ):
             raise ValueError("Center step simulation_delta_time does not match native step dt")
-        frequency_ratio = 90.0 * dt
-        simulation_power_z = (
-            math.pow(frequency_ratio, 0.3)
-            if frequency_ratio > 1.0
-            else frequency_ratio
-        )
-        simulation_power_y = (
-            math.sqrt(frequency_ratio)
-            if frequency_ratio > 1.0
-            else frequency_ratio
-        )
-        simulation_power_w = math.pow(frequency_ratio, 1.8)
+        powers = derive_mc2_simulation_powers(dt)
         self._module.mc2_context_v0_step(
             self._handle,
             dt,
-            simulation_power_y,
-            simulation_power_z,
-            simulation_power_w,
+            powers.distance_bending,
+            powers.integration,
+            powers.angle,
             bool(is_final_substep),
         )
         self._center_step_dt = None
@@ -1405,27 +1396,16 @@ class MC2NativeInteractionV0:
                 raise ValueError(
                     "Center step simulation_delta_time does not match native group step dt"
                 )
-        frequency_ratio = 90.0 * dt
-        simulation_power_z = (
-            math.pow(frequency_ratio, 0.3)
-            if frequency_ratio > 1.0
-            else frequency_ratio
-        )
-        simulation_power_y = (
-            math.sqrt(frequency_ratio)
-            if frequency_ratio > 1.0
-            else frequency_ratio
-        )
-        simulation_power_w = math.pow(frequency_ratio, 1.8)
+        powers = derive_mc2_simulation_powers(dt)
         self._module.mc2_interaction_v0_step_group(
             self._handle,
             tuple(context._handle for context in contexts),
             primary_group_bits,
             collided_by_groups,
             dt,
-            simulation_power_y,
-            simulation_power_z,
-            simulation_power_w,
+            powers.distance_bending,
+            powers.integration,
+            powers.angle,
             bool(is_final_substep),
             bool(
                 self._debug_capture_state.get("requested", False)

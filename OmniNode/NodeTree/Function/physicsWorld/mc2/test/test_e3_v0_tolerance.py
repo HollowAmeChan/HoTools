@@ -62,6 +62,9 @@ native_kernel = importlib.import_module("HoTools.OmniNode.NodeTree.Function.phys
 collider_frame = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame"
 )
+scheduler = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -278,8 +281,7 @@ def test_e3_prediction_matches_same_source_v0_and_domain():
         ))
         v0.reset()
         dt = 0.1
-        frequency_ratio = 90.0 * dt
-        simulation_power_z = frequency_ratio if frequency_ratio <= 1.0 else frequency_ratio ** 0.3
+        simulation_power_z = scheduler.derive_mc2_simulation_powers(dt).integration
         v0.step_no_collision(dt)
         v0_positions, _ = v0.read()
         domain.step({
@@ -322,9 +324,9 @@ def test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain(
         ))
         v0.reset()
         dt = 0.1
-        frequency_ratio = 90.0 * dt
-        simulation_power_z = frequency_ratio if frequency_ratio <= 1.0 else frequency_ratio ** 0.3
-        simulation_power_y = frequency_ratio ** 0.5 if frequency_ratio > 1.0 else frequency_ratio
+        powers = scheduler.derive_mc2_simulation_powers(dt)
+        simulation_power_z = powers.integration
+        simulation_power_y = powers.distance_bending
         v0.step_no_collision(dt)
         v0_positions, _ = v0.read()
         domain.step_reference_pipeline_full({
@@ -392,9 +394,9 @@ def test_e3_full_reference_post_history_matches_same_source_v0():
         ))
         v0.reset()
         dt = 0.1
-        frequency_ratio = 90.0 * dt
-        simulation_power_z = frequency_ratio ** 0.3
-        simulation_power_y = frequency_ratio ** 0.5
+        powers = scheduler.derive_mc2_simulation_powers(dt)
+        simulation_power_z = powers.integration
+        simulation_power_y = powers.distance_bending
         v0.step_no_collision(dt)
         v0_positions, _ = v0.read()
         v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
@@ -488,8 +490,7 @@ def test_e3_native_step_basic_pose_matches_v0_angle_reference():
             rtol=2.0e-5,
             atol=2.0e-5,
         )
-        frequency_ratio = 90.0 * 0.1
-        simulation_power_z = frequency_ratio ** 0.3
+        simulation_power_z = scheduler.derive_mc2_simulation_powers(0.1).integration
         domain.step({
             "data_path_only": True,
             "integration_slice": True,

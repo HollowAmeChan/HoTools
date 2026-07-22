@@ -14,10 +14,34 @@ MC2_MIN_SIMULATION_FREQUENCY = 30
 MC2_MAX_SIMULATION_FREQUENCY = 150
 MC2_MIN_SIMULATION_COUNT_PER_FRAME = 1
 MC2_MAX_SIMULATION_COUNT_PER_FRAME = 5
+MC2_REFERENCE_SIMULATION_FREQUENCY = 90.0
 
 
 def _f32(value: object) -> np.float32:
     return np.float32(value)
+
+
+@dataclass(frozen=True)
+class MC2SimulationPowers:
+    distance_bending: float
+    integration: float
+    angle: float
+
+
+def derive_mc2_simulation_powers(simulation_delta_time: float) -> MC2SimulationPowers:
+    """Derive the source MC2 Y/Z/W powers for one fixed substep."""
+    dt = float(simulation_delta_time)
+    if not math.isfinite(dt) or dt <= 0.0:
+        raise ValueError("simulation_delta_time must be finite and positive")
+    frequency_ratio = MC2_REFERENCE_SIMULATION_FREQUENCY * dt
+    integration = frequency_ratio ** 0.3 if frequency_ratio > 1.0 else frequency_ratio
+    distance_bending = math.sqrt(frequency_ratio) if frequency_ratio > 1.0 else frequency_ratio
+    angle = frequency_ratio ** 1.8
+    return MC2SimulationPowers(
+        distance_bending=float(distance_bending),
+        integration=float(integration),
+        angle=float(angle),
+    )
 
 
 @dataclass(frozen=True)
@@ -221,6 +245,9 @@ __all__ = [
     "MC2_MAX_SIMULATION_FREQUENCY",
     "MC2_MIN_SIMULATION_COUNT_PER_FRAME",
     "MC2_MIN_SIMULATION_FREQUENCY",
+    "MC2_REFERENCE_SIMULATION_FREQUENCY",
     "MC2FrameSchedule",
+    "MC2SimulationPowers",
     "MC2TimeSchedulerState",
+    "derive_mc2_simulation_powers",
 ]

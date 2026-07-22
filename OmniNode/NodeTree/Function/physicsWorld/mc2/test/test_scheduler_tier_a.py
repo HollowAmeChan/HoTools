@@ -151,8 +151,29 @@ def test_solver_settings_expose_source_scheduler_bounds() -> None:
             raise AssertionError(f"MC2 scheduler setting accepted {name}={value!r}")
 
 
+def test_substep_powers_freeze_the_v0_scheduler_handoff() -> None:
+    low = scheduler.derive_mc2_simulation_powers(1.0 / 180.0)
+    np.testing.assert_allclose(low.distance_bending, 0.5, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(low.integration, 0.5, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(low.angle, 0.5 ** 1.8, rtol=0.0, atol=1.0e-12)
+
+    high = scheduler.derive_mc2_simulation_powers(0.1)
+    np.testing.assert_allclose(high.distance_bending, 3.0, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(high.integration, 9.0 ** 0.3, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(high.angle, 9.0 ** 1.8, rtol=0.0, atol=1.0e-10)
+
+    for value in (0.0, -0.1, float("inf"), float("nan")):
+        try:
+            scheduler.derive_mc2_simulation_powers(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"simulation power handoff accepted {value!r}")
+
+
 if __name__ == "__main__":
     test_scheduler_matches_fixed_mc2_oracle()
     test_scheduler_rejects_overlapping_frames()
     test_solver_settings_expose_source_scheduler_bounds()
+    test_substep_powers_freeze_the_v0_scheduler_handoff()
     print("PASS MC2 scheduler Tier A oracle")
