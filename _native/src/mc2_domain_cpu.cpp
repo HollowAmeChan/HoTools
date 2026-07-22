@@ -1077,6 +1077,15 @@ void DomainV1::configure_baseline_pose(
 }
 
 void DomainV1::prepare_step_basic_pose(float animation_pose_ratio) {
+    if (!std::isfinite(animation_pose_ratio) ||
+        animation_pose_ratio < 0.0f || animation_pose_ratio > 1.0f) {
+        throw std::invalid_argument("MC2 CPU animation pose ratio is invalid");
+    }
+    std::vector<float> ratios(partition_count_, animation_pose_ratio);
+    prepare_step_basic_pose_partitioned(ratios.data());
+}
+
+void DomainV1::prepare_step_basic_pose_partitioned(const float* animation_pose_ratios) {
     ensure_live();
     if (frame_ < 0 || generation_ < 0) {
         throw std::logic_error("MC2 CPU StepBasic pose requires update_frame");
@@ -1086,9 +1095,14 @@ void DomainV1::prepare_step_basic_pose(float animation_pose_ratio) {
             "MC2 CPU StepBasic pose requires baseline topology and local pose"
         );
     }
-    if (!std::isfinite(animation_pose_ratio) ||
-        animation_pose_ratio < 0.0f || animation_pose_ratio > 1.0f) {
-        throw std::invalid_argument("MC2 CPU animation pose ratio is invalid");
+    require_finite(
+        animation_pose_ratios, partition_count_, "animation_pose_ratios"
+    );
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        if (animation_pose_ratios[partition] < 0.0f ||
+            animation_pose_ratios[partition] > 1.0f) {
+            throw std::invalid_argument("MC2 CPU animation pose ratio is invalid");
+        }
     }
     hotools::Mc2StepBasicPoseView view;
     view.base_positions = animated_base_world_positions_.data();
@@ -1104,7 +1118,9 @@ void DomainV1::prepare_step_basic_pose(float animation_pose_ratio) {
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.line_count = static_cast<std::int64_t>(baseline_line_starts_.size());
     view.baseline_data_count = static_cast<std::int64_t>(baseline_line_data_.size());
-    view.animation_pose_ratio = animation_pose_ratio;
+    view.particle_partition_index = particle_partition_index_.data();
+    view.partition_animation_pose_ratios = animation_pose_ratios;
+    view.partition_count = static_cast<std::int64_t>(partition_count_);
     hotools::update_step_basic_pose_mc2(view);
     ++step_count_;
 }

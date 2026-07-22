@@ -27,6 +27,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_baseline",
     "mc2_domain_cpu_v1_configure_baseline_pose",
     "mc2_domain_cpu_v1_prepare_step_basic_pose",
+    "mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned",
     "mc2_domain_cpu_v1_step_angle",
     "mc2_domain_cpu_v1_step_motion",
     "mc2_domain_cpu_v1_step_external_collision",
@@ -930,11 +931,23 @@ class MC2NativeCPUKernelV1:
                 array.flags.writeable = False
             self._module.mc2_domain_cpu_v1_configure_baseline_pose(handle, *pose_arrays)
 
-    def prepare_step_basic_pose(self, handle, animation_pose_ratio: float = 0.0) -> dict:
+    def prepare_step_basic_pose(self, handle, animation_pose_ratio=0.0) -> dict:
         key = self._require_handle(handle)
-        result = self._module.mc2_domain_cpu_v1_prepare_step_basic_pose(
-            key, float(animation_pose_ratio)
-        )
+        ratios = np.asarray(animation_pose_ratio)
+        if ratios.ndim == 1:
+            ratios = np.ascontiguousarray(ratios, dtype=np.float32)
+            if ratios.shape != (self._programs[key].partition_count,):
+                raise ValueError("animation_pose_ratios must match partition_count")
+            ratios.flags.writeable = False
+            result = self._module.mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned(
+                key, ratios
+            )
+        elif ratios.ndim == 0:
+            result = self._module.mc2_domain_cpu_v1_prepare_step_basic_pose(
+                key, float(ratios)
+            )
+        else:
+            raise ValueError("animation_pose_ratio must be scalar or partition vector")
         return {
             "positions": np.asarray(result["positions"], dtype=np.float32),
             "rotations": np.asarray(result["rotations"], dtype=np.float32),

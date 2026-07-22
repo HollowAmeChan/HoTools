@@ -81,6 +81,7 @@ public:
         const float* vertex_local_rotations
     );
     void prepare_step_basic_pose(float animation_pose_ratio);
+    void prepare_step_basic_pose_partitioned(const float* animation_pose_ratios);
     void step_angle(
         const float* step_basic_positions,
         const float* step_basic_rotations,

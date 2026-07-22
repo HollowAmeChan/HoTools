@@ -69,7 +69,7 @@ def _compiled():
     return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
 
 
-def _compiled_multi():
+def _compiled_multi(animation_pose_ratios=(0.0, 0.0)):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
     fragments = tuple(
@@ -80,11 +80,16 @@ def _compiled_multi():
     )
     effectives = tuple(
         runtime.make_mc2_runtime_parameters(
-            parameters.make_mc2_particle_profile(self_collision_mode=2),
+            parameters.make_mc2_particle_profile(
+                self_collision_mode=2,
+                animation_pose_ratio=animation_pose_ratio,
+            ),
             parameters.make_mc2_setup_options("mesh_cloth"),
             parameters.make_mc2_task_parameters(),
         )
-        for _fragment in fragments
+        for _fragment, animation_pose_ratio in zip(
+            fragments, animation_pose_ratios, strict=True
+        )
     )
     return compiler.compile_mc2_mesh_static_fragments(fragments, effectives)
 
@@ -96,16 +101,36 @@ def _frame(program):
         generation=2,
         animated_base_world_positions=program.particle_bind_position + np.float32(2.0),
         animated_base_world_rotations=program.particle_bind_rotation,
-        animated_base_world_normals=np.asarray(((0.0, 0.0, 1.0),) * 3, dtype=np.float32),
-        partition_world_position=((2.0, 0.0, 0.0),),
-        partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
-        partition_world_scale=((1.0, 1.0, 1.0),),
-        partition_world_linear=(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),),
+        animated_base_world_normals=np.asarray(
+            ((0.0, 0.0, 1.0),) * program.particle_count, dtype=np.float32
+        ),
+        partition_world_position=((2.0, 0.0, 0.0),) * program.partition_count,
+        partition_world_rotation=((0.0, 0.0, 0.0, 1.0),) * program.partition_count,
+        partition_world_scale=((1.0, 1.0, 1.0),) * program.partition_count,
+        partition_world_linear=(
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        ) * program.partition_count,
         frame_delta_time=0.1,
         simulation_delta_time=0.1,
         time_scale=1.0,
         is_running=True,
     )
+
+
+def test_native_cpu_backend_uses_partitioned_animation_pose_ratio():
+    compiled = _compiled_multi((0.0, 1.0))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    try:
+        domain.update_frame(_frame(compiled.program))
+        implicit = domain.prepare_step_basic_pose()["positions"]
+        reconstructed = domain.prepare_step_basic_pose(0.0)["positions"]
+        animated = domain.prepare_step_basic_pose(1.0)["positions"]
+        owners = compiled.program.particle_partition_index
+        np.testing.assert_allclose(implicit[owners == 0], reconstructed[owners == 0])
+        np.testing.assert_allclose(implicit[owners == 1], animated[owners == 1])
+    finally:
+        domain.dispose()
 
 
 def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
@@ -455,7 +480,7 @@ def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
         state = domain.inspect()["kernel"]
         assert state["center_shift_count"] == 1
         assert state["center_step_count"] == 1
-        assert state["step_count"] == 3
+        assert state["step_count"] == 4
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
@@ -501,7 +526,7 @@ def test_native_cpu_reference_pipeline_runs_structural_order_through_motion():
             "motion_backstop_enabled": False,
         })
         state = domain.inspect()["kernel"]
-        assert state["step_count"] == 6
+        assert state["step_count"] == 7
         assert domain.inspect()["step_count"] == 1
         assert np.isfinite(domain.read_output().world_positions).all()
     finally:
@@ -551,7 +576,7 @@ def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
             "self_collision": None,
         })
         assert np.isfinite(domain.read_output().world_positions).all()
-        assert domain.inspect()["kernel"]["step_count"] == 6
+        assert domain.inspect()["kernel"]["step_count"] == 7
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
@@ -631,7 +656,7 @@ def test_native_cpu_reference_pipeline_full_sequences_collision_passes():
         settings["edge_collision"] = None
         domain.step_reference_pipeline_full(settings)
         assert np.isfinite(domain.read_output().world_positions).all()
-        assert domain.inspect()["kernel"]["step_count"] == 8
+        assert domain.inspect()["kernel"]["step_count"] == 9
     finally:
         domain.dispose()
 
@@ -721,6 +746,8 @@ def test_native_cpu_kernel_exposes_external_edge_collision_slice():
 
 
 if __name__ == "__main__":
+    test_native_cpu_backend_uses_partitioned_animation_pose_ratio()
+    print("PASS test_native_cpu_backend_uses_partitioned_animation_pose_ratio")
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
     test_native_debug_off_inspect_does_not_readback_dynamics()

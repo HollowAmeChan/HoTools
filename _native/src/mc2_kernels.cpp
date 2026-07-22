@@ -2873,8 +2873,21 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
         view.step_rotations[rot_offset + 3] = view.base_rotations[rot_offset + 3];
     }
 
-    const float ratio = clamp_float(view.animation_pose_ratio, 0.0f, 1.0f);
-    if (ratio > 0.99f || view.baseline_data_count <= 0) {
+    const bool partitioned_ratios =
+        view.particle_partition_index != nullptr &&
+        view.partition_animation_pose_ratios != nullptr &&
+        view.partition_count > 0;
+    auto ratio_for_vertex = [&](std::int32_t vertex) {
+        if (!partitioned_ratios) {
+            return clamp_float(view.animation_pose_ratio, 0.0f, 1.0f);
+        }
+        const auto partition = view.particle_partition_index[vertex];
+        if (partition >= static_cast<std::uint32_t>(view.partition_count)) {
+            return 1.0f;
+        }
+        return clamp_float(view.partition_animation_pose_ratios[partition], 0.0f, 1.0f);
+    };
+    if (view.baseline_data_count <= 0) {
         return;
     }
 
@@ -2888,6 +2901,9 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
             }
             const std::int32_t vertex = view.baseline_data[data_index];
             if (vertex < 0 || static_cast<std::int64_t>(vertex) >= view.vertex_count) {
+                continue;
+            }
+            if (ratio_for_vertex(vertex) > 0.99f) {
                 continue;
             }
             const std::int32_t parent = view.parent_indices[vertex];
@@ -2919,9 +2935,6 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
             view.step_rotations[vertex_rot_offset + 3] = next_rotation[3];
         }
 
-        if (ratio <= kMc2Epsilon) {
-            continue;
-        }
         for (std::int32_t data_offset = 0; data_offset < count; ++data_offset) {
             const std::int64_t data_index = static_cast<std::int64_t>(start) + data_offset;
             if (data_index < 0 || data_index >= view.baseline_data_count) {
@@ -2929,6 +2942,10 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
             }
             const std::int32_t vertex = view.baseline_data[data_index];
             if (vertex < 0 || static_cast<std::int64_t>(vertex) >= view.vertex_count) {
+                continue;
+            }
+            const float ratio = ratio_for_vertex(vertex);
+            if (ratio <= kMc2Epsilon || ratio > 0.99f) {
                 continue;
             }
             const std::int64_t pos_offset = static_cast<std::int64_t>(vertex) * 3;

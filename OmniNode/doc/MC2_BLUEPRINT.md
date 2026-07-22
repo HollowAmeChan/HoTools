@@ -53,7 +53,7 @@ E3 单 source CPU reference 已完成。`cpu_backend.py` 先执行无资源 capa
 
 E3 的 py311/py313 固定证据覆盖创建/更新/失败回滚/释放、normal/Keep/Reset/catch-up/paused Center、非零 depth inertia + Fixed 根 + Tether + Distance A/B、Angle Limit + Motion/Backstop、point/edge/self、post 速度历史、scheduler 参数交接、单 target writeback 数学和 debug-off 零 readback。V0 与 Domain 的单 source 全功能等价门禁已经关闭；多 source 同域、whole-domain self、多 target 原子发布和产品 collector 分别属于 E4/E5，不能由 E3 结论代替。
 
-E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E4/E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。P0 原生阶段计时已经闭环，下一执行入口是 `MC2_NODE_SIMULATION_DESIGN.md` 中的 P1-B source observation cache，以及随后服务 E4 的粒子级覆盖合同。
+E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E4/E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。P0、P1-B与粒子级覆盖合同已经闭环；E4现已让StepBasic按`particle_partition_index`消费各partition的`animation_pose_ratio`，单source标量ABI继续作为reference。当前硬门禁是一次whole-domain self流水、跨partition group/mask过滤和统一输出，不得把分区参数接通误报为E4完成。
 
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 

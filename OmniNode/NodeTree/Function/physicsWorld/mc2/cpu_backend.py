@@ -277,19 +277,21 @@ class MC2CPUBackendDomainV1:
         if not callable(prepare_pose):
             raise RuntimeError("CPU kernel does not expose StepBasic pose preparation")
         if animation_pose_ratio is None:
-            if self._compiled.parameters.partition_parameters.row_count != 1:
-                raise ValueError(
-                    "implicit animation_pose_ratio requires exactly one partition"
-                )
             fields = self._compiled.parameters.partition_parameters.fields
             if "animation_pose_ratio" not in fields:
                 raise ValueError("compiled parameters lack animation_pose_ratio")
-            animation_pose_ratio = float(
+            compiled_ratios = np.asarray(
                 self._compiled.parameters.partition_parameters.values[
-                    0, fields.index("animation_pose_ratio")
-                ]
+                    :, fields.index("animation_pose_ratio")
+                ],
+                dtype=np.float32,
             )
-        return prepare_pose(self._handle, float(animation_pose_ratio))
+            animation_pose_ratio = (
+                float(compiled_ratios[0])
+                if len(compiled_ratios) == 1
+                else compiled_ratios
+            )
+        return prepare_pose(self._handle, animation_pose_ratio)
 
     def step_external_collision(self, settings: Mapping[str, object]) -> None:
         """Run the explicit native point external-collision slice."""

@@ -816,6 +816,8 @@ E3 native 合入门禁已经满足：新 owner 能在无 Blender 对象的 C++/h
 
 退出条件：两个原本独立的 MeshCloth 对象在一个 context 中稳定碰撞；关闭跨 partition filter 后退化为互不碰撞但仍共享 context；不同粒子参数通过 SoA 生效，不要求拆 task。
 
+实现进度（2026-07-22）：多partition frame、Center/Anchor/Teleport history和统一particle owner已有E3/E2合同；StepBasic现通过独立partitioned native ABI按`particle_partition_index`消费编译后的`animation_pose_ratio`，py311/py313均以单source标量ABI和双partition数组ABI对照。下一门禁是把compiled primitive/filter/particle参数配置进owner，并以一次whole-domain self broadphase验证同partition、跨partition握手和关闭过滤三种结果；在此之前不切产品slot。
+
 ### E5：多目标结果事务与产品节点
 
 范围：先完成多 target output adapter 和原子 writeback，再把 collector 接到产品节点；不能反过来。

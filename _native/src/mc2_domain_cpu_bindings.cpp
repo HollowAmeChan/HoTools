@@ -355,6 +355,31 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Prepare StepBasic positions and rotations through the native baseline kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned",
+        [](std::uint64_t handle, cf32_1d animation_pose_ratios) {
+            auto* domain = require_domain(handle);
+            if (static_cast<std::size_t>(animation_pose_ratios.shape(0)) !=
+                domain->partition_count()) {
+                throw nb::value_error(
+                    "MC2 CPU animation_pose_ratios must match partition_count"
+                );
+            }
+            domain->prepare_step_basic_pose_partitioned(animation_pose_ratios.data());
+            nb::dict result;
+            result["positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->step_basic_positions()),
+                domain->particle_count(), 3
+            );
+            result["rotations"] = owned_array_2d<float>(
+                std::vector<float>(domain->step_basic_rotations()),
+                domain->particle_count(), 4
+            );
+            return result;
+        },
+        nb::arg("handle"), nb::arg("animation_pose_ratios"),
+        "Prepare StepBasic with one animation pose ratio per domain partition."
+    );
+    module.def(
         "mc2_domain_cpu_v1_configure_tether",
         [](std::uint64_t handle, ci32_1d root_indices) {
             auto* domain = require_domain(handle);

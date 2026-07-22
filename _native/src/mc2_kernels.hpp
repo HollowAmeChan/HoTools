@@ -222,6 +222,9 @@ struct Mc2StepBasicPoseView {
     std::int64_t line_count = 0;
     std::int64_t baseline_data_count = 0;
     float animation_pose_ratio = 0.0f;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const float* partition_animation_pose_ratios = nullptr;
+    std::int64_t partition_count = 0;
 };
 
 struct Mc2BasePoseFromPoseView {

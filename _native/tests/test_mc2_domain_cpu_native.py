@@ -62,6 +62,22 @@ def _create_quad():
     )
 
 
+def _create_two_pose_chains():
+    bind_positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+         (0.0, 10.0, 0.0), (1.0, 10.0, 0.0)),
+        dtype=np.float32,
+    )
+    bind_rotations = np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    return hotools_native.mc2_domain_cpu_v1_create(
+        1, 4, 2, "domain:test", "layout:test", bind_positions, bind_rotations,
+        np.asarray((0, 0, 1, 1), dtype=np.uint32),
+        np.zeros(4, dtype=np.uint32),
+        np.zeros((2, 3), dtype=np.float32),
+        np.asarray(((0.0, -1.0, 0.0),) * 2, dtype=np.float32),
+    )
+
+
 def _frame(offset=0.0):
     positions = np.asarray(
         ((offset, 0.0, 0.0), (1.0 + offset, 0.0, 0.0), (offset, 1.0, 0.0)),
@@ -279,6 +295,56 @@ def test_domain_cpu_native_tracks_partition_history_atomically():
         np.testing.assert_allclose(
             after["partition_world_positions"], info["partition_world_positions"]
         )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
+def test_domain_cpu_native_prepares_step_basic_with_partition_ratios():
+    handle = _create_two_pose_chains()
+    try:
+        positions = np.asarray(
+            ((0.0, 0.0, 0.0), (10.0, 0.0, 0.0),
+             (0.0, 10.0, 0.0), (10.0, 10.0, 0.0)),
+            dtype=np.float32,
+        )
+        normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            partition_positions=((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_baseline(
+            handle,
+            np.asarray((-1, 0, -1, 2), dtype=np.int32),
+            np.asarray((0, 2), dtype=np.int32),
+            np.asarray((2, 2), dtype=np.int32),
+            np.asarray((0, 1, 2, 3), dtype=np.int32),
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_baseline_pose(
+            handle,
+            np.asarray(
+                ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                 (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                dtype=np.float32,
+            ),
+            np.asarray(((0.0, 0.0, 0.0, 1.0),) * 4, dtype=np.float32),
+        )
+        result = hotools_native.mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned(
+            handle, np.asarray((0.0, 1.0), dtype=np.float32)
+        )
+        np.testing.assert_allclose(result["positions"][1], (1.0, 0.0, 0.0))
+        np.testing.assert_allclose(result["positions"][3], (10.0, 10.0, 0.0))
+
+        before = hotools_native.mc2_domain_cpu_v1_inspect(handle)["step_count"]
+        try:
+            hotools_native.mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned(
+                handle, np.asarray((0.0, np.nan), dtype=np.float32)
+            )
+        except ValueError as exc:
+            assert "finite" in str(exc)
+        else:
+            raise AssertionError("non-finite partition pose ratio was accepted")
+        after = hotools_native.mc2_domain_cpu_v1_inspect(handle)["step_count"]
+        assert after == before
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
