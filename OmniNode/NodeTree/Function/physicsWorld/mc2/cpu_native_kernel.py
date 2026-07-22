@@ -599,6 +599,8 @@ class MC2NativeCPUKernelV1:
         """
         settings = dict(settings)
         post_step = settings.pop("post_step", None)
+        collision_mode = settings.pop("collision_mode", None)
+        self_collision_enabled = settings.pop("self_collision_enabled", None)
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "distance_simulation_power",
@@ -615,6 +617,25 @@ class MC2NativeCPUKernelV1:
         }
         if set(settings) != required:
             raise ValueError("full reference pipeline requires exactly its explicit pass inputs")
+        point_collision = settings["point_collision"]
+        edge_collision = settings["edge_collision"]
+        self_collision = settings["self_collision"]
+        if point_collision is not None and edge_collision is not None:
+            raise ValueError("point and edge collision modes are mutually exclusive")
+        if collision_mode is not None:
+            if isinstance(collision_mode, bool) or int(collision_mode) != collision_mode:
+                raise ValueError("collision_mode must be 0, 1, or 2")
+            collision_mode = int(collision_mode)
+            if collision_mode not in (0, 1, 2):
+                raise ValueError("collision_mode must be 0, 1, or 2")
+            selected_mode = 1 if point_collision is not None else 2 if edge_collision is not None else 0
+            if collision_mode != selected_mode:
+                raise ValueError("collision_mode does not match the selected collision pass")
+        if self_collision_enabled is not None:
+            if not isinstance(self_collision_enabled, bool):
+                raise TypeError("self_collision_enabled must be bool")
+            if self_collision_enabled != (self_collision is not None):
+                raise ValueError("self_collision_enabled does not match self_collision")
         key = self._require_handle(handle)
         structural = {
             name: settings[name] for name in required
@@ -658,12 +679,10 @@ class MC2NativeCPUKernelV1:
             })
         if has_bending:
             self.step_bending(key, structural["bending_simulation_power"])
-        point_collision = settings["point_collision"]
         if point_collision is not None:
             if not isinstance(point_collision, Mapping):
                 raise TypeError("point_collision must be a mapping or None")
             self.step_external_collision(key, point_collision)
-        edge_collision = settings["edge_collision"]
         if edge_collision is not None:
             if not isinstance(edge_collision, Mapping):
                 raise TypeError("edge_collision must be a mapping or None")
@@ -681,7 +700,6 @@ class MC2NativeCPUKernelV1:
             "max_distance_enabled": structural["motion_max_distance_enabled"],
             "backstop_enabled": structural["motion_backstop_enabled"],
         })
-        self_collision = settings["self_collision"]
         if self_collision is not None:
             if not isinstance(self_collision, Mapping):
                 raise TypeError("self_collision must be a mapping or None")

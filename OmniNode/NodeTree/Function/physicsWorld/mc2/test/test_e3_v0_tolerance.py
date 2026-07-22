@@ -154,6 +154,8 @@ def _full_reference_settings(
     edge_collision=None,
     self_collision=None,
     post_step=None,
+    collision_mode=None,
+    self_collision_enabled=None,
 ):
     count = program.particle_count
     settings = {
@@ -192,6 +194,10 @@ def _full_reference_settings(
     }
     if post_step is not None:
         settings["post_step"] = post_step
+    if collision_mode is not None:
+        settings["collision_mode"] = collision_mode
+    if self_collision_enabled is not None:
+        settings["self_collision_enabled"] = self_collision_enabled
     return settings
 
 
@@ -771,6 +777,8 @@ def test_e3_native_mesh_point_collision_matches_v0():
                 "collider_radii": collider_radii,
             },
             post_step=_post_step_settings(effective, base_positions),
+            collision_mode=1,
+            self_collision_enabled=False,
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
@@ -891,6 +899,8 @@ def test_e3_native_mesh_edge_collision_matches_v0():
                 "collider_radii": collider_radii,
             },
             post_step=_post_step_settings(effective, base_positions),
+            collision_mode=2,
+            self_collision_enabled=False,
         ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
@@ -1026,6 +1036,8 @@ def test_e3_native_mesh_self_collision_matches_v0():
                 "surface_thickness": 0.04,
             },
             "post_step": _post_step_settings(effective, base_positions),
+            "collision_mode": 0,
+            "self_collision_enabled": True,
         }
         domain.step_reference_pipeline_full(settings)
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)

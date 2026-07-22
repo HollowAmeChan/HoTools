@@ -576,9 +576,17 @@ def test_native_cpu_reference_pipeline_full_sequences_collision_passes():
             "point_collision": point, "edge_collision": edge,
             "self_collision": self_collision,
         }
+        try:
+            domain.step_reference_pipeline_full(settings)
+        except ValueError as exc:
+            assert "mutually exclusive" in str(exc)
+        else:
+            raise AssertionError("reference pipeline accepted point and edge together")
+        assert domain.inspect()["kernel"]["step_count"] == 0
+        settings["edge_collision"] = None
         domain.step_reference_pipeline_full(settings)
         assert np.isfinite(domain.read_output().world_positions).all()
-        assert domain.inspect()["kernel"]["step_count"] == 9
+        assert domain.inspect()["kernel"]["step_count"] == 8
     finally:
         domain.dispose()
 
