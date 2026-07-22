@@ -896,5 +896,6 @@ E3 的目标是证明统一 DomainV1 能按 V0 的真实流水线完成单 sourc
 - full reference 在首个 native pass 前校验 `collision_mode`、`self_collision_enabled` 与实际 mapping 是否一致，并拒绝同时提供 point/edge；这条拒绝必须保持 `step_count` 和粒子状态不变，避免错误的 mode handoff 先执行半条流水线。
 - `inspect()` 只返回 metadata；`real_velocities/world_normals` 只能由显式 `read_debug_state()` 请求。任何 debug-off 或普通结果路径都不得为了可观察性隐式 readback。
 - `domain_output.py` 已证明 logical 粒子按 `output_target_index/output_source_element` 拆分，并按各 partition 的 world linear 逆变换生成 object-local offsets；它只生成不可变 command，E5 才负责多 target 原子发布。
+- 单 partition 退化时，Domain writeback command 与 V0 `MC2ResultCandidateV1` 对同一 frame linear/world positions 生成逐 float32 相同的 object-local offsets；这关闭 E3 输出数学等价，不代表 E5 多 target 发布事务已完成。
 
-当前仍未关闭的 E3 门禁是：同一冻结 fixture 的 V0 全量容差、最终 writeback 等价、Blender debug-off 性能 gate；scheduler 到 Domain 的碰撞模式/pass enablement 与参数 packet handoff 已由 `reference_step.py`、双 ABI smoke 和 native mode rejection 证据关闭。在剩余证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
+当前仍未关闭的 E3 门禁是：同一冻结 fixture 的 V0 全分支矩阵与 Blender debug-off 性能 gate；scheduler/参数 handoff 和单 partition 最终 writeback 数学等价已经关闭。多 target 原子发布属于 E5，不得拿它继续阻塞 E3，也不得提前混入 E3。在剩余证据完成前不得切换 Physics World owner 或删除 V0。后续每完成一个大阶段，过程日志必须按本节方式归档，流水账不得继续追加到蓝本。
