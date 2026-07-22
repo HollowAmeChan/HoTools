@@ -142,6 +142,52 @@ def _frame_at(program, *, frame, generation, positions):
     )
 
 
+def _full_reference_settings(
+    program,
+    positions,
+    rotations,
+    *,
+    point_collision=None,
+    edge_collision=None,
+    self_collision=None,
+):
+    count = program.particle_count
+    return {
+        "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+        "dt": 0.1,
+        "frame_interpolation": 1.0,
+        "distance_weights": np.ones(1, dtype=np.float32),
+        "simulation_power": 1.0,
+        "distance_simulation_power": 1.0,
+        "bending_simulation_power": 1.0,
+        "velocity_weight": 1.0,
+        "gravity": (0.0, 0.0, 0.0),
+        "step_basic_positions": positions,
+        "tether_compression": 0.4,
+        "tether_stretch": 0.03,
+        "step_basic_rotations": rotations,
+        "angle_restoration_values": np.zeros(count, dtype=np.float32),
+        "angle_limit_values": np.zeros(count, dtype=np.float32),
+        "angle_restoration_velocity_attenuation": 0.0,
+        "angle_restoration_gravity_falloff": 0.0,
+        "angle_limit_stiffness": 0.0,
+        "angle_restoration_enabled": False,
+        "angle_limit_enabled": False,
+        "motion_base_positions": positions,
+        "motion_base_rotations": rotations,
+        "motion_max_distances": np.zeros(count, dtype=np.float32),
+        "motion_stiffness_values": np.ones(count, dtype=np.float32),
+        "motion_backstop_radii": np.zeros(count, dtype=np.float32),
+        "motion_backstop_distances": np.zeros(count, dtype=np.float32),
+        "motion_normal_axis": 1,
+        "motion_max_distance_enabled": False,
+        "motion_backstop_enabled": False,
+        "point_collision": point_collision,
+        "edge_collision": edge_collision,
+        "self_collision": self_collision,
+    }
+
+
 def _register_v0_static(context, snapshot, fragment):
     proxy = final_proxy_module.build_mc2_final_proxy(
         task_id=snapshot.partition_id,
@@ -613,15 +659,6 @@ def test_e3_native_mesh_point_collision_matches_v0():
         v0.reset()
         domain.update_frame(frame)
         v0.step_no_collision(0.1)
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
-            "dt": 0.1,
-            "simulation_power": 1.0,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, 0.0, 0.0),
-        })
-
         particle_fields = {
             name: index
             for index, name in enumerate(compiled.parameters.particle_parameters.fields)
@@ -631,23 +668,28 @@ def test_e3_native_mesh_point_collision_matches_v0():
             particle_values[:, particle_fields["radius"]]
             * particle_values[:, particle_fields["radius_multiplier"]]
         )
-        domain.step_external_collision({
+        domain.step_reference_pipeline_full(_full_reference_settings(
+            program,
+            base_positions,
+            base_rotations,
+            point_collision={
             # Mesh point collision has no soft-sphere base pose. BoneSpring is
             # the only setup that supplies animated base positions here.
-            "base_positions": np.zeros_like(base_positions),
-            "collision_radii": collision_radii_values,
-            "friction": particle_values[:, particle_fields["collision_friction"]],
-            "collided_by_groups": 1,
-            "collider_types": collider_types,
-            "collider_group_bits": collider_groups,
-            "collider_centers": center,
-            "collider_segment_a": center,
-            "collider_segment_b": center,
-            "collider_old_centers": center,
-            "collider_old_segment_a": center,
-            "collider_old_segment_b": center,
-            "collider_radii": collider_radii,
-        })
+                "base_positions": np.zeros_like(base_positions),
+                "collision_radii": collision_radii_values,
+                "friction": particle_values[:, particle_fields["collision_friction"]],
+                "collided_by_groups": 1,
+                "collider_types": collider_types,
+                "collider_group_bits": collider_groups,
+                "collider_centers": center,
+                "collider_segment_a": center,
+                "collider_segment_b": center,
+                "collider_old_centers": center,
+                "collider_old_segment_a": center,
+                "collider_old_segment_b": center,
+                "collider_radii": collider_radii,
+            },
+        ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
         assert v0_positions[2, 1] < -1.1
@@ -729,14 +771,6 @@ def test_e3_native_mesh_edge_collision_matches_v0():
         v0.reset()
         domain.update_frame(frame)
         v0.step_no_collision(0.1)
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
-            "dt": 0.1,
-            "simulation_power": 1.0,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, 0.0, 0.0),
-        })
         edge_table = next(table for table in program.primitive_tables if table.kind == "edge")
         edges = np.asarray(edge_table.indices, dtype=np.int32)
         particle_fields = {
@@ -744,24 +778,29 @@ def test_e3_native_mesh_edge_collision_matches_v0():
             for index, name in enumerate(compiled.parameters.particle_parameters.fields)
         }
         particle_values = compiled.parameters.particle_parameters.values
-        domain.step_external_edge_collision({
-            "collision_radii": (
+        domain.step_reference_pipeline_full(_full_reference_settings(
+            program,
+            base_positions,
+            base_rotations,
+            edge_collision={
+                "collision_radii": (
                 particle_values[:, particle_fields["radius"]]
                 * particle_values[:, particle_fields["radius_multiplier"]]
-            ),
-            "edges": edges,
-            "friction": particle_values[:, particle_fields["collision_friction"]],
-            "collided_by_groups": 1,
-            "collider_types": collider_types,
-            "collider_group_bits": collider_groups,
-            "collider_centers": center,
-            "collider_segment_a": center,
-            "collider_segment_b": center,
-            "collider_old_centers": center,
-            "collider_old_segment_a": center,
-            "collider_old_segment_b": center,
-            "collider_radii": collider_radii,
-        })
+                ),
+                "edges": edges,
+                "friction": particle_values[:, particle_fields["collision_friction"]],
+                "collided_by_groups": 1,
+                "collider_types": collider_types,
+                "collider_group_bits": collider_groups,
+                "collider_centers": center,
+                "collider_segment_a": center,
+                "collider_segment_b": center,
+                "collider_old_centers": center,
+                "collider_old_segment_a": center,
+                "collider_old_segment_b": center,
+                "collider_radii": collider_radii,
+            },
+        ))
         v0_positions = np.asarray(v0.read()[0], dtype=np.float32)
         domain_positions = domain.read_output().world_positions
         assert np.any(np.abs(v0_positions - base_positions) > 1.0e-4)
