@@ -1,4 +1,4 @@
-"""Product bridge from MC2 task authoring intent to one Mesh domain draft."""
+"""从resolved Mesh partition直接采集一个产品domain。"""
 
 from __future__ import annotations
 
@@ -14,22 +14,28 @@ from .mesh_topology_identity import mesh_topology_signature_from_arrays
 from .partition_specs import collect_mc2_partition_entries
 from .partition_specs import make_mc2_partition_entry
 from .partition_specs import MC2PartitionCollectorPlan
-from .specs import MC2TaskSpec
-from .specs import build_mc2_task_specs
-from .specs import make_mc2_task_spec
-from .specs import mc2_source_token
+from .source_identity import mc2_source_token
 from .setups.mesh_cloth.source_capture import (
     capture_mc2_mesh_partition_static_snapshot,
 )
 from .topology import MC2MeshRawSnapshot
 
 
-def _prepare_observed_static_inputs(world, task, *, force_audit=None):
-    from .source_observation_blender import prepare_observed_static_inputs
+def _prepare_observed_static_inputs(
+    world,
+    partition,
+    *,
+    receipt_slot_id,
+    force_audit=None,
+):
+    from .source_observation_blender import (
+        prepare_observed_static_inputs_for_partition,
+    )
 
-    return prepare_observed_static_inputs(
+    return prepare_observed_static_inputs_for_partition(
         world,
-        task,
+        partition,
+        receipt_slot_id=receipt_slot_id,
         force_audit=force_audit,
     )
 
@@ -182,7 +188,9 @@ def collect_mc2_mesh_product_domain(
     *,
     force_audit: bool | None = None,
 ) -> MC2MeshProductCollectionV1:
-    """Observe every explicit Mesh task once and produce no runtime owner state."""
+    """E7-CPU前显式V0 oracle桥；产品入口不得调用。"""
+
+    from .specs import MC2TaskSpec, build_mc2_task_specs
 
     specs = tuple(
         spec
@@ -199,7 +207,6 @@ def collect_mc2_mesh_product_domain(
         )
 
     entries = []
-    tasks_by_partition = {}
     for spec in specs:
         entries.append(make_mc2_partition_entry(
             spec.sources[0],
@@ -212,7 +219,6 @@ def collect_mc2_mesh_product_domain(
             anchor_object=spec.anchor_object,
             enabled=True,
         ))
-        tasks_by_partition[spec.task_id] = spec
     plan = collect_mc2_partition_entries(
         setup_type=MC2_SETUP_MESH_CLOTH,
         explicit_entries=tuple(entries),
@@ -220,8 +226,8 @@ def collect_mc2_mesh_product_domain(
     return collect_mc2_mesh_product_plan(
         world,
         plan,
+        receipt_slot_id=f"mc2.v0.oracle:{plan.report.domain_signature}",
         force_audit=force_audit,
-        observation_tasks=tasks_by_partition,
     )
 
 
@@ -229,8 +235,8 @@ def collect_mc2_mesh_product_plan(
     world,
     plan: MC2PartitionCollectorPlan,
     *,
+    receipt_slot_id: str,
     force_audit: bool | None = None,
-    observation_tasks=None,
 ) -> MC2MeshProductCollectionV1:
     """直接消费一个明确的 fused Mesh collector plan。"""
 
@@ -241,7 +247,9 @@ def collect_mc2_mesh_product_plan(
     partitions = tuple(plan.active_partitions)
     if not partitions:
         raise ValueError("MC2 Mesh product collector has no active partitions")
-    observation_tasks = dict(observation_tasks or {})
+    receipt_slot_id = str(receipt_slot_id or "").strip()
+    if not receipt_slot_id:
+        raise ValueError("Mesh product collection requires receipt_slot_id")
     rows = []
     identities = []
     statuses = []
@@ -249,20 +257,10 @@ def collect_mc2_mesh_product_plan(
     task_ids = []
     for partition in partitions:
         source = partition.source
-        spec = observation_tasks.get(partition.stable_id)
-        if spec is None:
-            spec = make_mc2_task_spec(
-                MC2_SETUP_MESH_CLOTH,
-                [source],
-                profile=partition.profile,
-                setup_options=partition.setup_options,
-                task_parameters=partition.task_parameters,
-                anchor_object=partition.anchor_object,
-                enabled=partition.enabled,
-            )
         observation = _prepare_observed_static_inputs(
             world,
-            spec,
+            partition,
+            receipt_slot_id=receipt_slot_id,
             force_audit=force_audit,
         )
         if len(observation.snapshots) != 1 or not isinstance(

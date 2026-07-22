@@ -13,7 +13,6 @@ from ..center_state import MC2CenterFramePoseSpec
 from ..frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from ..anchor import attach_mc2_task_anchor
 from ..names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
-from ..specs import MC2TaskSpec
 from ..topology import MC2TopologySpec, thaw_mc2_topology_payload
 
 
@@ -89,7 +88,9 @@ def _stage_mc2_bone_frame_state(world) -> MC2BoneFrameStateStageV1:
     )
 
 
-def _task_frame_intent(task: MC2TaskSpec) -> _MC2BoneFrameIntentV1:
+def _task_frame_intent(task) -> _MC2BoneFrameIntentV1:
+    from ..specs import MC2TaskSpec
+
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
     return _MC2BoneFrameIntentV1(

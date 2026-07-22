@@ -121,11 +121,15 @@ def _step_mc2_mesh_product(
     created_base_poses = _initialize_product_base_poses(request)
     if timing is not None:
         timing.checkpoint("统一域输入")
-    collection = collect_mc2_mesh_product_plan(world, request.plan)
+    slot_id = _product_slot_id(request)
+    collection = collect_mc2_mesh_product_plan(
+        world,
+        request.plan,
+        receipt_slot_id=slot_id,
+    )
     validate_mc2_mesh_product_targets(collection)
     if timing is not None:
         timing.checkpoint("统一域采集")
-    slot_id = _product_slot_id(request)
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action

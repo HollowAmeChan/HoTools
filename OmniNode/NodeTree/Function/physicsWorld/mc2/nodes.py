@@ -17,7 +17,6 @@ from .names import (
     MC2_SETUP_BONE_SPRING,
     MC2_SETUP_MESH_CLOTH,
 )
-from .solver import step_mc2
 from .timing import make_mc2_hotspot_timing
 from .parameters import (
     make_mc2_particle_profile,
@@ -26,7 +25,6 @@ from .parameters import (
     make_mc2_task_parameters,
 )
 from .presets import MC2_PARTICLE_PRESETS
-from .specs import make_mc2_task_spec
 from .product_authoring import (
     make_mc2_mesh_partition_entries,
     make_mc2_mesh_product_request,
@@ -55,6 +53,8 @@ def _product_name_output(requests) -> str:
 def _mesh_cloth_tasks(
     mesh_objects, anchor_object, profile, task_parameters, enabled: bool
 ):
+    from .specs import make_mc2_task_spec
+
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     sources = _flatten_values(mesh_objects)
@@ -175,6 +175,8 @@ def _hotools_bone_tasks(
     enabled: bool,
     **setup_values,
 ):
+    from .specs import make_mc2_task_spec
+
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     setup_values["self_collision_radius_model"] = "derived_radius"
@@ -219,6 +221,8 @@ def _bone_spring_tasks(
     enabled: bool,
     **setup_values,
 ):
+    from .specs import make_mc2_task_spec
+
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     grouped: dict[tuple[int, int], list[dict]] = {}
@@ -1197,6 +1201,8 @@ def physicsMC2Step(
             enabled=enabled,
             timing=timing,
         )
+    from .solver import step_mc2
+
     return step_mc2(
         world,
         mc2_tasks,

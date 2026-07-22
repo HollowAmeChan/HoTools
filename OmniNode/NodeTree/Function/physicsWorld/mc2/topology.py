@@ -15,7 +15,7 @@ from .bone_connection import (
     build_hotools_bone_connection,
     build_mc2_bone_connection,
 )
-from .specs import MC2TaskSpec, mc2_source_token
+from .source_identity import mc2_source_token
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,9 @@ class _MC2TopologyIntentV1:
     setup_options: object
 
 
-def _task_intent(task: MC2TaskSpec) -> _MC2TopologyIntentV1:
+def _task_intent(task) -> _MC2TopologyIntentV1:
+    from .specs import MC2TaskSpec
+
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task 必须是 MC2TaskSpec")
     return _MC2TopologyIntentV1(
@@ -48,8 +50,12 @@ def _partition_intent(partition) -> _MC2TopologyIntentV1:
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition 必须是 MC2ResolvedPartitionSpec")
     source = partition.source
-    if not isinstance(source, MC2BonePartitionSourceV1):
-        raise TypeError("Bone product partition source 类型无效")
+    if partition.setup_type == "mesh_cloth":
+        sources = (source,)
+    else:
+        if not isinstance(source, MC2BonePartitionSourceV1):
+            raise TypeError("Bone product partition source 类型无效")
+        sources = source.task_sources
     topology_signature = _signature({
         "schema": "mc2_partition_topology_intent_v1",
         "partition_id": partition.stable_id,
@@ -61,7 +67,7 @@ def _partition_intent(partition) -> _MC2TopologyIntentV1:
         task_id=partition.stable_id,
         setup_type=partition.setup_type,
         topology_signature=topology_signature,
-        sources=source.task_sources,
+        sources=sources,
         profile=partition.profile,
         setup_options=partition.setup_options,
     )
@@ -344,6 +350,13 @@ def read_mc2_static_source_observation(
     )
 
 
+def read_mc2_partition_static_source_observation(partition, source):
+    """从 resolved partition 读取一个 source，不创建旧 task spec。"""
+
+    intent = _partition_intent(partition)
+    return _read_mc2_static_source_observation(intent.setup_type, source)
+
+
 def _read_mc2_static_source_observation(
     setup_type: str,
     source,
@@ -372,6 +385,20 @@ def compose_mc2_static_inputs(
 
     return _compose_mc2_static_inputs(
         _task_intent(task),
+        source_fingerprints,
+        raw_snapshots,
+    )
+
+
+def compose_mc2_partition_static_inputs(
+    partition,
+    source_fingerprints,
+    raw_snapshots,
+):
+    """从 resolved partition 合成静态身份，不创建旧 task spec。"""
+
+    return _compose_mc2_static_inputs(
+        _partition_intent(partition),
         source_fingerprints,
         raw_snapshots,
     )
@@ -1077,7 +1104,7 @@ def _build_mc2_topology_spec(
 
 
 def build_mc2_topology_spec(
-    task: MC2TaskSpec,
+    task,
     *,
     static_input_fingerprint: MC2StaticInputFingerprint | None = None,
     static_input_snapshots: tuple[
@@ -1117,8 +1144,10 @@ __all__ = [
     "build_mc2_partition_topology_spec",
     "build_mc2_topology_spec",
     "compose_mc2_static_inputs",
+    "compose_mc2_partition_static_inputs",
     "prepare_static_inputs_for_task",
     "prepare_static_inputs_for_partition",
+    "read_mc2_partition_static_source_observation",
     "read_mc2_static_source_observation",
     "static_input_fingerprint_for_task",
     "thaw_mc2_topology_payload",

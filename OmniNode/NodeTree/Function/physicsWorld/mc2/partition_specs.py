@@ -15,7 +15,7 @@ from .parameters import (
     make_mc2_setup_options,
     make_mc2_task_parameters,
 )
-from .specs import mc2_source_token, normalize_mc2_setup_type
+from .source_identity import mc2_source_token, normalize_mc2_setup_type
 
 
 class _MC2UnsetType:

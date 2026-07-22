@@ -47,6 +47,19 @@ world_types = importlib.import_module(
 )
 
 
+def test_product_import_graph_excludes_v0_owner_modules():
+    prefix = "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2."
+    forbidden = (
+        "specs",
+        "solver",
+        "native_context",
+        "interaction_scope",
+        "shadow_pipeline",
+    )
+    loaded = set(sys.modules)
+    assert not [prefix + name for name in forbidden if prefix + name in loaded]
+
+
 class _Source:
     def __init__(self, pointer: int, name: str):
         self._pointer = pointer

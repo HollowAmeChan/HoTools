@@ -23,7 +23,6 @@ from ...self_collision_static import (
     MC2SelfCollisionStaticSpec,
 )
 from ...self_collision_static import build_mc2_self_collision_static
-from ...specs import MC2TaskSpec
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import thaw_mc2_topology_payload
 from ..mesh_cloth.final_proxy import (
@@ -45,7 +44,9 @@ class _MC2BoneStaticIntentV1:
     sources: tuple[object, ...]
 
 
-def _task_static_intent(task: MC2TaskSpec) -> _MC2BoneStaticIntentV1:
+def _task_static_intent(task) -> _MC2BoneStaticIntentV1:
+    from ...specs import MC2TaskSpec
+
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
     return _MC2BoneStaticIntentV1(

@@ -19,7 +19,10 @@ from .source_observation import (
 from .topology import (
     MC2StaticInputFingerprint,
     compose_mc2_static_inputs,
+    compose_mc2_partition_static_inputs,
     prepare_static_inputs_for_task,
+    prepare_static_inputs_for_partition,
+    read_mc2_partition_static_source_observation,
     read_mc2_static_source_observation,
 )
 
@@ -176,21 +179,26 @@ def _periodic_audit_due(world, source_pointer: int) -> bool:
     return (frame + phase) % interval == 0
 
 
-def prepare_observed_static_inputs(
+def _prepare_observed_static_inputs(
     world,
-    task,
     *,
+    setup_type: str,
+    sources: tuple,
+    receipt_slot_id: str,
+    read_source,
+    compose,
+    prepare_uncached,
     force_audit: bool | None = None,
 ) -> MC2ObservedStaticInputs:
-    """Reuse Mesh observations; conservatively scan unsupported source kinds."""
+    """按显式domain身份复用Mesh观察；其他setup保守全扫。"""
 
-    if task.setup_type != "mesh_cloth":
-        fingerprint, snapshots = prepare_static_inputs_for_task(task)
+    if setup_type != "mesh_cloth":
+        fingerprint, snapshots = prepare_uncached()
         return MC2ObservedStaticInputs(
             fingerprint=fingerprint,
             snapshots=snapshots,
             identities=(),
-            statuses=tuple("uncacheable" for _source in task.sources),
+            statuses=tuple("uncacheable" for _source in sources),
         )
 
     cache = _cache_for_world(world)
@@ -204,11 +212,11 @@ def prepare_observed_static_inputs(
     identities = []
     statuses = []
     receipts = get_gn_writeback_receipts(world)
-    for source in task.sources:
+    for source in sources:
         source_pointer = _pointer(source)
         data_pointer = _pointer(getattr(source, "data", None))
         if source_pointer <= 0 or data_pointer <= 0:
-            fingerprint, snapshot = read_mc2_static_source_observation(task, source)
+            fingerprint, snapshot = read_source(source)
             source_fingerprints.append(fingerprint)
             snapshots.append(snapshot)
             statuses.append("uncacheable")
@@ -221,7 +229,7 @@ def prepare_observed_static_inputs(
         )
         identity = (
             MC2_SOURCE_OBSERVATION_SCHEMA_VERSION,
-            task.setup_type,
+            setup_type,
             source_pointer,
             data_pointer,
         )
@@ -231,13 +239,13 @@ def prepare_observed_static_inputs(
             raw_revisions=raw_revisions,
             receipt=_matching_receipt(
                 receipts,
-                task.task_id,
+                receipt_slot_id,
                 f"{source_pointer}:{data_pointer}",
             ),
         )
         token = MC2SourceObservationToken(
             world_generation=int(getattr(world, "generation", 0) or 0),
-            setup_type=task.setup_type,
+            setup_type=setup_type,
             source_pointer=source_pointer,
             data_pointer=data_pointer,
             source_revision=source_revision,
@@ -247,7 +255,7 @@ def prepare_observed_static_inputs(
         )
 
         def load(source=source):
-            fingerprint, snapshot = read_mc2_static_source_observation(task, source)
+            fingerprint, snapshot = read_source(source)
             frozen_fingerprint = MappingProxyType(dict(fingerprint))
             return MC2SourceObservationValue(
                 signature=":".join(
@@ -269,16 +277,62 @@ def prepare_observed_static_inputs(
         snapshots.append(observation.value.snapshot)
         identities.append(token.identity)
         statuses.append(observation.status)
-    fingerprint, frozen_snapshots = compose_mc2_static_inputs(
-        task,
-        source_fingerprints,
-        snapshots,
-    )
+    fingerprint, frozen_snapshots = compose(source_fingerprints, snapshots)
     return MC2ObservedStaticInputs(
         fingerprint=fingerprint,
         snapshots=frozen_snapshots,
         identities=tuple(identities),
         statuses=tuple(statuses),
+    )
+
+
+def prepare_observed_static_inputs(
+    world,
+    task,
+    *,
+    force_audit: bool | None = None,
+) -> MC2ObservedStaticInputs:
+    """旧V0 oracle入口；E7-CPU删除前只供显式task调用。"""
+
+    return _prepare_observed_static_inputs(
+        world,
+        setup_type=task.setup_type,
+        sources=tuple(task.sources),
+        receipt_slot_id=str(task.task_id),
+        read_source=lambda source: read_mc2_static_source_observation(task, source),
+        compose=lambda fingerprints, snapshots: compose_mc2_static_inputs(
+            task, fingerprints, snapshots
+        ),
+        prepare_uncached=lambda: prepare_static_inputs_for_task(task),
+        force_audit=force_audit,
+    )
+
+
+def prepare_observed_static_inputs_for_partition(
+    world,
+    partition,
+    *,
+    receipt_slot_id: str,
+    force_audit: bool | None = None,
+) -> MC2ObservedStaticInputs:
+    """产品入口直接观察resolved partition，不构造旧task schema。"""
+
+    slot_id = str(receipt_slot_id or "").strip()
+    if not slot_id:
+        raise ValueError("Mesh product observation requires receipt_slot_id")
+    return _prepare_observed_static_inputs(
+        world,
+        setup_type=partition.setup_type,
+        sources=(partition.source,),
+        receipt_slot_id=slot_id,
+        read_source=lambda source: read_mc2_partition_static_source_observation(
+            partition, source
+        ),
+        compose=lambda fingerprints, snapshots: compose_mc2_partition_static_inputs(
+            partition, fingerprints, snapshots
+        ),
+        prepare_uncached=lambda: prepare_static_inputs_for_partition(partition),
+        force_audit=force_audit,
     )
 
 
@@ -381,6 +435,7 @@ __all__ = [
     "MC2_SOURCE_OBSERVATION_DEFAULT_AUDIT_INTERVAL",
     "MC2_SOURCE_OBSERVATION_FORCE_AUDIT_KEY",
     "prepare_observed_static_inputs",
+    "prepare_observed_static_inputs_for_partition",
     "prune_source_observation_cache",
     "register",
     "unregister",

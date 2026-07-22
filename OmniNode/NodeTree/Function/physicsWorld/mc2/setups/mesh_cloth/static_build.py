@@ -24,7 +24,6 @@ from ...names import MC2_SETUP_MESH_CLOTH
 from ...self_collision_static import MC2SelfCollisionStaticMetadata
 from ...self_collision_static import MC2SelfCollisionStaticSpec
 from ...self_collision_static import build_mc2_self_collision_static
-from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from .final_proxy import MC2MeshFinalProxyBuildResult
 from .final_proxy import build_blender_mesh_final_proxy
@@ -288,12 +287,14 @@ def build_mc2_mesh_cloth_static(
 
 
 def build_mc2_mesh_cloth_static_for_task(
-    task: MC2TaskSpec,
+    task,
     topology: MC2TopologySpec,
     *,
     native_context=None,
     raw_snapshot=None,
 ) -> MC2MeshClothStaticBuildResult | None:
+    from ...specs import MC2TaskSpec
+
     if not isinstance(task, MC2TaskSpec):
         raise TypeError("task must be MC2TaskSpec")
     if not isinstance(topology, MC2TopologySpec):

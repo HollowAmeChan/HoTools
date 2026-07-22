@@ -1,4 +1,4 @@
-"""E4 tests for the explicit-task Mesh product collector bridge."""
+"""E7-A：Mesh产品collector直接消费resolved partition。"""
 
 from __future__ import annotations
 
@@ -117,9 +117,9 @@ def _task(source, *, gravity_direction=(0.0, -1.0, 0.0), enabled=True):
 def _install_observer(monkey_rows):
     calls = []
 
-    def observe(world, task, *, force_audit=None):
-        calls.append((task.task_id, force_audit))
-        raw = monkey_rows[task.sources[0].as_pointer()]
+    def observe(world, partition, *, receipt_slot_id, force_audit=None):
+        calls.append((partition.stable_id, receipt_slot_id, force_audit))
+        raw = monkey_rows[partition.source.as_pointer()]
         fingerprint = topology.MC2StaticInputFingerprint(
             topology="1" * 32, geometry="2" * 32, surface="3" * 32,
             config="4" * 32, source="5" * 32,
@@ -154,7 +154,8 @@ def test_product_collector_observes_once_and_preserves_authoring_order():
     assert result.world_gravity_directions == (
         (0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
     )
-    assert calls == [(task.task_id, True) for task in tasks]
+    oracle_slot = f"mc2.v0.oracle:{result.draft.collector_domain_signature}"
+    assert calls == [(task.task_id, oracle_slot, True) for task in tasks]
 
 
 def test_product_collector_filters_disabled_and_non_mesh_tasks():
@@ -164,7 +165,8 @@ def test_product_collector_filters_disabled_and_non_mesh_tasks():
         _World(), (_task(first), _task(disabled, enabled=False)),
     )
     assert result.task_ids == (_task(first).task_id,)
-    assert calls == [(_task(first).task_id, None)]
+    oracle_slot = f"mc2.v0.oracle:{result.draft.collector_domain_signature}"
+    assert calls == [(_task(first).task_id, oracle_slot, None)]
 
 
 def test_product_collector_rejects_no_active_mesh_partition():
@@ -187,7 +189,11 @@ def test_product_collector_consumes_one_explicit_domain_plan_without_task_expans
         entries,
         include_implicit=False,
     )
-    result = collector.collect_mc2_mesh_product_plan(_World(), request.plan)
+    result = collector.collect_mc2_mesh_product_plan(
+        _World(),
+        request.plan,
+        receipt_slot_id="mc2.domain.product.v1:mesh_cloth:" + request.domain_signature,
+    )
     assert result.task_ids == tuple(entry.stable_id for entry in entries)
     assert result.draft.partition_ids == result.task_ids
     assert len(calls) == 2

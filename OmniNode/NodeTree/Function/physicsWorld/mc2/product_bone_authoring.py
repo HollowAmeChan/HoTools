@@ -15,7 +15,7 @@ from .parameters import (
 )
 from .partition_specs import collect_mc2_partition_entries, make_mc2_partition_entry
 from .product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
-from .specs import mc2_source_token
+from .source_identity import mc2_source_token
 
 
 @dataclass(frozen=True)

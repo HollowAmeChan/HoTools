@@ -13,11 +13,21 @@ import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+PYTHON_ABI = f"py{sys.version_info.major}{sys.version_info.minor}"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "hotools_native"
+        or module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+for path in reversed((NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS))):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -58,6 +68,14 @@ observation_adapter = importlib.import_module(
 observation_cache = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.source_observation"
 )
+partition_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs"
+)
+native_loader = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
+print("MC2_SOURCE_OBSERVATION_SOURCE", observation_adapter.__file__)
+print("MC2_SOURCE_OBSERVATION_NATIVE", native_loader.native_module().__file__)
 
 
 def _make_source():
@@ -253,6 +271,46 @@ def main() -> None:
             world,
             replacement.identities,
         ) == 1
+
+        entry = partition_specs.make_mc2_partition_entry(
+            source,
+            setup_type="mesh_cloth",
+        )
+        plan = partition_specs.collect_mc2_partition_entries(
+            setup_type="mesh_cloth",
+            explicit_entries=(entry,),
+        )
+        partition = plan.active_partitions[0]
+        product_slot_id = (
+            "mc2.domain.product.v1:mesh_cloth:" + plan.report.domain_signature
+        )
+        product_base = observation_adapter.prepare_observed_static_inputs_for_partition(
+            world,
+            partition,
+            receipt_slot_id=product_slot_id,
+        )
+        world.frame_context.frame += 1
+        writeback_commands.publish_gn_offset_writeback(
+            world,
+            solver="mc2",
+            slot_id=product_slot_id,
+            object_ptr=int(source.as_pointer()),
+            object_data_ptr=int(source.data.as_pointer()),
+            frame=world.frame_context.frame,
+            generation=world.generation,
+            local_offsets=np.zeros((len(source.data.vertices), 3), dtype=np.float32),
+        )
+        assert writeback.writeback_gn_attributes(world) == 1
+        bpy.context.view_layer.update()
+        product_internal = (
+            observation_adapter.prepare_observed_static_inputs_for_partition(
+                world,
+                partition,
+                receipt_slot_id=product_slot_id,
+            )
+        )
+        assert product_internal.statuses == ("hit",)
+        assert product_internal.snapshots[0] is product_base.snapshots[0]
 
         cache = world.runtime_cache(observation_cache.MC2_SOURCE_OBSERVATION_CACHE_KEY)
         report = cache.inspect()
