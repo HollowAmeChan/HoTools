@@ -43,6 +43,7 @@ cls = [ModTools]
 
 def register():
     texpacker.register()
+    weight.register()
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
@@ -52,4 +53,5 @@ def unregister():
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
     ureg_props()
+    weight.unregister()
     texpacker.unregister()
