@@ -23,7 +23,8 @@ E0-E2：partition / compile / output 合同
   -> P1-B：热帧静态观察缓存（已完成）
   -> E4/P2：多 Object fused MeshCloth + 一次 whole-domain self
   -> E5：多目标事务、覆盖与产品 collector（已完成）
-  -> E5-B：BoneCloth/BoneSpring 薄包装接入统一 DomainV1
+  -> E5-B：BoneCloth/BoneSpring 薄包装接入统一 DomainV1（已完成）
+  -> E7-A：删除前资格、生产依赖与代表资产审计
   -> E7-CPU：删除三种 setup 被替代的拆 task / aggregate / V0 路径
   -> E7-S：专项 review 并删除迁移期兼容处理
   -> P6-B：整理已验证的 GPU implementation package
@@ -32,7 +33,7 @@ E0-E2：partition / compile / output 合同
 
 P1-A、P2、P3、P5 和 P6 并非排在 E 阶段之后，而是按上述门禁穿插交付；精确映射以 `MC2_NODE_SIMULATION_DESIGN.md` 的“当前主线与真实混合执行顺序”为准。不能先用多线程掩盖重复工作。多线程也不能替代 fused context；当前默认路线不实施 CPU 并发。
 
-实现状态（2026-07-23）：E5已把统一域logical output接成带共同事务身份的多目标公共结果；Physics World在实际GN mutation前完成全target预检，并对第二目标写失败执行双目标回滚。显式对象/覆盖、隐式registry和Require-Fusion collector已进入产品节点，`MC2模拟步`只创建一个fused slot并拒绝旧task混输。Blender 4.5/py311与5.2/py313的120帧双跑soak均通过，E5后P2复跑D/B p50=`0.79823`且self数值门禁保持通过。当前入口转为E5-B：BoneCloth/BoneSpring只补setup包装并复用同一DomainV1；之后执行E7-CPU与E7-S，再收口P6。不实施P4 CPU并发，也不提前实现E6。
+实现状态（2026-07-23）：E5-B已把BoneCloth/BoneSpring公开节点切到setup-neutral product request；多个显式request使用动态domain slot，全部求解后一次发布，同Armature Bone结果合并，任一失败清除整批owner/result/feedback。旧Bone构建器仅由显式V0 oracle可达。Blender 4.5/py311与5.2/py313均通过native `28/28`、Mesh 120帧双跑、Bone多request、重复900帧混合输出、Center组合与Bone全约束soak，E5后P2门禁保持通过。当前入口转为E7-A删除前资格审计；之后执行E7-CPU与E7-S，再收口P6。不实施P4 CPU并发，也不提前实现E6。
 
 ## CPU并行与GPU前置的路线决策
 
@@ -499,11 +500,12 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic、compiled external、compiled whole-domain self、native-owned完整pass和Physics World单次domain collider capture已由双ABI关闭。完整Tier A fragment现按快照签名与重力方向两阶段缓存，并持有逐帧旋转所需的native-ready topology/adjacency/corner UV；失败stage不发布、commit才裁剪离域条目。纯host fused CPU owner已把该提交点与native staged replacement合并，exact输入复用handle，参数或静态变化在缺少原子热更新ABI时换建handle，失败保留旧域。产品collector/slot现可按全部BasePose/Anchor生成一个logical frame packet，并与一次whole-domain collider POD原子发布；旋转生产与V0共用同一native核心，无静态热帧repack。A5-04已把Tether/Angle/Motion/Post的partition SoA按particle owner展开，Integration/Post直接复用native Center输出，六轴Motion与标量E3 oracle均由双ABI锁定；slot scheduler/timing/Anchor历史也已具备可回滚的staged/committed state。Center frame shift进一步成为per-frame one-shot事务，不会因多substep重复应用，而其余solver pass仍逐substep完整运行；staged slot 现在真实调用 compiled full endpoint，成功后才提交 scheduler revision。下一优化门禁转为 Blender oracle、性能门禁与 E5 多目标事务；在产品路径启用前不把settings临时数组开销解释为CPU回归，也不做推测性缓存，启用前必须用P0同fixture复测并按证据决定是否预展开或缓存。
 6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
 7. E5 已先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
-8. E5-B把BoneCloth/BoneSpring现有capture/static/frame/output限制包装到setup-neutral product request与DomainV1；同Armature多链可融合，跨Armature不隐式拆task。
-9. 三种setup soak通过后执行E7-CPU，删除已失去所有权的拆task、普通aggregate、V0产品owner和binding。
-10. E7-CPU之后立即执行E7-S，逐项review并删除迁移期legacy/compat/fallback/shadow、双schema和结果翻译层；简化前后复跑双ABI与P0/P2。
-11. 贯穿2-10累积P6证据，最后单独提交GPU implementation package；不创建运行时backend。
-12. E6作为未来独立里程碑提交最小GPU prototype、规模曲线、tolerance和fallback，再按证据扩展pass。
+8. E5-B已完成：BoneCloth/BoneSpring现有capture/static/frame/output限制已包装到setup-neutral product request与DomainV1；同Armature多链显式融合，跨Armature生成多个可观察request，不产生hidden task。
+9. E7-A先审计旧包装输入解释、排序/identity、限制、错误域、性能、生命周期和生产依赖，确认新入口零fallback并冻结删除清单。
+10. E7-A关闭后执行E7-CPU，删除已失去所有权的拆task、普通aggregate、V0产品owner和binding；删除提交后重跑双ABI、Blender、P0/P2。
+11. E7-CPU之后立即执行E7-S，逐项review并删除迁移期legacy/compat/fallback/shadow、双schema和结果翻译层；简化前后复跑双ABI与P0/P2。
+12. 贯穿2-11累积P6证据，最后单独提交GPU implementation package；不创建运行时backend。
+13. E6作为未来独立里程碑提交最小GPU prototype、规模曲线、tolerance和fallback，再按证据扩展pass。
 
 P4 不在提交序列中。每个提交都应可独立基准、回归和回滚；fused context、算法优化与未来 GPU 原型不得合并成一个无法区分收益和数值变化的大提交。
 

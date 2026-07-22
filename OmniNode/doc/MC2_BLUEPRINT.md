@@ -25,8 +25,8 @@
 MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 - MeshCloth、BoneCloth、BoneSpring三种setup。
-- 单次公开solver step处理全部active MC2 task。
-- 每个task独立slot和native context，world-owned interaction context统一处理跨物体self collision。
+- 单次公开solver step处理全部显式`MC2ProductRequestV1`，并以一次结果事务发布。
+- 每个显式domain使用由setup与domain signature确定的动态slot；DomainV1一次处理域内全部partition、自碰撞和输出。
 - Mesh GN object-local offset与Bone PoseBone批量写回。
 - Point/Edge外部碰撞、单物体和跨物体self collision。
 - Center/Inertia、Tether、Distance、Angle、Triangle Bending、Motion/Backstop和post。
@@ -41,7 +41,7 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 ## 统一粒子域迁移状态
 
-`MC2_NODE_SIMULATION_DESIGN.md` 定义了未来多 Mesh 统一粒子域的架构和 E0-E7 执行/验收目录。E0 后端中立合同已经冻结：`mc2/domain_ir.py` 定义只读 static/program/parameter/frame/output/index envelope，`mc2/domain_capabilities.py` 在资源分配前检查 CPU/GPU 声明，`mc2/test/fixtures/domain_pipeline/` 固定单 Mesh、双 Mesh 静态域和双帧输入。碰撞 `group/mask` 是可热更新的 `uint32` partition SoA；参数表结构另有 `parameter_layout_signature`，不与数值变化或 program topology layout 混淆。
+`MC2_NODE_SIMULATION_DESIGN.md` 定义统一粒子域架构和 E0-E7 执行/验收目录。E0 后端中立合同已经冻结：`mc2/domain_ir.py` 定义只读 static/program/parameter/frame/output/index envelope，`mc2/domain_capabilities.py` 在资源分配前检查 CPU/GPU 声明，`mc2/test/fixtures/domain_pipeline/` 固定单 Mesh、双 Mesh 静态域和双帧输入。碰撞 `group/mask` 是可热更新的 `uint32` partition SoA；参数表结构另有 `parameter_layout_signature`，不与数值变化或 program topology layout 混淆。
 
 E1 单 source shadow pipeline 已完成，但它始终只是迁移验证工具，不是第二个 solver：`source_capture.py` 对真实 Mesh 只做一次静态读取，`static_fragment.py` 和 `domain_compile.py` 只处理冻结 POD，`shadow_pipeline.py` 将 compiled domain 与 V0 静态构建逐项比较并可采集阶段耗时。只有旧 `step_mc2` 的内部 `shadow_compile=True` 才会显式启用；默认关闭时不导入、不捕获、不编译、不分配对照数据。E5产品统一域不经过shadow report，后者也不进入 Physics World 持久 state。
 
@@ -53,11 +53,11 @@ E3 单 source CPU reference 已完成。`cpu_backend.py` 先执行无资源 capa
 
 E3 的 py311/py313 固定证据覆盖创建/更新/失败回滚/释放、normal/Keep/Reset/catch-up/paused Center、非零 depth inertia + Fixed 根 + Tether + Distance A/B、Angle Limit + Motion/Backstop、point/edge/self、post 速度历史、scheduler 参数交接、单 target writeback 数学和 debug-off 零 readback。V0 与 Domain 的单 source 全功能等价门禁已经关闭；多 source 同域、whole-domain self、多 target 原子发布和产品 collector 分别属于 E4/E5，不能由 E3 结论代替。
 
-E3保留下来的单source reference endpoint仍只用于迁移对照；在其上扩展出的DomainV1已经由E4/E5成为Mesh产品owner。现有`_native/src/mc2_context_*`暂时继续承载旧`Mc2ContextV0` ABI，只为E5-B前的Bone产品对照与回归，不得再作为新collector fallback；也不得把compiled domain伪装成V0输入或把`center_state.py`数值公式复制进Python owner。P0、P1-B、粒子级覆盖、whole-domain self/external、多partition frame/collider发布、A5-04分区full settings、slot-owned scheduler/Anchor staged state、真实compiled substep、Blender多source oracle、P2和E5多目标产品门禁均已闭环；Mesh帧旋转由V0与Domain共用同一native核心。当前硬门禁转为E5-B Bone统一域包装，随后才是E7-CPU删除、E7-S兼容层收敛与P6最终合同。
+E3保留下来的单source reference endpoint仍只用于迁移对照；在其上扩展出的DomainV1已经由E4/E5成为三种setup的产品owner。现有`_native/src/mc2_context_*`暂时继续承载旧`Mc2ContextV0` ABI，只供E7-CPU前显式V0 oracle与回归，不得作为collector fallback；也不得把compiled domain伪装成V0输入或把`center_state.py`数值公式复制进Python owner。P0、P1-B、粒子级覆盖、whole-domain self/external、多partition frame/collider发布、A5-04分区full settings、slot-owned scheduler/Anchor staged state、真实compiled substep、Blender多source oracle、P2、E5多目标事务和E5-B Bone产品迁移均已闭环；Mesh帧旋转由V0与Domain共用同一native核心。当前硬门禁是E7-A删除前资格审计，随后依次执行E7-CPU删除、E7-S兼容层收敛与P6最终合同。
 
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
-当前新生产行为是：多个Mesh对象经对象/覆盖/隐式registry进入一个Require-Fusion collector request，由唯一`mc2.domain.mesh.product.v1` slot拥有static/frame、whole-domain self与多目标事务；单对象只是一个partition的退化情况。旧“每Mesh一个`MC2TaskSpec` + 独立context + aggregate interaction”入口仍可被旧节点直接调用，但已冻结为E7待删迁移路径，新collector不会导入或回退到它。BoneCloth/BoneSpring当前仍经旧task/V0 owner运行，因此E7删除前先执行E5-B：把同Armature多链解析成显式partition plan，并以薄setup adapter复用相同DomainV1和公共结果事务；跨Armature输入在Require-Fusion下明确失败，不再隐式拆task。
+当前生产行为是：多个Mesh对象经对象/覆盖/隐式registry进入一个Require-Fusion request；BoneCloth/BoneSpring公开节点按Armature显式生成一个或多个request。同一Armature多链成为显式partition，同一Armature的多个Bone request在结果层合并；跨Armature不会生成hidden task。每个request使用`setup_type + domain_signature`动态产品槽，全部request先求解再以一个事务发布，任一失败清除整批尝试状态。旧“每source一个`MC2TaskSpec` + 独立context + aggregate interaction”只可经显式V0 oracle调用，已冻结为E7-CPU待删路径，产品collector不导入或回退到它。
 
 ## 一句话数据流
 
@@ -745,19 +745,19 @@ Python host只保存opaque handle和可复用输出/debug buffer，不保存C++ 
 
 ### 统一粒子域迁移状态（2026-07-23）
 
-Mesh生产描述以E5统一DomainV1 owner为准；Bone描述在E5-B完成前仍以V0作为迁移对照。独立`DomainV1`已经完成单source全功能CPU reference，并在E4中接通partitioned StepBasic、一次compiled external collision和一次compiled whole-domain self：同一个native owner直接消费point/edge/triangle、逐partition collision mode、独立外部`collided_by_groups`、self mode/group/mask和逐粒子radius/thickness/friction。外部碰撞每子步只接收一份公共Physics World collider POD，并严格位于Bending与Distance B之间；随后Motion、whole-domain self与post/history继续使用native-owned pre-prediction snapshot。外部摩擦状态不会被后续self初始化覆盖，post后snapshot与子步碰撞状态同时失效；py311/py313 raw ABI与adapter均有point/edge允许、阻断、非法输入零pass、真实位移和real velocity证据，E3旧标量ABI的14项V0 tolerance保持全过。
+三种setup生产描述均以setup-neutral product request与统一DomainV1 owner为准；V0只保留为E7-CPU前显式迁移对照。独立`DomainV1`已经完成单source全功能CPU reference，并在E4中接通partitioned StepBasic、一次compiled external collision和一次compiled whole-domain self：同一个native owner直接消费point/edge/triangle、逐partition collision mode、独立外部`collided_by_groups`、self mode/group/mask和逐粒子radius/thickness/friction。外部碰撞每子步只接收一份公共Physics World collider POD，并严格位于Bending与Distance B之间；随后Motion、whole-domain self与post/history继续使用native-owned pre-prediction snapshot。外部摩擦状态不会被后续self初始化覆盖，post后snapshot与子步碰撞状态同时失效；py311/py313 raw ABI与adapter均有point/edge允许、阻断、非法输入零pass、真实位移和real velocity证据，E3旧标量ABI的14项V0 tolerance保持全过。
 
 这关闭了E4的compiled external、whole-domain self与native-owned完整pass子门槛。纯host边界也已能从collector draft的全部resolved source一次消费Physics World公共snapshot，生成拥有独立只读数组的whole-domain collider POD：域内全部owner统一排除，外部group不在Python端按任一partition预筛选，moving collider previous pose与四种shape继续复用公共打包规则。完整Tier A fragment另由`MC2MeshFragmentCacheV1`按快照签名与逐partition world gravity缓存；stage只生成候选，显式commit才批量发布和裁剪，构建失败、stale或foreign batch均不能改变live cache。fragment同时缓存native-ready Mesh triangle/adjacency/corner UV；无handle `mc2_mesh_frame_orientations_v1`与V0 raw Mesh更新共享同一C++旋转核心，避免Python公式复制和热帧静态repack。`MC2MeshFusedCPUOwnerV1`把cache commit与native domain staged replacement合并，exact输入复用handle，参数/静态变化创建新handle后才交换，任何前置失败保留旧domain/cache；owner也直接代理frame、唯一compiled full step和logical output。产品collector bridge保留authoring顺序/字段，逐partition只消费一次P1-B raw observation并冻结draft、E0快照和BasePose topology identity。固定whole-domain Physics World slot负责owner同步/替换/dispose，并可把全部BasePose/Anchor编成一个logical frame packet，再与一次whole-domain collider POD按frame/slot identity共同发布。
 
 A5-04已关闭whole-domain参数隔离：Tether、Angle、Motion和Post不再读取partition 0标量，而是按`particle_partition_index`消费分区SoA展开；Integration和Post的velocity weight/gravity继续由同一native owner的Center输出驱动。旧标量endpoint只作为E3单partition oracle保留，Motion的六个有向轴`0..5`与V0公开参数合同一致。slot-owned scheduler/timing/Anchor staged state也已关闭所有权与失败回滚门禁；native Center frame shift另以per-frame one-shot状态锁定，同一frame多substep只提交一次component/Anchor位移，其余solver pass仍逐substep执行。真实 staged substep入口准备owner-owned StepBasic、编译全域settings并只在native full step成功后提交scheduler revision。
 
-E5现已完成Mesh产品切换入口：`domain_output.py`把logical output冻结为一个多target事务，`results.py`在公共流替换前验证完整批次，Physics World GN writeback对全部target先预检、再快照/提交并在任一点失败时整批恢复。`product_authoring.py`提供显式对象、完整覆盖、隐式registry producer/reader和Require-Fusion request；四个OmniNode输出中文装配报告。`product_solver.py`只接受一个明确request，驱动唯一fused slot并在成功发布全部目标后设置`product_enabled=True`，多个request或与旧task混输会直接失败。Blender 4.5/py311与5.2/py313均已通过两Mesh Object-local写回、第二target注入失败双目标回滚、旧map拒绝及120帧双跑确定性soak。下一步E5-B把request/collection/solver抽成setup-neutral核心，BoneCloth/BoneSpring只实现capture/static/frame/output包装；三种setup等价后才允许E7-CPU删除旧V0 task与aggregate。
+E5/E5-B已完成三种setup产品切换：`domain_output.py`把logical output冻结为多target事务，`results.py`在公共流替换前验证完整批次，Physics World writeback对全部target先预检、再快照/提交并在任一点失败时整批恢复。`product_authoring.py`提供Mesh显式对象、完整覆盖、隐式registry和Require-Fusion request；Bone公开节点只生成setup-neutral request。`product_solver.py`接受多个显式request，按动态槽位全部stage/solve后只发布一次事务；同Armature Bone结果合并，任一request失败清除整批尝试状态，request与旧task混输仍直接失败。Blender 4.5/py311与5.2/py313均通过native `28/28`、属性`11/11`、Mesh 120帧双跑、Bone多request合并、重复900帧混合输出、Center组合和Bone全约束soak。下一步是E7-A删除前资格审计，关闭后才执行E7-CPU。
 
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的Blender 4.5窗口中又发现`build.bat`复用了测试改写的runtime cache；脚本现每次先刷新preset，确保产物真实写入所选`_Lib/py311`或`py313`目录。重新生成的py311通过native `27/27`。
 
-E4/E5 Blender oracle 更新（2026-07-23）：Blender 5.2/Python 3.13 的非self多source结果继续在`1e-6`内逐target一致。whole-domain self由后端中立opaque engine复用成熟V0流水；1764粒子、4 source、35帧同夹具中，Domain与manual join的primitive/candidate/contact完全一致，reset轨迹位级相等，连续轨迹peak max-abs/RMS为`3.9208e-4/1.6597e-5`。E5后复跑为`3.9207e-4/1.6597e-5`，D/B p50=`0.79823`、D/C=`0.80175`，综合门禁继续通过。产品collector另以两Mesh 120帧双跑逐float32相等关闭长期结果事务门禁。Blender 4.5/Python 3.11现以相同runner通过属性声明`11/11`、GN事务、双source对照和120帧双跑；5.2 runner继续明确绑定当前cp313。下一阶段是E5-B Bone统一域包装，之后依次执行E7-CPU、E7-S与P6-B收口。
+E4-E5-B Blender oracle 更新（2026-07-23）：Blender 5.2/Python 3.13 的非self多source结果继续在`1e-6`内逐target一致。whole-domain self由后端中立opaque engine复用成熟V0流水；1764粒子、4 source、35帧同夹具中，Domain与manual join的primitive/candidate/contact完全一致，reset轨迹位级相等，连续轨迹peak max-abs/RMS为`3.9208e-4/1.6597e-5`。E5后复跑为`3.9207e-4/1.6597e-5`，D/B p50=`0.79823`、D/C=`0.80175`，综合门禁继续通过。两套ABI均明确绑定本工作树产物，并通过native `28/28`、属性`11/11`、Mesh 120帧确定性、Bone多产品事务、两次900帧混合输出、Center组合和Bone全约束soak。当前阶段依次为E7-A、E7-CPU、E7-S与P6-B收口。
 
 MC2 C++验证按目标ABI显式选择：
 
