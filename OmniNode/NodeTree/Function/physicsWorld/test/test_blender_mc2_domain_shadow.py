@@ -261,7 +261,11 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             max_simulation_count_per_frame=3,
         )
         assert returned is world and ready is True, status
-        slot = world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        slot_id = mc2_product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        slot = world.solver_slots[slot_id]
         assert slot.data["product_enabled"] is True
         assert slot.data["collector_request"] is request
         assert "分区 2" in status and "目标 2" in status
@@ -339,7 +343,12 @@ def _run_mc2_mesh_product_node_soak(run_name):
         digest = hashlib.sha256(
             np.ascontiguousarray(values).tobytes()
         ).hexdigest()
-        slot = world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        request = requests[0]
+        slot_id = mc2_product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        slot = world.solver_slots[slot_id]
         assert slot.data["product_enabled"] is True
         assert slot.data["owner"].compiled.program.partition_count == 2
         return digest, values

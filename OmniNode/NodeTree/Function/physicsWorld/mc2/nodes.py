@@ -1045,7 +1045,7 @@ def physicsMC2BoneSpringTask(
     input_init={
         "world": {"description": "Physics World统一时间源"},
         "mc2_tasks": {
-            "description": "连接一个MC2 Mesh统一域\n旧Bone task仅供迁移",
+            "description": "连接一个或多个显式MC2统一域\n不得与旧task混用",
         },
         "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "MC2局部时间倍率\n缩放统一dt"},
         "simulation_frequency": {"min_value": 30, "max_value": 150, "description": "MC2固定步频率（Hz）"},
@@ -1093,16 +1093,15 @@ def physicsMC2Step(
         legacy_values = tuple(
             value for value in flattened if not isinstance(value, MC2ProductRequestV1)
         )
-        if len(product_requests) != 1 or legacy_values:
+        if legacy_values:
             raise ValueError(
-                "MC2模拟步一次只接受一个明确统一域；"
-                "不得与旧task混用或隐式拆成多个domain"
+                "MC2模拟步不得与旧task混用；显式产品request必须独立执行"
             )
-        from .product_solver import step_mc2_product
+        from .product_solver import step_mc2_products
 
-        return step_mc2_product(
+        return step_mc2_products(
             world,
-            product_requests[0],
+            product_requests,
             settings=settings,
             enabled=enabled,
             timing=timing,

@@ -89,13 +89,15 @@ def test_bone_request_dispatches_to_domain_product_without_v0_fallback():
     world = world_types.PhysicsWorldCache()
     world.generation = 1
     calls = []
-    original = solver._step_mc2_bone_product
+    original = solver.step_mc2_products
 
-    def _record(current_world, request, **kwargs):
-        calls.append((request.setup_type, kwargs))
+    def _record(current_world, requests, **kwargs):
+        frozen = tuple(requests)
+        assert len(frozen) == 1
+        calls.append((frozen[0].setup_type, kwargs))
         return current_world, True, "domain product"
 
-    solver._step_mc2_bone_product = _record
+    solver.step_mc2_products = _record
     try:
         for setup_type in (
             names.MC2_SETUP_BONE_CLOTH,
@@ -108,7 +110,7 @@ def test_bone_request_dispatches_to_domain_product_without_v0_fallback():
             assert returned is world and ready is True
             assert status == "domain product"
     finally:
-        solver._step_mc2_bone_product = original
+        solver.step_mc2_products = original
     assert tuple(value[0] for value in calls) == (
         names.MC2_SETUP_BONE_CLOTH,
         names.MC2_SETUP_BONE_SPRING,

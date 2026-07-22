@@ -208,6 +208,7 @@ rig_d = _product_armature(
     connect_children=False,
 )
 rig_e = _oriented_chain_armature("MC2_ProductRigE_ZeroGravity")
+rig_f = _multi_control_armature("MC2_ProductRigF_MultiRequest", 2, 1, 3)
 rig_e.location = (1.5, -2.0, 0.75)
 rig_e.rotation_mode = "XYZ"
 rig_e.rotation_euler = (0.45, -0.3, 0.65)
@@ -215,6 +216,7 @@ bpy.context.view_layer.update()
 world = None
 product_world = None
 spring_product_world = None
+multi_request_world = None
 try:
     tasks, task_names = nodes.physicsMC2BoneClothTask(
         [
@@ -908,6 +910,93 @@ try:
         "source_kind"
     ] == "bone_spring"
     assert writeback.writeback_bone_transforms(spring_product_world) == 3
+
+    multi_requests = tuple(
+        product_authoring.make_mc2_bone_cloth_product_request(
+            [{"armature": rig_f, "bone": f"Parent{control_index}"}],
+            setup_options=parameters.make_mc2_setup_options(
+                "bone_cloth",
+                connection_mode=1,
+            ),
+        )
+        for control_index in range(2)
+    )
+    assert all(len(request.plan.active_partitions) == 1 for request in multi_requests)
+    multi_request_world = world_types.PhysicsWorldCache()
+    multi_request_world.generation = 1
+    multi_request_world.frame_context.frame = 1
+    multi_request_world.frame_context.generation = 1
+    multi_request_world.frame_context.dt = 1.0 / 60.0
+    multi_request_world.frame_context.raw_dt = 1.0 / 60.0
+    multi_request_world.frame_context.time_scale = 1.0
+    multi_request_world.collider_snapshot = {"frame": 1, "colliders": []}
+    returned, ready, multi_status = product_solver.step_mc2_products(
+        multi_request_world,
+        multi_requests,
+    )
+    assert returned is multi_request_world and ready is True
+    assert "域 2" in multi_status
+    multi_slot_ids = tuple(
+        product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        for request in multi_requests
+    )
+    multi_slots = tuple(
+        multi_request_world.solver_slots[slot_id] for slot_id in multi_slot_ids
+    )
+    multi_owners = tuple(slot.data["owner"] for slot in multi_slots)
+    assert all(owner.compiled.program.partition_count == 1 for owner in multi_owners)
+    assert all(owner.compiled.program.particle_count == 3 for owner in multi_owners)
+    assert len(multi_request_world.result_streams["bone_transform"]) == 1
+    multi_result = multi_request_world.result_streams["bone_transform"][0]
+    primary_slot_id = min(multi_slot_ids)
+    secondary_slot_id = max(multi_slot_ids)
+    assert multi_result["slot_id"] == primary_slot_id
+    assert multi_result["bone_count"] == 6
+    assert multi_result["component_count"] == 2
+    assert set(multi_result["task_ids"]) == {
+        request.plan.active_partitions[0].stable_id for request in multi_requests
+    }
+    primary_plan = multi_request_world.solver_slots[primary_slot_id].data[
+        "writeback_plan"
+    ]
+    secondary_plan = multi_request_world.solver_slots[secondary_slot_id].data[
+        "writeback_plan"
+    ]
+    assert primary_plan["component_count"] == 2
+    assert primary_plan["bone_count"] == 6
+    assert len(primary_plan["batches"]) == 2
+    assert secondary_plan["bone_count"] == 3
+    assert len(
+        multi_request_world.backend_resources[
+            bone_frame_input.MC2_BONE_FRAME_STATE_KEY
+        ]["bones"]
+    ) == 6
+    assert writeback.writeback_bone_transforms(multi_request_world) == 6
+
+    multi_request_world.frame_context.frame = 2
+    multi_request_world.frame_context.restart_required = False
+    multi_request_world.frame_context.reset_requested = False
+    multi_request_world.frame_context.dt = 1.0 / 30.0
+    multi_request_world.frame_context.raw_dt = 1.0 / 30.0
+    multi_request_world.collider_snapshot["frame"] = 2
+    returned, ready, _status = product_solver.step_mc2_products(
+        multi_request_world,
+        multi_requests,
+    )
+    assert returned is multi_request_world and ready is True
+    assert tuple(
+        multi_request_world.solver_slots[slot_id].data["owner"]
+        for slot_id in multi_slot_ids
+    ) == multi_owners
+    assert all(
+        multi_request_world.solver_slots[slot_id].data["last_sync"].native_domain_reused
+        for slot_id in multi_slot_ids
+    )
+    assert len(multi_request_world.result_streams["bone_transform"]) == 1
+    assert writeback.writeback_bone_transforms(multi_request_world) == 6
 finally:
     if world is not None:
         world.omni_cache_dispose("bone_product_test_cleanup")
@@ -917,11 +1006,16 @@ finally:
         spring_product_world.omni_cache_dispose(
             "bone_spring_domain_product_test_cleanup"
         )
+    if multi_request_world is not None:
+        multi_request_world.omni_cache_dispose(
+            "bone_multi_request_product_test_cleanup"
+        )
     _dispose_armature(rig_a)
     _dispose_armature(rig_b)
     _dispose_armature(rig_c)
     _dispose_armature(rig_d)
     _dispose_armature(rig_e)
+    _dispose_armature(rig_f)
 
 
 print("MC2 HoTools BoneCloth product topology/multi-task atomic step: PASS")

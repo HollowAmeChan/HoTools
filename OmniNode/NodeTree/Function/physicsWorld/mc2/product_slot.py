@@ -325,6 +325,113 @@ def sync_mc2_mesh_fused_slot(
     )
 
 
+def discard_mc2_product_slots(
+    world: PhysicsWorldCache,
+    slot_ids,
+    *,
+    reason: str,
+) -> tuple[str, ...]:
+    """失败关闭：先从 world 摘除整批产品 slot，再释放其 native owner。"""
+
+    if not isinstance(world, PhysicsWorldCache):
+        raise TypeError("world must be PhysicsWorldCache")
+    frozen_ids = tuple(dict.fromkeys(
+        str(slot_id or "").strip() for slot_id in slot_ids
+    ))
+    if any(not slot_id for slot_id in frozen_ids):
+        raise ValueError("product slot id cannot be empty")
+    removed = []
+    world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
+    try:
+        for slot_id in frozen_ids:
+            slot = world.solver_slots.get(slot_id)
+            if (
+                isinstance(slot, PhysicsSolverSlot)
+                and slot.kind == MC2_FUSED_PRODUCT_SLOT_KIND
+            ):
+                world.solver_slots.pop(slot_id, None)
+                removed.append(slot)
+    finally:
+        world.release_write(_MC2_FUSED_PRODUCT_WRITER)
+    for slot in removed:
+        slot.dispose(str(reason or "mc2_product_batch_failure"))
+    return tuple(slot.slot_id for slot in removed)
+
+
+def publish_mc2_product_output_transaction(
+    world: PhysicsWorldCache,
+    slots,
+    results,
+    *,
+    bone_writeback_plans=None,
+) -> tuple[dict, ...]:
+    """一次发布多个显式 domain，并同步提交最终 Bone 反馈指纹。"""
+
+    if not isinstance(world, PhysicsWorldCache):
+        raise TypeError("world must be PhysicsWorldCache")
+    frozen_slots = tuple(slots)
+    if not frozen_slots:
+        raise ValueError("product output transaction requires at least one slot")
+    if any(
+        not isinstance(slot, PhysicsSolverSlot)
+        or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND
+        for slot in frozen_slots
+    ):
+        raise TypeError("product output transaction contains an invalid slot")
+    slot_ids = tuple(slot.slot_id for slot in frozen_slots)
+    if len(set(slot_ids)) != len(slot_ids):
+        raise ValueError("product output transaction contains duplicate slots")
+
+    frozen_results = tuple(results)
+    plans = dict(bone_writeback_plans or {})
+    published_plan_ids = tuple(dict.fromkeys(
+        str(result.get("slot_id") or "")
+        for result in frozen_results
+        if isinstance(result, dict)
+        and str(result.get("slot_id") or "") in plans
+    ))
+    feedback_stage = None
+    if published_plan_ids:
+        from .setups.bone_frame_input import prepare_mc2_bone_writeback_expectations
+
+        feedback_stage = prepare_mc2_bone_writeback_expectations(
+            world,
+            tuple(plans[slot_id] for slot_id in published_plan_ids),
+        )
+
+    world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
+    try:
+        generation = int(world.generation)
+        for slot in frozen_slots:
+            if (
+                world.solver_slots.get(slot.slot_id) is not slot
+                or slot.world_generation != generation
+            ):
+                raise RuntimeError(
+                    "product slot changed before batch result publication"
+                )
+        if feedback_stage is not None:
+            feedback_stage.validate(world)
+        published = publish_mc2_result_transaction(world, frozen_results)
+        if feedback_stage is not None:
+            feedback_stage.commit(world)
+        for slot in frozen_slots:
+            slot_results = tuple(
+                result
+                for result in published
+                if str(result.get("slot_id") or "") == slot.slot_id
+            )
+            slot.data["published_output_results"] = slot_results
+            if "output_batch" in slot.data:
+                slot.data["published_output_batch"] = slot.data["output_batch"]
+            if slot.slot_id in plans:
+                slot.data["published_output_writeback_plans"] = plans
+                slot.data["writeback_plan"] = plans[slot.slot_id]
+        return published
+    finally:
+        world.release_write(_MC2_FUSED_PRODUCT_WRITER)
+
+
 def publish_mc2_product_frame(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot,
@@ -780,11 +887,13 @@ __all__ = [
     "build_mc2_mesh_fused_output_batch",
     "capture_and_publish_mc2_mesh_fused_frame",
     "capture_and_publish_mc2_product_frame",
+    "discard_mc2_product_slots",
     "make_mc2_product_slot_id",
     "publish_mc2_product_frame",
     "publish_mc2_mesh_fused_frame",
     "publish_mc2_mesh_fused_output_transaction",
     "publish_mc2_bone_product_output_transaction",
+    "publish_mc2_product_output_transaction",
     "step_mc2_mesh_fused_substep",
     "step_mc2_product_substep",
     "sync_mc2_product_slot",
