@@ -21,10 +21,17 @@ physicsWorld.writeback — 物理写回算法
 from __future__ import annotations
 
 import mathutils
+import numpy as np
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
-from .gn_offset import clear_gn_local_offsets, normalize_local_offsets, write_gn_local_offsets
+from .gn_offset import (
+    clear_gn_local_offsets,
+    ensure_gn_offset_output,
+    normalize_local_offsets,
+    write_gn_local_offsets,
+)
+from .names import GN_OFFSET_ATTRIBUTE_NAME, GN_OFFSET_MODIFIER_NAME
 from .utils.values import matrix_from_16
 from .writeback_commands import iter_bone_transform_writebacks, iter_gn_offset_writebacks
 
@@ -603,7 +610,108 @@ def _append_gn_writeback_receipt(world, diagnostics: dict, result) -> None:
         "target_key": str(result.get("target_key") or ""),
         "object_ptr": int(result.get("object_ptr", 0) or 0),
         "object_data_ptr": int(result.get("object_data_ptr", 0) or 0),
+        "transaction_id": str(result.get("transaction_id") or ""),
+        "transaction_index": int(result.get("transaction_index", -1)),
+        "transaction_size": int(result.get("transaction_size", 0)),
     })
+
+
+def _preflight_gn_target(result) -> dict:
+    obj = _find_mesh_by_pointer(
+        result.get("object_ptr"),
+        result.get("object_data_ptr"),
+    )
+    if obj is None:
+        raise ValueError("GN offset 目标 Mesh 不存在或 data pointer 已变化")
+    if int(getattr(obj.data, "users", 1) or 1) != 1:
+        raise ValueError("GN 物理 offset 要求目标 Mesh 数据单用户，避免共享数据串写")
+    vertex_count = int(result.get("vertex_count", -1))
+    values = normalize_local_offsets(
+        result.get("local_offsets"),
+        vertex_count,
+        copy=False,
+    )
+    if vertex_count != len(obj.data.vertices):
+        raise ValueError(
+            f"GN offset 拓扑已变化：result={vertex_count} target={len(obj.data.vertices)}"
+        )
+    attribute = obj.data.attributes.get(GN_OFFSET_ATTRIBUTE_NAME)
+    if attribute is not None and (
+        attribute.domain != "POINT" or attribute.data_type != "FLOAT_VECTOR"
+    ):
+        raise ValueError("GN offset 保留属性类型或 domain 已被外部改写")
+    modifier = obj.modifiers.get(GN_OFFSET_MODIFIER_NAME)
+    if modifier is not None and modifier.type != "NODES":
+        raise ValueError("GN offset 保留修改器已被外部改成非 Nodes 类型")
+    previous = np.zeros((vertex_count, 3), dtype=np.float32)
+    if attribute is not None:
+        attribute.data.foreach_get("vector", previous.reshape(-1))
+    return {
+        "result": result,
+        "obj": obj,
+        "values": values,
+        "previous": previous,
+        "had_attribute": attribute is not None,
+        "had_modifier": modifier is not None,
+    }
+
+
+def _restore_gn_target(target: dict) -> None:
+    obj = target["obj"]
+    if target["had_attribute"]:
+        attribute = obj.data.attributes.get(GN_OFFSET_ATTRIBUTE_NAME)
+        if attribute is None:
+            attribute, _modifier = ensure_gn_offset_output(obj)
+        attribute.data.foreach_set("vector", target["previous"].reshape(-1))
+    else:
+        attribute = obj.data.attributes.get(GN_OFFSET_ATTRIBUTE_NAME)
+        if attribute is not None:
+            obj.data.attributes.remove(attribute)
+    if not target["had_modifier"]:
+        modifier = obj.modifiers.get(GN_OFFSET_MODIFIER_NAME)
+        if modifier is not None:
+            obj.modifiers.remove(modifier)
+    obj.data.update()
+    obj.update_tag()
+
+
+def _apply_gn_transaction(world, diagnostics: dict, results) -> tuple[set[str], bool]:
+    targets = []
+    try:
+        targets = [_preflight_gn_target(result) for result in results]
+        for target in targets:
+            ensure_gn_offset_output(target["obj"])
+        for target in targets:
+            write_gn_local_offsets(target["obj"], target["values"])
+    except Exception as write_error:
+        rollback_errors = []
+        for target in reversed(targets):
+            try:
+                _restore_gn_target(target)
+                diagnostics["rollback_count"] += 1
+            except Exception as rollback_error:
+                rollback_errors.append(str(rollback_error))
+        message = f"GN 多目标事务失败：{write_error}"
+        if rollback_errors:
+            message += "；回滚失败：" + "; ".join(rollback_errors)
+        for result in results:
+            _gn_writeback_error(diagnostics, result, message)
+            _set_gn_slot_error(world, result, message)
+        diagnostics["failed_transaction_count"] += 1
+        return set(), False
+
+    written_targets = set()
+    touched = _get_touched_gn_objects(world)
+    for target in targets:
+        result = target["result"]
+        target_key = str(result["target_key"])
+        touched[target_key] = target["obj"]
+        written_targets.add(target_key)
+        diagnostics["written_count"] += 1
+        _append_gn_writeback_receipt(world, diagnostics, result)
+        _set_gn_slot_error(world, result, None)
+    diagnostics["committed_transaction_count"] += 1
+    return written_targets, True
 
 
 def writeback_gn_attributes(world) -> int:
@@ -625,6 +733,10 @@ def writeback_gn_attributes(world) -> int:
         "conflict_count": 0,
         "written_count": 0,
         "cleared_count": 0,
+        "transaction_count": 0,
+        "committed_transaction_count": 0,
+        "failed_transaction_count": 0,
+        "rollback_count": 0,
         "errors": [],
         "receipts": [],
     }
@@ -633,6 +745,7 @@ def writeback_gn_attributes(world) -> int:
     _ensure_cleanup_resource(world)
 
     by_target: dict[str, dict[str, dict]] = {}
+    rejected_transactions = set()
     for result in results:
         try:
             obj_ptr = int(result.get("object_ptr", 0) or 0)
@@ -652,9 +765,12 @@ def writeback_gn_attributes(world) -> int:
         except Exception as exc:
             _gn_writeback_error(diagnostics, result, exc)
             _set_gn_slot_error(world, result, str(exc))
+            transaction_id = str(result.get("transaction_id") or "")
+            if transaction_id:
+                rejected_transactions.add(transaction_id)
 
     diagnostics["candidate_count"] = len(by_target)
-    written_targets = set()
+    selected_results = []
     for target_key, writers in by_target.items():
         if len(writers) != 1:
             diagnostics["conflict_count"] += 1
@@ -662,38 +778,60 @@ def writeback_gn_attributes(world) -> int:
             for result in writers.values():
                 _gn_writeback_error(diagnostics, result, message)
                 _set_gn_slot_error(world, result, message)
+                transaction_id = str(result.get("transaction_id") or "")
+                if transaction_id:
+                    rejected_transactions.add(transaction_id)
             old_obj = touched.pop(target_key, None)
             if old_obj is not None and clear_gn_local_offsets(old_obj):
                 diagnostics["cleared_count"] += 1
             continue
+        selected_results.append(next(iter(writers.values())))
 
-        result = next(iter(writers.values()))
-        try:
-            obj = _find_mesh_by_pointer(
-                result.get("object_ptr"),
-                result.get("object_data_ptr"),
-            )
-            if obj is None:
-                raise ValueError("GN offset 目标 Mesh 不存在或 data pointer 已变化")
-            vertex_count = int(result.get("vertex_count", -1))
-            values = normalize_local_offsets(
-                result.get("local_offsets"),
-                vertex_count,
-                copy=False,
-            )
-            if vertex_count != len(obj.data.vertices):
-                raise ValueError(
-                    f"GN offset 拓扑已变化：result={vertex_count} target={len(obj.data.vertices)}"
-                )
-            write_gn_local_offsets(obj, values)
-            touched[target_key] = obj
-            written_targets.add(target_key)
-            diagnostics["written_count"] += 1
-            _append_gn_writeback_receipt(world, diagnostics, result)
-            _set_gn_slot_error(world, result, None)
-        except Exception as exc:
-            _gn_writeback_error(diagnostics, result, exc)
-            _set_gn_slot_error(world, result, str(exc))
+    transactions: dict[str, list[dict]] = {}
+    for sequence, result in enumerate(selected_results):
+        transaction_id = str(result.get("transaction_id") or "")
+        key = (
+            f"transaction:{transaction_id}"
+            if transaction_id
+            else f"single:{sequence}:{result.get('target_key', '')}"
+        )
+        transactions.setdefault(key, []).append(result)
+    diagnostics["transaction_count"] = len(transactions)
+
+    written_targets = set()
+    for key, transaction_results in transactions.items():
+        transaction_id = (
+            str(transaction_results[0].get("transaction_id") or "")
+            if transaction_results else ""
+        )
+        error = None
+        if transaction_id and transaction_id in rejected_transactions:
+            error = "GN 多目标事务包含冲突或非法 target"
+        elif transaction_id:
+            sizes = {int(result.get("transaction_size", -1)) for result in transaction_results}
+            indices = [int(result.get("transaction_index", -1)) for result in transaction_results]
+            writers = {str(result.get("writer_id") or "") for result in transaction_results}
+            if (
+                len(sizes) != 1
+                or next(iter(sizes), -1) != len(transaction_results)
+                or sorted(indices) != list(range(len(transaction_results)))
+                or len(writers) != 1
+            ):
+                error = "GN 多目标事务不完整或批次元数据不一致"
+            else:
+                transaction_results.sort(key=lambda item: int(item["transaction_index"]))
+        if error:
+            diagnostics["failed_transaction_count"] += 1
+            for result in transaction_results:
+                _gn_writeback_error(diagnostics, result, error)
+                _set_gn_slot_error(world, result, error)
+            continue
+        committed, _success = _apply_gn_transaction(
+            world,
+            diagnostics,
+            transaction_results,
+        )
+        written_targets.update(committed)
 
     for target_key, obj in list(touched.items()):
         if target_key in written_targets:

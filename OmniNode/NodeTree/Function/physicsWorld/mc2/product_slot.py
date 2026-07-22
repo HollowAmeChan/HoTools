@@ -11,12 +11,17 @@ from ..types import PhysicsWorldCache
 from .collider_frame import MC2DomainColliderFrameSpec
 from .domain_collect import build_mc2_mesh_domain_collider_frame
 from .domain_ir import MC2DomainFramePacketV1
+from .domain_output import MC2MeshWritebackBatchV1
+from .domain_output import make_mc2_mesh_writeback_batch
 from .domain_owner import MC2FusedCPUOwnerSyncReportV1
 from .domain_owner import MC2MeshFusedCPUOwnerV1
 from .product_collect import MC2MeshProductCollectionV1
+from .product_collect import validate_mc2_mesh_product_output_batch
 from .product_scheduler import MC2MeshProductScheduledFrameV1
 from .product_scheduler import MC2MeshProductSchedulerStateV1
 from .reference_step import make_mc2_compiled_domain_pipeline_settings
+from .results import make_mc2_mesh_domain_results
+from .results import publish_mc2_result_transaction
 
 
 MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
@@ -194,6 +199,9 @@ def sync_mc2_mesh_fused_slot(
                     "scheduled_frame",
                     "last_substep",
                     "last_step_failure",
+                    "output_batch",
+                    "published_output_batch",
+                    "published_output_results",
                 ):
                     existing.data.pop(name, None)
                 existing.data["completed_substeps"] = 0
@@ -301,6 +309,9 @@ def publish_mc2_mesh_fused_frame(
         slot.data["frame_complete"] = scheduled_frame.schedule.update_count == 0
         slot.data.pop("last_substep", None)
         slot.data.pop("last_step_failure", None)
+        slot.data.pop("output_batch", None)
+        slot.data.pop("published_output_batch", None)
+        slot.data.pop("published_output_results", None)
     finally:
         world.release_write(_MC2_FUSED_MESH_WRITER)
     return MC2FusedMeshFramePublishResultV1(
@@ -399,6 +410,62 @@ def step_mc2_mesh_fused_substep(
         world.release_write(_MC2_FUSED_MESH_WRITER)
 
 
+def build_mc2_mesh_fused_output_batch(
+    world: PhysicsWorldCache,
+    slot: PhysicsSolverSlot | None = None,
+) -> MC2MeshWritebackBatchV1:
+    """只在完整帧尾读取一次 logical output 并生成多目标事务。"""
+
+    if not isinstance(world, PhysicsWorldCache):
+        raise TypeError("world must be PhysicsWorldCache")
+    if slot is None:
+        slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
+    if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_MESH_SLOT_KIND:
+        raise TypeError("slot must be the fused Mesh PhysicsSolverSlot")
+    owner = slot.data.get("owner")
+    frame_packet = slot.data.get("frame_packet")
+    if not isinstance(owner, MC2MeshFusedCPUOwnerV1) or owner.compiled is None:
+        raise RuntimeError("fused Mesh slot has no live owner")
+    if not isinstance(frame_packet, MC2DomainFramePacketV1):
+        raise RuntimeError("fused Mesh slot has no published frame packet")
+    if not bool(slot.data.get("frame_complete", False)):
+        raise RuntimeError("fused Mesh output is only available after the final substep")
+    output = owner.read_output()
+    batch = make_mc2_mesh_writeback_batch(
+        owner.compiled.program,
+        frame_packet,
+        output,
+    )
+    slot.data["output_batch"] = batch
+    return batch
+
+
+def publish_mc2_mesh_fused_output_transaction(
+    world: PhysicsWorldCache,
+    slot: PhysicsSolverSlot | None = None,
+) -> tuple[dict, ...]:
+    """校验全部 live targets 后一次替换 MC2 公共结果流。"""
+
+    if slot is None:
+        slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
+    if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_MESH_SLOT_KIND:
+        raise TypeError("slot must be the fused Mesh PhysicsSolverSlot")
+    collection = slot.data.get("collection")
+    if not isinstance(collection, MC2MeshProductCollectionV1):
+        raise RuntimeError("fused Mesh slot has no product collection")
+    batch = build_mc2_mesh_fused_output_batch(world, slot)
+    validate_mc2_mesh_product_output_batch(collection, batch)
+    public_results = make_mc2_mesh_domain_results(
+        batch=batch,
+        slot_id=slot.slot_id,
+        world_generation=world.generation,
+    )
+    published = publish_mc2_result_transaction(world, public_results)
+    slot.data["published_output_batch"] = batch
+    slot.data["published_output_results"] = published
+    return published
+
+
 def capture_and_publish_mc2_mesh_fused_frame(
     world: PhysicsWorldCache,
     *,
@@ -485,8 +552,10 @@ __all__ = [
     "MC2FusedMeshFramePublishResultV1",
     "MC2FusedMeshSubstepResultV1",
     "MC2FusedMeshSlotSyncResultV1",
+    "build_mc2_mesh_fused_output_batch",
     "capture_and_publish_mc2_mesh_fused_frame",
     "publish_mc2_mesh_fused_frame",
+    "publish_mc2_mesh_fused_output_transaction",
     "step_mc2_mesh_fused_substep",
     "sync_mc2_mesh_fused_slot",
 ]

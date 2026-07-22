@@ -24,11 +24,20 @@ import bpy
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", "py313", "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "hotools_native"
+        or module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+for path in reversed((NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS))):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -102,6 +111,11 @@ mc2_solver = importlib.import_module(
 mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
 )
+mc2_native_loader = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
+print("MC2_PROPERTY_REGISTRY_SOURCE", mc2_nodes.__file__)
+print("MC2_PROPERTY_REGISTRY_NATIVE", mc2_native_loader.native_module().__file__)
 mc2_presets = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.presets"
 )
@@ -404,6 +418,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
             mc2_nodes.physicsMC2BoneClothProfile,
             mc2_nodes.physicsMC2BoneSpringProfile,
             mc2_nodes.physicsMC2MeshClothTask,
+            mc2_nodes.physicsMC2MeshObject,
+            mc2_nodes.physicsMC2MeshOverride,
+            mc2_nodes.physicsMC2MeshImplicitRegister,
+            mc2_nodes.physicsMC2MeshCollector,
             mc2_nodes.physicsMC2BoneClothTask,
             mc2_nodes.physicsMC2BoneSpringTask,
             mc2_nodes.physicsMC2Step,
@@ -413,6 +431,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "MC2 BoneCloth粒子配置",
         "MC2 BoneSpring粒子配置",
         "MC2 MeshCloth任务",
+        "MC2 Mesh对象",
+        "MC2 Mesh覆盖",
+        "MC2 Mesh隐式注册",
+        "MC2 Mesh收集器",
         "MC2 BoneCloth任务",
         "MC2 BoneSpring任务",
         "MC2模拟步",
@@ -426,6 +448,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         "MC2可视化调试",
         "MC2 MeshCloth粒子配置",
         "MC2 MeshCloth任务",
+        "MC2 Mesh收集器",
+        "MC2 Mesh隐式注册",
+        "MC2 Mesh对象",
+        "MC2 Mesh覆盖",
         "MC2模拟步",
     )
     assert not hasattr(mc2_nodes, "physicsMC2SolverSettings")
@@ -504,16 +530,18 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
     assert solver_declarations.validate_solver_declaration(declaration) == []
-    assert declaration["implementation_status"] == "mesh_and_bone_collider_native_public_result"
+    assert declaration["implementation_status"] == "mesh_e5_product_enabled_e7_cpu_pending"
+    assert declaration["stage"] == "mesh_fused_domain_product_bone_v0_migration"
     assert tuple(declaration["setup_types"]) == (
         mc2_names.MC2_SETUP_MESH_CLOTH,
         mc2_names.MC2_SETUP_BONE_CLOTH,
         mc2_names.MC2_SETUP_BONE_SPRING,
     )
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
-    assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
-    assert declaration["native_strategy"].endswith("single_native_context")
-    assert declaration["update_policy"]["framework"] == "sync_topology_auto_mesh_or_bone_frame_native_context_and_public_result"
+    assert declaration["native_strategy"] == "mesh_one_fused_domain_v1_bone_v0_until_e7"
+    assert declaration["update_policy"]["framework"] == (
+        "mesh_request_uses_one_fused_domain_bone_and_legacy_tasks_use_v0_until_e7"
+    )
     assert declaration["update_policy"]["node_execution"].startswith("always_run")
     assert declaration["update_policy"]["bone_cloth_partition"] == (
         "one_control_bone_per_task_and_lateral_topology_group"
@@ -531,7 +559,9 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
     assert "optional task.anchor_object evaluated world transform" in declaration[
         "consumes"
     ]
-    assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
+    assert declaration["update_policy"]["native_backend"] == (
+        "mesh_one_domain_v1_no_python_fallback"
+    )
     assert declaration["export"]["result_channels"] == [
         mc2_names.MC2_STATS_CHANNEL,
     ]
@@ -555,6 +585,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
         mc2_nodes.physicsMC2BoneClothProfile,
         mc2_nodes.physicsMC2BoneSpringProfile,
         *task_nodes,
+        mc2_nodes.physicsMC2MeshObject,
+        mc2_nodes.physicsMC2MeshOverride,
+        mc2_nodes.physicsMC2MeshImplicitRegister,
+        mc2_nodes.physicsMC2MeshCollector,
         mc2_nodes.physicsMC2Step,
         mc2_nodes.physicsMC2DebugDraw,
     )

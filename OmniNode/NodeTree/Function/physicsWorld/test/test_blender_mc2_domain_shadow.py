@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Blender E1 acceptance: explicit MeshCloth old/new static shadow compare."""
+"""Blender MC2统一域静态对照、E5产品节点与多目标事务验收。"""
 
 from __future__ import annotations
 
 import importlib
+import hashlib
 import os
 import sys
 import types
@@ -13,11 +14,20 @@ import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", "py313", "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "hotools_native"
+        or module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+for path in (NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -63,6 +73,16 @@ mc2_base_pose = importlib.import_module(
 mc2_gn_offset = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.gn_offset"
 )
+world_names = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.names"
+)
+world_writeback = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
+)
+mc2_native_loader = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.native"
+)
+print("MC2_DOMAIN_SHADOW_NATIVE", mc2_native_loader.native_module().__file__)
 physics_blender = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender"
 )
@@ -100,6 +120,15 @@ def _remove_object(obj):
     bpy.data.objects.remove(obj, do_unlink=True)
     if mesh is not None and mesh.users == 0:
         bpy.data.meshes.remove(mesh)
+
+
+def _offset_values_or_zero(obj):
+    attribute = obj.data.attributes.get(world_names.GN_OFFSET_ATTRIBUTE_NAME)
+    if attribute is None:
+        return np.zeros((len(obj.data.vertices), 3), dtype=np.float32)
+    values = np.empty(len(obj.data.vertices) * 3, dtype=np.float32)
+    attribute.data.foreach_get("vector", values)
+    return values.reshape((-1, 3))
 
 
 def _make_product_object(name, x_offset):
@@ -181,6 +210,152 @@ def test_mc2_mesh_domain_shadow_compile():
         for slot in tuple(world.solver_slots.values()):
             slot.dispose("E1 shadow test cleanup")
         _remove_object(obj)
+
+
+def test_mc2_mesh_product_nodes_build_one_reported_domain():
+    physics_blender.register()
+    pairs = (
+        _make_product_object("MC2CollectorNodeA", 0.0),
+        _make_product_object("MC2CollectorNodeB", 1.5),
+    )
+    sources = tuple(pair[0] for pair in pairs)
+    proxies = tuple(pair[1] for pair in pairs)
+    world = world_types.PhysicsWorldCache()
+    _set_frame_context(world, 1, None, 2)
+    try:
+        entries, count = mc2_nodes.physicsMC2MeshObject(list(sources))
+        assert count == 2 and len(entries) == 2
+        overridden, override_count = mc2_nodes.physicsMC2MeshOverride(
+            entries[:1],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity=6.0,
+                self_collision_mode=2,
+            ),
+        )
+        assert override_count == 1
+        returned, registered, status = mc2_nodes.physicsMC2MeshImplicitRegister(
+            world,
+            overridden,
+        )
+        assert returned is world and registered == 1
+        assert "隐式Mesh分区 1" in status
+
+        requests, report = mc2_nodes.physicsMC2MeshCollector(
+            world,
+            entries,
+            include_implicit=True,
+        )
+        assert len(requests) == 1
+        request = requests[0]
+        assert len(request.plan.active_partitions) == 2
+        assert request.plan.report.merged_partition_count == 1
+        assert "融合 2 个分区" in report
+        assert "显隐合并 1" in report
+        assert "Require Fusion" in report
+
+        returned, ready, status = mc2_nodes.physicsMC2Step(
+            world,
+            requests,
+            simulation_frequency=60,
+            max_simulation_count_per_frame=3,
+        )
+        assert returned is world and ready is True, status
+        slot = world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        assert slot.data["product_enabled"] is True
+        assert slot.data["collector_request"] is request
+        assert "分区 2" in status and "目标 2" in status
+        assert world_writeback.writeback_gn_attributes(world) == 2
+
+        sources[0].location.y = 0.05
+        bpy.context.view_layer.update()
+        _set_frame_context(world, 2, 1, 2)
+        returned, ready, status = mc2_nodes.physicsMC2Step(
+            world,
+            requests,
+            simulation_frequency=60,
+            max_simulation_count_per_frame=3,
+        )
+        assert returned is world and ready is True, status
+        assert world_writeback.writeback_gn_attributes(world) == 2
+        assert len(slot.data["published_output_results"]) == 2
+        try:
+            mc2_nodes.physicsMC2Step(world, [request, object()])
+        except ValueError as exc:
+            assert "不得与旧task混用" in str(exc)
+        else:
+            raise AssertionError("unified domain silently accepted legacy fallback input")
+    finally:
+        world.omni_cache_dispose("MC2 collector node acceptance cleanup")
+        for source in reversed(sources):
+            _remove_object(source)
+        for proxy in reversed(proxies):
+            _remove_object(proxy)
+
+
+def _run_mc2_mesh_product_node_soak(run_name):
+    pairs = (
+        _make_product_object(f"{run_name}A", -0.75),
+        _make_product_object(f"{run_name}B", 0.75),
+    )
+    sources = tuple(pair[0] for pair in pairs)
+    proxies = tuple(pair[1] for pair in pairs)
+    world = world_types.PhysicsWorldCache()
+    trajectory = []
+    try:
+        entries, count = mc2_nodes.physicsMC2MeshObject(list(sources))
+        assert count == 2
+        requests, report = mc2_nodes.physicsMC2MeshCollector(
+            world,
+            entries,
+            include_implicit=False,
+        )
+        assert len(requests) == 1 and "融合 2 个分区" in report
+        previous = None
+        for frame in range(1, 121):
+            sources[0].location.y = 0.025 * np.sin(frame * 0.07)
+            sources[1].rotation_euler.z = 0.04 * np.sin(frame * 0.05)
+            bpy.context.view_layer.update()
+            _set_frame_context(world, frame, previous, 41)
+            returned, ready, status = mc2_nodes.physicsMC2Step(
+                world,
+                requests,
+                simulation_frequency=60,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            assert world_writeback.writeback_gn_attributes(world) == 2
+            diagnostics = world_writeback.get_gn_writeback_diagnostics(world)
+            assert diagnostics["committed_transaction_count"] == 1
+            assert diagnostics["failed_transaction_count"] == 0
+            assert len(diagnostics["receipts"]) == 2
+            trajectory.append(np.concatenate(
+                tuple(_offset_values_or_zero(source) for source in sources),
+                axis=0,
+            ))
+            previous = frame
+        values = np.asarray(trajectory, dtype=np.float32)
+        assert np.isfinite(values).all()
+        digest = hashlib.sha256(
+            np.ascontiguousarray(values).tobytes()
+        ).hexdigest()
+        slot = world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        assert slot.data["product_enabled"] is True
+        assert slot.data["owner"].compiled.program.partition_count == 2
+        return digest, values
+    finally:
+        world.omni_cache_dispose("MC2 product node soak cleanup")
+        for source in reversed(sources):
+            _remove_object(source)
+        for proxy in reversed(proxies):
+            _remove_object(proxy)
+
+
+def test_mc2_mesh_product_nodes_120_frame_deterministic_soak():
+    physics_blender.register()
+    first_digest, first = _run_mc2_mesh_product_node_soak("MC2ProductSoakOne")
+    second_digest, second = _run_mc2_mesh_product_node_soak("MC2ProductSoakTwo")
+    assert first_digest == second_digest
+    np.testing.assert_array_equal(first, second)
 
 
 def test_mc2_mesh_fused_domain_matches_two_v0_sources():
@@ -315,7 +490,55 @@ def test_mc2_mesh_fused_domain_matches_two_v0_sources():
                     rtol=1.0e-6,
                     atol=1.0e-6,
                 )
+            public_results = (
+                mc2_product_slot.publish_mc2_mesh_fused_output_transaction(
+                    fused_world,
+                    slot,
+                )
+            )
+            assert len(public_results) == len(sources) == 2
+            assert len({item["transaction_id"] for item in public_results}) == 1
+            assert world_writeback.writeback_gn_attributes(fused_world) == 2
+            for source, command in zip(
+                sources,
+                slot.data["published_output_batch"].commands,
+            ):
+                np.testing.assert_allclose(
+                    _offset_values_or_zero(source),
+                    command.object_local_offsets,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
             previous_frame = frame
+
+        previous_stream = tuple(
+            fused_world.result_streams.get(world_names.GN_ATTRIBUTE_CHANNEL, ())
+        )
+        sources[1].data.vertices.add(1)
+        sources[1].data.update()
+        try:
+            mc2_product_slot.publish_mc2_mesh_fused_output_transaction(
+                fused_world,
+                slot,
+            )
+        except ValueError as exc:
+            assert "vertex count changed" in str(exc)
+        else:
+            raise AssertionError("stale Mesh target was published")
+        current_stream = tuple(
+            fused_world.result_streams.get(world_names.GN_ATTRIBUTE_CHANNEL, ())
+        )
+        assert len(current_stream) == len(previous_stream)
+        assert all(
+            current is previous
+            for current, previous in zip(current_stream, previous_stream)
+        )
+        assert world_writeback.writeback_gn_attributes(fused_world) == 0
+        np.testing.assert_allclose(_offset_values_or_zero(sources[0]), 0.0)
+        np.testing.assert_allclose(_offset_values_or_zero(sources[1]), 0.0)
+        diagnostics = world_writeback.get_gn_writeback_diagnostics(fused_world)
+        assert diagnostics["failed_transaction_count"] == 1
+        assert diagnostics["written_count"] == 0
     finally:
         for world in worlds:
             world.omni_cache_dispose("MC2 fused Blender oracle cleanup")
@@ -328,5 +551,9 @@ def test_mc2_mesh_fused_domain_matches_two_v0_sources():
 if __name__ == "__main__":
     test_mc2_mesh_domain_shadow_compile()
     print("PASS test_mc2_mesh_domain_shadow_compile")
+    test_mc2_mesh_product_nodes_build_one_reported_domain()
+    print("PASS test_mc2_mesh_product_nodes_build_one_reported_domain")
+    test_mc2_mesh_product_nodes_120_frame_deterministic_soak()
+    print("PASS test_mc2_mesh_product_nodes_120_frame_deterministic_soak")
     test_mc2_mesh_fused_domain_matches_two_v0_sources()
     print("PASS test_mc2_mesh_fused_domain_matches_two_v0_sources")

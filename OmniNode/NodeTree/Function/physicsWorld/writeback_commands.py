@@ -215,6 +215,9 @@ def make_gn_offset_writeback(
     frame: int,
     generation: int,
     local_offsets,
+    transaction_id: str | None = None,
+    transaction_index: int | None = None,
+    transaction_size: int | None = None,
 ) -> dict:
     """构建一个 Mesh 目标的最终对象局部 offset 快照。
 
@@ -232,7 +235,7 @@ def make_gn_offset_writeback(
     if obj_ptr <= 0 or data_ptr <= 0:
         raise ValueError("GN offset writeback 需要有效 object/data pointer")
     offsets = _final_gn_offset_buffer(local_offsets)
-    return {
+    result = {
         "channel": GN_ATTRIBUTE_CHANNEL,
         "writeback_type": GN_OFFSET_WRITEBACK_TYPE,
         "offset_space": GN_OFFSET_SPACE,
@@ -247,6 +250,20 @@ def make_gn_offset_writeback(
         "vertex_count": int(offsets.shape[0]),
         "local_offsets": offsets,
     }
+    if transaction_id is not None:
+        tx_id = str(transaction_id or "").strip()
+        index = int(transaction_index) if transaction_index is not None else -1
+        size = int(transaction_size) if transaction_size is not None else -1
+        if not tx_id or index < 0 or size <= 0 or index >= size:
+            raise ValueError("GN offset transaction metadata is invalid")
+        result.update({
+            "transaction_id": tx_id,
+            "transaction_index": index,
+            "transaction_size": size,
+        })
+    elif transaction_index is not None or transaction_size is not None:
+        raise ValueError("GN offset transaction index/size requires transaction_id")
+    return result
 
 
 def publish_gn_offset_writeback(world, **kwargs) -> dict | None:

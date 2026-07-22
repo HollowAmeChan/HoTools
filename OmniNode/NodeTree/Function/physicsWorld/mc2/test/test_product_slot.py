@@ -554,6 +554,14 @@ def test_slot_native_executes_complete_compiled_frame():
         output = owner.read_output()
         assert output.frame == 13 and output.generation == 1
         assert np.isfinite(output.world_positions).all()
+        batch = slot_module.build_mc2_mesh_fused_output_batch(world, slot)
+        assert len(batch.commands) == 2
+        assert [command.target_id for command in batch.commands] == [
+            snapshot.output_target_id
+            for snapshot in slot.data["collection"].static_snapshots
+        ]
+        assert batch.frame == 13 and batch.generation == 1
+        assert slot.data["output_batch"] is batch
         assert slot.data["scheduler_state"].revision == 1 + len(results)
         assert slot.data["frame_complete"] is True
     finally:

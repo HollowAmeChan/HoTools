@@ -106,6 +106,14 @@ def test_domain_output_splits_logical_particles_and_unscales_offsets():
     assert commands[1].logical_particle_indices.tolist() == [3, 4]
     assert all(command.domain_signature == program.domain_signature for command in commands)
     assert all(command.layout_signature == program.layout_signature for command in commands)
+    batch = output.make_mc2_mesh_writeback_batch(program, frame, frame_output)
+    assert [item.target_id for item in batch.commands] == [
+        item.target_id for item in commands
+    ]
+    for left, right in zip(batch.commands, commands):
+        np.testing.assert_array_equal(left.object_local_offsets, right.object_local_offsets)
+    assert batch.frame == frame.frame and batch.generation == frame.generation
+    assert batch.transaction_id.endswith(f":{frame.generation}:{frame.frame}")
 
 
 def test_domain_output_rejects_frame_identity_mismatch():

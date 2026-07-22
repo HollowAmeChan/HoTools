@@ -16,11 +16,20 @@ import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", "py313", "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "hotools_native"
+        or module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+for path in (NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -49,6 +58,7 @@ commands = importlib.import_module(
 writeback = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
 )
+print("GN_WRITEBACK_SOURCE", writeback.__file__)
 gn_offset = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.gn_offset"
 )
@@ -91,7 +101,17 @@ def _base_positions(obj):
     return values.reshape((-1, 3))
 
 
-def _publish(world, obj, offsets, *, solver="mc2", slot_id="mc2:mesh:one"):
+def _publish(
+    world,
+    obj,
+    offsets,
+    *,
+    solver="mc2",
+    slot_id="mc2:mesh:one",
+    transaction_id=None,
+    transaction_index=None,
+    transaction_size=None,
+):
     return commands.publish_gn_offset_writeback(
         world,
         solver=solver,
@@ -101,6 +121,9 @@ def _publish(world, obj, offsets, *, solver="mc2", slot_id="mc2:mesh:one"):
         frame=int(world.frame_context.frame),
         generation=int(world.generation),
         local_offsets=offsets,
+        transaction_id=transaction_id,
+        transaction_index=transaction_index,
+        transaction_size=transaction_size,
     )
 
 
@@ -230,6 +253,8 @@ def test_shared_gn_final_offset_contract():
         for link in tuple(output_node.inputs["Geometry"].links):
             legacy_group.links.remove(link)
         bake_node = legacy_group.nodes.new("GeometryNodeBake")
+        if not bake_node.inputs.get("Geometry"):
+            bake_node.bake_items.new("GEOMETRY", "Geometry")
         bake_node.name = "HoTools Physics Bake"
         legacy_group.links.new(set_position.outputs["Geometry"], bake_node.inputs["Geometry"])
         legacy_group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
@@ -389,8 +414,123 @@ def test_shared_gn_final_offset_contract():
             bpy.data.meshes.remove(mesh)
 
 
+def test_multi_target_gn_transaction_is_all_or_nothing():
+    objects = (_make_mesh_object(), _make_mesh_object())
+    objects[0].name = "GNTransactionA"
+    objects[1].name = "GNTransactionB"
+    world = world_types.PhysicsWorldCache()
+    world.frame_context.frame = 18
+    world.generation = 6
+    first = np.asarray(
+        ((0.1, 0.0, 0.0), (0.0, 0.2, 0.0), (0.0, 0.0, 0.3)),
+        dtype=np.float32,
+    )
+    second = first * np.float32(2.0)
+    try:
+        for index, (obj, values) in enumerate(zip(objects, (first, second))):
+            _publish(
+                world,
+                obj,
+                values,
+                slot_id="mc2.domain.mesh.product.v1",
+                transaction_id="mc2-domain-frame-18",
+                transaction_index=index,
+                transaction_size=2,
+            )
+        assert writeback.writeback_gn_attributes(world) == 2
+        np.testing.assert_allclose(_offset_values(objects[0]), first)
+        np.testing.assert_allclose(_offset_values(objects[1]), second)
+        diagnostics = writeback.get_gn_writeback_diagnostics(world)
+        assert diagnostics["committed_transaction_count"] == 1
+        assert diagnostics["failed_transaction_count"] == 0
+        assert len(diagnostics["receipts"]) == 2
+
+        world.clear_results(world_names.GN_ATTRIBUTE_CHANNEL)
+        world.frame_context.frame = 19
+        for index, (obj, values) in enumerate(zip(objects, (second, first))):
+            _publish(
+                world,
+                obj,
+                values,
+                slot_id="mc2.domain.mesh.product.v1",
+                transaction_id="mc2-domain-frame-19",
+                transaction_index=index,
+                transaction_size=2,
+            )
+        original_write = writeback.write_gn_local_offsets
+        write_count = 0
+
+        def fail_second_target(obj, values):
+            nonlocal write_count
+            write_count += 1
+            if write_count == 2:
+                raise RuntimeError("injected second target write failure")
+            return original_write(obj, values)
+
+        writeback.write_gn_local_offsets = fail_second_target
+        try:
+            assert writeback.writeback_gn_attributes(world) == 0
+        finally:
+            writeback.write_gn_local_offsets = original_write
+        np.testing.assert_allclose(_offset_values(objects[0]), 0.0)
+        np.testing.assert_allclose(_offset_values(objects[1]), 0.0)
+        diagnostics = writeback.get_gn_writeback_diagnostics(world)
+        assert diagnostics["failed_transaction_count"] == 1
+        assert diagnostics["rollback_count"] == 2
+        assert not diagnostics["receipts"]
+        assert any(
+            "injected second target write failure" in item["message"]
+            for item in diagnostics["errors"]
+        )
+
+        world.clear_results(world_names.GN_ATTRIBUTE_CHANNEL)
+        world.frame_context.frame = 20
+        for index, (obj, values) in enumerate(zip(objects, (first, second))):
+            _publish(
+                world,
+                obj,
+                values,
+                slot_id="mc2.domain.mesh.product.v1",
+                transaction_id="mc2-domain-frame-20",
+                transaction_index=index,
+                transaction_size=2,
+            )
+        assert writeback.writeback_gn_attributes(world) == 2
+
+        world.clear_results(world_names.GN_ATTRIBUTE_CHANNEL)
+        world.frame_context.frame = 21
+        for index, (obj, values) in enumerate(zip(objects, (second, first))):
+            _publish(
+                world,
+                obj,
+                values,
+                slot_id="mc2.domain.mesh.product.v1",
+                transaction_id="mc2-domain-frame-21",
+                transaction_index=index,
+                transaction_size=2,
+            )
+        objects[1].data.vertices.add(1)
+        objects[1].data.update()
+        assert writeback.writeback_gn_attributes(world) == 0
+        np.testing.assert_allclose(_offset_values(objects[0]), 0.0)
+        np.testing.assert_allclose(_offset_values(objects[1]), 0.0)
+        diagnostics = writeback.get_gn_writeback_diagnostics(world)
+        assert diagnostics["committed_transaction_count"] == 0
+        assert diagnostics["failed_transaction_count"] == 1
+        assert not diagnostics["receipts"]
+        assert any("拓扑已变化" in item["message"] for item in diagnostics["errors"])
+    finally:
+        world.omni_cache_dispose("multi-target GN transaction cleanup")
+        for obj in reversed(objects):
+            mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+
 def main():
     test_shared_gn_final_offset_contract()
+    test_multi_target_gn_transaction_is_all_or_nothing()
     print("Physics World shared GN final offset writeback: PASS")
 
 

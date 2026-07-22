@@ -276,6 +276,21 @@ def _build_node_group(group) -> None:
     group[_NODE_GROUP_SCHEMA_KEY] = _NODE_GROUP_SCHEMA
 
 
+def _ensure_bake_geometry_item(bake_node) -> None:
+    """Blender 5.2 的裸 Bake 节点只带 virtual socket，需显式声明 Geometry。"""
+
+    if bake_node.inputs.get("Geometry") and bake_node.outputs.get("Geometry"):
+        return
+    bake_items = getattr(bake_node, "bake_items", None)
+    if bake_items is None:
+        raise RuntimeError("共享 GN 物理 Bake 节点不能创建 Geometry socket")
+    existing = bake_items.get("Geometry")
+    if existing is None:
+        bake_items.new("GEOMETRY", "Geometry")
+    if not bake_node.inputs.get("Geometry") or not bake_node.outputs.get("Geometry"):
+        raise RuntimeError("共享 GN 物理 Bake 节点缺少 Geometry socket")
+
+
 def _build_cache_node_group(group, *, preserve_bake_node=None) -> None:
     bake_node = preserve_bake_node
     for node in tuple(group.nodes):
@@ -286,6 +301,7 @@ def _build_cache_node_group(group, *, preserve_bake_node=None) -> None:
     output_node = group.nodes.new("NodeGroupOutput")
     if bake_node is None:
         bake_node = group.nodes.new("GeometryNodeBake")
+    _ensure_bake_geometry_item(bake_node)
     bake_node.name = _BAKE_NODE_NAME
     bake_node.label = _BAKE_NODE_LABEL
     input_node.location = (-340, 0)
@@ -468,8 +484,7 @@ def get_gn_offset_bake_node(group=None):
     bake_node = group.nodes.get(_BAKE_NODE_NAME)
     if bake_node is None or getattr(bake_node, "bl_idname", "") != "GeometryNodeBake":
         raise RuntimeError("共享 GN 物理缓存组缺少受管 Bake 节点")
-    if not bake_node.inputs.get("Geometry") or not bake_node.outputs.get("Geometry"):
-        raise RuntimeError("共享 GN 物理 Bake 节点缺少 Geometry socket")
+    _ensure_bake_geometry_item(bake_node)
     return bake_node
 
 

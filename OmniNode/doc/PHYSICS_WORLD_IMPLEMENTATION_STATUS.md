@@ -78,7 +78,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 生产V0可用；统一粒子域E4/P2已闭环 | 既有产品数值/debug验收保持闭环；E0-E4、P0、P1-B、粒子级覆盖、partitioned StepBasic、compiled whole-domain self/external及完整混合pass已完成；后端中立opaque self engine复用成熟V0 primitive/grid/candidate/contact/四轮solve而不让Domain owner依赖旧context internal；collector draft可从Physics World公共snapshot一次生成whole-domain immutable collider POD；完整Tier A fragment已有逐partition重力感知的两阶段事务缓存；纯host fused CPU owner已将cache commit与native staged replacement合并，失败保留旧domain/cache；固定whole-domain world slot已关闭生命周期、多BasePose/Anchor logical frame与collider原子发布；A5-04已隔离分区参数；slot scheduler/Anchor staged state及Center frame one-shot已闭环；P2同夹具数值、工作量和性能门禁已由Blender 5.2/py313关闭 | 下一入口是E5多目标结果事务与产品collector接线；`product_enabled=False`继续保留，E5自动化与Blender验收完成前不得切换产品owner，之后才执行E7-CPU清理 |
+| MC2 | 统一粒子域E5产品路径可用；旧V0待E7-CPU删除 | E0-E5、P0、P1-B、E4/P2均已闭环；唯一fused CPU owner拥有partitioned StepBasic、compiled whole-domain self/external、完整混合pass、scheduler/Center/Anchor历史和多目标logical output；公共GN结果用共同事务身份发布，同一批次先全target校验、再快照/提交，真实第二目标写失败会整批回滚；Mesh对象/覆盖/隐式注册/Require-Fusion collector节点已接入`MC2模拟步`，产品入口只创建一个domain slot并输出中文装配报告，明确拒绝旧task混输；Blender 5.2/py313已通过多Mesh逐帧Object-local写回、失效target零发布、120帧双跑soak和P2复验 | 进入E7-CPU删除审计：评估Bone迁移边界并删除MeshCloth旧V0 owner、hidden task与普通aggregate；当前使用中的py311/Blender 4.5窗口未开放，删除提交前双ABI门禁仍保留；并行推进P6可实施合同 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -87,9 +87,11 @@ physicsWorld/
 
 MC2 E4/P2复验（2026-07-23）：Blender 5.2/Python 3.13 的非self双source oracle继续在`1e-6`内通过。whole-domain self接入后端中立opaque engine后，1764粒子、4 source、35帧、5帧warmup同夹具中，Domain与manual join的primitive/candidate/contact完全一致；reset轨迹位级相等，连续轨迹peak max-abs为`3.9208e-4`、RMS为`1.6597e-5`，通过`5e-4/5e-5`累计self合同。持久scratch消除每子步临时分配后，owner层p50为`5.9297 ms`，旧aggregate为`7.5374 ms`，D/B=`0.78670`；manual join为`7.9362 ms`，D/C=`0.74717`。当前只使用本工作树py313原生产物与Blender 5.2，py311/Blender 4.5不重编译、不启动。
 
+MC2 E5验收（2026-07-23）：`domain_output.py`把一次logical output冻结为带共同事务id的多target批次，`results.py`允许同一domain slot发布多个不重复target，并在进入result stream前拒绝缺项/重号批次。`writeback.py`对整批对象/data/顶点数和单用户状态先做零写入预检，再准备受管GN结构、快照旧offset并提交；第二目标注入写失败时两个目标均恢复，记录`rollback_count=2`且不产生receipt。Blender 5.2真实两Mesh还覆盖了拓扑失效时result stream不替换、随后writeback零partial mutation。四个产品节点已把显式与隐式entry解析为一个Require-Fusion request；`MC2模拟步`连续120帧实际写回两目标并双跑逐float32相等，不允许与旧task混输。E5后P2复跑仍通过：D/B p50=`0.79823`，D/C=`0.80175`，self轨迹peak max-abs/RMS=`3.9207e-4/1.6597e-5`。
+
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-3. MC2保持生产V0可用；E4/P2已完成，当前推进E5多目标结果事务与产品collector；不得越过Physics World边界、提前切换`product_enabled`或删除V0 owner。
+3. MC2统一域E5产品入口已切换；当前推进E7-CPU删除审计与P6合同，删除旧owner前仍须补回当前被占用的py311/Blender 4.5双ABI窗口，不得把迁移适配器长期保留成静默fallback。
 4. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 5. 决定Mesh XPBD迁移或删除。
 

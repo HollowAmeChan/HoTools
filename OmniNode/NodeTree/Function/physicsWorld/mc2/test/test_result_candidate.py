@@ -40,6 +40,9 @@ frame_module = importlib.import_module(
 results_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
 )
+domain_output_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_output"
+)
 
 
 class _PointerOwner:
@@ -423,6 +426,55 @@ def test_public_result_transaction_accepts_mesh_and_bone_channels_atomically() -
     assert len(world.result_streams["gn_attribute"]) == 1
     assert len(world.result_streams["bone_transform"]) == 1
     assert results_module.get_mc2_stats_result(world) is published[2]
+
+
+def test_domain_multi_target_results_share_one_complete_transaction() -> None:
+    commands = tuple(
+        domain_output_module.MC2MeshWritebackCommandV1(
+            target_id=f"mesh:{object_ptr}:{data_ptr}",
+            domain_signature="domain-signature",
+            layout_signature="layout-signature",
+            partition_index=index,
+            frame=12,
+            generation=4,
+            source_elements=np.arange(2, dtype=np.uint32),
+            logical_particle_indices=np.arange(index * 2, index * 2 + 2, dtype=np.uint32),
+            world_positions=np.full((2, 3), float(index), dtype=np.float32),
+            object_local_offsets=np.full((2, 3), float(index + 1), dtype=np.float32),
+        )
+        for index, (object_ptr, data_ptr) in enumerate(((101, 201), (102, 202)))
+    )
+    batch = domain_output_module.MC2MeshWritebackBatchV1(
+        transaction_id="mc2-domain-frame-12",
+        domain_signature="domain-signature",
+        layout_signature="layout-signature",
+        frame=12,
+        generation=4,
+        commands=commands,
+    )
+    public = results_module.make_mc2_mesh_domain_results(
+        batch=batch,
+        slot_id="mc2.domain.mesh.product.v1",
+        world_generation=4,
+    )
+    assert len(public) == 2
+    assert {item["slot_id"] for item in public} == {"mc2.domain.mesh.product.v1"}
+    assert {item["transaction_id"] for item in public} == {"mc2-domain-frame-12"}
+    assert [item["transaction_index"] for item in public] == [0, 1]
+    assert {item["transaction_size"] for item in public} == {2}
+    assert [item["target_key"] for item in public] == ["101:201", "102:202"]
+
+    world = _ResultWorld()
+    published = results_module.publish_mc2_result_transaction(world, public)
+    assert len(published) == 2
+    previous = dict(world.result_streams)
+    try:
+        results_module.publish_mc2_result_transaction(world, public[:1])
+    except ValueError as exc:
+        assert "incomplete" in str(exc)
+    else:
+        raise AssertionError("incomplete multi-target transaction was accepted")
+    assert world.result_streams == previous
 
 
 if __name__ == "__main__":

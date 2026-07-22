@@ -9,7 +9,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
     "capability_id": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "identifier": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "owner": "physicsWorld.mc2",
-    "storage": "immutable MC2TaskSpec + MC2ParticleProfileSpec",
+    "storage": "MC2PartitionCollectorPlan + MC2ParticleProfileSpec；旧MC2TaskSpec仅待E7迁移",
     "fields": (
         {
             "name": "setup_type",
@@ -26,6 +26,21 @@ MC2_SETUP_PROFILE_CAPABILITY = {
         {
             "name": "task_id",
             "type": "string",
+            "update_frequency": "topology",
+        },
+        {
+            "name": "partition_stable_id",
+            "type": "string",
+            "update_frequency": "topology",
+        },
+        {
+            "name": "domain_signature",
+            "type": "sha256",
+            "update_frequency": "topology_or_parameter",
+        },
+        {
+            "name": "output_target",
+            "type": "object_data_identity",
             "update_frequency": "topology",
         },
         {
@@ -59,7 +74,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
             "update_frequency": "parameter",
         },
     ),
-    "implementation_status": "native_context_framework",
+    "implementation_status": "mesh_e5_fused_domain_product_bone_v0_migration",
 }
 
 MC2_CAPABILITIES = {
@@ -70,6 +85,9 @@ MC2_UPDATE_FREQUENCY_TABLE = {
     "setup_type": "topology",
     "sources": "topology",
     "task_id": "topology",
+    "partition_stable_id": "topology",
+    "domain_signature": "topology_or_parameter_signature",
+    "output_target": "object_data_identity",
     "source_signature": "topology",
     "enabled": "frame",
     "profile": "parameter_signature",

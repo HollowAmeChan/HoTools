@@ -39,6 +39,7 @@ parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physics
 specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
 topology = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology")
 collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
+authoring = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring")
 
 
 class _Data:
@@ -175,6 +176,22 @@ def test_product_collector_rejects_no_active_mesh_partition():
         assert "no active partitions" in str(exc)
     else:
         raise AssertionError("empty Mesh product domain was accepted")
+
+
+def test_product_collector_consumes_one_explicit_domain_plan_without_task_expansion():
+    first, second = _Source(301), _Source(302)
+    calls = _install_observer({301: _raw(first, 4), 302: _raw(second, 5)})
+    entries = authoring.make_mc2_mesh_partition_entries((first, second))
+    request = authoring.make_mc2_mesh_product_request(
+        _World(),
+        entries,
+        include_implicit=False,
+    )
+    result = collector.collect_mc2_mesh_product_plan(_World(), request.plan)
+    assert result.task_ids == tuple(entry.stable_id for entry in entries)
+    assert result.draft.partition_ids == result.task_ids
+    assert len(calls) == 2
+    assert result.draft.collector_domain_signature == request.domain_signature
 
 
 TESTS = tuple(

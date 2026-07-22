@@ -824,9 +824,9 @@ E4/P2已经关闭：native/adapter的compiled external、纯host whole-domain co
 
 A5-04分区参数隔离已关闭：compiled full settings按`particle_partition_index`把Tether、Angle、Motion和Post的partition SoA展开为逐粒子只读数组，Integration/Post直接消费native-owned Center重力与稳定化输出；标量endpoint只保留为E3单partition oracle。Motion继续支持公开合同的`normal_axis=0..5`六个有向轴。统一full endpoint的混合顺序不变，双ABI已覆盖异构partition映射、六轴Motion、失败前零pass和旧标量reference。
 
-该slot当前仍明确`product_enabled=False`且未挂入普通V0 step，避免验收前双求解。scheduler frame timing、跨帧Anchor component-local历史和Center producer状态现由slot-owned staged/committed state正式拥有，并在frame/collider共同发布成功后提交。`Center frame shift`的native状态现按frame一次性消费：同一frame的后续substep仍执行全部7个solver pass，但不得重复应用component/Anchor位移；只有下一次成功`update_frame`才重新开放该事务。显式 staged substep 入口现已逐步消费计划、准备 owner-owned StepBasic、编译 partition-aware settings，并只在 native full step 成功后 advance scheduler；双 ABI 已覆盖完整 frame、失败重试和 paused 边界。
+低层slot创建时仍以`product_enabled=False`开始，避免独立测试或装配中途被当成产品owner；只有`MC2模拟步`收到一个合法`MC2MeshProductRequestV1`、完成整帧求解与多目标结果发布后才原子切为true。scheduler frame timing、跨帧Anchor component-local历史和Center producer状态由slot-owned staged/committed state正式拥有，并在frame/collider共同发布成功后提交。`Center frame shift`的native状态按frame一次性消费：同一frame的后续substep仍执行全部7个solver pass，但不得重复应用component/Anchor位移；只有下一次成功`update_frame`才重新开放该事务。产品入口明确拒绝多个request或request与旧task混输，不存在隐式拆task。
 
-Blender多source数值oracle已在Blender 5.2/Python 3.13关闭：非self双source经首帧初始化、连续帧位移、分区参数和output map拆分后在`1e-6`内逐target一致；whole-domain self的reset轨迹位级相等，1764粒子、4 source、35帧连续轨迹在primitive/candidate/contact完全一致时，peak max-abs为`3.9208e-4`、RMS为`1.6597e-5`，满足`5e-4/5e-5`累计合同。该累计合同只用于多步self接触，既有非self`1e-6`与单步self`1e-4`不放宽。相同夹具两次稳定复测的D/B p50分别为`0.79584`和`0.78670`，D/C分别为`0.77711`和`0.74717`，满足P2门禁。E4完成不代表产品切换；E5多目标事务与collector完成前，`product_enabled`继续为false，V0与aggregate暂不删除。
+Blender多source数值oracle已在Blender 5.2/Python 3.13关闭：非self双source经首帧初始化、连续帧位移、分区参数和output map拆分后在`1e-6`内逐target一致；whole-domain self的reset轨迹位级相等，1764粒子、4 source、35帧连续轨迹在primitive/candidate/contact完全一致时，peak max-abs为`3.9208e-4`、RMS为`1.6597e-5`，满足`5e-4/5e-5`累计合同。E5后复跑仍得到相同self工作量与`3.9207e-4/1.6597e-5`轨迹误差，D/B p50为`0.79823`、D/C为`0.80175`，P2门禁保持通过。
 
 ### E5：多目标结果事务与产品节点
 
@@ -841,6 +841,10 @@ Blender多source数值oracle已在Blender 5.2/Python 3.13关闭：非self双sour
 - 用户可读装配报告。
 
 退出条件：多 Mesh 每帧各自写回正确 Object local offsets；任一 target 失效时整批不发布；collector 显示真实 fusion 状态，不存在静默 `N Object -> N task` 回退。
+
+完成状态（2026-07-23）：E5退出条件已满足。`MC2MeshWritebackBatchV1`冻结domain/layout/frame/generation和有序target commands；公共GN envelope携带共同`transaction_id/index/size`，缺项、重号、重复target在result stream替换前失败。实际Blender写回先对全批对象/data pointer、顶点数、属性/修改器类型和单用户Mesh做零写入预检，再快照、准备并提交；若任一`foreach_set`失败，所有已准备target按逆序恢复。真实两Mesh注入第二目标写失败得到`rollback_count=2`、零receipt和零partial offset；拓扑失效则旧result stream保持不变。
+
+产品authoring由`MC2 Mesh对象`、`MC2 Mesh覆盖`、`MC2 Mesh隐式注册`和`MC2 Mesh收集器`组成。显式/隐式entry在`MC2PartitionCollectorPlan`按stable id解析，collector只输出一个Require-Fusion request和逐partition中文装配报告；冲突直接失败。`MC2模拟步`对该request初始化全部BasePose、同步唯一`mc2.domain.mesh.product.v1` slot、执行统一scheduler/full pipeline并一次发布全部GN目标，拒绝与旧task混输。Blender 5.2/py313已通过两目标逐帧Object-local写回、旧map失效整批拒绝及120帧双跑逐float32确定性soak。旧V0 task入口只作为E7前迁移路径存在，不是collector fallback。
 
 ### E6：未来 GPU backend 原型与收益门禁
 

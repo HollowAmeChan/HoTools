@@ -22,13 +22,15 @@ E0-E2：partition / compile / output 合同
   -> P0：完整 step 的原生分段计时
   -> P1-B：热帧静态观察缓存（已完成）
   -> E4/P2：多 Object fused MeshCloth + 一次 whole-domain self
-  -> E5：多目标事务、覆盖与产品 collector
+  -> E5：多目标事务、覆盖与产品 collector（已完成）
   -> E7-CPU：删除被替代的拆 task / aggregate / V0 路径
   -> P6-B：整理已验证的 GPU implementation package
   -> E6：未来独立 GPU 原型与规模曲线里程碑
 ```
 
 P1-A、P2、P3、P5 和 P6 并非排在 E 阶段之后，而是按上述门禁穿插交付；精确映射以 `MC2_NODE_SIMULATION_DESIGN.md` 的“当前主线与真实混合执行顺序”为准。不能先用多线程掩盖重复工作。多线程也不能替代 fused context；当前默认路线不实施 CPU 并发。
+
+实现状态（2026-07-23）：E5已把统一域logical output接成带共同事务身份的多目标公共结果；Physics World在实际GN mutation前完成全target预检，并对第二目标写失败执行双目标回滚。显式对象/覆盖、隐式registry和Require-Fusion collector已进入产品节点，`MC2模拟步`只创建一个fused slot并拒绝旧task混输。Blender 5.2/py313的120帧双跑soak逐float32相等，E5后P2复跑D/B p50=`0.79823`且self数值门禁保持通过。当前入口转为E7-CPU删除审计和P6可实施合同；不实施P4 CPU并发，也不提前实现E6。
 
 ## CPU并行与GPU前置的路线决策
 

@@ -13,6 +13,7 @@ from ..writeback_commands import (
     make_bone_transform_batch_writeback,
     make_gn_offset_writeback,
 )
+from .domain_output import MC2MeshWritebackBatchV1
 from .names import (
     MC2_SETUP_BONE_CLOTH,
     MC2_SETUP_BONE_SPRING,
@@ -312,6 +313,60 @@ def make_mc2_mesh_result(
         "native_dynamic_revision": candidate.native_dynamic_revision,
     })
     return result
+
+
+def make_mc2_mesh_domain_results(
+    *,
+    batch: MC2MeshWritebackBatchV1,
+    slot_id: str,
+    world_generation: int,
+) -> tuple[dict, ...]:
+    """将统一域的多 target commands 转成同一公共 GN 事务。"""
+
+    if not isinstance(batch, MC2MeshWritebackBatchV1):
+        raise TypeError("batch must be MC2MeshWritebackBatchV1")
+    if int(world_generation) != int(batch.generation) or int(world_generation) <= 0:
+        raise ValueError("MC2 Mesh domain result generation mismatch")
+    stable_slot_id = str(slot_id or "").strip()
+    if not stable_slot_id:
+        raise ValueError("MC2 Mesh domain result requires a stable slot id")
+    count = len(batch.commands)
+    results = []
+    for index, command in enumerate(batch.commands):
+        target = str(command.target_id or "")
+        parts = target.split(":")
+        if len(parts) != 3 or parts[0] != "mesh":
+            raise ValueError("MC2 Mesh domain target id must be mesh:<object>:<data>")
+        try:
+            object_ptr, object_data_ptr = int(parts[1]), int(parts[2])
+        except Exception as exc:
+            raise ValueError("MC2 Mesh domain target id is malformed") from exc
+        result = make_gn_offset_writeback(
+            solver=MC2_SOLVER_ID,
+            slot_id=stable_slot_id,
+            object_ptr=object_ptr,
+            object_data_ptr=object_data_ptr,
+            frame=batch.frame,
+            generation=batch.generation,
+            local_offsets=command.object_local_offsets,
+            transaction_id=batch.transaction_id,
+            transaction_index=index,
+            transaction_size=count,
+        )
+        result.update({
+            "mc2_result_schema": MC2_PUBLIC_RESULT_SCHEMA_VERSION,
+            "ready": True,
+            "setup_type": MC2_SETUP_MESH_CLOTH,
+            "task_id": stable_slot_id,
+            "frame_generation": batch.generation,
+            "world_generation": batch.generation,
+            "domain_signature": batch.domain_signature,
+            "layout_signature": batch.layout_signature,
+            "partition_index": int(command.partition_index),
+            "target_id": target,
+        })
+        results.append(result)
+    return tuple(results)
 
 
 def _bone_target(spec):
@@ -647,6 +702,7 @@ def _validated_result_batch(world, results: Iterable[dict]) -> tuple[dict, ...]:
     batch = tuple(results)
     slot_ids: set[str] = set()
     target_keys: set[str] = set()
+    transaction_groups: dict[str, dict] = {}
     stats_count = 0
     for result in batch:
         if not isinstance(result, dict):
@@ -677,12 +733,38 @@ def _validated_result_batch(world, results: Iterable[dict]) -> tuple[dict, ...]:
         else:
             slot_id = str(result.get("slot_id") or "")
             target_key = str(result.get("target_key") or "")
-            if not slot_id or slot_id in slot_ids:
+            transaction_id = str(result.get("transaction_id") or "")
+            permits_shared_slot = channel == GN_ATTRIBUTE_CHANNEL and transaction_id
+            if not slot_id or (slot_id in slot_ids and not permits_shared_slot):
                 raise ValueError("MC2 public result batch has duplicate slot identity")
             if not target_key or target_key in target_keys:
                 raise ValueError("MC2 public result batch has duplicate writeback target")
+            if permits_shared_slot:
+                index = int(result.get("transaction_index", -1))
+                size = int(result.get("transaction_size", -1))
+                if index < 0 or size <= 0 or index >= size:
+                    raise ValueError("MC2 GN transaction index/size is invalid")
+                group = transaction_groups.setdefault(transaction_id, {
+                    "size": size,
+                    "indices": set(),
+                    "slot_id": slot_id,
+                    "frame": int(result.get("frame", -1)),
+                    "generation": int(result.get("generation", -1)),
+                })
+                if (
+                    group["size"] != size
+                    or group["slot_id"] != slot_id
+                    or group["frame"] != int(result.get("frame", -1))
+                    or group["generation"] != int(result.get("generation", -1))
+                    or index in group["indices"]
+                ):
+                    raise ValueError("MC2 GN transaction metadata mismatch")
+                group["indices"].add(index)
             slot_ids.add(slot_id)
             target_keys.add(target_key)
+    for group in transaction_groups.values():
+        if len(group["indices"]) != group["size"]:
+            raise ValueError("MC2 GN transaction is incomplete")
     return batch
 
 
@@ -772,6 +854,7 @@ __all__ = [
     "mc2_bone_motion_mode",
     "make_mc2_bone_result",
     "make_mc2_mesh_result",
+    "make_mc2_mesh_domain_results",
     "make_mc2_result_candidate",
     "make_mc2_stats_result",
     "merge_mc2_bone_results",

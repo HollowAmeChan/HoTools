@@ -8,12 +8,15 @@ import json
 from .domain_collect import MC2MeshDomainDraftV1
 from .domain_collect import build_mc2_mesh_domain_draft
 from .domain_ir import MC2MeshPartitionStaticSnapshotV1
+from .domain_output import MC2MeshWritebackBatchV1
 from .names import MC2_SETUP_MESH_CLOTH
 from .mesh_topology_identity import mesh_topology_signature_from_arrays
 from .partition_specs import collect_mc2_partition_entries
 from .partition_specs import make_mc2_partition_entry
+from .partition_specs import MC2PartitionCollectorPlan
 from .specs import MC2TaskSpec
 from .specs import build_mc2_task_specs
+from .specs import make_mc2_task_spec
 from .specs import mc2_source_token
 from .setups.mesh_cloth.source_capture import (
     capture_mc2_mesh_partition_static_snapshot,
@@ -107,6 +110,72 @@ class MC2MeshProductCollectionV1:
         }
 
 
+def validate_mc2_mesh_product_output_batch(
+    collection: MC2MeshProductCollectionV1,
+    batch: MC2MeshWritebackBatchV1,
+) -> None:
+    """在发布前一次校验 collector 的全部 live Mesh target。"""
+
+    if not isinstance(collection, MC2MeshProductCollectionV1):
+        raise TypeError("collection must be MC2MeshProductCollectionV1")
+    if not isinstance(batch, MC2MeshWritebackBatchV1):
+        raise TypeError("batch must be MC2MeshWritebackBatchV1")
+    expected = tuple(snapshot.output_target_id for snapshot in collection.static_snapshots)
+    actual = tuple(command.target_id for command in batch.commands)
+    if actual != expected:
+        raise ValueError("Mesh product output targets no longer match the collector")
+    if len(collection.draft.partitions) != len(batch.commands):
+        raise ValueError("Mesh product output target count is stale")
+    validate_mc2_mesh_product_targets(collection)
+    for partition, snapshot, command in zip(
+        collection.draft.partitions,
+        collection.static_snapshots,
+        batch.commands,
+    ):
+        if snapshot.vertex_count != len(command.source_elements):
+            raise ValueError(
+                f"Mesh product output {partition.stable_id} vertex count is stale"
+            )
+
+
+def validate_mc2_mesh_product_targets(
+    collection: MC2MeshProductCollectionV1,
+) -> None:
+    """在求解前校验整域全部 target，失败时不推进 native 状态。"""
+
+    if not isinstance(collection, MC2MeshProductCollectionV1):
+        raise TypeError("collection must be MC2MeshProductCollectionV1")
+    for partition, snapshot in zip(
+        collection.draft.partitions,
+        collection.static_snapshots,
+    ):
+        source = partition.source
+        pointer = getattr(source, "as_pointer", None)
+        data = getattr(source, "data", None)
+        data_pointer = getattr(data, "as_pointer", None)
+        try:
+            object_ptr = int(pointer()) if callable(pointer) else 0
+            object_data_ptr = int(data_pointer()) if callable(data_pointer) else 0
+        except (ReferenceError, RuntimeError) as exc:
+            raise ValueError(
+                f"Mesh product target {partition.stable_id} is no longer live"
+            ) from exc
+        target_id = f"mesh:{object_ptr}:{object_data_ptr}"
+        if object_ptr <= 0 or object_data_ptr <= 0 or target_id != snapshot.output_target_id:
+            raise ValueError(
+                f"Mesh product target {partition.stable_id} object/data identity changed"
+            )
+        vertices = getattr(data, "vertices", None)
+        if vertices is None or len(vertices) != snapshot.vertex_count:
+            raise ValueError(
+                f"Mesh product target {partition.stable_id} vertex count changed"
+            )
+        if int(getattr(data, "users", 1) or 1) != 1:
+            raise ValueError(
+                f"Mesh product target {partition.stable_id} must use single-user Mesh data"
+            )
+
+
 def collect_mc2_mesh_product_domain(
     world,
     tasks,
@@ -129,13 +198,68 @@ def collect_mc2_mesh_product_domain(
             "transitional Mesh product collector requires one source per authoring task"
         )
 
-    rows = []
     entries = []
+    tasks_by_partition = {}
+    for spec in specs:
+        entries.append(make_mc2_partition_entry(
+            spec.sources[0],
+            setup_type=MC2_SETUP_MESH_CLOTH,
+            stable_id=spec.task_id,
+            producer="mc2.product_task",
+            profile=spec.profile,
+            task_parameters=spec.task_parameters,
+            setup_options=spec.setup_options,
+            anchor_object=spec.anchor_object,
+            enabled=True,
+        ))
+        tasks_by_partition[spec.task_id] = spec
+    plan = collect_mc2_partition_entries(
+        setup_type=MC2_SETUP_MESH_CLOTH,
+        explicit_entries=tuple(entries),
+    )
+    return collect_mc2_mesh_product_plan(
+        world,
+        plan,
+        force_audit=force_audit,
+        observation_tasks=tasks_by_partition,
+    )
+
+
+def collect_mc2_mesh_product_plan(
+    world,
+    plan: MC2PartitionCollectorPlan,
+    *,
+    force_audit: bool | None = None,
+    observation_tasks=None,
+) -> MC2MeshProductCollectionV1:
+    """直接消费一个明确的 fused Mesh collector plan。"""
+
+    if not isinstance(plan, MC2PartitionCollectorPlan):
+        raise TypeError("plan must be MC2PartitionCollectorPlan")
+    if plan.setup_type != MC2_SETUP_MESH_CLOTH:
+        raise ValueError("Mesh product collector plan setup type mismatch")
+    partitions = tuple(plan.active_partitions)
+    if not partitions:
+        raise ValueError("MC2 Mesh product collector has no active partitions")
+    observation_tasks = dict(observation_tasks or {})
+    rows = []
     identities = []
     statuses = []
     topology_signatures = []
-    for spec in specs:
-        source = spec.sources[0]
+    task_ids = []
+    for partition in partitions:
+        source = partition.source
+        spec = observation_tasks.get(partition.stable_id)
+        if spec is None:
+            spec = make_mc2_task_spec(
+                MC2_SETUP_MESH_CLOTH,
+                [source],
+                profile=partition.profile,
+                setup_options=partition.setup_options,
+                task_parameters=partition.task_parameters,
+                anchor_object=partition.anchor_object,
+                enabled=partition.enabled,
+            )
         observation = _prepare_observed_static_inputs(
             world,
             spec,
@@ -149,7 +273,7 @@ def collect_mc2_mesh_product_domain(
         snapshot = capture_mc2_mesh_partition_static_snapshot(
             source,
             raw_snapshot,
-            partition_id=spec.task_id,
+            partition_id=partition.stable_id,
             source_identity=_canonical_source_identity(source),
             source_revision=observation.fingerprint.overall,
             output_target_id=_output_target_id(source),
@@ -164,27 +288,12 @@ def collect_mc2_mesh_product_domain(
         ))
         identities.extend(observation.identities)
         statuses.extend(observation.statuses)
-        entries.append(make_mc2_partition_entry(
-            source,
-            setup_type=MC2_SETUP_MESH_CLOTH,
-            stable_id=spec.task_id,
-            producer="mc2.product_task",
-            profile=spec.profile,
-            task_parameters=spec.task_parameters,
-            setup_options=spec.setup_options,
-            anchor_object=spec.anchor_object,
-            enabled=True,
-        ))
-
-    plan = collect_mc2_partition_entries(
-        setup_type=MC2_SETUP_MESH_CLOTH,
-        explicit_entries=tuple(entries),
-    )
+        task_ids.append(partition.stable_id)
     draft = build_mc2_mesh_domain_draft(plan)
     return MC2MeshProductCollectionV1(
         draft=draft,
         static_snapshots=tuple(rows),
-        task_ids=tuple(spec.task_id for spec in specs),
+        task_ids=tuple(task_ids),
         observation_identities=tuple(identities),
         observation_statuses=tuple(statuses),
         mesh_topology_signatures=tuple(topology_signatures),
@@ -194,4 +303,7 @@ def collect_mc2_mesh_product_domain(
 __all__ = [
     "MC2MeshProductCollectionV1",
     "collect_mc2_mesh_product_domain",
+    "collect_mc2_mesh_product_plan",
+    "validate_mc2_mesh_product_output_batch",
+    "validate_mc2_mesh_product_targets",
 ]

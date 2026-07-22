@@ -62,6 +62,46 @@ class MC2MeshWritebackCommandV1:
         object.__setattr__(self, "object_local_offsets", offsets)
 
 
+@dataclass(frozen=True)
+class MC2MeshWritebackBatchV1:
+    """一个统一域在同一帧产生的完整多目标写回批次。"""
+
+    transaction_id: str
+    domain_signature: str
+    layout_signature: str
+    frame: int
+    generation: int
+    commands: tuple[MC2MeshWritebackCommandV1, ...]
+
+    def __post_init__(self) -> None:
+        if not str(self.transaction_id or "").strip():
+            raise ValueError("writeback transaction_id cannot be empty")
+        if not str(self.domain_signature or "").strip() or not str(
+            self.layout_signature or ""
+        ).strip():
+            raise ValueError("writeback batch signatures cannot be empty")
+        if int(self.frame) < 0 or int(self.generation) < 0:
+            raise ValueError("writeback batch frame/generation must be non-negative")
+        commands = tuple(self.commands)
+        if not commands:
+            raise ValueError("writeback batch requires at least one target")
+        target_ids = set()
+        for command in commands:
+            if not isinstance(command, MC2MeshWritebackCommandV1):
+                raise TypeError("writeback batch commands must be MC2 commands")
+            if command.target_id in target_ids:
+                raise ValueError("writeback batch contains duplicate target")
+            target_ids.add(command.target_id)
+            if (
+                command.domain_signature != self.domain_signature
+                or command.layout_signature != self.layout_signature
+                or command.frame != int(self.frame)
+                or command.generation != int(self.generation)
+            ):
+                raise ValueError("writeback command identity does not match batch")
+        object.__setattr__(self, "commands", commands)
+
+
 def make_mc2_mesh_writeback_commands(
     program: MC2CompiledDomainProgramV1,
     frame_packet: MC2DomainFramePacketV1,
@@ -136,7 +176,31 @@ def make_mc2_mesh_writeback_commands(
     return tuple(commands)
 
 
+def make_mc2_mesh_writeback_batch(
+    program: MC2CompiledDomainProgramV1,
+    frame_packet: MC2DomainFramePacketV1,
+    frame_output: MC2DomainFrameOutputV1,
+) -> MC2MeshWritebackBatchV1:
+    """把一次 domain output 封装成不可拆分的多目标事务。"""
+
+    commands = make_mc2_mesh_writeback_commands(program, frame_packet, frame_output)
+    transaction_id = (
+        f"mc2:{program.domain_signature}:{program.layout_signature}:"
+        f"{int(frame_packet.generation)}:{int(frame_packet.frame)}"
+    )
+    return MC2MeshWritebackBatchV1(
+        transaction_id=transaction_id,
+        domain_signature=program.domain_signature,
+        layout_signature=program.layout_signature,
+        frame=frame_packet.frame,
+        generation=frame_packet.generation,
+        commands=commands,
+    )
+
+
 __all__ = [
+    "MC2MeshWritebackBatchV1",
     "MC2MeshWritebackCommandV1",
+    "make_mc2_mesh_writeback_batch",
     "make_mc2_mesh_writeback_commands",
 ]

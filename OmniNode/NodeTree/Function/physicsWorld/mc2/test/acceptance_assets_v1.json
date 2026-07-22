@@ -3,7 +3,7 @@
   "acceptance_profile": "V1-R",
   "environment": {
     "python": "3.13",
-    "blender": "5.1",
+    "blender": "5.2",
     "blender_arguments": ["--background", "--factory-startup"]
   },
   "assets": [
@@ -140,6 +140,29 @@
         "non-mutual group masks reject the pair",
         "BoneCloth and BoneSpring never enter Mesh world interaction",
         "no ListObj or explicit partner socket is accepted"
+      ]
+    },
+    {
+      "id": "mesh_unified_domain_e5",
+      "setup_types": ["mesh_cloth"],
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_domain_shadow.py",
+      "production_surface": [
+        "Mesh对象、完整覆盖、隐式registry与Require-Fusion collector节点",
+        "唯一fused CPU domain slot与完整混合pass",
+        "共同事务身份的多目标GN Object-local offset结果",
+        "Physics World全target预检、快照、提交与回滚"
+      ],
+      "expected": [
+        "两个Mesh只创建一个产品domain且不展开为两个旧task",
+        "每帧两个target分别获得正确Object-local offset",
+        "120帧双跑的完整offset轨迹逐float32相等",
+        "第二target注入写失败时两个target均回滚且不产生receipt"
+      ],
+      "rejection_boundaries": [
+        "统一域request与旧task混输",
+        "缺项、重号或重复target的公共结果事务",
+        "Object Data或顶点数变化后的旧output map",
+        "共享Mesh data或失效object/data pointer"
       ]
     },
     {
