@@ -694,6 +694,76 @@ void clamp_vector_angle(float vx,
 
 }  // namespace
 
+bool apply_particle_frame_shift_mc2(Mc2ParticleFrameShiftView& view) {
+    if (view.vertex_count < 0 || view.partition_count <= 0 ||
+        view.positions == nullptr || view.rotations == nullptr ||
+        view.velocity_positions == nullptr || view.velocities == nullptr ||
+        view.pivots == nullptr || view.shift_vectors == nullptr ||
+        view.shift_rotations == nullptr) {
+        return false;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const auto partition = view.particle_partition_index == nullptr
+            ? 0
+            : static_cast<std::int64_t>(view.particle_partition_index[vertex]);
+        if (partition < 0 || partition >= view.partition_count) return false;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const auto partition = view.particle_partition_index == nullptr
+            ? 0
+            : static_cast<std::int64_t>(view.particle_partition_index[vertex]);
+        if (partition < 0 || partition >= view.partition_count) return false;
+        if (view.partition_apply_flags != nullptr &&
+            view.partition_apply_flags[partition] == 0u) {
+            continue;
+        }
+        const auto position_offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        const auto partition_position_offset = partition * 3;
+        const auto partition_rotation_offset = partition * 4;
+        const float* pivot = view.pivots + partition_position_offset;
+        const float* shift = view.shift_vectors + partition_position_offset;
+        const float* shift_rotation = view.shift_rotations + partition_rotation_offset;
+
+        float local_x = view.positions[position_offset + 0] - pivot[0];
+        float local_y = view.positions[position_offset + 1] - pivot[1];
+        float local_z = view.positions[position_offset + 2] - pivot[2];
+        float rotated_x = 0.0f;
+        float rotated_y = 0.0f;
+        float rotated_z = 0.0f;
+        quat_rotate(shift_rotation, local_x, local_y, local_z, rotated_x, rotated_y, rotated_z);
+        view.positions[position_offset + 0] = pivot[0] + rotated_x + shift[0];
+        view.positions[position_offset + 1] = pivot[1] + rotated_y + shift[1];
+        view.positions[position_offset + 2] = pivot[2] + rotated_z + shift[2];
+
+        local_x = view.velocity_positions[position_offset + 0] - pivot[0];
+        local_y = view.velocity_positions[position_offset + 1] - pivot[1];
+        local_z = view.velocity_positions[position_offset + 2] - pivot[2];
+        quat_rotate(shift_rotation, local_x, local_y, local_z, rotated_x, rotated_y, rotated_z);
+        view.velocity_positions[position_offset + 0] = pivot[0] + rotated_x + shift[0];
+        view.velocity_positions[position_offset + 1] = pivot[1] + rotated_y + shift[1];
+        view.velocity_positions[position_offset + 2] = pivot[2] + rotated_z + shift[2];
+
+        quat_rotate(
+            shift_rotation,
+            view.velocities[position_offset + 0],
+            view.velocities[position_offset + 1],
+            view.velocities[position_offset + 2],
+            rotated_x,
+            rotated_y,
+            rotated_z
+        );
+        view.velocities[position_offset + 0] = rotated_x;
+        view.velocities[position_offset + 1] = rotated_y;
+        view.velocities[position_offset + 2] = rotated_z;
+
+        float shifted_rotation[4] = {};
+        quat_mul(shift_rotation, view.rotations + rotation_offset, shifted_rotation);
+        std::copy_n(shifted_rotation, 4, view.rotations + rotation_offset);
+    }
+    return true;
+}
+
 void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
     if (view.vertex_count <= 0 || view.neighbor_count <= 0 || view.positions == nullptr ||
         view.inv_masses == nullptr || view.starts == nullptr || view.counts == nullptr ||

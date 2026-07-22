@@ -129,7 +129,19 @@ def _frame(program):
     )
 
 
-def _frame_at(program, *, frame, generation, positions):
+def _frame_at(
+    program,
+    *,
+    frame,
+    generation,
+    positions,
+    partition_world_position=((0.0, 0.0, 0.0),),
+    frame_delta_time=0.1,
+    simulation_delta_time=0.1,
+    time_scale=1.0,
+    is_running=True,
+    partition_frame_flags=(0,),
+):
     return ir.make_mc2_domain_frame_packet(
         program,
         frame=frame,
@@ -137,14 +149,26 @@ def _frame_at(program, *, frame, generation, positions):
         animated_base_world_positions=positions,
         animated_base_world_rotations=program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(((0.0, 0.0, 1.0),) * program.particle_count, dtype=np.float32),
-        partition_world_position=((0.0, 0.0, 0.0),),
+        partition_world_position=partition_world_position,
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
         partition_world_scale=((1.0, 1.0, 1.0),),
         partition_world_linear=(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),),
-        frame_delta_time=0.1,
-        simulation_delta_time=0.1,
-        time_scale=1.0,
-        is_running=True,
+        frame_delta_time=frame_delta_time,
+        simulation_delta_time=simulation_delta_time,
+        time_scale=time_scale,
+        is_running=is_running,
+        partition_frame_flags=partition_frame_flags,
+    )
+
+
+def _center_frame_pose(frame, generation, position):
+    return center_module.MC2CenterFramePoseSpec(
+        frame=frame,
+        generation=generation,
+        component_identity="e3-center-component",
+        component_world_position=tuple(float(value) for value in position),
+        component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        component_world_scale=(1.0, 1.0, 1.0),
     )
 
 
@@ -153,6 +177,8 @@ def _full_reference_settings(
     positions,
     rotations,
     *,
+    motion_base_positions=None,
+    motion_base_rotations=None,
     point_collision=None,
     edge_collision=None,
     self_collision=None,
@@ -182,8 +208,8 @@ def _full_reference_settings(
         "angle_limit_stiffness": 0.0,
         "angle_restoration_enabled": False,
         "angle_limit_enabled": False,
-        "motion_base_positions": positions,
-        "motion_base_rotations": rotations,
+        "motion_base_positions": positions if motion_base_positions is None else motion_base_positions,
+        "motion_base_rotations": rotations if motion_base_rotations is None else motion_base_rotations,
         "motion_max_distances": np.zeros(count, dtype=np.float32),
         "motion_stiffness_values": np.ones(count, dtype=np.float32),
         "motion_backstop_radii": np.zeros(count, dtype=np.float32),
@@ -775,6 +801,167 @@ def test_e3_native_full_angle_motion_pipeline_matches_v0():
         v0.dispose()
 
 
+def test_e3_center_frame_shift_two_frame_transaction_matches_v0():
+    """Compare a real component move through V0 and Domain Center history."""
+    with open(FIXTURE, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)["static_snapshots"][0]
+    payload.update({"pin_weights": (), "pin_present": False})
+    snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
+    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
+    task_parameters = parameters.make_mc2_task_parameters(
+        world_inertia=0.25,
+        movement_inertia_smoothing=0.0,
+        movement_speed_limit=-1.0,
+        rotation_speed_limit=-1.0,
+        teleport_mode=0,
+    )
+    effective = runtime.make_mc2_runtime_parameters(
+        parameters.make_mc2_particle_profile(
+            gravity=0.0,
+            damping=0.0,
+            collision_friction=0.0,
+            distance_stiffness=0.0,
+            bending_stiffness=0.0,
+            angle_restoration_enabled=False,
+            angle_limit_enabled=False,
+            self_collision_mode=0,
+        ),
+        parameters.make_mc2_setup_options("mesh_cloth"),
+        task_parameters,
+    )
+    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    program = compiled.program
+    v0 = native_context.MC2NativeContextV0(program.particle_count)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    center_state = center_module.MC2CenterPersistentState(
+        fragment.center.center_static_signature
+    )
+    try:
+        _register_v0_static(v0, snapshot, fragment)
+        v0.update_parameters(effective)
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        frame_one_pose = _center_frame_pose(1, 1, (0.0, 0.0, 0.0))
+        frame_one = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=1,
+            generation=1,
+            world_positions=base_positions,
+            world_rotations_xyzw=base_rotations,
+            center_frame_pose=frame_one_pose,
+        ))
+        v0.reset()
+        center_pose_one = v0.derived_center_pose()
+        center_state.reset(
+            frame_one_pose,
+            center_pose_one.position,
+            center_pose_one.rotation_xyzw,
+            velocity_weight=1.0,
+        )
+        v0.update_center_dynamic(center_state.make_step_input(
+            frame_one_pose,
+            center_pose_one,
+            simulation_delta_time=0.1,
+            frame_interpolation=1.0,
+        ))
+        v0.step_no_collision(0.1)
+        domain.update_frame(frame_one)
+        prefix_settings = {
+            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(1, dtype=np.float32),
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+        }
+        domain.step_reference_slices(prefix_settings)
+        domain.step_post(_post_step_settings(effective, base_positions))
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            np.asarray(v0.read()[0], dtype=np.float32),
+            rtol=4.0e-5,
+            atol=4.0e-5,
+        )
+        center_state.commit_step(
+            frame_one_pose,
+            center_pose_one,
+            v0.read_center_step(),
+        )
+
+        moved_positions = base_positions + np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+        frame_two_pose = _center_frame_pose(2, 1, (1.0, 0.0, 0.0))
+        frame_two = _frame_at(
+            program,
+            frame=2,
+            generation=1,
+            positions=moved_positions,
+            partition_world_position=((1.0, 0.0, 0.0),),
+        )
+        v0.update_dynamic(frame_state.make_mc2_frame_input(
+            task_id=snapshot.partition_id,
+            topology_signature=fragment.final_proxy.proxy_signature,
+            frame=2,
+            generation=1,
+            world_positions=moved_positions,
+            world_rotations_xyzw=base_rotations,
+            center_frame_pose=frame_two_pose,
+        ))
+        center_pose_two = v0.derived_center_pose()
+        shift = center_module.evaluate_mc2_center_frame_shift(
+            center_state.make_frame_shift_input(
+                frame_two_pose,
+                center_pose=center_pose_two,
+                simulation_delta_time=0.1,
+                frame_delta_time=0.1,
+                world_inertia=0.25,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                movement_inertia_smoothing=0.0,
+                is_running=True,
+            )
+        )
+        v0.apply_center_frame_shift(center_state.old_frame_world_position, shift)
+        v0_after_shift = np.asarray(v0.read()[0], dtype=np.float32).copy()
+        v0.update_center_dynamic(center_state.make_step_input(
+            frame_two_pose,
+            center_pose_two,
+            simulation_delta_time=0.1,
+            frame_interpolation=1.0,
+            frame_shift=shift,
+        ))
+        v0.step_no_collision(0.1)
+
+        domain.update_frame(frame_two)
+        domain.step_center_frame_shift(np.zeros((1, 3), dtype=np.float32))
+        kernel_state = domain.inspect()["kernel"]
+        np.testing.assert_allclose(
+            kernel_state["center_shift_vectors"],
+            (shift.frame_component_shift_vector,),
+            rtol=2.0e-5,
+            atol=2.0e-5,
+        )
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            v0_after_shift,
+            rtol=2.0e-5,
+            atol=2.0e-5,
+        )
+    finally:
+        domain.dispose()
+        v0.dispose()
+
+
 def test_e3_native_mesh_point_collision_matches_v0():
     snapshot, fragment, _compiled, _effective = _same_source_constraints()
     effective = runtime.make_mc2_runtime_parameters(
@@ -1174,6 +1361,8 @@ if __name__ == "__main__":
     print("PASS E3 native Tether-to-Motion branch matches V0")
     test_e3_native_full_angle_motion_pipeline_matches_v0()
     print("PASS E3 native full Angle Limit + Motion/Backstop pipeline matches V0")
+    test_e3_center_frame_shift_two_frame_transaction_matches_v0()
+    print("PASS E3 Center frame-shift two-frame transaction matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()

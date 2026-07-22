@@ -2,6 +2,7 @@
 
 #include "mc2_context_internal.hpp"
 #include "mc2_context_helpers.hpp"
+#include "mc2_kernels.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
@@ -232,53 +233,19 @@ PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args) {
     }
     const auto* pivot_values = static_cast<const float*>(pivot.view.buf);
     const auto* shift_values = static_cast<const float*>(shift_vector.view.buf);
-    const std::array<float, 4> shift_quaternion {
-        rotation[0], rotation[1], rotation[2], rotation[3]
-    };
-    for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        const auto offset = vertex * 3;
-        const auto rotation_offset = vertex * 4;
-        float local_position[3] {
-            context->state_positions[offset + 0] - pivot_values[0],
-            context->state_positions[offset + 1] - pivot_values[1],
-            context->state_positions[offset + 2] - pivot_values[2],
-        };
-        float rotated_position[3] {};
-        rotate_vector_xyzw(rotation, local_position, rotated_position);
-        for (std::size_t component = 0; component < 3; ++component) {
-            context->state_positions[offset + component] =
-                pivot_values[component] + rotated_position[component] + shift_values[component];
-        }
-        float local_reference[3] {
-            context->velocity_reference_positions[offset + 0] - pivot_values[0],
-            context->velocity_reference_positions[offset + 1] - pivot_values[1],
-            context->velocity_reference_positions[offset + 2] - pivot_values[2],
-        };
-        float rotated_reference[3] {};
-        rotate_vector_xyzw(rotation, local_reference, rotated_reference);
-        for (std::size_t component = 0; component < 3; ++component) {
-            context->velocity_reference_positions[offset + component] =
-                pivot_values[component] + rotated_reference[component] + shift_values[component];
-        }
-        float rotated_velocity[3] {};
-        rotate_vector_xyzw(
-            rotation,
-            context->state_velocities.data() + offset,
-            rotated_velocity
-        );
-        std::copy_n(rotated_velocity, 3, context->state_velocities.data() + offset);
-        const std::array<float, 4> state_rotation {
-            context->state_rotations[rotation_offset + 0],
-            context->state_rotations[rotation_offset + 1],
-            context->state_rotations[rotation_offset + 2],
-            context->state_rotations[rotation_offset + 3],
-        };
-        auto shifted_rotation = quaternion_multiply(shift_quaternion, state_rotation);
-        normalize_quaternion(shifted_rotation);
-        std::copy(
-            shifted_rotation.begin(), shifted_rotation.end(),
-            context->state_rotations.begin() + static_cast<std::ptrdiff_t>(rotation_offset)
-        );
+    hotools::Mc2ParticleFrameShiftView shift_view;
+    shift_view.positions = context->state_positions.data();
+    shift_view.rotations = context->state_rotations.data();
+    shift_view.velocity_positions = context->velocity_reference_positions.data();
+    shift_view.velocities = context->state_velocities.data();
+    shift_view.pivots = pivot_values;
+    shift_view.shift_vectors = shift_values;
+    shift_view.shift_rotations = rotation;
+    shift_view.vertex_count = static_cast<std::int64_t>(count);
+    shift_view.partition_count = 1;
+    if (!hotools::apply_particle_frame_shift_mc2(shift_view)) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center frame shift kernel rejected the particle state");
+        return nullptr;
     }
     ++context->center_frame_shift_count;
     Py_RETURN_NONE;

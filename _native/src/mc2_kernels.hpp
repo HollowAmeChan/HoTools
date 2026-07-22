@@ -83,6 +83,20 @@ struct Mc2PostStepView {
     float velocity_weight = 1.0f;
 };
 
+struct Mc2ParticleFrameShiftView {
+    float* positions = nullptr;
+    float* rotations = nullptr;
+    float* velocity_positions = nullptr;
+    float* velocities = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint8_t* partition_apply_flags = nullptr;
+    const float* pivots = nullptr;
+    const float* shift_vectors = nullptr;
+    const float* shift_rotations = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t partition_count = 0;
+};
+
 struct Mc2CollisionView {
     float* positions = nullptr;
     const float* base_positions = nullptr;
@@ -421,6 +435,7 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view);
 void project_tether_mc2(Mc2TetherConstraintView& view);
 void project_motion_constraints_mc2(Mc2MotionConstraintView& view);
 void apply_post_step_mc2(Mc2PostStepView& view);
+bool apply_particle_frame_shift_mc2(Mc2ParticleFrameShiftView& view);
 void project_collisions_mc2(Mc2CollisionView& view);
 void project_edge_collisions_mc2(Mc2EdgeCollisionView& view);
 void project_self_collisions_mc2(Mc2SelfCollisionView& view);

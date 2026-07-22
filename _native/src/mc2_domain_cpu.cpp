@@ -636,6 +636,57 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
             (view.keep_teleport ? 2u : 0u) |
             (view.reset_teleport ? 4u : 0u);
     }
+    std::vector<float> next_world_positions = world_positions_;
+    std::vector<float> next_world_rotations = world_rotations_;
+    std::vector<float> next_velocity_positions = velocity_positions_;
+    std::vector<float> next_post_velocities = post_velocities_;
+    std::vector<std::uint8_t> partition_apply_flags(partition_count_, 1u);
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        if ((next_teleport_flags[partition] & 4u) != 0u) {
+            partition_apply_flags[partition] = 0u;
+        }
+    }
+    hotools::Mc2ParticleFrameShiftView particle_shift;
+    particle_shift.positions = next_world_positions.data();
+    particle_shift.rotations = next_world_rotations.data();
+    particle_shift.velocity_positions = next_velocity_positions.data();
+    particle_shift.velocities = next_post_velocities.data();
+    particle_shift.particle_partition_index = particle_partition_index_.data();
+    particle_shift.partition_apply_flags = partition_apply_flags.data();
+    particle_shift.pivots = partition_previous_world_positions_.data();
+    particle_shift.shift_vectors = next_shift_vectors.data();
+    particle_shift.shift_rotations = next_shift_rotations.data();
+    particle_shift.vertex_count = static_cast<std::int64_t>(particle_count_);
+    particle_shift.partition_count = static_cast<std::int64_t>(partition_count_);
+    if (!hotools::apply_particle_frame_shift_mc2(particle_shift)) {
+        throw std::runtime_error("MC2 CPU Center particle frame shift rejected the domain state");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const auto partition = static_cast<std::size_t>(particle_partition_index_[vertex]);
+        if ((next_teleport_flags[partition] & 4u) == 0u) continue;
+        const auto position_offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            next_world_positions.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            next_velocity_positions.data() + position_offset
+        );
+        std::fill_n(next_post_velocities.data() + position_offset, 3, 0.0f);
+        std::copy_n(
+            animated_base_world_rotations_.data() + rotation_offset,
+            4,
+            next_world_rotations.data() + rotation_offset
+        );
+    }
+    world_positions_.swap(next_world_positions);
+    world_rotations_.swap(next_world_rotations);
+    velocity_positions_.swap(next_velocity_positions);
+    post_velocities_.swap(next_post_velocities);
     center_shift_vectors_.swap(next_shift_vectors);
     center_shift_rotations_.swap(next_shift_rotations);
     center_shift_old_frame_positions_.swap(next_shift_old_frame_positions);
