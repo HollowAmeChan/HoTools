@@ -426,6 +426,48 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit native Angle restoration/limit slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_angle_partitioned",
+        [](std::uint64_t handle,
+           cf32_2d step_basic_positions,
+           cf32_2d step_basic_rotations,
+           cf32_1d restoration_values,
+           cf32_1d limit_values,
+           cf32_1d restoration_velocity_attenuation_values,
+           cf32_1d restoration_gravity_falloff_values,
+           cf32_1d limit_stiffness_values,
+           cu32_1d restoration_enabled_values,
+           cu32_1d limit_enabled_values) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(step_basic_positions.shape(0)) != count ||
+                step_basic_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(step_basic_rotations.shape(0)) != count ||
+                step_basic_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(restoration_values.shape(0)) != count ||
+                static_cast<std::size_t>(limit_values.shape(0)) != count ||
+                static_cast<std::size_t>(restoration_velocity_attenuation_values.shape(0)) != count ||
+                static_cast<std::size_t>(restoration_gravity_falloff_values.shape(0)) != count ||
+                static_cast<std::size_t>(limit_stiffness_values.shape(0)) != count ||
+                static_cast<std::size_t>(restoration_enabled_values.shape(0)) != count ||
+                static_cast<std::size_t>(limit_enabled_values.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU partitioned Angle arrays have incompatible shapes");
+            }
+            domain->step_angle_partitioned(
+                step_basic_positions.data(), step_basic_rotations.data(),
+                restoration_values.data(), limit_values.data(),
+                restoration_velocity_attenuation_values.data(),
+                restoration_gravity_falloff_values.data(), limit_stiffness_values.data(),
+                restoration_enabled_values.data(), limit_enabled_values.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("step_basic_positions"), nb::arg("step_basic_rotations"),
+        nb::arg("restoration_values"), nb::arg("limit_values"),
+        nb::arg("restoration_velocity_attenuation_values"),
+        nb::arg("restoration_gravity_falloff_values"), nb::arg("limit_stiffness_values"),
+        nb::arg("restoration_enabled_values"), nb::arg("limit_enabled_values"),
+        "Run Angle with per-particle parameters compiled from domain partitions."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_tether",
         [](std::uint64_t handle, cf32_2d step_basic_positions, float compression, float stretch) {
             auto* domain = require_domain(handle);
@@ -438,6 +480,26 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("handle"), nb::arg("step_basic_positions"),
         nb::arg("compression"), nb::arg("stretch"),
         "Run the explicit Tether kernel slice using StepBasic rest lengths."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_tether_partitioned",
+        [](std::uint64_t handle, cf32_2d step_basic_positions,
+           cf32_1d compression_values, cf32_1d stretch_values) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(step_basic_positions.shape(0)) != count ||
+                step_basic_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(compression_values.shape(0)) != count ||
+                static_cast<std::size_t>(stretch_values.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU partitioned Tether arrays have incompatible shapes");
+            }
+            domain->step_tether_partitioned(
+                step_basic_positions.data(), compression_values.data(), stretch_values.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("step_basic_positions"),
+        nb::arg("compression_values"), nb::arg("stretch_values"),
+        "Run Tether with per-particle limits compiled from domain partitions."
     );
     module.def(
         "mc2_domain_cpu_v1_configure_bending",
@@ -501,6 +563,44 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("backstop_distances"), nb::arg("normal_axis"),
         nb::arg("max_distance_enabled"), nb::arg("backstop_enabled"),
         "Run the explicit native Motion max-distance/backstop slice."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_motion_partitioned",
+        [](std::uint64_t handle,
+           cf32_2d base_positions,
+           cf32_2d base_rotations,
+           cf32_1d max_distances,
+           cf32_1d stiffness_values,
+           cf32_1d backstop_radii,
+           cf32_1d backstop_distances,
+           ci32_1d normal_axis_values,
+           cu32_1d max_distance_enabled_values,
+           cu32_1d backstop_enabled_values) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(base_positions.shape(0)) != count || base_positions.shape(1) != 3 ||
+                static_cast<std::size_t>(base_rotations.shape(0)) != count || base_rotations.shape(1) != 4 ||
+                static_cast<std::size_t>(max_distances.shape(0)) != count ||
+                static_cast<std::size_t>(stiffness_values.shape(0)) != count ||
+                static_cast<std::size_t>(backstop_radii.shape(0)) != count ||
+                static_cast<std::size_t>(backstop_distances.shape(0)) != count ||
+                static_cast<std::size_t>(normal_axis_values.shape(0)) != count ||
+                static_cast<std::size_t>(max_distance_enabled_values.shape(0)) != count ||
+                static_cast<std::size_t>(backstop_enabled_values.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU partitioned Motion arrays have incompatible shapes");
+            }
+            domain->step_motion_partitioned(
+                base_positions.data(), base_rotations.data(), max_distances.data(),
+                stiffness_values.data(), backstop_radii.data(), backstop_distances.data(),
+                normal_axis_values.data(), max_distance_enabled_values.data(),
+                backstop_enabled_values.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("base_positions"), nb::arg("base_rotations"),
+        nb::arg("max_distances"), nb::arg("stiffness_values"), nb::arg("backstop_radii"),
+        nb::arg("backstop_distances"), nb::arg("normal_axis_values"),
+        nb::arg("max_distance_enabled_values"), nb::arg("backstop_enabled_values"),
+        "Run Motion with per-particle switches compiled from domain partitions."
     );
     module.def(
         "mc2_domain_cpu_v1_step_external_collision",
@@ -977,6 +1077,16 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run the explicit particle integration slice using the shared native kernel."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_integration_partitioned",
+        [](std::uint64_t handle,
+           float dt,
+           float simulation_power) {
+            require_domain(handle)->step_integration_partitioned(dt, simulation_power);
+        },
+        nb::arg("handle"), nb::arg("dt"), nb::arg("simulation_power"),
+        "Run integration from native-owned per-partition Center outputs."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_post",
         [](std::uint64_t handle,
            cf32_2d old_positions,
@@ -1017,6 +1127,29 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("static_friction_speed"), nb::arg("particle_speed_limit"),
         nb::arg("velocity_weight"),
         "Run post/history from the owned substep snapshot."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_post_owned_partitioned",
+        [](std::uint64_t handle,
+           float dt,
+           cf32_1d dynamic_friction_values,
+           cf32_1d static_friction_speed_values,
+           cf32_1d particle_speed_limit_values) {
+            auto* domain = require_domain(handle);
+            const auto count = domain->particle_count();
+            if (static_cast<std::size_t>(dynamic_friction_values.shape(0)) != count ||
+                static_cast<std::size_t>(static_friction_speed_values.shape(0)) != count ||
+                static_cast<std::size_t>(particle_speed_limit_values.shape(0)) != count) {
+                throw nb::value_error("MC2 CPU partitioned post arrays have incompatible shapes");
+            }
+            domain->step_post_owned_partitioned(
+                dt, dynamic_friction_values.data(), static_friction_speed_values.data(),
+                particle_speed_limit_values.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("dt"), nb::arg("dynamic_friction_values"),
+        nb::arg("static_friction_speed_values"), nb::arg("particle_speed_limit_values"),
+        "Run owned post/history with per-particle partition parameters."
     );
     module.def(
         "mc2_domain_cpu_v1_read",

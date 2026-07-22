@@ -93,6 +93,17 @@ public:
         bool restoration_enabled,
         bool limit_enabled
     );
+    void step_angle_partitioned(
+        const float* step_basic_positions,
+        const float* step_basic_rotations,
+        const float* restoration_values,
+        const float* limit_values,
+        const float* restoration_velocity_attenuation_values,
+        const float* restoration_gravity_falloff_values,
+        const float* limit_stiffness_values,
+        const std::uint32_t* restoration_enabled_values,
+        const std::uint32_t* limit_enabled_values
+    );
     void step_motion(
         const float* base_positions,
         const float* base_rotations,
@@ -103,6 +114,17 @@ public:
         std::int32_t normal_axis,
         bool max_distance_enabled,
         bool backstop_enabled
+    );
+    void step_motion_partitioned(
+        const float* base_positions,
+        const float* base_rotations,
+        const float* max_distances,
+        const float* stiffness_values,
+        const float* backstop_radii,
+        const float* backstop_distances,
+        const std::int32_t* normal_axis_values,
+        const std::uint32_t* max_distance_enabled_values,
+        const std::uint32_t* backstop_enabled_values
     );
     void step_external_collision(
         const float* base_positions,
@@ -188,6 +210,11 @@ public:
         float compression,
         float stretch
     );
+    void step_tether_partitioned(
+        const float* step_basic_positions,
+        const float* compression_values,
+        const float* stretch_values
+    );
     void configure_bending(
         const std::int32_t* dihedral_pairs,
         const float* dihedral_rest_angles,
@@ -247,6 +274,10 @@ public:
         float velocity_weight,
         const float* gravity
     );
+    void step_integration_partitioned(
+        float dt,
+        float simulation_power
+    );
     void step_post(
         const float* old_positions,
         float dt,
@@ -261,6 +292,12 @@ public:
         float static_friction_speed,
         float particle_speed_limit,
         float velocity_weight
+    );
+    void step_post_owned_partitioned(
+        float dt,
+        const float* dynamic_friction_values,
+        const float* static_friction_speed_values,
+        const float* particle_speed_limit_values
     );
     void dispose() noexcept;
 

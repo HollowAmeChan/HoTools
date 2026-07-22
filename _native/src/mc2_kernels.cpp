@@ -894,8 +894,6 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
         return;
     }
 
-    const float compression_limit = 1.0f - clamp_float(view.compression, 0.0f, 1.0f);
-    const float stretch_limit = 1.0f + std::max(view.stretch, 0.0f);
     const float stiffness_width = std::max(kTetherStiffnessWidth, kMc2Epsilon);
 
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
@@ -912,6 +910,17 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
         if (rest_length <= kMc2Epsilon) {
             continue;
         }
+        const float compression_limit = 1.0f - clamp_float(
+            view.compression_values != nullptr
+                ? view.compression_values[vertex]
+                : view.compression,
+            0.0f,
+            1.0f
+        );
+        const float stretch_limit = 1.0f + std::max(
+            view.stretch_values != nullptr ? view.stretch_values[vertex] : view.stretch,
+            0.0f
+        );
 
         const std::int64_t vertex_offset = vertex * 3;
         const std::int64_t root_offset = static_cast<std::int64_t>(root_index) * 3;
@@ -965,8 +974,12 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         return;
     }
 
-    bool use_max_distance = view.explicit_enable_flags && view.max_distance_enabled;
-    bool use_backstop = view.explicit_enable_flags && view.backstop_enabled;
+    bool use_max_distance = view.explicit_enable_flags && (
+        view.max_distance_enabled || view.max_distance_enabled_values != nullptr
+    );
+    bool use_backstop = view.explicit_enable_flags && (
+        view.backstop_enabled || view.backstop_enabled_values != nullptr
+    );
     bool has_stiffness = false;
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
         if (!view.explicit_enable_flags && view.max_distances[vertex] > kMc2Epsilon) {
@@ -994,9 +1007,15 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         }
         const float limit = std::max(view.max_distances[vertex], 0.0f);
         const float backstop_radius = std::max(view.backstop_radii[vertex], 0.0f);
-        const bool apply_max_distance = use_max_distance &&
+        const bool vertex_max_distance = view.max_distance_enabled_values != nullptr
+            ? view.max_distance_enabled_values[vertex] != 0u
+            : use_max_distance;
+        const bool vertex_backstop = view.backstop_enabled_values != nullptr
+            ? view.backstop_enabled_values[vertex] != 0u
+            : use_backstop;
+        const bool apply_max_distance = vertex_max_distance &&
             (view.explicit_enable_flags || limit > kMc2Epsilon);
-        if (!apply_max_distance && (!use_backstop || backstop_radius <= kMc2Epsilon)) {
+        if (!apply_max_distance && (!vertex_backstop || backstop_radius <= kMc2Epsilon)) {
             continue;
         }
 
@@ -1024,11 +1043,18 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         const float max_constrained_y = constrained_y;
         const float max_constrained_z = constrained_z;
 
-        if (use_backstop && backstop_radius > kMc2Epsilon) {
+        if (vertex_backstop && backstop_radius > kMc2Epsilon) {
             float axis_x = 0.0f;
             float axis_y = 1.0f;
             float axis_z = 0.0f;
-            motion_axis_vector(view.normal_axis, axis_x, axis_y, axis_z);
+            motion_axis_vector(
+                view.normal_axis_values != nullptr
+                    ? view.normal_axis_values[vertex]
+                    : view.normal_axis,
+                axis_x,
+                axis_y,
+                axis_z
+            );
             const float* base_rot = &view.base_rotations[vertex * 4];
             float nx = 0.0f;
             float ny = 1.0f;
@@ -1090,7 +1116,7 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
             view.debug_record_corrections[backstop_offset + 1] = add_y - max_add_y;
             view.debug_record_corrections[backstop_offset + 2] = add_z - max_add_z;
             view.debug_record_valid[backstop_record] =
-                use_backstop && backstop_radius > kMc2Epsilon ? 1 : 0;
+                vertex_backstop && backstop_radius > kMc2Epsilon ? 1 : 0;
         }
         view.positions[offset + 0] = next_x;
         view.positions[offset + 1] = next_y;
@@ -1111,11 +1137,26 @@ void apply_post_step_mc2(Mc2PostStepView& view) {
         return;
     }
 
-    const float dynamic_friction = clamp_float(view.dynamic_friction, 0.0f, 1.0f);
-    const float static_friction_speed = std::max(view.static_friction_speed, 0.0f);
-    const float particle_speed_limit = view.particle_speed_limit;
-
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const float dynamic_friction = clamp_float(
+            view.dynamic_friction_values != nullptr
+                ? view.dynamic_friction_values[vertex]
+                : view.dynamic_friction,
+            0.0f,
+            1.0f
+        );
+        const float static_friction_speed = std::max(
+            view.static_friction_speed_values != nullptr
+                ? view.static_friction_speed_values[vertex]
+                : view.static_friction_speed,
+            0.0f
+        );
+        const float particle_speed_limit = view.particle_speed_limit_values != nullptr
+            ? view.particle_speed_limit_values[vertex]
+            : view.particle_speed_limit;
+        const float velocity_weight = view.velocity_weight_values != nullptr
+            ? view.velocity_weight_values[vertex]
+            : view.velocity_weight;
         const std::int64_t offset = vertex * 3;
         float next_x = view.positions[offset + 0];
         float next_y = view.positions[offset + 1];
@@ -1210,9 +1251,9 @@ void apply_post_step_mc2(Mc2PostStepView& view) {
                     velocity_z *= scale;
                 }
             }
-            view.velocities[offset + 0] = velocity_x * view.velocity_weight;
-            view.velocities[offset + 1] = velocity_y * view.velocity_weight;
-            view.velocities[offset + 2] = velocity_z * view.velocity_weight;
+            view.velocities[offset + 0] = velocity_x * velocity_weight;
+            view.velocities[offset + 1] = velocity_y * velocity_weight;
+            view.velocities[offset + 2] = velocity_z * velocity_weight;
             view.friction[vertex] = contact_friction * kFrictionDampingRate;
         } else {
             view.velocities[offset + 0] = 0.0f;
@@ -2406,10 +2447,10 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
     }
 
     bool use_restoration = view.explicit_enable_flags
-        ? view.restoration_enabled
+        ? (view.restoration_enabled || view.restoration_enabled_values != nullptr)
         : view.restoration_values != nullptr;
     bool use_limit = view.explicit_enable_flags
-        ? view.limit_enabled
+        ? (view.limit_enabled || view.limit_enabled_values != nullptr)
         : view.limit_values != nullptr;
     bool has_restoration = false;
     bool has_limit = false;
@@ -2437,7 +2478,6 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
         return;
     }
 
-    const float limit_stiffness = clamp_float(view.limit_stiffness, 0.0f, 1.0f);
     const bool debug_records =
         view.debug_record_origins != nullptr &&
         view.debug_record_corrections != nullptr &&
@@ -2526,7 +2566,15 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
             const float base_y = view.step_basic_positions[vertex_offset + 1] - view.step_basic_positions[parent_offset + 1];
             const float base_z = view.step_basic_positions[vertex_offset + 2] - view.step_basic_positions[parent_offset + 2];
 
-            if (use_limit) {
+            const bool vertex_uses_limit = use_limit && (
+                view.limit_enabled_values == nullptr ||
+                view.limit_enabled_values[vertex_index] != 0u
+            );
+            const bool vertex_uses_restoration = use_restoration && (
+                view.restoration_enabled_values == nullptr ||
+                view.restoration_enabled_values[vertex_index] != 0u
+            );
+            if (vertex_uses_limit) {
                 const float cur_x = view.positions[vertex_offset + 0] - view.positions[parent_offset + 0];
                 const float cur_y = view.positions[vertex_offset + 1] - view.positions[parent_offset + 1];
                 const float cur_z = view.positions[vertex_offset + 2] - view.positions[parent_offset + 2];
@@ -2563,7 +2611,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 3)] = 1.0f;
                 }
             }
-            if (use_restoration) {
+            if (vertex_uses_restoration) {
                 restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 0)] = base_x;
                 restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 1)] = base_y;
                 restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 2)] = base_z;
@@ -2600,8 +2648,16 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 float parent_x = view.positions[parent_offset + 0];
                 float parent_y = view.positions[parent_offset + 1];
                 float parent_z = view.positions[parent_offset + 2];
+                const bool child_uses_limit = use_limit && (
+                    view.limit_enabled_values == nullptr ||
+                    view.limit_enabled_values[child_index] != 0u
+                );
+                const bool child_uses_restoration = use_restoration && (
+                    view.restoration_enabled_values == nullptr ||
+                    view.restoration_enabled_values[child_index] != 0u
+                );
 
-                if (use_limit) {
+                if (child_uses_limit) {
                     const auto debug_record = debug_record_index(0, iteration, data_index);
                     debug_begin(debug_record, parent_index, child_index);
                     const std::int64_t parent_rot_offset = static_cast<std::int64_t>(parent_index) * 4;
@@ -2685,6 +2741,13 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                         float result_y = vector_y;
                         float result_z = vector_z;
                         if (angle > max_angle_rad) {
+                            const float limit_stiffness = clamp_float(
+                                view.limit_stiffness_values != nullptr
+                                    ? view.limit_stiffness_values[child_index]
+                                    : view.limit_stiffness,
+                                0.0f,
+                                1.0f
+                            );
                             const float recovery_angle = angle * (1.0f - limit_stiffness) + max_angle_rad * limit_stiffness;
                             clamp_vector_angle(vector_x, vector_y, vector_z, target_x, target_y, target_z,
                                                recovery_angle, result_x, result_y, result_z);
@@ -2760,7 +2823,7 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     }
                 }
 
-                if (!use_restoration) {
+                if (!child_uses_restoration) {
                     continue;
                 }
                 const auto debug_record = debug_record_index(1, iteration, data_index);
@@ -3866,10 +3929,16 @@ void integrate_particles_mc2(Mc2ParticleIntegrationView& view) {
             1.0f - damping * view.simulation_power, 0.0f, 1.0f
         );
         const auto offset = vertex * 3;
+        const float velocity_weight = view.velocity_weight_values != nullptr
+            ? view.velocity_weight_values[vertex]
+            : view.velocity_weight;
         for (std::int64_t component = 0; component < 3; ++component) {
             float velocity = view.velocities[offset + component] *
-                view.velocity_weight * damping_factor;
-            velocity += view.gravity[component] * view.dt;
+                velocity_weight * damping_factor;
+            const float gravity = view.gravity_values != nullptr
+                ? view.gravity_values[offset + component]
+                : view.gravity[component];
+            velocity += gravity * view.dt;
             view.velocities[offset + component] = velocity;
             view.positions[offset + component] += velocity * view.dt;
         }

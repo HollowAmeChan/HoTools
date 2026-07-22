@@ -38,6 +38,15 @@ def _partition_vector(table, fields: Mapping[str, int], names: tuple[str, ...]) 
     return tuple(_partition_scalar(table, fields, name) for name in names)
 
 
+def _particle_partition_column(compiled, table, fields, name, *, dtype=np.float32):
+    if name not in fields:
+        raise ValueError(f"partition parameter table lacks {name}")
+    owners = np.asarray(compiled.program.particle_partition_index, dtype=np.intp)
+    values = np.ascontiguousarray(table.values[owners, fields[name]], dtype=dtype)
+    values.flags.writeable = False
+    return values
+
+
 def _scaled_particle_column(
     table,
     fields: Mapping[str, int],
@@ -232,4 +241,121 @@ def make_mc2_reference_pipeline_settings(
     return settings
 
 
-__all__ = ["make_mc2_reference_pipeline_settings"]
+def make_mc2_compiled_domain_pipeline_settings(
+    compiled: MC2MeshCompiledDomainV1,
+    frame_packet: MC2DomainFramePacketV1,
+    substep_plan: MC2SubstepPlan,
+    *,
+    anchor_component_local_positions,
+    step_basic_positions,
+    step_basic_rotations,
+    distance_weights,
+    external_collision,
+) -> dict[str, object]:
+    """Compile one E4 whole-domain substep without collapsing partition values."""
+
+    if not isinstance(compiled, MC2MeshCompiledDomainV1):
+        raise TypeError("compiled must be MC2MeshCompiledDomainV1")
+    if not isinstance(frame_packet, MC2DomainFramePacketV1):
+        raise TypeError("frame_packet must be MC2DomainFramePacketV1")
+    if not isinstance(substep_plan, MC2SubstepPlan):
+        raise TypeError("substep_plan must be MC2SubstepPlan")
+    program = compiled.program
+    if (
+        frame_packet.domain_signature != program.domain_signature
+        or frame_packet.layout_signature != program.layout_signature
+    ):
+        raise ValueError("frame packet identity does not match compiled program")
+    count = program.particle_count
+    partitions = program.partition_count
+    anchor = _validate_vector(
+        anchor_component_local_positions,
+        (partitions, 3),
+        "anchor_component_local_positions",
+    )
+    step_positions = _validate_vector(
+        step_basic_positions, (count, 3), "step_basic_positions"
+    )
+    step_rotations = _validate_vector(
+        step_basic_rotations, (count, 4), "step_basic_rotations"
+    )
+    weights = _validate_vector(distance_weights, (partitions,), "distance_weights")
+    partition = compiled.parameters.partition_parameters
+    partition_uint = compiled.parameters.partition_uint_parameters
+    particle = compiled.parameters.particle_parameters
+    partition_fields = _table_fields(partition)
+    uint_fields = _table_fields(partition_uint)
+    particle_fields = _table_fields(particle)
+
+    def partition_float(name):
+        return _particle_partition_column(
+            compiled, partition, partition_fields, name, dtype=np.float32
+        )
+
+    def partition_uint_value(name):
+        return _particle_partition_column(
+            compiled, partition_uint, uint_fields, name, dtype=np.uint32
+        )
+
+    motion_stiffness = partition_float("motion_stiffness")
+    backstop_radii = partition_float("backstop_radius")
+    settings = {
+        "anchor_component_local_positions": anchor,
+        "dt": float(substep_plan.simulation_delta_time),
+        "frame_interpolation": float(substep_plan.frame_interpolation),
+        "distance_weights": weights,
+        "simulation_power": float(substep_plan.powers.integration),
+        "distance_simulation_power": float(substep_plan.powers.distance_bending),
+        "bending_simulation_power": float(substep_plan.powers.distance_bending),
+        "step_basic_positions": step_positions,
+        "tether_compression_values": partition_float("tether_compression_limit"),
+        "tether_stretch_values": partition_float("tether_stretch_limit"),
+        "step_basic_rotations": step_rotations,
+        "angle_restoration_values": _scaled_particle_column(
+            particle, particle_fields, "angle_restoration_stiffness",
+            substep_plan.powers.angle,
+        ),
+        "angle_limit_values": _particle_column(
+            particle, particle_fields, "angle_limit"
+        ),
+        "angle_restoration_velocity_attenuation_values": partition_float(
+            "angle_restoration_velocity_attenuation"
+        ),
+        "angle_restoration_gravity_falloff_values": partition_float(
+            "angle_restoration_gravity_falloff"
+        ),
+        "angle_limit_stiffness_values": partition_float("angle_limit_stiffness"),
+        "angle_restoration_enabled_values": partition_uint_value(
+            "use_angle_restoration"
+        ),
+        "angle_limit_enabled_values": partition_uint_value("use_angle_limit"),
+        "motion_base_positions": frame_packet.animated_base_world_positions,
+        "motion_base_rotations": frame_packet.animated_base_world_rotations,
+        "motion_max_distances": _particle_column(
+            particle, particle_fields, "max_distance"
+        ),
+        "motion_stiffness_values": motion_stiffness,
+        "motion_backstop_radii": backstop_radii,
+        "motion_backstop_distances": _particle_column(
+            particle, particle_fields, "backstop_distance"
+        ),
+        "motion_normal_axis_values": _particle_partition_column(
+            compiled, partition_uint, uint_fields, "normal_axis", dtype=np.int32
+        ),
+        "motion_max_distance_enabled_values": partition_uint_value("use_max_distance"),
+        "motion_backstop_enabled_values": partition_uint_value("use_backstop"),
+        "external_collision": external_collision,
+        "post_step": {
+            "dt": float(substep_plan.simulation_delta_time),
+            "dynamic_friction_values": partition_float("collision_dynamic_friction"),
+            "static_friction_speed_values": partition_float("collision_static_friction"),
+            "particle_speed_limit_values": partition_float("particle_speed_limit"),
+        },
+    }
+    return settings
+
+
+__all__ = [
+    "make_mc2_compiled_domain_pipeline_settings",
+    "make_mc2_reference_pipeline_settings",
+]

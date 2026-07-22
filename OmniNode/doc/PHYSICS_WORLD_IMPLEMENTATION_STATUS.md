@@ -78,7 +78,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 生产V0可用；统一粒子域E4进行中 | 既有产品数值/debug验收保持闭环；E0-E3、P0、P1-B、粒子级覆盖、partitioned StepBasic、compiled whole-domain self/external及native-owned完整pass已完成；collector draft可从Physics World公共snapshot一次生成whole-domain immutable collider POD，排除全部域内owner但不按任一partition mask预筛选，并由native逐partition过滤；完整Tier A fragment已有逐partition重力感知的两阶段事务缓存，并持有帧旋转native-ready topology/adjacency/corner UV；纯host fused CPU owner已将cache commit与native staged replacement合并并直接代理frame/full step/output，失败保留旧domain/cache；产品collector bridge逐source单次消费P1-B observation并冻结draft/E0快照/BasePose topology identity；固定whole-domain world slot已关闭同/跨generation同步、dispose及多BasePose/Anchor logical frame + whole-domain collider原子发布合同，Mesh旋转与V0共用native核心；但`product_enabled=False`且不进入普通V0 step；py311/py313均有collector、缓存、owner/slot生命周期、frame旋转ABI及完整碰撞等价证据 | 下一入口是复用现有scheduler/Center生产者组装真实compiled full-step settings与执行，然后完成Blender oracle/性能验收；E5多目标事务和产品collector通过后执行E7-CPU清理 |
+| MC2 | 生产V0可用；统一粒子域E4进行中 | 既有产品数值/debug验收保持闭环；E0-E3、P0、P1-B、粒子级覆盖、partitioned StepBasic、compiled whole-domain self/external及native-owned完整pass已完成；collector draft可从Physics World公共snapshot一次生成whole-domain immutable collider POD，排除全部域内owner但不按任一partition mask预筛选，并由native逐partition过滤；完整Tier A fragment已有逐partition重力感知的两阶段事务缓存，并持有帧旋转native-ready topology/adjacency/corner UV；纯host fused CPU owner已将cache commit与native staged replacement合并并直接代理frame/full step/output，失败保留旧domain/cache；产品collector bridge逐source单次消费P1-B observation并冻结draft/E0快照/BasePose topology identity；固定whole-domain world slot已关闭同/跨generation同步、dispose及多BasePose/Anchor logical frame + whole-domain collider原子发布合同，Mesh旋转与V0共用native核心；A5-04已按particle owner隔离Tether/Angle/Motion/Post参数并复用native Center输出，六轴Motion与旧标量oracle均有双ABI证据；但`product_enabled=False`且不进入普通V0 step | 下一入口是让slot拥有scheduler frame timing、Anchor component-local历史和Center producer状态并执行真实compiled子步，然后完成Blender oracle/性能验收；E5多目标事务和产品collector通过后执行E7-CPU清理 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -87,7 +87,7 @@ physicsWorld/
 
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-3. MC2保持生产V0可用，继续完成E4统一slot的真实full-step settings/执行与Blender验收，再推进E5多目标事务与产品collector；不得越过Physics World边界或提前删除V0 owner。
+3. MC2保持生产V0可用，继续完成E4统一slot的scheduler/timing/Anchor历史所有权、真实compiled子步执行与Blender验收，再推进E5多目标事务与产品collector；不得越过Physics World边界或提前删除V0 owner。
 4. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 5. 决定Mesh XPBD迁移或删除。
 

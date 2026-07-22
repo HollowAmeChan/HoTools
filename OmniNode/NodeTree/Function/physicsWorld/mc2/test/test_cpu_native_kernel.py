@@ -53,6 +53,12 @@ native_module_api = importlib.import_module(
 collider_frame = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame"
 )
+reference_step = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.reference_step"
+)
+scheduler = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -80,6 +86,8 @@ def _compiled_multi(
     collision_masks=None,
     collision_modes=(1, 1),
     external_collision_masks=None,
+    profile_overrides=None,
+    task_normal_axes=(1, 1),
 ):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
@@ -89,23 +97,30 @@ def _compiled_multi(
         )
         for payload in payloads
     )
-    effectives = tuple(
-        runtime.make_mc2_runtime_parameters(
-            parameters.make_mc2_particle_profile(
-                self_collision_mode=2,
-                animation_pose_ratio=animation_pose_ratio,
-                collision_mode=collision_mode,
-            ),
+    if profile_overrides is None:
+        profile_overrides = ({},) * len(fragments)
+    effectives = []
+    for animation_pose_ratio, collision_mode, overrides, normal_axis in zip(
+        animation_pose_ratios,
+        collision_modes,
+        profile_overrides,
+        task_normal_axes,
+        strict=True,
+    ):
+        profile_values = {
+            "self_collision_mode": 2,
+            "animation_pose_ratio": animation_pose_ratio,
+            "collision_mode": collision_mode,
+        }
+        profile_values.update(overrides)
+        effectives.append(runtime.make_mc2_runtime_parameters(
+            parameters.make_mc2_particle_profile(**profile_values),
             parameters.make_mc2_setup_options("mesh_cloth"),
-            parameters.make_mc2_task_parameters(),
-        )
-        for _fragment, animation_pose_ratio, collision_mode in zip(
-            fragments, animation_pose_ratios, collision_modes, strict=True
-        )
-    )
+            parameters.make_mc2_task_parameters(normal_axis=normal_axis),
+        ))
     return compiler.compile_mc2_mesh_static_fragments(
         fragments,
-        effectives,
+        tuple(effectives),
         collision_groups=collision_groups,
         collision_masks=collision_masks,
         external_collision_masks=external_collision_masks,
@@ -666,7 +681,11 @@ def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
 
 
 def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
-    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    compiled = _compiled_multi(
+        collision_groups=(1, 2),
+        collision_masks=(0, 0),
+        task_normal_axes=(0, 5),
+    )
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
@@ -680,53 +699,39 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
     partition_count = compiled.program.partition_count
     try:
         domain.update_frame(frame)
-        settings = {
-            "anchor_component_local_positions": np.zeros(
+        plan = scheduler.MC2SubstepPlan(
+            update_index=0,
+            simulation_delta_time=0.1,
+            frame_interpolation=1.0,
+            is_final_substep=True,
+            powers=scheduler.MC2SimulationPowers(
+                distance_bending=0.0, integration=0.0, angle=0.0
+            ),
+        )
+        settings = reference_step.make_mc2_compiled_domain_pipeline_settings(
+            compiled,
+            frame,
+            plan,
+            anchor_component_local_positions=np.zeros(
                 (partition_count, 3), dtype=np.float32
             ),
-            "dt": 0.1,
-            "frame_interpolation": 1.0,
-            "distance_weights": np.ones(partition_count, dtype=np.float32),
-            "simulation_power": 0.0,
-            "distance_simulation_power": 0.0,
-            "bending_simulation_power": 0.0,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, 0.0, 0.0),
-            "step_basic_positions": positions,
-            "tether_compression": 0.0,
-            "tether_stretch": 0.0,
-            "step_basic_rotations": frame.animated_base_world_rotations,
-            "angle_restoration_values": np.zeros(count, dtype=np.float32),
-            "angle_limit_values": np.zeros(count, dtype=np.float32),
-            "angle_restoration_velocity_attenuation": 0.0,
-            "angle_restoration_gravity_falloff": 0.0,
-            "angle_limit_stiffness": 0.0,
-            "angle_restoration_enabled": False,
-            "angle_limit_enabled": False,
-            "motion_base_positions": positions,
-            "motion_base_rotations": frame.animated_base_world_rotations,
-            "motion_max_distances": np.zeros(count, dtype=np.float32),
-            "motion_stiffness_values": np.zeros(count, dtype=np.float32),
-            "motion_backstop_radii": np.zeros(count, dtype=np.float32),
-            "motion_backstop_distances": np.zeros(count, dtype=np.float32),
-            "motion_normal_axis": 1,
-            "motion_max_distance_enabled": False,
-            "motion_backstop_enabled": False,
-            "external_collision": _empty_collider_table(),
-            "post_step": {
-                "dt": 0.1,
-                "dynamic_friction": 0.0,
-                "static_friction_speed": 0.0,
-                "particle_speed_limit": -1.0,
-                "velocity_weight": 1.0,
-            },
-        }
+            step_basic_positions=positions,
+            step_basic_rotations=frame.animated_base_world_rotations,
+            distance_weights=np.ones(partition_count, dtype=np.float32),
+            external_collision=_empty_collider_table(),
+        )
         invalid = dict(settings)
-        invalid["post_step"] = dict(settings["post_step"], dt=float("nan"))
+        invalid_values = np.asarray(
+            settings["post_step"]["dynamic_friction_values"]
+        ).copy()
+        invalid_values[0] = np.nan
+        invalid["post_step"] = dict(
+            settings["post_step"], dynamic_friction_values=invalid_values
+        )
         try:
             domain.step_compiled_domain_pipeline_full(invalid)
         except ValueError as exc:
-            assert "post_step scalars" in str(exc)
+            assert "finite" in str(exc) or "invalid" in str(exc)
         else:
             raise AssertionError("compiled domain pipeline accepted invalid post scalars")
         assert domain.inspect()["kernel"]["step_count"] == 0
@@ -734,9 +739,10 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         order = []
         ordered_methods = (
             "step_center_frame_shift", "step_center", "step_center_inertia",
-            "step_integration", "step_tether", "step_distance", "step_angle",
-            "step_bending", "_run_compiled_external_collision", "step_motion",
-            "step_whole_domain_self_owned", "step_post_owned",
+            "step_integration_partitioned", "step_tether_partitioned",
+            "step_distance", "step_angle_partitioned", "step_bending",
+            "_run_compiled_external_collision", "step_motion_partitioned",
+            "step_whole_domain_self_owned", "step_post_owned_partitioned",
         )
         for name in ordered_methods:
             original = getattr(kernel, name)
@@ -749,9 +755,11 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         domain.step_compiled_domain_pipeline_full(settings)
         assert order == [
             "step_center_frame_shift", "step_center", "step_center_inertia",
-            "step_integration", "step_tether", "step_distance", "step_angle",
+            "step_integration_partitioned", "step_tether_partitioned",
+            "step_distance", "step_angle_partitioned",
             "_run_compiled_external_collision", "step_distance",
-            "step_motion", "step_whole_domain_self_owned", "step_post_owned",
+            "step_motion_partitioned", "step_whole_domain_self_owned",
+            "step_post_owned_partitioned",
         ], order
         output = domain.read_output().world_positions
         state = domain.inspect()["kernel"]
@@ -764,6 +772,106 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
+
+
+def test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse():
+    compiled = _compiled_multi(
+        profile_overrides=(
+            {
+                "tether_compression": 0.15,
+                "angle_restoration_enabled": False,
+                "angle_restoration_velocity_attenuation": 0.2,
+                "angle_restoration_gravity_falloff": 0.3,
+                "angle_limit_enabled": True,
+                "angle_limit_stiffness": 0.4,
+                "max_distance_enabled": True,
+                "backstop_enabled": False,
+                "backstop_radius": 1.0,
+                "motion_stiffness": 0.25,
+                "collision_friction": 0.1,
+                "particle_speed_limit": 2.0,
+            },
+            {
+                "tether_compression": 0.75,
+                "angle_restoration_enabled": True,
+                "angle_restoration_velocity_attenuation": 0.6,
+                "angle_restoration_gravity_falloff": 0.7,
+                "angle_limit_enabled": False,
+                "angle_limit_stiffness": 0.8,
+                "max_distance_enabled": False,
+                "backstop_enabled": True,
+                "backstop_radius": 3.0,
+                "motion_stiffness": 0.9,
+                "collision_friction": 0.4,
+                "particle_speed_limit": 7.0,
+            },
+        ),
+        task_normal_axes=(0, 5),
+    )
+    frame = _frame(compiled.program)
+    plan = scheduler.MC2SubstepPlan(
+        update_index=0,
+        simulation_delta_time=0.05,
+        frame_interpolation=0.5,
+        is_final_substep=False,
+        powers=scheduler.MC2SimulationPowers(
+            distance_bending=0.25, integration=0.5, angle=0.75
+        ),
+    )
+    settings = reference_step.make_mc2_compiled_domain_pipeline_settings(
+        compiled,
+        frame,
+        plan,
+        anchor_component_local_positions=np.zeros((2, 3), dtype=np.float32),
+        step_basic_positions=frame.animated_base_world_positions,
+        step_basic_rotations=frame.animated_base_world_rotations,
+        distance_weights=np.ones(2, dtype=np.float32),
+        external_collision=_empty_collider_table(),
+    )
+    owners = np.asarray(compiled.program.particle_partition_index, dtype=np.intp)
+    float_table = compiled.parameters.partition_parameters
+    uint_table = compiled.parameters.partition_uint_parameters
+    float_fields = {name: index for index, name in enumerate(float_table.fields)}
+    uint_fields = {name: index for index, name in enumerate(uint_table.fields)}
+
+    float_settings = {
+        "tether_compression_values": "tether_compression_limit",
+        "tether_stretch_values": "tether_stretch_limit",
+        "angle_restoration_velocity_attenuation_values":
+            "angle_restoration_velocity_attenuation",
+        "angle_restoration_gravity_falloff_values":
+            "angle_restoration_gravity_falloff",
+        "angle_limit_stiffness_values": "angle_limit_stiffness",
+        "motion_stiffness_values": "motion_stiffness",
+        "motion_backstop_radii": "backstop_radius",
+    }
+    for setting_name, field_name in float_settings.items():
+        expected = float_table.values[owners, float_fields[field_name]]
+        assert np.array_equal(settings[setting_name], expected), setting_name
+        assert settings[setting_name].flags.c_contiguous
+        assert not settings[setting_name].flags.writeable
+
+    uint_settings = {
+        "angle_restoration_enabled_values": "use_angle_restoration",
+        "angle_limit_enabled_values": "use_angle_limit",
+        "motion_normal_axis_values": "normal_axis",
+        "motion_max_distance_enabled_values": "use_max_distance",
+        "motion_backstop_enabled_values": "use_backstop",
+    }
+    for setting_name, field_name in uint_settings.items():
+        expected = uint_table.values[owners, uint_fields[field_name]]
+        assert np.array_equal(settings[setting_name], expected), setting_name
+
+    post_settings = {
+        "dynamic_friction_values": "collision_dynamic_friction",
+        "static_friction_speed_values": "collision_static_friction",
+        "particle_speed_limit_values": "particle_speed_limit",
+    }
+    for setting_name, field_name in post_settings.items():
+        expected = float_table.values[owners, float_fields[field_name]]
+        assert np.array_equal(settings["post_step"][setting_name], expected), setting_name
+    assert set(settings["motion_normal_axis_values"].tolist()) == {0, 5}
+    assert len(set(settings["tether_compression_values"].tolist())) == 2
 
 
 def test_native_cpu_compiled_external_collision_filters_each_partition():
@@ -1019,6 +1127,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots")
     test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post()
     print("PASS test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post")
+    test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse()
+    print("PASS test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse")
     test_native_cpu_compiled_external_collision_filters_each_partition()
     print("PASS test_native_cpu_compiled_external_collision_filters_each_partition")
     test_native_cpu_reference_pipeline_full_sequences_collision_passes()

@@ -1187,6 +1187,50 @@ void DomainV1::step_tether(
     ++step_count_;
 }
 
+void DomainV1::step_tether_partitioned(
+    const float* step_basic_positions,
+    const float* compression_values,
+    const float* stretch_values
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU partitioned tether step requires update_frame");
+    }
+    if (!tether_ready_ || !inertia_ready_) {
+        throw std::logic_error("MC2 CPU partitioned tether step requires particle configuration");
+    }
+    require_finite(step_basic_positions, particle_count_ * 3, "partitioned tether StepBasic positions");
+    require_finite(compression_values, particle_count_, "partitioned tether compression");
+    require_finite(stretch_values, particle_count_, "partitioned tether stretch");
+    std::vector<float> rest_lengths(particle_count_, 0.0f);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (compression_values[vertex] < 0.0f || compression_values[vertex] > 1.0f ||
+            stretch_values[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU partitioned tether limits are invalid");
+        }
+        const auto root = tether_root_indices_[vertex];
+        if (root < 0) continue;
+        const auto offset = vertex * 3;
+        const auto root_offset = static_cast<std::size_t>(root) * 3;
+        const float dx = step_basic_positions[root_offset + 0] - step_basic_positions[offset + 0];
+        const float dy = step_basic_positions[root_offset + 1] - step_basic_positions[offset + 1];
+        const float dz = step_basic_positions[root_offset + 2] - step_basic_positions[offset + 2];
+        rest_lengths[vertex] = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    hotools::Mc2TetherConstraintView view;
+    view.positions = world_positions_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.root_indices = tether_root_indices_.data();
+    view.root_rest_lengths = rest_lengths.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.stiffness = 1.0f;
+    view.compression_values = compression_values;
+    view.stretch_values = stretch_values;
+    hotools::project_tether_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::step_angle(
     const float* step_basic_positions,
     const float* step_basic_rotations,
@@ -1242,6 +1286,64 @@ void DomainV1::step_angle(
     ++step_count_;
 }
 
+void DomainV1::step_angle_partitioned(
+    const float* step_basic_positions,
+    const float* step_basic_rotations,
+    const float* restoration_values,
+    const float* limit_values,
+    const float* restoration_velocity_attenuation_values,
+    const float* restoration_gravity_falloff_values,
+    const float* limit_stiffness_values,
+    const std::uint32_t* restoration_enabled_values,
+    const std::uint32_t* limit_enabled_values
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU partitioned Angle step requires update_frame");
+    }
+    if (!baseline_ready_ || !inertia_ready_) {
+        throw std::logic_error("MC2 CPU partitioned Angle step requires particle configuration");
+    }
+    require_finite(step_basic_positions, particle_count_ * 3, "partitioned Angle StepBasic positions");
+    require_unit_quaternions(step_basic_rotations, particle_count_, "partitioned Angle StepBasic rotations");
+    require_finite(restoration_values, particle_count_, "partitioned Angle restoration values");
+    require_finite(limit_values, particle_count_, "partitioned Angle limit values");
+    require_finite(restoration_velocity_attenuation_values, particle_count_, "partitioned Angle attenuation");
+    require_finite(restoration_gravity_falloff_values, particle_count_, "partitioned Angle gravity falloff");
+    require_finite(limit_stiffness_values, particle_count_, "partitioned Angle limit stiffness");
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (restoration_velocity_attenuation_values[vertex] < 0.0f ||
+            restoration_gravity_falloff_values[vertex] < 0.0f ||
+            limit_stiffness_values[vertex] < 0.0f || limit_stiffness_values[vertex] > 1.0f ||
+            restoration_enabled_values[vertex] > 1u || limit_enabled_values[vertex] > 1u) {
+            throw std::invalid_argument("MC2 CPU partitioned Angle values are invalid");
+        }
+    }
+    hotools::Mc2AngleConstraintView view;
+    view.positions = world_positions_.data();
+    view.inv_masses = constraint_friction_ready_ ? angle_inverse_masses_.data() : inertia_inv_masses_.data();
+    view.parent_indices = baseline_parent_indices_.data();
+    view.baseline_start = baseline_line_starts_.data();
+    view.baseline_count = baseline_line_counts_.data();
+    view.baseline_data = baseline_line_data_.data();
+    view.step_basic_positions = step_basic_positions;
+    view.step_basic_rotations = step_basic_rotations;
+    view.restoration_values = restoration_values;
+    view.limit_values = limit_values;
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.line_count = static_cast<std::int64_t>(baseline_line_starts_.size());
+    view.baseline_data_count = static_cast<std::int64_t>(baseline_line_data_.size());
+    view.restoration_velocity_attenuation_values = restoration_velocity_attenuation_values;
+    view.restoration_gravity_falloff_values = restoration_gravity_falloff_values;
+    view.limit_stiffness_values = limit_stiffness_values;
+    view.explicit_enable_flags = true;
+    view.restoration_enabled_values = restoration_enabled_values;
+    view.limit_enabled_values = limit_enabled_values;
+    hotools::project_angle_constraints_mc2(view);
+    ++step_count_;
+}
+
 void DomainV1::step_motion(
     const float* base_positions,
     const float* base_rotations,
@@ -1266,8 +1368,8 @@ void DomainV1::step_motion(
     require_finite(stiffness_values, particle_count_, "Motion stiffness values");
     require_finite(backstop_radii, particle_count_, "Motion backstop radii");
     require_finite(backstop_distances, particle_count_, "Motion backstop distances");
-    if (normal_axis < 0 || normal_axis > 2) {
-        throw std::invalid_argument("MC2 CPU Motion normal_axis must be 0, 1, or 2");
+    if (normal_axis < 0 || normal_axis > 5) {
+        throw std::invalid_argument("MC2 CPU Motion normal_axis must be in 0..5");
     }
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if (max_distances[vertex] < 0.0f || stiffness_values[vertex] < 0.0f ||
@@ -1291,6 +1393,58 @@ void DomainV1::step_motion(
     view.explicit_enable_flags = true;
     view.max_distance_enabled = max_distance_enabled;
     view.backstop_enabled = backstop_enabled;
+    hotools::project_motion_constraints_mc2(view);
+    ++step_count_;
+}
+
+void DomainV1::step_motion_partitioned(
+    const float* base_positions,
+    const float* base_rotations,
+    const float* max_distances,
+    const float* stiffness_values,
+    const float* backstop_radii,
+    const float* backstop_distances,
+    const std::int32_t* normal_axis_values,
+    const std::uint32_t* max_distance_enabled_values,
+    const std::uint32_t* backstop_enabled_values
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU partitioned Motion step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 CPU partitioned Motion step requires particle configuration");
+    }
+    require_finite(base_positions, particle_count_ * 3, "partitioned Motion base positions");
+    require_unit_quaternions(base_rotations, particle_count_, "partitioned Motion base rotations");
+    require_finite(max_distances, particle_count_, "partitioned Motion max distances");
+    require_finite(stiffness_values, particle_count_, "partitioned Motion stiffness");
+    require_finite(backstop_radii, particle_count_, "partitioned Motion backstop radii");
+    require_finite(backstop_distances, particle_count_, "partitioned Motion backstop distances");
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (normal_axis_values[vertex] < 0 || normal_axis_values[vertex] > 5 ||
+            max_distance_enabled_values[vertex] > 1u || backstop_enabled_values[vertex] > 1u ||
+            max_distances[vertex] < 0.0f || stiffness_values[vertex] < 0.0f ||
+            stiffness_values[vertex] > 1.0f || backstop_radii[vertex] < 0.0f ||
+            backstop_distances[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 CPU partitioned Motion values are invalid");
+        }
+    }
+    hotools::Mc2MotionConstraintView view;
+    view.positions = world_positions_.data();
+    view.base_positions = base_positions;
+    view.base_rotations = base_rotations;
+    view.inv_masses = inertia_inv_masses_.data();
+    view.max_distances = max_distances;
+    view.stiffness_values = stiffness_values;
+    view.backstop_radii = backstop_radii;
+    view.backstop_distances = backstop_distances;
+    view.velocity_positions = velocity_positions_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.explicit_enable_flags = true;
+    view.normal_axis_values = normal_axis_values;
+    view.max_distance_enabled_values = max_distance_enabled_values;
+    view.backstop_enabled_values = backstop_enabled_values;
     hotools::project_motion_constraints_mc2(view);
     ++step_count_;
 }
@@ -2093,6 +2247,48 @@ void DomainV1::step_integration(
     ++step_count_;
 }
 
+void DomainV1::step_integration_partitioned(
+    float dt,
+    float simulation_power
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 CPU partitioned integration step requires update_frame");
+    }
+    if (!inertia_ready_ || !integration_ready_) {
+        throw std::logic_error("MC2 CPU partitioned integration requires particle configuration");
+    }
+    if (!std::isfinite(dt) || dt < 0.0f || !std::isfinite(simulation_power) ||
+        simulation_power < 0.0f) {
+        throw std::invalid_argument("MC2 CPU partitioned integration scalars are invalid");
+    }
+    std::vector<float> velocity_weight_values(particle_count_);
+    std::vector<float> gravity_values(particle_count_ * 3);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        const auto partition = static_cast<std::size_t>(particle_partition_index_[vertex]);
+        velocity_weight_values[vertex] = center_velocity_weights_[partition];
+        for (std::size_t component = 0; component < 3; ++component) {
+            gravity_values[vertex * 3 + component] =
+                center_gravity_directions_[partition * 3 + component] *
+                center_gravity_[partition] * center_gravity_ratios_[partition];
+        }
+    }
+    if (!prediction_state_ready_) prepare_prediction_state();
+    hotools::Mc2ParticleIntegrationView view;
+    view.positions = world_positions_.data();
+    view.velocities = state_velocities_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.damping_values = integration_damping_values_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.dt = dt;
+    view.simulation_power = simulation_power;
+    view.velocity_weight_values = velocity_weight_values.data();
+    view.gravity_values = gravity_values.data();
+    hotools::integrate_particles_mc2(view);
+    prediction_state_ready_ = false;
+    ++step_count_;
+}
+
 void DomainV1::step_post(
     const float* old_positions,
     float dt,
@@ -2158,6 +2354,59 @@ void DomainV1::step_post_owned(
         substep_old_positions_.data(), dt, dynamic_friction, static_friction_speed,
         particle_speed_limit, velocity_weight
     );
+}
+
+void DomainV1::step_post_owned_partitioned(
+    float dt,
+    const float* dynamic_friction_values,
+    const float* static_friction_speed_values,
+    const float* particle_speed_limit_values
+) {
+    ensure_live();
+    if (!substep_snapshot_ready_) {
+        throw std::logic_error("MC2 partitioned post owned step requires the substep snapshot");
+    }
+    require_finite(dynamic_friction_values, particle_count_, "partitioned post dynamic friction");
+    require_finite(static_friction_speed_values, particle_count_, "partitioned post static friction speed");
+    require_finite(particle_speed_limit_values, particle_count_, "partitioned post speed limit");
+    if (!std::isfinite(dt) || dt <= 0.0f) {
+        throw std::invalid_argument("MC2 partitioned post dt is invalid");
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (dynamic_friction_values[vertex] < 0.0f || dynamic_friction_values[vertex] > 1.0f ||
+            static_friction_speed_values[vertex] < 0.0f) {
+            throw std::invalid_argument("MC2 partitioned post values are invalid");
+        }
+    }
+    std::copy(
+        substep_old_positions_.begin(), substep_old_positions_.end(), post_old_positions_.begin()
+    );
+    std::vector<float> velocity_weight_values(particle_count_);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        velocity_weight_values[vertex] = center_velocity_weights_[
+            static_cast<std::size_t>(particle_partition_index_[vertex])
+        ];
+    }
+    hotools::Mc2PostStepView view;
+    view.positions = world_positions_.data();
+    view.old_positions = post_old_positions_.data();
+    view.velocity_positions = velocity_positions_.data();
+    view.velocities = state_velocities_.data();
+    view.real_velocities = real_velocities_.data();
+    view.friction = collision_friction_.data();
+    view.static_friction = static_friction_.data();
+    view.collision_normals = world_normals_.data();
+    view.inv_masses = inertia_inv_masses_.data();
+    view.vertex_count = static_cast<std::int64_t>(particle_count_);
+    view.step_dt = dt;
+    view.dynamic_friction_values = dynamic_friction_values;
+    view.static_friction_speed_values = static_friction_speed_values;
+    view.particle_speed_limit_values = particle_speed_limit_values;
+    view.velocity_weight_values = velocity_weight_values.data();
+    hotools::apply_post_step_mc2(view);
+    substep_snapshot_ready_ = false;
+    collision_state_ready_ = false;
+    ++step_count_;
 }
 
 void DomainV1::dispose() noexcept {

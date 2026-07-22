@@ -30,7 +30,9 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_prepare_step_basic_pose",
     "mc2_domain_cpu_v1_prepare_step_basic_pose_partitioned",
     "mc2_domain_cpu_v1_step_angle",
+    "mc2_domain_cpu_v1_step_angle_partitioned",
     "mc2_domain_cpu_v1_step_motion",
+    "mc2_domain_cpu_v1_step_motion_partitioned",
     "mc2_domain_cpu_v1_step_external_collision",
     "mc2_domain_cpu_v1_step_self_collision",
     "mc2_domain_cpu_v1_configure_whole_domain_self",
@@ -41,6 +43,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
+    "mc2_domain_cpu_v1_step_tether_partitioned",
     "mc2_domain_cpu_v1_configure_bending",
     "mc2_domain_cpu_v1_step_bending",
     "mc2_domain_cpu_v1_configure_inertia",
@@ -53,8 +56,10 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
+    "mc2_domain_cpu_v1_step_integration_partitioned",
     "mc2_domain_cpu_v1_step_post",
     "mc2_domain_cpu_v1_step_post_owned",
+    "mc2_domain_cpu_v1_step_post_owned_partitioned",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -219,6 +224,25 @@ class MC2NativeCPUKernelV1:
             key, positions, float(settings["compression"]), float(settings["stretch"])
         )
 
+    def step_tether_partitioned(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"step_basic_positions", "compression_values", "stretch_values"}
+        if set(settings) != required:
+            raise ValueError("partitioned tether requires exactly its particle inputs")
+        program = self._programs[key]
+        positions = np.ascontiguousarray(settings["step_basic_positions"], dtype=np.float32)
+        compression = np.ascontiguousarray(settings["compression_values"], dtype=np.float32)
+        stretch = np.ascontiguousarray(settings["stretch_values"], dtype=np.float32)
+        if positions.shape != (program.particle_count, 3):
+            raise ValueError("step_basic_positions must match particle_count x 3")
+        if compression.shape != (program.particle_count,) or stretch.shape != (program.particle_count,):
+            raise ValueError("partitioned tether limits must match particle_count")
+        for array in (positions, compression, stretch):
+            array.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_tether_partitioned(
+            key, positions, compression, stretch
+        )
+
     def step_bending(self, handle, simulation_power: float = 1.0) -> None:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_bending(key, float(simulation_power))
@@ -258,6 +282,43 @@ class MC2NativeCPUKernelV1:
             bool(settings["limit_enabled"]),
         )
 
+    def step_angle_partitioned(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "step_basic_positions", "step_basic_rotations", "restoration_values",
+            "limit_values", "restoration_velocity_attenuation_values",
+            "restoration_gravity_falloff_values", "limit_stiffness_values",
+            "restoration_enabled_values", "limit_enabled_values",
+        }
+        if set(settings) != required:
+            raise ValueError("partitioned angle requires exactly its particle inputs")
+        program = self._programs[key]
+        arrays = {}
+        for name, dtype, shape in (
+            ("step_basic_positions", np.float32, (program.particle_count, 3)),
+            ("step_basic_rotations", np.float32, (program.particle_count, 4)),
+            ("restoration_values", np.float32, (program.particle_count,)),
+            ("limit_values", np.float32, (program.particle_count,)),
+            ("restoration_velocity_attenuation_values", np.float32, (program.particle_count,)),
+            ("restoration_gravity_falloff_values", np.float32, (program.particle_count,)),
+            ("limit_stiffness_values", np.float32, (program.particle_count,)),
+            ("restoration_enabled_values", np.uint32, (program.particle_count,)),
+            ("limit_enabled_values", np.uint32, (program.particle_count,)),
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=dtype)
+            if array.shape != shape:
+                raise ValueError(f"{name} must have shape {shape}")
+            array.flags.writeable = False
+            arrays[name] = array
+        self._module.mc2_domain_cpu_v1_step_angle_partitioned(
+            key, *(arrays[name] for name in (
+                "step_basic_positions", "step_basic_rotations", "restoration_values",
+                "limit_values", "restoration_velocity_attenuation_values",
+                "restoration_gravity_falloff_values", "limit_stiffness_values",
+                "restoration_enabled_values", "limit_enabled_values",
+            ))
+        )
+
     def step_motion(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
         required = {
@@ -287,6 +348,41 @@ class MC2NativeCPUKernelV1:
             arrays["backstop_radii"], arrays["backstop_distances"],
             int(settings["normal_axis"]), bool(settings["max_distance_enabled"]),
             bool(settings["backstop_enabled"]),
+        )
+
+    def step_motion_partitioned(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "base_positions", "base_rotations", "max_distances", "stiffness_values",
+            "backstop_radii", "backstop_distances", "normal_axis_values",
+            "max_distance_enabled_values", "backstop_enabled_values",
+        }
+        if set(settings) != required:
+            raise ValueError("partitioned motion requires exactly its particle inputs")
+        program = self._programs[key]
+        arrays = {}
+        for name, dtype, shape in (
+            ("base_positions", np.float32, (program.particle_count, 3)),
+            ("base_rotations", np.float32, (program.particle_count, 4)),
+            ("max_distances", np.float32, (program.particle_count,)),
+            ("stiffness_values", np.float32, (program.particle_count,)),
+            ("backstop_radii", np.float32, (program.particle_count,)),
+            ("backstop_distances", np.float32, (program.particle_count,)),
+            ("normal_axis_values", np.int32, (program.particle_count,)),
+            ("max_distance_enabled_values", np.uint32, (program.particle_count,)),
+            ("backstop_enabled_values", np.uint32, (program.particle_count,)),
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=dtype)
+            if array.shape != shape:
+                raise ValueError(f"{name} must have shape {shape}")
+            array.flags.writeable = False
+            arrays[name] = array
+        self._module.mc2_domain_cpu_v1_step_motion_partitioned(
+            key, *(arrays[name] for name in (
+                "base_positions", "base_rotations", "max_distances", "stiffness_values",
+                "backstop_radii", "backstop_distances", "normal_axis_values",
+                "max_distance_enabled_values", "backstop_enabled_values",
+            ))
         )
 
     def step_post(self, handle, settings: Mapping[str, object]) -> None:
@@ -328,6 +424,38 @@ class MC2NativeCPUKernelV1:
             float(settings["static_friction_speed"]),
             float(settings["particle_speed_limit"]),
             float(settings["velocity_weight"]),
+        )
+
+    def step_post_owned_partitioned(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {
+            "dt", "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
+        }
+        if set(settings) != required:
+            raise ValueError("partitioned owned post requires exactly its particle inputs")
+        program = self._programs[key]
+        arrays = []
+        for name in (
+            "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
+        ):
+            array = np.ascontiguousarray(settings[name], dtype=np.float32)
+            if array.shape != (program.particle_count,):
+                raise ValueError(f"{name} must match particle_count")
+            array.flags.writeable = False
+            arrays.append(array)
+        self._module.mc2_domain_cpu_v1_step_post_owned_partitioned(
+            key, float(settings["dt"]), *arrays
+        )
+
+    def step_integration_partitioned(self, handle, settings: Mapping[str, object]) -> None:
+        key = self._require_handle(handle)
+        required = {"dt", "simulation_power"}
+        if set(settings) != required:
+            raise ValueError("partitioned integration requires exactly dt/simulation_power")
+        self._module.mc2_domain_cpu_v1_step_integration_partitioned(
+            key, float(settings["dt"]), float(settings["simulation_power"])
         )
 
     def step_external_collision(self, handle, settings: Mapping[str, object]) -> None:
@@ -852,37 +980,48 @@ class MC2NativeCPUKernelV1:
         if not isinstance(post_step, Mapping):
             raise TypeError("post_step must be a mapping")
         post_required = {
-            "dt", "dynamic_friction", "static_friction_speed",
-            "particle_speed_limit", "velocity_weight",
+            "dt", "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
         }
         if set(post_step) != post_required:
-            raise ValueError("compiled domain post_step requires exactly its scalar inputs")
-        scalars = {name: float(post_step[name]) for name in post_required}
-        if (
-            not all(np.isfinite(value) for value in scalars.values())
-            or scalars["dt"] <= 0.0
-            or not 0.0 <= scalars["dynamic_friction"] <= 1.0
-            or scalars["static_friction_speed"] < 0.0
-            or not 0.0 <= scalars["velocity_weight"] <= 1.0
-        ):
-            raise ValueError("compiled domain post_step scalars are invalid")
+            raise ValueError("compiled domain post_step requires exactly its particle inputs")
         key = self._require_handle(handle)
+        program = self._programs[key]
+        post_values = {"dt": float(post_step["dt"])}
+        if not np.isfinite(post_values["dt"]) or post_values["dt"] <= 0.0:
+            raise ValueError("compiled domain post_step dt is invalid")
+        for name in (
+            "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
+        ):
+            array = np.ascontiguousarray(post_step[name], dtype=np.float32)
+            if array.shape != (program.particle_count,) or not np.isfinite(array).all():
+                raise ValueError(f"compiled domain post_step {name} is invalid")
+            array.flags.writeable = False
+            post_values[name] = array
+        if (
+            np.any(post_values["dynamic_friction_values"] < 0.0)
+            or np.any(post_values["dynamic_friction_values"] > 1.0)
+            or np.any(post_values["static_friction_speed_values"] < 0.0)
+        ):
+            raise ValueError("compiled domain post_step particle values are invalid")
         collider_arrays = self._prepare_compiled_external_collision(key, external_collision)
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
             "distance_weights", "simulation_power", "distance_simulation_power",
-            "bending_simulation_power", "velocity_weight", "gravity",
-            "step_basic_positions", "tether_compression", "tether_stretch",
+            "bending_simulation_power", "step_basic_positions",
+            "tether_compression_values", "tether_stretch_values",
             "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
-            "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
-            "angle_limit_stiffness", "angle_restoration_enabled", "angle_limit_enabled",
+            "angle_restoration_velocity_attenuation_values",
+            "angle_restoration_gravity_falloff_values", "angle_limit_stiffness_values",
+            "angle_restoration_enabled_values", "angle_limit_enabled_values",
             "motion_base_positions", "motion_base_rotations", "motion_max_distances",
             "motion_stiffness_values", "motion_backstop_radii", "motion_backstop_distances",
-            "motion_normal_axis", "motion_max_distance_enabled", "motion_backstop_enabled",
+            "motion_normal_axis_values", "motion_max_distance_enabled_values",
+            "motion_backstop_enabled_values",
         }
         if set(settings) != required:
             raise ValueError("compiled domain pipeline requires exactly its structural inputs")
-        program = self._programs[key]
         has_distance = any(table.kind == "distance" for table in program.constraint_tables)
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
@@ -894,52 +1033,51 @@ class MC2NativeCPUKernelV1:
             "distance_weights": settings["distance_weights"],
         })
         self.step_center_inertia(key)
-        self.step_integration(key, {
+        self.step_integration_partitioned(key, {
             "dt": settings["dt"], "simulation_power": settings["simulation_power"],
-            "velocity_weight": settings["velocity_weight"], "gravity": settings["gravity"],
         })
         if has_tether:
-            self.step_tether(key, {
+            self.step_tether_partitioned(key, {
                 "step_basic_positions": settings["step_basic_positions"],
-                "compression": settings["tether_compression"],
-                "stretch": settings["tether_stretch"],
+                "compression_values": settings["tether_compression_values"],
+                "stretch_values": settings["tether_stretch_values"],
             })
         if has_distance:
             self.step_distance(key, settings["distance_simulation_power"])
         if has_angle:
-            self.step_angle(key, {
+            self.step_angle_partitioned(key, {
                 "step_basic_positions": settings["step_basic_positions"],
                 "step_basic_rotations": settings["step_basic_rotations"],
                 "restoration_values": settings["angle_restoration_values"],
                 "limit_values": settings["angle_limit_values"],
-                "restoration_velocity_attenuation": settings[
-                    "angle_restoration_velocity_attenuation"
+                "restoration_velocity_attenuation_values": settings[
+                    "angle_restoration_velocity_attenuation_values"
                 ],
-                "restoration_gravity_falloff": settings[
-                    "angle_restoration_gravity_falloff"
+                "restoration_gravity_falloff_values": settings[
+                    "angle_restoration_gravity_falloff_values"
                 ],
-                "limit_stiffness": settings["angle_limit_stiffness"],
-                "restoration_enabled": settings["angle_restoration_enabled"],
-                "limit_enabled": settings["angle_limit_enabled"],
+                "limit_stiffness_values": settings["angle_limit_stiffness_values"],
+                "restoration_enabled_values": settings["angle_restoration_enabled_values"],
+                "limit_enabled_values": settings["angle_limit_enabled_values"],
             })
         if has_bending:
             self.step_bending(key, settings["bending_simulation_power"])
         self._run_compiled_external_collision(key, collider_arrays)
         if has_distance:
             self.step_distance(key, settings["distance_simulation_power"])
-        self.step_motion(key, {
+        self.step_motion_partitioned(key, {
             "base_positions": settings["motion_base_positions"],
             "base_rotations": settings["motion_base_rotations"],
             "max_distances": settings["motion_max_distances"],
             "stiffness_values": settings["motion_stiffness_values"],
             "backstop_radii": settings["motion_backstop_radii"],
             "backstop_distances": settings["motion_backstop_distances"],
-            "normal_axis": settings["motion_normal_axis"],
-            "max_distance_enabled": settings["motion_max_distance_enabled"],
-            "backstop_enabled": settings["motion_backstop_enabled"],
+            "normal_axis_values": settings["motion_normal_axis_values"],
+            "max_distance_enabled_values": settings["motion_max_distance_enabled_values"],
+            "backstop_enabled_values": settings["motion_backstop_enabled_values"],
         })
         self.step_whole_domain_self_owned(key)
-        self.step_post_owned(key, scalars)
+        self.step_post_owned_partitioned(key, post_values)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""

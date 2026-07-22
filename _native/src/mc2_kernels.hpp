@@ -43,6 +43,8 @@ struct Mc2TetherConstraintView {
     float stiffness = 0.0f;
     float compression = 0.0f;
     float stretch = 0.0f;
+    const float* compression_values = nullptr;
+    const float* stretch_values = nullptr;
 };
 
 struct Mc2MotionConstraintView {
@@ -60,6 +62,9 @@ struct Mc2MotionConstraintView {
     bool explicit_enable_flags = false;
     bool max_distance_enabled = false;
     bool backstop_enabled = false;
+    const std::int32_t* normal_axis_values = nullptr;
+    const std::uint32_t* max_distance_enabled_values = nullptr;
+    const std::uint32_t* backstop_enabled_values = nullptr;
     float* debug_record_origins = nullptr;
     float* debug_record_corrections = nullptr;
     std::uint8_t* debug_record_valid = nullptr;
@@ -81,6 +86,10 @@ struct Mc2PostStepView {
     float static_friction_speed = 0.0f;
     float particle_speed_limit = -1.0f;
     float velocity_weight = 1.0f;
+    const float* dynamic_friction_values = nullptr;
+    const float* static_friction_speed_values = nullptr;
+    const float* particle_speed_limit_values = nullptr;
+    const float* velocity_weight_values = nullptr;
 };
 
 struct Mc2ParticleFrameShiftView {
@@ -219,6 +228,9 @@ struct Mc2AngleConstraintView {
     bool explicit_enable_flags = false;
     bool restoration_enabled = false;
     bool limit_enabled = false;
+    const float* limit_stiffness_values = nullptr;
+    const std::uint32_t* restoration_enabled_values = nullptr;
+    const std::uint32_t* limit_enabled_values = nullptr;
     float* debug_record_origins = nullptr;
     float* debug_record_corrections = nullptr;
     float* debug_record_currents = nullptr;
@@ -427,6 +439,8 @@ struct Mc2ParticleIntegrationView {
     float simulation_power = 0.0f;
     float velocity_weight = 1.0f;
     float gravity[3] = {};
+    const float* velocity_weight_values = nullptr;
+    const float* gravity_values = nullptr;
 };
 
 struct Mc2PartitionKeepTransformView {
