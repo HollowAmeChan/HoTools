@@ -820,7 +820,7 @@ E3 native 合入门禁已经满足：新 owner 能在无 Blender 对象的 C++/h
 
 上述配置、失败原子性、primitive计数、candidate/contact计数、允许/阻断跨partition以及双source edge-edge真实位移均由py311/py313 raw ABI和adapter夹具锁定；单source标量self endpoint继续只作为E3 oracle，不是第二个产品owner。统一context的compiled full endpoint现在固定执行`Center frame shift -> Center -> Center inertia -> Integration -> Tether -> Distance A -> Angle -> Bending -> External -> Distance B -> Motion -> Whole Self -> Post`。External只接收一份公共collider数组，静态edge、partition collision mode、独立`collided_by_groups`、particle radius/friction由domain编译并持有；point只消费mode 1，edge只消费mode 2且primitive不得跨partition。substep起点由native owner独立冻结，self继承External已经累积的摩擦状态，post后snapshot与碰撞状态立即失效。双partitionpoint/edge过滤、真实接触、real velocity history、非法collider/post零pass执行及E3旧标量ABI均有双ABI证据。
 
-E4尚未关闭：native/adapter的compiled external和纯host的whole-domain collider capture子门槛已关闭。`MC2DomainColliderFrameSpec`拥有独立只读SoA，按collector draft的全部resolved source一次排除域内owner，不做partition mask预筛选，并可直接被compiled full endpoint消费；source重排不改变capture signature。下一门禁是把既有source observation/fragment cache、domain frame和该collider POD接入产品fused owner，完成多source oracle与性能验收；在此之前不切产品slot，也不删除V0或普通aggregate路径。
+E4尚未关闭：native/adapter的compiled external和纯host的whole-domain collider capture子门槛已关闭。`MC2DomainColliderFrameSpec`拥有独立只读SoA，按collector draft的全部resolved source一次排除域内owner，不做partition mask预筛选，并可直接被compiled full endpoint消费；source重排不改变capture signature。`MC2MeshFragmentCacheV1`现按`static_signature + world_gravity_direction`复用完整Tier A fragment，stage期间的部分成功不会进入live cache，只有显式commit才批量发布并裁掉离域条目；stale/foreign batch均被拒绝，py311/py313已有相同5项合同。下一门禁是让产品fused owner把该缓存提交点与native domain staged replacement合并，再接domain frame与collider POD并完成多source oracle/性能验收；在此之前不切产品slot，也不删除V0或普通aggregate路径。
 
 ### E5：多目标结果事务与产品节点
 
