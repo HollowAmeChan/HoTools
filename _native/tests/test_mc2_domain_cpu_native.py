@@ -546,6 +546,61 @@ def test_domain_cpu_native_whole_domain_self_configuration_is_atomic():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_owned_substep_snapshot_is_consumed_by_post():
+    handle = _create_whole_domain_self_case()
+    positions = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+         (0.25, 0.25, 0.01)), dtype=np.float32,
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    try:
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            domain_signature="domain:self",
+            partition_positions=((0.0, 0.0, 0.0),) * 2,
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_integration(
+            handle, np.zeros(4, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(
+            handle, np.asarray((3,), dtype=np.int32), np.empty((0, 2), dtype=np.int32),
+            np.asarray(((0, 1, 2),), dtype=np.int32),
+            np.asarray((2, 2), dtype=np.uint32), np.asarray((1, 2), dtype=np.uint32),
+            np.zeros(2, dtype=np.uint32), np.zeros(4, dtype=np.float32),
+            np.full(4, 0.02, dtype=np.float32),
+        )
+        try:
+            hotools_native.mc2_domain_cpu_v1_step_whole_domain_self_owned(handle)
+        except RuntimeError as exc:
+            assert "snapshot" in str(exc)
+        else:
+            raise AssertionError("owned self accepted a missing substep snapshot")
+
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 0.1, 1.0, 1.0, np.zeros(3, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_step_whole_domain_self_owned(handle)
+        hotools_native.mc2_domain_cpu_v1_step_post_owned(
+            handle, 0.1, 0.0, 0.0, -1.0, 1.0
+        )
+        try:
+            hotools_native.mc2_domain_cpu_v1_step_post_owned(
+                handle, 0.1, 0.0, 0.0, -1.0, 1.0
+            )
+        except RuntimeError as exc:
+            assert "snapshot" in str(exc)
+        else:
+            raise AssertionError("owned post reused a consumed substep snapshot")
+        info = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert info["whole_domain_self_step_count"] == 1
+        assert info["step_count"] == 3
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 def test_domain_cpu_native_preserves_state_and_resets_one_partition():
     handle = _create(partition_count=2, particle_attributes=(1, 0, 0))
     try:

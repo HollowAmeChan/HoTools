@@ -644,6 +644,83 @@ def test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots():
         domain.dispose()
 
 
+def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
+    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    edge_midpoint = (positions[0] + positions[1]) / np.float32(2.0)
+    positions[3] = edge_midpoint + np.asarray((0.0, -0.5, 0.001), dtype=np.float32)
+    positions[4] = edge_midpoint + np.asarray((0.0, 0.5, 0.001), dtype=np.float32)
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    count = compiled.program.particle_count
+    partition_count = compiled.program.partition_count
+    try:
+        domain.update_frame(frame)
+        settings = {
+            "anchor_component_local_positions": np.zeros(
+                (partition_count, 3), dtype=np.float32
+            ),
+            "dt": 0.1,
+            "frame_interpolation": 1.0,
+            "distance_weights": np.ones(partition_count, dtype=np.float32),
+            "simulation_power": 0.0,
+            "distance_simulation_power": 0.0,
+            "bending_simulation_power": 0.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, 0.0, 0.0),
+            "step_basic_positions": positions,
+            "tether_compression": 0.0,
+            "tether_stretch": 0.0,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "angle_restoration_values": np.zeros(count, dtype=np.float32),
+            "angle_limit_values": np.zeros(count, dtype=np.float32),
+            "angle_restoration_velocity_attenuation": 0.0,
+            "angle_restoration_gravity_falloff": 0.0,
+            "angle_limit_stiffness": 0.0,
+            "angle_restoration_enabled": False,
+            "angle_limit_enabled": False,
+            "motion_base_positions": positions,
+            "motion_base_rotations": frame.animated_base_world_rotations,
+            "motion_max_distances": np.zeros(count, dtype=np.float32),
+            "motion_stiffness_values": np.zeros(count, dtype=np.float32),
+            "motion_backstop_radii": np.zeros(count, dtype=np.float32),
+            "motion_backstop_distances": np.zeros(count, dtype=np.float32),
+            "motion_normal_axis": 1,
+            "motion_max_distance_enabled": False,
+            "motion_backstop_enabled": False,
+            "post_step": {
+                "dt": 0.1,
+                "dynamic_friction": 0.0,
+                "static_friction_speed": 0.0,
+                "particle_speed_limit": -1.0,
+                "velocity_weight": 1.0,
+            },
+        }
+        invalid = dict(settings)
+        invalid["post_step"] = dict(settings["post_step"], dt=float("nan"))
+        try:
+            domain.step_compiled_domain_pipeline_full(invalid)
+        except ValueError as exc:
+            assert "post_step scalars" in str(exc)
+        else:
+            raise AssertionError("compiled domain pipeline accepted invalid post scalars")
+        assert domain.inspect()["kernel"]["step_count"] == 0
+
+        domain.step_compiled_domain_pipeline_full(settings)
+        output = domain.read_output().world_positions
+        state = domain.inspect()["kernel"]
+        assert np.any(np.abs(output - positions) > np.float32(1.0e-6))
+        assert state["whole_domain_self_step_count"] == 1
+        assert state["whole_domain_self_last_contact_count"] > 0
+        assert np.any(np.abs(domain.read_debug_state()["real_velocities"]) > 1.0e-6)
+        assert domain.inspect()["step_count"] == 1
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_reference_pipeline_full_sequences_collision_passes():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -842,6 +919,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_pipeline_runs_structural_order_through_motion")
     test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots()
     print("PASS test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots")
+    test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post()
+    print("PASS test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post")
     test_native_cpu_reference_pipeline_full_sequences_collision_passes()
     print("PASS test_native_cpu_reference_pipeline_full_sequences_collision_passes")
     test_native_cpu_kernel_exposes_external_point_collision_slice()

@@ -484,7 +484,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 2. E3 已完成：逐段复用/提取现有 kernel，完成 per-partition Center/Anchor/Teleport history、完整单线程 step 和 V0 tolerance；同时为每个 pass 固定 backend-neutral IO/读写集。
 3. E3 step 骨架完整后接 P0 native stage counters；已完成，计时实现、基准与结论分提交。
 4. P1-B source observation cache、失效矩阵与性能门禁已完成。
-5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic与compiled primitive/filter/particle驱动的一次whole-domain self也已由双ABI关闭。当前继续多source capture/fragment cache与统一context中的完整固定pass顺序；每个子交付独立做单/双source oracle，产品slot仍保持V0。
+5. 粒子级隐式/显式resolved intent、provenance、partition filter与domain draft编译入口已闭环；E4/P2的partitioned StepBasic、compiled whole-domain self以及native-owned substep snapshot到post的完整结构段已由双ABI关闭。当前继续compiled external collision和多source capture/fragment cache；每个子交付独立做单/双source oracle，产品slot仍保持V0。
 6. 只对 P0 已证明的热点做 P5 容量/排序/布局优化，不预先排算法改写。
 7. E5 先提交多目标事务，再提交产品 collector、implicit/explicit merge 和 fusion report。
 8. soak 通过后执行 E7-CPU，删除已失去所有权的拆 task、普通 aggregate 和 V0 兼容路径。

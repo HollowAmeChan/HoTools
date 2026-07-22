@@ -69,6 +69,7 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       real_velocities_(program.particle_count * 3, 0.0f),
       static_friction_(program.particle_count, 0.0f),
       post_old_positions_(program.particle_count * 3, 0.0f),
+      substep_old_positions_(program.particle_count * 3, 0.0f),
       partition_world_positions_(program.partition_count * 3, 0.0f),
       partition_previous_world_positions_(program.partition_count * 3, 0.0f),
       partition_world_rotations_(program.partition_count * 4, 0.0f),
@@ -432,6 +433,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     center_frame_shift_ready_ = false;
     center_inertia_pending_ = false;
     prediction_state_ready_ = false;
+    substep_snapshot_ready_ = false;
     frame_delta_time_ = frame.frame_delta_time;
     simulation_delta_time_ = frame.simulation_delta_time;
     time_scale_ = frame.time_scale;
@@ -893,7 +895,9 @@ void DomainV1::prepare_prediction_state() {
             world_rotations_.data() + rotation_offset
         );
     }
+    substep_old_positions_ = world_positions_;
     prediction_state_ready_ = true;
+    substep_snapshot_ready_ = true;
 }
 
 void DomainV1::step() {
@@ -1579,6 +1583,16 @@ void DomainV1::step_whole_domain_self(const float* old_positions) {
     ++step_count_;
 }
 
+void DomainV1::step_whole_domain_self_owned() {
+    ensure_live();
+    if (!substep_snapshot_ready_) {
+        throw std::logic_error(
+            "MC2 whole-domain self owned step requires the substep snapshot"
+        );
+    }
+    step_whole_domain_self(substep_old_positions_.data());
+}
+
 void DomainV1::step_external_edge_collision(
     const float* collision_radii,
     const std::int32_t* edges,
@@ -1933,7 +1947,25 @@ void DomainV1::step_post(
     view.particle_speed_limit = particle_speed_limit;
     view.velocity_weight = velocity_weight;
     hotools::apply_post_step_mc2(view);
+    substep_snapshot_ready_ = false;
     ++step_count_;
+}
+
+void DomainV1::step_post_owned(
+    float dt,
+    float dynamic_friction,
+    float static_friction_speed,
+    float particle_speed_limit,
+    float velocity_weight
+) {
+    ensure_live();
+    if (!substep_snapshot_ready_) {
+        throw std::logic_error("MC2 post owned step requires the substep snapshot");
+    }
+    step_post(
+        substep_old_positions_.data(), dt, dynamic_friction, static_friction_speed,
+        particle_speed_limit, velocity_weight
+    );
 }
 
 void DomainV1::dispose() noexcept {
@@ -1957,6 +1989,7 @@ void DomainV1::dispose() noexcept {
     real_velocities_.clear();
     static_friction_.clear();
     post_old_positions_.clear();
+    substep_old_positions_.clear();
     whole_domain_self_points_.clear();
     whole_domain_self_edges_.clear();
     whole_domain_self_triangles_.clear();
@@ -2027,6 +2060,7 @@ void DomainV1::dispose() noexcept {
     center_frame_shift_ready_ = false;
     center_inertia_pending_ = false;
     prediction_state_ready_ = false;
+    substep_snapshot_ready_ = false;
     center_shift_count_ = 0;
 }
 

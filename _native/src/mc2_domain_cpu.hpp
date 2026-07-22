@@ -143,6 +143,7 @@ public:
         const float* particle_thickness
     );
     void step_whole_domain_self(const float* old_positions);
+    void step_whole_domain_self_owned();
     void step_external_edge_collision(
         const float* collision_radii,
         const std::int32_t* edges,
@@ -228,6 +229,13 @@ public:
     );
     void step_post(
         const float* old_positions,
+        float dt,
+        float dynamic_friction,
+        float static_friction_speed,
+        float particle_speed_limit,
+        float velocity_weight
+    );
+    void step_post_owned(
         float dt,
         float dynamic_friction,
         float static_friction_speed,
@@ -352,6 +360,7 @@ private:
     std::vector<float> real_velocities_;
     std::vector<float> static_friction_;
     std::vector<float> post_old_positions_;
+    std::vector<float> substep_old_positions_;
     std::vector<float> partition_world_positions_;
     std::vector<float> partition_previous_world_positions_;
     std::vector<float> partition_world_rotations_;
@@ -414,6 +423,7 @@ private:
     bool center_ready_ = false;
     bool center_inertia_pending_ = false;
     bool prediction_state_ready_ = false;
+    bool substep_snapshot_ready_ = false;
     std::int64_t center_step_count_ = 0;
     std::vector<std::int64_t> partition_reset_counts_;
     std::vector<std::int64_t> partition_keep_counts_;

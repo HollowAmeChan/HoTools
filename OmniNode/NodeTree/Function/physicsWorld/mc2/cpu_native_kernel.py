@@ -34,6 +34,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_self_collision",
     "mc2_domain_cpu_v1_configure_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self",
+    "mc2_domain_cpu_v1_step_whole_domain_self_owned",
     "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
     "mc2_domain_cpu_v1_step_tether",
@@ -50,6 +51,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
     "mc2_domain_cpu_v1_step_post",
+    "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -306,6 +308,24 @@ class MC2NativeCPUKernelV1:
             float(settings["velocity_weight"]),
         )
 
+    def step_post_owned(self, handle, settings: Mapping[str, object]) -> None:
+        """Commit post/history from the native-owned substep snapshot."""
+        key = self._require_handle(handle)
+        required = {
+            "dt", "dynamic_friction", "static_friction_speed",
+            "particle_speed_limit", "velocity_weight",
+        }
+        if set(settings) != required:
+            raise ValueError("owned post slice requires exactly its scalar inputs")
+        self._module.mc2_domain_cpu_v1_step_post_owned(
+            key,
+            float(settings["dt"]),
+            float(settings["dynamic_friction"]),
+            float(settings["static_friction_speed"]),
+            float(settings["particle_speed_limit"]),
+            float(settings["velocity_weight"]),
+        )
+
     def step_external_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
         required = {
@@ -384,6 +404,11 @@ class MC2NativeCPUKernelV1:
             raise ValueError("old_positions must match particle_count x 3")
         positions.flags.writeable = False
         self._module.mc2_domain_cpu_v1_step_whole_domain_self(key, positions)
+
+    def step_whole_domain_self_owned(self, handle) -> None:
+        """Run E4 whole-domain self from the native-owned substep snapshot."""
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_step_whole_domain_self_owned(key)
 
     def step_external_edge_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -729,6 +754,43 @@ class MC2NativeCPUKernelV1:
             if not isinstance(post_step, Mapping):
                 raise TypeError("post_step must be a mapping or None")
             self.step_post(key, post_step)
+
+    def step_compiled_domain_pipeline_full(
+        self,
+        handle,
+        settings: Mapping[str, object],
+    ) -> None:
+        """Run the E4 structural order, compiled self, and owned post/history.
+
+        External collider packets are intentionally not accepted by this
+        endpoint yet.  They remain on the explicit E3 oracle until their
+        per-partition compiled contract lands.
+        """
+        settings = dict(settings)
+        if "post_step" not in settings:
+            raise ValueError("compiled domain pipeline requires post_step")
+        post_step = settings.pop("post_step")
+        if not isinstance(post_step, Mapping):
+            raise TypeError("post_step must be a mapping")
+        post_required = {
+            "dt", "dynamic_friction", "static_friction_speed",
+            "particle_speed_limit", "velocity_weight",
+        }
+        if set(post_step) != post_required:
+            raise ValueError("compiled domain post_step requires exactly its scalar inputs")
+        scalars = {name: float(post_step[name]) for name in post_required}
+        if (
+            not all(np.isfinite(value) for value in scalars.values())
+            or scalars["dt"] <= 0.0
+            or not 0.0 <= scalars["dynamic_friction"] <= 1.0
+            or scalars["static_friction_speed"] < 0.0
+            or not 0.0 <= scalars["velocity_weight"] <= 1.0
+        ):
+            raise ValueError("compiled domain post_step scalars are invalid")
+        key = self._require_handle(handle)
+        self.step_reference_pipeline(key, settings)
+        self.step_whole_domain_self_owned(key)
+        self.step_post_owned(key, scalars)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift slice only."""

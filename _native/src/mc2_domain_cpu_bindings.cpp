@@ -632,6 +632,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Run one compiled whole-domain self-collision pass."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_whole_domain_self_owned",
+        [](std::uint64_t handle) {
+            require_domain(handle)->step_whole_domain_self_owned();
+        },
+        nb::arg("handle"),
+        "Run compiled whole-domain self collision from the owned substep snapshot."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_external_edge_collision",
         [](std::uint64_t handle,
            cf32_1d collision_radii,
@@ -918,6 +926,24 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("dynamic_friction"), nb::arg("static_friction_speed"),
         nb::arg("particle_speed_limit"), nb::arg("velocity_weight"),
         "Run the explicit V0 post-step velocity/friction transaction."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_post_owned",
+        [](std::uint64_t handle,
+           float dt,
+           float dynamic_friction,
+           float static_friction_speed,
+           float particle_speed_limit,
+           float velocity_weight) {
+            require_domain(handle)->step_post_owned(
+                dt, dynamic_friction, static_friction_speed,
+                particle_speed_limit, velocity_weight
+            );
+        },
+        nb::arg("handle"), nb::arg("dt"), nb::arg("dynamic_friction"),
+        nb::arg("static_friction_speed"), nb::arg("particle_speed_limit"),
+        nb::arg("velocity_weight"),
+        "Run post/history from the owned substep snapshot."
     );
     module.def(
         "mc2_domain_cpu_v1_read",

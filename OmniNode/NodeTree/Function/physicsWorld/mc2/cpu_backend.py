@@ -268,6 +268,17 @@ class MC2CPUBackendDomainV1:
         run_reference(self._handle, settings)
         self._step_count += 1
 
+    def step_compiled_domain_pipeline_full(self, settings: Mapping[str, object]) -> None:
+        """Run the E4 compiled structural/self/post order in one domain owner."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("compiled domain pipeline requires update_frame first")
+        run_pipeline = getattr(self._kernel, "step_compiled_domain_pipeline_full", None)
+        if not callable(run_pipeline):
+            raise RuntimeError("CPU kernel does not expose compiled domain pipeline")
+        run_pipeline(self._handle, settings)
+        self._step_count += 1
+
     def prepare_step_basic_pose(self, animation_pose_ratio: float | None = None) -> dict:
         """Build StepBasic from compiled ratio unless an explicit test override is supplied."""
         self._ensure_live()

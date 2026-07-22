@@ -78,7 +78,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 生产V0可用；统一粒子域E4进行中 | 既有产品数值/debug验收保持闭环；E0-E3、P0、P1-B、粒子级覆盖、partitioned StepBasic和compiled whole-domain self子门槛已完成；whole-domain self由一个DomainV1 pass消费point/edge/triangle、逐partition filter和逐粒子参数，py311/py313均有允许/阻断跨partition证据；1600粒子120稳定样本的static observation p95为`0.171 ms`，Bone静态观察仍保守全扫 | 下一入口是多source capture/fragment cache与统一context完整固定pass顺序；E5多目标事务和产品collector通过后才切换owner并执行E7-CPU清理 |
+| MC2 | 生产V0可用；统一粒子域E4进行中 | 既有产品数值/debug验收保持闭环；E0-E3、P0、P1-B、粒子级覆盖、partitioned StepBasic、compiled whole-domain self及native-owned结构/post段已完成；同一DomainV1 pass消费point/edge/triangle、逐partition filter和逐粒子参数，py311/py313均有允许/阻断跨partition、真实位移与post速度证据；1600粒子120稳定样本的static observation p95为`0.171 ms`，Bone静态观察仍保守全扫 | 下一入口是compiled external collision和多source capture/fragment cache；E5多目标事务和产品collector通过后才切换owner并执行E7-CPU清理 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。

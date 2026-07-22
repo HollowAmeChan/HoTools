@@ -745,9 +745,9 @@ Python host只保存opaque handle和可复用输出/debug buffer，不保存C++ 
 
 ### 统一粒子域迁移状态（2026-07-22）
 
-本文其余生产描述仍以V0产品owner为准。独立`DomainV1`已经完成单source全功能CPU reference，并在E4中接通partitioned StepBasic和一次compiled whole-domain self：同一个native owner直接消费point/edge/triangle、逐partition self mode/group/mask和逐粒子thickness/friction，跨partition碰撞要求双方过滤握手，py311/py313 raw ABI与adapter均有允许、阻断和真实位移证据。
+本文其余生产描述仍以V0产品owner为准。独立`DomainV1`已经完成单source全功能CPU reference，并在E4中接通partitioned StepBasic和一次compiled whole-domain self：同一个native owner直接消费point/edge/triangle、逐partition self mode/group/mask和逐粒子thickness/friction，跨partition碰撞要求双方过滤握手。结构pass到Motion后由同一owner运行whole-domain self与post/history，pre-prediction snapshot全程留在native且post后失效；py311/py313 raw ABI与adapter均有允许、阻断、真实位移和real velocity证据。
 
-这只关闭E4的whole-domain self子门槛，不代表产品迁移完成。多source capture/fragment cache、统一context完整pass、多目标原子事务和产品collector仍未关闭，因此旧V0 task与普通aggregate暂时继续拥有产品路径，下面的既有产品性能与debug合同仍然有效；只有E5自动化与Blender验收完成后才允许切换owner并执行E7-CPU删除。
+这关闭了E4的whole-domain self与native-owned结构/post子门槛，不代表产品迁移完成。compiled external collision、多source capture/fragment cache、多目标原子事务和产品collector仍未关闭，因此旧V0 task与普通aggregate暂时继续拥有产品路径，下面的既有产品性能与debug合同仍然有效；只有E5自动化与Blender验收完成后才允许切换owner并执行E7-CPU删除。
 
 ## 构建与性能边界
 
