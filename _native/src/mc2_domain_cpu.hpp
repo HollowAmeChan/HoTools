@@ -66,6 +66,7 @@ public:
         const float* stiffness_values,
         const float* depth_values,
         const float* friction_values,
+        const float* velocity_attenuation_values,
         std::size_t neighbor_count
     );
     void configure_baseline(
@@ -317,6 +318,7 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& velocity_positions() const noexcept { return velocity_positions_; }
     const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
@@ -499,6 +501,7 @@ private:
     std::vector<float> distance_rest_lengths_;
     std::vector<float> distance_stiffness_values_;
     std::vector<float> distance_inverse_masses_;
+    std::vector<float> distance_velocity_attenuation_values_;
     bool distance_ready_ = false;
     std::vector<std::int32_t> baseline_parent_indices_;
     std::vector<std::int32_t> baseline_line_starts_;

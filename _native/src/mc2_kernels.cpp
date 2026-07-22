@@ -874,10 +874,13 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
             view.positions[offset + 0] = current_x + add_pos_x;
             view.positions[offset + 1] = current_y + add_pos_y;
             view.positions[offset + 2] = current_z + add_pos_z;
-            if (view.velocity_positions != nullptr && view.velocity_attenuation > kMc2Epsilon) {
-                view.velocity_positions[offset + 0] += add_pos_x * view.velocity_attenuation;
-                view.velocity_positions[offset + 1] += add_pos_y * view.velocity_attenuation;
-                view.velocity_positions[offset + 2] += add_pos_z * view.velocity_attenuation;
+            const float velocity_attenuation = view.velocity_attenuation_values != nullptr
+                ? view.velocity_attenuation_values[vertex]
+                : view.velocity_attenuation;
+            if (view.velocity_positions != nullptr && velocity_attenuation > kMc2Epsilon) {
+                view.velocity_positions[offset + 0] += add_pos_x * velocity_attenuation;
+                view.velocity_positions[offset + 1] += add_pos_y * velocity_attenuation;
+                view.velocity_positions[offset + 2] += add_pos_z * velocity_attenuation;
             }
         }
     }

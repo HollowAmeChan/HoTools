@@ -135,6 +135,7 @@ class MC2MeshProductSchedulerStateV1:
         *,
         frame_delta_time: float,
         world_time_scale: float,
+        initialize_only: bool = False,
     ) -> MC2MeshProductScheduledFrameV1:
         if not isinstance(frame_packet, MC2DomainFramePacketV1):
             raise TypeError("frame_packet must be MC2DomainFramePacketV1")
@@ -148,14 +149,37 @@ class MC2MeshProductSchedulerStateV1:
             raise ValueError("frame_delta_time must be finite and positive")
         if not math.isfinite(world_scale) or world_scale < 0.0:
             raise ValueError("world_time_scale must be finite and non-negative")
+        if type(initialize_only) is not bool:
+            raise TypeError("initialize_only must be a boolean")
         effective_time_scale = world_scale * float(settings.time_scale)
         staged_scheduler = self._time_scheduler.clone()
-        schedule = staged_scheduler.plan_frame(
-            frame_delta_time=frame_dt,
-            now_time_scale=effective_time_scale,
-            simulation_delta_time=1.0 / float(settings.simulation_frequency),
-            max_simulation_count_per_frame=settings.max_simulation_count_per_frame,
-        )
+        if initialize_only:
+            schedule = MC2FrameSchedule(
+                frame_delta_time=float(np.float32(frame_dt)),
+                now_time_scale=float(np.float32(effective_time_scale)),
+                simulation_delta_time=float(np.float32(
+                    1.0 / float(settings.simulation_frequency)
+                )),
+                max_simulation_count_per_frame=(
+                    settings.max_simulation_count_per_frame
+                ),
+                planned_update_count=0,
+                update_count=0,
+                skip_count=0,
+                time=staged_scheduler.time,
+                old_time=staged_scheduler.old_time,
+                now_update_time=staged_scheduler.now_update_time,
+                old_update_time=staged_scheduler.old_update_time,
+                frame_update_time=staged_scheduler.frame_update_time,
+                frame_old_time=staged_scheduler.frame_old_time,
+            )
+        else:
+            schedule = staged_scheduler.plan_frame(
+                frame_delta_time=frame_dt,
+                now_time_scale=effective_time_scale,
+                simulation_delta_time=1.0 / float(settings.simulation_frequency),
+                max_simulation_count_per_frame=settings.max_simulation_count_per_frame,
+            )
         running = schedule.update_count > 0
         packet = replace(
             frame_packet,

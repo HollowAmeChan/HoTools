@@ -924,11 +924,12 @@ void DomainV1::configure_distance(
     const float* stiffness_values,
     const float* depth_values,
     const float* friction_values,
+    const float* velocity_attenuation_values,
     std::size_t neighbor_count
 ) {
     ensure_live();
     if (starts == nullptr || counts == nullptr || depth_values == nullptr ||
-        friction_values == nullptr ||
+        friction_values == nullptr || velocity_attenuation_values == nullptr ||
         (neighbor_count != 0 && (neighbors == nullptr || rest_lengths == nullptr || stiffness_values == nullptr))) {
         throw std::invalid_argument("MC2 CPU distance arrays cannot be null");
     }
@@ -950,8 +951,11 @@ void DomainV1::configure_distance(
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         const float depth = depth_values[vertex];
         const float friction = friction_values[vertex];
+        const float velocity_attenuation = velocity_attenuation_values[vertex];
         if (!std::isfinite(depth) || depth < 0.0f || depth > 1.0f ||
-            !std::isfinite(friction) || friction < 0.0f) {
+            !std::isfinite(friction) || friction < 0.0f ||
+            !std::isfinite(velocity_attenuation) || velocity_attenuation < 0.0f ||
+            velocity_attenuation > 1.0f) {
             throw std::invalid_argument("MC2 CPU distance particle values are invalid");
         }
         if ((particle_attribute_flags_[vertex] & 0x01u) != 0u) {
@@ -967,6 +971,9 @@ void DomainV1::configure_distance(
     distance_neighbors_.assign(neighbors, neighbors + neighbor_count);
     distance_rest_lengths_.assign(rest_lengths, rest_lengths + neighbor_count);
     distance_stiffness_values_.assign(stiffness_values, stiffness_values + neighbor_count);
+    distance_velocity_attenuation_values_.assign(
+        velocity_attenuation_values, velocity_attenuation_values + particle_count_
+    );
     distance_ready_ = true;
 }
 
@@ -981,10 +988,9 @@ void DomainV1::step_distance(float simulation_power) {
     if (!std::isfinite(simulation_power) || simulation_power < 0.0f) {
         throw std::invalid_argument("MC2 CPU distance simulation power is invalid");
     }
-    const std::vector<float> base_positions = world_positions_;
     hotools::Mc2NeighborConstraintView view;
     view.positions = world_positions_.data();
-    view.base_positions = base_positions.data();
+    view.base_positions = step_basic_positions_.data();
     view.inv_masses = distance_inverse_masses_.data();
     view.starts = distance_starts_.data();
     view.counts = distance_counts_.data();
@@ -992,6 +998,7 @@ void DomainV1::step_distance(float simulation_power) {
     view.rest_lengths = distance_rest_lengths_.data();
     view.stiffness_values = distance_stiffness_values_.data();
     view.velocity_positions = velocity_positions_.data();
+    view.velocity_attenuation_values = distance_velocity_attenuation_values_.data();
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.neighbor_count = static_cast<std::int64_t>(distance_neighbors_.size());
     view.simulation_power = simulation_power;
@@ -2477,6 +2484,8 @@ void DomainV1::dispose() noexcept {
     distance_neighbors_.clear();
     distance_rest_lengths_.clear();
     distance_stiffness_values_.clear();
+    distance_inverse_masses_.clear();
+    distance_velocity_attenuation_values_.clear();
     tether_root_indices_.clear();
     tether_ready_ = false;
     baseline_parent_indices_.clear();

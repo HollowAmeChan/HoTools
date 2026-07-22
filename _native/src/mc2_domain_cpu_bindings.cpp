@@ -6,7 +6,6 @@
 #include <nanobind/stl/string.h>
 
 #include <cstdint>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -24,7 +23,8 @@ using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::d
 using ci32_2d = nb::ndarray<const std::int32_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using cu32_1d = nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
-std::mutex domain_registry_mutex;
+// Every DomainV1 binding retains the Python GIL. Keep this registry GIL-serial;
+// MSVC std::mutex is not safe under Blender's tbbmalloc_proxy interception.
 std::unordered_set<mc2_domain_cpu::DomainV1*> live_domains;
 
 mc2_domain_cpu::DomainV1* require_domain(std::uint64_t handle) {
@@ -32,11 +32,8 @@ mc2_domain_cpu::DomainV1* require_domain(std::uint64_t handle) {
         throw nb::value_error("MC2 CPU domain handle is null");
     }
     auto* domain = reinterpret_cast<mc2_domain_cpu::DomainV1*>(handle);
-    {
-        const std::lock_guard<std::mutex> lock(domain_registry_mutex);
-        if (live_domains.find(domain) == live_domains.end()) {
-            throw std::runtime_error("MC2 CPU domain handle is not live");
-        }
+    if (live_domains.find(domain) == live_domains.end()) {
+        throw std::runtime_error("MC2 CPU domain handle is not live");
     }
     return domain;
 }
@@ -116,10 +113,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 layout_signature.c_str(),
             };
             auto* domain = new mc2_domain_cpu::DomainV1(program);
-            {
-                const std::lock_guard<std::mutex> lock(domain_registry_mutex);
-                live_domains.insert(domain);
-            }
+            live_domains.insert(domain);
             return reinterpret_cast<std::uint64_t>(domain);
         },
         nb::arg("schema_version"),
@@ -255,12 +249,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            cf32_1d rest_lengths,
            cf32_1d stiffness_values,
            cf32_1d depth_values,
-           cf32_1d friction_values) {
+           cf32_1d friction_values,
+           cf32_1d velocity_attenuation_values) {
             auto* domain = require_domain(handle);
             if (static_cast<std::size_t>(starts.shape(0)) != domain->particle_count() ||
                 static_cast<std::size_t>(counts.shape(0)) != domain->particle_count() ||
                 static_cast<std::size_t>(depth_values.shape(0)) != domain->particle_count() ||
                 static_cast<std::size_t>(friction_values.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(velocity_attenuation_values.shape(0)) != domain->particle_count() ||
                 neighbors.shape(0) != rest_lengths.shape(0) ||
                 neighbors.shape(0) != stiffness_values.shape(0)) {
                 throw nb::value_error("MC2 CPU distance arrays have incompatible lengths");
@@ -268,7 +264,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             domain->configure_distance(
                 starts.data(), counts.data(), neighbors.data(),
                 rest_lengths.data(), stiffness_values.data(),
-                depth_values.data(), friction_values.data(),
+                depth_values.data(), friction_values.data(), velocity_attenuation_values.data(),
                 static_cast<std::size_t>(neighbors.shape(0))
             );
         },
@@ -280,6 +276,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("stiffness_values"),
         nb::arg("depth_values"),
         nb::arg("friction_values"),
+        nb::arg("velocity_attenuation_values"),
         "Configure the explicit E3 Distance kernel slice."
     );
     module.def(
@@ -1165,6 +1162,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["world_normals"] = owned_array_2d<float>(
                 std::vector<float>(domain->world_normals()), domain->particle_count(), 3
             );
+            result["velocity_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->velocity_positions()), domain->particle_count(), 3
+            );
             result["real_velocities"] = owned_array_2d<float>(
                 std::vector<float>(domain->real_velocities()), domain->particle_count(), 3
             );
@@ -1279,10 +1279,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         [](std::uint64_t handle) {
             if (handle == 0) return;
             auto* domain = reinterpret_cast<mc2_domain_cpu::DomainV1*>(handle);
-            {
-                const std::lock_guard<std::mutex> lock(domain_registry_mutex);
-                if (live_domains.erase(domain) == 0) return;
-            }
+            if (live_domains.erase(domain) == 0) return;
             domain->dispose();
             delete domain;
         },
@@ -1394,7 +1391,6 @@ void bind_mc2_domain_cpu(nb::module_& module) {
     module.def(
         "mc2_domain_cpu_v1_stats",
         []() {
-            const std::lock_guard<std::mutex> lock(domain_registry_mutex);
             nb::dict result;
             result["live_domain_count"] = live_domains.size();
             return result;

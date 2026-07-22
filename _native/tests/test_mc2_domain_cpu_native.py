@@ -825,10 +825,14 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
         stiffness = np.ones(4, dtype=np.float32)
         depths = np.zeros(3, dtype=np.float32)
         friction = np.zeros(3, dtype=np.float32)
-        for array in (starts, counts, neighbors, rest, stiffness, depths, friction):
+        attenuation = np.asarray((0.0, 0.25, 0.5), dtype=np.float32)
+        for array in (
+            starts, counts, neighbors, rest, stiffness, depths, friction, attenuation,
+        ):
             array.flags.writeable = False
         hotools_native.mc2_domain_cpu_v1_configure_distance(
-            handle, starts, counts, neighbors, rest, stiffness, depths, friction
+            handle, starts, counts, neighbors, rest, stiffness, depths, friction,
+            attenuation,
         )
         hotools_native.mc2_domain_cpu_v1_step_distance(handle)
         output = hotools_native.mc2_domain_cpu_v1_read(handle)
@@ -836,6 +840,13 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
             output["world_positions"],
             np.asarray(
                 ((0.5, 0.0, 0.0), (2.125, 0.0, 0.0), (3.5625, 0.0, 0.0)),
+                dtype=np.float32,
+            ),
+        )
+        np.testing.assert_allclose(
+            output["velocity_positions"],
+            np.asarray(
+                ((0.0, 0.0, 0.0), (2.03125, 0.0, 0.0), (3.78125, 0.0, 0.0)),
                 dtype=np.float32,
             ),
         )

@@ -433,6 +433,17 @@ def capture_and_publish_mc2_mesh_fused_frame(
         raise TypeError("settings must be MC2SolverSettingsSpec")
     from .product_frame import capture_mc2_mesh_product_frame
 
+    frame_context = getattr(world, "frame_context", None)
+    if frame_context is None:
+        raise RuntimeError("Physics World has no active frame context")
+    initialization_only = (
+        "frame_packet" not in slot.data
+        or bool(getattr(frame_context, "restart_required", False))
+        or bool(getattr(frame_context, "reset_requested", False))
+    )
+    if partition_frame_flags is None and initialization_only:
+        partition_frame_flags = (1,) * len(collection.draft.partitions)
+
     frame_packet, partition_snapshots = capture_mc2_mesh_product_frame(
         world,
         collection,
@@ -442,9 +453,6 @@ def capture_and_publish_mc2_mesh_fused_frame(
         velocity_weights=velocity_weights,
         gravity_ratios=gravity_ratios,
     )
-    frame_context = getattr(world, "frame_context", None)
-    if frame_context is None:
-        raise RuntimeError("Physics World has no active frame context")
     world_time_scale = float(getattr(frame_context, "time_scale", 0.0) or 0.0)
     frame_delta_time = float(getattr(frame_context, "raw_dt", 0.0) or 0.0)
     effective_time_scale = world_time_scale * float(settings.time_scale)
@@ -459,6 +467,7 @@ def capture_and_publish_mc2_mesh_fused_frame(
         settings,
         frame_delta_time=frame_delta_time,
         world_time_scale=world_time_scale,
+        initialize_only=initialization_only,
     )
     collider_frame = build_mc2_mesh_domain_collider_frame(world, collection.draft)
     return publish_mc2_mesh_fused_frame(

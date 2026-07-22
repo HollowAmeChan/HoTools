@@ -26,6 +26,7 @@ struct Mc2NeighborConstraintView {
     const float* rest_lengths = nullptr;
     const float* stiffness_values = nullptr;
     float* velocity_positions = nullptr;
+    const float* velocity_attenuation_values = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t neighbor_count = 0;
     float velocity_attenuation = 0.0f;

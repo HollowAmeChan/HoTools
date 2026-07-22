@@ -755,6 +755,8 @@ A5-04已关闭whole-domain参数隔离：Tether、Angle、Motion和Post不再读
 
 V0 raw native revalidation (2026-07-22): this supersedes the access-violation note above. Clean, probe-free py311/py313 rebuilds pass the complete V0 native contract and all E3 V0/Domain tolerance cases. Treat the old failure as an inconsistent incremental artifact; never relax Domain tolerance to mask it. Future P0/E4 native changes require the same dual-ABI clean rebuild and regression set before Blender oracle.
 
+E4 Blender oracle update (2026-07-22): Blender 5.2/Python 3.13 now runs two real Mesh sources through separate V0 contexts and one fused Domain for three frames. Initialization performs zero substeps; the following frames exercise per-partition gravity/damping, component movement, Center history, Distance/Tether/Post history and output-map splitting. Position and rotation match per target at `1e-6`. The fix keeps Distance velocity attenuation in partition SoA and applies it to native velocity-reference corrections. Domain handles remain serialized by the Python GIL, avoiding Blender `tbbmalloc_proxy` interaction with MSVC `std::mutex`. E4 now waits only on the same-fixture P2 performance gate; `product_enabled` remains false until E5.
+
 日常MC2 C++验证固定使用：
 
 ```text

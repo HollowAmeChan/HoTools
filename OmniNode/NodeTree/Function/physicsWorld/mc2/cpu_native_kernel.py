@@ -1247,6 +1247,23 @@ class MC2NativeCPUKernelV1:
         friction_array = np.asarray(
             particle_values[:, particle_fields["collision_friction"]], dtype=np.float32
         )
+        partition_fields = {
+            name: index for index, name in enumerate(parameters.partition_parameters.fields)
+        }
+        if "distance_velocity_attenuation" not in partition_fields:
+            raise ValueError(
+                "partition parameter table lacks distance_velocity_attenuation"
+            )
+        attenuation_by_partition = np.asarray(
+            parameters.partition_parameters.values[
+                :, partition_fields["distance_velocity_attenuation"]
+            ],
+            dtype=np.float32,
+        )
+        attenuation_array = np.asarray(
+            attenuation_by_partition[program.particle_partition_index],
+            dtype=np.float32,
+        )
         starts_array = np.asarray(starts, dtype=np.int32)
         counts_array = np.asarray(counts, dtype=np.int32)
         neighbors_array = np.asarray(neighbors, dtype=np.int32)
@@ -1254,7 +1271,7 @@ class MC2NativeCPUKernelV1:
         stiffness_array = np.asarray(stiffness, dtype=np.float32)
         for array in (
             starts_array, counts_array, neighbors_array, rest_array, stiffness_array,
-            depth_array, friction_array,
+            depth_array, friction_array, attenuation_array,
         ):
             array.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_distance(
@@ -1266,6 +1283,7 @@ class MC2NativeCPUKernelV1:
             stiffness_array,
             depth_array,
             friction_array,
+            attenuation_array,
         )
 
     def _configure_baseline(

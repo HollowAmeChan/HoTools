@@ -433,8 +433,8 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
     packet = slot.data["frame_packet"]
     assert packet.frame == 9 and packet.frame_delta_time == np.float32(0.1)
     assert packet.time_scale == np.float32(0.25)
-    assert packet.is_running is True and packet.simulation_delta_time > 0.0
-    assert report.update_count > 0 and report.skip_count == 0
+    assert packet.is_running is False and packet.simulation_delta_time == 0.0
+    assert report.update_count == 0 and report.skip_count == 0
     assert slot.data["partition_frame_snapshots"] == ("first", "second")
     assert slot.data["scheduler_state"].revision == 1
 

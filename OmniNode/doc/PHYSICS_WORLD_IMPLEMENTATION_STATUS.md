@@ -85,11 +85,11 @@ physicsWorld/
 
 ## 当前优先级
 
-MC2 raw-native revalidation (2026-07-22): clean py311/py313 rebuilds pass the complete V0 native contract and all E3 V0/Domain tolerance cases. The earlier access violation was an inconsistent incremental artifact; do not alter Domain tolerances. The next gates remain Blender multi-source oracle/performance, E5 multi-target transactions/product collector, then E7-CPU cleanup.
+MC2 E4 revalidation (2026-07-22): Blender 5.2/Python 3.13 now passes the real two-source, three-frame V0/Domain oracle at `1e-6`, including initialization-only frame timing and partitioned Distance velocity history. The Domain registry is GIL-serialized to avoid Blender/MSVC mutex startup crashes. The remaining E4 gate is the same-fixture P2 performance comparison; then E5 multi-target transactions/product collector, followed by E7-CPU cleanup after full acceptance.
 
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-3. MC2保持生产V0可用；E4统一slot的真实compiled子步与scheduler advance原子性已完成，当前关闭Blender多source oracle和性能门禁，再推进E5多目标事务与产品collector；不得越过Physics World边界或提前删除V0 owner。
+3. MC2保持生产V0可用；E4统一slot、真实compiled子步、scheduler advance原子性和Blender 5.2多source数值oracle已完成，当前只关闭同fixture性能门禁，再推进E5多目标事务与产品collector；不得越过Physics World边界或提前删除V0 owner。
 4. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 5. 决定Mesh XPBD迁移或删除。
 
