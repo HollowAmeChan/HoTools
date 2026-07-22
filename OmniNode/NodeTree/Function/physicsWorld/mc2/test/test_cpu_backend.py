@@ -188,6 +188,20 @@ def test_cpu_backend_capability_gate_rejects_before_kernel_allocation():
     assert kernel.created == []
 
 
+def test_cpu_backend_declares_all_unified_cpu_setups():
+    assert backend.MC2_CPU_REFERENCE_CAPABILITIES.setup_types == (
+        "bone_cloth",
+        "bone_spring",
+        "mesh_cloth",
+    )
+    assert set(backend.MC2_CPU_REFERENCE_CAPABILITIES.capabilities) == {
+        "bone_cloth",
+        "bone_spring",
+        "mesh_cloth",
+        "self_collision",
+    }
+
+
 def test_cpu_backend_step_basic_uses_compiled_animation_pose_ratio_by_default():
     compiled = _compiled(animation_pose_ratio=0.625)
     kernel = _FakeKernel()

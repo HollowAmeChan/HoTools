@@ -13,7 +13,7 @@ import numpy as np
 
 from .domain_capabilities import MC2BackendCapabilitiesV1
 from .domain_capabilities import evaluate_mc2_backend_capabilities
-from .domain_compile import MC2MeshCompiledDomainV1
+from .domain_compile import MC2CompiledDomainV1
 from .domain_ir import MC2DomainFrameOutputV1
 from .domain_ir import MC2DomainFramePacketV1
 from .domain_ir import MC2PhysicalIndexMapV1
@@ -24,8 +24,8 @@ from .domain_ir import make_mc2_physical_index_map
 MC2_CPU_REFERENCE_CAPABILITIES = MC2BackendCapabilitiesV1(
     backend_id="mc2_cpu_domain_v1",
     schema_versions=(1,),
-    setup_types=("mesh_cloth",),
-    capabilities=("mesh_cloth", "self_collision"),
+    setup_types=("bone_cloth", "bone_spring", "mesh_cloth"),
+    capabilities=("bone_cloth", "bone_spring", "mesh_cloth", "self_collision"),
     max_particles=0xFFFFFFFF,
     index_width_bits=32,
     supports_physical_reorder=True,
@@ -53,15 +53,17 @@ class MC2CPUBackendDomainV1:
 
     def __init__(
         self,
-        compiled: MC2MeshCompiledDomainV1,
+        compiled: MC2CompiledDomainV1,
         kernel: MC2CPUKernelV1,
         handle,
         physical_index_map: MC2PhysicalIndexMapV1,
+        backend_id: str,
     ) -> None:
         self._compiled = compiled
         self._kernel = kernel
         self._handle = handle
         self._physical_index_map = physical_index_map
+        self._backend_id = str(backend_id)
         self._latest_frame: MC2DomainFramePacketV1 | None = None
         self._last_output: MC2DomainFrameOutputV1 | None = None
         self._step_count = 0
@@ -75,7 +77,7 @@ class MC2CPUBackendDomainV1:
         return self._handle is None
 
     @property
-    def compiled(self) -> MC2MeshCompiledDomainV1:
+    def compiled(self) -> MC2CompiledDomainV1:
         return self._compiled
 
     @property
@@ -93,13 +95,13 @@ class MC2CPUBackendDomainV1:
     @classmethod
     def create(
         cls,
-        compiled: MC2MeshCompiledDomainV1,
+        compiled: MC2CompiledDomainV1,
         kernel: MC2CPUKernelV1,
         *,
         capabilities: MC2BackendCapabilitiesV1 = MC2_CPU_REFERENCE_CAPABILITIES,
     ) -> "MC2CPUBackendDomainV1":
-        if not isinstance(compiled, MC2MeshCompiledDomainV1):
-            raise TypeError("compiled must be MC2MeshCompiledDomainV1")
+        if not isinstance(compiled, MC2CompiledDomainV1):
+            raise TypeError("compiled must be MC2CompiledDomainV1")
         report = evaluate_mc2_backend_capabilities(compiled.program, capabilities)
         if not report.compatible:
             raise RuntimeError(
@@ -118,7 +120,13 @@ class MC2CPUBackendDomainV1:
                 raise RuntimeError("CPU kernel returned an empty domain handle")
             identity = np.arange(compiled.program.particle_count, dtype=np.uint32)
             physical_index_map = make_mc2_physical_index_map(identity)
-            return cls(compiled, kernel, handle, physical_index_map)
+            return cls(
+                compiled,
+                kernel,
+                handle,
+                physical_index_map,
+                capabilities.backend_id,
+            )
         except Exception:
             if handle is not None:
                 try:
@@ -423,7 +431,7 @@ class MC2CPUBackendDomainV1:
         if not isinstance(kernel_state, Mapping):
             raise TypeError("CPU kernel inspect must return a mapping")
         return {
-            "backend_id": MC2_CPU_REFERENCE_CAPABILITIES.backend_id,
+            "backend_id": self._backend_id,
             "domain_signature": self._compiled.program.domain_signature,
             "layout_signature": self._compiled.program.layout_signature,
             "physical_layout_revision": 1,
@@ -466,7 +474,7 @@ class MC2CPUBackendDomainV1:
 
 
 def create_mc2_cpu_backend_domain(
-    compiled: MC2MeshCompiledDomainV1,
+    compiled: MC2CompiledDomainV1,
     kernel: MC2CPUKernelV1,
     *,
     capabilities: MC2BackendCapabilitiesV1 = MC2_CPU_REFERENCE_CAPABILITIES,

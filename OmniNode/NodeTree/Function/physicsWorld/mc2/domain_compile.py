@@ -1,4 +1,4 @@
-"""Backend-neutral MeshCloth domain compilation from ordered static fragments."""
+"""Backend-neutral MC2 domain compilation from ordered static fragments."""
 
 from __future__ import annotations
 
@@ -22,21 +22,28 @@ from .runtime_parameters import MC2_RUNTIME_INT_FIELDS
 from .runtime_parameters import MC2_RUNTIME_CURVE_FIELDS
 from .runtime_parameters import MC2RuntimeParametersV0
 from .setups.mesh_cloth.static_fragment import MC2MeshStaticFragmentV1
+from .setups.bone_cloth.static_fragment import MC2BoneStaticFragmentV1
+
+
+_MC2_STATIC_FRAGMENT_TYPES = (MC2MeshStaticFragmentV1, MC2BoneStaticFragmentV1)
 
 
 @dataclass(frozen=True)
-class MC2MeshCompiledDomainV1:
-    fragments: tuple[MC2MeshStaticFragmentV1, ...]
+class MC2CompiledDomainV1:
+    fragments: tuple[object, ...]
     program: MC2CompiledDomainProgramV1
     parameters: MC2DomainParameterPacketV1
     effective_parameter_signatures: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not self.fragments or any(
-            not isinstance(fragment, MC2MeshStaticFragmentV1)
+            not isinstance(fragment, _MC2_STATIC_FRAGMENT_TYPES)
             for fragment in self.fragments
         ):
-            raise TypeError("fragments must contain MC2MeshStaticFragmentV1")
+            raise TypeError("fragments must contain supported MC2 static fragments")
+        setup_types = {fragment.setup_type for fragment in self.fragments}
+        if len(setup_types) != 1:
+            raise ValueError("compiled domain fragments must share one setup type")
         if not isinstance(self.program, MC2CompiledDomainProgramV1):
             raise TypeError("program must be MC2CompiledDomainProgramV1")
         if not isinstance(self.parameters, MC2DomainParameterPacketV1):
@@ -54,15 +61,17 @@ class MC2MeshCompiledDomainV1:
             raise ValueError("compiled domain partition order must match fragments")
         if self.parameters.layout_signature != self.program.layout_signature:
             raise ValueError("compiled domain parameter layout does not match program")
+        if self.program.setup_type != self.fragments[0].setup_type:
+            raise ValueError("compiled domain setup type does not match fragments")
 
     @property
-    def single_fragment(self) -> MC2MeshStaticFragmentV1:
+    def single_fragment(self) -> object:
         if len(self.fragments) != 1:
             raise ValueError("compiled domain does not contain exactly one fragment")
         return self.fragments[0]
 
     @property
-    def fragment(self) -> MC2MeshStaticFragmentV1:
+    def fragment(self) -> object:
         """E1 compatibility view; multi-partition callers must use fragments."""
         return self.single_fragment
 
@@ -155,18 +164,15 @@ def _runtime_maps(effective: MC2RuntimeParametersV0) -> tuple[dict, dict, dict]:
     )
 
 
-def _source_elements(fragment: MC2MeshStaticFragmentV1) -> np.ndarray:
-    values = []
-    for identity in fragment.final_proxy.vertex_identities:
-        prefix, marker, suffix = str(identity).rpartition("v")
-        if not marker or not prefix.endswith(":") or not suffix.isdigit():
-            raise ValueError(f"unsupported Mesh particle identity: {identity!r}")
-        values.append(int(suffix))
-    return np.asarray(values, dtype=np.uint32)
+def _source_elements(fragment) -> np.ndarray:
+    values = np.asarray(fragment.source_elements, dtype=np.uint32)
+    if values.shape != (fragment.final_proxy.vertex_count,):
+        raise ValueError("fragment source_elements must cover every particle")
+    return values
 
 
 def _fragment_offsets(
-    fragments: tuple[MC2MeshStaticFragmentV1, ...],
+    fragments: tuple[object, ...],
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
     starts = []
     counts = []
@@ -180,7 +186,7 @@ def _fragment_offsets(
 
 
 def _program_for_fragments(
-    fragments: tuple[MC2MeshStaticFragmentV1, ...],
+    fragments: tuple[object, ...],
     *,
     domain_id: str,
     required_capabilities=(),
@@ -310,13 +316,13 @@ def _program_for_fragments(
             target_id=fragment.output_target_id,
             partition_index=partition_index,
             element_count=count,
-            space_kind="mesh_object_local_offset",
+            space_kind=fragment.output_space_kind,
         )
         for partition_index, (fragment, count) in enumerate(zip(fragments, counts))
     )
     return make_mc2_compiled_domain_program(
         domain_id=domain_id,
-        setup_type=MC2_SETUP_MESH_CLOTH,
+        setup_type=fragments[0].setup_type,
         partition_ids=tuple(fragment.partition_id for fragment in fragments),
         partition_flags=(0x03,) * len(fragments),
         partition_particle_views=tuple(
@@ -353,7 +359,7 @@ def _program_for_fragments(
 
 
 def _parameter_packet_for_fragments(
-    fragments: tuple[MC2MeshStaticFragmentV1, ...],
+    fragments: tuple[object, ...],
     effectives: tuple[MC2RuntimeParametersV0, ...],
     program: MC2CompiledDomainProgramV1,
     *,
@@ -508,7 +514,7 @@ def _validated_external_collision_masks(count: int, values) -> tuple[int, ...]:
     return tuple(int(value) for value in result)
 
 
-def compile_mc2_mesh_static_fragments(
+def compile_mc2_static_fragments(
     fragments,
     effectives,
     *,
@@ -516,23 +522,26 @@ def compile_mc2_mesh_static_fragments(
     collision_groups=None,
     collision_masks=None,
     external_collision_masks=None,
-) -> MC2MeshCompiledDomainV1:
+) -> MC2CompiledDomainV1:
     fragments = tuple(fragments)
     effectives = tuple(effectives)
     if not fragments:
-        raise ValueError("Mesh domain compile requires at least one fragment")
-    if any(not isinstance(fragment, MC2MeshStaticFragmentV1) for fragment in fragments):
-        raise TypeError("fragments must contain MC2MeshStaticFragmentV1")
+        raise ValueError("MC2 domain compile requires at least one fragment")
+    if any(not isinstance(fragment, _MC2_STATIC_FRAGMENT_TYPES) for fragment in fragments):
+        raise TypeError("fragments must contain supported MC2 static fragments")
+    setup_types = {fragment.setup_type for fragment in fragments}
+    if len(setup_types) != 1:
+        raise ValueError("MC2 domain fragments must share one setup type")
     if len(effectives) != len(fragments) or any(
         not isinstance(effective, MC2RuntimeParametersV0) for effective in effectives
     ):
         raise TypeError("effectives must match fragments with MC2RuntimeParametersV0")
     partition_ids = tuple(fragment.partition_id for fragment in fragments)
     if len(set(partition_ids)) != len(partition_ids):
-        raise ValueError("Mesh domain partition ids must be unique")
+        raise ValueError("MC2 domain partition ids must be unique")
     target_ids = tuple(fragment.output_target_id for fragment in fragments)
     if len(set(target_ids)) != len(target_ids):
-        raise ValueError("Mesh domain output target ids must be unique")
+        raise ValueError("MC2 domain output target ids must be unique")
     groups = _validated_collision_groups(len(fragments), collision_groups)
     masks = _validated_collision_masks(len(fragments), collision_masks)
     external_masks = _validated_external_collision_masks(
@@ -540,7 +549,7 @@ def compile_mc2_mesh_static_fragments(
     )
     resolved_domain_id = domain_id or f"mc2.domain:{'|'.join(partition_ids)}"
 
-    required = ["mesh_cloth"]
+    required = [fragments[0].setup_type]
     self_mode_index = MC2_RUNTIME_INT_FIELDS.index("self_collision_mode")
     if any(
         effective.int_values[self_mode_index] != 0
@@ -561,7 +570,7 @@ def compile_mc2_mesh_static_fragments(
         collision_masks=masks,
         external_collision_masks=external_masks,
     )
-    return MC2MeshCompiledDomainV1(
+    return MC2CompiledDomainV1(
         fragments=fragments,
         program=program,
         parameters=parameters,
@@ -578,7 +587,7 @@ def compile_mc2_mesh_static_fragment(
     collision_group: int = 1,
     collision_mask: int = 0xFFFF,
     external_collision_mask: int = 0,
-) -> MC2MeshCompiledDomainV1:
+) -> MC2CompiledDomainV1:
     return compile_mc2_mesh_static_fragments(
         (fragment,),
         (effective,),
@@ -588,25 +597,27 @@ def compile_mc2_mesh_static_fragment(
     )
 
 
-def compile_mc2_mesh_domain_draft(
+def compile_mc2_domain_draft(
     draft,
     fragments,
-) -> MC2MeshCompiledDomainV1:
+) -> MC2CompiledDomainV1:
     """Compile fragments only when their order matches resolved authoring intent."""
 
-    from .domain_collect import MC2MeshDomainDraftV1
+    from .domain_collect import MC2DomainDraftV1
 
-    if not isinstance(draft, MC2MeshDomainDraftV1):
-        raise TypeError("draft must be MC2MeshDomainDraftV1")
+    if not isinstance(draft, MC2DomainDraftV1):
+        raise TypeError("draft must be MC2DomainDraftV1")
     fragments = tuple(fragments)
     fragment_ids = tuple(
         str(getattr(fragment, "partition_id", "")) for fragment in fragments
     )
     if fragment_ids != draft.partition_ids:
         raise ValueError(
-            "Mesh domain fragment order does not match resolved partition ids"
+            "MC2 domain fragment order does not match resolved partition ids"
         )
-    return compile_mc2_mesh_static_fragments(
+    if any(fragment.setup_type != draft.setup_type for fragment in fragments):
+        raise ValueError("MC2 domain fragment setup type does not match draft")
+    return compile_mc2_static_fragments(
         fragments,
         draft.effectives,
         domain_id=draft.domain_id,
@@ -620,13 +631,13 @@ def compile_mc2_mesh_domain_draft(
 
 
 def compare_mc2_domain_compile_cache(
-    previous: MC2MeshCompiledDomainV1 | None,
-    current: MC2MeshCompiledDomainV1,
+    previous: MC2CompiledDomainV1 | None,
+    current: MC2CompiledDomainV1,
 ) -> MC2DomainCompileCacheReportV1:
-    if previous is not None and not isinstance(previous, MC2MeshCompiledDomainV1):
-        raise TypeError("previous must be MC2MeshCompiledDomainV1 or None")
-    if not isinstance(current, MC2MeshCompiledDomainV1):
-        raise TypeError("current must be MC2MeshCompiledDomainV1")
+    if previous is not None and not isinstance(previous, MC2CompiledDomainV1):
+        raise TypeError("previous must be MC2CompiledDomainV1 or None")
+    if not isinstance(current, MC2CompiledDomainV1):
+        raise TypeError("current must be MC2CompiledDomainV1")
     previous_ids = previous.program.partition_ids if previous is not None else ()
     current_ids = current.program.partition_ids
     added = tuple(value for value in current_ids if value not in previous_ids)
@@ -660,11 +671,35 @@ def compare_mc2_domain_compile_cache(
     )
 
 
+# E5-B 迁移包装；E7-S 删除 Mesh 专名。
+MC2MeshCompiledDomainV1 = MC2CompiledDomainV1
+
+
+def compile_mc2_mesh_static_fragments(
+    fragments,
+    effectives,
+    **kwargs,
+) -> MC2CompiledDomainV1:
+    fragments = tuple(fragments)
+    if any(fragment.setup_type != MC2_SETUP_MESH_CLOTH for fragment in fragments):
+        raise ValueError("Mesh compiler wrapper only accepts mesh_cloth fragments")
+    return compile_mc2_static_fragments(fragments, effectives, **kwargs)
+
+
+def compile_mc2_mesh_domain_draft(draft, fragments) -> MC2CompiledDomainV1:
+    if getattr(draft, "setup_type", None) != MC2_SETUP_MESH_CLOTH:
+        raise ValueError("Mesh compiler wrapper only accepts mesh_cloth drafts")
+    return compile_mc2_domain_draft(draft, fragments)
+
+
 __all__ = [
+    "MC2CompiledDomainV1",
     "MC2DomainCompileCacheReportV1",
     "MC2MeshCompiledDomainV1",
     "compare_mc2_domain_compile_cache",
+    "compile_mc2_domain_draft",
     "compile_mc2_mesh_domain_draft",
     "compile_mc2_mesh_static_fragment",
     "compile_mc2_mesh_static_fragments",
+    "compile_mc2_static_fragments",
 ]

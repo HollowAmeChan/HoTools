@@ -119,6 +119,26 @@ class MC2MeshStaticFragmentV1:
     def final_proxy(self):
         return self.baseline.final_proxy
 
+    @property
+    def setup_type(self) -> str:
+        return "mesh_cloth"
+
+    @property
+    def output_space_kind(self) -> str:
+        return "mesh_object_local_offset"
+
+    @property
+    def source_elements(self) -> np.ndarray:
+        values = []
+        for identity in self.final_proxy.vertex_identities:
+            prefix, marker, suffix = str(identity).rpartition("v")
+            if not marker or not prefix.endswith(":") or not suffix.isdigit():
+                raise ValueError(f"unsupported Mesh particle identity: {identity!r}")
+            values.append(int(suffix))
+        result = np.asarray(values, dtype=np.uint32)
+        result.flags.writeable = False
+        return result
+
     def debug_dict(self) -> dict:
         return {
             "snapshot_signature": self.snapshot_signature,

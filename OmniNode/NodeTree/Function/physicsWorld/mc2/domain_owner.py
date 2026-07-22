@@ -1,4 +1,4 @@
-"""Transactional product-side owner for one fused MeshCloth CPU domain."""
+"""统一 MC2 产品域的事务化 CPU owner。"""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from .cpu_backend import MC2CPUBackendDomainV1
 from .cpu_backend import MC2CPUKernelV1
 from .cpu_backend import create_mc2_cpu_backend_domain
 from .domain_capabilities import MC2BackendCapabilitiesV1
-from .domain_collect import MC2MeshDomainDraftV1
+from .domain_collect import MC2DomainDraftV1
 from .domain_compile import MC2DomainCompileCacheReportV1
-from .domain_compile import MC2MeshCompiledDomainV1
+from .domain_compile import MC2CompiledDomainV1
 from .domain_compile import compare_mc2_domain_compile_cache
-from .domain_compile import compile_mc2_mesh_domain_draft
+from .domain_compile import compile_mc2_domain_draft
 from .setups.mesh_cloth.fragment_cache import MC2MeshFragmentCacheV1
 
 
@@ -55,7 +55,7 @@ class MC2FusedCPUOwnerSyncReportV1:
         }
 
 
-class MC2MeshFusedCPUOwnerV1:
+class MC2FusedCPUOwnerV1:
     """Owns exactly one live native domain and its committed host products."""
 
     def __init__(
@@ -75,8 +75,8 @@ class MC2MeshFusedCPUOwnerV1:
         self._capabilities = capabilities
         self._fragment_cache = fragment_cache
         self._domain: MC2CPUBackendDomainV1 | None = None
-        self._compiled: MC2MeshCompiledDomainV1 | None = None
-        self._draft: MC2MeshDomainDraftV1 | None = None
+        self._compiled: MC2CompiledDomainV1 | None = None
+        self._draft: MC2DomainDraftV1 | None = None
         self._revision = 0
         self._last_report: MC2FusedCPUOwnerSyncReportV1 | None = None
         self._cleanup_errors: list[str] = []
@@ -86,11 +86,11 @@ class MC2MeshFusedCPUOwnerV1:
         return self._domain
 
     @property
-    def compiled(self) -> MC2MeshCompiledDomainV1 | None:
+    def compiled(self) -> MC2CompiledDomainV1 | None:
         return self._compiled
 
     @property
-    def draft(self) -> MC2MeshDomainDraftV1 | None:
+    def draft(self) -> MC2DomainDraftV1 | None:
         return self._draft
 
     @property
@@ -107,14 +107,16 @@ class MC2MeshFusedCPUOwnerV1:
 
     def sync(
         self,
-        draft: MC2MeshDomainDraftV1,
+        draft: MC2DomainDraftV1,
         snapshots,
         *,
         world_gravity_direction=(0.0, -1.0, 0.0),
         world_gravity_directions=None,
     ) -> MC2FusedCPUOwnerSyncReportV1:
-        if not isinstance(draft, MC2MeshDomainDraftV1):
-            raise TypeError("draft must be MC2MeshDomainDraftV1")
+        if not isinstance(draft, MC2DomainDraftV1):
+            raise TypeError("draft must be MC2DomainDraftV1")
+        if draft.setup_type != "mesh_cloth":
+            raise ValueError("snapshot cache sync 只接受 mesh_cloth draft")
         snapshots = tuple(snapshots)
         snapshot_ids = tuple(
             str(getattr(snapshot, "partition_id", "")) for snapshot in snapshots
@@ -129,15 +131,73 @@ class MC2MeshFusedCPUOwnerV1:
             world_gravity_direction=world_gravity_direction,
             world_gravity_directions=world_gravity_directions,
         )
-        current = compile_mc2_mesh_domain_draft(draft, batch.fragments)
-        cache_report = compare_mc2_domain_compile_cache(self._compiled, current)
+        current = compile_mc2_domain_draft(draft, batch.fragments)
+        return self._sync_compiled(
+            draft,
+            current,
+            commit_static=lambda: self._fragment_cache.commit(batch),
+            fragment_cache_revision=self._fragment_cache.revision + 1,
+            fragment_cache_hits=batch.hit_count,
+            fragment_builds=batch.build_count,
+        )
 
+    def sync_fragments(
+        self,
+        draft: MC2DomainDraftV1,
+        fragments,
+        *,
+        fragment_cache_revision: int = 1,
+        fragment_cache_hits: int = 0,
+        fragment_builds: int = 0,
+        commit_static=None,
+    ) -> MC2FusedCPUOwnerSyncReportV1:
+        """提交任意 setup 的宿主 fragments，复用同一 native domain owner。"""
+
+        if not isinstance(draft, MC2DomainDraftV1):
+            raise TypeError("draft must be MC2DomainDraftV1")
+        fragments = tuple(fragments)
+        fragment_ids = tuple(
+            str(getattr(fragment, "partition_id", "")) for fragment in fragments
+        )
+        if fragment_ids != draft.partition_ids:
+            raise ValueError("fused owner fragment order does not match draft partitions")
+        current = compile_mc2_domain_draft(draft, fragments)
+        if commit_static is None:
+            commit_static = lambda: None
+        if not callable(commit_static):
+            raise TypeError("commit_static must be callable")
+        return self._sync_compiled(
+            draft,
+            current,
+            commit_static=commit_static,
+            fragment_cache_revision=int(fragment_cache_revision),
+            fragment_cache_hits=int(fragment_cache_hits),
+            fragment_builds=int(fragment_builds),
+        )
+
+    def _sync_compiled(
+        self,
+        draft: MC2DomainDraftV1,
+        current: MC2CompiledDomainV1,
+        *,
+        commit_static,
+        fragment_cache_revision: int,
+        fragment_cache_hits: int,
+        fragment_builds: int,
+    ) -> MC2FusedCPUOwnerSyncReportV1:
+        cache_report = compare_mc2_domain_compile_cache(self._compiled, current)
         if self._domain is not None and cache_report.exact_cache_hit:
-            self._fragment_cache.commit(batch)
+            commit_static()
             self._compiled = current
             self._draft = draft
             self._revision += 1
-            report = self._make_report("reused", batch, cache_report)
+            report = self._make_report_values(
+                "reused",
+                cache_report,
+                fragment_cache_revision=fragment_cache_revision,
+                fragment_cache_hits=fragment_cache_hits,
+                fragment_builds=fragment_builds,
+            )
             self._last_report = report
             return report
 
@@ -147,7 +207,7 @@ class MC2MeshFusedCPUOwnerV1:
             capabilities=self._capabilities,
         )
         try:
-            self._fragment_cache.commit(batch)
+            commit_static()
         except Exception:
             try:
                 staged_domain.dispose()
@@ -161,7 +221,6 @@ class MC2MeshFusedCPUOwnerV1:
         self._compiled = current
         self._draft = draft
         self._revision += 1
-
         cleanup_error = None
         if old_domain is not None:
             try:
@@ -169,10 +228,12 @@ class MC2MeshFusedCPUOwnerV1:
             except Exception as exc:
                 cleanup_error = f"{type(exc).__name__}: {exc}"
                 self._cleanup_errors.append(cleanup_error)
-        report = self._make_report(
+        report = self._make_report_values(
             action,
-            batch,
             cache_report,
+            fragment_cache_revision=fragment_cache_revision,
+            fragment_cache_hits=fragment_cache_hits,
+            fragment_builds=fragment_builds,
             cleanup_error=cleanup_error,
         )
         self._last_report = report
@@ -200,7 +261,7 @@ class MC2MeshFusedCPUOwnerV1:
 
     def inspect(self) -> dict:
         return {
-            "schema": "mc2_mesh_fused_cpu_owner_v1",
+            "schema": "mc2_fused_cpu_owner_v1",
             "revision": self._revision,
             "live": self._domain is not None,
             "partition_ids": (
@@ -227,20 +288,22 @@ class MC2MeshFusedCPUOwnerV1:
         if domain is not None:
             domain.dispose()
 
-    def _make_report(
+    def _make_report_values(
         self,
         action,
-        batch,
         cache_report,
         *,
+        fragment_cache_revision,
+        fragment_cache_hits,
+        fragment_builds,
         cleanup_error=None,
     ) -> MC2FusedCPUOwnerSyncReportV1:
         return MC2FusedCPUOwnerSyncReportV1(
             action=action,
             owner_revision=self._revision,
-            fragment_cache_revision=self._fragment_cache.revision,
-            fragment_cache_hits=batch.hit_count,
-            fragment_builds=batch.build_count,
+            fragment_cache_revision=fragment_cache_revision,
+            fragment_cache_hits=fragment_cache_hits,
+            fragment_builds=fragment_builds,
             compile_cache=cache_report,
             old_domain_cleanup_error=cleanup_error,
         )
@@ -251,7 +314,12 @@ class MC2MeshFusedCPUOwnerV1:
         return self._domain
 
 
+# E5-B 迁移包装；E7-S 删除 Mesh 专名。
+MC2MeshFusedCPUOwnerV1 = MC2FusedCPUOwnerV1
+
+
 __all__ = [
+    "MC2FusedCPUOwnerV1",
     "MC2FusedCPUOwnerSyncReportV1",
     "MC2MeshFusedCPUOwnerV1",
 ]

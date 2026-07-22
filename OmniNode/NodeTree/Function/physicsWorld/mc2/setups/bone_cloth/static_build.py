@@ -37,6 +37,41 @@ MC2_BONE_STATIC_SCHEMA_VERSION = 4
 MC2_LINE_BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
 
 
+@dataclass(frozen=True)
+class _MC2BoneStaticIntentV1:
+    task_id: str
+    setup_type: str
+    profile: object
+    sources: tuple[object, ...]
+
+
+def _task_static_intent(task: MC2TaskSpec) -> _MC2BoneStaticIntentV1:
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task must be MC2TaskSpec")
+    return _MC2BoneStaticIntentV1(
+        task_id=task.task_id,
+        setup_type=task.setup_type,
+        profile=task.profile,
+        sources=task.sources,
+    )
+
+
+def _partition_static_intent(partition) -> _MC2BoneStaticIntentV1:
+    from ...partition_specs import MC2ResolvedPartitionSpec
+    from ...product_bone_authoring import MC2BonePartitionSourceV1
+
+    if not isinstance(partition, MC2ResolvedPartitionSpec):
+        raise TypeError("partition must be MC2ResolvedPartitionSpec")
+    if not isinstance(partition.source, MC2BonePartitionSourceV1):
+        raise TypeError("Bone product partition source is invalid")
+    return _MC2BoneStaticIntentV1(
+        task_id=partition.stable_id,
+        setup_type=partition.setup_type,
+        profile=partition.profile,
+        sources=partition.source.task_sources,
+    )
+
+
 def mc2_bone_static_domain_error(
     setup_type: str,
     connection_mode: int,
@@ -55,10 +90,10 @@ def mc2_bone_static_domain_error(
     return ""
 
 
-def _require_mc2_bone_static_domain(task: MC2TaskSpec, topology: MC2TopologySpec) -> None:
+def _require_mc2_bone_static_domain(intent, topology: MC2TopologySpec) -> None:
     triangles = topology.bone_connection.triangles if topology.bone_connection else ()
     error = mc2_bone_static_domain_error(
-        task.setup_type,
+        intent.setup_type,
         topology.connection_mode,
         triangles,
         getattr(topology, "connection_model", "mc2_source"),
@@ -407,8 +442,8 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
     return tuple(flattened)
 
 
-def _initial_armature_world_columns(task: MC2TaskSpec):
-    for source in task.sources:
+def _initial_armature_world_columns(intent: _MC2BoneStaticIntentV1):
+    for source in intent.sources:
         armature = source.get("armature") if isinstance(source, dict) else None
         matrix = getattr(armature, "matrix_world", None)
         if matrix is not None:
@@ -426,15 +461,44 @@ def build_mc2_bone_cloth_static_for_task(
     raw_snapshots=None,
     native_context=None,
 ) -> MC2BoneClothStaticBuildResult | None:
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
+    return _build_mc2_bone_static(
+        _task_static_intent(task),
+        topology,
+        raw_snapshots=raw_snapshots,
+        native_context=native_context,
+    )
+
+
+def build_mc2_bone_static_for_partition(
+    partition,
+    topology: MC2TopologySpec,
+    *,
+    raw_snapshots=None,
+) -> MC2BoneClothStaticBuildResult | None:
+    """从 resolved Bone partition 构建完整宿主静态包。"""
+
+    return _build_mc2_bone_static(
+        _partition_static_intent(partition),
+        topology,
+        raw_snapshots=raw_snapshots,
+        native_context=None,
+    )
+
+
+def _build_mc2_bone_static(
+    intent: _MC2BoneStaticIntentV1,
+    topology: MC2TopologySpec,
+    *,
+    raw_snapshots=None,
+    native_context=None,
+) -> MC2BoneClothStaticBuildResult | None:
     if not isinstance(topology, MC2TopologySpec):
         raise TypeError("topology must be MC2TopologySpec")
-    if task.task_id != topology.task_id or task.setup_type != topology.setup_type:
+    if intent.task_id != topology.task_id or intent.setup_type != topology.setup_type:
         raise ValueError("BoneCloth static task/topology identity mismatch")
-    if task.setup_type not in MC2_LINE_BONE_SETUP_TYPES:
+    if intent.setup_type not in MC2_LINE_BONE_SETUP_TYPES:
         return None
-    _require_mc2_bone_static_domain(task, topology)
+    _require_mc2_bone_static_domain(intent, topology)
     if topology.bone_connection is None:
         raise ValueError("BoneCloth Line static requires frozen connection topology")
     snapshots = tuple(raw_snapshots or ())
@@ -529,8 +593,8 @@ def build_mc2_bone_cloth_static_for_task(
         uvs = np.zeros((record_count, 2), dtype=np.float64)
 
     bone = build_mc2_bone_static(
-        task_id=task.task_id,
-        setup_type=task.setup_type,
+        task_id=intent.task_id,
+        setup_type=intent.setup_type,
         vertex_identities=identities,
         local_positions=positions,
         local_normals=normal_values,
@@ -555,13 +619,13 @@ def build_mc2_bone_cloth_static_for_task(
     )
     bending = build_mc2_bending_static(
         bone.proxy,
-        initial_local_to_world_columns=_initial_armature_world_columns(task),
+        initial_local_to_world_columns=_initial_armature_world_columns(intent),
         native_context=native_context,
     )
     center = build_mc2_center_static(
         bone.proxy,
         vertex_bind_pose_rotations=bone.finalizer.vertex_bind_pose_rotations,
-        world_gravity_direction=task.profile.gravity_direction,
+        world_gravity_direction=intent.profile.gravity_direction,
         native_context=native_context,
     )
     self_collision = build_mc2_self_collision_static(
@@ -599,5 +663,6 @@ __all__ = [
     "MC2BoneClothStaticBuildResult",
     "MC2BoneClothStaticMetadata",
     "build_mc2_bone_cloth_static_for_task",
+    "build_mc2_bone_static_for_partition",
     "mc2_bone_static_domain_error",
 ]

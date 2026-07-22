@@ -18,6 +18,55 @@ from .bone_connection import (
 from .specs import MC2TaskSpec, mc2_source_token
 
 
+@dataclass(frozen=True)
+class _MC2TopologyIntentV1:
+    task_id: str
+    setup_type: str
+    topology_signature: str
+    sources: tuple[object, ...]
+    profile: object
+    setup_options: object
+
+
+def _task_intent(task: MC2TaskSpec) -> _MC2TopologyIntentV1:
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task 必须是 MC2TaskSpec")
+    return _MC2TopologyIntentV1(
+        task_id=task.task_id,
+        setup_type=task.setup_type,
+        topology_signature=task.topology_signature,
+        sources=task.sources,
+        profile=task.profile,
+        setup_options=task.setup_options,
+    )
+
+
+def _partition_intent(partition) -> _MC2TopologyIntentV1:
+    from .partition_specs import MC2ResolvedPartitionSpec
+    from .product_bone_authoring import MC2BonePartitionSourceV1
+
+    if not isinstance(partition, MC2ResolvedPartitionSpec):
+        raise TypeError("partition 必须是 MC2ResolvedPartitionSpec")
+    source = partition.source
+    if not isinstance(source, MC2BonePartitionSourceV1):
+        raise TypeError("Bone product partition source 类型无效")
+    topology_signature = _signature({
+        "schema": "mc2_partition_topology_intent_v1",
+        "partition_id": partition.stable_id,
+        "setup_type": partition.setup_type,
+        "source": mc2_source_token(source),
+        "setup_options": partition.setup_options.debug_dict(),
+    })
+    return _MC2TopologyIntentV1(
+        task_id=partition.stable_id,
+        setup_type=partition.setup_type,
+        topology_signature=topology_signature,
+        sources=source.task_sources,
+        profile=partition.profile,
+        setup_options=partition.setup_options,
+    )
+
+
 def _freeze(value):
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -287,9 +336,21 @@ def read_mc2_static_source_observation(
 ]:
     """Read one source once and derive its topology/geometry/surface hashes."""
 
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task 必须是 MC2TaskSpec")
-    if task.setup_type == "mesh_cloth":
+    intent = _task_intent(task)
+    return _read_mc2_static_source_observation(
+        intent.setup_type,
+        source,
+        armature_rest_snapshots=armature_rest_snapshots,
+    )
+
+
+def _read_mc2_static_source_observation(
+    setup_type: str,
+    source,
+    *,
+    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
+):
+    if setup_type == "mesh_cloth":
         snapshot = _read_mesh_raw_snapshot(source)
         return _mesh_input_fingerprint(source, snapshot), snapshot
     shared_rest = armature_rest_snapshots
@@ -309,12 +370,22 @@ def compose_mc2_static_inputs(
 ]:
     """Compose one task fingerprint from already observed source snapshots."""
 
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task 必须是 MC2TaskSpec")
+    return _compose_mc2_static_inputs(
+        _task_intent(task),
+        source_fingerprints,
+        raw_snapshots,
+    )
+
+
+def _compose_mc2_static_inputs(
+    intent: _MC2TopologyIntentV1,
+    source_fingerprints,
+    raw_snapshots,
+):
     sources = tuple(source_fingerprints)
     snapshots = tuple(raw_snapshots)
-    if len(sources) != len(task.sources) or len(snapshots) != len(task.sources):
-        raise ValueError("MC2 static source observation count does not match task sources")
+    if len(sources) != len(intent.sources) or len(snapshots) != len(intent.sources):
+        raise ValueError("MC2 static source observation count does not match intent sources")
     for source in sources:
         if not isinstance(source, Mapping) or any(
             key not in source for key in ("topology", "geometry", "surface")
@@ -322,24 +393,24 @@ def compose_mc2_static_inputs(
             raise TypeError("MC2 static source fingerprint is invalid")
     topology = _compact_signature((
         "mc2_task_topology_v1",
-        task.setup_type,
-        task.topology_signature,
+        intent.setup_type,
+        intent.topology_signature,
         tuple(source["topology"] for source in sources),
     ))
     geometry = _compact_signature((
         "mc2_task_geometry_v1",
-        task.setup_type,
+        intent.setup_type,
         tuple(source["geometry"] for source in sources),
     ))
     surface = _compact_signature((
         "mc2_task_surface_v1",
-        task.setup_type,
+        intent.setup_type,
         tuple(source["surface"] for source in sources),
     ))
     config = _compact_signature((
         "mc2_task_static_config_v1",
-        task.setup_type,
-        tuple(float(value) for value in task.profile.gravity_direction),
+        intent.setup_type,
+        tuple(float(value) for value in intent.profile.gravity_direction),
     ))
     source = _compact_signature(("mc2_task_source_v1", topology, geometry, surface))
     overall = _compact_signature(("mc2_task_static_v1", source, config))
@@ -362,24 +433,34 @@ def prepare_static_inputs_for_task(
 ]:
     """Read each source once and derive the native static fingerprint."""
 
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task 必须是 MC2TaskSpec")
+    return _prepare_static_inputs_for_intent(_task_intent(task))
+
+
+def _prepare_static_inputs_for_intent(
+    intent: _MC2TopologyIntentV1,
+):
     sources = []
     raw_snapshots: list[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None] = []
     armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
-    for source in task.sources:
-        source_fingerprint, snapshot = read_mc2_static_source_observation(
-            task,
+    for source in intent.sources:
+        source_fingerprint, snapshot = _read_mc2_static_source_observation(
+            intent.setup_type,
             source,
             armature_rest_snapshots=armature_rest_snapshots,
         )
         sources.append(source_fingerprint)
         raw_snapshots.append(snapshot)
-    return compose_mc2_static_inputs(
-        task,
+    return _compose_mc2_static_inputs(
+        intent,
         sources,
         raw_snapshots,
     )
+
+
+def prepare_static_inputs_for_partition(partition):
+    """读取一个 resolved Bone partition，且不创建 MC2TaskSpec。"""
+
+    return _prepare_static_inputs_for_intent(_partition_intent(partition))
 
 
 def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
@@ -819,19 +900,17 @@ def _build_compact_bone_source_topology(
     )
 
 
-def build_mc2_topology_spec(
-    task: MC2TaskSpec,
+def _build_mc2_topology_spec(
+    intent: _MC2TopologyIntentV1,
     *,
     static_input_fingerprint: MC2StaticInputFingerprint | None = None,
     static_input_snapshots: tuple[
         MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...
     ] | None = None,
 ) -> MC2TopologySpec:
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task 必须是 MC2TaskSpec")
     from .setups import get_mc2_setup_adapter
 
-    adapter = get_mc2_setup_adapter(task.setup_type)
+    adapter = get_mc2_setup_adapter(intent.setup_type)
     source_topology_builders = {
         "build_mc2_mesh_source_topology": build_mc2_mesh_source_topology,
         "build_mc2_bone_source_topology": build_mc2_bone_source_topology,
@@ -846,33 +925,33 @@ def build_mc2_topology_spec(
             f"{adapter.topology_builder_name!r}"
         ) from exc
     if (
-        task.setup_type == "mesh_cloth"
-        and len(task.sources) == 1
+        intent.setup_type == "mesh_cloth"
+        and len(intent.sources) == 1
         and isinstance(static_input_fingerprint, MC2StaticInputFingerprint)
     ):
         sources = (
             _build_compact_mesh_source_topology(
-                task.sources[0],
+                intent.sources[0],
                 0,
                 static_input_fingerprint,
             ),
         )
     elif (
-        task.setup_type in ("bone_cloth", "bone_spring")
+        intent.setup_type in ("bone_cloth", "bone_spring")
         and static_input_snapshots is not None
-        and len(static_input_snapshots) == len(task.sources)
+        and len(static_input_snapshots) == len(intent.sources)
         and all(isinstance(item, MC2BoneRawSnapshot) for item in static_input_snapshots)
     ):
         sources = tuple(
             _build_compact_bone_source_topology(source, index, snapshot)
             for index, (source, snapshot) in enumerate(
-                zip(task.sources, static_input_snapshots)
+                zip(intent.sources, static_input_snapshots)
             )
         )
     else:
         sources = tuple(
             source_topology_builder(source, index)
-            for index, source in enumerate(task.sources)
+            for index, source in enumerate(intent.sources)
         )
     bone_connection = None
     if sources and all(source.source_kind == "bone_chain" for source in sources):
@@ -950,50 +1029,80 @@ def build_mc2_topology_spec(
                 ))
                 positions.append(tuple(float(value) for value in record["head"]))
         if positions and all(source.resolved for source in sources):
-            if task.setup_options.connection_model == "hotools_product":
+            if intent.setup_options.connection_model == "hotools_product":
                 bone_connection = build_hotools_bone_connection(
                     positions,
                     parent_indices,
                     product_chains,
-                    task.setup_options.connection_mode,
+                    intent.setup_options.connection_mode,
                 )
             else:
                 bone_connection = build_mc2_bone_connection(
                     positions,
                     parent_indices,
                     root_indices,
-                    task.setup_options.connection_mode,
+                    intent.setup_options.connection_mode,
                     child_indices=child_indices,
                 )
     signature_payload = {
         "schema_version": 1,
-        "setup_type": task.setup_type,
-        "task_topology_signature": task.topology_signature,
-        "connection_mode": task.setup_options.connection_mode,
-        "connection_model": task.setup_options.connection_model,
+        "setup_type": intent.setup_type,
+        "task_topology_signature": intent.topology_signature,
+        "connection_mode": intent.setup_options.connection_mode,
+        "connection_model": intent.setup_options.connection_model,
     }
-    if task.setup_type == "mesh_cloth":
+    if intent.setup_type == "mesh_cloth":
         mesh_fingerprint = static_input_fingerprint
         if not isinstance(mesh_fingerprint, MC2StaticInputFingerprint):
-            mesh_fingerprint = static_input_fingerprint_for_task(task)
+            mesh_fingerprint = _prepare_static_inputs_for_intent(intent)[0]
         signature_payload["mesh_topology_fingerprint"] = mesh_fingerprint.topology
     else:
         bone_fingerprint = static_input_fingerprint
         if not isinstance(bone_fingerprint, MC2StaticInputFingerprint):
-            bone_fingerprint = static_input_fingerprint_for_task(task)
+            bone_fingerprint = _prepare_static_inputs_for_intent(intent)[0]
         signature_payload["bone_topology_fingerprint"] = bone_fingerprint.topology
     if bone_connection is not None:
         signature_payload["bone_connection_signature"] = bone_connection.topology_signature
     return MC2TopologySpec(
-        task_id=task.task_id,
-        setup_type=task.setup_type,
-        task_topology_signature=task.topology_signature,
-        connection_mode=task.setup_options.connection_mode,
-        connection_model=task.setup_options.connection_model,
+        task_id=intent.task_id,
+        setup_type=intent.setup_type,
+        task_topology_signature=intent.topology_signature,
+        connection_mode=intent.setup_options.connection_mode,
+        connection_model=intent.setup_options.connection_model,
         sources=sources,
         particle_count=sum(source.particle_count for source in sources),
         topology_signature=_signature(signature_payload),
         bone_connection=bone_connection,
+    )
+
+
+def build_mc2_topology_spec(
+    task: MC2TaskSpec,
+    *,
+    static_input_fingerprint: MC2StaticInputFingerprint | None = None,
+    static_input_snapshots: tuple[
+        MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...
+    ] | None = None,
+) -> MC2TopologySpec:
+    return _build_mc2_topology_spec(
+        _task_intent(task),
+        static_input_fingerprint=static_input_fingerprint,
+        static_input_snapshots=static_input_snapshots,
+    )
+
+
+def build_mc2_partition_topology_spec(
+    partition,
+    *,
+    static_input_fingerprint: MC2StaticInputFingerprint | None = None,
+    static_input_snapshots: tuple[MC2BoneRawSnapshot, ...] | None = None,
+) -> MC2TopologySpec:
+    """用同一拓扑核心编译 resolved Bone partition。"""
+
+    return _build_mc2_topology_spec(
+        _partition_intent(partition),
+        static_input_fingerprint=static_input_fingerprint,
+        static_input_snapshots=static_input_snapshots,
     )
 
 
@@ -1005,9 +1114,11 @@ __all__ = [
     "MC2TopologySpec",
     "build_mc2_bone_source_topology",
     "build_mc2_mesh_source_topology",
+    "build_mc2_partition_topology_spec",
     "build_mc2_topology_spec",
     "compose_mc2_static_inputs",
     "prepare_static_inputs_for_task",
+    "prepare_static_inputs_for_partition",
     "read_mc2_static_source_observation",
     "static_input_fingerprint_for_task",
     "thaw_mc2_topology_payload",

@@ -7,6 +7,8 @@ import os
 import sys
 import types
 
+import numpy as np
+
 
 MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
@@ -39,6 +41,24 @@ topology = importlib.import_module(
 )
 static_build = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.static_build"
+)
+product_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+)
+domain_collect = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect"
+)
+domain_compile = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_compile"
+)
+bone_fragment = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.static_fragment"
+)
+domain_owner = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_owner"
+)
+cpu_kernel = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
 )
 
 
@@ -75,8 +95,11 @@ class Data:
 
 
 class Armature:
+    type = "ARMATURE"
+
     def __init__(self, bones, pointer=1001):
         self.data = Data(bones, pointer + 1)
+        self.pose = types.SimpleNamespace(bones=self.data.bones)
         self.name = "ProductArmature"
         self.name_full = self.name
         self._pointer = pointer
@@ -182,12 +205,224 @@ def test_product_task_rejects_sources_from_multiple_armatures() -> None:
         raise AssertionError("multi-armature BoneCloth task was accepted")
 
 
+def test_product_partition_capture_matches_task_topology_without_task_creation() -> None:
+    armature = _armature()
+    task = _task(armature)
+    legacy_fingerprint, legacy_snapshots = topology.prepare_static_inputs_for_task(task)
+    legacy = topology.build_mc2_topology_spec(
+        task,
+        static_input_fingerprint=legacy_fingerprint,
+        static_input_snapshots=legacy_snapshots,
+    )
+    request = product_authoring.make_mc2_bone_cloth_product_request(
+        list(task.sources),
+        profile=task.profile,
+        setup_options=task.setup_options,
+        task_parameters=task.task_parameters,
+    )
+    partition = request.plan.active_partitions[0]
+    product_fingerprint, product_snapshots = (
+        topology.prepare_static_inputs_for_partition(partition)
+    )
+    product = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=product_fingerprint,
+        static_input_snapshots=product_snapshots,
+    )
+    assert product.task_id == partition.stable_id
+    assert product.particle_count == legacy.particle_count == 9
+    assert product.connection_mode == legacy.connection_mode
+    assert product.connection_model == legacy.connection_model == "hotools_product"
+    assert product.bone_connection.lines == legacy.bone_connection.lines
+    assert product.bone_connection.triangles == legacy.bone_connection.triangles
+    assert product.bone_connection.root_indices == legacy.bone_connection.root_indices
+    assert product_fingerprint.geometry == legacy_fingerprint.geometry
+    assert product_fingerprint.surface == legacy_fingerprint.surface
+
+    legacy_static = static_build.build_mc2_bone_cloth_static_for_task(
+        task,
+        legacy,
+        raw_snapshots=legacy_snapshots,
+    )
+    product_static = static_build.build_mc2_bone_static_for_partition(
+        partition,
+        product,
+        raw_snapshots=product_snapshots,
+    )
+    assert product_static.final_proxy.vertex_identities == (
+        legacy_static.final_proxy.vertex_identities
+    )
+    assert product_static.final_proxy.edges == legacy_static.final_proxy.edges
+    assert product_static.final_proxy.triangles == legacy_static.final_proxy.triangles
+    np.testing.assert_allclose(
+        product_static.final_proxy.local_positions,
+        legacy_static.final_proxy.local_positions,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        product_static.baseline.depths,
+        legacy_static.baseline.depths,
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert product_static.distance.distance_ranges == legacy_static.distance.distance_ranges
+    assert product_static.distance.distance_targets == legacy_static.distance.distance_targets
+    np.testing.assert_allclose(
+        product_static.distance.distance_rest_signed,
+        legacy_static.distance.distance_rest_signed,
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert product_static.bending.bending_quads == legacy_static.bending.bending_quads
+    np.testing.assert_allclose(
+        product_static.bending.bending_rest_angle_or_volume,
+        legacy_static.bending.bending_rest_angle_or_volume,
+        rtol=0.0,
+        atol=0.0,
+    )
+    fragment = bone_fragment.build_mc2_bone_static_fragment(
+        partition,
+        product_fingerprint,
+        product,
+        product_snapshots,
+    )
+    draft = domain_collect.build_mc2_domain_draft(request.plan)
+    compiled = domain_compile.compile_mc2_domain_draft(draft, (fragment,))
+    assert isinstance(compiled, domain_compile.MC2CompiledDomainV1)
+    assert compiled.program.setup_type == "bone_cloth"
+    assert compiled.program.partition_ids == (partition.stable_id,)
+    assert compiled.program.output_targets[0].space_kind == "bone_pose"
+    assert compiled.program.output_targets[0].target_id == fragment.output_target_id
+    assert compiled.program.particle_count == 9
+    assert compiled.program.particle_source_element.tolist() == list(range(9))
+    assert {
+        table.kind for table in compiled.program.constraint_tables
+    } == {"distance", "tether", "bending"}
+    assert compiled.parameters.layout_signature == compiled.program.layout_signature
+    owner = domain_owner.MC2FusedCPUOwnerV1(cpu_kernel.MC2NativeCPUKernelV1())
+    try:
+        created = owner.sync_fragments(
+            draft,
+            (fragment,),
+            fragment_cache_revision=1,
+            fragment_builds=1,
+        )
+        reused = owner.sync_fragments(
+            draft,
+            (fragment,),
+            fragment_cache_revision=1,
+            fragment_cache_hits=1,
+        )
+        assert created.action == "created"
+        assert reused.action == "reused"
+        assert owner.compiled.program.setup_type == "bone_cloth"
+        assert owner.inspect()["schema"] == "mc2_fused_cpu_owner_v1"
+    finally:
+        owner.dispose()
+
+
+def test_bone_spring_partition_uses_the_same_domain_owner() -> None:
+    armature = _armature()
+    source_task = _task(armature)
+    request = product_authoring.make_mc2_bone_spring_product_request(
+        list(source_task.sources),
+        profile=source_task.profile,
+        task_parameters=source_task.task_parameters,
+    )
+    partition = request.plan.active_partitions[0]
+    fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+    product_topology = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=snapshots,
+    )
+    fragment = bone_fragment.build_mc2_bone_static_fragment(
+        partition,
+        fingerprint,
+        product_topology,
+        snapshots,
+    )
+    draft = domain_collect.build_mc2_domain_draft(request.plan)
+    compiled = domain_compile.compile_mc2_domain_draft(draft, (fragment,))
+    assert compiled.program.setup_type == "bone_spring"
+    assert compiled.program.required_capabilities[0] == "bone_spring"
+    assert compiled.program.output_targets[0].space_kind == "bone_pose"
+
+    owner = domain_owner.MC2FusedCPUOwnerV1(cpu_kernel.MC2NativeCPUKernelV1())
+    try:
+        report = owner.sync_fragments(draft, (fragment,), fragment_builds=1)
+        assert report.action == "created"
+        assert owner.compiled.program.domain_signature == compiled.program.domain_signature
+        assert owner.compiled.program.setup_type == "bone_spring"
+    finally:
+        owner.dispose()
+
+
+def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
+    armature = _armature()
+    request = product_authoring.make_mc2_bone_cloth_product_request(
+        [(armature, "A0"), (armature, "B0")],
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_cloth",
+            connection_mode=0,
+        ),
+    )
+    assert len(request.plan.active_partitions) == 2
+    fragments = []
+    for partition in request.plan.active_partitions:
+        fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+        product_topology = topology.build_mc2_partition_topology_spec(
+            partition,
+            static_input_fingerprint=fingerprint,
+            static_input_snapshots=snapshots,
+        )
+        fragments.append(bone_fragment.build_mc2_bone_static_fragment(
+            partition,
+            fingerprint,
+            product_topology,
+            snapshots,
+        ))
+
+    draft = domain_collect.build_mc2_domain_draft(request.plan)
+    compiled = domain_compile.compile_mc2_domain_draft(draft, tuple(fragments))
+    assert compiled.program.partition_count == 2
+    assert compiled.program.particle_count == 4
+    assert compiled.program.partition_ids == draft.partition_ids
+    assert len({target.target_id for target in compiled.program.output_targets}) == 2
+
+    owner = domain_owner.MC2FusedCPUOwnerV1(cpu_kernel.MC2NativeCPUKernelV1())
+    try:
+        report = owner.sync_fragments(
+            draft,
+            tuple(fragments),
+            fragment_cache_revision=1,
+            fragment_builds=2,
+        )
+        assert report.action == "created"
+        assert tuple(owner.inspect()["partition_ids"]) == draft.partition_ids
+    finally:
+        owner.dispose()
+
+
 TESTS = (
     (
         "multi-chain product topology and static",
         test_product_task_builds_multi_chain_topology_and_static_bundle,
     ),
     ("multi-armature task rejection", test_product_task_rejects_sources_from_multiple_armatures),
+    (
+        "partition capture matches task topology",
+        test_product_partition_capture_matches_task_topology_without_task_creation,
+    ),
+    (
+        "BoneSpring partition uses unified owner",
+        test_bone_spring_partition_uses_the_same_domain_owner,
+    ),
+    (
+        "same Armature partitions compile into one domain",
+        test_same_armature_bone_cloth_partitions_compile_into_one_domain,
+    ),
 )
 
 
