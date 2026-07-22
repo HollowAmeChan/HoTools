@@ -59,6 +59,22 @@ def _pointer_token(value) -> dict | None:
 
 
 def mc2_source_token(source) -> dict:
+    token_builder = getattr(source, "mc2_source_token", None)
+    if callable(token_builder):
+        token = token_builder()
+        if not isinstance(token, dict) or not str(token.get("kind") or "").strip():
+            raise TypeError("MC2 source token provider 必须返回带 kind 的 dict")
+        try:
+            json.dumps(
+                token,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise TypeError("MC2 source token provider 返回了不可序列化数据") from exc
+        return token
+
     pointer_token = _pointer_token(source)
     if pointer_token is not None:
         return pointer_token
