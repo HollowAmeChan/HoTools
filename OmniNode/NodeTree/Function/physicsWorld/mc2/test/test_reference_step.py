@@ -50,6 +50,10 @@ reference_step = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.reference_step"
 )
 scheduler = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler")
+cpu_backend = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_backend")
+native_kernel = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -173,6 +177,43 @@ def test_reference_settings_reject_collision_mapping_that_disagrees_with_compile
         assert "collision_mode" in str(exc)
     else:
         raise AssertionError("collision mapping mismatch must be rejected")
+
+
+def test_reference_settings_enter_native_full_pipeline_without_manual_defaults() -> None:
+    compiled = _compiled()
+    frame = _frame(compiled)
+    domain = cpu_backend.create_mc2_cpu_backend_domain(
+        compiled,
+        native_kernel.MC2NativeCPUKernelV1(),
+    )
+    try:
+        domain.update_frame(frame)
+        pose = domain.prepare_step_basic_pose()
+        plan = scheduler.MC2SubstepPlan(
+            update_index=0,
+            simulation_delta_time=1.0 / 90.0,
+            frame_interpolation=1.0,
+            is_final_substep=True,
+            powers=scheduler.derive_mc2_simulation_powers(1.0 / 90.0),
+        )
+        positions = compiled.program.particle_bind_position
+        settings = reference_step.make_mc2_reference_pipeline_settings(
+            compiled,
+            frame,
+            plan,
+            anchor_component_local_positions=np.zeros((1, 3), dtype=np.float32),
+            step_basic_positions=pose["positions"],
+            step_basic_rotations=pose["rotations"],
+            motion_base_positions=frame.animated_base_world_positions,
+            motion_base_rotations=frame.animated_base_world_rotations,
+            distance_weights=np.ones(1, dtype=np.float32),
+            old_positions=positions,
+        )
+        domain.step_reference_pipeline_full(settings)
+        assert domain.inspect()["step_count"] == 1
+        assert np.isfinite(domain.read_output().world_positions).all()
+    finally:
+        domain.dispose()
 
 
 if __name__ == "__main__":
