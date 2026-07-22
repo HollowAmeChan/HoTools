@@ -2453,7 +2453,8 @@ bool self_owner_pair_allowed(
     }
     const auto owner0 = context.self_primitive_owner_indices[primitive0];
     const auto owner1 = context.self_primitive_owner_indices[primitive1];
-    if (owner0 < 0 || owner1 < 0 || owner0 == owner1) return false;
+    if (owner0 < 0 || owner1 < 0) return false;
+    if (owner0 == owner1) return context.self_owner_same_partition_enabled;
     const auto owner_count = context.self_owner_primary_group_bits.size();
     if (static_cast<std::size_t>(owner0) >= owner_count ||
         static_cast<std::size_t>(owner1) >= owner_count ||
@@ -4313,6 +4314,217 @@ bool build_and_solve_interaction(
         }
     }
     return true;
+}
+
+void configure_whole_domain_self_engine(
+    Mc2ContextV0& engine,
+    std::size_t vertex_count,
+    const std::int32_t* points,
+    std::size_t point_count,
+    const std::int32_t* edges,
+    std::size_t edge_count,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const std::uint32_t* particle_partition_indices,
+    const std::uint32_t* particle_attribute_flags,
+    const std::uint32_t* partition_self_collision_modes,
+    const std::uint32_t* partition_collision_groups,
+    const std::uint32_t* partition_collision_masks,
+    std::size_t partition_count
+) {
+    engine = Mc2ContextV0 {};
+    engine.vertex_count = static_cast<std::int64_t>(vertex_count);
+    engine.self_point_primitive_count = static_cast<std::int64_t>(point_count);
+    engine.self_edge_primitive_count = static_cast<std::int64_t>(edge_count);
+    engine.self_triangle_primitive_count = static_cast<std::int64_t>(triangle_count);
+    engine.self_owner_same_partition_enabled = true;
+    engine.self_primitive_flags.reserve(point_count + edge_count + triangle_count);
+    engine.self_particle_indices.reserve((point_count + edge_count + triangle_count) * 3);
+    engine.self_primitive_depths.assign(point_count + edge_count + triangle_count, 0.0f);
+    engine.self_primitive_owner_indices.reserve(point_count + edge_count + triangle_count);
+    auto append_primitive = [&](std::uint32_t kind, const std::int32_t* indices) {
+        const auto axis_count = static_cast<std::size_t>(kind + 1u);
+        std::uint32_t flags = kind << 24u;
+        std::int32_t owner = -1;
+        std::size_t fixed_count = 0;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const auto vertex = indices[axis];
+            engine.self_particle_indices.push_back(vertex);
+            if (axis >= axis_count) continue;
+            if (owner < 0) {
+                owner = static_cast<std::int32_t>(particle_partition_indices[vertex]);
+            }
+            if ((particle_attribute_flags[vertex] & 0x02u) == 0u) {
+                flags |= kSelfFix0 << axis;
+                ++fixed_count;
+            }
+        }
+        if (fixed_count == axis_count) flags |= kSelfAllFix;
+        if (owner < 0 || partition_self_collision_modes[owner] != 2u) {
+            flags |= kSelfIgnore;
+        }
+        engine.self_primitive_flags.push_back(flags);
+        engine.self_primitive_owner_indices.push_back(owner);
+    };
+    for (std::size_t index = 0; index < point_count; ++index) {
+        const std::int32_t value = points[index];
+        const std::int32_t indices[3] = {value, -1, -1};
+        append_primitive(0u, indices);
+    }
+    for (std::size_t index = 0; index < edge_count; ++index) {
+        const std::int32_t indices[3] = {edges[index * 2], edges[index * 2 + 1], -1};
+        append_primitive(1u, indices);
+    }
+    for (std::size_t index = 0; index < triangle_count; ++index) {
+        const std::int32_t indices[3] = {
+            triangles[index * 3], triangles[index * 3 + 1], triangles[index * 3 + 2]
+        };
+        append_primitive(2u, indices);
+    }
+    engine.self_owner_primary_group_bits.assign(partition_count, 0);
+    engine.self_owner_collided_by_groups.assign(partition_count, 0);
+    for (std::size_t partition = 0; partition < partition_count; ++partition) {
+        engine.self_owner_primary_group_bits[partition] =
+            static_cast<std::int32_t>(partition_collision_groups[partition]);
+        engine.self_owner_collided_by_groups[partition] =
+            static_cast<std::int32_t>(partition_collision_masks[partition]);
+    }
+    engine.self_topology_neighbor_keys.clear();
+    engine.self_topology_neighbor_keys.reserve(edge_count);
+    for (std::size_t edge = 0; edge < edge_count; ++edge) {
+        const auto first = edges[edge * 2];
+        const auto second = edges[edge * 2 + 1];
+        if (first != second) {
+            engine.self_topology_neighbor_keys.push_back(
+                self_particle_pair_key(first, second)
+            );
+        }
+    }
+    std::sort(
+        engine.self_topology_neighbor_keys.begin(),
+        engine.self_topology_neighbor_keys.end()
+    );
+    engine.self_topology_neighbor_keys.erase(
+        std::unique(
+            engine.self_topology_neighbor_keys.begin(),
+            engine.self_topology_neighbor_keys.end()
+        ),
+        engine.self_topology_neighbor_keys.end()
+    );
+    const auto primitive_count = point_count + edge_count + triangle_count;
+    engine.self_primitive_inverse_masses.assign(primitive_count * 3, 0.0f);
+    engine.self_primitive_aabb_min.assign(primitive_count * 3, 0.0f);
+    engine.self_primitive_aabb_max.assign(primitive_count * 3, 0.0f);
+    engine.self_primitive_thickness.assign(primitive_count, 0.0f);
+    engine.self_primitive_grids.assign(primitive_count * 3, kSelfIgnoreGrid);
+    engine.self_grid_hashes.assign(primitive_count, 0);
+    engine.self_grid_starts.assign(primitive_count, 0);
+    engine.self_grid_counts.assign(primitive_count, 0);
+    engine.self_collision_static_ready = true;
+    engine.self_primitive_dynamic_ready = false;
+    engine.self_grid_dynamic_ready = false;
+    engine.self_candidate_ready = false;
+    clear_self_collision_contacts(engine);
+}
+
+void solve_whole_domain_self_engine(
+    Mc2ContextV0& engine,
+    float* positions,
+    const float* old_positions,
+    const float* particle_thickness,
+    const float* particle_friction,
+    const float* particle_cloth_mass,
+    std::int64_t frame,
+    std::int64_t generation,
+    std::int64_t& candidate_count,
+    std::int64_t& contact_count
+) {
+    const auto vertex_count = static_cast<std::size_t>(engine.vertex_count);
+    const auto primitive_count = engine.self_primitive_flags.size();
+    engine.frame = frame;
+    engine.generation = generation;
+    engine.state_positions.assign(positions, positions + vertex_count * 3);
+    engine.velocity_reference_positions.assign(
+        old_positions,
+        old_positions + vertex_count * 3
+    );
+    float edge_max_size = 0.0f;
+    float fallback_max_size = 0.0f;
+    for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
+        const auto kind = (engine.self_primitive_flags[primitive] >> 24u) & 0x03u;
+        const auto axis_count = static_cast<std::size_t>(kind + 1u);
+        float minimum[3] {
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+        };
+        float maximum[3] {
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(),
+        };
+        float thickness = 0.0f;
+        for (std::size_t axis = 0; axis < axis_count; ++axis) {
+            const auto vertex = static_cast<std::size_t>(
+                engine.self_particle_indices[primitive * 3 + axis]
+            );
+            const auto position_offset = vertex * 3;
+            const bool fixed =
+                (engine.self_primitive_flags[primitive] & (kSelfFix0 << axis)) != 0u;
+            float mass = fixed ? 100.0f : 1.0f + particle_friction[vertex] * 10.0f;
+            mass += particle_cloth_mass[vertex] * 50.0f;
+            engine.self_primitive_inverse_masses[primitive * 3 + axis] = 1.0f / mass;
+            thickness += std::max(particle_thickness[vertex], 0.0f);
+            for (std::size_t component = 0; component < 3; ++component) {
+                minimum[component] = std::min({
+                    minimum[component],
+                    engine.state_positions[position_offset + component],
+                    engine.velocity_reference_positions[position_offset + component],
+                });
+                maximum[component] = std::max({
+                    maximum[component],
+                    engine.state_positions[position_offset + component],
+                    engine.velocity_reference_positions[position_offset + component],
+                });
+            }
+        }
+        thickness /= static_cast<float>(axis_count);
+        engine.self_primitive_thickness[primitive] = thickness;
+        for (std::size_t component = 0; component < 3; ++component) {
+            engine.self_primitive_aabb_min[primitive * 3 + component] =
+                minimum[component] - thickness;
+            engine.self_primitive_aabb_max[primitive * 3 + component] =
+                maximum[component] + thickness;
+        }
+        const float primitive_size = std::max({
+            maximum[0] - minimum[0],
+            maximum[1] - minimum[1],
+            maximum[2] - minimum[2],
+        });
+        fallback_max_size = std::max(fallback_max_size, primitive_size);
+        if (kind == 1u) {
+            edge_max_size = std::max(edge_max_size, primitive_size);
+        }
+    }
+    if (edge_max_size <= kMc2Epsilon) {
+        edge_max_size = fallback_max_size;
+    }
+    engine.self_max_primitive_size = edge_max_size;
+    engine.self_grid_size = edge_max_size * 3.0f;
+    engine.self_primitive_frame = frame;
+    engine.self_primitive_generation = generation;
+    engine.self_primitive_dynamic_ready = true;
+    update_self_collision_grid(engine);
+    update_self_collision_candidates(engine);
+    build_self_collision_contacts(engine, engine.velocity_reference_positions);
+    solve_self_collision_contacts(engine, nullptr);
+    candidate_count = static_cast<std::int64_t>(engine.self_contact_candidates.size() / 3);
+    contact_count = static_cast<std::int64_t>(engine.self_contact_types.size());
+    std::copy(
+        engine.state_positions.begin(),
+        engine.state_positions.end(),
+        positions
+    );
 }
 
 void finish_interaction_intersections(

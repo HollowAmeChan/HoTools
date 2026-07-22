@@ -334,6 +334,33 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
             (mask1 & view.partition_collision_groups[owner0]) != 0u;
         return allows0 && allows1;
     };
+    auto particle_pair_key = [](std::int32_t first, std::int32_t second) {
+        const auto low = static_cast<std::uint32_t>(std::min(first, second));
+        const auto high = static_cast<std::uint32_t>(std::max(first, second));
+        return (static_cast<std::uint64_t>(low) << 32u) |
+            static_cast<std::uint64_t>(high);
+    };
+    std::unordered_set<std::uint64_t> topology_neighbor_keys;
+    topology_neighbor_keys.reserve(
+        view.edge_count > 0 ? static_cast<std::size_t>(view.edge_count) : 0u
+    );
+    if (view.edges != nullptr) {
+        for (std::int64_t edge = 0; edge < view.edge_count; ++edge) {
+            const std::int32_t first = view.edges[edge * 2];
+            const std::int32_t second = view.edges[edge * 2 + 1];
+            if (first >= 0 && second >= 0 && first != second) {
+                topology_neighbor_keys.insert(particle_pair_key(first, second));
+            }
+        }
+    }
+    auto topology_neighbors = [&](std::int32_t first, std::int32_t second) {
+        if (partitioned &&
+            view.particle_partition_index[first] != view.particle_partition_index[second]) {
+            return false;
+        }
+        return topology_neighbor_keys.find(particle_pair_key(first, second)) !=
+            topology_neighbor_keys.end();
+    };
     auto particle_side_thickness = [&](std::int32_t vertex) {
         return view.particle_thickness == nullptr
             ? view.surface_thickness
@@ -403,6 +430,13 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
         float max_y = 0.0f;
         float max_z = 0.0f;
         bool valid = false;
+    };
+
+    auto bounds_overlap = [](const PrimitiveBounds& left, const PrimitiveBounds& right) {
+        return left.valid && right.valid &&
+            left.max_x >= right.min_x && left.min_x <= right.max_x &&
+            left.max_y >= right.min_y && left.min_y <= right.max_y &&
+            left.max_z >= right.min_z && left.min_z <= right.max_z;
     };
 
     auto grid_coord = [](float value, float cell_size) -> std::int64_t {
@@ -550,10 +584,15 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
         if (!bounds.valid) {
             continue;
         }
-        for_grid_cells(bounds.min_x, bounds.min_y, bounds.min_z, bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
-                       [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
-                           edge_cells[GridCell{grid_x, grid_y, grid_z}].push_back(static_cast<std::int32_t>(edge_index));
-                       });
+        for_grid_cells(
+            bounds.min_x, bounds.min_y, bounds.min_z,
+            bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
+            [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                edge_cells[GridCell{grid_x, grid_y, grid_z}].push_back(
+                    static_cast<std::int32_t>(edge_index)
+                );
+            }
+        );
     }
 
     for (std::int64_t tri_index = 0; tri_index < view.triangle_count; ++tri_index) {
@@ -561,10 +600,15 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
         if (!bounds.valid) {
             continue;
         }
-        for_grid_cells(bounds.min_x, bounds.min_y, bounds.min_z, bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
-                       [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
-                           triangle_cells[GridCell{grid_x, grid_y, grid_z}].push_back(static_cast<std::int32_t>(tri_index));
-                       });
+        for_grid_cells(
+            bounds.min_x, bounds.min_y, bounds.min_z,
+            bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
+            [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                triangle_cells[GridCell{grid_x, grid_y, grid_z}].push_back(
+                    static_cast<std::int32_t>(tri_index)
+                );
+            }
+        );
     }
 
     std::vector<SelfContact> contacts;
@@ -596,6 +640,11 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
             const float point_max_x = std::max(view.positions[po + 0], view.old_positions[po + 0]) + point_thickness;
             const float point_max_y = std::max(view.positions[po + 1], view.old_positions[po + 1]) + point_thickness;
             const float point_max_z = std::max(view.positions[po + 2], view.old_positions[po + 2]) + point_thickness;
+            const PrimitiveBounds point_bounds {
+                point_min_x, point_min_y, point_min_z,
+                point_max_x, point_max_y, point_max_z,
+                true,
+            };
             for_grid_cells(point_min_x, point_min_y, point_min_z, point_max_x, point_max_y, point_max_z, cell_size,
                            [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
                                const auto found = triangle_cells.find(GridCell{grid_x, grid_y, grid_z});
@@ -622,6 +671,17 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                     continue;
                 }
                 if (!owner_pair_allowed(static_cast<std::int32_t>(point), ta)) continue;
+                if (topology_neighbors(static_cast<std::int32_t>(point), ta) ||
+                    topology_neighbors(static_cast<std::int32_t>(point), tb) ||
+                    topology_neighbors(static_cast<std::int32_t>(point), tc)) {
+                    continue;
+                }
+                if (!bounds_overlap(
+                        point_bounds,
+                        triangle_bounds[static_cast<std::size_t>(tri_index)]
+                    )) {
+                    continue;
+                }
                 if (view.candidate_count != nullptr) ++*view.candidate_count;
                 const std::int32_t triangle_vertices[] = {ta, tb, tc};
                 const float contact_thickness = view.particle_thickness == nullptr
@@ -764,6 +824,16 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                     continue;
                 }
                 if (!owner_pair_allowed(a0, b0)) continue;
+                if (topology_neighbors(a0, b0) || topology_neighbors(a0, b1) ||
+                    topology_neighbors(a1, b0) || topology_neighbors(a1, b1)) {
+                    continue;
+                }
+                if (!bounds_overlap(
+                        bounds,
+                        edge_bounds[static_cast<std::size_t>(edge_b)]
+                    )) {
+                    continue;
+                }
                 if (view.candidate_count != nullptr) ++*view.candidate_count;
                 const std::int32_t edge_a_vertices[] = {a0, a1};
                 const std::int32_t edge_b_vertices[] = {b0, b1};

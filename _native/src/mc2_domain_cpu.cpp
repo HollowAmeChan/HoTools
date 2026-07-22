@@ -1,6 +1,7 @@
 #include "mc2_domain_cpu.hpp"
 
 #include "mc2_kernels.hpp"
+#include "mc2_whole_domain_self.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -195,7 +196,10 @@ DomainV1::DomainV1(const ProgramViewV1& program)
     world_positions_ = bind_positions_;
     world_rotations_ = bind_rotations_;
     velocity_positions_ = world_positions_;
+    whole_domain_self_engine_ = std::make_unique<hotools::Mc2WholeDomainSelfEngine>();
 }
+
+DomainV1::~DomainV1() = default;
 
 void DomainV1::update_frame(const FrameViewV1& frame) {
     ensure_live();
@@ -1607,7 +1611,8 @@ void DomainV1::configure_whole_domain_self(
     const std::uint32_t* partition_collision_groups,
     const std::uint32_t* partition_collision_masks,
     const float* particle_friction,
-    const float* particle_thickness
+    const float* particle_thickness,
+    const float* particle_cloth_mass
 ) {
     ensure_live();
     if ((point_count != 0 && points == nullptr) ||
@@ -1621,6 +1626,7 @@ void DomainV1::configure_whole_domain_self(
     }
     require_finite(particle_friction, particle_count_, "whole-domain self friction");
     require_finite(particle_thickness, particle_count_, "whole-domain self thickness");
+    require_finite(particle_cloth_mass, particle_count_, "whole-domain self cloth mass");
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         if (partition_self_collision_modes[partition] != 0u &&
             partition_self_collision_modes[partition] != 2u) {
@@ -1628,7 +1634,8 @@ void DomainV1::configure_whole_domain_self(
         }
     }
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
-        if (particle_friction[vertex] < 0.0f || particle_thickness[vertex] < 0.0f) {
+        if (particle_friction[vertex] < 0.0f || particle_thickness[vertex] < 0.0f ||
+            particle_cloth_mass[vertex] < 0.0f || particle_cloth_mass[vertex] > 1.0f) {
             throw std::invalid_argument("MC2 whole-domain self particle values cannot be negative");
         }
     }
@@ -1678,6 +1685,27 @@ void DomainV1::configure_whole_domain_self(
     );
     whole_domain_self_friction_.assign(particle_friction, particle_friction + particle_count_);
     whole_domain_self_thickness_.assign(particle_thickness, particle_thickness + particle_count_);
+    whole_domain_self_cloth_mass_.assign(
+        particle_cloth_mass,
+        particle_cloth_mass + particle_count_
+    );
+    whole_domain_self_scaled_thickness_.assign(particle_count_, 0.0f);
+    whole_domain_self_partition_scale_ratios_.assign(partition_count_, 1.0f);
+    whole_domain_self_engine_->configure(
+        particle_count_,
+        points,
+        point_count,
+        edges,
+        edge_count,
+        triangles,
+        triangle_count,
+        particle_partition_index_.data(),
+        particle_attribute_flags_.data(),
+        partition_self_collision_modes,
+        partition_collision_groups,
+        partition_collision_masks,
+        partition_count_
+    );
     whole_domain_self_ready_ = true;
     whole_domain_self_step_count_ = 0;
     whole_domain_self_last_contact_count_ = 0;
@@ -1699,8 +1727,6 @@ void DomainV1::step_whole_domain_self_impl(const float* old_positions, bool rese
     if (reset_friction || !collision_state_ready_) {
         collision_friction_ = whole_domain_self_friction_;
     }
-    std::vector<float> scaled_thickness(particle_count_, 0.0f);
-    std::vector<float> partition_scale_ratios(partition_count_, 1.0f);
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         const auto offset = partition * 3;
         const float current_length = std::sqrt(
@@ -1713,41 +1739,25 @@ void DomainV1::step_whole_domain_self_impl(const float* old_positions, bool rese
             center_initial_scales_[offset + 1] * center_initial_scales_[offset + 1] +
             center_initial_scales_[offset + 2] * center_initial_scales_[offset + 2]
         );
-        partition_scale_ratios[partition] = std::max(
+        whole_domain_self_partition_scale_ratios_[partition] = std::max(
             current_length / std::max(initial_length, 0.00000001f), 0.000001f
         );
     }
-    std::vector<std::uint8_t> attributes(particle_count_, 0u);
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
-        scaled_thickness[vertex] = whole_domain_self_thickness_[vertex] *
-            partition_scale_ratios[particle_partition_index_[vertex]];
-        if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
-            attributes[vertex] = 1u << 2u;
-        }
+        whole_domain_self_scaled_thickness_[vertex] = whole_domain_self_thickness_[vertex] *
+            whole_domain_self_partition_scale_ratios_[particle_partition_index_[vertex]];
     }
-    hotools::Mc2SelfCollisionView view;
-    view.positions = world_positions_.data();
-    view.old_positions = old_positions;
-    view.inv_masses = inertia_inv_masses_.data();
-    view.points = whole_domain_self_points_.data();
-    view.edges = whole_domain_self_edges_.data();
-    view.triangles = whole_domain_self_triangles_.data();
-    view.attributes = attributes.data();
-    view.particle_thickness = scaled_thickness.data();
-    view.particle_partition_index = particle_partition_index_.data();
-    view.partition_self_collision_modes = whole_domain_self_modes_.data();
-    view.partition_collision_groups = whole_domain_collision_groups_.data();
-    view.partition_collision_masks = whole_domain_collision_masks_.data();
-    view.collision_normals = world_normals_.data();
-    view.friction = collision_friction_.data();
-    view.vertex_count = static_cast<std::int64_t>(particle_count_);
-    view.point_count = static_cast<std::int64_t>(whole_domain_self_points_.size());
-    view.edge_count = static_cast<std::int64_t>(whole_domain_self_edges_.size() / 2);
-    view.triangle_count = static_cast<std::int64_t>(whole_domain_self_triangles_.size() / 3);
-    view.partition_count = static_cast<std::int64_t>(partition_count_);
-    view.contact_count = &whole_domain_self_last_contact_count_;
-    view.candidate_count = &whole_domain_self_last_candidate_count_;
-    hotools::project_self_collisions_mc2(view);
+    whole_domain_self_engine_->solve(
+        world_positions_.data(),
+        old_positions,
+        whole_domain_self_scaled_thickness_.data(),
+        collision_friction_.data(),
+        whole_domain_self_cloth_mass_.data(),
+        frame_,
+        generation_,
+        whole_domain_self_last_candidate_count_,
+        whole_domain_self_last_contact_count_
+    );
     collision_state_ready_ = true;
     ++whole_domain_self_step_count_;
     ++step_count_;
@@ -2451,6 +2461,9 @@ void DomainV1::dispose() noexcept {
     whole_domain_collision_masks_.clear();
     whole_domain_self_friction_.clear();
     whole_domain_self_thickness_.clear();
+    whole_domain_self_cloth_mass_.clear();
+    whole_domain_self_scaled_thickness_.clear();
+    whole_domain_self_partition_scale_ratios_.clear();
     whole_domain_self_ready_ = false;
     whole_domain_self_step_count_ = 0;
     whole_domain_self_last_contact_count_ = 0;

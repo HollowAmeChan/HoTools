@@ -1511,6 +1511,7 @@ class MC2NativeCPUKernelV1:
         }
         required_particle = {
             "radius_multiplier", "self_collision_thickness", "collision_friction",
+            "cloth_mass",
         }
         missing_particle = required_particle - set(particle_fields)
         if missing_particle:
@@ -1527,10 +1528,16 @@ class MC2NativeCPUKernelV1:
             * particle_values[:, particle_fields["radius_multiplier"]],
             dtype=np.float32,
         )
-        for array in (points, edges, triangles, modes, groups, masks, friction, thickness):
+        cloth_mass = np.asarray(
+            particle_values[:, particle_fields["cloth_mass"]], dtype=np.float32
+        )
+        for array in (
+            points, edges, triangles, modes, groups, masks, friction, thickness, cloth_mass,
+        ):
             array.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_whole_domain_self(
-            handle, points, edges, triangles, modes, groups, masks, friction, thickness
+            handle, points, edges, triangles, modes, groups, masks, friction, thickness,
+            cloth_mass,
         )
 
     def _configure_compiled_external_collision(

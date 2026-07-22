@@ -2,8 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+namespace hotools {
+class Mc2WholeDomainSelfEngine;
+}
 
 namespace hotools::mc2_domain_cpu {
 
@@ -51,7 +56,7 @@ struct FrameViewV1 {
 class DomainV1 {
 public:
     explicit DomainV1(const ProgramViewV1& program);
-    ~DomainV1() = default;
+    ~DomainV1();
 
     DomainV1(const DomainV1&) = delete;
     DomainV1& operator=(const DomainV1&) = delete;
@@ -163,7 +168,8 @@ public:
         const std::uint32_t* partition_collision_groups,
         const std::uint32_t* partition_collision_masks,
         const float* particle_friction,
-        const float* particle_thickness
+        const float* particle_thickness,
+        const float* particle_cloth_mass
     );
     void step_whole_domain_self(const float* old_positions);
     void step_whole_domain_self_owned();
@@ -318,7 +324,6 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
-    const std::vector<float>& velocity_positions() const noexcept { return velocity_positions_; }
     const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
@@ -547,6 +552,10 @@ private:
     std::vector<std::uint32_t> whole_domain_collision_masks_;
     std::vector<float> whole_domain_self_friction_;
     std::vector<float> whole_domain_self_thickness_;
+    std::vector<float> whole_domain_self_cloth_mass_;
+    std::vector<float> whole_domain_self_scaled_thickness_;
+    std::vector<float> whole_domain_self_partition_scale_ratios_;
+    std::unique_ptr<hotools::Mc2WholeDomainSelfEngine> whole_domain_self_engine_;
     bool whole_domain_self_ready_ = false;
     std::int64_t whole_domain_self_step_count_ = 0;
     std::int64_t whole_domain_self_last_contact_count_ = 0;

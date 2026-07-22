@@ -684,6 +684,48 @@ void bind_mc2_domain_cpu(nb::module_& module) {
            cu32_1d partition_collision_groups,
            cu32_1d partition_collision_masks,
            cf32_1d particle_friction,
+           cf32_1d particle_thickness,
+           cf32_1d particle_cloth_mass) {
+            auto* domain = require_domain(handle);
+            const auto particle_count = domain->particle_count();
+            const auto partition_count = domain->partition_count();
+            if (edges.shape(1) != 2 || triangles.shape(1) != 3 ||
+                static_cast<std::size_t>(partition_self_collision_modes.shape(0)) != partition_count ||
+                static_cast<std::size_t>(partition_collision_groups.shape(0)) != partition_count ||
+                static_cast<std::size_t>(partition_collision_masks.shape(0)) != partition_count ||
+                static_cast<std::size_t>(particle_friction.shape(0)) != particle_count ||
+                static_cast<std::size_t>(particle_thickness.shape(0)) != particle_count ||
+                static_cast<std::size_t>(particle_cloth_mass.shape(0)) != particle_count) {
+                throw nb::value_error(
+                    "MC2 whole-domain self configuration arrays have incompatible shapes"
+                );
+            }
+            domain->configure_whole_domain_self(
+                points.data(), static_cast<std::size_t>(points.shape(0)),
+                edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                triangles.data(), static_cast<std::size_t>(triangles.shape(0)),
+                partition_self_collision_modes.data(), partition_collision_groups.data(),
+                partition_collision_masks.data(), particle_friction.data(),
+                particle_thickness.data(), particle_cloth_mass.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("points"), nb::arg("edges"), nb::arg("triangles"),
+        nb::arg("partition_self_collision_modes"),
+        nb::arg("partition_collision_groups"), nb::arg("partition_collision_masks"),
+        nb::arg("particle_friction"), nb::arg("particle_thickness"),
+        nb::arg("particle_cloth_mass"),
+        "Configure the compiled whole-domain self-collision pass."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_configure_whole_domain_self",
+        [](std::uint64_t handle,
+           ci32_1d points,
+           ci32_2d edges,
+           ci32_2d triangles,
+           cu32_1d partition_self_collision_modes,
+           cu32_1d partition_collision_groups,
+           cu32_1d partition_collision_masks,
+           cf32_1d particle_friction,
            cf32_1d particle_thickness) {
             auto* domain = require_domain(handle);
             const auto particle_count = domain->particle_count();
@@ -698,20 +740,21 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                     "MC2 whole-domain self configuration arrays have incompatible shapes"
                 );
             }
+            std::vector<float> particle_cloth_mass(particle_count, 0.0f);
             domain->configure_whole_domain_self(
                 points.data(), static_cast<std::size_t>(points.shape(0)),
                 edges.data(), static_cast<std::size_t>(edges.shape(0)),
                 triangles.data(), static_cast<std::size_t>(triangles.shape(0)),
                 partition_self_collision_modes.data(), partition_collision_groups.data(),
                 partition_collision_masks.data(), particle_friction.data(),
-                particle_thickness.data()
+                particle_thickness.data(), particle_cloth_mass.data()
             );
         },
         nb::arg("handle"), nb::arg("points"), nb::arg("edges"), nb::arg("triangles"),
         nb::arg("partition_self_collision_modes"),
         nb::arg("partition_collision_groups"), nb::arg("partition_collision_masks"),
         nb::arg("particle_friction"), nb::arg("particle_thickness"),
-        "Configure the compiled whole-domain self-collision pass."
+        "Configure whole-domain self collision with zero cloth mass."
     );
     module.def(
         "mc2_domain_cpu_v1_step_whole_domain_self",
@@ -1161,9 +1204,6 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["world_normals"] = owned_array_2d<float>(
                 std::vector<float>(domain->world_normals()), domain->particle_count(), 3
-            );
-            result["velocity_positions"] = owned_array_2d<float>(
-                std::vector<float>(domain->velocity_positions()), domain->particle_count(), 3
             );
             result["real_velocities"] = owned_array_2d<float>(
                 std::vector<float>(domain->real_velocities()), domain->particle_count(), 3

@@ -428,6 +428,14 @@ native 分阶段计时完成后，优先检查以下代码形态：
 
 P0之后的优先级是：先由E4 whole-domain self删除多context + aggregate的重复grid/交叉流水，再在新统一域上复测候选去重、contact构建和四轮solve。旧aggregate上的局部容量或排序优化只有能独立复用到统一域且不延误E4时才允许实施；不得为了压低1764粒子样本而偏离收益曲线目标。
 
+#### E4/P2 当前证据与下一门禁
+
+当前验收环境固定为 Blender 5.2 / Python 3.13，但源码和原生产物来自本工作树；基准启动时必须清除 Blender 5.2 默认加载的 HoTools 备份模块，显式绑定 `_Lib/py313/HotoolsPackage`，并打印实际加载的原生模块路径。用户正在使用 Blender 4.5，因此本阶段禁止启动 Blender 4.5，也禁止编译或覆盖 py311 产物。
+
+首版通用 whole-domain self 在 1764 粒子夹具上产生了候选爆炸和不稳定输出，不能作为 P2 实现。Domain现持有后端中立opaque whole-domain self engine，由桥接实现复用成熟V0 primitive/grid/candidate/contact/四轮求解流程；Domain owner本身不依赖旧context internal。该改动把候选量恢复到手工join同一数量级；随后按P5证据把每子步重新分配的scaled thickness与partition scale改为Domain持久scratch，数值结果逐位不变。
+
+性能证据把`owner.step`求解层、完整产品子步事务和帧capture分开报告，不拿包含StepBasic/settings/调度提交的产品包装耗时直接对比V0原生入口。1764粒子、4 source、35帧、5帧warmup夹具连续两次得到D/B p50=`0.79584/0.78670`、D/C=`0.77711/0.74717`；primitive/candidate/contact与manual join完全相等。reset轨迹位级一致，连续轨迹peak max-abs=`3.9208e-4`、RMS=`1.6597e-5`，通过`5e-4/5e-5`累计self合同。E4/P2因此关闭；该容差不适用于非self oracle。下一性能工作只允许服务E5产品事务或由新阶段证据驱动，禁止为了小样本继续改self算法或引入P4并发。
+
 ### P6：GPU 前置准备与未来实施包
 
 fused context、连续 partition ranges、显式 particle/constraint SoA、明确的 pass 依赖和无 Python inner-loop 是 GPU 化的前置条件，但不代表应立即实现 GPU solver。这里的前置工作应避免引入 CPU 专用的 worker object、线程亲和性和每粒子 callback；它只定义数据、资源和阶段合同。

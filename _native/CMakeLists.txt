@@ -130,10 +130,12 @@ nanobind_add_module(hotools_native
     src/mc2_static_build.cpp
     src/mc2_kernels.cpp
     src/mc2_self_collision.cpp
+    src/mc2_whole_domain_self.cpp
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     src/mc2_domain_cpu.hpp
     src/mc2_kernels.hpp
+    src/mc2_whole_domain_self.hpp
     src/spring_bone_vrm.cpp
     src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp

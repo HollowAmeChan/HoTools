@@ -123,7 +123,9 @@ def _create_whole_domain_self_five_case():
     )
 
 
-def _run_whole_domain_self_case(modes, groups, masks, *, points=(3,)):
+def _run_whole_domain_self_case(
+    modes, groups, masks, *, points=(3,), cloth_mass=None,
+):
     handle = _create_whole_domain_self_case()
     positions = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
@@ -140,7 +142,7 @@ def _run_whole_domain_self_case(modes, groups, masks, *, points=(3,)):
         hotools_native.mc2_domain_cpu_v1_configure_inertia(
             handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
         )
-        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(
+        arguments = [
             handle,
             np.asarray(points, dtype=np.int32),
             np.empty((0, 2), dtype=np.int32),
@@ -150,7 +152,10 @@ def _run_whole_domain_self_case(modes, groups, masks, *, points=(3,)):
             np.asarray(masks, dtype=np.uint32),
             np.asarray((0.1, 0.2, 0.3, 0.4), dtype=np.float32),
             np.asarray((0.01, 0.01, 0.01, 0.03), dtype=np.float32),
-        )
+        ]
+        if cloth_mass is not None:
+            arguments.append(np.asarray(cloth_mass, dtype=np.float32))
+        hotools_native.mc2_domain_cpu_v1_configure_whole_domain_self(*arguments)
         hotools_native.mc2_domain_cpu_v1_step_whole_domain_self(handle, positions)
         return (
             hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"].copy(),
@@ -460,6 +465,19 @@ def test_domain_cpu_native_whole_domain_self_honors_partition_policy():
     np.testing.assert_array_equal(no_points, original)
     assert info["whole_domain_self_point_count"] == 0
     assert info["whole_domain_self_last_contact_count"] == 0
+
+
+def test_domain_cpu_native_whole_domain_self_honors_cloth_mass():
+    point_heavy, _ = _run_whole_domain_self_case(
+        (2, 2), (1, 2), (2, 1), cloth_mass=(0.0, 0.0, 0.0, 1.0),
+    )
+    triangle_heavy, _ = _run_whole_domain_self_case(
+        (2, 2), (1, 2), (2, 1), cloth_mass=(1.0, 1.0, 1.0, 0.0),
+    )
+    point_start_z = np.float32(0.01)
+    point_heavy_delta = abs(point_heavy[3, 2] - point_start_z)
+    triangle_heavy_delta = abs(triangle_heavy[3, 2] - point_start_z)
+    assert triangle_heavy_delta > point_heavy_delta
 
 
 def test_domain_cpu_native_compiled_external_filters_point_and_edge_modes():
@@ -834,6 +852,13 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
             handle, starts, counts, neighbors, rest, stiffness, depths, friction,
             attenuation,
         )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, depths, np.ones(3, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_constraint_friction(
+            handle, friction
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_integration(handle, depths)
         hotools_native.mc2_domain_cpu_v1_step_distance(handle)
         output = hotools_native.mc2_domain_cpu_v1_read(handle)
         assert np.allclose(
@@ -843,10 +868,16 @@ def test_domain_cpu_native_distance_slice_uses_existing_kernel():
                 dtype=np.float32,
             ),
         )
+        hotools_native.mc2_domain_cpu_v1_step_post(
+            handle, positions, 1.0, 0.0, 0.0, -1.0, 1.0
+        )
+        hotools_native.mc2_domain_cpu_v1_step_integration(
+            handle, 1.0, 1.0, 1.0, np.zeros(3, dtype=np.float32)
+        )
         np.testing.assert_allclose(
-            output["velocity_positions"],
+            hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"],
             np.asarray(
-                ((0.0, 0.0, 0.0), (2.03125, 0.0, 0.0), (3.78125, 0.0, 0.0)),
+                ((1.0, 0.0, 0.0), (2.21875, 0.0, 0.0), (3.34375, 0.0, 0.0)),
                 dtype=np.float32,
             ),
         )

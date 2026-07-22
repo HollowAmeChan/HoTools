@@ -53,7 +53,7 @@ E3 单 source CPU reference 已完成。`cpu_backend.py` 先执行无资源 capa
 
 E3 的 py311/py313 固定证据覆盖创建/更新/失败回滚/释放、normal/Keep/Reset/catch-up/paused Center、非零 depth inertia + Fixed 根 + Tether + Distance A/B、Angle Limit + Motion/Backstop、point/edge/self、post 速度历史、scheduler 参数交接、单 target writeback 数学和 debug-off 零 readback。V0 与 Domain 的单 source 全功能等价门禁已经关闭；多 source 同域、whole-domain self、多 target 原子发布和产品 collector 分别属于 E4/E5，不能由 E3 结论代替。
 
-E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E4/E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。P0、P1-B、粒子级覆盖、whole-domain self/external、多partition frame/collider发布合同、A5-04分区full settings、slot-owned scheduler/Anchor staged state和真实 compiled substep 执行已经闭环；Mesh帧旋转由V0与Domain共用同一native核心。当前硬门禁收窄为 Blender 多source oracle、性能门禁与E5统一输出事务，不得把“frame ready”“settings可编译”或“schedule已stage”误报为E4产品切换完成。
+E3 仍是迁移 reference，不是当前产品 owner。现有 `_native/src/mc2_context_*` 继续承载 `Mc2ContextV0` 产品 ABI，Physics World 生产路径在 E5 完成并通过迁移门禁前继续走 V0；不得把 compiled domain 伪装成 V0 输入，也不得把 `center_state.py` 数值公式复制进新的 Python owner。P0、P1-B、粒子级覆盖、whole-domain self/external、多partition frame/collider发布、A5-04分区full settings、slot-owned scheduler/Anchor staged state、真实 compiled substep、Blender多source oracle与P2同夹具门禁均已闭环；Mesh帧旋转由V0与Domain共用同一native核心。当前硬门禁收窄为E5多目标原子输出与产品collector，不得把E4完成误报为产品owner已经切换。
 
 E0 的合同与 fixture 模块仍不被生产节点、Physics World、runtime cache 或 native ABI 导入，不创建 task、slot、backend owner 或 writeback。E1 的 `shadow_pipeline.py` 仅由 `solver.py` 在显式内部开关下懒加载，且只产出调用方持有的临时对照报告；架构审计继续禁止它改变 V0 context/solve/writeback 所有权。E1 完成只表示单 source 的 IO/schema 对照可供后续阶段复用，不表示统一粒子域已经进入产品运行时。
 
@@ -749,21 +749,21 @@ Python host只保存opaque handle和可复用输出/debug buffer，不保存C++ 
 
 这关闭了E4的compiled external、whole-domain self与native-owned完整pass子门槛。纯host边界也已能从collector draft的全部resolved source一次消费Physics World公共snapshot，生成拥有独立只读数组的whole-domain collider POD：域内全部owner统一排除，外部group不在Python端按任一partition预筛选，moving collider previous pose与四种shape继续复用公共打包规则。完整Tier A fragment另由`MC2MeshFragmentCacheV1`按快照签名与逐partition world gravity缓存；stage只生成候选，显式commit才批量发布和裁剪，构建失败、stale或foreign batch均不能改变live cache。fragment同时缓存native-ready Mesh triangle/adjacency/corner UV；无handle `mc2_mesh_frame_orientations_v1`与V0 raw Mesh更新共享同一C++旋转核心，避免Python公式复制和热帧静态repack。`MC2MeshFusedCPUOwnerV1`把cache commit与native domain staged replacement合并，exact输入复用handle，参数/静态变化创建新handle后才交换，任何前置失败保留旧domain/cache；owner也直接代理frame、唯一compiled full step和logical output。产品collector bridge保留authoring顺序/字段，逐partition只消费一次P1-B raw observation并冻结draft、E0快照和BasePose topology identity。固定whole-domain Physics World slot负责owner同步/替换/dispose，并可把全部BasePose/Anchor编成一个logical frame packet，再与一次whole-domain collider POD按frame/slot identity共同发布。
 
-A5-04已关闭whole-domain参数隔离：Tether、Angle、Motion和Post不再读取partition 0标量，而是按`particle_partition_index`消费分区SoA展开；Integration和Post的velocity weight/gravity继续由同一native owner的Center输出驱动。旧标量endpoint只作为E3单partition oracle保留，Motion的六个有向轴`0..5`与V0公开参数合同一致。slot-owned scheduler/timing/Anchor staged state也已关闭所有权与失败回滚门禁；native Center frame shift另以per-frame one-shot状态锁定，同一frame多substep只提交一次component/Anchor位移，其余7个solver pass仍逐substep执行。真实 staged substep 入口现已准备 owner-owned StepBasic、编译全域 settings、调用 native full endpoint，并在成功后提交 scheduler revision；当前仍显式`product_enabled=False`且尚未进入普通V0 step，因此不产生双求解回归。它仍不代表产品迁移完成：Blender oracle、性能门禁与E5多目标事务仍未关闭。当前工作树与`HEAD`已提交二进制均可复现旧`test_mc2_context_v0_native.py`在首项后的Windows access violation；该独立V0 raw native基线缺陷必须在Blender oracle前关闭，不能通过放宽Domain tolerance掩盖。旧V0 task与普通aggregate暂时继续拥有产品路径。只有E5自动化与Blender验收完成后才允许切换owner并执行E7-CPU删除。
+A5-04已关闭whole-domain参数隔离：Tether、Angle、Motion和Post不再读取partition 0标量，而是按`particle_partition_index`消费分区SoA展开；Integration和Post的velocity weight/gravity继续由同一native owner的Center输出驱动。旧标量endpoint只作为E3单partition oracle保留，Motion的六个有向轴`0..5`与V0公开参数合同一致。slot-owned scheduler/timing/Anchor staged state也已关闭所有权与失败回滚门禁；native Center frame shift另以per-frame one-shot状态锁定，同一frame多substep只提交一次component/Anchor位移，其余solver pass仍逐substep执行。真实 staged substep入口准备owner-owned StepBasic、编译全域settings并只在native full step成功后提交scheduler revision。E4/P2现已通过Blender 5.2/py313同夹具数值、工作量与性能门禁，但`product_enabled=False`仍保持；旧V0 task与普通aggregate继续拥有产品路径，只有E5自动化与Blender验收完成后才允许切换owner并执行E7-CPU删除。
 
 ## 构建与性能边界
 
-V0 raw native revalidation (2026-07-22): this supersedes the access-violation note above. Clean, probe-free py311/py313 rebuilds pass the complete V0 native contract and all E3 V0/Domain tolerance cases. Treat the old failure as an inconsistent incremental artifact; never relax Domain tolerance to mask it. Future P0/E4 native changes require the same dual-ABI clean rebuild and regression set before Blender oracle.
+V0 原生复验（2026-07-22）：本段取代上面的 access-violation 说明。干净且无 probe 的构建已通过完整 V0 native contract 与全部 E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽 Domain tolerance 掩盖。后续 P0/E4 原生改动仍必须保留双 ABI 回归合同；当前因用户正在使用 Blender 4.5，本轮只构建 py313 并只用 Blender 5.2 验收，py311 兼容门禁不重编译。
 
-E4 Blender oracle update (2026-07-22): Blender 5.2/Python 3.13 now runs two real Mesh sources through separate V0 contexts and one fused Domain for three frames. Initialization performs zero substeps; the following frames exercise per-partition gravity/damping, component movement, Center history, Distance/Tether/Post history and output-map splitting. Position and rotation match per target at `1e-6`. The fix keeps Distance velocity attenuation in partition SoA and applies it to native velocity-reference corrections. Domain handles remain serialized by the Python GIL, avoiding Blender `tbbmalloc_proxy` interaction with MSVC `std::mutex`. E4 now waits only on the same-fixture P2 performance gate; `product_enabled` remains false until E5.
+E4 Blender oracle 更新（2026-07-23）：Blender 5.2/Python 3.13 的非self多source结果继续在`1e-6`内逐target一致。whole-domain self现由后端中立opaque engine复用成熟V0流水；1764粒子、4 source、35帧同夹具中，Domain与manual join的primitive/candidate/contact完全一致，reset轨迹位级相等，连续轨迹peak max-abs/RMS为`3.9208e-4/1.6597e-5`。持久self scratch消除每子步临时分配后，两次稳定复测的D/B p50为`0.79584/0.78670`，D/C为`0.77711/0.74717`，E4/P2综合门禁关闭。`product_enabled`继续为false，下一阶段是E5多目标事务与产品collector；E7-CPU不得提前执行。
 
-日常MC2 C++验证固定使用：
+当前工作会话的MC2 C++验证固定使用：
 
 ```text
-_native\build.bat 311 native
+_native\build.bat 313 native
 ```
 
-该命令使用已有`vs2022-py311-native`构建目录，只生成`hotools_native.cp311-win_amd64.pyd`且不构建Jolt。普通调用保持增量；由于当前MSBuild不会可靠追踪项目内共享header，`build.bat`仅在`mc2_context_internal.hpp`比构建戳更新时对`hotools_native`目标执行一次`--clean-first`，随后恢复增量。Jolt是独立`EXCLUDE_FROM_ALL`目标；只有明确修改/验证Jolt时才选择对应module。
+该命令使用`vs2022-py313-native`构建目录，只生成`hotools_native.cp313-win_amd64.pyd`且不构建Jolt。普通调用保持增量；`build.bat`在`mc2_context_internal.hpp`或`mc2_domain_cpu.hpp`任一布局头比构建戳更新时，对当前所选`hotools_native`目标执行一次`--clean-first`，防止新旧对象布局混链。用户正在使用Blender 4.5，本阶段禁止启动4.5或编译/覆盖py311；双ABI合同保留到可用窗口再复验。Jolt是独立`EXCLUDE_FROM_ALL`目标，只有明确修改/验证Jolt时才选择对应module。
 
 Python 3.11 + Blender 4.5继续保留兼容门禁；Python 3.13 + Blender 5.2用于当前代表资产、性能和长帧soak补充。
 

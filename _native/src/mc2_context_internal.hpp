@@ -218,6 +218,7 @@ struct Mc2ContextV0 {
     bool external_contact_debug_ready = false;
     bool self_contact_debug_requested = false;
     bool self_contact_debug_ready = false;
+    bool self_owner_same_partition_enabled = false;
     std::uint32_t debug_constraint_request_mask = 0;
     std::uint32_t debug_constraint_ready_mask = 0;
     std::uint8_t debug_distance_record_phase_mask = 0;
