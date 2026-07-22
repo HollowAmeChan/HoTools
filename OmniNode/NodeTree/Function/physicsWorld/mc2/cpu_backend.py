@@ -238,14 +238,27 @@ class MC2CPUBackendDomainV1:
         run_reference(self._handle, settings)
         self._step_count += 1
 
-    def prepare_step_basic_pose(self, animation_pose_ratio: float = 0.0) -> dict:
-        """Build native StepBasic pose input from the compiled baseline topology."""
+    def prepare_step_basic_pose(self, animation_pose_ratio: float | None = None) -> dict:
+        """Build StepBasic from compiled ratio unless an explicit test override is supplied."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("StepBasic pose requires update_frame first")
         prepare_pose = getattr(self._kernel, "prepare_step_basic_pose", None)
         if not callable(prepare_pose):
             raise RuntimeError("CPU kernel does not expose StepBasic pose preparation")
+        if animation_pose_ratio is None:
+            if self._compiled.parameters.partition_parameters.row_count != 1:
+                raise ValueError(
+                    "implicit animation_pose_ratio requires exactly one partition"
+                )
+            fields = self._compiled.parameters.partition_parameters.fields
+            if "animation_pose_ratio" not in fields:
+                raise ValueError("compiled parameters lack animation_pose_ratio")
+            animation_pose_ratio = float(
+                self._compiled.parameters.partition_parameters.values[
+                    0, fields.index("animation_pose_ratio")
+                ]
+            )
         return prepare_pose(self._handle, float(animation_pose_ratio))
 
     def step_external_collision(self, settings: Mapping[str, object]) -> None:

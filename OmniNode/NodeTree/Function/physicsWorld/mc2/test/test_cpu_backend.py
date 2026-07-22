@@ -50,12 +50,15 @@ FIXTURE = os.path.join(
 )
 
 
-def _compiled():
+def _compiled(*, animation_pose_ratio=0.0):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payload = json.load(handle)["static_snapshots"][0]
     snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
-    profile = parameters.make_mc2_particle_profile(self_collision_mode=2)
+    profile = parameters.make_mc2_particle_profile(
+        self_collision_mode=2,
+        animation_pose_ratio=animation_pose_ratio,
+    )
     options = parameters.make_mc2_setup_options("mesh_cloth")
     task = parameters.make_mc2_task_parameters()
     effective = runtime.make_mc2_runtime_parameters(profile, options, task)
@@ -86,6 +89,7 @@ class _FakeKernel:
         self.frame = None
         self.physical = physical
         self.steps = 0
+        self.pose_ratio = None
 
     def create_domain(self, program, parameters_packet):
         handle = {"program": program, "parameters": parameters_packet}
@@ -97,6 +101,13 @@ class _FakeKernel:
 
     def step(self, handle, frame_packet, scheduler_settings, collider_snapshot):
         self.steps += 1
+
+    def prepare_step_basic_pose(self, handle, animation_pose_ratio):
+        self.pose_ratio = float(animation_pose_ratio)
+        return {
+            "positions": handle["program"].particle_bind_position,
+            "rotations": handle["program"].particle_bind_rotation,
+        }
 
     def read_output(self, handle):
         positions = self.frame.animated_base_world_positions
@@ -175,6 +186,18 @@ def test_cpu_backend_capability_gate_rejects_before_kernel_allocation():
     else:
         raise AssertionError("incompatible CPU capability was accepted")
     assert kernel.created == []
+
+
+def test_cpu_backend_step_basic_uses_compiled_animation_pose_ratio_by_default():
+    compiled = _compiled(animation_pose_ratio=0.625)
+    kernel = _FakeKernel()
+    domain = backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    domain.update_frame(_frame(compiled.program))
+    domain.prepare_step_basic_pose()
+    assert kernel.pose_ratio == 0.625
+    domain.prepare_step_basic_pose(0.125)
+    assert kernel.pose_ratio == 0.125
+    domain.dispose()
 
 
 TESTS = tuple(
