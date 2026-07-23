@@ -95,6 +95,8 @@ def _run_profile(*, spring: bool, stiffness: float, run_index: int):
             request.domain_signature,
         )
         owner = None
+        fixed = None
+        previous_step_basic = None
         for frame in range(1, 601):
             for bone in armature.pose.bones:
                 bone.matrix_basis = initial_basis[bone.name].copy()
@@ -123,10 +125,54 @@ def _run_profile(*, spring: bool, stiffness: float, run_index: int):
             current_owner = world.solver_slots[slot_id].data["owner"]
             if owner is None:
                 owner = current_owner
+                fixed = (
+                    owner.compiled.program.particle_attribute_flags & 1
+                ) != 0
+                assert np.any(fixed)
+                table = owner.compiled.parameters.partition_parameters
+                values = dict(zip(table.fields, table.values[0]))
+                np.testing.assert_allclose(
+                    values["tether_compression_limit"],
+                    (
+                        parameters.MC2_BONE_SPRING_TETHER_COMPRESSION
+                        if spring
+                        else 0.35
+                    ),
+                    rtol=0.0,
+                    atol=1.0e-7,
+                )
+                np.testing.assert_allclose(
+                    values["tether_stretch_limit"],
+                    parameters.MC2_TETHER_STRETCH_LIMIT,
+                    rtol=0.0,
+                    atol=1.0e-7,
+                )
+                np.testing.assert_allclose(
+                    values["distance_velocity_attenuation"],
+                    parameters.MC2_DISTANCE_VELOCITY_ATTENUATION,
+                    rtol=0.0,
+                    atol=1.0e-7,
+                )
             else:
                 assert current_owner is owner
             output = owner.read_output()
             assert np.all(np.isfinite(output.world_positions))
+            step_basic = owner.prepare_step_basic_pose()["positions"]
+            fixed_output = output.world_positions[fixed]
+            matches_current = np.allclose(
+                fixed_output, step_basic[fixed], rtol=0.0, atol=1.0e-6
+            )
+            matches_previous = (
+                previous_step_basic is not None
+                and np.allclose(
+                    fixed_output,
+                    previous_step_basic[fixed],
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+            )
+            assert matches_current or matches_previous, frame
+            previous_step_basic = np.array(step_basic, copy=True)
             trajectory.append(np.array(output.world_positions, copy=True))
             digest.update(output.world_positions.tobytes())
             if capture:
