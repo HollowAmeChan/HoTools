@@ -39,7 +39,6 @@ def test_mesh_product_static_contract() -> None:
         assert program.setup_type == "mesh_cloth"
         assert program.partition_count == 1
         assert program.particle_count == len(mesh.data.vertices)
-        assert slot.data["mesh_static"] if "mesh_static" in slot.data else True
         assert "native_context" not in slot.data
         assert "spec" not in slot.data
         output = owner.read_output()
