@@ -144,6 +144,54 @@ def _run(world, requests, frame: int, *, dt=1.0 / 60.0):
     return slots
 
 
+class _FakeMatrix:
+    def __init__(self, value):
+        self.value = value
+
+    def copy(self):
+        return _FakeMatrix(self.value)
+
+
+class _FakePoseBone:
+    def __init__(self, value, fail_value=None):
+        self._matrix_basis = _FakeMatrix(value)
+        self.fail_value = fail_value
+
+    @property
+    def matrix_basis(self):
+        return self._matrix_basis
+
+    @matrix_basis.setter
+    def matrix_basis(self, value):
+        if self.fail_value is not None and value.value == self.fail_value:
+            raise RuntimeError("injected bone writeback failure")
+        self._matrix_basis = value.copy()
+
+
+class _NoForeachPoseBones:
+    def foreach_get(self, _name, _values):
+        raise TypeError("foreach unavailable")
+
+
+def test_bone_product_batch_writeback_rollback_contract() -> None:
+    first = _FakePoseBone("old-first")
+    second = _FakePoseBone("old-second", fail_value="new-second")
+    updates = (
+        (first, 0, _FakeMatrix("new-first"), "First"),
+        (second, 1, _FakeMatrix("new-second"), "Second"),
+    )
+    try:
+        writeback._apply_bone_basis_updates(
+            _NoForeachPoseBones(), updates, [0.0] * 32
+        )
+    except RuntimeError as exc:
+        assert "injected bone writeback failure" in str(exc)
+    else:
+        raise AssertionError("batch writeback failure was not propagated")
+    assert first.matrix_basis.value == "old-first"
+    assert second.matrix_basis.value == "old-second"
+
+
 rig_multi = _armature("MC2ProductMultiPartition", 2, 2, 3)
 rig_a = _armature("MC2ProductCrossA", 1, 3, 3)
 rig_b = _armature("MC2ProductCrossB", 1, 2, 3)
@@ -151,6 +199,7 @@ rig_spring = _armature("MC2ProductSpring", 1, 1, 3)
 rig_requests = _armature("MC2ProductMultiRequest", 2, 1, 3)
 worlds = []
 try:
+    test_bone_product_batch_writeback_rollback_contract()
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity_direction=(1.0, 0.0, 0.0),
         wind_influence=0.0,

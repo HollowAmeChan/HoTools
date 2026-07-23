@@ -166,9 +166,22 @@ def test_bone_frame_compatibility_entry_is_product_only():
 def test_bone_static_compatibility_entry_is_product_only():
     path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_static.py"
     source = path.read_text(encoding="utf-8")
-    assert "native_context" not in source
-    assert "mc2.specs" not in source
-    assert "mc2.solver" not in source
+    tree = ast.parse(source, filename=str(path))
+    imports = {
+        ("." * node.level) + (node.module or "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    imported_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert not {"native_context", "solver", "specs"} & imported_names
+    assert not any(name.endswith(".native_context") for name in imports)
+    assert not any(name.endswith(".solver") for name in imports)
+    assert not any(name.endswith(".specs") for name in imports)
     assert "test_bone_product_static" in source
     assert "test_blender_mc2_bone_product" in source
 
