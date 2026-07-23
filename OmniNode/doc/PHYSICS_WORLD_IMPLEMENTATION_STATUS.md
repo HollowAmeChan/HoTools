@@ -197,3 +197,5 @@ Mesh base-pose 旧 Blender 入口已完成 product-only 收口：Armature 驱动
 Mesh gravity 产品证据已迁移到 `test_blender_mc2_mesh_product_constraint_soak.py::test_mesh_product_gravity_axes_falloff`：Blender 5.2/py313 以公开 collector、动态产品槽和 DomainV1 owner 完成 600 帧双跑，校验 gravity 方向/强度/falloff 的参数 SoA、有限性、确定性及 X/Z 方向轨迹差异。capability matrix 已切换该 runner；Mesh Angle/rest 精确断言仍保留为旧 runner 的下一项迁移任务，4.5/py311 继续冻结。
 
 Mesh Angle Restoration 的 attenuation 与 gravity-falloff 产品证据已接入：`test_blender_mc2_mesh_product_angle_motion.py` 在 Blender 5.2/py313 各完成 600 帧双跑，直接校验编译参数、有限性、确定性和响应差异，capability matrix 已移除对应旧 runner 引用。target/rest 精确 debug 断言仍保留在删除前清单中，未由响应差异测试替代。
+
+Mesh Motion/Backstop 产品证据已接入 `test_blender_mc2_mesh_product_motion_soak.py::test_mesh_product_motion_base_deterministic`：Blender 5.2/py313 完成 900 帧双跑，逐点验证 BasePose proxy 时序、参数热更新不替换 owner、最大距离 `0.031m` 边界、Backstop 参数和确定性；capability matrix 已切换该 runner，4.5/py311 继续冻结。
