@@ -36,6 +36,8 @@ def _request(
     angle_limit: float,
     motion: bool = False,
     backstop: bool = False,
+    rotational_interpolation: float = 0.5,
+    root_rotation: float = 0.5,
 ):
     profile = parameters.make_mc2_particle_profile(
         gravity=6.0 if motion else 4.0,
@@ -71,6 +73,8 @@ def _request(
                 "bones": tuple(f"Chain0_{depth}" for depth in range(6)),
             }],
             profile=profile,
+            rotational_interpolation=rotational_interpolation,
+            root_rotation=root_rotation,
             **task_values,
         )
     else:
@@ -79,6 +83,8 @@ def _request(
             profile=profile,
             connection_mode=0,
             normal_axis=2,
+            rotational_interpolation=rotational_interpolation,
+            root_rotation=root_rotation,
             **task_values,
         )
     assert len(requests) == 1
@@ -244,6 +250,152 @@ def _rotate_axes(rotations) -> np.ndarray:
     return result
 
 
+def _quaternion_component_distance(first, second) -> np.ndarray:
+    first = np.asarray(first, dtype=np.float32)
+    second = np.asarray(second, dtype=np.float32)
+    return np.minimum(
+        np.linalg.norm(first - second, axis=2),
+        np.linalg.norm(first + second, axis=2),
+    )
+
+
+def _quaternion_angle_degrees(first, second) -> np.ndarray:
+    first = np.asarray(first, dtype=np.float64)
+    second = np.asarray(second, dtype=np.float64)
+    dot = np.sum(first * second, axis=2)
+    return np.degrees(2.0 * np.arccos(np.clip(np.abs(dot), 0.0, 1.0)))
+
+
+def _run_rotation_output_case(
+    *,
+    spring: bool,
+    interpolation: float,
+    root_rotation: float,
+    run_index: int,
+):
+    world = world_types.PhysicsWorldCache()
+    generation = 1400 + run_index
+    armature = None
+    positions = []
+    rotations = []
+    try:
+        armature = product_soak._armature(
+            f"MC2ProductRotationOutput_{run_index}",
+            chain_count=1,
+            chain_length=6,
+            x_offset=0.0,
+        )
+        request = _request(
+            armature,
+            spring=spring,
+            restoration=False,
+            limit_enabled=False,
+            angle_limit=30.0,
+            rotational_interpolation=interpolation,
+            root_rotation=root_rotation,
+        )
+        slot_id = product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        owner = None
+        for frame in range(1, 601):
+            product_soak._set_frame(world, frame, generation)
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [request],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            current_owner = world.solver_slots[slot_id].data["owner"]
+            if owner is None:
+                owner = current_owner
+            else:
+                assert current_owner is owner
+            output = owner.read_output()
+            assert np.all(np.isfinite(output.world_positions))
+            assert np.all(np.isfinite(output.world_rotations_xyzw))
+            positions.append(np.array(output.world_positions, copy=True))
+            rotations.append(np.array(output.world_rotations_xyzw, copy=True))
+            assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
+            bpy.context.view_layer.update()
+
+        runtime = owner.inspect()["parameters"]["float_values"]
+        np.testing.assert_allclose(
+            runtime["rotational_interpolation"], interpolation,
+            rtol=0.0, atol=1.0e-7,
+        )
+        np.testing.assert_allclose(
+            runtime["root_rotation"], root_rotation,
+            rtol=0.0, atol=1.0e-7,
+        )
+        attributes = np.asarray(
+            owner.compiled.program.particle_attribute_flags,
+            dtype=np.uint8,
+        )
+        return (
+            np.asarray(positions, dtype=np.float32),
+            np.asarray(rotations, dtype=np.float32),
+            attributes,
+        )
+    finally:
+        world.omni_cache_dispose("bone_product_rotation_output_cleanup")
+        product_soak._remove_armature(armature)
+
+
+def test_bone_product_rotation_output_controls():
+    for setup_index, spring in enumerate((False, True)):
+        base = _run_rotation_output_case(
+            spring=spring, interpolation=0.0, root_rotation=0.0,
+            run_index=setup_index * 10,
+        )
+        interpolation = _run_rotation_output_case(
+            spring=spring, interpolation=1.0, root_rotation=0.0,
+            run_index=setup_index * 10 + 1,
+        )
+        root = _run_rotation_output_case(
+            spring=spring, interpolation=0.0, root_rotation=1.0,
+            run_index=setup_index * 10 + 2,
+        )
+        np.testing.assert_array_equal(base[0], interpolation[0])
+        np.testing.assert_array_equal(base[0], root[0])
+        np.testing.assert_array_equal(base[2], interpolation[2])
+        np.testing.assert_array_equal(base[2], root[2])
+
+        attributes = base[2]
+        indices = np.arange(len(attributes))
+        fixed = (attributes & 0x01) != 0
+        move_parent = np.logical_and(
+            (attributes & 0x02) != 0,
+            indices < len(attributes) - 1,
+        )
+        leaf = np.logical_not(np.logical_or(fixed, move_parent))
+        assert int(np.count_nonzero(fixed)) == 1
+        assert int(np.count_nonzero(move_parent)) >= 2
+        assert int(np.count_nonzero(leaf)) == 1
+
+        interpolation_angles = _quaternion_angle_degrees(base[1], interpolation[1])
+        root_angles = _quaternion_angle_degrees(base[1], root[1])
+        interpolation_distance = _quaternion_component_distance(base[1], interpolation[1])
+        root_distance = _quaternion_component_distance(base[1], root[1])
+        assert float(np.max(interpolation_angles[:, move_parent])) > 0.05
+        assert float(np.max(interpolation_distance[:, fixed])) < 1.0e-6
+        assert float(np.max(root_angles[:, fixed])) > 0.01
+        assert float(np.max(root_distance[:, np.logical_not(fixed)])) < 1.0e-6
+
+        digest = hashlib.sha256()
+        for values in (base[0], base[1], interpolation[1], root[1], attributes):
+            digest.update(np.asarray(values).tobytes())
+        print(
+            "MC2_BONE_PRODUCT_ROTATION_OUTPUT",
+            "bone_spring" if spring else "bone_cloth",
+            digest.hexdigest(),
+        )
+    print("PASS test_bone_product_rotation_output_controls")
+
+
 def _run_motion_case(*, backstop: bool, run_index: int):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -393,6 +545,7 @@ def test_bone_product_angle_motion_numeric_boundaries():
         "backstop_surface=%.9f" % backstop_surface,
         "trajectory_delta=%.9f" % trajectory_delta,
     )
+    test_bone_product_rotation_output_controls()
     print("PASS test_bone_product_angle_motion_numeric_boundaries")
 
 
