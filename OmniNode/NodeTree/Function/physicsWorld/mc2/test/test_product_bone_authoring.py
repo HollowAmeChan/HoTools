@@ -39,8 +39,8 @@ parameters = importlib.import_module(
 request_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"
 )
-specs = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+source_identity = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.source_identity"
 )
 
 
@@ -130,7 +130,7 @@ def test_explicit_bone_cloth_chains_share_one_partition_without_tasks():
         _chain(armature, "A1", "A2"),
         _chain(armature, "B1", "B2", "B3"),
     )
-    token = specs.mc2_source_token(source)
+    token = source_identity.mc2_source_token(source)
     assert token["kind"] == "bone_partition_v1"
     assert tuple(item["root_bone"] for item in token["chains"]) == ("A1", "B1")
 
