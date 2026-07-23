@@ -36,7 +36,12 @@ parameters = importlib.import_module(
 runtime = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"
 )
-specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
+partition_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs"
+)
+request_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"
+)
 
 
 class FakeMeshSource:
@@ -121,22 +126,38 @@ def test_task_parameter_hot_update_preserves_identity_and_topology() -> None:
     source = FakeMeshSource()
     first_parameters = parameters.make_mc2_task_parameters()
     second_parameters = replace(first_parameters, world_inertia=0.25)
-    first = specs.make_mc2_task_spec(
-        names.MC2_SETUP_MESH_CLOTH,
-        [source],
-        task_parameters=first_parameters,
+    entry = partition_specs.make_mc2_partition_entry(
+        source,
+        setup_type=names.MC2_SETUP_MESH_CLOTH,
+        origin="explicit",
+        producer="test.task_parameter_ownership",
     )
-    second = specs.make_mc2_task_spec(
-        names.MC2_SETUP_MESH_CLOTH,
-        [source],
-        task_parameters=second_parameters,
-    )
-    assert first.task_id == second.task_id
-    assert first.source_signature == second.source_signature
-    assert first.topology_signature == second.topology_signature
-    assert first.config_signature == second.config_signature
-    assert first.parameter_signature != second.parameter_signature
-    assert first.implementation_version == second.implementation_version == 3
+
+    def _request(task_parameters):
+        plan = partition_specs.collect_mc2_partition_entries(
+            setup_type=names.MC2_SETUP_MESH_CLOTH,
+            explicit_entries=(entry,),
+            default_profile=parameters.make_mc2_particle_profile(),
+            default_setup_options=parameters.make_mc2_setup_options(
+                names.MC2_SETUP_MESH_CLOTH
+            ),
+            default_task_parameters=task_parameters,
+        )
+        return request_module.MC2ProductRequestV1(
+            plan=plan,
+            fusion_policy=request_module.MC2_FUSION_REQUIRE,
+            report_text="task parameter ownership product request",
+        )
+
+    first = _request(first_parameters)
+    second = _request(second_parameters)
+    first_partition = first.plan.active_partitions[0]
+    second_partition = second.plan.active_partitions[0]
+    assert first.domain_signature == second.domain_signature
+    assert first_partition.stable_id == second_partition.stable_id
+    assert first_partition.source_token == second_partition.source_token
+    assert first_partition.setup_options == second_partition.setup_options
+    assert first_partition.task_parameters != second_partition.task_parameters
 
 
 if __name__ == "__main__":
