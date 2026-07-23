@@ -81,7 +81,7 @@ def _source():
     return ir.make_mc2_mesh_partition_static_snapshot(**payload)
 
 
-def _compiled_domain(profile=None):
+def _compiled_domain(profile=None, task_parameters=None):
     snapshot = _source()
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
     if profile is None:
@@ -97,7 +97,11 @@ def _compiled_domain(profile=None):
     effective = runtime.make_mc2_runtime_parameters(
         profile,
         parameters.make_mc2_setup_options("mesh_cloth"),
-        parameters.make_mc2_task_parameters(),
+        (
+            parameters.make_mc2_task_parameters()
+            if task_parameters is None
+            else task_parameters
+        ),
     )
     compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
     domain = cpu_backend.create_mc2_cpu_backend_domain(
@@ -113,8 +117,12 @@ def _frame_at(
     frame,
     generation,
     positions,
+    partition_world_position=((0.0, 0.0, 0.0),),
     frame_delta_time=0.1,
     simulation_delta_time=0.1,
+    time_scale=1.0,
+    skip_count=0,
+    is_running=True,
 ):
     return ir.make_mc2_domain_frame_packet(
         program,
@@ -126,7 +134,7 @@ def _frame_at(
             ((0.0, 0.0, 1.0),) * program.particle_count,
             dtype=np.float32,
         ),
-        partition_world_position=((0.0, 0.0, 0.0),),
+        partition_world_position=partition_world_position,
         partition_world_rotation=((0.0, 0.0, 0.0, 1.0),),
         partition_world_scale=((1.0, 1.0, 1.0),),
         partition_world_linear=(
@@ -134,9 +142,9 @@ def _frame_at(
         ),
         frame_delta_time=frame_delta_time,
         simulation_delta_time=simulation_delta_time,
-        time_scale=1.0,
-        skip_count=0,
-        is_running=True,
+        time_scale=time_scale,
+        skip_count=skip_count,
+        is_running=is_running,
         partition_frame_flags=(0,),
     )
 
@@ -579,6 +587,231 @@ def test_domain_full_angle_motion_matches_frozen_e3_reference():
         )
     finally:
         domain.dispose()
+
+
+def _run_center_transaction(
+    case_name,
+    *,
+    teleport_mode=0,
+    frame_delta_time=0.1,
+    simulation_delta_time=0.1,
+    time_scale=1.0,
+    skip_count=0,
+    is_running=True,
+):
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.0,
+        collision_friction=0.0,
+        distance_stiffness=0.5,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        self_collision_mode=0,
+    )
+    task_parameters = parameters.make_mc2_task_parameters(
+        world_inertia=0.25,
+        depth_inertia=1.0,
+        movement_inertia_smoothing=0.0,
+        movement_speed_limit=-1.0,
+        rotation_speed_limit=-1.0,
+        teleport_mode=teleport_mode,
+        teleport_distance=0.5,
+        teleport_rotation=90.0,
+    )
+    compiled, effective, domain = _compiled_domain(profile, task_parameters)
+    program = compiled.program
+    partition_fields = {
+        name: index
+        for index, name in enumerate(
+            compiled.parameters.partition_parameters.fields
+        )
+    }
+    partition_values = compiled.parameters.partition_parameters.values[0]
+    tether_compression = float(
+        partition_values[partition_fields["tether_compression_limit"]]
+    )
+    tether_stretch = float(
+        partition_values[partition_fields["tether_stretch_limit"]]
+    )
+    try:
+        base_positions = program.particle_bind_position.copy()
+        frame_one = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        domain.update_frame(frame_one)
+        frame_one_powers = scheduler.derive_mc2_simulation_powers(0.1)
+        domain.step_reference_slices(
+            {
+                "anchor_component_local_positions": np.zeros(
+                    (1, 3),
+                    dtype=np.float32,
+                ),
+                "dt": 0.1,
+                "frame_interpolation": 1.0,
+                "distance_weights": np.ones(1, dtype=np.float32),
+                "simulation_power": frame_one_powers.integration,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, 0.0, 0.0),
+                "step_basic_positions": base_positions,
+                "tether_compression": tether_compression,
+                "tether_stretch": tether_stretch,
+            }
+        )
+        domain.step_distance(frame_one_powers.distance_bending)
+        domain.step_post(
+            {
+                "old_positions": base_positions,
+                "dt": 0.1,
+                "dynamic_friction": 0.0,
+                "static_friction_speed": 0.0,
+                "particle_speed_limit": effective.debug_dict()["float_values"][
+                    "particle_speed_limit"
+                ],
+                "velocity_weight": 1.0,
+            }
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            _golden("center_frame_one"),
+            "world_positions",
+        )
+
+        moved_positions = base_positions + np.asarray(
+            (1.0, 0.0, 0.0),
+            dtype=np.float32,
+        )
+        frame_two = _frame_at(
+            program,
+            frame=2,
+            generation=1,
+            positions=moved_positions,
+            partition_world_position=((1.0, 0.0, 0.0),),
+            frame_delta_time=frame_delta_time,
+            simulation_delta_time=simulation_delta_time,
+            time_scale=time_scale,
+            skip_count=skip_count,
+            is_running=is_running,
+        )
+        domain.update_frame(frame_two)
+        domain.step_center_frame_shift(np.zeros((1, 3), dtype=np.float32))
+        case = _golden(case_name)
+        kernel_state = domain.inspect()["kernel"]
+        assert (
+            int(kernel_state["center_shift_teleport_flags"][0])
+            == int(case["teleport_flags"])
+        )
+        _assert_golden(
+            kernel_state["center_shift_vectors"],
+            case,
+            "shift_vector",
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "after_shift",
+        )
+        if simulation_delta_time <= 0.0:
+            return
+
+        domain.step_center(
+            {
+                "dt": simulation_delta_time,
+                "frame_interpolation": 1.0,
+                "distance_weights": np.ones(1, dtype=np.float32),
+            }
+        )
+        domain.step_center_inertia()
+        powers = scheduler.derive_mc2_simulation_powers(simulation_delta_time)
+        domain.step(
+            {
+                "integration_slice": True,
+                "data_path_only": True,
+                "dt": simulation_delta_time,
+                "simulation_power": powers.integration,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, 0.0, 0.0),
+            }
+        )
+        after_integration = domain.read_output().world_positions.copy()
+        domain.step(
+            {
+                "tether_slice": True,
+                "data_path_only": True,
+                "step_basic_positions": moved_positions,
+                "compression": tether_compression,
+                "stretch": tether_stretch,
+            }
+        )
+        domain.step_distance(powers.distance_bending)
+        domain.step_distance(powers.distance_bending)
+        if teleport_mode == 0 and is_running:
+            assert np.any(
+                np.abs(
+                    domain.read_output().world_positions - after_integration
+                )
+                > 1.0e-5
+            )
+        old_positions = np.asarray(
+            case["after_shift"]["values"],
+            dtype=np.float32,
+        )
+        domain.step_post(
+            {
+                "old_positions": old_positions,
+                "dt": simulation_delta_time,
+                "dynamic_friction": 0.0,
+                "static_friction_speed": 0.0,
+                "particle_speed_limit": effective.debug_dict()["float_values"][
+                    "particle_speed_limit"
+                ],
+                "velocity_weight": 1.0,
+            }
+        )
+        if teleport_mode == 0 and is_running:
+            assert np.any(
+                np.abs(
+                    domain.read_output().world_positions - old_positions
+                )
+                > 1.0e-5
+            )
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+        _assert_golden(
+            domain.read_debug_state()["real_velocities"],
+            case,
+            "real_velocities",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_center_transactions_match_frozen_e3_reference():
+    cases = (
+        ("center_default", {}),
+        ("center_keep", {"teleport_mode": 2}),
+        ("center_reset", {"teleport_mode": 1}),
+        (
+            "center_paused",
+            {"is_running": False, "simulation_delta_time": 0.0},
+        ),
+        (
+            "center_catchup",
+            {
+                "frame_delta_time": 0.3,
+                "simulation_delta_time": 0.1,
+                "skip_count": 2,
+            },
+        ),
+    )
+    for case_name, kwargs in cases:
+        _run_center_transaction(case_name, **kwargs)
 
 
 if __name__ == "__main__":

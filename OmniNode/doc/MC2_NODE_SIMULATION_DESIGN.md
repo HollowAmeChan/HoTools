@@ -991,7 +991,7 @@ E7-CPU 统一域自碰调试记录（2026-07-23）：`WholeDomainSelf=64` 复用
 
 删除提交的硬门禁：py311/py313 全部纯 Python/native 测试通过；Blender 4.5 capability matrix 无缺项；D-01 至 D-10 与代表 soak 的同输入结果在已声明 tolerance 内；单/双 partition、Reset/Keep、Anchor、参数热更新、碰撞、自碰、final intersection、debug-off 零 readback、多目标原子失败均有自动证据；统一路径性能不因 GPU-ready 数据边界发生无法由实际工作量解释的显著退化。最后增加架构审计，禁止生产代码重新出现 V0 owner/binding、hidden task 展开或普通 aggregate 路径。仅“新测试通过”但旧路径仍被产品导入，不算 E7 完成。
 
-E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`mesh_cloth_world_self_interaction`并入产品`mesh_unified_domain_e5`，由统一域runner承担跨partition接触、穿插历史、互惠group-mask、动态source重配与多目标事务证据；纯旧`test_interaction_scope.py`、`test_shadow_pipeline.py`、`test_blender_mc2_interaction_v0.py`和`benchmark_blender_mc2_interaction_scope.py`删除。E3的Integration prediction、无碰撞完整混合pass、Post history、StepBasic、Angle和Motion六项已从运行时V0对照迁到`test_domain_reference_golden.py`：JSON只冻结删除前已通过等价门禁的float32数值与逐字段原容差，测试直接驱动DomainV1且不导入旧owner。`test_e3_v0_tolerance.py`只余Center与点/边/自碰四个测试函数，Mesh/Bone旧长帧soak也仍含尚未逐项落位的数值oracle，迁移完成前不得删除。当前只跑py313/Blender 5.2；py311/Blender 4.5冻结到旧代码删除与E7-S基本完成后的最终收尾。
+E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`mesh_cloth_world_self_interaction`并入产品`mesh_unified_domain_e5`，由统一域runner承担跨partition接触、穿插历史、互惠group-mask、动态source重配与多目标事务证据；纯旧`test_interaction_scope.py`、`test_shadow_pipeline.py`、`test_blender_mc2_interaction_v0.py`和`benchmark_blender_mc2_interaction_scope.py`删除。E3的Integration、完整无碰撞pass、Post history、StepBasic、Angle/Motion与5种Center事务已迁到`test_domain_reference_golden.py`：JSON只冻结删除前已通过等价门禁的float32数值与逐字段原容差，Center直接驱动Domain自有history，不保存旧包装schema。`test_e3_v0_tolerance.py`只余点/边/自碰三个测试函数，Mesh/Bone旧长帧soak也仍含尚未逐项落位的数值oracle，迁移完成前不得删除。当前只跑py313/Blender 5.2；py311/Blender 4.5冻结到旧代码删除与E7-S基本完成后的最终收尾。
 
 ### E7-S：删除后的兼容层收敛审计
 

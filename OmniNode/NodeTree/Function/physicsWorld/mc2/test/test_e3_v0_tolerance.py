@@ -1,4 +1,4 @@
-"""尚未迁出的E3 Center与碰撞V0/DomainV1容差证据。"""
+"""尚未迁出的E3点、边与自碰V0/DomainV1容差证据。"""
 
 from __future__ import annotations
 
@@ -61,9 +61,6 @@ cpu_backend = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physic
 native_kernel = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel")
 collider_frame = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame"
-)
-scheduler = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
 )
 
 FIXTURE = os.path.join(
@@ -128,17 +125,6 @@ def _frame_at(
         skip_count=skip_count,
         is_running=is_running,
         partition_frame_flags=partition_frame_flags,
-    )
-
-
-def _center_frame_pose(frame, generation, position):
-    return center_module.MC2CenterFramePoseSpec(
-        frame=frame,
-        generation=generation,
-        component_identity="e3-center-component",
-        component_world_position=tuple(float(value) for value in position),
-        component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
-        component_world_scale=(1.0, 1.0, 1.0),
     )
 
 
@@ -260,265 +246,6 @@ def _register_v0_static(context, snapshot, fragment):
         baseline.baseline.depths,
         native_context=context,
     )
-
-
-def test_e3_center_frame_shift_two_frame_transaction_matches_v0(
-    teleport_mode=0,
-    *,
-    frame_delta_time=0.1,
-    simulation_delta_time=0.1,
-    time_scale=1.0,
-    skip_count=0,
-    is_running=True,
-):
-    """Compare a real component move through V0 and Domain Center history."""
-    with open(FIXTURE, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)["static_snapshots"][0]
-    snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
-    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
-    task_parameters = parameters.make_mc2_task_parameters(
-        world_inertia=0.25,
-        depth_inertia=1.0,
-        movement_inertia_smoothing=0.0,
-        movement_speed_limit=-1.0,
-        rotation_speed_limit=-1.0,
-        teleport_mode=teleport_mode,
-        teleport_distance=0.5,
-        teleport_rotation=90.0,
-    )
-    effective = runtime.make_mc2_runtime_parameters(
-        parameters.make_mc2_particle_profile(
-            gravity=0.0,
-            damping=0.0,
-            collision_friction=0.0,
-            distance_stiffness=0.5,
-            bending_stiffness=0.0,
-            angle_restoration_enabled=False,
-            angle_limit_enabled=False,
-            self_collision_mode=0,
-        ),
-        parameters.make_mc2_setup_options("mesh_cloth"),
-        task_parameters,
-    )
-    compiled = compiler.compile_mc2_mesh_static_fragment(fragment, effective)
-    program = compiled.program
-    partition_fields = {
-        name: index for index, name in enumerate(compiled.parameters.partition_parameters.fields)
-    }
-    partition_values = compiled.parameters.partition_parameters.values[0]
-    tether_compression = float(
-        partition_values[partition_fields["tether_compression_limit"]]
-    )
-    tether_stretch = float(
-        partition_values[partition_fields["tether_stretch_limit"]]
-    )
-    v0 = native_context.MC2NativeContextV0(program.particle_count)
-    domain = cpu_backend.create_mc2_cpu_backend_domain(
-        compiled,
-        native_kernel.MC2NativeCPUKernelV1(),
-    )
-    center_state = center_module.MC2CenterPersistentState(
-        fragment.center.center_static_signature
-    )
-    try:
-        _register_v0_static(v0, snapshot, fragment)
-        v0.update_parameters(effective)
-        base_positions = program.particle_bind_position.copy()
-        base_rotations = program.particle_bind_rotation
-        frame_one_pose = _center_frame_pose(1, 1, (0.0, 0.0, 0.0))
-        frame_one = _frame_at(
-            program,
-            frame=1,
-            generation=1,
-            positions=base_positions,
-        )
-        v0.update_dynamic(frame_state.make_mc2_frame_input(
-            task_id=snapshot.partition_id,
-            topology_signature=fragment.final_proxy.proxy_signature,
-            frame=1,
-            generation=1,
-            world_positions=base_positions,
-            world_rotations_xyzw=base_rotations,
-            center_frame_pose=frame_one_pose,
-        ))
-        v0.reset()
-        center_pose_one = v0.derived_center_pose()
-        center_state.reset(
-            frame_one_pose,
-            center_pose_one.position,
-            center_pose_one.rotation_xyzw,
-            velocity_weight=1.0,
-        )
-        v0.update_center_dynamic(center_state.make_step_input(
-            frame_one_pose,
-            center_pose_one,
-            simulation_delta_time=0.1,
-            frame_interpolation=1.0,
-        ))
-        v0.step_no_collision(0.1)
-        domain.update_frame(frame_one)
-        frame_one_powers = scheduler.derive_mc2_simulation_powers(0.1)
-        prefix_settings = {
-            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
-            "dt": 0.1,
-            "frame_interpolation": 1.0,
-            "distance_weights": np.ones(1, dtype=np.float32),
-            "simulation_power": frame_one_powers.integration,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, 0.0, 0.0),
-            "step_basic_positions": base_positions,
-            "tether_compression": tether_compression,
-            "tether_stretch": tether_stretch,
-        }
-        domain.step_reference_slices(prefix_settings)
-        domain.step_distance(frame_one_powers.distance_bending)
-        domain.step_post(_post_step_settings(effective, base_positions))
-        np.testing.assert_allclose(
-            domain.read_output().world_positions,
-            np.asarray(v0.read()[0], dtype=np.float32),
-            rtol=4.0e-5,
-            atol=4.0e-5,
-        )
-        center_state.commit_step(
-            frame_one_pose,
-            center_pose_one,
-            v0.read_center_step(),
-        )
-
-        moved_positions = base_positions + np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
-        frame_two_pose = _center_frame_pose(2, 1, (1.0, 0.0, 0.0))
-        frame_two = _frame_at(
-            program,
-            frame=2,
-            generation=1,
-            positions=moved_positions,
-            partition_world_position=((1.0, 0.0, 0.0),),
-            frame_delta_time=frame_delta_time,
-            simulation_delta_time=simulation_delta_time,
-            time_scale=time_scale,
-            skip_count=skip_count,
-            is_running=is_running,
-        )
-        v0.update_dynamic(frame_state.make_mc2_frame_input(
-            task_id=snapshot.partition_id,
-            topology_signature=fragment.final_proxy.proxy_signature,
-            frame=2,
-            generation=1,
-            world_positions=moved_positions,
-            world_rotations_xyzw=base_rotations,
-            center_frame_pose=frame_two_pose,
-        ))
-        center_pose_two = v0.derived_center_pose()
-        shift = center_module.evaluate_mc2_center_frame_shift(
-            center_state.make_frame_shift_input(
-                frame_two_pose,
-                center_pose=center_pose_two,
-                simulation_delta_time=simulation_delta_time,
-                frame_delta_time=frame_delta_time,
-                world_inertia=0.25,
-                movement_speed_limit=-1.0,
-                rotation_speed_limit=-1.0,
-                movement_inertia_smoothing=0.0,
-                is_running=is_running,
-                now_time_scale=time_scale,
-                skip_count=skip_count,
-                teleport_mode=teleport_mode,
-                teleport_distance=0.5,
-                teleport_rotation=90.0,
-            )
-        )
-        if teleport_mode == 1:
-            v0.reset()
-        else:
-            v0.apply_center_frame_shift(center_state.old_component_world_position, shift)
-        v0_after_shift = np.asarray(v0.read()[0], dtype=np.float32).copy()
-
-        domain.update_frame(frame_two)
-        domain.step_center_frame_shift(np.zeros((1, 3), dtype=np.float32))
-        kernel_state = domain.inspect()["kernel"]
-        expected_teleport_flags = {0: 0, 1: 5, 2: 3}[teleport_mode]
-        assert int(kernel_state["center_shift_teleport_flags"][0]) == expected_teleport_flags
-        np.testing.assert_allclose(
-            kernel_state["center_shift_vectors"],
-            (shift.frame_component_shift_vector,),
-            rtol=2.0e-5,
-            atol=2.0e-5,
-        )
-        np.testing.assert_allclose(
-            domain.read_output().world_positions,
-            v0_after_shift,
-            rtol=2.0e-5,
-            atol=2.0e-5,
-        )
-        if simulation_delta_time > 0.0:
-            if teleport_mode == 1:
-                center_state.reset(
-                    frame_two_pose,
-                    center_pose_two.position,
-                    center_pose_two.rotation_xyzw,
-                    velocity_weight=1.0,
-                )
-                center_step_shift = None
-            else:
-                center_step_shift = shift
-            v0.update_center_dynamic(center_state.make_step_input(
-                frame_two_pose,
-                center_pose_two,
-                simulation_delta_time=simulation_delta_time,
-                frame_interpolation=1.0,
-                frame_shift=center_step_shift,
-            ))
-            v0.step_no_collision(simulation_delta_time)
-            v0_after_step = np.asarray(v0.read()[0], dtype=np.float32)
-            if teleport_mode == 0 and is_running:
-                assert np.any(np.abs(v0_after_step - v0_after_shift) > 1.0e-5)
-            domain.step_center({
-                "dt": simulation_delta_time,
-                "frame_interpolation": 1.0,
-                "distance_weights": np.ones(1, dtype=np.float32),
-            })
-            domain.step_center_inertia()
-            powers = scheduler.derive_mc2_simulation_powers(simulation_delta_time)
-            domain.step({
-                "integration_slice": True,
-                "data_path_only": True,
-                "dt": simulation_delta_time,
-                "simulation_power": powers.integration,
-                "velocity_weight": 1.0,
-                "gravity": (0.0, 0.0, 0.0),
-            })
-            domain_after_integration = domain.read_output().world_positions.copy()
-            domain.step({
-                "tether_slice": True,
-                "data_path_only": True,
-                "step_basic_positions": moved_positions,
-                "compression": tether_compression,
-                "stretch": tether_stretch,
-            })
-            domain.step_distance(powers.distance_bending)
-            domain.step_distance(powers.distance_bending)
-            if teleport_mode == 0 and is_running:
-                assert np.any(
-                    np.abs(domain.read_output().world_positions - domain_after_integration)
-                    > 1.0e-5
-                )
-            domain.step_post(_post_step_settings(effective, v0_after_shift))
-            v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
-            np.testing.assert_allclose(
-                domain.read_output().world_positions,
-                v0_after_step,
-                rtol=4.0e-5,
-                atol=4.0e-5,
-            )
-            np.testing.assert_allclose(
-                domain.read_debug_state()["real_velocities"],
-                np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
-                rtol=4.0e-5,
-                atol=4.0e-5,
-            )
-    finally:
-        domain.dispose()
-        v0.dispose()
 
 
 def test_e3_native_mesh_point_collision_matches_v0():
@@ -908,23 +635,6 @@ def test_e3_native_mesh_self_collision_matches_v0():
 
 
 if __name__ == "__main__":
-    test_e3_center_frame_shift_two_frame_transaction_matches_v0()
-    print("PASS E3 Center frame-shift + inertia/post two-frame transaction matches V0")
-    test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=2)
-    print("PASS E3 Center Keep teleport + inertia/post transaction matches V0")
-    test_e3_center_frame_shift_two_frame_transaction_matches_v0(teleport_mode=1)
-    print("PASS E3 Center Reset teleport + inertia/post transaction matches V0")
-    test_e3_center_frame_shift_two_frame_transaction_matches_v0(
-        is_running=False,
-        simulation_delta_time=0.0,
-    )
-    print("PASS E3 Center paused zero-substep transaction matches V0")
-    test_e3_center_frame_shift_two_frame_transaction_matches_v0(
-        frame_delta_time=0.3,
-        simulation_delta_time=0.1,
-        skip_count=2,
-    )
-    print("PASS E3 Center catch-up + inertia/post transaction matches V0")
     test_e3_native_mesh_point_collision_matches_v0()
     print("PASS E3 native Mesh point collision matches V0")
     test_e3_native_mesh_edge_collision_matches_v0()
