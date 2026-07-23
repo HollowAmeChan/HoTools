@@ -919,7 +919,7 @@ E7-CPU 的删除对象至少包括：
 |---|---|---|---|
 | 产品 Python import 图 | `product_solver` 导入时不会加载 `specs`、`solver`、`native_context`、`interaction_scope`、`shadow_pipeline`；Mesh/Bone 公开任务节点只生成显式 `MC2ProductRequestV1`。 | 保留架构测试，并把禁止项扩展到字符串引用和公开导出。 | 已关闭 |
 | 公开 step 分派 | `physicsMC2Step` 对 product request 走 `step_mc2_products`，但无 product request 时仍延迟导入旧 `step_mc2`；因此入口仍存在可调用 V0 fallback。 | 删除旧分支并只接受显式 product request；空输入保持产品合同定义的空事务，不调用旧 solver。 | 待关闭 |
-| 旧 Mesh collector bridge | benchmark、domain shadow 和 collector 单测已改为显式 product request/resolved plan、动态产品槽和通用 frame 发布；`collect_mc2_mesh_product_domain` 已删除，`product_collect.py` 对 `specs/MC2TaskSpec` 零引用。 | 保留产品 plan 采集合同和旧模型数值对照，不恢复 task 到产品的转换。 | 已关闭 |
+| 旧 Mesh collector bridge | domain shadow 与 collector 单测已改为显式 product request/resolved plan、动态产品槽和通用 frame 发布；`collect_mc2_mesh_product_domain` 已删除，`product_collect.py` 对 `specs/MC2TaskSpec` 零引用。旧 V0 融合 benchmark 已删除，历史 P2 数值保存在策略/蓝本中，不再提供可执行的双轨基线。 | 保留产品 plan 采集合同和已归档的历史数值，不恢复 task 到产品的转换。 | 已关闭 |
 | Bone 包装与反馈 | 公开 BoneCloth/BoneSpring 已按 Armature 生成显式 request/partition，产品 frame adapter 拥有动画反馈屏障、Anchor、Center/Teleport 与动态产品槽；全约束、混合输出、外碰/摩擦、Center/Teleport、故障事务和 Angle/Motion 数值边界均已迁到产品 fixture。旧 task frame/static adapter 只服务 oracle。 | 删除 `_physicsMC2Bone*TaskV0Oracle`、task 型 frame/static 入口和旧反馈分支；删除前只剩精确 import/reachability 审计。 | 已关闭 |
 | Python V0 owner | `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py` 仍完整存在；`debug.py`/`debug_draw.py` 仍导入旧 interaction 类型。 | 按“测试迁移 -> 生产入口切断 -> owner/interaction/debug/dispose 删除”分提交移除，不能留下产品 fallback。 | 待关闭 |
 | native DomainV1 | `mc2_domain_cpu.*` 不直接包含旧 context/interaction，完整 pass 使用 `mc2_kernels.*` 与独立 DomainV1 state。 | 保留 DomainV1、共享 kernel、静态构建和后端中立数据结构。 | 已关闭 |
@@ -928,7 +928,7 @@ E7-CPU 的删除对象至少包括：
 | native fingerprint | 产品 topology 已切换 `mc2_*_static_fingerprint_v1`，独立双 ABI 测试锁定 Mesh/Bone 输出；`v0` 仅为迁移 alias，产品模块已零引用。 | E7-CPU 迁移最后一个旧 owner 测试后删除 V0 alias。 | 产品依赖已关闭；alias 待删除 |
 | native V0 ABI | `mc2_bindings.cpp` 仍导出 context/interaction create、static、dynamic、step、read/debug、dispose 全组 binding；五个 `mc2_context_*` 翻译单元仍拥有旧生命周期。 | self/orientation/fingerprint 解耦后，整组删除旧声明、binding、翻译单元、capsule/type 和只服务它们的 helper。 | 待关闭 |
 | 长程产品证据 | 产品测试已覆盖公开 request、多 Armature、多 request 原子事务、重复 900 帧全约束/混合输出、细粒度外碰、Center/Teleport、故障回滚及 Angle/Motion 数值边界；两套 Blender/ABI 均显式绑定本工作树。 | 删除 V0 后原样保留产品长程门禁，不再保留 oracle 调用作为产品证据。 | 已关闭 |
-| Mesh shadow/性能证据 | domain shadow 与 fused benchmark 已改为公开 request/resolved plan，P0/P2 保持同输入、同工作量。 | E7-CPU 后复跑并记录新基线；不得因删除旧 bridge 改变工作量。 | 已关闭 |
+| Mesh shadow/性能证据 | domain shadow 已改为公开 request/resolved plan；旧 `benchmark_blender_mc2_fused_domain.py` 因仍依赖 V0 aggregate/manual join 已删除，P2 的同输入、同工作量结果已归档在策略与蓝本中。 | E7-CPU 删除旧 owner 后，以产品统一域维护基准复跑新基线；不得因删除旧 bridge 改变工作量。 | 旧 benchmark 已删除；产品基准待复跑 |
 
 精确文件分组如下：
 
