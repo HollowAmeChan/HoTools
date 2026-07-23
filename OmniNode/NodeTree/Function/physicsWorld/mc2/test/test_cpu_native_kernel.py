@@ -66,15 +66,18 @@ FIXTURE = os.path.join(
 )
 
 
-def _compiled():
+def _compiled(*, profile_overrides=None, task_overrides=None):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payload = json.load(handle)["static_snapshots"][0]
     snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
+    profile_values = {"self_collision_mode": 2}
+    if profile_overrides is not None:
+        profile_values.update(profile_overrides)
     effective = runtime.make_mc2_runtime_parameters(
-        parameters.make_mc2_particle_profile(self_collision_mode=2),
+        parameters.make_mc2_particle_profile(**profile_values),
         parameters.make_mc2_setup_options("mesh_cloth"),
-        parameters.make_mc2_task_parameters(),
+        parameters.make_mc2_task_parameters(**(task_overrides or {})),
     )
     return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
 
@@ -445,6 +448,9 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
         assert inspection["kernel"]["baseline_data_count"] == 3
         assert "real_velocities" not in inspection["kernel"]
         debug_state = domain.read_debug_state()
+        assert debug_state["velocities"].shape == (
+            compiled.program.particle_count, 3
+        )
         assert debug_state["real_velocities"].shape == (
             compiled.program.particle_count, 3
         )
@@ -460,15 +466,23 @@ def test_native_debug_off_inspect_does_not_readback_dynamics():
 
     class _CountingModule:
         def __init__(self):
-            self.read_count = 0
+            self.output_read_count = 0
+            self.dynamics_debug_read_count = 0
 
         def __getattr__(self, name):
             value = getattr(real_module, name)
-            if name != "mc2_domain_cpu_v1_read":
+            counters = {
+                "mc2_domain_cpu_v1_read": "output_read_count",
+                "mc2_domain_cpu_v1_read_dynamics_debug": (
+                    "dynamics_debug_read_count"
+                ),
+            }
+            counter = counters.get(name)
+            if counter is None:
                 return value
 
             def counted(*args, **kwargs):
-                self.read_count += 1
+                setattr(self, counter, getattr(self, counter) + 1)
                 return value(*args, **kwargs)
 
             return counted
@@ -479,14 +493,18 @@ def test_native_debug_off_inspect_does_not_readback_dynamics():
     try:
         domain.update_frame(_frame(compiled.program))
         domain.inspect()
-        assert module.read_count == 0
+        assert module.output_read_count == 0
+        assert module.dynamics_debug_read_count == 0
         domain.step({"data_path_only": True})
         domain.inspect()
-        assert module.read_count == 0
+        assert module.output_read_count == 0
+        assert module.dynamics_debug_read_count == 0
         domain.read_debug_state()
-        assert module.read_count == 1
+        assert module.output_read_count == 0
+        assert module.dynamics_debug_read_count == 1
         domain.read_output()
-        assert module.read_count == 2
+        assert module.output_read_count == 1
+        assert module.dynamics_debug_read_count == 1
     finally:
         domain.dispose()
 
@@ -814,6 +832,48 @@ def test_native_cpu_domain_commits_center_frame_shift_transaction():
         assert state["center_shift_rotations"].shape == (1, 4)
         assert state["center_shift_teleport_flags"].shape == (1,)
         assert np.isfinite(state["center_shift_vectors"]).all()
+    finally:
+        domain.dispose()
+
+
+def test_native_cpu_reset_teleport_restarts_center_stabilization_once():
+    compiled = _compiled(
+        profile_overrides={"stabilization_time_after_reset": 0.2},
+        task_overrides={"teleport_mode": 1, "teleport_distance": 0.1},
+    )
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    first = _frame(compiled.program)
+    moved_positions = first.partition_world_position.copy()
+    moved_positions[:, 0] += np.float32(2.0)
+    moved_positions.flags.writeable = False
+    second = replace(first, frame=first.frame + 1, partition_world_position=moved_positions)
+    anchor_positions = np.zeros((1, 3), dtype=np.float32)
+    center_settings = {
+        "dt": 0.05,
+        "frame_interpolation": 0.5,
+        "distance_weights": np.ones(1, dtype=np.float32),
+    }
+    try:
+        domain.update_frame(first)
+        domain.update_frame(second)
+        domain.step_center_frame_shift(anchor_positions)
+        reset_state = domain.read_center_debug_state()
+        assert int(reset_state["teleport_flags"][0]) & 4
+        np.testing.assert_allclose(reset_state["velocity_weights"], (0.0,))
+
+        domain.step_center(center_settings)
+        np.testing.assert_allclose(
+            domain.read_center_debug_state()["velocity_weights"], (0.25,), atol=1.0e-6
+        )
+        domain.step_center_frame_shift(anchor_positions)
+        np.testing.assert_allclose(
+            domain.read_center_debug_state()["velocity_weights"], (0.25,), atol=1.0e-6
+        )
+        domain.step_center({**center_settings, "frame_interpolation": 1.0})
+        np.testing.assert_allclose(
+            domain.read_center_debug_state()["velocity_weights"], (0.5,), atol=1.0e-6
+        )
     finally:
         domain.dispose()
 
@@ -1426,6 +1486,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_center_frame_shift_slice")
     test_native_cpu_domain_commits_center_frame_shift_transaction()
     print("PASS test_native_cpu_domain_commits_center_frame_shift_transaction")
+    test_native_cpu_reset_teleport_restarts_center_stabilization_once()
+    print("PASS test_native_cpu_reset_teleport_restarts_center_stabilization_once")
     test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order()
     print("PASS test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order")
     test_native_cpu_reference_pipeline_runs_structural_order_through_motion()

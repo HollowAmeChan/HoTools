@@ -760,6 +760,8 @@ def _product_center_payload(program, frame_packet, raw) -> tuple[dict, dict]:
                 "step_vector": raw["step_vectors"][index],
                 "inertia_vector": raw["inertia_vectors"][index],
                 "now_world_position": raw["now_world_positions"][index],
+                "velocity_weight": float(raw["velocity_weights"][index]),
+                "gravity_ratio": float(raw["gravity_ratios"][index]),
             },
             "task_teleport": {},
             "negative_scale_transition": {},

@@ -144,13 +144,16 @@ def _slot_id(request) -> str:
     )
 
 
-def _run_once(run_index: int) -> str:
+def _run_once(run_index: int):
     world = world_types.PhysicsWorldCache()
     generation = 920 + run_index
     mesh = proxy = cloth = spring = None
     owners = None
     schedulers = None
     disabled_solve_counts = None
+    hot = False
+    hot_speed_limits = (0.08, 0.09, 0.03)
+    hot_speed_samples = ([], [], [])
     digest = hashlib.sha256()
     try:
         physics_blender.register()
@@ -204,7 +207,12 @@ def _run_once(run_index: int) -> str:
                     owner.compiled.parameters.parameter_signature for owner in owners
                 )
                 mesh_request = _mesh_request(world, mesh, hot=hot)
-                bone_requests = bone_soak._requests(cloth, spring, hot=hot)
+                bone_requests = bone_soak._requests(
+                    cloth,
+                    spring,
+                    hot=hot,
+                    spring_particle_speed_limit=0.03 if hot else None,
+                )
                 requests = (mesh_request, *bone_requests)
                 assert tuple(_slot_id(request) for request in requests) == slot_ids
             returned, ready, status = nodes.physicsMC2Step(
@@ -247,7 +255,7 @@ def _run_once(run_index: int) -> str:
                         for owner, previous in zip(owners, previous_signatures)
                     )
 
-            for slot, owner in zip(slots, current_owners):
+            for owner_index, (slot, owner) in enumerate(zip(slots, current_owners)):
                 assert "native_context" not in slot.data
                 assert "spec" not in slot.data
                 output = owner.read_output()
@@ -256,6 +264,36 @@ def _run_once(run_index: int) -> str:
                 assert np.all(np.isfinite(output.world_rotations_xyzw))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
+                if hot:
+                    speed_limit = hot_speed_limits[owner_index]
+                    dynamics = owner.read_debug_state()
+                    velocities = np.asarray(
+                        dynamics["velocities"], dtype=np.float32
+                    ).reshape((-1, 3))
+                    assert np.all(np.isfinite(velocities))
+                    particle_speed = float(np.max(np.linalg.norm(velocities, axis=1)))
+                    assert particle_speed <= speed_limit + 1.0e-4, (
+                        frame,
+                        requests[owner_index].setup_type,
+                        particle_speed,
+                        speed_limit,
+                    )
+                    hot_speed_samples[owner_index].append(particle_speed)
+                    digest.update(velocities.tobytes())
+                    if frame == 301:
+                        table = next(
+                            table
+                            for table in (
+                                owner.compiled.parameters.domain_scalars,
+                                owner.compiled.parameters.partition_parameters,
+                                owner.compiled.parameters.particle_parameters,
+                            )
+                            if "particle_speed_limit" in table.fields
+                        )
+                        field_index = table.fields.index("particle_speed_limit")
+                        np.testing.assert_allclose(
+                            table.values[:, field_index], speed_limit, atol=1.0e-6
+                        )
 
             solve_counts = tuple(
                 (
@@ -295,7 +333,12 @@ def _run_once(run_index: int) -> str:
 
         assert owners is not None
         assert all(owner.inspect()["domain"]["step_count"] >= 899 for owner in owners)
-        return digest.hexdigest()
+        peak_ratios = tuple(
+            max(samples) / limit
+            for samples, limit in zip(hot_speed_samples, hot_speed_limits)
+        )
+        assert all(0.98 <= ratio <= 1.0001 for ratio in peak_ratios), peak_ratios
+        return digest.hexdigest(), peak_ratios
     finally:
         world.omni_cache_dispose("mc2_product_mixed_output_soak_cleanup")
         bone_soak._remove_armature(cloth)
@@ -308,7 +351,8 @@ def test_three_setup_product_mixed_output_900_frame_deterministic_soak() -> None
     first = _run_once(0)
     second = _run_once(1)
     assert first == second, (first, second)
-    print(f"MC2_PRODUCT_MIXED_OUTPUT_DIGEST {first}")
+    print(f"MC2_PRODUCT_MIXED_OUTPUT_DIGEST {first[0]}")
+    print(f"MC2_PRODUCT_MIXED_SPEED_LIMIT_PEAK_RATIOS {first[1]}")
 
 
 if __name__ == "__main__":

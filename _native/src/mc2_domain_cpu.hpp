@@ -344,6 +344,7 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& state_velocities() const noexcept { return state_velocities_; }
     const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
     const std::vector<float>& partition_world_positions() const noexcept {
         return partition_world_positions_;
@@ -431,6 +432,9 @@ public:
     }
     const std::vector<float>& center_gravity_ratios() const noexcept {
         return center_gravity_ratios_;
+    }
+    const std::vector<float>& center_velocity_weights() const noexcept {
+        return center_velocity_weights_;
     }
     std::int64_t center_shift_count() const noexcept { return center_shift_count_; }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }

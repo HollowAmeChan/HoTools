@@ -218,6 +218,7 @@ def _run_world_case(
             "movement_speed_limited": [],
             "anchor_shift_x": [],
             "teleport_flags": [],
+            "velocity_weight": [],
             "real_velocity_max": [],
             "configured_stabilization": [],
             "configured_blend_weight": [],
@@ -432,6 +433,12 @@ def _run_world_case(
                             int(np.asarray(
                                 debug_state["teleport_flags"],
                                 dtype=np.uint32,
+                            ).reshape((-1,))[0])
+                        )
+                        values["velocity_weight"].append(
+                            float(np.asarray(
+                                debug_state["velocity_weights"],
+                                dtype=np.float32,
                             ).reshape((-1,))[0])
                         )
                         if teleport_mode:
@@ -862,8 +869,25 @@ def center_stabilization_controls():
         assert reset_indices.size > 0
         velocity = np.asarray(left["real_velocity_max"], dtype=np.float32)
         sample = velocity[reset_indices[0]:reset_indices[0] + 8]
+        weights = np.asarray(left["velocity_weight"], dtype=np.float32)
+        reset_weight_index = int(reset_indices[0])
+        weight_sample = weights[reset_weight_index:reset_weight_index + 20]
         print("MC2_PRODUCT_CENTER_STABILIZATION", setup, sample.tolist())
         assert np.all(np.isfinite(sample))
+        expected_weights = np.minimum(
+            np.arange(1, 21, dtype=np.float32)
+            * np.float32((1.0 / _FRAME_RATE) / 0.2),
+            np.float32(1.0),
+        )
+        np.testing.assert_allclose(
+            weight_sample, expected_weights, rtol=0.0, atol=1.0e-6
+        )
+        np.testing.assert_allclose(
+            weight_sample * np.float32(0.6),
+            expected_weights * np.float32(0.6),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
         np.testing.assert_allclose(left["configured_stabilization"], [0.2])
         np.testing.assert_allclose(left["configured_blend_weight"], [0.6])
         np.testing.assert_allclose(

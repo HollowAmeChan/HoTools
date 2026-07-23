@@ -723,6 +723,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     std::vector<float> next_shift_now_positions(partition_count_ * 3, 0.0f);
     std::vector<float> next_shift_now_rotations(partition_count_ * 4, 0.0f);
     std::vector<float> next_smoothing_velocities = center_shift_smoothing_velocities_;
+    std::vector<float> next_center_velocity_weights = center_velocity_weights_;
     std::vector<std::uint32_t> next_teleport_flags(partition_count_, 0u);
     std::vector<float> next_raw_component_deltas(partition_count_ * 3, 0.0f);
     std::vector<float> next_anchor_shift_vectors(partition_count_ * 3, 0.0f);
@@ -798,6 +799,10 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
             (view.teleport_triggered ? 1u : 0u) |
             (view.keep_teleport ? 2u : 0u) |
             (view.reset_teleport ? 4u : 0u);
+        if (view.reset_teleport) {
+            next_center_velocity_weights[partition] =
+                center_stabilization_time_[partition] > 1.0e-6f ? 0.0f : 1.0f;
+        }
     }
     std::vector<float> next_world_positions = world_positions_;
     std::vector<float> next_world_rotations = world_rotations_;
@@ -857,6 +862,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     center_shift_now_positions_.swap(next_shift_now_positions);
     center_shift_now_rotations_.swap(next_shift_now_rotations);
     center_shift_smoothing_velocities_.swap(next_smoothing_velocities);
+    center_velocity_weights_.swap(next_center_velocity_weights);
     center_shift_teleport_flags_.swap(next_teleport_flags);
     center_debug_raw_component_deltas_.swap(next_raw_component_deltas);
     center_debug_anchor_shift_vectors_.swap(next_anchor_shift_vectors);

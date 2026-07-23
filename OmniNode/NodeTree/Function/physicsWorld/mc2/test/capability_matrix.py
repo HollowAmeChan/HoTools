@@ -98,19 +98,9 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "invariants": (
                 "finite", "deterministic", "candidate_frame_progresses",
                 "writeback_targets_present",
+                "bounded_velocity",
                 "parameter_hot_update_in_place",
                 "angle_motion_hot_update_stable",
-            ),
-        }, {
-            "runner": "test_blender_mc2_mixed_output_soak.py::main",
-            "frames": 900,
-            "setups": ALL_SETUPS,
-            "fields": (
-                "stabilization_time_after_reset", "blend_weight",
-            ),
-            "invariants": (
-                "finite", "deterministic", "bounded_velocity",
-                "stabilization_blend_ramp_exact",
             ),
         }, {
             "runner": (
@@ -124,6 +114,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": (
                 "finite", "deterministic",
+                "stabilization_blend_ramp_exact",
                 "product_stabilization_parameters_and_determinism",
             ),
         }, {
@@ -235,11 +226,23 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "particle_keep_offset_exact",
                     "particle_keep_velocity_cleared",
                     "particle_reset_step_history_exact",
-                    "particle_subset_scope_exact",
-                    "bone_root_teleport_detected",
-                    "teleport_debug_layers_isolated",
+                "particle_subset_scope_exact",
+                "bone_root_teleport_detected",
+                "teleport_debug_layers_isolated",
+                "teleport_nonunit_positive_scale", "real_writeback_each_frame",
+                ),
+            },
+            {
+                "runner": (
+                    "test_blender_mc2_product_mixed_output_soak.py::"
+                    "test_three_setup_product_mixed_output_900_frame_deterministic_soak"
+                ),
+                "frames": 900,
+                "setups": ALL_SETUPS,
+                "fields": ("particle_speed_limit",),
+                "invariants": (
+                    "finite", "deterministic",
                     "particle_speed_limit_bounded_and_active",
-                    "teleport_nonunit_positive_scale", "real_writeback_each_frame",
                 ),
             },
             {

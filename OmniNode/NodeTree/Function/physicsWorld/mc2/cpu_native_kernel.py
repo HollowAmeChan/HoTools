@@ -64,6 +64,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_step_post_owned_partitioned",
     "mc2_domain_cpu_v1_read",
+    "mc2_domain_cpu_v1_read_dynamics_debug",
     "mc2_domain_cpu_v1_begin_constraint_debug",
     "mc2_domain_cpu_v1_end_constraint_debug",
     "mc2_domain_cpu_v1_read_constraint_debug",
@@ -1277,8 +1278,9 @@ class MC2NativeCPUKernelV1:
     def read_debug_state(self, handle) -> dict:
         """Read native dynamics/debug arrays only when explicitly requested."""
         key = self._require_handle(handle)
-        raw = self._module.mc2_domain_cpu_v1_read(key)
+        raw = self._module.mc2_domain_cpu_v1_read_dynamics_debug(key)
         return {
+            "velocities": np.asarray(raw["velocities"], dtype=np.float32),
             "real_velocities": np.asarray(raw["real_velocities"], dtype=np.float32),
             "world_normals": np.asarray(raw["world_normals"], dtype=np.float32),
         }

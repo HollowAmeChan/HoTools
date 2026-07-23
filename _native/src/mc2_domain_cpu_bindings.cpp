@@ -1248,6 +1248,25 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Read the logical pass-through output of the E3 data-path slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_read_dynamics_debug",
+        [](std::uint64_t handle) {
+            auto* domain = require_domain(handle);
+            nb::dict result;
+            result["velocities"] = owned_array_2d<float>(
+                std::vector<float>(domain->state_velocities()), domain->particle_count(), 3
+            );
+            result["real_velocities"] = owned_array_2d<float>(
+                std::vector<float>(domain->real_velocities()), domain->particle_count(), 3
+            );
+            result["world_normals"] = owned_array_2d<float>(
+                std::vector<float>(domain->world_normals()), domain->particle_count(), 3
+            );
+            return result;
+        },
+        nb::arg("handle"),
+        "Read particle dynamics only for an explicit debug request."
+    );
+    module.def(
         "mc2_domain_cpu_v1_begin_constraint_debug",
         [](std::uint64_t handle, std::uint32_t mask) {
             require_domain(handle)->begin_constraint_debug(mask);
@@ -1665,6 +1684,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["gravity_ratios"] = owned_array_1d<float>(
                 std::vector<float>(domain->center_gravity_ratios())
+            );
+            result["velocity_weights"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_velocity_weights())
             );
             result["center_shift_count"] = domain->center_shift_count();
             result["center_step_count"] = domain->center_step_count();

@@ -811,6 +811,8 @@ def test_slot_native_executes_complete_compiled_frame():
         assert len(center_partitions) == len(teleport_partitions) == 2
         for center in center_partitions:
             shift = center["frame_shift"]
+            assert 0.0 <= center["step"]["velocity_weight"] <= 1.0
+            assert 0.0 <= center["step"]["gravity_ratio"] <= 1.0
             assert np.allclose(
                 shift["frame_component_shift_vector"],
                 np.asarray(shift["anchor_shift_vector"])
