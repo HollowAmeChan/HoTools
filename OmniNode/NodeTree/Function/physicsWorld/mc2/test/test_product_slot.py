@@ -621,6 +621,9 @@ def test_slot_native_executes_complete_compiled_frame():
                 "show_attributes": True,
                 "show_velocity": True,
                 "show_output": True,
+                "show_center": True,
+                "show_teleport_threshold": True,
+                "show_teleport_status": True,
                 "show_motion": True,
             },
         ) == 1
@@ -661,6 +664,26 @@ def test_slot_native_executes_complete_compiled_frame():
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
         assert snapshot["topology"]["edges"].shape[1] == 2
+        center_partitions = snapshot["center"]["partitions"]
+        teleport_partitions = snapshot["teleport"]["partitions"]
+        assert len(center_partitions) == len(teleport_partitions) == 2
+        for center in center_partitions:
+            shift = center["frame_shift"]
+            assert np.allclose(
+                shift["frame_component_shift_vector"],
+                np.asarray(shift["anchor_shift_vector"])
+                + np.asarray(shift["smoothing_shift_vector"])
+                + np.asarray(shift["world_shift_vector"]),
+                atol=1.0e-6,
+                rtol=0.0,
+            )
+            assert np.isfinite(shift["raw_component_delta"]).all()
+        for teleport in teleport_partitions:
+            assert teleport["mode"] in (0, 1, 2)
+            assert teleport["distance_threshold"] >= 0.0
+            assert teleport["rotation_threshold_degrees"] >= 0.0
+            assert teleport["measured_distance"] >= 0.0
+            assert teleport["measured_rotation_degrees"] >= 0.0
         assert snapshot["output"]["target_positions"].shape == (
             owner.compiled.program.particle_count,
             3,

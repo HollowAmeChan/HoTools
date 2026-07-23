@@ -113,6 +113,16 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       center_shift_now_rotations_(program.partition_count * 4, 0.0f),
       center_shift_smoothing_velocities_(program.partition_count * 3, 0.0f),
       center_shift_teleport_flags_(program.partition_count, 0u),
+      center_debug_raw_component_deltas_(program.partition_count * 3, 0.0f),
+      center_debug_anchor_shift_vectors_(program.partition_count * 3, 0.0f),
+      center_debug_smoothing_shift_vectors_(program.partition_count * 3, 0.0f),
+      center_debug_world_shift_vectors_(program.partition_count * 3, 0.0f),
+      center_debug_teleport_rotation_axes_(program.partition_count * 3, 0.0f),
+      center_debug_teleport_measured_distances_(program.partition_count, 0.0f),
+      center_debug_teleport_distance_thresholds_(program.partition_count, 0.0f),
+      center_debug_teleport_measured_rotation_degrees_(program.partition_count, 0.0f),
+      center_debug_movement_speed_limited_(program.partition_count, 0u),
+      center_debug_rotation_speed_limited_(program.partition_count, 0u),
       center_anchor_inertia_(program.partition_count, 0.0f),
       center_world_inertia_(program.partition_count, 0.0f),
       center_movement_inertia_smoothing_(program.partition_count, 0.0f),
@@ -714,6 +724,16 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     std::vector<float> next_shift_now_rotations(partition_count_ * 4, 0.0f);
     std::vector<float> next_smoothing_velocities = center_shift_smoothing_velocities_;
     std::vector<std::uint32_t> next_teleport_flags(partition_count_, 0u);
+    std::vector<float> next_raw_component_deltas(partition_count_ * 3, 0.0f);
+    std::vector<float> next_anchor_shift_vectors(partition_count_ * 3, 0.0f);
+    std::vector<float> next_smoothing_shift_vectors(partition_count_ * 3, 0.0f);
+    std::vector<float> next_world_shift_vectors(partition_count_ * 3, 0.0f);
+    std::vector<float> next_teleport_rotation_axes(partition_count_ * 3, 0.0f);
+    std::vector<float> next_teleport_measured_distances(partition_count_, 0.0f);
+    std::vector<float> next_teleport_distance_thresholds(partition_count_, 0.0f);
+    std::vector<float> next_teleport_measured_rotation_degrees(partition_count_, 0.0f);
+    std::vector<std::uint8_t> next_movement_speed_limited(partition_count_, 0u);
+    std::vector<std::uint8_t> next_rotation_speed_limited(partition_count_, 0u);
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         const auto position_offset = partition * 3;
         const auto rotation_offset = partition * 4;
@@ -761,6 +781,19 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
         std::copy_n(view.shifted_now_position, 3, next_shift_now_positions.data() + position_offset);
         std::copy_n(view.shifted_now_rotation, 4, next_shift_now_rotations.data() + rotation_offset);
         std::copy_n(view.smoothing_velocity_output, 3, next_smoothing_velocities.data() + position_offset);
+        std::copy_n(view.raw_component_delta, 3, next_raw_component_deltas.data() + position_offset);
+        std::copy_n(view.anchor_shift_vector, 3, next_anchor_shift_vectors.data() + position_offset);
+        std::copy_n(view.smoothing_shift_vector, 3, next_smoothing_shift_vectors.data() + position_offset);
+        std::copy_n(view.world_shift_vector, 3, next_world_shift_vectors.data() + position_offset);
+        std::copy_n(view.teleport_rotation_axis, 3, next_teleport_rotation_axes.data() + position_offset);
+        next_teleport_measured_distances[partition] = view.teleport_measured_distance;
+        next_teleport_distance_thresholds[partition] = view.teleport_distance_threshold;
+        next_teleport_measured_rotation_degrees[partition] =
+            view.teleport_measured_rotation_degrees;
+        next_movement_speed_limited[partition] =
+            view.movement_speed_limited ? 1u : 0u;
+        next_rotation_speed_limited[partition] =
+            view.rotation_speed_limited ? 1u : 0u;
         next_teleport_flags[partition] =
             (view.teleport_triggered ? 1u : 0u) |
             (view.keep_teleport ? 2u : 0u) |
@@ -825,6 +858,18 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     center_shift_now_rotations_.swap(next_shift_now_rotations);
     center_shift_smoothing_velocities_.swap(next_smoothing_velocities);
     center_shift_teleport_flags_.swap(next_teleport_flags);
+    center_debug_raw_component_deltas_.swap(next_raw_component_deltas);
+    center_debug_anchor_shift_vectors_.swap(next_anchor_shift_vectors);
+    center_debug_smoothing_shift_vectors_.swap(next_smoothing_shift_vectors);
+    center_debug_world_shift_vectors_.swap(next_world_shift_vectors);
+    center_debug_teleport_rotation_axes_.swap(next_teleport_rotation_axes);
+    center_debug_teleport_measured_distances_.swap(next_teleport_measured_distances);
+    center_debug_teleport_distance_thresholds_.swap(next_teleport_distance_thresholds);
+    center_debug_teleport_measured_rotation_degrees_.swap(
+        next_teleport_measured_rotation_degrees
+    );
+    center_debug_movement_speed_limited_.swap(next_movement_speed_limited);
+    center_debug_rotation_speed_limited_.swap(next_rotation_speed_limited);
     center_frame_shift_ready_ = true;
     center_frame_shift_consumed_ = true;
     ++center_shift_count_;
@@ -2655,6 +2700,16 @@ void DomainV1::dispose() noexcept {
     center_shift_now_rotations_.clear();
     center_shift_smoothing_velocities_.clear();
     center_shift_teleport_flags_.clear();
+    center_debug_raw_component_deltas_.clear();
+    center_debug_anchor_shift_vectors_.clear();
+    center_debug_smoothing_shift_vectors_.clear();
+    center_debug_world_shift_vectors_.clear();
+    center_debug_teleport_rotation_axes_.clear();
+    center_debug_teleport_measured_distances_.clear();
+    center_debug_teleport_distance_thresholds_.clear();
+    center_debug_teleport_measured_rotation_degrees_.clear();
+    center_debug_movement_speed_limited_.clear();
+    center_debug_rotation_speed_limited_.clear();
     center_frame_shift_ready_ = false;
     center_frame_shift_consumed_ = false;
     center_inertia_pending_ = false;

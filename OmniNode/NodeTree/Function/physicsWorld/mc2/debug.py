@@ -94,6 +94,9 @@ MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_attributes",
     "show_velocity",
     "show_output",
+    "show_center",
+    "show_teleport_threshold",
+    "show_teleport_status",
 )
 
 
@@ -607,6 +610,84 @@ def _product_topology_payload(program, positions) -> dict:
     }
 
 
+def _product_center_payload(program, frame_packet, raw) -> tuple[dict, dict]:
+    center_partitions = []
+    teleport_partitions = []
+    flags = np.asarray(raw["teleport_flags"], dtype=np.uint32)
+    modes = np.asarray(raw["teleport_modes"], dtype=np.int32)
+    for index, partition_id in enumerate(program.partition_ids):
+        frame_pose = {
+            "component_world_position": frame_packet.partition_world_position[index],
+            "component_world_rotation_xyzw": frame_packet.partition_world_rotation[index],
+            "anchor_identity": (
+                str(partition_id) if int(frame_packet.anchor_present[index]) else ""
+            ),
+            "anchor_world_position": frame_packet.anchor_world_position[index],
+            "anchor_world_rotation_xyzw": frame_packet.anchor_world_rotation[index],
+        }
+        frame_shift = {
+            "old_frame_world_position": raw["old_frame_world_positions"][index],
+            "old_frame_world_rotation_xyzw": raw[
+                "old_frame_world_rotations_xyzw"
+            ][index],
+            "now_world_position": raw["now_world_positions"][index],
+            "now_world_rotation_xyzw": raw["now_world_rotations_xyzw"][index],
+            "teleport_origin_world_position": raw["frame_world_positions"][index],
+            "frame_component_shift_vector": raw[
+                "frame_component_shift_vectors"
+            ][index],
+            "frame_component_shift_rotation_xyzw": raw[
+                "frame_component_shift_rotations_xyzw"
+            ][index],
+            "raw_component_delta": raw["raw_component_deltas"][index],
+            "anchor_shift_vector": raw["anchor_shift_vectors"][index],
+            "smoothing_shift_vector": raw["smoothing_shift_vectors"][index],
+            "world_shift_vector": raw["world_shift_vectors"][index],
+            "movement_speed_limited": bool(raw["movement_speed_limited"][index]),
+            "rotation_speed_limited": bool(raw["rotation_speed_limited"][index]),
+        }
+        center_partitions.append({
+            "partition_id": str(partition_id),
+            "frame_pose": frame_pose,
+            "frame_shift": frame_shift,
+            "step": {
+                "step_vector": raw["step_vectors"][index],
+                "inertia_vector": raw["inertia_vectors"][index],
+                "now_world_position": raw["now_world_positions"][index],
+            },
+            "task_teleport": {},
+            "negative_scale_transition": {},
+            "frame_sync": {},
+        })
+        flag = int(flags[index])
+        teleport_partitions.append({
+            "partition_id": str(partition_id),
+            "old_reference_position": raw["old_frame_world_positions"][index],
+            "reference_position": raw["now_world_positions"][index],
+            "old_reference_rotation_xyzw": raw[
+                "old_frame_world_rotations_xyzw"
+            ][index],
+            "reference_rotation_xyzw": raw["now_world_rotations_xyzw"][index],
+            "rotation_axis": raw["teleport_rotation_axes"][index],
+            "mode": int(modes[index]),
+            "applied": bool(flag & 1),
+            "keep": bool(flag & 2),
+            "reset": bool(flag & 4),
+            "measured_distance": float(raw["teleport_measured_distances"][index]),
+            "distance_threshold": float(raw["teleport_distance_thresholds"][index]),
+            "measured_rotation_degrees": float(
+                raw["teleport_measured_rotation_degrees"][index]
+            ),
+            "rotation_threshold_degrees": float(
+                raw["teleport_rotation_threshold_degrees"][index]
+            ),
+        })
+    return (
+        {"schema": "mc2_product_center_debug_v1", "partitions": tuple(center_partitions)},
+        {"schema": "mc2_product_teleport_debug_v1", "partitions": tuple(teleport_partitions)},
+    )
+
+
 def capture_requested_mc2_product_debug(world, slots) -> int:
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     generation = int(world.generation)
@@ -643,6 +724,17 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             native = {"positions": positions}
             if filters.get("show_velocity", False):
                 native.update(_freeze_value(owner.read_debug_state()))
+            center = {}
+            teleport = {}
+            if (
+                filters.get("show_center", False)
+                or filters.get("show_teleport_threshold", False)
+                or filters.get("show_teleport_status", False)
+            ):
+                center_raw = _freeze_value(owner.read_center_debug_state())
+                center, teleport = _product_center_payload(
+                    program, frame_packet, center_raw
+                )
             topology = (
                 _product_topology_payload(program, positions)
                 if filters.get("show_topology", False)
@@ -669,8 +761,13 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 "topology": topology,
                 "parameters": {},
                 "motion": {},
-                "center": {},
-                "teleport": {},
+                "center": center if filters.get("show_center", False) else {},
+                "teleport": (
+                    teleport
+                    if filters.get("show_teleport_threshold", False)
+                    or filters.get("show_teleport_status", False)
+                    else {}
+                ),
                 "collision": {},
                 "self_collision": None,
                 "output": ({

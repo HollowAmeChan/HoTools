@@ -369,8 +369,50 @@ public:
     const std::vector<float>& center_shift_now_rotations() const noexcept {
         return center_shift_now_rotations_;
     }
+    const std::vector<float>& center_shift_old_frame_positions() const noexcept {
+        return center_shift_old_frame_positions_;
+    }
+    const std::vector<float>& center_shift_old_frame_rotations() const noexcept {
+        return center_shift_old_frame_rotations_;
+    }
+    const std::vector<std::int32_t>& center_teleport_modes() const noexcept {
+        return center_teleport_modes_;
+    }
+    const std::vector<float>& center_teleport_rotations() const noexcept {
+        return center_teleport_rotations_;
+    }
     const std::vector<std::uint32_t>& center_shift_teleport_flags() const noexcept {
         return center_shift_teleport_flags_;
+    }
+    const std::vector<float>& center_debug_raw_component_deltas() const noexcept {
+        return center_debug_raw_component_deltas_;
+    }
+    const std::vector<float>& center_debug_anchor_shift_vectors() const noexcept {
+        return center_debug_anchor_shift_vectors_;
+    }
+    const std::vector<float>& center_debug_smoothing_shift_vectors() const noexcept {
+        return center_debug_smoothing_shift_vectors_;
+    }
+    const std::vector<float>& center_debug_world_shift_vectors() const noexcept {
+        return center_debug_world_shift_vectors_;
+    }
+    const std::vector<float>& center_debug_teleport_rotation_axes() const noexcept {
+        return center_debug_teleport_rotation_axes_;
+    }
+    const std::vector<float>& center_debug_teleport_measured_distances() const noexcept {
+        return center_debug_teleport_measured_distances_;
+    }
+    const std::vector<float>& center_debug_teleport_distance_thresholds() const noexcept {
+        return center_debug_teleport_distance_thresholds_;
+    }
+    const std::vector<float>& center_debug_teleport_measured_rotation_degrees() const noexcept {
+        return center_debug_teleport_measured_rotation_degrees_;
+    }
+    const std::vector<std::uint8_t>& center_debug_movement_speed_limited() const noexcept {
+        return center_debug_movement_speed_limited_;
+    }
+    const std::vector<std::uint8_t>& center_debug_rotation_speed_limited() const noexcept {
+        return center_debug_rotation_speed_limited_;
     }
     std::int64_t center_shift_count() const noexcept { return center_shift_count_; }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }
@@ -480,6 +522,16 @@ private:
     std::vector<float> center_shift_now_rotations_;
     std::vector<float> center_shift_smoothing_velocities_;
     std::vector<std::uint32_t> center_shift_teleport_flags_;
+    std::vector<float> center_debug_raw_component_deltas_;
+    std::vector<float> center_debug_anchor_shift_vectors_;
+    std::vector<float> center_debug_smoothing_shift_vectors_;
+    std::vector<float> center_debug_world_shift_vectors_;
+    std::vector<float> center_debug_teleport_rotation_axes_;
+    std::vector<float> center_debug_teleport_measured_distances_;
+    std::vector<float> center_debug_teleport_distance_thresholds_;
+    std::vector<float> center_debug_teleport_measured_rotation_degrees_;
+    std::vector<std::uint8_t> center_debug_movement_speed_limited_;
+    std::vector<std::uint8_t> center_debug_rotation_speed_limited_;
     std::vector<float> center_anchor_inertia_;
     std::vector<float> center_world_inertia_;
     std::vector<float> center_movement_inertia_smoothing_;

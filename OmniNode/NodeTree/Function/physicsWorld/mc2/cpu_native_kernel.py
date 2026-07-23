@@ -64,6 +64,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_step_post_owned_partitioned",
     "mc2_domain_cpu_v1_read",
+    "mc2_domain_cpu_v1_read_center_debug",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
     "mc2_center_frame_shift_v1_evaluate",
@@ -1261,6 +1262,11 @@ class MC2NativeCPUKernelV1:
             "real_velocities": np.asarray(raw["real_velocities"], dtype=np.float32),
             "world_normals": np.asarray(raw["world_normals"], dtype=np.float32),
         }
+
+    def read_center_debug_state(self, handle) -> dict:
+        """Read the native partitioned Center/Teleport observation slice."""
+        key = self._require_handle(handle)
+        return dict(self._module.mc2_domain_cpu_v1_read_center_debug(key))
 
     def dispose(self, handle) -> None:
         key = int(handle or 0)

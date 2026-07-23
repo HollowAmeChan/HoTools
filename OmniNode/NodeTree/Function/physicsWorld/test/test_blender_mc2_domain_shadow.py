@@ -59,6 +59,9 @@ mc2_nodes = importlib.import_module(
 mc2_debug = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
 )
+mc2_debug_draw = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug_draw"
+)
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
@@ -283,6 +286,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
                 "show_attributes": True,
                 "show_velocity": True,
                 "show_output": True,
+                "show_center": True,
+                "show_teleport_threshold": True,
+                "show_teleport_status": True,
             },
         ) == 1
 
@@ -305,6 +311,23 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
         assert len(snapshot["output"]["writeback_targets"]) == 2
+        assert len(snapshot["center"]["partitions"]) == 2
+        assert len(snapshot["teleport"]["partitions"]) == 2
+        status_text = mc2_debug_draw.update_mc2_debug_draw_store(
+            "mc2-product-center-debug",
+            world,
+            True,
+            show_center=True,
+            show_teleport_threshold=True,
+            show_teleport_status=True,
+        )
+        rendered = mc2_debug_draw.mc2_debug_draw_store_snapshot(
+            "mc2-product-center-debug"
+        )
+        assert "Center：分区2" in status_text
+        assert "Teleport：分区2" in status_text
+        assert rendered is not None
+        assert rendered["point_vertex_count"] > 0
         assert (
             mc2_names.MC2_INTERACTION_RESOURCE_KEY
             not in world.backend_resources
@@ -316,6 +339,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         else:
             raise AssertionError("unified domain silently accepted legacy fallback input")
     finally:
+        mc2_debug_draw.clear_mc2_debug_draw_store(
+            node_uid="mc2-product-center-debug"
+        )
         world.omni_cache_dispose("MC2 collector node acceptance cleanup")
         for source in reversed(sources):
             _remove_object(source)

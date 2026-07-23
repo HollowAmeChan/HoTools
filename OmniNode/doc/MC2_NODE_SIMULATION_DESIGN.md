@@ -964,6 +964,8 @@ E7-CPU 第一组进度（2026-07-23）：公开 `physicsMC2Step` 已删除 `step
 
 产品调试基础切片（2026-07-23）：公开调试请求器与 renderer 已识别统一域产品 slot；请求在下一真实帧完成 whole-domain 求解和 logical output 后捕获 `mc2_product_debug_snapshot_v1`。首批只承诺 `topology/attributes/velocity/output`：拓扑来自编译后的 domain IR，位置和输出复用同一 logical output，速度/法线只在显式请求时调用产品 owner 的 native readback；没有请求时不增加 readback。Mesh output 已接通，Bone 因 connected 旋转专用写回语义暂不发布 output 图层；其余 Center/Teleport、约束记录、外碰和 whole-domain self 模式写入 `unsupported_filters`，不得从最终位置反推。py311/py313 真实 native owner 测试与 Blender 4.5/cp311、5.2/cp313 公开产品节点均通过，且产品捕获不创建旧 interaction resource。这是迁移骨架，不是 28 模式等价完成。
 
+产品 Center/Teleport 调试切片（2026-07-23）：DomainV1 在真实 `evaluate_center_frame_shift_mc2` 调用后按 partition 保存 raw component delta、Anchor/平滑/World 三类贡献、最终 frame shift、old/now frame pose、移动/旋转限速标志、Teleport 模式/阈值/实际测量/旋转轴和 Keep/Reset flags；独立 `mc2_domain_cpu_v1_read_center_debug` 只在对应模式显式请求时读取，不进入普通 output、velocity 调试或 debug-off 热路径。产品 snapshot 使用稳定 `partition_id` 排列的 `center.partitions` 与 `teleport.partitions`，renderer 同时兼容旧单 task 记录和新多 partition 记录。双 ABI 真实 native owner 锁定每个 partition 的最终 shift 等于 Anchor、平滑、World 三项之和；Blender 4.5/cp311 与 5.2/cp313 均通过公开两 Mesh 产品域、实际 renderer、120 帧和双 source 对照，旧 13 组调试绘制也保持全过。尚未迁移的是 Bone output、约束 pass、外碰和 whole-domain self 明细。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |

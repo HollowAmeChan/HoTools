@@ -1246,6 +1246,88 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Read the logical pass-through output of the E3 data-path slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_read_center_debug",
+        [](std::uint64_t handle) {
+            auto* domain = require_domain(handle);
+            const auto partitions = domain->partition_count();
+            nb::dict result;
+            result["frame_world_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_frame_world_positions()), partitions, 3
+            );
+            result["frame_world_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_frame_world_rotations()), partitions, 4
+            );
+            result["old_frame_world_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_old_frame_positions()), partitions, 3
+            );
+            result["old_frame_world_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_old_frame_rotations()), partitions, 4
+            );
+            result["now_world_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_now_positions()), partitions, 3
+            );
+            result["now_world_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_now_rotations()), partitions, 4
+            );
+            result["frame_component_shift_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_vectors()), partitions, 3
+            );
+            result["frame_component_shift_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_shift_rotations()), partitions, 4
+            );
+            result["raw_component_deltas"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_debug_raw_component_deltas()), partitions, 3
+            );
+            result["anchor_shift_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_debug_anchor_shift_vectors()), partitions, 3
+            );
+            result["smoothing_shift_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_debug_smoothing_shift_vectors()), partitions, 3
+            );
+            result["world_shift_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_debug_world_shift_vectors()), partitions, 3
+            );
+            result["step_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_step_vectors()), partitions, 3
+            );
+            result["inertia_vectors"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_inertia_vectors()), partitions, 3
+            );
+            result["teleport_rotation_axes"] = owned_array_2d<float>(
+                std::vector<float>(domain->center_debug_teleport_rotation_axes()), partitions, 3
+            );
+            result["teleport_measured_distances"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_debug_teleport_measured_distances())
+            );
+            result["teleport_distance_thresholds"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_debug_teleport_distance_thresholds())
+            );
+            result["teleport_measured_rotation_degrees"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_debug_teleport_measured_rotation_degrees())
+            );
+            result["teleport_rotation_threshold_degrees"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_teleport_rotations())
+            );
+            result["teleport_modes"] = owned_array_1d<std::int32_t>(
+                std::vector<std::int32_t>(domain->center_teleport_modes())
+            );
+            result["teleport_flags"] = owned_array_1d<std::uint32_t>(
+                std::vector<std::uint32_t>(domain->center_shift_teleport_flags())
+            );
+            result["movement_speed_limited"] = owned_array_1d<std::uint8_t>(
+                std::vector<std::uint8_t>(domain->center_debug_movement_speed_limited())
+            );
+            result["rotation_speed_limited"] = owned_array_1d<std::uint8_t>(
+                std::vector<std::uint8_t>(domain->center_debug_rotation_speed_limited())
+            );
+            result["center_shift_count"] = domain->center_shift_count();
+            result["center_step_count"] = domain->center_step_count();
+            return result;
+        },
+        nb::arg("handle"),
+        "Read the explicit partitioned Center and Teleport debug slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_inspect",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);

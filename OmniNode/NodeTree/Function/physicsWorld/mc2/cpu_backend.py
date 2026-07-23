@@ -486,6 +486,16 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose explicit debug state")
         return read_state(self._handle)
 
+    def read_center_debug_state(self) -> Mapping[str, object]:
+        """Read Center/Teleport state only for an explicit debug request."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("CPU backend Center debug state requires update_frame first")
+        read_state = getattr(self._kernel, "read_center_debug_state", None)
+        if not callable(read_state):
+            raise RuntimeError("CPU kernel does not expose Center debug state")
+        return read_state(self._handle)
+
     def inspect(self) -> dict:
         self._ensure_live()
         kernel_state = self._kernel.inspect(self._handle)

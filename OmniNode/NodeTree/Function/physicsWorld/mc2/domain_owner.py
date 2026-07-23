@@ -287,6 +287,11 @@ class MC2FusedCPUOwnerV1:
 
         return self._require_domain().read_debug_state()
 
+    def read_center_debug_state(self):
+        """Read explicit partitioned Center/Teleport observations."""
+
+        return self._require_domain().read_center_debug_state()
+
     def inspect(self) -> dict:
         return {
             "schema": "mc2_fused_cpu_owner_v1",

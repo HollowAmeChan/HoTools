@@ -497,12 +497,16 @@ def _build_slot_status_lines(snapshot: dict, filters: dict) -> list[str]:
             ((1, "恢复"),),
         ))
     if filters.get("show_center"):
-        shift = (snapshot.get("center") or {}).get("frame_shift") or {}
-        step = (snapshot.get("center") or {}).get("step") or {}
+        center = snapshot.get("center") or {}
+        center_items = tuple(center.get("partitions") or (center,))
+        shifts = tuple(item.get("frame_shift") or {} for item in center_items)
+        steps = tuple(item.get("step") or {} for item in center_items)
+        shift = shifts[0] if shifts else {}
+        step = steps[0] if steps else {}
         frame_final = _vector_length(shift.get("frame_component_shift_vector"))
         local_final = _vector_length(step.get("inertia_vector"))
         lines.append(
-            "Center：帧惯性最终位移"
+            f"Center：分区{len(center_items)}，首分区帧惯性最终位移"
             f"{frame_final:.4g}，fixed-step有效惯性{local_final:.4g}；"
             "来源[对象"
             f"{_vector_length(shift.get('raw_component_delta')):.4g} / Anchor"
@@ -515,12 +519,16 @@ def _build_slot_status_lines(snapshot: dict, filters: dict) -> list[str]:
         )
     if filters.get("show_teleport_status") or filters.get("show_teleport_threshold"):
         teleport = snapshot.get("teleport") or {}
-        mode = int(teleport.get("mode", 0) or 0)
-        applied = bool(teleport.get("applied", False))
-        result = "Reset" if applied and mode == 1 else "Keep" if applied and mode == 2 else "未触发"
+        teleport_items = tuple(teleport.get("partitions") or (teleport,))
+        reset_count = sum(bool(item.get("reset", False)) for item in teleport_items)
+        keep_count = sum(bool(item.get("keep", False)) for item in teleport_items)
+        applied_count = sum(bool(item.get("applied", False)) for item in teleport_items)
+        first = teleport_items[0] if teleport_items else {}
         lines.append(
-            f"Teleport：{result}；位移阈值{float(teleport.get('distance_threshold', 0.0) or 0.0):.4g}，"
-            f"旋转阈值{float(teleport.get('rotation_threshold_degrees', 0.0) or 0.0):.4g}度。"
+            f"Teleport：分区{len(teleport_items)}，触发{applied_count}，"
+            f"Reset {reset_count}，Keep {keep_count}；首分区位移阈值"
+            f"{float(first.get('distance_threshold', 0.0) or 0.0):.4g}，旋转阈值"
+            f"{float(first.get('rotation_threshold_degrees', 0.0) or 0.0):.4g}度。"
         )
     if filters.get("show_collision_contacts"):
         contacts = native.get("external_contacts") or {}
@@ -1605,6 +1613,13 @@ def _append_angle_limit_batches(batches, point_batches, motion, records, limit):
 def _append_task_teleport_batches(
     batches, point_batches, teleport, filters, limit
 ):
+    partitions = tuple(teleport.get("partitions") or ())
+    if partitions:
+        for item in partitions[:limit]:
+            _append_task_teleport_batches(
+                batches, point_batches, item, filters, limit
+            )
+        return
     if "reference_position" in teleport:
         old_position = vector3(teleport.get("old_reference_position", (0.0, 0.0, 0.0)))
         position = vector3(teleport.get("reference_position", (0.0, 0.0, 0.0)))
@@ -1781,6 +1796,11 @@ def _append_task_teleport_batches(
 
 
 def _append_center_batches(batches, point_batches, center):
+    partitions = tuple(center.get("partitions") or ())
+    if partitions:
+        for item in partitions:
+            _append_center_batches(batches, point_batches, item)
+        return
     frame_pose = center.get("frame_pose") or {}
     shift = center.get("frame_shift") or {}
     step = center.get("step") or {}
@@ -1825,13 +1845,17 @@ def _append_center_batches(batches, point_batches, center):
         if position is not None:
             add_line(anchor_lines, position, anchor)
     old_position = shift.get("old_frame_world_position")
-    now_position = shift.get("now_world_position") or step.get("now_world_position")
+    now_position = shift.get("now_world_position")
+    if now_position is None:
+        now_position = step.get("now_world_position")
     if old_position is not None and now_position is not None:
         add_arrow_lines(frame_lines, old_position, now_position)
         add_point(old_points, old_position)
         add_point(now_points, now_position)
     shift_vector = shift.get("frame_component_shift_vector")
-    shift_origin = shift.get("teleport_origin_world_position") or position
+    shift_origin = shift.get("teleport_origin_world_position")
+    if shift_origin is None:
+        shift_origin = position
     if shift_origin is not None and shift_vector is not None:
         add_arrow_lines(
             shift_lines,
