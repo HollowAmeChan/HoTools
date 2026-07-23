@@ -113,6 +113,47 @@ def test_product_execution_boundary_has_no_v0_owner_imports():
         assert not (set(imports) & forbidden), (filename, set(imports) & forbidden)
 
 
+def test_specs_is_v0_only_and_resolved_topology_avoids_it():
+    """specs.py 只能保留待删 V0 task 合同，中立拓扑走 resolved partition。"""
+
+    root = BLENDER_TEST_ROOT.parent
+    specs_tree = ast.parse(
+        (root / "specs.py").read_text(encoding="utf-8"),
+        filename=str(root / "specs.py"),
+    )
+    top_level = {
+        node.name
+        for node in specs_tree.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert top_level == {
+        "_normalize_sources",
+        "_source_identity",
+        "_ordered_source_identity",
+        "MC2TaskSpec",
+        "_spec_signature",
+        "make_mc2_task_spec",
+        "build_mc2_task_specs",
+    }
+
+    topology_tree = ast.parse(
+        (root / "topology.py").read_text(encoding="utf-8"),
+        filename=str(root / "topology.py"),
+    )
+    resolved = {
+        node.name: node
+        for node in topology_tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for function_name in ("_partition_intent", "prepare_static_inputs_for_partition"):
+        imports = {
+            ("." * node.level) + (node.module or "")
+            for node in ast.walk(resolved[function_name])
+            if isinstance(node, ast.ImportFrom)
+        }
+        assert ".specs" not in imports, (function_name, imports)
+
+
 def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
         encoding="utf-8"
