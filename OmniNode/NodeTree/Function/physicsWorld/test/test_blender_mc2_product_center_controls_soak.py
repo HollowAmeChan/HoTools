@@ -167,6 +167,7 @@ def _run_world_case(
     local_rotation_speed_limit: float = -1.0,
     depth_inertia: float = 0.0,
     read_center_debug: bool = False,
+    capture_candidates: bool = False,
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -182,6 +183,9 @@ def _run_world_case(
             "step_x": [],
             "movement_speed_limited": [],
             "anchor_shift_x": [],
+            "candidate_positions": [],
+            "depths": [],
+            "move_mask": [],
         }
         for setup in _SETUPS
     }
@@ -286,6 +290,27 @@ def _run_world_case(
                 assert output.generation == generation
                 assert np.all(np.isfinite(output.world_positions))
                 assert np.all(np.isfinite(output.world_rotations_xyzw))
+                if capture_candidates:
+                    values = observations[setup]
+                    values["candidate_positions"].append(
+                        np.array(output.world_positions, dtype=np.float32, copy=True)
+                    )
+                    if frame == 1:
+                        particle_parameters = (
+                            owner.compiled.parameters.particle_parameters
+                        )
+                        depth_index = particle_parameters.fields.index("depth")
+                        depths = np.asarray(
+                            particle_parameters.values[:, depth_index],
+                            dtype=np.float32,
+                        ).reshape((-1,))
+                        move_mask = np.asarray(
+                            owner.compiled.program.particle_attribute_flags,
+                            dtype=np.uint32,
+                        ).reshape((-1,)) & 0x02
+                        values["move_mask"].append(move_mask.astype(bool))
+                        assert depths.size == output.world_positions.shape[0]
+                        values["depths"].append(depths)
                 if frame > 1:
                     kernel = owner.inspect()["domain"]["kernel"]
                     shift = np.asarray(
@@ -624,8 +649,60 @@ def center_anchor_controls():
     print("PASS 产品Center Anchor端点与确定性")
 
 
+def center_depth_controls():
+    def run(run_index):
+        result = {}
+        for case_index, depth_inertia in enumerate((0.0, 1.0)):
+            result[depth_inertia] = _run_world_case(
+                f"Depth{int(depth_inertia)}",
+                run_index * 10 + case_index,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                local_inertia=1.0,
+                depth_inertia=depth_inertia,
+                capture_candidates=True,
+            )
+        return result
+
+    first = run(0)
+    second = run(1)
+    for depth_inertia in first:
+        for setup in _SETUPS:
+            left = first[depth_inertia][0][setup]
+            right = second[depth_inertia][0][setup]
+            for field in left:
+                np.testing.assert_array_equal(left[field], right[field])
+            zero = first[0.0][0][setup]
+            one = first[1.0][0][setup]
+            depths = zero["depths"][0]
+            np.testing.assert_array_equal(depths, one["depths"][0])
+            assert depths.size > 0 and float(np.max(depths)) > 0.0
+            expected = depths * depths
+            move_mask = zero["move_mask"][0].astype(bool)
+            assert int(np.count_nonzero(move_mask)) > 0
+            correlations = []
+            for zero_positions, one_positions in zip(
+                zero["candidate_positions"],
+                one["candidate_positions"],
+            ):
+                delta_x = one_positions[:, 0] - zero_positions[:, 0]
+                if float(np.std(delta_x[move_mask])) <= 1.0e-7:
+                    continue
+                correlations.append(
+                    float(np.corrcoef(expected[move_mask], delta_x[move_mask])[0, 1])
+                )
+            correlation = max(correlations)
+            print("MC2_PRODUCT_CENTER_DEPTH", setup, correlation, len(correlations))
+            assert correlation > 0.8
+    print("PASS 产品Center Depth惯性与确定性")
+
+
 if __name__ == "__main__":
-    if os.environ.get("MC2_CENTER_ANCHOR_ONLY"):
+    if os.environ.get("MC2_CENTER_DEPTH_ONLY"):
+        center_depth_controls()
+    elif os.environ.get("MC2_CENTER_ANCHOR_ONLY"):
         center_anchor_controls()
     elif os.environ.get("MC2_CENTER_LOCAL_ONLY"):
         center_local_controls()

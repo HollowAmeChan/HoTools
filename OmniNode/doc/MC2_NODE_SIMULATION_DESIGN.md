@@ -999,6 +999,8 @@ E7-CPU Center Local 产品迁移（2026-07-23）：同一 runner 的 `center_loc
 
 E7-CPU Center Anchor 产品迁移（2026-07-23）：`center_anchor_controls` 对三种 setup 的 Anchor inertia `0/1` 各双跑 600 帧，显式验证 Anchor shift 端点：`0` 跟随平台产生约 `0.03m` 的累计 shift，`1` 保持零 shift；产品槽边界和双跑确定性均通过。capability matrix 已切换 Anchor 条目；Depth 仍待产品 runner。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
 
+E7-CPU Center Depth 产品迁移（2026-07-23）：`center_depth_controls` 对三种 setup 的 `depth_inertia=0/1` 各双跑 600 帧，从 compiled particle parameter SoA 读取真实 depth、从 DomainV1 program 读取 Move mask，并在有运动方差的 592/599 帧验证 candidate 差值的深度排序与确定性；相关性为 MeshCloth `0.9989`、BoneCloth `0.8796`、BoneSpring `0.9940`。产品实际差值方向与旧 V0 `1-depth²` 公式相反，产品证据固定自身 `depth²` 排序合同，不把旧符号带入产品路径。Center World/Local/Depth/Anchor 现均已完成 product runner 迁移；此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
+
 ### E7-S：删除后的兼容层收敛审计
 
 E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V0`、`legacy`、`compat`、`fallback`、`shadow`、旧schema、旧result翻译、双签名overload、迁移feature flag和“仅测试使用”入口建立机器可读清单，并逐项给出外部合同依据。没有当前资产格式、公开ABI或明确oracle责任的处理必须删除；仍需保留的边界必须重命名为真实职责，不能继续用迁移期术语掩盖所有权。
