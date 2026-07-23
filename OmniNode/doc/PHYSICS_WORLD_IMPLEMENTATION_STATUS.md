@@ -120,6 +120,8 @@ MC2 产品 Center Anchor 长跑迁移（2026-07-23）：`center_anchor_controls`
 
 MC2 产品 Center Depth 长跑迁移（2026-07-23）：`center_depth_controls` 对三种 setup 的 `depth_inertia=0/1` 各双跑 600 帧，从 compiled particle parameter SoA 读取真实 depth、从 DomainV1 program 读取 Move mask，并在有运动方差的 592/599 帧验证 candidate 差值的深度排序与确定性；相关性为 MeshCloth `0.9989`、BoneCloth `0.8796`、BoneSpring `0.9940`。产品实际差值方向与旧 V0 `1-depth²` 公式相反，matrix 固定产品自身 `depth²` 排序合同，不把旧符号带入产品路径。Center World/Local/Depth/Anchor 条目现均已切换到 product runner；仅使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
 
+MC2 产品通用 mixed-output 长跑迁移（2026-07-23）：capability matrix 的通用 mixed-output 证据已切换为 `test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak`。该 runner 以 MeshCloth、BoneCloth、BoneSpring 三种 setup 同域运行，连续 900 帧双跑，覆盖 product request、统一 scheduler、GN/Bone 写回、同布局参数热更新以及 Angle/Motion active-solve 计数，摘要双跑逐字节一致为 `7538202abf1026ea3a1b932d82fa38781cabc84f2c4752c4f808885d9adf0db8`。旧 mixed-output main 中的 stabilization ramp 精确断言和 teleport 细节不在本证据范围，仍由后续独立产品门禁迁移；因此不能据此提前删除旧 owner。仅使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
+
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 3. MC2统一域E7-A已关闭，当前按冻结清单执行E7-CPU分组删除；完成产品调试快照迁移、Python旧owner/oracle bridge和native V0面删除后，立即执行E7-S兼容层专项简化。P6合同贯穿其间，任何setup都不得静默回退到旧task/V0。
