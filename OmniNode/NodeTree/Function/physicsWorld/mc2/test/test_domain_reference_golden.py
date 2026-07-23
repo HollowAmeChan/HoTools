@@ -83,7 +83,6 @@ def _source():
 
 def _compiled_domain(profile=None, task_parameters=None):
     snapshot = _source()
-    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
     if profile is None:
         profile = parameters.make_mc2_particle_profile(
             gravity=1.0,
@@ -94,6 +93,11 @@ def _compiled_domain(profile=None, task_parameters=None):
             angle_limit_enabled=False,
             self_collision_mode=0,
         )
+    return _domain_from_snapshot(snapshot, profile, task_parameters)
+
+
+def _domain_from_snapshot(snapshot, profile, task_parameters=None):
+    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
     effective = runtime.make_mc2_runtime_parameters(
         profile,
         parameters.make_mc2_setup_options("mesh_cloth"),
@@ -165,7 +169,18 @@ def _golden(case_name):
     return payload["cases"][case_name]
 
 
-def _full_reference_settings(program, positions, rotations, *, post_step=None):
+def _full_reference_settings(
+    program,
+    positions,
+    rotations,
+    *,
+    point_collision=None,
+    edge_collision=None,
+    self_collision=None,
+    post_step=None,
+    collision_mode=None,
+    self_collision_enabled=None,
+):
     count = program.particle_count
     settings = {
         "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
@@ -197,12 +212,16 @@ def _full_reference_settings(program, positions, rotations, *, post_step=None):
         "motion_normal_axis": 1,
         "motion_max_distance_enabled": False,
         "motion_backstop_enabled": False,
-        "point_collision": None,
-        "edge_collision": None,
-        "self_collision": None,
+        "point_collision": point_collision,
+        "edge_collision": edge_collision,
+        "self_collision": self_collision,
     }
     if post_step is not None:
         settings["post_step"] = post_step
+    if collision_mode is not None:
+        settings["collision_mode"] = collision_mode
+    if self_collision_enabled is not None:
+        settings["self_collision_enabled"] = self_collision_enabled
     return settings
 
 
@@ -812,6 +831,298 @@ def test_domain_center_transactions_match_frozen_e3_reference():
     )
     for case_name, kwargs in cases:
         _run_center_transaction(case_name, **kwargs)
+
+
+def _post_step_settings(effective, old_positions):
+    floats = effective.debug_dict()["float_values"]
+    return {
+        "old_positions": old_positions,
+        "dt": 0.1,
+        "dynamic_friction": floats["collision_dynamic_friction"],
+        "static_friction_speed": floats["collision_static_friction"],
+        "particle_speed_limit": floats["particle_speed_limit"],
+        "velocity_weight": 1.0,
+    }
+
+
+def _collision_parameters(compiled):
+    fields = {
+        name: index
+        for index, name in enumerate(
+            compiled.parameters.particle_parameters.fields
+        )
+    }
+    values = compiled.parameters.particle_parameters.values
+    return fields, values
+
+
+def test_domain_point_collision_matches_frozen_e3_reference():
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.0,
+        collision_mode=1,
+        collision_friction=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        self_collision_mode=0,
+    )
+    compiled, effective, domain = _compiled_domain(profile)
+    program = compiled.program
+    center = np.asarray(((0.0, -1.0, 0.0),), dtype=np.float32)
+    collider_types = np.asarray((0,), dtype=np.int32)
+    collider_groups = np.asarray((1,), dtype=np.int32)
+    collider_radii = np.asarray((0.5,), dtype=np.float32)
+    try:
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        domain.update_frame(
+            _frame_at(
+                program,
+                frame=1,
+                generation=1,
+                positions=base_positions,
+            )
+        )
+        fields, values = _collision_parameters(compiled)
+        domain.step_reference_pipeline_full(
+            _full_reference_settings(
+                program,
+                base_positions,
+                base_rotations,
+                point_collision={
+                    "base_positions": np.zeros_like(base_positions),
+                    "collision_radii": (
+                        values[:, fields["radius"]]
+                        * values[:, fields["radius_multiplier"]]
+                    ),
+                    "friction": values[:, fields["collision_friction"]],
+                    "collided_by_groups": 1,
+                    "collider_types": collider_types,
+                    "collider_group_bits": collider_groups,
+                    "collider_centers": center,
+                    "collider_segment_a": center,
+                    "collider_segment_b": center,
+                    "collider_old_centers": center,
+                    "collider_old_segment_a": center,
+                    "collider_old_segment_b": center,
+                    "collider_radii": collider_radii,
+                },
+                post_step=_post_step_settings(effective, base_positions),
+                collision_mode=1,
+                self_collision_enabled=False,
+            )
+        )
+        case = _golden("point_collision")
+        assert domain.read_output().world_positions[2, 1] < -1.1
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+        _assert_golden(
+            domain.read_debug_state()["real_velocities"],
+            case,
+            "real_velocities",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_edge_collision_matches_frozen_e3_reference():
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.0,
+        collision_mode=2,
+        collision_friction=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        self_collision_mode=0,
+    )
+    compiled, effective, domain = _compiled_domain(profile)
+    program = compiled.program
+    center = np.asarray(((0.0, -0.5, 0.0),), dtype=np.float32)
+    collider_types = np.asarray((0,), dtype=np.int32)
+    collider_groups = np.asarray((1,), dtype=np.int32)
+    collider_radii = np.asarray((0.5,), dtype=np.float32)
+    try:
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        domain.update_frame(
+            _frame_at(
+                program,
+                frame=1,
+                generation=1,
+                positions=base_positions,
+            )
+        )
+        edge_table = next(
+            table for table in program.primitive_tables if table.kind == "edge"
+        )
+        fields, values = _collision_parameters(compiled)
+        domain.step_reference_pipeline_full(
+            _full_reference_settings(
+                program,
+                base_positions,
+                base_rotations,
+                edge_collision={
+                    "collision_radii": (
+                        values[:, fields["radius"]]
+                        * values[:, fields["radius_multiplier"]]
+                    ),
+                    "edges": np.asarray(edge_table.indices, dtype=np.int32),
+                    "friction": values[:, fields["collision_friction"]],
+                    "collided_by_groups": 1,
+                    "collider_types": collider_types,
+                    "collider_group_bits": collider_groups,
+                    "collider_centers": center,
+                    "collider_segment_a": center,
+                    "collider_segment_b": center,
+                    "collider_old_centers": center,
+                    "collider_old_segment_a": center,
+                    "collider_old_segment_b": center,
+                    "collider_radii": collider_radii,
+                },
+                post_step=_post_step_settings(effective, base_positions),
+                collision_mode=2,
+                self_collision_enabled=False,
+            )
+        )
+        case = _golden("edge_collision")
+        assert np.any(
+            np.abs(domain.read_output().world_positions - base_positions)
+            > 1.0e-4
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+        _assert_golden(
+            domain.read_debug_state()["real_velocities"],
+            case,
+            "real_velocities",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_self_collision_matches_frozen_e3_reference():
+    with open(STATIC_FIXTURE, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)["static_snapshots"][0]
+    payload.update(
+        {
+            "local_positions": (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.1, 0.1, 0.0),
+                (1.1, 0.1, 0.0),
+                (0.1, 1.1, 0.0),
+            ),
+            "local_normals": ((0.0, 0.0, 1.0),) * 6,
+            "edges": (
+                (0, 1),
+                (1, 2),
+                (2, 0),
+                (3, 4),
+                (4, 5),
+                (5, 3),
+            ),
+            "triangles": ((0, 1, 2), (3, 4, 5)),
+            "triangle_loops": ((0, 1, 2), (3, 4, 5)),
+            "loop_vertices": (0, 1, 2, 3, 4, 5),
+            "loop_uvs": (
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            )
+            * 2,
+            "pin_weights": (1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            "source_element_ids": (0, 1, 2, 3, 4, 5),
+            "radius_multipliers": (1.0,) * 6,
+        }
+    )
+    snapshot = ir.make_mc2_mesh_partition_static_snapshot(**payload)
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.0,
+        radius=0.05,
+        collision_friction=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        self_collision_mode=2,
+        self_collision_thickness=0.02,
+    )
+    compiled, effective, domain = _domain_from_snapshot(snapshot, profile)
+    program = compiled.program
+    try:
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        domain.update_frame(
+            _frame_at(
+                program,
+                frame=1,
+                generation=1,
+                positions=base_positions,
+            )
+        )
+        edge_table = next(
+            table for table in program.primitive_tables if table.kind == "edge"
+        )
+        triangle_table = next(
+            table
+            for table in program.primitive_tables
+            if table.kind == "triangle"
+        )
+        domain.step_reference_pipeline_full(
+            _full_reference_settings(
+                program,
+                base_positions,
+                base_rotations,
+                self_collision={
+                    "old_positions": base_positions,
+                    "edges": np.asarray(
+                        edge_table.indices,
+                        dtype=np.int32,
+                    ),
+                    "triangles": np.asarray(
+                        triangle_table.indices,
+                        dtype=np.int32,
+                    ),
+                    "friction": np.zeros(
+                        program.particle_count,
+                        dtype=np.float32,
+                    ),
+                    "surface_thickness": 0.04,
+                },
+                post_step=_post_step_settings(effective, base_positions),
+                collision_mode=0,
+                self_collision_enabled=True,
+            )
+        )
+        case = _golden("self_collision")
+        assert np.any(
+            np.abs(domain.read_output().world_positions - base_positions)
+            > 1.0e-4
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+        _assert_golden(
+            domain.read_debug_state()["real_velocities"],
+            case,
+            "real_velocities",
+        )
+    finally:
+        domain.dispose()
 
 
 if __name__ == "__main__":
