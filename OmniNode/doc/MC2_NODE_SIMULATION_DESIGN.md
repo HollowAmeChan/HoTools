@@ -921,7 +921,7 @@ E7-CPU 的删除对象至少包括：
 | 公开 step 分派 | `physicsMC2Step` 对 product request 走 `step_mc2_products`，但无 product request 时仍延迟导入旧 `step_mc2`；因此入口仍存在可调用 V0 fallback。 | 删除旧分支并只接受显式 product request；空输入保持产品合同定义的空事务，不调用旧 solver。 | 待关闭 |
 | 旧 Mesh collector bridge | domain shadow 与 collector 单测已改为显式 product request/resolved plan、动态产品槽和通用 frame 发布；`collect_mc2_mesh_product_domain` 已删除，`product_collect.py` 对 `specs/MC2TaskSpec` 零引用。旧 V0 融合 benchmark 已删除，历史 P2 数值保存在策略/蓝本中，不再提供可执行的双轨基线。 | 保留产品 plan 采集合同和已归档的历史数值，不恢复 task 到产品的转换。 | 已关闭 |
 | Bone 包装与反馈 | 公开 BoneCloth/BoneSpring 已按 Armature 生成显式 request/partition，产品 frame adapter 拥有动画反馈屏障、Anchor、Center/Teleport 与动态产品槽；全约束、混合输出、外碰/摩擦、Center/Teleport、故障事务和 Angle/Motion 数值边界均已迁到产品 fixture。旧 task frame/static adapter 只服务 oracle。 | 删除 `_physicsMC2Bone*TaskV0Oracle`、task 型 frame/static 入口和旧反馈分支；删除前只剩精确 import/reachability 审计。 | 已关闭 |
-| Python V0 owner | `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py` 仍完整存在；`debug.py`/`debug_draw.py` 仍导入旧 interaction 类型。 | 按“测试迁移 -> 生产入口切断 -> owner/interaction/debug/dispose 删除”分提交移除，不能留下产品 fallback。 | 待关闭 |
+| Python V0 owner | `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 仍完整存在；纯 E1 `shadow_pipeline.py` 已在 E7-CPU 删除；`debug.py`/`debug_draw.py` 仍保留旧 interaction 兼容协议。 | 按“测试迁移 -> 生产入口切断 -> owner/interaction/debug/dispose 删除”分提交移除，不能留下产品 fallback。 | 进行中 |
 | native DomainV1 | `mc2_domain_cpu.*` 不直接包含旧 context/interaction，完整 pass 使用 `mc2_kernels.*` 与独立 DomainV1 state。 | 保留 DomainV1、共享 kernel、静态构建和后端中立数据结构。 | 已关闭 |
 | native whole-domain self | `mc2_whole_domain_self.cpp` 已拥有独立 `WholeDomainSelfState`，精确迁出 grid/candidate/contact/四轮 solve，不再包含或引用 `mc2_context_internal.hpp`、`Mc2ContextV0` 或 `mc2_internal`。旧 core 中同算法副本只服务待删 V0 owner。 | 产品依赖已经关闭；E7-CPU 删除旧 core/interaction 时同步删除旧副本，保留中立实现和数值门禁。 | 已关闭 |
 | native frame orientation | Mesh/Bone 无句柄 ABI、纯方向推导与输入校验已经迁到 `mc2_frame_orientations.*`；旧 raw context 在删除前反向调用该共享核心，中立文件不包含旧 context 类型。 | 保留中立翻译单元；删除旧 raw wrapper 时不改产品 ABI。 | 已关闭 |
@@ -933,7 +933,7 @@ E7-CPU 的删除对象至少包括：
 精确文件分组如下：
 
 1. **先迁出并保留**：`mc2_kernels.*`、`mc2_domain_cpu.*`、`mc2_static_build.*`；把 frame orientation、static fingerprint、whole-domain self state/算法迁到不包含 `mc2_context_internal.hpp` 的中立翻译单元。迁移提交只改所有权与调用位置，不改数值公式或 pass 顺序。
-2. **测试迁移后删除的 Python 路径**：`solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py`，以及 `nodes.py`、setup static/frame adapter、`debug.py`、`debug_draw.py` 中只服务 `MC2TaskSpec`/V0 interaction 的分支。共享的 source capture、partition topology、产品 frame/output/debug 合同保留在真实职责模块中。
+2. **测试迁移后删除的 Python 路径**：`solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`，以及 `nodes.py`、setup static/frame adapter、`debug.py`、`debug_draw.py` 中只服务 `MC2TaskSpec`/V0 interaction 的分支。纯 E1 `shadow_pipeline.py` 已删除；共享的 source capture、partition topology、产品 frame/output/debug 合同保留在真实职责模块中。
 3. **解耦后删除的 native 路径**：`mc2_context_interaction.cpp`、`mc2_context_readback.cpp`、`mc2_context_static.cpp`、旧 context frame/core API、`mc2_context_internal.hpp`、`mc2_context_helpers.hpp` 中只服务旧 capsule/owner 的部分，以及 `mc2_api.hpp`/`mc2_bindings.cpp` 的全部 V0 context/interaction 导出。
 4. **先迁移再删除的测试入口**：所有 `_physicsMC2*V0Oracle` 调用、直接构造 `MC2NativeContextV0` 的 E3 tolerance，以及只验证已删除 binding 的 native case。旧 Mesh collector bridge 及其三个调用方已经完成产品 plan 迁移。其余数值断言分别落到 DomainV1、共享 kernel、产品事务和公开节点测试，不能简单删掉。
 
@@ -995,6 +995,8 @@ E7-CPU 统一域自碰调试记录（2026-07-23）：`WholeDomainSelf=64` 复用
 
 E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`mesh_cloth_world_self_interaction`并入产品`mesh_unified_domain_e5`，由统一域runner承担跨partition接触、穿插历史、互惠group-mask、动态source重配与多目标事务证据；纯旧`test_interaction_scope.py`、`test_shadow_pipeline.py`、`test_blender_mc2_interaction_v0.py`和`benchmark_blender_mc2_interaction_scope.py`删除。E3的Integration、完整无碰撞pass、Post history、StepBasic、Angle/Motion、5种Center事务及点/边/self collision已全部迁到`test_domain_reference_golden.py`：JSON只冻结删除前已通过等价门禁的float32数值与逐字段原容差，Center直接驱动Domain自有history，碰撞输入来自真实compiled tables，不保存旧包装schema。完整Domain golden `10/10`，原`test_e3_v0_tolerance.py`删除。Mesh/Bone旧长帧soak仍含尚未逐项落位的数值oracle，迁移完成前不得删除。当前只跑py313/Blender 5.2；py311/Blender 4.5冻结到旧代码删除与E7-S基本完成后的最终收尾。
 
+E7-CPU shadow 删除复核（2026-07-24）：仓内纯 E1 `shadow_pipeline.py` 与 `test_blender_mc2_domain_shadow.py` 已删除，`step_mc2` 不再暴露 `shadow_compile`/`shadow_reports` 迁移开关。产品运行图没有新增旧依赖；manifest 已改指 Blender 5.2 的 product mixed soak。Domain golden 和 resolved partition 静态测试保留实际合同，旧 Mesh/Bone 长跑中尚未迁移的数值 oracle 继续阻止 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 删除。
+
 E7-CPU Center World 产品迁移（2026-07-23）：`test_blender_mc2_product_center_controls_soak.py::center_world_controls` 已覆盖 MeshCloth、BoneCloth、BoneSpring 三种 setup 的五组世界 Center 控制。每组双跑 600 帧，验证有限性、确定性、惯性排序、平滑、平移/旋转限速、Center shift/step 计数，并检查产品槽不含 `native_context`、`spec` 或 `_debug_draw_snapshot`。capability matrix 已切换该 runner；Local、Depth、Anchor 继续保留旧证据，待对应产品 runner 完成后再迁移。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
 
 E7-CPU Center Local 产品迁移（2026-07-23）：同一 runner 的 `center_local_controls` 对三种 setup 各执行四组控制、双跑 600 帧，显式读取产品 Center debug ABI 的 partition inertia/step 分量，锁定 `local_inertia=0/1` 端点、BoneCloth/BoneSpring Local movement 限制响应、MeshCloth 零误报以及产品槽边界和确定性。capability matrix 已切换 Local 条目；Depth、Anchor 仍待产品 runner。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
@@ -1050,7 +1052,7 @@ mc2/test/
   acceptance_assets_v2.json
 ```
 
-Blender 主线程验收：`physicsWorld/test/test_blender_mc2_domain_shadow.py`（E1，真实 Mesh/World/Task，验证 opt-in report 与旧静态路径一致）。
+Blender 主线程验收：`physicsWorld/test/test_blender_mc2_product_mixed_output_soak.py`（E7-CPU，真实 Mesh/Bone product request、统一 scheduler、900 帧双跑与写回摘要）。
 
 固定 JSON/NPZ fixture 只保存 POD、schema version、signature 和 tolerance，不保存 Blender 指针。需要真实 Blender IO 的 capture/writeback 验收由 `acceptance_assets_v2.json` 指向版本化 `.blend` 资产，并输出机器可读报告。CPU/GPU 共用同一组 compiled-domain/frame fixtures；后端不得各自维护不同的“正确答案”。
 

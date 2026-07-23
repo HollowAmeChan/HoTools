@@ -122,30 +122,25 @@
     {
       "id": "mesh_unified_domain_e5",
       "setup_types": ["mesh_cloth"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_domain_shadow.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_product_mixed_output_soak.py",
       "production_surface": [
-        "Mesh对象、完整覆盖、隐式registry与Require-Fusion collector节点",
-        "唯一fused CPU domain slot与完整混合pass",
-        "统一域whole-domain self宽相、接触、穿插历史与组掩码过滤",
-        "共同事务身份的多目标GN Object-local offset结果",
-        "Physics World全target预检、快照、提交与回滚"
+        "MeshCloth、BoneCloth、BoneSpring公开product request",
+        "统一product solver、动态slot与完整混合pass",
+        "参数热更新、Angle/Motion与三种setup的限速证据",
+        "GN Object-local offset与Bone PoseBone逐帧写回",
+        "900帧双跑摘要与同一产品槽复用"
       ],
       "expected": [
-        "两个Mesh只创建一个产品domain且不展开为两个旧task",
-        "跨partition EE/PT接触在共同Post前求解且穿插历史回到同一产品owner",
-        "source增删只重建产品domain配置，不创建旧interaction scope",
-        "每帧两个target分别获得正确Object-local offset",
-        "120帧双跑的完整offset轨迹逐float32相等",
-        "第二target注入写失败时两个target均回滚且不产生receipt"
+        "三种setup均只接受MC2ProductRequestV1",
+        "301和601帧参数热更新不替换产品slot owner",
+        "900帧双跑的输出与调试摘要逐字节相等",
+        "Mesh目标与Bone目标均完成逐帧写回"
       ],
       "rejection_boundaries": [
-        "统一域request与旧task混输",
-        "非互惠group-mask、禁用self的partition或被拓扑邻接过滤的primitive pair",
-        "BoneCloth与BoneSpring沿setup产品包装进入各自统一域，不参与Mesh collector",
-        "显式partner socket或旧ListObj聚合输入",
-        "缺项、重号或重复target的公共结果事务",
-        "Object Data或顶点数变化后的旧output map",
-        "共享Mesh data或失效object/data pointer"
+        "旧task或V0请求混输",
+        "产品slot identity或domain signature不一致",
+        "参数更新改变静态拓扑而未触发合法重建",
+        "GN/Bone写回目标失效"
       ]
     },
     {

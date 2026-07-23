@@ -96,8 +96,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.mesh_cloth.fragment_cache", "hit_count"),
     ("mc2.setups.mesh_cloth.fragment_cache", "build_count"),
     ("mc2.setups.mesh_cloth.fragment_cache", "entry_count"),
-    ("mc2.shadow_pipeline", "compatible"),
-    ("mc2.shadow_pipeline", "_array_equal"),
     ("mc2.frame_state", "particle_count"),
     ("mc2.frame_state", "make_mc2_frame_input"),
     ("mc2.interaction_scope", "_mesh_collision_properties"),
@@ -154,7 +152,6 @@ E7_LEGACY_MODULES = frozenset((
     "mc2.specs",
     "mc2.native_context",
     "mc2.interaction_scope",
-    "mc2.shadow_pipeline",
 ))
 E7_PRODUCT_RUNTIME_ROOTS = ("mc2.product_solver",)
 E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
@@ -649,7 +646,6 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.setups.mesh_cloth.source_capture",
             "mc2.setups.mesh_cloth.static_fragment",
             "mc2.domain_compile",
-            "mc2.shadow_pipeline",
             "mc2.cpu_backend",
             "mc2.frame_compile",
             "mc2.cpu_native_kernel",

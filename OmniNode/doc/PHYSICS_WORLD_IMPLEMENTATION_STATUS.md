@@ -167,6 +167,8 @@ MC2 E7-CPU Teleport 附加证据迁移（2026-07-23）：同一产品 runner 现
 
 `nodes.py` 的 Bone V0 oracle 已不再有任何调用者；公开 BoneCloth/BoneSpring 节点只生成 `MC2ProductRequestV1`，旧约束与 mixed runner 已降为 product-only 兼容门面。新增 AST 架构门禁，逐文件检查 `nodes.py`、`product_solver.py`、`product_collect.py` 和 `product_bone_collect.py` 不得导入 `specs`、`solver`、`native_context`、`interaction_scope` 或 `shadow_pipeline`。Blender 5.2 / Python 3.13 的 BoneCloth 约束 900 帧双跑仍通过，摘要保持 `5b16bbe0110606bfd1cb0a5364f925d93cdad4b2793bc89006a10bf0a3c0389e`。这只是旧 owner 删除前的第一批切断，不代表 `specs.py`、`solver.py`、context 或 native V0 binding 已删除；后续仍按 Bone plan 迁移三项真实缺口，再分步删除旧测试、owner、hidden task、aggregate 和 binding。4.5 / py311 继续冻结。
 
+同一删除批次已移除纯 E1 `shadow_pipeline.py` 和 `test_blender_mc2_domain_shadow.py`；`solver.py` 不再接受 `shadow_compile` 开关。原 shadow 对照职责由 Domain golden、product mixed soak 和纯静态 partition 测试承接，`acceptance_assets_v1.json` 已改指当前 Blender 5.2 产品 runner。旧 V0 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 仍因长跑数值缺口保留，不能把本批 shadow 删除误解为旧 owner 全部删除。
+
 本轮进一步确认 `specs.py` 没有应迁出的中立合同：它只包含 `MC2TaskSpec`、构造器和旧 V0 去重函数。`MC2TopologySpec`、`MC2StaticInputFingerprint`、参数和帧输入合同分别由 `topology.py`、`parameters.py`、`frame_state.py` 持有；resolved partition 的 topology/setup 路径不再导入 `specs.py`。新增门禁锁定这一边界，避免为了形式迁移重新制造第二套 schema。
 
 MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：task pass 先于 Center，随后才进入固定的 Center、约束、碰撞、self 和 post/history 流水线。Reset/Keep 的 native 数据合同、whole-domain self 一次失效和零 substep 行为已由 Python 3.13 native、ProductSlot、DomainOwner、E3 golden 及 Blender 5.2 产品验收锁定。
