@@ -11,7 +11,6 @@ from ....OmniTiming import OmniNodeTiming
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
 from ... import _Color
 from ..types import PhysicsWorldCache
-from .debug_draw import update_mc2_debug_draw_store
 from .names import (
     MC2_SETUP_BONE_CLOTH,
     MC2_SETUP_BONE_SPRING,
@@ -1510,6 +1509,8 @@ def physicsMC2DebugDraw(
     show_self_contacts: bool = False,
     show_output: bool = False,
 ) -> tuple[PhysicsWorldCache, str]:
+    from .debug_draw import update_mc2_debug_draw_store
+
     status_text = update_mc2_debug_draw_store(
         str(id(world)),
         world,

@@ -958,6 +958,8 @@ E7-A 最终依赖审计（2026-07-23）：`tools/audit_mc2_architecture.py --che
 
 E7-CPU 第一组进度（2026-07-23）：公开 `physicsMC2Step` 已删除 `step_mc2` fallback，只接受 `MC2ProductRequestV1` 或默认空输入；V0 数值对照必须显式调用 oracle solver，不能再借公开产品节点进入。`step_mc2_products` 同时接管活动 request 集合生命周期：空批次清理全部产品槽和旧结果，成功的非空批次在原子发布后清理本帧未再出现的产品槽，失败批次仍只回滚本次尝试而不提前裁剪旧集合。py311/py313 纯宿主事务均为 `5/5`，Blender 4.5/cp311 与 5.2/cp313 的产品节点、120 帧确定性和双 source 显式 oracle 对照均通过。下一小组只处理 `debug/debug_draw -> native_context` 顶层依赖，不与 native ABI 删除混提交。
 
+公开 import-time 解耦补充（2026-07-23）：`nodes.py` 不再顶层导入 `debug_draw`，只有调试节点实际执行时才加载绘制模块；架构工具新增 `--e7-public-import-check`。py311/py313 下，以 `product_solver` 为根和以公开 `nodes` 为根的顶层旧模块可达数现在均为 `0`。Blender 4.5/cp311 与 5.2/cp313 的完整调试绘制 runner 均通过 13 组捕获/稀疏读取/绘制/清理断言。此结论只表示公开模块加载边界已清洁；`debug.py`、`debug_draw.py` 内部仍消费旧 context/interaction snapshot，必须在后续组迁到产品 owner，不能因延迟加载而保留到 E7-CPU 结束。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |

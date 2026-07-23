@@ -759,6 +759,8 @@ E7-A 精确依赖审计已冻结删除面：双 ABI AST 门禁证明 `product_so
 
 E7-CPU 第一层已完成公开 step 切断：`physicsMC2Step` 不再导入或调用旧 `step_mc2`，非产品值直接拒绝；空 request 集合与集合缩减由 `step_mc2_products` 释放退出集合的产品槽并清理结果。V0 对照 runner 改为显式调用 oracle solver。双 ABI 纯宿主事务与 Blender 产品域/确定性/双 source 对照均通过；下一提交继续迁移公开 debug，不改变本组生命周期合同。
 
+公开节点 import-time 图也已关闭：`debug_draw` 改为调试节点执行时按需加载，双 ABI 的 `--e7-public-import-check` 证明 `nodes` 顶层图到旧模块可达数为 `0`，两版 Blender 调试绘制 13 组断言保持全过。调试模块内部仍是待迁移旧 snapshot consumer，本步骤不把延迟加载解释成产品 debug 已迁移。
+
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的 Blender 4.5 窗口中又发现 `build.bat` 复用了测试改写的 runtime cache；脚本现每次先刷新 preset，确保产物真实写入所选 `_Lib/py311` 或 `_Lib/py313` 目录。重新生成并提交的 py311 产物通过 22 个 MC2 native 测试文件；Blender 4.5 运行时明确加载当前 cp311 并通过 Mesh shadow、120 帧产品确定性、双 source 对照和 Bone product 事务。

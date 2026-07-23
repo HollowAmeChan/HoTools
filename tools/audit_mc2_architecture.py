@@ -887,6 +887,11 @@ def main() -> None:
         action="store_true",
         help="fail when the product runtime graph reaches a legacy MC2 owner",
     )
+    parser.add_argument(
+        "--e7-public-import-check",
+        action="store_true",
+        help="fail when importing public MC2 nodes reaches a legacy MC2 owner",
+    )
     args = parser.parse_args()
     report = build_report()
     if args.json:
@@ -917,6 +922,11 @@ def main() -> None:
         if any(failures):
             raise SystemExit(1)
     if args.e7_product_check and report["python"]["e7_cpu"]["product_runtime_reachable_legacy"]:
+        raise SystemExit(1)
+    if (
+        args.e7_public_import_check
+        and report["python"]["e7_cpu"]["public_node_reachable_legacy"]
+    ):
         raise SystemExit(1)
 
 
