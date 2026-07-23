@@ -655,6 +655,9 @@ def test_slot_native_executes_complete_compiled_frame():
                 "show_motion": True,
                 "show_angle_restoration": True,
                 "show_angle_limit": True,
+                "show_collision": True,
+                "show_collision_contacts": True,
+                "show_radii": True,
             },
         ) == 1
         frame = _domain_frame(owner.compiled.program, frame=13)
@@ -694,9 +697,31 @@ def test_slot_native_executes_complete_compiled_frame():
             "show_distance", "show_tether", "show_bending",
             "show_motion_base", "show_motion",
             "show_angle_restoration", "show_angle_limit",
+            "show_collision", "show_collision_contacts", "show_radii",
         }.intersection(snapshot["unsupported_filters"])
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
+        contacts = snapshot["native"]["external_contacts"]
+        assert contacts["vertices"].shape[1:] == (2,)
+        assert contacts["origins"].shape[1:] == (2, 3)
+        assert contacts["role_corrections"].shape[1:] == (2, 3)
+        assert contacts["temporal"]["active_count"] == 0
+        collision = snapshot["collision"]
+        assert collision["schema"] == "mc2_product_external_collision_debug_v1"
+        assert collision["particle_radii"].shape == (
+            owner.compiled.program.particle_count,
+        )
+        assert collision["particle_partitions"].shape == (
+            owner.compiled.program.particle_count,
+        )
+        assert collision["collision_modes"].shape == (
+            owner.compiled.program.partition_count,
+        )
+        assert collision["collision_masks"].shape == (
+            owner.compiled.program.partition_count,
+        )
+        assert collision["friction_before"].flags.writeable is False
+        assert collision["friction_after"].flags.writeable is False
         assert snapshot["topology"]["edges"].shape[1] == 2
         assert snapshot["topology"]["baseline_parent_indices"].shape == (
             owner.compiled.program.particle_count,

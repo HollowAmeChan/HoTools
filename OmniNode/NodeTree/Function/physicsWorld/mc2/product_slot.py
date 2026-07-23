@@ -38,6 +38,7 @@ _MC2_CONSTRAINT_DEBUG_MOTION = 2
 _MC2_CONSTRAINT_DEBUG_DISTANCE = 4
 _MC2_CONSTRAINT_DEBUG_TETHER = 8
 _MC2_CONSTRAINT_DEBUG_BENDING = 16
+_MC2_CONSTRAINT_DEBUG_EXTERNAL_COLLISION = 32
 
 
 def _constraint_debug_mask(filters: dict) -> int:
@@ -52,6 +53,12 @@ def _constraint_debug_mask(filters: dict) -> int:
         mask |= _MC2_CONSTRAINT_DEBUG_TETHER
     if filters.get("show_bending"):
         mask |= _MC2_CONSTRAINT_DEBUG_BENDING
+    if (
+        filters.get("show_collision")
+        or filters.get("show_collision_contacts")
+        or filters.get("show_radii")
+    ):
+        mask |= _MC2_CONSTRAINT_DEBUG_EXTERNAL_COLLISION
     return mask
 
 

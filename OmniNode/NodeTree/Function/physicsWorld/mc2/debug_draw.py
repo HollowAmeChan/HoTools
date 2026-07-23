@@ -856,7 +856,7 @@ def _append_topology_batches(batches, topology, positions, limit):
 
 def _active_collision_payload(collision):
     mode = int(collision.get("collision_mode", 0) or 0)
-    if mode not in (1, 2):
+    if mode not in (1, 2, 3):
         return mode, None
     colliders = collision.get("colliders")
     if not isinstance(colliders, dict):
@@ -881,7 +881,7 @@ def _append_collision_situation_batches(
     if colliders is None:
         return
     _append_collider_batches(batches, triangle_meshes, collision, limit)
-    if mode == 1:
+    if mode in (1, 3):
         _append_point_collision_batches(
             batches,
             triangle_meshes,
@@ -891,7 +891,7 @@ def _append_collision_situation_batches(
             str(snapshot.get("setup_type") or ""),
             limit,
         )
-    else:
+    if mode in (2, 3):
         _append_edge_collision_batches(
             batches, triangle_meshes, topology, positions, collision, limit
         )
@@ -981,6 +981,12 @@ def _append_point_collision_batches(
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     )
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
+    particle_partitions = np.asarray(
+        _values(collision.get("particle_partitions")), dtype=np.int32
+    ).reshape((-1,))
+    partition_modes = np.asarray(
+        _values(collision.get("collision_modes")), dtype=np.int32
+    ).reshape((-1,))
     is_spring = setup_type == "bone_spring"
     mesh = _triangle_mesh(triangle_meshes, "point_collision_surface")
     count = min(len(positions), len(attributes), len(radii))
@@ -988,6 +994,14 @@ def _append_point_collision_batches(
     component_ids = _collision_component_ids(count, edges)
     candidates = []
     for index in range(count):
+        if len(particle_partitions) == count and len(partition_modes):
+            partition = int(particle_partitions[index])
+            if (
+                partition < 0
+                or partition >= len(partition_modes)
+                or int(partition_modes[partition]) != 1
+            ):
+                continue
         attribute = int(attributes[index])
         valid = bool(attribute & 0x03) if is_spring else bool(attribute & 0x02)
         if not valid or attribute & 0x10:
@@ -1013,13 +1027,19 @@ def _append_edge_collision_batches(
     batches, triangle_meshes, topology, positions, collision, limit
 ):
     mode, colliders = _active_collision_payload(collision)
-    if mode != 2 or colliders is None:
+    if mode not in (2, 3) or colliders is None:
         return
     edges = np.asarray(_values(topology.get("edges")), dtype=np.int32).reshape((-1, 2))
     attributes = np.asarray(
         _values(topology.get("vertex_attributes")), dtype=np.uint8
     )
     radii = np.asarray(_values(collision.get("particle_radii")), dtype=np.float32)
+    particle_partitions = np.asarray(
+        _values(collision.get("particle_partitions")), dtype=np.int32
+    ).reshape((-1,))
+    partition_modes = np.asarray(
+        _values(collision.get("collision_modes")), dtype=np.int32
+    ).reshape((-1,))
     mesh = _triangle_mesh(triangle_meshes, "edge_collision_surface")
     centers = []
     vertex_count = min(len(positions), len(attributes), len(radii))
@@ -1031,6 +1051,14 @@ def _append_edge_collision_batches(
             continue
         if max(left, right) >= len(attributes) or max(left, right) >= len(radii):
             continue
+        if len(particle_partitions) == vertex_count and len(partition_modes):
+            partition = int(particle_partitions[left])
+            if (
+                partition < 0
+                or partition >= len(partition_modes)
+                or int(partition_modes[partition]) != 2
+            ):
+                continue
         if not (int(attributes[left]) & 0x02 or int(attributes[right]) & 0x02):
             continue
         radius_left = max(float(radii[left]), 0.0)

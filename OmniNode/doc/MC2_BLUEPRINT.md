@@ -775,6 +775,8 @@ Angle/Motion 产品调试迁移已经关闭。统一 Domain 以 `Angle=1`、`Mot
 
 Distance/Tether/Bending 产品调试迁移也已经关闭。请求掩码扩展为 `4/8/16`；Distance 以 A/B phase 和有向邻接 record 为身份，记录求解时两端位置、实际 rest/length/stiffness、平均后贡献、hit 及双端 partition；Tether 以 vertex/root 为身份，记录真实上下限、分支、两端位置与 correction；Bending 以 dihedral/volume record 和四角色为身份，记录实际 current/rest/stiffness、四角色位置、平均后贡献及逐角色 partition。记录 buffer 仅在请求时存在，产品 slot 使用独立冻结 token，不再借用 Angle/Motion 输入快照决定 readback。cp313 native 求和门禁、产品槽、多 source Mesh renderer 和 BoneCloth 非零 Bending 产品资产已通过；4.5 按用户要求冻结到旧代码最终删除收尾。当前剩余顺序固定为：产品 external collision 记录、whole-domain self 记录，然后删除旧 Python/native owner 面并进入 E7-S 简化。
 
+External Collision 产品调试迁移已经关闭。`ExternalCollision=32` 会话只在最终真实子步按 `show_collision/show_collision_contacts/show_radii` 请求开启；Point/Edge kernel 直接记录 primitive/collider、参与粒子、origin、接触点/法线和归一化 role correction。Domain readback 同时发布逐 partition mode/mask、逐粒子 radius、摩擦前后状态，产品层与同一帧 frozen whole-domain collider POD 配对，不再访问旧 V0 task/context。混合 renderer 通过 `particle_partition_index` 分别筛选 point 与 edge 图元；contact 时间状态继续使用稳定 primitive/collider identity。cp313 native、产品槽、CPU backend、架构审计与 Blender 5.2 的 BoneCloth/BoneSpring 真实接触和 renderer 均通过，5.2 明确清除备份并加载当前 `_Lib/py313`。4.5/py311 保持冻结。剩余顺序现缩减为：完成 whole-domain self 产品调试记录，删除旧 Python/native owner、hidden-task、普通 aggregate 与 oracle bridge，随后执行 E7-S 兼容处理专项简化和最终 4.5 双 ABI 收尾。
+
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的 Blender 4.5 窗口中又发现 `build.bat` 复用了测试改写的 runtime cache；脚本现每次先刷新 preset，确保产物真实写入所选 `_Lib/py311` 或 `_Lib/py313` 目录。重新生成并提交的 py311 产物通过 22 个 MC2 native 测试文件；Blender 4.5 运行时明确加载当前 cp311 并通过 Mesh shadow、120 帧产品确定性、双 source 对照和 Bone product 事务。

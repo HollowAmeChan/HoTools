@@ -439,6 +439,8 @@ P0之后的优先级是：先由E4 whole-domain self删除多context + aggregate
 
 E7-CPU 调试观测补充（2026-07-23）：Angle/Motion/Distance/Tether/Bending 记录统一采用请求驱动的临时缓冲，普通产品帧不分配、不 readback，也不改变 pass 顺序。Distance 与 Bending 只在请求时增加与实际约束 record 数成正比的旁路写入和贡献归一化；Tether 为逐粒子线性写入，均不存在常驻 CPU 成本。cp313 native、产品槽和 Blender 5.2 代表资产已通过；4.5 按用户要求冻结到最终删除收尾。外碰和 whole-domain self 后续必须继续复用同一显式会话原则；不得为未来 E6/P6 预埋常驻 CPU 记录或把 Python 重建结果当作 GPU 数据合同。
 
+E7-CPU 外碰观测补充（2026-07-23）：External Collision 已复用同一请求驱动会话，debug-off 不分配 contact、radius 或摩擦历史缓冲。开启时的额外成本只与真实 Point/Edge contact 数和粒子数线性相关；生产 pass 顺序、位置提交和摩擦状态仍由原 native kernel 唯一拥有。逐角色 correction 经过与 production 完全相同的 collider 平均、edge blend 与共享粒子计数归一化，native 求和门禁已关闭。产品侧只冻结已存在的 whole-domain collider POD 与 mode/mask/radius/friction SoA，不引入 Python 碰撞公式。cp313/Blender 5.2 验收通过且 4.5/py311 继续冻结。下一组 whole-domain self 仍须保持按需分配；P6 只提取可直接映射的 primitive/contact/filter/history 数据合同，不得把这些 CPU 调试数组变成 E6 常驻上传路径。
+
 首版通用 whole-domain self 在 1764 粒子夹具上产生了候选爆炸和不稳定输出，不能作为 P2 实现。Domain现持有后端中立opaque whole-domain self engine，由桥接实现复用成熟V0 primitive/grid/candidate/contact/四轮求解流程；Domain owner本身不依赖旧context internal。该改动把候选量恢复到手工join同一数量级；随后按P5证据把每子步重新分配的scaled thickness与partition scale改为Domain持久scratch，数值结果逐位不变。
 
 性能证据把`owner.step`求解层、完整产品子步事务和帧capture分开报告，不拿包含StepBasic/settings/调度提交的产品包装耗时直接对比V0原生入口。1764粒子、4 source、35帧、5帧warmup夹具连续两次得到D/B p50=`0.79584/0.78670`、D/C=`0.77711/0.74717`；primitive/candidate/contact与manual join完全相等。reset轨迹位级一致，连续轨迹peak max-abs=`3.9208e-4`、RMS=`1.6597e-5`，通过`5e-4/5e-5`累计self合同。E4/P2因此关闭；该容差不适用于非self oracle。下一性能工作只允许服务E5产品事务或由新阶段证据驱动，禁止为了小样本继续改self算法或引入P4并发。

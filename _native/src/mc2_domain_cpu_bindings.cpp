@@ -1388,6 +1388,56 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 bending["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
                 result["bending_results"] = bending;
             }
+            if ((mask & mc2_domain_cpu::kConstraintDebugExternalCollision) != 0u) {
+                const auto& records = domain->external_debug_contacts();
+                const auto count = records.size();
+                std::vector<std::int32_t> kinds(count), primitives(count), colliders(count);
+                std::vector<std::int32_t> vertices(count * 2, -1);
+                std::vector<std::uint32_t> partitions(count * 2, 0u);
+                std::vector<float> origins(count * 2 * 3), role_corrections(count * 2 * 3);
+                std::vector<float> positions(count * 3), normals(count * 3), corrections(count * 3);
+                for (std::size_t index = 0; index < count; ++index) {
+                    const auto& record = records[index];
+                    kinds[index] = record.primitive_kind;
+                    primitives[index] = record.primitive_index;
+                    colliders[index] = record.collider_index;
+                    for (std::size_t role = 0; role < 2; ++role) {
+                        const auto vertex = record.vertices[role];
+                        vertices[index * 2 + role] = vertex;
+                        if (vertex >= 0) {
+                            partitions[index * 2 + role] = domain->particle_partition_index()[static_cast<std::size_t>(vertex)];
+                        }
+                        for (std::size_t component = 0; component < 3; ++component) {
+                            origins[(index * 2 + role) * 3 + component] = record.origins[role * 3 + component];
+                            role_corrections[(index * 2 + role) * 3 + component] = record.role_corrections[role * 3 + component];
+                        }
+                    }
+                    for (std::size_t component = 0; component < 3; ++component) {
+                        positions[index * 3 + component] = record.position[component];
+                        normals[index * 3 + component] = record.normal[component];
+                        corrections[index * 3 + component] = record.correction[component];
+                    }
+                }
+                nb::dict external;
+                external["record_count"] = count;
+                external["primitive_kinds"] = owned_array_1d<std::int32_t>(std::move(kinds));
+                external["primitive_indices"] = owned_array_1d<std::int32_t>(std::move(primitives));
+                external["collider_indices"] = owned_array_1d<std::int32_t>(std::move(colliders));
+                external["vertices"] = owned_array_1d<std::int32_t>(std::move(vertices));
+                external["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                external["origins"] = owned_array_1d<float>(std::move(origins));
+                external["role_corrections"] = owned_array_1d<float>(std::move(role_corrections));
+                external["positions"] = owned_array_1d<float>(std::move(positions));
+                external["normals"] = owned_array_1d<float>(std::move(normals));
+                external["corrections"] = owned_array_1d<float>(std::move(corrections));
+                external["particle_partitions"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->particle_partition_index()));
+                external["partition_modes"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->compiled_external_modes()));
+                external["partition_masks"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->compiled_external_masks()));
+                external["particle_radii"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_radii()));
+                external["friction_before"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_before()));
+                external["friction_after"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_after()));
+                result["external_collision_results"] = external;
+            }
             if ((mask & mc2_domain_cpu::kConstraintDebugMotion) != 0u) {
                 const auto particles = domain->particle_count();
                 std::vector<std::int32_t> vertices(particles * 2);

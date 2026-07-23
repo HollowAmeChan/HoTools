@@ -1078,7 +1078,7 @@ void DomainV1::begin_constraint_debug(std::uint32_t mask) {
     constexpr std::uint32_t supported =
         kConstraintDebugAngle | kConstraintDebugMotion |
         kConstraintDebugDistance | kConstraintDebugTether |
-        kConstraintDebugBending;
+        kConstraintDebugBending | kConstraintDebugExternalCollision;
     if (mask == 0u || (mask & ~supported) != 0u) {
         throw std::invalid_argument("MC2 CPU constraint debug mask is invalid");
     }
@@ -1138,6 +1138,12 @@ void DomainV1::begin_constraint_debug(std::uint32_t mask) {
         bending_debug_valid_.assign(records, 0u);
         bending_debug_hit_.assign(records, 0u);
     }
+    if ((mask & kConstraintDebugExternalCollision) != 0u) {
+        external_debug_contacts_.clear();
+        external_debug_friction_before_.assign(particle_count_, 0.0f);
+        external_debug_friction_after_.assign(particle_count_, 0.0f);
+        external_debug_radii_.assign(particle_count_, 0.0f);
+    }
     constraint_debug_active_mask_ = mask;
 }
 
@@ -1189,6 +1195,10 @@ void DomainV1::clear_constraint_debug() {
     std::vector<float>().swap(bending_debug_stiffnesses_);
     std::vector<std::uint8_t>().swap(bending_debug_valid_);
     std::vector<std::uint8_t>().swap(bending_debug_hit_);
+    std::vector<hotools::Mc2ExternalCollisionDebugRecord>().swap(external_debug_contacts_);
+    std::vector<float>().swap(external_debug_friction_before_);
+    std::vector<float>().swap(external_debug_friction_after_);
+    std::vector<float>().swap(external_debug_radii_);
 }
 
 void DomainV1::configure_distance(
@@ -2258,6 +2268,13 @@ void DomainV1::step_compiled_external_collision(
         }
     }
     collision_friction_ = compiled_external_friction_;
+    const bool capture_external =
+        (constraint_debug_active_mask_ & kConstraintDebugExternalCollision) != 0u;
+    if (capture_external) {
+        external_debug_contacts_.clear();
+        external_debug_friction_before_ = collision_friction_;
+        external_debug_radii_ = scaled_radii;
+    }
     std::fill(world_normals_.begin(), world_normals_.end(), 0.0f);
 
     hotools::Mc2CollisionView point_view;
@@ -2282,6 +2299,7 @@ void DomainV1::step_compiled_external_collision(
     point_view.vertex_count = static_cast<std::int64_t>(particle_count_);
     point_view.collider_count = static_cast<std::int64_t>(collider_count);
     point_view.partition_count = static_cast<std::int64_t>(partition_count_);
+    if (capture_external) point_view.debug_contacts = &external_debug_contacts_;
     hotools::project_collisions_mc2(point_view);
 
     hotools::Mc2EdgeCollisionView edge_view;
@@ -2308,7 +2326,10 @@ void DomainV1::step_compiled_external_collision(
     edge_view.edge_count = static_cast<std::int64_t>(compiled_external_edges_.size() / 2);
     edge_view.collider_count = static_cast<std::int64_t>(collider_count);
     edge_view.partition_count = static_cast<std::int64_t>(partition_count_);
+    if (capture_external) edge_view.debug_contacts = &external_debug_contacts_;
     hotools::project_edge_collisions_mc2(edge_view);
+
+    if (capture_external) external_debug_friction_after_ = collision_friction_;
 
     collision_state_ready_ = true;
     ++compiled_external_step_count_;

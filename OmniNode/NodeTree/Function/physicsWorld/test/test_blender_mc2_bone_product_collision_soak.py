@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 import sys
 
@@ -22,6 +23,12 @@ parameters = product_soak.parameters
 product_slot = product_soak.product_slot
 world_types = product_soak.world_types
 writeback = product_soak.writeback
+debug_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
+debug_draw = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug_draw"
+)
 
 print(f"MC2_BONE_PRODUCT_COLLISION_SOURCE {__file__}")
 
@@ -149,6 +156,10 @@ def _run_case(*, spring: bool, accepted: bool, run_index: int):
     digest = hashlib.sha256()
     max_normal = 0.0
     max_response = 0.0
+    max_debug_contacts = 0
+    max_debug_batches = 0
+    debug_enabled = accepted and run_index == 1
+    debug_node_uid = f"mc2-product-external-{int(spring)}"
     try:
         armature = product_soak._armature(
             f"MC2ProductCollision_{'Spring' if spring else 'Cloth'}_{run_index}_{int(accepted)}",
@@ -210,6 +221,44 @@ def _run_case(*, spring: bool, accepted: bool, run_index: int):
                 assert "product-collision-accepted" in keys
                 digest.update(output.world_positions.tobytes())
                 digest.update(normals.tobytes())
+            if debug_enabled and target is not None:
+                debug_draw.update_mc2_debug_draw_store(
+                    debug_node_uid,
+                    world,
+                    True,
+                    show_collision=True,
+                    show_collision_contacts=True,
+                    show_radii=True,
+                )
+                snapshot = slot.data.get("_debug_draw_snapshot")
+                if isinstance(snapshot, dict):
+                    assert not snapshot["unsupported_filters"]
+                    collision = snapshot["collision"]
+                    contacts = snapshot["native"]["external_contacts"]
+                    assert collision["schema"] == (
+                        "mc2_product_external_collision_debug_v1"
+                    )
+                    assert collision["particle_radii"].flags.writeable is False
+                    assert collision["friction_before"].flags.writeable is False
+                    assert collision["friction_after"].flags.writeable is False
+                    assert np.all(np.isfinite(collision["friction_before"]))
+                    assert np.all(np.isfinite(collision["friction_after"]))
+                    active_count = int(
+                        contacts["temporal"].get("active_count", 0)
+                    )
+                    max_debug_contacts = max(max_debug_contacts, active_count)
+                    collider_keys = collision["colliders"]["keys"]
+                    for collider_index in contacts["collider_indices"]:
+                        key = collider_keys[int(collider_index)]
+                        assert key == "product-collision-accepted", key
+                    draw_state = debug_draw.mc2_debug_draw_store_snapshot(
+                        debug_node_uid
+                    )
+                    if draw_state is not None:
+                        max_debug_batches = max(
+                            max_debug_batches,
+                            int(draw_state["batch_count"]),
+                        )
             assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
             bpy.context.view_layer.update()
 
@@ -221,8 +270,12 @@ def _run_case(*, spring: bool, accepted: bool, run_index: int):
             assert max_response > 1.0e-5, (spring, accepted, max_response)
         else:
             assert max_normal == 0.0, (spring, accepted, max_normal)
+        if debug_enabled:
+            assert max_debug_contacts > 0, (spring, max_debug_contacts)
+            assert max_debug_batches > 0, (spring, max_debug_batches)
         return digest.hexdigest(), max_normal, max_response
     finally:
+        debug_draw.clear_mc2_debug_draw_store(node_uid=debug_node_uid)
         world.omni_cache_dispose("bone_product_collision_soak_cleanup")
         product_soak._remove_armature(armature)
 

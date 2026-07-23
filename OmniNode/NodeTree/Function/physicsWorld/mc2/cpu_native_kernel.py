@@ -1354,6 +1354,28 @@ class MC2NativeCPUKernelV1:
                 "markers": np.asarray(bending_raw["markers"], dtype=np.int32).reshape((count,)),
                 "partitions": np.asarray(bending_raw["partitions"], dtype=np.uint32).reshape((count, 4)),
             }
+        external_raw = raw.get("external_collision_results")
+        if external_raw is not None:
+            external_raw = dict(external_raw)
+            count = int(external_raw["record_count"])
+            result["external_collision_results"] = {
+                "primitive_kinds": np.asarray(external_raw["primitive_kinds"], dtype=np.int32).reshape((count,)),
+                "primitive_indices": np.asarray(external_raw["primitive_indices"], dtype=np.int32).reshape((count,)),
+                "collider_indices": np.asarray(external_raw["collider_indices"], dtype=np.int32).reshape((count,)),
+                "vertices": np.asarray(external_raw["vertices"], dtype=np.int32).reshape((count, 2)),
+                "partitions": np.asarray(external_raw["partitions"], dtype=np.uint32).reshape((count, 2)),
+                "origins": np.asarray(external_raw["origins"], dtype=np.float32).reshape((count, 2, 3)),
+                "role_corrections": np.asarray(external_raw["role_corrections"], dtype=np.float32).reshape((count, 2, 3)),
+                "positions": np.asarray(external_raw["positions"], dtype=np.float32).reshape((count, 3)),
+                "normals": np.asarray(external_raw["normals"], dtype=np.float32).reshape((count, 3)),
+                "corrections": np.asarray(external_raw["corrections"], dtype=np.float32).reshape((count, 3)),
+                "particle_partitions": np.asarray(external_raw["particle_partitions"], dtype=np.uint32).reshape((-1,)),
+                "partition_modes": np.asarray(external_raw["partition_modes"], dtype=np.uint32).reshape((-1,)),
+                "partition_masks": np.asarray(external_raw["partition_masks"], dtype=np.uint32).reshape((-1,)),
+                "particle_radii": np.asarray(external_raw["particle_radii"], dtype=np.float32).reshape((-1,)),
+                "friction_before": np.asarray(external_raw["friction_before"], dtype=np.float32).reshape((-1,)),
+                "friction_after": np.asarray(external_raw["friction_after"], dtype=np.float32).reshape((-1,)),
+            }
         motion_raw = raw.get("motion_results")
         if motion_raw is not None:
             motion_raw = dict(motion_raw)

@@ -11,6 +11,9 @@ struct Mc2ExternalCollisionDebugRecord {
     std::int32_t primitive_kind = 0;
     std::int32_t primitive_index = -1;
     std::int32_t collider_index = -1;
+    std::int32_t vertices[2] {-1, -1};
+    float origins[6] {};
+    float role_corrections[6] {};
     float position[3] {};
     float normal[3] {};
     float correction[3] {};

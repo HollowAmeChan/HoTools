@@ -1444,6 +1444,8 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         float friction_normal_z = 0.0f;
         float friction_value = 0.0f;
         const float friction_range = std::max(hit_radius, kMc2Epsilon);
+        const std::size_t debug_record_start = view.debug_contacts != nullptr
+            ? view.debug_contacts->size() : 0;
 
         for (std::int64_t collider = 0; collider < view.collider_count; ++collider) {
             if ((collision_mask & static_cast<std::uint32_t>(view.collider_group_bits[collider])) == 0u) {
@@ -1628,6 +1630,10 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 record.primitive_kind = 0;
                 record.primitive_index = static_cast<std::int32_t>(vertex);
                 record.collider_index = static_cast<std::int32_t>(collider);
+                record.vertices[0] = static_cast<std::int32_t>(vertex);
+                record.origins[0] = origin_x;
+                record.origins[1] = origin_y;
+                record.origins[2] = origin_z;
                 record.position[0] = origin_x + correction_x;
                 record.position[1] = origin_y + correction_y;
                 record.position[2] = origin_z + correction_z;
@@ -1637,6 +1643,9 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 record.correction[0] = correction_x;
                 record.correction[1] = correction_y;
                 record.correction[2] = correction_z;
+                record.role_corrections[0] = correction_x;
+                record.role_corrections[1] = correction_y;
+                record.role_corrections[2] = correction_z;
                 view.debug_contacts->push_back(record);
             }
             add_x += correction_x;
@@ -1646,6 +1655,18 @@ void project_collisions_mc2(Mc2CollisionView& view) {
             add_normal_y += normal_y;
             add_normal_z += normal_z;
             ++add_count;
+        }
+
+        if (view.debug_contacts != nullptr && add_count > 0) {
+            const float scale = 1.0f / static_cast<float>(add_count);
+            for (std::size_t index = debug_record_start; index < view.debug_contacts->size(); ++index) {
+                auto& record = (*view.debug_contacts)[index];
+                if (record.primitive_kind != 0 || record.primitive_index != vertex) continue;
+                for (int component = 0; component < 3; ++component) {
+                    record.role_corrections[component] *= scale;
+                    record.correction[component] = record.role_corrections[component];
+                }
+            }
         }
 
         if (add_count <= 0) {
@@ -2129,6 +2150,8 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
         bool has_friction_contact = false;
         float min_dist = 3.402823466e+38F;
         float collision_normal[3] = {};
+        const std::size_t debug_record_start = view.debug_contacts != nullptr
+            ? view.debug_contacts->size() : 0;
 
         for (std::int64_t collider = 0; collider < view.collider_count; ++collider) {
             if ((collision_mask & static_cast<std::uint32_t>(view.collider_group_bits[collider])) == 0u) {
@@ -2162,6 +2185,14 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
                     record.primitive_kind = 1;
                     record.primitive_index = static_cast<std::int32_t>(edge_index);
                     record.collider_index = static_cast<std::int32_t>(collider);
+                    record.vertices[0] = v0;
+                    record.vertices[1] = v1;
+                    record.origins[0] = p0x;
+                    record.origins[1] = p0y;
+                    record.origins[2] = p0z;
+                    record.origins[3] = p1x;
+                    record.origins[4] = p1y;
+                    record.origins[5] = p1z;
                     record.position[0] = (out0[0] + out1[0]) * 0.5f;
                     record.position[1] = (out0[1] + out1[1]) * 0.5f;
                     record.position[2] = (out0[2] + out1[2]) * 0.5f;
@@ -2177,6 +2208,12 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
                     record.correction[2] = (
                         (out0[2] - p0z) + (out1[2] - p1z)
                     ) * 0.5f;
+                    record.role_corrections[0] = out0[0] - p0x;
+                    record.role_corrections[1] = out0[1] - p0y;
+                    record.role_corrections[2] = out0[2] - p0z;
+                    record.role_corrections[3] = out1[0] - p1x;
+                    record.role_corrections[4] = out1[1] - p1y;
+                    record.role_corrections[5] = out1[2] - p1z;
                     view.debug_contacts->push_back(record);
                 }
                 add0[0] += out0[0] - p0x;
@@ -2205,8 +2242,19 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
             const float avg_ny = add_normal[1] * inv_count;
             const float avg_nz = add_normal[2] * inv_count;
             const float normal_len = length3(avg_nx, avg_ny, avg_nz);
+            const float blend = normal_len > kMc2Epsilon
+                ? std::min(normal_len, 1.0f) : 0.0f;
+            if (view.debug_contacts != nullptr) {
+                const float record_scale = inv_count * blend;
+                for (std::size_t index = debug_record_start; index < view.debug_contacts->size(); ++index) {
+                    auto& record = (*view.debug_contacts)[index];
+                    if (record.primitive_kind != 1 || record.primitive_index != edge_index) continue;
+                    for (int component = 0; component < 6; ++component) {
+                        record.role_corrections[component] *= record_scale;
+                    }
+                }
+            }
             if (normal_len > kMc2Epsilon) {
-                const float blend = std::min(normal_len, 1.0f);
                 add_positions[o0 + 0] += add0[0] * inv_count * blend;
                 add_positions[o0 + 1] += add0[1] * inv_count * blend;
                 add_positions[o0 + 2] += add0[2] * inv_count * blend;
@@ -2260,6 +2308,26 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
             view.collision_normals[offset + 0] = add_normals[offset + 0] * inv_len;
             view.collision_normals[offset + 1] = add_normals[offset + 1] * inv_len;
             view.collision_normals[offset + 2] = add_normals[offset + 2] * inv_len;
+        }
+    }
+    if (view.debug_contacts != nullptr) {
+        for (auto& record : *view.debug_contacts) {
+            if (record.primitive_kind != 1) continue;
+            for (int role = 0; role < 2; ++role) {
+                const auto vertex = record.vertices[role];
+                const auto count = vertex >= 0
+                    ? add_counts[static_cast<std::size_t>(vertex)] : 0;
+                const float scale = count > 0 ? 1.0f / static_cast<float>(count) : 0.0f;
+                for (int component = 0; component < 3; ++component) {
+                    record.role_corrections[role * 3 + component] *= scale;
+                }
+            }
+            for (int component = 0; component < 3; ++component) {
+                record.correction[component] = 0.5f * (
+                    record.role_corrections[component] +
+                    record.role_corrections[3 + component]
+                );
+            }
         }
     }
 }

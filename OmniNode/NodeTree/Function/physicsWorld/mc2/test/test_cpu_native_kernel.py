@@ -1114,7 +1114,10 @@ def test_native_cpu_compiled_external_collision_filters_each_partition():
             raise AssertionError("compiled external collision accepted a non-finite table")
         assert domain.inspect()["kernel"]["step_count"] == 0
 
+        domain.begin_constraint_debug(32)
+        before = domain.read_output().world_positions.copy()
         domain.step_compiled_external_collision(collider)
+        domain.end_constraint_debug()
         output = domain.read_output().world_positions
         partition_index = compiled.program.particle_partition_index
         first = partition_index == 0
@@ -1125,6 +1128,34 @@ def test_native_cpu_compiled_external_collision_filters_each_partition():
         assert state["compiled_external_ready"] is True
         assert state["compiled_external_edge_count"] == 4
         assert state["compiled_external_step_count"] == 1
+        external = domain.read_constraint_debug_state()[
+            "external_collision_results"
+        ]
+        assert np.array_equal(external["partition_modes"], (1, 1))
+        assert np.array_equal(external["partition_masks"], (1, 2))
+        assert np.array_equal(
+            external["particle_partitions"], partition_index
+        )
+        assert external["vertices"].shape[1:] == (2,)
+        assert external["origins"].shape[1:] == (2, 3)
+        assert external["role_corrections"].shape[1:] == (2, 3)
+        assert np.all(external["primitive_kinds"] == 0)
+        assert np.isfinite(external["friction_before"]).all()
+        assert np.isfinite(external["friction_after"]).all()
+        for vertex in range(compiled.program.particle_count):
+            expected = np.zeros((3,), dtype=np.float32)
+            for role in range(2):
+                selected = external["vertices"][:, role] == vertex
+                expected += np.sum(
+                    external["role_corrections"][selected, role], axis=0
+                )
+            np.testing.assert_allclose(
+                output[vertex] - before[vertex],
+                expected,
+                atol=2.0e-7,
+                rtol=0.0,
+            )
+        domain.clear_constraint_debug()
     finally:
         domain.dispose()
 

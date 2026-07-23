@@ -8,6 +8,7 @@ import time
 import numpy as np
 
 from ..types import PhysicsWorldCache
+from .collider_frame import MC2DomainColliderFrameSpec
 from .names import (
     MC2_DEBUG_DRAW_MODE,
     MC2_FUSED_PRODUCT_SLOT_KIND,
@@ -108,6 +109,9 @@ MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_center",
     "show_teleport_threshold",
     "show_teleport_status",
+    "show_collision",
+    "show_collision_contacts",
+    "show_radii",
 )
 
 
@@ -863,6 +867,58 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
     }
 
 
+def _product_collision_payload(collider_frame, external: dict) -> dict:
+    modes = _readonly(external.get("partition_modes", ()), np.uint32).reshape((-1,))
+    masks = _readonly(external.get("partition_masks", ()), np.uint32).reshape((-1,))
+    active_modes = set(map(int, modes[modes != 0]))
+    collision_mode = (
+        0 if not active_modes
+        else next(iter(active_modes)) if len(active_modes) == 1
+        else 3
+    )
+    collider_payload = {
+        "keys": tuple(getattr(collider_frame, "collider_keys", ()) or ()),
+        "source_pointers": tuple(
+            getattr(collider_frame, "source_pointers", ()) or ()
+        ),
+        "collided_by_groups": int(
+            np.bitwise_or.reduce(masks, initial=np.uint32(0))
+        ),
+        "types": _readonly(collider_frame.collider_types, np.int32),
+        "group_bits": _readonly(collider_frame.collider_group_bits, np.int32),
+        "centers": _readonly(collider_frame.collider_centers, np.float32),
+        "segment_a": _readonly(collider_frame.collider_segment_a, np.float32),
+        "segment_b": _readonly(collider_frame.collider_segment_b, np.float32),
+        "old_centers": _readonly(collider_frame.collider_old_centers, np.float32),
+        "old_segment_a": _readonly(
+            collider_frame.collider_old_segment_a, np.float32
+        ),
+        "old_segment_b": _readonly(
+            collider_frame.collider_old_segment_b, np.float32
+        ),
+        "radii": _readonly(collider_frame.collider_radii, np.float32),
+    }
+    return {
+        "schema": "mc2_product_external_collision_debug_v1",
+        "collision_mode": collision_mode,
+        "collision_modes": modes,
+        "collision_masks": masks,
+        "particle_partitions": _readonly(
+            external.get("particle_partitions", ()), np.uint32
+        ),
+        "particle_radii": _readonly(
+            external.get("particle_radii", ()), np.float32
+        ),
+        "friction_before": _readonly(
+            external.get("friction_before", ()), np.float32
+        ),
+        "friction_after": _readonly(
+            external.get("friction_after", ()), np.float32
+        ),
+        "colliders": collider_payload,
+    }
+
+
 def capture_requested_mc2_product_debug(world, slots) -> int:
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     generation = int(world.generation)
@@ -899,6 +955,9 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             "show_motion",
             "show_angle_restoration",
             "show_angle_limit",
+            "show_collision",
+            "show_collision_contacts",
+            "show_radii",
         ))
         if needs_constraint_capture and (
             not isinstance(constraint_capture, dict)
@@ -958,6 +1017,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             needs_topology = any(filters.get(name, False) for name in (
                 "show_topology", "show_attributes", "show_depth",
                 "show_step_basic", "show_gravity",
+                "show_collision", "show_collision_contacts", "show_radii",
             ))
             topology = (
                 _product_topology_payload(
@@ -1022,6 +1082,40 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 constraint_records["angle_limit"] = (
                     _angle_constraint_record_payload(constraint_native, 0)
                 )
+            collision = {}
+            external_contacts = constraint_native.get(
+                "external_collision_results"
+            )
+            if (
+                filters.get("show_collision", False)
+                or filters.get("show_collision_contacts", False)
+                or filters.get("show_radii", False)
+            ):
+                collider_frame = slot.data.get("collider_frame")
+                if not isinstance(collider_frame, MC2DomainColliderFrameSpec):
+                    raise RuntimeError(
+                        "产品外碰调试缺少已发布的统一域 collider frame"
+                    )
+                if not isinstance(external_contacts, dict):
+                    raise RuntimeError(
+                        "产品外碰调试缺少原生 external collision 记录"
+                    )
+                collision = _product_collision_payload(
+                    collider_frame, external_contacts
+                )
+                if filters.get("show_collision_contacts", False):
+                    native["external_contacts"] = external_contacts
+                    history = slot.data.setdefault(
+                        "_debug_external_contact_history", {}
+                    )
+                    _annotate_external_contact_temporal(
+                        external_contacts,
+                        history,
+                        frame=frame,
+                        generation=generation,
+                    )
+                else:
+                    slot.data.pop("_debug_external_contact_history", None)
             parameters = (
                 _product_gravity_payload(compiled, frame_packet, center_raw)
                 if filters.get("show_gravity", False)
@@ -1058,7 +1152,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                     or filters.get("show_teleport_status", False)
                     else {}
                 ),
-                "collision": {},
+                "collision": collision,
                 "self_collision": None,
                 "output": output_payload,
             }

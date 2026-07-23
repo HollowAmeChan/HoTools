@@ -8,6 +8,7 @@
 
 namespace hotools {
 class Mc2WholeDomainSelfEngine;
+struct Mc2ExternalCollisionDebugRecord;
 }
 
 namespace hotools::mc2_domain_cpu {
@@ -18,6 +19,7 @@ enum ConstraintDebugMaskV1 : std::uint32_t {
     kConstraintDebugDistance = 4u,
     kConstraintDebugTether = 8u,
     kConstraintDebugBending = 16u,
+    kConstraintDebugExternalCollision = 32u,
 };
 
 struct ProgramViewV1 {
@@ -526,6 +528,15 @@ public:
     const std::vector<float>& bending_debug_stiffnesses() const noexcept { return bending_debug_stiffnesses_; }
     const std::vector<std::uint8_t>& bending_debug_valid() const noexcept { return bending_debug_valid_; }
     const std::vector<std::uint8_t>& bending_debug_hit() const noexcept { return bending_debug_hit_; }
+    const std::vector<hotools::Mc2ExternalCollisionDebugRecord>& external_debug_contacts() const noexcept { return external_debug_contacts_; }
+    const std::vector<float>& external_debug_friction_before() const noexcept { return external_debug_friction_before_; }
+    const std::vector<float>& external_debug_friction_after() const noexcept { return external_debug_friction_after_; }
+    const std::vector<float>& external_debug_radii() const noexcept { return external_debug_radii_; }
+    const std::vector<std::uint32_t>& compiled_external_modes() const noexcept { return compiled_external_modes_; }
+    const std::vector<std::uint32_t>& compiled_external_masks() const noexcept { return compiled_external_masks_; }
+    const std::vector<float>& compiled_external_radii() const noexcept { return compiled_external_radii_; }
+    const std::vector<float>& compiled_external_friction() const noexcept { return compiled_external_friction_; }
+    const std::vector<std::int32_t>& compiled_external_edges() const noexcept { return compiled_external_edges_; }
 
 private:
     void ensure_live() const;
@@ -697,6 +708,10 @@ private:
     std::vector<float> bending_debug_stiffnesses_;
     std::vector<std::uint8_t> bending_debug_valid_;
     std::vector<std::uint8_t> bending_debug_hit_;
+    std::vector<hotools::Mc2ExternalCollisionDebugRecord> external_debug_contacts_;
+    std::vector<float> external_debug_friction_before_;
+    std::vector<float> external_debug_friction_after_;
+    std::vector<float> external_debug_radii_;
     bool bending_ready_ = false;
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
