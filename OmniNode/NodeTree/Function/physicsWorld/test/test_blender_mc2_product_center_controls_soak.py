@@ -59,6 +59,8 @@ def _requests(
     cloth,
     spring,
     *,
+    anchor_object=None,
+    anchor_inertia: float = 0.0,
     world_inertia: float,
     movement_inertia_smoothing: float,
     movement_speed_limit: float,
@@ -69,6 +71,7 @@ def _requests(
     depth_inertia: float = 0.0,
 ):
     task_values = {
+        "anchor_inertia": anchor_inertia,
         "world_inertia": world_inertia,
         "movement_inertia_smoothing": movement_inertia_smoothing,
         "movement_speed_limit": movement_speed_limit,
@@ -86,6 +89,7 @@ def _requests(
     entries, count = nodes.physicsMC2MeshOverride(
         entries,
         profile=_profile(spring=False),
+        anchor_object=anchor_object,
         **task_values,
     )
     assert count == 1
@@ -99,6 +103,7 @@ def _requests(
     cloth_requests, _cloth_report = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Parent"}],
         profile=_profile(spring=False),
+        anchor_object=anchor_object,
         connection_mode=0,
         **task_values,
     )
@@ -109,6 +114,7 @@ def _requests(
             "bones": tuple(f"Chain0_{depth}" for depth in range(6)),
         }],
         profile=_profile(spring=True),
+        anchor_object=anchor_object,
         **task_values,
     )
     requests = tuple(mesh_requests + cloth_requests + spring_requests)
@@ -148,6 +154,8 @@ def _run_world_case(
     case_name: str,
     run_index: int,
     *,
+    anchor_enabled: bool = False,
+    anchor_inertia: float = 0.0,
     component_translation: bool = True,
     component_rotation_speed: float = 0.0,
     world_inertia: float,
@@ -162,7 +170,7 @@ def _run_world_case(
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
-    mesh = proxy = cloth = spring = None
+    mesh = proxy = cloth = spring = driver = anchor = None
     owners = None
     observations = {
         setup: {
@@ -173,6 +181,7 @@ def _run_world_case(
             "inertia_x": [],
             "step_x": [],
             "movement_speed_limited": [],
+            "anchor_shift_x": [],
         }
         for setup in _SETUPS
     }
@@ -196,11 +205,24 @@ def _run_world_case(
         )
         sources = (mesh, cloth, spring)
         base_x = tuple(float(source.location.x) for source in sources)
+        if anchor_enabled:
+            driver = bpy.data.objects.new(
+                f"MC2ProductCenter{case_name}Driver{run_index}", None
+            )
+            anchor = bpy.data.objects.new(
+                f"MC2ProductCenter{case_name}Anchor{run_index}", None
+            )
+            bpy.context.scene.collection.objects.link(driver)
+            bpy.context.scene.collection.objects.link(anchor)
+            constraint = anchor.constraints.new("COPY_TRANSFORMS")
+            constraint.target = driver
         requests = _requests(
             world,
             mesh,
             cloth,
             spring,
+            anchor_object=anchor,
+            anchor_inertia=anchor_inertia,
             world_inertia=world_inertia,
             movement_inertia_smoothing=movement_inertia_smoothing,
             movement_speed_limit=movement_speed_limit,
@@ -227,6 +249,10 @@ def _run_world_case(
                 source.rotation_euler.z = math.radians(
                     component_rotation_degrees
                 )
+            if driver is not None:
+                driver.location.x = component_x
+                driver.rotation_mode = "XYZ"
+                driver.rotation_euler.z = math.radians(component_rotation_degrees)
             bpy.context.view_layer.update()
 
             bone_soak._set_frame(world, frame, generation)
@@ -303,6 +329,12 @@ def _run_world_case(
                                 dtype=np.uint8,
                             ).reshape((-1,))[0])
                         )
+                        values["anchor_shift_x"].append(
+                            float(np.asarray(
+                                debug_state["anchor_shift_vectors"],
+                                dtype=np.float32,
+                            ).reshape((-1, 3))[0, 0])
+                        )
                 digest.update(setup.encode("ascii"))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
@@ -332,7 +364,8 @@ def _run_world_case(
         bone_soak._remove_armature(spring)
         mixed_soak._remove_mesh(mesh)
         mixed_soak._remove_mesh(proxy)
-        _remove_object(None)
+        _remove_object(driver)
+        _remove_object(anchor)
         if mixed_soak.physics_blender.is_registered():
             mixed_soak.physics_blender.unregister()
 
@@ -555,10 +588,47 @@ def center_local_controls():
     print("PASS 产品Center Local惯性/平移与旋转限速")
 
 
+def center_anchor_controls():
+    def run(run_index):
+        result = {}
+        for case_index, anchor_inertia in enumerate((0.0, 1.0)):
+            result[anchor_inertia] = _run_world_case(
+                f"Anchor{int(anchor_inertia)}",
+                run_index * 10 + case_index,
+                anchor_enabled=True,
+                anchor_inertia=anchor_inertia,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                read_center_debug=True,
+            )
+        return result
+
+    first = run(0)
+    second = run(1)
+    for anchor_inertia in first:
+        for setup in _SETUPS:
+            for field in first[anchor_inertia][0][setup]:
+                np.testing.assert_array_equal(
+                    first[anchor_inertia][0][setup][field],
+                    second[anchor_inertia][0][setup][field],
+                )
+            values = first[anchor_inertia][0][setup]
+            print(
+                "MC2_PRODUCT_CENTER_ANCHOR",
+                anchor_inertia,
+                setup,
+                float(np.max(np.abs(values["anchor_shift_x"]))),
+            )
+    print("PASS 产品Center Anchor端点与确定性")
+
+
 if __name__ == "__main__":
-    if os.environ.get("MC2_CENTER_LOCAL_ONLY"):
+    if os.environ.get("MC2_CENTER_ANCHOR_ONLY"):
+        center_anchor_controls()
+    elif os.environ.get("MC2_CENTER_LOCAL_ONLY"):
         center_local_controls()
     else:
         center_world_controls()
         center_local_controls()
-    center_local_controls()

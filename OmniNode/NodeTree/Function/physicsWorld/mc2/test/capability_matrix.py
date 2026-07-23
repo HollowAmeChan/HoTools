@@ -290,7 +290,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             },
             {
                 "runner": (
-                    "test_blender_mc2_mixed_output_soak.py::"
+                    "test_blender_mc2_product_center_controls_soak.py::"
                     "center_anchor_controls"
                 ),
                 "frames": 600,
@@ -436,7 +436,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         }, {
-            "runner": "test_blender_mc2_mixed_output_soak.py::center_anchor_controls",
+            "runner": "test_blender_mc2_product_center_controls_soak.py::center_anchor_controls",
             "frames": 600,
             "setups": ALL_SETUPS,
             "fields": (),
