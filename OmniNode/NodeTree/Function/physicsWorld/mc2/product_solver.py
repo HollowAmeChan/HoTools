@@ -409,6 +409,14 @@ def step_mc2_products(
                     raise RuntimeError("Bone 产品结果缺少对应 writeback plan")
                 bone_entries.append((result, plan))
 
+        if any(
+            bool((slot.data.get("_debug_capture_state") or {}).get("requested"))
+            for slot in slots
+        ):
+            from .debug import capture_requested_mc2_product_debug
+
+            capture_requested_mc2_product_debug(world, slots)
+
         bone_results, bone_plans = merge_mc2_bone_results(bone_entries)
         public_results = (*mesh_results, *bone_results)
         published = publish_mc2_product_output_transaction(

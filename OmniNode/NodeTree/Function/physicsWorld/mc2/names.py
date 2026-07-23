@@ -15,3 +15,4 @@ MC2_SETUP_TYPES = (
 MC2_STATS_CHANNEL = "mc2_stats"
 MC2_DEBUG_DRAW_MODE = "mc2"
 MC2_INTERACTION_RESOURCE_KEY = "mc2_interaction_v0"
+MC2_FUSED_PRODUCT_SLOT_KIND = "mc2_fused_cpu_product_v1"

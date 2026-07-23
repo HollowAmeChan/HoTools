@@ -10,7 +10,9 @@ import numpy as np
 from ..types import PhysicsWorldCache
 from .names import (
     MC2_DEBUG_DRAW_MODE,
+    MC2_FUSED_PRODUCT_SLOT_KIND,
     MC2_INTERACTION_RESOURCE_KEY,
+    MC2_SETUP_MESH_CLOTH,
     MC2_SLOT_KIND,
     MC2_SOLVER_ID,
 )
@@ -85,6 +87,13 @@ MC2_SUBSTEP_DEBUG_FILTER_KEYS = tuple(
     name
     for name in MC2_NATIVE_DEBUG_FILTER_KEYS
     if name not in ("show_teleport_threshold", "show_teleport_status")
+)
+
+MC2_PRODUCT_DEBUG_FILTER_KEYS = (
+    "show_topology",
+    "show_attributes",
+    "show_velocity",
+    "show_output",
 )
 
 
@@ -492,6 +501,29 @@ def request_mc2_debug_capture(
     setup_filter = str(filters.get("setup_filter") or "all").strip().lower()
     requested = 0
     for slot in world.solver_slots.values():
+        if slot.kind == MC2_FUSED_PRODUCT_SLOT_KIND:
+            owner = slot.data.get("owner")
+            program = getattr(getattr(owner, "compiled", None), "program", None)
+            if program is None:
+                continue
+            task_tokens = (str(slot.slot_id), *tuple(program.partition_ids))
+            matches_task = not task_filters or any(
+                token in identity
+                for token in task_filters
+                for identity in task_tokens
+            )
+            matches_setup = setup_filter in ("", "all", str(program.setup_type).lower())
+            state = slot.data.setdefault("_debug_capture_state", {})
+            if not (matches_task and matches_setup and has_modes):
+                state.update({"requested": False, "filters": filters})
+                continue
+            state.update({
+                "requested": True,
+                "request_frame": frame,
+                "filters": filters,
+            })
+            requested += 1
+            continue
         if slot.kind != MC2_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
@@ -534,6 +566,143 @@ def request_mc2_debug_capture(
         else:
             interaction.cancel_debug_capture(filters)
     return requested
+
+
+def _product_topology_payload(program, positions) -> dict:
+    primitive_tables = {table.kind: table for table in program.primitive_tables}
+    constraint_tables = {table.kind: table for table in program.constraint_tables}
+    edge_table = primitive_tables.get("edge") or constraint_tables.get("distance")
+    triangle_table = primitive_tables.get("triangle")
+    edges = (
+        np.empty((0, 2), dtype=np.int32)
+        if edge_table is None
+        else np.asarray(edge_table.indices, dtype=np.int32).reshape((-1, 2))
+    )
+    triangles = (
+        np.empty((0, 3), dtype=np.int32)
+        if triangle_table is None
+        else np.asarray(triangle_table.indices, dtype=np.int32).reshape((-1, 3))
+    )
+    return {
+        "connection_model": "product_domain_v1",
+        "connection_mode": 0,
+        "vertex_identities": tuple(
+            (
+                str(program.partition_ids[int(partition)]),
+                int(source),
+            )
+            for partition, source in zip(
+                program.particle_partition_index,
+                program.particle_source_element,
+            )
+        ),
+        "vertex_attributes": _readonly(program.particle_attribute_flags, np.uint8),
+        "edges": _readonly(edges, np.int32),
+        "triangles": _readonly(triangles, np.int32),
+        "longitudinal_edges": _readonly(edges, np.int32),
+        "lateral_edges": _readonly((), np.int32).reshape((-1, 2)),
+        "chain_indices": _readonly((), np.int32),
+        "chain_depths": _readonly((), np.int32),
+        "positions": _readonly(positions),
+    }
+
+
+def capture_requested_mc2_product_debug(world, slots) -> int:
+    frame = int(getattr(world.frame_context, "frame", 0) or 0)
+    generation = int(world.generation)
+    captured = 0
+    for slot in slots:
+        if getattr(slot, "kind", None) != MC2_FUSED_PRODUCT_SLOT_KIND:
+            continue
+        state = slot.data.get("_debug_capture_state")
+        if not _state_requested(state, frame):
+            continue
+        started = time.perf_counter()
+        try:
+            owner = slot.data.get("owner")
+            compiled = getattr(owner, "compiled", None)
+            program = getattr(compiled, "program", None)
+            frame_packet = slot.data.get("frame_packet")
+            output = slot.data.get("domain_output")
+            if program is None or frame_packet is None or output is None:
+                raise RuntimeError("产品调试捕获需要完整的owner、frame和logical output")
+            filters = dict(state.get("filters") or {})
+            requested_modes = tuple(
+                name for name in MC2_DEBUG_FILTER_KEYS if filters.get(name, False)
+            )
+            supported_filters = MC2_PRODUCT_DEBUG_FILTER_KEYS
+            if program.setup_type != MC2_SETUP_MESH_CLOTH:
+                supported_filters = tuple(
+                    name for name in supported_filters if name != "show_output"
+                )
+            unsupported = tuple(
+                name for name in requested_modes
+                if name not in supported_filters
+            )
+            positions = _readonly(output.world_positions)
+            native = {"positions": positions}
+            if filters.get("show_velocity", False):
+                native.update(_freeze_value(owner.read_debug_state()))
+            topology = (
+                _product_topology_payload(program, positions)
+                if filters.get("show_topology", False)
+                or filters.get("show_attributes", False)
+                else {}
+            )
+            base_positions = _readonly(frame_packet.animated_base_world_positions)
+            target_positions = positions
+            applied = np.ones((program.particle_count,), dtype=np.uint8)
+            applied.flags.writeable = False
+            snapshot = {
+                "source": "mc2_product_capture",
+                "schema": "mc2_product_debug_snapshot_v1",
+                "slot_id": str(slot.slot_id),
+                "task_id": str(slot.slot_id),
+                "setup_type": str(program.setup_type),
+                "partition_ids": tuple(program.partition_ids),
+                "frame": frame,
+                "generation": generation,
+                "filters": filters,
+                "supported_filters": supported_filters,
+                "unsupported_filters": unsupported,
+                "native": native,
+                "topology": topology,
+                "parameters": {},
+                "motion": {},
+                "center": {},
+                "teleport": {},
+                "collision": {},
+                "self_collision": None,
+                "output": ({
+                    "base_positions": base_positions,
+                    "target_positions": target_positions,
+                    "world_offsets": _readonly(target_positions - base_positions),
+                    "mesh_object_local_offsets": None,
+                    "translation_applied": applied,
+                    "writeback_schema": "mc2_domain_output_v1",
+                    "writeback_target_count": len(program.output_targets),
+                    "has_writeback_plan": True,
+                    "writeback_targets": tuple(
+                        target.target_id for target in program.output_targets
+                    ),
+                    "writeback_target_kind": "product_domain",
+                    "writeback_motion_modes": (),
+                    "rotation_only_connected_count": 0,
+                    "position_rotation_count": 0,
+                } if filters.get("show_output", False)
+                and "show_output" in supported_filters else {}),
+            }
+            slot.data["_debug_draw_snapshot"] = snapshot
+            state.pop("error", None)
+            state["captured_frame"] = frame
+            captured += 1
+        except Exception as exc:
+            state["error"] = str(exc)
+        finally:
+            state["requested"] = False
+            state["attempted_frame"] = frame
+            state["capture_ms"] = (time.perf_counter() - started) * 1000.0
+    return captured
 
 
 def _active_static(slot):
@@ -1613,5 +1782,6 @@ __all__ = [
     "MC2_DEBUG_FILTER_KEYS",
     "MC2_NATIVE_DEBUG_FILTER_KEYS",
     "capture_requested_mc2_debug",
+    "capture_requested_mc2_product_debug",
     "request_mc2_debug_capture",
 ]

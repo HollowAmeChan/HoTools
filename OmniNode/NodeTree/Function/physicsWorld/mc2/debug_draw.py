@@ -32,7 +32,11 @@ from .debug import (
     normalize_mc2_task_filters,
     request_mc2_debug_capture,
 )
-from .names import MC2_INTERACTION_RESOURCE_KEY, MC2_SLOT_KIND
+from .names import (
+    MC2_FUSED_PRODUCT_SLOT_KIND,
+    MC2_INTERACTION_RESOURCE_KEY,
+    MC2_SLOT_KIND,
+)
 
 
 _COLORS = {
@@ -323,7 +327,7 @@ def _matching_slot_snapshots(world: PhysicsWorldCache, filters: dict) -> list[di
     task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
     snapshots = []
     for slot in world.solver_slots.values():
-        if slot.kind != MC2_SLOT_KIND:
+        if slot.kind not in (MC2_SLOT_KIND, MC2_FUSED_PRODUCT_SLOT_KIND):
             continue
         snapshot = slot.data.get("_debug_draw_snapshot")
         if not isinstance(snapshot, dict):
@@ -588,7 +592,7 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
     triangle_meshes = {}
     task_filters = normalize_mc2_task_filters(filters["task_filter"])
     for slot in world.solver_slots.values():
-        if slot.kind != MC2_SLOT_KIND:
+        if slot.kind not in (MC2_SLOT_KIND, MC2_FUSED_PRODUCT_SLOT_KIND):
             continue
         snapshot = slot.data.get("_debug_draw_snapshot")
         if not isinstance(snapshot, dict):

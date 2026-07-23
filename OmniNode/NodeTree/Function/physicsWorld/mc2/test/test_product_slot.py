@@ -49,6 +49,9 @@ collider_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.ph
 native_kernel_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.cpu_native_kernel"
 )
+debug_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -610,6 +613,17 @@ def test_slot_native_executes_complete_compiled_frame():
         slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
         slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
         owner = slot.data["owner"]
+        world.frame_context = types.SimpleNamespace(frame=12)
+        assert debug_module.request_mc2_debug_capture(
+            world,
+            filters={
+                "show_topology": True,
+                "show_attributes": True,
+                "show_velocity": True,
+                "show_output": True,
+                "show_motion": True,
+            },
+        ) == 1
         frame = _domain_frame(owner.compiled.program, frame=13)
         scheduled = _scheduled(slot, frame)
         slot_module.publish_mc2_mesh_fused_frame(
@@ -634,6 +648,27 @@ def test_slot_native_executes_complete_compiled_frame():
         ]
         assert batch.frame == 13 and batch.generation == 1
         assert slot.data["output_batch"] is batch
+        world.frame_context = types.SimpleNamespace(frame=13)
+        assert debug_module.capture_requested_mc2_product_debug(
+            world, (slot,)
+        ) == 1
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["schema"] == "mc2_product_debug_snapshot_v1"
+        assert snapshot["source"] == "mc2_product_capture"
+        assert snapshot["frame"] == 13
+        assert snapshot["partition_ids"] == owner.compiled.program.partition_ids
+        assert "show_motion" in snapshot["unsupported_filters"]
+        assert snapshot["native"]["positions"].flags.writeable is False
+        assert snapshot["native"]["real_velocities"].flags.writeable is False
+        assert snapshot["topology"]["edges"].shape[1] == 2
+        assert snapshot["output"]["target_positions"].shape == (
+            owner.compiled.program.particle_count,
+            3,
+        )
+        assert np.array_equal(
+            snapshot["output"]["target_positions"],
+            slot.data["domain_output"].world_positions,
+        )
         assert slot.data["scheduler_state"].revision == 1 + len(results)
         assert slot.data["frame_complete"] is True
     finally:

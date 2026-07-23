@@ -16,6 +16,7 @@ from .domain_output import MC2MeshWritebackBatchV1
 from .domain_output import make_mc2_mesh_writeback_batch
 from .domain_owner import MC2FusedCPUOwnerSyncReportV1
 from .domain_owner import MC2FusedCPUOwnerV1
+from .names import MC2_FUSED_PRODUCT_SLOT_KIND
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .names import MC2_SETUP_MESH_CLOTH
 from .product_bone_collect import MC2BoneProductCollectionV1
@@ -30,7 +31,6 @@ from .results import publish_mc2_result_transaction
 
 
 MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
-MC2_FUSED_PRODUCT_SLOT_KIND = "mc2_fused_cpu_product_v1"
 MC2_FUSED_MESH_SLOT_KIND = MC2_FUSED_PRODUCT_SLOT_KIND
 _MC2_FUSED_PRODUCT_WRITER = "mc2_fused_cpu_product"
 
@@ -709,6 +709,7 @@ def build_mc2_mesh_fused_output_batch(
         frame_packet,
         output,
     )
+    slot.data["domain_output"] = output
     slot.data["output_batch"] = batch
     return batch
 

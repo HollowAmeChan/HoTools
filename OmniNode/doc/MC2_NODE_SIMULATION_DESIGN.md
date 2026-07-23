@@ -962,6 +962,8 @@ E7-CPU 第一组进度（2026-07-23）：公开 `physicsMC2Step` 已删除 `step
 
 调试旧类型解耦补充（2026-07-23）：`MC2_INTERACTION_RESOURCE_KEY` 已移到中立 `names.py`；`debug.py` 与 `debug_draw.py` 不再导入 `native_context`，也不再以 `MC2NativeInteractionV0` 类型判断可观察能力，而只检查捕获控制、冻结快照和时间历史所需的窄只读方法协议。架构工具新增 `--e7-debug-import-check`，py311/py313 下产品运行图、公开节点顶层图和调试模块图到五个旧 Python owner 的可达数均为 `0`；Blender 4.5/cp311 与 5.2/cp313 的调试绘制 runner 继续通过 13 组断言。这一组只切断模块与具体旧类型的硬依赖：backend resource 中的旧 interaction 实例和兼容观察分支仍存在，不等于产品调试快照已经迁移；后续必须让产品 owner 提供最终冻结快照，并在旧 owner 删除后由 E7-S 删除协议探测和 V0 resource key 残留。
 
+产品调试基础切片（2026-07-23）：公开调试请求器与 renderer 已识别统一域产品 slot；请求在下一真实帧完成 whole-domain 求解和 logical output 后捕获 `mc2_product_debug_snapshot_v1`。首批只承诺 `topology/attributes/velocity/output`：拓扑来自编译后的 domain IR，位置和输出复用同一 logical output，速度/法线只在显式请求时调用产品 owner 的 native readback；没有请求时不增加 readback。Mesh output 已接通，Bone 因 connected 旋转专用写回语义暂不发布 output 图层；其余 Center/Teleport、约束记录、外碰和 whole-domain self 模式写入 `unsupported_filters`，不得从最终位置反推。py311/py313 真实 native owner 测试与 Blender 4.5/cp311、5.2/cp313 公开产品节点均通过，且产品捕获不创建旧 interaction resource。这是迁移骨架，不是 28 模式等价完成。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |

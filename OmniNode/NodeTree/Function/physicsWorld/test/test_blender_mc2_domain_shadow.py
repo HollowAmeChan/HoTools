@@ -56,6 +56,9 @@ mc2_specs = importlib.import_module(
 mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
 )
+mc2_debug = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
@@ -273,6 +276,15 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert slot.data["collector_request"] is request
         assert "分区 2" in status and "目标 2" in status
         assert world_writeback.writeback_gn_attributes(world) == 2
+        assert mc2_debug.request_mc2_debug_capture(
+            world,
+            filters={
+                "show_topology": True,
+                "show_attributes": True,
+                "show_velocity": True,
+                "show_output": True,
+            },
+        ) == 1
 
         sources[0].location.y = 0.05
         bpy.context.view_layer.update()
@@ -286,6 +298,17 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert returned is world and ready is True, status
         assert world_writeback.writeback_gn_attributes(world) == 2
         assert len(slot.data["published_output_results"]) == 2
+        snapshot = slot.data["_debug_draw_snapshot"]
+        assert snapshot["schema"] == "mc2_product_debug_snapshot_v1"
+        assert snapshot["source"] == "mc2_product_capture"
+        assert snapshot["unsupported_filters"] == ()
+        assert snapshot["native"]["positions"].flags.writeable is False
+        assert snapshot["native"]["real_velocities"].flags.writeable is False
+        assert len(snapshot["output"]["writeback_targets"]) == 2
+        assert (
+            mc2_names.MC2_INTERACTION_RESOURCE_KEY
+            not in world.backend_resources
+        )
         try:
             mc2_nodes.physicsMC2Step(world, [request, object()])
         except TypeError as exc:
