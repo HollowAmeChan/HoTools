@@ -938,3 +938,9 @@ E7-CPU native 清理继续遵循“先迁测试、后删 ABI”：两个 static 
 BoneCloth/BoneSpring 的产品包装合同仍是“一个 Armature 一个统一域”，同 Armature 的多链输入由包装层收敛，跨 Armature 才产生可观察的多个 request；不得把这个限制误标为 Mesh 的多 source partition 能力。删除前的逐项 oracle、包装限制和验收门槛已分别记录在 `MC2_BONE_CLOTH_PLAN.md` 与 `MC2_BONE_SPRING_PLAN.md`；下一步按 plan 迁移旧 runner helper，再进行旧 owner、hidden task、普通 aggregate 和 V0 binding 的删除审计。
 
 验证只使用 Blender 5.2 的 `--factory-startup`，runner 会清理默认备份模块并打印当前源码与 `_Lib/py313` native 路径。Blender 4.5 / Python 3.11 从本轮起冻结，直到旧代码删除收尾；P4 CPU 并发不实施，E6 GPU 仍是未来独立里程碑。
+
+## E7-CPU 当前复核（2026-07-24）
+
+本轮只在 Blender 5.2 / Python 3.13 复核。Bone 旧约束兼容门面已修正为分别转发 gravity、rotation、Angle/Motion、外碰和摩擦产品 runner，不再把 gravity 或 rotation 错转到通用约束 soak；rotation 产品双跑摘要保持不变。架构审计结果为：生产 Python 76 个模块、依赖环 0、产品/公开节点/调试旧模块可达数均为 0，Physics World 与 E0 边界违规均为 0；native 待删面仍为 68 个 binding、5 个 `mc2_context_*` 翻译单元。
+
+当前不提前删除旧 owner。下一门禁是 BoneCloth 自碰撞的跨 source scope、contact cache 有界性、radius consistency，以及 target/rest 精确断言；这些完成后才迁移剩余旧 runner 的独立断言并开始 E7-CPU 删除提交。4.5 / py311 继续冻结，P6 仍只沉淀数据、pass、buffer 和 IO 合同。
