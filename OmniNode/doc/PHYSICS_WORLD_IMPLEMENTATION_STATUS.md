@@ -191,3 +191,4 @@ Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 6
 
 Bone frame transform 的独立断言也已迁移到 product partition：验证 world pose、只读 frame packet、负 scale、零 scale、父级负 scale 和 shear-free 拒绝；旧 N3 facade 现在只转发 `test_bone_product_frame_transform_contract`，不再以约束 soak 冒充 frame 输入等价。
 MC2 Bone static 旧 Blender 入口已完成 product-only 收口：静态拓扑/fragment/collector 断言转由 `mc2/test/test_bone_product_static.py` 与 `test_blender_mc2_bone_product.py` 承担，并保留批量 Bone writeback 失败回滚断言；旧入口只保留兼容门面，不再创建 V0 task 或读取 `native_context`。Blender 5.2/py313 验收通过。剩余旧测试所有权仍集中在 base-pose、final-proxy、debug-draw、property-registry 和长跑数值细节，未提前删除旧 owner。
+Mesh final-proxy 旧 Blender 入口已完成 product-only 收口：Tier A proxy/UV/Pin oracle 由 `mc2/test/test_mesh_final_proxy.py` 承担，实际 Blender base-pose、MeshCloth product program、GN 写回、同槽参数更新和静态输入变化由 `test_blender_mc2_mesh_product_static.py` 承担；旧入口只保留兼容门面。5.2/py313 已通过，统一 owner 在静态输入变化时保持槽位稳定，未继承旧 V0 native handle 替换断言。
