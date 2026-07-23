@@ -77,7 +77,5 @@ PyObject* mc2_context_v0_free(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_stats(PyObject*, PyObject* args);
 PyObject* mc2_mesh_static_fingerprint_v1(PyObject*, PyObject* args);
 PyObject* mc2_bone_static_fingerprint_v1(PyObject*, PyObject* args);
-PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args);
-PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args);
 
 }  // namespace hotools

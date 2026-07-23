@@ -292,10 +292,6 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v1(nullptr, a.ptr())); });
     m.def("mc2_bone_static_fingerprint_v1",
         [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v1(nullptr, a.ptr())); });
-    m.def("mc2_mesh_static_fingerprint_v0",
-        [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v0(nullptr, a.ptr())); });
-    m.def("mc2_bone_static_fingerprint_v0",
-        [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v0(nullptr, a.ptr())); });
     m.def("mc2_optimize_triangle_direction_v0",
         [](cf64_2d positions, i32_2d triangles, f64_2d triangle_normals) {
             check_cols(positions, 3, "positions");

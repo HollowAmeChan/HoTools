@@ -27,7 +27,7 @@ def _assert_fingerprint(value) -> None:
     assert all(len(item) == 32 for item in value.values())
 
 
-def test_mesh_product_fingerprint_v1_matches_migration_alias() -> None:
+def test_mesh_product_fingerprint_v1_has_stable_shape() -> None:
     arguments = (
         np.asarray((0, 0, 0, 1, 0, 0, 0, 1, 0), dtype=np.float32),
         np.asarray((0, 0, 1) * 3, dtype=np.float32),
@@ -46,10 +46,9 @@ def test_mesh_product_fingerprint_v1_matches_migration_alias() -> None:
     )
     product = hotools_native.mc2_mesh_static_fingerprint_v1(*arguments)
     _assert_fingerprint(product)
-    assert product == hotools_native.mc2_mesh_static_fingerprint_v0(*arguments)
 
 
-def test_bone_product_fingerprint_v1_matches_migration_alias() -> None:
+def test_bone_product_fingerprint_v1_has_stable_shape() -> None:
     arguments = (
         np.asarray((-1, 0), dtype=np.int32),
         np.asarray((0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 2, 0), dtype=np.float32),
@@ -62,4 +61,3 @@ def test_bone_product_fingerprint_v1_matches_migration_alias() -> None:
     )
     product = hotools_native.mc2_bone_static_fingerprint_v1(*arguments)
     _assert_fingerprint(product)
-    assert product == hotools_native.mc2_bone_static_fingerprint_v0(*arguments)

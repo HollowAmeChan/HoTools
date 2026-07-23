@@ -157,10 +157,7 @@ E7_PRODUCT_RUNTIME_ROOTS = ("mc2.product_solver",)
 E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
 E7_DEBUG_ROOTS = ("mc2.debug", "mc2.debug_draw")
 E7_LEGACY_BINDING_PREFIXES = ("mc2_context_v0_", "mc2_interaction_v0_")
-E7_LEGACY_BINDING_NAMES = frozenset((
-    "mc2_mesh_static_fingerprint_v0",
-    "mc2_bone_static_fingerprint_v0",
-))
+E7_LEGACY_BINDING_NAMES = frozenset()
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",
 ))

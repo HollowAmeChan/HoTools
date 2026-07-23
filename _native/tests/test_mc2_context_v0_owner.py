@@ -71,7 +71,7 @@ def test_owner_static_fingerprint_classification() -> None:
 
 def test_mesh_static_fingerprint_accepts_blender_mesh_without_uv_layer() -> None:
     module = native_loader.native_module()
-    fingerprint = module.mc2_mesh_static_fingerprint_v0(
+    fingerprint = module.mc2_mesh_static_fingerprint_v1(
         np.asarray((0, 0, 0, 1, 0, 0, 0, 1, 0), dtype=np.float32),
         np.asarray((0, 0, 1) * 3, dtype=np.float32),
         np.asarray((0, 1, 1, 2, 0, 2), dtype=np.int32),

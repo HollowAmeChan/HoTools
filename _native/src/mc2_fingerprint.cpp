@@ -261,12 +261,4 @@ PyObject* mc2_bone_static_fingerprint_v1(PyObject*, PyObject* args) {
     return static_fingerprint_result(topology, geometry, surface);
 }
 
-PyObject* mc2_mesh_static_fingerprint_v0(PyObject* self, PyObject* args) {
-    return mc2_mesh_static_fingerprint_v1(self, args);
-}
-
-PyObject* mc2_bone_static_fingerprint_v0(PyObject* self, PyObject* args) {
-    return mc2_bone_static_fingerprint_v1(self, args);
-}
-
 }  // namespace hotools
