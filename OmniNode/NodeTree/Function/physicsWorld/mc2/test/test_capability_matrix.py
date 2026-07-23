@@ -275,14 +275,15 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert by_id["angle_restoration"]["status"] == "verified"
 
     self_collision = capability_gaps(by_id["self_collision"])
-    assert "cross_task_scope_exact@mesh_cloth" in self_collision["invariants"]
+    assert not self_collision["setups"]
+    assert not self_collision["fields"]
+    assert not self_collision["invariants"]
     assert "cross_source_scope_exact@bone_cloth" not in self_collision["invariants"]
-    assert "contact_cache_bounded@mesh_cloth" in self_collision["invariants"]
-    assert "single_radius_model_consistent@mesh_cloth" in self_collision["invariants"]
     assert "cross_task_scope_exact@bone_cloth" not in self_collision["invariants"]
     assert "contact_cache_bounded@bone_cloth" not in self_collision["invariants"]
     assert "single_radius_model_consistent@bone_cloth" not in self_collision["invariants"]
-    assert by_id["self_collision"]["status"] == "gap"
+    assert not any(self_collision.values())
+    assert by_id["self_collision"]["status"] == "verified"
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]

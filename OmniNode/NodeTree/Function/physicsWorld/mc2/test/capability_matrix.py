@@ -697,8 +697,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "cross_source_scope_exact": ("bone_cloth",),
         },
         "evidence": ({
-            "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
-            "frames": 1800,
+            "runner": "test_blender_mc2_mesh_product_self_collision.py::test_mesh_product_self_collision_cross_partition_scope_and_cache",
+            "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": (
                 "self_collision_mode", "self_collision_sync_mode",
@@ -706,6 +706,8 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": (
                 "finite", "deterministic", "whole_domain_self_step_active",
+                "cross_task_scope_exact", "contact_cache_bounded",
+                "single_radius_model_consistent",
             ),
         }, {
             "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_self_collision_domain_contract",
@@ -732,7 +734,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "contact_cache_bounded", "single_radius_model_consistent",
             ),
         }),
-        "status": "gap",
+        "status": "verified",
     },
 )
 
