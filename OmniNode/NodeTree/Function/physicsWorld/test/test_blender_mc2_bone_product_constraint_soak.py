@@ -59,6 +59,15 @@ world_types = importlib.import_module(
 writeback = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
 )
+product_bone_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+)
+topology = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
+)
+bone_frame = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_frame_input"
+)
 hotools_native = importlib.import_module("hotools_native")
 
 print(f"MC2_BONE_PRODUCT_SOAK_SOURCE {nodes.__file__}")
@@ -394,6 +403,131 @@ def test_bone_product_self_collision_domain_contract() -> None:
     second = _run_once(21, self_collision_thickness=0.008, cloth_mass=0.4)
     assert first == second, (first, second)
     print(f"MC2_BONE_PRODUCT_SELF_CONTRACT_DIGEST {first}")
+
+
+def test_bone_product_frame_transform_contract() -> None:
+    armature = None
+    parent = None
+    try:
+        armature = _armature(
+            "MC2ProductFrameTransform",
+            chain_count=1,
+            chain_length=1,
+            x_offset=0.0,
+        )
+        request = product_bone_authoring.make_mc2_bone_cloth_product_request(
+            [{
+                "armature": armature,
+                "bones": ("Parent", "Chain0_0"),
+            }],
+            profile=_profile(bone_spring=False),
+            setup_options=parameters.make_mc2_setup_options(
+                "bone_cloth",
+                connection_mode=0,
+            ),
+        )
+        partition = request.plan.active_partitions[0]
+        fingerprint, snapshots = topology.prepare_static_inputs_for_partition(
+            partition
+        )
+        product_topology = topology.build_mc2_partition_topology_spec(
+            partition,
+            static_input_fingerprint=fingerprint,
+            static_input_snapshots=snapshots,
+        )
+        bpy.context.view_layer.update()
+        frame_input = bone_frame.build_mc2_bone_partition_frame_input(
+            partition,
+            product_topology,
+            frame=12,
+            generation=4,
+        )
+        assert frame_input.native_producer_kind == "bone"
+        assert frame_input.particle_count == 2
+        assert frame_input.world_positions.flags.writeable is False
+        assert frame_input.world_rotations_xyzw.flags.writeable is False
+        assert frame_input.raw_pose_matrices.shape == (2, 3, 3)
+        assert frame_input.raw_pose_matrices.flags.writeable is False
+        names = tuple(product_topology.sources[0].bone_names)
+        parent_index = names.index("Parent")
+        expected_root = armature.matrix_world @ armature.pose.bones["Parent"].head
+        np.testing.assert_allclose(
+            frame_input.world_positions[parent_index],
+            (expected_root.x, expected_root.y, expected_root.z),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+        assert frame_input.center_frame_pose is not None
+
+        armature.scale = (-1.0, 1.0, 1.0)
+        bpy.context.view_layer.update()
+        negative = bone_frame.build_mc2_bone_partition_frame_input(
+            partition,
+            product_topology,
+            frame=13,
+            generation=4,
+        )
+        assert negative.negative_scale_sign == -1.0
+        np.testing.assert_allclose(
+            negative.center_frame_pose.component_world_scale,
+            (-1.0, 1.0, 1.0),
+            atol=1.0e-6,
+        )
+
+        armature.scale = (0.0, 1.0, 1.0)
+        bpy.context.view_layer.update()
+        try:
+            bone_frame.build_mc2_bone_partition_frame_input(
+                partition,
+                product_topology,
+                frame=13,
+                generation=4,
+            )
+        except ValueError as exc:
+            assert "zero scale" in str(exc)
+        else:
+            raise AssertionError("zero-scale Bone product frame was accepted")
+
+        armature.scale = (1.0, 1.0, 1.0)
+        parent = bpy.data.objects.new("MC2ProductFrameTransformParent", None)
+        bpy.context.scene.collection.objects.link(parent)
+        armature.parent = parent
+        armature.matrix_parent_inverse.identity()
+        parent.scale = (-1.0, 1.0, 1.0)
+        bpy.context.view_layer.update()
+        try:
+            bone_frame.build_mc2_bone_partition_frame_input(
+                partition,
+                product_topology,
+                frame=14,
+                generation=4,
+            )
+        except ValueError as exc:
+            assert "negative scale inherited from a parent" in str(exc)
+        else:
+            raise AssertionError("negative parent scale reached Bone product frame")
+
+        parent.scale = (2.0, 1.0, 0.5)
+        armature.rotation_mode = "XYZ"
+        armature.rotation_euler.y = 0.5
+        bpy.context.view_layer.update()
+        try:
+            bone_frame.build_mc2_bone_partition_frame_input(
+                partition,
+                product_topology,
+                frame=14,
+                generation=4,
+            )
+        except ValueError as exc:
+            assert "shear-free" in str(exc)
+        else:
+            raise AssertionError("sheared Bone component reached product frame")
+        print("PASS test_bone_product_frame_transform_contract")
+    finally:
+        if parent is not None:
+            armature.parent = None
+            bpy.data.objects.remove(parent, do_unlink=True)
+        _remove_armature(armature)
 
 
 if __name__ == "__main__":

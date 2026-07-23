@@ -21,7 +21,7 @@ if TEST_ROOT not in sys.path:
 def run_product_bone_frame_contract():
     return importlib.import_module(
         "test_blender_mc2_bone_product_constraint_soak"
-    ).test_bone_product_constraints_900_frame_deterministic_soak()
+    ).test_bone_product_frame_transform_contract()
 
 
 def test_bone_frame_product_contract():
