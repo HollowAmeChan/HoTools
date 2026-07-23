@@ -163,6 +163,16 @@ def test_bone_frame_compatibility_entry_is_product_only():
     assert "test_blender_mc2_bone_product_constraint_soak" in source
 
 
+def test_bone_static_compatibility_entry_is_product_only():
+    path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_static.py"
+    source = path.read_text(encoding="utf-8")
+    assert "native_context" not in source
+    assert "mc2.specs" not in source
+    assert "mc2.solver" not in source
+    assert "test_bone_product_static" in source
+    assert "test_blender_mc2_bone_product" in source
+
+
 def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
         encoding="utf-8"

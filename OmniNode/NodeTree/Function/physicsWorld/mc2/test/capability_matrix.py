@@ -139,7 +139,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": ("finite", "deterministic"),
         }, {
-            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_gravity_axes_falloff",
+            "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_gravity_axes_falloff",
             "frames": 600,
             "setups": ("bone_cloth",),
             "fields": (

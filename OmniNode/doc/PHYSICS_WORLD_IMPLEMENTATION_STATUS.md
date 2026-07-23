@@ -87,7 +87,7 @@ MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_produ
 
 ## Bone 删除前门禁更新（2026-07-23）
 
-旧 `test_blender_mc2_bone_constraint_soak.py` 已从 2158 行 V0 soak 收缩为 product-only 兼容门面，所有旧符号只转发到公开 BoneCloth/BoneSpring 产品 runner，不再创建 V0 task、读取 `native_context` 或导入 mixed runner。Angle/Motion、外碰/摩擦与 rotation controls runner 已在 Blender 5.2 / Python 3.13 完成 600 帧，约束 runner 完成 900 帧双跑；公共 helper 固定使用 `_Lib/py313`。BoneCloth/BoneSpring plan 已登记逐项迁移清单，当前删除前缺口收窄为 `bone_gravity_axes_falloff`、`bone_self_collision` 的 scope/cache/radius 以及精确 target/rest 边界，不能由兼容门面宣称等价。完成这些产品证据后才允许删除门面、旧 Python/native owner、hidden task、普通 aggregate 和 V0 binding；4.5/py311 继续冻结。
+旧 `test_blender_mc2_bone_constraint_soak.py` 已从 2158 行 V0 soak 收缩为 product-only 兼容门面，所有旧符号只转发到公开 BoneCloth/BoneSpring 产品 runner，不再创建 V0 task、读取 `native_context` 或导入 mixed runner。Angle/Motion、外碰/摩擦、rotation controls 和 gravity axes/falloff runner 已在 Blender 5.2 / Python 3.13 完成 600 帧，约束 runner 完成 900 帧双跑；公共 helper 固定使用 `_Lib/py313`。BoneCloth/BoneSpring plan 已登记逐项迁移清单，当前删除前缺口收窄为 `bone_self_collision` 的 scope/cache/radius 以及精确 target/rest 边界，不能由兼容门面宣称等价。完成这些产品证据后才允许删除门面、旧 Python/native owner、hidden task、普通 aggregate 和 V0 binding；4.5/py311 继续冻结。
 
 ## 当前优先级
 
@@ -190,3 +190,4 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 600 帧，显式检查 `rotational_interpolation`、`root_rotation` 的编译参数、fixed/move/leaf 目标集合、位置不变性和旋转输出差异；5.2 双 setup 摘要分别为 `527f1c71e3bcc37dab771bc7bd2a3ef0d52b2956aff1f1cdff3e6a999ecd53b8` 与 `0a87b35a5fddc7b12318b200d21ec328810e66877dda1ad2566884126f25355b`。Bone gravity axes/falloff 也已由 BoneCloth product runner 锁定；BoneSpring 按节点合同不消费世界重力。self collision 的 scope/cache/radius gap 仍单独保留。
 
 Bone frame transform 的独立断言也已迁移到 product partition：验证 world pose、只读 frame packet、负 scale、零 scale、父级负 scale 和 shear-free 拒绝；旧 N3 facade 现在只转发 `test_bone_product_frame_transform_contract`，不再以约束 soak 冒充 frame 输入等价。
+MC2 Bone static 旧 Blender 入口已完成 product-only 收口：静态拓扑/fragment/collector 断言转由 `mc2/test/test_bone_product_static.py` 与 `test_blender_mc2_bone_product.py` 承担，并保留批量 Bone writeback 失败回滚断言；旧入口只保留兼容门面，不再创建 V0 task 或读取 `native_context`。Blender 5.2/py313 验收通过。剩余旧测试所有权仍集中在 base-pose、final-proxy、debug-draw、property-registry 和长跑数值细节，未提前删除旧 owner。
