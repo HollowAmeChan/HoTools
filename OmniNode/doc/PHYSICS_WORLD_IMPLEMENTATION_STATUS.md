@@ -83,7 +83,7 @@ physicsWorld/
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
 
-MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_product.py` 已移除脚本内 V0 task/oracle、旧 solver/spec/context 与 aggregate 故障注入，改为只验证公开 BoneCloth/BoneSpring request、统一产品 owner、动态槽、约束调试和 Bone writeback。Blender 5.2/Python 3.13 明确加载当前工作树 `product_solver.py` 与 `_Lib/py313` 后全部通过；4.5/py311 继续冻结。该项不替代旧 mixed-output 中仍待迁移的精确 stabilization ramp、零子步、particle subset、debug layer 和非单位正尺度断言。
+MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_product.py` 已移除脚本内 V0 task/oracle、旧 solver/spec/context 与 aggregate 故障注入，改为只验证公开 BoneCloth/BoneSpring request、统一产品 owner、动态槽、约束调试和 Bone writeback。Blender 5.2/Python 3.13 明确加载当前工作树 `product_solver.py` 与 `_Lib/py313` 后全部通过。旧 `test_blender_mc2_v1_soak.py` 及其独占的 Blender 5.1 JSON 基线也已删除；其性能、长程/热更新、dispose/参数交换和 same-frame 职责分别由产品 hotspot、产品 mixed soak、product slot 与 frame-state 门禁承接。4.5/py311 继续冻结。该项不替代旧 mixed-output 中仍待迁移的精确 stabilization ramp、零子步、particle subset、debug layer 和非单位正尺度断言。
 
 ## 当前优先级
 
