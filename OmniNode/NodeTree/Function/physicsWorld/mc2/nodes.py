@@ -996,46 +996,19 @@ def physicsMC2BoneSpringTask(
 
 
 def _oracle_node_arguments(node, args, kwargs) -> dict:
-    bound = inspect.signature(node).bind(*args, **kwargs)
-    bound.apply_defaults()
-    return dict(bound.arguments)
+    raise RuntimeError("MC2 V0 oracle 已删除；请使用公开 product request")
 
 
 def _physicsMC2BoneClothTaskV0Oracle(*args, **kwargs):
     """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
 
-    values = _oracle_node_arguments(physicsMC2BoneClothTask, args, kwargs)
-    task_parameters = _make_task_parameters(values)
-    tasks = _hotools_bone_tasks(
-        values["control_bones"],
-        values["anchor_object"],
-        values["profile"],
-        task_parameters,
-        values["enabled"],
-        connection_mode=values["connection_mode"],
-        rotational_interpolation=values["rotational_interpolation"],
-        root_rotation=values["root_rotation"],
-        collided_by_groups=values["collided_by_groups"],
-    )
-    return tasks, _task_name_output(tasks)
+    raise RuntimeError("MC2 BoneCloth V0 oracle 已删除；请使用 physicsMC2BoneClothTask")
 
 
 def _physicsMC2BoneSpringTaskV0Oracle(*args, **kwargs):
     """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
 
-    values = _oracle_node_arguments(physicsMC2BoneSpringTask, args, kwargs)
-    task_parameters = _make_task_parameters(values)
-    tasks = _bone_spring_tasks(
-        values["root_bones"],
-        values["anchor_object"],
-        values["profile"],
-        task_parameters,
-        values["enabled"],
-        rotational_interpolation=values["rotational_interpolation"],
-        root_rotation=values["root_rotation"],
-        collided_by_groups=values["collided_by_groups"],
-    )
-    return tasks, _task_name_output(tasks)
+    raise RuntimeError("MC2 BoneSpring V0 oracle 已删除；请使用 physicsMC2BoneSpringTask")
 
 
 @omni(
