@@ -14,13 +14,6 @@ import sys
 TEST_ROOT = os.path.dirname(os.path.abspath(__file__))
 if TEST_ROOT not in sys.path:
     sys.path.insert(0, TEST_ROOT)
-import os
-import sys
-
-
-TEST_ROOT = os.path.dirname(os.path.abspath(__file__))
-if TEST_ROOT not in sys.path:
-    sys.path.insert(0, TEST_ROOT)
 
 
 def _product_constraint():
@@ -33,6 +26,18 @@ def _product_angle_motion():
     return importlib.import_module(
         "test_blender_mc2_bone_product_angle_motion"
     ).test_bone_product_angle_motion_numeric_boundaries()
+
+
+def _product_rotation():
+    return importlib.import_module(
+        "test_blender_mc2_bone_product_angle_motion"
+    ).test_bone_product_rotation_output_controls()
+
+
+def _product_gravity():
+    return importlib.import_module(
+        "test_blender_mc2_bone_product_constraint_soak"
+    ).test_bone_product_gravity_axes_falloff()
 
 
 def _product_collision():
@@ -52,11 +57,11 @@ def bone_angle_constraints():
 
 
 def bone_gravity_axes_falloff():
-    return _product_constraint()
+    return _product_gravity()
 
 
 def bone_rotation_output_controls():
-    return _product_constraint()
+    return _product_rotation()
 
 
 def bone_angle_restoration_attenuation():
