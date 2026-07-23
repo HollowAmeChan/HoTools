@@ -1,55 +1,38 @@
-# MC2 BoneSpring 统一域计划
+# MC2 BoneSpring 统一域删除前计划
 
-## 当前状态（2026-07-23）
+## 目标与边界
 
-公共 Blender 5.2 / Python 3.13 产品测试 helper 已从旧 mixed runner 解耦，并固定使用当前 `py313` native 包。BoneSpring 的约束、Angle/Motion、外碰和摩擦产品 runner 已完成 600/900 帧双跑；这些 runner 已成为迁移中的有效证据。旧约束 soak 仍仅用于迁移盘点；任何 V0 task、hidden task 或 `native_context` 断言都不能作为产品通过证据。能力矩阵完成产品态替换和删除前审计前，不删除 BoneSpring 旧 owner。
+BoneSpring 与 BoneCloth 共用同一个 `DomainV1` backend 和 Bone 产品 collector，只保留 Line 骨链、spring-specific 参数归一化、Sphere-only 外碰和 PoseBone 写回限制。它不是第二套 solver，也不拥有独立 pass 顺序。
 
-## 旧断言迁移清单
+- 一个 Armature 对应一个可观察统一域；同 Armature 多链是域内 partition，跨 Armature 才产生多个 request。
+- 对象整体变换属于 Center；骨根动画参考的突变属于 task-reference pass。
+- 输入由产品 Bone frame packet 提供，输出由统一 Bone writeback transaction 发布。
+- 包装限制必须在 runtime 参数合同中显式归零或固定，不能靠无效 topology 偶然不产生结果。
+- 产品路径不得恢复旧 task owner、native context、hidden task 或普通 aggregate。
 
-| 旧符号 | 当前产品证据 | 状态 |
+## 固定包装合同
+
+| 能力 | BoneSpring 产品合同 | 删除前状态 |
 | --- | --- | --- |
-| `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；Angle target/rest 由请求式 native record 对照同一 StepBasic pose，并由 BoneCloth/BoneSpring 各自双跑锁定 |
-| `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
-| `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py`、`test_blender_mc2_bone_product_distance_tether.py` | wrapper 固定实际 Distance stiffness 为 `0.5`；输入 stiffness 变化不得改变轨迹，Tether record 仍按 Line setup 发布 |
-| `bone_gravity_axes_falloff` | 不适用于 BoneSpring；产品节点合同明确世界重力只由 MeshCloth/BoneCloth 消费 | 不把 BoneSpring 的 spring-specific Line setup 错记为 gravity 缺口 |
-| `bone_angle_restoration_attenuation`、`bone_angle_restoration_falloff` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
-| `bone_rotation_output_controls` | `test_blender_mc2_bone_product_angle_motion.py::test_bone_product_rotation_output_controls` | BoneSpring Line product 已验证 rotation 参数 ABI、fixed/move/leaf 目标集合与位置不变性 |
-| `bone_self_collision` | BoneCloth product constraint runner 锁定共享 whole-domain self 执行路径 | BoneSpring 的 spring-specific self scope、contact cache 和 radius consistency 仍是缺口 |
+| Distance | stiffness 固定为 `0.5`，authoring 输入不得改变有效值或轨迹 | 已有产品证据 |
+| Tether | 使用 Line setup 的共享记录与边界，不产生第二套 spring kernel | 已有产品证据 |
+| Bending | stiffness/method 强制为零；Line topology 不进入 Bending pass | `test_blender_mc2_bone_product_bending.py` 已锁定输入 profile 不产生 Bending table、有效 record 或 solve count，并完成 600 帧双跑 |
+| Self collision | mode 强制为零；不建立 primitive/cache/radius self 合同 | 待补输入隔离与 debug 空状态签字 |
+| Gravity、Motion/Backstop | 按 setup 合同关闭，不列为缺失能力 | 已有参数合同，待统一签字表核对 |
+| Angle Restoration/Limit | 使用共享 kernel 和 BoneSpring 有效参数 | 已有 target/rest、边界与响应证据 |
+| External collision | 只接受 Sphere，并消费 soft collision limit | 已有过滤、响应和确定性证据 |
+| Rotation/writeback | 使用统一 Bone output 与事务 | 已有目标集合、多 request 和失败回滚证据 |
 
-## 目标
+## 删除前剩余工作
 
-BoneSpring 与 BoneCloth 共用同一套 DomainV1 粒子域和产品 collector，只保留 spring-specific authoring、拓扑和参数包装。任何粒子状态或执行顺序差异都必须落在共享合同或明确的 BoneSpring 参数表中。
-
-## 固定边界
-
-- 一个 Armature 对应一个统一 domain；同 Armature 多链是 domain 内 partition，跨 Armature 才是多个 product request。
-- 输入由 `bone_frame_input.py` 生成，输出由统一 Bone writeback transaction 提交；不得恢复旧 task owner、native context 或普通 aggregate。
-- component pose 由 Armature object 提供。对象整体变换交给 Center；骨根 animated reference 的不连续变化交给 task-reference pass。
-- BoneSpring 允许的限制只包括 spring-specific 拓扑/参数/authoring 约束；不能改变 DomainV1 的 shared pass order、self policy、事务提交和调试边界。
-
-## Oracle 归属
-
-| 行为 | 最终断言归属 |
-| --- | --- |
-| spring source、骨骼拓扑、partition 顺序 | BoneSpring static fragment/topology tests |
-| 骨骼姿态方向与 root reference | shared bone orientation kernel、task-reference product runner |
-| spring distance/tether/bending 参数 | shared constraint kernel 与 BoneSpring 参数合同 |
-| Center、Teleport、碰撞、whole-domain self、history | DomainV1 与统一 capability matrix |
-| writeback、回滚、generation/scheduler 生命周期 | product frame/slot owner tests |
-
-旧 BoneSpring 约束 soak 若通过 mixed runner 或 `native_context` 读取内部计数，只能作为迁移清单，不能作为删除后的验收依据。
-
-## 实施顺序
-
-1. 以统一 Bone product collector 覆盖 BoneSpring 单 Armature、多链 partition、root Teleport Reset/Keep、spring 参数更新和写回事务。
-2. 把 BoneSpring 仍复用的测试构造 helper 移到不依赖旧 owner 的公共产品测试模块；把内部 inspect 断言改为公开 owner/debug/readback 合同。
-3. 在 Python 3.13 / Blender 5.2 执行 600 帧双跑，单独验证 spring 参数变化不会破坏 task/Center 顺序和 history。
-4. 完成旧路径可达性审计，移除 `solver.py`、`native_context.py`、`interaction_scope.py`、`shadow_pipeline.py` 与 `MC2TaskSpec` 的 BoneSpring 入口。
-5. 删除旧 BoneSpring hidden task、普通 aggregate 和 V0 binding；紧接着执行 E7-S，删除不再需要的兼容翻译层。
+1. 用公开 product request 同时改变 Bending/self/Motion/gravity 等被禁止输入，证明 compiled parameter、debug record 和轨迹都遵守固定包装合同。
+2. 将旧 BoneSpring runner 中仍有价值的 topology/参数 helper 迁到产品测试公共模块；删除依赖 `native_context` 内部计数的断言。
+3. 确认 capability matrix 不把被强制关闭的字段登记为待实现功能，也不以 BoneCloth self/Bending 证据代替 BoneSpring 限制证据。
+4. 与 Mesh/BoneCloth 共用同一 E7-CPU 删除批次移除旧 owner、hidden task、普通 aggregate 和 V0 ABI；随后执行 E7-S 简化。
 
 ## 删除门槛
 
-- BoneSpring 每一项公开行为都有 shared kernel、DomainV1 或 product collector oracle。
-- BoneSpring runner 不再读取 `slot.data["native_context"]`，不再导入 mixed runner。
-- capability matrix 的 BoneSpring 字段和 invariant 均由统一产品证据覆盖。
-- 删除旧实现后，Python 3.13 / Blender 5.2 全量验收无未解释 CPU 回归；4.5/py311 仅在最终双 ABI 收尾时恢复。
+- 每项公开能力或包装限制都有 shared kernel、DomainV1、product collector 或参数表 oracle。
+- BoneSpring 产品/测试入口不导入 mixed runner、`MC2TaskSpec` 或 `MC2NativeContextV0`。
+- Python 3.13 / Blender 5.2 的长程确定性、事务、debug-off 和限制输入隔离全部通过。
+- 4.5/py311 只在旧面删除和 E7-S 基本完成后恢复做最终双 ABI 收尾。

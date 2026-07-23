@@ -1,7 +1,5 @@
 # OmniNode 物理世界当前实现状态
 
-更新日期：2026-07-24
-
 本文只记录 Physics World 各 domain **当前成立的边界、主要未完成项和全局优先级**。公共结构规则见 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；solver稳定事实由各自蓝本维护；历史过程由Git保存。
 
 MC2专项入口：稳定产品/实现/维护合同见`MC2_BLUEPRINT.md`；当前阶段只看本文MC2 domain行。
@@ -78,7 +76,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 三种setup统一域产品路径可用；E7-A已关闭，E7-CPU分组删除中 | E0-E5-B、P0、P1-B、E4/P2均已闭环；DomainV1拥有partitioned StepBasic、whole-domain self/external、完整混合pass、scheduler/Center/Anchor历史和多目标logical output；Mesh与Bone公开节点只生成setup-neutral显式product request，动态槽位按setup/domain identity拥有状态，多request全部求解后一次发布；同Armature Bone结果合并，失败清除整批owner/result/feedback；Bone删除前全约束、混合输出、外碰、Center/Teleport、故障事务和Angle/Motion数值门禁已双ABI关闭；公开step、节点顶层导入、调试模块硬类型依赖及产品调试快照迁移已经关闭 | 按冻结清单删除三种setup旧Python owner、hidden task、普通aggregate、oracle bridge及70个native V0 binding、五个context翻译单元；删除后执行E7-S兼容层专项简化；最后恢复4.5/py311并完成双ABI收尾；并行沉淀P6合同 |
+| MC2 | 三种 setup 的统一域产品路径可用；处于 E7-CPU 删除前证据收口 | E0-E5-B、P0、P1-B、E4/P2 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；产品/公开节点/debug 到旧模块的可达性为零 | 迁移 capability matrix 的 4 条旧 runner 引用并完成 Bone 包装限制签字；迁出 `specs.py` 中立合同；删除旧 Python owner、普通 aggregate、68 个 V0 binding 和 5 个 context 翻译单元；执行 E7-S、P6 合同收口和最终双 ABI 验收 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -89,12 +87,13 @@ MC2 当前处于 E7-CPU 删除前迁移阶段。统一 MC2ProductRequestV1、Dom
 
 后续只按以下逻辑批次推进：
 
-1. 将 capability matrix 中仍直接指向旧 `test_blender_mc2_constraint_soak.py` 的 4 条证据逐项迁移到 DomainV1、共享 kernel 或 product runner，保留独立数值断言。Mesh Distance/Tether、外碰/摩擦的 data-path 不得计作数值等价。
-2. 完成 BoneCloth/BoneSpring 计划中的跨 source self scope、contact cache/radius、target/rest 等精确断言，再迁移剩余 Mesh target/rest、Distance/Tether、Bending、Angle Limit 和 task collider scope 证据。
-3. 将 topology/setup 仍需要的中立任务合同迁出 mc2/specs.py；随后隔离并删除 V0 oracle、旧 property/debug/constraint runner 依赖。
-4. 删除旧 Python owner、hidden task、普通 aggregate、interaction 资源、70 个 native V0 binding 和 5 个 mc2_context_* 翻译单元；删除后立即执行 E7-S 兼容层简化审查。
-5. 冻结 P6 的 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，也不改变当前 CPU 产品路径来“预留”GPU。
-6. 旧代码删除和 E7-S 复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+1. 将 capability matrix 中仍直接指向旧 `test_blender_mc2_constraint_soak.py` 的 4 条证据迁到共享 kernel、DomainV1 或产品 runner。Mesh data-path 只能证明接线，不能代替 Bending、Angle Limit、Collider scope 和 Friction 的数值响应。
+2. 完成 BoneCloth Bending record 级签字，以及 BoneSpring 对 Bending/self/Motion/gravity 等强制关闭或固定参数的输入隔离签字；不重复已经关闭的 target/rest、Distance/Tether 和跨 source self 工作。
+3. 将 topology/setup 仍需要的中立合同迁出 `mc2/specs.py`，使旧 runner 不再拥有唯一 oracle；随后删除 Python V0 owner、hidden task、普通 aggregate 和兼容 bridge。
+4. 删除 68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元；每个逻辑批次同时更新测试、审计和唯一蓝本，不按单 runner 提交。
+5. 删除完成后立即执行 E7-S，逐项清理迁移期 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
+6. 并行只冻结 P6 的 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+7. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
