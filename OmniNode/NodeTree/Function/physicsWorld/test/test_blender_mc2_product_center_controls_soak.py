@@ -202,6 +202,9 @@ def _run_world_case(
     gravity: float = 0.0,
     read_center_debug: bool = False,
     capture_candidates: bool = False,
+    same_frame_probe: bool = False,
+    teleport_jump: bool = True,
+    zero_substep_frame: int | None = None,
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -219,10 +222,16 @@ def _run_world_case(
             "anchor_shift_x": [],
             "teleport_flags": [],
             "velocity_weight": [],
+            "velocity_max": [],
             "real_velocity_max": [],
+            "teleport_measured_distance": [],
+            "teleport_distance_threshold": [],
+            "teleport_measured_rotation_degrees": [],
             "configured_stabilization": [],
             "configured_blend_weight": [],
             "candidate_positions": [],
+            "animated_positions": [],
+            "update_count": [],
             "depths": [],
             "move_mask": [],
         }
@@ -292,7 +301,7 @@ def _run_world_case(
                 component_rotation_degrees += (
                     component_rotation_speed / _FRAME_RATE
                 )
-            if teleport_mode and frame == 301:
+            if teleport_jump and frame == 301:
                 component_x += 2.0
             for source, initial_x in zip(sources, base_x):
                 source.location.x = initial_x + component_x
@@ -309,6 +318,8 @@ def _run_world_case(
             bone_soak._set_frame(world, frame, generation)
             world.frame_context.raw_dt = 1.0 / _FRAME_RATE
             world.frame_context.dt = 1.0 / _FRAME_RATE
+            if frame == zero_substep_frame:
+                world.frame_context.time_scale = 0.0
             world.collider_snapshot = {"frame": frame, "colliders": []}
             returned, ready, status = nodes.physicsMC2Step(
                 world,
@@ -341,6 +352,16 @@ def _run_world_case(
                     values = observations[setup]
                     values["candidate_positions"].append(
                         np.array(output.world_positions, dtype=np.float32, copy=True)
+                    )
+                    values["animated_positions"].append(
+                        np.array(
+                            slot.data["frame_packet"].animated_base_world_positions,
+                            dtype=np.float32,
+                            copy=True,
+                        )
+                    )
+                    values["update_count"].append(
+                        int(slot.data["scheduled_frame"].schedule.update_count)
                     )
                     if frame == 1:
                         particle_parameters = (
@@ -441,8 +462,35 @@ def _run_world_case(
                                 dtype=np.float32,
                             ).reshape((-1,))[0])
                         )
+                        values["teleport_measured_distance"].append(
+                            float(np.asarray(
+                                debug_state["teleport_measured_distances"],
+                                dtype=np.float32,
+                            ).reshape((-1,))[0])
+                        )
+                        values["teleport_distance_threshold"].append(
+                            float(np.asarray(
+                                debug_state["teleport_distance_thresholds"],
+                                dtype=np.float32,
+                            ).reshape((-1,))[0])
+                        )
+                        values["teleport_measured_rotation_degrees"].append(
+                            float(np.asarray(
+                                debug_state["teleport_measured_rotation_degrees"],
+                                dtype=np.float32,
+                            ).reshape((-1,))[0])
+                        )
                         if teleport_mode:
                             dynamics = owner.read_debug_state()
+                            values["velocity_max"].append(
+                                float(np.max(np.linalg.norm(
+                                    np.asarray(
+                                        dynamics["velocities"],
+                                        dtype=np.float32,
+                                    ).reshape((-1, 3)),
+                                    axis=1,
+                                )))
+                            )
                             values["real_velocity_max"].append(
                                 float(np.max(np.linalg.norm(
                                     np.asarray(
@@ -455,6 +503,52 @@ def _run_world_case(
                 digest.update(setup.encode("ascii"))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
+
+            if same_frame_probe and frame == 301:
+                before = tuple(
+                    (
+                        np.array(owner.read_output().world_positions, copy=True),
+                        int(owner.inspect()["domain"]["kernel"]["center_shift_count"]),
+                        int(owner.inspect()["domain"]["kernel"]["center_step_count"]),
+                        np.array(
+                            owner.read_center_debug_state()["teleport_flags"],
+                            copy=True,
+                        ),
+                    )
+                    for owner in current_owners
+                )
+                world.frame_context.same_frame = True
+                returned, ready, status = nodes.physicsMC2Step(
+                    world,
+                    list(requests),
+                    simulation_frequency=90,
+                    max_simulation_count_per_frame=3,
+                )
+                assert returned is world and ready is True, status
+                for owner, expected in zip(current_owners, before):
+                    positions, shift_count, step_count, flags = expected
+                    np.testing.assert_allclose(
+                        owner.read_output().world_positions,
+                        positions,
+                        rtol=0.0,
+                        atol=3.0e-7,
+                    )
+                    kernel = owner.inspect()["domain"]["kernel"]
+                    assert int(kernel["center_shift_count"]) == shift_count, (
+                        owner.compiled.program.setup_type,
+                        shift_count,
+                        int(kernel["center_shift_count"]),
+                        slot.data["last_sync"].action,
+                    )
+                    assert int(kernel["center_step_count"]) == step_count, (
+                        owner.compiled.program.setup_type,
+                        step_count,
+                        int(kernel["center_step_count"]),
+                        slot.data["last_sync"].action,
+                    )
+                    np.testing.assert_array_equal(
+                        owner.read_center_debug_state()["teleport_flags"], flags
+                    )
 
             assert writeback.writeback_gn_attributes(world) == 1
             bone_results = tuple(
@@ -805,6 +899,8 @@ def center_teleport_controls():
             teleport_rotation=30.0,
             read_center_debug=True,
             capture_candidates=True,
+            same_frame_probe=True,
+            zero_substep_frame=301,
         )
 
     first = {mode: run(mode - 1, mode) for mode in (1, 2)}
@@ -821,7 +917,7 @@ def center_teleport_controls():
                 assert np.all((flags & 2) == 0)
                 assert np.any((flags & 4) != 0), (mode, setup, flags)
                 reset_velocity = np.asarray(
-                    left["real_velocity_max"], dtype=np.float32
+                    left["velocity_max"], dtype=np.float32
                 )[(flags & 4) != 0]
                 assert np.all(reset_velocity <= 1.0e-6), (
                     mode,
@@ -831,6 +927,46 @@ def center_teleport_controls():
             else:
                 assert np.all((flags & 4) == 0)
                 assert np.any((flags & 2) != 0), (mode, setup, flags)
+            measured = np.asarray(
+                left["teleport_measured_distance"], dtype=np.float32
+            )
+            threshold = np.asarray(
+                left["teleport_distance_threshold"], dtype=np.float32
+            )
+            measured_rotation = np.asarray(
+                left["teleport_measured_rotation_degrees"], dtype=np.float32
+            )
+            triggered = (flags & 1) != 0
+            assert np.all(
+                (measured[triggered] >= threshold[triggered] - 1.0e-6)
+                | (measured_rotation[triggered] >= 30.0 - 1.0e-5)
+            ), (mode, setup)
+            reset_index = int(np.flatnonzero((flags & 4) != 0)[0]) if mode == 1 else None
+            if reset_index is not None:
+                frame_index = reset_index + 1
+                assert int(left["update_count"][frame_index]) == 0
+                np.testing.assert_allclose(
+                    left["candidate_positions"][frame_index],
+                    left["animated_positions"][frame_index],
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+            keep_index = int(np.flatnonzero((flags & 2) != 0)[0]) if mode == 2 else None
+            if keep_index is not None:
+                frame_index = keep_index + 1
+                assert int(left["update_count"][frame_index]) == 0
+                expected = np.array(
+                    left["candidate_positions"][frame_index - 1],
+                    dtype=np.float32,
+                    copy=True,
+                )
+                expected[:, 0] += float(left["shift_x"][keep_index])
+                np.testing.assert_allclose(
+                    left["candidate_positions"][frame_index],
+                    expected,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
             assert np.all(np.isfinite(left["candidate_positions"]))
     print(
         "PASS 产品Center Teleport Reset/Keep与确定性："

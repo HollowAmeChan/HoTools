@@ -522,6 +522,10 @@ def publish_mc2_product_frame(
         if frame_state_stage is not None:
             frame_state_stage.validate(world)
         owner.update_frame(frame_packet)
+        if scheduled_frame.schedule.update_count == 0:
+            owner.apply_zero_substep_frame(
+                scheduled_frame.anchor_component_local_positions
+            )
         scheduler_state.commit(scheduled_frame)
         if frame_state_stage is not None:
             frame_state_stage.commit(world)

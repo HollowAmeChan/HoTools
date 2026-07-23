@@ -125,6 +125,7 @@ class _Kernel:
         self.created = []
         self.disposed = []
         self.frames = []
+        self.frame_shifts = []
         self.poses = []
         self.full_steps = []
         self.fail_create = False
@@ -167,6 +168,8 @@ class _Kernel:
         if self.fail_update:
             raise RuntimeError("injected frame update failure")
         self.frames.append((handle, frame))
+    def step_center_frame_shift(self, handle, anchor_component_local_positions):
+        self.frame_shifts.append((handle, anchor_component_local_positions))
     def prepare_step_basic_pose(self, handle, _ratios):
         self.poses.append(handle)
         return {
@@ -544,6 +547,7 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
     assert results[-1].is_final_substep
     assert slot.data["completed_substeps"] == scheduled.schedule.update_count
     assert slot.data["frame_complete"] is True
+    assert kernel.frame_shifts == []
     assert slot.data["scheduler_state"].revision == 1 + len(results)
     assert len(kernel.poses) == len(results) == len(kernel.full_steps)
     assert "_debug_product_step_basic" not in slot.data
@@ -611,6 +615,11 @@ def test_paused_fused_frame_has_no_product_substeps():
         world, slot, scheduled, _empty_collider_frame(12),
     )
     assert slot.data["frame_complete"] is True
+    assert len(kernel.frame_shifts) == 1
+    np.testing.assert_array_equal(
+        kernel.frame_shifts[0][1],
+        scheduled.anchor_component_local_positions,
+    )
     try:
         slot_module.step_mc2_mesh_fused_substep(world, slot)
     except RuntimeError as exc:

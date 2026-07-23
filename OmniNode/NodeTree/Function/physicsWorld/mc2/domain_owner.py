@@ -272,6 +272,13 @@ class MC2FusedCPUOwnerV1:
 
         self._require_domain().step_compiled_domain_pipeline_full(settings)
 
+    def apply_zero_substep_frame(self, anchor_component_local_positions) -> None:
+        """Apply Center/Teleport state for a frame with no physics substep."""
+
+        self._require_domain().step_center_frame_shift(
+            anchor_component_local_positions
+        )
+
     def prepare_step_basic_pose(self) -> dict:
         """Build the partition-aware StepBasic pose through the live owner."""
 

@@ -40,6 +40,23 @@ _BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
 _PRODUCT_SETUP_TYPES = (MC2_SETUP_MESH_CLOTH, *_BONE_SETUP_TYPES)
 
 
+def _same_frame_product_reuse(world, slot) -> bool:
+    """Return whether this explicit repeat call must reuse the completed frame."""
+    if not bool(getattr(getattr(world, "frame_context", None), "same_frame", False)):
+        return False
+    if not bool(slot.data.get("frame_complete", False)):
+        return False
+    scheduled = slot.data.get("scheduled_frame")
+    packet = getattr(scheduled, "frame_packet", None)
+    if packet is None:
+        return False
+    return (
+        int(getattr(packet, "frame", -1))
+        == int(getattr(world.frame_context, "frame", -2))
+        and int(getattr(packet, "generation", -1)) == int(world.generation)
+    )
+
+
 def _product_slot_id(request: MC2ProductRequestV1) -> str:
     return make_mc2_product_slot_id(
         request.setup_type,
@@ -134,6 +151,38 @@ def _step_mc2_mesh_product(
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action
+    if _same_frame_product_reuse(world, slot):
+        frame = slot.data["scheduled_frame"]
+        if publish_results:
+            public_results = publish_mc2_mesh_fused_output_transaction(world, slot)
+        else:
+            batch = build_mc2_mesh_fused_output_batch(world, slot)
+            validate_mc2_mesh_product_output_batch(collection, batch)
+            public_results = make_mc2_mesh_domain_results(
+                batch=batch,
+                slot_id=slot.slot_id,
+                world_generation=world.generation,
+            )
+            slot.data["output_results"] = public_results
+        slot.data["product_enabled"] = True
+        slot.data["collector_request"] = request
+        slot.data["collector_report"] = request.report_text
+        slot.data["created_base_poses"] = created_base_poses
+        _finish_single_timing(
+            timing,
+            world=world,
+            request=request,
+            collection=collection,
+            slot=slot,
+            sync=sync,
+            frame=frame,
+            public_results=public_results,
+            settings=settings,
+        )
+        return world, True, (
+            f"MC2 Mesh product same-frame reuse: partitions {len(collection.draft.partitions)}, "
+            f"owner {sync.action}"
+        )
     if timing is not None:
         timing.checkpoint("统一域同步")
     frame = capture_and_publish_mc2_product_frame(
@@ -216,6 +265,31 @@ def _step_mc2_bone_product(
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action
+    if _same_frame_product_reuse(world, slot):
+        frame = slot.data["scheduled_frame"]
+        if publish_results:
+            public_results = publish_mc2_bone_product_output_transaction(world, slot)
+        else:
+            public_results, _plans = build_mc2_bone_product_output(world, slot)
+            slot.data["output_results"] = public_results
+        slot.data["product_enabled"] = True
+        slot.data["collector_request"] = request
+        slot.data["collector_report"] = request.report_text
+        _finish_single_timing(
+            timing,
+            world=world,
+            request=request,
+            collection=collection,
+            slot=slot,
+            sync=sync,
+            frame=frame,
+            public_results=public_results,
+            settings=settings,
+        )
+        return world, True, (
+            f"MC2 {request.setup_type} product same-frame reuse: "
+            f"partitions {len(collection.draft.partitions)}, owner {sync.action}"
+        )
     if timing is not None:
         timing.checkpoint("统一域同步")
     frame = capture_and_publish_mc2_product_frame(
