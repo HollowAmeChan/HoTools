@@ -84,7 +84,9 @@ def test_bone_constraint_runner_does_not_import_mixed_v0_helpers():
     path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_constraint_soak.py"
     source = path.read_text(encoding="utf-8")
     assert "test_blender_mc2_mixed_output_soak" not in source
-    assert "import mc2_product_test_helpers as helpers" in source
+    assert "_physicsMC2BoneClothTaskV0Oracle" not in source
+    assert '"native_context"' not in source
+    assert "test_blender_mc2_bone_product_constraint_soak" in source
 
 
 def test_setup_local_evidence_cannot_close_another_setup():

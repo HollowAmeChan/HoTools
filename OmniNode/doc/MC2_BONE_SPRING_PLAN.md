@@ -2,7 +2,16 @@
 
 ## 当前状态（2026-07-23）
 
-公共 Blender 5.2 / Python 3.13 产品测试 helper 已从旧 mixed runner 解耦，并固定使用当前 `py313` native 包。旧约束 soak 仍仅用于迁移盘点；任何 V0 task、hidden task 或 `native_context` 断言都不能作为产品通过证据。能力矩阵完成产品态替换和删除前审计前，不删除 BoneSpring 旧 owner。
+公共 Blender 5.2 / Python 3.13 产品测试 helper 已从旧 mixed runner 解耦，并固定使用当前 `py313` native 包。BoneSpring 的约束、Angle/Motion、外碰和摩擦产品 runner 已完成 600/900 帧双跑；这些 runner 已成为迁移中的有效证据。旧约束 soak 仍仅用于迁移盘点；任何 V0 task、hidden task 或 `native_context` 断言都不能作为产品通过证据。能力矩阵完成产品态替换和删除前审计前，不删除 BoneSpring 旧 owner。
+
+## 旧断言迁移清单
+
+| 旧符号 | 当前产品证据 | 状态 |
+| --- | --- | --- |
+| `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
+| `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
+| `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性 |
+| `bone_gravity_axes_falloff`、`bone_angle_restoration_attenuation`、`bone_angle_restoration_falloff`、`bone_self_collision` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
 
 ## 目标
 

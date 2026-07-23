@@ -2,7 +2,16 @@
 
 ## 当前状态（2026-07-23）
 
-公共 Blender 5.2 / Python 3.13 产品测试 helper 已从旧 mixed runner 解耦，并固定使用当前 `py313` native 包。旧约束 soak 的主体仍然是迁移清单：它调用的 V0 task 已被产品入口拒绝，因此本阶段不把它当作通过证据，也不删除旧 owner。下一步必须把能力矩阵中仍指向该 soak 的每一项改为产品 request、DomainV1 或共享 kernel 证据，再执行删除前审计。
+公共 Blender 5.2 / Python 3.13 产品测试 helper 已从旧 mixed runner 解耦，并固定使用当前 `py313` native 包。BoneCloth/BoneSpring 的约束、Angle/Motion、外碰和摩擦产品 runner 已完成 600/900 帧双跑；这些 runner 已成为迁移中的有效证据。旧约束 soak 的主体仍然是迁移清单：它调用的 V0 task 已被产品入口拒绝，因此本阶段不把它当作通过证据，也不删除旧 owner。下一步必须把能力矩阵中仍指向该 soak 的每一项改为产品 request、DomainV1 或共享 kernel 证据，再执行删除前审计。
+
+## 旧断言迁移清单
+
+| 旧符号 | 当前产品证据 | 状态 |
+| --- | --- | --- |
+| `bone_angle_constraints`、`bone_angle_limit`、`bone_motion_constraints` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
+| `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
+| `bone_distance_tether`、`bone_triangle_bending` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性；边界响应断言仍需补齐 |
+| `bone_gravity_axes_falloff`、`bone_rotation_output_controls`、`bone_self_collision` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
 
 ## 目标
 
