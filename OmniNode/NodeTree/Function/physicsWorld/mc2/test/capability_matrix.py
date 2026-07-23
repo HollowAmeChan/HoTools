@@ -124,7 +124,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": (),
             "invariants": ("finite", "deterministic", "zero_force_rest"),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": (),
@@ -378,7 +378,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "parameter_hot_update_in_place",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_distance_tether",
+            "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_constraints_900_frame_deterministic_soak",
             "frames": 900,
             "setups": ("bone_cloth",),
             "fields": (
@@ -414,7 +414,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "bending_response_changes", "solve_branch_exact",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_triangle_bending",
+            "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_constraints_900_frame_deterministic_soak",
             "frames": 900,
             "setups": ("bone_cloth",),
             "fields": ("bending_stiffness", "bending_method"),
@@ -462,7 +462,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": ("angle_restoration_gravity_falloff",),
             "invariants": ("finite", "gravity_falloff_response_ordered"),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_restoration_attenuation",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 600,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("angle_restoration_velocity_attenuation",),
@@ -471,7 +471,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_constraints",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
@@ -487,7 +487,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": (),
             "invariants": ("finite", "deterministic", "center_input_reachable"),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_restoration_falloff",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 600,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("angle_restoration_gravity_falloff",),
@@ -515,7 +515,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "branch_transition_stable", "parameter_hot_update_in_place",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_angle_limit",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
@@ -551,7 +551,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "parameter_hot_update_in_place",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_motion_constraints",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth",),
             "fields": (
@@ -603,7 +603,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": ("finite", "friction_response_ordered"),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_external_collision",
+            "runner": "test_blender_mc2_bone_product_collision_soak.py::test_bone_product_collision_filter_response_deterministic",
             "frames": 900,
             "setups": ("bone_cloth",),
             "fields": ("collision_mode", "radius"),
@@ -614,7 +614,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_friction_response",
+            "runner": "test_blender_mc2_bone_product_collision_soak.py::test_bone_product_friction_ordered_response",
             "frames": 600,
             "setups": ("bone_cloth",),
             "fields": (
@@ -625,7 +625,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "connected_disconnected_writeback",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_external_collision",
+            "runner": "test_blender_mc2_bone_product_collision_soak.py::test_bone_product_collision_filter_response_deterministic",
             "frames": 900,
             "setups": ("bone_spring",),
             "fields": ("collision_mode", "radius", "collision_limit_distance"),

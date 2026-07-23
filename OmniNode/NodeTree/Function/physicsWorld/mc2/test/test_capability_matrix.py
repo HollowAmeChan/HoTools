@@ -89,6 +89,19 @@ def test_bone_constraint_runner_does_not_import_mixed_v0_helpers():
     assert "test_blender_mc2_bone_product_constraint_soak" in source
 
 
+def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
+    source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
+        encoding="utf-8"
+    )
+    legacy = [line.strip() for line in source.splitlines()
+              if "test_blender_mc2_bone_constraint_soak.py::" in line]
+    assert legacy == [
+        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_gravity_axes_falloff",',
+        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_rotation_output_controls",',
+        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",',
+    ]
+
+
 def test_setup_local_evidence_cannot_close_another_setup():
     by_id = {item["id"]: item for item in MC2_LONG_RUN_CAPABILITY_MATRIX}
     angle_restoration = capability_gaps(by_id["angle_restoration"])
