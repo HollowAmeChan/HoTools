@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import math
 import os
 import sys
@@ -24,6 +25,9 @@ parameters = mixed_soak.parameters
 product_slot = mixed_soak.product_slot
 world_types = mixed_soak.world_types
 writeback = mixed_soak.writeback
+debug_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug"
+)
 
 print(f"MC2_PRODUCT_CENTER_SOURCE {__file__}")
 print(f"MC2_PRODUCT_CENTER_NODES {nodes.__file__}")
@@ -205,6 +209,8 @@ def _run_world_case(
     same_frame_probe: bool = False,
     teleport_jump: bool = True,
     zero_substep_frame: int | None = None,
+    source_scales=None,
+    debug_layer_probe: bool = False,
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -256,6 +262,11 @@ def _run_world_case(
             x_offset=0.3,
         )
         sources = (mesh, cloth, spring)
+        if source_scales is not None:
+            assert len(source_scales) == len(sources)
+            for source, scale in zip(sources, source_scales):
+                source.scale = tuple(float(value) for value in scale)
+            bpy.context.view_layer.update()
         base_x = tuple(float(source.location.x) for source in sources)
         if anchor_enabled:
             driver = bpy.data.objects.new(
@@ -342,7 +353,23 @@ def _run_world_case(
             for setup, slot, owner in zip(_SETUPS, slots, current_owners):
                 assert "native_context" not in slot.data
                 assert "spec" not in slot.data
-                assert "_debug_draw_snapshot" not in slot.data
+                if debug_layer_probe and frame in (301, 401):
+                    snapshot = slot.data["_debug_draw_snapshot"]
+                    assert snapshot["schema"] == "mc2_product_debug_snapshot_v1"
+                    assert snapshot["frame"] == frame
+                    assert snapshot["center"] == {}
+                    assert snapshot["output"] == {}
+                    assert snapshot["teleport"]
+                    filters = snapshot["filters"]
+                    if frame == 301:
+                        assert filters["show_teleport_threshold"] is True
+                        assert filters.get("show_teleport_status", False) is False
+                    else:
+                        assert filters["show_teleport_status"] is True
+                        assert filters.get("show_teleport_threshold", False) is False
+                    slot.data.pop("_debug_draw_snapshot", None)
+                else:
+                    assert "_debug_draw_snapshot" not in slot.data
                 output = owner.read_output()
                 assert output.frame == frame
                 assert output.generation == generation
@@ -560,6 +587,16 @@ def _run_world_case(
             assert expected_bones > 0
             assert writeback.writeback_bone_transforms(world) == expected_bones
             bpy.context.view_layer.update()
+            if debug_layer_probe and frame in (300, 400):
+                filters = (
+                    {"show_teleport_threshold": True}
+                    if frame == 300
+                    else {"show_teleport_status": True}
+                )
+                assert debug_module.request_mc2_debug_capture(
+                    world,
+                    filters=filters,
+                ) == len(_SETUPS)
 
         frozen = {
             setup: {
@@ -901,6 +938,12 @@ def center_teleport_controls():
             capture_candidates=True,
             same_frame_probe=True,
             zero_substep_frame=301,
+            source_scales=(
+                (0.75, 0.75, 0.75),
+                (0.5, 0.5, 0.5),
+                (1.5, 1.5, 1.5),
+            ),
+            debug_layer_probe=True,
         )
 
     first = {mode: run(mode - 1, mode) for mode in (1, 2)}

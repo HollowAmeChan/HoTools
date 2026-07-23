@@ -224,8 +224,6 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "particle_reset_step_history_exact",
                 "particle_subset_scope_exact",
                 "bone_root_teleport_detected",
-                "teleport_debug_layers_isolated",
-                "teleport_nonunit_positive_scale", "real_writeback_each_frame",
                 ),
             },
             {
@@ -347,6 +345,9 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "object_teleport_zero_substep_immediate",
                     "object_reset_pose_exact",
                     "particle_keep_offset_exact",
+                    "teleport_debug_layers_isolated",
+                    "teleport_nonunit_positive_scale",
+                    "real_writeback_each_frame",
                     "product_center_teleport_flags",
                     "product_center_reset_velocity_cleared",
                     "product_center_no_context_rebuild",
