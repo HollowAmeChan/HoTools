@@ -187,6 +187,6 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 
 本轮已先处理 Bone frame 入口：旧 N3 顶层脚本改为调用公开 Bone product soak 的兼容门面，并增加静态门禁禁止回引 V0 owner。缩放、负缩放继承和剪切 pose 等原 N3 的独立输入断言没有被伪造为“已迁移”，仍列入下一批 product frame runner 的明确任务。
 
-Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 600 帧，显式检查 `rotational_interpolation`、`root_rotation` 的编译参数、fixed/move/leaf 目标集合、位置不变性和旋转输出差异；5.2 双 setup 摘要分别为 `527f1c71e3bcc37dab771bc7bd2a3ef0d52b2956aff1f1cdff3e6a999ecd53b8` 与 `0a87b35a5fddc7b12318b200d21ec328810e66877dda1ad2566884126f25355b`。因此 Bone 删除前 legacy gap 已缩减为 gravity axes/falloff，self collision 的 scope/cache/radius gap 仍单独保留。
+Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 600 帧，显式检查 `rotational_interpolation`、`root_rotation` 的编译参数、fixed/move/leaf 目标集合、位置不变性和旋转输出差异；5.2 双 setup 摘要分别为 `527f1c71e3bcc37dab771bc7bd2a3ef0d52b2956aff1f1cdff3e6a999ecd53b8` 与 `0a87b35a5fddc7b12318b200d21ec328810e66877dda1ad2566884126f25355b`。Bone gravity axes/falloff 也已由 BoneCloth product runner 锁定；BoneSpring 按节点合同不消费世界重力。self collision 的 scope/cache/radius gap 仍单独保留。
 
 Bone frame transform 的独立断言也已迁移到 product partition：验证 world pose、只读 frame packet、负 scale、零 scale、父级负 scale 和 shear-free 拒绝；旧 N3 facade 现在只转发 `test_bone_product_frame_transform_contract`，不再以约束 soak 冒充 frame 输入等价。
