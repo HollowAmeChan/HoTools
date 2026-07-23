@@ -1203,4 +1203,15 @@ E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/
 
 E7-CPU 的 Teleport 迁移现已完成 task-reference 产品证据：统一执行器在 Center 前调用 DomainV1 task pass，Reset/Keep、速度参考、whole-domain self 失效和零 substep 都由 native owner 持有。三 setup 单 source 以及 MeshCloth 两 source partition scope 已在 Blender 5.2 / Python 3.13 双跑 600 帧通过；`particle_subset_scope_exact` 只对 MeshCloth 多 source partition 宣称，BoneCloth/BoneSpring 仍遵守一个 Armature 一个统一域的包装限制。
 
-在删除旧非统一 V0 owner 前，新增的强制顺序是：先补齐 BoneCloth/BoneSpring plan 与逐项 oracle 归属，再执行 E7-A 可达性审计，最后删除旧 hidden task、普通 aggregate、V0 binding 和兼容桥并进入 E7-S 简化。4.5 / Python 3.11 在删除收尾前冻结；P4 CPU 并发不实施；P6 只沉淀数据、pass、buffer 和 IO 合同；E6 GPU 保持未来独立里程碑。
+在删除旧非统一 V0 owner 前，新增的强制顺序是：先补齐 BoneCloth/BoneSpring plan 与逐项 oracle 归属（见 `MC2_BONE_CLOTH_PLAN.md`、`MC2_BONE_SPRING_PLAN.md`），再迁移旧 runner helper 并执行 E7-A 可达性审计，最后删除旧 hidden task、普通 aggregate、V0 binding 和兼容桥并进入 E7-S 简化。4.5 / Python 3.11 在删除收尾前冻结；P4 CPU 并发不实施；P6 只沉淀数据、pass、buffer 和 IO 合同；E6 GPU 保持未来独立里程碑。
+
+### BoneCloth/BoneSpring plan 修订门禁
+
+这两种 setup 不是第二套 solver，而是统一粒子域的薄包装。删除旧实现前按以下顺序逐项关闭：
+
+1. **source 与 topology**：BoneCloth 固定中控骨链、Line/Seq/SeqLoop、triangle 横向连接和 connected/disconnected 写回；BoneSpring 固定根骨链、Line 连接和 Sphere-only 外碰限制。每个 Armature 是一个可观察统一域，跨 Armature 才产生多个 request。
+2. **frame 与历史**：产品 owner 直接提供动画 base pose、组件线性变换、Center/Anchor/Teleport、Reset/Keep、scheduler 和零 substep 语义；旧 Bone frame/static adapter 只能作为迁移 oracle，不能被产品 collector 调用。
+3. **参数与 pass**：逐字段把 gravity、damping、depth、Distance/Tether、Angle、Motion/Backstop、collision group/mask、self 和 external 的有效值、固定值、禁用值登记到 `MC2ProductRequestV1` 的 setup contract；每项都必须有 DomainV1/native 或 product runner 的数值断言。
+4. **结果与写回**：验证 logical particle 到 stable bone name 的映射、connected 旋转专用写回、free 粒子位置/旋转写回、单 request 多 target 原子发布，以及任一 target 失败时整批回滚。不得从最终姿态反推约束 correction。
+5. **多 request 与失败**：同一 Physics World 同时运行 BoneCloth/BoneSpring、同一 Armature 多 request、跨 Armature 多 request，验证 slot 复用、generation、参数热更新、结果事务和 deterministic 900 帧 soak；失败必须不写入 pose/output/receipt。
+6. **删除前签字**：每个旧 V0 oracle 的断言标记最终归属（DomainV1、共享 kernel、product collector、Bone writeback 或保留的数值 fixture）。未标记的断言不得随旧测试直接删除；完成后再执行 import/include/symbol/reachability 审计，才允许 E7-CPU 删除旧 owner 和 binding。

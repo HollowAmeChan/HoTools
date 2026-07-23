@@ -923,6 +923,6 @@ Teleport 的正 uniform scale 和调试层隔离现已由产品 runner 直接覆
 
 产品验收分为两条证据：三种 setup 的单 source BoneCloth/BoneSpring/三 setup MeshCloth Reset/Keep 600 帧双跑；以及 MeshCloth 两个 source 合成一个 `partition_count=2` 的 product domain，在零 substep 帧只移动第 0 分区的 BasePose proxy，逐项证明 flags、reference、位置、state/real velocity、velocity-reference 和第 1 分区隔离。Mesh source 必须通过 BasePose proxy 产生帧姿态；直接修改 source mesh 会触发静态域替换，不属于 Teleport 输入。
 
-BoneCloth/BoneSpring 的产品包装合同仍是“一个 Armature 一个统一域”，同 Armature 的多链输入由包装层收敛，跨 Armature 才产生可观察的多个 request；不得把这个限制误标为 Mesh 的多 source partition 能力。后续 E7-CPU 删除前仍需完成 BoneCloth/BoneSpring plan 的逐项 oracle 归属，再进行旧 owner、hidden task、普通 aggregate 和 V0 binding 的删除审计。
+BoneCloth/BoneSpring 的产品包装合同仍是“一个 Armature 一个统一域”，同 Armature 的多链输入由包装层收敛，跨 Armature 才产生可观察的多个 request；不得把这个限制误标为 Mesh 的多 source partition 能力。删除前的逐项 oracle、包装限制和验收门槛已分别记录在 `MC2_BONE_CLOTH_PLAN.md` 与 `MC2_BONE_SPRING_PLAN.md`；下一步按 plan 迁移旧 runner helper，再进行旧 owner、hidden task、普通 aggregate 和 V0 binding 的删除审计。
 
 验证只使用 Blender 5.2 的 `--factory-startup`，runner 会清理默认备份模块并打印当前源码与 `_Lib/py313` native 路径。Blender 4.5 / Python 3.11 从本轮起冻结，直到旧代码删除收尾；P4 CPU 并发不实施，E6 GPU 仍是未来独立里程碑。
