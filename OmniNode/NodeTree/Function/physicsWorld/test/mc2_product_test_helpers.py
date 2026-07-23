@@ -14,7 +14,9 @@ HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\script
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
-PYTHON_ABI = "py313" if sys.version_info >= (3, 13) else "py311"
+if sys.version_info < (3, 13):
+    raise RuntimeError("MC2 产品验收只允许 Python 3.13 / Blender 5.2")
+PYTHON_ABI = "py313"
 NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 
 for module_name in tuple(sys.modules):
