@@ -911,6 +911,34 @@ E7-CPU 的删除对象至少包括：
 - 已被共享 kernel 或 DomainV1 接管的重复 Center、integration、constraint、collision、debug readback 实现；
 - 迁移期 `data_path_only`、slice 开关、shadow solve adapter 和双路径结果翻译层。
 
+#### E7-A 当前审计结论与删除清单（2026-07-23）
+
+本节是 E7-CPU 的唯一删除资格清单，以当前工作树 `4c605ad` 为基线。`38bf16b` 之后已经完成产品 collector 对旧 task spec 的生产解耦，因此不得回退该提交；下列“待关闭”项目全部关闭后才允许开始删除提交。
+
+| 所有权面 | 当前事实 | E7-CPU 动作 | 状态 |
+|---|---|---|---|
+| 产品 Python import 图 | `product_solver` 导入时不会加载 `specs`、`solver`、`native_context`、`interaction_scope`、`shadow_pipeline`；Mesh/Bone 公开任务节点只生成显式 `MC2ProductRequestV1`。 | 保留架构测试，并把禁止项扩展到字符串引用和公开导出。 | 已关闭 |
+| 公开 step 分派 | `physicsMC2Step` 对 product request 走 `step_mc2_products`，但无 product request 时仍延迟导入旧 `step_mc2`；因此入口仍存在可调用 V0 fallback。 | 删除旧分支并只接受显式 product request；空输入保持产品合同定义的空事务，不调用旧 solver。 | 待关闭 |
+| 旧 Mesh collector bridge | `collect_mc2_mesh_product_domain` 仍把 `MC2TaskSpec` 转成 resolved partition，仅被 benchmark、domain shadow 和 collector 单测调用，生产 solver 不调用。 | 先把三处测试改为显式 product request/resolved plan，再删除 bridge。 | 待关闭 |
+| Bone 包装与反馈 | 公开 BoneCloth/BoneSpring 已按 Armature 生成显式 request/partition，产品 frame adapter 拥有动画反馈屏障、Anchor、Center/Teleport 与动态产品槽。旧 task frame/static adapter 只服务 oracle。 | 将仍有价值的反馈与约束断言迁到产品 fixture，然后删除 `_physicsMC2Bone*TaskV0Oracle`、task 型 frame/static 入口和旧反馈分支。 | 待关闭 |
+| Python V0 owner | `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py` 仍完整存在；`debug.py`/`debug_draw.py` 仍导入旧 interaction 类型。 | 按“测试迁移 -> 生产入口切断 -> owner/interaction/debug/dispose 删除”分提交移除，不能留下产品 fallback。 | 待关闭 |
+| native DomainV1 | `mc2_domain_cpu.*` 不直接包含旧 context/interaction，完整 pass 使用 `mc2_kernels.*` 与独立 DomainV1 state。 | 保留 DomainV1、共享 kernel、静态构建和后端中立数据结构。 | 已关闭 |
+| native whole-domain self | `mc2_whole_domain_self.cpp` 的 opaque engine 内部仍实例化 `Mc2ContextV0`，并调用 `mc2_context_core.cpp` 中的 grid/candidate/contact/solve 函数；因此旧 core 目前是产品的传递依赖。 | 先把 self state 与算法迁到后端中立 owner，让 DomainV1 不再包含或链接 `mc2_context_internal.hpp`；数值与计数必须保持。 | 待关闭 |
+| native frame orientation | 产品 Mesh/Bone frame 使用无句柄 `mc2_*_frame_orientations_v1`，但实现仍位于 `mc2_context_core.cpp`/`mc2_context_frame_step.cpp`。 | 抽到独立 frame-orientation 翻译单元；旧 raw context 仅在删除前调用同一核心。 | 待关闭 |
+| native fingerprint | 产品 topology 直接调用 `mc2_mesh_static_fingerprint_v0` 与 `mc2_bone_static_fingerprint_v0`。算法应保留，但 `v0` 符号会错误表达所有权。 | 增加并切换中立/V1 符号，迁移双 ABI 测试后删除 V0 alias。 | 待关闭 |
+| native V0 ABI | `mc2_bindings.cpp` 仍导出 context/interaction create、static、dynamic、step、read/debug、dispose 全组 binding；五个 `mc2_context_*` 翻译单元仍拥有旧生命周期。 | self/orientation/fingerprint 解耦后，整组删除旧声明、binding、翻译单元、capsule/type 和只服务它们的 helper。 | 待关闭 |
+| 长程产品证据 | Bone product 测试覆盖公开 request、多 Armature、多 request 事务和基本 step；但 `test_blender_mc2_bone_constraint_soak.py` 与 `test_blender_mc2_mixed_output_soak.py` 的主要场景仍通过 `V0Oracle + physicsMC2Step`，不能作为产品 DomainV1 全约束/混合输出证据。 | 同 fixture 改为公开产品 request，保留约束阶段、反馈、写回、确定性与 900 帧断言；迁移后先双跑，再删除 oracle 调用。 | 待关闭 |
+| Mesh shadow/性能证据 | domain shadow 与 fused benchmark 仍通过旧 task bridge 构造 collection。 | 改为公开 request/plan，并继续记录同输入 P0/P2；不得因去桥接而改变工作量。 | 待关闭 |
+
+精确文件分组如下：
+
+1. **先迁出并保留**：`mc2_kernels.*`、`mc2_domain_cpu.*`、`mc2_static_build.*`；把 frame orientation、static fingerprint、whole-domain self state/算法迁到不包含 `mc2_context_internal.hpp` 的中立翻译单元。迁移提交只改所有权与调用位置，不改数值公式或 pass 顺序。
+2. **测试迁移后删除的 Python 路径**：`solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py`，以及 `nodes.py`、setup static/frame adapter、`debug.py`、`debug_draw.py` 中只服务 `MC2TaskSpec`/V0 interaction 的分支。共享的 source capture、partition topology、产品 frame/output/debug 合同保留在真实职责模块中。
+3. **解耦后删除的 native 路径**：`mc2_context_interaction.cpp`、`mc2_context_readback.cpp`、`mc2_context_static.cpp`、旧 context frame/core API、`mc2_context_internal.hpp`、`mc2_context_helpers.hpp` 中只服务旧 capsule/owner 的部分，以及 `mc2_api.hpp`/`mc2_bindings.cpp` 的全部 V0 context/interaction 导出。
+4. **先迁移再删除的测试入口**：`collect_mc2_mesh_product_domain` 三个调用方、所有 `_physicsMC2*V0Oracle` 调用、直接构造 `MC2NativeContextV0` 的 E3 tolerance，以及只验证已删除 binding 的 native case。数值断言分别落到 DomainV1、共享 kernel、产品事务和公开节点测试，不能简单删掉。
+
+删除提交固定拆分为：A. 中立 native 能力迁出；B. 产品/soak 测试去 oracle；C. Python 生产入口切断与旧 owner 删除；D. native V0 ABI/TU 删除；E. import/include/公开符号架构门禁与双 ABI/Blender/P0/P2 全复验。任一组发现产品可达依赖时立即停在该组修正，不把跨组删除压成一次大提交。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |
