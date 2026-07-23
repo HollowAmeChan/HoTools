@@ -56,9 +56,6 @@ writeback = importlib.import_module(
 writeback_commands = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback_commands"
 )
-specs = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
-)
 topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
 )
@@ -107,11 +104,30 @@ def _make_source():
 
 
 def _task(source):
-    return specs.make_mc2_task_spec("mesh_cloth", (source,))
+    entry = partition_specs.make_mc2_partition_entry(
+        source,
+        setup_type="mesh_cloth",
+        origin="explicit",
+        producer="test_blender_mc2_source_observation",
+    )
+    plan = partition_specs.collect_mc2_partition_entries(
+        setup_type="mesh_cloth",
+        explicit_entries=(entry,),
+    )
+    partition = plan.active_partitions[0]
+    return types.SimpleNamespace(
+        partition=partition,
+        slot_id="mc2.domain.product.v1:mesh_cloth:" + plan.report.domain_signature,
+    )
 
 
 def _observe(world, task, **kwargs):
-    return observation_adapter.prepare_observed_static_inputs(world, task, **kwargs)
+    return observation_adapter.prepare_observed_static_inputs_for_partition(
+        world,
+        task.partition,
+        receipt_slot_id=task.slot_id,
+        **kwargs,
+    )
 
 
 def _fingerprint_tuple(value):
@@ -119,7 +135,7 @@ def _fingerprint_tuple(value):
 
 
 def _assert_matches_full_scan(task, observed) -> None:
-    scanned, _snapshots = topology.prepare_static_inputs_for_task(task)
+    scanned, _snapshots = topology.prepare_static_inputs_for_partition(task.partition)
     assert observed.fingerprint == scanned
 
 
@@ -171,7 +187,7 @@ def main() -> None:
         writeback_commands.publish_gn_offset_writeback(
             world,
             solver="mc2",
-            slot_id=task.task_id,
+            slot_id=task.slot_id,
             object_ptr=int(source.as_pointer()),
             object_data_ptr=int(source.data.as_pointer()),
             frame=world.frame_context.frame,
@@ -188,7 +204,7 @@ def main() -> None:
         writeback_commands.publish_gn_offset_writeback(
             world,
             solver="mc2",
-            slot_id=task.task_id,
+            slot_id=task.slot_id,
             object_ptr=int(source.as_pointer()),
             object_data_ptr=int(source.data.as_pointer()),
             frame=world.frame_context.frame,
