@@ -441,6 +441,8 @@ E7-CPU 调试观测补充（2026-07-23）：Angle/Motion/Distance/Tether/Bending
 
 E7-CPU 外碰观测补充（2026-07-23）：External Collision 已复用同一请求驱动会话，debug-off 不分配 contact、radius 或摩擦历史缓冲。开启时的额外成本只与真实 Point/Edge contact 数和粒子数线性相关；生产 pass 顺序、位置提交和摩擦状态仍由原 native kernel 唯一拥有。逐角色 correction 经过与 production 完全相同的 collider 平均、edge blend 与共享粒子计数归一化，native 求和门禁已关闭。产品侧只冻结已存在的 whole-domain collider POD 与 mode/mask/radius/friction SoA，不引入 Python 碰撞公式。cp313/Blender 5.2 验收通过且 4.5/py311 继续冻结。下一组 whole-domain self 仍须保持按需分配；P6 只提取可直接映射的 primitive/contact/filter/history 数据合同，不得把这些 CPU 调试数组变成 E6 常驻上传路径。
 
+E7-CPU 统一域自碰观测补充（2026-07-23）：whole-domain self 的 primitive/grid/candidate/contact/correction 快照只在 `WholeDomainSelf=64` 请求下复制，debug-off 不保留快照、不分配 correction，也不执行穿插检测。接触 correction 直接复用生产四轮 fixed-point 汇总后的逐贡献归一结果；穿插记录保持隔帧 edge phase，只作诊断，不修改位置。由此 P6 可直接复用的数据合同已经明确为：连续粒子/primitive SoA、稳定 owner/group/mask、grid run、candidate/contact 对、接触参数与法线、双侧 correction、五粒子穿插记录，以及 contact/intersection 历史键；这些是按需输出合同，不是 E6 的常驻 CPU staging 或上传缓存。py313 原生、产品与 Blender 5.2 门禁全部关闭，未引入普通 CPU 路径的无解释工作。下一阶段删除旧 owner/native 面；4.5/py311 在删除收尾前继续冻结，P4 CPU 并发仍不实施。
+
 首版通用 whole-domain self 在 1764 粒子夹具上产生了候选爆炸和不稳定输出，不能作为 P2 实现。Domain现持有后端中立opaque whole-domain self engine，由桥接实现复用成熟V0 primitive/grid/candidate/contact/四轮求解流程；Domain owner本身不依赖旧context internal。该改动把候选量恢复到手工join同一数量级；随后按P5证据把每子步重新分配的scaled thickness与partition scale改为Domain持久scratch，数值结果逐位不变。
 
 性能证据把`owner.step`求解层、完整产品子步事务和帧capture分开报告，不拿包含StepBasic/settings/调度提交的产品包装耗时直接对比V0原生入口。1764粒子、4 source、35帧、5帧warmup夹具连续两次得到D/B p50=`0.79584/0.78670`、D/C=`0.77711/0.74717`；primitive/candidate/contact与manual join完全相等。reset轨迹位级一致，连续轨迹peak max-abs=`3.9208e-4`、RMS=`1.6597e-5`，通过`5e-4/5e-5`累计self合同。E4/P2因此关闭；该容差不适用于非self oracle。下一性能工作只允许服务E5产品事务或由新阶段证据驱动，禁止为了小样本继续改self算法或引入P4并发。

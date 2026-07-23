@@ -8,6 +8,7 @@
 
 namespace hotools {
 class Mc2WholeDomainSelfEngine;
+struct Mc2WholeDomainSelfDebugSnapshot;
 struct Mc2ExternalCollisionDebugRecord;
 }
 
@@ -20,6 +21,7 @@ enum ConstraintDebugMaskV1 : std::uint32_t {
     kConstraintDebugTether = 8u,
     kConstraintDebugBending = 16u,
     kConstraintDebugExternalCollision = 32u,
+    kConstraintDebugWholeDomainSelf = 64u,
 };
 
 struct ProgramViewV1 {
@@ -537,6 +539,7 @@ public:
     const std::vector<float>& compiled_external_radii() const noexcept { return compiled_external_radii_; }
     const std::vector<float>& compiled_external_friction() const noexcept { return compiled_external_friction_; }
     const std::vector<std::int32_t>& compiled_external_edges() const noexcept { return compiled_external_edges_; }
+    const hotools::Mc2WholeDomainSelfDebugSnapshot& whole_domain_self_debug_snapshot() const;
 
 private:
     void ensure_live() const;

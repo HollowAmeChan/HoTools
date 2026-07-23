@@ -112,6 +112,10 @@ MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_collision",
     "show_collision_contacts",
     "show_radii",
+    "show_self_primitives",
+    "show_self_grid",
+    "show_self_candidates",
+    "show_self_contacts",
 )
 
 
@@ -958,6 +962,10 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             "show_collision",
             "show_collision_contacts",
             "show_radii",
+            "show_self_primitives",
+            "show_self_grid",
+            "show_self_candidates",
+            "show_self_contacts",
         ))
         if needs_constraint_capture and (
             not isinstance(constraint_capture, dict)
@@ -1116,6 +1124,57 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                     )
                 else:
                     slot.data.pop("_debug_external_contact_history", None)
+            self_collision = None
+            self_results = constraint_native.get("whole_domain_self_results")
+            if any(filters.get(name, False) for name in (
+                "show_self_primitives",
+                "show_self_grid",
+                "show_self_candidates",
+                "show_self_contacts",
+            )):
+                if not isinstance(self_results, dict):
+                    raise RuntimeError(
+                        "产品 whole-domain self 调试缺少原生生产记录"
+                    )
+                self_collision = self_results
+                native["native"] = {
+                    "self_point_primitive_count": int(
+                        self_results["point_primitive_count"]
+                    ),
+                    "self_edge_primitive_count": int(
+                        self_results["edge_primitive_count"]
+                    ),
+                    "self_triangle_primitive_count": int(
+                        self_results["triangle_primitive_count"]
+                    ),
+                    "self_point_grid_count": int(
+                        self_results["point_grid_count"]
+                    ),
+                    "self_edge_grid_count": int(
+                        self_results["edge_grid_count"]
+                    ),
+                    "self_triangle_grid_count": int(
+                        self_results["triangle_grid_count"]
+                    ),
+                    "self_max_primitive_size": float(
+                        self_results["max_primitive_size"]
+                    ),
+                    "self_grid_size": float(self_results["grid_size"]),
+                }
+                if filters.get("show_self_contacts", False):
+                    history = slot.data.setdefault(
+                        "_debug_self_temporal_history", {}
+                    )
+                    _annotate_self_temporal(
+                        self_collision,
+                        history,
+                        positions=positions,
+                        frame=frame,
+                        generation=generation,
+                        scope=(str(slot.slot_id), *tuple(program.partition_ids)),
+                    )
+                else:
+                    slot.data.pop("_debug_self_temporal_history", None)
             parameters = (
                 _product_gravity_payload(compiled, frame_packet, center_raw)
                 if filters.get("show_gravity", False)
@@ -1153,7 +1212,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                     else {}
                 ),
                 "collision": collision,
-                "self_collision": None,
+                "self_collision": self_collision,
                 "output": output_payload,
             }
             slot.data["_debug_draw_snapshot"] = snapshot

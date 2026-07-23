@@ -1078,12 +1078,19 @@ void DomainV1::begin_constraint_debug(std::uint32_t mask) {
     constexpr std::uint32_t supported =
         kConstraintDebugAngle | kConstraintDebugMotion |
         kConstraintDebugDistance | kConstraintDebugTether |
-        kConstraintDebugBending | kConstraintDebugExternalCollision;
+        kConstraintDebugBending | kConstraintDebugExternalCollision |
+        kConstraintDebugWholeDomainSelf;
     if (mask == 0u || (mask & ~supported) != 0u) {
         throw std::invalid_argument("MC2 CPU constraint debug mask is invalid");
     }
     if ((mask & kConstraintDebugAngle) != 0u && !baseline_ready_) {
         throw std::logic_error("MC2 CPU Angle debug requires baseline configuration");
+    }
+    if ((mask & kConstraintDebugWholeDomainSelf) != 0u &&
+        !whole_domain_self_ready_) {
+        throw std::logic_error(
+            "MC2 CPU whole-domain self debug requires self configuration"
+        );
     }
     clear_constraint_debug();
     if ((mask & kConstraintDebugMotion) != 0u) {
@@ -1144,6 +1151,9 @@ void DomainV1::begin_constraint_debug(std::uint32_t mask) {
         external_debug_friction_after_.assign(particle_count_, 0.0f);
         external_debug_radii_.assign(particle_count_, 0.0f);
     }
+    if ((mask & kConstraintDebugWholeDomainSelf) != 0u) {
+        whole_domain_self_engine_->request_debug_capture();
+    }
     constraint_debug_active_mask_ = mask;
 }
 
@@ -1199,6 +1209,18 @@ void DomainV1::clear_constraint_debug() {
     std::vector<float>().swap(external_debug_friction_before_);
     std::vector<float>().swap(external_debug_friction_after_);
     std::vector<float>().swap(external_debug_radii_);
+    if (whole_domain_self_engine_) {
+        whole_domain_self_engine_->clear_debug_capture();
+    }
+}
+
+const hotools::Mc2WholeDomainSelfDebugSnapshot&
+DomainV1::whole_domain_self_debug_snapshot() const {
+    if (!whole_domain_self_engine_ ||
+        !whole_domain_self_engine_->debug_capture_ready()) {
+        throw std::logic_error("MC2 whole-domain self debug snapshot is not ready");
+    }
+    return whole_domain_self_engine_->debug_snapshot();
 }
 
 void DomainV1::configure_distance(

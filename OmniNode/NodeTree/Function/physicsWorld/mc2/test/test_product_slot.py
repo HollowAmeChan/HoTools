@@ -658,6 +658,10 @@ def test_slot_native_executes_complete_compiled_frame():
                 "show_collision": True,
                 "show_collision_contacts": True,
                 "show_radii": True,
+                "show_self_primitives": True,
+                "show_self_grid": True,
+                "show_self_candidates": True,
+                "show_self_contacts": True,
             },
         ) == 1
         frame = _domain_frame(owner.compiled.program, frame=13)
@@ -698,6 +702,8 @@ def test_slot_native_executes_complete_compiled_frame():
             "show_motion_base", "show_motion",
             "show_angle_restoration", "show_angle_limit",
             "show_collision", "show_collision_contacts", "show_radii",
+            "show_self_primitives", "show_self_grid",
+            "show_self_candidates", "show_self_contacts",
         }.intersection(snapshot["unsupported_filters"])
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
@@ -722,6 +728,27 @@ def test_slot_native_executes_complete_compiled_frame():
         )
         assert collision["friction_before"].flags.writeable is False
         assert collision["friction_after"].flags.writeable is False
+        self_collision = snapshot["self_collision"]
+        self_info = snapshot["native"]["native"]
+        self_primitive_count = (
+            self_info["self_point_primitive_count"]
+            + self_info["self_edge_primitive_count"]
+            + self_info["self_triangle_primitive_count"]
+        )
+        assert self_collision["particle_indices"].shape == (
+            self_primitive_count, 3,
+        )
+        assert self_collision["primitive_grids"].shape == (
+            self_primitive_count, 3,
+        )
+        assert self_collision["candidates"].shape[1:] == (3,)
+        assert self_collision["contact_indices"].shape[1:] == (2,)
+        assert self_collision["contact_corrections"].shape[1:] == (2, 3)
+        assert self_collision["intersect_records"].shape[1:] == (5,)
+        assert set(map(int, self_collision["owner_indices"])) == {0, 1}
+        assert self_collision["contact_temporal"]["observed"] is True
+        assert self_collision["intersection_temporal"]["observed"] is True
+        assert self_collision["contact_temporal"]["frame"] == 13
         assert snapshot["topology"]["edges"].shape[1] == 2
         assert snapshot["topology"]["baseline_parent_indices"].shape == (
             owner.compiled.program.particle_count,

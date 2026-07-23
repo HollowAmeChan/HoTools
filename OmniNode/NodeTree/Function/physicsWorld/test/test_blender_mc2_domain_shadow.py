@@ -305,6 +305,10 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
                 "show_center": True,
                 "show_teleport_threshold": True,
                 "show_teleport_status": True,
+                "show_self_primitives": True,
+                "show_self_grid": True,
+                "show_self_candidates": True,
+                "show_self_contacts": True,
             },
         ) == 1
 
@@ -355,6 +359,22 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert len(snapshot["output"]["writeback_targets"]) == 2
         assert len(snapshot["center"]["partitions"]) == 2
         assert len(snapshot["teleport"]["partitions"]) == 2
+        self_collision = snapshot["self_collision"]
+        self_info = snapshot["native"]["native"]
+        primitive_count = (
+            self_info["self_point_primitive_count"]
+            + self_info["self_edge_primitive_count"]
+            + self_info["self_triangle_primitive_count"]
+        )
+        assert self_collision["particle_indices"].shape == (primitive_count, 3)
+        assert self_collision["primitive_grids"].shape == (primitive_count, 3)
+        assert self_collision["candidates"].shape[1:] == (3,)
+        assert self_collision["contact_indices"].shape[1:] == (2,)
+        assert self_collision["contact_corrections"].shape[1:] == (2, 3)
+        assert self_collision["intersect_records"].shape[1:] == (5,)
+        assert set(map(int, self_collision["owner_indices"])) == {0, 1}
+        assert self_collision["contact_temporal"]["observed"] is True
+        assert self_collision["intersection_temporal"]["observed"] is True
         status_text = mc2_debug_draw.update_mc2_debug_draw_store(
             "mc2-product-center-debug",
             world,
@@ -372,6 +392,10 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             show_motion=True,
             show_angle_restoration=True,
             show_angle_limit=True,
+            show_self_primitives=True,
+            show_self_grid=True,
+            show_self_candidates=True,
+            show_self_contacts=True,
         )
         rendered = mc2_debug_draw.mc2_debug_draw_store_snapshot(
             "mc2-product-center-debug"

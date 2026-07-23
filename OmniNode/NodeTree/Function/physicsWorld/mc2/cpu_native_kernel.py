@@ -1376,6 +1376,53 @@ class MC2NativeCPUKernelV1:
                 "friction_before": np.asarray(external_raw["friction_before"], dtype=np.float32).reshape((-1,)),
                 "friction_after": np.asarray(external_raw["friction_after"], dtype=np.float32).reshape((-1,)),
             }
+        self_raw = raw.get("whole_domain_self_results")
+        if self_raw is not None:
+            self_raw = dict(self_raw)
+            primitive_count = (
+                int(self_raw["point_primitive_count"])
+                + int(self_raw["edge_primitive_count"])
+                + int(self_raw["triangle_primitive_count"])
+            )
+            contact_count = np.asarray(
+                self_raw["contact_types"], dtype=np.int32
+            ).size
+            result["whole_domain_self_results"] = {
+                "frame": int(self_raw["frame"]),
+                "generation": int(self_raw["generation"]),
+                "point_primitive_count": int(self_raw["point_primitive_count"]),
+                "edge_primitive_count": int(self_raw["edge_primitive_count"]),
+                "triangle_primitive_count": int(self_raw["triangle_primitive_count"]),
+                "point_grid_count": int(self_raw["point_grid_count"]),
+                "edge_grid_count": int(self_raw["edge_grid_count"]),
+                "triangle_grid_count": int(self_raw["triangle_grid_count"]),
+                "max_primitive_size": float(self_raw["max_primitive_size"]),
+                "grid_size": float(self_raw["grid_size"]),
+                "primitive_flags": np.asarray(self_raw["primitive_flags"], dtype=np.uint32).reshape((primitive_count,)),
+                "particle_indices": np.asarray(self_raw["particle_indices"], dtype=np.int32).reshape((primitive_count, 3)),
+                "primitive_depths": np.asarray(self_raw["primitive_depths"], dtype=np.float32).reshape((primitive_count,)),
+                "inverse_masses": np.asarray(self_raw["inverse_masses"], dtype=np.float32).reshape((primitive_count, 3)),
+                "aabb_min": np.asarray(self_raw["aabb_min"], dtype=np.float32).reshape((primitive_count, 3)),
+                "aabb_max": np.asarray(self_raw["aabb_max"], dtype=np.float32).reshape((primitive_count, 3)),
+                "thickness": np.asarray(self_raw["thickness"], dtype=np.float32).reshape((primitive_count,)),
+                "owner_indices": np.asarray(self_raw["owner_indices"], dtype=np.int32).reshape((primitive_count,)),
+                "owner_group_bits": np.asarray(self_raw["owner_group_bits"], dtype=np.int32).reshape((-1,)),
+                "owner_collision_masks": np.asarray(self_raw["owner_collision_masks"], dtype=np.int32).reshape((-1,)),
+                "primitive_grids": np.asarray(self_raw["primitive_grids"], dtype=np.int32).reshape((primitive_count, 3)),
+                "grid_hashes": np.asarray(self_raw["grid_hashes"], dtype=np.int32).reshape((primitive_count,)),
+                "grid_starts": np.asarray(self_raw["grid_starts"], dtype=np.int32).reshape((primitive_count,)),
+                "grid_counts": np.asarray(self_raw["grid_counts"], dtype=np.int32).reshape((primitive_count,)),
+                "candidates": np.asarray(self_raw["candidates"], dtype=np.int32).reshape((-1, 3)),
+                "contact_indices": np.asarray(self_raw["contact_indices"], dtype=np.int32).reshape((contact_count, 2)),
+                "contact_types": np.asarray(self_raw["contact_types"], dtype=np.int32).reshape((contact_count,)),
+                "contact_enabled": np.asarray(self_raw["contact_enabled"], dtype=np.uint8).reshape((contact_count,)),
+                "contact_thickness": np.asarray(self_raw["contact_thickness"], dtype=np.float32).reshape((contact_count,)),
+                "contact_s": np.asarray(self_raw["contact_s"], dtype=np.float32).reshape((contact_count,)),
+                "contact_t": np.asarray(self_raw["contact_t"], dtype=np.float32).reshape((contact_count,)),
+                "contact_normals": np.asarray(self_raw["contact_normals"], dtype=np.float32).reshape((contact_count, 3)),
+                "contact_corrections": np.asarray(self_raw["contact_corrections"], dtype=np.float32).reshape((contact_count, 2, 3)),
+                "intersect_records": np.asarray(self_raw["intersect_records"], dtype=np.int32).reshape((-1, 5)),
+            }
         motion_raw = raw.get("motion_results")
         if motion_raw is not None:
             motion_raw = dict(motion_raw)

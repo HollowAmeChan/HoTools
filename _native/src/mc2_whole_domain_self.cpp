@@ -199,6 +199,7 @@ struct WholeDomainSelfState {
     std::vector<float> self_contact_s;
     std::vector<float> self_contact_t;
     std::vector<float> self_contact_normals;
+    std::vector<std::int32_t> self_intersect_records;
     std::int64_t self_point_primitive_count = 0;
     std::int64_t self_edge_primitive_count = 0;
     std::int64_t self_triangle_primitive_count = 0;
@@ -467,6 +468,167 @@ std::int64_t self_binary_search_grid_hash(
         }
     }
     return -1;
+}
+
+void detect_self_collision_intersections(WholeDomainSelfState& context) {
+    context.self_intersect_records.clear();
+    if (!context.self_contact_debug_requested ||
+        !context.self_grid_dynamic_ready ||
+        context.self_edge_primitive_count <= 0 ||
+        context.self_triangle_primitive_count <= 0 ||
+        context.self_max_primitive_size <= kMc2Epsilon ||
+        context.self_grid_size <= kMc2Epsilon) {
+        return;
+    }
+
+    struct IntersectRecord {
+        std::array<std::int32_t, 5> particles {};
+    };
+    std::vector<IntersectRecord> records;
+    const auto edge_start = static_cast<std::size_t>(
+        context.self_point_primitive_count
+    );
+    const auto edge_count = static_cast<std::size_t>(
+        context.self_edge_primitive_count
+    );
+    const auto triangle_start = static_cast<std::size_t>(
+        context.self_point_primitive_count + context.self_edge_primitive_count
+    );
+    const auto triangle_grid_count = static_cast<std::size_t>(
+        context.self_triangle_grid_count
+    );
+    const auto frame_phase = static_cast<std::size_t>(
+        (context.frame % 2 + 2) % 2
+    );
+    for (std::size_t edge = edge_start; edge < edge_start + edge_count; ++edge) {
+        if ((edge % 2) != frame_phase) continue;
+        const auto edge_flags = context.self_primitive_flags[edge];
+        if ((edge_flags & kSelfIgnore) != 0u) continue;
+        std::array<std::int32_t, 3> start_grid {};
+        std::array<std::int32_t, 3> end_grid {};
+        const float padding = context.self_max_primitive_size * 0.5f;
+        for (std::size_t component = 0; component < 3; ++component) {
+            start_grid[component] = static_cast<std::int32_t>(std::floor(
+                (context.self_primitive_aabb_min[edge * 3 + component] - padding) /
+                context.self_grid_size
+            ));
+            end_grid[component] = static_cast<std::int32_t>(std::floor(
+                (context.self_primitive_aabb_max[edge * 3 + component] + padding) /
+                context.self_grid_size
+            ));
+        }
+        for (std::int64_t z = start_grid[2]; z <= end_grid[2]; ++z) {
+            for (std::int64_t y = start_grid[1]; y <= end_grid[1]; ++y) {
+                for (std::int64_t x = start_grid[0]; x <= end_grid[0]; ++x) {
+                    const auto hash = self_grid_hash(
+                        static_cast<std::int32_t>(x),
+                        static_cast<std::int32_t>(y),
+                        static_cast<std::int32_t>(z)
+                    );
+                    const auto run_index = self_binary_search_grid_hash(
+                        context,
+                        triangle_start,
+                        triangle_grid_count,
+                        hash
+                    );
+                    if (run_index < 0) continue;
+                    const auto buffer_index = triangle_start +
+                        static_cast<std::size_t>(run_index);
+                    const auto run_start = static_cast<std::size_t>(
+                        context.self_grid_starts[buffer_index]
+                    );
+                    const auto run_end = run_start + static_cast<std::size_t>(
+                        context.self_grid_counts[buffer_index]
+                    );
+                    for (std::size_t triangle = run_start;
+                         triangle < run_end;
+                         ++triangle) {
+                        const auto triangle_flags =
+                            context.self_primitive_flags[triangle];
+                        if (!self_owner_pair_allowed(context, edge, triangle) ||
+                            !self_aabbs_overlap(context, edge, triangle) ||
+                            (triangle_flags & kSelfIgnore) != 0u ||
+                            ((edge_flags & kSelfAllFix) != 0u &&
+                             (triangle_flags & kSelfAllFix) != 0u) ||
+                            self_primitives_are_topology_neighbors(
+                                context, edge, triangle
+                            )) {
+                            continue;
+                        }
+                        records.push_back(IntersectRecord {{
+                            context.self_particle_indices[edge * 3],
+                            context.self_particle_indices[edge * 3 + 1],
+                            context.self_particle_indices[triangle * 3],
+                            context.self_particle_indices[triangle * 3 + 1],
+                            context.self_particle_indices[triangle * 3 + 2],
+                        }});
+                    }
+                }
+            }
+        }
+    }
+    std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+        return left.particles < right.particles;
+    });
+    records.erase(
+        std::unique(records.begin(), records.end(), [](const auto& left, const auto& right) {
+            return left.particles == right.particles;
+        }),
+        records.end()
+    );
+    context.self_intersect_records.reserve(records.size() * 5);
+    for (const auto& record : records) {
+        context.self_intersect_records.insert(
+            context.self_intersect_records.end(),
+            record.particles.begin(),
+            record.particles.end()
+        );
+    }
+}
+
+void confirm_self_collision_intersections(WholeDomainSelfState& context) {
+    const auto record_count = context.self_intersect_records.size() / 5;
+    std::vector<std::int32_t> confirmed;
+    confirmed.reserve(context.self_intersect_records.size());
+    for (std::size_t record = 0; record < record_count; ++record) {
+        const auto* particles = context.self_intersect_records.data() + record * 5;
+        Vec3 p = load_vector3(
+            context.state_positions, static_cast<std::size_t>(particles[0])
+        );
+        const Vec3 q = load_vector3(
+            context.state_positions, static_cast<std::size_t>(particles[1])
+        );
+        const Vec3 a = load_vector3(
+            context.state_positions, static_cast<std::size_t>(particles[2])
+        );
+        const Vec3 b = load_vector3(
+            context.state_positions, static_cast<std::size_t>(particles[3])
+        );
+        const Vec3 c = load_vector3(
+            context.state_positions, static_cast<std::size_t>(particles[4])
+        );
+        Vec3 qp = sub(p, q);
+        const Vec3 ac = sub(c, a);
+        const Vec3 ab = sub(b, a);
+        const Vec3 normal = cross(ab, ac);
+        float denominator = dot(qp, normal);
+        if (std::abs(denominator) < kMc2Epsilon) continue;
+        if (denominator < 0.0f) {
+            p = q;
+            qp = mul(qp, -1.0f);
+            denominator = -denominator;
+        }
+        const Vec3 ap = sub(p, a);
+        const float distance = dot(ap, normal);
+        if (distance < 0.0f || distance > denominator) continue;
+        const Vec3 cross_value = cross(qp, ap);
+        const float v = dot(ac, cross_value);
+        if (v < 0.0f || v > denominator) continue;
+        const float w = -dot(ab, cross_value);
+        if (w < 0.0f || v + w > denominator) continue;
+        confirmed.insert(confirmed.end(), particles, particles + 5);
+    }
+    context.self_intersect_records.swap(confirmed);
 }
 
 void update_self_collision_candidates(WholeDomainSelfState& context) {
@@ -1135,6 +1297,8 @@ void solve_self_collision_contacts(
 
 struct Mc2WholeDomainSelfEngine::Impl {
     WholeDomainSelfState state;
+    Mc2WholeDomainSelfDebugSnapshot debug_snapshot;
+    bool debug_snapshot_ready = false;
 };
 
 Mc2WholeDomainSelfEngine::Mc2WholeDomainSelfEngine()
@@ -1159,6 +1323,8 @@ void Mc2WholeDomainSelfEngine::configure(
 ) {
     auto& state = impl_->state;
     state = WholeDomainSelfState {};
+    impl_->debug_snapshot = Mc2WholeDomainSelfDebugSnapshot {};
+    impl_->debug_snapshot_ready = false;
     state.vertex_count = static_cast<std::int64_t>(vertex_count);
     state.self_point_primitive_count = static_cast<std::int64_t>(point_count);
     state.self_edge_primitive_count = static_cast<std::int64_t>(edge_count);
@@ -1335,14 +1501,80 @@ void Mc2WholeDomainSelfEngine::solve(
     state.self_primitive_generation = generation;
     state.self_primitive_dynamic_ready = true;
     update_self_collision_grid(state);
+    detect_self_collision_intersections(state);
     update_self_collision_candidates(state);
     build_self_collision_contacts(state, state.velocity_reference_positions);
     solve_self_collision_contacts(state, nullptr);
+    if (state.self_contact_debug_requested) {
+        confirm_self_collision_intersections(state);
+    }
+    if (state.self_contact_debug_requested && state.self_contact_debug_ready) {
+        auto& snapshot = impl_->debug_snapshot;
+        snapshot.frame = state.frame;
+        snapshot.generation = state.generation;
+        snapshot.point_primitive_count = state.self_point_primitive_count;
+        snapshot.edge_primitive_count = state.self_edge_primitive_count;
+        snapshot.triangle_primitive_count = state.self_triangle_primitive_count;
+        snapshot.point_grid_count = state.self_point_grid_count;
+        snapshot.edge_grid_count = state.self_edge_grid_count;
+        snapshot.triangle_grid_count = state.self_triangle_grid_count;
+        snapshot.max_primitive_size = state.self_max_primitive_size;
+        snapshot.grid_size = state.self_grid_size;
+        snapshot.primitive_flags = state.self_primitive_flags;
+        snapshot.particle_indices = state.self_particle_indices;
+        snapshot.primitive_depths = state.self_primitive_depths;
+        snapshot.inverse_masses = state.self_primitive_inverse_masses;
+        snapshot.aabb_min = state.self_primitive_aabb_min;
+        snapshot.aabb_max = state.self_primitive_aabb_max;
+        snapshot.thickness = state.self_primitive_thickness;
+        snapshot.owner_indices = state.self_primitive_owner_indices;
+        snapshot.owner_group_bits = state.self_owner_primary_group_bits;
+        snapshot.owner_collision_masks = state.self_owner_collided_by_groups;
+        snapshot.primitive_grids = state.self_primitive_grids;
+        snapshot.grid_hashes = state.self_grid_hashes;
+        snapshot.grid_starts = state.self_grid_starts;
+        snapshot.grid_counts = state.self_grid_counts;
+        snapshot.candidates = state.self_contact_candidates;
+        snapshot.contact_indices = state.self_contact_primitive_indices;
+        snapshot.contact_types = state.self_contact_types;
+        snapshot.contact_enabled = state.self_contact_enabled;
+        snapshot.contact_thickness = state.self_contact_thickness;
+        snapshot.contact_s = state.self_contact_s;
+        snapshot.contact_t = state.self_contact_t;
+        snapshot.contact_normals = state.self_contact_normals;
+        snapshot.contact_corrections = state.debug_self_contact_corrections;
+        snapshot.intersect_records = state.self_intersect_records;
+        impl_->debug_snapshot_ready = true;
+    }
+    state.self_contact_debug_requested = false;
     candidate_count = static_cast<std::int64_t>(
         state.self_contact_candidates.size() / 3
     );
     contact_count = static_cast<std::int64_t>(state.self_contact_types.size());
     std::copy(state.state_positions.begin(), state.state_positions.end(), positions);
+}
+
+void Mc2WholeDomainSelfEngine::request_debug_capture() {
+    impl_->state.self_contact_debug_requested = true;
+    impl_->debug_snapshot_ready = false;
+}
+
+void Mc2WholeDomainSelfEngine::clear_debug_capture() noexcept {
+    impl_->state.self_contact_debug_requested = false;
+    impl_->state.self_contact_debug_ready = false;
+    impl_->state.debug_self_contact_corrections.clear();
+    impl_->state.self_intersect_records.clear();
+    impl_->debug_snapshot = Mc2WholeDomainSelfDebugSnapshot {};
+    impl_->debug_snapshot_ready = false;
+}
+
+bool Mc2WholeDomainSelfEngine::debug_capture_ready() const noexcept {
+    return impl_->debug_snapshot_ready;
+}
+
+const Mc2WholeDomainSelfDebugSnapshot&
+Mc2WholeDomainSelfEngine::debug_snapshot() const noexcept {
+    return impl_->debug_snapshot;
 }
 
 }  // namespace hotools

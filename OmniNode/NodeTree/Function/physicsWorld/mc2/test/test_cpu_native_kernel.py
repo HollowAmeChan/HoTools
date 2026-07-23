@@ -315,9 +315,37 @@ def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
     try:
         domain.update_frame(frame)
         np.testing.assert_array_equal(domain.read_output().world_positions, positions)
+        domain.begin_constraint_debug(64)
         domain.step_whole_domain_self(positions)
+        domain.end_constraint_debug()
         output = domain.read_output().world_positions
         assert np.any(np.abs(output - positions) > np.float32(1.0e-6))
+        debug = domain.read_constraint_debug_state()[
+            "whole_domain_self_results"
+        ]
+        primitive_count = (
+            debug["point_primitive_count"]
+            + debug["edge_primitive_count"]
+            + debug["triangle_primitive_count"]
+        )
+        assert debug["frame"] == frame.frame
+        assert debug["generation"] == frame.generation
+        assert debug["particle_indices"].shape == (primitive_count, 3)
+        assert debug["primitive_grids"].shape == (primitive_count, 3)
+        assert debug["candidates"].shape[1:] == (3,)
+        assert debug["contact_indices"].shape[1:] == (2,)
+        assert debug["contact_corrections"].shape[1:] == (2, 3)
+        assert debug["intersect_records"].shape[1:] == (5,)
+        assert set(map(int, debug["owner_indices"])) == {0, 1}
+        assert np.array_equal(debug["owner_group_bits"], (1, 2))
+        assert np.array_equal(debug["owner_collision_masks"], (0, 0))
+        np.testing.assert_allclose(
+            np.sum(debug["contact_corrections"], axis=(0, 1)),
+            np.sum(output - positions, axis=0),
+            atol=2.0e-6,
+            rtol=0.0,
+        )
+        domain.clear_constraint_debug()
         state = domain.inspect()["kernel"]
         assert state["whole_domain_self_ready"] is True
         assert state["whole_domain_self_point_count"] == 3
@@ -327,6 +355,8 @@ def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
         assert state["whole_domain_self_last_candidate_count"] > 0
         assert state["whole_domain_self_last_contact_count"] > 0
         assert state["step_count"] == 1
+        assert state["constraint_debug_active_mask"] == 0
+        assert state["constraint_debug_captured_mask"] == 0
     finally:
         domain.dispose()
 
@@ -348,6 +378,42 @@ def test_native_cpu_backend_blocks_compiled_whole_domain_self_pair():
         np.testing.assert_array_equal(domain.read_output().world_positions, positions)
         assert domain.inspect()["kernel"]["whole_domain_self_step_count"] == 1
         assert domain.inspect()["kernel"]["whole_domain_self_last_contact_count"] == 0
+    finally:
+        domain.dispose()
+
+
+def test_native_whole_domain_self_debug_reports_intersection():
+    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(
+        frame.animated_base_world_positions, dtype=np.float32
+    ).copy()
+    triangle_center = np.mean(positions[:3], axis=0)
+    positions[3] = triangle_center + np.asarray(
+        (0.0, 0.0, -0.1), dtype=np.float32
+    )
+    positions[4] = triangle_center + np.asarray(
+        (0.0, 0.0, 0.1), dtype=np.float32
+    )
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    try:
+        domain.update_frame(frame)
+        domain.begin_constraint_debug(64)
+        domain.step_whole_domain_self(positions)
+        domain.end_constraint_debug()
+        records = domain.read_constraint_debug_state()[
+            "whole_domain_self_results"
+        ]["intersect_records"]
+        assert len(records) > 0
+        assert any(
+            set(map(int, record[:2])) == {3, 4}
+            and set(map(int, record[2:])) == {0, 1, 2}
+            for record in records
+        )
+        domain.clear_constraint_debug()
     finally:
         domain.dispose()
 
@@ -1334,6 +1400,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_backend_runs_compiled_whole_domain_self_policy")
     test_native_cpu_backend_blocks_compiled_whole_domain_self_pair()
     print("PASS test_native_cpu_backend_blocks_compiled_whole_domain_self_pair")
+    test_native_whole_domain_self_debug_reports_intersection()
+    print("PASS test_native_whole_domain_self_debug_reports_intersection")
     test_native_cpu_kernel_runs_only_explicit_data_path_mode()
     print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
     test_native_debug_off_inspect_does_not_readback_dynamics()

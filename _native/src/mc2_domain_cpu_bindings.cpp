@@ -1,5 +1,6 @@
 #include "mc2_domain_cpu.hpp"
 #include "mc2_kernels.hpp"
+#include "mc2_whole_domain_self.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -1437,6 +1438,93 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 external["friction_before"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_before()));
                 external["friction_after"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_after()));
                 result["external_collision_results"] = external;
+            }
+            if ((mask & mc2_domain_cpu::kConstraintDebugWholeDomainSelf) != 0u) {
+                const auto& snapshot = domain->whole_domain_self_debug_snapshot();
+                nb::dict self;
+                self["frame"] = snapshot.frame;
+                self["generation"] = snapshot.generation;
+                self["point_primitive_count"] = snapshot.point_primitive_count;
+                self["edge_primitive_count"] = snapshot.edge_primitive_count;
+                self["triangle_primitive_count"] = snapshot.triangle_primitive_count;
+                self["point_grid_count"] = snapshot.point_grid_count;
+                self["edge_grid_count"] = snapshot.edge_grid_count;
+                self["triangle_grid_count"] = snapshot.triangle_grid_count;
+                self["max_primitive_size"] = snapshot.max_primitive_size;
+                self["grid_size"] = snapshot.grid_size;
+                self["primitive_flags"] = owned_array_1d<std::uint32_t>(
+                    std::vector<std::uint32_t>(snapshot.primitive_flags)
+                );
+                self["particle_indices"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.particle_indices)
+                );
+                self["primitive_depths"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.primitive_depths)
+                );
+                self["inverse_masses"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.inverse_masses)
+                );
+                self["aabb_min"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.aabb_min)
+                );
+                self["aabb_max"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.aabb_max)
+                );
+                self["thickness"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.thickness)
+                );
+                self["owner_indices"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.owner_indices)
+                );
+                self["owner_group_bits"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.owner_group_bits)
+                );
+                self["owner_collision_masks"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.owner_collision_masks)
+                );
+                self["primitive_grids"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.primitive_grids)
+                );
+                self["grid_hashes"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.grid_hashes)
+                );
+                self["grid_starts"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.grid_starts)
+                );
+                self["grid_counts"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.grid_counts)
+                );
+                self["candidates"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.candidates)
+                );
+                self["contact_indices"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.contact_indices)
+                );
+                self["contact_types"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.contact_types)
+                );
+                self["contact_enabled"] = owned_array_1d<std::uint8_t>(
+                    std::vector<std::uint8_t>(snapshot.contact_enabled)
+                );
+                self["contact_thickness"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.contact_thickness)
+                );
+                self["contact_s"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.contact_s)
+                );
+                self["contact_t"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.contact_t)
+                );
+                self["contact_normals"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.contact_normals)
+                );
+                self["contact_corrections"] = owned_array_1d<float>(
+                    std::vector<float>(snapshot.contact_corrections)
+                );
+                self["intersect_records"] = owned_array_1d<std::int32_t>(
+                    std::vector<std::int32_t>(snapshot.intersect_records)
+                );
+                result["whole_domain_self_results"] = self;
             }
             if ((mask & mc2_domain_cpu::kConstraintDebugMotion) != 0u) {
                 const auto particles = domain->particle_count();

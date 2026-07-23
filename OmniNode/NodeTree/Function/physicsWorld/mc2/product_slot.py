@@ -39,6 +39,7 @@ _MC2_CONSTRAINT_DEBUG_DISTANCE = 4
 _MC2_CONSTRAINT_DEBUG_TETHER = 8
 _MC2_CONSTRAINT_DEBUG_BENDING = 16
 _MC2_CONSTRAINT_DEBUG_EXTERNAL_COLLISION = 32
+_MC2_CONSTRAINT_DEBUG_WHOLE_DOMAIN_SELF = 64
 
 
 def _constraint_debug_mask(filters: dict) -> int:
@@ -59,6 +60,13 @@ def _constraint_debug_mask(filters: dict) -> int:
         or filters.get("show_radii")
     ):
         mask |= _MC2_CONSTRAINT_DEBUG_EXTERNAL_COLLISION
+    if any(filters.get(name) for name in (
+        "show_self_primitives",
+        "show_self_grid",
+        "show_self_candidates",
+        "show_self_contacts",
+    )):
+        mask |= _MC2_CONSTRAINT_DEBUG_WHOLE_DOMAIN_SELF
     return mask
 
 
