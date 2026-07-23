@@ -63,16 +63,20 @@ def _requests(
     movement_inertia_smoothing: float,
     movement_speed_limit: float,
     rotation_speed_limit: float,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
 ):
     task_values = {
         "world_inertia": world_inertia,
         "movement_inertia_smoothing": movement_inertia_smoothing,
         "movement_speed_limit": movement_speed_limit,
         "rotation_speed_limit": rotation_speed_limit,
-        "local_inertia": 1.0,
-        "local_movement_speed_limit": -1.0,
-        "local_rotation_speed_limit": -1.0,
-        "depth_inertia": 0.0,
+        "local_inertia": local_inertia,
+        "local_movement_speed_limit": local_movement_speed_limit,
+        "local_rotation_speed_limit": local_rotation_speed_limit,
+        "depth_inertia": depth_inertia,
         "teleport_mode": 0,
         "teleport_distance": 100.0,
         "teleport_rotation": 180.0,
@@ -150,6 +154,11 @@ def _run_world_case(
     movement_inertia_smoothing: float,
     movement_speed_limit: float,
     rotation_speed_limit: float,
+    local_inertia: float = 1.0,
+    local_movement_speed_limit: float = -1.0,
+    local_rotation_speed_limit: float = -1.0,
+    depth_inertia: float = 0.0,
+    read_center_debug: bool = False,
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -161,6 +170,9 @@ def _run_world_case(
             "shift_rotation_degrees": [],
             "shift_count": [],
             "step_count": [],
+            "inertia_x": [],
+            "step_x": [],
+            "movement_speed_limited": [],
         }
         for setup in _SETUPS
     }
@@ -193,6 +205,10 @@ def _run_world_case(
             movement_inertia_smoothing=movement_inertia_smoothing,
             movement_speed_limit=movement_speed_limit,
             rotation_speed_limit=rotation_speed_limit,
+            local_inertia=local_inertia,
+            local_movement_speed_limit=local_movement_speed_limit,
+            local_rotation_speed_limit=local_rotation_speed_limit,
+            depth_inertia=depth_inertia,
         )
         slot_ids = _slot_ids(requests)
         component_x = 0.0
@@ -267,6 +283,26 @@ def _run_world_case(
                     values["step_count"].append(
                         float(kernel["center_step_count"])
                     )
+                    if read_center_debug:
+                        debug_state = owner.read_center_debug_state()
+                        inertia_vectors = np.asarray(
+                            debug_state["inertia_vectors"],
+                            dtype=np.float32,
+                        ).reshape((-1, 3))
+                        step_vectors = np.asarray(
+                            debug_state["step_vectors"],
+                            dtype=np.float32,
+                        ).reshape((-1, 3))
+                        values["inertia_x"].append(
+                            float(inertia_vectors[0, 0])
+                        )
+                        values["step_x"].append(float(step_vectors[0, 0]))
+                        values["movement_speed_limited"].append(
+                            bool(np.asarray(
+                                debug_state["movement_speed_limited"],
+                                dtype=np.uint8,
+                            ).reshape((-1,))[0])
+                        )
                 digest.update(setup.encode("ascii"))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
@@ -443,5 +479,86 @@ def center_world_controls():
     )
 
 
+def center_local_controls():
+    case_definitions = {
+        "inertia_zero": {
+            "component_rotation_speed": 90.0,
+            "world_inertia": 1.0,
+            "local_inertia": 0.0,
+            "local_movement_speed_limit": -1.0,
+            "local_rotation_speed_limit": -1.0,
+        },
+        "inertia_one": {
+            "component_rotation_speed": 90.0,
+            "world_inertia": 1.0,
+            "local_inertia": 1.0,
+            "local_movement_speed_limit": -1.0,
+            "local_rotation_speed_limit": -1.0,
+        },
+        "movement_limited": {
+            "component_rotation_speed": 0.0,
+            "world_inertia": 1.0,
+            "local_inertia": 1.0,
+            "local_movement_speed_limit": 0.2,
+            "local_rotation_speed_limit": -1.0,
+        },
+        "rotation_limited": {
+            "component_translation": False,
+            "component_rotation_speed": 90.0,
+            "world_inertia": 1.0,
+            "local_inertia": 1.0,
+            "local_movement_speed_limit": -1.0,
+            "local_rotation_speed_limit": 30.0,
+        },
+    }
+
+    def run(run_index):
+        cases = {}
+        for case_index, (case_name, values) in enumerate(
+            case_definitions.items()
+        ):
+            cases[case_name] = _run_world_case(
+                f"Local{case_name}",
+                run_index * 10 + case_index,
+                read_center_debug=True,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                **values,
+            )
+        return cases
+
+    first = run(0)
+    second = run(1)
+    for name in case_definitions:
+        for setup in _SETUPS:
+            for field in first[name][0][setup]:
+                np.testing.assert_array_equal(
+                    first[name][0][setup][field],
+                    second[name][0][setup][field],
+                )
+    for setup in _SETUPS:
+        zero = first["inertia_zero"][0][setup]
+        one = first["inertia_one"][0][setup]
+        np.testing.assert_allclose(zero["inertia_x"], zero["step_x"], atol=2.0e-6)
+        np.testing.assert_allclose(one["inertia_x"], 0.0, atol=2.0e-6)
+        movement = first["movement_limited"][0][setup]
+        movement_speed = np.abs(movement["step_x"]) * _FRAME_RATE
+        active = movement_speed > 0.2001
+        if setup == "mesh_cloth":
+            np.testing.assert_allclose(movement["inertia_x"], 0.0, atol=2.0e-6)
+        else:
+            assert np.max(np.abs(movement["inertia_x"])) > 1.0e-4
+            assert np.max(np.abs(movement["inertia_x"])) < np.max(
+                np.abs(movement["step_x"])
+            )
+    print("PASS 产品Center Local惯性/平移与旋转限速")
+
+
 if __name__ == "__main__":
-    center_world_controls()
+    if os.environ.get("MC2_CENTER_LOCAL_ONLY"):
+        center_local_controls()
+    else:
+        center_world_controls()
+        center_local_controls()
+    center_local_controls()

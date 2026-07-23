@@ -995,6 +995,8 @@ E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`
 
 E7-CPU Center World 产品迁移（2026-07-23）：`test_blender_mc2_product_center_controls_soak.py::center_world_controls` 已覆盖 MeshCloth、BoneCloth、BoneSpring 三种 setup 的五组世界 Center 控制。每组双跑 600 帧，验证有限性、确定性、惯性排序、平滑、平移/旋转限速、Center shift/step 计数，并检查产品槽不含 `native_context`、`spec` 或 `_debug_draw_snapshot`。capability matrix 已切换该 runner；Local、Depth、Anchor 继续保留旧证据，待对应产品 runner 完成后再迁移。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
 
+E7-CPU Center Local 产品迁移（2026-07-23）：同一 runner 的 `center_local_controls` 对三种 setup 各执行四组控制、双跑 600 帧，显式读取产品 Center debug ABI 的 partition inertia/step 分量，锁定 `local_inertia=0/1` 端点、BoneCloth/BoneSpring Local movement 限制响应、MeshCloth 零误报以及产品槽边界和确定性。capability matrix 已切换 Local 条目；Depth、Anchor 仍待产品 runner。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
+
 ### E7-S：删除后的兼容层收敛审计
 
 E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V0`、`legacy`、`compat`、`fallback`、`shadow`、旧schema、旧result翻译、双签名overload、迁移feature flag和“仅测试使用”入口建立机器可读清单，并逐项给出外部合同依据。没有当前资产格式、公开ABI或明确oracle责任的处理必须删除；仍需保留的边界必须重命名为真实职责，不能继续用迁移期术语掩盖所有权。
