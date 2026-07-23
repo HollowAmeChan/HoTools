@@ -1,6 +1,6 @@
 """Bone frame 旧入口的 product-only 兼容门面。
 
-旧 N3 文件直接创建 V0 task、调用旧 solver 并读取 native_context；这些路径
+旧 N3 文件直接创建 V0 task、调用旧执行器并读取内部状态；这些路径
 不再属于产品执行合同。产品 frame input、owner 复用、写回和 finite 输出由
 公开 BoneCloth/BoneSpring soak 统一验证，本门面只保留旧文件名供外部脚本
 过渡调用，完成矩阵迁移后删除。

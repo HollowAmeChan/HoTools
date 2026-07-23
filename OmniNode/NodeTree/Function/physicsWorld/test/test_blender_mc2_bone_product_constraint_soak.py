@@ -76,7 +76,15 @@ assert os.path.commonpath((HOTOOLS, os.path.abspath(nodes.__file__))) == HOTOOLS
 assert os.path.commonpath((NATIVE_PACKAGE, os.path.abspath(hotools_native.__file__))) == NATIVE_PACKAGE
 
 
-def _armature(name: str, *, chain_count: int, chain_length: int, x_offset: float):
+def _armature(
+    name: str,
+    *,
+    chain_count: int,
+    chain_length: int,
+    x_offset: float,
+    chain_spacing: float = 0.16,
+    bone_spacing: float = 0.18,
+):
     data = bpy.data.armatures.new(f"{name}Data")
     obj = bpy.data.objects.new(name, data)
     obj.location.x = x_offset
@@ -90,11 +98,15 @@ def _armature(name: str, *, chain_count: int, chain_length: int, x_offset: float
     parent.tail = (0.0, 0.0, 0.4)
     for chain_index in range(chain_count):
         previous = parent
-        x = (float(chain_index) - float(chain_count - 1) * 0.5) * 0.16
+        x = (float(chain_index) - float(chain_count - 1) * 0.5) * chain_spacing
         for depth in range(chain_length):
             bone = data.edit_bones.new(f"Chain{chain_index}_{depth}")
-            bone.head = (x, depth * 0.18, 0.4 + depth * 0.04)
-            bone.tail = (x + depth * 0.01, (depth + 1) * 0.18, 0.44 + depth * 0.04)
+            bone.head = (x, depth * bone_spacing, 0.4 + depth * 0.04)
+            bone.tail = (
+                x + depth * 0.01,
+                (depth + 1) * bone_spacing,
+                0.44 + depth * 0.04,
+            )
             bone.parent = previous
             bone.use_connect = depth > 0 and depth != 3
             previous = bone
@@ -407,6 +419,121 @@ def test_bone_product_self_collision_domain_contract() -> None:
     second = _run_once(21, self_collision_thickness=0.008, cloth_mass=0.4)
     assert first == second, (first, second)
     print(f"MC2_BONE_PRODUCT_SELF_CONTRACT_DIGEST {first}")
+
+
+def _run_self_scope_once(run_index: int):
+    world = world_types.PhysicsWorldCache()
+    generation = 2500 + run_index
+    armatures = []
+    digest = hashlib.sha256()
+    samples = []
+    try:
+        armatures = [
+            _armature(
+                f"MC2ProductSelfScope{run_index}_{index}",
+                chain_count=2,
+                chain_length=6,
+                x_offset=0.0,
+                chain_spacing=0.04,
+                bone_spacing=0.03,
+            )
+            for index in range(2)
+        ]
+        requests = []
+        for armature in armatures:
+            cloth_requests, _ = nodes.physicsMC2BoneClothTask(
+                [{"armature": armature, "bone": "Parent"}],
+                profile=_profile(
+                    bone_spring=False,
+                    self_collision_thickness=0.008,
+                    gravity=0.0,
+                ),
+                connection_mode=1,
+                cloth_mass=0.4,
+                collided_by_groups=1,
+                teleport_mode=2,
+                teleport_distance=0.5,
+                teleport_rotation=90.0,
+            )
+            assert len(cloth_requests) == 1
+            requests.extend(cloth_requests)
+        requests = tuple(requests)
+        slot_ids = _slot_ids(requests)
+        assert len(slot_ids) == 2 and slot_ids[0] != slot_ids[1]
+
+        for frame in range(1, 901):
+            phase = frame * 0.017
+            for armature in armatures:
+                parent = armature.pose.bones["Parent"]
+                parent.rotation_mode = "XYZ"
+                parent.rotation_euler.z = 0.12 * math.sin(phase)
+                parent.location.x = 0.01 * math.sin(phase * 0.5)
+            bpy.context.view_layer.update()
+            _set_frame(world, frame, generation)
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(requests),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+
+            frame_sample = []
+            for slot_id, request in zip(slot_ids, requests):
+                slot = world.solver_slots[slot_id]
+                owner = slot.data["owner"]
+                inspection = owner.inspect()
+                kernel = inspection["domain"]["kernel"]
+                assert "native_context" not in slot.data
+                assert "spec" not in slot.data
+                assert kernel["whole_domain_self_ready"] is True
+                point_count = int(kernel["whole_domain_self_point_count"])
+                candidate_count = int(
+                    kernel.get("whole_domain_self_last_candidate_count", 0)
+                )
+                contact_count = int(
+                    kernel.get("whole_domain_self_last_contact_count", 0)
+                )
+                assert point_count == owner.compiled.program.particle_count
+                assert candidate_count >= 0 and contact_count >= 0
+                assert candidate_count <= point_count * point_count
+                assert contact_count <= candidate_count
+                assert np.isfinite(candidate_count) and np.isfinite(contact_count)
+                if frame > 1:
+                    assert kernel["whole_domain_self_step_count"] > 0
+                output = owner.read_output()
+                assert np.all(np.isfinite(output.world_positions))
+                digest.update(output.world_positions.tobytes())
+                if frame in (2, 900):
+                    frame_sample.append((point_count, candidate_count, contact_count))
+                particle_parameters = owner.compiled.parameters.particle_parameters
+                thickness_index = particle_parameters.fields.index(
+                    "self_collision_thickness"
+                )
+                radius_index = particle_parameters.fields.index("radius")
+                np.testing.assert_allclose(
+                    particle_parameters.values[:, thickness_index],
+                    particle_parameters.values[:, radius_index] * 0.25,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+            if frame_sample:
+                samples.append(tuple(frame_sample))
+        assert samples
+        return digest.hexdigest(), tuple(samples)
+    finally:
+        world.omni_cache_dispose("bone_product_self_scope_cleanup")
+        for armature in armatures:
+            _remove_armature(armature)
+
+
+def test_bone_product_self_collision_cross_source_scope_and_cache() -> None:
+    first = _run_self_scope_once(0)
+    second = _run_self_scope_once(1)
+    assert first == second, (first, second)
+    print(f"MC2_BONE_PRODUCT_SELF_SCOPE_DIGEST {first[0]}")
+    print(f"MC2_BONE_PRODUCT_SELF_SCOPE_SAMPLES {first[1]}")
 
 
 def test_bone_product_frame_transform_contract() -> None:

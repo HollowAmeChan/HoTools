@@ -96,6 +96,7 @@ def _run_rest_debug(run_index: int):
         )
         owner = None
         base = None
+        initial_parameter_signature = None
         for frame in range(1, 901):
             if frame == 451:
                 request = _request(
@@ -128,8 +129,16 @@ def _run_rest_debug(run_index: int):
             if owner is None:
                 owner = current_owner
                 base = owner.prepare_step_basic_pose()["positions"].copy()
+                initial_parameter_signature = (
+                    owner.compiled.parameters.parameter_signature
+                )
             else:
                 assert current_owner is owner
+            if frame == 451:
+                assert (
+                    owner.compiled.parameters.parameter_signature
+                    != initial_parameter_signature
+                )
             output = owner.read_output()
             error = float(np.max(np.linalg.norm(output.world_positions - base, axis=1)))
             max_error = max(max_error, error)

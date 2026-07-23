@@ -118,6 +118,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "product_stabilization_parameters_and_determinism",
             ),
         }, {
+            "runner": (
+                "test_blender_mc2_mesh_product_angle_motion.py::"
+                "test_mesh_product_angle_restoration_rest_debug"
+            ),
+            "frames": 900,
+            "setups": ("mesh_cloth",),
+            "fields": (),
+            "invariants": ("finite", "deterministic", "zero_force_rest"),
+        }, {
             "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
@@ -683,7 +692,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": (
                 "finite", "deterministic", "cross_task_scope_exact",
-                "contact_cache_bounded", "single_radius_model_consistent",
+                "single_radius_model_consistent",
             ),
         }),
         "status": "gap",
