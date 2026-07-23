@@ -130,6 +130,29 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Create an independent E3 MC2 CPU domain data-path owner."
     );
     module.def(
+        "mc2_domain_cpu_v1_create_parameter_staging",
+        [](std::uint64_t handle) {
+            auto staging = require_domain(handle)->create_parameter_staging_domain();
+            auto* staging_domain = staging.get();
+            live_domains.insert(staging_domain);
+            staging.release();
+            return reinterpret_cast<std::uint64_t>(staging_domain);
+        },
+        nb::arg("handle"),
+        "Create an isolated same-layout domain for atomic parameter staging."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_swap_parameter_staging",
+        [](std::uint64_t handle, std::uint64_t staging_handle) {
+            auto* domain = require_domain(handle);
+            auto* staging = require_domain(staging_handle);
+            domain->swap_parameter_configuration(*staging);
+        },
+        nb::arg("handle"),
+        nb::arg("staging_handle"),
+        "Reversibly swap staged parameter configuration with a live domain."
+    );
+    module.def(
         "mc2_domain_cpu_v1_update_frame",
         [](std::uint64_t handle,
            const std::string& domain_signature,

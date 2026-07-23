@@ -121,8 +121,10 @@ class _FakeKernel:
         self.created = []
         self.disposed = []
         self.fail_create = False
+        self.fail_parameter_stage = False
         self.frame = None
         self.full_steps = []
+        self.parameter_updates = []
 
     def create_domain(self, program, parameter_packet):
         if self.fail_create:
@@ -130,6 +132,41 @@ class _FakeKernel:
         handle = {"serial": len(self.created), "program": program, "parameters": parameter_packet}
         self.created.append(handle)
         return handle
+
+    def stage_parameter_update(self, handle, program, parameter_packet):
+        if self.fail_parameter_stage:
+            raise RuntimeError("injected native parameter stage failure")
+        update = {
+            "handle": handle,
+            "old_program": handle["program"],
+            "old_parameters": handle["parameters"],
+            "new_program": program,
+            "new_parameters": parameter_packet,
+            "applied": False,
+            "closed": False,
+        }
+        self.parameter_updates.append(update)
+        return update
+
+    def apply_parameter_update(self, handle, update):
+        assert update["handle"] is handle and not update["applied"]
+        handle["program"] = update["new_program"]
+        handle["parameters"] = update["new_parameters"]
+        update["applied"] = True
+
+    def rollback_parameter_update(self, handle, update):
+        assert update["handle"] is handle and update["applied"]
+        handle["program"] = update["old_program"]
+        handle["parameters"] = update["old_parameters"]
+        update["applied"] = False
+
+    def finish_parameter_update(self, handle, update):
+        assert update["handle"] is handle and update["applied"]
+        update["closed"] = True
+
+    def discard_parameter_update(self, update):
+        assert not update["applied"]
+        update["closed"] = True
 
     def update_frame(self, handle, frame_packet):
         self.frame = frame_packet
@@ -244,17 +281,24 @@ def test_owner_exposes_explicit_product_debug_state():
     assert inspection["domain"]["kernel"]["serial"] == 0
 
 
-def test_parameter_change_stages_replacement_until_hot_update_abi_exists():
+def test_parameter_change_updates_same_domain_and_preserves_history():
     kernel = _FakeKernel()
     owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
     owner.sync(_draft(gravity=5.0), _snapshots())
     old_domain = owner.domain
+    old_handle = kernel.created[0]
+    old_parameter_signature = owner.compiled.parameters.parameter_signature
     report = owner.sync(_draft(gravity=6.0), _snapshots())
-    assert report.action == "replaced"
+    assert report.action == "parameters_updated"
+    assert report.native_domain_reused
     assert report.compile_cache.program_cache_hit
+    assert report.compile_cache.parameter_layout_cache_hit
     assert not report.compile_cache.parameter_value_cache_hit
-    assert owner.domain is not old_domain
-    assert len(kernel.created) == 2 and len(kernel.disposed) == 1
+    assert owner.domain is old_domain
+    assert kernel.created == [old_handle] and kernel.disposed == []
+    assert old_handle["parameters"] is owner.compiled.parameters
+    assert owner.compiled.parameters.parameter_signature != old_parameter_signature
+    assert kernel.parameter_updates[0]["closed"]
 
 
 def test_partition_gravity_direction_change_rebuilds_only_its_fragment():
@@ -274,7 +318,7 @@ def test_partition_gravity_direction_change_rebuilds_only_its_fragment():
     assert not report.compile_cache.program_cache_hit
 
 
-def test_native_create_failure_preserves_live_domain_and_cache_commit():
+def test_native_parameter_stage_failure_preserves_live_domain_and_cache_commit():
     kernel = _FakeKernel()
     owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
     owner.sync(_draft(), _snapshots())
@@ -282,17 +326,46 @@ def test_native_create_failure_preserves_live_domain_and_cache_commit():
     old_compiled = owner.compiled
     old_owner_revision = owner.revision
     old_cache_revision = owner.fragment_cache.revision
-    kernel.fail_create = True
+    kernel.fail_parameter_stage = True
     try:
         owner.sync(_draft(gravity=6.0), _snapshots())
     except RuntimeError as exc:
-        assert "injected native create failure" in str(exc)
+        assert "injected native parameter stage failure" in str(exc)
     else:
-        raise AssertionError("native create failure was accepted")
+        raise AssertionError("native parameter stage failure was accepted")
     assert owner.domain is old_domain and owner.compiled is old_compiled
     assert owner.revision == old_owner_revision
     assert owner.fragment_cache.revision == old_cache_revision
     assert kernel.disposed == []
+
+
+def test_host_commit_failure_rolls_back_applied_native_parameters():
+    kernel = _FakeKernel()
+    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner.sync(_draft(gravity=5.0), _snapshots())
+    old_domain = owner.domain
+    old_compiled = owner.compiled
+    old_parameters = kernel.created[0]["parameters"]
+
+    def fail_commit():
+        raise RuntimeError("injected host commit failure")
+
+    try:
+        owner.sync_fragments(
+            _draft(gravity=6.0),
+            old_compiled.fragments,
+            fragment_cache_revision=owner.fragment_cache.revision,
+            fragment_cache_hits=2,
+            commit_static=fail_commit,
+        )
+    except RuntimeError as exc:
+        assert "injected host commit failure" in str(exc)
+    else:
+        raise AssertionError("host commit failure was accepted")
+    assert owner.domain is old_domain and owner.compiled is old_compiled
+    assert kernel.created[0]["parameters"] is old_parameters
+    assert not kernel.parameter_updates[-1]["applied"]
+    assert kernel.parameter_updates[-1]["closed"]
 
 
 def test_fragment_failure_preserves_live_domain_and_fragment_cache():

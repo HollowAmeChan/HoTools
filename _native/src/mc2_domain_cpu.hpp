@@ -61,6 +61,9 @@ public:
     DomainV1(const DomainV1&) = delete;
     DomainV1& operator=(const DomainV1&) = delete;
 
+    std::unique_ptr<DomainV1> create_parameter_staging_domain() const;
+    void swap_parameter_configuration(DomainV1& staging);
+
     void update_frame(const FrameViewV1& frame);
     void step();
     void configure_distance(

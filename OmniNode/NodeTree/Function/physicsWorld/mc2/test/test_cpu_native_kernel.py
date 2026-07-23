@@ -180,6 +180,127 @@ def test_native_cpu_backend_uses_partitioned_animation_pose_ratio():
         domain.dispose()
 
 
+def test_native_cpu_backend_hot_updates_parameters_without_replacing_history():
+    first = _compiled_multi(
+        collision_modes=(0, 0),
+        profile_overrides=(
+            {"gravity": 5.0, "damping": 0.1, "self_collision_mode": 0},
+            {"gravity": 8.0, "damping": 0.2, "self_collision_mode": 0},
+        ),
+    )
+    second = _compiled_multi(
+        collision_modes=(0, 0),
+        profile_overrides=(
+            {"gravity": 6.0, "damping": 0.7, "self_collision_mode": 0},
+            {"gravity": 8.0, "damping": 0.2, "self_collision_mode": 0},
+        ),
+    )
+    assert first.program.domain_signature == second.program.domain_signature
+    assert first.parameters.parameter_signature != second.parameters.parameter_signature
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(first, kernel)
+    fresh_kernel = native_kernel.MC2NativeCPUKernelV1()
+    fresh = cpu_backend.create_mc2_cpu_backend_domain(second, fresh_kernel)
+    committed = []
+    try:
+        frame = _frame(first.program)
+        domain.update_frame(frame)
+        fresh.update_frame(frame)
+        before = domain.inspect()
+        live_before = native_module_api.native_module().mc2_domain_cpu_v1_stats()[
+            "live_domain_count"
+        ]
+        domain.update_parameters(second, commit_host=lambda: committed.append(True))
+        after = domain.inspect()
+        assert committed == [True]
+        assert domain.compiled is second
+        assert after["kernel"]["frame"] == before["kernel"]["frame"] == 6
+        assert after["kernel"]["generation"] == before["kernel"]["generation"] == 2
+        assert after["kernel"]["step_count"] == before["kernel"]["step_count"]
+        assert after["partition_history"] == before["partition_history"]
+        assert (
+            native_module_api.native_module().mc2_domain_cpu_v1_stats()[
+                "live_domain_count"
+            ]
+            == live_before
+        )
+        plan = scheduler.MC2SubstepPlan(
+            update_index=0,
+            simulation_delta_time=0.1,
+            frame_interpolation=1.0,
+            is_final_substep=True,
+            powers=scheduler.MC2SimulationPowers(
+                distance_bending=1.0, integration=1.0, angle=1.0
+            ),
+        )
+        settings = reference_step.make_mc2_compiled_domain_pipeline_settings(
+            second,
+            frame,
+            plan,
+            anchor_component_local_positions=np.zeros(
+                (second.program.partition_count, 3), dtype=np.float32
+            ),
+            step_basic_positions=frame.animated_base_world_positions,
+            step_basic_rotations=frame.animated_base_world_rotations,
+            distance_weights=np.ones(second.program.partition_count, dtype=np.float32),
+            external_collision=_empty_collider_table(),
+        )
+        domain.step_compiled_domain_pipeline_full(settings)
+        fresh.step_compiled_domain_pipeline_full(settings)
+        np.testing.assert_array_equal(
+            domain.read_output().world_positions,
+            fresh.read_output().world_positions,
+        )
+        np.testing.assert_array_equal(
+            domain.read_debug_state()["real_velocities"],
+            fresh.read_debug_state()["real_velocities"],
+        )
+    finally:
+        domain.dispose()
+        fresh.dispose()
+
+
+def test_native_cpu_backend_rolls_back_parameters_when_host_commit_fails():
+    first = _compiled_multi(
+        profile_overrides=({"gravity": 5.0}, {"gravity": 8.0})
+    )
+    second = _compiled_multi(
+        profile_overrides=({"gravity": 6.0}, {"gravity": 8.0})
+    )
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(first, kernel)
+    try:
+        domain.update_frame(_frame(first.program))
+        before = domain.inspect()
+        live_before = native_module_api.native_module().mc2_domain_cpu_v1_stats()[
+            "live_domain_count"
+        ]
+
+        def fail_commit():
+            raise RuntimeError("injected host commit failure")
+
+        try:
+            domain.update_parameters(second, commit_host=fail_commit)
+        except RuntimeError as exc:
+            assert "injected host commit failure" in str(exc)
+        else:
+            raise AssertionError("host commit failure was accepted")
+        after = domain.inspect()
+        assert domain.compiled is first
+        assert after["kernel"]["frame"] == before["kernel"]["frame"]
+        assert after["kernel"]["generation"] == before["kernel"]["generation"]
+        assert after["kernel"]["step_count"] == before["kernel"]["step_count"]
+        assert after["partition_history"] == before["partition_history"]
+        assert (
+            native_module_api.native_module().mc2_domain_cpu_v1_stats()[
+                "live_domain_count"
+            ]
+            == live_before
+        )
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
     compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -1099,6 +1220,10 @@ def test_native_cpu_kernel_exposes_external_edge_collision_slice():
 if __name__ == "__main__":
     test_native_cpu_backend_uses_partitioned_animation_pose_ratio()
     print("PASS test_native_cpu_backend_uses_partitioned_animation_pose_ratio")
+    test_native_cpu_backend_hot_updates_parameters_without_replacing_history()
+    print("PASS test_native_cpu_backend_hot_updates_parameters_without_replacing_history")
+    test_native_cpu_backend_rolls_back_parameters_when_host_commit_fails()
+    print("PASS test_native_cpu_backend_rolls_back_parameters_when_host_commit_fails")
     test_native_cpu_backend_runs_compiled_whole_domain_self_policy()
     print("PASS test_native_cpu_backend_runs_compiled_whole_domain_self_policy")
     test_native_cpu_backend_blocks_compiled_whole_domain_self_pair()

@@ -28,7 +28,7 @@ class MC2FusedCPUOwnerSyncReportV1:
     old_domain_cleanup_error: str | None = None
 
     def __post_init__(self) -> None:
-        if self.action not in {"created", "reused", "replaced"}:
+        if self.action not in {"created", "reused", "parameters_updated", "replaced"}:
             raise ValueError("invalid fused CPU owner sync action")
         if self.owner_revision <= 0 or self.fragment_cache_revision <= 0:
             raise ValueError("fused CPU owner revisions must be positive")
@@ -39,7 +39,7 @@ class MC2FusedCPUOwnerSyncReportV1:
 
     @property
     def native_domain_reused(self) -> bool:
-        return self.action == "reused"
+        return self.action in {"reused", "parameters_updated"}
 
     def debug_dict(self) -> dict:
         return {
@@ -196,6 +196,26 @@ class MC2FusedCPUOwnerV1:
             self._revision += 1
             report = self._make_report_values(
                 "reused",
+                cache_report,
+                fragment_cache_revision=fragment_cache_revision,
+                fragment_cache_hits=fragment_cache_hits,
+                fragment_builds=fragment_builds,
+            )
+            self._last_report = report
+            return report
+
+        if (
+            self._domain is not None
+            and cache_report.program_cache_hit
+            and cache_report.parameter_layout_cache_hit
+            and not cache_report.parameter_value_cache_hit
+        ):
+            self._domain.update_parameters(current, commit_host=commit_static)
+            self._compiled = current
+            self._draft = draft
+            self._revision += 1
+            report = self._make_report_values(
+                "parameters_updated",
                 cache_report,
                 fragment_cache_revision=fragment_cache_revision,
                 fragment_cache_hits=fragment_cache_hits,

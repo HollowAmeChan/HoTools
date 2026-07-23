@@ -8,6 +8,7 @@ product solver.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -21,6 +22,8 @@ from .native import native_module
 
 _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_create",
+    "mc2_domain_cpu_v1_create_parameter_staging",
+    "mc2_domain_cpu_v1_swap_parameter_staging",
     "mc2_domain_cpu_v1_update_frame",
     "mc2_domain_cpu_v1_step",
     "mc2_domain_cpu_v1_configure_distance",
@@ -65,6 +68,18 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_dispose",
     "mc2_center_frame_shift_v1_evaluate",
 )
+
+
+@dataclass
+class _MC2NativeParameterUpdateV1:
+    owner_handle: int
+    staging_handle: int
+    old_program: MC2CompiledDomainProgramV1
+    old_parameters: MC2DomainParameterPacketV1
+    new_program: MC2CompiledDomainProgramV1
+    new_parameters: MC2DomainParameterPacketV1
+    applied: bool = False
+    closed: bool = False
 
 
 class MC2NativeCPUKernelV1:
@@ -112,23 +127,90 @@ class MC2NativeCPUKernelV1:
         if handle <= 0:
             raise RuntimeError("native CPU domain returned an invalid handle")
         try:
-            self._configure_distance(handle, program, parameters)
-            self._configure_baseline(handle, program)
-            self._configure_tether(handle, program)
-            self._configure_bending(handle, program, parameters)
-            self._configure_inertia(handle, program, parameters)
-            self._configure_constraint_friction(handle, parameters)
-            self._configure_whole_domain_self(handle, program, parameters)
-            self._configure_compiled_external_collision(handle, program, parameters)
-            self._configure_center(handle, parameters)
-            self._configure_center_frame_shift(handle, parameters)
-            self._configure_integration(handle, parameters)
+            self._configure_domain(handle, program, parameters)
         except Exception:
             self._module.mc2_domain_cpu_v1_dispose(handle)
             raise
         self._programs[handle] = program
         self._parameters[handle] = parameters
         return handle
+
+    def stage_parameter_update(
+        self,
+        handle,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> _MC2NativeParameterUpdateV1:
+        key = self._require_handle(handle)
+        if not isinstance(program, MC2CompiledDomainProgramV1):
+            raise TypeError("program must be MC2CompiledDomainProgramV1")
+        if not isinstance(parameters, MC2DomainParameterPacketV1):
+            raise TypeError("parameters must be MC2DomainParameterPacketV1")
+        old_program = self._programs[key]
+        if (
+            program.domain_signature != old_program.domain_signature
+            or program.layout_signature != old_program.layout_signature
+            or program.particle_count != old_program.particle_count
+            or program.partition_count != old_program.partition_count
+        ):
+            raise ValueError("parameter update must preserve native domain identity")
+        if parameters.layout_signature != program.layout_signature:
+            raise ValueError("native CPU parameter layout does not match program")
+        staging = int(self._module.mc2_domain_cpu_v1_create_parameter_staging(key))
+        if staging <= 0:
+            raise RuntimeError("native CPU parameter staging returned an invalid handle")
+        try:
+            self._configure_domain(staging, program, parameters)
+        except Exception:
+            self._module.mc2_domain_cpu_v1_dispose(staging)
+            raise
+        return _MC2NativeParameterUpdateV1(
+            owner_handle=key,
+            staging_handle=staging,
+            old_program=old_program,
+            old_parameters=self._parameters[key],
+            new_program=program,
+            new_parameters=parameters,
+        )
+
+    def apply_parameter_update(self, handle, update) -> None:
+        key, update = self._require_parameter_update(handle, update)
+        if update.applied:
+            raise RuntimeError("native CPU parameter update is already applied")
+        self._module.mc2_domain_cpu_v1_swap_parameter_staging(
+            key, update.staging_handle
+        )
+        self._programs[key] = update.new_program
+        self._parameters[key] = update.new_parameters
+        update.applied = True
+
+    def rollback_parameter_update(self, handle, update) -> None:
+        key, update = self._require_parameter_update(handle, update)
+        if not update.applied:
+            raise RuntimeError("native CPU parameter update is not applied")
+        self._module.mc2_domain_cpu_v1_swap_parameter_staging(
+            key, update.staging_handle
+        )
+        self._programs[key] = update.old_program
+        self._parameters[key] = update.old_parameters
+        update.applied = False
+
+    def finish_parameter_update(self, handle, update) -> None:
+        _key, update = self._require_parameter_update(handle, update)
+        if not update.applied:
+            raise RuntimeError("native CPU parameter update must be applied before finish")
+        self._module.mc2_domain_cpu_v1_dispose(update.staging_handle)
+        update.closed = True
+
+    def discard_parameter_update(self, update) -> None:
+        if not isinstance(update, _MC2NativeParameterUpdateV1):
+            raise TypeError("update must be a native CPU parameter update")
+        if update.closed:
+            return
+        if update.applied:
+            raise RuntimeError("cannot discard an applied native CPU parameter update")
+        self._module.mc2_domain_cpu_v1_dispose(update.staging_handle)
+        update.closed = True
 
     def update_frame(self, handle, frame_packet: MC2DomainFramePacketV1) -> None:
         key = self._require_handle(handle)
@@ -1196,6 +1278,32 @@ class MC2NativeCPUKernelV1:
         if key <= 0 or key not in self._programs:
             raise RuntimeError("native MC2 CPU domain handle is not owned by this kernel")
         return key
+
+    def _require_parameter_update(self, handle, update):
+        key = self._require_handle(handle)
+        if not isinstance(update, _MC2NativeParameterUpdateV1):
+            raise TypeError("update must be a native CPU parameter update")
+        if update.owner_handle != key or update.closed:
+            raise RuntimeError("native CPU parameter update is stale")
+        return key, update
+
+    def _configure_domain(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        self._configure_distance(handle, program, parameters)
+        self._configure_baseline(handle, program)
+        self._configure_tether(handle, program)
+        self._configure_bending(handle, program, parameters)
+        self._configure_inertia(handle, program, parameters)
+        self._configure_constraint_friction(handle, parameters)
+        self._configure_whole_domain_self(handle, program, parameters)
+        self._configure_compiled_external_collision(handle, program, parameters)
+        self._configure_center(handle, parameters)
+        self._configure_center_frame_shift(handle, parameters)
+        self._configure_integration(handle, parameters)
 
     def _configure_distance(
         self,

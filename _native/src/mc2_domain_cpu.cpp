@@ -201,6 +201,114 @@ DomainV1::DomainV1(const ProgramViewV1& program)
 
 DomainV1::~DomainV1() = default;
 
+std::unique_ptr<DomainV1> DomainV1::create_parameter_staging_domain() const {
+    ensure_live();
+    ProgramViewV1 program {
+        1u,
+        particle_count_,
+        partition_count_,
+        bind_positions_.data(),
+        bind_rotations_.data(),
+        particle_partition_index_.data(),
+        particle_attribute_flags_.data(),
+        partition_center_local_positions_.data(),
+        partition_initial_local_gravity_directions_.data(),
+        domain_signature_.c_str(),
+        layout_signature_.c_str(),
+    };
+    return std::make_unique<DomainV1>(program);
+}
+
+void DomainV1::swap_parameter_configuration(DomainV1& staging) {
+    ensure_live();
+    staging.ensure_live();
+    if (&staging == this || particle_count_ != staging.particle_count_ ||
+        partition_count_ != staging.partition_count_ ||
+        domain_signature_ != staging.domain_signature_ ||
+        layout_signature_ != staging.layout_signature_) {
+        throw std::invalid_argument("MC2 CPU parameter staging identity mismatch");
+    }
+
+    using std::swap;
+    swap(center_local_inertia_, staging.center_local_inertia_);
+    swap(center_local_movement_speed_limits_, staging.center_local_movement_speed_limits_);
+    swap(center_local_rotation_speed_limits_, staging.center_local_rotation_speed_limits_);
+    swap(center_depth_inertia_, staging.center_depth_inertia_);
+    swap(center_gravity_, staging.center_gravity_);
+    swap(center_gravity_directions_, staging.center_gravity_directions_);
+    swap(center_gravity_falloff_, staging.center_gravity_falloff_);
+    swap(center_stabilization_time_, staging.center_stabilization_time_);
+    swap(center_blend_weight_, staging.center_blend_weight_);
+    swap(center_anchor_inertia_, staging.center_anchor_inertia_);
+    swap(center_world_inertia_, staging.center_world_inertia_);
+    swap(center_movement_inertia_smoothing_, staging.center_movement_inertia_smoothing_);
+    swap(center_movement_speed_limits_, staging.center_movement_speed_limits_);
+    swap(center_rotation_speed_limits_, staging.center_rotation_speed_limits_);
+    swap(center_teleport_modes_, staging.center_teleport_modes_);
+    swap(center_teleport_distances_, staging.center_teleport_distances_);
+    swap(center_teleport_rotations_, staging.center_teleport_rotations_);
+    swap(center_ready_, staging.center_ready_);
+
+    swap(distance_starts_, staging.distance_starts_);
+    swap(distance_counts_, staging.distance_counts_);
+    swap(distance_neighbors_, staging.distance_neighbors_);
+    swap(distance_rest_lengths_, staging.distance_rest_lengths_);
+    swap(distance_stiffness_values_, staging.distance_stiffness_values_);
+    swap(distance_inverse_masses_, staging.distance_inverse_masses_);
+    swap(distance_velocity_attenuation_values_, staging.distance_velocity_attenuation_values_);
+    swap(distance_ready_, staging.distance_ready_);
+    swap(baseline_parent_indices_, staging.baseline_parent_indices_);
+    swap(baseline_line_starts_, staging.baseline_line_starts_);
+    swap(baseline_line_counts_, staging.baseline_line_counts_);
+    swap(baseline_line_data_, staging.baseline_line_data_);
+    swap(baseline_ready_, staging.baseline_ready_);
+    swap(baseline_vertex_local_positions_, staging.baseline_vertex_local_positions_);
+    swap(baseline_vertex_local_rotations_, staging.baseline_vertex_local_rotations_);
+    swap(baseline_pose_ready_, staging.baseline_pose_ready_);
+    swap(tether_root_indices_, staging.tether_root_indices_);
+    swap(tether_ready_, staging.tether_ready_);
+    swap(bending_dihedral_pairs_, staging.bending_dihedral_pairs_);
+    swap(bending_dihedral_rest_angles_, staging.bending_dihedral_rest_angles_);
+    swap(bending_dihedral_signs_, staging.bending_dihedral_signs_);
+    swap(bending_volume_pairs_, staging.bending_volume_pairs_);
+    swap(bending_volume_rest_, staging.bending_volume_rest_);
+    swap(bending_stiffness_values_, staging.bending_stiffness_values_);
+    swap(bending_ready_, staging.bending_ready_);
+    swap(inertia_depths_, staging.inertia_depths_);
+    swap(inertia_inv_masses_, staging.inertia_inv_masses_);
+    swap(inertia_ready_, staging.inertia_ready_);
+    swap(angle_inverse_masses_, staging.angle_inverse_masses_);
+    swap(bending_inverse_masses_, staging.bending_inverse_masses_);
+    swap(constraint_friction_ready_, staging.constraint_friction_ready_);
+    swap(integration_damping_values_, staging.integration_damping_values_);
+    swap(integration_ready_, staging.integration_ready_);
+    swap(collision_friction_, staging.collision_friction_);
+    swap(collision_state_ready_, staging.collision_state_ready_);
+
+    swap(compiled_external_edges_, staging.compiled_external_edges_);
+    swap(compiled_external_modes_, staging.compiled_external_modes_);
+    swap(compiled_external_masks_, staging.compiled_external_masks_);
+    swap(compiled_external_radii_, staging.compiled_external_radii_);
+    swap(compiled_external_friction_, staging.compiled_external_friction_);
+    swap(compiled_external_ready_, staging.compiled_external_ready_);
+    swap(whole_domain_self_edges_, staging.whole_domain_self_edges_);
+    swap(whole_domain_self_points_, staging.whole_domain_self_points_);
+    swap(whole_domain_self_triangles_, staging.whole_domain_self_triangles_);
+    swap(whole_domain_self_modes_, staging.whole_domain_self_modes_);
+    swap(whole_domain_collision_groups_, staging.whole_domain_collision_groups_);
+    swap(whole_domain_collision_masks_, staging.whole_domain_collision_masks_);
+    swap(whole_domain_self_friction_, staging.whole_domain_self_friction_);
+    swap(whole_domain_self_thickness_, staging.whole_domain_self_thickness_);
+    swap(whole_domain_self_cloth_mass_, staging.whole_domain_self_cloth_mass_);
+    swap(whole_domain_self_scaled_thickness_, staging.whole_domain_self_scaled_thickness_);
+    swap(
+        whole_domain_self_partition_scale_ratios_,
+        staging.whole_domain_self_partition_scale_ratios_
+    );
+    swap(whole_domain_self_engine_, staging.whole_domain_self_engine_);
+    swap(whole_domain_self_ready_, staging.whole_domain_self_ready_);
+}
+
 void DomainV1::update_frame(const FrameViewV1& frame) {
     ensure_live();
     if (frame.particle_count != particle_count_) {

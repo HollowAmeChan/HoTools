@@ -37,6 +37,16 @@ class MC2CPUKernelV1(Protocol):
 
     def create_domain(self, program, parameters): ...
 
+    def stage_parameter_update(self, handle, program, parameters): ...
+
+    def apply_parameter_update(self, handle, update) -> None: ...
+
+    def rollback_parameter_update(self, handle, update) -> None: ...
+
+    def finish_parameter_update(self, handle, update) -> None: ...
+
+    def discard_parameter_update(self, update) -> None: ...
+
     def update_frame(self, handle, frame_packet): ...
 
     def step(self, handle, frame_packet, scheduler_settings, collider_snapshot): ...
@@ -147,6 +157,57 @@ class MC2CPUBackendDomainV1:
                 "last_frame": int(frame_packet.frame),
                 "generation": int(frame_packet.generation),
             }
+
+    def update_parameters(self, compiled: MC2CompiledDomainV1, commit_host=None) -> None:
+        """Atomically replace same-layout parameters without replacing domain history."""
+
+        self._ensure_live()
+        if not isinstance(compiled, MC2CompiledDomainV1):
+            raise TypeError("compiled must be MC2CompiledDomainV1")
+        if (
+            compiled.program.domain_signature
+            != self._compiled.program.domain_signature
+            or compiled.program.layout_signature
+            != self._compiled.program.layout_signature
+            or compiled.parameters.parameter_layout_signature
+            != self._compiled.parameters.parameter_layout_signature
+        ):
+            raise ValueError("parameter update must preserve compiled domain layout")
+        if commit_host is None:
+            commit_host = lambda: None
+        if not callable(commit_host):
+            raise TypeError("commit_host must be callable")
+        methods = {
+            name: getattr(self._kernel, name, None)
+            for name in (
+                "stage_parameter_update",
+                "apply_parameter_update",
+                "rollback_parameter_update",
+                "finish_parameter_update",
+                "discard_parameter_update",
+            )
+        }
+        if any(not callable(method) for method in methods.values()):
+            raise RuntimeError("CPU kernel does not expose atomic parameter update")
+
+        update = methods["stage_parameter_update"](
+            self._handle, compiled.program, compiled.parameters
+        )
+        try:
+            methods["apply_parameter_update"](self._handle, update)
+        except Exception:
+            methods["discard_parameter_update"](update)
+            raise
+        try:
+            commit_host()
+        except Exception:
+            try:
+                methods["rollback_parameter_update"](self._handle, update)
+            finally:
+                methods["discard_parameter_update"](update)
+            raise
+        methods["finish_parameter_update"](self._handle, update)
+        self._compiled = compiled
 
     def step(
         self,
