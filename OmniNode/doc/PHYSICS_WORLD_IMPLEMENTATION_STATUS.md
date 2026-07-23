@@ -178,3 +178,9 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 产品证据已经从旧 mixed runner 进一步拆开：单 source 三 setup 负责 BoneCloth/BoneSpring 的 root reference、Reset/Keep、速度和写回；MeshCloth 两 source product runner 负责真正的 partition scope 隔离。MeshCloth source 的动画变化使用 BasePose proxy，避免静态 source fingerprint 变化造成域替换。Capability matrix 的 `particle_subset_scope_exact` 仅声明 MeshCloth 适用，Bone 包装的“一 Armature 一统一域”限制保持显式。
 
 当前门禁：Python 3.13 native `30/30`、ProductSlot `13/13`、DomainOwner `9/9`、Domain E3 golden `10/10`、capability matrix `3/3`，Blender 5.2 单 source Teleport 与 Mesh 两 source 分区隔离双跑均通过。BoneCloth/BoneSpring 删除前 plan 已补齐，下一阶段先迁移旧 runner helper，再做 E7-A/E7-S。4.5 / Python 3.11 暂停编译和验收，待 E7-CPU 删除旧 owner 前的最终收尾再恢复双 ABI；P4 不实施，E6 GPU 不提前启动。
+
+## E7-CPU 当前收口（2026-07-24）
+
+本轮已将 whole-domain self 的产品证据登记到 capability matrix：MeshCloth 使用三 setup mixed-output 900 帧 runner，BoneCloth 使用独立的 product self-contract runner。两条证据都锁定 finite、deterministic 与 `whole_domain_self_step_active`；BoneCloth 还直接检查 derived-radius、cloth mass 和 owner 的 self-step 计数。self capability 仍明确标记为 `gap`，因为跨任务 scope、contact cache 有界性和 radius consistency 尚未有独立产品断言，不能由旧 V0 soak 代替。
+
+当前旧 Python 测试仍有 `native_context`、`specs`、`solver` 的直接断言，主要集中在 base-pose、Bone static/frame、final-proxy、debug-draw 和 property-registry；这些断言必须逐项迁移为 DomainV1/ProductSlot/产品 readback 证据后，才能删除 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 及剩余 V0 binding/TU。产品运行时的 E7 reachability 仍为零，故下一批只处理测试所有权和独立断言，不改变 Physics World/OmniNode 边界。
