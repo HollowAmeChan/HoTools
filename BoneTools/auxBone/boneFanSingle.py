@@ -4,7 +4,8 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneUtils import BoneUtils
+from ..boneUtils import BoneUtils
+from .auxUtils import AuxPreviewUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
@@ -13,7 +14,6 @@ from .boneFan import (
     HoRig_Fan,
 )
 import gpu
-from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 import blf
 
@@ -1079,14 +1079,7 @@ class BoneFanSinglePreview:
         spoke_len = max(frame["base_length"] * length_factor, EPS)
 
         def _append_circle(target, center, ax, ay, r, segments=64):
-            if r <= EPS:
-                return
-            prev = center + ax * r
-            for idx in range(1, segments + 1):
-                ang = tau * idx / segments
-                pt = center + ax * cos(ang) * r + ay * sin(ang) * r
-                target.extend([tuple(prev), tuple(pt)])
-                prev = pt
+            AuxPreviewUtils.append_circle(target, center, ax, ay, r, segments, EPS)
 
         # 正交辅助轴，用来画权重球的三个大圆
         axis_a = _safe_normalized_vector(parent_dir_world - plane_normal_world * parent_dir_world.dot(plane_normal_world))
@@ -1131,28 +1124,15 @@ class BoneFanSinglePreview:
                     continue
                 out_spokes.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
 
-        shader.bind()
         if sphere_lines:
-            b = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
-            shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-            b.draw(shader)
-        b = batch_for_shader(shader, "LINES", {"pos": virtual_line})
-        shader.uniform_float("color", (1.0, 0.3, 0.9, 0.95))
-        b.draw(shader)
-        b = batch_for_shader(shader, "LINES", {"pos": main_line})
-        shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
-        b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, sphere_lines, (0.2, 0.9, 1.0, 0.95))
+        AuxPreviewUtils.draw_lines(shader, virtual_line, (1.0, 0.3, 0.9, 0.95))
+        AuxPreviewUtils.draw_lines(shader, main_line, (0.95, 0.95, 0.95, 0.85))
         if in_spokes:
-            b = batch_for_shader(shader, "LINES", {"pos": in_spokes})
-            shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
-            b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, in_spokes, (1.0, 0.72, 0.2, 0.95))
         if out_spokes:
-            b = batch_for_shader(shader, "LINES", {"pos": out_spokes})
-            shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
-            b.draw(shader)
-        b = batch_for_shader(shader, "POINTS", {"pos": [tuple(joint_world)]})
-        shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-        b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, out_spokes, (0.35, 0.95, 0.55, 0.95))
+        AuxPreviewUtils.draw_points(shader, [tuple(joint_world)], (1.0, 0.65, 0.15, 1.0), size=8.0)
 
     @classmethod
     def _draw_2d(cls):
@@ -1241,6 +1221,10 @@ def drawBoneFanSinglePanel(layout: UILayout, context: Context):
     mid = sub.column(align=True)
     mid.enabled = settings.process_symmetry
     mid.prop(settings, "midline_threshold")
+
+
+def draw_panel(layout, context):
+    drawBoneFanSinglePanel(layout, context)
 
 
 class OP_FanSingleGenerate(Operator):
@@ -1414,6 +1398,24 @@ class OP_FanSingleGenerate(Operator):
         BoneFanSinglePreview.show(context)
         return self.execute(context)
 
+
+
+@classmethod
+def _fan_single_preview_ensure_handler(cls):
+    AuxPreviewUtils.ensure_handlers(cls, _draw_fan_single_preview, _draw_fan_single_preview_2d)
+
+
+@classmethod
+def _fan_single_preview_shutdown(cls):
+    AuxPreviewUtils.remove_handlers(cls)
+    cls._state = None
+    cls._timer_running = False
+
+
+BoneFanSinglePreview.ensure_handler = _fan_single_preview_ensure_handler
+BoneFanSinglePreview.shutdown = _fan_single_preview_shutdown
+BoneFanSinglePreview._tag_redraw = staticmethod(AuxPreviewUtils.tag_redraw)
+BoneFanSinglePreview._find_view3d_region = staticmethod(AuxPreviewUtils.find_view3d_region)
 
 
 cls = [

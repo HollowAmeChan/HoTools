@@ -4,9 +4,9 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneUtils import BoneUtils
+from ..boneUtils import BoneUtils
+from .auxUtils import AuxPreviewUtils
 import gpu
-from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 import blf
 
@@ -26,14 +26,8 @@ def ureg_props():
         del bpy.types.Scene.ho_fan_settings
 
 
-def _safe_normalized_vector(vector):
-    if vector.length < EPS:
-        return None
-    return vector.normalized()
-
-
-def _clamp(value, min_value, max_value):
-    return max(min_value, min(max_value, value))
+_safe_normalized_vector = AuxPreviewUtils.safe_normalized_vector
+_clamp = AuxPreviewUtils.clamp
 
 
 def _fan_preview_update(self, context):
@@ -280,6 +274,10 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
     sub.prop(settings, "fan_weight_blur")
 
 
+def draw_panel(layout, context):
+    drawBoneFanPanel(layout, context)
+
+
 class BoneFanPreview:
     _handler_3d = None
     _handler_2d = None
@@ -496,14 +494,9 @@ class BoneFanPreview:
             return
 
         def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
-            if ring_radius <= EPS:
-                return
-            previous = center + axis_x * ring_radius
-            for index in range(1, segments + 1):
-                angle = tau * index / segments
-                point = center + axis_x * cos(angle) * ring_radius + axis_y * sin(angle) * ring_radius
-                target.extend([tuple(previous), tuple(point)])
-                previous = point
+            AuxPreviewUtils.append_circle(
+                target, center, axis_x, axis_y, ring_radius, segments, EPS
+            )
 
         points = [tuple(joint_world)]
         in_spokes = []
@@ -554,31 +547,19 @@ class BoneFanPreview:
                     continue
                 out_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
 
-        shader.bind()
-
         if sphere_lines:
-            line_batch = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
-            shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-            line_batch.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, sphere_lines, (0.2, 0.9, 1.0, 0.95))
 
         if len(center_spokes) >= 2:
-            center_batch = batch_for_shader(shader, "LINES", {"pos": center_spokes})
-            shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
-            center_batch.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, center_spokes, (0.95, 0.95, 0.95, 0.85))
 
         if len(in_spokes) >= 2:
-            in_batch = batch_for_shader(shader, "LINES", {"pos": in_spokes})
-            shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
-            in_batch.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, in_spokes, (1.0, 0.72, 0.2, 0.95))
 
         if len(out_spokes) >= 2:
-            out_batch = batch_for_shader(shader, "LINES", {"pos": out_spokes})
-            shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
-            out_batch.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, out_spokes, (0.35, 0.95, 0.55, 0.95))
 
-        point_batch = batch_for_shader(shader, "POINTS", {"pos": points})
-        shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-        point_batch.draw(shader)
+        AuxPreviewUtils.draw_points(shader, points, (1.0, 0.65, 0.15, 1.0), size=8.0)
 
     @classmethod
     def _draw_2d(cls):
@@ -702,15 +683,7 @@ class BoneFanCore:
 
     @staticmethod
     def _rotate_vector_around_axis(vector, axis, angle_rad):
-        axis = _safe_normalized_vector(axis)
-        if axis is None:
-            return None
-
-        return (
-            vector * cos(angle_rad)
-            + axis.cross(vector) * sin(angle_rad)
-            + axis * axis.dot(vector) * (1.0 - cos(angle_rad))
-        )
+        return AuxPreviewUtils.rotate_vector_around_axis(vector, axis, angle_rad)
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -1528,6 +1501,25 @@ class OP_FanGenerate(Operator):
     def invoke(self, context, event):
         BoneFanPreview.show(context)
         return self.execute(context)
+
+
+@classmethod
+def _fan_preview_ensure_handler(cls):
+    AuxPreviewUtils.ensure_handlers(cls, _draw_fan_preview, _draw_fan_preview_2d)
+
+
+@classmethod
+def _fan_preview_shutdown(cls):
+    AuxPreviewUtils.remove_handlers(cls)
+    cls._state = None
+    cls._timer_running = False
+
+
+BoneFanPreview.ensure_handler = _fan_preview_ensure_handler
+BoneFanPreview.shutdown = _fan_preview_shutdown
+BoneFanPreview._tag_redraw = staticmethod(AuxPreviewUtils.tag_redraw)
+BoneFanPreview._find_view3d_region = staticmethod(AuxPreviewUtils.find_view3d_region)
+BoneFanCore._apply_hotools_bone_props = staticmethod(AuxPreviewUtils.set_aux_bone_props)
 
 
 cls = [

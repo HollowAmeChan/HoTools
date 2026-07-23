@@ -6,11 +6,11 @@ from bpy.types import Context, Operator, PropertyGroup, UILayout
 from mathutils import Vector
 
 import gpu
-from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 import blf
 
-from .boneUtils import BoneUtils
+from ..boneUtils import BoneUtils
+from .auxUtils import AuxPreviewUtils
 
 
 EPS = 1e-6
@@ -135,14 +135,8 @@ def ureg_props():
         del bpy.types.Scene.ho_twist_settings
 
 
-def _safe_normalized_vector(vector):
-    if vector.length < EPS:
-        return None
-    return vector.normalized()
-
-
-def _clamp(value, min_value, max_value):
-    return max(min_value, min(max_value, value))
+_safe_normalized_vector = AuxPreviewUtils.safe_normalized_vector
+_clamp = AuxPreviewUtils.clamp
 
 
 class TwistBonePreview:
@@ -443,20 +437,13 @@ class TwistBonePreview:
                 radius = disk["radius"]
 
                 ring = []
-                previous = center + axis_x * radius
-                for index in range(1, segments + 1):
-                    angle = (math.tau * index) / segments
-                    point = center + axis_x * math.cos(angle) * radius + axis_y * math.sin(angle) * radius
-                    ring.extend([tuple(previous), tuple(point)])
-                    previous = point
+                AuxPreviewUtils.append_circle(ring, center, axis_x, axis_y, radius, segments)
 
-                ring_batch = batch_for_shader(shader, "LINES", {"pos": ring})
-                shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-                ring_batch.draw(shader)
+                AuxPreviewUtils.draw_lines(shader, ring, (0.2, 0.9, 1.0, 0.95))
 
-                center_batch = batch_for_shader(shader, "POINTS", {"pos": [tuple(center)]})
-                shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-                center_batch.draw(shader)
+                AuxPreviewUtils.draw_points(
+                    shader, [tuple(center)], (1.0, 0.65, 0.15, 1.0), size=6.0
+                )
         finally:
             gpu.state.point_size_set(1.0)
             gpu.state.line_width_set(1.0)
@@ -503,20 +490,12 @@ class TwistBonePreview:
                     (x, y),
                     (label_x - cls._line_end_offset_x, label_y + cls._line_end_offset_y),
                 ]
-                batch = batch_for_shader(line_shader, "LINES", {"pos": coords})
-                line_shader.bind()
-                line_shader.uniform_float("color", (0.1, 0.85, 1.0, 0.85))
-                batch.draw(line_shader)
+                AuxPreviewUtils.draw_lines(line_shader, coords, (0.1, 0.85, 1.0, 0.85))
 
                 label = f"{disk['name']}  ({disk['influence']:.2f})"
-                blf.size(font_id, cls._font_size)
-                blf.enable(font_id, blf.SHADOW)
-                blf.shadow(font_id, 3, 0, 0, 0, 0.75)
-                blf.shadow_offset(font_id, 1, -1)
-                blf.color(font_id, 0.85, 0.97, 1.0, 1.0)
-                blf.position(font_id, label_x, label_y, 0.0)
-                blf.draw(font_id, label)
-                blf.disable(font_id, blf.SHADOW)
+                AuxPreviewUtils.draw_label(
+                    font_id, label, (label_x, label_y), (0.85, 0.97, 1.0, 1.0), cls._font_size
+                )
         finally:
             gpu.state.line_width_set(1.0)
             gpu.state.blend_set("NONE")
@@ -574,6 +553,10 @@ def drawBoneTwistPanel(layout: UILayout, context: Context):
     sub.prop(settings, "soft_factor")
 
 
+def draw_panel(layout, context):
+    drawBoneTwistPanel(layout, context)
+
+
 class TwistBoneCore:
     # 该核心生成的辅助骨类型，与 hotools_boneprops.auxBone.auxType 一致；约束命名前缀按它区分。
     AUX_TYPE = "TWIST"
@@ -603,15 +586,7 @@ class TwistBoneCore:
 
     @staticmethod
     def _rotate_vector_around_axis(vector, axis, angle_rad):
-        axis = _safe_normalized_vector(axis)
-        if axis is None:
-            return None
-
-        return (
-            vector * math.cos(angle_rad)
-            + axis.cross(vector) * math.sin(angle_rad)
-            + axis * axis.dot(vector) * (1.0 - math.cos(angle_rad))
-        )
+        return AuxPreviewUtils.rotate_vector_around_axis(vector, axis, angle_rad)
 
     @staticmethod
     def _apply_hotools_bone_props(
@@ -1465,6 +1440,25 @@ class OP_TwistBoneWithWeight(Operator):
         layout = self.layout
         layout.prop(self, "copy_rotation_target_bone")
 
+
+
+@classmethod
+def _twist_preview_ensure_handler(cls):
+    AuxPreviewUtils.ensure_handlers(cls, _draw_twist_preview, _draw_twist_preview_2d)
+
+
+@classmethod
+def _twist_preview_shutdown(cls):
+    AuxPreviewUtils.remove_handlers(cls)
+    cls._state = None
+    cls._timer_running = False
+
+
+TwistBonePreview.ensure_handler = _twist_preview_ensure_handler
+TwistBonePreview.shutdown = _twist_preview_shutdown
+TwistBonePreview._tag_redraw = staticmethod(AuxPreviewUtils.tag_redraw)
+TwistBonePreview._find_view3d_region = staticmethod(AuxPreviewUtils.find_view3d_region)
+TwistBoneCore._apply_hotools_bone_props = staticmethod(AuxPreviewUtils.set_aux_bone_props)
 
 
 cls = [

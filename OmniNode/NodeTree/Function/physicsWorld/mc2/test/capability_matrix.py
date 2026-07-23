@@ -88,7 +88,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
         },
         "evidence": ({
-            "runner": "test_blender_mc2_mixed_output_soak.py::main",
+            "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
             "frames": 900,
             "setups": ALL_SETUPS,
             "fields": (
@@ -99,8 +99,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "finite", "deterministic", "candidate_frame_progresses",
                 "writeback_targets_present",
                 "parameter_hot_update_in_place",
-                "stabilization_blend_ramp_exact",
-                "bounded_velocity",
+                "angle_motion_hot_update_stable",
             ),
         }, {
             "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",

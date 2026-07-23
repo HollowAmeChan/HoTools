@@ -4,7 +4,8 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneUtils import BoneUtils
+from ..boneUtils import BoneUtils
+from .auxUtils import AuxPreviewUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
@@ -14,7 +15,6 @@ from .boneFan import (
 )
 from .boneFanSingle import BoneFanSingleCore
 import gpu
-from gpu_extras.batch import batch_for_shader
 import blf
 
 
@@ -661,14 +661,7 @@ class BoneFanSidePreview:
         spoke_len = max(frame["base_length"] * length_factor, EPS)
 
         def _append_circle(target, center, ax, ay, r, segments=64):
-            if r <= EPS:
-                return
-            prev = center + ax * r
-            for idx in range(1, segments + 1):
-                ang = tau * idx / segments
-                pt = center + ax * cos(ang) * r + ay * sin(ang) * r
-                target.extend([tuple(prev), tuple(pt)])
-                prev = pt
+            AuxPreviewUtils.append_circle(target, center, ax, ay, r, segments, EPS)
 
         sphere_lines = []
         if getattr(settings, "auto_transfer_weights", False) and sphere_radius > EPS:
@@ -692,22 +685,13 @@ class BoneFanSidePreview:
                     continue
                 target.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
 
-        shader.bind()
         if sphere_lines:
-            b = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
-            shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-            b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, sphere_lines, (0.2, 0.9, 1.0, 0.95))
         if left_spokes:
-            b = batch_for_shader(shader, "LINES", {"pos": left_spokes})
-            shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
-            b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, left_spokes, (0.35, 0.95, 0.55, 0.95))
         if right_spokes:
-            b = batch_for_shader(shader, "LINES", {"pos": right_spokes})
-            shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
-            b.draw(shader)
-        b = batch_for_shader(shader, "POINTS", {"pos": [tuple(joint_world)]})
-        shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-        b.draw(shader)
+            AuxPreviewUtils.draw_lines(shader, right_spokes, (1.0, 0.72, 0.2, 0.95))
+        AuxPreviewUtils.draw_points(shader, [tuple(joint_world)], (1.0, 0.65, 0.15, 1.0), size=8.0)
 
     @classmethod
     def _draw_2d(cls):
@@ -784,6 +768,10 @@ def drawBoneFanSidePanel(layout: UILayout, context: Context):
     mid.enabled = settings.process_symmetry
     mid.prop(settings, "midline_threshold")
     mid.prop(settings, "midplane_threshold")
+
+
+def draw_panel(layout, context):
+    drawBoneFanSidePanel(layout, context)
 
 
 class OP_FanSideGenerate(Operator):
@@ -926,6 +914,24 @@ class OP_FanSideGenerate(Operator):
     def invoke(self, context, event):
         BoneFanSidePreview.show(context)
         return self.execute(context)
+
+
+@classmethod
+def _fan_side_preview_ensure_handler(cls):
+    AuxPreviewUtils.ensure_handlers(cls, _draw_fan_side_preview, _draw_fan_side_preview_2d)
+
+
+@classmethod
+def _fan_side_preview_shutdown(cls):
+    AuxPreviewUtils.remove_handlers(cls)
+    cls._state = None
+    cls._timer_running = False
+
+
+BoneFanSidePreview.ensure_handler = _fan_side_preview_ensure_handler
+BoneFanSidePreview.shutdown = _fan_side_preview_shutdown
+BoneFanSidePreview._tag_redraw = staticmethod(AuxPreviewUtils.tag_redraw)
+BoneFanSidePreview._find_view3d_region = staticmethod(AuxPreviewUtils.find_view3d_region)
 
 
 cls = [

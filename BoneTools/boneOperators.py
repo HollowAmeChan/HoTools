@@ -5,7 +5,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
-from . import boneTwist, boneFan, boneFanSingle, boneFanSide, boneProperty
+from . import boneProperty, auxBone
 
 
 class OP_ApplyRestPose(Operator):
@@ -711,7 +711,7 @@ class OP_BoneRemoveConstraints(Operator):
         return {'FINISHED'}
 
 
-def drawBoneOperatorsPanel(layout: UILayout, context: Context):
+def _drawBoneOperatorsPanelLegacy(layout: UILayout, context: Context):
 
     row = layout.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
@@ -762,11 +762,31 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row.operator(OP_DisableAuxBoneConstraints.bl_idname, text="禁用辅助骨约束")
     row.operator(OP_EnableAuxBoneConstraints.bl_idname, text="启用辅助骨约束")
 
-    boneTwist.drawBoneTwistPanel(layout, context)
-    boneFan.drawBoneFanPanel(layout, context)
-    boneFanSingle.drawBoneFanSinglePanel(layout, context)
-    boneFanSide.drawBoneFanSidePanel(layout, context)
+    auxBone.draw_panel(layout, context)
        
+
+def drawBoneOperatorsPanel(layout: UILayout, context: Context):
+    """Draw common bone operations, then delegate all aux UI to auxBone."""
+    row = layout.row(align=True)
+    row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
+    row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
+
+    row = layout.row(align=True)
+    row.operator(OP_SplitBoneWithWeight.bl_idname, text="细分骨骼")
+    row.operator(OP_DissolveBoneWithWeight.bl_idname, text="溶并骨骼")
+    row.operator(OP_SimpleDissolveBone.bl_idname, text="简单溶并")
+
+    col = layout.column(align=True)
+    col.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
+    row = col.row(align=True)
+    row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
+    row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
+    row = col.row(align=True)
+    row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
+    row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
+
+    auxBone.draw_panel(layout, context)
+
 
 cls = [
     OP_ApplyRestPose,
