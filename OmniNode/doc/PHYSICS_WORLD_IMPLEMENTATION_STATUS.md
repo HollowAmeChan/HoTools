@@ -85,6 +85,10 @@ physicsWorld/
 
 MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_product.py` 已移除脚本内 V0 task/oracle、旧 solver/spec/context 与 aggregate 故障注入，改为只验证公开 BoneCloth/BoneSpring request、统一产品 owner、动态槽、约束调试和 Bone writeback。Blender 5.2/Python 3.13 明确加载当前工作树 `product_solver.py` 与 `_Lib/py313` 后全部通过。旧 `test_blender_mc2_v1_soak.py` 及其独占的 Blender 5.1 JSON 基线也已删除；其性能、长程/热更新、dispose/参数交换和 same-frame 职责分别由产品 hotspot、产品 mixed soak、product slot 与 frame-state 门禁承接。4.5/py311 继续冻结。该项不替代旧 mixed-output 中仍待迁移的精确 stabilization ramp、零子步、particle subset、debug layer 和非单位正尺度断言。
 
+## Bone 删除前门禁更新（2026-07-23）
+
+旧 `test_blender_mc2_bone_constraint_soak.py` 已从 2158 行 V0 soak 收缩为 product-only 兼容门面，所有旧符号只转发到公开 BoneCloth/BoneSpring 产品 runner，不再创建 V0 task、读取 `native_context` 或导入 mixed runner。Angle/Motion 与外碰/摩擦 runner 已在 Blender 5.2 / Python 3.13 完成 600 帧，约束 runner 完成 900 帧双跑；公共 helper 固定使用 `_Lib/py313`。BoneCloth/BoneSpring plan 已登记逐项迁移清单，`bone_gravity_axes_falloff`、`bone_rotation_output_controls`、`bone_self_collision` 以及精确 target/rest 边界仍是删除前缺口，不能由兼容门面宣称等价。完成这些产品证据后才允许删除门面、旧 Python/native owner、hidden task、普通 aggregate 和 V0 binding；4.5/py311 继续冻结。
+
 ## 当前优先级
 
 MC2 E7-CPU 产品稳定化与限速证据更正（2026-07-23）：产品 Center debug ABI 已增加请求驱动的 `velocity_weight` 与 `gravity_ratio`，`Reset` 在一次 frame-shift 事务中按 `stabilization_time_after_reset > 1e-6` 从零开始，帧内多个 substep 只累加一次；DomainV1 native 回归和 Blender 5.2 三 setup 双跑均精确通过 `1/6` 增量、20 帧饱和到 `1.0` 的 ramp。产品 mixed 900 帧热更新窗口新增独立 dynamics debug ABI，直接观察 post 后 `state_velocities`，MeshCloth/BoneCloth/BoneSpring 的低限峰值比分别为 `1.00000007/1.00000021/1.00000010`，并验证上限未越界、参数 SoA 已提交和双跑摘要一致。此前“产品 ABI 不暴露 velocity_weight、ramp 尚未迁移”的表述自本条起失效；旧 mixed-output main 仍只保留尚未迁移的 teleport 零子步、particle subset、debug layer 隔离和非单位正尺度断言。当前只使用 Blender 5.2/Python 3.13 与 `_Lib/py313`；不恢复 4.5/py311。
