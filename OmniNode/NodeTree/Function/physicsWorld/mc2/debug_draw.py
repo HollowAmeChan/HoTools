@@ -1214,6 +1214,50 @@ def _append_step_basic_batches(batches, topology, motion, limit):
 
 
 def _append_gravity_batches(batches, parameters, topology, positions, limit):
+    particle_directions = np.asarray(
+        _values(parameters.get("gravity_directions")), dtype=np.float32
+    )
+    raw_strengths = np.asarray(
+        _values(parameters.get("gravity_raw_strengths")), dtype=np.float32
+    ).reshape((-1,))
+    effective_strengths = np.asarray(
+        _values(parameters.get("gravity_effective_strengths")), dtype=np.float32
+    ).reshape((-1,))
+    if (
+        particle_directions.ndim == 2
+        and particle_directions.shape[1] == 3
+        and len(particle_directions) == len(positions)
+        and len(raw_strengths) == len(positions)
+        and len(effective_strengths) == len(positions)
+    ):
+        attributes = np.asarray(
+            _values(topology.get("vertex_attributes")), dtype=np.uint8
+        ).reshape((-1,))
+        raw_lines = []
+        effective_lines = []
+        for index, position in enumerate(positions[:limit]):
+            if index < len(attributes) and not (int(attributes[index]) & 0x02):
+                continue
+            direction = vector3(particle_directions[index])
+            if direction.length <= 1.0e-8:
+                continue
+            direction.normalize()
+            start = vector3(position)
+            raw_strength = max(float(raw_strengths[index]), 0.0)
+            effective_strength = max(float(effective_strengths[index]), 0.0)
+            if raw_strength > 1.0e-8:
+                add_arrow_lines(
+                    raw_lines, start, start + direction * raw_strength * 0.02
+                )
+            if effective_strength > 1.0e-8:
+                add_arrow_lines(
+                    effective_lines,
+                    start,
+                    start + direction * effective_strength * 0.02,
+                )
+        _batch(batches, raw_lines, "gravity_raw", 1.0)
+        _batch(batches, effective_lines, "gravity", 2.2)
+        return
     direction = np.asarray(
         _values(parameters.get("gravity_direction")), dtype=np.float32
     ).reshape((-1,))

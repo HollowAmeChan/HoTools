@@ -857,7 +857,12 @@ try:
     assert writeback.writeback_bone_transforms(product_world) == 12
     assert debug.request_mc2_debug_capture(
         product_world,
-        filters={"show_output": True},
+        filters={
+            "show_output": True,
+            "show_depth": True,
+            "show_step_basic": True,
+            "show_gravity": True,
+        },
     ) == 1
 
     product_world.frame_context.frame = 2
@@ -896,6 +901,10 @@ try:
     assert "show_output" not in unified_slot.data[
         "_debug_draw_snapshot"
     ]["unsupported_filters"]
+    cloth_debug = unified_slot.data["_debug_draw_snapshot"]
+    assert cloth_debug["topology"]["baseline_root_indices"].shape == (12,)
+    assert cloth_debug["motion"]["step_basic_positions"].shape == (12, 3)
+    assert cloth_debug["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
     assert writeback.writeback_bone_transforms(product_world) == 12
 
     spring_product_requests, spring_product_names = nodes.physicsMC2BoneSpringTask(
@@ -960,6 +969,27 @@ try:
         "source_kind"
     ] == "bone_spring"
     assert writeback.writeback_bone_transforms(spring_product_world) == 3
+    assert debug.request_mc2_debug_capture(
+        spring_product_world,
+        filters={
+            "show_depth": True,
+            "show_step_basic": True,
+            "show_gravity": True,
+        },
+    ) == 1
+    spring_product_world.frame_context.frame = 4
+    spring_product_world.frame_context.restart_required = False
+    spring_product_world.frame_context.reset_requested = False
+    spring_product_world.collider_snapshot["frame"] = 4
+    returned, ready, _status = nodes.physicsMC2Step(
+        spring_product_world,
+        spring_product_requests,
+    )
+    assert returned is spring_product_world and ready is True
+    spring_debug = spring_unified_slot.data["_debug_draw_snapshot"]
+    assert spring_debug["topology"]["baseline_root_indices"].shape == (3,)
+    assert spring_debug["motion"]["step_basic_positions"].shape == (3, 3)
+    assert len(spring_debug["parameters"]["partitions"]) == 1
 
     multi_requests = tuple(
         product_authoring.make_mc2_bone_cloth_product_request(

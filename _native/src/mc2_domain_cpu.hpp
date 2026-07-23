@@ -414,6 +414,9 @@ public:
     const std::vector<std::uint8_t>& center_debug_rotation_speed_limited() const noexcept {
         return center_debug_rotation_speed_limited_;
     }
+    const std::vector<float>& center_gravity_ratios() const noexcept {
+        return center_gravity_ratios_;
+    }
     std::int64_t center_shift_count() const noexcept { return center_shift_count_; }
     std::int64_t center_step_count() const noexcept { return center_step_count_; }
     bool baseline_ready() const noexcept { return baseline_ready_; }

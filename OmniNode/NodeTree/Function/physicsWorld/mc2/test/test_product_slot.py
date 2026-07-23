@@ -537,6 +537,7 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
     assert slot.data["frame_complete"] is True
     assert slot.data["scheduler_state"].revision == 1 + len(results)
     assert len(kernel.poses) == len(results) == len(kernel.full_steps)
+    assert "_debug_product_step_basic" not in slot.data
     for _handle, settings in kernel.full_steps:
         np.testing.assert_array_equal(
             settings["distance_weights"],
@@ -588,6 +589,10 @@ def test_paused_fused_frame_has_no_product_substeps():
     kernel = _Kernel()
     slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    world.frame_context = types.SimpleNamespace(frame=11)
+    assert debug_module.request_mc2_debug_capture(
+        world, filters={"show_step_basic": True},
+    ) == 1
     program = slot.data["owner"].compiled.program
     scheduled = _scheduled(
         slot, _domain_frame(program, frame=12), world_time_scale=0.0,
@@ -604,6 +609,11 @@ def test_paused_fused_frame_has_no_product_substeps():
     else:
         raise AssertionError("paused fused frame accepted a substep")
     assert kernel.poses == [] and kernel.full_steps == []
+    world.frame_context = types.SimpleNamespace(frame=12)
+    assert debug_module.capture_requested_mc2_product_debug(world, (slot,)) == 0
+    debug_state = slot.data["_debug_capture_state"]
+    assert debug_state["requested"] is True
+    assert debug_state["waiting_for_substep"] is True
 
 
 def test_slot_native_executes_complete_compiled_frame():
@@ -619,6 +629,9 @@ def test_slot_native_executes_complete_compiled_frame():
             filters={
                 "show_topology": True,
                 "show_attributes": True,
+                "show_depth": True,
+                "show_step_basic": True,
+                "show_gravity": True,
                 "show_velocity": True,
                 "show_output": True,
                 "show_center": True,
@@ -664,6 +677,25 @@ def test_slot_native_executes_complete_compiled_frame():
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
         assert snapshot["topology"]["edges"].shape[1] == 2
+        assert snapshot["topology"]["baseline_parent_indices"].shape == (
+            owner.compiled.program.particle_count,
+        )
+        assert snapshot["topology"]["baseline_root_indices"].flags.writeable is False
+        assert np.isfinite(snapshot["topology"]["baseline_depths"]).all()
+        assert snapshot["motion"]["step_basic_positions"].shape == (
+            owner.compiled.program.particle_count, 3,
+        )
+        assert snapshot["motion"]["step_basic_positions"].flags.writeable is False
+        assert snapshot["motion"]["update_index"] == results[-1].update_index
+        assert snapshot["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
+        assert snapshot["parameters"]["gravity_directions"].shape == (
+            owner.compiled.program.particle_count, 3,
+        )
+        assert len(snapshot["parameters"]["partitions"]) == 2
+        assert np.isfinite(
+            snapshot["parameters"]["gravity_effective_strengths"]
+        ).all()
+        assert "_debug_product_step_basic" not in slot.data
         center_partitions = snapshot["center"]["partitions"]
         teleport_partitions = snapshot["teleport"]["partitions"]
         assert len(center_partitions) == len(teleport_partitions) == 2

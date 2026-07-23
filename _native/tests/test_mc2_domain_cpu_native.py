@@ -1029,6 +1029,10 @@ def test_domain_cpu_native_center_slice_uses_partition_history():
         np.testing.assert_allclose(info["center_step_vectors"], ((2.0, 0.0, 0.0),))
         np.testing.assert_allclose(info["center_inertia_vectors"], ((1.0, 0.0, 0.0),))
         assert info["center_step_count"] == 1
+        debug = hotools_native.mc2_domain_cpu_v1_read_center_debug(handle)
+        assert debug["gravity_ratios"].shape == (1,)
+        assert np.isfinite(debug["gravity_ratios"]).all()
+        np.testing.assert_allclose(debug["gravity_ratios"], (1.0,))
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 

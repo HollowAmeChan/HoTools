@@ -93,6 +93,9 @@ MC2_SUBSTEP_DEBUG_FILTER_KEYS = tuple(
 MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_topology",
     "show_attributes",
+    "show_depth",
+    "show_step_basic",
+    "show_gravity",
     "show_velocity",
     "show_output",
     "show_center",
@@ -518,6 +521,7 @@ def request_mc2_debug_capture(
             )
             matches_setup = setup_filter in ("", "all", str(program.setup_type).lower())
             state = slot.data.setdefault("_debug_capture_state", {})
+            slot.data.pop("_debug_product_step_basic", None)
             if not (matches_task and matches_setup and has_modes):
                 state.update({"requested": False, "filters": filters})
                 continue
@@ -572,7 +576,8 @@ def request_mc2_debug_capture(
     return requested
 
 
-def _product_topology_payload(program, positions) -> dict:
+def _product_topology_payload(compiled, positions, *, include_depth=False) -> dict:
+    program = compiled.program
     primitive_tables = {table.kind: table for table in program.primitive_tables}
     constraint_tables = {table.kind: table for table in program.constraint_tables}
     edge_table = primitive_tables.get("edge") or constraint_tables.get("distance")
@@ -587,7 +592,7 @@ def _product_topology_payload(program, positions) -> dict:
         if triangle_table is None
         else np.asarray(triangle_table.indices, dtype=np.int32).reshape((-1, 3))
     )
-    return {
+    result = {
         "connection_model": "product_domain_v1",
         "connection_mode": 0,
         "vertex_identities": tuple(
@@ -608,6 +613,90 @@ def _product_topology_payload(program, positions) -> dict:
         "chain_indices": _readonly((), np.int32),
         "chain_depths": _readonly((), np.int32),
         "positions": _readonly(positions),
+    }
+    if include_depth:
+        parents = (
+            np.full(program.particle_count, -1, dtype=np.int32)
+            if program.baseline_parent_indices is None
+            else np.asarray(program.baseline_parent_indices, dtype=np.int32)
+        )
+        roots = np.full(program.particle_count, -1, dtype=np.int32)
+        for fragment, view in zip(compiled.fragments, program.partition_particle_views):
+            indices = np.asarray(view.resolved_indices(), dtype=np.int64)
+            baseline = _baseline_for_static(fragment)
+            local_roots = np.asarray(
+                getattr(baseline, "root_indices", ()), dtype=np.int64
+            ).reshape((-1,))
+            if len(indices) != len(local_roots):
+                raise RuntimeError("产品 Depth 调试的 baseline root 数量与分区粒子数不一致")
+            valid = (local_roots >= 0) & (local_roots < len(indices))
+            roots[indices[valid]] = indices[local_roots[valid]].astype(np.int32)
+        particle_table = compiled.parameters.particle_parameters
+        try:
+            depth_column = particle_table.fields.index("depth")
+        except ValueError as exc:
+            raise RuntimeError("产品 Depth 调试缺少 depth 参数列") from exc
+        result.update({
+            "baseline_parent_indices": _readonly(parents, np.int32),
+            "baseline_root_indices": _readonly(roots, np.int32),
+            "baseline_depths": _readonly(
+                particle_table.values[:, depth_column], np.float32
+            ),
+        })
+    return result
+
+
+def _product_gravity_payload(compiled, frame_packet, center_raw) -> dict:
+    program = compiled.program
+    table = compiled.parameters.partition_parameters
+    fields = {name: index for index, name in enumerate(table.fields)}
+    required = (
+        "gravity", "gravity_direction_x", "gravity_direction_y",
+        "gravity_direction_z",
+    )
+    if any(name not in fields for name in required):
+        raise RuntimeError("产品 Gravity 调试缺少统一域重力参数列")
+    strengths = np.asarray(
+        table.values[:, fields["gravity"]], dtype=np.float32
+    )
+    directions = np.column_stack(tuple(
+        table.values[:, fields[name]] for name in required[1:]
+    )).astype(np.float32, copy=False)
+    ratios = np.asarray(
+        center_raw.get("gravity_ratios"), dtype=np.float32
+    ).reshape((-1,))
+    if ratios.shape != (program.partition_count,):
+        raise RuntimeError("产品 Gravity 调试的 Center gravity_ratio 数量不匹配")
+    partition_indices = np.asarray(
+        program.particle_partition_index, dtype=np.int64
+    )
+    raw_particle = strengths[partition_indices]
+    effective_partition = strengths * ratios
+    effective_particle = effective_partition[partition_indices]
+    particle_directions = directions[partition_indices]
+    return {
+        "schema": "mc2_product_gravity_debug_v1",
+        "gravity_direction": _readonly(directions[0], np.float32),
+        "gravity_strength": float(np.max(strengths, initial=0.0)),
+        "gravity_ratio": float(np.max(ratios, initial=0.0)),
+        "gravity_effective_strength": float(
+            np.max(effective_partition, initial=0.0)
+        ),
+        "scale_ratio": 1.0,
+        "gravity_directions": _readonly(particle_directions, np.float32),
+        "gravity_raw_strengths": _readonly(raw_particle, np.float32),
+        "gravity_effective_strengths": _readonly(
+            effective_particle, np.float32
+        ),
+        "partitions": tuple({
+            "partition_id": str(partition_id),
+            "direction": _readonly(directions[index], np.float32),
+            "strength": float(strengths[index]),
+            "gravity_ratio": float(ratios[index]),
+            "effective_strength": float(effective_partition[index]),
+        } for index, partition_id in enumerate(program.partition_ids)),
+        "frame": int(frame_packet.frame),
+        "generation": int(frame_packet.generation),
     }
 
 
@@ -776,16 +865,26 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
         state = slot.data.get("_debug_capture_state")
         if not _state_requested(state, frame):
             continue
+        filters = dict(state.get("filters") or {})
+        frame_packet = slot.data.get("frame_packet")
+        step_basic = slot.data.get("_debug_product_step_basic")
+        if filters.get("show_step_basic", False) and (
+            not isinstance(step_basic, dict)
+            or frame_packet is None
+            or int(step_basic.get("frame", -1)) != int(frame_packet.frame)
+            or int(step_basic.get("generation", -1)) != int(frame_packet.generation)
+        ):
+            state["waiting_for_substep"] = True
+            continue
+        state.pop("waiting_for_substep", None)
         started = time.perf_counter()
         try:
             owner = slot.data.get("owner")
             compiled = getattr(owner, "compiled", None)
             program = getattr(compiled, "program", None)
-            frame_packet = slot.data.get("frame_packet")
             output = slot.data.get("domain_output")
             if program is None or frame_packet is None or output is None:
                 raise RuntimeError("产品调试捕获需要完整的owner、frame和logical output")
-            filters = dict(state.get("filters") or {})
             requested_modes = tuple(
                 name for name in MC2_DEBUG_FILTER_KEYS if filters.get(name, False)
             )
@@ -804,15 +903,41 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 filters.get("show_center", False)
                 or filters.get("show_teleport_threshold", False)
                 or filters.get("show_teleport_status", False)
+                or filters.get("show_gravity", False)
             ):
                 center_raw = _freeze_value(owner.read_center_debug_state())
                 center, teleport = _product_center_payload(
                     program, frame_packet, center_raw
                 )
+            needs_topology = any(filters.get(name, False) for name in (
+                "show_topology", "show_attributes", "show_depth",
+                "show_step_basic", "show_gravity",
+            ))
             topology = (
-                _product_topology_payload(program, positions)
-                if filters.get("show_topology", False)
-                or filters.get("show_attributes", False)
+                _product_topology_payload(
+                    compiled,
+                    positions,
+                    include_depth=filters.get("show_depth", False),
+                )
+                if needs_topology
+                else {}
+            )
+            motion = (
+                {
+                    "step_basic_positions": _readonly(
+                        step_basic["positions"], np.float32
+                    ),
+                    "step_basic_rotations_xyzw": _readonly(
+                        step_basic["rotations"], np.float32
+                    ),
+                    "update_index": int(step_basic["update_index"]),
+                }
+                if filters.get("show_step_basic", False)
+                else {}
+            )
+            parameters = (
+                _product_gravity_payload(compiled, frame_packet, center_raw)
+                if filters.get("show_gravity", False)
                 else {}
             )
             output_payload = (
@@ -836,8 +961,8 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 "unsupported_filters": unsupported,
                 "native": native,
                 "topology": topology,
-                "parameters": {},
-                "motion": {},
+                "parameters": parameters,
+                "motion": motion,
                 "center": center if filters.get("show_center", False) else {},
                 "teleport": (
                     teleport
@@ -856,6 +981,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
         except Exception as exc:
             state["error"] = str(exc)
         finally:
+            slot.data.pop("_debug_product_step_basic", None)
             state["requested"] = False
             state["attempted_frame"] = frame
             state["capture_ms"] = (time.perf_counter() - started) * 1000.0

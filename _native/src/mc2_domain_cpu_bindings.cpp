@@ -1320,6 +1320,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["rotation_speed_limited"] = owned_array_1d<std::uint8_t>(
                 std::vector<std::uint8_t>(domain->center_debug_rotation_speed_limited())
             );
+            result["gravity_ratios"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_gravity_ratios())
+            );
             result["center_shift_count"] = domain->center_shift_count();
             result["center_step_count"] = domain->center_step_count();
             return result;

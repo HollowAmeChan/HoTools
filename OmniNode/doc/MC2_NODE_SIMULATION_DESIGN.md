@@ -968,6 +968,8 @@ E7-CPU 第一组进度（2026-07-23）：公开 `physicsMC2Step` 已删除 `step
 
 产品 Bone output 调试切片（2026-07-23）：Bone snapshot 不依赖记录顺序猜测，而以 compiled fragment 的 `logical particle -> stable bone name` 映射和产品 writeback plan 的 `bone name -> motion_mode` 映射做完整双向校验；缺项、越界、重名或 schema 不唯一时捕获失败。connected 的 `rotation_only_connected` 粒子将 `translation_applied=0` 且调试 target position 固定为动画 base，free 粒子保留真实位置与旋转写回。Blender 4.5/cp311 与 5.2/cp313 的同 Armature 两 partition 产品域锁定 8 个 connected、4 个 free 的精确掩码。至此 Mesh/Bone output 均进入产品快照；剩余调试迁移为约束 pass、外碰和 whole-domain self 明细。
 
+产品约束调试前置切片（2026-07-23）：`show_depth` 的 parent 来自 immutable domain program，root 由每个 compiled fragment 的生产 baseline 按 partition view 映射到全域索引，depth 直接读取已上传的粒子参数 SoA；它不是从最终位置重算的近似值。`show_step_basic` 复用每个真实 substep 中 native `prepare_step_basic_pose` 的返回值，并且只在有请求且完整 step 成功后暂存最后一份，捕获后立即删除；零 substep 帧不会用旧 pose 冒充当前帧，而是保持请求等待。`show_gravity` 从参数 SoA 与 Center evaluator 的逐 partition `gravity_ratio` 生成 Integration 实际使用的逐粒子方向和有效强度，renderer 按粒子所属分区绘制。py311/py313 的 native 全量、DomainV1 与产品槽测试均通过；Blender 4.5/cp311 和 5.2/cp313 的三种 setup 产品入口、Mesh 120 帧/双 source 对照及旧 renderer 回归均显式加载当前工作树产物并通过，双 ABI 提交门禁已经关闭。下一组才为 Distance/Tether/Bending/Angle/Motion 增加 native 真实 constraint record，禁止由最终位姿反推 correction。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |

@@ -284,6 +284,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             filters={
                 "show_topology": True,
                 "show_attributes": True,
+                "show_depth": True,
+                "show_step_basic": True,
+                "show_gravity": True,
                 "show_velocity": True,
                 "show_output": True,
                 "show_center": True,
@@ -310,6 +313,12 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert snapshot["unsupported_filters"] == ()
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
+        assert snapshot["topology"]["baseline_depths"].shape == (
+            slot.data["owner"].compiled.program.particle_count,
+        )
+        assert snapshot["motion"]["step_basic_positions"].flags.writeable is False
+        assert snapshot["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
+        assert len(snapshot["parameters"]["partitions"]) == 2
         assert len(snapshot["output"]["writeback_targets"]) == 2
         assert len(snapshot["center"]["partitions"]) == 2
         assert len(snapshot["teleport"]["partitions"]) == 2
@@ -320,6 +329,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             show_center=True,
             show_teleport_threshold=True,
             show_teleport_status=True,
+            show_depth=True,
+            show_step_basic=True,
+            show_gravity=True,
         )
         rendered = mc2_debug_draw.mc2_debug_draw_store_snapshot(
             "mc2-product-center-debug"
@@ -328,6 +340,7 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert "Teleport：分区2" in status_text
         assert rendered is not None
         assert rendered["point_vertex_count"] > 0
+        assert rendered["line_vertex_count"] > 0
         assert (
             mc2_names.MC2_INTERACTION_RESOURCE_KEY
             not in world.backend_resources

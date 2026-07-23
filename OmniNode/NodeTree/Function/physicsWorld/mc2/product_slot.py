@@ -582,6 +582,18 @@ def step_mc2_product_substep(
         except Exception as exc:
             slot.data["last_step_failure"] = f"{type(exc).__name__}: {exc}"
             raise
+        debug_state = slot.data.get("_debug_capture_state") or {}
+        debug_filters = debug_state.get("filters") or {}
+        if bool(debug_state.get("requested")) and bool(
+            debug_filters.get("show_step_basic", False)
+        ):
+            slot.data["_debug_product_step_basic"] = {
+                "frame": int(scheduled_frame.frame_packet.frame),
+                "generation": int(scheduled_frame.frame_packet.generation),
+                "update_index": update_index,
+                "positions": settings["step_basic_positions"],
+                "rotations": settings["step_basic_rotations"],
+            }
         scheduler_state.commit_substep(staged_substep)
         completed = update_index + 1
         is_final = bool(staged_substep.plan.is_final_substep)
