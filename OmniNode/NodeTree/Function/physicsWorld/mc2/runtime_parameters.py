@@ -274,9 +274,13 @@ def make_mc2_runtime_parameters(
         "backstop_distance": (profile.backstop_distance, 1.0),
         "collision_limit_distance": (profile.collision_limit_distance if is_spring else zero_curve, 1.0),
         "self_collision_thickness": (
-            (profile.radius, MC2_SELF_COLLISION_RADIUS_RATIO)
-            if setup_options.self_collision_radius_model == "derived_radius"
-            else (profile.self_collision_thickness, 1.0)
+            (zero_curve, 1.0)
+            if is_spring
+            else (
+                (profile.radius, MC2_SELF_COLLISION_RADIUS_RATIO)
+                if setup_options.self_collision_radius_model == "derived_radius"
+                else (profile.self_collision_thickness, 1.0)
+            )
         ),
     }
 

@@ -115,6 +115,42 @@ def pack_mc2_self_collision_static(spec: MC2SelfCollisionStaticSpec) -> dict[str
     }
 
 
+def _static_signature(
+    proxy_signature: str,
+    primitive_flags,
+    particle_indices,
+    primitive_depths,
+    counts: tuple[int, int, int],
+) -> str:
+    digest = hashlib.sha256(proxy_signature.encode("ascii"))
+    digest.update(np.ascontiguousarray(primitive_flags, dtype=np.uint32).tobytes())
+    digest.update(np.ascontiguousarray(particle_indices, dtype=np.int32).tobytes())
+    digest.update(np.ascontiguousarray(primitive_depths, dtype=np.float32).tobytes())
+    digest.update(np.asarray(counts, dtype=np.int64).tobytes())
+    return digest.hexdigest()
+
+
+def make_empty_mc2_self_collision_static(
+    proxy_signature: str,
+) -> MC2SelfCollisionStaticSpec:
+    """构造 setup 明确禁用 self collision 时的稳定空静态表。"""
+
+    signature = str(proxy_signature or "").strip()
+    if not signature:
+        raise ValueError("self-collision proxy signature cannot be empty")
+    counts = (0, 0, 0)
+    return MC2SelfCollisionStaticSpec(
+        proxy_signature=signature,
+        primitive_flags=(),
+        particle_indices=(),
+        primitive_depths=(),
+        point_count=0,
+        edge_count=0,
+        triangle_count=0,
+        static_signature=_static_signature(signature, (), (), (), counts),
+    )
+
+
 def build_mc2_self_collision_static(
     proxy: MC2ProxyStaticSpec,
     depths,
@@ -143,11 +179,13 @@ def build_mc2_self_collision_static(
     point_count = int(derived["point_count"])
     edge_count = int(derived["edge_count"])
     triangle_count = int(derived["triangle_count"])
-    digest = hashlib.sha256(proxy.proxy_signature.encode("ascii"))
-    for value in (packed_flags, packed_indices, packed_depths):
-        digest.update(value.tobytes())
-    digest.update(np.asarray((point_count, edge_count, triangle_count), dtype=np.int64).tobytes())
-    static_signature = digest.hexdigest()
+    static_signature = _static_signature(
+        proxy.proxy_signature,
+        packed_flags,
+        packed_indices,
+        packed_depths,
+        (point_count, edge_count, triangle_count),
+    )
     if native_context is not None:
         metadata = MC2SelfCollisionStaticMetadata(
             proxy_signature=proxy.proxy_signature,
@@ -174,5 +212,6 @@ __all__ = [
     "MC2SelfCollisionStaticMetadata",
     "MC2SelfCollisionStaticSpec",
     "build_mc2_self_collision_static",
+    "make_empty_mc2_self_collision_static",
     "pack_mc2_self_collision_static",
 ]

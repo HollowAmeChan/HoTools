@@ -368,6 +368,9 @@ def test_bone_spring_partition_uses_the_same_domain_owner() -> None:
     compiled = domain_compile.compile_mc2_domain_draft(draft, (fragment,))
     assert compiled.program.setup_type == "bone_spring"
     assert compiled.program.required_capabilities[0] == "bone_spring"
+    assert "self_collision" not in compiled.program.required_capabilities
+    assert fragment.self_collision.primitive_count == 0
+    assert not compiled.program.primitive_tables
     assert compiled.program.output_targets[0].space_kind == "bone_pose"
 
     owner = domain_owner.MC2FusedCPUOwnerV1(cpu_kernel.MC2NativeCPUKernelV1())

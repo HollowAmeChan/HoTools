@@ -23,6 +23,7 @@ from ...self_collision_static import (
     MC2SelfCollisionStaticSpec,
 )
 from ...self_collision_static import build_mc2_self_collision_static
+from ...self_collision_static import make_empty_mc2_self_collision_static
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import thaw_mc2_topology_payload
 from ..mesh_cloth.final_proxy import (
@@ -629,11 +630,16 @@ def _build_mc2_bone_static(
         world_gravity_direction=intent.profile.gravity_direction,
         native_context=native_context,
     )
-    self_collision = build_mc2_self_collision_static(
-        bone.proxy,
-        bone.baseline.depths,
-        native_context=native_context,
-    )
+    if intent.setup_type == MC2_SETUP_BONE_SPRING and native_context is None:
+        self_collision = make_empty_mc2_self_collision_static(
+            bone.proxy.proxy_signature
+        )
+    else:
+        self_collision = build_mc2_self_collision_static(
+            bone.proxy,
+            bone.baseline.depths,
+            native_context=native_context,
+        )
     signature_payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
         "topology_signature": topology.topology_signature,

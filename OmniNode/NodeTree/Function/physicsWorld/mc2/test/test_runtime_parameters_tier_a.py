@@ -57,6 +57,7 @@ def _assert_matches_oracle(
     *,
     product_float_overrides=None,
     product_int_overrides=None,
+    product_curve_overrides=None,
 ):
     expected = _fixture(case_id)["expected"]
     assert expected["abi_version"] == runtime.MC2_RUNTIME_PARAMETERS_ABI
@@ -72,7 +73,11 @@ def _assert_matches_oracle(
     for name, value in (product_int_overrides or {}).items():
         expected_ints[runtime.MC2_RUNTIME_INT_FIELDS.index(name)] = np.int32(value)
     np.testing.assert_array_equal(packed["int_values"], expected_ints)
-    expected_curves = np.asarray(expected["curve_values"], dtype=np.float32).reshape(expected["curve_shape"])
+    expected_curves = np.asarray(
+        expected["curve_values"], dtype=np.float32
+    ).reshape(expected["curve_shape"]).copy()
+    for name, value in (product_curve_overrides or {}).items():
+        expected_curves[runtime.MC2_RUNTIME_CURVE_FIELDS.index(name)] = np.float32(value)
     np.testing.assert_array_equal(packed["curve_values"], expected_curves)
 
 
@@ -127,6 +132,7 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
     assert ints["use_max_distance"] == ints["use_backstop"] == 0
     assert curves["distance_stiffness"] == (0.5,) * 16
     assert curves["collision_limit_distance"] == (0.125,) * 16
+    assert curves["self_collision_thickness"] == (0.0,) * 16
     # MC2 serializes the authoring bending value for BoneSpring even though its
     # Line topology cannot consume it.  The product effective block normalizes
     # that dead value to zero and keeps the source fixture unchanged.
@@ -135,6 +141,7 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
         "runtime_parameters_bone_spring_001",
         product_float_overrides={"bending_stiffness": 0.0},
         product_int_overrides={"bending_method": 0},
+        product_curve_overrides={"self_collision_thickness": 0.0},
     )
 
 

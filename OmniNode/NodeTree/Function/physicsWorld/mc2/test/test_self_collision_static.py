@@ -31,6 +31,7 @@ from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.self_collision_static i
     FLAG_IGNORE,
     MC2SelfCollisionStaticMetadata,
     build_mc2_self_collision_static,
+    make_empty_mc2_self_collision_static,
     pack_mc2_self_collision_static,
 )
 from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.static_data import (
@@ -135,8 +136,22 @@ def test_staged_registration_returns_metadata_without_host_primitive_arrays():
         raise AssertionError("native-owned Self metadata was accepted by the host packer")
 
 
+def test_explicitly_disabled_setup_uses_stable_empty_static_table():
+    first = make_empty_mc2_self_collision_static("a" * 64)
+    second = make_empty_mc2_self_collision_static("a" * 64)
+    assert first == second
+    assert first.primitive_count == 0
+    assert first.point_count == first.edge_count == first.triangle_count == 0
+    packed = pack_mc2_self_collision_static(first)
+    assert packed["primitive_flags"].shape == (0,)
+    assert packed["particle_indices"].shape == (0, 3)
+    assert packed["primitive_depths"].shape == (0,)
+    assert all(not value.flags.writeable for value in packed.values())
+
+
 if __name__ == "__main__":
     test_source_ordered_primitive_flags_indices_and_depths()
     test_line_proxy_registers_only_edge_primitives()
     test_staged_registration_returns_metadata_without_host_primitive_arrays()
+    test_explicitly_disabled_setup_uses_stable_empty_static_table()
     print("PASS MC2 self-collision static registration")
