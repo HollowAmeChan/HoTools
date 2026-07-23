@@ -34,7 +34,9 @@ for package_name, package_path in (
 names = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names")
 parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
 runtime = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters")
-specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
+partition_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs"
+)
 
 
 class FakeMeshSource:
@@ -79,11 +81,22 @@ with open(fixture_path, "r", encoding="utf-8") as handle:
 expected_damping = np.asarray(expected["curve_values"][:16], dtype=np.float32)
 np.testing.assert_allclose(curves["damping"], expected_damping, rtol=1.0e-6, atol=1.0e-7)
 
-task = specs.make_mc2_task_spec(
-    names.MC2_SETUP_MESH_CLOTH,
-    [FakeMeshSource()],
-    profile=profile,
-    setup_options=options,
+entry = partition_specs.make_mc2_partition_entry(
+    FakeMeshSource(),
+    setup_type=names.MC2_SETUP_MESH_CLOTH,
+    origin="explicit",
+    producer="test_blender_mc2_runtime_parameters",
 )
-assert task.parameter_signature == runtime_spec.parameter_signature
+plan = partition_specs.collect_mc2_partition_entries(
+    setup_type=names.MC2_SETUP_MESH_CLOTH,
+    explicit_entries=(entry,),
+    default_profile=profile,
+    default_setup_options=options,
+)
+assert plan.active_partitions[0].profile == profile
+assert runtime.make_mc2_runtime_parameters(
+    plan.active_partitions[0].profile,
+    plan.active_partitions[0].setup_options,
+    plan.active_partitions[0].task_parameters,
+).parameter_signature == runtime_spec.parameter_signature
 print("MC2 Blender runtime parameters: PASS")
