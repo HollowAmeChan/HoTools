@@ -995,22 +995,6 @@ def physicsMC2BoneSpringTask(
     return list(requests), _product_name_output(requests)
 
 
-def _oracle_node_arguments(node, args, kwargs) -> dict:
-    raise RuntimeError("MC2 V0 oracle 已删除；请使用公开 product request")
-
-
-def _physicsMC2BoneClothTaskV0Oracle(*args, **kwargs):
-    """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
-
-    raise RuntimeError("MC2 BoneCloth V0 oracle 已删除；请使用 physicsMC2BoneClothTask")
-
-
-def _physicsMC2BoneSpringTaskV0Oracle(*args, **kwargs):
-    """E7 删除前仅供数值 oracle 使用；产品节点不会调用。"""
-
-    raise RuntimeError("MC2 BoneSpring V0 oracle 已删除；请使用 physicsMC2BoneSpringTask")
-
-
 @omni(
     enable=True,
     always_run=True,

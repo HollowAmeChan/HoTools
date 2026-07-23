@@ -89,6 +89,30 @@ def test_bone_constraint_runner_does_not_import_mixed_v0_helpers():
     assert "test_blender_mc2_bone_product_constraint_soak" in source
 
 
+def test_product_execution_boundary_has_no_v0_owner_imports():
+    """产品执行边界不得重新依赖待删除的 V0 owner 模块。"""
+
+    root = BLENDER_TEST_ROOT.parent
+    forbidden = {
+        ".specs",
+        ".solver",
+        ".native_context",
+        ".interaction_scope",
+        ".shadow_pipeline",
+    }
+    for filename in ("nodes.py", "product_solver.py", "product_collect.py", "product_bone_collect.py"):
+        path = root / filename
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                imports.append(("." * node.level) + module)
+        assert not (set(imports) & forbidden), (filename, set(imports) & forbidden)
+
+
 def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
         encoding="utf-8"
