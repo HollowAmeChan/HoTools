@@ -110,6 +110,8 @@ MC2 产品外部碰撞原生调试记录（2026-07-23）：约束会话新增 `E
 
 MC2 产品统一域自碰调试记录（2026-07-23）：约束会话新增 `WholeDomainSelf=64`，产品只在最终真实子步明确请求 primitive、grid、candidate 或 contact 时触发。中立 `Mc2WholeDomainSelfEngine` 直接冻结生产 primitive flags/indices、AABB、厚度、逆质量、owner group/mask、网格桶、候选、接触身份/类型/法线/参数，以及四轮求解按共享粒子计数归一后的双侧 correction；所有 correction 的向量和必须等于该 self pass 的真实总位移。旧 `show_self_contacts` 所需的线段/三角形穿插诊断也已迁入中立引擎，保持隔帧 edge phase、owner 过滤、拓扑邻接过滤和最终五粒子确认，并且只在调试请求时运行。产品快照直接生成 contact/intersection 时间状态，renderer 不再读取旧 context。py313 原生 CPU `28/28`、产品槽 `13/13` 和 Blender 5.2 产品节点、120帧确定性、双V0对照及实际 renderer 全部通过；5.2 明确清除默认 HoTools 备份并加载当前 `_Lib/py313`。产品调试迁移至此关闭，下一步按审计清单删除旧 Python/native owner、hidden task、普通 aggregate 与 oracle bridge，再执行 E7-S 简化。py311/Blender 4.5 在删除完成、进入最终收尾前保持硬冻结。
 
+MC2 E7-CPU基础数值oracle迁移（2026-07-23）：删除前由py313同输入V0/DomainV1已通过对照采集最小JSON golden，新增不导入`native_context/specs/solver`的`test_domain_reference_golden.py`，直接锁定Integration prediction、无碰撞完整混合pass和Post real-velocity history的float32位置/速度、shape、有限性与原容差；对应三项已从`test_e3_v0_tolerance.py`删除。新Domain golden `3/3`与剩余Angle/Motion、五组Center、点/边/自碰共11次旧对照同跑通过。golden只保存有独立价值的数值输出，不保存旧context schema或调试快照；后续分组迁移剩余七个旧测试函数。
+
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 3. MC2统一域E7-A已关闭，当前按冻结清单执行E7-CPU分组删除；完成产品调试快照迁移、Python旧owner/oracle bridge和native V0面删除后，立即执行E7-S兼容层专项简化。P6合同贯穿其间，任何setup都不得静默回退到旧task/V0。

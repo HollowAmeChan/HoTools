@@ -1,4 +1,4 @@
-"""E3 same-source V0/DomainV1 tolerance evidence for the prediction pass."""
+"""尚未迁出的E3 Angle/Motion、Center与碰撞V0/DomainV1容差证据。"""
 
 from __future__ import annotations
 
@@ -79,26 +79,6 @@ def _source():
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payload = json.load(handle)["static_snapshots"][0]
     return ir.make_mc2_mesh_partition_static_snapshot(**payload)
-
-
-def _same_source():
-    snapshot = _source()
-    fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
-    effective = runtime.make_mc2_runtime_parameters(
-        parameters.make_mc2_particle_profile(
-            gravity=1.0,
-            gravity_direction=(0.0, -1.0, 0.0),
-            collision_friction=0.0,
-            distance_stiffness=0.0,
-            bending_stiffness=0.0,
-            angle_restoration_enabled=False,
-            angle_limit_enabled=False,
-            self_collision_mode=0,
-        ),
-        parameters.make_mc2_setup_options("mesh_cloth"),
-        parameters.make_mc2_task_parameters(),
-    )
-    return snapshot, fragment, compiler.compile_mc2_mesh_static_fragment(fragment, effective), effective
 
 
 def _same_source_constraints():
@@ -292,182 +272,6 @@ def _register_v0_static(context, snapshot, fragment):
         baseline.baseline.depths,
         native_context=context,
     )
-
-
-def test_e3_prediction_matches_same_source_v0_and_domain():
-    snapshot, fragment, compiled, effective = _same_source()
-    frame = _frame(compiled.program)
-    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
-    domain = cpu_backend.create_mc2_cpu_backend_domain(
-        compiled,
-        native_kernel.MC2NativeCPUKernelV1(),
-    )
-    try:
-        _register_v0_static(v0, snapshot, fragment)
-        v0.update_parameters(effective)
-        v0.set_tether_enabled(False)
-        domain.update_frame(frame)
-        domain_before = domain.read_output().world_positions.copy()
-        v0.update_dynamic(frame_state.make_mc2_frame_input(
-            task_id=snapshot.partition_id,
-            topology_signature=fragment.final_proxy.proxy_signature,
-            frame=frame.frame,
-            generation=frame.generation,
-            world_positions=domain_before,
-            world_rotations_xyzw=frame.animated_base_world_rotations,
-        ))
-        v0.reset()
-        dt = 0.1
-        simulation_power_z = scheduler.derive_mc2_simulation_powers(dt).integration
-        v0.step_no_collision(dt)
-        v0_positions, _ = v0.read()
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
-            "dt": dt,
-            "simulation_power": simulation_power_z,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, -1.0, 0.0),
-        })
-        domain_positions = domain.read_output().world_positions
-        assert np.isfinite(v0_positions).all()
-        assert np.isfinite(domain_positions).all()
-        np.testing.assert_allclose(domain_positions, v0_positions, rtol=2.0e-5, atol=2.0e-5)
-    finally:
-        domain.dispose()
-        v0.dispose()
-
-
-def test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain():
-    snapshot, fragment, compiled, effective = _same_source_constraints()
-    frame = _frame(compiled.program)
-    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
-    domain = cpu_backend.create_mc2_cpu_backend_domain(
-        compiled,
-        native_kernel.MC2NativeCPUKernelV1(),
-    )
-    try:
-        _register_v0_static(v0, snapshot, fragment)
-        v0.update_parameters(effective)
-        domain.update_frame(frame)
-        domain_before = domain.read_output().world_positions.copy()
-        v0.update_dynamic(frame_state.make_mc2_frame_input(
-            task_id=snapshot.partition_id,
-            topology_signature=fragment.final_proxy.proxy_signature,
-            frame=frame.frame,
-            generation=frame.generation,
-            world_positions=domain_before,
-            world_rotations_xyzw=frame.animated_base_world_rotations,
-        ))
-        v0.reset()
-        dt = 0.1
-        powers = scheduler.derive_mc2_simulation_powers(dt)
-        simulation_power_z = powers.integration
-        simulation_power_y = powers.distance_bending
-        v0.step_no_collision(dt)
-        v0_positions, _ = v0.read()
-        domain.step_reference_pipeline_full({
-            "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
-            "dt": dt,
-            "frame_interpolation": 1.0,
-            "distance_weights": np.ones(1, dtype=np.float32),
-            "simulation_power": simulation_power_z,
-            "distance_simulation_power": simulation_power_y,
-            "bending_simulation_power": simulation_power_y,
-            "velocity_weight": 1.0,
-            "gravity": (0.0, -1.0, 0.0),
-            "step_basic_positions": domain_before,
-            "tether_compression": 0.4,
-            "tether_stretch": 0.03,
-            "step_basic_rotations": frame.animated_base_world_rotations,
-            "angle_restoration_values": np.zeros(compiled.program.particle_count, dtype=np.float32),
-            "angle_limit_values": np.zeros(compiled.program.particle_count, dtype=np.float32),
-            "angle_restoration_velocity_attenuation": 0.0,
-            "angle_restoration_gravity_falloff": 0.0,
-            "angle_limit_stiffness": 0.0,
-            "angle_restoration_enabled": False,
-            "angle_limit_enabled": False,
-            "motion_base_positions": domain_before,
-            "motion_base_rotations": frame.animated_base_world_rotations,
-            "motion_max_distances": np.zeros(compiled.program.particle_count, dtype=np.float32),
-            "motion_stiffness_values": np.ones(compiled.program.particle_count, dtype=np.float32),
-            "motion_backstop_radii": np.zeros(compiled.program.particle_count, dtype=np.float32),
-            "motion_backstop_distances": np.zeros(compiled.program.particle_count, dtype=np.float32),
-            "motion_normal_axis": 1,
-            "motion_max_distance_enabled": False,
-            "motion_backstop_enabled": False,
-            "point_collision": None,
-            "edge_collision": None,
-            "self_collision": None,
-        })
-        domain_positions = domain.read_output().world_positions
-        np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
-    finally:
-        domain.dispose()
-        v0.dispose()
-
-
-def test_e3_full_reference_post_history_matches_same_source_v0():
-    """The explicit transaction must commit V0 real-velocity history too."""
-    snapshot, fragment, compiled, effective = _same_source_constraints()
-    frame = _frame(compiled.program)
-    v0 = native_context.MC2NativeContextV0(compiled.program.particle_count)
-    domain = cpu_backend.create_mc2_cpu_backend_domain(
-        compiled,
-        native_kernel.MC2NativeCPUKernelV1(),
-    )
-    try:
-        _register_v0_static(v0, snapshot, fragment)
-        v0.update_parameters(effective)
-        domain.update_frame(frame)
-        domain_before = domain.read_output().world_positions.copy()
-        v0.update_dynamic(frame_state.make_mc2_frame_input(
-            task_id=snapshot.partition_id,
-            topology_signature=fragment.final_proxy.proxy_signature,
-            frame=frame.frame,
-            generation=frame.generation,
-            world_positions=domain_before,
-            world_rotations_xyzw=frame.animated_base_world_rotations,
-        ))
-        v0.reset()
-        dt = 0.1
-        powers = scheduler.derive_mc2_simulation_powers(dt)
-        simulation_power_z = powers.integration
-        simulation_power_y = powers.distance_bending
-        v0.step_no_collision(dt)
-        v0_positions, _ = v0.read()
-        v0_debug = v0.refresh_debug_draw_snapshot(include_dynamics=True)
-        domain.step_reference_pipeline_full({
-            **_full_reference_settings(
-                compiled.program,
-                domain_before,
-                frame.animated_base_world_rotations,
-            ),
-            "simulation_power": simulation_power_z,
-            "distance_simulation_power": simulation_power_y,
-            "bending_simulation_power": simulation_power_y,
-            "gravity": (0.0, -1.0, 0.0),
-            "post_step": {
-                "old_positions": domain_before,
-                "dt": dt,
-                "dynamic_friction": 0.0,
-                "static_friction_speed": 0.0,
-                "particle_speed_limit": effective.debug_dict()["float_values"]["particle_speed_limit"],
-                "velocity_weight": 1.0,
-            },
-        })
-        domain_positions = domain.read_output().world_positions
-        domain_real_velocities = domain.read_debug_state()["real_velocities"]
-        np.testing.assert_allclose(domain_positions, v0_positions, rtol=4.0e-5, atol=4.0e-5)
-        np.testing.assert_allclose(
-            domain_real_velocities,
-            np.asarray(v0_debug["dynamics"]["real_velocities"], dtype=np.float32),
-            rtol=4.0e-5,
-            atol=4.0e-5,
-        )
-    finally:
-        domain.dispose()
-        v0.dispose()
 
 
 def test_e3_native_step_basic_pose_matches_v0_angle_reference():
@@ -1449,12 +1253,6 @@ def test_e3_native_mesh_self_collision_matches_v0():
 
 
 if __name__ == "__main__":
-    test_e3_prediction_matches_same_source_v0_and_domain()
-    print("PASS E3 same-source V0/Domain prediction tolerance")
-    test_e3_full_reference_without_collisions_matches_same_source_v0_and_domain()
-    print("PASS E3 same-source V0/Domain full no-collision tolerance")
-    test_e3_full_reference_post_history_matches_same_source_v0()
-    print("PASS E3 same-source V0/Domain post velocity history tolerance")
     test_e3_native_step_basic_pose_matches_v0_angle_reference()
     print("PASS E3 native StepBasic pose matches V0 Angle reference")
     test_e3_native_motion_branch_matches_v0_after_tether()
