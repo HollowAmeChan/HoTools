@@ -169,9 +169,7 @@ def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     )
     legacy = [line.strip() for line in source.splitlines()
               if "test_blender_mc2_bone_constraint_soak.py::" in line]
-    assert legacy == [
-        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_gravity_axes_falloff",',
-    ]
+    assert legacy == []
 
 
 def test_setup_local_evidence_cannot_close_another_setup():
