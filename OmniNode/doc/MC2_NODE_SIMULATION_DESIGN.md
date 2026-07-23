@@ -919,7 +919,7 @@ E7-CPU 的删除对象至少包括：
 |---|---|---|---|
 | 产品 Python import 图 | `product_solver` 导入时不会加载 `specs`、`solver`、`native_context`、`interaction_scope`、`shadow_pipeline`；Mesh/Bone 公开任务节点只生成显式 `MC2ProductRequestV1`。 | 保留架构测试，并把禁止项扩展到字符串引用和公开导出。 | 已关闭 |
 | 公开 step 分派 | `physicsMC2Step` 对 product request 走 `step_mc2_products`，但无 product request 时仍延迟导入旧 `step_mc2`；因此入口仍存在可调用 V0 fallback。 | 删除旧分支并只接受显式 product request；空输入保持产品合同定义的空事务，不调用旧 solver。 | 待关闭 |
-| 旧 Mesh collector bridge | `collect_mc2_mesh_product_domain` 仍把 `MC2TaskSpec` 转成 resolved partition，仅被 benchmark、domain shadow 和 collector 单测调用，生产 solver 不调用。 | 先把三处测试改为显式 product request/resolved plan，再删除 bridge。 | 待关闭 |
+| 旧 Mesh collector bridge | benchmark、domain shadow 和 collector 单测已改为显式 product request/resolved plan、动态产品槽和通用 frame 发布；`collect_mc2_mesh_product_domain` 已删除，`product_collect.py` 对 `specs/MC2TaskSpec` 零引用。 | 保留产品 plan 采集合同和旧模型数值对照，不恢复 task 到产品的转换。 | 已关闭 |
 | Bone 包装与反馈 | 公开 BoneCloth/BoneSpring 已按 Armature 生成显式 request/partition，产品 frame adapter 拥有动画反馈屏障、Anchor、Center/Teleport 与动态产品槽。旧 task frame/static adapter 只服务 oracle。 | 将仍有价值的反馈与约束断言迁到产品 fixture，然后删除 `_physicsMC2Bone*TaskV0Oracle`、task 型 frame/static 入口和旧反馈分支。 | 待关闭 |
 | Python V0 owner | `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py` 仍完整存在；`debug.py`/`debug_draw.py` 仍导入旧 interaction 类型。 | 按“测试迁移 -> 生产入口切断 -> owner/interaction/debug/dispose 删除”分提交移除，不能留下产品 fallback。 | 待关闭 |
 | native DomainV1 | `mc2_domain_cpu.*` 不直接包含旧 context/interaction，完整 pass 使用 `mc2_kernels.*` 与独立 DomainV1 state。 | 保留 DomainV1、共享 kernel、静态构建和后端中立数据结构。 | 已关闭 |
@@ -935,11 +935,11 @@ E7-CPU 的删除对象至少包括：
 1. **先迁出并保留**：`mc2_kernels.*`、`mc2_domain_cpu.*`、`mc2_static_build.*`；把 frame orientation、static fingerprint、whole-domain self state/算法迁到不包含 `mc2_context_internal.hpp` 的中立翻译单元。迁移提交只改所有权与调用位置，不改数值公式或 pass 顺序。
 2. **测试迁移后删除的 Python 路径**：`solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py`、`shadow_pipeline.py`，以及 `nodes.py`、setup static/frame adapter、`debug.py`、`debug_draw.py` 中只服务 `MC2TaskSpec`/V0 interaction 的分支。共享的 source capture、partition topology、产品 frame/output/debug 合同保留在真实职责模块中。
 3. **解耦后删除的 native 路径**：`mc2_context_interaction.cpp`、`mc2_context_readback.cpp`、`mc2_context_static.cpp`、旧 context frame/core API、`mc2_context_internal.hpp`、`mc2_context_helpers.hpp` 中只服务旧 capsule/owner 的部分，以及 `mc2_api.hpp`/`mc2_bindings.cpp` 的全部 V0 context/interaction 导出。
-4. **先迁移再删除的测试入口**：`collect_mc2_mesh_product_domain` 三个调用方、所有 `_physicsMC2*V0Oracle` 调用、直接构造 `MC2NativeContextV0` 的 E3 tolerance，以及只验证已删除 binding 的 native case。数值断言分别落到 DomainV1、共享 kernel、产品事务和公开节点测试，不能简单删掉。
+4. **先迁移再删除的测试入口**：所有 `_physicsMC2*V0Oracle` 调用、直接构造 `MC2NativeContextV0` 的 E3 tolerance，以及只验证已删除 binding 的 native case。旧 Mesh collector bridge 及其三个调用方已经完成产品 plan 迁移。其余数值断言分别落到 DomainV1、共享 kernel、产品事务和公开节点测试，不能简单删掉。
 
 删除提交固定拆分为：A. 中立 native 能力迁出；B. 产品/soak 测试去 oracle；C. Python 生产入口切断与旧 owner 删除；D. native V0 ABI/TU 删除；E. import/include/公开符号架构门禁与双 ABI/Blender/P0/P2 全复验。任一组发现产品可达依赖时立即停在该组修正，不把跨组删除压成一次大提交。
 
-清单 A 完成证据（2026-07-23）：py311/py313 native 均为 `29/29`；Blender 4.5/cp311 与 5.2/cp313 均明确打印本工作树产物并通过 Mesh 统一域、120 帧确定性、Bone frame 和 Bone product。1764 粒子、4 source、35 帧同夹具中，迁出后的 whole-domain self 与 manual join 的 primitive/candidate/contact 完全一致，轨迹 peak max-abs/RMS 保持 `3.9207e-4/1.6597e-5`；D/B p50=`0.7076`、D/C=`0.6845`，P0/P2 继续通过。下一项固定为清单 B：把 Bone 全约束、mixed-output、Mesh shadow/benchmark 从显式 V0 oracle/旧 collector bridge 迁到公开产品 request。
+清单 A 完成证据（2026-07-23）：py311/py313 native 均为 `30/30`；Blender 4.5/cp311 与 5.2/cp313 均明确打印本工作树产物并通过 Mesh 统一域、120 帧确定性、Bone frame 和 Bone product。1764 粒子、4 source、35 帧同夹具中，迁出后的 whole-domain self 与 manual join 的 primitive/candidate/contact 完全一致，轨迹 peak max-abs/RMS 保持 `3.9207e-4/1.6597e-5`；旧 collector bridge 删除后的最新 D/B p50=`0.6645`、D/C=`0.6513`，P0/P2 继续通过。清单 B 的 Mesh shadow/benchmark 产品采集迁移已关闭；下一项固定为把 Bone 全约束与 mixed-output 从显式 V0 oracle 迁到公开产品 request。
 
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 

@@ -36,10 +36,11 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
-specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs")
 topology = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology")
 collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
 authoring = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring")
+partition_specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
+product_slot = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
 
 
 class _Data:
@@ -100,9 +101,10 @@ def _raw(source, count):
     )
 
 
-def _task(source, *, gravity_direction=(0.0, -1.0, 0.0), enabled=True):
-    return specs.make_mc2_task_spec(
-        "mesh_cloth", (source,),
+def _entry(source, *, gravity_direction=(0.0, -1.0, 0.0), enabled=True):
+    entry = authoring.make_mc2_mesh_partition_entries((source,))[0]
+    return authoring.override_mc2_mesh_partition_entries(
+        (entry,),
         profile=parameters.make_mc2_particle_profile(
             gravity_direction=gravity_direction, self_collision_mode=2,
         ),
@@ -111,6 +113,27 @@ def _task(source, *, gravity_direction=(0.0, -1.0, 0.0), enabled=True):
         ),
         task_parameters=parameters.make_mc2_task_parameters(),
         enabled=enabled,
+    )[0]
+
+
+def _collect_request(world, entries, *, force_audit=None):
+    request = authoring.make_mc2_mesh_product_request(
+        world,
+        entries,
+        include_implicit=False,
+    )
+    slot_id = product_slot.make_mc2_product_slot_id(
+        request.setup_type,
+        request.domain_signature,
+    )
+    return (
+        collector.collect_mc2_mesh_product_plan(
+            world,
+            request.plan,
+            receipt_slot_id=slot_id,
+            force_audit=force_audit,
+        ),
+        slot_id,
     )
 
 
@@ -138,14 +161,12 @@ def _install_observer(monkey_rows):
 def test_product_collector_observes_once_and_preserves_authoring_order():
     first, second = _Source(101), _Source(202)
     calls = _install_observer({101: _raw(first, 3), 202: _raw(second, 2)})
-    tasks = (
-        _task(first, gravity_direction=(0.0, -1.0, 0.0)),
-        _task(second, gravity_direction=(1.0, 0.0, 0.0)),
+    entries = (
+        _entry(first, gravity_direction=(0.0, -1.0, 0.0)),
+        _entry(second, gravity_direction=(1.0, 0.0, 0.0)),
     )
-    result = collector.collect_mc2_mesh_product_domain(
-        _World(), tasks, force_audit=True,
-    )
-    assert result.task_ids == tuple(task.task_id for task in tasks)
+    result, slot_id = _collect_request(_World(), entries, force_audit=True)
+    assert result.task_ids == tuple(entry.stable_id for entry in entries)
     assert result.draft.partition_ids == result.task_ids
     assert [snapshot.vertex_count for snapshot in result.static_snapshots] == [3, 2]
     assert [snapshot.output_target_id for snapshot in result.static_snapshots] == [
@@ -154,26 +175,37 @@ def test_product_collector_observes_once_and_preserves_authoring_order():
     assert result.world_gravity_directions == (
         (0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
     )
-    oracle_slot = f"mc2.v0.oracle:{result.draft.collector_domain_signature}"
-    assert calls == [(task.task_id, oracle_slot, True) for task in tasks]
+    assert calls == [(entry.stable_id, slot_id, True) for entry in entries]
 
 
-def test_product_collector_filters_disabled_and_non_mesh_tasks():
+def test_product_collector_filters_disabled_explicit_entries():
     first, disabled = _Source(101), _Source(202)
     calls = _install_observer({101: _raw(first, 3), 202: _raw(disabled, 2)})
-    result = collector.collect_mc2_mesh_product_domain(
-        _World(), (_task(first), _task(disabled, enabled=False)),
+    active = _entry(first)
+    result, slot_id = _collect_request(
+        _World(),
+        (active, _entry(disabled, enabled=False)),
     )
-    assert result.task_ids == (_task(first).task_id,)
-    oracle_slot = f"mc2.v0.oracle:{result.draft.collector_domain_signature}"
-    assert calls == [(_task(first).task_id, oracle_slot, None)]
+    assert result.task_ids == (active.stable_id,)
+    assert calls == [(active.stable_id, slot_id, None)]
 
 
 def test_product_collector_rejects_no_active_mesh_partition():
     source = _Source(101)
     _install_observer({101: _raw(source, 3)})
     try:
-        collector.collect_mc2_mesh_product_domain(_World(), (_task(source, enabled=False),))
+        plan = partition_specs.collect_mc2_partition_entries(
+            setup_type="mesh_cloth",
+            explicit_entries=(_entry(source, enabled=False),),
+            default_profile=parameters.make_mc2_particle_profile(),
+            default_task_parameters=parameters.make_mc2_task_parameters(),
+            default_setup_options=parameters.make_mc2_setup_options("mesh_cloth"),
+        )
+        collector.collect_mc2_mesh_product_plan(
+            _World(),
+            plan,
+            receipt_slot_id="mc2.domain.product.v1:mesh_cloth:" + "0" * 64,
+        )
     except ValueError as exc:
         assert "no active partitions" in str(exc)
     else:

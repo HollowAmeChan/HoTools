@@ -62,6 +62,9 @@ mc2_parameters = importlib.import_module(
 mc2_product_collect = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect"
 )
+mc2_product_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring"
+)
 mc2_product_slot = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot"
 )
@@ -418,16 +421,34 @@ def test_mc2_mesh_fused_domain_matches_two_v0_sources():
         )
         _set_frame_context(v0_world, 1, None, generation)
         _set_frame_context(fused_world, 1, None, generation)
-        collection = mc2_product_collect.collect_mc2_mesh_product_domain(
-            fused_world,
-            tasks,
+        entries = tuple(
+            mc2_product_authoring.override_mc2_mesh_partition_entries(
+                mc2_product_authoring.make_mc2_mesh_partition_entries((source,)),
+                profile=profile,
+            )[0]
+            for source, profile in zip(sources, profiles)
         )
-        sync = mc2_product_slot.sync_mc2_mesh_fused_slot(
+        request = mc2_product_authoring.make_mc2_mesh_product_request(
+            fused_world,
+            entries,
+            include_implicit=False,
+        )
+        slot_id = mc2_product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        collection = mc2_product_collect.collect_mc2_mesh_product_plan(
+            fused_world,
+            request.plan,
+            receipt_slot_id=slot_id,
+        )
+        sync = mc2_product_slot.sync_mc2_product_slot(
             fused_world,
             collection,
+            slot_id=slot_id,
         )
         assert sync.action == "created"
-        slot = fused_world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        slot = fused_world.solver_slots[slot_id]
         assert slot.data["product_enabled"] is False
         target_to_task = {
             snapshot.output_target_id: task
@@ -449,8 +470,9 @@ def test_mc2_mesh_fused_domain_matches_two_v0_sources():
                 max_simulation_count_per_frame=3,
             )
             assert returned is v0_world and ready is True, status
-            published = mc2_product_slot.capture_and_publish_mc2_mesh_fused_frame(
+            published = mc2_product_slot.capture_and_publish_mc2_product_frame(
                 fused_world,
+                slot,
                 settings=settings,
             )
             assert published.partition_ids == collection.draft.partition_ids

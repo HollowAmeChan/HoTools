@@ -74,6 +74,9 @@ mc2_runtime = importlib.import_module(
 mc2_product_collect = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect"
 )
+mc2_product_authoring = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring"
+)
 mc2_product_slot = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot"
 )
@@ -458,24 +461,40 @@ def _run_fused(objects):
     try:
         for obj in objects:
             proxies.append(_prepare_product_object(obj))
-        tasks = tuple(
-            mc2_specs.make_mc2_task_spec(
-                mc2_names.MC2_SETUP_MESH_CLOTH,
-                [obj],
+        entries = tuple(
+            mc2_product_authoring.override_mc2_mesh_partition_entries(
+                mc2_product_authoring.make_mc2_mesh_partition_entries((obj,)),
                 profile=_profile(2),
                 setup_options=mc2_parameters.make_mc2_setup_options(
                     mc2_names.MC2_SETUP_MESH_CLOTH,
                     self_collision_radius_model="derived_radius",
                 ),
-            )
+            )[0]
             for obj in objects
         )
         _set_world_frame(world, 1, None)
         start = time.perf_counter_ns()
-        collection = mc2_product_collect.collect_mc2_mesh_product_domain(world, tasks)
-        mc2_product_slot.sync_mc2_mesh_fused_slot(world, collection)
+        request = mc2_product_authoring.make_mc2_mesh_product_request(
+            world,
+            entries,
+            include_implicit=False,
+        )
+        slot_id = mc2_product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        collection = mc2_product_collect.collect_mc2_mesh_product_plan(
+            world,
+            request.plan,
+            receipt_slot_id=slot_id,
+        )
+        mc2_product_slot.sync_mc2_product_slot(
+            world,
+            collection,
+            slot_id=slot_id,
+        )
         compile_ms = (time.perf_counter_ns() - start) / 1.0e6
-        slot = world.solver_slots[mc2_product_slot.MC2_FUSED_MESH_SLOT_ID]
+        slot = world.solver_slots[slot_id]
         owner = slot.data["owner"]
         owner_step_samples = []
         original_owner_step = owner.step
@@ -505,8 +524,9 @@ def _run_fused(objects):
         for frame in range(1, FRAMES + 2):
             _set_world_frame(world, frame, previous)
             start = time.perf_counter_ns()
-            published = mc2_product_slot.capture_and_publish_mc2_mesh_fused_frame(
+            published = mc2_product_slot.capture_and_publish_mc2_product_frame(
                 world,
+                slot,
                 settings=settings,
                 partition_frame_flags=(1,) * len(tasks) if FORCE_CONTACTS else None,
             )

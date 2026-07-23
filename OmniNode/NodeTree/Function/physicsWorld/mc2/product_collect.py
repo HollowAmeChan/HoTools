@@ -11,8 +11,6 @@ from .domain_ir import MC2MeshPartitionStaticSnapshotV1
 from .domain_output import MC2MeshWritebackBatchV1
 from .names import MC2_SETUP_MESH_CLOTH
 from .mesh_topology_identity import mesh_topology_signature_from_arrays
-from .partition_specs import collect_mc2_partition_entries
-from .partition_specs import make_mc2_partition_entry
 from .partition_specs import MC2PartitionCollectorPlan
 from .source_identity import mc2_source_token
 from .setups.mesh_cloth.source_capture import (
@@ -182,55 +180,6 @@ def validate_mc2_mesh_product_targets(
             )
 
 
-def collect_mc2_mesh_product_domain(
-    world,
-    tasks,
-    *,
-    force_audit: bool | None = None,
-) -> MC2MeshProductCollectionV1:
-    """E7-CPU前显式V0 oracle桥；产品入口不得调用。"""
-
-    from .specs import MC2TaskSpec, build_mc2_task_specs
-
-    specs = tuple(
-        spec
-        for spec in build_mc2_task_specs(tasks)
-        if spec.enabled and spec.setup_type == MC2_SETUP_MESH_CLOTH and spec.sources
-    )
-    if not specs:
-        raise ValueError("MC2 Mesh product collector has no active partitions")
-    if any(not isinstance(spec, MC2TaskSpec) for spec in specs):
-        raise TypeError("tasks must resolve to MC2TaskSpec values")
-    if any(len(spec.sources) != 1 for spec in specs):
-        raise ValueError(
-            "transitional Mesh product collector requires one source per authoring task"
-        )
-
-    entries = []
-    for spec in specs:
-        entries.append(make_mc2_partition_entry(
-            spec.sources[0],
-            setup_type=MC2_SETUP_MESH_CLOTH,
-            stable_id=spec.task_id,
-            producer="mc2.product_task",
-            profile=spec.profile,
-            task_parameters=spec.task_parameters,
-            setup_options=spec.setup_options,
-            anchor_object=spec.anchor_object,
-            enabled=True,
-        ))
-    plan = collect_mc2_partition_entries(
-        setup_type=MC2_SETUP_MESH_CLOTH,
-        explicit_entries=tuple(entries),
-    )
-    return collect_mc2_mesh_product_plan(
-        world,
-        plan,
-        receipt_slot_id=f"mc2.v0.oracle:{plan.report.domain_signature}",
-        force_audit=force_audit,
-    )
-
-
 def collect_mc2_mesh_product_plan(
     world,
     plan: MC2PartitionCollectorPlan,
@@ -300,7 +249,6 @@ def collect_mc2_mesh_product_plan(
 
 __all__ = [
     "MC2MeshProductCollectionV1",
-    "collect_mc2_mesh_product_domain",
     "collect_mc2_mesh_product_plan",
     "validate_mc2_mesh_product_output_batch",
     "validate_mc2_mesh_product_targets",
