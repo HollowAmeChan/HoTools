@@ -536,7 +536,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "finite", "deterministic", "motion_base_exact", "constraint_boundary_bounded",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::motion_base_deterministic",
+            "runner": "test_blender_mc2_mesh_product_motion_soak.py::test_mesh_product_motion_base_deterministic",
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": (
@@ -705,4 +705,4 @@ MC2_DEBUG_ACCEPTANCE_LAYERS = (
 )
 
 
-MC2_DEBUG_ACCEPTANCE_RUNNER = "test_blender_mc2_debug_draw.py"
+MC2_DEBUG_ACCEPTANCE_RUNNER = "test_blender_mc2_product_debug_acceptance.py"
