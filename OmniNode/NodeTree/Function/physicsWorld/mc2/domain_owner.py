@@ -287,6 +287,18 @@ class MC2FusedCPUOwnerV1:
 
         return self._require_domain().read_debug_state()
 
+    def begin_constraint_debug(self, mask: int) -> None:
+        self._require_domain().begin_constraint_debug(int(mask))
+
+    def end_constraint_debug(self) -> None:
+        self._require_domain().end_constraint_debug()
+
+    def read_constraint_debug_state(self):
+        return self._require_domain().read_constraint_debug_state()
+
+    def clear_constraint_debug(self) -> None:
+        self._require_domain().clear_constraint_debug()
+
     def read_center_debug_state(self):
         """Read explicit partitioned Center/Teleport observations."""
 

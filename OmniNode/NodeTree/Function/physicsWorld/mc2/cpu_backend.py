@@ -486,6 +486,22 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose explicit debug state")
         return read_state(self._handle)
 
+    def begin_constraint_debug(self, mask: int) -> None:
+        self._ensure_live()
+        self._kernel.begin_constraint_debug(self._handle, int(mask))
+
+    def end_constraint_debug(self) -> None:
+        self._ensure_live()
+        self._kernel.end_constraint_debug(self._handle)
+
+    def read_constraint_debug_state(self) -> Mapping[str, object]:
+        self._ensure_live()
+        return self._kernel.read_constraint_debug_state(self._handle)
+
+    def clear_constraint_debug(self) -> None:
+        self._ensure_live()
+        self._kernel.clear_constraint_debug(self._handle)
+
     def read_center_debug_state(self) -> Mapping[str, object]:
         """Read Center/Teleport state only for an explicit debug request."""
         self._ensure_live()

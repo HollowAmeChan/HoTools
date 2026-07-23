@@ -1246,6 +1246,100 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Read the logical pass-through output of the E3 data-path slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_begin_constraint_debug",
+        [](std::uint64_t handle, std::uint32_t mask) {
+            require_domain(handle)->begin_constraint_debug(mask);
+        },
+        nb::arg("handle"), nb::arg("mask"),
+        "Allocate and enable explicitly requested constraint pass records."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_end_constraint_debug",
+        [](std::uint64_t handle) {
+            require_domain(handle)->end_constraint_debug();
+        },
+        nb::arg("handle"),
+        "Freeze the requested constraint pass records after a successful step."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_clear_constraint_debug",
+        [](std::uint64_t handle) {
+            require_domain(handle)->clear_constraint_debug();
+        },
+        nb::arg("handle"),
+        "Release all constraint pass record storage."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_read_constraint_debug",
+        [](std::uint64_t handle) {
+            auto* domain = require_domain(handle);
+            nb::dict result;
+            const auto mask = domain->constraint_debug_captured_mask();
+            result["active_mask"] = domain->constraint_debug_active_mask();
+            result["captured_mask"] = mask;
+            if ((mask & mc2_domain_cpu::kConstraintDebugMotion) != 0u) {
+                const auto particles = domain->particle_count();
+                std::vector<std::int32_t> vertices(particles * 2);
+                std::vector<std::uint32_t> partitions(particles * 2);
+                for (std::size_t branch = 0; branch < 2; ++branch) {
+                    for (std::size_t vertex = 0; vertex < particles; ++vertex) {
+                        const auto record = branch * particles + vertex;
+                        vertices[record] = static_cast<std::int32_t>(vertex);
+                        partitions[record] = domain->particle_partition_index()[vertex];
+                    }
+                }
+                nb::dict motion;
+                motion["record_count"] = particles * 2;
+                motion["particle_count"] = particles;
+                motion["origins"] = owned_array_1d<float>(std::vector<float>(domain->motion_debug_origins()));
+                motion["targets"] = owned_array_1d<float>(std::vector<float>(domain->motion_debug_targets()));
+                motion["corrections"] = owned_array_1d<float>(std::vector<float>(domain->motion_debug_corrections()));
+                motion["limits"] = owned_array_1d<float>(std::vector<float>(domain->motion_debug_limits()));
+                motion["valid"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->motion_debug_valid()));
+                motion["vertices"] = owned_array_1d<std::int32_t>(std::move(vertices));
+                motion["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                result["motion_results"] = motion;
+            }
+            if ((mask & mc2_domain_cpu::kConstraintDebugAngle) != 0u) {
+                const auto data_count = domain->baseline_data_count();
+                const auto records = data_count * 2 * 3;
+                std::vector<std::int32_t> children(records, -1);
+                std::vector<std::int32_t> parents(records, -1);
+                std::vector<std::uint32_t> partitions(records, 0u);
+                for (std::size_t branch = 0; branch < 2; ++branch) {
+                    for (std::size_t iteration = 0; iteration < 3; ++iteration) {
+                        for (std::size_t data = 0; data < data_count; ++data) {
+                            const auto record = (branch * 3 + iteration) * data_count + data;
+                            const auto child = domain->baseline_line_data()[data];
+                            children[record] = child;
+                            if (child >= 0 && static_cast<std::size_t>(child) < domain->particle_count()) {
+                                parents[record] = domain->baseline_parent_indices()[static_cast<std::size_t>(child)];
+                                partitions[record] = domain->particle_partition_index()[static_cast<std::size_t>(child)];
+                            }
+                        }
+                    }
+                }
+                nb::dict angle;
+                angle["record_count"] = records;
+                angle["baseline_data_count"] = data_count;
+                angle["origins"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_origins()));
+                angle["targets"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_targets()));
+                angle["target_vectors"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_target_vectors()));
+                angle["corrections"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_corrections()));
+                angle["currents"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_currents()));
+                angle["limits"] = owned_array_1d<float>(std::vector<float>(domain->angle_debug_limits()));
+                angle["valid"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->angle_debug_valid()));
+                angle["children"] = owned_array_1d<std::int32_t>(std::move(children));
+                angle["parents"] = owned_array_1d<std::int32_t>(std::move(parents));
+                angle["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                result["angle_results"] = angle;
+            }
+            return result;
+        },
+        nb::arg("handle"),
+        "Read frozen true native Angle and Motion pass records."
+    );
+    module.def(
         "mc2_domain_cpu_v1_read_center_debug",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);
@@ -1349,6 +1443,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["step_count"] = domain->step_count();
             result["angle_solve_count"] = domain->angle_solve_count();
             result["motion_solve_count"] = domain->motion_solve_count();
+            result["constraint_debug_active_mask"] = domain->constraint_debug_active_mask();
+            result["constraint_debug_captured_mask"] = domain->constraint_debug_captured_mask();
             result["disposed"] = domain->disposed();
             result["baseline_ready"] = domain->baseline_ready();
             result["baseline_line_count"] = domain->baseline_line_count();

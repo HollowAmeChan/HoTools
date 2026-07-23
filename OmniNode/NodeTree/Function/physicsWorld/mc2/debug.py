@@ -97,6 +97,10 @@ MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_step_basic",
     "show_gravity",
     "show_velocity",
+    "show_motion_base",
+    "show_motion",
+    "show_angle_restoration",
+    "show_angle_limit",
     "show_output",
     "show_center",
     "show_teleport_threshold",
@@ -522,6 +526,7 @@ def request_mc2_debug_capture(
             matches_setup = setup_filter in ("", "all", str(program.setup_type).lower())
             state = slot.data.setdefault("_debug_capture_state", {})
             slot.data.pop("_debug_product_step_basic", None)
+            slot.data.pop("_debug_product_constraint_inputs", None)
             if not (matches_task and matches_setup and has_modes):
                 state.update({"requested": False, "filters": filters})
                 continue
@@ -868,11 +873,26 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
         filters = dict(state.get("filters") or {})
         frame_packet = slot.data.get("frame_packet")
         step_basic = slot.data.get("_debug_product_step_basic")
+        constraint_inputs = slot.data.get("_debug_product_constraint_inputs")
         if filters.get("show_step_basic", False) and (
             not isinstance(step_basic, dict)
             or frame_packet is None
             or int(step_basic.get("frame", -1)) != int(frame_packet.frame)
             or int(step_basic.get("generation", -1)) != int(frame_packet.generation)
+        ):
+            state["waiting_for_substep"] = True
+            continue
+        needs_constraint_inputs = any(filters.get(name, False) for name in (
+            "show_motion_base",
+            "show_motion",
+            "show_angle_restoration",
+            "show_angle_limit",
+        ))
+        if needs_constraint_inputs and (
+            not isinstance(constraint_inputs, dict)
+            or frame_packet is None
+            or int(constraint_inputs.get("frame", -1)) != int(frame_packet.frame)
+            or int(constraint_inputs.get("generation", -1)) != int(frame_packet.generation)
         ):
             state["waiting_for_substep"] = True
             continue
@@ -897,6 +917,12 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             native = {"positions": positions}
             if filters.get("show_velocity", False):
                 native.update(_freeze_value(owner.read_debug_state()))
+            constraint_native = {}
+            if int((constraint_inputs or {}).get("mask", 0)):
+                constraint_native = _freeze_value(
+                    owner.read_constraint_debug_state()
+                )
+                native.update(constraint_native)
             center = {}
             teleport = {}
             if (
@@ -922,8 +948,9 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 if needs_topology
                 else {}
             )
-            motion = (
-                {
+            motion = {}
+            if filters.get("show_step_basic", False):
+                motion.update({
                     "step_basic_positions": _readonly(
                         step_basic["positions"], np.float32
                     ),
@@ -931,10 +958,38 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                         step_basic["rotations"], np.float32
                     ),
                     "update_index": int(step_basic["update_index"]),
-                }
-                if filters.get("show_step_basic", False)
-                else {}
-            )
+                })
+            if needs_constraint_inputs:
+                motion.update({
+                    "motion_base_positions": _readonly(
+                        constraint_inputs["motion_base_positions"], np.float32
+                    ),
+                    "motion_base_rotations_xyzw": _readonly(
+                        constraint_inputs["motion_base_rotations_xyzw"], np.float32
+                    ),
+                    "normal_axis_values": _readonly(
+                        constraint_inputs["motion_normal_axis_values"], np.int32
+                    ),
+                    "use_angle_restoration": bool(np.any(
+                        constraint_inputs["angle_restoration_enabled_values"]
+                    )),
+                    "use_angle_limit": bool(np.any(
+                        constraint_inputs["angle_limit_enabled_values"]
+                    )),
+                })
+            constraint_records = {}
+            if filters.get("show_motion", False):
+                constraint_records["motion"] = _motion_constraint_record_payload(
+                    constraint_native, motion
+                )
+            if filters.get("show_angle_restoration", False):
+                constraint_records["angle_restoration"] = (
+                    _angle_constraint_record_payload(constraint_native, 1)
+                )
+            if filters.get("show_angle_limit", False):
+                constraint_records["angle_limit"] = (
+                    _angle_constraint_record_payload(constraint_native, 0)
+                )
             parameters = (
                 _product_gravity_payload(compiled, frame_packet, center_raw)
                 if filters.get("show_gravity", False)
@@ -963,6 +1018,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 "topology": topology,
                 "parameters": parameters,
                 "motion": motion,
+                "constraint_records": constraint_records,
                 "center": center if filters.get("show_center", False) else {},
                 "teleport": (
                     teleport
@@ -982,6 +1038,9 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             state["error"] = str(exc)
         finally:
             slot.data.pop("_debug_product_step_basic", None)
+            slot.data.pop("_debug_product_constraint_inputs", None)
+            if int((constraint_inputs or {}).get("mask", 0)):
+                slot.data["owner"].clear_constraint_debug()
             state["requested"] = False
             state["attempted_frame"] = frame
             state["capture_ms"] = (time.perf_counter() - started) * 1000.0
@@ -1455,13 +1514,18 @@ def _bending_constraint_record_payload(native_snapshot, parameters) -> dict:
 def _motion_constraint_record_payload(native_snapshot, motion) -> dict:
     results = native_snapshot.get("motion_results") or {}
     origins = results.get("origins")
+    native_targets = results.get("targets")
     corrections = results.get("corrections")
+    native_limits = results.get("limits")
+    native_vertices = results.get("vertices")
+    native_partitions = results.get("partitions")
     valid = results.get("valid")
     base = motion.get("motion_base_positions")
     rotations = motion.get("motion_base_rotations_xyzw")
     empty = {
         "branches": _readonly((), np.int8),
         "vertices": _readonly((), np.int32),
+        "partitions": _readonly((), np.uint32),
         "origins": _readonly((), np.float32).reshape((0, 3)),
         "target_origins": _readonly((), np.float32).reshape((0, 3)),
         "corrections": _readonly((), np.float32).reshape((0, 3)),
@@ -1470,57 +1534,75 @@ def _motion_constraint_record_payload(native_snapshot, motion) -> dict:
         "errors": _readonly((), np.float32),
         "states": _readonly((), np.int8),
     }
-    if any(
-        value is None
-        for value in (origins, corrections, valid, base, rotations)
-    ):
+    if any(value is None for value in (origins, corrections, valid)):
         return empty
     origins = np.asarray(origins, dtype=np.float32)
     corrections = np.asarray(corrections, dtype=np.float32)
     valid = np.asarray(valid, dtype=np.uint8)
-    base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
-    rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
-    vertex_count = len(base)
+    vertex_count = origins.size // 6
     origins = origins.reshape((2, vertex_count, 3))
     corrections = corrections.reshape((2, vertex_count, 3))
     valid = valid.reshape((2, vertex_count))
-    axis_values = np.asarray(
-        ((1, 0, 0), (0, 1, 0), (0, 0, 1),
-         (-1, 0, 0), (0, -1, 0), (0, 0, -1)),
-        dtype=np.float32,
-    )
-    local_axis = axis_values[max(0, min(5, int(motion.get("normal_axis", 1))))]
-    q_xyz = rotations[:, :3]
-    q_w = rotations[:, 3:4]
-    local_axes = np.broadcast_to(local_axis, (vertex_count, 3))
-    rotated_axes = local_axes + 2.0 * np.cross(
-        q_xyz, np.cross(q_xyz, local_axes) + q_w * local_axes
-    )
-    backstop_radius = max(float(motion.get("backstop_radius", 0.0) or 0.0), 0.0)
-    backstop_distances = np.asarray(
-        motion.get("backstop_distances"), dtype=np.float32
-    ).reshape((-1,))
-    max_distances = np.asarray(
-        motion.get("max_distances"), dtype=np.float32
-    ).reshape((-1,))
-    backstop_centers = base - rotated_axes * (
-        backstop_distances[:, None] + np.float32(backstop_radius)
-    )
+    has_native_targets = all(value is not None for value in (
+        native_targets, native_limits, native_vertices, native_partitions
+    ))
+    if has_native_targets:
+        targets = np.asarray(native_targets, dtype=np.float32).reshape((2, vertex_count, 3))
+        limits = np.asarray(native_limits, dtype=np.float32).reshape((2, vertex_count))
+        vertices = np.asarray(native_vertices, dtype=np.int32).reshape((2, vertex_count))
+        partitions = np.asarray(native_partitions, dtype=np.uint32).reshape((2, vertex_count))
+    else:
+        if base is None or rotations is None:
+            return empty
+        base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
+        rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
+        axis_values = np.asarray(
+            ((1, 0, 0), (0, 1, 0), (0, 0, 1),
+             (-1, 0, 0), (0, -1, 0), (0, 0, -1)),
+            dtype=np.float32,
+        )
+        local_axis = axis_values[max(0, min(5, int(motion.get("normal_axis", 1))))]
+        q_xyz = rotations[:, :3]
+        q_w = rotations[:, 3:4]
+        local_axes = np.broadcast_to(local_axis, (vertex_count, 3))
+        rotated_axes = local_axes + 2.0 * np.cross(
+            q_xyz, np.cross(q_xyz, local_axes) + q_w * local_axes
+        )
+        backstop_radius = max(float(motion.get("backstop_radius", 0.0) or 0.0), 0.0)
+        backstop_distances = np.asarray(
+            motion.get("backstop_distances"), dtype=np.float32
+        ).reshape((-1,))
+        max_distances = np.asarray(
+            motion.get("max_distances"), dtype=np.float32
+        ).reshape((-1,))
+        backstop_centers = base - rotated_axes * (
+            backstop_distances[:, None] + np.float32(backstop_radius)
+        )
+        targets = np.stack((base, backstop_centers), axis=0)
+        limits = np.stack((
+            max_distances,
+            np.full((vertex_count,), backstop_radius, dtype=np.float32),
+        ), axis=0)
+        vertices = np.broadcast_to(
+            np.arange(vertex_count, dtype=np.int32), (2, vertex_count)
+        )
+        partitions = np.zeros((2, vertex_count), dtype=np.uint32)
     records = []
     for branch in range(2):
         for vertex in range(vertex_count):
             if not valid[branch, vertex]:
                 continue
-            target = base[vertex] if branch == 0 else backstop_centers[vertex]
+            target = targets[branch, vertex]
             distance = float(np.linalg.norm(origins[branch, vertex] - target))
-            limit = float(max_distances[vertex]) if branch == 0 else backstop_radius
+            limit = float(limits[branch, vertex])
             error = distance - limit if branch == 0 else limit - distance
             correction_length = float(np.linalg.norm(corrections[branch, vertex]))
             near_width = max(limit * 0.05, 1.0e-5)
             state = 2 if correction_length > 1.0e-8 else 1 if error >= -near_width else 0
             records.append((
                 branch,
-                vertex,
+                int(vertices[branch, vertex]),
+                int(partitions[branch, vertex]),
                 origins[branch, vertex],
                 target,
                 corrections[branch, vertex],
@@ -1531,17 +1613,19 @@ def _motion_constraint_record_payload(native_snapshot, motion) -> dict:
             ))
     if not records:
         return empty
-    return {
+    payload = {
         "branches": _readonly([item[0] for item in records], np.int8),
         "vertices": _readonly([item[1] for item in records], np.int32),
-        "origins": _readonly([item[2] for item in records], np.float32),
-        "target_origins": _readonly([item[3] for item in records], np.float32),
-        "corrections": _readonly([item[4] for item in records], np.float32),
-        "distances": _readonly([item[5] for item in records], np.float32),
-        "limits": _readonly([item[6] for item in records], np.float32),
-        "errors": _readonly([item[7] for item in records], np.float32),
-        "states": _readonly([item[8] for item in records], np.int8),
+        "partitions": _readonly([item[2] for item in records], np.uint32),
+        "origins": _readonly([item[3] for item in records], np.float32),
+        "target_origins": _readonly([item[4] for item in records], np.float32),
+        "corrections": _readonly([item[5] for item in records], np.float32),
+        "distances": _readonly([item[6] for item in records], np.float32),
+        "limits": _readonly([item[7] for item in records], np.float32),
+        "errors": _readonly([item[8] for item in records], np.float32),
+        "states": _readonly([item[9] for item in records], np.int8),
     }
+    return payload
 
 
 def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> dict:
@@ -1550,8 +1634,11 @@ def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> d
     corrections = results.get("corrections")
     currents = results.get("currents")
     limits = results.get("limits")
+    targets = results.get("targets")
+    target_vectors = results.get("target_vectors")
     children = results.get("children")
     parents = results.get("parents")
+    partitions = results.get("partitions")
     valid = results.get("valid")
     empty = {
         "branches": _readonly((), np.int8),
@@ -1559,6 +1646,7 @@ def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> d
         "record_indices": _readonly((), np.int32),
         "children": _readonly((), np.int32),
         "parents": _readonly((), np.int32),
+        "partitions": _readonly((), np.uint32),
         "origins": _readonly((), np.float32).reshape((0, 3)),
         "parent_origins": _readonly((), np.float32).reshape((0, 3)),
         "corrections": _readonly((), np.float32).reshape((0, 3)),
@@ -1583,6 +1671,14 @@ def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> d
     children = np.asarray(children, dtype=np.int32)
     parents = np.asarray(parents, dtype=np.int32)
     valid = np.asarray(valid, dtype=np.uint8)
+    native_targets = None if targets is None else np.asarray(targets, dtype=np.float32)
+    native_target_vectors = (
+        None if target_vectors is None
+        else np.asarray(target_vectors, dtype=np.float32)
+    )
+    native_partitions = (
+        None if partitions is None else np.asarray(partitions, dtype=np.uint32)
+    )
     if origins.ndim != 5 or origins.shape[:2] != (2, 3):
         return empty
     data_count = origins.shape[2]
@@ -1605,8 +1701,14 @@ def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> d
                 record,
                 int(children[branch, iteration, record]),
                 int(parents[branch, iteration, record]),
+                int(native_partitions[branch, iteration, record])
+                if native_partitions is not None else 0,
                 origins[branch, iteration, record, 1],
                 origins[branch, iteration, record, 0],
+                native_targets[branch, iteration, record]
+                if native_targets is not None else None,
+                native_target_vectors[branch, iteration, record]
+                if native_target_vectors is not None else None,
                 role_corrections[1],
                 role_corrections[0],
                 current,
@@ -1617,22 +1719,29 @@ def _angle_constraint_record_payload(native_snapshot, selected_branch: int) -> d
             ))
     if not records:
         return empty
-    return {
+    payload = {
         "branches": _readonly([item[0] for item in records], np.int8),
         "iterations": _readonly([item[1] for item in records], np.int8),
         "record_indices": _readonly([item[2] for item in records], np.int32),
         "children": _readonly([item[3] for item in records], np.int32),
         "parents": _readonly([item[4] for item in records], np.int32),
-        "origins": _readonly([item[5] for item in records], np.float32),
-        "parent_origins": _readonly([item[6] for item in records], np.float32),
-        "corrections": _readonly([item[7] for item in records], np.float32),
-        "parent_corrections": _readonly([item[8] for item in records], np.float32),
-        "currents": _readonly([item[9] for item in records], np.float32),
-        "limits": _readonly([item[10] for item in records], np.float32),
-        "errors": _readonly([item[11] for item in records], np.float32),
-        "normalized_errors": _readonly([item[12] for item in records], np.float32),
-        "states": _readonly([item[13] for item in records], np.int8),
+        "partitions": _readonly([item[5] for item in records], np.uint32),
+        "origins": _readonly([item[6] for item in records], np.float32),
+        "parent_origins": _readonly([item[7] for item in records], np.float32),
+        "corrections": _readonly([item[10] for item in records], np.float32),
+        "parent_corrections": _readonly([item[11] for item in records], np.float32),
+        "currents": _readonly([item[12] for item in records], np.float32),
+        "limits": _readonly([item[13] for item in records], np.float32),
+        "errors": _readonly([item[14] for item in records], np.float32),
+        "normalized_errors": _readonly([item[15] for item in records], np.float32),
+        "states": _readonly([item[16] for item in records], np.int8),
     }
+    if native_targets is not None and native_target_vectors is not None:
+        payload["targets"] = _readonly([item[8] for item in records], np.float32)
+        payload["target_vectors"] = _readonly(
+            [item[9] for item in records], np.float32
+        )
+    return payload
 
 
 def _collision_payload(item, native_snapshot) -> dict:

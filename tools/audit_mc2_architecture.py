@@ -84,6 +84,7 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_collect", "build_mc2_mesh_domain_draft"),
     ("mc2.domain_collect", "build_mc2_mesh_domain_collider_frame"),
     ("mc2.domain_owner", "_make_report_values"),
+    ("mc2.domain_owner", "read_constraint_debug_state"),
     ("mc2.reference_step", "_partition_vector"),
     ("mc2.reference_step", "partition_float"),
     ("mc2.reference_step", "partition_uint_value"),

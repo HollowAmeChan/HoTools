@@ -64,6 +64,10 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_step_post_owned_partitioned",
     "mc2_domain_cpu_v1_read",
+    "mc2_domain_cpu_v1_begin_constraint_debug",
+    "mc2_domain_cpu_v1_end_constraint_debug",
+    "mc2_domain_cpu_v1_read_constraint_debug",
+    "mc2_domain_cpu_v1_clear_constraint_debug",
     "mc2_domain_cpu_v1_read_center_debug",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
@@ -1262,6 +1266,56 @@ class MC2NativeCPUKernelV1:
             "real_velocities": np.asarray(raw["real_velocities"], dtype=np.float32),
             "world_normals": np.asarray(raw["world_normals"], dtype=np.float32),
         }
+
+    def begin_constraint_debug(self, handle, mask: int) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_begin_constraint_debug(key, int(mask))
+
+    def end_constraint_debug(self, handle) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_end_constraint_debug(key)
+
+    def read_constraint_debug_state(self, handle) -> dict:
+        key = self._require_handle(handle)
+        raw = dict(self._module.mc2_domain_cpu_v1_read_constraint_debug(key))
+        result = {
+            "active_mask": int(raw.get("active_mask", 0)),
+            "captured_mask": int(raw.get("captured_mask", 0)),
+        }
+        motion_raw = raw.get("motion_results")
+        if motion_raw is not None:
+            motion_raw = dict(motion_raw)
+            count = int(motion_raw["particle_count"])
+            result["motion_results"] = {
+                "origins": np.asarray(motion_raw["origins"], dtype=np.float32).reshape((2, count, 3)),
+                "targets": np.asarray(motion_raw["targets"], dtype=np.float32).reshape((2, count, 3)),
+                "corrections": np.asarray(motion_raw["corrections"], dtype=np.float32).reshape((2, count, 3)),
+                "limits": np.asarray(motion_raw["limits"], dtype=np.float32).reshape((2, count)),
+                "valid": np.asarray(motion_raw["valid"], dtype=np.uint8).reshape((2, count)),
+                "vertices": np.asarray(motion_raw["vertices"], dtype=np.int32).reshape((2, count)),
+                "partitions": np.asarray(motion_raw["partitions"], dtype=np.uint32).reshape((2, count)),
+            }
+        angle_raw = raw.get("angle_results")
+        if angle_raw is not None:
+            angle_raw = dict(angle_raw)
+            count = int(angle_raw["baseline_data_count"])
+            result["angle_results"] = {
+                "origins": np.asarray(angle_raw["origins"], dtype=np.float32).reshape((2, 3, count, 2, 3)),
+                "targets": np.asarray(angle_raw["targets"], dtype=np.float32).reshape((2, 3, count, 3)),
+                "target_vectors": np.asarray(angle_raw["target_vectors"], dtype=np.float32).reshape((2, 3, count, 3)),
+                "corrections": np.asarray(angle_raw["corrections"], dtype=np.float32).reshape((2, 3, count, 2, 3)),
+                "currents": np.asarray(angle_raw["currents"], dtype=np.float32).reshape((2, 3, count)),
+                "limits": np.asarray(angle_raw["limits"], dtype=np.float32).reshape((2, 3, count)),
+                "valid": np.asarray(angle_raw["valid"], dtype=np.uint8).reshape((2, 3, count)),
+                "children": np.asarray(angle_raw["children"], dtype=np.int32).reshape((2, 3, count)),
+                "parents": np.asarray(angle_raw["parents"], dtype=np.int32).reshape((2, 3, count)),
+                "partitions": np.asarray(angle_raw["partitions"], dtype=np.uint32).reshape((2, 3, count)),
+            }
+        return result
+
+    def clear_constraint_debug(self, handle) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_clear_constraint_debug(key)
 
     def read_center_debug_state(self, handle) -> dict:
         """Read the native partitioned Center/Teleport observation slice."""

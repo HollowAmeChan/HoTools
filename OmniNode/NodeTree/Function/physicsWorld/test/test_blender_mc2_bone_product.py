@@ -769,6 +769,12 @@ try:
         profile=parameters.make_mc2_particle_profile(
             gravity_direction=(1.0, 0.0, 0.0),
             wind_influence=0.0,
+            max_distance_enabled=True,
+            max_distance=0.03,
+            backstop_enabled=True,
+            backstop_radius=0.01,
+            angle_limit_enabled=True,
+            angle_limit=30.0,
         ),
         connection_mode=1,
     )
@@ -862,6 +868,10 @@ try:
             "show_depth": True,
             "show_step_basic": True,
             "show_gravity": True,
+            "show_motion_base": True,
+            "show_motion": True,
+            "show_angle_restoration": True,
+            "show_angle_limit": True,
         },
     ) == 1
 
@@ -905,6 +915,12 @@ try:
     assert cloth_debug["topology"]["baseline_root_indices"].shape == (12,)
     assert cloth_debug["motion"]["step_basic_positions"].shape == (12, 3)
     assert cloth_debug["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
+    assert len(cloth_debug["constraint_records"]["motion"]["states"]) > 0
+    for name in ("angle_restoration", "angle_limit"):
+        records = cloth_debug["constraint_records"][name]
+        assert len(records["states"]) > 0
+        assert np.isfinite(records["targets"]).all()
+        assert set(map(int, records["partitions"])).issubset({0, 1})
     assert writeback.writeback_bone_transforms(product_world) == 12
 
     spring_product_requests, spring_product_names = nodes.physicsMC2BoneSpringTask(
@@ -913,6 +929,10 @@ try:
             "root_bone": "Chain0_0",
             "bones": tuple(f"Chain0_{depth}" for depth in range(3)),
         }],
+        profile=parameters.make_mc2_particle_profile(
+            angle_limit_enabled=True,
+            angle_limit=15.0,
+        ),
         collided_by_groups=1,
     )
     assert len(spring_product_requests) == 1
@@ -975,6 +995,9 @@ try:
             "show_depth": True,
             "show_step_basic": True,
             "show_gravity": True,
+            "show_motion_base": True,
+            "show_angle_restoration": True,
+            "show_angle_limit": True,
         },
     ) == 1
     spring_product_world.frame_context.frame = 4
@@ -990,6 +1013,11 @@ try:
     assert spring_debug["topology"]["baseline_root_indices"].shape == (3,)
     assert spring_debug["motion"]["step_basic_positions"].shape == (3, 3)
     assert len(spring_debug["parameters"]["partitions"]) == 1
+    for name in ("angle_restoration", "angle_limit"):
+        records = spring_debug["constraint_records"][name]
+        assert len(records["states"]) > 0
+        assert np.isfinite(records["targets"]).all()
+        assert set(map(int, records["partitions"])) == {0}
 
     multi_requests = tuple(
         product_authoring.make_mc2_bone_cloth_product_request(

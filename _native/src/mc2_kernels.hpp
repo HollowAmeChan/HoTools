@@ -67,7 +67,9 @@ struct Mc2MotionConstraintView {
     const std::uint32_t* max_distance_enabled_values = nullptr;
     const std::uint32_t* backstop_enabled_values = nullptr;
     float* debug_record_origins = nullptr;
+    float* debug_record_targets = nullptr;
     float* debug_record_corrections = nullptr;
+    float* debug_record_limits = nullptr;
     std::uint8_t* debug_record_valid = nullptr;
 };
 
@@ -233,6 +235,8 @@ struct Mc2AngleConstraintView {
     const std::uint32_t* restoration_enabled_values = nullptr;
     const std::uint32_t* limit_enabled_values = nullptr;
     float* debug_record_origins = nullptr;
+    float* debug_record_targets = nullptr;
+    float* debug_record_target_vectors = nullptr;
     float* debug_record_corrections = nullptr;
     float* debug_record_currents = nullptr;
     float* debug_record_limits = nullptr;

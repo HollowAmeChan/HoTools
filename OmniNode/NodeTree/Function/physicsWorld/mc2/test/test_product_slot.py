@@ -79,7 +79,7 @@ class _Source:
         return self._pointer
 
 
-def _collection(*, gravity=5.0):
+def _collection(*, gravity=5.0, constraints=False):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
     snapshots = tuple(
@@ -91,7 +91,14 @@ def _collection(*, gravity=5.0):
         partitions.make_mc2_partition_entry(
             source, setup_type="mesh_cloth", stable_id=snapshot.partition_id,
             profile=parameters.make_mc2_particle_profile(
-                gravity=gravity if index == 0 else 8.0, self_collision_mode=2,
+                gravity=gravity if index == 0 else 8.0,
+                self_collision_mode=2,
+                max_distance_enabled=constraints,
+                max_distance=0.1,
+                backstop_enabled=constraints,
+                backstop_radius=0.05,
+                angle_limit_enabled=constraints,
+                angle_limit=30.0,
             ),
             setup_options=parameters.make_mc2_setup_options("mesh_cloth"),
             task_parameters=parameters.make_mc2_task_parameters(),
@@ -221,7 +228,9 @@ def test_staged_create_failure_preserves_previous_generation_slot():
     world.generation = 2
     kernel.fail_create = True
     try:
-        slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+        slot_module.sync_mc2_mesh_fused_slot(
+            world, _collection(), kernel=kernel
+        )
     except RuntimeError as exc:
         assert "injected slot create failure" in str(exc)
     else:
@@ -620,7 +629,9 @@ def test_slot_native_executes_complete_compiled_frame():
     world = _world()
     kernel = native_kernel_module.MC2NativeCPUKernelV1()
     try:
-        slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+        slot_module.sync_mc2_mesh_fused_slot(
+            world, _collection(constraints=True), kernel=kernel
+        )
         slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
         owner = slot.data["owner"]
         world.frame_context = types.SimpleNamespace(frame=12)
@@ -637,7 +648,10 @@ def test_slot_native_executes_complete_compiled_frame():
                 "show_center": True,
                 "show_teleport_threshold": True,
                 "show_teleport_status": True,
+                "show_motion_base": True,
                 "show_motion": True,
+                "show_angle_restoration": True,
+                "show_angle_limit": True,
             },
         ) == 1
         frame = _domain_frame(owner.compiled.program, frame=13)
@@ -673,7 +687,10 @@ def test_slot_native_executes_complete_compiled_frame():
         assert snapshot["source"] == "mc2_product_capture"
         assert snapshot["frame"] == 13
         assert snapshot["partition_ids"] == owner.compiled.program.partition_ids
-        assert "show_motion" in snapshot["unsupported_filters"]
+        assert not {
+            "show_motion_base", "show_motion",
+            "show_angle_restoration", "show_angle_limit",
+        }.intersection(snapshot["unsupported_filters"])
         assert snapshot["native"]["positions"].flags.writeable is False
         assert snapshot["native"]["real_velocities"].flags.writeable is False
         assert snapshot["topology"]["edges"].shape[1] == 2
@@ -687,6 +704,20 @@ def test_slot_native_executes_complete_compiled_frame():
         )
         assert snapshot["motion"]["step_basic_positions"].flags.writeable is False
         assert snapshot["motion"]["update_index"] == results[-1].update_index
+        assert snapshot["motion"]["normal_axis_values"].shape == (
+            owner.compiled.program.particle_count,
+        )
+        records = snapshot["constraint_records"]
+        motion_records = records["motion"]
+        assert len(motion_records["branches"]) > 0
+        assert np.isfinite(motion_records["target_origins"]).all()
+        assert set(map(int, motion_records["partitions"])).issubset({0, 1})
+        for name in ("angle_restoration", "angle_limit"):
+            angle_records = records[name]
+            assert len(angle_records["branches"]) > 0
+            assert np.isfinite(angle_records["targets"]).all()
+            assert np.isfinite(angle_records["target_vectors"]).all()
+            assert set(map(int, angle_records["partitions"])).issubset({0, 1})
         assert snapshot["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
         assert snapshot["parameters"]["gravity_directions"].shape == (
             owner.compiled.program.particle_count, 3,
@@ -696,6 +727,10 @@ def test_slot_native_executes_complete_compiled_frame():
             snapshot["parameters"]["gravity_effective_strengths"]
         ).all()
         assert "_debug_product_step_basic" not in slot.data
+        assert "_debug_product_constraint_inputs" not in slot.data
+        debug_inspect = owner.inspect()["domain"]["kernel"]
+        assert debug_inspect["constraint_debug_active_mask"] == 0
+        assert debug_inspect["constraint_debug_captured_mask"] == 0
         center_partitions = snapshot["center"]["partitions"]
         teleport_partitions = snapshot["teleport"]["partitions"]
         assert len(center_partitions) == len(teleport_partitions) == 2

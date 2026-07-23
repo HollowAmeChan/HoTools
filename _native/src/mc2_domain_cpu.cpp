@@ -1073,6 +1073,61 @@ void DomainV1::step() {
     ++step_count_;
 }
 
+void DomainV1::begin_constraint_debug(std::uint32_t mask) {
+    ensure_live();
+    constexpr std::uint32_t supported = kConstraintDebugAngle | kConstraintDebugMotion;
+    if (mask == 0u || (mask & ~supported) != 0u) {
+        throw std::invalid_argument("MC2 CPU constraint debug mask is invalid");
+    }
+    if ((mask & kConstraintDebugAngle) != 0u && !baseline_ready_) {
+        throw std::logic_error("MC2 CPU Angle debug requires baseline configuration");
+    }
+    clear_constraint_debug();
+    if ((mask & kConstraintDebugMotion) != 0u) {
+        const auto records = particle_count_ * 2;
+        motion_debug_origins_.assign(records * 3, 0.0f);
+        motion_debug_targets_.assign(records * 3, 0.0f);
+        motion_debug_corrections_.assign(records * 3, 0.0f);
+        motion_debug_limits_.assign(records, 0.0f);
+        motion_debug_valid_.assign(records, 0u);
+    }
+    if ((mask & kConstraintDebugAngle) != 0u) {
+        const auto records = baseline_line_data_.size() * 2 * 3;
+        angle_debug_origins_.assign(records * 2 * 3, 0.0f);
+        angle_debug_targets_.assign(records * 3, 0.0f);
+        angle_debug_target_vectors_.assign(records * 3, 0.0f);
+        angle_debug_corrections_.assign(records * 2 * 3, 0.0f);
+        angle_debug_currents_.assign(records, 0.0f);
+        angle_debug_limits_.assign(records, 0.0f);
+        angle_debug_valid_.assign(records, 0u);
+    }
+    constraint_debug_active_mask_ = mask;
+}
+
+void DomainV1::end_constraint_debug() {
+    ensure_live();
+    constraint_debug_captured_mask_ = constraint_debug_active_mask_;
+    constraint_debug_active_mask_ = 0u;
+}
+
+void DomainV1::clear_constraint_debug() {
+    ensure_live();
+    constraint_debug_active_mask_ = 0u;
+    constraint_debug_captured_mask_ = 0u;
+    std::vector<float>().swap(motion_debug_origins_);
+    std::vector<float>().swap(motion_debug_targets_);
+    std::vector<float>().swap(motion_debug_corrections_);
+    std::vector<float>().swap(motion_debug_limits_);
+    std::vector<std::uint8_t>().swap(motion_debug_valid_);
+    std::vector<float>().swap(angle_debug_origins_);
+    std::vector<float>().swap(angle_debug_targets_);
+    std::vector<float>().swap(angle_debug_target_vectors_);
+    std::vector<float>().swap(angle_debug_corrections_);
+    std::vector<float>().swap(angle_debug_currents_);
+    std::vector<float>().swap(angle_debug_limits_);
+    std::vector<std::uint8_t>().swap(angle_debug_valid_);
+}
+
 void DomainV1::configure_distance(
     const std::int32_t* starts,
     const std::int32_t* counts,
@@ -1451,6 +1506,15 @@ void DomainV1::step_angle(
     view.explicit_enable_flags = true;
     view.restoration_enabled = restoration_enabled;
     view.limit_enabled = limit_enabled;
+    if ((constraint_debug_active_mask_ & kConstraintDebugAngle) != 0u) {
+        view.debug_record_origins = angle_debug_origins_.data();
+        view.debug_record_targets = angle_debug_targets_.data();
+        view.debug_record_target_vectors = angle_debug_target_vectors_.data();
+        view.debug_record_corrections = angle_debug_corrections_.data();
+        view.debug_record_currents = angle_debug_currents_.data();
+        view.debug_record_limits = angle_debug_limits_.data();
+        view.debug_record_valid = angle_debug_valid_.data();
+    }
     hotools::project_angle_constraints_mc2(view);
     if (restoration_enabled || limit_enabled) ++angle_solve_count_;
     ++step_count_;
@@ -1510,6 +1574,15 @@ void DomainV1::step_angle_partitioned(
     view.explicit_enable_flags = true;
     view.restoration_enabled_values = restoration_enabled_values;
     view.limit_enabled_values = limit_enabled_values;
+    if ((constraint_debug_active_mask_ & kConstraintDebugAngle) != 0u) {
+        view.debug_record_origins = angle_debug_origins_.data();
+        view.debug_record_targets = angle_debug_targets_.data();
+        view.debug_record_target_vectors = angle_debug_target_vectors_.data();
+        view.debug_record_corrections = angle_debug_corrections_.data();
+        view.debug_record_currents = angle_debug_currents_.data();
+        view.debug_record_limits = angle_debug_limits_.data();
+        view.debug_record_valid = angle_debug_valid_.data();
+    }
     hotools::project_angle_constraints_mc2(view);
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if (restoration_enabled_values[vertex] != 0u || limit_enabled_values[vertex] != 0u) {
@@ -1569,6 +1642,13 @@ void DomainV1::step_motion(
     view.explicit_enable_flags = true;
     view.max_distance_enabled = max_distance_enabled;
     view.backstop_enabled = backstop_enabled;
+    if ((constraint_debug_active_mask_ & kConstraintDebugMotion) != 0u) {
+        view.debug_record_origins = motion_debug_origins_.data();
+        view.debug_record_targets = motion_debug_targets_.data();
+        view.debug_record_corrections = motion_debug_corrections_.data();
+        view.debug_record_limits = motion_debug_limits_.data();
+        view.debug_record_valid = motion_debug_valid_.data();
+    }
     hotools::project_motion_constraints_mc2(view);
     if (max_distance_enabled || backstop_enabled) ++motion_solve_count_;
     ++step_count_;
@@ -1622,6 +1702,13 @@ void DomainV1::step_motion_partitioned(
     view.normal_axis_values = normal_axis_values;
     view.max_distance_enabled_values = max_distance_enabled_values;
     view.backstop_enabled_values = backstop_enabled_values;
+    if ((constraint_debug_active_mask_ & kConstraintDebugMotion) != 0u) {
+        view.debug_record_origins = motion_debug_origins_.data();
+        view.debug_record_targets = motion_debug_targets_.data();
+        view.debug_record_corrections = motion_debug_corrections_.data();
+        view.debug_record_limits = motion_debug_limits_.data();
+        view.debug_record_valid = motion_debug_valid_.data();
+    }
     hotools::project_motion_constraints_mc2(view);
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if (max_distance_enabled_values[vertex] != 0u || backstop_enabled_values[vertex] != 0u) {

@@ -771,6 +771,8 @@ Bone output 已完成第三条产品调试切片。产品 owner 以 compiled fra
 
 约束调试的公共前置层已经迁到产品 owner。Depth 使用 compiled baseline/参数 SoA 的原始生产数据；StepBasic 使用同一 substep 已交给后续约束 pass 的 native pose，只在显式请求时暂存并在捕获后释放；Gravity 使用 Center 实际输出的逐 partition `gravity_ratio` 与参数 SoA，按粒子分区绘制原始/有效向量。暂停帧没有真实 StepBasic 时必须保留请求等待，不能复用上一帧；debug-off 不得保存 pose 或增加 readback。MeshCloth、BoneCloth、BoneSpring 已通过 py311/Blender 4.5 与 py313/Blender 5.2 产品路径、native/DomainV1/产品槽自动化和旧 renderer 回归，双 ABI 门禁已经关闭。Distance/Tether/Bending/Angle/Motion 仍必须由 native pass 发布真实输入、目标、correction 与命中标志，不能把本前置层解释为约束记录已经等价。
 
+Angle/Motion 产品调试迁移已经关闭。统一 Domain 以 `Angle=1`、`Motion=2` 掩码在最终真实子步前临时分配记录，求解成功后冻结，snapshot 消费后释放；异常、暂停和 debug-off 均不能留下侧带状态。Motion kernel 直接发布 MaxDistance/Backstop 的实际目标、限值与分区身份；Angle kernel 在每个 branch/iteration 发布当时使用的 target point/vector、current/limit 和 parent/child correction。Python 只做只读形状整理与状态分类，产品 renderer 不再重建 target；旧 V0 renderer 仍以缺少 target 时的兼容分支通过 13 组回归。MeshCloth 多 source、BoneCloth 与受限 BoneSpring 包装已在 cp311/4.5 和 cp313/5.2 验收，且两版 native 全量均为 `30/30`。当前剩余顺序固定为：Distance/Tether/Bending 原生记录，产品外碰记录，whole-domain self 记录，然后才删除旧 Python/native owner 面并进入 E7-S 简化。
+
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的 Blender 4.5 窗口中又发现 `build.bat` 复用了测试改写的 runtime cache；脚本现每次先刷新 preset，确保产物真实写入所选 `_Lib/py311` 或 `_Lib/py313` 目录。重新生成并提交的 py311 产物通过 22 个 MC2 native 测试文件；Blender 4.5 运行时明确加载当前 cp311 并通过 Mesh shadow、120 帧产品确定性、双 source 对照和 Bone product 事务。

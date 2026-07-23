@@ -1529,7 +1529,15 @@ def _append_motion_base_batches(batches, point_batches, motion, limit):
         return
     base = np.asarray(base, dtype=np.float32).reshape((-1, 3))
     rotations = np.asarray(rotations, dtype=np.float32).reshape((-1, 4))
-    axes = _motion_axes(base, rotations, int(motion.get("normal_axis", 1)))
+    normal_axis_values = motion.get("normal_axis_values")
+    if normal_axis_values is None:
+        axes = _motion_axes(base, rotations, int(motion.get("normal_axis", 1)))
+    else:
+        normal_axis_values = np.asarray(normal_axis_values, dtype=np.int32).reshape((-1,))
+        axes = np.asarray([
+            _motion_axes(base[index:index + 1], rotations[index:index + 1], int(axis))[0]
+            for index, axis in enumerate(normal_axis_values[:len(base)])
+        ], dtype=np.float32)
     lines = []
     points = []
     for center, axis in zip(base[:limit], axes[:limit]):
@@ -1559,9 +1567,9 @@ def _visible_angle_records(records, limit):
     else:
         iterations = np.asarray(iterations, dtype=np.int8).reshape((-1,))
     selected = {}
-    for child, origin, state, iteration in zip(
+    for index, (child, origin, state, iteration) in enumerate(zip(
         children, origins, states, iterations
-    ):
+    )):
         child = int(child)
         state = int(state)
         if child < 0 or state == 0:
@@ -1569,9 +1577,9 @@ def _visible_angle_records(records, limit):
         score = (abs(state), int(iteration))
         previous = selected.get(child)
         if previous is None or score > previous[0]:
-            selected[child] = (score, vector3(origin), state)
+            selected[child] = (score, vector3(origin), state, index)
     return tuple(
-        (child, value[1], value[2])
+        (value[3], child, value[1], value[2])
         for child, value in tuple(selected.items())[:limit]
     )
 
@@ -1581,19 +1589,28 @@ def _append_angle_restoration_batches(
 ):
     if not bool(motion.get("use_angle_restoration")):
         return
-    targets = motion.get("angle_restoration_target_positions")
-    valid = motion.get("angle_restoration_target_valid")
+    record_targets = records.get("targets")
+    targets = record_targets
+    valid = None
+    if targets is None:
+        targets = motion.get("angle_restoration_target_positions")
+        valid = motion.get("angle_restoration_target_valid")
     if targets is None or valid is None:
-        return
+        if record_targets is None:
+            return
     targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
-    valid = np.asarray(valid, dtype=np.uint8)
+    if valid is not None:
+        valid = np.asarray(valid, dtype=np.uint8)
     guide_lines = []
     near_points = []
     active_points = []
-    for child, origin, state in _visible_angle_records(records, limit):
-        if child >= len(targets) or child >= len(valid) or not valid[child]:
+    for record, child, origin, state in _visible_angle_records(records, limit):
+        target_index = record if record_targets is not None else child
+        if target_index >= len(targets):
             continue
-        add_line(guide_lines, origin, targets[child])
+        if valid is not None and (child >= len(valid) or not valid[child]):
+            continue
+        add_line(guide_lines, origin, targets[target_index])
         add_point(active_points if abs(state) == 2 else near_points, origin)
     _batch(batches, guide_lines, "angle_restoration_guide", 0.9)
     _point_batch(point_batches, near_points, "angle_restoration_near", 3.0)
@@ -1603,38 +1620,56 @@ def _append_angle_restoration_batches(
 def _append_angle_limit_batches(batches, point_batches, motion, records, limit):
     if not bool(motion.get("use_angle_limit")):
         return
-    if float(motion.get("angle_limit_stiffness", 0.0) or 0.0) <= 1.0e-8:
-        return
-    targets = motion.get("angle_limit_target_positions")
-    vectors = motion.get("angle_limit_target_vectors")
-    valid = motion.get("angle_limit_target_valid")
-    limits = motion.get("angle_limits")
-    if targets is None or vectors is None or valid is None or limits is None:
+    record_targets = records.get("targets")
+    targets = record_targets
+    vectors = records.get("target_vectors")
+    limits = records.get("limits")
+    valid = None
+    native_records = targets is not None and vectors is not None
+    if not native_records:
+        if float(motion.get("angle_limit_stiffness", 0.0) or 0.0) <= 1.0e-8:
+            return
+        targets = motion.get("angle_limit_target_positions")
+        vectors = motion.get("angle_limit_target_vectors")
+        valid = motion.get("angle_limit_target_valid")
+        limits = motion.get("angle_limits")
+    if (
+        targets is None
+        or vectors is None
+        or limits is None
+        or (not native_records and valid is None)
+    ):
         return
     targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
     vectors = np.asarray(vectors, dtype=np.float32).reshape((-1, 3))
-    valid = np.asarray(valid, dtype=np.uint8)
+    if valid is not None:
+        valid = np.asarray(valid, dtype=np.uint8)
     limits = np.asarray(limits, dtype=np.float32)
     range_lines = []
     near_points = []
     active_points = []
-    for child, origin, state in _visible_angle_records(records, limit):
+    for record, child, origin, state in _visible_angle_records(records, limit):
+        target_index = record if native_records else child
         if (
-            child >= len(targets)
-            or child >= len(vectors)
-            or child >= len(valid)
-            or child >= len(limits)
-            or not valid[child]
+            target_index >= len(targets)
+            or target_index >= len(vectors)
+            or target_index >= len(limits)
         ):
             continue
-        target = targets[child]
-        vector = vector3(vectors[child])
+        if valid is not None and (child >= len(valid) or not valid[child]):
+            continue
+        target = targets[target_index]
+        vector = vector3(vectors[target_index])
         length = vector.length
         if length <= 1.0e-8:
             continue
         direction = vector / length
         parent = vector3(target) - vector
-        angle = math.radians(max(0.0, min(180.0, float(limits[child]))))
+        angle = (
+            max(0.0, min(math.pi, float(limits[target_index])))
+            if native_records
+            else math.radians(max(0.0, min(180.0, float(limits[target_index]))))
+        )
         if angle >= math.pi - 1.0e-4:
             _add_axis_sphere(range_lines, parent, length)
             add_point(active_points if abs(state) == 2 else near_points, origin)

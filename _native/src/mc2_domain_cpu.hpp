@@ -12,6 +12,11 @@ class Mc2WholeDomainSelfEngine;
 
 namespace hotools::mc2_domain_cpu {
 
+enum ConstraintDebugMaskV1 : std::uint32_t {
+    kConstraintDebugAngle = 1u,
+    kConstraintDebugMotion = 2u,
+};
+
 struct ProgramViewV1 {
     std::uint32_t schema_version = 0;
     std::size_t particle_count = 0;
@@ -66,6 +71,9 @@ public:
 
     void update_frame(const FrameViewV1& frame);
     void step();
+    void begin_constraint_debug(std::uint32_t mask);
+    void end_constraint_debug();
+    void clear_constraint_debug();
     void configure_distance(
         const std::int32_t* starts,
         const std::int32_t* counts,
@@ -455,6 +463,33 @@ public:
     const std::vector<float>& step_basic_rotations() const noexcept {
         return step_basic_rotations_;
     }
+    const std::vector<std::uint32_t>& particle_partition_index() const noexcept {
+        return particle_partition_index_;
+    }
+    const std::vector<std::int32_t>& baseline_parent_indices() const noexcept {
+        return baseline_parent_indices_;
+    }
+    const std::vector<std::int32_t>& baseline_line_data() const noexcept {
+        return baseline_line_data_;
+    }
+    std::uint32_t constraint_debug_active_mask() const noexcept {
+        return constraint_debug_active_mask_;
+    }
+    std::uint32_t constraint_debug_captured_mask() const noexcept {
+        return constraint_debug_captured_mask_;
+    }
+    const std::vector<float>& motion_debug_origins() const noexcept { return motion_debug_origins_; }
+    const std::vector<float>& motion_debug_targets() const noexcept { return motion_debug_targets_; }
+    const std::vector<float>& motion_debug_corrections() const noexcept { return motion_debug_corrections_; }
+    const std::vector<float>& motion_debug_limits() const noexcept { return motion_debug_limits_; }
+    const std::vector<std::uint8_t>& motion_debug_valid() const noexcept { return motion_debug_valid_; }
+    const std::vector<float>& angle_debug_origins() const noexcept { return angle_debug_origins_; }
+    const std::vector<float>& angle_debug_targets() const noexcept { return angle_debug_targets_; }
+    const std::vector<float>& angle_debug_target_vectors() const noexcept { return angle_debug_target_vectors_; }
+    const std::vector<float>& angle_debug_corrections() const noexcept { return angle_debug_corrections_; }
+    const std::vector<float>& angle_debug_currents() const noexcept { return angle_debug_currents_; }
+    const std::vector<float>& angle_debug_limits() const noexcept { return angle_debug_limits_; }
+    const std::vector<std::uint8_t>& angle_debug_valid() const noexcept { return angle_debug_valid_; }
 
 private:
     void ensure_live() const;
@@ -578,6 +613,20 @@ private:
     std::vector<float> step_basic_positions_;
     std::vector<float> step_basic_rotations_;
     bool baseline_pose_ready_ = false;
+    std::uint32_t constraint_debug_active_mask_ = 0u;
+    std::uint32_t constraint_debug_captured_mask_ = 0u;
+    std::vector<float> motion_debug_origins_;
+    std::vector<float> motion_debug_targets_;
+    std::vector<float> motion_debug_corrections_;
+    std::vector<float> motion_debug_limits_;
+    std::vector<std::uint8_t> motion_debug_valid_;
+    std::vector<float> angle_debug_origins_;
+    std::vector<float> angle_debug_targets_;
+    std::vector<float> angle_debug_target_vectors_;
+    std::vector<float> angle_debug_corrections_;
+    std::vector<float> angle_debug_currents_;
+    std::vector<float> angle_debug_limits_;
+    std::vector<std::uint8_t> angle_debug_valid_;
     std::vector<std::int32_t> tether_root_indices_;
     bool tether_ready_ = false;
     std::vector<std::int32_t> bending_dihedral_pairs_;

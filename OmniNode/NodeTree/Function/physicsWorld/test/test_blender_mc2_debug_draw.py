@@ -12,11 +12,21 @@ import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+PYTHON_ABI = f"py{sys.version_info.major}{sys.version_info.minor}"
+NATIVE_PACKAGE = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 NODETREE = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 FUNCTION = os.path.join(NODETREE, "Function")
 PW_ROOT = os.path.join(FUNCTION, "physicsWorld")
 
-for path in (HOTOOLS, os.path.dirname(HOTOOLS)):
+for module_name in tuple(sys.modules):
+    if (
+        module_name == "hotools_native"
+        or module_name == "HoTools"
+        or module_name.startswith("HoTools.")
+    ):
+        sys.modules.pop(module_name, None)
+os.environ["HOTOOLS_NATIVE_TEST_DIR"] = NATIVE_PACKAGE
+for path in (NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -1205,6 +1215,7 @@ try:
         assert set(motion_records) == {
             "branches",
             "vertices",
+            "partitions",
             "origins",
             "target_origins",
             "corrections",
@@ -1247,6 +1258,7 @@ try:
                 "record_indices",
                 "children",
                 "parents",
+                "partitions",
                 "origins",
                 "parent_origins",
                 "corrections",

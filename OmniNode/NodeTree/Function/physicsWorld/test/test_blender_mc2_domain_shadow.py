@@ -240,6 +240,12 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             profile=mc2_parameters.make_mc2_particle_profile(
                 gravity=6.0,
                 self_collision_mode=2,
+                max_distance_enabled=True,
+                max_distance=0.1,
+                backstop_enabled=True,
+                backstop_radius=0.05,
+                angle_limit_enabled=True,
+                angle_limit=30.0,
             ),
         )
         assert override_count == 1
@@ -288,6 +294,10 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
                 "show_step_basic": True,
                 "show_gravity": True,
                 "show_velocity": True,
+                "show_motion_base": True,
+                "show_motion": True,
+                "show_angle_restoration": True,
+                "show_angle_limit": True,
                 "show_output": True,
                 "show_center": True,
                 "show_teleport_threshold": True,
@@ -317,6 +327,19 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             slot.data["owner"].compiled.program.particle_count,
         )
         assert snapshot["motion"]["step_basic_positions"].flags.writeable is False
+        assert snapshot["motion"]["normal_axis_values"].shape == (
+            slot.data["owner"].compiled.program.particle_count,
+        )
+        for name in ("motion", "angle_restoration", "angle_limit"):
+            records = snapshot["constraint_records"][name]
+            assert len(records["states"]) > 0
+            assert set(map(int, records["partitions"])).issubset({0, 1})
+        assert np.isfinite(
+            snapshot["constraint_records"]["motion"]["target_origins"]
+        ).all()
+        assert np.isfinite(
+            snapshot["constraint_records"]["angle_limit"]["targets"]
+        ).all()
         assert snapshot["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
         assert len(snapshot["parameters"]["partitions"]) == 2
         assert len(snapshot["output"]["writeback_targets"]) == 2
@@ -332,6 +355,10 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             show_depth=True,
             show_step_basic=True,
             show_gravity=True,
+            show_motion_base=True,
+            show_motion=True,
+            show_angle_restoration=True,
+            show_angle_limit=True,
         )
         rendered = mc2_debug_draw.mc2_debug_draw_store_snapshot(
             "mc2-product-center-debug"

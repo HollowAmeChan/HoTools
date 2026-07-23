@@ -33,6 +33,17 @@ from .results import publish_mc2_result_transaction
 MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
 MC2_FUSED_MESH_SLOT_KIND = MC2_FUSED_PRODUCT_SLOT_KIND
 _MC2_FUSED_PRODUCT_WRITER = "mc2_fused_cpu_product"
+_MC2_CONSTRAINT_DEBUG_ANGLE = 1
+_MC2_CONSTRAINT_DEBUG_MOTION = 2
+
+
+def _constraint_debug_mask(filters: dict) -> int:
+    mask = 0
+    if filters.get("show_angle_restoration") or filters.get("show_angle_limit"):
+        mask |= _MC2_CONSTRAINT_DEBUG_ANGLE
+    if filters.get("show_motion"):
+        mask |= _MC2_CONSTRAINT_DEBUG_MOTION
+    return mask
 
 
 def make_mc2_product_slot_id(setup_type: str, domain_signature: str) -> str:
@@ -577,14 +588,52 @@ def step_mc2_product_substep(
             distance_weights=distance_weights,
             external_collision=collider_frame.native_mapping(),
         )
-        try:
-            owner.step(settings)
-        except Exception as exc:
-            slot.data["last_step_failure"] = f"{type(exc).__name__}: {exc}"
-            raise
         debug_state = slot.data.get("_debug_capture_state") or {}
         debug_filters = debug_state.get("filters") or {}
-        if bool(debug_state.get("requested")) and bool(
+        debug_requested = bool(debug_state.get("requested"))
+        is_final = bool(staged_substep.plan.is_final_substep)
+        constraint_debug_mask = (
+            _constraint_debug_mask(debug_filters)
+            if debug_requested and is_final
+            else 0
+        )
+        constraint_inputs_requested = debug_requested and is_final and any(
+            debug_filters.get(name, False)
+            for name in (
+                "show_motion_base",
+                "show_motion",
+                "show_angle_restoration",
+                "show_angle_limit",
+            )
+        )
+        constraint_debug_started = False
+        try:
+            if constraint_debug_mask:
+                owner.begin_constraint_debug(constraint_debug_mask)
+                constraint_debug_started = True
+            owner.step(settings)
+            if constraint_debug_started:
+                owner.end_constraint_debug()
+        except Exception as exc:
+            if constraint_debug_started:
+                owner.clear_constraint_debug()
+            slot.data["last_step_failure"] = f"{type(exc).__name__}: {exc}"
+            raise
+        if constraint_inputs_requested:
+            slot.data["_debug_product_constraint_inputs"] = {
+                "frame": int(scheduled_frame.frame_packet.frame),
+                "generation": int(scheduled_frame.frame_packet.generation),
+                "update_index": update_index,
+                "mask": constraint_debug_mask,
+                "motion_base_positions": settings["motion_base_positions"],
+                "motion_base_rotations_xyzw": settings["motion_base_rotations"],
+                "motion_normal_axis_values": settings["motion_normal_axis_values"],
+                "motion_max_distance_enabled_values": settings["motion_max_distance_enabled_values"],
+                "motion_backstop_enabled_values": settings["motion_backstop_enabled_values"],
+                "angle_restoration_enabled_values": settings["angle_restoration_enabled_values"],
+                "angle_limit_enabled_values": settings["angle_limit_enabled_values"],
+            }
+        if debug_requested and bool(
             debug_filters.get("show_step_basic", False)
         ):
             slot.data["_debug_product_step_basic"] = {
@@ -596,7 +645,6 @@ def step_mc2_product_substep(
             }
         scheduler_state.commit_substep(staged_substep)
         completed = update_index + 1
-        is_final = bool(staged_substep.plan.is_final_substep)
         result = MC2FusedProductSubstepResultV1(
             frame=int(scheduled_frame.frame_packet.frame),
             generation=int(scheduled_frame.frame_packet.generation),

@@ -1029,6 +1029,9 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         float constrained_x = original_x;
         float constrained_y = original_y;
         float constrained_z = original_z;
+        float backstop_center_x = view.base_positions[offset + 0];
+        float backstop_center_y = view.base_positions[offset + 1];
+        float backstop_center_z = view.base_positions[offset + 2];
 
         if (apply_max_distance) {
             const float dx = constrained_x - view.base_positions[offset + 0];
@@ -1065,18 +1068,18 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
             quat_rotate(base_rot, axis_x, axis_y, axis_z, nx, ny, nz);
             safe_normal_with_fallback(nx, ny, nz, 0.0f, 1.0f, 0.0f, nx, ny, nz);
             const float backstop_distance = std::max(view.backstop_distances[vertex], 0.0f);
-            const float center_x = view.base_positions[offset + 0] - nx * (backstop_distance + backstop_radius);
-            const float center_y = view.base_positions[offset + 1] - ny * (backstop_distance + backstop_radius);
-            const float center_z = view.base_positions[offset + 2] - nz * (backstop_distance + backstop_radius);
-            const float dx = constrained_x - center_x;
-            const float dy = constrained_y - center_y;
-            const float dz = constrained_z - center_z;
+            backstop_center_x = view.base_positions[offset + 0] - nx * (backstop_distance + backstop_radius);
+            backstop_center_y = view.base_positions[offset + 1] - ny * (backstop_distance + backstop_radius);
+            backstop_center_z = view.base_positions[offset + 2] - nz * (backstop_distance + backstop_radius);
+            const float dx = constrained_x - backstop_center_x;
+            const float dy = constrained_y - backstop_center_y;
+            const float dz = constrained_z - backstop_center_z;
             const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (distance > kMc2Epsilon && distance < backstop_radius) {
                 const float scale = backstop_radius / distance;
-                constrained_x = center_x + dx * scale;
-                constrained_y = center_y + dy * scale;
-                constrained_z = center_z + dz * scale;
+                constrained_x = backstop_center_x + dx * scale;
+                constrained_y = backstop_center_y + dy * scale;
+                constrained_z = backstop_center_z + dz * scale;
             }
         }
 
@@ -1108,18 +1111,34 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
             view.debug_record_origins[max_offset + 0] = original_x;
             view.debug_record_origins[max_offset + 1] = original_y;
             view.debug_record_origins[max_offset + 2] = original_z;
+            if (view.debug_record_targets != nullptr) {
+                view.debug_record_targets[max_offset + 0] = view.base_positions[offset + 0];
+                view.debug_record_targets[max_offset + 1] = view.base_positions[offset + 1];
+                view.debug_record_targets[max_offset + 2] = view.base_positions[offset + 2];
+            }
             view.debug_record_corrections[max_offset + 0] = max_add_x;
             view.debug_record_corrections[max_offset + 1] = max_add_y;
             view.debug_record_corrections[max_offset + 2] = max_add_z;
             view.debug_record_valid[max_record] = apply_max_distance ? 1 : 0;
+            if (view.debug_record_limits != nullptr) {
+                view.debug_record_limits[max_record] = limit;
+            }
             view.debug_record_origins[backstop_offset + 0] = original_x + max_add_x;
             view.debug_record_origins[backstop_offset + 1] = original_y + max_add_y;
             view.debug_record_origins[backstop_offset + 2] = original_z + max_add_z;
+            if (view.debug_record_targets != nullptr) {
+                view.debug_record_targets[backstop_offset + 0] = backstop_center_x;
+                view.debug_record_targets[backstop_offset + 1] = backstop_center_y;
+                view.debug_record_targets[backstop_offset + 2] = backstop_center_z;
+            }
             view.debug_record_corrections[backstop_offset + 0] = add_x - max_add_x;
             view.debug_record_corrections[backstop_offset + 1] = add_y - max_add_y;
             view.debug_record_corrections[backstop_offset + 2] = add_z - max_add_z;
             view.debug_record_valid[backstop_record] =
                 vertex_backstop && backstop_radius > kMc2Epsilon ? 1 : 0;
+            if (view.debug_record_limits != nullptr) {
+                view.debug_record_limits[backstop_record] = backstop_radius;
+            }
         }
         view.positions[offset + 0] = next_x;
         view.positions[offset + 1] = next_y;
@@ -2522,6 +2541,21 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
         view.debug_record_corrections[debug_offset + 4] += child_y;
         view.debug_record_corrections[debug_offset + 5] += child_z;
     };
+    const auto debug_target = [&] (
+        std::size_t record,
+        float parent_x, float parent_y, float parent_z,
+        float vector_x, float vector_y, float vector_z
+    ) {
+        if (!debug_records || view.debug_record_targets == nullptr ||
+            view.debug_record_target_vectors == nullptr) return;
+        const auto target_offset = record * 3;
+        view.debug_record_target_vectors[target_offset + 0] = vector_x;
+        view.debug_record_target_vectors[target_offset + 1] = vector_y;
+        view.debug_record_target_vectors[target_offset + 2] = vector_z;
+        view.debug_record_targets[target_offset + 0] = parent_x + vector_x;
+        view.debug_record_targets[target_offset + 1] = parent_y + vector_y;
+        view.debug_record_targets[target_offset + 2] = parent_z + vector_z;
+    };
 
     std::vector<float> length_buffer(static_cast<std::size_t>(view.vertex_count), 0.0f);
     std::vector<float> local_pos_buffer(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
@@ -2688,6 +2722,9 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     float target_dir_x = 0.0f;
                     float target_dir_y = 0.0f;
                     float target_dir_z = 0.0f;
+                    float debug_target_x = target_x;
+                    float debug_target_y = target_y;
+                    float debug_target_z = target_z;
                     if (vector_len > kMc2Epsilon && target_len <= kMc2Epsilon) {
                         const float add_x = parent_x - child_x;
                         const float add_y = parent_y - child_y;
@@ -2725,9 +2762,17 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                             vector_x = vector_dir_x * blend_len;
                             vector_y = vector_dir_y * blend_len;
                             vector_z = vector_dir_z * blend_len;
+                            debug_target_x = target_dir_x * blend_len;
+                            debug_target_y = target_dir_y * blend_len;
+                            debug_target_z = target_dir_z * blend_len;
                             has_vector = true;
                         }
                     }
+                    debug_target(
+                        debug_record,
+                        parent_x, parent_y, parent_z,
+                        debug_target_x, debug_target_y, debug_target_z
+                    );
 
                     if (has_vector) {
                         const float max_angle_rad =
@@ -2831,6 +2876,20 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 }
                 const auto debug_record = debug_record_index(1, iteration, data_index);
                 debug_begin(debug_record, parent_index, child_index);
+                child_x = view.positions[child_offset + 0];
+                child_y = view.positions[child_offset + 1];
+                child_z = view.positions[child_offset + 2];
+                parent_x = view.positions[parent_offset + 0];
+                parent_y = view.positions[parent_offset + 1];
+                parent_z = view.positions[parent_offset + 2];
+                const float target_x = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 0)];
+                const float target_y = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 1)];
+                const float target_z = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 2)];
+                debug_target(
+                    debug_record,
+                    parent_x, parent_y, parent_z,
+                    target_x, target_y, target_z
+                );
                 const float gravity_falloff = clamp_float(
                     1.0f - (view.restoration_gravity_falloff_values != nullptr
                                 ? view.restoration_gravity_falloff_values[child_index]
@@ -2843,15 +2902,6 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                     continue;
                 }
 
-                child_x = view.positions[child_offset + 0];
-                child_y = view.positions[child_offset + 1];
-                child_z = view.positions[child_offset + 2];
-                parent_x = view.positions[parent_offset + 0];
-                parent_y = view.positions[parent_offset + 1];
-                parent_z = view.positions[parent_offset + 2];
-                const float target_x = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 0)];
-                const float target_y = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 1)];
-                const float target_z = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 2)];
                 const float target_len = std::sqrt(target_x * target_x + target_y * target_y + target_z * target_z);
                 const float vector_x = child_x - parent_x;
                 const float vector_y = child_y - parent_y;
