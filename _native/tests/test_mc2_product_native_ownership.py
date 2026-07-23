@@ -49,3 +49,20 @@ def test_product_topology_uses_only_v1_static_fingerprints() -> None:
     assert "mc2_mesh_static_fingerprint_v1" in source
     assert "mc2_bone_static_fingerprint_v1" in source
     assert "static_fingerprint_v0" not in source
+
+
+def test_bone_product_constraint_soak_has_no_legacy_owner_dependency() -> None:
+    source = _source(
+        MC2_PYTHON.parent
+        / "test"
+        / "test_blender_mc2_bone_product_constraint_soak.py"
+    )
+    for forbidden in (
+        "_physicsMC2BoneClothTaskV0Oracle",
+        "_physicsMC2BoneSpringTaskV0Oracle",
+        "MC2TaskSpec(",
+        'data["native_context"]',
+        "import interaction_scope",
+        "Mc2InteractionV0",
+    ):
+        assert forbidden not in source

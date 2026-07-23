@@ -262,6 +262,11 @@ class MC2FusedCPUOwnerV1:
 
         return self._require_domain().read_output()
 
+    def read_debug_state(self):
+        """Read explicit native dynamics through the product-owned domain."""
+
+        return self._require_domain().read_debug_state()
+
     def inspect(self) -> dict:
         return {
             "schema": "mc2_fused_cpu_owner_v1",
@@ -272,6 +277,7 @@ class MC2FusedCPUOwnerV1:
                 if self._compiled is not None
                 else []
             ),
+            "domain": self._domain.inspect() if self._domain is not None else None,
             "fragment_cache": self._fragment_cache.inspect(),
             "cleanup_errors": list(self._cleanup_errors),
             "last_sync": (

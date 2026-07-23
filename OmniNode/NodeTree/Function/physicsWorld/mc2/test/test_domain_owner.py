@@ -150,6 +150,9 @@ class _FakeKernel:
     def inspect(self, handle):
         return {"serial": handle["serial"]}
 
+    def read_debug_state(self, handle):
+        return {"serial": handle["serial"], "real_velocities": np.zeros((0, 3), dtype=np.float32)}
+
     def dispose(self, handle):
         self.disposed.append(handle)
 
@@ -207,6 +210,38 @@ def test_owner_delegates_frame_full_pipeline_and_logical_output():
     assert kernel.full_steps == [(kernel.created[0], settings)]
     assert output.frame == 3 and output.generation == 7
     assert output.world_positions.tolist() == program.particle_bind_position.tolist()
+
+
+def test_owner_exposes_explicit_product_debug_state():
+    kernel = _FakeKernel()
+    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner.sync(_draft(), _snapshots())
+    program = owner.compiled.program
+    rotations = np.zeros((program.particle_count, 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
+    owner.update_frame(
+        ir.make_mc2_domain_frame_packet(
+            program,
+            frame=1,
+            generation=1,
+            animated_base_world_positions=program.particle_bind_position,
+            animated_base_world_rotations=rotations,
+            partition_world_position=np.zeros((2, 3), dtype=np.float32),
+            partition_world_rotation=np.asarray(
+                ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)),
+                dtype=np.float32,
+            ),
+            partition_world_scale=np.ones((2, 3), dtype=np.float32),
+            partition_world_linear=np.asarray((np.eye(3), np.eye(3)), dtype=np.float32),
+            velocity_weight=(1.0, 0.5),
+            gravity_ratio=(1.0, 0.75),
+        )
+    )
+    state = owner.read_debug_state()
+    assert state["serial"] == 0
+    assert state["real_velocities"].shape == (0, 3)
+    inspection = owner.inspect()
+    assert inspection["domain"]["kernel"]["serial"] == 0
 
 
 def test_parameter_change_stages_replacement_until_hot_update_abi_exists():
