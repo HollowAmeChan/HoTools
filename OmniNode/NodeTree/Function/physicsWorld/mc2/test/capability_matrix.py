@@ -448,13 +448,13 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "target_direction_exact", "parameter_hot_update_in_place",
             ),
         }, {
-            "runner": "test_blender_mc2_constraint_soak.py::mesh_angle_restoration_response",
+            "runner": "test_blender_mc2_mesh_product_angle_motion.py::test_mesh_product_angle_restoration_response",
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": ("angle_restoration_velocity_attenuation",),
             "invariants": ("finite", "velocity_attenuation_response_ordered"),
         }, {
-            "runner": "test_blender_mc2_constraint_soak.py::mesh_angle_restoration_falloff",
+            "runner": "test_blender_mc2_mesh_product_angle_motion.py::test_mesh_product_angle_restoration_falloff",
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": ("angle_restoration_gravity_falloff",),
