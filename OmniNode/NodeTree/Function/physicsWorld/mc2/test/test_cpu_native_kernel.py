@@ -469,6 +469,64 @@ def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
         domain.dispose()
 
 
+def test_native_constraint_debug_distance_and_tether_sum_to_pass_delta():
+    compiled = _compiled()
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    positions[1] += np.asarray((0.35, 0.1, 0.0), dtype=np.float32)
+    positions[2] += np.asarray((-0.1, 0.25, 0.0), dtype=np.float32)
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    try:
+        domain.update_frame(frame)
+        domain.begin_constraint_debug(4)
+        before = domain.read_output().world_positions.copy()
+        domain.step({"data_path_only": True, "distance_slice": True})
+        after = domain.read_output().world_positions.copy()
+        domain.end_constraint_debug()
+        distance = domain.read_constraint_debug_state()["distance_results"]
+        assert np.any(distance["valid"][0] != 0)
+        assert np.any(distance["hit"][0] != 0)
+        for vertex in range(compiled.program.particle_count):
+            select = (distance["valid"][0] != 0) & (
+                distance["vertices"][0] == vertex
+            )
+            expected = np.sum(distance["corrections"][0, select], axis=0)
+            np.testing.assert_allclose(
+                after[vertex] - before[vertex], expected, atol=2.0e-7, rtol=0.0
+            )
+        domain.clear_constraint_debug()
+
+        domain.begin_constraint_debug(8)
+        before = domain.read_output().world_positions.copy()
+        domain.step({
+            "data_path_only": True,
+            "tether_slice": True,
+            "step_basic_positions": np.asarray(
+                ((2.0, 2.0, 2.0), (1.5, 2.0, 2.0), (2.0, 1.5, 2.0)),
+                dtype=np.float32,
+            ),
+            "compression": 0.0,
+            "stretch": 0.03,
+        })
+        after = domain.read_output().world_positions.copy()
+        domain.end_constraint_debug()
+        tether = domain.read_constraint_debug_state()["tether_results"]
+        assert np.any(tether["valid"] != 0)
+        assert np.any(tether["hit"] != 0)
+        np.testing.assert_allclose(
+            after - before, tether["corrections"], atol=2.0e-7, rtol=0.0
+        )
+        domain.clear_constraint_debug()
+        debug_state = domain.inspect()["kernel"]
+        assert debug_state["constraint_debug_active_mask"] == 0
+        assert debug_state["constraint_debug_captured_mask"] == 0
+    finally:
+        domain.dispose()
+
+
 def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
@@ -1253,6 +1311,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
     test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths()
     print("PASS test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths")
+    test_native_constraint_debug_distance_and_tether_sum_to_pass_delta()
+    print("PASS test_native_constraint_debug_distance_and_tether_sum_to_pass_delta")
     test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction()
     print("PASS test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction")
     test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose()

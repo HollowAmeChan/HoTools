@@ -32,6 +32,14 @@ struct Mc2NeighborConstraintView {
     float velocity_attenuation = 0.0f;
     float animation_pose_ratio = 0.0f;
     float simulation_power = 1.0f;
+    float* debug_record_origins = nullptr;
+    float* debug_record_target_origins = nullptr;
+    float* debug_record_corrections = nullptr;
+    float* debug_record_lengths = nullptr;
+    float* debug_record_rests = nullptr;
+    float* debug_record_stiffnesses = nullptr;
+    std::uint8_t* debug_record_valid = nullptr;
+    std::uint8_t* debug_record_hit = nullptr;
 };
 
 struct Mc2TetherConstraintView {
@@ -46,6 +54,17 @@ struct Mc2TetherConstraintView {
     float stretch = 0.0f;
     const float* compression_values = nullptr;
     const float* stretch_values = nullptr;
+    float* debug_record_origins = nullptr;
+    float* debug_record_root_origins = nullptr;
+    float* debug_record_corrections = nullptr;
+    float* debug_record_lengths = nullptr;
+    float* debug_record_rests = nullptr;
+    float* debug_record_minimums = nullptr;
+    float* debug_record_maximums = nullptr;
+    float* debug_record_stiffnesses = nullptr;
+    std::int8_t* debug_record_branches = nullptr;
+    std::uint8_t* debug_record_valid = nullptr;
+    std::uint8_t* debug_record_hit = nullptr;
 };
 
 struct Mc2MotionConstraintView {
@@ -206,6 +225,13 @@ struct Mc2TriangleBendingView {
     std::int64_t dihedral_count = 0;
     std::int64_t volume_count = 0;
     float simulation_power = 1.0f;
+    float* debug_record_origins = nullptr;
+    float* debug_record_corrections = nullptr;
+    float* debug_record_currents = nullptr;
+    float* debug_record_rests = nullptr;
+    float* debug_record_stiffnesses = nullptr;
+    std::uint8_t* debug_record_valid = nullptr;
+    std::uint8_t* debug_record_hit = nullptr;
 };
 
 struct Mc2AngleConstraintView {

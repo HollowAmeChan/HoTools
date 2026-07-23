@@ -644,6 +644,9 @@ def test_slot_native_executes_complete_compiled_frame():
                 "show_step_basic": True,
                 "show_gravity": True,
                 "show_velocity": True,
+                "show_distance": True,
+                "show_tether": True,
+                "show_bending": True,
                 "show_output": True,
                 "show_center": True,
                 "show_teleport_threshold": True,
@@ -688,6 +691,7 @@ def test_slot_native_executes_complete_compiled_frame():
         assert snapshot["frame"] == 13
         assert snapshot["partition_ids"] == owner.compiled.program.partition_ids
         assert not {
+            "show_distance", "show_tether", "show_bending",
             "show_motion_base", "show_motion",
             "show_angle_restoration", "show_angle_limit",
         }.intersection(snapshot["unsupported_filters"])
@@ -708,6 +712,24 @@ def test_slot_native_executes_complete_compiled_frame():
             owner.compiled.program.particle_count,
         )
         records = snapshot["constraint_records"]
+        distance_records = records["distance"]
+        assert len(distance_records["phases"]) > 0
+        assert set(map(int, distance_records["phases"])) == {0, 1}
+        assert np.isfinite(distance_records["target_origins"]).all()
+        assert np.isfinite(distance_records["corrections"]).all()
+        assert set(map(int, distance_records["partitions"])).issubset({0, 1})
+        assert distance_records["hit"].dtype == np.uint8
+        tether_records = records["tether"]
+        assert len(tether_records["vertices"]) > 0
+        assert np.isfinite(tether_records["root_origins"]).all()
+        assert np.isfinite(tether_records["minimums"]).all()
+        assert np.isfinite(tether_records["maximums"]).all()
+        assert set(map(int, tether_records["partitions"])).issubset({0, 1})
+        bending_records = records["bending"]
+        assert len(bending_records["record_indices"]) == 0
+        assert snapshot["native"]["bending_results"]["origins"].shape == (
+            0, 4, 3,
+        )
         motion_records = records["motion"]
         assert len(motion_records["branches"]) > 0
         assert np.isfinite(motion_records["target_origins"]).all()
@@ -728,6 +750,7 @@ def test_slot_native_executes_complete_compiled_frame():
         ).all()
         assert "_debug_product_step_basic" not in slot.data
         assert "_debug_product_constraint_inputs" not in slot.data
+        assert "_debug_product_constraint_capture" not in slot.data
         debug_inspect = owner.inspect()["domain"]["kernel"]
         assert debug_inspect["constraint_debug_active_mask"] == 0
         assert debug_inspect["constraint_debug_captured_mask"] == 0

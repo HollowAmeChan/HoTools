@@ -437,7 +437,7 @@ P0之后的优先级是：先由E4 whole-domain self删除多context + aggregate
 
 当前性能验收固定为Blender 5.2/Python 3.13，源码和原生产物来自本工作树；基准启动时必须清除Blender 5.2默认加载的HoTools备份模块，显式绑定`_Lib/py313/HotoolsPackage`并打印实际原生模块路径。双ABI正确性门禁已在临时窗口补跑：py311 native `27/27`，Blender 4.5的属性声明、GN事务、双source和120帧产品soak全过。后续是否启动4.5仍服从用户占用状态，不能因已有证据擅自覆盖正在使用的产物。
 
-E7-CPU 调试观测补充（2026-07-23）：Angle/Motion 记录采用请求驱动的临时缓冲，普通产品帧不分配、不 readback，也不改变 pass 顺序；因此当前没有无解释的 CPU 热路径回归。双 ABI native 全量与 Blender 代表验收均通过。Distance/Tether/Bending、外碰和 whole-domain self 后续也必须复用同一显式会话原则；不得为未来 E6/P6 预埋常驻 CPU 记录或把 Python 重建结果当作 GPU 数据合同。
+E7-CPU 调试观测补充（2026-07-23）：Angle/Motion/Distance/Tether/Bending 记录统一采用请求驱动的临时缓冲，普通产品帧不分配、不 readback，也不改变 pass 顺序。Distance 与 Bending 只在请求时增加与实际约束 record 数成正比的旁路写入和贡献归一化；Tether 为逐粒子线性写入，均不存在常驻 CPU 成本。cp313 native、产品槽和 Blender 5.2 代表资产已通过；4.5 按用户要求冻结到最终删除收尾。外碰和 whole-domain self 后续必须继续复用同一显式会话原则；不得为未来 E6/P6 预埋常驻 CPU 记录或把 Python 重建结果当作 GPU 数据合同。
 
 首版通用 whole-domain self 在 1764 粒子夹具上产生了候选爆炸和不稳定输出，不能作为 P2 实现。Domain现持有后端中立opaque whole-domain self engine，由桥接实现复用成熟V0 primitive/grid/candidate/contact/四轮求解流程；Domain owner本身不依赖旧context internal。该改动把候选量恢复到手工join同一数量级；随后按P5证据把每子步重新分配的scaled thickness与partition scale改为Domain持久scratch，数值结果逐位不变。
 

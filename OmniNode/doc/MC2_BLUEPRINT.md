@@ -771,7 +771,9 @@ Bone output 已完成第三条产品调试切片。产品 owner 以 compiled fra
 
 约束调试的公共前置层已经迁到产品 owner。Depth 使用 compiled baseline/参数 SoA 的原始生产数据；StepBasic 使用同一 substep 已交给后续约束 pass 的 native pose，只在显式请求时暂存并在捕获后释放；Gravity 使用 Center 实际输出的逐 partition `gravity_ratio` 与参数 SoA，按粒子分区绘制原始/有效向量。暂停帧没有真实 StepBasic 时必须保留请求等待，不能复用上一帧；debug-off 不得保存 pose 或增加 readback。MeshCloth、BoneCloth、BoneSpring 已通过 py311/Blender 4.5 与 py313/Blender 5.2 产品路径、native/DomainV1/产品槽自动化和旧 renderer 回归，双 ABI 门禁已经关闭。Distance/Tether/Bending/Angle/Motion 仍必须由 native pass 发布真实输入、目标、correction 与命中标志，不能把本前置层解释为约束记录已经等价。
 
-Angle/Motion 产品调试迁移已经关闭。统一 Domain 以 `Angle=1`、`Motion=2` 掩码在最终真实子步前临时分配记录，求解成功后冻结，snapshot 消费后释放；异常、暂停和 debug-off 均不能留下侧带状态。Motion kernel 直接发布 MaxDistance/Backstop 的实际目标、限值与分区身份；Angle kernel 在每个 branch/iteration 发布当时使用的 target point/vector、current/limit 和 parent/child correction。Python 只做只读形状整理与状态分类，产品 renderer 不再重建 target；旧 V0 renderer 仍以缺少 target 时的兼容分支通过 13 组回归。MeshCloth 多 source、BoneCloth 与受限 BoneSpring 包装已在 cp311/4.5 和 cp313/5.2 验收，且两版 native 全量均为 `30/30`。当前剩余顺序固定为：Distance/Tether/Bending 原生记录，产品外碰记录，whole-domain self 记录，然后才删除旧 Python/native owner 面并进入 E7-S 简化。
+Angle/Motion 产品调试迁移已经关闭。统一 Domain 以 `Angle=1`、`Motion=2` 掩码在最终真实子步前临时分配记录，求解成功后冻结，snapshot 消费后释放；异常、暂停和 debug-off 均不能留下侧带状态。Motion kernel 直接发布 MaxDistance/Backstop 的实际目标、限值与分区身份；Angle kernel 在每个 branch/iteration 发布当时使用的 target point/vector、current/limit 和 parent/child correction。Python 只做只读形状整理与状态分类，产品 renderer 不再重建 target；旧 V0 renderer 仍保留删除前兼容分支。
+
+Distance/Tether/Bending 产品调试迁移也已经关闭。请求掩码扩展为 `4/8/16`；Distance 以 A/B phase 和有向邻接 record 为身份，记录求解时两端位置、实际 rest/length/stiffness、平均后贡献、hit 及双端 partition；Tether 以 vertex/root 为身份，记录真实上下限、分支、两端位置与 correction；Bending 以 dihedral/volume record 和四角色为身份，记录实际 current/rest/stiffness、四角色位置、平均后贡献及逐角色 partition。记录 buffer 仅在请求时存在，产品 slot 使用独立冻结 token，不再借用 Angle/Motion 输入快照决定 readback。cp313 native 求和门禁、产品槽、多 source Mesh renderer 和 BoneCloth 非零 Bending 产品资产已通过；4.5 按用户要求冻结到旧代码最终删除收尾。当前剩余顺序固定为：产品 external collision 记录、whole-domain self 记录，然后删除旧 Python/native owner 面并进入 E7-S 简化。
 
 ## 构建与性能边界
 

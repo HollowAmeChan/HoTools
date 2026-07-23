@@ -781,6 +781,15 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
     if (!has_stiffness) {
         return;
     }
+    const bool capture_debug =
+        view.debug_record_origins != nullptr &&
+        view.debug_record_target_origins != nullptr &&
+        view.debug_record_corrections != nullptr &&
+        view.debug_record_lengths != nullptr &&
+        view.debug_record_rests != nullptr &&
+        view.debug_record_stiffnesses != nullptr &&
+        view.debug_record_valid != nullptr &&
+        view.debug_record_hit != nullptr;
 
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
         const float wi = view.inv_masses[vertex];
@@ -848,10 +857,33 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
             const float dy = view.positions[neighbor_offset + 1] - current_y;
             const float dz = view.positions[neighbor_offset + 2] - current_z;
             const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const std::int64_t debug_offset = data_index * 3;
+            if (capture_debug) {
+                view.debug_record_origins[debug_offset + 0] = current_x;
+                view.debug_record_origins[debug_offset + 1] = current_y;
+                view.debug_record_origins[debug_offset + 2] = current_z;
+                view.debug_record_target_origins[debug_offset + 0] = view.positions[neighbor_offset + 0];
+                view.debug_record_target_origins[debug_offset + 1] = view.positions[neighbor_offset + 1];
+                view.debug_record_target_origins[debug_offset + 2] = view.positions[neighbor_offset + 2];
+                view.debug_record_lengths[data_index] = distance;
+                view.debug_record_rests[data_index] = rest;
+                view.debug_record_stiffnesses[data_index] = final_stiffness;
+                view.debug_record_valid[data_index] = 1u;
+            }
             if (rest <= kMc2Epsilon) {
-                add_x += dx * 0.5f;
-                add_y += dy * 0.5f;
-                add_z += dz * 0.5f;
+                const float record_x = dx * 0.5f;
+                const float record_y = dy * 0.5f;
+                const float record_z = dz * 0.5f;
+                add_x += record_x;
+                add_y += record_y;
+                add_z += record_z;
+                if (capture_debug) {
+                    view.debug_record_corrections[debug_offset + 0] = record_x;
+                    view.debug_record_corrections[debug_offset + 1] = record_y;
+                    view.debug_record_corrections[debug_offset + 2] = record_z;
+                    view.debug_record_hit[data_index] =
+                        length3(record_x, record_y, record_z) > kMc2Epsilon ? 1u : 0u;
+                }
                 ++add_count;
                 continue;
             }
@@ -860,9 +892,19 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
             }
 
             const float correction_scale = ((distance - rest) * final_stiffness / wsum) * wi / distance;
-            add_x += dx * correction_scale;
-            add_y += dy * correction_scale;
-            add_z += dz * correction_scale;
+            const float record_x = dx * correction_scale;
+            const float record_y = dy * correction_scale;
+            const float record_z = dz * correction_scale;
+            add_x += record_x;
+            add_y += record_y;
+            add_z += record_z;
+            if (capture_debug) {
+                view.debug_record_corrections[debug_offset + 0] = record_x;
+                view.debug_record_corrections[debug_offset + 1] = record_y;
+                view.debug_record_corrections[debug_offset + 2] = record_z;
+                view.debug_record_hit[data_index] =
+                    length3(record_x, record_y, record_z) > kMc2Epsilon ? 1u : 0u;
+            }
             ++add_count;
         }
 
@@ -882,6 +924,18 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
                 view.velocity_positions[offset + 1] += add_pos_y * velocity_attenuation;
                 view.velocity_positions[offset + 2] += add_pos_z * velocity_attenuation;
             }
+            if (capture_debug) {
+                for (std::int32_t local = 0; local < count; ++local) {
+                    const std::int64_t data_index = static_cast<std::int64_t>(start) + local;
+                    if (view.debug_record_valid[data_index] == 0u) {
+                        continue;
+                    }
+                    const std::int64_t debug_offset = data_index * 3;
+                    view.debug_record_corrections[debug_offset + 0] *= inv_add_count;
+                    view.debug_record_corrections[debug_offset + 1] *= inv_add_count;
+                    view.debug_record_corrections[debug_offset + 2] *= inv_add_count;
+                }
+            }
         }
     }
 }
@@ -898,6 +952,18 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
     }
 
     const float stiffness_width = std::max(kTetherStiffnessWidth, kMc2Epsilon);
+    const bool capture_debug =
+        view.debug_record_origins != nullptr &&
+        view.debug_record_root_origins != nullptr &&
+        view.debug_record_corrections != nullptr &&
+        view.debug_record_lengths != nullptr &&
+        view.debug_record_rests != nullptr &&
+        view.debug_record_minimums != nullptr &&
+        view.debug_record_maximums != nullptr &&
+        view.debug_record_stiffnesses != nullptr &&
+        view.debug_record_branches != nullptr &&
+        view.debug_record_valid != nullptr &&
+        view.debug_record_hit != nullptr;
 
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
         if (view.inv_masses[vertex] <= kMc2Epsilon) {
@@ -936,6 +1002,19 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
         }
 
         const float ratio = distance / rest_length;
+        if (capture_debug) {
+            view.debug_record_origins[vertex_offset + 0] = view.positions[vertex_offset + 0];
+            view.debug_record_origins[vertex_offset + 1] = view.positions[vertex_offset + 1];
+            view.debug_record_origins[vertex_offset + 2] = view.positions[vertex_offset + 2];
+            view.debug_record_root_origins[vertex_offset + 0] = view.positions[root_offset + 0];
+            view.debug_record_root_origins[vertex_offset + 1] = view.positions[root_offset + 1];
+            view.debug_record_root_origins[vertex_offset + 2] = view.positions[root_offset + 2];
+            view.debug_record_lengths[vertex] = distance;
+            view.debug_record_rests[vertex] = rest_length;
+            view.debug_record_minimums[vertex] = compression_limit * rest_length;
+            view.debug_record_maximums[vertex] = stretch_limit * rest_length;
+            view.debug_record_valid[vertex] = 1u;
+        }
         float dist = 0.0f;
         float solve_stiffness = 0.0f;
         float velocity_attenuation = 0.0f;
@@ -944,12 +1023,15 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
             const float fade = clamp_float((compression_limit - ratio) / stiffness_width, 0.0f, 1.0f);
             solve_stiffness = stiffness * kTetherCompressionStiffness * fade;
             velocity_attenuation = kTetherCompressionVelocityAttenuation;
+            if (capture_debug) view.debug_record_branches[vertex] = -1;
         } else if (ratio > stretch_limit) {
             dist = distance - stretch_limit * rest_length;
             const float fade = clamp_float((ratio - stretch_limit) / stiffness_width, 0.0f, 1.0f);
             solve_stiffness = stiffness * kTetherStretchStiffness * fade;
             velocity_attenuation = kTetherStretchVelocityAttenuation;
+            if (capture_debug) view.debug_record_branches[vertex] = 1;
         }
+        if (capture_debug) view.debug_record_stiffnesses[vertex] = solve_stiffness;
 
         if (solve_stiffness <= kMc2Epsilon) {
             continue;
@@ -959,6 +1041,13 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
         const float add_x = dx * correction_scale;
         const float add_y = dy * correction_scale;
         const float add_z = dz * correction_scale;
+        if (capture_debug) {
+            view.debug_record_corrections[vertex_offset + 0] = add_x;
+            view.debug_record_corrections[vertex_offset + 1] = add_y;
+            view.debug_record_corrections[vertex_offset + 2] = add_z;
+            view.debug_record_hit[vertex] =
+                length3(add_x, add_y, add_z) > kMc2Epsilon ? 1u : 0u;
+        }
         view.positions[vertex_offset + 0] += add_x;
         view.positions[vertex_offset + 1] += add_y;
         view.positions[vertex_offset + 2] += add_z;
@@ -2191,11 +2280,19 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
     if (!has_stiffness) {
         return;
     }
+    const bool capture_debug =
+        view.debug_record_origins != nullptr &&
+        view.debug_record_corrections != nullptr &&
+        view.debug_record_currents != nullptr &&
+        view.debug_record_rests != nullptr &&
+        view.debug_record_stiffnesses != nullptr &&
+        view.debug_record_valid != nullptr &&
+        view.debug_record_hit != nullptr;
 
     std::vector<float> add_positions(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
     std::vector<std::int32_t> add_counts(static_cast<std::size_t>(view.vertex_count), 0);
 
-    auto add_correction = [&](const std::int32_t vertices[4], const float corrections[12]) {
+    auto add_correction = [&](std::int64_t record_index, const std::int32_t vertices[4], const float corrections[12]) {
         for (int local = 0; local < 4; ++local) {
             const std::int32_t vertex = vertices[local];
             if (view.inv_masses[vertex] <= kMc2Epsilon) {
@@ -2206,7 +2303,14 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             add_positions[static_cast<std::size_t>(offset + 1)] += corrections[local * 3 + 1];
             add_positions[static_cast<std::size_t>(offset + 2)] += corrections[local * 3 + 2];
             add_counts[static_cast<std::size_t>(vertex)] += 1;
+            if (capture_debug) {
+                const auto debug_offset = (record_index * 4 + local) * 3;
+                view.debug_record_corrections[debug_offset + 0] = corrections[local * 3 + 0];
+                view.debug_record_corrections[debug_offset + 1] = corrections[local * 3 + 1];
+                view.debug_record_corrections[debug_offset + 2] = corrections[local * 3 + 2];
+            }
         }
+        if (capture_debug) view.debug_record_hit[record_index] = 1u;
     };
 
     for (std::int64_t pair_index = 0; pair_index < view.dihedral_count; ++pair_index) {
@@ -2250,6 +2354,11 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             p[local * 3 + 0] = view.positions[offset + 0];
             p[local * 3 + 1] = view.positions[offset + 1];
             p[local * 3 + 2] = view.positions[offset + 2];
+        }
+        if (capture_debug) {
+            std::copy_n(p, 12, view.debug_record_origins + pair_index * 12);
+            view.debug_record_stiffnesses[pair_index] = local_stiffness;
+            view.debug_record_valid[pair_index] = 1u;
         }
 
         const float edge_x = p[9] - p[6];
@@ -2343,6 +2452,10 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         }
 
         const float rest_angle = view.dihedral_rest_angles[pair_index] * sign;
+        if (capture_debug) {
+            view.debug_record_currents[pair_index] = phi;
+            view.debug_record_rests[pair_index] = rest_angle;
+        }
         const float angle_error = rest_angle - phi;
         if (std::fabs(angle_error) <= 1.0e-3f) {
             continue;
@@ -2354,7 +2467,7 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             corrections[local * 3 + 1] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 1];
             corrections[local * 3 + 2] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 2];
         }
-        add_correction(vertices, corrections);
+        add_correction(pair_index, vertices, corrections);
     }
 
     for (std::int64_t pair_index = 0; pair_index < view.volume_count; ++pair_index) {
@@ -2399,6 +2512,12 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             p[local * 3 + 1] = view.positions[offset + 1];
             p[local * 3 + 2] = view.positions[offset + 2];
         }
+        const std::int64_t record_index = view.dihedral_count + pair_index;
+        if (capture_debug) {
+            std::copy_n(p, 12, view.debug_record_origins + record_index * 12);
+            view.debug_record_stiffnesses[record_index] = local_stiffness;
+            view.debug_record_valid[record_index] = 1u;
+        }
 
         float cross_p1p0_p2p0_x = 0.0f;
         float cross_p1p0_p2p0_y = 0.0f;
@@ -2432,6 +2551,10 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         }
 
         const float rest_volume = view.volume_rest[pair_index];
+        if (capture_debug) {
+            view.debug_record_currents[record_index] = volume;
+            view.debug_record_rests[record_index] = rest_volume;
+        }
         const float volume_error = rest_volume - volume;
         if (std::fabs(volume_error) <= std::max(1.0e-6f, std::fabs(rest_volume) * 2.0e-6f)) {
             continue;
@@ -2443,7 +2566,7 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
             corrections[local * 3 + 1] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 1];
             corrections[local * 3 + 2] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 2];
         }
-        add_correction(vertices, corrections);
+        add_correction(record_index, vertices, corrections);
     }
 
     for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
@@ -2456,6 +2579,26 @@ void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
         view.positions[offset + 0] += add_positions[static_cast<std::size_t>(offset + 0)] * inv_count;
         view.positions[offset + 1] += add_positions[static_cast<std::size_t>(offset + 1)] * inv_count;
         view.positions[offset + 2] += add_positions[static_cast<std::size_t>(offset + 2)] * inv_count;
+    }
+    if (capture_debug) {
+        const auto record_count = view.dihedral_count + view.volume_count;
+        for (std::int64_t record = 0; record < record_count; ++record) {
+            if (view.debug_record_hit[record] == 0u) continue;
+            const auto* vertices = record < view.dihedral_count
+                ? view.dihedral_pairs + record * 4
+                : view.volume_pairs + (record - view.dihedral_count) * 4;
+            for (int local = 0; local < 4; ++local) {
+                const auto vertex = vertices[local];
+                const auto count = add_counts[static_cast<std::size_t>(vertex)];
+                const auto debug_offset = (record * 4 + local) * 3;
+                const float scale = view.inv_masses[vertex] > kMc2Epsilon && count > 0
+                    ? 1.0f / static_cast<float>(count)
+                    : 0.0f;
+                view.debug_record_corrections[debug_offset + 0] *= scale;
+                view.debug_record_corrections[debug_offset + 1] *= scale;
+                view.debug_record_corrections[debug_offset + 2] *= scale;
+            }
+        }
     }
 }
 

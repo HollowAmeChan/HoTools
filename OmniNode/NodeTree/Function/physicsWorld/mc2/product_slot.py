@@ -35,6 +35,9 @@ MC2_FUSED_MESH_SLOT_KIND = MC2_FUSED_PRODUCT_SLOT_KIND
 _MC2_FUSED_PRODUCT_WRITER = "mc2_fused_cpu_product"
 _MC2_CONSTRAINT_DEBUG_ANGLE = 1
 _MC2_CONSTRAINT_DEBUG_MOTION = 2
+_MC2_CONSTRAINT_DEBUG_DISTANCE = 4
+_MC2_CONSTRAINT_DEBUG_TETHER = 8
+_MC2_CONSTRAINT_DEBUG_BENDING = 16
 
 
 def _constraint_debug_mask(filters: dict) -> int:
@@ -43,6 +46,12 @@ def _constraint_debug_mask(filters: dict) -> int:
         mask |= _MC2_CONSTRAINT_DEBUG_ANGLE
     if filters.get("show_motion"):
         mask |= _MC2_CONSTRAINT_DEBUG_MOTION
+    if filters.get("show_distance"):
+        mask |= _MC2_CONSTRAINT_DEBUG_DISTANCE
+    if filters.get("show_tether"):
+        mask |= _MC2_CONSTRAINT_DEBUG_TETHER
+    if filters.get("show_bending"):
+        mask |= _MC2_CONSTRAINT_DEBUG_BENDING
     return mask
 
 
@@ -617,14 +626,21 @@ def step_mc2_product_substep(
         except Exception as exc:
             if constraint_debug_started:
                 owner.clear_constraint_debug()
+            slot.data.pop("_debug_product_constraint_capture", None)
             slot.data["last_step_failure"] = f"{type(exc).__name__}: {exc}"
             raise
+        if constraint_debug_started:
+            slot.data["_debug_product_constraint_capture"] = {
+                "frame": int(scheduled_frame.frame_packet.frame),
+                "generation": int(scheduled_frame.frame_packet.generation),
+                "update_index": update_index,
+                "mask": constraint_debug_mask,
+            }
         if constraint_inputs_requested:
             slot.data["_debug_product_constraint_inputs"] = {
                 "frame": int(scheduled_frame.frame_packet.frame),
                 "generation": int(scheduled_frame.frame_packet.generation),
                 "update_index": update_index,
-                "mask": constraint_debug_mask,
                 "motion_base_positions": settings["motion_base_positions"],
                 "motion_base_rotations_xyzw": settings["motion_base_rotations"],
                 "motion_normal_axis_values": settings["motion_normal_axis_values"],

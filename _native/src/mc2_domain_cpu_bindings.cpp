@@ -304,11 +304,12 @@ void bind_mc2_domain_cpu(nb::module_& module) {
     );
     module.def(
         "mc2_domain_cpu_v1_step_distance",
-        [](std::uint64_t handle, float simulation_power) {
-            require_domain(handle)->step_distance(simulation_power);
+        [](std::uint64_t handle, float simulation_power, std::int32_t debug_phase) {
+            require_domain(handle)->step_distance(simulation_power, debug_phase);
         },
         nb::arg("handle"),
         nb::arg("simulation_power") = 1.0f,
+        nb::arg("debug_phase") = -1,
         "Run the explicit Distance kernel slice using the existing native kernel."
     );
     module.def(
@@ -1277,6 +1278,116 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             const auto mask = domain->constraint_debug_captured_mask();
             result["active_mask"] = domain->constraint_debug_active_mask();
             result["captured_mask"] = mask;
+            if ((mask & mc2_domain_cpu::kConstraintDebugDistance) != 0u) {
+                const auto record_count = domain->distance_neighbors().size();
+                std::vector<std::int32_t> owners(record_count, -1);
+                for (std::size_t vertex = 0; vertex < domain->particle_count(); ++vertex) {
+                    const auto start = domain->distance_starts()[vertex];
+                    const auto count = domain->distance_counts()[vertex];
+                    for (std::int32_t local = 0; local < count; ++local) {
+                        const auto record = static_cast<std::size_t>(start + local);
+                        if (record < record_count) owners[record] = static_cast<std::int32_t>(vertex);
+                    }
+                }
+                std::vector<std::int32_t> vertices(record_count * 2, -1);
+                std::vector<std::int32_t> targets(record_count * 2, -1);
+                std::vector<std::uint32_t> partitions(record_count * 2, 0u);
+                std::vector<std::uint32_t> target_partitions(record_count * 2, 0u);
+                for (std::size_t phase = 0; phase < 2; ++phase) {
+                    for (std::size_t record = 0; record < record_count; ++record) {
+                        const auto output = phase * record_count + record;
+                        const auto vertex = owners[record];
+                        const auto target = domain->distance_neighbors()[record];
+                        vertices[output] = vertex;
+                        targets[output] = target;
+                        if (vertex >= 0) partitions[output] = domain->particle_partition_index()[static_cast<std::size_t>(vertex)];
+                        if (target >= 0) target_partitions[output] = domain->particle_partition_index()[static_cast<std::size_t>(target)];
+                    }
+                }
+                nb::dict distance;
+                distance["record_count"] = record_count;
+                distance["origins"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_origins()));
+                distance["target_origins"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_target_origins()));
+                distance["corrections"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_corrections()));
+                distance["lengths"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_lengths()));
+                distance["rests"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_rests()));
+                distance["stiffnesses"] = owned_array_1d<float>(std::vector<float>(domain->distance_debug_stiffnesses()));
+                distance["valid"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->distance_debug_valid()));
+                distance["hit"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->distance_debug_hit()));
+                distance["vertices"] = owned_array_1d<std::int32_t>(std::move(vertices));
+                distance["targets"] = owned_array_1d<std::int32_t>(std::move(targets));
+                distance["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                distance["target_partitions"] = owned_array_1d<std::uint32_t>(std::move(target_partitions));
+                result["distance_results"] = distance;
+            }
+            if ((mask & mc2_domain_cpu::kConstraintDebugTether) != 0u) {
+                const auto particles = domain->particle_count();
+                std::vector<std::int32_t> vertices(particles);
+                std::vector<std::uint32_t> partitions(particles, 0u);
+                std::vector<std::uint32_t> root_partitions(particles, 0u);
+                for (std::size_t vertex = 0; vertex < particles; ++vertex) {
+                    vertices[vertex] = static_cast<std::int32_t>(vertex);
+                    partitions[vertex] = domain->particle_partition_index()[vertex];
+                    const auto root = domain->tether_root_indices()[vertex];
+                    if (root >= 0) root_partitions[vertex] = domain->particle_partition_index()[static_cast<std::size_t>(root)];
+                }
+                nb::dict tether;
+                tether["record_count"] = particles;
+                tether["origins"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_origins()));
+                tether["root_origins"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_root_origins()));
+                tether["corrections"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_corrections()));
+                tether["lengths"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_lengths()));
+                tether["rests"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_rests()));
+                tether["minimums"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_minimums()));
+                tether["maximums"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_maximums()));
+                tether["stiffnesses"] = owned_array_1d<float>(std::vector<float>(domain->tether_debug_stiffnesses()));
+                tether["branches"] = owned_array_1d<std::int8_t>(std::vector<std::int8_t>(domain->tether_debug_branches()));
+                tether["valid"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->tether_debug_valid()));
+                tether["hit"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->tether_debug_hit()));
+                tether["vertices"] = owned_array_1d<std::int32_t>(std::move(vertices));
+                tether["roots"] = owned_array_1d<std::int32_t>(std::vector<std::int32_t>(domain->tether_root_indices()));
+                tether["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                tether["root_partitions"] = owned_array_1d<std::uint32_t>(std::move(root_partitions));
+                result["tether_results"] = tether;
+            }
+            if ((mask & mc2_domain_cpu::kConstraintDebugBending) != 0u) {
+                const auto dihedral_count = domain->bending_dihedral_pairs().size() / 4;
+                const auto volume_count = domain->bending_volume_pairs().size() / 4;
+                const auto record_count = dihedral_count + volume_count;
+                std::vector<std::int32_t> vertices;
+                vertices.reserve(record_count * 4);
+                vertices.insert(vertices.end(), domain->bending_dihedral_pairs().begin(), domain->bending_dihedral_pairs().end());
+                vertices.insert(vertices.end(), domain->bending_volume_pairs().begin(), domain->bending_volume_pairs().end());
+                std::vector<std::int8_t> kinds(record_count, 0);
+                std::vector<std::int32_t> markers(record_count, 100);
+                std::vector<std::uint32_t> partitions(record_count * 4, 0u);
+                for (std::size_t record = 0; record < record_count; ++record) {
+                    if (record < dihedral_count) {
+                        markers[record] = domain->bending_dihedral_signs()[record];
+                    } else {
+                        kinds[record] = 1;
+                    }
+                    for (std::size_t role = 0; role < 4; ++role) {
+                        const auto vertex = vertices[record * 4 + role];
+                        partitions[record * 4 + role] = domain->particle_partition_index()[static_cast<std::size_t>(vertex)];
+                    }
+                }
+                nb::dict bending;
+                bending["record_count"] = record_count;
+                bending["dihedral_count"] = dihedral_count;
+                bending["origins"] = owned_array_1d<float>(std::vector<float>(domain->bending_debug_origins()));
+                bending["corrections"] = owned_array_1d<float>(std::vector<float>(domain->bending_debug_corrections()));
+                bending["currents"] = owned_array_1d<float>(std::vector<float>(domain->bending_debug_currents()));
+                bending["rests"] = owned_array_1d<float>(std::vector<float>(domain->bending_debug_rests()));
+                bending["stiffnesses"] = owned_array_1d<float>(std::vector<float>(domain->bending_debug_stiffnesses()));
+                bending["valid"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->bending_debug_valid()));
+                bending["hit"] = owned_array_1d<std::uint8_t>(std::vector<std::uint8_t>(domain->bending_debug_hit()));
+                bending["vertices"] = owned_array_1d<std::int32_t>(std::move(vertices));
+                bending["kinds"] = owned_array_1d<std::int8_t>(std::move(kinds));
+                bending["markers"] = owned_array_1d<std::int32_t>(std::move(markers));
+                bending["partitions"] = owned_array_1d<std::uint32_t>(std::move(partitions));
+                result["bending_results"] = bending;
+            }
             if ((mask & mc2_domain_cpu::kConstraintDebugMotion) != 0u) {
                 const auto particles = domain->particle_count();
                 std::vector<std::int32_t> vertices(particles * 2);
@@ -1337,7 +1448,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             return result;
         },
         nb::arg("handle"),
-        "Read frozen true native Angle and Motion pass records."
+        "Read frozen true native constraint pass records."
     );
     module.def(
         "mc2_domain_cpu_v1_read_center_debug",

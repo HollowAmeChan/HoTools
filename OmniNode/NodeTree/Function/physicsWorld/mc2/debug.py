@@ -97,6 +97,9 @@ MC2_PRODUCT_DEBUG_FILTER_KEYS = (
     "show_step_basic",
     "show_gravity",
     "show_velocity",
+    "show_distance",
+    "show_tether",
+    "show_bending",
     "show_motion_base",
     "show_motion",
     "show_angle_restoration",
@@ -874,6 +877,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
         frame_packet = slot.data.get("frame_packet")
         step_basic = slot.data.get("_debug_product_step_basic")
         constraint_inputs = slot.data.get("_debug_product_constraint_inputs")
+        constraint_capture = slot.data.get("_debug_product_constraint_capture")
         if filters.get("show_step_basic", False) and (
             not isinstance(step_basic, dict)
             or frame_packet is None
@@ -888,6 +892,22 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             "show_angle_restoration",
             "show_angle_limit",
         ))
+        needs_constraint_capture = any(filters.get(name, False) for name in (
+            "show_distance",
+            "show_tether",
+            "show_bending",
+            "show_motion",
+            "show_angle_restoration",
+            "show_angle_limit",
+        ))
+        if needs_constraint_capture and (
+            not isinstance(constraint_capture, dict)
+            or frame_packet is None
+            or int(constraint_capture.get("frame", -1)) != int(frame_packet.frame)
+            or int(constraint_capture.get("generation", -1)) != int(frame_packet.generation)
+        ):
+            state["waiting_for_substep"] = True
+            continue
         if needs_constraint_inputs and (
             not isinstance(constraint_inputs, dict)
             or frame_packet is None
@@ -918,7 +938,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             if filters.get("show_velocity", False):
                 native.update(_freeze_value(owner.read_debug_state()))
             constraint_native = {}
-            if int((constraint_inputs or {}).get("mask", 0)):
+            if int((constraint_capture or {}).get("mask", 0)):
                 constraint_native = _freeze_value(
                     owner.read_constraint_debug_state()
                 )
@@ -982,6 +1002,18 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 constraint_records["motion"] = _motion_constraint_record_payload(
                     constraint_native, motion
                 )
+            if filters.get("show_distance", False):
+                constraint_records["distance"] = (
+                    _distance_constraint_record_payload(constraint_native)
+                )
+            if filters.get("show_tether", False):
+                constraint_records["tether"] = _tether_constraint_record_payload(
+                    constraint_native, motion, {}
+                )
+            if filters.get("show_bending", False):
+                constraint_records["bending"] = _bending_constraint_record_payload(
+                    constraint_native, {}
+                )
             if filters.get("show_angle_restoration", False):
                 constraint_records["angle_restoration"] = (
                     _angle_constraint_record_payload(constraint_native, 1)
@@ -1039,7 +1071,8 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
         finally:
             slot.data.pop("_debug_product_step_basic", None)
             slot.data.pop("_debug_product_constraint_inputs", None)
-            if int((constraint_inputs or {}).get("mask", 0)):
+            slot.data.pop("_debug_product_constraint_capture", None)
+            if int((constraint_capture or {}).get("mask", 0)):
                 slot.data["owner"].clear_constraint_debug()
             state["requested"] = False
             state["attempted_frame"] = frame
@@ -1210,6 +1243,7 @@ def _parameter_payload(slot, native_snapshot) -> dict:
 
 
 def _tether_constraint_record_payload(native_snapshot, motion, parameters) -> dict:
+    native_results = native_snapshot.get("tether_results") or {}
     distance = native_snapshot.get("distance_tether") or {}
     constraint = (native_snapshot.get("constraint_results") or {}).get(
         "tether"
@@ -1223,6 +1257,8 @@ def _tether_constraint_record_payload(native_snapshot, motion, parameters) -> di
         "enabled": bool(native.get("tether_enabled", False)),
         "vertices": _readonly((), np.int32),
         "roots": _readonly((), np.int32),
+        "partitions": _readonly((), np.uint32),
+        "root_partitions": _readonly((), np.uint32),
         "origins": _readonly((), np.float32).reshape((0, 3)),
         "root_origins": _readonly((), np.float32).reshape((0, 3)),
         "corrections": _readonly((), np.float32).reshape((0, 3)),
@@ -1231,7 +1267,55 @@ def _tether_constraint_record_payload(native_snapshot, motion, parameters) -> di
         "maximums": _readonly((), np.float32),
         "errors": _readonly((), np.float32),
         "states": _readonly((), np.int8),
+        "lengths": _readonly((), np.float32),
+        "rests": _readonly((), np.float32),
+        "stiffnesses": _readonly((), np.float32),
+        "branches": _readonly((), np.int8),
+        "hit": _readonly((), np.uint8),
     }
+    if native_results.get("root_origins") is not None:
+        valid = np.asarray(native_results["valid"], dtype=np.uint8).reshape((-1,))
+        select = valid != 0
+        if not np.any(select):
+            return empty
+        lengths = np.asarray(native_results["lengths"], dtype=np.float32).reshape((-1,))
+        rests = np.asarray(native_results["rests"], dtype=np.float32).reshape((-1,))
+        minimums = np.asarray(native_results["minimums"], dtype=np.float32).reshape((-1,))
+        maximums = np.asarray(native_results["maximums"], dtype=np.float32).reshape((-1,))
+        branches = np.asarray(native_results["branches"], dtype=np.int8).reshape((-1,))
+        hit = np.asarray(native_results["hit"], dtype=np.uint8).reshape((-1,))
+        errors = np.where(
+            branches < 0,
+            lengths - minimums,
+            np.where(branches > 0, lengths - maximums, 0.0),
+        ).astype(np.float32, copy=False)
+        states = np.zeros_like(branches, dtype=np.int8)
+        states[(hit != 0) & (branches < 0)] = -2
+        states[(hit != 0) & (branches > 0)] = 2
+        near_width = np.maximum(rests * np.float32(0.05), np.float32(1.0e-5))
+        inactive = (hit == 0) & select
+        states[inactive & (minimums > 1.0e-8) & ((lengths - minimums) >= 0.0) & ((lengths - minimums) <= near_width)] = -1
+        states[inactive & ((maximums - lengths) >= 0.0) & ((maximums - lengths) <= near_width)] = 1
+        return {
+            "enabled": True,
+            "vertices": _readonly(np.asarray(native_results["vertices"], dtype=np.int32)[select], np.int32),
+            "roots": _readonly(np.asarray(native_results["roots"], dtype=np.int32)[select], np.int32),
+            "partitions": _readonly(np.asarray(native_results["partitions"], dtype=np.uint32)[select], np.uint32),
+            "root_partitions": _readonly(np.asarray(native_results["root_partitions"], dtype=np.uint32)[select], np.uint32),
+            "origins": _readonly(np.asarray(native_results["origins"], dtype=np.float32)[select], np.float32),
+            "root_origins": _readonly(np.asarray(native_results["root_origins"], dtype=np.float32)[select], np.float32),
+            "corrections": _readonly(np.asarray(native_results["corrections"], dtype=np.float32)[select], np.float32),
+            "ratios": _readonly((lengths / np.maximum(rests, np.float32(1.0e-8)))[select], np.float32),
+            "minimums": _readonly(minimums[select], np.float32),
+            "maximums": _readonly(maximums[select], np.float32),
+            "errors": _readonly(errors[select], np.float32),
+            "states": _readonly(states[select], np.int8),
+            "lengths": _readonly(lengths[select], np.float32),
+            "rests": _readonly(rests[select], np.float32),
+            "stiffnesses": _readonly(np.asarray(native_results["stiffnesses"], dtype=np.float32)[select], np.float32),
+            "branches": _readonly(branches[select], np.int8),
+            "hit": _readonly(hit[select], np.uint8),
+        }
     if roots is None or step_basic is None or origins is None or corrections is None:
         return empty
     roots = np.asarray(roots, dtype=np.int32).reshape((-1,))
@@ -1318,6 +1402,8 @@ def _distance_constraint_record_payload(native_snapshot) -> dict:
         "record_indices": _readonly((), np.int32),
         "vertices": _readonly((), np.int32),
         "targets": _readonly((), np.int32),
+        "partitions": _readonly((), np.uint32),
+        "target_partitions": _readonly((), np.uint32),
         "origins": _readonly((), np.float32).reshape((0, 3)),
         "target_origins": _readonly((), np.float32).reshape((0, 3)),
         "corrections": _readonly((), np.float32).reshape((0, 3)),
@@ -1326,7 +1412,48 @@ def _distance_constraint_record_payload(native_snapshot) -> dict:
         "errors": _readonly((), np.float32),
         "normalized_errors": _readonly((), np.float32),
         "states": _readonly((), np.int8),
+        "stiffnesses": _readonly((), np.float32),
+        "hit": _readonly((), np.uint8),
     }
+    if results.get("target_origins") is not None and results.get("vertices") is not None:
+        valid = np.asarray(results["valid"], dtype=np.uint8).reshape((2, -1))
+        select = valid != 0
+        if not np.any(select):
+            return empty
+        lengths = np.asarray(results["lengths"], dtype=np.float32).reshape(valid.shape)
+        rests = np.asarray(results["rests"], dtype=np.float32).reshape(valid.shape)
+        hit = np.asarray(results["hit"], dtype=np.uint8).reshape(valid.shape)
+        errors = lengths - rests
+        states = np.zeros(valid.shape, dtype=np.int8)
+        states[(hit != 0) & (errors < 0.0)] = -2
+        states[(hit != 0) & (errors >= 0.0)] = 2
+        near = (hit == 0) & (np.abs(errors) > 1.0e-8) & (
+            np.abs(errors) <= np.maximum(rests * np.float32(0.02), np.float32(1.0e-5))
+        )
+        states[near & (errors < 0.0)] = -1
+        states[near & (errors >= 0.0)] = 1
+        phases = np.broadcast_to(np.arange(2, dtype=np.int8)[:, None], valid.shape)
+        record_indices = np.broadcast_to(
+            np.arange(valid.shape[1], dtype=np.int32)[None, :], valid.shape
+        )
+        return {
+            "phases": _readonly(phases[select], np.int8),
+            "record_indices": _readonly(record_indices[select], np.int32),
+            "vertices": _readonly(np.asarray(results["vertices"], dtype=np.int32).reshape(valid.shape)[select], np.int32),
+            "targets": _readonly(np.asarray(results["targets"], dtype=np.int32).reshape(valid.shape)[select], np.int32),
+            "partitions": _readonly(np.asarray(results["partitions"], dtype=np.uint32).reshape(valid.shape)[select], np.uint32),
+            "target_partitions": _readonly(np.asarray(results["target_partitions"], dtype=np.uint32).reshape(valid.shape)[select], np.uint32),
+            "origins": _readonly(np.asarray(results["origins"], dtype=np.float32).reshape(valid.shape + (3,))[select], np.float32),
+            "target_origins": _readonly(np.asarray(results["target_origins"], dtype=np.float32).reshape(valid.shape + (3,))[select], np.float32),
+            "corrections": _readonly(np.asarray(results["corrections"], dtype=np.float32).reshape(valid.shape + (3,))[select], np.float32),
+            "lengths": _readonly(lengths[select], np.float32),
+            "rests": _readonly(rests[select], np.float32),
+            "errors": _readonly(errors[select], np.float32),
+            "normalized_errors": _readonly((errors / np.maximum(rests, np.float32(1.0e-8)))[select], np.float32),
+            "states": _readonly(states[select], np.int8),
+            "stiffnesses": _readonly(np.asarray(results["stiffnesses"], dtype=np.float32).reshape(valid.shape)[select], np.float32),
+            "hit": _readonly(hit[select], np.uint8),
+        }
     if any(
         value is None
         for value in (
@@ -1425,6 +1552,7 @@ def _bending_constraint_record_payload(native_snapshot, parameters) -> dict:
         "kinds": _readonly((), np.int8),
         "markers": _readonly((), np.int8),
         "vertices": _readonly((), np.int32).reshape((0, 4)),
+        "partitions": _readonly((), np.uint32).reshape((0, 4)),
         "origins": _readonly((), np.float32).reshape((0, 4, 3)),
         "corrections": _readonly((), np.float32).reshape((0, 4, 3)),
         "currents": _readonly((), np.float32),
@@ -1432,7 +1560,37 @@ def _bending_constraint_record_payload(native_snapshot, parameters) -> dict:
         "errors": _readonly((), np.float32),
         "normalized_errors": _readonly((), np.float32),
         "states": _readonly((), np.int8),
+        "stiffnesses": _readonly((), np.float32),
+        "hit": _readonly((), np.uint8),
     }
+    if results.get("vertices") is not None and results.get("currents") is not None:
+        valid = np.asarray(results["valid"], dtype=np.uint8).reshape((-1,))
+        select = valid != 0
+        if not np.any(select):
+            return empty
+        currents = np.asarray(results["currents"], dtype=np.float32).reshape((-1,))
+        rests = np.asarray(results["rests"], dtype=np.float32).reshape((-1,))
+        hit = np.asarray(results["hit"], dtype=np.uint8).reshape((-1,))
+        errors = rests - currents
+        states = np.zeros(valid.shape, dtype=np.int8)
+        states[(hit != 0) & (errors < 0.0)] = -2
+        states[(hit != 0) & (errors >= 0.0)] = 2
+        return {
+            "record_indices": _readonly(np.arange(len(valid), dtype=np.int32)[select], np.int32),
+            "kinds": _readonly(np.asarray(results["kinds"], dtype=np.int8).reshape((-1,))[select], np.int8),
+            "markers": _readonly(np.asarray(results["markers"], dtype=np.int8).reshape((-1,))[select], np.int8),
+            "vertices": _readonly(np.asarray(results["vertices"], dtype=np.int32).reshape((-1, 4))[select], np.int32),
+            "partitions": _readonly(np.asarray(results["partitions"], dtype=np.uint32).reshape((-1, 4))[select], np.uint32),
+            "origins": _readonly(np.asarray(results["origins"], dtype=np.float32).reshape((-1, 4, 3))[select], np.float32),
+            "corrections": _readonly(np.asarray(results["corrections"], dtype=np.float32).reshape((-1, 4, 3))[select], np.float32),
+            "currents": _readonly(currents[select], np.float32),
+            "rests": _readonly(rests[select], np.float32),
+            "errors": _readonly(errors[select], np.float32),
+            "normalized_errors": _readonly((errors / np.maximum(np.abs(rests), np.float32(1.0e-8)))[select], np.float32),
+            "states": _readonly(states[select], np.int8),
+            "stiffnesses": _readonly(np.asarray(results["stiffnesses"], dtype=np.float32).reshape((-1,))[select], np.float32),
+            "hit": _readonly(hit[select], np.uint8),
+        }
     if any(
         value is None
         for value in (quads, raw_rests, markers, origins, corrections, active)

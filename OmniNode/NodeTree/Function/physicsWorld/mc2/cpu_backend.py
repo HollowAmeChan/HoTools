@@ -254,7 +254,7 @@ class MC2CPUBackendDomainV1:
                 raise RuntimeError(
                     "distance_slice requires data_path_only=True and no colliders"
                 )
-            step_distance(self._handle)
+            step_distance(self._handle, 1.0, 0)
         else:
             self._kernel.step(
                 self._handle,
@@ -294,7 +294,9 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose Center inertia")
         step_inertia(self._handle)
 
-    def step_distance(self, simulation_power: float = 1.0) -> None:
+    def step_distance(
+        self, simulation_power: float = 1.0, debug_phase: int = -1
+    ) -> None:
         """Run one explicit native Distance pass with scheduler-owned power."""
         self._ensure_live()
         if self._latest_frame is None:
@@ -302,7 +304,7 @@ class MC2CPUBackendDomainV1:
         step_distance = getattr(self._kernel, "step_distance", None)
         if not callable(step_distance):
             raise RuntimeError("CPU kernel does not expose the Distance slice")
-        step_distance(self._handle, simulation_power)
+        step_distance(self._handle, simulation_power, debug_phase)
 
     def step_reference_slices(self, settings: Mapping[str, object]) -> None:
         """Run only the explicit landed native reference pass prefix."""

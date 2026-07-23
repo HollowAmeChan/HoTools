@@ -1075,7 +1075,10 @@ void DomainV1::step() {
 
 void DomainV1::begin_constraint_debug(std::uint32_t mask) {
     ensure_live();
-    constexpr std::uint32_t supported = kConstraintDebugAngle | kConstraintDebugMotion;
+    constexpr std::uint32_t supported =
+        kConstraintDebugAngle | kConstraintDebugMotion |
+        kConstraintDebugDistance | kConstraintDebugTether |
+        kConstraintDebugBending;
     if (mask == 0u || (mask & ~supported) != 0u) {
         throw std::invalid_argument("MC2 CPU constraint debug mask is invalid");
     }
@@ -1100,6 +1103,40 @@ void DomainV1::begin_constraint_debug(std::uint32_t mask) {
         angle_debug_currents_.assign(records, 0.0f);
         angle_debug_limits_.assign(records, 0.0f);
         angle_debug_valid_.assign(records, 0u);
+    }
+    if ((mask & kConstraintDebugDistance) != 0u) {
+        const auto records = distance_neighbors_.size() * 2;
+        distance_debug_origins_.assign(records * 3, 0.0f);
+        distance_debug_target_origins_.assign(records * 3, 0.0f);
+        distance_debug_corrections_.assign(records * 3, 0.0f);
+        distance_debug_lengths_.assign(records, 0.0f);
+        distance_debug_rests_.assign(records, 0.0f);
+        distance_debug_stiffnesses_.assign(records, 0.0f);
+        distance_debug_valid_.assign(records, 0u);
+        distance_debug_hit_.assign(records, 0u);
+    }
+    if ((mask & kConstraintDebugTether) != 0u) {
+        tether_debug_origins_.assign(particle_count_ * 3, 0.0f);
+        tether_debug_root_origins_.assign(particle_count_ * 3, 0.0f);
+        tether_debug_corrections_.assign(particle_count_ * 3, 0.0f);
+        tether_debug_lengths_.assign(particle_count_, 0.0f);
+        tether_debug_rests_.assign(particle_count_, 0.0f);
+        tether_debug_minimums_.assign(particle_count_, 0.0f);
+        tether_debug_maximums_.assign(particle_count_, 0.0f);
+        tether_debug_stiffnesses_.assign(particle_count_, 0.0f);
+        tether_debug_branches_.assign(particle_count_, 0);
+        tether_debug_valid_.assign(particle_count_, 0u);
+        tether_debug_hit_.assign(particle_count_, 0u);
+    }
+    if ((mask & kConstraintDebugBending) != 0u) {
+        const auto records = bending_dihedral_rest_angles_.size() + bending_volume_rest_.size();
+        bending_debug_origins_.assign(records * 4 * 3, 0.0f);
+        bending_debug_corrections_.assign(records * 4 * 3, 0.0f);
+        bending_debug_currents_.assign(records, 0.0f);
+        bending_debug_rests_.assign(records, 0.0f);
+        bending_debug_stiffnesses_.assign(records, 0.0f);
+        bending_debug_valid_.assign(records, 0u);
+        bending_debug_hit_.assign(records, 0u);
     }
     constraint_debug_active_mask_ = mask;
 }
@@ -1126,6 +1163,32 @@ void DomainV1::clear_constraint_debug() {
     std::vector<float>().swap(angle_debug_currents_);
     std::vector<float>().swap(angle_debug_limits_);
     std::vector<std::uint8_t>().swap(angle_debug_valid_);
+    std::vector<float>().swap(distance_debug_origins_);
+    std::vector<float>().swap(distance_debug_target_origins_);
+    std::vector<float>().swap(distance_debug_corrections_);
+    std::vector<float>().swap(distance_debug_lengths_);
+    std::vector<float>().swap(distance_debug_rests_);
+    std::vector<float>().swap(distance_debug_stiffnesses_);
+    std::vector<std::uint8_t>().swap(distance_debug_valid_);
+    std::vector<std::uint8_t>().swap(distance_debug_hit_);
+    std::vector<float>().swap(tether_debug_origins_);
+    std::vector<float>().swap(tether_debug_root_origins_);
+    std::vector<float>().swap(tether_debug_corrections_);
+    std::vector<float>().swap(tether_debug_lengths_);
+    std::vector<float>().swap(tether_debug_rests_);
+    std::vector<float>().swap(tether_debug_minimums_);
+    std::vector<float>().swap(tether_debug_maximums_);
+    std::vector<float>().swap(tether_debug_stiffnesses_);
+    std::vector<std::int8_t>().swap(tether_debug_branches_);
+    std::vector<std::uint8_t>().swap(tether_debug_valid_);
+    std::vector<std::uint8_t>().swap(tether_debug_hit_);
+    std::vector<float>().swap(bending_debug_origins_);
+    std::vector<float>().swap(bending_debug_corrections_);
+    std::vector<float>().swap(bending_debug_currents_);
+    std::vector<float>().swap(bending_debug_rests_);
+    std::vector<float>().swap(bending_debug_stiffnesses_);
+    std::vector<std::uint8_t>().swap(bending_debug_valid_);
+    std::vector<std::uint8_t>().swap(bending_debug_hit_);
 }
 
 void DomainV1::configure_distance(
@@ -1189,7 +1252,7 @@ void DomainV1::configure_distance(
     distance_ready_ = true;
 }
 
-void DomainV1::step_distance(float simulation_power) {
+void DomainV1::step_distance(float simulation_power, std::int32_t debug_phase) {
     ensure_live();
     if (frame_ < 0 || generation_ < 0) {
         throw std::logic_error("MC2 CPU distance step requires update_frame");
@@ -1214,6 +1277,18 @@ void DomainV1::step_distance(float simulation_power) {
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.neighbor_count = static_cast<std::int64_t>(distance_neighbors_.size());
     view.simulation_power = simulation_power;
+    if ((constraint_debug_active_mask_ & kConstraintDebugDistance) != 0u &&
+        debug_phase >= 0 && debug_phase < 2) {
+        const auto record_offset = static_cast<std::size_t>(debug_phase) * distance_neighbors_.size();
+        view.debug_record_origins = distance_debug_origins_.data() + record_offset * 3;
+        view.debug_record_target_origins = distance_debug_target_origins_.data() + record_offset * 3;
+        view.debug_record_corrections = distance_debug_corrections_.data() + record_offset * 3;
+        view.debug_record_lengths = distance_debug_lengths_.data() + record_offset;
+        view.debug_record_rests = distance_debug_rests_.data() + record_offset;
+        view.debug_record_stiffnesses = distance_debug_stiffnesses_.data() + record_offset;
+        view.debug_record_valid = distance_debug_valid_.data() + record_offset;
+        view.debug_record_hit = distance_debug_hit_.data() + record_offset;
+    }
     hotools::project_neighbor_constraints_mc2(view);
     ++step_count_;
 }
@@ -1407,6 +1482,19 @@ void DomainV1::step_tether(
     view.stiffness = 1.0f;
     view.compression = compression;
     view.stretch = stretch;
+    if ((constraint_debug_active_mask_ & kConstraintDebugTether) != 0u) {
+        view.debug_record_origins = tether_debug_origins_.data();
+        view.debug_record_root_origins = tether_debug_root_origins_.data();
+        view.debug_record_corrections = tether_debug_corrections_.data();
+        view.debug_record_lengths = tether_debug_lengths_.data();
+        view.debug_record_rests = tether_debug_rests_.data();
+        view.debug_record_minimums = tether_debug_minimums_.data();
+        view.debug_record_maximums = tether_debug_maximums_.data();
+        view.debug_record_stiffnesses = tether_debug_stiffnesses_.data();
+        view.debug_record_branches = tether_debug_branches_.data();
+        view.debug_record_valid = tether_debug_valid_.data();
+        view.debug_record_hit = tether_debug_hit_.data();
+    }
     hotools::project_tether_mc2(view);
     ++step_count_;
 }
@@ -1451,6 +1539,19 @@ void DomainV1::step_tether_partitioned(
     view.stiffness = 1.0f;
     view.compression_values = compression_values;
     view.stretch_values = stretch_values;
+    if ((constraint_debug_active_mask_ & kConstraintDebugTether) != 0u) {
+        view.debug_record_origins = tether_debug_origins_.data();
+        view.debug_record_root_origins = tether_debug_root_origins_.data();
+        view.debug_record_corrections = tether_debug_corrections_.data();
+        view.debug_record_lengths = tether_debug_lengths_.data();
+        view.debug_record_rests = tether_debug_rests_.data();
+        view.debug_record_minimums = tether_debug_minimums_.data();
+        view.debug_record_maximums = tether_debug_maximums_.data();
+        view.debug_record_stiffnesses = tether_debug_stiffnesses_.data();
+        view.debug_record_branches = tether_debug_branches_.data();
+        view.debug_record_valid = tether_debug_valid_.data();
+        view.debug_record_hit = tether_debug_hit_.data();
+    }
     hotools::project_tether_mc2(view);
     ++step_count_;
 }
@@ -2389,6 +2490,15 @@ void DomainV1::step_bending(float simulation_power) {
     view.dihedral_count = static_cast<std::int64_t>(bending_dihedral_rest_angles_.size());
     view.volume_count = static_cast<std::int64_t>(bending_volume_rest_.size());
     view.simulation_power = simulation_power;
+    if ((constraint_debug_active_mask_ & kConstraintDebugBending) != 0u) {
+        view.debug_record_origins = bending_debug_origins_.data();
+        view.debug_record_corrections = bending_debug_corrections_.data();
+        view.debug_record_currents = bending_debug_currents_.data();
+        view.debug_record_rests = bending_debug_rests_.data();
+        view.debug_record_stiffnesses = bending_debug_stiffnesses_.data();
+        view.debug_record_valid = bending_debug_valid_.data();
+        view.debug_record_hit = bending_debug_hit_.data();
+    }
     hotools::project_triangle_bending_mc2(view);
     ++step_count_;
 }

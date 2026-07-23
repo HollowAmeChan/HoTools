@@ -287,15 +287,19 @@ class MC2NativeCPUKernelV1:
         elif distance_slice:
             if settings:
                 raise ValueError("distance_slice does not accept additional inputs")
-            self._module.mc2_domain_cpu_v1_step_distance(key)
+            self.step_distance(key, debug_phase=0)
         else:
             if settings:
                 raise ValueError("data_path_only step does not accept additional inputs")
             self._module.mc2_domain_cpu_v1_step(key)
 
-    def step_distance(self, handle, simulation_power: float = 1.0) -> None:
+    def step_distance(
+        self, handle, simulation_power: float = 1.0, debug_phase: int = -1
+    ) -> None:
         key = self._require_handle(handle)
-        self._module.mc2_domain_cpu_v1_step_distance(key, float(simulation_power))
+        self._module.mc2_domain_cpu_v1_step_distance(
+            key, float(simulation_power), int(debug_phase)
+        )
 
     def step_tether(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -855,7 +859,7 @@ class MC2NativeCPUKernelV1:
                 "stretch": settings["tether_stretch"],
             })
         if has_distance:
-            self.step_distance(key)
+            self.step_distance(key, debug_phase=0)
         if has_bending:
             self.step_bending(key)
 
@@ -898,7 +902,9 @@ class MC2NativeCPUKernelV1:
                 "compression": settings["tether_compression"], "stretch": settings["tether_stretch"],
             })
         if has_distance:
-            self.step_distance(key, settings["distance_simulation_power"])
+            self.step_distance(
+                key, settings["distance_simulation_power"], debug_phase=0
+            )
         if has_angle:
             self.step_angle(key, {
                 "step_basic_positions": settings["step_basic_positions"],
@@ -914,7 +920,9 @@ class MC2NativeCPUKernelV1:
         if has_bending:
             self.step_bending(key, settings["bending_simulation_power"])
         if has_distance:
-            self.step_distance(key, settings["distance_simulation_power"])
+            self.step_distance(
+                key, settings["distance_simulation_power"], debug_phase=1
+            )
         self.step_motion(key, {
             "base_positions": settings["motion_base_positions"],
             "base_rotations": settings["motion_base_rotations"],
@@ -1004,7 +1012,9 @@ class MC2NativeCPUKernelV1:
                 "stretch": structural["tether_stretch"],
             })
         if has_distance:
-            self.step_distance(key, structural["distance_simulation_power"])
+            self.step_distance(
+                key, structural["distance_simulation_power"], debug_phase=0
+            )
         if has_angle:
             self.step_angle(key, {
                 "step_basic_positions": structural["step_basic_positions"],
@@ -1028,7 +1038,9 @@ class MC2NativeCPUKernelV1:
                 raise TypeError("edge_collision must be a mapping or None")
             self.step_external_edge_collision(key, edge_collision)
         if has_distance:
-            self.step_distance(key, structural["distance_simulation_power"])
+            self.step_distance(
+                key, structural["distance_simulation_power"], debug_phase=1
+            )
         self.step_motion(key, {
             "base_positions": structural["motion_base_positions"],
             "base_rotations": structural["motion_base_rotations"],
@@ -1130,7 +1142,9 @@ class MC2NativeCPUKernelV1:
                 "stretch_values": settings["tether_stretch_values"],
             })
         if has_distance:
-            self.step_distance(key, settings["distance_simulation_power"])
+            self.step_distance(
+                key, settings["distance_simulation_power"], debug_phase=0
+            )
         if has_angle:
             self.step_angle_partitioned(key, {
                 "step_basic_positions": settings["step_basic_positions"],
@@ -1151,7 +1165,9 @@ class MC2NativeCPUKernelV1:
             self.step_bending(key, settings["bending_simulation_power"])
         self._run_compiled_external_collision(key, collider_arrays)
         if has_distance:
-            self.step_distance(key, settings["distance_simulation_power"])
+            self.step_distance(
+                key, settings["distance_simulation_power"], debug_phase=1
+            )
         self.step_motion_partitioned(key, {
             "base_positions": settings["motion_base_positions"],
             "base_rotations": settings["motion_base_rotations"],
@@ -1282,6 +1298,62 @@ class MC2NativeCPUKernelV1:
             "active_mask": int(raw.get("active_mask", 0)),
             "captured_mask": int(raw.get("captured_mask", 0)),
         }
+        distance_raw = raw.get("distance_results")
+        if distance_raw is not None:
+            distance_raw = dict(distance_raw)
+            count = int(distance_raw["record_count"])
+            result["distance_results"] = {
+                "origins": np.asarray(distance_raw["origins"], dtype=np.float32).reshape((2, count, 3)),
+                "target_origins": np.asarray(distance_raw["target_origins"], dtype=np.float32).reshape((2, count, 3)),
+                "corrections": np.asarray(distance_raw["corrections"], dtype=np.float32).reshape((2, count, 3)),
+                "lengths": np.asarray(distance_raw["lengths"], dtype=np.float32).reshape((2, count)),
+                "rests": np.asarray(distance_raw["rests"], dtype=np.float32).reshape((2, count)),
+                "stiffnesses": np.asarray(distance_raw["stiffnesses"], dtype=np.float32).reshape((2, count)),
+                "valid": np.asarray(distance_raw["valid"], dtype=np.uint8).reshape((2, count)),
+                "hit": np.asarray(distance_raw["hit"], dtype=np.uint8).reshape((2, count)),
+                "vertices": np.asarray(distance_raw["vertices"], dtype=np.int32).reshape((2, count)),
+                "targets": np.asarray(distance_raw["targets"], dtype=np.int32).reshape((2, count)),
+                "partitions": np.asarray(distance_raw["partitions"], dtype=np.uint32).reshape((2, count)),
+                "target_partitions": np.asarray(distance_raw["target_partitions"], dtype=np.uint32).reshape((2, count)),
+            }
+        tether_raw = raw.get("tether_results")
+        if tether_raw is not None:
+            tether_raw = dict(tether_raw)
+            count = int(tether_raw["record_count"])
+            result["tether_results"] = {
+                "origins": np.asarray(tether_raw["origins"], dtype=np.float32).reshape((count, 3)),
+                "root_origins": np.asarray(tether_raw["root_origins"], dtype=np.float32).reshape((count, 3)),
+                "corrections": np.asarray(tether_raw["corrections"], dtype=np.float32).reshape((count, 3)),
+                "lengths": np.asarray(tether_raw["lengths"], dtype=np.float32).reshape((count,)),
+                "rests": np.asarray(tether_raw["rests"], dtype=np.float32).reshape((count,)),
+                "minimums": np.asarray(tether_raw["minimums"], dtype=np.float32).reshape((count,)),
+                "maximums": np.asarray(tether_raw["maximums"], dtype=np.float32).reshape((count,)),
+                "stiffnesses": np.asarray(tether_raw["stiffnesses"], dtype=np.float32).reshape((count,)),
+                "branches": np.asarray(tether_raw["branches"], dtype=np.int8).reshape((count,)),
+                "valid": np.asarray(tether_raw["valid"], dtype=np.uint8).reshape((count,)),
+                "hit": np.asarray(tether_raw["hit"], dtype=np.uint8).reshape((count,)),
+                "vertices": np.asarray(tether_raw["vertices"], dtype=np.int32).reshape((count,)),
+                "roots": np.asarray(tether_raw["roots"], dtype=np.int32).reshape((count,)),
+                "partitions": np.asarray(tether_raw["partitions"], dtype=np.uint32).reshape((count,)),
+                "root_partitions": np.asarray(tether_raw["root_partitions"], dtype=np.uint32).reshape((count,)),
+            }
+        bending_raw = raw.get("bending_results")
+        if bending_raw is not None:
+            bending_raw = dict(bending_raw)
+            count = int(bending_raw["record_count"])
+            result["bending_results"] = {
+                "origins": np.asarray(bending_raw["origins"], dtype=np.float32).reshape((count, 4, 3)),
+                "corrections": np.asarray(bending_raw["corrections"], dtype=np.float32).reshape((count, 4, 3)),
+                "currents": np.asarray(bending_raw["currents"], dtype=np.float32).reshape((count,)),
+                "rests": np.asarray(bending_raw["rests"], dtype=np.float32).reshape((count,)),
+                "stiffnesses": np.asarray(bending_raw["stiffnesses"], dtype=np.float32).reshape((count,)),
+                "valid": np.asarray(bending_raw["valid"], dtype=np.uint8).reshape((count,)),
+                "hit": np.asarray(bending_raw["hit"], dtype=np.uint8).reshape((count,)),
+                "vertices": np.asarray(bending_raw["vertices"], dtype=np.int32).reshape((count, 4)),
+                "kinds": np.asarray(bending_raw["kinds"], dtype=np.int8).reshape((count,)),
+                "markers": np.asarray(bending_raw["markers"], dtype=np.int32).reshape((count,)),
+                "partitions": np.asarray(bending_raw["partitions"], dtype=np.uint32).reshape((count, 4)),
+            }
         motion_raw = raw.get("motion_results")
         if motion_raw is not None:
             motion_raw = dict(motion_raw)

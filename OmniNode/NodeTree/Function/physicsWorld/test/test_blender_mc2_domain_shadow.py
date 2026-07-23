@@ -294,6 +294,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
                 "show_step_basic": True,
                 "show_gravity": True,
                 "show_velocity": True,
+                "show_distance": True,
+                "show_tether": True,
+                "show_bending": True,
                 "show_motion_base": True,
                 "show_motion": True,
                 "show_angle_restoration": True,
@@ -334,6 +337,13 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             records = snapshot["constraint_records"][name]
             assert len(records["states"]) > 0
             assert set(map(int, records["partitions"])).issubset({0, 1})
+        for name in ("distance", "tether"):
+            records = snapshot["constraint_records"][name]
+            assert len(records["states"]) > 0
+            assert set(map(int, records["partitions"])).issubset({0, 1})
+        bending_records = snapshot["constraint_records"]["bending"]
+        assert len(bending_records["states"]) > 0
+        assert bending_records["partitions"].shape[1] == 4
         assert np.isfinite(
             snapshot["constraint_records"]["motion"]["target_origins"]
         ).all()
@@ -355,6 +365,9 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
             show_depth=True,
             show_step_basic=True,
             show_gravity=True,
+            show_distance=True,
+            show_tether=True,
+            show_bending=True,
             show_motion_base=True,
             show_motion=True,
             show_angle_restoration=True,

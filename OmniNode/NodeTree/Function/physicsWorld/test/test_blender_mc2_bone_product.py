@@ -868,6 +868,9 @@ try:
             "show_depth": True,
             "show_step_basic": True,
             "show_gravity": True,
+            "show_distance": True,
+            "show_tether": True,
+            "show_bending": True,
             "show_motion_base": True,
             "show_motion": True,
             "show_angle_restoration": True,
@@ -916,6 +919,21 @@ try:
     assert cloth_debug["motion"]["step_basic_positions"].shape == (12, 3)
     assert cloth_debug["parameters"]["schema"] == "mc2_product_gravity_debug_v1"
     assert len(cloth_debug["constraint_records"]["motion"]["states"]) > 0
+    distance_records = cloth_debug["constraint_records"]["distance"]
+    assert len(distance_records["states"]) > 0
+    assert set(map(int, distance_records["phases"])) == {0, 1}
+    assert np.isfinite(distance_records["target_origins"]).all()
+    assert set(map(int, distance_records["partitions"])).issubset({0, 1})
+    tether_records = cloth_debug["constraint_records"]["tether"]
+    assert len(tether_records["states"]) > 0
+    assert np.isfinite(tether_records["root_origins"]).all()
+    assert set(map(int, tether_records["partitions"])).issubset({0, 1})
+    bending_records = cloth_debug["constraint_records"]["bending"]
+    assert len(bending_records["states"]) > 0
+    assert bending_records["vertices"].shape[1] == 4
+    assert bending_records["partitions"].shape[1] == 4
+    assert np.isfinite(bending_records["currents"]).all()
+    assert np.isfinite(bending_records["corrections"]).all()
     for name in ("angle_restoration", "angle_limit"):
         records = cloth_debug["constraint_records"][name]
         assert len(records["states"]) > 0

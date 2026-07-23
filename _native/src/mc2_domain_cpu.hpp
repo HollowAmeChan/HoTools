@@ -15,6 +15,9 @@ namespace hotools::mc2_domain_cpu {
 enum ConstraintDebugMaskV1 : std::uint32_t {
     kConstraintDebugAngle = 1u,
     kConstraintDebugMotion = 2u,
+    kConstraintDebugDistance = 4u,
+    kConstraintDebugTether = 8u,
+    kConstraintDebugBending = 16u,
 };
 
 struct ProgramViewV1 {
@@ -221,7 +224,7 @@ public:
         const float* collider_radii,
         std::size_t collider_count
     );
-    void step_distance(float simulation_power = 1.0f);
+    void step_distance(float simulation_power = 1.0f, std::int32_t debug_phase = -1);
     void configure_tether(const std::int32_t* root_indices);
     void step_tether(
         const float* step_basic_positions,
@@ -490,6 +493,39 @@ public:
     const std::vector<float>& angle_debug_currents() const noexcept { return angle_debug_currents_; }
     const std::vector<float>& angle_debug_limits() const noexcept { return angle_debug_limits_; }
     const std::vector<std::uint8_t>& angle_debug_valid() const noexcept { return angle_debug_valid_; }
+    const std::vector<std::int32_t>& distance_starts() const noexcept { return distance_starts_; }
+    const std::vector<std::int32_t>& distance_counts() const noexcept { return distance_counts_; }
+    const std::vector<std::int32_t>& distance_neighbors() const noexcept { return distance_neighbors_; }
+    const std::vector<float>& distance_debug_origins() const noexcept { return distance_debug_origins_; }
+    const std::vector<float>& distance_debug_target_origins() const noexcept { return distance_debug_target_origins_; }
+    const std::vector<float>& distance_debug_corrections() const noexcept { return distance_debug_corrections_; }
+    const std::vector<float>& distance_debug_lengths() const noexcept { return distance_debug_lengths_; }
+    const std::vector<float>& distance_debug_rests() const noexcept { return distance_debug_rests_; }
+    const std::vector<float>& distance_debug_stiffnesses() const noexcept { return distance_debug_stiffnesses_; }
+    const std::vector<std::uint8_t>& distance_debug_valid() const noexcept { return distance_debug_valid_; }
+    const std::vector<std::uint8_t>& distance_debug_hit() const noexcept { return distance_debug_hit_; }
+    const std::vector<std::int32_t>& tether_root_indices() const noexcept { return tether_root_indices_; }
+    const std::vector<float>& tether_debug_origins() const noexcept { return tether_debug_origins_; }
+    const std::vector<float>& tether_debug_root_origins() const noexcept { return tether_debug_root_origins_; }
+    const std::vector<float>& tether_debug_corrections() const noexcept { return tether_debug_corrections_; }
+    const std::vector<float>& tether_debug_lengths() const noexcept { return tether_debug_lengths_; }
+    const std::vector<float>& tether_debug_rests() const noexcept { return tether_debug_rests_; }
+    const std::vector<float>& tether_debug_minimums() const noexcept { return tether_debug_minimums_; }
+    const std::vector<float>& tether_debug_maximums() const noexcept { return tether_debug_maximums_; }
+    const std::vector<float>& tether_debug_stiffnesses() const noexcept { return tether_debug_stiffnesses_; }
+    const std::vector<std::int8_t>& tether_debug_branches() const noexcept { return tether_debug_branches_; }
+    const std::vector<std::uint8_t>& tether_debug_valid() const noexcept { return tether_debug_valid_; }
+    const std::vector<std::uint8_t>& tether_debug_hit() const noexcept { return tether_debug_hit_; }
+    const std::vector<std::int32_t>& bending_dihedral_pairs() const noexcept { return bending_dihedral_pairs_; }
+    const std::vector<std::int32_t>& bending_dihedral_signs() const noexcept { return bending_dihedral_signs_; }
+    const std::vector<std::int32_t>& bending_volume_pairs() const noexcept { return bending_volume_pairs_; }
+    const std::vector<float>& bending_debug_origins() const noexcept { return bending_debug_origins_; }
+    const std::vector<float>& bending_debug_corrections() const noexcept { return bending_debug_corrections_; }
+    const std::vector<float>& bending_debug_currents() const noexcept { return bending_debug_currents_; }
+    const std::vector<float>& bending_debug_rests() const noexcept { return bending_debug_rests_; }
+    const std::vector<float>& bending_debug_stiffnesses() const noexcept { return bending_debug_stiffnesses_; }
+    const std::vector<std::uint8_t>& bending_debug_valid() const noexcept { return bending_debug_valid_; }
+    const std::vector<std::uint8_t>& bending_debug_hit() const noexcept { return bending_debug_hit_; }
 
 private:
     void ensure_live() const;
@@ -627,7 +663,26 @@ private:
     std::vector<float> angle_debug_currents_;
     std::vector<float> angle_debug_limits_;
     std::vector<std::uint8_t> angle_debug_valid_;
+    std::vector<float> distance_debug_origins_;
+    std::vector<float> distance_debug_target_origins_;
+    std::vector<float> distance_debug_corrections_;
+    std::vector<float> distance_debug_lengths_;
+    std::vector<float> distance_debug_rests_;
+    std::vector<float> distance_debug_stiffnesses_;
+    std::vector<std::uint8_t> distance_debug_valid_;
+    std::vector<std::uint8_t> distance_debug_hit_;
     std::vector<std::int32_t> tether_root_indices_;
+    std::vector<float> tether_debug_origins_;
+    std::vector<float> tether_debug_root_origins_;
+    std::vector<float> tether_debug_corrections_;
+    std::vector<float> tether_debug_lengths_;
+    std::vector<float> tether_debug_rests_;
+    std::vector<float> tether_debug_minimums_;
+    std::vector<float> tether_debug_maximums_;
+    std::vector<float> tether_debug_stiffnesses_;
+    std::vector<std::int8_t> tether_debug_branches_;
+    std::vector<std::uint8_t> tether_debug_valid_;
+    std::vector<std::uint8_t> tether_debug_hit_;
     bool tether_ready_ = false;
     std::vector<std::int32_t> bending_dihedral_pairs_;
     std::vector<float> bending_dihedral_rest_angles_;
@@ -635,6 +690,13 @@ private:
     std::vector<std::int32_t> bending_volume_pairs_;
     std::vector<float> bending_volume_rest_;
     std::vector<float> bending_stiffness_values_;
+    std::vector<float> bending_debug_origins_;
+    std::vector<float> bending_debug_corrections_;
+    std::vector<float> bending_debug_currents_;
+    std::vector<float> bending_debug_rests_;
+    std::vector<float> bending_debug_stiffnesses_;
+    std::vector<std::uint8_t> bending_debug_valid_;
+    std::vector<std::uint8_t> bending_debug_hit_;
     bool bending_ready_ = false;
     std::vector<float> inertia_depths_;
     std::vector<float> inertia_inv_masses_;
