@@ -169,7 +169,7 @@ MC2 E7-CPU Teleport 附加证据迁移（2026-07-23）：同一产品 runner 现
 
 同一删除批次已移除纯 E1 `shadow_pipeline.py` 和 `test_blender_mc2_domain_shadow.py`；`solver.py` 不再接受 `shadow_compile` 开关。原 shadow 对照职责由 Domain golden、product mixed soak 和纯静态 partition 测试承接，`acceptance_assets_v1.json` 已改指当前 Blender 5.2 产品 runner。旧 V0 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 仍因长跑数值缺口保留，不能把本批 shadow 删除误解为旧 owner 全部删除。
 
-E7-CPU native 别名清理（2026-07-24）：`mc2_mesh_static_fingerprint_v0` 与 `mc2_bone_static_fingerprint_v0` 仅是 v1 的迁移别名，产品、native context 和公开节点均无消费者；已删除 C++ 实现、API 声明、nanobind 注册，并把旧 native 测试改为直接验证 v1 形状。Blender 5.2 当前源码审计显示 legacy surface 从 `70 bindings` 降为 `68 bindings`，仍有 `5 个 context TU`；当前 `_Lib/py313` 二进制未重编译，不能把源码清理误报成 ABI 运行时已切换。下一步先完成旧 solver/debug 测试迁移，再按清单删除剩余 binding/TU。
+E7-CPU native 别名清理（2026-07-24）：`mc2_mesh_static_fingerprint_v0` 与 `mc2_bone_static_fingerprint_v0` 仅是 v1 的迁移别名，产品、native context 和公开节点均无消费者；已删除 C++ 实现、API 声明、nanobind 注册，并把旧 native 测试改为直接验证 v1 形状。Blender 5.2 当前源码审计显示 legacy surface 从 `70 bindings` 降为 `68 bindings`，仍有 `5 个 context TU`；随后已按 `vs2022-py313-native` 刷新 `_Lib/py313`，运行时核验 v1 存在且两个 v0 别名均不存在。4.5/py311 仍冻结，不在本阶段构建。下一步先完成旧 solver/debug 测试迁移，再按清单删除剩余 binding/TU。
 
 本轮进一步确认 `specs.py` 没有应迁出的中立合同：它只包含 `MC2TaskSpec`、构造器和旧 V0 去重函数。`MC2TopologySpec`、`MC2StaticInputFingerprint`、参数和帧输入合同分别由 `topology.py`、`parameters.py`、`frame_state.py` 持有；resolved partition 的 topology/setup 路径不再导入 `specs.py`。新增门禁锁定这一边界，避免为了形式迁移重新制造第二套 schema。
 

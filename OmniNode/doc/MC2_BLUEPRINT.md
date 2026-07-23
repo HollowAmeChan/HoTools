@@ -927,7 +927,7 @@ Teleport 的正 uniform scale 和调试层隔离现已由产品 runner 直接覆
 
 E7-CPU 的 shadow 删除批次已完成：纯 E1 `shadow_pipeline.py` 与 Blender shadow runner 已删除，旧 `solver.py` 的 `shadow_compile` 参数和延迟 import 同步移除。`acceptance_assets_v1.json` 现在指向产品 mixed soak；Domain golden、产品 collector 和静态 partition 测试分别承接数值、fusion 与 topology 断言。剩余四个 Python V0 owner 及其旧长跑测试仍按缺口清单保留，不能用本批删除替代最终 owner 清理。
 
-E7-CPU native 清理继续遵循“先迁测试、后删 ABI”：两个 static fingerprint V0 别名已经从 `mc2_fingerprint.cpp`、`mc2_api.hpp` 和 `mc2_bindings.cpp` 删除，v1 作为唯一 fingerprint ABI。源码审计基线更新为 `68 个 legacy binding / 5 个 context TU`；py313 当前运行二进制仍是未重编译的旧产物，直到旧 owner 最终删除收尾前不得宣称二进制已完成切换。
+E7-CPU native 清理继续遵循“先迁测试、后删 ABI”：两个 static fingerprint V0 别名已经从 `mc2_fingerprint.cpp`、`mc2_api.hpp` 和 `mc2_bindings.cpp` 删除，v1 作为唯一 fingerprint ABI。源码审计基线更新为 `68 个 legacy binding / 5 个 context TU`；已用 `vs2022-py313-native` 刷新 `_Lib/py313`，并在 Blender 5.2 运行时确认 v1 ABI 生效、两个 v0 别名均不存在。4.5/py311 保持冻结，直到旧 owner 删除收尾阶段再恢复双 ABI 验收。
 
 `specs.py` 的边界审计已完成：没有需要搬出的中立类型；它只保留待删除的 `MC2TaskSpec` 及旧构造/去重函数。产品 topology 使用 `MC2ResolvedPartitionSpec`、`MC2TopologySpec` 和 `MC2StaticInputFingerprint`，参数与 frame input 仍由各自模块单独拥有。后续删除 `specs.py` 时应连同 V0 topology/setup adapter、旧测试和 owner 一起删除，不能把它改名后继续作为隐式兼容层。
 

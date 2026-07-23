@@ -997,7 +997,7 @@ E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`
 
 E7-CPU shadow 删除复核（2026-07-24）：仓内纯 E1 `shadow_pipeline.py` 与 `test_blender_mc2_domain_shadow.py` 已删除，`step_mc2` 不再暴露 `shadow_compile`/`shadow_reports` 迁移开关。产品运行图没有新增旧依赖；manifest 已改指 Blender 5.2 的 product mixed soak。Domain golden 和 resolved partition 静态测试保留实际合同，旧 Mesh/Bone 长跑中尚未迁移的数值 oracle 继续阻止 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 删除。
 
-E7-CPU native 清理复核（2026-07-24）：两个 static fingerprint V0 alias 已删除，旧 native fingerprint 测试改为 v1 形状合同；源码架构审计的 legacy surface 为 `68 bindings / 5 context TU`。当前只验证源码、AST 与现有 `_Lib/py313` binary 的 v1 调用，不编译 4.5/py311，也不因 alias 删除提前删除 context owner；剩余 binding/TU 等旧长跑测试迁移完成后再分步删除。
+E7-CPU native 清理复核（2026-07-24）：两个 static fingerprint V0 alias 已删除，旧 native fingerprint 测试改为 v1 形状合同；源码架构审计的 legacy surface 为 `68 bindings / 5 context TU`。已完成 `vs2022-py313-native` 刷新，并在 Blender 5.2/py313 运行时确认 v1 调用与产品约束长跑通过；4.5/py311 继续冻结，不因本次 alias 删除提前恢复。仍不提前删除 context owner，待剩余 binding/TU 及旧长跑测试迁移完成后再分步删除。
 
 E7-CPU Center World 产品迁移（2026-07-23）：`test_blender_mc2_product_center_controls_soak.py::center_world_controls` 已覆盖 MeshCloth、BoneCloth、BoneSpring 三种 setup 的五组世界 Center 控制。每组双跑 600 帧，验证有限性、确定性、惯性排序、平滑、平移/旋转限速、Center shift/step 计数，并检查产品槽不含 `native_context`、`spec` 或 `_debug_draw_snapshot`。capability matrix 已切换该 runner；Local、Depth、Anchor 继续保留旧证据，待对应产品 runner 完成后再迁移。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
 
