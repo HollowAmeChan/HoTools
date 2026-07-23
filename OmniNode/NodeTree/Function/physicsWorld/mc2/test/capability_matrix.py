@@ -150,7 +150,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "finite", "deterministic", "connected_disconnected_writeback",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_rotation_output_controls",
+            "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_rotation_output_controls",
             "frames": 600,
             "setups": ("bone_cloth", "bone_spring"),
             "fields": ("rotational_interpolation", "root_rotation"),

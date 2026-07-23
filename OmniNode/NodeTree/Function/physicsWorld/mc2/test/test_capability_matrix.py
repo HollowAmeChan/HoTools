@@ -171,7 +171,6 @@ def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
               if "test_blender_mc2_bone_constraint_soak.py::" in line]
     assert legacy == [
         '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_gravity_axes_falloff",',
-        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_rotation_output_controls",',
     ]
 
 
