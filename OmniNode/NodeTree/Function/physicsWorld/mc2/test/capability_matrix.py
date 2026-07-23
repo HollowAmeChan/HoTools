@@ -180,7 +180,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "object_reset_pose_exact",
             "task_teleport_single_reference_exact",
             "particle_keep_offset_exact",
-            "particle_keep_velocity_cleared",
+            "particle_keep_velocity_preserved",
             "particle_reset_step_history_exact",
             "particle_reset_self_history_invalidated",
             "particle_subset_scope_exact",
@@ -207,23 +207,40 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
             "particle_reset_self_history_invalidated": CLOTH_SETUPS,
+            "particle_subset_scope_exact": ("mesh_cloth",),
         },
         "evidence": (
             {
-                "runner": "test_blender_mc2_mixed_output_soak.py::main",
-                "frames": 900,
+                "runner": (
+                    "test_blender_mc2_product_center_controls_soak.py::"
+                    "task_reference_teleport_controls"
+                ),
+                "frames": 600,
                 "setups": ALL_SETUPS,
                 "fields": (
-                    "particle_speed_limit", "teleport_distance",
-                    "teleport_rotation", "teleport_mode",
+                    "teleport_distance", "teleport_rotation", "teleport_mode",
                 ),
                 "invariants": (
                     "finite", "deterministic",
                     "task_teleport_single_reference_exact",
-                    "particle_keep_velocity_cleared",
+                    "particle_keep_velocity_preserved",
                     "particle_reset_step_history_exact",
-                "particle_subset_scope_exact",
-                "bone_root_teleport_detected",
+                    "particle_reset_self_history_invalidated",
+                    "bone_root_teleport_detected",
+                ),
+            },
+            {
+                "runner": (
+                    "test_blender_mc2_product_center_controls_soak.py::"
+                    "task_reference_partition_scope_controls"
+                ),
+                "frames": 600,
+                "setups": ("mesh_cloth",),
+                "fields": (
+                    "teleport_distance", "teleport_rotation", "teleport_mode",
+                ),
+                "invariants": (
+                    "finite", "deterministic", "particle_subset_scope_exact",
                 ),
             },
             {
@@ -237,26 +254,6 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "invariants": (
                     "finite", "deterministic",
                     "particle_speed_limit_bounded_and_active",
-                ),
-            },
-            {
-                "runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",
-                "frames": 900,
-                "setups": ("bone_cloth",),
-                "fields": ("teleport_distance", "teleport_mode"),
-                "invariants": (
-                    "finite", "deterministic",
-                    "particle_reset_self_history_invalidated",
-                ),
-            },
-            {
-                "runner": "test_blender_mc2_constraint_soak.py::_self_interaction_soak",
-                "frames": 1800,
-                "setups": ("mesh_cloth",),
-                "fields": ("teleport_distance", "teleport_mode"),
-                "invariants": (
-                    "finite", "deterministic",
-                    "particle_reset_self_history_invalidated",
                 ),
             },
             {

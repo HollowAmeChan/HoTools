@@ -91,6 +91,7 @@ def _compiled_multi(
     external_collision_masks=None,
     profile_overrides=None,
     task_normal_axes=(1, 1),
+    task_overrides=None,
 ):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
@@ -102,12 +103,15 @@ def _compiled_multi(
     )
     if profile_overrides is None:
         profile_overrides = ({},) * len(fragments)
+    if task_overrides is None:
+        task_overrides = ({},) * len(fragments)
     effectives = []
-    for animation_pose_ratio, collision_mode, overrides, normal_axis in zip(
+    for animation_pose_ratio, collision_mode, overrides, normal_axis, task_values in zip(
         animation_pose_ratios,
         collision_modes,
         profile_overrides,
         task_normal_axes,
+        task_overrides,
         strict=True,
     ):
         profile_values = {
@@ -119,7 +123,9 @@ def _compiled_multi(
         effectives.append(runtime.make_mc2_runtime_parameters(
             parameters.make_mc2_particle_profile(**profile_values),
             parameters.make_mc2_setup_options("mesh_cloth"),
-            parameters.make_mc2_task_parameters(normal_axis=normal_axis),
+            parameters.make_mc2_task_parameters(
+                normal_axis=normal_axis, **task_values
+            ),
         ))
     return compiler.compile_mc2_mesh_static_fragments(
         fragments,
@@ -836,6 +842,154 @@ def test_native_cpu_domain_commits_center_frame_shift_transaction():
         domain.dispose()
 
 
+def test_native_task_reference_teleport_ignores_object_only_motion():
+    compiled = _compiled(task_overrides={
+        "teleport_mode": 2, "teleport_distance": 0.1,
+    })
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    first = _frame(compiled.program)
+    offset = np.asarray((3.0, 0.0, 0.0), dtype=np.float32)
+    moved_animation = np.asarray(first.animated_base_world_positions).copy() + offset
+    moved_components = np.asarray(first.partition_world_position).copy() + offset
+    moved_animation.flags.writeable = False
+    moved_components.flags.writeable = False
+    second = replace(
+        first,
+        frame=first.frame + 1,
+        animated_base_world_positions=moved_animation,
+        partition_world_position=moved_components,
+    )
+    try:
+        domain.update_frame(first)
+        domain.update_frame(second)
+        domain.step_task_reference_teleport()
+        state = domain.read_task_reference_teleport_state()
+        np.testing.assert_array_equal(state["flags"], (0,))
+        np.testing.assert_allclose(state["measured_distances"], (0.0,), atol=1.0e-6)
+        assert int(state["reference_indices"][0]) == 0
+    finally:
+        domain.dispose()
+
+
+def test_native_task_reference_keep_uses_one_fixed_reference_and_partition_scope():
+    compiled = _compiled_multi(
+        task_overrides=(
+            {"teleport_mode": 2, "teleport_distance": 0.1},
+            {"teleport_mode": 2, "teleport_distance": 0.1},
+        ),
+    )
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    first = _frame(compiled.program)
+    owners = np.asarray(compiled.program.particle_partition_index)
+    moved_animation = np.asarray(first.animated_base_world_positions).copy()
+    moved_animation[owners == 0, 0] += np.float32(2.0)
+    moved_animation.flags.writeable = False
+    second = replace(
+        first,
+        frame=first.frame + 1,
+        animated_base_world_positions=moved_animation,
+    )
+    try:
+        domain.update_frame(first)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -9.81, 0.0),
+        })
+        before = domain.read_output().world_positions.copy()
+        before_dynamics = domain.read_debug_state()
+        domain.update_frame(second)
+        domain.step_task_reference_teleport()
+        after = domain.read_output().world_positions
+        state = domain.read_task_reference_teleport_state()
+        np.testing.assert_array_equal(state["flags"], (3, 0))
+        expected_references = []
+        attributes = np.asarray(compiled.program.particle_attribute_flags)
+        for partition in range(compiled.program.partition_count):
+            fixed = np.flatnonzero((owners == partition) & ((attributes & 1) != 0))
+            expected_references.append(int(fixed[0]) if fixed.size else -1)
+        np.testing.assert_array_equal(
+            state["reference_indices"], expected_references
+        )
+        np.testing.assert_allclose(
+            after[owners == 0],
+            before[owners == 0] + np.asarray((2.0, 0.0, 0.0), dtype=np.float32),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(after[owners == 1], before[owners == 1], atol=1.0e-6)
+        dynamics = domain.read_debug_state()
+        np.testing.assert_allclose(
+            dynamics["velocities"], before_dynamics["velocities"], atol=1.0e-7
+        )
+        np.testing.assert_allclose(dynamics["real_velocities"], 0.0, atol=1.0e-7)
+        np.testing.assert_allclose(
+            dynamics["velocity_reference_positions"][owners == 0],
+            before_dynamics["velocity_reference_positions"][owners == 0]
+            + np.asarray((2.0, 0.0, 0.0), dtype=np.float32),
+            atol=1.0e-6,
+        )
+        assert int(state["teleport_count"]) == 1
+        assert int(state["self_history_invalidation_count"]) == 1
+    finally:
+        domain.dispose()
+
+
+def test_native_task_reference_reset_is_exact_and_invalidates_histories_once():
+    compiled = _compiled(task_overrides={
+        "teleport_mode": 1, "teleport_distance": 0.1,
+    })
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    first = _frame(compiled.program)
+    moved_animation = np.asarray(first.animated_base_world_positions).copy()
+    moved_animation[:, 1] += np.float32(1.25)
+    moved_animation.flags.writeable = False
+    second = replace(
+        first,
+        frame=first.frame + 1,
+        animated_base_world_positions=moved_animation,
+    )
+    try:
+        domain.update_frame(first)
+        domain.step({
+            "data_path_only": True,
+            "integration_slice": True,
+            "dt": 0.1,
+            "simulation_power": 1.0,
+            "velocity_weight": 1.0,
+            "gravity": (0.0, -9.81, 0.0),
+        })
+        domain.update_frame(second)
+        domain.step_task_reference_teleport()
+        domain.step_task_reference_teleport()
+        state = domain.read_task_reference_teleport_state()
+        np.testing.assert_array_equal(state["flags"], (5,))
+        np.testing.assert_allclose(
+            domain.read_output().world_positions, moved_animation, atol=1.0e-6
+        )
+        dynamics = domain.read_debug_state()
+        np.testing.assert_allclose(
+            dynamics["velocity_reference_positions"], moved_animation, atol=1.0e-7
+        )
+        np.testing.assert_allclose(dynamics["velocities"], 0.0, atol=1.0e-7)
+        np.testing.assert_allclose(dynamics["real_velocities"], 0.0, atol=1.0e-7)
+        assert int(state["teleport_count"]) == 1
+        assert int(state["self_history_invalidation_count"]) == 1
+    finally:
+        domain.dispose()
+
+
+def task_reference_teleport_contracts():
+    test_native_task_reference_teleport_ignores_object_only_motion()
+    test_native_task_reference_keep_uses_one_fixed_reference_and_partition_scope()
+    test_native_task_reference_reset_is_exact_and_invalidates_histories_once()
+
+
 def test_native_cpu_reset_teleport_restarts_center_stabilization_once():
     compiled = _compiled(
         profile_overrides={"stabilization_time_after_reset": 0.2},
@@ -1066,7 +1220,8 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
 
         order = []
         ordered_methods = (
-            "step_center_frame_shift", "step_center", "step_center_inertia",
+            "step_task_reference_teleport", "step_center_frame_shift",
+            "step_center", "step_center_inertia",
             "step_integration_partitioned", "step_tether_partitioned",
             "step_distance", "step_angle_partitioned", "step_bending",
             "_run_compiled_external_collision", "step_motion_partitioned",
@@ -1082,7 +1237,8 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             setattr(kernel, name, record)
         domain.step_compiled_domain_pipeline_full(settings)
         assert order == [
-            "step_center_frame_shift", "step_center", "step_center_inertia",
+            "step_task_reference_teleport", "step_center_frame_shift",
+            "step_center", "step_center_inertia",
             "step_integration_partitioned", "step_tether_partitioned",
             "step_distance", "step_angle_partitioned",
             "_run_compiled_external_collision", "step_distance",
@@ -1486,6 +1642,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_kernel_exposes_center_frame_shift_slice")
     test_native_cpu_domain_commits_center_frame_shift_transaction()
     print("PASS test_native_cpu_domain_commits_center_frame_shift_transaction")
+    task_reference_teleport_contracts()
+    print("PASS task_reference_teleport_contracts")
     test_native_cpu_reset_teleport_restarts_center_stabilization_once()
     print("PASS test_native_cpu_reset_teleport_restarts_center_stabilization_once")
     test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order()

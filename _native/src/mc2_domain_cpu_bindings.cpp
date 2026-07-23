@@ -1095,6 +1095,14 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the explicit per-partition Center frame-shift slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_step_task_reference_teleport",
+        [](std::uint64_t handle) {
+            require_domain(handle)->step_task_reference_teleport();
+        },
+        nb::arg("handle"),
+        "Run the per-partition task-reference Teleport pass."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_center_frame_shift",
         [](std::uint64_t handle, cf32_2d anchor_component_local_positions) {
             auto* domain = require_domain(handle);
@@ -1254,6 +1262,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             nb::dict result;
             result["velocities"] = owned_array_2d<float>(
                 std::vector<float>(domain->state_velocities()), domain->particle_count(), 3
+            );
+            result["velocity_reference_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->velocity_positions()), domain->particle_count(), 3
             );
             result["real_velocities"] = owned_array_2d<float>(
                 std::vector<float>(domain->real_velocities()), domain->particle_count(), 3
@@ -1608,6 +1619,44 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Read frozen true native constraint pass records."
     );
     module.def(
+        "mc2_domain_cpu_v1_read_task_reference_teleport",
+        [](std::uint64_t handle) {
+            auto* domain = require_domain(handle);
+            const auto partitions = domain->partition_count();
+            nb::dict result;
+            result["flags"] = owned_array_1d<std::uint32_t>(
+                std::vector<std::uint32_t>(domain->task_reference_teleport_flags())
+            );
+            result["reference_indices"] = owned_array_1d<std::int32_t>(
+                std::vector<std::int32_t>(domain->task_reference_indices())
+            );
+            result["old_reference_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->task_reference_old_positions()), partitions, 3
+            );
+            result["reference_positions"] = owned_array_2d<float>(
+                std::vector<float>(domain->task_reference_positions()), partitions, 3
+            );
+            result["measured_distances"] = owned_array_1d<float>(
+                std::vector<float>(domain->task_reference_measured_distances())
+            );
+            result["distance_thresholds"] = owned_array_1d<float>(
+                std::vector<float>(domain->task_reference_distance_thresholds())
+            );
+            result["measured_rotation_degrees"] = owned_array_1d<float>(
+                std::vector<float>(domain->task_reference_measured_rotation_degrees())
+            );
+            result["rotation_threshold_degrees"] = owned_array_1d<float>(
+                std::vector<float>(domain->center_teleport_rotations())
+            );
+            result["teleport_count"] = domain->task_reference_teleport_count();
+            result["self_history_invalidation_count"] =
+                domain->whole_domain_self_invalidation_count();
+            return result;
+        },
+        nb::arg("handle"),
+        "Read the task-reference Teleport observation slice."
+    );
+    module.def(
         "mc2_domain_cpu_v1_read_center_debug",
         [](std::uint64_t handle) {
             auto* domain = require_domain(handle);
@@ -1726,6 +1775,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["whole_domain_self_edge_count"] = domain->whole_domain_self_edge_count();
             result["whole_domain_self_triangle_count"] = domain->whole_domain_self_triangle_count();
             result["whole_domain_self_step_count"] = domain->whole_domain_self_step_count();
+            result["whole_domain_self_invalidation_count"] =
+                domain->whole_domain_self_invalidation_count();
             result["whole_domain_self_last_contact_count"] =
                 domain->whole_domain_self_last_contact_count();
             result["whole_domain_self_last_candidate_count"] =
@@ -1786,6 +1837,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["center_shift_count"] = domain->center_shift_count();
             result["center_step_count"] = domain->center_step_count();
+            result["task_reference_teleport_flags"] = owned_array_1d<std::uint32_t>(
+                std::vector<std::uint32_t>(domain->task_reference_teleport_flags())
+            );
+            result["task_reference_teleport_count"] =
+                domain->task_reference_teleport_count();
             return result;
         },
         nb::arg("handle"),

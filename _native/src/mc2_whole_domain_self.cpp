@@ -1559,6 +1559,28 @@ void Mc2WholeDomainSelfEngine::request_debug_capture() {
     impl_->debug_snapshot_ready = false;
 }
 
+void Mc2WholeDomainSelfEngine::invalidate_history() noexcept {
+    auto& state = impl_->state;
+    state.self_primitive_dynamic_ready = false;
+    state.self_grid_dynamic_ready = false;
+    state.self_candidate_ready = false;
+    state.self_contact_ready = false;
+    state.state_positions.clear();
+    state.velocity_reference_positions.clear();
+    state.self_primitive_aabb_min.clear();
+    state.self_primitive_aabb_max.clear();
+    state.self_primitive_grids.assign(
+        state.self_primitive_flags.size() * 3, kSelfIgnoreGrid
+    );
+    state.self_grid_hashes.assign(state.self_primitive_flags.size(), 0);
+    state.self_grid_starts.assign(state.self_primitive_flags.size(), 0);
+    state.self_grid_counts.assign(state.self_primitive_flags.size(), 0);
+    state.self_contact_candidates.clear();
+    state.self_intersect_records.clear();
+    clear_self_collision_contacts(state);
+    clear_debug_capture();
+}
+
 void Mc2WholeDomainSelfEngine::clear_debug_capture() noexcept {
     impl_->state.self_contact_debug_requested = false;
     impl_->state.self_contact_debug_ready = false;

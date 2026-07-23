@@ -274,6 +274,16 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose the Center frame-shift slice")
         step_frame_shift(self._handle, anchor_component_local_positions)
 
+    def step_task_reference_teleport(self) -> None:
+        """Run the task-local discontinuity pass before Center frame shift."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("task-reference teleport requires update_frame first")
+        step_teleport = getattr(self._kernel, "step_task_reference_teleport", None)
+        if not callable(step_teleport):
+            raise RuntimeError("CPU kernel does not expose task-reference teleport")
+        step_teleport(self._handle)
+
     def step_center(self, settings: Mapping[str, object]) -> None:
         """Evaluate one explicit native Center substep."""
         self._ensure_live()
@@ -512,6 +522,18 @@ class MC2CPUBackendDomainV1:
         read_state = getattr(self._kernel, "read_center_debug_state", None)
         if not callable(read_state):
             raise RuntimeError("CPU kernel does not expose Center debug state")
+        return read_state(self._handle)
+
+    def read_task_reference_teleport_state(self) -> Mapping[str, object]:
+        """Read the explicit task-reference Teleport observation slice."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("task-reference Teleport debug requires update_frame first")
+        read_state = getattr(
+            self._kernel, "read_task_reference_teleport_state", None
+        )
+        if not callable(read_state):
+            raise RuntimeError("CPU kernel does not expose task-reference Teleport debug")
         return read_state(self._handle)
 
     def inspect(self) -> dict:

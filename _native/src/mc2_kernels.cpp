@@ -764,6 +764,182 @@ bool apply_particle_frame_shift_mc2(Mc2ParticleFrameShiftView& view) {
     return true;
 }
 
+bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view) {
+    if (view.particle_count <= 0 || view.partition_count <= 0 ||
+        view.positions == nullptr || view.rotations == nullptr ||
+        view.velocity_positions == nullptr || view.velocities == nullptr ||
+        view.real_velocities == nullptr || view.previous_animated_positions == nullptr ||
+        view.previous_animated_rotations == nullptr || view.animated_positions == nullptr ||
+        view.animated_rotations == nullptr || view.particle_partition_index == nullptr ||
+        view.particle_attribute_flags == nullptr || view.old_partition_positions == nullptr ||
+        view.old_partition_rotations == nullptr || view.partition_positions == nullptr ||
+        view.partition_rotations == nullptr || view.initial_partition_scales == nullptr ||
+        view.partition_scales == nullptr || view.teleport_modes == nullptr ||
+        view.teleport_distances == nullptr || view.teleport_rotations == nullptr ||
+        view.output_flags == nullptr || view.output_reference_indices == nullptr ||
+        view.output_old_reference_positions == nullptr ||
+        view.output_reference_positions == nullptr ||
+        view.output_measured_distances == nullptr ||
+        view.output_distance_thresholds == nullptr ||
+        view.output_measured_rotation_degrees == nullptr) {
+        return false;
+    }
+    constexpr float kRadiansToDegrees = 57.295779513082320876f;
+    std::vector<float> delta_rotations(
+        static_cast<std::size_t>(view.partition_count) * 4, 0.0f
+    );
+    std::fill_n(view.output_flags, view.partition_count, 0u);
+    std::fill_n(view.output_reference_indices, view.partition_count, -1);
+    std::fill_n(view.output_old_reference_positions, view.partition_count * 3, 0.0f);
+    std::fill_n(view.output_reference_positions, view.partition_count * 3, 0.0f);
+    std::fill_n(view.output_measured_distances, view.partition_count, 0.0f);
+    std::fill_n(view.output_distance_thresholds, view.partition_count, 0.0f);
+    std::fill_n(view.output_measured_rotation_degrees, view.partition_count, 0.0f);
+    for (std::int64_t particle = 0; particle < view.particle_count; ++particle) {
+        const auto partition = static_cast<std::int64_t>(
+            view.particle_partition_index[particle]
+        );
+        if (partition < 0 || partition >= view.partition_count) return false;
+        if (view.output_reference_indices[partition] < 0 &&
+            (view.particle_attribute_flags[particle] & view.fixed_attribute_mask) != 0u) {
+            view.output_reference_indices[partition] = static_cast<std::int32_t>(particle);
+        }
+    }
+    for (std::int64_t partition = 0; partition < view.partition_count; ++partition) {
+        const auto reference = view.output_reference_indices[partition];
+        const auto p3 = partition * 3;
+        const auto p4 = partition * 4;
+        const float initial_scale_length = length3(
+            view.initial_partition_scales[p3 + 0],
+            view.initial_partition_scales[p3 + 1],
+            view.initial_partition_scales[p3 + 2]
+        );
+        const float scale_length = length3(
+            view.partition_scales[p3 + 0],
+            view.partition_scales[p3 + 1],
+            view.partition_scales[p3 + 2]
+        );
+        const float scale_ratio = initial_scale_length > kMc2Epsilon
+            ? scale_length / initial_scale_length : 1.0f;
+        view.output_distance_thresholds[partition] =
+            std::max(view.teleport_distances[partition] * std::fabs(scale_ratio), 0.0f);
+        if (reference < 0) continue;
+        const auto r3 = static_cast<std::int64_t>(reference) * 3;
+        const auto r4 = static_cast<std::int64_t>(reference) * 4;
+        const float* old_reference = view.previous_animated_positions + r3;
+        const float* current_reference = view.animated_positions + r3;
+        std::copy_n(old_reference, 3, view.output_old_reference_positions + p3);
+        const float component_delta[3] = {
+            view.partition_positions[p3 + 0] - view.old_partition_positions[p3 + 0],
+            view.partition_positions[p3 + 1] - view.old_partition_positions[p3 + 1],
+            view.partition_positions[p3 + 2] - view.old_partition_positions[p3 + 2],
+        };
+        const float neutral_reference[3] = {
+            current_reference[0] - component_delta[0],
+            current_reference[1] - component_delta[1],
+            current_reference[2] - component_delta[2],
+        };
+        std::copy_n(neutral_reference, 3, view.output_reference_positions + p3);
+        const float raw_distance = length3(
+            current_reference[0] - old_reference[0],
+            current_reference[1] - old_reference[1],
+            current_reference[2] - old_reference[2]
+        );
+        const float measured_distance = raw_distance > kMc2Epsilon ? length3(
+            neutral_reference[0] - old_reference[0],
+            neutral_reference[1] - old_reference[1],
+            neutral_reference[2] - old_reference[2]
+        ) : 0.0f;
+        float old_component_inverse[4];
+        float component_inverse[4];
+        float old_local_rotation[4];
+        float local_rotation[4];
+        float old_local_inverse[4];
+        quat_inverse(view.old_partition_rotations + p4, old_component_inverse);
+        quat_inverse(view.partition_rotations + p4, component_inverse);
+        quat_multiply(old_component_inverse, view.previous_animated_rotations + r4, old_local_rotation);
+        quat_multiply(component_inverse, view.animated_rotations + r4, local_rotation);
+        quat_inverse(old_local_rotation, old_local_inverse);
+        quat_multiply(
+            local_rotation,
+            old_local_inverse,
+            delta_rotations.data() + p4
+        );
+        const float measured_rotation = 2.0f * std::acos(clamp_float(
+            quat_dot_abs(
+                old_local_rotation,
+                local_rotation
+            ),
+            0.0f,
+            1.0f
+        )) * kRadiansToDegrees;
+        view.output_measured_distances[partition] = measured_distance;
+        view.output_measured_rotation_degrees[partition] = measured_rotation;
+        const bool triggered = view.teleport_modes[partition] != 0 && (
+            (measured_distance > kMc2Epsilon &&
+             measured_distance >= view.output_distance_thresholds[partition]) ||
+            (measured_rotation > kMc2Epsilon &&
+             measured_rotation >= std::max(view.teleport_rotations[partition], 0.0f))
+        );
+        if (!triggered) continue;
+        view.output_flags[partition] = 1u |
+            (view.teleport_modes[partition] == 2 ? 2u : 4u);
+    }
+    for (std::int64_t particle = 0; particle < view.particle_count; ++particle) {
+        const auto partition = static_cast<std::int64_t>(
+            view.particle_partition_index[particle]
+        );
+        const auto flags = view.output_flags[partition];
+        if ((flags & 1u) == 0u) continue;
+        const auto p3 = partition * 3;
+        const auto p4 = partition * 4;
+        const auto v3 = particle * 3;
+        const auto v4 = particle * 4;
+        if ((flags & 4u) != 0u) {
+            std::copy_n(view.animated_positions + v3, 3, view.positions + v3);
+            std::copy_n(view.animated_positions + v3, 3, view.velocity_positions + v3);
+            std::fill_n(view.velocities + v3, 3, 0.0f);
+            std::fill_n(view.real_velocities + v3, 3, 0.0f);
+            std::copy_n(view.animated_rotations + v4, 4, view.rotations + v4);
+            continue;
+        }
+        const auto transform_position = [&](float* values) {
+            float rotated[3];
+            quat_rotate(
+                delta_rotations.data() + p4,
+                values[v3 + 0] - view.output_old_reference_positions[p3 + 0],
+                values[v3 + 1] - view.output_old_reference_positions[p3 + 1],
+                values[v3 + 2] - view.output_old_reference_positions[p3 + 2],
+                rotated[0], rotated[1], rotated[2]
+            );
+            values[v3 + 0] = view.output_reference_positions[p3 + 0] + rotated[0];
+            values[v3 + 1] = view.output_reference_positions[p3 + 1] + rotated[1];
+            values[v3 + 2] = view.output_reference_positions[p3 + 2] + rotated[2];
+        };
+        transform_position(view.positions);
+        transform_position(view.velocity_positions);
+        const auto rotate_vector = [&](float* values) {
+            float rotated[3];
+            quat_rotate(
+                delta_rotations.data() + p4,
+                values[v3 + 0], values[v3 + 1], values[v3 + 2],
+                rotated[0], rotated[1], rotated[2]
+            );
+            std::copy_n(rotated, 3, values + v3);
+        };
+        rotate_vector(view.velocities);
+        rotate_vector(view.real_velocities);
+        float transformed_rotation[4];
+        quat_multiply(
+            delta_rotations.data() + p4,
+            view.rotations + v4,
+            transformed_rotation
+        );
+        std::copy_n(transformed_rotation, 4, view.rotations + v4);
+    }
+    return true;
+}
+
 void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
     if (view.vertex_count <= 0 || view.neighbor_count <= 0 || view.positions == nullptr ||
         view.inv_masses == nullptr || view.starts == nullptr || view.counts == nullptr ||

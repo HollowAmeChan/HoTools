@@ -154,6 +154,35 @@ def _requests(
     return requests
 
 
+def _partition_scope_requests(world, meshes):
+    task_values = {
+        "world_inertia": 0.0,
+        "movement_inertia_smoothing": 0.0,
+        "movement_speed_limit": -1.0,
+        "rotation_speed_limit": -1.0,
+        "teleport_mode": 2,
+        "teleport_distance": 0.5,
+        "teleport_rotation": 30.0,
+    }
+    entries, count = nodes.physicsMC2MeshObject(list(meshes))
+    assert count == 2 and len(entries) == 2
+    entries, count = nodes.physicsMC2MeshOverride(
+        entries,
+        profile=_profile(spring=False),
+        **task_values,
+    )
+    assert count == 2
+    mesh_requests, report = nodes.physicsMC2MeshCollector(
+        world,
+        entries,
+        include_implicit=False,
+    )
+    assert len(mesh_requests) == 1 and report
+
+    assert mesh_requests[0].setup_type == "mesh_cloth"
+    return tuple(mesh_requests)
+
+
 def _slot_ids(requests):
     return tuple(
         product_slot.make_mc2_product_slot_id(
@@ -211,6 +240,8 @@ def _run_world_case(
     zero_substep_frame: int | None = None,
     source_scales=None,
     debug_layer_probe: bool = False,
+    task_reference_probe: bool = False,
+    task_reference_jump: bool = False,
 ):
     world = world_types.PhysicsWorldCache()
     generation = 1300 + run_index
@@ -240,6 +271,15 @@ def _run_world_case(
             "update_count": [],
             "depths": [],
             "move_mask": [],
+            "task_flags": [],
+            "task_reference_index": [],
+            "task_expected_reference_index": [],
+            "task_old_reference_position": [],
+            "task_reference_position": [],
+            "task_measured_distance": [],
+            "task_distance_threshold": [],
+            "task_teleport_count": [],
+            "task_self_invalidation_count": [],
         }
         for setup in _SETUPS
     }
@@ -320,6 +360,9 @@ def _run_world_case(
                 source.rotation_euler.z = math.radians(
                     component_rotation_degrees
                 )
+            if task_reference_jump and frame == 301:
+                for armature in (cloth, spring):
+                    armature.pose.bones["Parent"].location.x += 2.0
             if driver is not None:
                 driver.location.x = component_x
                 driver.rotation_mode = "XYZ"
@@ -348,7 +391,7 @@ def _run_world_case(
                 assert all(
                     slot.data["last_sync"].native_domain_reused
                     for slot in slots
-                )
+                ), (frame, tuple(slot.data["last_sync"].action for slot in slots))
 
             for setup, slot, owner in zip(_SETUPS, slots, current_owners):
                 assert "native_context" not in slot.data
@@ -451,6 +494,50 @@ def _run_world_case(
                     values["step_count"].append(
                         float(kernel["center_step_count"])
                     )
+                    if task_reference_probe:
+                        task_state = owner.read_task_reference_teleport_state()
+                        attributes = np.asarray(
+                            owner.compiled.program.particle_attribute_flags,
+                            dtype=np.uint32,
+                        ).reshape((-1,))
+                        fixed = np.flatnonzero((attributes & 1) != 0)
+                        expected_reference = int(fixed[0]) if fixed.size else -1
+                        assert int(np.asarray(
+                            task_state["reference_indices"], dtype=np.int32
+                        ).reshape((-1,))[0]) == expected_reference
+                        values["task_flags"].append(int(np.asarray(
+                            task_state["flags"], dtype=np.uint32
+                        ).reshape((-1,))[0]))
+                        values["task_reference_index"].append(int(np.asarray(
+                            task_state["reference_indices"], dtype=np.int32
+                        ).reshape((-1,))[0]))
+                        fixed_indices = np.flatnonzero(
+                            np.asarray(
+                                owner.compiled.program.particle_attribute_flags,
+                                dtype=np.uint32,
+                            ) & np.uint32(0x01)
+                        )
+                        values["task_expected_reference_index"].append(
+                            int(fixed_indices[0]) if fixed_indices.size else -1
+                        )
+                        values["task_old_reference_position"].append(np.asarray(
+                            task_state["old_reference_positions"], dtype=np.float32
+                        ).reshape((-1, 3))[0].copy())
+                        values["task_reference_position"].append(np.asarray(
+                            task_state["reference_positions"], dtype=np.float32
+                        ).reshape((-1, 3))[0].copy())
+                        values["task_measured_distance"].append(float(np.asarray(
+                            task_state["measured_distances"], dtype=np.float32
+                        ).reshape((-1,))[0]))
+                        values["task_distance_threshold"].append(float(np.asarray(
+                            task_state["distance_thresholds"], dtype=np.float32
+                        ).reshape((-1,))[0]))
+                        values["task_teleport_count"].append(
+                            int(task_state["teleport_count"])
+                        )
+                        values["task_self_invalidation_count"].append(
+                            int(task_state["self_history_invalidation_count"])
+                        )
                     if read_center_debug:
                         debug_state = owner.read_center_debug_state()
                         inertia_vectors = np.asarray(
@@ -944,6 +1031,8 @@ def center_teleport_controls():
                 (1.5, 1.5, 1.5),
             ),
             debug_layer_probe=True,
+            task_reference_probe=True,
+            task_reference_jump=False,
         )
 
     first = {mode: run(mode - 1, mode) for mode in (1, 2)}
@@ -955,6 +1044,13 @@ def center_teleport_controls():
             for field in left:
                 np.testing.assert_array_equal(left[field], right[field])
             flags = np.asarray(left["teleport_flags"], dtype=np.uint32)
+            task_flags = np.asarray(left["task_flags"], dtype=np.uint32)
+            assert not np.any(task_flags), (
+                mode,
+                setup,
+                task_flags,
+                np.asarray(left["task_measured_distance"], dtype=np.float32),
+            )
             assert np.any((flags & 1) != 0), (mode, setup, flags)
             if mode == 1:
                 assert np.all((flags & 2) == 0)
@@ -1075,6 +1171,321 @@ def center_stabilization_controls():
     print("PASS 产品Center stabilization 参数效果与Reset后轨迹确定性")
 
 
+def _run_task_reference_partition_scope(run_index: int):
+    world = world_types.PhysicsWorldCache()
+    generation = 1500 + run_index
+    meshes = []
+    proxies = []
+    digest = hashlib.sha256()
+    captures = {"mesh_cloth": {}}
+    owners = None
+    try:
+        mixed_soak.physics_blender.register()
+        for source_index in range(2):
+            mesh, proxy = mixed_soak._mesh_object(
+                f"MC2TaskPartitionMesh{run_index}_{source_index}"
+            )
+            meshes.append(mesh)
+            proxies.append(proxy)
+        requests = _partition_scope_requests(world, meshes)
+        slot_ids = _slot_ids(requests)
+
+        for frame in range(1, 601):
+            if frame == 301:
+                for vertex in proxies[0].data.vertices:
+                    vertex.co.x += 2.0
+                proxies[0].data.update()
+            bpy.context.view_layer.update()
+
+            bone_soak._set_frame(world, frame, generation)
+            world.frame_context.raw_dt = 1.0 / _FRAME_RATE
+            world.frame_context.dt = 1.0 / _FRAME_RATE
+            if frame == 301:
+                world.frame_context.time_scale = 0.0
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                list(requests),
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slots = tuple(world.solver_slots[slot_id] for slot_id in slot_ids)
+            current_owners = tuple(slot.data["owner"] for slot in slots)
+            if owners is None:
+                owners = current_owners
+            else:
+                assert current_owners == owners
+                assert all(
+                    slot.data["last_sync"].native_domain_reused
+                    for slot in slots
+                ), (frame, tuple(slot.data["last_sync"].action for slot in slots))
+
+            for setup, slot, owner in zip(("mesh_cloth",), slots, current_owners):
+                program = owner.compiled.program
+                assert program.partition_count == 2, (
+                    setup, program.partition_count, program.partition_ids
+                )
+                output = owner.read_output()
+                assert output.frame == frame
+                assert np.all(np.isfinite(output.world_positions))
+                digest.update(setup.encode("ascii"))
+                digest.update(output.world_positions.tobytes())
+                digest.update(output.world_rotations_xyzw.tobytes())
+                if frame in (300, 301, 302):
+                    dynamics = owner.read_debug_state()
+                    task_state = owner.read_task_reference_teleport_state()
+                    captures[setup][frame] = {
+                        "positions": np.array(
+                            output.world_positions, dtype=np.float32, copy=True
+                        ),
+                        "velocities": np.array(
+                            dynamics["velocities"], dtype=np.float32, copy=True
+                        ),
+                        "real_velocities": np.array(
+                            dynamics["real_velocities"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "velocity_reference_positions": np.array(
+                            dynamics["velocity_reference_positions"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "flags": np.array(
+                            task_state["flags"], dtype=np.uint32, copy=True
+                        ),
+                        "reference_indices": np.array(
+                            task_state["reference_indices"],
+                            dtype=np.int32,
+                            copy=True,
+                        ),
+                        "old_reference_positions": np.array(
+                            task_state["old_reference_positions"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "reference_positions": np.array(
+                            task_state["reference_positions"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "measured_distances": np.array(
+                            task_state["measured_distances"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "distance_thresholds": np.array(
+                            task_state["distance_thresholds"],
+                            dtype=np.float32,
+                            copy=True,
+                        ),
+                        "particle_partitions": np.array(
+                            program.particle_partition_index,
+                            dtype=np.uint32,
+                            copy=True,
+                        ),
+                        "particle_attributes": np.array(
+                            program.particle_attribute_flags,
+                            dtype=np.uint32,
+                            copy=True,
+                        ),
+                        "teleport_count": int(task_state["teleport_count"]),
+                        "self_invalidation_count": int(
+                            task_state["self_history_invalidation_count"]
+                        ),
+                        "update_count": int(
+                            slot.data["scheduled_frame"].schedule.update_count
+                        ),
+                    }
+
+            assert writeback.writeback_gn_attributes(world) == 2
+            bpy.context.view_layer.update()
+        return captures, digest.hexdigest()
+    finally:
+        world.omni_cache_dispose("task_reference_partition_scope")
+        for mesh in meshes:
+            mixed_soak._remove_mesh(mesh)
+        for proxy in proxies:
+            mixed_soak._remove_mesh(proxy)
+        if mixed_soak.physics_blender.is_registered():
+            mixed_soak.physics_blender.unregister()
+
+
+def task_reference_partition_scope_controls():
+    first = _run_task_reference_partition_scope(0)
+    second = _run_task_reference_partition_scope(1)
+    assert first[1] == second[1]
+    for setup in ("mesh_cloth",):
+        left = first[0][setup]
+        right = second[0][setup]
+        for frame in (300, 301, 302):
+            for field in left[frame]:
+                np.testing.assert_array_equal(
+                    left[frame][field], right[frame][field]
+                )
+
+        previous = left[300]
+        event = left[301]
+        following = left[302]
+        np.testing.assert_array_equal(event["flags"], (3, 0))
+        np.testing.assert_array_equal(following["flags"], (0, 0))
+        assert event["teleport_count"] == 1
+        assert event["self_invalidation_count"] == 1
+        assert event["update_count"] == 0
+        expected_references = []
+        for partition_index in range(2):
+            indices = np.flatnonzero(
+                (event["particle_partitions"] == partition_index)
+                & ((event["particle_attributes"] & 1) != 0)
+            )
+            assert indices.size > 0
+            expected_references.append(int(indices[0]))
+        np.testing.assert_array_equal(
+            event["reference_indices"], expected_references
+        )
+        assert event["measured_distances"][0] >= (
+            event["distance_thresholds"][0] - 1.0e-6
+        )
+        assert event["measured_distances"][1] < event["distance_thresholds"][1]
+
+        particle_partitions = event["particle_partitions"]
+        moved = particle_partitions == 0
+        untouched = particle_partitions == 1
+        delta = (
+            event["reference_positions"][0]
+            - event["old_reference_positions"][0]
+        )
+        np.testing.assert_allclose(
+            event["positions"][moved],
+            previous["positions"][moved] + delta,
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_array_equal(
+            event["positions"][untouched], previous["positions"][untouched]
+        )
+        np.testing.assert_array_equal(
+            event["velocities"], previous["velocities"]
+        )
+        np.testing.assert_array_equal(
+            event["real_velocities"], previous["real_velocities"]
+        )
+        np.testing.assert_allclose(
+            event["velocity_reference_positions"][moved],
+            previous["velocity_reference_positions"][moved] + delta,
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_array_equal(
+            event["velocity_reference_positions"][untouched],
+            previous["velocity_reference_positions"][untouched],
+        )
+    print(
+        "PASS 产品 task-reference Teleport 双分区隔离："
+        "MeshCloth two-source x 2 run x 600 frame"
+    )
+
+
+def task_reference_teleport_controls():
+    def run(run_index, mode):
+        return _run_world_case(
+            f"TaskReference{mode}",
+            run_index,
+            component_translation=False,
+            teleport_jump=False,
+            world_inertia=0.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+            teleport_mode=mode,
+            teleport_distance=0.5,
+            teleport_rotation=30.0,
+            read_center_debug=True,
+            capture_candidates=True,
+            task_reference_probe=True,
+            task_reference_jump=True,
+            zero_substep_frame=301,
+            source_scales=(
+                (0.75, 0.75, 0.75),
+                (0.5, 0.5, 0.5),
+                (1.5, 1.5, 1.5),
+            ),
+        )
+
+    first = {mode: run(mode - 1, mode) for mode in (1, 2)}
+    second = {mode: run(mode + 9, mode) for mode in (1, 2)}
+    event_index = 301 - 2
+    frame_index = 301 - 1
+    for mode in (1, 2):
+        for setup in _SETUPS:
+            left = first[mode][0][setup]
+            right = second[mode][0][setup]
+            for field in left:
+                np.testing.assert_array_equal(left[field], right[field])
+            flags = np.asarray(left["task_flags"], dtype=np.uint32)
+            assert flags.shape == (599,)
+            np.testing.assert_array_equal(
+                left["task_reference_index"],
+                left["task_expected_reference_index"],
+            )
+            if setup == "mesh_cloth":
+                assert not np.any(flags)
+                np.testing.assert_array_equal(
+                    left["candidate_positions"][frame_index],
+                    left["candidate_positions"][frame_index - 1],
+                )
+                continue
+            expected_flag = 5 if mode == 1 else 3
+            assert int(flags[event_index]) == expected_flag, (
+                mode, setup, flags[event_index]
+            )
+            assert int(left["task_reference_index"][event_index]) >= 0
+            assert float(left["task_measured_distance"][event_index]) >= (
+                float(left["task_distance_threshold"][event_index]) - 1.0e-6
+            )
+            assert int(left["update_count"][frame_index]) == 0
+            assert int(left["task_teleport_count"][event_index]) == 1
+            assert int(left["task_self_invalidation_count"][event_index]) == 1
+            assert not np.any(flags[event_index + 1:])
+            if mode == 1:
+                assert float(left["velocity_max"][event_index]) <= 1.0e-6
+                assert float(left["real_velocity_max"][event_index]) <= 1.0e-6
+                np.testing.assert_allclose(
+                    left["candidate_positions"][frame_index],
+                    left["animated_positions"][frame_index],
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+            else:
+                np.testing.assert_allclose(
+                    left["velocity_max"][event_index],
+                    left["velocity_max"][event_index - 1],
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+                np.testing.assert_allclose(
+                    left["real_velocity_max"][event_index],
+                    left["real_velocity_max"][event_index - 1],
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+                delta = (
+                    left["task_reference_position"][event_index]
+                    - left["task_old_reference_position"][event_index]
+                )
+                np.testing.assert_allclose(
+                    left["candidate_positions"][frame_index],
+                    left["candidate_positions"][frame_index - 1] + delta,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+    print(
+        "PASS 产品 task-reference Teleport："
+        "BoneCloth/BoneSpring x Reset/Keep x 2 run x 600 frame"
+    )
+
+
 if __name__ == "__main__":
     if os.environ.get("MC2_CENTER_DEPTH_ONLY"):
         center_depth_controls()
@@ -1086,6 +1497,10 @@ if __name__ == "__main__":
         center_teleport_controls()
     elif os.environ.get("MC2_CENTER_STABILIZATION_ONLY"):
         center_stabilization_controls()
+    elif os.environ.get("MC2_TASK_REFERENCE_ONLY"):
+        task_reference_teleport_controls()
+    elif os.environ.get("MC2_TASK_PARTITION_SCOPE_ONLY"):
+        task_reference_partition_scope_controls()
     else:
         center_world_controls()
         center_local_controls()

@@ -277,6 +277,7 @@ public:
         const float* teleport_distances,
         const float* teleport_rotations
     );
+    void step_task_reference_teleport();
     void step_center_frame_shift(const float* anchor_component_local_positions);
     void step_center(
         float dt,
@@ -344,6 +345,7 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& velocity_positions() const noexcept { return velocity_positions_; }
     const std::vector<float>& state_velocities() const noexcept { return state_velocities_; }
     const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
     const std::vector<float>& partition_world_positions() const noexcept {
@@ -399,6 +401,33 @@ public:
     }
     const std::vector<std::uint32_t>& center_shift_teleport_flags() const noexcept {
         return center_shift_teleport_flags_;
+    }
+    const std::vector<std::uint32_t>& task_reference_teleport_flags() const noexcept {
+        return task_reference_teleport_flags_;
+    }
+    const std::vector<std::int32_t>& task_reference_indices() const noexcept {
+        return task_reference_indices_;
+    }
+    const std::vector<float>& task_reference_old_positions() const noexcept {
+        return task_reference_old_positions_;
+    }
+    const std::vector<float>& task_reference_positions() const noexcept {
+        return task_reference_positions_;
+    }
+    const std::vector<float>& task_reference_measured_distances() const noexcept {
+        return task_reference_measured_distances_;
+    }
+    const std::vector<float>& task_reference_distance_thresholds() const noexcept {
+        return task_reference_distance_thresholds_;
+    }
+    const std::vector<float>& task_reference_measured_rotation_degrees() const noexcept {
+        return task_reference_measured_rotation_degrees_;
+    }
+    std::int64_t task_reference_teleport_count() const noexcept {
+        return task_reference_teleport_count_;
+    }
+    std::int64_t whole_domain_self_invalidation_count() const noexcept {
+        return whole_domain_self_invalidation_count_;
     }
     const std::vector<float>& center_debug_raw_component_deltas() const noexcept {
         return center_debug_raw_component_deltas_;
@@ -563,6 +592,8 @@ private:
     std::vector<float> partition_initial_local_gravity_directions_;
     std::vector<float> animated_base_world_positions_;
     std::vector<float> animated_base_world_rotations_;
+    std::vector<float> previous_animated_base_world_positions_;
+    std::vector<float> previous_animated_base_world_rotations_;
     std::vector<float> world_positions_;
     std::vector<float> world_rotations_;
     std::vector<float> world_normals_;
@@ -614,6 +645,15 @@ private:
     std::vector<float> center_shift_now_rotations_;
     std::vector<float> center_shift_smoothing_velocities_;
     std::vector<std::uint32_t> center_shift_teleport_flags_;
+    std::vector<std::uint32_t> task_reference_teleport_flags_;
+    std::vector<std::int32_t> task_reference_indices_;
+    std::vector<float> task_reference_old_positions_;
+    std::vector<float> task_reference_positions_;
+    std::vector<float> task_reference_measured_distances_;
+    std::vector<float> task_reference_distance_thresholds_;
+    std::vector<float> task_reference_measured_rotation_degrees_;
+    bool task_reference_teleport_consumed_ = false;
+    std::int64_t task_reference_teleport_count_ = 0;
     std::vector<float> center_debug_raw_component_deltas_;
     std::vector<float> center_debug_anchor_shift_vectors_;
     std::vector<float> center_debug_smoothing_shift_vectors_;
@@ -751,6 +791,7 @@ private:
     std::unique_ptr<hotools::Mc2WholeDomainSelfEngine> whole_domain_self_engine_;
     bool whole_domain_self_ready_ = false;
     std::int64_t whole_domain_self_step_count_ = 0;
+    std::int64_t whole_domain_self_invalidation_count_ = 0;
     std::int64_t whole_domain_self_last_contact_count_ = 0;
     std::int64_t whole_domain_self_last_candidate_count_ = 0;
     std::int64_t frame_ = -1;

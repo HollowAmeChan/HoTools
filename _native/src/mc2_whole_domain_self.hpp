@@ -81,6 +81,7 @@ public:
     );
 
     void request_debug_capture();
+    void invalidate_history() noexcept;
     void clear_debug_capture() noexcept;
     bool debug_capture_ready() const noexcept;
     const Mc2WholeDomainSelfDebugSnapshot& debug_snapshot() const noexcept;

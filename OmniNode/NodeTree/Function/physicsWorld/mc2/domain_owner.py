@@ -275,7 +275,9 @@ class MC2FusedCPUOwnerV1:
     def apply_zero_substep_frame(self, anchor_component_local_positions) -> None:
         """Apply Center/Teleport state for a frame with no physics substep."""
 
-        self._require_domain().step_center_frame_shift(
+        domain = self._require_domain()
+        domain.step_task_reference_teleport()
+        domain.step_center_frame_shift(
             anchor_component_local_positions
         )
 
@@ -310,6 +312,11 @@ class MC2FusedCPUOwnerV1:
         """Read explicit partitioned Center/Teleport observations."""
 
         return self._require_domain().read_center_debug_state()
+
+    def read_task_reference_teleport_state(self):
+        """读取独立的 task-reference Teleport 观测结果。"""
+
+        return self._require_domain().read_task_reference_teleport_state()
 
     def inspect(self) -> dict:
         return {

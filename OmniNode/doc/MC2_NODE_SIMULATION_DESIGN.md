@@ -1199,3 +1199,8 @@ E3 已关闭：单 source DomainV1 的完整 pass 顺序、Center 跨帧 normal/
 - raw snapshot进入world-owned cache后数组只读。旧final-proxy会原位优化triangle direction，因此可写工作数组必须在该native pass边界显式复制，不能污染缓存快照。
 - MC2只忽略“新GN receipt + 下一安全批次至多一次Object/Data geometry update”。receipt每帧每target只消费一次；若authoring与GN写回被Blender合并为同一批，handler无法严格区分，低频/强制全扫审计是明确fallback，不能增加猜测规则。
 - Mesh坐标、拓扑、UV、Pin/radius、Object Data替换、纯transform、连续写回、undo/load epoch、cache prune和audit mismatch均有固定证据。1600粒子、120稳定样本的static observation mean/p95/max为`0.112/0.171/0.267 ms`；Bone未进入该缓存。
+# 当前执行补充（2026-07-23）
+
+E7-CPU 的 Teleport 迁移现已完成 task-reference 产品证据：统一执行器在 Center 前调用 DomainV1 task pass，Reset/Keep、速度参考、whole-domain self 失效和零 substep 都由 native owner 持有。三 setup 单 source 以及 MeshCloth 两 source partition scope 已在 Blender 5.2 / Python 3.13 双跑 600 帧通过；`particle_subset_scope_exact` 只对 MeshCloth 多 source partition 宣称，BoneCloth/BoneSpring 仍遵守一个 Armature 一个统一域的包装限制。
+
+在删除旧非统一 V0 owner 前，新增的强制顺序是：先补齐 BoneCloth/BoneSpring plan 与逐项 oracle 归属，再执行 E7-A 可达性审计，最后删除旧 hidden task、普通 aggregate、V0 binding 和兼容桥并进入 E7-S 简化。4.5 / Python 3.11 在删除收尾前冻结；P4 CPU 并发不实施；P6 只沉淀数据、pass、buffer 和 IO 合同；E6 GPU 保持未来独立里程碑。

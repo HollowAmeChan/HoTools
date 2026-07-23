@@ -56,6 +56,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_center",
     "mc2_domain_cpu_v1_step_center_inertia",
     "mc2_domain_cpu_v1_configure_center_frame_shift",
+    "mc2_domain_cpu_v1_step_task_reference_teleport",
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
@@ -70,6 +71,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_read_constraint_debug",
     "mc2_domain_cpu_v1_clear_constraint_debug",
     "mc2_domain_cpu_v1_read_center_debug",
+    "mc2_domain_cpu_v1_read_task_reference_teleport",
     "mc2_domain_cpu_v1_inspect",
     "mc2_domain_cpu_v1_dispose",
     "mc2_center_frame_shift_v1_evaluate",
@@ -823,6 +825,10 @@ class MC2NativeCPUKernelV1:
         values.flags.writeable = False
         self._module.mc2_domain_cpu_v1_step_center_frame_shift(key, values)
 
+    def step_task_reference_teleport(self, handle) -> None:
+        key = self._require_handle(handle)
+        self._module.mc2_domain_cpu_v1_step_task_reference_teleport(key)
+
     def step_reference_slices(self, handle, settings: Mapping[str, object]) -> None:
         """Run the currently landed native reference pass prefix in fixed order."""
         required = {
@@ -840,6 +846,7 @@ class MC2NativeCPUKernelV1:
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
         has_angle = program.baseline_parent_indices is not None
+        self.step_task_reference_teleport(key)
         self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": settings["dt"],
@@ -887,6 +894,7 @@ class MC2NativeCPUKernelV1:
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
         has_angle = program.baseline_parent_indices is not None
+        self.step_task_reference_teleport(key)
         self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
@@ -996,6 +1004,7 @@ class MC2NativeCPUKernelV1:
         has_angle = program.baseline_parent_indices is not None
         # Keep the same explicit structural prefix as step_reference_pipeline,
         # then insert V0 collision passes before Distance B and self after Motion.
+        self.step_task_reference_teleport(key)
         self.step_center_frame_shift(key, structural["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": structural["dt"], "frame_interpolation": structural["frame_interpolation"],
@@ -1127,6 +1136,7 @@ class MC2NativeCPUKernelV1:
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
         has_angle = program.baseline_parent_indices is not None
 
+        self.step_task_reference_teleport(key)
         self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
         self.step_center(key, {
             "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
@@ -1281,6 +1291,9 @@ class MC2NativeCPUKernelV1:
         raw = self._module.mc2_domain_cpu_v1_read_dynamics_debug(key)
         return {
             "velocities": np.asarray(raw["velocities"], dtype=np.float32),
+            "velocity_reference_positions": np.asarray(
+                raw["velocity_reference_positions"], dtype=np.float32
+            ),
             "real_velocities": np.asarray(raw["real_velocities"], dtype=np.float32),
             "world_normals": np.asarray(raw["world_normals"], dtype=np.float32),
         }
@@ -1464,6 +1477,10 @@ class MC2NativeCPUKernelV1:
         """Read the native partitioned Center/Teleport observation slice."""
         key = self._require_handle(handle)
         return dict(self._module.mc2_domain_cpu_v1_read_center_debug(key))
+
+    def read_task_reference_teleport_state(self, handle) -> dict:
+        key = self._require_handle(handle)
+        return dict(self._module.mc2_domain_cpu_v1_read_task_reference_teleport(key))
 
     def dispose(self, handle) -> None:
         key = int(handle or 0)

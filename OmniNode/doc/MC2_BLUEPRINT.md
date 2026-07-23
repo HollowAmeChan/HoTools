@@ -917,3 +917,12 @@ Teleport 的正 uniform scale 和调试层隔离现已由产品 runner 直接覆
 12. 修改共享context布局后，首次`311 native`是否触发单目标重建、第二次是否恢复增量。
 13. 自动架构审计是否仍为全零违规；新增合法单调用边界是否显式分类。
 14. 更新本文中的稳定事实；逐次修复和临时数字只由Git/benchmark输出保存。
+# 当前进展补充（2026-07-23，Python 3.13 / Blender 5.2）
+
+本轮已完成统一 DomainV1 的 task-reference Teleport 产品收口。native CPU pass 现在在 Center 之前执行，按 partition 选择第一个 Fixed reference；Reset 直接回到当前动画姿态并清零 state/real velocity，Keep 搬运完整 frame pose delta、state velocity 和 velocity-reference。任务事务只在真实触发时清理对应 partition 的碰撞/摩擦状态，并对 whole-domain self history 做一次失效；同一帧重复调用不会重复应用。
+
+产品验收分为两条证据：三种 setup 的单 source BoneCloth/BoneSpring/三 setup MeshCloth Reset/Keep 600 帧双跑；以及 MeshCloth 两个 source 合成一个 `partition_count=2` 的 product domain，在零 substep 帧只移动第 0 分区的 BasePose proxy，逐项证明 flags、reference、位置、state/real velocity、velocity-reference 和第 1 分区隔离。Mesh source 必须通过 BasePose proxy 产生帧姿态；直接修改 source mesh 会触发静态域替换，不属于 Teleport 输入。
+
+BoneCloth/BoneSpring 的产品包装合同仍是“一个 Armature 一个统一域”，同 Armature 的多链输入由包装层收敛，跨 Armature 才产生可观察的多个 request；不得把这个限制误标为 Mesh 的多 source partition 能力。后续 E7-CPU 删除前仍需完成 BoneCloth/BoneSpring plan 的逐项 oracle 归属，再进行旧 owner、hidden task、普通 aggregate 和 V0 binding 的删除审计。
+
+验证只使用 Blender 5.2 的 `--factory-startup`，runner 会清理默认备份模块并打印当前源码与 `_Lib/py313` native 路径。Blender 4.5 / Python 3.11 从本轮起冻结，直到旧代码删除收尾；P4 CPU 并发不实施，E6 GPU 仍是未来独立里程碑。

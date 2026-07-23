@@ -125,6 +125,7 @@ class _Kernel:
         self.created = []
         self.disposed = []
         self.frames = []
+        self.zero_frame_passes = []
         self.frame_shifts = []
         self.poses = []
         self.full_steps = []
@@ -168,7 +169,10 @@ class _Kernel:
         if self.fail_update:
             raise RuntimeError("injected frame update failure")
         self.frames.append((handle, frame))
+    def step_task_reference_teleport(self, handle):
+        self.zero_frame_passes.append(("task_reference_teleport", handle))
     def step_center_frame_shift(self, handle, anchor_component_local_positions):
+        self.zero_frame_passes.append(("center_frame_shift", handle))
         self.frame_shifts.append((handle, anchor_component_local_positions))
     def prepare_step_basic_pose(self, handle, _ratios):
         self.poses.append(handle)
@@ -616,6 +620,9 @@ def test_paused_fused_frame_has_no_product_substeps():
     )
     assert slot.data["frame_complete"] is True
     assert len(kernel.frame_shifts) == 1
+    assert [name for name, _handle in kernel.zero_frame_passes] == [
+        "task_reference_teleport", "center_frame_shift",
+    ]
     np.testing.assert_array_equal(
         kernel.frame_shifts[0][1],
         scheduled.anchor_component_local_positions,

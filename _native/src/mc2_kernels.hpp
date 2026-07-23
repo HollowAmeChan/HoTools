@@ -131,6 +131,39 @@ struct Mc2ParticleFrameShiftView {
     std::int64_t partition_count = 0;
 };
 
+struct Mc2TaskReferenceTeleportView {
+    float* positions = nullptr;
+    float* rotations = nullptr;
+    float* velocity_positions = nullptr;
+    float* velocities = nullptr;
+    float* real_velocities = nullptr;
+    const float* previous_animated_positions = nullptr;
+    const float* previous_animated_rotations = nullptr;
+    const float* animated_positions = nullptr;
+    const float* animated_rotations = nullptr;
+    const std::uint32_t* particle_partition_index = nullptr;
+    const std::uint32_t* particle_attribute_flags = nullptr;
+    const float* old_partition_positions = nullptr;
+    const float* old_partition_rotations = nullptr;
+    const float* partition_positions = nullptr;
+    const float* partition_rotations = nullptr;
+    const float* initial_partition_scales = nullptr;
+    const float* partition_scales = nullptr;
+    const std::int32_t* teleport_modes = nullptr;
+    const float* teleport_distances = nullptr;
+    const float* teleport_rotations = nullptr;
+    std::uint32_t* output_flags = nullptr;
+    std::int32_t* output_reference_indices = nullptr;
+    float* output_old_reference_positions = nullptr;
+    float* output_reference_positions = nullptr;
+    float* output_measured_distances = nullptr;
+    float* output_distance_thresholds = nullptr;
+    float* output_measured_rotation_degrees = nullptr;
+    std::int64_t particle_count = 0;
+    std::int64_t partition_count = 0;
+    std::uint32_t fixed_attribute_mask = 0x01u;
+};
+
 struct Mc2CollisionView {
     float* positions = nullptr;
     const float* base_positions = nullptr;
@@ -523,6 +556,7 @@ void project_tether_mc2(Mc2TetherConstraintView& view);
 void project_motion_constraints_mc2(Mc2MotionConstraintView& view);
 void apply_post_step_mc2(Mc2PostStepView& view);
 bool apply_particle_frame_shift_mc2(Mc2ParticleFrameShiftView& view);
+bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view);
 void project_collisions_mc2(Mc2CollisionView& view);
 void project_edge_collisions_mc2(Mc2EdgeCollisionView& view);
 void project_self_collisions_mc2(Mc2SelfCollisionView& view);

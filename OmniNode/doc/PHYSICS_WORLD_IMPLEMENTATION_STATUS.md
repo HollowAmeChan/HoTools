@@ -157,3 +157,10 @@ MC2 E7-CPU Teleport 附加证据迁移（2026-07-23）：同一产品 runner 现
 - 不保留旧路径asset adapter、runtime fallback或shadow solver。
 
 具体字段和生命周期规则以公共contract与代码中的descriptor/declaration registry为准；本文只在domain边界或主要未完成项变化时更新。
+# 当前状态补充（2026-07-23）
+
+MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：task pass 先于 Center，随后才进入固定的 Center、约束、碰撞、self 和 post/history 流水线。Reset/Keep 的 native 数据合同、whole-domain self 一次失效和零 substep 行为已由 Python 3.13 native、ProductSlot、DomainOwner、E3 golden 及 Blender 5.2 产品验收锁定。
+
+产品证据已经从旧 mixed runner 进一步拆开：单 source 三 setup 负责 BoneCloth/BoneSpring 的 root reference、Reset/Keep、速度和写回；MeshCloth 两 source product runner 负责真正的 partition scope 隔离。MeshCloth source 的动画变化使用 BasePose proxy，避免静态 source fingerprint 变化造成域替换。Capability matrix 的 `particle_subset_scope_exact` 仅声明 MeshCloth 适用，Bone 包装的“一 Armature 一统一域”限制保持显式。
+
+当前门禁：Python 3.13 native `30/30`、ProductSlot `13/13`、DomainOwner `9/9`、Domain E3 golden `10/10`、capability matrix `3/3`，Blender 5.2 单 source Teleport 与 Mesh 两 source 分区隔离双跑均通过。4.5 / Python 3.11 暂停编译和验收，待 E7-CPU 删除旧 owner 前的最终收尾再恢复双 ABI；P4 不实施，E6 GPU 不提前启动。

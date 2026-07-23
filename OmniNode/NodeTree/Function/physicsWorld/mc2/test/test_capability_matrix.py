@@ -179,7 +179,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
     for invariant in (
         "task_teleport_single_reference_exact",
         "particle_keep_offset_exact",
-        "particle_keep_velocity_cleared",
+        "particle_keep_velocity_preserved",
         "particle_reset_step_history_exact",
         "particle_subset_scope_exact",
     ):
