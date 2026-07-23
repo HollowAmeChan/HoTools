@@ -184,3 +184,5 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 本轮已将 whole-domain self 的产品证据登记到 capability matrix：MeshCloth 使用三 setup mixed-output 900 帧 runner，BoneCloth 使用独立的 product self-contract runner。两条证据都锁定 finite、deterministic 与 `whole_domain_self_step_active`；BoneCloth 还直接检查 derived-radius、cloth mass 和 owner 的 self-step 计数。self capability 仍明确标记为 `gap`，因为跨任务 scope、contact cache 有界性和 radius consistency 尚未有独立产品断言，不能由旧 V0 soak 代替。
 
 当前旧 Python 测试仍有 `native_context`、`specs`、`solver` 的直接断言，主要集中在 base-pose、Bone static/frame、final-proxy、debug-draw 和 property-registry；这些断言必须逐项迁移为 DomainV1/ProductSlot/产品 readback 证据后，才能删除 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 及剩余 V0 binding/TU。产品运行时的 E7 reachability 仍为零，故下一批只处理测试所有权和独立断言，不改变 Physics World/OmniNode 边界。
+
+本轮已先处理 Bone frame 入口：旧 N3 顶层脚本改为调用公开 Bone product soak 的兼容门面，并增加静态门禁禁止回引 V0 owner。缩放、负缩放继承和剪切 pose 等原 N3 的独立输入断言没有被伪造为“已迁移”，仍列入下一批 product frame runner 的明确任务。
