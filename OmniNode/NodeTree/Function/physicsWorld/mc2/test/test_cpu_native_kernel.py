@@ -491,7 +491,23 @@ def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
         })
         output = domain.read_output().world_positions
         assert np.isfinite(output).all()
-        assert domain.inspect()["kernel"]["step_count"] == 1
+        assert domain.inspect()["kernel"]["angle_solve_count"] == 1
+        disabled = {
+            "data_path_only": True,
+            "angle_slice": True,
+            "step_basic_positions": frame.animated_base_world_positions,
+            "step_basic_rotations": frame.animated_base_world_rotations,
+            "restoration_values": np.ones(compiled.program.particle_count, dtype=np.float32),
+            "limit_values": np.ones(compiled.program.particle_count, dtype=np.float32),
+            "restoration_velocity_attenuation": 0.0,
+            "restoration_gravity_falloff": 0.0,
+            "limit_stiffness": 0.2,
+            "restoration_enabled": False,
+            "limit_enabled": False,
+        }
+        domain.step(disabled)
+        assert domain.inspect()["kernel"]["angle_solve_count"] == 1
+        assert domain.inspect()["kernel"]["step_count"] == 2
     finally:
         domain.dispose()
 
@@ -517,6 +533,7 @@ def test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose():
             "backstop_enabled": False,
         })
         assert np.isfinite(domain.read_output().world_positions).all()
+        assert domain.inspect()["kernel"]["motion_solve_count"] == 1
         assert domain.inspect()["kernel"]["step_count"] == 1
     finally:
         domain.dispose()

@@ -1407,6 +1407,7 @@ void DomainV1::step_angle(
     view.restoration_enabled = restoration_enabled;
     view.limit_enabled = limit_enabled;
     hotools::project_angle_constraints_mc2(view);
+    if (restoration_enabled || limit_enabled) ++angle_solve_count_;
     ++step_count_;
 }
 
@@ -1465,6 +1466,12 @@ void DomainV1::step_angle_partitioned(
     view.restoration_enabled_values = restoration_enabled_values;
     view.limit_enabled_values = limit_enabled_values;
     hotools::project_angle_constraints_mc2(view);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (restoration_enabled_values[vertex] != 0u || limit_enabled_values[vertex] != 0u) {
+            ++angle_solve_count_;
+            break;
+        }
+    }
     ++step_count_;
 }
 
@@ -1518,6 +1525,7 @@ void DomainV1::step_motion(
     view.max_distance_enabled = max_distance_enabled;
     view.backstop_enabled = backstop_enabled;
     hotools::project_motion_constraints_mc2(view);
+    if (max_distance_enabled || backstop_enabled) ++motion_solve_count_;
     ++step_count_;
 }
 
@@ -1570,6 +1578,12 @@ void DomainV1::step_motion_partitioned(
     view.max_distance_enabled_values = max_distance_enabled_values;
     view.backstop_enabled_values = backstop_enabled_values;
     hotools::project_motion_constraints_mc2(view);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        if (max_distance_enabled_values[vertex] != 0u || backstop_enabled_values[vertex] != 0u) {
+            ++motion_solve_count_;
+            break;
+        }
+    }
     ++step_count_;
 }
 

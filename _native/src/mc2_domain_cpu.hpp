@@ -322,6 +322,8 @@ public:
     std::int64_t skip_count() const noexcept { return skip_count_; }
     bool is_running() const noexcept { return is_running_; }
     std::int64_t step_count() const noexcept { return step_count_; }
+    std::int64_t angle_solve_count() const noexcept { return angle_solve_count_; }
+    std::int64_t motion_solve_count() const noexcept { return motion_solve_count_; }
     const std::string& domain_signature() const noexcept { return domain_signature_; }
     const std::string& layout_signature() const noexcept { return layout_signature_; }
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
@@ -571,6 +573,8 @@ private:
     std::int64_t skip_count_ = 0;
     bool is_running_ = false;
     std::int64_t step_count_ = 0;
+    std::int64_t angle_solve_count_ = 0;
+    std::int64_t motion_solve_count_ = 0;
     bool disposed_ = false;
 };
 

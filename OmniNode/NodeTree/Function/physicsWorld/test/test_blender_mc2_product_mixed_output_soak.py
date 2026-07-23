@@ -113,9 +113,9 @@ def _mesh_request(world, mesh, *, hot: bool = False):
             bending_stiffness=0.48,
             angle_restoration_enabled=False,
             angle_limit_enabled=False,
-            max_distance_enabled=True,
+            max_distance_enabled=not hot,
             max_distance=0.32,
-            backstop_enabled=True,
+            backstop_enabled=not hot,
             backstop_radius=0.16,
             backstop_distance=0.03,
             motion_stiffness=0.65,
@@ -150,6 +150,7 @@ def _run_once(run_index: int) -> str:
     mesh = proxy = cloth = spring = None
     owners = None
     schedulers = None
+    disabled_solve_counts = None
     digest = hashlib.sha256()
     try:
         physics_blender.register()
@@ -255,6 +256,28 @@ def _run_once(run_index: int) -> str:
                 assert np.all(np.isfinite(output.world_rotations_xyzw))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
+
+            solve_counts = tuple(
+                (
+                    owner.inspect()["domain"]["kernel"]["angle_solve_count"],
+                    owner.inspect()["domain"]["kernel"]["motion_solve_count"],
+                )
+                for owner in current_owners
+            )
+            if frame == 300:
+                assert solve_counts[0][0] == 0 and solve_counts[0][1] > 0
+                assert solve_counts[1][0] > 0 and solve_counts[1][1] > 0
+                assert solve_counts[2][0] > 0 and solve_counts[2][1] == 0
+                disabled_solve_counts = solve_counts
+            elif 301 <= frame <= 600:
+                assert solve_counts == disabled_solve_counts
+            elif frame == 601:
+                assert solve_counts[0][0] == 0
+                assert solve_counts[0][1] > disabled_solve_counts[0][1]
+                assert solve_counts[1][0] > disabled_solve_counts[1][0]
+                assert solve_counts[1][1] > disabled_solve_counts[1][1]
+                assert solve_counts[2][0] > disabled_solve_counts[2][0]
+                assert solve_counts[2][1] == 0
 
             gn_results = tuple(world.result_streams.get("gn_attribute", ()))
             bone_results = tuple(world.result_streams.get("bone_transform", ()))

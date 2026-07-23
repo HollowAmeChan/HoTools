@@ -1262,6 +1262,8 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["skip_count"] = domain->skip_count();
             result["is_running"] = domain->is_running();
             result["step_count"] = domain->step_count();
+            result["angle_solve_count"] = domain->angle_solve_count();
+            result["motion_solve_count"] = domain->motion_solve_count();
             result["disposed"] = domain->disposed();
             result["baseline_ready"] = domain->baseline_ready();
             result["baseline_line_count"] = domain->baseline_line_count();
