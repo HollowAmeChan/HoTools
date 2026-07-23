@@ -127,6 +127,7 @@ nanobind_add_module(hotools_native
     src/mc2_context_readback.cpp
     src/mc2_context_static.cpp
     src/mc2_fingerprint.cpp
+    src/mc2_frame_orientations.cpp
     src/mc2_static_build.cpp
     src/mc2_kernels.cpp
     src/mc2_self_collision.cpp
@@ -134,6 +135,7 @@ nanobind_add_module(hotools_native
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     src/mc2_domain_cpu.hpp
+    src/mc2_frame_orientations.hpp
     src/mc2_kernels.hpp
     src/mc2_whole_domain_self.hpp
     src/spring_bone_vrm.cpp
@@ -146,11 +148,12 @@ nanobind_add_module(hotools_native
 # producer paired with a freshly compiled kernel consumer.
 set_source_files_properties(
     src/mc2_context_frame_step.cpp
+    src/mc2_frame_orientations.cpp
     src/mc2_kernels.cpp
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     PROPERTIES OBJECT_DEPENDS
-        "${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_frame_orientations.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
 )
 
 target_include_directories(hotools_native PRIVATE
