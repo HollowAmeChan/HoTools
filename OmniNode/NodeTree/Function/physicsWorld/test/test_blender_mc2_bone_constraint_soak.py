@@ -16,16 +16,16 @@ TEST_ROOT = os.path.dirname(os.path.abspath(__file__))
 if TEST_ROOT not in sys.path:
     sys.path.insert(0, TEST_ROOT)
 
-import test_blender_mc2_mixed_output_soak as mixed
+import mc2_product_test_helpers as helpers
 
 
-parameters = mixed.parameters
-names = mixed.names
-nodes = mixed.nodes
-topology_module = mixed.topology_module
-bone_frame_input = mixed.bone_frame_input
-world_types = mixed.world_types
-writeback = mixed.writeback
+parameters = helpers.parameters
+names = helpers.names
+nodes = helpers.nodes
+topology_module = helpers.topology_module
+bone_frame_input = helpers.bone_frame_input
+world_types = helpers.world_types
+writeback = helpers.writeback
 
 
 def _profile(
@@ -86,7 +86,7 @@ def _task(
 def _run_setup(setup_type):
     world = world_types.PhysicsWorldCache()
     world.generation = 73
-    armature = mixed._armature(
+    armature = helpers.make_armature(
         f"MC2Angle_{setup_type}",
         0.0,
         0.75 if setup_type == names.MC2_SETUP_BONE_CLOTH else 1.25,
@@ -122,7 +122,7 @@ def _run_setup(setup_type):
                 task = _task(setup_type, armature, restoration=True, limit=True)
                 assert task.task_id == stable_task_id
 
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -219,7 +219,7 @@ def _run_setup(setup_type):
     finally:
         world.omni_cache_dispose("bone_constraint_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_angle_constraints():
@@ -236,7 +236,7 @@ def bone_angle_constraints():
 def _run_bone_angle_attenuation(setup_type, attenuation):
     world = world_types.PhysicsWorldCache()
     world.generation = 78
-    armature = mixed._armature(
+    armature = helpers.make_armature(
         f"MC2AngleAttenuation_{setup_type}_{attenuation:.1f}",
         0.0,
         0.9,
@@ -285,7 +285,7 @@ def _run_bone_angle_attenuation(setup_type, attenuation):
                     animated_input.world_positions - initial_input.world_positions,
                     axis=1,
                 )))
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -322,7 +322,7 @@ def _run_bone_angle_attenuation(setup_type, attenuation):
     finally:
         world.omni_cache_dispose("bone_angle_attenuation")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_angle_restoration_attenuation():
@@ -358,11 +358,11 @@ def _run_bone_gravity_axes_falloff():
         (0.0, 0.0, 1.0),
     )
     armatures = tuple(
-        mixed._armature(f"MC2BoneGravityAxis{index}", index * 0.8, 0.9)
+        helpers.make_armature(f"MC2BoneGravityAxis{index}", index * 0.8, 0.9)
         for index in range(3)
     ) + (
-        mixed._armature("MC2BoneGravityFalloff0", 2.8, 0.9),
-        mixed._armature("MC2BoneGravityFalloff1", 3.6, 0.9),
+        helpers.make_armature("MC2BoneGravityFalloff0", 2.8, 0.9),
+        helpers.make_armature("MC2BoneGravityFalloff1", 3.6, 0.9),
     )
     anchors = tuple(
         bpy.data.objects.new(f"MC2BoneGravityAnchor{index}", None)
@@ -426,7 +426,7 @@ def _run_bone_gravity_axes_falloff():
                 armature.rotation_euler.x = angle
                 anchor.rotation_euler.x = angle
             bpy.context.view_layer.update()
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(tasks),
@@ -533,10 +533,10 @@ def _run_bone_gravity_axes_falloff():
         world.omni_cache_dispose("bone_gravity_axes_falloff")
         for armature in armatures:
             if armature.name in bpy.data.objects:
-                mixed._remove_object(armature)
+                helpers.remove_object(armature)
         for anchor in anchors:
             if anchor.name in bpy.data.objects:
-                mixed._remove_object(anchor)
+                helpers.remove_object(anchor)
 
 
 def bone_gravity_axes_falloff():
@@ -549,7 +549,7 @@ def bone_gravity_axes_falloff():
 def _run_bone_angle_restoration_falloff(setup_type, falloff):
     world = world_types.PhysicsWorldCache()
     world.generation = 95
-    armature = mixed._armature(
+    armature = helpers.make_armature(
         f"MC2AngleFalloff_{setup_type}_{falloff:.1f}",
         0.0,
         0.9,
@@ -620,7 +620,7 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
                 frame=frame,
                 generation=world.generation,
             )
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -651,7 +651,7 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
             assert writeback.writeback_bone_transforms(world) == topology.particle_count
             bpy.context.view_layer.update()
             if frame == 599:
-                assert mixed.debug_module.request_mc2_debug_capture(
+                assert helpers.debug_module.request_mc2_debug_capture(
                     world,
                     filters={
                         "show_center": True,
@@ -689,9 +689,9 @@ def _run_bone_angle_restoration_falloff(setup_type, falloff):
     finally:
         world.omni_cache_dispose("bone_angle_restoration_falloff")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
         if anchor.name in bpy.data.objects:
-            mixed._remove_object(anchor)
+            helpers.remove_object(anchor)
 
 
 def bone_angle_restoration_falloff():
@@ -730,7 +730,7 @@ def bone_angle_restoration_falloff():
 def _run_bone_motion():
     world = world_types.PhysicsWorldCache()
     world.generation = 74
-    armature = mixed._armature("MC2Motion_bone_cloth", 0.0, 0.8)
+    armature = helpers.make_armature("MC2Motion_bone_cloth", 0.0, 0.8)
 
     def make_task(backstop):
         profile = parameters.make_mc2_particle_profile(
@@ -773,7 +773,7 @@ def _run_bone_motion():
                 revision = context.inspect()["parameter_revision"]
                 task = make_task(True)
                 assert task.task_id == stable_task_id
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -799,7 +799,7 @@ def _run_bone_motion():
             assert writeback.writeback_bone_transforms(world) == topology.particle_count
             bpy.context.view_layer.update()
             if frame == 899:
-                mixed.debug_module.request_mc2_debug_capture(
+                helpers.debug_module.request_mc2_debug_capture(
                     world,
                     filters={
                         "show_motion": True,
@@ -828,7 +828,7 @@ def _run_bone_motion():
     finally:
         world.omni_cache_dispose("bone_motion_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_motion_constraints():
@@ -842,7 +842,7 @@ def _run_bone_external_collision(setup_type):
     world = world_types.PhysicsWorldCache()
     world.generation = 75
     is_spring = setup_type == names.MC2_SETUP_BONE_SPRING
-    armature = mixed._armature(
+    armature = helpers.make_armature(
         f"MC2Collision_{setup_type}",
         0.0,
         1.15 if is_spring else 0.9,
@@ -953,7 +953,7 @@ def _run_bone_external_collision(setup_type):
                 "frame": frame,
                 "colliders": tuple(colliders),
             }
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -1013,7 +1013,7 @@ def _run_bone_external_collision(setup_type):
                 assert slot.data["native_context"] is context
                 assert info["parameter_revision"] == revision + 1
             if frame == 899:
-                mixed.debug_module.request_mc2_debug_capture(
+                helpers.debug_module.request_mc2_debug_capture(
                     world,
                     filters={"show_collision": True, "show_self": False},
                 )
@@ -1046,7 +1046,7 @@ def _run_bone_external_collision(setup_type):
     finally:
         world.omni_cache_dispose("bone_external_collision_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_external_collision():
@@ -1063,7 +1063,7 @@ def bone_external_collision():
 def _run_bone_cloth_friction(friction):
     world = world_types.PhysicsWorldCache()
     world.generation = 76
-    armature = mixed._armature(f"MC2BoneFriction{friction}", 0.0, 0.9)
+    armature = helpers.make_armature(f"MC2BoneFriction{friction}", 0.0, 0.9)
     initial_basis = {
         bone.name: bone.matrix_basis.copy()
         for bone in armature.pose.bones
@@ -1126,7 +1126,7 @@ def _run_bone_cloth_friction(friction):
                     "normal": (0.0, 0.0, 1.0),
                 },),
             }
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -1161,7 +1161,7 @@ def _run_bone_cloth_friction(friction):
     finally:
         world.omni_cache_dispose("bone_cloth_friction_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_friction_response():
@@ -1178,7 +1178,7 @@ def bone_friction_response():
 def _run_bone_distance_tether():
     world = world_types.PhysicsWorldCache()
     world.generation = 77
-    armature = mixed._armature("MC2BoneDistanceTether", 0.0, 1.1)
+    armature = helpers.make_armature("MC2BoneDistanceTether", 0.0, 1.1)
 
     def make_task(*, gravity, gravity_direction, compression, stiffness):
         profile = parameters.make_mc2_particle_profile(
@@ -1259,7 +1259,7 @@ def _run_bone_distance_tether():
                     stiffness=0.25,
                 )
                 assert task.task_id == stable_task_id
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -1359,7 +1359,7 @@ def _run_bone_distance_tether():
     finally:
         world.omni_cache_dispose("bone_distance_tether_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_distance_tether():
@@ -1400,7 +1400,7 @@ def _bone_angle_values(native_context, candidate):
 def _run_bone_angle_limit(setup_type):
     world = world_types.PhysicsWorldCache()
     world.generation = 78 if setup_type == names.MC2_SETUP_BONE_CLOTH else 79
-    armature = mixed._armature(f"MC2AngleLimit_{setup_type}", 0.0, 1.0)
+    armature = helpers.make_armature(f"MC2AngleLimit_{setup_type}", 0.0, 1.0)
     initial_basis = {
         bone.name: bone.matrix_basis.copy()
         for bone in armature.pose.bones
@@ -1464,7 +1464,7 @@ def _run_bone_angle_limit(setup_type):
             root.rotation_euler.z = 0.75 * math.sin(frame * 0.13)
             root.location.x = 0.035 * math.sin(frame * 0.09)
             bpy.context.view_layer.update()
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -1533,7 +1533,7 @@ def _run_bone_angle_limit(setup_type):
     finally:
         world.omni_cache_dispose("bone_angle_limit_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_angle_limit():
@@ -1666,7 +1666,7 @@ def _run_bone_bending_suite():
                 control.rotation_euler.z = 0.35 * math.sin(frame * 0.047)
                 control.location.y = 0.08 * math.sin(frame * 0.037)
             bpy.context.view_layer.update()
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(tasks),
@@ -1740,7 +1740,7 @@ def _run_bone_bending_suite():
         world.omni_cache_dispose("bone_bending_soak")
         for armature in armatures:
             if armature.name in bpy.data.objects:
-                mixed._remove_object(armature)
+                helpers.remove_object(armature)
 
 
 def bone_triangle_bending():
@@ -1829,7 +1829,7 @@ def _run_bone_self_collision():
             if frame == 801:
                 armature.pose.bones["Chain1_2"].location = (2.0, 0.0, 0.0)
             bpy.context.view_layer.update()
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             if frame == 801:
                 world.frame_context.time_scale = 0.0
             returned, ready, status = nodes.physicsMC2Step(
@@ -1884,7 +1884,7 @@ def _run_bone_self_collision():
             trajectory_digest.update(np.asarray(candidate.world_positions).tobytes())
             trajectory_digest.update(np.asarray(candidate.world_rotations_xyzw).tobytes())
             if frame == 899:
-                mixed.debug_module.request_mc2_debug_capture(
+                helpers.debug_module.request_mc2_debug_capture(
                     world,
                     filters={
                         "show_self_primitives": True,
@@ -1923,7 +1923,7 @@ def _run_bone_self_collision():
     finally:
         world.omni_cache_dispose("bone_self_collision_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def bone_self_collision():
@@ -1949,7 +1949,7 @@ def _quaternion_component_distance(left, right):
 def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
     world = world_types.PhysicsWorldCache()
     world.generation = 96
-    armature = mixed._armature(
+    armature = helpers.make_armature(
         f"MC2RotationOutput_{setup_type}_{interpolation}_{root_rotation}",
         0.0,
         0.9,
@@ -2017,7 +2017,7 @@ def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
                     "radius": 0.025,
                 },),
             }
-            mixed._set_frame(world, frame, world.generation)
+            helpers.set_frame(world, frame, world.generation)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [task],
@@ -2043,7 +2043,7 @@ def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
             assert writeback.writeback_bone_transforms(world) == topology.particle_count
             bpy.context.view_layer.update()
             if frame == 599:
-                assert mixed.debug_module.request_mc2_debug_capture(
+                assert helpers.debug_module.request_mc2_debug_capture(
                     world,
                     filters={"show_output": True},
                 ) == 1
@@ -2078,7 +2078,7 @@ def _run_bone_rotation_output_case(setup_type, interpolation, root_rotation):
     finally:
         world.omni_cache_dispose("bone_rotation_output_soak")
         if armature.name in bpy.data.objects:
-            mixed._remove_object(armature)
+            helpers.remove_object(armature)
 
 
 def _run_bone_rotation_output_setup(setup_type):
@@ -2135,7 +2135,7 @@ def bone_rotation_output_controls():
 
 
 def main():
-    mixed.physics_blender.register()
+    helpers.physics_blender.register()
     try:
         bone_angle_constraints()
         bone_angle_restoration_attenuation()
@@ -2150,8 +2150,8 @@ def main():
         bone_self_collision()
         bone_rotation_output_controls()
     finally:
-        if mixed.physics_blender.is_registered():
-            mixed.physics_blender.unregister()
+        if helpers.physics_blender.is_registered():
+            helpers.physics_blender.unregister()
     print("MC2 Bone constraint soak: PASS")
 
 
