@@ -209,6 +209,28 @@ def test_mesh_final_proxy_compatibility_entry_is_product_only():
     assert "test_blender_mc2_mesh_product_static" in source
 
 
+def test_base_pose_compatibility_entry_is_product_only():
+    path = BLENDER_TEST_ROOT / "test_blender_mc2_base_pose.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    imports = {
+        ("." * node.level) + (node.module or "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    imported_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert not {"native_context", "solver", "specs"} & imported_names
+    assert not any(name.endswith(".native_context") for name in imports)
+    assert not any(name.endswith(".solver") for name in imports)
+    assert not any(name.endswith(".specs") for name in imports)
+    assert "test_blender_mc2_mesh_product_base_pose" in source
+
+
 def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
         encoding="utf-8"
