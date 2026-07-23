@@ -8,7 +8,7 @@
 
 | 旧符号 | 当前产品证据 | 状态 |
 | --- | --- | --- |
-| `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
+| `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；Angle target/rest 由请求式 native record 对照同一 StepBasic pose，并由 BoneCloth/BoneSpring 各自双跑锁定 |
 | `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
 | `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性 |
 | `bone_gravity_axes_falloff` | 不适用于 BoneSpring；产品节点合同明确世界重力只由 MeshCloth/BoneCloth 消费 | 不把 BoneSpring 的 spring-specific Line setup 错记为 gravity 缺口 |

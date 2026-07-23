@@ -8,7 +8,7 @@
 
 | 旧符号 | 当前产品证据 | 状态 |
 | --- | --- | --- |
-| `bone_angle_constraints`、`bone_angle_limit`、`bone_motion_constraints` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
+| `bone_angle_constraints`、`bone_angle_limit`、`bone_motion_constraints` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；Angle target/rest 由请求式 native record 对照同一 StepBasic pose，并由 BoneCloth/BoneSpring 各自双跑锁定 |
 | `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
 | `bone_distance_tether`、`bone_triangle_bending` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性；边界响应断言仍需补齐 |
 | `bone_gravity_axes_falloff` | `test_blender_mc2_bone_product_angle_motion.py::test_bone_product_gravity_axes_falloff` | 已锁定 gravity、归一化三轴方向、falloff、600 帧 finite/deterministic、轴向速度与 falloff 比例 |

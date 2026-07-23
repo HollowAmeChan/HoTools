@@ -243,6 +243,128 @@ def _run_angle_case(
         product_soak._remove_armature(armature)
 
 
+def _run_angle_target_rest_case(*, spring: bool, run_index: int):
+    world = world_types.PhysicsWorldCache()
+    generation = 1800 + run_index
+    armature = None
+    digest = hashlib.sha256()
+    samples = []
+    try:
+        armature = product_soak._armature(
+            f"MC2ProductAngleTargetRest_{run_index}_{int(spring)}",
+            chain_count=1,
+            chain_length=6,
+            x_offset=0.0,
+        )
+        initial_basis = {
+            bone.name: bone.matrix_basis.copy()
+            for bone in armature.pose.bones
+        }
+        request = _request(
+            armature,
+            spring=spring,
+            restoration=True,
+            limit_enabled=False,
+            angle_limit=30.0,
+        )
+        slot_id = product_slot.make_mc2_product_slot_id(
+            request.setup_type,
+            request.domain_signature,
+        )
+        owner = None
+        for frame in range(1, 601):
+            for bone in armature.pose.bones:
+                bone.matrix_basis = initial_basis[bone.name].copy()
+            root = armature.pose.bones["Chain0_0"]
+            root.rotation_mode = "XYZ"
+            root.rotation_euler.z = 0.65 * math.sin(frame * 0.11)
+            root.location.x = 0.025 * math.sin(frame * 0.07)
+            bpy.context.view_layer.update()
+            product_soak._set_frame(world, frame, generation)
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            capture = frame in (2, 300, 600)
+            if capture:
+                assert owner is not None
+                owner.begin_constraint_debug(1)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [request],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            current_owner = world.solver_slots[slot_id].data["owner"]
+            if owner is None:
+                owner = current_owner
+            else:
+                assert current_owner is owner
+            output = owner.read_output()
+            assert np.all(np.isfinite(output.world_positions))
+            digest.update(output.world_positions.tobytes())
+            if capture:
+                owner.end_constraint_debug()
+                angle = owner.read_constraint_debug_state()["angle_results"]
+                valid = np.asarray(angle["valid"][1], dtype=np.uint8).astype(bool)
+                assert np.any(valid)
+                children = np.asarray(angle["children"][1], dtype=np.int32)[valid]
+                parents = np.asarray(angle["parents"][1], dtype=np.int32)[valid]
+                targets = np.asarray(angle["targets"][1], dtype=np.float32)[valid]
+                vectors = np.asarray(
+                    angle["target_vectors"][1], dtype=np.float32
+                )[valid]
+                origins = np.asarray(
+                    angle["origins"][1], dtype=np.float32
+                )[valid]
+                step_basic = owner.prepare_step_basic_pose()["positions"]
+                expected_vectors = step_basic[children] - step_basic[parents]
+                expected_targets = origins[:, 0] + vectors
+                np.testing.assert_allclose(
+                    vectors,
+                    expected_vectors,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+                np.testing.assert_allclose(
+                    targets,
+                    expected_targets,
+                    rtol=0.0,
+                    atol=1.0e-6,
+                )
+                vector_error = float(np.max(np.abs(vectors - expected_vectors)))
+                target_error = float(np.max(np.abs(targets - expected_targets)))
+                samples.append((int(np.count_nonzero(valid)), vector_error, target_error))
+                digest.update(children.tobytes())
+                digest.update(parents.tobytes())
+                digest.update(origins.tobytes())
+                digest.update(vectors.tobytes())
+                digest.update(targets.tobytes())
+            assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
+            bpy.context.view_layer.update()
+        assert owner is not None and len(samples) == 3
+        assert owner.inspect()["domain"]["kernel"]["angle_solve_count"] > 0
+        return digest.hexdigest(), tuple(samples)
+    finally:
+        world.omni_cache_dispose("bone_product_angle_target_rest_cleanup")
+        product_soak._remove_armature(armature)
+
+
+def test_bone_product_angle_target_rest_deterministic():
+    results = []
+    for spring, base_index in ((False, 70), (True, 72)):
+        first = _run_angle_target_rest_case(
+            spring=spring,
+            run_index=base_index,
+        )
+        second = _run_angle_target_rest_case(
+            spring=spring,
+            run_index=base_index + 1,
+        )
+        assert first == second, (spring, first, second)
+        results.append(("bone_spring" if spring else "bone_cloth", first))
+    print("MC2_BONE_PRODUCT_ANGLE_TARGET_REST", results)
+    print("PASS test_bone_product_angle_target_rest_deterministic")
+
+
 def _rotate_axes(rotations) -> np.ndarray:
     result = np.empty((len(rotations), 3), dtype=np.float32)
     for index, xyzw in enumerate(rotations):
@@ -553,3 +675,4 @@ def test_bone_product_angle_motion_numeric_boundaries():
 
 if __name__ == "__main__":
     test_bone_product_angle_motion_numeric_boundaries()
+    test_bone_product_angle_target_rest_deterministic()
