@@ -363,7 +363,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         ),
         "required_invariants": (
             "finite", "deterministic", "rest_length_bounded", "fixed_particles_static",
-            "tether_range_bounded",
+            "tether_range_bounded", "distance_response_changes",
         ),
         "evidence": ({
             "runner": (
@@ -394,18 +394,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "invariants": (
                 "finite", "deterministic", "rest_length_bounded",
                 "fixed_particles_static", "tether_range_bounded",
-            ),
-        }, {
-            "runner": (
-                "test_blender_mc2_bone_product_distance_tether.py::"
-                "test_bone_product_distance_tether_numeric_deterministic"
-            ),
-            "frames": 600,
-            "setups": ("bone_cloth",),
-            "fields": ("distance_stiffness",),
-            "invariants": (
-                "finite", "deterministic", "rest_length_bounded",
-                "tether_range_bounded", "distance_response_changes",
+                "distance_response_changes",
             ),
         },),
         "status": "gap",
@@ -416,6 +405,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "owned_fields": ("bending_stiffness", "bending_method"),
         "required_invariants": (
             "finite", "deterministic", "signed_volume_stable", "fixed_particles_static",
+            "bending_response_changes", "solve_branch_exact",
         ),
         "invariant_setups": {
             "signed_volume_stable": ("bone_cloth",),
@@ -430,17 +420,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "bending_response_changes", "solve_branch_exact",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_constraints_900_frame_deterministic_soak",
-            "frames": 900,
+            "runner": (
+                "test_blender_mc2_bone_product_bending.py::"
+                "test_bone_product_bending_numeric_deterministic"
+            ),
+            "frames": 600,
             "setups": ("bone_cloth",),
             "fields": ("bending_stiffness", "bending_method"),
             "invariants": (
-                "finite", "deterministic", "signed_volume_stable",
-                "fixed_particles_static", "bending_response_changes",
-                "connected_disconnected_writeback",
+                "finite", "deterministic", "fixed_particles_static",
+                "bending_response_changes", "solve_branch_exact",
             ),
         }),
-        "status": "verified",
+        "status": "gap",
     },
     {
         "id": "angle_restoration",
