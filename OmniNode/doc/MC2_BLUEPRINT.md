@@ -794,7 +794,7 @@ _native\build.bat 313 native
 
 两条命令分别使用`vs2022-py311-native`与`vs2022-py313-native`，只生成所选`hotools_native`且不构建Jolt。每次构建先刷新preset cache和runtime输出目录，再保持增量；布局头更新时仅对当前目标执行一次`--clean-first`，防止新旧对象布局混链。是否启动Blender 4.5仍服从当前用户占用窗口；Jolt是独立`EXCLUDE_FROM_ALL`目标，只有明确修改/验证Jolt时才选择对应module。
 
-Python 3.11 + Blender 4.5继续保留兼容门禁；Python 3.13 + Blender 5.2用于当前代表资产、性能和长帧soak补充。
+Python 3.11 + Blender 4.5继续保留最终兼容门禁，但从2026-07-23起冻结编译和测试，也不得触碰用户的4.5进程；当前删除与简化阶段只使用Python 3.13 + Blender 5.2。只有旧Python/native owner删除完成、E7-S进入最终收尾时才恢复py311/4.5双ABI验收。
 
 稳定性能原则：
 
@@ -808,10 +808,9 @@ Python 3.11 + Blender 4.5继续保留兼容门禁；Python 3.13 + Blender 5.2用
 维护态热点脚本：
 
 - `physicsWorld/test/benchmark_blender_mc2_hotspots.py`
-- `physicsWorld/test/benchmark_blender_mc2_interaction_scope.py`
 - `physicsWorld/test/benchmark_blender_mc2_self_radius.py`
 
-主脚本构造small/medium/large Mesh与Bone固定资产，分段测量static observation、topology/fingerprint、static build/clone、frame prepare、all-task group step、result build/publish、writeback和debug capture。每个场景覆盖cold、hot、config、Mesh Pin surface/Bone rest geometry change及Python分配峰值，并断言所有阶段真实命中；`MC2_BENCH_HOT_FRAMES`只用于扩大稳定性能样本。
+主脚本构造small/medium/large Mesh与Bone固定资产，分段测量static observation、topology/fingerprint、static build/clone、frame prepare、产品统一域step、result build/publish、writeback和debug capture。每个场景覆盖cold、hot、config、Mesh Pin surface/Bone rest geometry change及Python分配峰值，并断言所有阶段真实命中；`MC2_BENCH_HOT_FRAMES`只用于扩大稳定性能样本。旧interaction-scope benchmark已随E7-CPU测试证据迁移删除，不再作为维护入口。
 
 粗粒度ceiling只用于发现数量级回退：
 

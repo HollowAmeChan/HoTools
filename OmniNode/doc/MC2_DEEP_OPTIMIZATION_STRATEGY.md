@@ -303,7 +303,7 @@ Blender 5.2 / py313 Release、4个`21x21` MeshCloth context、1764粒子、9924 
 - 持续接触夹具在每次step外重置相交姿态，丢弃5帧后取20样本；每帧保持74040 candidate和69240 contact。关闭/开启均值为`22.0552/21.7366 ms`，开启结果的阶段覆盖`99.67%`，差异属于采样噪声。
 - 持续接触时，上帧交叉检测约`5.75 ms`，四轮contact solve合计约`5.66 ms`，contact构建约`4.40 ms`，候选生成去重约`4.34 ms`，grid约`0.55 ms`。self grid和交叉阶段每步各调用5次，即4个context加1个aggregate；这项证据优先支持E4 whole-domain self删除重复流水，而不是在旧aggregate上做小范围极限优化。
 
-这些数字只用于同机同夹具的实现门禁和热点排序，不能替代用户的1760粒子、6 substep、495 collider代表资产，也不能外推GPU收益。复现入口是`benchmark_blender_mc2_interaction_scope.py`的`MC2_BENCH_NATIVE_STAGES`、`MC2_BENCH_GRID_SIZE`、`MC2_BENCH_FRAMES`和`MC2_BENCH_FORCE_CONTACTS`环境开关。
+这些数字只用于同机同夹具的历史热点排序，不能替代用户的1760粒子、6 substep、495 collider代表资产，也不能外推GPU收益。原`benchmark_blender_mc2_interaction_scope.py`只测旧task aggregate，已在E7-CPU测试迁移首批删除；后续复测必须落到产品统一域benchmark，固定domain partition、primitive/contact数量、warmup与帧数，不得为保留旧入口继续携带aggregate owner。
 
 同时固定四组同资产对比：
 

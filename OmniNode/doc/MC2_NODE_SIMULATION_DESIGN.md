@@ -986,10 +986,12 @@ E7-CPU 统一域自碰调试记录（2026-07-23）：`WholeDomainSelf=64` 复用
 | `test_particle_step_tier_a.py`、`test_distance_tier_a.py`、`test_bending_tier_a.py` 及 Motion/Tether/Angle fixture | 锁定 pass 顺序、系数、exact/tolerance 与边界条件；旧/新 backend 使用同一输入。 | 继续锁定共享 kernel 和 whole-domain step，不保留 V0 runner。 |
 | `_native/tests/test_mc2_*_native.py` | 每提取一个 kernel，原测试先同时证明 V0 wrapper 与新 owner 调到同一实现。 | 改为直接 kernel/DomainV1 测试；只测试已删除 ABI 的 case 同提交移除。 |
 | `test_domain_ir.py`、`test_domain_compile.py`、`test_frame_compile.py`、`test_cpu_backend.py`、`test_cpu_native_kernel.py` | 证明 schema、identity、失败原子性、生命周期和单/双 partition 隔离。 | 成为统一 owner 的长期合同测试。 |
-| `capability_matrix.py`、`acceptance_assets_v1.json`、Mesh/Bone constraint/mixed-output/self-interaction Blender soak | 在同版本资产、帧段和参数下分别运行 V0 与新路径，比较确定性摘要、有限性、阶段计数和允许误差。 | 后端切换移除后仍原样运行，证明产品能力没有因迁移缩窄。 |
+| `capability_matrix.py`、`acceptance_assets_v1.json`、Mesh/Bone产品 constraint/mixed-output/whole-domain self Blender soak | 删除前用同输入锁定V0与产品路径的确定性摘要、有限性、阶段计数和允许误差；等价证据落到产品runner后移除纯旧runner。 | 删除后只运行产品统一域runner，继续证明能力没有因迁移缩窄，不为“原样运行”保留已删除owner。 |
 | `test_mc2_domain_cpu_native.py` 与 E2 双 Mesh fixture | 覆盖单 partition 退化、双 partition 状态隔离、同/跨 partition self、过滤和输出映射。 | 扩展为统一粒子域的核心回归套件。 |
 
 删除提交的硬门禁：py311/py313 全部纯 Python/native 测试通过；Blender 4.5 capability matrix 无缺项；D-01 至 D-10 与代表 soak 的同输入结果在已声明 tolerance 内；单/双 partition、Reset/Keep、Anchor、参数热更新、碰撞、自碰、final intersection、debug-off 零 readback、多目标原子失败均有自动证据；统一路径性能不因 GPU-ready 数据边界发生无法由实际工作量解释的显著退化。最后增加架构审计，禁止生产代码重新出现 V0 owner/binding、hidden task 展开或普通 aggregate 路径。仅“新测试通过”但旧路径仍被产品导入，不算 E7 完成。
+
+E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`mesh_cloth_world_self_interaction`并入产品`mesh_unified_domain_e5`，由统一域runner承担跨partition接触、穿插历史、互惠group-mask、动态source重配与多目标事务证据；纯旧`test_interaction_scope.py`、`test_shadow_pipeline.py`、`test_blender_mc2_interaction_v0.py`和`benchmark_blender_mc2_interaction_scope.py`删除。`test_e3_v0_tolerance.py`以及Mesh/Bone旧长帧soak仍含尚未逐项落位的数值oracle，迁移完成前不得删除。当前只跑py313/Blender 5.2；py311/Blender 4.5冻结到旧代码删除与E7-S基本完成后的最终收尾。
 
 ### E7-S：删除后的兼容层收敛审计
 
@@ -1025,7 +1027,6 @@ mc2/test/
   test_partition_capture.py       # E1 已有
   test_partition_static_fragment.py # E1 已有
   test_domain_compile.py           # E1/E2 已有
-  test_shadow_pipeline.py          # E1 已有
   test_cpu_backend.py               # E3 ABI/lifecycle 已有
   test_frame_compile.py              # E3 frame pack 已有
   test_cpu_native_kernel.py          # E3 Python/native data-path 已有
