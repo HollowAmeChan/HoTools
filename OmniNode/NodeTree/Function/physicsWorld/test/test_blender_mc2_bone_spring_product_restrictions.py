@@ -40,11 +40,11 @@ def _profile(*, hostile: bool):
         angle_restoration_enabled=False,
         angle_limit_enabled=False,
         max_distance_enabled=hostile,
-        max_distance=0.1,
+        max_distance=0.75 if hostile else 0.01,
         backstop_enabled=hostile,
-        backstop_radius=0.04,
-        backstop_distance=0.02,
-        motion_stiffness=1.0,
+        backstop_radius=0.2 if hostile else 0.01,
+        backstop_distance=0.15 if hostile else 0.01,
+        motion_stiffness=1.0 if hostile else 0.0,
         collision_mode=1,
         self_collision_mode=2 if hostile else 0,
         self_collision_sync_mode=2 if hostile else 0,
@@ -70,7 +70,11 @@ def _request(armature, *, hostile: bool):
     assert partition_profile.gravity == profile.gravity
     assert partition_profile.bending_stiffness == profile.bending_stiffness
     assert partition_profile.max_distance_enabled is hostile
+    assert partition_profile.max_distance.value == (0.75 if hostile else 0.01)
     assert partition_profile.backstop_enabled is hostile
+    assert partition_profile.backstop_radius == (0.2 if hostile else 0.01)
+    assert partition_profile.backstop_distance.value == (0.15 if hostile else 0.01)
+    assert partition_profile.motion_stiffness == (1.0 if hostile else 0.0)
     assert partition_profile.self_collision_mode == (2 if hostile else 0)
     assert partition_profile.self_collision_sync_mode == (2 if hostile else 0)
     return requests[0]
@@ -99,15 +103,22 @@ def _assert_compiled_restrictions(owner) -> tuple[np.ndarray, ...]:
     }
     assert floats["gravity"] == 0.0
     assert floats["bending_stiffness"] == 0.0
+    assert floats["backstop_radius"] == 0.0
+    assert floats["motion_stiffness"] == 0.0
     assert uints["bending_method"] == 0
     assert uints["use_max_distance"] == 0
     assert uints["use_backstop"] == 0
     assert uints["self_collision_mode"] == 0
     assert uints["self_collision_sync_mode"] == 0
-    np.testing.assert_array_equal(
-        particle.values[:, particle_fields["self_collision_thickness"]],
-        0.0,
-    )
+    for field in (
+        "max_distance",
+        "backstop_distance",
+        "self_collision_thickness",
+    ):
+        np.testing.assert_array_equal(
+            particle.values[:, particle_fields[field]],
+            0.0,
+        )
     return (
         np.array(compiled.parameters.partition_parameters.values, copy=True),
         np.array(compiled.parameters.partition_uint_parameters.values, copy=True),
@@ -149,6 +160,9 @@ def _run(*, hostile: bool, run_index: int):
             bpy.context.view_layer.update()
             product_soak._set_frame(world, frame, generation)
             world.collider_snapshot = {"frame": frame, "colliders": []}
+            capture = owner is not None and frame in (2, 600)
+            if capture:
+                owner.begin_constraint_debug(64)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 [request],
@@ -167,6 +181,15 @@ def _run(*, hostile: bool, run_index: int):
             positions = np.array(output.world_positions, copy=True)
             trajectory.append(positions)
             digest.update(positions.tobytes())
+            if capture:
+                owner.end_constraint_debug()
+                self_debug = owner.read_constraint_debug_state()[
+                    "whole_domain_self_results"
+                ]
+                assert self_debug["point_primitive_count"] == 0
+                assert self_debug["edge_primitive_count"] == 0
+                assert self_debug["triangle_primitive_count"] == 0
+                assert not np.asarray(self_debug["contact_types"]).size
             assert writeback.writeback_bone_transforms(world) == len(positions)
             bpy.context.view_layer.update()
 
@@ -177,13 +200,7 @@ def _run(*, hostile: bool, run_index: int):
         assert kernel.get("whole_domain_self_triangle_count", 0) == 0
         assert kernel.get("whole_domain_self_last_candidate_count", 0) == 0
         assert kernel.get("whole_domain_self_last_contact_count", 0) == 0
-        native_debug = owner.read_debug_state()
-        self_debug = native_debug.get("whole_domain_self_results")
-        if self_debug is not None:
-            assert self_debug["point_primitive_count"] == 0
-            assert self_debug["edge_primitive_count"] == 0
-            assert self_debug["triangle_primitive_count"] == 0
-            assert not np.asarray(self_debug["contact_types"]).size
+        assert kernel.get("bending_solve_count", 0) == 0
         return (
             digest.hexdigest(),
             np.asarray(trajectory, dtype=np.float32),

@@ -230,8 +230,8 @@ def make_mc2_runtime_parameters(
         "angle_restoration_velocity_attenuation": profile.angle_restoration_velocity_attenuation,
         "angle_restoration_gravity_falloff": profile.angle_restoration_gravity_falloff,
         "angle_limit_stiffness": profile.angle_limit_stiffness,
-        "backstop_radius": profile.backstop_radius,
-        "motion_stiffness": profile.motion_stiffness,
+        "backstop_radius": 0.0 if is_spring else profile.backstop_radius,
+        "motion_stiffness": 0.0 if is_spring else profile.motion_stiffness,
         "collision_dynamic_friction": friction,
         "collision_static_friction": friction,
         "cloth_mass": task_parameters.cloth_mass,
@@ -270,8 +270,11 @@ def make_mc2_runtime_parameters(
         ),
         "angle_restoration_stiffness": (profile.angle_restoration_stiffness, 0.2),
         "angle_limit": (profile.angle_limit, 1.0),
-        "max_distance": (profile.max_distance, 1.0),
-        "backstop_distance": (profile.backstop_distance, 1.0),
+        "max_distance": (zero_curve if is_spring else profile.max_distance, 1.0),
+        "backstop_distance": (
+            zero_curve if is_spring else profile.backstop_distance,
+            1.0,
+        ),
         "collision_limit_distance": (profile.collision_limit_distance if is_spring else zero_curve, 1.0),
         "self_collision_thickness": (
             (zero_curve, 1.0)

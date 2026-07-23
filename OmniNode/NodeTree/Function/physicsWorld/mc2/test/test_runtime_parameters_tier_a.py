@@ -107,8 +107,13 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
         gravity_direction=(0.0, -1.0, 0.0),
         tether_compression=0.25,
         distance_stiffness=0.9,
+        bending_stiffness=1.0,
         max_distance_enabled=True,
+        max_distance=0.375,
         backstop_enabled=True,
+        backstop_radius=0.125,
+        backstop_distance=0.25,
+        motion_stiffness=0.75,
         collision_mode=2,
         collision_friction=0.1,
         collision_limit_distance=0.125,
@@ -124,6 +129,9 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
     ints = dict(zip(runtime.MC2_RUNTIME_INT_FIELDS, spec.int_values))
     curves = dict(zip(runtime.MC2_RUNTIME_CURVE_FIELDS, spec.curve_values))
     assert floats["gravity"] == 0.0
+    assert floats["bending_stiffness"] == 0.0
+    assert floats["backstop_radius"] == 0.0
+    assert floats["motion_stiffness"] == 0.0
     assert floats["tether_compression_limit"] == np.float32(0.8).item()
     assert floats["collision_dynamic_friction"] == 0.5
     assert floats["spring_power"] == np.float32(0.3).item()
@@ -131,17 +139,25 @@ def test_bone_spring_applies_mc2_fixed_overrides() -> None:
     assert ints["self_collision_mode"] == ints["self_collision_sync_mode"] == 0
     assert ints["use_max_distance"] == ints["use_backstop"] == 0
     assert curves["distance_stiffness"] == (0.5,) * 16
+    assert curves["max_distance"] == (0.0,) * 16
+    assert curves["backstop_distance"] == (0.0,) * 16
     assert curves["collision_limit_distance"] == (0.125,) * 16
     assert curves["self_collision_thickness"] == (0.0,) * 16
-    # MC2 serializes the authoring bending value for BoneSpring even though its
-    # Line topology cannot consume it.  The product effective block normalizes
-    # that dead value to zero and keeps the source fixture unchanged.
+    # 保留 source fixture 作为 V0 oracle；产品有效参数消除 BoneSpring 不消费的输入。
     _assert_matches_oracle(
         spec,
         "runtime_parameters_bone_spring_001",
-        product_float_overrides={"bending_stiffness": 0.0},
+        product_float_overrides={
+            "bending_stiffness": 0.0,
+            "backstop_radius": 0.0,
+            "motion_stiffness": 0.0,
+        },
         product_int_overrides={"bending_method": 0},
-        product_curve_overrides={"self_collision_thickness": 0.0},
+        product_curve_overrides={
+            "max_distance": 0.0,
+            "backstop_distance": 0.0,
+            "self_collision_thickness": 0.0,
+        },
     )
 
 
