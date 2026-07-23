@@ -83,6 +83,8 @@ physicsWorld/
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
 
+MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_product.py` 已移除脚本内 V0 task/oracle、旧 solver/spec/context 与 aggregate 故障注入，改为只验证公开 BoneCloth/BoneSpring request、统一产品 owner、动态槽、约束调试和 Bone writeback。Blender 5.2/Python 3.13 明确加载当前工作树 `product_solver.py` 与 `_Lib/py313` 后全部通过；4.5/py311 继续冻结。该项不替代旧 mixed-output 中仍待迁移的精确 stabilization ramp、零子步、particle subset、debug layer 和非单位正尺度断言。
+
 ## 当前优先级
 
 MC2 E4/P2复验（2026-07-23）：Blender 5.2/Python 3.13 的非self双source oracle继续在`1e-6`内通过。whole-domain self接入后端中立opaque engine后，1764粒子、4 source、35帧、5帧warmup同夹具中，Domain与manual join的primitive/candidate/contact完全一致；reset轨迹位级相等，连续轨迹peak max-abs为`3.9208e-4`、RMS为`1.6597e-5`，通过`5e-4/5e-5`累计self合同。持久scratch消除每子步临时分配后，owner层p50为`5.9297 ms`，旧aggregate为`7.5374 ms`，D/B=`0.78670`；manual join为`7.9362 ms`，D/C=`0.74717`。
