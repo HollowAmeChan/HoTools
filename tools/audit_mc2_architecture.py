@@ -157,6 +157,7 @@ E7_LEGACY_MODULES = frozenset((
 ))
 E7_PRODUCT_RUNTIME_ROOTS = ("mc2.product_solver",)
 E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
+E7_DEBUG_ROOTS = ("mc2.debug", "mc2.debug_draw")
 E7_LEGACY_BINDING_PREFIXES = ("mc2_context_v0_", "mc2_interaction_v0_")
 E7_LEGACY_BINDING_NAMES = frozenset((
     "mc2_mesh_static_fingerprint_v0",
@@ -551,6 +552,7 @@ def _python_facts() -> dict:
         top_level_edges, E7_PRODUCT_RUNTIME_ROOTS
     )
     public_node_reachable = _reachable_modules(top_level_edges, E7_PUBLIC_NODE_ROOTS)
+    debug_reachable = _reachable_modules(top_level_edges, E7_DEBUG_ROOTS)
     legacy_inbound_imports = [
         {"module": module, "dependency": dependency}
         for module, dependencies in sorted(edges.items())
@@ -602,6 +604,10 @@ def _python_facts() -> dict:
                 public_node_reachable & E7_LEGACY_MODULES
             ),
             "legacy_inbound_imports": legacy_inbound_imports,
+            "debug_roots": list(E7_DEBUG_ROOTS),
+            "debug_reachable_legacy": sorted(
+                debug_reachable & E7_LEGACY_MODULES
+            ),
             "legacy_lazy_imports": sorted(
                 (
                     item for item in legacy_inbound_imports
@@ -849,6 +855,10 @@ def _print_summary(report: dict) -> None:
         "E7 public node reachable legacy modules: "
         f"{len(python['e7_cpu']['public_node_reachable_legacy'])}"
     )
+    print(
+        "E7 debug reachable legacy modules: "
+        f"{len(python['e7_cpu']['debug_reachable_legacy'])}"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -892,6 +902,11 @@ def main() -> None:
         action="store_true",
         help="fail when importing public MC2 nodes reaches a legacy MC2 owner",
     )
+    parser.add_argument(
+        "--e7-debug-import-check",
+        action="store_true",
+        help="fail when MC2 debug modules import a legacy MC2 owner",
+    )
     args = parser.parse_args()
     report = build_report()
     if args.json:
@@ -927,6 +942,8 @@ def main() -> None:
         args.e7_public_import_check
         and report["python"]["e7_cpu"]["public_node_reachable_legacy"]
     ):
+        raise SystemExit(1)
+    if args.e7_debug_import_check and report["python"]["e7_cpu"]["debug_reachable_legacy"]:
         raise SystemExit(1)
 
 

@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from .scheduler import derive_mc2_simulation_powers
+from .names import MC2_INTERACTION_RESOURCE_KEY
 
 from .center_state import (
     MC2CenterStaticMetadata,
@@ -30,7 +31,6 @@ from .self_collision_static import (
 
 
 MC2_NATIVE_CONTEXT_SCHEMA_VERSION = 0
-MC2_INTERACTION_RESOURCE_KEY = "mc2_interaction_v0"
 MC2_STATIC_CHANGE_TOPOLOGY = 1
 MC2_STATIC_CHANGE_GEOMETRY = 2
 MC2_STATIC_CHANGE_SURFACE = 4

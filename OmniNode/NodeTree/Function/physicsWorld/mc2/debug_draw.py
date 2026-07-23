@@ -32,8 +32,7 @@ from .debug import (
     normalize_mc2_task_filters,
     request_mc2_debug_capture,
 )
-from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
-from .names import MC2_SLOT_KIND
+from .names import MC2_INTERACTION_RESOURCE_KEY, MC2_SLOT_KIND
 
 
 _COLORS = {
@@ -153,6 +152,12 @@ for _depth_index, _depth_color in enumerate(_DEPTH_COLORS):
 
 _MC2_DRAW_STORE: dict[str, dict] = {}
 _MC2_DRAW_HANDLE = None
+
+
+def _supports_interaction_snapshot(value) -> bool:
+    return value is not None and callable(
+        getattr(value, "debug_draw_snapshot", None)
+    )
 
 
 def _values(value):
@@ -553,8 +558,8 @@ def _build_world_status_text(world: PhysicsWorldCache, filters: dict) -> str:
     for snapshot in snapshots:
         lines.extend(_build_slot_status_lines(snapshot, filters))
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
-    if filters.get("show_collision_contacts") and isinstance(
-        interaction, MC2NativeInteractionV0
+    if filters.get("show_collision_contacts") and _supports_interaction_snapshot(
+        interaction
     ):
         state = interaction.debug_draw_snapshot() or {}
         enabled = np.asarray(
@@ -597,7 +602,7 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
         )
 
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
-    if isinstance(interaction, MC2NativeInteractionV0):
+    if _supports_interaction_snapshot(interaction):
         snapshot = interaction.debug_draw_snapshot()
         if isinstance(snapshot, dict):
             if filters["show_collision_contacts"]:

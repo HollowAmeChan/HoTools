@@ -8,8 +8,12 @@ import time
 import numpy as np
 
 from ..types import PhysicsWorldCache
-from .names import MC2_DEBUG_DRAW_MODE, MC2_SLOT_KIND, MC2_SOLVER_ID
-from .native_context import MC2_INTERACTION_RESOURCE_KEY, MC2NativeInteractionV0
+from .names import (
+    MC2_DEBUG_DRAW_MODE,
+    MC2_INTERACTION_RESOURCE_KEY,
+    MC2_SLOT_KIND,
+    MC2_SOLVER_ID,
+)
 from .runtime_parameters import (
     MC2_RUNTIME_CURVE_FIELDS,
     MC2_RUNTIME_FLOAT_FIELDS,
@@ -82,6 +86,20 @@ MC2_SUBSTEP_DEBUG_FILTER_KEYS = tuple(
     for name in MC2_NATIVE_DEBUG_FILTER_KEYS
     if name not in ("show_teleport_threshold", "show_teleport_status")
 )
+
+
+def _supports_interaction_debug(value) -> bool:
+    methods = (
+        "clear_debug_self_temporal_history",
+        "request_debug_capture",
+        "cancel_debug_capture",
+        "debug_capture_state",
+        "refresh_debug_draw_snapshot",
+        "debug_self_temporal_history",
+    )
+    return value is not None and all(
+        callable(getattr(value, name, None)) for name in methods
+    )
 
 
 def normalize_mc2_task_filters(value) -> tuple[str, ...]:
@@ -506,7 +524,7 @@ def request_mc2_debug_capture(
         })
         requested += 1
     interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
-    if isinstance(interaction, MC2NativeInteractionV0):
+    if _supports_interaction_debug(interaction):
         if not (has_modes and requested and filters.get("show_self_contacts", False)):
             interaction.clear_debug_self_temporal_history()
         if has_modes and requested and (
@@ -1534,7 +1552,7 @@ def capture_requested_mc2_debug(
                 state["attempted_frame"] = frame
                 state["capture_ms"] = (time.perf_counter() - started) * 1000.0
 
-    if isinstance(interaction, MC2NativeInteractionV0):
+    if _supports_interaction_debug(interaction):
         state = interaction.debug_capture_state()
         if _state_requested(state, frame) and any(item.get("substeps") for item in runtime_items):
             started = time.perf_counter()

@@ -78,7 +78,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 三种setup统一域产品路径可用；E7-A行为迁移完成，执行最终依赖审计 | E0-E5-B、P0、P1-B、E4/P2均已闭环；DomainV1拥有partitioned StepBasic、whole-domain self/external、完整混合pass、scheduler/Center/Anchor历史和多目标logical output；Mesh与Bone公开节点只生成setup-neutral显式product request，动态槽位按setup/domain identity拥有状态，多request全部求解后一次发布；同Armature Bone结果合并，失败清除整批owner/result/feedback；Bone删除前全约束、混合输出、外碰、Center/Teleport、故障事务和Angle/Motion数值门禁已双ABI关闭 | 完成精确import/reachability/公开符号审计并冻结实际删除集合；再执行E7-CPU删除三种setup旧owner/hidden task/aggregate，随后执行E7-S兼容层专项简化；并行沉淀P6合同 |
+| MC2 | 三种setup统一域产品路径可用；E7-A已关闭，E7-CPU分组删除中 | E0-E5-B、P0、P1-B、E4/P2均已闭环；DomainV1拥有partitioned StepBasic、whole-domain self/external、完整混合pass、scheduler/Center/Anchor历史和多目标logical output；Mesh与Bone公开节点只生成setup-neutral显式product request，动态槽位按setup/domain identity拥有状态，多request全部求解后一次发布；同Armature Bone结果合并，失败清除整批owner/result/feedback；Bone删除前全约束、混合输出、外碰、Center/Teleport、故障事务和Angle/Motion数值门禁已双ABI关闭；公开step、节点顶层导入和调试模块硬类型依赖已经切断 | 继续迁移产品调试冻结快照，随后按冻结清单删除三种setup旧Python owner/hidden task/aggregate/oracle bridge及70个native V0 binding、五个context翻译单元；删除后执行E7-S兼容层专项简化；并行沉淀P6合同 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -96,10 +96,11 @@ MC2 参数热更新、外碰、Center、故障与Angle/Motion门禁（2026-07-23
 MC2 E7-A 精确依赖审计（2026-07-23）：更新后的架构工具区分顶层 import-time 与函数内延迟 bridge，py311/py313 的 `--check --e7-product-check` 均通过。`product_solver` 产品运行图到五个旧模块的可达数为 `0`；公开 `nodes` 顶层图仍经旧 debug 链可达 `native_context`，另有 7 条 task/oracle 延迟 bridge。native 待删面为 68 个旧必需符号、2 个 fingerprint V0 alias、70 个 binding 和五个 context 翻译单元。E7-A 至此完成并冻结删除顺序；下一步进入 E7-CPU 的 product-only step/debug 切断提交。
 MC2 E7-CPU 公开 step 切断（2026-07-23）：`physicsMC2Step` 已改为 product-only，不再回退 `step_mc2`；空 request 和成功后的 request 集合缩减由产品 solver 原子清理退出槽与旧结果。py311/py313 产品批事务 `5/5`，Blender 4.5/cp311 与 5.2/cp313 的产品节点、120 帧确定性和显式双 source oracle 对照均通过。下一组迁移 debug/debug_draw 的旧 context 依赖。
 MC2 公开 import-time 解耦（2026-07-23）：`nodes` 改为仅在调试节点执行时加载 `debug_draw`，新增架构门禁后产品运行图与公开节点顶层图的旧模块可达数均为 `0`；两版 Blender 调试绘制 13 组断言全过。`debug/debug_draw` 内部旧 snapshot 依赖仍待下一组迁移。
+MC2 调试旧类型解耦（2026-07-23）：旧 interaction resource key 已移到中立名称模块，`debug/debug_draw` 不再导入 `native_context` 或判断 `MC2NativeInteractionV0`，只通过捕获控制与冻结快照的窄只读方法协议观察资源。新增 `--e7-debug-import-check` 后，py311/py313 的产品运行图、公开节点顶层图和调试模块图到五个旧 Python owner 的可达数均为 `0`；Blender 4.5/cp311 与 5.2/cp313 调试绘制 13 组断言保持全过。旧 interaction 实例、V0 resource key 和兼容协议分支仍在，不得把本组解释成产品调试快照迁移完成；它们分别进入后续产品 owner 迁移与 E7-S 简化清单。
 
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
-3. MC2统一域E5-B产品入口已切换；当前执行E7-A删除前资格审计，关闭后依次执行E7-CPU删除和E7-S兼容层专项简化；P6合同贯穿其间，任何setup都不得静默回退到旧task/V0。
+3. MC2统一域E7-A已关闭，当前按冻结清单执行E7-CPU分组删除；完成产品调试快照迁移、Python旧owner/oracle bridge和native V0面删除后，立即执行E7-S兼容层专项简化。P6合同贯穿其间，任何setup都不得静默回退到旧task/V0。
 4. 用真实业务场景验证rigid→cloth、body transform→collider等跨solver exchange。
 5. 决定Mesh XPBD迁移或删除。
 
