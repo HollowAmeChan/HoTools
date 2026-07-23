@@ -54,6 +54,9 @@ native_kernel = importlib.import_module(
 scheduler = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.scheduler"
 )
+reference_step = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.reference_step"
+)
 
 FIXTURE_ROOT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -78,11 +81,11 @@ def _source():
     return ir.make_mc2_mesh_partition_static_snapshot(**payload)
 
 
-def _compiled_domain():
+def _compiled_domain(profile=None):
     snapshot = _source()
     fragment = fragment_module.build_mc2_mesh_static_fragment(snapshot)
-    effective = runtime.make_mc2_runtime_parameters(
-        parameters.make_mc2_particle_profile(
+    if profile is None:
+        profile = parameters.make_mc2_particle_profile(
             gravity=1.0,
             gravity_direction=(0.0, -1.0, 0.0),
             collision_friction=0.0,
@@ -90,7 +93,9 @@ def _compiled_domain():
             angle_restoration_enabled=False,
             angle_limit_enabled=False,
             self_collision_mode=0,
-        ),
+        )
+    effective = runtime.make_mc2_runtime_parameters(
+        profile,
         parameters.make_mc2_setup_options("mesh_cloth"),
         parameters.make_mc2_task_parameters(),
     )
@@ -102,16 +107,23 @@ def _compiled_domain():
     return compiled, effective, domain
 
 
-def _frame(program):
-    count = program.particle_count
+def _frame_at(
+    program,
+    *,
+    frame,
+    generation,
+    positions,
+    frame_delta_time=0.1,
+    simulation_delta_time=0.1,
+):
     return ir.make_mc2_domain_frame_packet(
         program,
-        frame=6,
-        generation=2,
-        animated_base_world_positions=program.particle_bind_position,
+        frame=frame,
+        generation=generation,
+        animated_base_world_positions=positions,
         animated_base_world_rotations=program.particle_bind_rotation,
         animated_base_world_normals=np.asarray(
-            ((0.0, 0.0, 1.0),) * count,
+            ((0.0, 0.0, 1.0),) * program.particle_count,
             dtype=np.float32,
         ),
         partition_world_position=((0.0, 0.0, 0.0),),
@@ -120,12 +132,21 @@ def _frame(program):
         partition_world_linear=(
             ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         ),
-        frame_delta_time=0.1,
-        simulation_delta_time=0.1,
+        frame_delta_time=frame_delta_time,
+        simulation_delta_time=simulation_delta_time,
         time_scale=1.0,
         skip_count=0,
         is_running=True,
         partition_frame_flags=(0,),
+    )
+
+
+def _frame(program):
+    return _frame_at(
+        program,
+        frame=6,
+        generation=2,
+        positions=program.particle_bind_position,
     )
 
 
@@ -178,15 +199,23 @@ def _full_reference_settings(program, positions, rotations, *, post_step=None):
 
 
 def _assert_golden(actual, case, field):
-    expected = np.asarray(case[field], dtype=np.float32)
+    field_payload = case[field]
+    if isinstance(field_payload, dict):
+        expected = np.asarray(field_payload["values"], dtype=np.float32)
+        rtol = float(field_payload["rtol"])
+        atol = float(field_payload["atol"])
+    else:
+        expected = np.asarray(field_payload, dtype=np.float32)
+        rtol = float(case["rtol"])
+        atol = float(case["atol"])
     assert actual.dtype == np.float32
     assert actual.shape == expected.shape
     assert np.isfinite(actual).all()
     np.testing.assert_allclose(
         actual,
         expected,
-        rtol=float(case["rtol"]),
-        atol=float(case["atol"]),
+        rtol=rtol,
+        atol=atol,
     )
 
 
@@ -275,6 +304,269 @@ def test_domain_post_history_matches_frozen_e3_reference():
         )
         domain.step_reference_pipeline_full(settings)
         case = _golden("post_history")
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+        _assert_golden(
+            domain.read_debug_state()["real_velocities"],
+            case,
+            "real_velocities",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_step_basic_and_angle_match_frozen_e3_reference():
+    compiled, _effective, domain = _compiled_domain()
+    try:
+        frame = _frame(compiled.program)
+        domain.update_frame(frame)
+        pose = domain.prepare_step_basic_pose(0.0)
+        case = _golden("step_basic_angle")
+        _assert_golden(
+            np.asarray(pose["positions"], dtype=np.float32),
+            case,
+            "step_basic_positions",
+        )
+        _assert_golden(
+            np.asarray(pose["rotations"], dtype=np.float32),
+            case,
+            "step_basic_rotations_xyzw",
+        )
+        powers = scheduler.derive_mc2_simulation_powers(0.1)
+        domain.step(
+            {
+                "data_path_only": True,
+                "integration_slice": True,
+                "dt": 0.1,
+                "simulation_power": powers.integration,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, -1.0, 0.0),
+            }
+        )
+        domain.step(
+            {
+                "data_path_only": True,
+                "angle_slice": True,
+                "step_basic_positions": pose["positions"],
+                "step_basic_rotations": pose["rotations"],
+                "restoration_values": np.full(
+                    compiled.program.particle_count,
+                    np.float32(0.2 * (9.0 ** 1.8)),
+                    dtype=np.float32,
+                ),
+                "limit_values": np.zeros(
+                    compiled.program.particle_count,
+                    dtype=np.float32,
+                ),
+                "restoration_velocity_attenuation": 0.0,
+                "restoration_gravity_falloff": 0.0,
+                "limit_stiffness": 0.0,
+                "restoration_enabled": True,
+                "limit_enabled": False,
+            }
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            case,
+            "world_positions",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_tether_motion_matches_frozen_e3_reference():
+    profile = parameters.make_mc2_particle_profile(
+        gravity=0.0,
+        damping=0.0,
+        collision_friction=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=False,
+        angle_limit_enabled=False,
+        max_distance_enabled=True,
+        max_distance=0.3,
+        backstop_enabled=True,
+        backstop_radius=0.5,
+        backstop_distance=0.1,
+        self_collision_mode=0,
+    )
+    compiled, _effective, domain = _compiled_domain(profile)
+    program = compiled.program
+    try:
+        base_positions = program.particle_bind_position.copy()
+        base_rotations = program.particle_bind_rotation
+        domain.update_frame(
+            _frame_at(
+                program,
+                frame=1,
+                generation=1,
+                positions=base_positions,
+            )
+        )
+        domain.step(
+            {
+                "data_path_only": True,
+                "integration_slice": True,
+                "dt": 0.1,
+                "simulation_power": 1.0,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, 0.0, 0.0),
+            }
+        )
+        moved_base = base_positions + np.asarray(
+            (1.0, 0.0, 0.0),
+            dtype=np.float32,
+        )
+        domain.update_frame(
+            _frame_at(
+                program,
+                frame=2,
+                generation=1,
+                positions=moved_base,
+            )
+        )
+        step_basic = domain.prepare_step_basic_pose(0.0)
+        domain.step(
+            {
+                "data_path_only": True,
+                "integration_slice": True,
+                "dt": 0.1,
+                "simulation_power": 1.0,
+                "velocity_weight": 1.0,
+                "gravity": (0.0, 0.0, 0.0),
+            }
+        )
+        partition_fields = {
+            name: index
+            for index, name in enumerate(
+                compiled.parameters.partition_parameters.fields
+            )
+        }
+        particle_fields = {
+            name: index
+            for index, name in enumerate(
+                compiled.parameters.particle_parameters.fields
+            )
+        }
+        uint_fields = {
+            name: index
+            for index, name in enumerate(
+                compiled.parameters.partition_uint_parameters.fields
+            )
+        }
+        partition_values = compiled.parameters.partition_parameters.values[0]
+        particle_values = compiled.parameters.particle_parameters.values
+        domain.step(
+            {
+                "data_path_only": True,
+                "tether_slice": True,
+                "step_basic_positions": step_basic["positions"],
+                "compression": float(
+                    partition_values[
+                        partition_fields["tether_compression_limit"]
+                    ]
+                ),
+                "stretch": float(
+                    partition_values[partition_fields["tether_stretch_limit"]]
+                ),
+            }
+        )
+        domain.step(
+            {
+                "data_path_only": True,
+                "motion_slice": True,
+                "base_positions": moved_base,
+                "base_rotations": base_rotations,
+                "max_distances": particle_values[
+                    :, particle_fields["max_distance"]
+                ],
+                "stiffness_values": np.full(
+                    program.particle_count,
+                    partition_values[partition_fields["motion_stiffness"]],
+                    dtype=np.float32,
+                ),
+                "backstop_radii": np.full(
+                    program.particle_count,
+                    partition_values[partition_fields["backstop_radius"]],
+                    dtype=np.float32,
+                ),
+                "backstop_distances": particle_values[
+                    :, particle_fields["backstop_distance"]
+                ],
+                "normal_axis": int(
+                    compiled.parameters.partition_uint_parameters.values[
+                        0, uint_fields["normal_axis"]
+                    ]
+                ),
+                "max_distance_enabled": True,
+                "backstop_enabled": False,
+            }
+        )
+        _assert_golden(
+            domain.read_output().world_positions,
+            _golden("tether_motion"),
+            "world_positions",
+        )
+    finally:
+        domain.dispose()
+
+
+def test_domain_full_angle_motion_matches_frozen_e3_reference():
+    profile = parameters.make_mc2_particle_profile(
+        gravity=1.0,
+        gravity_direction=(0.0, -1.0, 0.0),
+        damping=0.0,
+        collision_friction=0.0,
+        distance_stiffness=0.0,
+        bending_stiffness=0.0,
+        angle_restoration_enabled=True,
+        angle_restoration_stiffness=0.2,
+        angle_limit_enabled=True,
+        angle_limit=15.0,
+        angle_limit_stiffness=0.2,
+        max_distance_enabled=True,
+        max_distance=0.3,
+        backstop_enabled=True,
+        backstop_radius=0.5,
+        backstop_distance=0.1,
+        collision_mode=0,
+        self_collision_mode=0,
+    )
+    compiled, _effective, domain = _compiled_domain(profile)
+    program = compiled.program
+    try:
+        base_positions = program.particle_bind_position.copy()
+        frame = _frame_at(
+            program,
+            frame=1,
+            generation=1,
+            positions=base_positions,
+        )
+        domain.update_frame(frame)
+        step_basic = domain.prepare_step_basic_pose()
+        settings = reference_step.make_mc2_reference_pipeline_settings(
+            compiled,
+            frame,
+            scheduler.MC2SubstepPlan(
+                update_index=0,
+                simulation_delta_time=0.1,
+                frame_interpolation=1.0,
+                is_final_substep=True,
+                powers=scheduler.derive_mc2_simulation_powers(0.1),
+            ),
+            anchor_component_local_positions=np.zeros((1, 3), dtype=np.float32),
+            step_basic_positions=step_basic["positions"],
+            step_basic_rotations=step_basic["rotations"],
+            motion_base_positions=base_positions,
+            motion_base_rotations=frame.animated_base_world_rotations,
+            distance_weights=np.ones(1, dtype=np.float32),
+            old_positions=base_positions,
+        )
+        domain.step_reference_pipeline_full(settings)
+        case = _golden("full_angle_motion")
         _assert_golden(
             domain.read_output().world_positions,
             case,
