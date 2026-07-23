@@ -119,16 +119,16 @@ def _set_frame(world, frame: int, generation: int) -> None:
     world.generation = generation
 
 
-def _profile(*, bone_spring: bool):
+def _profile(*, bone_spring: bool, hot: bool = False):
     return parameters.make_mc2_particle_profile(
         gravity=0.0 if bone_spring else 3.0,
         gravity_direction=(0.25, -0.5, -1.0),
-        damping=0.08,
-        stabilization_time_after_reset=0.0,
-        particle_speed_limit=3.5,
-        radius=0.025,
+        damping=0.31 if hot else 0.08,
+        stabilization_time_after_reset=0.18 if hot else 0.0,
+        particle_speed_limit=0.09 if hot else 3.5,
+        radius=0.032 if hot else 0.025,
         tether_compression=0.35,
-        distance_stiffness=0.72,
+        distance_stiffness=0.43 if hot else 0.72,
         bending_stiffness=0.0 if bone_spring else 0.55,
         angle_restoration_enabled=True,
         angle_restoration_stiffness=0.62,
@@ -153,16 +153,16 @@ def _profile(*, bone_spring: bool):
     )
 
 
-def _requests(cloth, spring):
+def _requests(cloth, spring, *, hot: bool = False):
     cloth_requests, _cloth_names = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Parent"}],
-        profile=_profile(bone_spring=False),
+        profile=_profile(bone_spring=False, hot=hot),
         connection_mode=1,
         cloth_mass=0.4,
         collided_by_groups=1,
         teleport_mode=2,
-        teleport_distance=0.5,
-        teleport_rotation=90.0,
+        teleport_distance=0.24 if hot else 0.5,
+        teleport_rotation=35.0 if hot else 90.0,
     )
     spring_requests, _spring_names = nodes.physicsMC2BoneSpringTask(
         [{
@@ -170,11 +170,11 @@ def _requests(cloth, spring):
             "root_bone": "Chain0_0",
             "bones": tuple(f"Chain0_{depth}" for depth in range(6)),
         }],
-        profile=_profile(bone_spring=True),
+        profile=_profile(bone_spring=True, hot=hot),
         collided_by_groups=1,
         teleport_mode=2,
-        teleport_distance=0.5,
-        teleport_rotation=90.0,
+        teleport_distance=0.24 if hot else 0.5,
+        teleport_rotation=35.0 if hot else 90.0,
     )
     requests = tuple(cloth_requests + spring_requests)
     assert len(requests) == 2

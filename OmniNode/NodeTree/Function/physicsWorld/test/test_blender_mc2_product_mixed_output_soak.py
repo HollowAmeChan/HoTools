@@ -97,7 +97,7 @@ def _mesh_offsets(obj) -> np.ndarray:
     return values.reshape((-1, 3))
 
 
-def _mesh_request(world, mesh):
+def _mesh_request(world, mesh, *, hot: bool = False):
     entries, count = nodes.physicsMC2MeshObject([mesh])
     assert count == 1 and len(entries) == 1
     entries, override_count = nodes.physicsMC2MeshOverride(
@@ -105,11 +105,11 @@ def _mesh_request(world, mesh):
         profile=parameters.make_mc2_particle_profile(
             gravity=4.0,
             gravity_direction=(0.0, 0.0, -1.0),
-            damping=0.06,
-            particle_speed_limit=3.5,
-            radius=0.018,
+            damping=0.29 if hot else 0.06,
+            particle_speed_limit=0.08 if hot else 3.5,
+            radius=0.026 if hot else 0.018,
             tether_compression=0.35,
-            distance_stiffness=0.76,
+            distance_stiffness=0.41 if hot else 0.76,
             bending_stiffness=0.48,
             angle_restoration_enabled=False,
             angle_limit_enabled=False,
@@ -149,6 +149,7 @@ def _run_once(run_index: int) -> str:
     generation = 920 + run_index
     mesh = proxy = cloth = spring = None
     owners = None
+    schedulers = None
     digest = hashlib.sha256()
     try:
         physics_blender.register()
@@ -196,6 +197,15 @@ def _run_once(run_index: int) -> str:
                     "radius": 1.0,
                 }],
             }
+            if frame in (301, 601):
+                hot = frame == 301
+                previous_signatures = tuple(
+                    owner.compiled.parameters.parameter_signature for owner in owners
+                )
+                mesh_request = _mesh_request(world, mesh, hot=hot)
+                bone_requests = bone_soak._requests(cloth, spring, hot=hot)
+                requests = (mesh_request, *bone_requests)
+                assert tuple(_slot_id(request) for request in requests) == slot_ids
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(requests),
@@ -208,6 +218,7 @@ def _run_once(run_index: int) -> str:
             current_owners = tuple(slot.data["owner"] for slot in slots)
             if owners is None:
                 owners = current_owners
+                schedulers = tuple(slot.data["scheduler_state"] for slot in slots)
                 assert tuple(request.setup_type for request in requests) == (
                     "mesh_cloth",
                     "bone_cloth",
@@ -220,7 +231,20 @@ def _run_once(run_index: int) -> str:
                 )
             else:
                 assert current_owners == owners
+                assert all(
+                    slot.data["scheduler_state"] is scheduler
+                    for slot, scheduler in zip(slots, schedulers)
+                )
                 assert all(slot.data["last_sync"].native_domain_reused for slot in slots)
+                if frame in (301, 601):
+                    assert all(
+                        slot.data["last_sync"].action == "parameters_updated"
+                        for slot in slots
+                    )
+                    assert all(
+                        owner.compiled.parameters.parameter_signature != previous
+                        for owner, previous in zip(owners, previous_signatures)
+                    )
 
             for slot, owner in zip(slots, current_owners):
                 assert "native_context" not in slot.data

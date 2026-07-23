@@ -118,6 +118,7 @@ class _Kernel:
         self.poses = []
         self.full_steps = []
         self.fail_create = False
+        self.fail_parameter_stage = False
         self.fail_update = False
         self.fail_step = False
 
@@ -127,6 +128,30 @@ class _Kernel:
         handle = {"program": program, "packet": packet, "serial": len(self.created)}
         self.created.append(handle)
         return handle
+
+    def stage_parameter_update(self, handle, program, packet):
+        if self.fail_parameter_stage:
+            raise RuntimeError("injected slot parameter stage failure")
+        return {
+            "handle": handle,
+            "old_program": handle["program"],
+            "old_packet": handle["packet"],
+            "new_program": program,
+            "new_packet": packet,
+            "applied": False,
+        }
+    def apply_parameter_update(self, handle, update):
+        handle["program"] = update["new_program"]
+        handle["packet"] = update["new_packet"]
+        update["applied"] = True
+    def rollback_parameter_update(self, handle, update):
+        handle["program"] = update["old_program"]
+        handle["packet"] = update["old_packet"]
+        update["applied"] = False
+    def finish_parameter_update(self, handle, update):
+        assert update["applied"]
+    def discard_parameter_update(self, update):
+        assert not update["applied"]
 
     def update_frame(self, handle, frame):
         if self.fail_update:
@@ -210,13 +235,13 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     owner = slot.data["owner"]
     compiled = owner.compiled
-    kernel.fail_create = True
+    kernel.fail_parameter_stage = True
     try:
         slot_module.sync_mc2_mesh_fused_slot(
             world, _collection(gravity=6.0), kernel=kernel,
         )
     except RuntimeError as exc:
-        assert "injected slot create failure" in str(exc)
+        assert "injected slot parameter stage failure" in str(exc)
     else:
         raise AssertionError("owner replacement failure was accepted")
     assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
@@ -224,7 +249,7 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
     assert world._current_writer is None
 
 
-def test_same_generation_native_replacement_resets_product_scheduler_state():
+def test_same_generation_parameter_update_preserves_product_scheduler_state():
     world = _world()
     kernel = _Kernel()
     slot_module.sync_mc2_mesh_fused_slot(
@@ -235,10 +260,9 @@ def test_same_generation_native_replacement_resets_product_scheduler_state():
     updated = slot_module.sync_mc2_mesh_fused_slot(
         world, _collection(gravity=6.0), kernel=kernel,
     )
-    assert updated.owner_report.action == "replaced"
-    assert slot.data["scheduler_state"] is not old_scheduler
-    assert slot.data["scheduler_state"].revision == 0
-    assert slot.data["frame_ready"] is False
+    assert updated.owner_report.action == "parameters_updated"
+    assert updated.owner_report.native_domain_reused
+    assert slot.data["scheduler_state"] is old_scheduler
 
 
 def _empty_collider_frame(frame):
