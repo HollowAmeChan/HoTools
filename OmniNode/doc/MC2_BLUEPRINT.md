@@ -755,6 +755,8 @@ E5/E5-B已完成三种setup产品切换：`domain_output.py`把logical output冻
 
 参数热更新补验（2026-07-23）：同布局参数更新现由 native 暂存域承接。暂存阶段完整执行新参数的 Distance、Bending、Inertia、Friction、whole-domain self、compiled external、Center/Teleport 和 Integration 配置校验；成功后可逆交换配置 SoA，不替换 live handle，也不清除 frame、scheduler、Center/Teleport、粒子和输出历史。host cache 提交失败会交换回旧配置并清理暂存域。cp313/Blender 5.2 与临时开放的 cp311/Blender 4.5 均通过 owner、native kernel 和 compiled pipeline 对照，热更新轨迹与全新 second-domain 逐数组一致。Bone 产品 Center/Teleport 端点和真实两域故障事务也已在两版关闭。新增公开 Bone 产品 Angle/Motion 门禁锁定两种包装的 Restoration 响应、父旋转级联 Limit 30°/15° 上界、MaxDistance `0.03m` 与 Backstop `0.01m` 表面边界；两版数值一致。E7-A 行为迁移已完成，只剩最终精确依赖审计。
 
+E7-A 精确依赖审计已冻结删除面：双 ABI AST 门禁证明 `product_solver` 产品运行图到五个旧 Python 模块的可达数为 `0`；公开 `nodes` 顶层图仍因旧调试绘制可达 `native_context`，并保留 7 条只在旧 task/oracle 函数调用时生效的延迟 bridge。native 侧共有 68 个旧 context/interaction 必需符号和 2 个 fingerprint V0 alias，落在 70 个 binding 与五个 `mc2_context_*` 翻译单元。E7-CPU 必须按“公开 product-only step/debug -> Python task owner/bridge -> native ABI/TU”三层删除，不能先删 native 再用兼容 fallback 修补上层。
+
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的 Blender 4.5 窗口中又发现 `build.bat` 复用了测试改写的 runtime cache；脚本现每次先刷新 preset，确保产物真实写入所选 `_Lib/py311` 或 `_Lib/py313` 目录。重新生成并提交的 py311 产物通过 22 个 MC2 native 测试文件；Blender 4.5 运行时明确加载当前 cp311 并通过 Mesh shadow、120 帧产品确定性、双 source 对照和 Bone product 事务。

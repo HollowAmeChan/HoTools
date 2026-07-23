@@ -81,6 +81,9 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_compile", "compile_mc2_mesh_static_fragment"),
     ("mc2.domain_owner", "_make_report"),
     ("mc2.cpu_backend", "create_mc2_cpu_backend_domain"),
+    ("mc2.domain_collect", "build_mc2_mesh_domain_draft"),
+    ("mc2.domain_collect", "build_mc2_mesh_domain_collider_frame"),
+    ("mc2.domain_owner", "_make_report_values"),
     ("mc2.reference_step", "_partition_vector"),
     ("mc2.reference_step", "partition_float"),
     ("mc2.reference_step", "partition_uint_value"),
@@ -99,6 +102,7 @@ ALLOWED_FORWARDERS = {
     ("mc2.interaction_scope", "_mesh_collision_properties"),
     ("mc2.mesh_baseline", "baseline_count"),
     ("mc2.nodes", "_task_name_output"),
+    ("mc2.nodes", "_product_name_output"),
     ("mc2.nodes", "_task_parameter_presets"),
     ("mc2.nodes", "_make_task_parameters"),
     ("mc2.nodes", "physicsMC2MeshClothTask"),
@@ -116,6 +120,11 @@ ALLOWED_FORWARDERS = {
     ("mc2.partition_specs", "make_mc2_partition_patch"),
     ("mc2.partition_specs", "field_source"),
     ("mc2.partition_specs", "active_partitions"),
+    ("mc2.product_bone_authoring", "task_sources"),
+    ("mc2.product_bone_collect", "world_gravity_directions"),
+    ("mc2.product_slot", "_is_product_collection"),
+    ("mc2.product_slot", "sync_mc2_mesh_fused_slot"),
+    ("mc2.product_solver", "_product_slot_id"),
     ("mc2.results", "particle_count"),
     ("mc2.runtime_parameters", "_multiply_float32"),
     ("mc2.scheduler", "_f32"),
@@ -126,12 +135,36 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.mesh_cloth.final_proxy", "metadata"),
     ("mc2.setups.mesh_cloth.final_proxy", "every_vertex_has_triangle"),
     ("mc2.setups.mesh_cloth.final_proxy", "_tuple_vectors"),
+    ("mc2.setups.bone_cloth.fragment_cache", "hit_count"),
+    ("mc2.setups.bone_cloth.fragment_cache", "build_count"),
+    ("mc2.setups.bone_cloth.static_build", "build_mc2_bone_cloth_static_for_task"),
+    ("mc2.setups.bone_cloth.static_fragment", "baseline"),
+    ("mc2.setups.bone_frame_input", "build_mc2_bone_frame_input"),
     ("mc2.setups.mesh_cloth.frame_input", "vertex_count"),
     ("mc2.static_data", "vertex_count"),
     ("mc2.timing", "_metric"),
     ("mc2.topology", "build_mc2_mesh_source_topology"),
     ("mc2.topology", "build_mc2_bone_source_topology"),
+    ("mc2.topology", "build_mc2_topology_spec"),
 }
+
+E7_LEGACY_MODULES = frozenset((
+    "mc2.solver",
+    "mc2.specs",
+    "mc2.native_context",
+    "mc2.interaction_scope",
+    "mc2.shadow_pipeline",
+))
+E7_PRODUCT_RUNTIME_ROOTS = ("mc2.product_solver",)
+E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
+E7_LEGACY_BINDING_PREFIXES = ("mc2_context_v0_", "mc2_interaction_v0_")
+E7_LEGACY_BINDING_NAMES = frozenset((
+    "mc2_mesh_static_fingerprint_v0",
+    "mc2_bone_static_fingerprint_v0",
+))
+ALLOWED_BINDING_OVERLOADS = frozenset((
+    "mc2_domain_cpu_v1_configure_whole_domain_self",
+))
 
 FORBIDDEN_PRODUCT_FUNCTIONS = {
     ("mc2.interaction_scope", "explicit_partner_pairs"),
@@ -310,9 +343,22 @@ def _strongly_connected_components(edges: dict[str, set[str]]) -> list[list[str]
     return sorted(components)
 
 
+def _reachable_modules(edges: dict[str, set[str]], roots: tuple[str, ...]) -> set[str]:
+    reachable = set()
+    pending = list(roots)
+    while pending:
+        module = pending.pop()
+        if module in reachable:
+            continue
+        reachable.add(module)
+        pending.extend(edges.get(module, ()))
+    return reachable
+
+
 def _python_facts() -> dict:
     modules = {}
     edges: dict[str, set[str]] = defaultdict(set)
+    top_level_edges: dict[str, set[str]] = defaultdict(set)
     private_imports = []
     forwarders = []
     test_imports = []
@@ -324,6 +370,15 @@ def _python_facts() -> dict:
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         module_name = _module_name(path)
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom):
+                dependency = _resolve_import(module_name, path, statement)
+                if dependency is not None:
+                    top_level_edges[module_name].add(dependency)
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    if alias.name == "mc2" or alias.name.startswith("mc2."):
+                        top_level_edges[module_name].add(alias.name)
         imports = []
         functions = []
         classes = []
@@ -460,6 +515,7 @@ def _python_facts() -> dict:
                         "call": call_name,
                     })
         edges.setdefault(module_name, set())
+        top_level_edges.setdefault(module_name, set())
         docstring = ast.get_docstring(tree) or ""
         modules[module_name] = {
             "path": path.relative_to(REPO_ROOT).as_posix(),
@@ -491,12 +547,26 @@ def _python_facts() -> dict:
             "line": 0,
             "name": f"missing_profile_node:{name}",
         })
+    product_runtime_reachable = _reachable_modules(
+        top_level_edges, E7_PRODUCT_RUNTIME_ROOTS
+    )
+    public_node_reachable = _reachable_modules(top_level_edges, E7_PUBLIC_NODE_ROOTS)
+    legacy_inbound_imports = [
+        {"module": module, "dependency": dependency}
+        for module, dependencies in sorted(edges.items())
+        for dependency in sorted(dependencies)
+        if dependency in E7_LEGACY_MODULES
+    ]
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
         "reexport_count": sum(module["reexport_count"] for module in modules.values()),
         "modules": modules,
         "edges": {name: sorted(dependencies) for name, dependencies in sorted(edges.items())},
+        "top_level_edges": {
+            name: sorted(dependencies)
+            for name, dependencies in sorted(top_level_edges.items())
+        },
         "cycles": _strongly_connected_components(edges),
         "private_imports": sorted(private_imports, key=lambda item: (item["module"], item["line"])),
         "forwarders": sorted(forwarders, key=lambda item: (item["module"], item["line"])),
@@ -521,6 +591,26 @@ def _python_facts() -> dict:
             product_boundary_violations,
             key=lambda item: (item["module"], item["line"], item["name"]),
         ),
+        "e7_cpu": {
+            "legacy_modules": sorted(E7_LEGACY_MODULES),
+            "product_runtime_roots": list(E7_PRODUCT_RUNTIME_ROOTS),
+            "product_runtime_reachable_legacy": sorted(
+                product_runtime_reachable & E7_LEGACY_MODULES
+            ),
+            "public_node_roots": list(E7_PUBLIC_NODE_ROOTS),
+            "public_node_reachable_legacy": sorted(
+                public_node_reachable & E7_LEGACY_MODULES
+            ),
+            "legacy_inbound_imports": legacy_inbound_imports,
+            "legacy_lazy_imports": sorted(
+                (
+                    item for item in legacy_inbound_imports
+                    if item["dependency"]
+                    not in top_level_edges.get(item["module"], set())
+                ),
+                key=lambda item: (item["module"], item["dependency"]),
+            ),
+        },
     }
 
 
@@ -561,6 +651,7 @@ def _e0_domain_boundary_hits() -> list[dict]:
             "mc2.product_collect",
             "mc2.product_scheduler",
             "mc2.product_slot",
+            "mc2.results",
             "mc2.setups.mesh_cloth.fragment_cache",
         )),
         "mc2.domain_capabilities": frozenset((
@@ -647,13 +738,17 @@ def _cpp_facts() -> dict:
     ]
     binding_contract_violations = {
         "duplicate_bindings": sorted({
-            symbol for symbol in binding_symbols if binding_symbols.count(symbol) > 1
+            symbol for symbol in binding_symbols
+            if binding_symbols.count(symbol) > 1
+            and symbol not in ALLOWED_BINDING_OVERLOADS
         }),
         "duplicate_required": sorted({
             symbol for symbol in required_symbols if required_symbols.count(symbol) > 1
         }),
         "required_missing_bindings": sorted(set(required_symbols) - set(binding_symbols)),
-        "api_missing_required": sorted(set(api_symbols) - set(required_symbols)),
+        "api_missing_required": sorted(
+            set(api_symbols) - set(required_symbols) - E7_LEGACY_BINDING_NAMES
+        ),
     }
     pure_native_violations = []
     for filename in PURE_NATIVE_FILES:
@@ -661,6 +756,16 @@ def _cpp_facts() -> dict:
         for term in PYTHON_NATIVE_TERMS:
             if term in source:
                 pure_native_violations.append({"file": filename, "term": term})
+    legacy_bindings = sorted(
+        symbol for symbol in binding_symbols
+        if symbol.startswith(E7_LEGACY_BINDING_PREFIXES)
+        or symbol in E7_LEGACY_BINDING_NAMES
+    )
+    legacy_required = sorted(
+        symbol for symbol in required_symbols
+        if symbol.startswith(E7_LEGACY_BINDING_PREFIXES)
+        or symbol in E7_LEGACY_BINDING_NAMES
+    )
     return {
         "translation_unit_count": len(files),
         "line_count": sum(item["lines"] for item in files.values()),
@@ -671,6 +776,13 @@ def _cpp_facts() -> dict:
         "api_definition_violations": api_definition_violations,
         "binding_contract_violations": binding_contract_violations,
         "pure_native_violations": pure_native_violations,
+        "e7_cpu": {
+            "legacy_bindings": legacy_bindings,
+            "legacy_required_symbols": legacy_required,
+            "legacy_translation_units": sorted(
+                name for name in files if name.startswith("mc2_context_")
+            ),
+        },
     }
 
 
@@ -729,6 +841,14 @@ def _print_summary(report: dict) -> None:
     print(f"Python raw readback boundary violations: {len(python['raw_readback_calls'])}")
     print(f"Python persistent ndarray state fields: {len(python['persistent_array_fields'])}")
     print(f"Python product boundary violations: {len(python['product_boundary_violations'])}")
+    print(
+        "E7 product runtime reachable legacy modules: "
+        f"{len(python['e7_cpu']['product_runtime_reachable_legacy'])}"
+    )
+    print(
+        "E7 public node reachable legacy modules: "
+        f"{len(python['e7_cpu']['public_node_reachable_legacy'])}"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -752,12 +872,21 @@ def _print_summary(report: dict) -> None:
         f"{binding_violation_count} violations"
     )
     print(f"C++ pure-native Python dependencies: {len(cpp['pure_native_violations'])}")
+    print(
+        f"E7 native legacy surface: {len(cpp['e7_cpu']['legacy_bindings'])} bindings, "
+        f"{len(cpp['e7_cpu']['legacy_translation_units'])} translation units"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", help="print the full JSON report")
     parser.add_argument("--check", action="store_true", help="fail on architecture boundary violations")
+    parser.add_argument(
+        "--e7-product-check",
+        action="store_true",
+        help="fail when the product runtime graph reaches a legacy MC2 owner",
+    )
     args = parser.parse_args()
     report = build_report()
     if args.json:
@@ -787,6 +916,8 @@ def main() -> None:
         )
         if any(failures):
             raise SystemExit(1)
+    if args.e7_product_check and report["python"]["e7_cpu"]["product_runtime_reachable_legacy"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
