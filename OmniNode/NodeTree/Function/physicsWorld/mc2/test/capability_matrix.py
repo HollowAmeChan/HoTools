@@ -130,7 +130,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": (),
             "invariants": ("finite", "deterministic", "zero_force_rest"),
         }, {
-            "runner": "test_blender_mc2_constraint_soak.py::mesh_gravity_axes_falloff",
+            "runner": "test_blender_mc2_mesh_product_constraint_soak.py::test_mesh_product_gravity_axes_falloff",
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": (
