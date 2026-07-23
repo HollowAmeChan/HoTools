@@ -481,8 +481,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
             "invariants": (
                 "finite", "deterministic", "bone_branch_transition_stable",
-                "zero_force_rest", "target_direction_exact",
+                "zero_force_rest",
                 "connected_disconnected_writeback",
+            ),
+        }, {
+            "runner": (
+                "test_blender_mc2_bone_product_angle_motion.py::"
+                "test_bone_product_angle_target_rest_deterministic"
+            ),
+            "frames": 600,
+            "setups": ("bone_cloth", "bone_spring"),
+            "fields": (),
+            "invariants": (
+                "finite", "deterministic", "target_direction_exact",
             ),
         }, {
             "runner": "test_blender_mc2_product_center_controls_soak.py::center_anchor_controls",
@@ -692,7 +703,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": (
                 "finite", "deterministic", "cross_task_scope_exact",
-                "single_radius_model_consistent",
+                "contact_cache_bounded", "single_radius_model_consistent",
             ),
         }),
         "status": "gap",

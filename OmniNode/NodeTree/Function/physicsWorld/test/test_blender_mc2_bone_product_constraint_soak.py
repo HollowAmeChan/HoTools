@@ -116,6 +116,39 @@ def _armature(
     return obj
 
 
+def _self_scope_armature(name: str):
+    data = bpy.data.armatures.new(f"{name}Data")
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    for source_index in range(2):
+        source_x = (float(source_index) - 0.5) * 0.005
+        parent = data.edit_bones.new(f"Parent{source_index}")
+        parent.head = (source_x, 0.0, 0.0)
+        parent.tail = (source_x, 0.0, 0.4)
+        for chain_index in range(2):
+            chain_x = source_x + (float(chain_index) - 0.5) * 0.02
+            previous = parent
+            for depth in range(6):
+                bone = data.edit_bones.new(
+                    f"Source{source_index}_Chain{chain_index}_{depth}"
+                )
+                bone.head = (chain_x, depth * 0.03, 0.4 + depth * 0.04)
+                bone.tail = (
+                    chain_x + depth * 0.01,
+                    (depth + 1) * 0.03,
+                    0.44 + depth * 0.04,
+                )
+                bone.parent = previous
+                bone.use_connect = depth > 0 and depth != 3
+                previous = bone
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
+    return obj
+
+
 def _remove_armature(obj) -> None:
     if obj is None or obj.name not in bpy.data.objects:
         return
@@ -424,53 +457,52 @@ def test_bone_product_self_collision_domain_contract() -> None:
 def _run_self_scope_once(run_index: int):
     world = world_types.PhysicsWorldCache()
     generation = 2500 + run_index
-    armatures = []
+    armature = None
     digest = hashlib.sha256()
     samples = []
     try:
-        armatures = [
-            _armature(
-                f"MC2ProductSelfScope{run_index}_{index}",
-                chain_count=2,
-                chain_length=6,
-                x_offset=0.0,
-                chain_spacing=0.04,
-                bone_spacing=0.03,
-            )
-            for index in range(2)
-        ]
-        requests = []
-        for armature in armatures:
-            cloth_requests, _ = nodes.physicsMC2BoneClothTask(
-                [{"armature": armature, "bone": "Parent"}],
-                profile=_profile(
-                    bone_spring=False,
-                    self_collision_thickness=0.008,
-                    gravity=0.0,
-                ),
-                connection_mode=1,
-                cloth_mass=0.4,
-                collided_by_groups=1,
-                teleport_mode=2,
-                teleport_distance=0.5,
-                teleport_rotation=90.0,
-            )
-            assert len(cloth_requests) == 1
-            requests.extend(cloth_requests)
+        armature = _self_scope_armature(f"MC2ProductSelfScope{run_index}")
+        requests, _ = nodes.physicsMC2BoneClothTask(
+            [
+                {"armature": armature, "bone": "Parent0"},
+                {"armature": armature, "bone": "Parent1"},
+            ],
+            profile=_profile(
+                bone_spring=False,
+                self_collision_thickness=0.008,
+                gravity=0.0,
+            ),
+            connection_mode=1,
+            cloth_mass=0.4,
+            collided_by_groups=1,
+            teleport_mode=2,
+            teleport_distance=0.5,
+            teleport_rotation=90.0,
+        )
+        assert len(requests) == 1
         requests = tuple(requests)
         slot_ids = _slot_ids(requests)
-        assert len(slot_ids) == 2 and slot_ids[0] != slot_ids[1]
+        assert len(slot_ids) == 1
 
         for frame in range(1, 901):
             phase = frame * 0.017
-            for armature in armatures:
-                parent = armature.pose.bones["Parent"]
+            for source_index in range(2):
+                parent = armature.pose.bones[f"Parent{source_index}"]
                 parent.rotation_mode = "XYZ"
-                parent.rotation_euler.z = 0.12 * math.sin(phase)
-                parent.location.x = 0.01 * math.sin(phase * 0.5)
+                parent.rotation_euler.z = (
+                    0.12 * math.sin(phase + source_index * 0.25)
+                )
+                parent.location.x = (
+                    0.01 * math.sin(phase * 0.5 + source_index * 0.4)
+                )
             bpy.context.view_layer.update()
             _set_frame(world, frame, generation)
             world.collider_snapshot = {"frame": frame, "colliders": []}
+            capture_self = frame in (2, 900)
+            captured_owner = None
+            if capture_self:
+                captured_owner = world.solver_slots[slot_ids[0]].data["owner"]
+                captured_owner.begin_constraint_debug(64)
             returned, ready, status = nodes.physicsMC2Step(
                 world,
                 list(requests),
@@ -480,52 +512,82 @@ def _run_self_scope_once(run_index: int):
             assert returned is world and ready is True, status
 
             frame_sample = []
-            for slot_id, request in zip(slot_ids, requests):
-                slot = world.solver_slots[slot_id]
-                owner = slot.data["owner"]
-                inspection = owner.inspect()
-                kernel = inspection["domain"]["kernel"]
-                assert "native_context" not in slot.data
-                assert "spec" not in slot.data
-                assert kernel["whole_domain_self_ready"] is True
-                point_count = int(kernel["whole_domain_self_point_count"])
-                candidate_count = int(
-                    kernel.get("whole_domain_self_last_candidate_count", 0)
+            slot_id = slot_ids[0]
+            slot = world.solver_slots[slot_id]
+            owner = slot.data["owner"]
+            if captured_owner is not None:
+                assert owner is captured_owner
+            inspection = owner.inspect()
+            kernel = inspection["domain"]["kernel"]
+            assert "native_context" not in slot.data
+            assert "spec" not in slot.data
+            assert owner.compiled.program.partition_count == 2
+            assert set(owner.compiled.program.particle_partition_index) == {0, 1}
+            assert kernel["whole_domain_self_ready"] is True
+            point_count = int(kernel["whole_domain_self_point_count"])
+            candidate_count = int(
+                kernel.get("whole_domain_self_last_candidate_count", 0)
+            )
+            contact_count = int(
+                kernel.get("whole_domain_self_last_contact_count", 0)
+            )
+            assert point_count == owner.compiled.program.particle_count
+            assert candidate_count >= 0 and contact_count >= 0
+            assert candidate_count <= point_count * point_count
+            assert contact_count <= candidate_count
+            assert np.isfinite(candidate_count) and np.isfinite(contact_count)
+            if frame > 1:
+                assert kernel["whole_domain_self_step_count"] > 0
+            if frame in (2, 900):
+                assert candidate_count > 0
+                assert contact_count > 0
+                owner.end_constraint_debug()
+                self_debug = owner.read_constraint_debug_state()[
+                    "whole_domain_self_results"
+                ]
+                primitive_owners = np.asarray(
+                    self_debug["owner_indices"], dtype=np.int32
                 )
-                contact_count = int(
-                    kernel.get("whole_domain_self_last_contact_count", 0)
+                contact_indices = np.asarray(
+                    self_debug["contact_indices"], dtype=np.int32
+                ).reshape((-1, 2))
+                enabled = np.asarray(
+                    self_debug["contact_enabled"], dtype=np.uint8
+                ).astype(bool)
+                assert len(contact_indices) == len(enabled)
+                cross_partition = enabled & (
+                    primitive_owners[contact_indices[:, 0]]
+                    != primitive_owners[contact_indices[:, 1]]
                 )
-                assert point_count == owner.compiled.program.particle_count
-                assert candidate_count >= 0 and contact_count >= 0
-                assert candidate_count <= point_count * point_count
-                assert contact_count <= candidate_count
-                assert np.isfinite(candidate_count) and np.isfinite(contact_count)
-                if frame > 1:
-                    assert kernel["whole_domain_self_step_count"] > 0
-                output = owner.read_output()
-                assert np.all(np.isfinite(output.world_positions))
-                digest.update(output.world_positions.tobytes())
-                if frame in (2, 900):
-                    frame_sample.append((point_count, candidate_count, contact_count))
-                particle_parameters = owner.compiled.parameters.particle_parameters
-                thickness_index = particle_parameters.fields.index(
-                    "self_collision_thickness"
-                )
-                radius_index = particle_parameters.fields.index("radius")
-                np.testing.assert_allclose(
-                    particle_parameters.values[:, thickness_index],
-                    particle_parameters.values[:, radius_index] * 0.25,
-                    rtol=0.0,
-                    atol=1.0e-6,
-                )
+                assert np.any(cross_partition)
+            output = owner.read_output()
+            assert np.all(np.isfinite(output.world_positions))
+            digest.update(output.world_positions.tobytes())
+            if frame in (2, 900):
+                frame_sample.append((
+                    point_count,
+                    candidate_count,
+                    contact_count,
+                    int(np.count_nonzero(cross_partition)),
+                ))
+            particle_parameters = owner.compiled.parameters.particle_parameters
+            thickness_index = particle_parameters.fields.index(
+                "self_collision_thickness"
+            )
+            radius_index = particle_parameters.fields.index("radius")
+            np.testing.assert_allclose(
+                particle_parameters.values[:, thickness_index],
+                particle_parameters.values[:, radius_index] * 0.25,
+                rtol=0.0,
+                atol=1.0e-6,
+            )
             if frame_sample:
                 samples.append(tuple(frame_sample))
         assert samples
         return digest.hexdigest(), tuple(samples)
     finally:
         world.omni_cache_dispose("bone_product_self_scope_cleanup")
-        for armature in armatures:
-            _remove_armature(armature)
+        _remove_armature(armature)
 
 
 def test_bone_product_self_collision_cross_source_scope_and_cache() -> None:
