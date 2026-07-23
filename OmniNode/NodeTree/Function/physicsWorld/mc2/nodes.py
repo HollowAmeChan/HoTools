@@ -1181,31 +1181,18 @@ def physicsMC2Step(
             overlay=OmniNodeTiming.current(),
         )
     flattened = _flatten_values(mc2_tasks)
-    product_requests = tuple(
-        value for value in flattened if isinstance(value, MC2ProductRequestV1)
+    invalid_values = tuple(
+        value for value in flattened if not isinstance(value, MC2ProductRequestV1)
     )
-    if product_requests:
-        legacy_values = tuple(
-            value for value in flattened if not isinstance(value, MC2ProductRequestV1)
+    if invalid_values:
+        raise TypeError(
+            "MC2模拟步只接受显式产品request；旧task/V0入口已删除"
         )
-        if legacy_values:
-            raise ValueError(
-                "MC2模拟步不得与旧task混用；显式产品request必须独立执行"
-            )
-        from .product_solver import step_mc2_products
+    from .product_solver import step_mc2_products
 
-        return step_mc2_products(
-            world,
-            product_requests,
-            settings=settings,
-            enabled=enabled,
-            timing=timing,
-        )
-    from .solver import step_mc2
-
-    return step_mc2(
+    return step_mc2_products(
         world,
-        mc2_tasks,
+        tuple(flattened),
         settings=settings,
         enabled=enabled,
         timing=timing,

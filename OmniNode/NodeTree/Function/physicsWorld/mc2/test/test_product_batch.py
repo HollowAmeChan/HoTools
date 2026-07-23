@@ -219,6 +219,64 @@ def test_duplicate_explicit_domain_is_rejected_before_execution():
     assert world.solver_slots == {}
 
 
+def test_empty_product_batch_discards_all_product_slots_and_results():
+    world = _world()
+    request = _request(606)
+    disposed = []
+    _install_staged_slot(world, request, 6, disposed)
+    world.publish_result(
+        _result("old", 6),
+        channel=names.GN_ATTRIBUTE_CHANNEL,
+        solver=mc2_names.MC2_SOLVER_ID,
+    )
+
+    returned, ready, status = solver.step_mc2_products(world, ())
+
+    assert returned is world and ready is False
+    assert "无活动request" in status and "清理 1" in status
+    assert world.solver_slots == {}
+    assert disposed == [(
+        slot_module.make_mc2_product_slot_id(
+            request.setup_type, request.domain_signature
+        ),
+        "mc2_product_request_removed",
+    )]
+    assert world.consume_results(solver=mc2_names.MC2_SOLVER_ID) == []
+    assert world.replace_required is True
+
+
+def test_successful_product_batch_discards_only_removed_product_slots():
+    world = _world()
+    stale_request = _request(707)
+    active_request = _request(808)
+    disposed = []
+    _install_staged_slot(world, stale_request, 7, disposed)
+    original_dispatch = solver._dispatch_product
+
+    def _dispatch(current_world, request, **_kwargs):
+        _install_staged_slot(current_world, request, 8, disposed)
+        return current_world, True, "active domain staged"
+
+    solver._dispatch_product = _dispatch
+    try:
+        returned, ready, status = solver.step_mc2_products(
+            world, (active_request,)
+        )
+    finally:
+        solver._dispatch_product = original_dispatch
+
+    stale_slot_id = slot_module.make_mc2_product_slot_id(
+        stale_request.setup_type, stale_request.domain_signature
+    )
+    active_slot_id = slot_module.make_mc2_product_slot_id(
+        active_request.setup_type, active_request.domain_signature
+    )
+    assert returned is world and ready is True
+    assert "清理 1" in status
+    assert set(world.solver_slots) == {active_slot_id}
+    assert disposed == [(stale_slot_id, "mc2_product_request_removed")]
+
+
 if __name__ == "__main__":
     tests = tuple(
         (name, value)

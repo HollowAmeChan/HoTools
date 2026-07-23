@@ -288,8 +288,8 @@ def test_mc2_mesh_product_nodes_build_one_reported_domain():
         assert len(slot.data["published_output_results"]) == 2
         try:
             mc2_nodes.physicsMC2Step(world, [request, object()])
-        except ValueError as exc:
-            assert "不得与旧task混用" in str(exc)
+        except TypeError as exc:
+            assert "只接受显式产品request" in str(exc)
         else:
             raise AssertionError("unified domain silently accepted legacy fallback input")
     finally:
@@ -463,11 +463,10 @@ def test_mc2_mesh_fused_domain_matches_two_v0_sources():
             _set_frame_context(v0_world, frame, previous_frame, generation)
             _set_frame_context(fused_world, frame, previous_frame, generation)
 
-            returned, ready, status = mc2_nodes.physicsMC2Step(
+            returned, ready, status = mc2_solver.step_mc2(
                 v0_world,
                 list(tasks),
-                simulation_frequency=60,
-                max_simulation_count_per_frame=3,
+                settings=settings,
             )
             assert returned is v0_world and ready is True, status
             published = mc2_product_slot.capture_and_publish_mc2_product_frame(

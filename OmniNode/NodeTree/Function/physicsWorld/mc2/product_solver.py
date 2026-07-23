@@ -20,6 +20,7 @@ from .product_bone_collect import (
     validate_mc2_bone_product_targets,
 )
 from .product_slot import (
+    MC2_FUSED_PRODUCT_SLOT_KIND,
     build_mc2_bone_product_output,
     build_mc2_mesh_fused_output_batch,
     capture_and_publish_mc2_product_frame,
@@ -320,11 +321,8 @@ def step_mc2_products(
     """执行多个显式 domain，并在全部成功后一次发布公共结果。"""
 
     frozen_requests = tuple(requests)
-    if not frozen_requests or any(
-        not isinstance(request, MC2ProductRequestV1)
-        for request in frozen_requests
-    ):
-        raise TypeError("requests 必须是非空 MC2ProductRequestV1 序列")
+    if any(not isinstance(request, MC2ProductRequestV1) for request in frozen_requests):
+        raise TypeError("requests 必须是 MC2ProductRequestV1 序列")
     if any(request.setup_type not in _PRODUCT_SETUP_TYPES for request in frozen_requests):
         raise NotImplementedError("产品批次包含尚未实现的 setup")
     slot_ids = tuple(_product_slot_id(request) for request in frozen_requests)
@@ -342,6 +340,24 @@ def step_mc2_products(
         return world, False, "MC2 显式统一域已禁用"
     if int(world.generation) <= 0:
         return world, False, "MC2 显式统一域等待 Physics World Begin"
+
+    existing_product_slot_ids = tuple(
+        slot_id
+        for slot_id, slot in world.solver_slots.items()
+        if getattr(slot, "kind", None) == MC2_FUSED_PRODUCT_SLOT_KIND
+    )
+    stale_slot_ids = tuple(
+        slot_id for slot_id in existing_product_slot_ids if slot_id not in slot_ids
+    )
+    if not frozen_requests:
+        removed = discard_mc2_product_slots(
+            world,
+            stale_slot_ids,
+            reason="mc2_product_request_removed",
+        )
+        world.clear_results(solver=MC2_SOLVER_ID)
+        world.replace_required = bool(removed)
+        return world, False, f"MC2 显式统一域无活动request；清理 {len(removed)}"
 
     has_bone = any(request.setup_type in _BONE_SETUP_TYPES for request in frozen_requests)
     bone_state_key = None
@@ -401,6 +417,11 @@ def step_mc2_products(
             public_results,
             bone_writeback_plans=bone_plans,
         )
+        removed = discard_mc2_product_slots(
+            world,
+            stale_slot_ids,
+            reason="mc2_product_request_removed",
+        )
     except Exception:
         discard_mc2_product_slots(
             world,
@@ -459,7 +480,7 @@ def step_mc2_products(
         })
     status = (
         f"MC2 显式统一域批次就绪：域 {len(slots)}，"
-        f"目标 {len(published)}；" + " | ".join(statuses)
+        f"目标 {len(published)}，清理 {len(removed)}；" + " | ".join(statuses)
     )
     return world, True, status
 

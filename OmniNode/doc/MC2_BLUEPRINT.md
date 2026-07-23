@@ -757,6 +757,8 @@ E5/E5-B已完成三种setup产品切换：`domain_output.py`把logical output冻
 
 E7-A 精确依赖审计已冻结删除面：双 ABI AST 门禁证明 `product_solver` 产品运行图到五个旧 Python 模块的可达数为 `0`；公开 `nodes` 顶层图仍因旧调试绘制可达 `native_context`，并保留 7 条只在旧 task/oracle 函数调用时生效的延迟 bridge。native 侧共有 68 个旧 context/interaction 必需符号和 2 个 fingerprint V0 alias，落在 70 个 binding 与五个 `mc2_context_*` 翻译单元。E7-CPU 必须按“公开 product-only step/debug -> Python task owner/bridge -> native ABI/TU”三层删除，不能先删 native 再用兼容 fallback 修补上层。
 
+E7-CPU 第一层已完成公开 step 切断：`physicsMC2Step` 不再导入或调用旧 `step_mc2`，非产品值直接拒绝；空 request 集合与集合缩减由 `step_mc2_products` 释放退出集合的产品槽并清理结果。V0 对照 runner 改为显式调用 oracle solver。双 ABI 纯宿主事务与 Blender 产品域/确定性/双 source 对照均通过；下一提交继续迁移公开 debug，不改变本组生命周期合同。
+
 ## 构建与性能边界
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的 Blender 4.5 窗口中又发现 `build.bat` 复用了测试改写的 runtime cache；脚本现每次先刷新 preset，确保产物真实写入所选 `_Lib/py311` 或 `_Lib/py313` 目录。重新生成并提交的 py311 产物通过 22 个 MC2 native 测试文件；Blender 4.5 运行时明确加载当前 cp311 并通过 Mesh shadow、120 帧产品确定性、双 source 对照和 Bone product 事务。
