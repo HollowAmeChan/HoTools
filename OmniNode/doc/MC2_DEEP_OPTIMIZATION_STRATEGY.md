@@ -2,6 +2,8 @@
 
 本文规划 OmniNode `physicsWorld.mc2` 的性能优化、MeshCloth 多代理融合、native 并行和未来 GPU 数据边界。它是实施前的策略文档，不把尚未落地的方案写成当前能力；稳定的现状合同仍由 `MC2_BLUEPRINT.md` 维护。
 
+当前执行环境补充（2026-07-23）：E7-CPU 删除前的产品证据、native 编译和 Blender 验收只使用 Python 3.13 / Blender 5.2，并清除默认 HoTools 备份模块后绑定当前工作树 `_Lib/py313`。Python 3.11 / Blender 4.5 在旧 owner 删除与 E7-S 基本完成前冻结；P4 CPU 并发不实施，E6 GPU 只保留未来独立里程碑，当前不得以 GPU 预研引入无法解释的 CPU 回归。P6 交付仅包括可直接实施的 backend-neutral data/pass/IO 合同。
+
 新一代节点、partition entry、隐式/显式覆盖和 setup collector 的目标数据流见 `MC2_NODE_SIMULATION_DESIGN.md`。节点合同先于 fused runtime 和 GPU backend 实施。
 
 ## 结论摘要
