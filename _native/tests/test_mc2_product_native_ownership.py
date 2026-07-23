@@ -66,3 +66,20 @@ def test_bone_product_constraint_soak_has_no_legacy_owner_dependency() -> None:
         "Mc2InteractionV0",
     ):
         assert forbidden not in source
+
+
+def test_three_setup_product_soak_has_no_legacy_owner_dependency() -> None:
+    source = _source(
+        MC2_PYTHON.parent
+        / "test"
+        / "test_blender_mc2_product_mixed_output_soak.py"
+    )
+    for forbidden in (
+        "_physicsMC2",
+        "MC2TaskSpec(",
+        'data["native_context"]',
+        "import interaction_scope",
+        "Mc2InteractionV0",
+        "collect_mc2_mesh_product_domain",
+    ):
+        assert forbidden not in source
