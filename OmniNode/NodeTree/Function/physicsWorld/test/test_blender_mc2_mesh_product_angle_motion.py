@@ -25,23 +25,33 @@ world_types = mixed.world_types
 physics_blender = mixed.physics_blender
 
 
-def _request(world, mesh, *, attenuation, falloff, enabled=True):
+def _request(
+    world,
+    mesh,
+    *,
+    attenuation,
+    falloff,
+    enabled=True,
+    gravity=4.0,
+    damping=0.05,
+    stiffness=0.65,
+):
     entries, count = nodes.physicsMC2MeshObject([mesh])
     assert count == 1 and len(entries) == 1
     entries, count = nodes.physicsMC2MeshOverride(
         entries,
         profile=parameters.make_mc2_particle_profile(
-            gravity=4.0,
+            gravity=gravity,
             gravity_direction=(0.0, 0.0, -1.0),
             gravity_falloff=0.0,
-            damping=0.05,
+            damping=damping,
             particle_speed_limit=3.5,
             radius=0.018,
             tether_compression=0.35,
             distance_stiffness=0.0,
             bending_stiffness=0.0,
             angle_restoration_enabled=enabled,
-            angle_restoration_stiffness=0.65,
+            angle_restoration_stiffness=stiffness,
             angle_restoration_velocity_attenuation=attenuation,
             angle_restoration_gravity_falloff=falloff,
             angle_limit_enabled=False,
@@ -61,6 +71,102 @@ def _request(world, mesh, *, attenuation, falloff, enabled=True):
     )
     assert len(requests) == 1 and report
     return requests[0]
+
+
+def _run_rest_debug(run_index: int):
+    world = world_types.PhysicsWorldCache()
+    mesh = proxy = None
+    generation = 1950 + run_index
+    digest = hashlib.sha256()
+    max_error = 0.0
+    try:
+        physics_blender.register()
+        mesh, proxy = mixed._mesh_object(f"MC2ProductMeshAngleRest{run_index}")
+        request = _request(
+            world,
+            mesh,
+            attenuation=1.0,
+            falloff=0.0,
+            gravity=0.0,
+            damping=0.0,
+            stiffness=0.2,
+        )
+        slot_id = product_slot.make_mc2_product_slot_id(
+            request.setup_type, request.domain_signature
+        )
+        owner = None
+        base = None
+        for frame in range(1, 901):
+            if frame == 451:
+                request = _request(
+                    world,
+                    mesh,
+                    attenuation=1.0,
+                    falloff=0.0,
+                    gravity=0.0,
+                    damping=0.0,
+                    stiffness=0.85,
+                )
+                assert product_slot.make_mc2_product_slot_id(
+                    request.setup_type, request.domain_signature
+                ) == slot_id
+            bone_soak._set_frame(world, frame, generation)
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            capture_constraints = frame in (2, 900)
+            if capture_constraints:
+                assert owner is not None
+                owner.begin_constraint_debug(1)
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [request],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            slot = world.solver_slots[slot_id]
+            current_owner = slot.data["owner"]
+            if owner is None:
+                owner = current_owner
+                base = owner.prepare_step_basic_pose()["positions"].copy()
+            else:
+                assert current_owner is owner
+            output = owner.read_output()
+            error = float(np.max(np.linalg.norm(output.world_positions - base, axis=1)))
+            max_error = max(max_error, error)
+            assert error <= 1.0e-7, (frame, error)
+            if capture_constraints:
+                owner.end_constraint_debug()
+                raw = owner.read_constraint_debug_state()
+                angle = raw["angle_results"]
+                valid = np.asarray(angle["valid"][1], dtype=np.uint8).astype(bool)
+                assert np.any(valid)
+                children = np.asarray(angle["children"][1], dtype=np.int32)[valid]
+                parents = np.asarray(angle["parents"][1], dtype=np.int32)[valid]
+                step_basic = owner.prepare_step_basic_pose()["positions"]
+                targets = np.asarray(angle["targets"][1], dtype=np.float32)[valid]
+                vectors = np.asarray(angle["target_vectors"][1], dtype=np.float32)[valid]
+                np.testing.assert_allclose(
+                    vectors,
+                    step_basic[children] - step_basic[parents],
+                    rtol=0.0,
+                    atol=1.0e-7,
+                )
+                np.testing.assert_allclose(
+                    targets,
+                    output.world_positions[parents] + vectors,
+                    rtol=0.0,
+                    atol=1.0e-7,
+                )
+                digest.update(vectors.tobytes())
+                digest.update(targets.tobytes())
+        assert owner is not None
+        assert owner.inspect()["domain"]["kernel"]["angle_solve_count"] > 0
+        return digest.hexdigest(), max_error
+    finally:
+        world.omni_cache_dispose("mesh_product_angle_rest_cleanup")
+        mixed._remove_mesh(mesh)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
 
 
 def _run_response(run_index: int, *, attenuation: float, falloff: float):
@@ -168,6 +274,17 @@ def test_mesh_product_angle_restoration_falloff() -> None:
     print("PASS test_mesh_product_angle_restoration_falloff")
 
 
+def test_mesh_product_angle_restoration_rest_debug() -> None:
+    first = _run_rest_debug(0)
+    second = _run_rest_debug(1)
+    assert first == second, (first, second)
+    assert first[1] <= 1.0e-7
+    print("MC2_MESH_PRODUCT_ANGLE_REST_DIGEST", first[0])
+    print("MC2_MESH_PRODUCT_ANGLE_REST_MAX_ERROR", first[1])
+    print("PASS test_mesh_product_angle_restoration_rest_debug")
+
+
 if __name__ == "__main__":
     test_mesh_product_angle_restoration_response()
     test_mesh_product_angle_restoration_falloff()
+    test_mesh_product_angle_restoration_rest_debug()

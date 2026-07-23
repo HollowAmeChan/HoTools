@@ -97,17 +97,11 @@ world_names = importlib.import_module(
 mc2_names = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
 )
-mc2_specs = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
-)
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
 mc2_runtime_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"
-)
-mc2_solver = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
 )
 mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
@@ -403,7 +397,15 @@ def test_solver_node_add_menu_uses_manifest_submenus():
     assert tuple(menu_calls) == tuple(menu_id for _solver, _name, menu_id in expected)
 
 
-def test_mc2_is_one_solver_with_three_setup_types_and_public_step():
+def _run_v0_oracle_mc2_runtime_contract():
+    """保留待 E7 删除的旧运行断言，避免污染当前 registry 验收入口。"""
+
+    mc2_specs = importlib.import_module(
+        "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+    )
+    mc2_solver = importlib.import_module(
+        "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
+    )
     assert solver_registry.builtin_solver_domains().count("mc2") == 1
     assert "mesh_cloth" not in solver_registry.builtin_solver_domains()
     assert solver_registry.builtin_component_domains() == ("collision", "mc2")
@@ -1752,7 +1754,6 @@ TESTS = (
     ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
     ("solver node modules keep manifest menu groups", test_solver_node_modules_are_grouped_by_manifest_menu_name),
     ("solver add menu uses manifest submenus", test_solver_node_add_menu_uses_manifest_submenus),
-    ("one MC2 solver owns three public setup types", test_mc2_is_one_solver_with_three_setup_types_and_public_step),
     ("solver registry separates owned/shared/planned result channels", test_solver_registry_separates_owned_shared_and_planned_result_channels),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),

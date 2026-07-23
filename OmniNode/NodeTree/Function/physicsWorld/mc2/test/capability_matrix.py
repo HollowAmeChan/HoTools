@@ -118,12 +118,6 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "product_stabilization_parameters_and_determinism",
             ),
         }, {
-            "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
-            "frames": 900,
-            "setups": ("mesh_cloth",),
-            "fields": (),
-            "invariants": ("finite", "deterministic", "zero_force_rest"),
-        }, {
             "runner": "test_blender_mc2_bone_product_angle_motion.py::test_bone_product_angle_motion_numeric_boundaries",
             "frames": 900,
             "setups": ("bone_cloth", "bone_spring"),
@@ -439,7 +433,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "center_input_reachable",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
+            "runner": (
+                "test_blender_mc2_mesh_product_angle_motion.py::"
+                "test_mesh_product_angle_restoration_rest_debug"
+            ),
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": ("use_angle_restoration", "angle_restoration_stiffness"),
@@ -673,6 +670,20 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             ),
             "invariants": (
                 "finite", "deterministic", "whole_domain_self_step_active",
+            ),
+        }, {
+            "runner": (
+                "test_blender_mc2_bone_product_constraint_soak.py::"
+                "test_bone_product_self_collision_cross_source_scope_and_cache"
+            ),
+            "frames": 900,
+            "setups": ("bone_cloth",),
+            "fields": (
+                "self_collision_mode", "self_collision_thickness", "cloth_mass",
+            ),
+            "invariants": (
+                "finite", "deterministic", "cross_task_scope_exact",
+                "contact_cache_bounded", "single_radius_model_consistent",
             ),
         }),
         "status": "gap",

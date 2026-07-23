@@ -17,6 +17,7 @@ from ..runtime_parameters import (
 
 
 BLENDER_TEST_ROOT = Path(__file__).resolve().parents[2] / "test"
+MC2_ROOT = BLENDER_TEST_ROOT.parent / "mc2"
 
 
 def _runner_symbol_exists(runner):
@@ -92,7 +93,7 @@ def test_bone_constraint_runner_does_not_import_mixed_v0_helpers():
 def test_product_execution_boundary_has_no_v0_owner_imports():
     """产品执行边界不得重新依赖待删除的 V0 owner 模块。"""
 
-    root = BLENDER_TEST_ROOT.parent
+    root = MC2_ROOT
     forbidden = {
         ".specs",
         ".solver",
@@ -116,7 +117,7 @@ def test_product_execution_boundary_has_no_v0_owner_imports():
 def test_specs_is_v0_only_and_resolved_topology_avoids_it():
     """specs.py 只能保留待删 V0 task 合同，中立拓扑走 resolved partition。"""
 
-    root = BLENDER_TEST_ROOT.parent
+    root = MC2_ROOT
     specs_tree = ast.parse(
         (root / "specs.py").read_text(encoding="utf-8"),
         filename=str(root / "specs.py"),
