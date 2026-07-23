@@ -411,7 +411,10 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "signed_volume_stable": ("bone_cloth",),
         },
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_bending_soak",
+            "runner": (
+                "test_blender_mc2_mesh_product_bending.py::"
+                "test_mesh_product_bending_numeric_deterministic"
+            ),
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": ("bending_stiffness", "bending_method"),

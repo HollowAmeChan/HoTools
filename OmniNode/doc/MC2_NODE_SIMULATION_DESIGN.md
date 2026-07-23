@@ -235,7 +235,7 @@ MC2TaskSpec
 
 当前产品运行时已完成统一域切换：三种 setup 只生成显式 `MC2ProductRequestV1`，DomainV1 按 request/domain identity 拥有动态 slot、编译程序、历史和 particle state；多 request 全部求解后由一次结果事务发布。旧 `MC2TaskSpec`、context owner 和 aggregate 只存在于隔离迁移 oracle。
 
-当前阻塞点不在产品运行图，而在删除资格：4 条旧 Mesh constraint 证据、Bone 包装限制签字、`specs.py` 中立合同迁移，以及 Python/native V0 面的物理删除。
+当前阻塞点不在产品运行图，而在删除资格：3 条旧 Mesh constraint 证据、Bone 包装限制签字、`specs.py` 中立合同迁移，以及 Python/native V0 面的物理删除。
 ## 统一粒子场流水线
 
 ### 四层对象
@@ -881,12 +881,12 @@ E7-A 的产品边界审计已经关闭：
 
 E7-CPU 的剩余阻塞只有两类：
 
-1. capability matrix 仍有 4 条证据直接引用旧 Mesh constraint runner；必须迁移真实数值不变量，不能以 data-path 记录替代。
+1. capability matrix 仍有 3 条证据直接引用旧 Mesh constraint runner；必须迁移真实数值不变量，不能以 data-path 记录替代。Triangle Bending 已改由 Blender 5.2 MeshCloth 产品 runner 验收。
 2. `specs.py` 仍承载部分中立 topology/setup 合同；Python V0 owner、普通 aggregate、68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元仍待删除。BoneCloth/BoneSpring 的独立数值与包装限制前置签字已经关闭。
 
 #### E7-CPU 逻辑批次
 
-1. 迁移 4 条旧 capability 证据，并完成 BoneCloth/BoneSpring 删除签字。
+1. 迁移 3 条旧 capability 证据，并完成 BoneCloth/BoneSpring 删除签字。
 2. 把中立 topology/setup/frame 合同迁出 `specs.py`；产品测试 helper 不再导入旧 runner。
 3. 删除 Python V0 oracle、`solver.py`、`native_context.py`、`interaction_scope.py`、普通 aggregate 和旧 resource bridge。
 4. 删除 68 个 V0 binding、5 个旧 context 翻译单元及 CMake/API/required-symbol 残留。
