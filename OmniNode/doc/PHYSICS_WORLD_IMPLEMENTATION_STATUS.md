@@ -181,6 +181,8 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 
 ## E7-CPU 当前收口（2026-07-24）
 
+Mesh 外碰/摩擦迁移复核（2026-07-24）：公开产品请求可以编译 `collision_friction`，但当前 MeshCloth 产品 kernel 在 Blender 5.2/py313 仍是 `numerical_kernel_ready=false`、`data_path_only=true`，没有实际 external collision solve，低/高 friction 轨迹因此完全相同。该试验不作为产品等价证据，旧 `mesh_friction_response` 继续保留，直到数值后端和产品 collector 能发布真实碰撞/摩擦结果。能力矩阵当前剩余 7 个旧 runner 引用，删除 V0 owner 前必须逐项迁移或记录不可替代的 gap。
+
 本轮已将 whole-domain self 的产品证据登记到 capability matrix：MeshCloth 使用三 setup mixed-output 900 帧 runner，BoneCloth 使用独立的 product self-contract runner。两条证据都锁定 finite、deterministic 与 `whole_domain_self_step_active`；BoneCloth 还直接检查 derived-radius、cloth mass 和 owner 的 self-step 计数。self capability 仍明确标记为 `gap`，因为跨任务 scope、contact cache 有界性和 radius consistency 尚未有独立产品断言，不能由旧 V0 soak 代替。
 
 当前旧 Python 测试仍有 `native_context`、`specs`、`solver` 的直接断言，主要集中在 debug-draw、property-registry 和 base-pose/Center 的长跑细节；Bone static/frame、Mesh final-proxy 以及 base-pose proxy 输入隔离已分别迁移到 product-only runner。剩余断言必须逐项迁移为 DomainV1/ProductSlot/产品 readback 证据后，才能删除 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 及剩余 V0 binding/TU。产品运行时的 E7 reachability 仍为零，故下一批只处理测试所有权和独立断言，不改变 Physics World/OmniNode 边界。
