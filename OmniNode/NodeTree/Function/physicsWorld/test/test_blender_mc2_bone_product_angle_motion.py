@@ -323,7 +323,6 @@ def _run_rotation_output_case(
             assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
             bpy.context.view_layer.update()
 
-        print("MC2_BONE_PRODUCT_ROTATION_TYPES", type(owner), type(owner.compiled))
         table = owner.compiled.parameters.partition_parameters
         runtime = dict(zip(table.fields, table.values[0]))
         np.testing.assert_allclose(
@@ -383,13 +382,6 @@ def test_bone_product_rotation_output_controls():
         root_angles = _quaternion_angle_degrees(base[1], root[1])
         interpolation_distance = _quaternion_component_distance(base[1], interpolation[1])
         root_distance = _quaternion_component_distance(base[1], root[1])
-        print(
-            "MC2_BONE_PRODUCT_ROTATION_METRICS",
-            float(np.max(interpolation_angles[:, move_parent])),
-            float(np.max(interpolation_distance[:, fixed])),
-            float(np.max(root_angles[:, fixed])),
-            float(np.max(root_distance[:, np.logical_not(fixed)])),
-        )
         assert float(np.max(interpolation_angles[:, move_parent])) > 0.01
         assert float(np.max(interpolation_distance[:, fixed])) < 1.0e-6
         assert float(np.max(root_angles[:, fixed])) > 0.01
