@@ -1,6 +1,5 @@
 """Unified MC2 parameters, setup tasks, and simulation-step nodes."""
 
-import inspect
 import typing
 
 import bpy
@@ -36,10 +35,6 @@ from .product_bone_authoring import (
     make_mc2_bone_spring_product_request,
 )
 from .product_slot import make_mc2_product_slot_id
-
-
-def _task_name_output(tasks) -> str:
-    return "\n".join(str(task.task_id) for task in tasks)
 
 
 def _product_name_output(requests) -> str:
@@ -164,89 +159,6 @@ def _group_bone_product_sources(values) -> tuple[tuple[object, ...], ...]:
             raise ValueError("Bone 产品 source 缺少 Armature")
         grouped.setdefault(_owner_key({"armature": armature}), []).append(source)
     return tuple(tuple(group) for group in grouped.values())
-
-
-def _hotools_bone_tasks(
-    control_bones,
-    anchor_object,
-    profile,
-    task_parameters,
-    enabled: bool,
-    **setup_values,
-):
-    from .specs import make_mc2_task_spec
-
-    if profile is None:
-        profile = make_mc2_particle_profile(spring_enabled=False)
-    setup_values["self_collision_radius_model"] = "derived_radius"
-    groups: list[list[dict]] = []
-    explicit_group_indices: dict[tuple[int, int], int] = {}
-    for value in _flatten_values(control_bones):
-        sources = _expand_hotools_bone_source(value)
-        is_explicit_chain = isinstance(value, dict) and bool(value.get("bones"))
-        if not is_explicit_chain:
-            groups.append(sources)
-            continue
-        owner_key = _owner_key(sources[0])
-        group_index = explicit_group_indices.get(owner_key)
-        if group_index is None:
-            explicit_group_indices[owner_key] = len(groups)
-            groups.append(list(sources))
-        else:
-            groups[group_index].extend(sources)
-    return [
-        make_mc2_task_spec(
-            MC2_SETUP_BONE_CLOTH,
-            group,
-            profile=profile,
-            setup_options=make_mc2_setup_options(
-                MC2_SETUP_BONE_CLOTH,
-                connection_model="hotools_product",
-                **setup_values,
-            ),
-            task_parameters=task_parameters,
-            anchor_object=anchor_object,
-            enabled=enabled,
-        )
-        for group in groups
-    ]
-
-
-def _bone_spring_tasks(
-    root_bones,
-    anchor_object,
-    profile,
-    task_parameters,
-    enabled: bool,
-    **setup_values,
-):
-    from .specs import make_mc2_task_spec
-
-    if profile is None:
-        profile = make_mc2_particle_profile(spring_enabled=False)
-    grouped: dict[tuple[int, int], list[dict]] = {}
-    for source in _flatten_values(root_bones):
-        if not isinstance(source, dict) or source.get("armature") is None:
-            raise TypeError("BoneSpring product source must be a root Bone socket")
-        root_name = str(source.get("bone") or source.get("root_bone") or "").strip()
-        if not root_name and not source.get("bones"):
-            raise ValueError("BoneSpring root Bone socket is empty")
-        grouped.setdefault(_owner_key(source), []).append(source)
-    return [
-        make_mc2_task_spec(
-            MC2_SETUP_BONE_SPRING,
-            group,
-            profile=profile,
-            setup_options=make_mc2_setup_options(
-                MC2_SETUP_BONE_SPRING,
-                **setup_values,
-            ),
-            task_parameters=task_parameters,
-            anchor_object=anchor_object,
-            enabled=enabled,
-        )
-        for group in grouped.values()
-    ]
 
 
 def _profile_input(description: str, **settings) -> dict:
