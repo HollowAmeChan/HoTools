@@ -966,6 +966,8 @@ E7-CPU 第一组进度（2026-07-23）：公开 `physicsMC2Step` 已删除 `step
 
 产品 Center/Teleport 调试切片（2026-07-23）：DomainV1 在真实 `evaluate_center_frame_shift_mc2` 调用后按 partition 保存 raw component delta、Anchor/平滑/World 三类贡献、最终 frame shift、old/now frame pose、移动/旋转限速标志、Teleport 模式/阈值/实际测量/旋转轴和 Keep/Reset flags；独立 `mc2_domain_cpu_v1_read_center_debug` 只在对应模式显式请求时读取，不进入普通 output、velocity 调试或 debug-off 热路径。产品 snapshot 使用稳定 `partition_id` 排列的 `center.partitions` 与 `teleport.partitions`，renderer 同时兼容旧单 task 记录和新多 partition 记录。双 ABI 真实 native owner 锁定每个 partition 的最终 shift 等于 Anchor、平滑、World 三项之和；Blender 4.5/cp311 与 5.2/cp313 均通过公开两 Mesh 产品域、实际 renderer、120 帧和双 source 对照，旧 13 组调试绘制也保持全过。尚未迁移的是 Bone output、约束 pass、外碰和 whole-domain self 明细。
 
+产品 Bone output 调试切片（2026-07-23）：Bone snapshot 不依赖记录顺序猜测，而以 compiled fragment 的 `logical particle -> stable bone name` 映射和产品 writeback plan 的 `bone name -> motion_mode` 映射做完整双向校验；缺项、越界、重名或 schema 不唯一时捕获失败。connected 的 `rotation_only_connected` 粒子将 `translation_applied=0` 且调试 target position 固定为动画 base，free 粒子保留真实位置与旋转写回。Blender 4.5/cp311 与 5.2/cp313 的同 Armature 两 partition 产品域锁定 8 个 connected、4 个 free 的精确掩码。至此 Mesh/Bone output 均进入产品快照；剩余调试迁移为约束 pass、外碰和 whole-domain self 明细。
+
 删除采用“测试迁移”而不是“测试删除”。现有证据按下表复用：
 
 | 现有资产 | 双跑期用途 | 删除 V0 后的归属 |

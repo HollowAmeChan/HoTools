@@ -21,6 +21,7 @@ from .runtime_parameters import (
     MC2_RUNTIME_FLOAT_FIELDS,
     MC2_RUNTIME_INT_FIELDS,
 )
+from .results import MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
 
 
 MC2_DEBUG_DRAW_MODES = {
@@ -688,6 +689,83 @@ def _product_center_payload(program, frame_packet, raw) -> tuple[dict, dict]:
     )
 
 
+def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
+    program = compiled.program
+    base_positions = _readonly(frame_packet.animated_base_world_positions)
+    target_positions = np.asarray(output.world_positions, dtype=np.float32)
+    applied = np.ones((program.particle_count,), dtype=np.uint8)
+    targets = tuple(target.target_id for target in program.output_targets)
+    motion_modes = ()
+    writeback_schema = "mc2_domain_output_v1"
+    target_kind = "mesh_vertex"
+    rotation_only_count = 0
+    position_rotation_count = 0
+    has_plan = True
+    if program.setup_type != MC2_SETUP_MESH_CLOTH:
+        plans = tuple((slot.data.get("output_writeback_plans") or {}).values())
+        records = tuple(
+            record
+            for plan in plans
+            for batch in plan.get("batches") or ()
+            for record in batch.get("records") or ()
+        )
+        mode_by_name = {}
+        for record in records:
+            name = str(record.get("bone_name") or "")
+            mode = str(record.get("motion_mode") or "")
+            if not name or not mode or name in mode_by_name:
+                raise RuntimeError("Bone产品调试writeback plan包含缺项或重名")
+            mode_by_name[name] = mode
+        logical_names = []
+        for partition, source in zip(
+            program.particle_partition_index,
+            program.particle_source_element,
+        ):
+            fragment = compiled.fragments[int(partition)]
+            identities = tuple(fragment.final_proxy.vertex_identities)
+            source_index = int(source)
+            if source_index >= len(identities):
+                raise RuntimeError("Bone产品调试output map越界")
+            logical_names.append(str(identities[source_index]))
+        if set(logical_names) != set(mode_by_name):
+            raise RuntimeError("Bone产品调试output map与writeback plan不一致")
+        motion_modes = tuple((name, mode_by_name[name]) for name in logical_names)
+        for index, (_name, mode) in enumerate(motion_modes):
+            if mode == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED:
+                applied[index] = 0
+        target_positions = target_positions.copy()
+        target_positions[applied == 0] = base_positions[applied == 0]
+        targets = tuple(logical_names)
+        target_kind = "bone"
+        rotation_only_count = int(np.count_nonzero(applied == 0))
+        position_rotation_count = int(np.count_nonzero(applied != 0))
+        schemas = {
+            str(plan.get("schema") or "") for plan in plans
+            if str(plan.get("schema") or "")
+        }
+        if len(schemas) != 1:
+            raise RuntimeError("Bone产品调试writeback plan schema不唯一")
+        writeback_schema = schemas.pop()
+        has_plan = bool(plans)
+    target_positions = _readonly(target_positions)
+    applied.flags.writeable = False
+    return {
+        "base_positions": base_positions,
+        "target_positions": target_positions,
+        "world_offsets": _readonly(target_positions - base_positions),
+        "mesh_object_local_offsets": None,
+        "translation_applied": applied,
+        "writeback_schema": writeback_schema,
+        "writeback_target_count": len(targets),
+        "has_writeback_plan": has_plan,
+        "writeback_targets": targets,
+        "writeback_target_kind": target_kind,
+        "writeback_motion_modes": motion_modes,
+        "rotation_only_connected_count": rotation_only_count,
+        "position_rotation_count": position_rotation_count,
+    }
+
+
 def capture_requested_mc2_product_debug(world, slots) -> int:
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     generation = int(world.generation)
@@ -712,10 +790,6 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 name for name in MC2_DEBUG_FILTER_KEYS if filters.get(name, False)
             )
             supported_filters = MC2_PRODUCT_DEBUG_FILTER_KEYS
-            if program.setup_type != MC2_SETUP_MESH_CLOTH:
-                supported_filters = tuple(
-                    name for name in supported_filters if name != "show_output"
-                )
             unsupported = tuple(
                 name for name in requested_modes
                 if name not in supported_filters
@@ -741,10 +815,13 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 or filters.get("show_attributes", False)
                 else {}
             )
-            base_positions = _readonly(frame_packet.animated_base_world_positions)
-            target_positions = positions
-            applied = np.ones((program.particle_count,), dtype=np.uint8)
-            applied.flags.writeable = False
+            output_payload = (
+                _product_output_payload(
+                    slot, compiled, frame_packet, output
+                )
+                if filters.get("show_output", False)
+                else {}
+            )
             snapshot = {
                 "source": "mc2_product_capture",
                 "schema": "mc2_product_debug_snapshot_v1",
@@ -770,24 +847,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 ),
                 "collision": {},
                 "self_collision": None,
-                "output": ({
-                    "base_positions": base_positions,
-                    "target_positions": target_positions,
-                    "world_offsets": _readonly(target_positions - base_positions),
-                    "mesh_object_local_offsets": None,
-                    "translation_applied": applied,
-                    "writeback_schema": "mc2_domain_output_v1",
-                    "writeback_target_count": len(program.output_targets),
-                    "has_writeback_plan": True,
-                    "writeback_targets": tuple(
-                        target.target_id for target in program.output_targets
-                    ),
-                    "writeback_target_kind": "product_domain",
-                    "writeback_motion_modes": (),
-                    "rotation_only_connected_count": 0,
-                    "position_rotation_count": 0,
-                } if filters.get("show_output", False)
-                and "show_output" in supported_filters else {}),
+                "output": output_payload,
             }
             slot.data["_debug_draw_snapshot"] = snapshot
             state.pop("error", None)

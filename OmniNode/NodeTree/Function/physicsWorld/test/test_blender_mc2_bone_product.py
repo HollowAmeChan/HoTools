@@ -855,6 +855,10 @@ try:
         ]["bones"]
     ) == 12
     assert writeback.writeback_bone_transforms(product_world) == 12
+    assert debug.request_mc2_debug_capture(
+        product_world,
+        filters={"show_output": True},
+    ) == 1
 
     product_world.frame_context.frame = 2
     product_world.frame_context.restart_required = False
@@ -876,6 +880,22 @@ try:
         unified_slot.data["scheduled_frame"].schedule.update_count
     )
     assert len(product_world.result_streams["bone_transform"]) == 1
+    product_output = unified_slot.data["_debug_draw_snapshot"]["output"]
+    translation_applied = np.asarray(
+        product_output["translation_applied"], dtype=np.uint8
+    )
+    assert product_output["writeback_target_kind"] == "bone"
+    assert product_output["rotation_only_connected_count"] == 8
+    assert product_output["position_rotation_count"] == 4
+    assert np.count_nonzero(translation_applied == 0) == 8
+    assert np.count_nonzero(translation_applied == 1) == 4
+    assert np.array_equal(
+        product_output["target_positions"][translation_applied == 0],
+        product_output["base_positions"][translation_applied == 0],
+    )
+    assert "show_output" not in unified_slot.data[
+        "_debug_draw_snapshot"
+    ]["unsupported_filters"]
     assert writeback.writeback_bone_transforms(product_world) == 12
 
     spring_product_requests, spring_product_names = nodes.physicsMC2BoneSpringTask(
