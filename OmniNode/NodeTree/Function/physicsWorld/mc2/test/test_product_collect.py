@@ -54,11 +54,15 @@ class _Data:
 class _Source:
     type = "MESH"
 
-    def __init__(self, pointer):
+    def __init__(self, pointer, *, collided_by_groups=None):
         self._pointer = pointer
         self.data = _Data(pointer + 1000)
         self.name = self.name_full = f"Mesh{pointer}"
         self.matrix_world = np.eye(4, dtype=np.float32)
+        if collided_by_groups is not None:
+            self.hotools_mesh_collision = SimpleNamespace(
+                collided_by_groups=collided_by_groups,
+            )
 
     def as_pointer(self):
         return self._pointer
@@ -176,6 +180,22 @@ def test_product_collector_observes_once_and_preserves_authoring_order():
         (0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
     )
     assert calls == [(entry.stable_id, slot_id, True) for entry in entries]
+
+
+def test_product_collector_captures_mesh_external_collision_masks():
+    first = _Source(101, collided_by_groups=1)
+    second = _Source(202, collided_by_groups=4)
+    fallback = _Source(303)
+    _install_observer({
+        101: _raw(first, 3),
+        202: _raw(second, 2),
+        303: _raw(fallback, 2),
+    })
+    result, _slot_id = _collect_request(
+        _World(),
+        (_entry(first), _entry(second), _entry(fallback)),
+    )
+    assert result.draft.external_collision_masks == (1, 4, 3)
 
 
 def test_product_collector_filters_disabled_explicit_entries():

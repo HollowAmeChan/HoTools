@@ -115,6 +115,7 @@ def test_domain_draft_resolves_effectives_filters_and_provenance() -> None:
     assert draft.partition_ids == ("sleeve", "coat")
     assert draft.collision_groups == (1, 8)
     assert draft.collision_masks == (9, 8)
+    assert draft.external_collision_masks == (0, 0)
     first = draft.effectives[0].debug_dict()
     second = draft.effectives[1].debug_dict()
     assert first["float_values"]["gravity"] == 3.0
@@ -136,6 +137,18 @@ def test_parameter_change_keeps_domain_identity_but_changes_draft_signature() ->
     changed = collect.build_mc2_mesh_domain_draft(_plan(gravity=4.0))
     assert first.domain_id == changed.domain_id
     assert first.collector_domain_signature == changed.collector_domain_signature
+    assert first.draft_signature != changed.draft_signature
+
+
+def test_domain_draft_external_collision_masks_are_parameter_state() -> None:
+    first = collect.build_mc2_mesh_domain_draft(
+        _plan(), external_collision_masks=(1, 2),
+    )
+    changed = collect.build_mc2_mesh_domain_draft(
+        _plan(), external_collision_masks=(1, 4),
+    )
+    assert first.external_collision_masks == (1, 2)
+    assert first.domain_id == changed.domain_id
     assert first.draft_signature != changed.draft_signature
 
 

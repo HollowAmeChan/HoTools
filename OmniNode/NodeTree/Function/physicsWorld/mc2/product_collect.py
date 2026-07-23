@@ -59,6 +59,18 @@ def _output_target_id(source) -> str:
     return f"mesh:{owner}:{data}"
 
 
+def _external_collision_mask(partition) -> int:
+    """在产品 IO 边界解析 Mesh 对象面板的外部碰撞组。"""
+
+    properties = getattr(partition.source, "hotools_mesh_collision", None)
+    value = (
+        partition.setup_options.collided_by_groups
+        if properties is None
+        else getattr(properties, "collided_by_groups", 0)
+    )
+    return max(0, min(0xFFFF, int(value or 0)))
+
+
 @dataclass(frozen=True)
 class MC2MeshProductCollectionV1:
     draft: MC2MeshDomainDraftV1
@@ -236,7 +248,12 @@ def collect_mc2_mesh_product_plan(
         identities.extend(observation.identities)
         statuses.extend(observation.statuses)
         task_ids.append(partition.stable_id)
-    draft = build_mc2_mesh_domain_draft(plan)
+    draft = build_mc2_mesh_domain_draft(
+        plan,
+        external_collision_masks=tuple(
+            _external_collision_mask(partition) for partition in partitions
+        ),
+    )
     return MC2MeshProductCollectionV1(
         draft=draft,
         static_snapshots=tuple(rows),

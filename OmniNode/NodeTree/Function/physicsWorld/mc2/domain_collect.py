@@ -63,6 +63,7 @@ class MC2DomainDraftV1:
     effectives: tuple[MC2RuntimeParametersV0, ...]
     collision_groups: tuple[int, ...]
     collision_masks: tuple[int, ...]
+    external_collision_masks: tuple[int, ...]
     draft_signature: str
 
     def __post_init__(self) -> None:
@@ -75,8 +76,19 @@ class MC2DomainDraftV1:
             raise ValueError("MC2 domain draft requires active partitions")
         if len(self.effectives) != count:
             raise ValueError("MC2 domain draft effective count mismatch")
-        if len(self.collision_groups) != count or len(self.collision_masks) != count:
+        if (
+            len(self.collision_groups) != count
+            or len(self.collision_masks) != count
+            or len(self.external_collision_masks) != count
+        ):
             raise ValueError("MC2 domain draft filter count mismatch")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 0xFFFF
+            for value in self.external_collision_masks
+        ):
+            raise ValueError("MC2 external collision masks must fit 16 groups")
         if any(
             not isinstance(partition, MC2ResolvedPartitionSpec)
             or partition.setup_type != self.setup_type
@@ -108,6 +120,7 @@ class MC2DomainDraftV1:
             "partition_ids": list(self.partition_ids),
             "collision_groups": list(self.collision_groups),
             "collision_masks": list(self.collision_masks),
+            "external_collision_masks": list(self.external_collision_masks),
             "effective_parameter_signatures": [
                 effective.parameter_signature for effective in self.effectives
             ],
@@ -119,6 +132,7 @@ def build_mc2_domain_draft(
     plan: MC2PartitionCollectorPlan,
     *,
     domain_id: str | None = None,
+    external_collision_masks=None,
 ) -> MC2DomainDraftV1:
     """Compile resolved authoring intent without Blender IO or dense buffers."""
 
@@ -137,6 +151,20 @@ def build_mc2_domain_draft(
     )
     groups = _resolved_collision_groups(partitions)
     masks = tuple(int(partition.collision_mask) for partition in partitions)
+    external_masks = (
+        tuple(int(partition.setup_options.collided_by_groups) for partition in partitions)
+        if external_collision_masks is None
+        else tuple(external_collision_masks)
+    )
+    if len(external_masks) != len(partitions):
+        raise ValueError("MC2 external collision masks must match active partitions")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= 0xFFFF
+        for value in external_masks
+    ):
+        raise ValueError("MC2 external collision masks must fit 16 groups")
     resolved_domain_id = str(
         domain_id or f"mc2.domain:{plan.report.domain_signature[:24]}"
     ).strip()
@@ -151,6 +179,7 @@ def build_mc2_domain_draft(
         ],
         "collision_groups": groups,
         "collision_masks": masks,
+        "external_collision_masks": external_masks,
         "field_sources": [
             dict(partition.field_sources) for partition in partitions
         ],
@@ -163,6 +192,7 @@ def build_mc2_domain_draft(
         effectives=effectives,
         collision_groups=groups,
         collision_masks=masks,
+        external_collision_masks=external_masks,
         draft_signature=_signature(payload),
     )
 
@@ -199,8 +229,13 @@ def build_mc2_mesh_domain_draft(
     plan: MC2PartitionCollectorPlan,
     *,
     domain_id: str | None = None,
+    external_collision_masks=None,
 ) -> MC2DomainDraftV1:
-    return build_mc2_domain_draft(plan, domain_id=domain_id)
+    return build_mc2_domain_draft(
+        plan,
+        domain_id=domain_id,
+        external_collision_masks=external_collision_masks,
+    )
 
 
 def build_mc2_mesh_domain_collider_frame(world, draft: MC2DomainDraftV1):

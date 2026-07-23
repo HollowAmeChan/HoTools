@@ -232,12 +232,16 @@ def test_base_pose_compatibility_entry_is_product_only():
     assert "test_blender_mc2_mesh_product_base_pose" in source
 
 
-def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
+def test_capability_matrix_has_no_legacy_constraint_runner_evidence():
     source = (BLENDER_TEST_ROOT.parent / "mc2" / "test" / "capability_matrix.py").read_text(
         encoding="utf-8"
     )
-    legacy = [line.strip() for line in source.splitlines()
-              if "test_blender_mc2_bone_constraint_soak.py::" in line]
+    legacy = [
+        line.strip()
+        for line in source.splitlines()
+        if "test_blender_mc2_constraint_soak.py::" in line
+        or "test_blender_mc2_bone_constraint_soak.py::" in line
+    ]
     assert legacy == []
 
 

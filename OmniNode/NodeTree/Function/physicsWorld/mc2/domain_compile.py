@@ -623,10 +623,7 @@ def compile_mc2_domain_draft(
         domain_id=draft.domain_id,
         collision_groups=draft.collision_groups,
         collision_masks=draft.collision_masks,
-        external_collision_masks=tuple(
-            partition.setup_options.collided_by_groups
-            for partition in draft.partitions
-        ),
+        external_collision_masks=draft.external_collision_masks,
     )
 
 

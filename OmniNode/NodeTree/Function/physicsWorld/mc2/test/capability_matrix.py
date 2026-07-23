@@ -542,7 +542,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "finite", "deterministic", "limit_bounded", "branch_transition_stable",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_angle_limit_soak",
+            "runner": "test_blender_mc2_mesh_product_angle_motion.py::test_mesh_product_angle_limit_transition_deterministic",
             "frames": 1200,
             "setups": ("mesh_cloth",),
             "fields": ("angle_limit_stiffness", "use_angle_limit", "angle_limit"),
@@ -622,7 +622,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "friction_response_ordered": CLOTH_SETUPS,
         },
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_task_collider_scope_soak",
+            "runner": "test_blender_mc2_mesh_product_collision_soak.py::test_mesh_product_collider_scope_response_deterministic",
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": ("collision_mode", "radius"),
@@ -631,13 +631,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "contact_response_bounded",
             ),
         }, {
-            "runner": "test_blender_mc2_constraint_soak.py::mesh_friction_response",
+            "runner": "test_blender_mc2_mesh_product_collision_soak.py::test_mesh_product_friction_ordered_deterministic",
             "frames": 600,
             "setups": ("mesh_cloth",),
             "fields": (
                 "collision_dynamic_friction", "collision_static_friction",
             ),
-            "invariants": ("finite", "friction_response_ordered"),
+            "invariants": (
+                "finite", "deterministic", "friction_response_ordered",
+            ),
         }, {
             "runner": "test_blender_mc2_bone_product_collision_soak.py::test_bone_product_collision_filter_response_deterministic",
             "frames": 900,
