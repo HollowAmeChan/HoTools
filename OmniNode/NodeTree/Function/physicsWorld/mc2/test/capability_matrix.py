@@ -102,6 +102,17 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "angle_motion_hot_update_stable",
             ),
         }, {
+            "runner": "test_blender_mc2_mixed_output_soak.py::main",
+            "frames": 900,
+            "setups": ALL_SETUPS,
+            "fields": (
+                "stabilization_time_after_reset", "blend_weight",
+            ),
+            "invariants": (
+                "finite", "deterministic", "bounded_velocity",
+                "stabilization_blend_ramp_exact",
+            ),
+        }, {
             "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
             "frames": 900,
             "setups": ("mesh_cloth",),
@@ -184,6 +195,9 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "anchor_rotation_inertia_endpoints_exact",
             "anchor_constraint_object_evaluated",
             "anchor_motion_no_context_rebuild",
+            "product_center_teleport_flags",
+            "product_center_reset_velocity_cleared",
+            "product_center_no_context_rebuild",
         ),
         "invariant_setups": {
             "bone_root_teleport_detected": ("bone_cloth", "bone_spring"),
@@ -302,6 +316,23 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                     "anchor_constraint_object_evaluated",
                     "anchor_motion_no_context_rebuild",
                     "center_controls_no_implicit_debug_readback",
+                ),
+            },
+            {
+                "runner": (
+                    "test_blender_mc2_product_center_controls_soak.py::"
+                    "center_teleport_controls"
+                ),
+                "frames": 600,
+                "setups": ALL_SETUPS,
+                "fields": (
+                    "teleport_distance", "teleport_rotation", "teleport_mode",
+                ),
+                "invariants": (
+                    "finite", "deterministic",
+                    "product_center_teleport_flags",
+                    "product_center_reset_velocity_cleared",
+                    "product_center_no_context_rebuild",
                 ),
             },
         ),

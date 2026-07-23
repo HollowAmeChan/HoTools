@@ -69,6 +69,9 @@ def _requests(
     local_movement_speed_limit: float = -1.0,
     local_rotation_speed_limit: float = -1.0,
     depth_inertia: float = 0.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 100.0,
+    teleport_rotation: float = 180.0,
 ):
     task_values = {
         "anchor_inertia": anchor_inertia,
@@ -80,9 +83,9 @@ def _requests(
         "local_movement_speed_limit": local_movement_speed_limit,
         "local_rotation_speed_limit": local_rotation_speed_limit,
         "depth_inertia": depth_inertia,
-        "teleport_mode": 0,
-        "teleport_distance": 100.0,
-        "teleport_rotation": 180.0,
+        "teleport_mode": teleport_mode,
+        "teleport_distance": teleport_distance,
+        "teleport_rotation": teleport_rotation,
     }
     entries, count = nodes.physicsMC2MeshObject([mesh])
     assert count == 1 and len(entries) == 1
@@ -166,6 +169,9 @@ def _run_world_case(
     local_movement_speed_limit: float = -1.0,
     local_rotation_speed_limit: float = -1.0,
     depth_inertia: float = 0.0,
+    teleport_mode: int = 0,
+    teleport_distance: float = 100.0,
+    teleport_rotation: float = 180.0,
     read_center_debug: bool = False,
     capture_candidates: bool = False,
 ):
@@ -183,6 +189,8 @@ def _run_world_case(
             "step_x": [],
             "movement_speed_limited": [],
             "anchor_shift_x": [],
+            "teleport_flags": [],
+            "real_velocity_max": [],
             "candidate_positions": [],
             "depths": [],
             "move_mask": [],
@@ -235,6 +243,9 @@ def _run_world_case(
             local_movement_speed_limit=local_movement_speed_limit,
             local_rotation_speed_limit=local_rotation_speed_limit,
             depth_inertia=depth_inertia,
+            teleport_mode=teleport_mode,
+            teleport_distance=teleport_distance,
+            teleport_rotation=teleport_rotation,
         )
         slot_ids = _slot_ids(requests)
         component_x = 0.0
@@ -247,6 +258,8 @@ def _run_world_case(
                 component_rotation_degrees += (
                     component_rotation_speed / _FRAME_RATE
                 )
+            if teleport_mode and frame == 301:
+                component_x += 2.0
             for source, initial_x in zip(sources, base_x):
                 source.location.x = initial_x + component_x
                 source.rotation_mode = "XYZ"
@@ -360,6 +373,23 @@ def _run_world_case(
                                 dtype=np.float32,
                             ).reshape((-1, 3))[0, 0])
                         )
+                        values["teleport_flags"].append(
+                            int(np.asarray(
+                                debug_state["teleport_flags"],
+                                dtype=np.uint32,
+                            ).reshape((-1,))[0])
+                        )
+                        if teleport_mode:
+                            dynamics = owner.read_debug_state()
+                            values["real_velocity_max"].append(
+                                float(np.max(np.linalg.norm(
+                                    np.asarray(
+                                        dynamics["real_velocities"],
+                                        dtype=np.float32,
+                                    ).reshape((-1, 3)),
+                                    axis=1,
+                                )))
+                            )
                 digest.update(setup.encode("ascii"))
                 digest.update(output.world_positions.tobytes())
                 digest.update(output.world_rotations_xyzw.tobytes())
@@ -699,6 +729,53 @@ def center_depth_controls():
     print("PASS 产品Center Depth惯性与确定性")
 
 
+def center_teleport_controls():
+    def run(run_index, teleport_mode):
+        return _run_world_case(
+            f"Teleport{teleport_mode}",
+            run_index,
+            world_inertia=0.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+            teleport_mode=teleport_mode,
+            teleport_distance=0.5,
+            teleport_rotation=30.0,
+            read_center_debug=True,
+            capture_candidates=True,
+        )
+
+    first = {mode: run(mode - 1, mode) for mode in (1, 2)}
+    second = {mode: run(mode + 9, mode) for mode in (1, 2)}
+    for mode in first:
+        for setup in _SETUPS:
+            left = first[mode][0][setup]
+            right = second[mode][0][setup]
+            for field in left:
+                np.testing.assert_array_equal(left[field], right[field])
+            flags = np.asarray(left["teleport_flags"], dtype=np.uint32)
+            assert np.any((flags & 1) != 0), (mode, setup, flags)
+            if mode == 1:
+                assert np.all((flags & 2) == 0)
+                assert np.any((flags & 4) != 0), (mode, setup, flags)
+                reset_velocity = np.asarray(
+                    left["real_velocity_max"], dtype=np.float32
+                )[(flags & 4) != 0]
+                assert np.all(reset_velocity <= 1.0e-6), (
+                    mode,
+                    setup,
+                    reset_velocity,
+                )
+            else:
+                assert np.all((flags & 4) == 0)
+                assert np.any((flags & 2) != 0), (mode, setup, flags)
+            assert np.all(np.isfinite(left["candidate_positions"]))
+    print(
+        "PASS 产品Center Teleport Reset/Keep与确定性："
+        "3 setup x 2 mode x 2 run x 600 frame"
+    )
+
+
 if __name__ == "__main__":
     if os.environ.get("MC2_CENTER_DEPTH_ONLY"):
         center_depth_controls()
@@ -706,6 +783,8 @@ if __name__ == "__main__":
         center_anchor_controls()
     elif os.environ.get("MC2_CENTER_LOCAL_ONLY"):
         center_local_controls()
+    elif os.environ.get("MC2_CENTER_TELEPORT_ONLY"):
+        center_teleport_controls()
     else:
         center_world_controls()
         center_local_controls()
