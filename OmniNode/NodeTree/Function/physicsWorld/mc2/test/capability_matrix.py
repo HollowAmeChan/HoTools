@@ -113,6 +113,20 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "stabilization_blend_ramp_exact",
             ),
         }, {
+            "runner": (
+                "test_blender_mc2_product_center_controls_soak.py::"
+                "center_stabilization_controls"
+            ),
+            "frames": 600,
+            "setups": ALL_SETUPS,
+            "fields": (
+                "stabilization_time_after_reset", "blend_weight",
+            ),
+            "invariants": (
+                "finite", "deterministic",
+                "product_stabilization_parameters_and_determinism",
+            ),
+        }, {
             "runner": "test_blender_mc2_constraint_soak.py::_angle_restoration_rest_soak",
             "frames": 900,
             "setups": ("mesh_cloth",),

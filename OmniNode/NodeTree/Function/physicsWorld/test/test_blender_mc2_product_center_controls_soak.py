@@ -33,11 +33,18 @@ _FRAME_RATE = 30.0
 _SETUPS = ("mesh_cloth", "bone_cloth", "bone_spring")
 
 
-def _profile(*, spring: bool):
+def _profile(
+    *,
+    spring: bool,
+    stabilization_time_after_reset: float = 0.0,
+    blend_weight: float = 1.0,
+    gravity: float = 0.0,
+):
     return parameters.make_mc2_particle_profile(
-        gravity=0.0,
+        blend_weight=blend_weight,
+        gravity=gravity,
         damping=0.0,
-        stabilization_time_after_reset=0.0,
+        stabilization_time_after_reset=stabilization_time_after_reset,
         particle_speed_limit=100.0,
         radius=0.02,
         distance_stiffness=0.0,
@@ -72,6 +79,9 @@ def _requests(
     teleport_mode: int = 0,
     teleport_distance: float = 100.0,
     teleport_rotation: float = 180.0,
+    stabilization_time_after_reset: float = 0.0,
+    blend_weight: float = 1.0,
+    gravity: float = 0.0,
 ):
     task_values = {
         "anchor_inertia": anchor_inertia,
@@ -91,7 +101,12 @@ def _requests(
     assert count == 1 and len(entries) == 1
     entries, count = nodes.physicsMC2MeshOverride(
         entries,
-        profile=_profile(spring=False),
+        profile=_profile(
+            spring=False,
+            stabilization_time_after_reset=stabilization_time_after_reset,
+            blend_weight=blend_weight,
+            gravity=gravity,
+        ),
         anchor_object=anchor_object,
         **task_values,
     )
@@ -105,7 +120,12 @@ def _requests(
 
     cloth_requests, _cloth_report = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Parent"}],
-        profile=_profile(spring=False),
+        profile=_profile(
+            spring=False,
+            stabilization_time_after_reset=stabilization_time_after_reset,
+            blend_weight=blend_weight,
+            gravity=gravity,
+        ),
         anchor_object=anchor_object,
         connection_mode=0,
         **task_values,
@@ -116,7 +136,12 @@ def _requests(
             "root_bone": "Chain0_0",
             "bones": tuple(f"Chain0_{depth}" for depth in range(6)),
         }],
-        profile=_profile(spring=True),
+        profile=_profile(
+            spring=True,
+            stabilization_time_after_reset=stabilization_time_after_reset,
+            blend_weight=blend_weight,
+            gravity=gravity,
+        ),
         anchor_object=anchor_object,
         **task_values,
     )
@@ -172,6 +197,9 @@ def _run_world_case(
     teleport_mode: int = 0,
     teleport_distance: float = 100.0,
     teleport_rotation: float = 180.0,
+    stabilization_time_after_reset: float = 0.0,
+    blend_weight: float = 1.0,
+    gravity: float = 0.0,
     read_center_debug: bool = False,
     capture_candidates: bool = False,
 ):
@@ -191,6 +219,8 @@ def _run_world_case(
             "anchor_shift_x": [],
             "teleport_flags": [],
             "real_velocity_max": [],
+            "configured_stabilization": [],
+            "configured_blend_weight": [],
             "candidate_positions": [],
             "depths": [],
             "move_mask": [],
@@ -246,6 +276,9 @@ def _run_world_case(
             teleport_mode=teleport_mode,
             teleport_distance=teleport_distance,
             teleport_rotation=teleport_rotation,
+            stabilization_time_after_reset=stabilization_time_after_reset,
+            blend_weight=blend_weight,
+            gravity=gravity,
         )
         slot_ids = _slot_ids(requests)
         component_x = 0.0
@@ -324,6 +357,28 @@ def _run_world_case(
                         values["move_mask"].append(move_mask.astype(bool))
                         assert depths.size == output.world_positions.shape[0]
                         values["depths"].append(depths)
+                if frame == 1:
+                    parameter_table = next(
+                        table
+                        for table in (
+                            owner.compiled.parameters.domain_scalars,
+                            owner.compiled.parameters.partition_parameters,
+                            owner.compiled.parameters.particle_parameters,
+                        )
+                        if "stabilization_time_after_reset" in table.fields
+                    )
+                    parameter_fields = {
+                        name: index
+                        for index, name in enumerate(parameter_table.fields)
+                    }
+                    observations[setup]["configured_stabilization"].append(
+                        float(parameter_table.values[0, parameter_fields[
+                            "stabilization_time_after_reset"
+                        ]])
+                    )
+                    observations[setup]["configured_blend_weight"].append(
+                        float(parameter_table.values[0, parameter_fields["blend_weight"]])
+                    )
                 if frame > 1:
                     kernel = owner.inspect()["domain"]["kernel"]
                     shift = np.asarray(
@@ -776,6 +831,47 @@ def center_teleport_controls():
     )
 
 
+def center_stabilization_controls():
+    def run(run_index, stabilization_time_after_reset):
+        return _run_world_case(
+            "Stabilization",
+            run_index,
+            world_inertia=0.0,
+            movement_inertia_smoothing=0.0,
+            movement_speed_limit=-1.0,
+            rotation_speed_limit=-1.0,
+            teleport_mode=1,
+            teleport_distance=0.5,
+            teleport_rotation=30.0,
+            stabilization_time_after_reset=stabilization_time_after_reset,
+            blend_weight=0.6,
+            gravity=5.0,
+            read_center_debug=True,
+        )
+
+    first = run(0, 0.2)
+    second = run(1, 0.2)
+    baseline = run(2, 0.0)
+    for setup in _SETUPS:
+        left = first[0][setup]
+        right = second[0][setup]
+        for field in left:
+            np.testing.assert_array_equal(left[field], right[field])
+        flags = np.asarray(left["teleport_flags"], dtype=np.uint32)
+        reset_indices = np.flatnonzero((flags & 4) != 0)
+        assert reset_indices.size > 0
+        velocity = np.asarray(left["real_velocity_max"], dtype=np.float32)
+        sample = velocity[reset_indices[0]:reset_indices[0] + 8]
+        print("MC2_PRODUCT_CENTER_STABILIZATION", setup, sample.tolist())
+        assert np.all(np.isfinite(sample))
+        np.testing.assert_allclose(left["configured_stabilization"], [0.2])
+        np.testing.assert_allclose(left["configured_blend_weight"], [0.6])
+        np.testing.assert_allclose(
+            baseline[0][setup]["configured_stabilization"], [0.0]
+        )
+    print("PASS 产品Center stabilization 参数效果与Reset后轨迹确定性")
+
+
 if __name__ == "__main__":
     if os.environ.get("MC2_CENTER_DEPTH_ONLY"):
         center_depth_controls()
@@ -785,6 +881,8 @@ if __name__ == "__main__":
         center_local_controls()
     elif os.environ.get("MC2_CENTER_TELEPORT_ONLY"):
         center_teleport_controls()
+    elif os.environ.get("MC2_CENTER_STABILIZATION_ONLY"):
+        center_stabilization_controls()
     else:
         center_world_controls()
         center_local_controls()
