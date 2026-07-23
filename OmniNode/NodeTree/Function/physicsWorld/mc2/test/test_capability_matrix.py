@@ -272,6 +272,7 @@ def test_setup_local_evidence_cannot_close_another_setup():
 
     self_collision = capability_gaps(by_id["self_collision"])
     assert "cross_task_scope_exact@mesh_cloth" in self_collision["invariants"]
+    assert "cross_source_scope_exact@bone_cloth" not in self_collision["invariants"]
     assert "contact_cache_bounded@mesh_cloth" in self_collision["invariants"]
     assert "single_radius_model_consistent@mesh_cloth" in self_collision["invariants"]
     assert "cross_task_scope_exact@bone_cloth" not in self_collision["invariants"]
@@ -395,7 +396,13 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert by_id["center_inertia_and_teleport"]["status"] == "verified"
 
     tether = capability_gaps(by_id["tether_and_distance"])
-    assert not any(tether.values())
+    assert not tether["setups"]
+    assert "tether_stretch_limit@mesh_cloth" in tether["fields"]
+    assert "distance_velocity_attenuation@mesh_cloth" in tether["fields"]
+    assert "rest_length_bounded@mesh_cloth" in tether["invariants"]
+    assert "tether_range_bounded@mesh_cloth" in tether["invariants"]
+    assert "fixed_particles_static@mesh_cloth" not in tether["invariants"]
+    assert by_id["tether_and_distance"]["status"] == "gap"
 
     bending = capability_gaps(by_id["triangle_bending"])
     assert "bending_method@mesh_cloth" not in bending["fields"]

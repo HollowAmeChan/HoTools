@@ -89,7 +89,7 @@ MC2 当前处于 E7-CPU 删除前迁移阶段。统一 MC2ProductRequestV1、Dom
 
 后续只按以下逻辑批次推进：
 
-1. 将 capability matrix 中仍指向旧 test_blender_mc2_constraint_soak.py 的 5 条证据逐项迁移到 DomainV1、共享 kernel 或 product runner，保留独立数值断言。Mesh 外碰/摩擦目前只有 data-path，未形成数值等价，必须明确为缺口。
+1. 将 capability matrix 中仍直接指向旧 `test_blender_mc2_constraint_soak.py` 的 4 条证据逐项迁移到 DomainV1、共享 kernel 或 product runner，保留独立数值断言。Mesh Distance/Tether、外碰/摩擦的 data-path 不得计作数值等价。
 2. 完成 BoneCloth/BoneSpring 计划中的跨 source self scope、contact cache/radius、target/rest 等精确断言，再迁移剩余 Mesh target/rest、Distance/Tether、Bending、Angle Limit 和 task collider scope 证据。
 3. 将 topology/setup 仍需要的中立任务合同迁出 mc2/specs.py；随后隔离并删除 V0 oracle、旧 property/debug/constraint runner 依赖。
 4. 删除旧 Python owner、hidden task、普通 aggregate、interaction 资源、70 个 native V0 binding 和 5 个 mc2_context_* 翻译单元；删除后立即执行 E7-S 兼容层简化审查。

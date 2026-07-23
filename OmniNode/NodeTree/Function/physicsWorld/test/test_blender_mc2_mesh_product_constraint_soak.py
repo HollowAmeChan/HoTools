@@ -294,16 +294,16 @@ def _run_distance_tether_profile(run_index: int):
             physics_blender.unregister()
 
 
-def test_mesh_product_distance_tether_response_deterministic() -> None:
+def test_mesh_product_distance_tether_data_path_deterministic() -> None:
     first = _run_distance_tether_profile(0)
     second = _run_distance_tether_profile(1)
     assert first == second, (first, second)
     assert first[1] <= 1.55
     print("MC2_MESH_PRODUCT_DISTANCE_TETHER_DIGEST", first[0])
     print("MC2_MESH_PRODUCT_DISTANCE_TETHER_DEBUG", first[2])
-    print("PASS test_mesh_product_distance_tether_response_deterministic")
+    print("PASS test_mesh_product_distance_tether_data_path_deterministic")
 
 
 if __name__ == "__main__":
     test_mesh_product_gravity_axes_falloff()
-    test_mesh_product_distance_tether_response_deterministic()
+    test_mesh_product_distance_tether_data_path_deterministic()

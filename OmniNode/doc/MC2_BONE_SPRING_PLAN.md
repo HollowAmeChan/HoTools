@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；Angle target/rest 由请求式 native record 对照同一 StepBasic pose，并由 BoneCloth/BoneSpring 各自双跑锁定 |
 | `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
-| `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性 |
+| `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py`、`test_blender_mc2_bone_product_distance_tether.py` | wrapper 固定实际 Distance stiffness 为 `0.5`；输入 stiffness 变化不得改变轨迹，Tether record 仍按 Line setup 发布 |
 | `bone_gravity_axes_falloff` | 不适用于 BoneSpring；产品节点合同明确世界重力只由 MeshCloth/BoneCloth 消费 | 不把 BoneSpring 的 spring-specific Line setup 错记为 gravity 缺口 |
 | `bone_angle_restoration_attenuation`、`bone_angle_restoration_falloff` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
 | `bone_rotation_output_controls` | `test_blender_mc2_bone_product_angle_motion.py::test_bone_product_rotation_output_controls` | BoneSpring Line product 已验证 rotation 参数 ABI、fixed/move/leaf 目标集合与位置不变性 |

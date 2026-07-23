@@ -366,16 +366,18 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "tether_range_bounded",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_distance_tether_soak",
+            "runner": (
+                "test_blender_mc2_mesh_product_constraint_soak.py::"
+                "test_mesh_product_distance_tether_data_path_deterministic"
+            ),
             "frames": 900,
             "setups": ("mesh_cloth",),
             "fields": (
-                "tether_compression_limit", "tether_stretch_limit",
-                "distance_velocity_attenuation", "distance_stiffness",
+                "tether_compression_limit", "distance_stiffness",
             ),
             "invariants": (
-                "finite", "deterministic", "rest_length_bounded",
-                "fixed_particles_static", "tether_range_bounded",
+                "finite", "deterministic", "fixed_particles_static",
+                "product_debug_data_path_present",
                 "parameter_hot_update_in_place",
             ),
         }, {
@@ -392,8 +394,20 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "parameter_hot_update_in_place",
                 "connected_disconnected_writeback",
             ),
+        }, {
+            "runner": (
+                "test_blender_mc2_bone_product_distance_tether.py::"
+                "test_bone_product_distance_tether_numeric_deterministic"
+            ),
+            "frames": 600,
+            "setups": ("bone_cloth",),
+            "fields": ("distance_stiffness",),
+            "invariants": (
+                "finite", "deterministic", "rest_length_bounded",
+                "tether_range_bounded", "distance_response_changes",
+            ),
         },),
-        "status": "verified",
+        "status": "gap",
     },
     {
         "id": "triangle_bending",
@@ -664,11 +678,13 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         },
         "required_invariants": (
             "finite", "deterministic", "whole_domain_self_step_active",
-            "cross_task_scope_exact", "contact_cache_bounded",
+            "cross_task_scope_exact", "cross_source_scope_exact",
+            "contact_cache_bounded",
             "single_radius_model_consistent",
         ),
         "invariant_setups": {
             "cross_task_scope_exact": ("mesh_cloth",),
+            "cross_source_scope_exact": ("bone_cloth",),
         },
         "evidence": ({
             "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
@@ -702,7 +718,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "self_collision_mode", "self_collision_thickness", "cloth_mass",
             ),
             "invariants": (
-                "finite", "deterministic", "cross_task_scope_exact",
+                "finite", "deterministic", "cross_source_scope_exact",
                 "contact_cache_bounded", "single_radius_model_consistent",
             ),
         }),
