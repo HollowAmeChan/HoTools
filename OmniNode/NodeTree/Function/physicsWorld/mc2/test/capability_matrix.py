@@ -368,17 +368,18 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         "evidence": ({
             "runner": (
                 "test_blender_mc2_mesh_product_constraint_soak.py::"
-                "test_mesh_product_distance_tether_data_path_deterministic"
+                "test_mesh_product_distance_tether_numeric_deterministic"
             ),
-            "frames": 900,
+            "frames": 3600,
             "setups": ("mesh_cloth",),
             "fields": (
-                "tether_compression_limit", "distance_stiffness",
+                "tether_compression_limit", "tether_stretch_limit",
+                "distance_velocity_attenuation", "distance_stiffness",
             ),
             "invariants": (
-                "finite", "deterministic", "fixed_particles_static",
-                "product_debug_data_path_present",
-                "parameter_hot_update_in_place",
+                "finite", "deterministic", "rest_length_bounded",
+                "fixed_particles_static", "tether_range_bounded",
+                "distance_response_changes",
             ),
         }, {
             "runner": (
@@ -397,7 +398,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "distance_response_changes",
             ),
         },),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "triangle_bending",

@@ -881,12 +881,12 @@ E7-A 的产品边界审计已经关闭：
 
 E7-CPU 的剩余阻塞只有两类：
 
-1. capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用；Mesh Bending、Angle Limit、外部碰撞 scope 与 friction 已由 Blender 5.2 产品数值验收接管。尚需关闭 Mesh Distance/Tether 与 whole-domain self 两个 `gap`，不能以 data-path 记录替代数值响应。
+1. capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用；Mesh Bending、Angle Limit、Distance/Tether、外部碰撞 scope 与 friction 已由 Blender 5.2 产品数值验收接管。尚需关闭 Mesh whole-domain self 唯一 `gap`，不能以 data-path 记录替代数值响应。
 2. `specs.py` 仍承载部分中立 topology/setup 合同；Python V0 owner、普通 aggregate、68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元仍待删除。BoneCloth/BoneSpring 的独立数值与包装限制前置签字已经关闭。
 
 #### E7-CPU 逻辑批次
 
-1. 关闭 Mesh Distance/Tether 与 whole-domain self 两个产品数值缺口；旧 capability runner 和 BoneCloth/BoneSpring 删除签字均已关闭。
+1. 关闭 Mesh whole-domain self 唯一产品数值缺口；Distance/Tether、旧 capability runner 和 BoneCloth/BoneSpring 删除签字均已关闭。
 2. 把中立 topology/setup/frame 合同迁出 `specs.py`；产品测试 helper 不再导入旧 runner。
 3. 删除 Python V0 oracle、`solver.py`、`native_context.py`、`interaction_scope.py`、普通 aggregate 和旧 resource bridge。
 4. 删除 68 个 V0 binding、5 个旧 context 翻译单元及 CMake/API/required-symbol 残留。

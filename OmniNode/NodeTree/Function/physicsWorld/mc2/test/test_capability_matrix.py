@@ -401,14 +401,10 @@ def test_setup_local_evidence_cannot_close_another_setup():
 
     tether = capability_gaps(by_id["tether_and_distance"])
     assert not tether["setups"]
-    assert "tether_stretch_limit@mesh_cloth" in tether["fields"]
-    assert "distance_velocity_attenuation@mesh_cloth" in tether["fields"]
-    assert "rest_length_bounded@mesh_cloth" in tether["invariants"]
-    assert "tether_range_bounded@mesh_cloth" in tether["invariants"]
-    assert "distance_response_changes@mesh_cloth" in tether["invariants"]
-    assert "distance_response_changes@bone_cloth" not in tether["invariants"]
-    assert "fixed_particles_static@mesh_cloth" not in tether["invariants"]
-    assert by_id["tether_and_distance"]["status"] == "gap"
+    assert not tether["fields"]
+    assert not tether["invariants"]
+    assert not any(tether.values())
+    assert by_id["tether_and_distance"]["status"] == "verified"
 
     bending = capability_gaps(by_id["triangle_bending"])
     assert "bending_method@mesh_cloth" not in bending["fields"]

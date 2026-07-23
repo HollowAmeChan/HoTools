@@ -76,7 +76,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 三种 setup 的统一域产品路径可用；处于 E7-CPU 删除前证据收口 | E0-E5-B、P0、P1-B、E4/P2 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；产品/公开节点/debug 到旧模块的可达性为零；Mesh Bending、Angle Limit、外部碰撞 scope 与 friction 已全部由产品数值闸门接管 | 补齐 Mesh Distance/Tether 与 whole-domain self 两个能力缺口；迁出 `specs.py` 中立合同；删除旧 Python owner、普通 aggregate、68 个 V0 binding 和 5 个 context 翻译单元；执行 E7-S、P6 合同收口和最终双 ABI 验收 |
+| MC2 | 三种 setup 的统一域产品路径可用；处于 E7-CPU 删除前证据收口 | E0-E5-B、P0、P1-B、E4/P2 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；产品/公开节点/debug 到旧模块的可达性为零；Mesh Bending、Angle Limit、Distance/Tether、外部碰撞 scope 与 friction 已全部由产品数值闸门接管 | 补齐 Mesh whole-domain self 唯一能力缺口；迁出 `specs.py` 中立合同；删除旧 Python owner、普通 aggregate、68 个 V0 binding 和 5 个 context 翻译单元；执行 E7-S、P6 合同收口和最终双 ABI 验收 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
@@ -87,7 +87,7 @@ MC2 当前处于 E7-CPU 删除前迁移阶段。统一 MC2ProductRequestV1、Dom
 
 后续只按以下逻辑批次推进：
 
-1. capability matrix 已不再引用旧 Mesh/Bone constraint runner；Mesh Bending、Angle Limit、Collider scope 和 Friction 均由 Blender 5.2 产品 runner 提供真实数值响应。继续补齐 Mesh Distance/Tether 与 whole-domain self 两个 `gap`，data-path 记录仍不能代替响应门槛。
+1. capability matrix 已不再引用旧 Mesh/Bone constraint runner；Mesh Bending、Angle Limit、Distance/Tether、Collider scope 和 Friction 均由 Blender 5.2 产品 runner 提供真实数值响应。继续补齐 Mesh whole-domain self 唯一 `gap`，data-path 记录仍不能代替响应门槛。
 2. BoneCloth/BoneSpring 的独立数值与包装限制前置签字已经关闭，不重复实施；将 topology/setup 仍需要的中立合同迁出 `mc2/specs.py`，使旧 runner 不再拥有唯一 oracle，随后删除 Python V0 owner、hidden task、普通 aggregate 和兼容 bridge。
 3. 删除 68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元；每个逻辑批次同时更新测试、审计和唯一蓝本，不按单 runner 提交。
 4. 删除完成后立即执行 E7-S，逐项清理迁移期 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
