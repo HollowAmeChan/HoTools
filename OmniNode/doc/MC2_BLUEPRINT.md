@@ -810,7 +810,7 @@ Python 3.11 + Blender 4.5继续保留最终兼容门禁，但从2026-07-23起冻
 - `physicsWorld/test/benchmark_blender_mc2_hotspots.py`
 - `physicsWorld/test/benchmark_blender_mc2_self_radius.py`
 
-主脚本构造small/medium/large Mesh与Bone固定资产，分段测量static observation、topology/fingerprint、static build/clone、frame prepare、产品统一域step、result build/publish、writeback和debug capture。每个场景覆盖cold、hot、config、Mesh Pin surface/Bone rest geometry change及Python分配峰值，并断言所有阶段真实命中；`MC2_BENCH_HOT_FRAMES`只用于扩大稳定性能样本。旧interaction-scope benchmark已随E7-CPU测试证据迁移删除，不再作为维护入口。
+主脚本构造small/medium/large Mesh与Bone固定资产，分段测量static observation、topology/fingerprint、static build/clone、frame prepare、产品统一域step、result build/publish、writeback和debug capture。每个场景覆盖cold、hot、config、Mesh Pin surface/Bone rest geometry change及Python分配峰值，并断言所有阶段真实命中；`MC2_BENCH_HOT_FRAMES`只用于扩大稳定性能样本。`self_radius`脚本同样只走产品 request/slot，比较公开粒子半径及其派生self厚度，不再传入source-oracle的独立厚度字段。旧interaction-scope benchmark已随E7-CPU测试证据迁移删除，不再作为维护入口。
 
 粗粒度ceiling只用于发现数量级回退：
 
