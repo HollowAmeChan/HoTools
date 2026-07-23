@@ -237,7 +237,7 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             },
             {
                 "runner": (
-                    "test_blender_mc2_mixed_output_soak.py::"
+                    "test_blender_mc2_product_center_controls_soak.py::"
                     "center_world_controls"
                 ),
                 "frames": 600,

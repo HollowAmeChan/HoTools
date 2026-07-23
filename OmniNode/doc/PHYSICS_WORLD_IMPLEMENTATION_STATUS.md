@@ -112,6 +112,8 @@ MC2 产品统一域自碰调试记录（2026-07-23）：约束会话新增 `Whol
 
 MC2 E7-CPU基础数值oracle迁移（2026-07-23）：删除前由py313同输入V0/DomainV1已通过对照采集最小JSON golden，新增不导入`native_context/specs/solver`的`test_domain_reference_golden.py`。它直接锁定Integration、完整无碰撞pass、Post history、StepBasic、Angle/Motion、5种Center事务及点/边/self collision的float32位置/旋转/速度、native shift、Teleport flags、暂停零子步和逐字段原容差；Center使用Domain自有history，碰撞输入来自真实compiled primitive/parameter tables，均不冻结旧包装schema。完整Domain golden `10/10`，原`test_e3_v0_tolerance.py`已删除。
 
+MC2 产品 Center World 长跑迁移（2026-07-23）：新增 `test_blender_mc2_product_center_controls_soak.py::center_world_controls`，只通过 `MC2ProductRequestV1`、统一 product collector 与 DomainV1 owner 运行 MeshCloth、BoneCloth、BoneSpring。3 个 setup、follow/hold/smooth/limited/rotation_limited 五组控制、每组双跑 600 帧全部通过，覆盖有限性、确定性、世界平移惯性排序、平滑、平移/旋转限速、Center shift/step 计数及产品槽无 `native_context`、`spec`、`_debug_draw_snapshot`。capability matrix 已将 `center_world_controls` 切换到该 runner；Local、Depth、Anchor 仍待各自产品 runner 证明。当前只使用 Blender 5.2/Python 3.13 与 `_Lib/py313`，4.5/py311 保持冻结。
+
 1. 推进 Physics Bake 的 Bone component ownership、Object Action、Bake回绕暂停、Object/PC2 baseline、journal与topology signature，同时保持现有 Bone/PC2/Clear 留存合同。
 2. 保持Rigid/Jolt schema、native ABI、debug renderer与fixture同步。
 3. MC2统一域E7-A已关闭，当前按冻结清单执行E7-CPU分组删除；完成产品调试快照迁移、Python旧owner/oracle bridge和native V0面删除后，立即执行E7-S兼容层专项简化。P6合同贯穿其间，任何setup都不得静默回退到旧task/V0。

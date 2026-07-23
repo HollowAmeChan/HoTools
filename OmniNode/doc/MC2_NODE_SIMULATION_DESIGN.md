@@ -993,6 +993,8 @@ E7-CPU 统一域自碰调试记录（2026-07-23）：`WholeDomainSelf=64` 复用
 
 E7-CPU测试迁移首批（2026-07-23）：`acceptance_assets_v1.json`已把旧`mesh_cloth_world_self_interaction`并入产品`mesh_unified_domain_e5`，由统一域runner承担跨partition接触、穿插历史、互惠group-mask、动态source重配与多目标事务证据；纯旧`test_interaction_scope.py`、`test_shadow_pipeline.py`、`test_blender_mc2_interaction_v0.py`和`benchmark_blender_mc2_interaction_scope.py`删除。E3的Integration、完整无碰撞pass、Post history、StepBasic、Angle/Motion、5种Center事务及点/边/self collision已全部迁到`test_domain_reference_golden.py`：JSON只冻结删除前已通过等价门禁的float32数值与逐字段原容差，Center直接驱动Domain自有history，碰撞输入来自真实compiled tables，不保存旧包装schema。完整Domain golden `10/10`，原`test_e3_v0_tolerance.py`删除。Mesh/Bone旧长帧soak仍含尚未逐项落位的数值oracle，迁移完成前不得删除。当前只跑py313/Blender 5.2；py311/Blender 4.5冻结到旧代码删除与E7-S基本完成后的最终收尾。
 
+E7-CPU Center World 产品迁移（2026-07-23）：`test_blender_mc2_product_center_controls_soak.py::center_world_controls` 已覆盖 MeshCloth、BoneCloth、BoneSpring 三种 setup 的五组世界 Center 控制。每组双跑 600 帧，验证有限性、确定性、惯性排序、平滑、平移/旋转限速、Center shift/step 计数，并检查产品槽不含 `native_context`、`spec` 或 `_debug_draw_snapshot`。capability matrix 已切换该 runner；Local、Depth、Anchor 继续保留旧证据，待对应产品 runner 完成后再迁移。此阶段只使用 Blender 5.2/Python 3.13，4.5/py311 继续冻结。
+
 ### E7-S：删除后的兼容层收敛审计
 
 E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V0`、`legacy`、`compat`、`fallback`、`shadow`、旧schema、旧result翻译、双签名overload、迁移feature flag和“仅测试使用”入口建立机器可读清单，并逐项给出外部合同依据。没有当前资产格式、公开ABI或明确oracle责任的处理必须删除；仍需保留的边界必须重命名为真实职责，不能继续用迁移期术语掩盖所有权。
