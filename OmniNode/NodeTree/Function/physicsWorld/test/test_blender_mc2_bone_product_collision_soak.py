@@ -174,7 +174,7 @@ def _run_case(*, spring: bool, accepted: bool, run_index: int):
         )
         target = None
         initial = None
-        for frame in range(1, 121):
+        for frame in range(1, 601):
             product_soak._set_frame(world, frame, generation)
             if target is None:
                 world.collider_snapshot = {"frame": frame, "colliders": []}

@@ -185,7 +185,7 @@ def _run_angle_case(
             request.domain_signature,
         )
         owner = None
-        for frame in range(1, 301):
+        for frame in range(1, 601):
             for bone in armature.pose.bones:
                 bone.matrix_basis = initial_basis[bone.name].copy()
             if drive_root:
@@ -272,7 +272,7 @@ def _run_motion_case(*, backstop: bool, run_index: int):
             request.domain_signature,
         )
         movable = owner = None
-        for frame in range(1, 451):
+        for frame in range(1, 601):
             product_soak._set_frame(world, frame, generation)
             world.collider_snapshot = {"frame": frame, "colliders": []}
             returned, ready, status = nodes.physicsMC2Step(
