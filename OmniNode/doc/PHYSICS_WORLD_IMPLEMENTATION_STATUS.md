@@ -87,7 +87,7 @@ MC2 Bone 产品集成脚本收敛（2026-07-23）：`test_blender_mc2_bone_produ
 
 ## Bone 删除前门禁更新（2026-07-23）
 
-旧 `test_blender_mc2_bone_constraint_soak.py` 已从 2158 行 V0 soak 收缩为 product-only 兼容门面，所有旧符号只转发到公开 BoneCloth/BoneSpring 产品 runner，不再创建 V0 task、读取 `native_context` 或导入 mixed runner。Angle/Motion 与外碰/摩擦 runner 已在 Blender 5.2 / Python 3.13 完成 600 帧，约束 runner 完成 900 帧双跑；公共 helper 固定使用 `_Lib/py313`。BoneCloth/BoneSpring plan 已登记逐项迁移清单，`bone_gravity_axes_falloff`、`bone_rotation_output_controls`、`bone_self_collision` 以及精确 target/rest 边界仍是删除前缺口，不能由兼容门面宣称等价。完成这些产品证据后才允许删除门面、旧 Python/native owner、hidden task、普通 aggregate 和 V0 binding；4.5/py311 继续冻结。
+旧 `test_blender_mc2_bone_constraint_soak.py` 已从 2158 行 V0 soak 收缩为 product-only 兼容门面，所有旧符号只转发到公开 BoneCloth/BoneSpring 产品 runner，不再创建 V0 task、读取 `native_context` 或导入 mixed runner。Angle/Motion、外碰/摩擦与 rotation controls runner 已在 Blender 5.2 / Python 3.13 完成 600 帧，约束 runner 完成 900 帧双跑；公共 helper 固定使用 `_Lib/py313`。BoneCloth/BoneSpring plan 已登记逐项迁移清单，当前删除前缺口收窄为 `bone_gravity_axes_falloff`、`bone_self_collision` 的 scope/cache/radius 以及精确 target/rest 边界，不能由兼容门面宣称等价。完成这些产品证据后才允许删除门面、旧 Python/native owner、hidden task、普通 aggregate 和 V0 binding；4.5/py311 继续冻结。
 
 ## 当前优先级
 
@@ -188,3 +188,5 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 本轮已先处理 Bone frame 入口：旧 N3 顶层脚本改为调用公开 Bone product soak 的兼容门面，并增加静态门禁禁止回引 V0 owner。缩放、负缩放继承和剪切 pose 等原 N3 的独立输入断言没有被伪造为“已迁移”，仍列入下一批 product frame runner 的明确任务。
 
 Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 600 帧，显式检查 `rotational_interpolation`、`root_rotation` 的编译参数、fixed/move/leaf 目标集合、位置不变性和旋转输出差异；5.2 双 setup 摘要分别为 `527f1c71e3bcc37dab771bc7bd2a3ef0d52b2956aff1f1cdff3e6a999ecd53b8` 与 `0a87b35a5fddc7b12318b200d21ec328810e66877dda1ad2566884126f25355b`。因此 Bone 删除前 legacy gap 已缩减为 gravity axes/falloff，self collision 的 scope/cache/radius gap 仍单独保留。
+
+Bone frame transform 的独立断言也已迁移到 product partition：验证 world pose、只读 frame packet、负 scale、零 scale、父级负 scale 和 shear-free 拒绝；旧 N3 facade 现在只转发 `test_bone_product_frame_transform_contract`，不再以约束 soak 冒充 frame 输入等价。
