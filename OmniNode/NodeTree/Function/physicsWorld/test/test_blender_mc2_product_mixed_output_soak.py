@@ -302,6 +302,10 @@ def _run_once(run_index: int):
                 )
                 for owner in current_owners
             )
+            mesh_kernel = current_owners[0].inspect()["domain"]["kernel"]
+            assert mesh_kernel["whole_domain_self_ready"] is True
+            if frame > 1:
+                assert mesh_kernel["whole_domain_self_step_count"] > 0
             if frame == 300:
                 assert solve_counts[0][0] == 0 and solve_counts[0][1] > 0
                 assert solve_counts[1][0] > 0 and solve_counts[1][1] > 0

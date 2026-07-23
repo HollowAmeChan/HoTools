@@ -11,7 +11,8 @@
 | `bone_angle_constraints`、`bone_angle_limit`、`bone_motion_constraints` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
 | `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
 | `bone_distance_tether`、`bone_triangle_bending` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性；边界响应断言仍需补齐 |
-| `bone_gravity_axes_falloff`、`bone_rotation_output_controls`、`bone_self_collision` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
+| `bone_gravity_axes_falloff`、`bone_rotation_output_controls` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
+| `bone_self_collision` | `test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_self_collision_domain_contract` | 已锁定 derived-radius、cloth mass、whole-domain self step；跨任务 scope、contact cache 和 radius consistency 仍是缺口 |
 
 ## 目标
 

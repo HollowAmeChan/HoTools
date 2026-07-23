@@ -11,7 +11,8 @@
 | `bone_angle_constraints`、`bone_angle_limit` | `test_blender_mc2_bone_product_angle_motion.py` | 已有 600 帧数值边界；精确 target/rest 断言仍需补齐 |
 | `bone_external_collision`、`bone_friction_response` | `test_blender_mc2_bone_product_collision_soak.py` | 已有 600 帧筛选、响应、摩擦和确定性 |
 | `bone_distance_tether` | `test_blender_mc2_bone_product_constraint_soak.py` | 已有 topology、参数 SoA、finite 和 900 帧确定性 |
-| `bone_gravity_axes_falloff`、`bone_angle_restoration_attenuation`、`bone_angle_restoration_falloff`、`bone_self_collision` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
+| `bone_gravity_axes_falloff`、`bone_angle_restoration_attenuation`、`bone_angle_restoration_falloff` | 暂无完整产品 runner | 保留为删除前缺口，不得由旧 V0 soak 继续宣称通过 |
+| `bone_self_collision` | BoneCloth product constraint runner 锁定共享 whole-domain self 执行路径 | BoneSpring 的 spring-specific self scope、contact cache 和 radius consistency 仍是缺口 |
 
 ## 目标
 

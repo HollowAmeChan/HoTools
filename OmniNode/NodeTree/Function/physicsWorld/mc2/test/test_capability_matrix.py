@@ -163,7 +163,6 @@ def test_capability_matrix_keeps_only_declared_bone_legacy_gaps():
     assert legacy == [
         '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_gravity_axes_falloff",',
         '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_rotation_output_controls",',
-        '"runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",',
     ]
 
 
@@ -197,10 +196,13 @@ def test_setup_local_evidence_cannot_close_another_setup():
     assert by_id["angle_restoration"]["status"] == "verified"
 
     self_collision = capability_gaps(by_id["self_collision"])
-    assert self_collision["setups"] == set()
-    assert self_collision["fields"] == set()
-    assert self_collision["invariants"] == set()
-    assert by_id["self_collision"]["status"] == "verified"
+    assert "cross_task_scope_exact@mesh_cloth" in self_collision["invariants"]
+    assert "contact_cache_bounded@mesh_cloth" in self_collision["invariants"]
+    assert "single_radius_model_consistent@mesh_cloth" in self_collision["invariants"]
+    assert "cross_task_scope_exact@bone_cloth" in self_collision["invariants"]
+    assert "contact_cache_bounded@bone_cloth" in self_collision["invariants"]
+    assert "single_radius_model_consistent@bone_cloth" in self_collision["invariants"]
+    assert by_id["self_collision"]["status"] == "gap"
 
     angle_limit = capability_gaps(by_id["angle_limit"])
     assert "limit_bounded@mesh_cloth" not in angle_limit["invariants"]

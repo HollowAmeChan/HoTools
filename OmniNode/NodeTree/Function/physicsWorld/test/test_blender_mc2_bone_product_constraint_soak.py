@@ -124,6 +124,7 @@ def _profile(
     bone_spring: bool,
     hot: bool = False,
     particle_speed_limit: float | None = None,
+    self_collision_thickness: float = 0.008,
 ):
     return parameters.make_mc2_particle_profile(
         gravity=0.0 if bone_spring else 3.0,
@@ -154,7 +155,7 @@ def _profile(
         collision_friction=0.2,
         collision_limit_distance=0.035,
         self_collision_mode=0 if bone_spring else 2,
-        self_collision_thickness=0.008,
+        self_collision_thickness=self_collision_thickness,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -166,12 +167,18 @@ def _requests(
     *,
     hot: bool = False,
     spring_particle_speed_limit: float | None = None,
+    self_collision_thickness: float = 0.008,
+    cloth_mass: float = 0.4,
 ):
     cloth_requests, _cloth_names = nodes.physicsMC2BoneClothTask(
         [{"armature": cloth, "bone": "Parent"}],
-        profile=_profile(bone_spring=False, hot=hot),
+        profile=_profile(
+            bone_spring=False,
+            hot=hot,
+            self_collision_thickness=self_collision_thickness,
+        ),
         connection_mode=1,
-        cloth_mass=0.4,
+        cloth_mass=cloth_mass,
         collided_by_groups=1,
         teleport_mode=2,
         teleport_distance=0.24 if hot else 0.5,
@@ -212,7 +219,12 @@ def _constraint_kinds(owner) -> set[str]:
     return {table.kind for table in owner.compiled.program.constraint_tables}
 
 
-def _run_once(run_index: int) -> str:
+def _run_once(
+    run_index: int,
+    *,
+    self_collision_thickness: float = 0.008,
+    cloth_mass: float = 0.4,
+) -> str:
     world = world_types.PhysicsWorldCache()
     generation = 810 + run_index
     cloth = spring = None
@@ -231,7 +243,12 @@ def _run_once(run_index: int) -> str:
             chain_length=6,
             x_offset=0.35,
         )
-        requests = _requests(cloth, spring)
+        requests = _requests(
+            cloth,
+            spring,
+            self_collision_thickness=self_collision_thickness,
+            cloth_mass=cloth_mass,
+        )
         slot_ids = _slot_ids(requests)
         expected_particles = None
 
@@ -278,6 +295,30 @@ def _run_once(run_index: int) -> str:
                 )
                 particle_fields = set(
                     owners[0].compiled.parameters.particle_parameters.fields
+                )
+                particle_parameters = owners[0].compiled.parameters.particle_parameters
+                self_thickness_index = particle_parameters.fields.index(
+                    "self_collision_thickness"
+                )
+                np.testing.assert_allclose(
+                    particle_parameters.values[:, self_thickness_index],
+                    0.025 * 0.25,
+                    atol=1.0e-6,
+                )
+                cloth_mass_table = next(
+                    table
+                    for table in (
+                        owners[0].compiled.parameters.domain_scalars,
+                        owners[0].compiled.parameters.partition_parameters,
+                        owners[0].compiled.parameters.particle_parameters,
+                    )
+                    if "cloth_mass" in table.fields
+                )
+                cloth_mass_index = cloth_mass_table.fields.index("cloth_mass")
+                np.testing.assert_allclose(
+                    cloth_mass_table.values[:, cloth_mass_index],
+                    cloth_mass,
+                    atol=1.0e-6,
                 )
                 assert {
                     "angle_restoration_velocity_attenuation",
@@ -346,6 +387,13 @@ def test_bone_product_constraints_900_frame_deterministic_soak() -> None:
     second = _run_once(1)
     assert first == second, (first, second)
     print(f"MC2_BONE_PRODUCT_CONSTRAINT_DIGEST {first}")
+
+
+def test_bone_product_self_collision_domain_contract() -> None:
+    first = _run_once(20, self_collision_thickness=0.008, cloth_mass=0.4)
+    second = _run_once(21, self_collision_thickness=0.008, cloth_mass=0.4)
+    assert first == second, (first, second)
+    print(f"MC2_BONE_PRODUCT_SELF_CONTRACT_DIGEST {first}")
 
 
 if __name__ == "__main__":

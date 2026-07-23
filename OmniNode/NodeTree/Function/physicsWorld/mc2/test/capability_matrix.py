@@ -648,14 +648,15 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "self_collision_sync_mode": ("mesh_cloth",),
         },
         "required_invariants": (
-            "finite", "deterministic", "cross_task_scope_exact", "contact_cache_bounded",
+            "finite", "deterministic", "whole_domain_self_step_active",
+            "cross_task_scope_exact", "contact_cache_bounded",
             "single_radius_model_consistent",
         ),
         "invariant_setups": {
             "cross_task_scope_exact": ("mesh_cloth",),
         },
         "evidence": ({
-            "runner": "test_blender_mc2_constraint_soak.py::_self_interaction_soak",
+            "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
             "frames": 1800,
             "setups": ("mesh_cloth",),
             "fields": (
@@ -663,25 +664,20 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "self_collision_thickness", "cloth_mass",
             ),
             "invariants": (
-                "finite", "deterministic", "cross_task_scope_exact",
-                "cross_task_candidates_present", "contact_cache_bounded",
-                "single_radius_model_consistent",
-                "parameter_hot_update_in_place",
+                "finite", "deterministic", "whole_domain_self_step_active",
             ),
         }, {
-            "runner": "test_blender_mc2_bone_constraint_soak.py::bone_self_collision",
+            "runner": "test_blender_mc2_bone_product_constraint_soak.py::test_bone_product_self_collision_domain_contract",
             "frames": 900,
             "setups": ("bone_cloth",),
             "fields": (
                 "self_collision_mode", "self_collision_thickness", "cloth_mass",
             ),
             "invariants": (
-                "finite", "deterministic", "contact_cache_bounded",
-                "parameter_hot_update_in_place", "connected_disconnected_writeback",
-                "single_radius_model_consistent",
+                "finite", "deterministic", "whole_domain_self_step_active",
             ),
         }),
-        "status": "verified",
+        "status": "gap",
     },
 )
 
