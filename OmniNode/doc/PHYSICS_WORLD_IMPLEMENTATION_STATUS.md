@@ -183,7 +183,7 @@ MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：tas
 
 本轮已将 whole-domain self 的产品证据登记到 capability matrix：MeshCloth 使用三 setup mixed-output 900 帧 runner，BoneCloth 使用独立的 product self-contract runner。两条证据都锁定 finite、deterministic 与 `whole_domain_self_step_active`；BoneCloth 还直接检查 derived-radius、cloth mass 和 owner 的 self-step 计数。self capability 仍明确标记为 `gap`，因为跨任务 scope、contact cache 有界性和 radius consistency 尚未有独立产品断言，不能由旧 V0 soak 代替。
 
-当前旧 Python 测试仍有 `native_context`、`specs`、`solver` 的直接断言，主要集中在 base-pose、Bone static/frame、final-proxy、debug-draw 和 property-registry；这些断言必须逐项迁移为 DomainV1/ProductSlot/产品 readback 证据后，才能删除 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 及剩余 V0 binding/TU。产品运行时的 E7 reachability 仍为零，故下一批只处理测试所有权和独立断言，不改变 Physics World/OmniNode 边界。
+当前旧 Python 测试仍有 `native_context`、`specs`、`solver` 的直接断言，主要集中在 debug-draw、property-registry 和 base-pose/Center 的长跑细节；Bone static/frame、Mesh final-proxy 以及 base-pose proxy 输入隔离已分别迁移到 product-only runner。剩余断言必须逐项迁移为 DomainV1/ProductSlot/产品 readback 证据后，才能删除 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 及剩余 V0 binding/TU。产品运行时的 E7 reachability 仍为零，故下一批只处理测试所有权和独立断言，不改变 Physics World/OmniNode 边界。
 
 本轮已先处理 Bone frame 入口：旧 N3 顶层脚本改为调用公开 Bone product soak 的兼容门面，并增加静态门禁禁止回引 V0 owner。缩放、负缩放继承和剪切 pose 等原 N3 的独立输入断言没有被伪造为“已迁移”，仍列入下一批 product frame runner 的明确任务。
 
@@ -192,3 +192,6 @@ Bone rotation output 的产品证据也已接入：BoneCloth/BoneSpring 各跑 6
 Bone frame transform 的独立断言也已迁移到 product partition：验证 world pose、只读 frame packet、负 scale、零 scale、父级负 scale 和 shear-free 拒绝；旧 N3 facade 现在只转发 `test_bone_product_frame_transform_contract`，不再以约束 soak 冒充 frame 输入等价。
 MC2 Bone static 旧 Blender 入口已完成 product-only 收口：静态拓扑/fragment/collector 断言转由 `mc2/test/test_bone_product_static.py` 与 `test_blender_mc2_bone_product.py` 承担，并保留批量 Bone writeback 失败回滚断言；旧入口只保留兼容门面，不再创建 V0 task 或读取 `native_context`。Blender 5.2/py313 验收通过。剩余旧测试所有权仍集中在 base-pose、final-proxy、debug-draw、property-registry 和长跑数值细节，未提前删除旧 owner。
 Mesh final-proxy 旧 Blender 入口已完成 product-only 收口：Tier A proxy/UV/Pin oracle 由 `mc2/test/test_mesh_final_proxy.py` 承担，实际 Blender base-pose、MeshCloth product program、GN 写回、同槽参数更新和静态输入变化由 `test_blender_mc2_mesh_product_static.py` 承担；旧入口只保留兼容门面。5.2/py313 已通过，统一 owner 在静态输入变化时保持槽位稳定，未继承旧 V0 native handle 替换断言。
+Mesh base-pose 旧 Blender 入口已完成 product-only 收口：Armature 驱动的缓存 proxy 隔离、拓扑 token 修复、只读 frame snapshot、负 scale 与首帧 MeshCloth 产品写回由 `test_blender_mc2_mesh_product_base_pose.py` 承担；旧入口只保留兼容门面。5.2/py313 已通过。旧 base-pose 文件中依赖 V0 owner 的 Center/Reset/Keep 长跑细节仍由后续产品 runner 逐项承接，不能由本次输入合同迁移提前宣称全部等价。
+
+Mesh gravity 产品证据已迁移到 `test_blender_mc2_mesh_product_constraint_soak.py::test_mesh_product_gravity_axes_falloff`：Blender 5.2/py313 以公开 collector、动态产品槽和 DomainV1 owner 完成 600 帧双跑，校验 gravity 方向/强度/falloff 的参数 SoA、有限性、确定性及 X/Z 方向轨迹差异。capability matrix 已切换该 runner；Mesh Angle/rest 精确断言仍保留为旧 runner 的下一项迁移任务，4.5/py311 继续冻结。
