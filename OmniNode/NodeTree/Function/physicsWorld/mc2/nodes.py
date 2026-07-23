@@ -52,29 +52,29 @@ def _product_name_output(requests) -> str:
 def _mesh_cloth_tasks(
     mesh_objects, anchor_object, profile, task_parameters, enabled: bool
 ):
-    from .specs import make_mc2_task_spec
-
     if profile is None:
         profile = make_mc2_particle_profile(spring_enabled=False)
     sources = _flatten_values(mesh_objects)
     for source in sources:
         if getattr(source, "type", None) != "MESH":
             raise TypeError("MeshCloth product source must be a Mesh Object socket")
-    return [
-        make_mc2_task_spec(
+    if not bool(enabled):
+        return []
+    entries = make_mc2_mesh_partition_entries(sources)
+    request = make_mc2_mesh_product_request(
+        None,
+        entries,
+        include_implicit=False,
+        default_profile=profile,
+        default_task_parameters=task_parameters,
+        default_setup_options=make_mc2_setup_options(
             MC2_SETUP_MESH_CLOTH,
-            [source],
-            profile=profile,
-            setup_options=make_mc2_setup_options(
-                MC2_SETUP_MESH_CLOTH,
-                self_collision_radius_model="derived_radius",
-            ),
-            task_parameters=task_parameters,
-            anchor_object=anchor_object,
-            enabled=enabled,
-        )
-        for source in sources
-    ]
+            self_collision_radius_model="derived_radius",
+        ),
+        default_anchor_object=anchor_object,
+        default_enabled=True,
+    )
+    return [request]
 
 
 def _flatten_values(values) -> list:
@@ -921,7 +921,7 @@ def physicsMC2MeshClothTask(
         task_parameters,
         enabled,
     )
-    return tasks, _task_name_output(tasks)
+    return tasks, _product_name_output(tasks)
 
 
 @omni(
