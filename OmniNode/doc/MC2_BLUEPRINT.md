@@ -923,7 +923,7 @@ Teleport 的正 uniform scale 和调试层隔离现已由产品 runner 直接覆
 
 ## E7-CPU 产品边界门禁（2026-07-24）
 
-公开产品执行图已移除三个仅抛错的 Bone V0 oracle 占位函数。产品边界的 AST 门禁固定为：`nodes.py`、`product_solver.py`、`product_collect.py` 和 `product_bone_collect.py` 不得依赖 `specs`、`solver`、`native_context`、`interaction_scope`、`shadow_pipeline`。这些约束只证明产品图的导入边界，不提前宣称旧 Python owner 或 native V0 ABI 已删除；`specs.py` 仍作为待删除的 V0 测试/owner 合同保留，删除顺序必须先完成 BoneCloth/BoneSpring plan 中的真实能力缺口和旧测试迁移。当前验收基线只使用 Blender 5.2 / Python 3.13，4.5 / py311 继续冻结。
+公开产品执行图已移除 Bone V0 oracle 的实际调用；旧约束与 mixed runner 仅保留 product-only 兼容门面。产品边界的 AST 门禁固定为：`nodes.py`、`product_solver.py`、`product_collect.py` 和 `product_bone_collect.py` 不得依赖 `specs`、`solver`、`native_context`、`interaction_scope`、`shadow_pipeline`。这些约束只证明产品图的导入边界，不提前宣称旧 Python owner 或 native V0 ABI 已删除；`specs.py` 仍作为待删除的 V0 测试/owner 合同保留，删除顺序必须先完成 BoneCloth/BoneSpring plan 中的真实能力缺口和旧测试迁移。当前验收基线只使用 Blender 5.2 / Python 3.13，4.5 / py311 继续冻结。
 
 本轮已完成统一 DomainV1 的 task-reference Teleport 产品收口。native CPU pass 现在在 Center 之前执行，按 partition 选择第一个 Fixed reference；Reset 直接回到当前动画姿态并清零 state/real velocity，Keep 搬运完整 frame pose delta、state velocity 和 velocity-reference。任务事务只在真实触发时清理对应 partition 的碰撞/摩擦状态，并对 whole-domain self history 做一次失效；同一帧重复调用不会重复应用。
 

@@ -165,7 +165,7 @@ MC2 E7-CPU Teleport 附加证据迁移（2026-07-23）：同一产品 runner 现
 
 ## E7-CPU 产品边界门禁（2026-07-24）
 
-删除了 `nodes.py` 中仅用于报错的三个 Bone V0 oracle 占位入口；仓内已无调用者，公开 BoneCloth/BoneSpring 节点只生成 `MC2ProductRequestV1`。新增 AST 架构门禁，逐文件检查 `nodes.py`、`product_solver.py`、`product_collect.py` 和 `product_bone_collect.py` 不得导入 `specs`、`solver`、`native_context`、`interaction_scope` 或 `shadow_pipeline`。Blender 5.2 / Python 3.13 的 BoneCloth 约束 900 帧双跑仍通过，摘要保持 `5b16bbe0110606bfd1cb0a5364f925d93cdad4b2793bc89006a10bf0a3c0389e`。这只是旧 owner 删除前的第一批切断，不代表 `specs.py`、`solver.py`、context 或 native V0 binding 已删除；后续仍按 Bone plan 迁移三项真实缺口，再分步删除旧测试、owner、hidden task、aggregate 和 binding。4.5 / py311 继续冻结。
+`nodes.py` 的 Bone V0 oracle 已不再有任何调用者；公开 BoneCloth/BoneSpring 节点只生成 `MC2ProductRequestV1`，旧约束与 mixed runner 已降为 product-only 兼容门面。新增 AST 架构门禁，逐文件检查 `nodes.py`、`product_solver.py`、`product_collect.py` 和 `product_bone_collect.py` 不得导入 `specs`、`solver`、`native_context`、`interaction_scope` 或 `shadow_pipeline`。Blender 5.2 / Python 3.13 的 BoneCloth 约束 900 帧双跑仍通过，摘要保持 `5b16bbe0110606bfd1cb0a5364f925d93cdad4b2793bc89006a10bf0a3c0389e`。这只是旧 owner 删除前的第一批切断，不代表 `specs.py`、`solver.py`、context 或 native V0 binding 已删除；后续仍按 Bone plan 迁移三项真实缺口，再分步删除旧测试、owner、hidden task、aggregate 和 binding。4.5 / py311 继续冻结。
 
 MC2 DomainV1 的 task-reference Teleport 已接入统一产品执行顺序：task pass 先于 Center，随后才进入固定的 Center、约束、碰撞、self 和 post/history 流水线。Reset/Keep 的 native 数据合同、whole-domain self 一次失效和零 substep 行为已由 Python 3.13 native、ProductSlot、DomainOwner、E3 golden 及 Blender 5.2 产品验收锁定。
 
