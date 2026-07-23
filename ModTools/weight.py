@@ -899,12 +899,13 @@ def drawWeightPanel(layout, context):
     layout.separator()
     box = layout.box()
     box.label(text="融合骨架")
-    box.prop(
+    row = box.row(align=True)
+    row.prop(
         context.scene,
         "ho_mod_weight_merge_main_armature",
         text="主骨架",
     )
-    box.prop(
+    row.prop(
         context.scene,
         "ho_mod_weight_merge_asset_armature",
         text="素材骨架",
