@@ -431,8 +431,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
                 "finite", "deterministic", "fixed_particles_static",
                 "bending_response_changes", "solve_branch_exact",
             ),
+        }, {
+            "runner": (
+                "test_blender_mc2_bone_product_volume_bending.py::"
+                "test_bone_product_signed_volume_bending_is_stable_deterministically"
+            ),
+            "frames": 600,
+            "setups": ("bone_cloth",),
+            "fields": (),
+            "invariants": (
+                "finite", "deterministic", "signed_volume_stable",
+            ),
         }),
-        "status": "gap",
+        "status": "verified",
     },
     {
         "id": "angle_restoration",

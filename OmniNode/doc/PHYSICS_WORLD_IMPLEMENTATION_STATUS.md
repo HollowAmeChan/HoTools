@@ -88,12 +88,11 @@ MC2 当前处于 E7-CPU 删除前迁移阶段。统一 MC2ProductRequestV1、Dom
 后续只按以下逻辑批次推进：
 
 1. 将 capability matrix 中仍直接指向旧 `test_blender_mc2_constraint_soak.py` 的 4 条证据迁到共享 kernel、DomainV1 或产品 runner。Mesh data-path 只能证明接线，不能代替 Bending、Angle Limit、Collider scope 和 Friction 的数值响应。
-2. 完成 BoneCloth Bending signed-volume 长程签字；BoneSpring 的 Bending/self/Motion/gravity 固定或关闭输入隔离，以及 Bone target/rest、Distance/Tether 和跨 source self 已关闭，不重复实施。
-3. 将 topology/setup 仍需要的中立合同迁出 `mc2/specs.py`，使旧 runner 不再拥有唯一 oracle；随后删除 Python V0 owner、hidden task、普通 aggregate 和兼容 bridge。
-4. 删除 68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元；每个逻辑批次同时更新测试、审计和唯一蓝本，不按单 runner 提交。
-5. 删除完成后立即执行 E7-S，逐项清理迁移期 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
-6. 并行只冻结 P6 的 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
-7. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+2. BoneCloth/BoneSpring 的独立数值与包装限制前置签字已经关闭，不重复实施；将 topology/setup 仍需要的中立合同迁出 `mc2/specs.py`，使旧 runner 不再拥有唯一 oracle，随后删除 Python V0 owner、hidden task、普通 aggregate 和兼容 bridge。
+3. 删除 68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元；每个逻辑批次同时更新测试、审计和唯一蓝本，不按单 runner 提交。
+4. 删除完成后立即执行 E7-S，逐项清理迁移期 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
+5. 并行只冻结 P6 的 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+6. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

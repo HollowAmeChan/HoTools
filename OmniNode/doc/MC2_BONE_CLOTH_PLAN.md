@@ -22,14 +22,13 @@ BoneCloth 只保留 Armature authoring、骨链拓扑、动画姿态采集和 Po
 | 外碰、摩擦、过滤和半径 | compiled collider POD、shared kernel 与产品 collision tests | 已成立 |
 | 同 Armature 跨 source self、cache/radius | whole-domain self owner 与产品 self tests | 已成立 |
 | connected/disconnected 写回、多 request 和失败回滚 | product output、Bone writeback transaction 与 slot tests | 已成立 |
-| Triangle Bending | `test_blender_mc2_bone_product_bending.py` | dihedral kind 已锁定 stiffness `0/1` 真实响应、record hit/correction、fixed 静置与 600 帧双跑；signed-volume 长程分支仍是缺口 |
+| Triangle Bending | `test_blender_mc2_bone_product_bending.py`、`test_blender_mc2_bone_product_volume_bending.py` | dihedral kind 已锁定 stiffness `0/1` 真实响应、record hit/correction 和 fixed 静置；signed-volume 已锁定真实 marker/kind、逐帧符号不翻转、体积有界和 600 帧双跑 |
 
 ## 删除前剩余工作
 
-1. 为 BoneCloth Bending 补齐 signed-volume 长程分支；dihedral method、四角色 record、fixed 粒子、非零响应和确定性已由独立产品 runner 固定。
-2. 逐条映射旧 Bone constraint runner 的剩余断言；中立 Armature/几何 helper 迁到产品测试公共模块，读取 `native_context` 或旧 slot 的断言直接淘汰。
-3. 运行产品、公开节点和 debug 可达性审计，确认 BoneCloth 不再依赖 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 或 V0 binding。
-4. 与 Mesh/BoneSpring 共用同一 E7-CPU 删除批次移除旧 owner、hidden task、普通 aggregate 和 V0 ABI；随后执行 E7-S 简化。
+1. 逐条映射旧 Bone constraint runner 的剩余断言；中立 Armature/几何 helper 迁到产品测试公共模块，读取 `native_context` 或旧 slot 的断言直接淘汰。
+2. 运行产品、公开节点和 debug 可达性审计，确认 BoneCloth 不再依赖 `solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 或 V0 binding。
+3. 与 Mesh/BoneSpring 共用同一 E7-CPU 删除批次移除旧 owner、hidden task、普通 aggregate 和 V0 ABI；随后执行 E7-S 简化。
 
 ## 删除门槛
 

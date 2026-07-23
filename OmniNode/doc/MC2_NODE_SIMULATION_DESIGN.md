@@ -879,11 +879,10 @@ E7-A 的产品边界审计已经关闭：
 - DomainV1、共享 kernel、whole-domain self、frame orientation、static build 和产品 debug 不包含旧 context 类型。
 - Mesh/Bone collector、动态产品 slot、多 request 求解、logical output、GN/Bone writeback 和失败回滚均由产品路径拥有。
 
-E7-CPU 的剩余阻塞只有三类：
+E7-CPU 的剩余阻塞只有两类：
 
 1. capability matrix 仍有 4 条证据直接引用旧 Mesh constraint runner；必须迁移真实数值不变量，不能以 data-path 记录替代。
-2. BoneCloth 仍需 Bending signed-volume 长程签字；BoneSpring 的 Bending/self/Motion/gravity 固定或关闭输入隔离已经锁定。细节见两份 Bone 删除前计划。
-3. `specs.py` 仍承载部分中立 topology/setup 合同；Python V0 owner、普通 aggregate、68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元仍待删除。
+2. `specs.py` 仍承载部分中立 topology/setup 合同；Python V0 owner、普通 aggregate、68 个 native V0 binding 和 5 个 `mc2_context_*` 翻译单元仍待删除。BoneCloth/BoneSpring 的独立数值与包装限制前置签字已经关闭。
 
 #### E7-CPU 逻辑批次
 
