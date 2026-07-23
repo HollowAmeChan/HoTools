@@ -313,7 +313,7 @@ def _mesh_input_fingerprint(
         return _unresolved_source_fingerprint(source, "mesh")
     from .native import native_module
 
-    return dict(native_module().mc2_mesh_static_fingerprint_v0(
+    return dict(native_module().mc2_mesh_static_fingerprint_v1(
         snapshot.positions.reshape((-1,)),
         snapshot.normals.reshape((-1,)),
         snapshot.edges.reshape((-1,)),
@@ -736,7 +736,7 @@ def _bone_input_fingerprint(
         snapshot = _read_bone_raw_snapshot(source)
     from .native import native_module
 
-    return dict(native_module().mc2_bone_static_fingerprint_v0(
+    return dict(native_module().mc2_bone_static_fingerprint_v1(
         snapshot.parents,
         snapshot.head_tail.reshape((-1,)),
         snapshot.matrices.reshape((-1,)),

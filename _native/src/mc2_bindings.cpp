@@ -288,6 +288,10 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { call_pyobject_api(hotools::mc2_context_v0_free, a); });
     m.def("mc2_context_v0_stats",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_stats(nullptr, a.ptr())); });
+    m.def("mc2_mesh_static_fingerprint_v1",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v1(nullptr, a.ptr())); });
+    m.def("mc2_bone_static_fingerprint_v1",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v1(nullptr, a.ptr())); });
     m.def("mc2_mesh_static_fingerprint_v0",
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v0(nullptr, a.ptr())); });
     m.def("mc2_bone_static_fingerprint_v0",

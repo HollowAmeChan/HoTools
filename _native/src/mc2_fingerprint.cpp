@@ -94,11 +94,11 @@ PyObject* static_fingerprint_result(
 
 }  // namespace
 
-PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
+PyObject* mc2_mesh_static_fingerprint_v1(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 14) {
         PyErr_Format(
             PyExc_TypeError,
-            "mc2_mesh_static_fingerprint_v0 expects 14 arguments, got %zd",
+            "mc2_mesh_static_fingerprint_v1 expects 14 arguments, got %zd",
             PyTuple_GET_SIZE(args)
         );
         return nullptr;
@@ -201,11 +201,11 @@ PyObject* mc2_mesh_static_fingerprint_v0(PyObject*, PyObject* args) {
     return static_fingerprint_result(topology, geometry, surface);
 }
 
-PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args) {
+PyObject* mc2_bone_static_fingerprint_v1(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 8) {
         PyErr_Format(
             PyExc_TypeError,
-            "mc2_bone_static_fingerprint_v0 expects 8 arguments, got %zd",
+            "mc2_bone_static_fingerprint_v1 expects 8 arguments, got %zd",
             PyTuple_GET_SIZE(args)
         );
         return nullptr;
@@ -259,6 +259,14 @@ PyObject* mc2_bone_static_fingerprint_v0(PyObject*, PyObject* args) {
     geometry.append_buffer("matrices", matrices);
     surface.append_text("mc2_bone_surface_v0");
     return static_fingerprint_result(topology, geometry, surface);
+}
+
+PyObject* mc2_mesh_static_fingerprint_v0(PyObject* self, PyObject* args) {
+    return mc2_mesh_static_fingerprint_v1(self, args);
+}
+
+PyObject* mc2_bone_static_fingerprint_v0(PyObject* self, PyObject* args) {
+    return mc2_bone_static_fingerprint_v1(self, args);
 }
 
 }  // namespace hotools
