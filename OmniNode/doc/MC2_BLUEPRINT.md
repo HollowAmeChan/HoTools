@@ -757,7 +757,7 @@ E5/E5-B已完成三种setup产品切换：`domain_output.py`把logical output冻
 
 V0 原生复验（2026-07-23）：干净且无probe的构建已通过完整V0 native contract与全部E3 V0/Domain tolerance case。旧失败属于不一致的增量二进制产物，不能通过放宽Domain tolerance掩盖。临时开放的Blender 4.5窗口中又发现`build.bat`复用了测试改写的runtime cache；脚本现每次先刷新preset，确保产物真实写入所选`_Lib/py311`或`py313`目录。重新生成的py311通过native `27/27`。
 
-E4-E5-B Blender oracle 更新（2026-07-23）：Blender 5.2/Python 3.13 的非self多source结果继续在`1e-6`内逐target一致。whole-domain self由后端中立opaque engine复用成熟V0流水；1764粒子、4 source、35帧同夹具中，Domain与manual join的primitive/candidate/contact完全一致，reset轨迹位级相等，连续轨迹peak max-abs/RMS为`3.9208e-4/1.6597e-5`。E5后复跑为`3.9207e-4/1.6597e-5`，D/B p50=`0.79823`、D/C=`0.80175`，综合门禁继续通过。两套ABI均明确绑定本工作树产物，并通过native `28/28`、属性`11/11`、Mesh 120帧确定性、Bone多产品事务、两次900帧混合输出、Center组合和Bone全约束soak。当前阶段依次为E7-A、E7-CPU、E7-S与P6-B收口。
+E4-E5-B Blender oracle 更新（2026-07-23）：Blender 5.2/Python 3.13 的非self多source结果继续在`1e-6`内逐target一致。whole-domain self最初由opaque engine复用成熟V0内部状态；E7-A现已把相同grid/candidate/contact/四轮solve迁到独立`WholeDomainSelfState`，产品翻译单元不再包含旧context类型。1764粒子、4 source、35帧同夹具中，迁出前后Domain与manual join的primitive/candidate/contact均完全一致，reset轨迹位级相等，连续轨迹peak max-abs/RMS保持`3.9207e-4/1.6597e-5`；最新D/B p50=`0.7076`、D/C=`0.6845`，综合门禁继续通过。frame orientation也已迁到独立中立翻译单元，产品static fingerprint切换V1符号；两套ABI native更新为`29/29`，Blender 4.5/5.2均复验Mesh 120帧、Bone frame与Bone产品。当前继续执行E7-A测试去oracle与精确删除资格关闭，随后依次为E7-CPU、E7-S与P6-B收口。
 
 MC2 C++验证按目标ABI显式选择：
 
