@@ -109,13 +109,15 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 20. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
 21. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
-最新 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。生产模块保持 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
+此前 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。该批时生产模块为 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 
 native 后续清单发现并删除了没有任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出；py313 已重编，当前为 101 个注册 binding、21 个产品必需 symbol、0 native 旧面。native kernel 30 项、Bone Tier A 与产品静态门禁通过。生产读取为零不单独构成 Python 原子合同的删除依据，partition patch factory 和 fragment cache 只读状态继续按真实职责保留。
 
-架构审计已增加 `stale_forwarder_allowances` 硬门禁；78 项 forwarder 分类与当前生产 AST 双向一致，未分类入口和过期历史豁免均为 0。后续删除、改写或新增长薄入口都会要求同批更新职责分类。
+架构审计已增加 `stale_forwarder_allowances` 硬门禁；77 项 forwarder 分类与当前生产 AST 双向一致，未分类入口和过期历史豁免均为 0。后续删除、改写或新增长薄入口都会要求同批更新职责分类。
 
-Python 文件职责门禁已覆盖全部 69 个生产模块，按九类 Physics World 原子职责统计为 5/8/7/18/6/5/2/14/4；缺失、已删除残留、重复归类和既定 merge source 均为 0。E7-S 可以继续发现新合并点，但必须按 owner、生命周期和依赖方向逐批证明，不再默认把剩余模块视为待压缩文件。
+Python 文件职责门禁已覆盖全部 68 个生产模块，按九类 Physics World 原子职责统计为 5/8/7/17/6/5/2/14/4；缺失、已删除残留、重复归类和既定 merge source 均为 0。E7-S 可以继续发现新合并点，但必须按 owner、生命周期和依赖方向逐批证明，不再默认把剩余模块视为待压缩文件。
+
+反向依赖审计把只有两份 Tier A 测试消费的 `bone_rotation.py` 从生产根迁入 `mc2/test/bone_rotation_reference.py`；Line/Triangle oracle 各 2/2、Blender 5.2 factory-startup 能力矩阵 7/7 通过。正式 Bone post rotation/writeback 仍只由 native DomainV1 产品路径负责，能力门禁禁止测试 reference 回流生产根。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

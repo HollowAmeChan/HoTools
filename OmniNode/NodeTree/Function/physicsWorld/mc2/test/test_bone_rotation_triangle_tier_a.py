@@ -33,7 +33,7 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 bone_rotation = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.bone_rotation"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.test.bone_rotation_reference"
 )
 
 

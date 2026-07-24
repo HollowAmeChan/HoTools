@@ -121,6 +121,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "native_context.py",
         "interaction_scope.py",
         "shadow_pipeline.py",
+        "bone_rotation.py",
     }
     assert not {path.name for path in MC2_ROOT.iterdir()} & removed_modules
 

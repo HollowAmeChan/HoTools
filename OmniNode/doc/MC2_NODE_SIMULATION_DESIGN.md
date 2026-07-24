@@ -646,9 +646,11 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 
 调用计数不是删除资格本身。`make_mc2_partition_patch` 虽然当前只由合同测试直接调用，但它集中承担稀疏字段校验、排序和参数归一化；Mesh fragment cache 的 `entry_count` 也属于 cache owner 的只读状态面。两者均有独立职责和测试，不是迁移兼容转发。E7-S 后续必须同时证明“没有生产读取”和“没有合同/owner 价值”，才允许删除薄入口。
 
-forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 78 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
+forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 77 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
 
-Python 文件职责复核已把当前 69 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、18 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、14 个 Blender/product boundary、4 个 observation。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
+Python 文件职责复核已把当前 68 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、17 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、14 个 Blender/product boundary、4 个 observation。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
+
+反向依赖审计确认原生产 `bone_rotation.py` 只有两份 Tier A oracle 测试消费，正式产品图入站为 0；其 Line/Triangle 纯 Python 算法是 Unity fixture 的 reference，不是 DomainV1 产品 compile stage。该文件已迁入 `mc2/test/bone_rotation_reference.py`，两份 Tier A 测试继续通过；能力门禁禁止 `bone_rotation.py` 回到生产根。正式 Bone post rotation、transform output 与 writeback 仍由 native DomainV1 和统一产品事务负责。
 
 ## 明确的数据流
 
@@ -940,7 +942,7 @@ E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V
 E7-S至少完成以下简化：
 
 - 按“文件职责重排”把六个顶层 setup 产品钩子归位为四个 setup owner，生产模块由 72 个变为 70 个；不以文件数量为 KPI，不合并符合 Physics World 原子化标准的依赖根、合同、独立阶段或 owner；
-- 删除无调用方的 Mesh 旧 `static_build.py` owner 与两个 task frame adapter，当前生产模块为 69 个；
+- 删除无调用方的 Mesh 旧 `static_build.py` owner、两个 task frame adapter，并把测试专用 Bone rotation reference 移出生产根，当前生产模块为 68 个；
 - 删除旧 debug slot/interaction 聚合器、专用 helper、resource key 与 renderer 分支；debug 只消费产品快照；
 - 删除旧 candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布两类真实产品结果；
 - product authoring/collection/solver从Mesh专用命名收敛为setup-neutral核心，setup adapter只保留capture/fragment/frame/output hook；

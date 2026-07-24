@@ -59,7 +59,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.bone_connection", "_triangle"),
     ("mc2.bone_connection", "_distance"),
     ("mc2.bone_connection", "_length_squared"),
-    ("mc2.bone_rotation", "debug_dict"),
     ("mc2.bone_static", "_tuple_vectors"),
     ("mc2.center_state", "fixed_count"),
     ("mc2.center_state", "_shift_position_f32"),
@@ -155,7 +154,6 @@ E7S_PYTHON_RESPONSIBILITY_MODULES = {
     "compile_stage": frozenset((
         "mc2.bending_static",
         "mc2.bone_connection",
-        "mc2.bone_rotation",
         "mc2.bone_static",
         "mc2.collider_frame",
         "mc2.distance_static",

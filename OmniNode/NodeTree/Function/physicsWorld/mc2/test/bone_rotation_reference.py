@@ -1,4 +1,4 @@
-"""Source-aligned Bone Line proxy rotation and transform output contract."""
+"""Tier A 的 Bone proxy rotation 与 transform output 纯 Python reference。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import hashlib
 import json
 import numpy as np
 
-from ..utils.math3d import (
+from ...utils.math3d import (
     look_rotation_f32,
     normalize_quaternion_f32,
     normalize_vector_f32,
