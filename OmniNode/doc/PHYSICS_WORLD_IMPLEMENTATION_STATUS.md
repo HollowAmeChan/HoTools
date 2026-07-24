@@ -92,21 +92,22 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 3. 68 个 native V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、`mc2_api.hpp` 声明/CMake 残留和直接 V0 native tests 已删除；4 个 frame/static 中立 API 与 DomainV1 产品 ABI 已保留并通过 py313/Blender 5.2 验收。
 4. E7-S 已把六个顶层 setup 产品钩子按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；文件数量不是 KPI，符合 Physics World 原子化标准的依赖根、合同、独立阶段和 owner 保持独立。
 5. E7-S 已删除可选 `native_context` 参数，并把仅存于当前 world 内存的 Bone frame 与 hotspot timing `v0` 资源键改为职责名且不保留兼容读取；继续逐项清理双 schema/result 翻译、无调用 forwarder 和误导命名，途中只按真实依赖证据新增合并项。
-6. 首次后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 与两个 task frame adapter，生产模块当前为 69 个。
-7. 第二次后续依赖审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支；产品 debug 只消费 fused product snapshot。
-8. 第三次后续依赖审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布 GN 与 Bone shared product results。
-9. 第四次后续依赖审计已删除四个约束 static builder 与 Bone 产品静态装配器的 staged metadata、compact 转换和对应可选 `native_context` 参数；剩余 Mesh proxy/baseline 与 Bone native-owned 壳继续独立审计。
-10. E7-S 按职责与调用图审计、单批所有权变更、架构门禁、产品验收和独立提交循环推进；允许途中发现新的合并点，但不合并符合 Physics World 原子化标准的独立合同、阶段、owner 或边界模块。
-11. 第五次后续依赖审计已删除剩余 native-owned proxy/finalizer/baseline/Bone DTO、registration capsule、`native_owner_kind` 与生产侧全部 `native_context` 参数；native 中立派生 API 与完整 static spec 合同继续保留。
-12. 产品 slot 已删除仅供旧测试使用的 Mesh fused 默认 slot wrapper；统一 sync/frame/substep/capture 入口只接受显式产品 slot identity，Mesh output batch/transaction 的准确命名继续单独收敛。
-13. Mesh output batch/transaction 与 Python slot 常量已完成 `mesh_product` 命名收敛；底层 slot identity、事务、执行顺序和数值 digest 保持不变。
-14. 当前运行参数产品类型已统一为 `MC2RuntimeParameters`；packed ABI 0、字段布局和签名不变，旧 `MC2RuntimeParametersV0` 不保留兼容别名。
-15. compiled-domain 已删除四个 E1 单 partition compatibility/shadow 属性，只保留多 partition 的真实 fragment 与参数签名集合。
-16. 12 个 static/frame 中立 native helper 已去除版本后缀并重新编译 py313 pyd；旧符号为 0、新符号完整，正式 DomainV1 ABI 版本名不变。
-17. 三份 Bone compatibility runner 已删除，验收资产直接指向真实产品 runner，并通过 Bone 产品集成、BoneSpring 599 帧限制与 BoneCloth 900 帧约束 soak。
-18. 两份 Mesh final-proxy/BasePose compatibility runner 也已删除，验收资产直接指向 Mesh 产品 runner，Tier A oracle 保持独立纯数据测试。
-19. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
-20. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+6. `mc2_bone_writeback_plan_v0` 经审计是公共 Bone result/writeback 边界的唯一活动 schema，不是兼容层；保留其版本身份。产品多 request 失败回滚改为调用 Bone frame owner 的 checkpoint，不再跨模块读写 setup 私有资源键。
+7. 首次后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 与两个 task frame adapter，生产模块当前为 69 个。
+8. 第二次后续依赖审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支；产品 debug 只消费 fused product snapshot。
+9. 第三次后续依赖审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布 GN 与 Bone shared product results。
+10. 第四次后续依赖审计已删除四个约束 static builder 与 Bone 产品静态装配器的 staged metadata、compact 转换和对应可选 `native_context` 参数；剩余 Mesh proxy/baseline 与 Bone native-owned 壳继续独立审计。
+11. E7-S 按职责与调用图审计、单批所有权变更、架构门禁、产品验收和独立提交循环推进；允许途中发现新的合并点，但不合并符合 Physics World 原子化标准的独立合同、阶段、owner 或边界模块。
+12. 第五次后续依赖审计已删除剩余 native-owned proxy/finalizer/baseline/Bone DTO、registration capsule、`native_owner_kind` 与生产侧全部 `native_context` 参数；native 中立派生 API 与完整 static spec 合同继续保留。
+13. 产品 slot 已删除仅供旧测试使用的 Mesh fused 默认 slot wrapper；统一 sync/frame/substep/capture 入口只接受显式产品 slot identity，Mesh output batch/transaction 的准确命名继续单独收敛。
+14. Mesh output batch/transaction 与 Python slot 常量已完成 `mesh_product` 命名收敛；底层 slot identity、事务、执行顺序和数值 digest 保持不变。
+15. 当前运行参数产品类型已统一为 `MC2RuntimeParameters`；packed ABI 0、字段布局和签名不变，旧 `MC2RuntimeParametersV0` 不保留兼容别名。
+16. compiled-domain 已删除四个 E1 单 partition compatibility/shadow 属性，只保留多 partition 的真实 fragment 与参数签名集合。
+17. 12 个 static/frame 中立 native helper 已去除版本后缀并重新编译 py313 pyd；旧符号为 0、新符号完整，正式 DomainV1 ABI 版本名不变。
+18. 三份 Bone compatibility runner 已删除，验收资产直接指向真实产品 runner，并通过 Bone 产品集成、BoneSpring 599 帧限制与 BoneCloth 900 帧约束 soak。
+19. 两份 Mesh final-proxy/BasePose 门面和一份 mixed-output/Center 串行门面也已删除；6 个旧 runner 由不存在性门禁禁止回流，验收资产直接指向真实产品 runner。
+20. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+21. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

@@ -197,6 +197,11 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     assert "MC2_FUSED_MESH_SLOT_KIND" not in product_slot_source
     assert "MC2_FUSED_MESH_SLOT_ID" not in product_slot_source
     assert "publish_mc2_mesh_fused_frame" not in product_slot_source
+    product_solver_source = (MC2_ROOT / "product_solver.py").read_text(
+        encoding="utf-8"
+    )
+    assert "MC2_BONE_FRAME_STATE_KEY" not in product_solver_source
+    assert "backend_resources" not in product_solver_source
     domain_compile_source = (MC2_ROOT / "domain_compile.py").read_text(encoding="utf-8")
     for name in (
         "single_fragment",

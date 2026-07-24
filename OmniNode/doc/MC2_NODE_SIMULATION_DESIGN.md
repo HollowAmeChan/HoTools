@@ -632,6 +632,8 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 内部资源身份审计确认 Bone frame 反馈状态和按需 hotspot timing profile 都只存活于当前 `PhysicsWorldCache.backend_resources`，不写入 `.blend`、manifest、公开 ABI 或跨进程缓存。两者的迁移期 `v0` 键已直接改为 `mc2.bone.frame_state` 与 `mc2.hotspot_timing.profile`，不读取旧键、不双写、不保留别名；架构门禁禁止旧字面量回流。版本化内容签名和结果 schema 不属于这一批，必须按各自消费边界单独审计。
 
+结果 schema 审计确认 `mc2_bone_writeback_plan_v0` 是当前唯一的 MC2 Bone plan schema，并通过公共 `bone_transform_batch.plan_schema` 跨越 MC2/Physics World writeback 与 debug 边界；代码中不存在旧格式读取、双 schema 翻译或 fallback。它因此保留版本身份，只有实际布局或消费合同变化时才升级。相邻审计同时把产品多 request 失败时的 Bone frame 状态快照/恢复归还给 `setups/bone_frame_input.py`，`product_solver.py` 不再读取或写入该 setup 私有资源键。
+
 ## 明确的数据流
 
 ### 显式模式

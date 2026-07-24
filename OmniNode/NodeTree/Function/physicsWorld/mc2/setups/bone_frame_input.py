@@ -51,6 +51,19 @@ class MC2BoneFrameStateStageV1:
         world.backend_resources[MC2_BONE_FRAME_STATE_KEY] = self.staged_state
 
 
+@dataclass(frozen=True)
+class _MC2BoneFrameStateCheckpoint:
+    base_present: bool
+    base_state: object
+
+    def restore(self, world) -> None:
+        resources = world.backend_resources
+        if self.base_present:
+            resources[MC2_BONE_FRAME_STATE_KEY] = self.base_state
+        else:
+            resources.pop(MC2_BONE_FRAME_STATE_KEY, None)
+
+
 def _copy_state_value(value):
     copier = getattr(value, "copy", None)
     if callable(copier):
@@ -85,6 +98,16 @@ def _stage_mc2_bone_frame_state(world) -> MC2BoneFrameStateStageV1:
         base_present=base_present,
         base_state=base_state,
         staged_state=_clone_mc2_bone_frame_state(base_state, generation),
+    )
+
+
+def checkpoint_mc2_bone_frame_state(world) -> _MC2BoneFrameStateCheckpoint:
+    """保存产品批次开始前的 Bone frame 反馈 owner，供整批失败时恢复。"""
+
+    resources = world.backend_resources
+    return _MC2BoneFrameStateCheckpoint(
+        base_present=MC2_BONE_FRAME_STATE_KEY in resources,
+        base_state=resources.get(MC2_BONE_FRAME_STATE_KEY),
     )
 
 
@@ -478,6 +501,7 @@ __all__ = [
     "MC2BoneFrameStateStageV1",
     "build_mc2_bone_partition_frame_input",
     "capture_mc2_bone_product_frame_inputs",
+    "checkpoint_mc2_bone_frame_state",
     "clear_mc2_bone_frame_state",
     "prepare_mc2_bone_writeback_expectations",
     "stage_mc2_bone_writeback_expectations",

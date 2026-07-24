@@ -434,15 +434,11 @@ def step_mc2_products(
         return world, False, f"MC2 显式统一域无活动request；清理 {len(removed)}"
 
     has_bone = any(request.setup_type in _BONE_SETUP_TYPES for request in frozen_requests)
-    bone_state_key = None
-    bone_state_present = False
-    bone_state_base = None
+    bone_state_checkpoint = None
     if has_bone:
-        from .setups.bone_frame_input import MC2_BONE_FRAME_STATE_KEY
+        from .setups.bone_frame_input import checkpoint_mc2_bone_frame_state
 
-        bone_state_key = MC2_BONE_FRAME_STATE_KEY
-        bone_state_present = bone_state_key in world.backend_resources
-        bone_state_base = world.backend_resources.get(bone_state_key)
+        bone_state_checkpoint = checkpoint_mc2_bone_frame_state(world)
 
     attempted_slot_ids = []
     slots = []
@@ -512,11 +508,8 @@ def step_mc2_products(
         )
         world.clear_results(solver=MC2_SOLVER_ID)
         world.replace_required = True
-        if bone_state_key is not None:
-            if bone_state_present:
-                world.backend_resources[bone_state_key] = bone_state_base
-            else:
-                world.backend_resources.pop(bone_state_key, None)
+        if bone_state_checkpoint is not None:
+            bone_state_checkpoint.restore(world)
         raise
 
     if timing is not None:
