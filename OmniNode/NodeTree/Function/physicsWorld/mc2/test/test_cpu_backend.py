@@ -62,7 +62,9 @@ def _compiled(*, animation_pose_ratio=0.0):
     options = parameters.make_mc2_setup_options("mesh_cloth")
     task = parameters.make_mc2_task_parameters()
     effective = runtime.make_mc2_runtime_parameters(profile, options, task)
-    return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    return compiler.compile_mc2_mesh_static_fragments(
+        (fragment,), (effective,)
+    )
 
 
 def _frame(program, frame=1, generation=1):

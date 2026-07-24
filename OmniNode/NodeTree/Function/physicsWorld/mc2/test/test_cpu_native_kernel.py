@@ -79,7 +79,9 @@ def _compiled(*, profile_overrides=None, task_overrides=None):
         parameters.make_mc2_setup_options("mesh_cloth"),
         parameters.make_mc2_task_parameters(**(task_overrides or {})),
     )
-    return compiler.compile_mc2_mesh_static_fragment(fragment, effective)
+    return compiler.compile_mc2_mesh_static_fragments(
+        (fragment,), (effective,)
+    )
 
 
 def _compiled_multi(

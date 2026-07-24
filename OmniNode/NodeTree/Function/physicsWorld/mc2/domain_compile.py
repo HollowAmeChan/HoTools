@@ -558,23 +558,6 @@ def compile_mc2_static_fragments(
     )
 
 
-def compile_mc2_mesh_static_fragment(
-    fragment: MC2MeshStaticFragmentV1,
-    effective: MC2RuntimeParameters,
-    *,
-    collision_group: int = 1,
-    collision_mask: int = 0xFFFF,
-    external_collision_mask: int = 0,
-) -> MC2CompiledDomainV1:
-    return compile_mc2_mesh_static_fragments(
-        (fragment,),
-        (effective,),
-        collision_groups=(collision_group,),
-        collision_masks=(collision_mask,),
-        external_collision_masks=(external_collision_mask,),
-    )
-
-
 def compile_mc2_domain_draft(
     draft,
     fragments,
@@ -674,7 +657,6 @@ __all__ = [
     "compare_mc2_domain_compile_cache",
     "compile_mc2_domain_draft",
     "compile_mc2_mesh_domain_draft",
-    "compile_mc2_mesh_static_fragment",
     "compile_mc2_mesh_static_fragments",
     "compile_mc2_static_fragments",
 ]

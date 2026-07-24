@@ -149,7 +149,9 @@ def _domain_draft():
 
 
 def test_compiler_builds_one_program_and_parameter_packet() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragment(_fragment(), _effective())
+    compiled = compiler.compile_mc2_mesh_static_fragments(
+        (_fragment(),), (_effective(),)
+    )
     assert compiled.program.partition_count == 1
     assert compiled.program.particle_count == compiled.fragments[0].final_proxy.vertex_count
     assert compiled.program.partition_particle_views[0].resolved_indices().tolist() == [0, 1, 2]
@@ -175,7 +177,9 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
 
 
 def test_compiler_preserves_local_constraint_partition_and_output_identity() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragment(_fragment(), _effective())
+    compiled = compiler.compile_mc2_mesh_static_fragments(
+        (_fragment(),), (_effective(),)
+    )
     for table in compiled.program.constraint_tables:
         assert all(
             compiled.program.particle_partition_index[int(index)] == 0
@@ -195,11 +199,11 @@ def test_bending_marker_encoding_preserves_volume_marker_for_native_domain() -> 
 def test_collision_mask_is_parameter_hot_update_not_program_rebuild() -> None:
     fragment = _fragment()
     effective = _effective()
-    first = compiler.compile_mc2_mesh_static_fragment(
-        fragment, effective, collision_group=1, collision_mask=0xFFFF
+    first = compiler.compile_mc2_mesh_static_fragments(
+        (fragment,), (effective,), collision_groups=(1,), collision_masks=(0xFFFF,)
     )
-    second = compiler.compile_mc2_mesh_static_fragment(
-        fragment, effective, collision_group=1, collision_mask=0
+    second = compiler.compile_mc2_mesh_static_fragments(
+        (fragment,), (effective,), collision_groups=(1,), collision_masks=(0,)
     )
     assert first.program.layout_signature == second.program.layout_signature
     assert first.program.domain_signature == second.program.domain_signature
@@ -208,8 +212,12 @@ def test_collision_mask_is_parameter_hot_update_not_program_rebuild() -> None:
 
 
 def test_compiler_is_deterministic() -> None:
-    first = compiler.compile_mc2_mesh_static_fragment(_fragment(), _effective())
-    second = compiler.compile_mc2_mesh_static_fragment(_fragment(), _effective())
+    first = compiler.compile_mc2_mesh_static_fragments(
+        (_fragment(),), (_effective(),)
+    )
+    second = compiler.compile_mc2_mesh_static_fragments(
+        (_fragment(),), (_effective(),)
+    )
     assert first.program.domain_signature == second.program.domain_signature
     assert first.parameters.parameter_signature == second.parameters.parameter_signature
     assert first.debug_dict() == second.debug_dict()

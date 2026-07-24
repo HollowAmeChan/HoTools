@@ -78,7 +78,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.domain_ir", "partition_count"),
     ("mc2.domain_ir", "row_count"),
     ("mc2.domain_ir", "field_count"),
-    ("mc2.domain_compile", "compile_mc2_mesh_static_fragment"),
     ("mc2.cpu_backend", "create_mc2_cpu_backend_domain"),
     ("mc2.domain_owner", "_make_report_values"),
     ("mc2.domain_owner", "read_constraint_debug_state"),
