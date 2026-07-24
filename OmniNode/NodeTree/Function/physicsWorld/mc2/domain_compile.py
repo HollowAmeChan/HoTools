@@ -64,28 +64,6 @@ class MC2CompiledDomainV1:
         if self.program.setup_type != self.fragments[0].setup_type:
             raise ValueError("compiled domain setup type does not match fragments")
 
-    @property
-    def single_fragment(self) -> object:
-        if len(self.fragments) != 1:
-            raise ValueError("compiled domain does not contain exactly one fragment")
-        return self.fragments[0]
-
-    @property
-    def fragment(self) -> object:
-        """E1 compatibility view; multi-partition callers must use fragments."""
-        return self.single_fragment
-
-    @property
-    def single_effective_parameter_signature(self) -> str:
-        if len(self.effective_parameter_signatures) != 1:
-            raise ValueError("compiled domain does not contain exactly one parameter set")
-        return self.effective_parameter_signatures[0]
-
-    @property
-    def effective_parameter_signature(self) -> str:
-        """E1 compatibility view for the single-partition shadow path."""
-        return self.single_effective_parameter_signature
-
     def debug_dict(self) -> dict:
         return {
             "domain_signature": self.program.domain_signature,

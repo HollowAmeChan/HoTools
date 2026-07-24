@@ -622,6 +622,8 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 运行参数命名审计已把当前三 setup 共用值对象由 `MC2RuntimeParametersV0` 改为 `MC2RuntimeParameters`，不保留旧类名别名。`MC2_RUNTIME_PARAMETERS_ABI = 0`、字段顺序、curve 采样、dtype 与 parameter signature 保持不变；Python 产品类型去除迁移后缀不等于 packed ABI 升版。
 
+compiled-domain 审计已删除 `fragment`、`single_fragment`、`effective_parameter_signature` 与 `single_effective_parameter_signature` 四个 E1 单 partition compatibility/shadow 视图。当前对象只暴露真实 `fragments` 与 `effective_parameter_signatures` 集合；单 partition 测试也必须显式索引集合，不再形成第二套单 source 产品表面。
+
 ## 明确的数据流
 
 ### 显式模式

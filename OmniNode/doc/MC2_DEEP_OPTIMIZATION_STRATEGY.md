@@ -371,6 +371,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 11. 产品 slot 审计已删除仅供旧测试使用的 Mesh fused 默认 slot wrapper；统一 slot/frame/substep/capture 入口必须显式接收产品 slot identity，避免重新形成隐藏 owner 或默认 Mesh 产品面。
 12. Mesh output batch/transaction 与 Python slot 常量已收敛为 `mesh_product` 命名；持久 slot identity、pass 顺序、事务和 900 帧数值 digest 保持不变。
 13. 当前运行参数值对象已去除 `V0` 迁移后缀；packed ABI 0、字段布局、dtype、curve 采样与 parameter signature 保持稳定。
+14. compiled-domain 已删除 E1 单 partition compatibility/shadow 视图，只保留多 partition 真实集合，单 source 测试不得重新形成第二产品表面。
 8. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
 9. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
 10. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。

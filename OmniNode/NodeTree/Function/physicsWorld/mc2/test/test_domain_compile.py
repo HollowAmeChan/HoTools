@@ -151,7 +151,7 @@ def _domain_draft():
 def test_compiler_builds_one_program_and_parameter_packet() -> None:
     compiled = compiler.compile_mc2_mesh_static_fragment(_fragment(), _effective())
     assert compiled.program.partition_count == 1
-    assert compiled.program.particle_count == compiled.fragment.final_proxy.vertex_count
+    assert compiled.program.particle_count == compiled.fragments[0].final_proxy.vertex_count
     assert compiled.program.partition_particle_views[0].resolved_indices().tolist() == [0, 1, 2]
     assert compiled.program.required_capabilities == ("mesh_cloth", "self_collision")
     assert compiled.program.partition_center_local_position.shape == (1, 3)

@@ -206,6 +206,14 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     assert "MC2_FUSED_MESH_SLOT_KIND" not in product_slot_source
     assert "MC2_FUSED_MESH_SLOT_ID" not in product_slot_source
     assert "publish_mc2_mesh_fused_frame" not in product_slot_source
+    domain_compile_source = (MC2_ROOT / "domain_compile.py").read_text(encoding="utf-8")
+    for name in (
+        "single_fragment",
+        "fragment",
+        "single_effective_parameter_signature",
+        "effective_parameter_signature",
+    ):
+        assert f"def {name}(" not in domain_compile_source
 
 
 def test_bone_frame_compatibility_entry_is_product_only():
