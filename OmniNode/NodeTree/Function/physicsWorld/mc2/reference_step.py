@@ -174,8 +174,8 @@ def make_mc2_reference_pipeline_settings(
             "angle_restoration_stiffness",
             substep_plan.powers.angle,
         ),
-        # V0 scales restoration strength by the substep angle power, but
-        # samples the angle-limit curve as an instantaneous bound.
+        # 当前数值合同按 substep angle power 缩放 restoration strength，
+        # angle-limit curve 则作为瞬时边界采样。
         "angle_limit_values": _particle_column(
             particle_values,
             particle_fields,

@@ -684,12 +684,10 @@ class MC2CenterPersistentState:
 
 @dataclass(frozen=True)
 class MC2CenterFrameShiftInputSpec:
-    """Source-aligned world-inertia inputs before Center substep derivation.
+    """Center 子步派生前、与 source 对齐的世界惯性输入。
 
-    V0 covers component or fixed-derived Center frames after any verified
-    negative-scale transition, with optional anchor, movement smoothing, and
-    configured Keep/Reset teleport. Synchronization and culling remain outside
-    this evaluator.
+    当前合同覆盖组件或 fixed 派生的 Center frame、已验证的负缩放切换、
+    可选 Anchor、移动平滑和 Keep/Reset teleport；同步与裁剪不属于本求值器。
     """
 
     simulation_delta_time: float
@@ -997,7 +995,7 @@ def mc2_anchor_component_local_position(
     anchor_world_position,
     anchor_world_rotation_xyzw,
 ) -> tuple[float, float, float]:
-    """Return the V0-compatible component position in Anchor local space."""
+    """返回组件位置在 Anchor 局部空间中的 float32 合同值。"""
     return tuple(
         float(value)
         for value in _inverse_transform_point_unit_scale_f32(

@@ -1,8 +1,8 @@
-"""E3 CPU backend lifecycle boundary for compiled MC2 domains.
+"""编译后 MC2 domain 的 E3 CPU backend 生命周期边界。
 
-This module owns only backend-domain state.  A native/C++ kernel is injected
-through ``MC2CPUKernelV1``; the adapter never imports Blender or the V0 slot
-context and therefore remains testable without allocating native resources.
+本模块只拥有 backend-domain 状态。native/C++ kernel 通过
+``MC2CPUKernelV1`` 注入；adapter 不导入 Blender 或已删除的旧 slot owner，
+因此无需分配 native 资源也可以测试。
 """
 
 from __future__ import annotations
@@ -339,7 +339,7 @@ class MC2CPUBackendDomainV1:
         self._step_count += 1
 
     def step_reference_pipeline_full(self, settings: Mapping[str, object]) -> None:
-        """Run the explicit V0 order with optional collision passes."""
+        """按当前完整顺序执行显式结构、碰撞与后处理 pass。"""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("full reference pipeline requires update_frame first")
@@ -441,7 +441,7 @@ class MC2CPUBackendDomainV1:
         self._step_count += 1
 
     def step_post(self, settings: Mapping[str, object]) -> None:
-        """Run the explicit native V0 post-step velocity/history slice."""
+        """执行显式 native 后处理速度与历史阶段。"""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("post step requires update_frame first")

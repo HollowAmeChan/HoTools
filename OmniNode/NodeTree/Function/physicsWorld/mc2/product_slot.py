@@ -582,8 +582,8 @@ def step_mc2_product_substep(
         update_index = int(slot.data.get("completed_substeps", 0))
         staged_substep = scheduler_state.stage_substep(update_index)
         pose = owner.prepare_step_basic_pose()
-        # V0 product execution currently never supplies distance-culling weights;
-        # make that observed all-enabled behavior explicit per partition.
+        # 当前产品合同不提供 distance-culling weights；逐 partition 显式提交
+        # 全启用值，避免 backend 猜测缺省语义。
         distance_weights = np.ones(
             owner.compiled.program.partition_count,
             dtype=np.float32,

@@ -1054,7 +1054,7 @@ def physicsMC2Step(
     )
     if invalid_values:
         raise TypeError(
-            "MC2模拟步只接受显式产品request；旧task/V0入口已删除"
+            "MC2模拟步只接受显式产品request；旧task/owner入口已删除"
         )
     from .product_solver import step_mc2_products
 

@@ -945,13 +945,11 @@ class MC2NativeCPUKernelV1:
         })
 
     def step_reference_pipeline_full(self, handle, settings: Mapping[str, object]) -> None:
-        """Run the V0 pass order, with collision passes supplied explicitly.
+        """按当前 reference 顺序执行，并显式接收碰撞 pass。
 
-        Collision inputs are nested so the caller cannot accidentally mix a
-        Physics World snapshot with the structural pass inputs.  ``None`` is
-        an explicit disabled pass; a mapping invokes that pass at its V0
-        position.  This is a reference transaction only and does not replace
-        the product solver path.
+        碰撞输入保持嵌套，避免调用方把 Physics World snapshot 与结构 pass
+        输入混用。``None`` 表示显式禁用；mapping 在固定混合顺序的位置执行
+        对应 pass。本入口只提供 reference 事务，不替代产品 solver 路径。
         """
         settings = dict(settings)
         post_step = settings.pop("post_step", None)
@@ -1002,8 +1000,8 @@ class MC2NativeCPUKernelV1:
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
         has_angle = program.baseline_parent_indices is not None
-        # Keep the same explicit structural prefix as step_reference_pipeline,
-        # then insert V0 collision passes before Distance B and self after Motion.
+        # 结构前缀与 step_reference_pipeline 一致；外碰位于 Distance B 前，
+        # whole-domain self 位于 Motion 后。
         self.step_task_reference_teleport(key)
         self.step_center_frame_shift(key, structural["anchor_component_local_positions"])
         self.step_center(key, {

@@ -175,6 +175,11 @@ E7S_PYTHON_MERGE_TARGETS = {
     "mc2.product_bone_frame": "mc2.setups.bone_cloth.product",
     "mc2.setups.mesh_cloth.static_build": "mc2.setups.mesh_cloth.static_fragment",
 }
+E7S_ALLOWED_VERSIONED_V0_IDENTITIES = frozenset((
+    "mc2_center_static_v0",
+    "mc2_bone_writeback_plan_v0",
+))
+E7S_MIGRATION_V0_PATTERN = re.compile(r"(?i)(?:\bv0\b|_v0\b)")
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",
 ))
@@ -378,11 +383,22 @@ def _python_facts() -> dict:
     raw_readback_calls = []
     persistent_array_fields = []
     product_boundary_violations = []
+    migration_v0_violations = []
     seen_profile_nodes = set()
     for path in _production_python_files():
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         module_name = _module_name(path)
+        for line_number, line in enumerate(source.splitlines(), start=1):
+            candidate = line
+            for identity in E7S_ALLOWED_VERSIONED_V0_IDENTITIES:
+                candidate = candidate.replace(identity, "")
+            if E7S_MIGRATION_V0_PATTERN.search(candidate):
+                migration_v0_violations.append({
+                    "module": module_name,
+                    "line": line_number,
+                    "text": line.strip(),
+                })
         for statement in tree.body:
             if isinstance(statement, ast.ImportFrom):
                 dependency = _resolve_import(module_name, path, statement)
@@ -613,6 +629,15 @@ def _python_facts() -> dict:
             product_boundary_violations,
             key=lambda item: (item["module"], item["line"], item["name"]),
         ),
+        "e7s_migration_v0": {
+            "allowed_versioned_identities": sorted(
+                E7S_ALLOWED_VERSIONED_V0_IDENTITIES
+            ),
+            "violations": sorted(
+                migration_v0_violations,
+                key=lambda item: (item["module"], item["line"]),
+            ),
+        },
         "e7s_python_layout": {
             "merge_targets": dict(sorted(E7S_PYTHON_MERGE_TARGETS.items())),
             "remaining_merge_sources": e7s_merge_sources,
@@ -882,6 +907,12 @@ def _print_summary(report: dict) -> None:
     print(f"Python persistent ndarray state fields: {len(python['persistent_array_fields'])}")
     print(f"Python product boundary violations: {len(python['product_boundary_violations'])}")
     print(
+        "E7-S migration V0 terms: "
+        f"{len(python['e7s_migration_v0']['violations'])} violations, "
+        f"{len(python['e7s_migration_v0']['allowed_versioned_identities'])} "
+        "versioned identities"
+    )
+    print(
         "E7 product runtime reachable legacy modules: "
         f"{len(python['e7_cpu']['product_runtime_reachable_legacy'])}"
     )
@@ -968,6 +999,7 @@ def main() -> None:
             report["python"]["raw_readback_calls"],
             report["python"]["persistent_array_fields"],
             report["python"]["product_boundary_violations"],
+            report["python"]["e7s_migration_v0"]["violations"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item

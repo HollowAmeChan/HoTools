@@ -634,6 +634,8 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 结果 schema 审计确认 `mc2_bone_writeback_plan_v0` 是当前唯一的 MC2 Bone plan schema，并通过公共 `bone_transform_batch.plan_schema` 跨越 MC2/Physics World writeback 与 debug 边界；代码中不存在旧格式读取、双 schema 翻译或 fallback。它因此保留版本身份，只有实际布局或消费合同变化时才升级。相邻审计同时把产品多 request 失败时的 Bone frame 状态快照/恢复归还给 `setups/bone_frame_input.py`，`product_solver.py` 不再读取或写入该 setup 私有资源键。
 
+生产源码的迁移命名门禁进一步把 `V0/_v0` 收敛为机器可读白名单：只允许 `mc2_center_static_v0` 内容签名命名空间和 `mc2_bone_writeback_plan_v0` 活动结果 schema。CPU backend、reference kernel、Center、产品 slot 与节点错误信息中的旧阶段叙述已改为当前职责和固定 pass 顺序；任何新的非版本合同 `V0` 字样都会使架构审计失败。该门禁不重命名 DomainV1 ABI，也不改变数值顺序。
+
 ## 明确的数据流
 
 ### 显式模式
