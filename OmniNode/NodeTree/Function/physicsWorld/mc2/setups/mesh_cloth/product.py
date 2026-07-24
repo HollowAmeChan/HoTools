@@ -198,6 +198,7 @@ def collect_mc2_mesh_product_plan(
     *,
     receipt_slot_id: str,
     force_audit: bool | None = None,
+    previous_collection: MC2MeshProductCollectionV1 | None = None,
 ) -> MC2MeshProductCollectionV1:
     """直接消费一个明确的 Mesh product collector plan。"""
 
@@ -211,6 +212,20 @@ def collect_mc2_mesh_product_plan(
     receipt_slot_id = str(receipt_slot_id or "").strip()
     if not receipt_slot_id:
         raise ValueError("Mesh product collection requires receipt_slot_id")
+    if previous_collection is not None and not isinstance(
+        previous_collection, MC2MeshProductCollectionV1
+    ):
+        raise TypeError("previous_collection must be MC2MeshProductCollectionV1 or None")
+    previous_rows = {}
+    if previous_collection is not None:
+        previous_rows = {
+            task_id: (snapshot, topology_signature)
+            for task_id, snapshot, topology_signature in zip(
+                previous_collection.task_ids,
+                previous_collection.static_snapshots,
+                previous_collection.mesh_topology_signatures,
+            )
+        }
     rows = []
     identities = []
     statuses = []
@@ -229,22 +244,35 @@ def collect_mc2_mesh_product_plan(
         ):
             raise ValueError("Mesh product source observation did not resolve")
         raw_snapshot = observation.snapshots[0]
-        snapshot = capture_mc2_mesh_partition_static_snapshot(
-            source,
-            raw_snapshot,
-            partition_id=partition.stable_id,
-            source_identity=_canonical_source_identity(source),
-            source_revision=observation.fingerprint.overall,
-            output_target_id=_output_target_id(source),
-        )
+        source_identity = _canonical_source_identity(source)
+        source_revision = observation.fingerprint.overall
+        output_target_id = _output_target_id(source)
+        previous = previous_rows.get(partition.stable_id)
+        if (
+            previous is not None
+            and previous[0].source_identity == source_identity
+            and previous[0].source_revision == source_revision
+            and previous[0].output_target_id == output_target_id
+        ):
+            snapshot, topology_signature = previous
+        else:
+            snapshot = capture_mc2_mesh_partition_static_snapshot(
+                source,
+                raw_snapshot,
+                partition_id=partition.stable_id,
+                source_identity=source_identity,
+                source_revision=source_revision,
+                output_target_id=output_target_id,
+            )
+            topology_signature = mesh_topology_signature_from_arrays(
+                len(raw_snapshot.positions),
+                raw_snapshot.edges,
+                raw_snapshot.polygon_loop_totals,
+                raw_snapshot.loop_vertices,
+                raw_snapshot.triangles,
+            )
         rows.append(snapshot)
-        topology_signatures.append(mesh_topology_signature_from_arrays(
-            len(raw_snapshot.positions),
-            raw_snapshot.edges,
-            raw_snapshot.polygon_loop_totals,
-            raw_snapshot.loop_vertices,
-            raw_snapshot.triangles,
-        ))
+        topology_signatures.append(topology_signature)
         identities.extend(observation.identities)
         statuses.extend(observation.statuses)
         task_ids.append(partition.stable_id)

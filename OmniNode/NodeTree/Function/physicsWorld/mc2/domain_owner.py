@@ -134,7 +134,24 @@ class MC2FusedCPUOwnerV1:
             world_gravity_direction=world_gravity_direction,
             world_gravity_directions=world_gravity_directions,
         )
-        current = compile_mc2_domain_draft(draft, batch.fragments)
+        exact_fragment_reuse = (
+            self._domain is not None
+            and self._compiled is not None
+            and self._draft is not None
+            and draft.draft_signature == self._draft.draft_signature
+            and len(batch.fragments) == len(self._compiled.fragments)
+            and all(
+                current is previous
+                for current, previous in zip(
+                    batch.fragments, self._compiled.fragments
+                )
+            )
+        )
+        current = (
+            self._compiled
+            if exact_fragment_reuse
+            else compile_mc2_domain_draft(draft, batch.fragments)
+        )
         return self._sync_compiled(
             draft,
             current,

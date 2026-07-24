@@ -209,12 +209,24 @@ class _FailingBuilder:
 def test_owner_creates_once_then_reuses_exact_native_domain():
     kernel = _FakeKernel()
     owner = owner_module.MC2FusedCPUOwnerV1(kernel)
-    first = owner.sync(_draft(), _snapshots())
-    domain = owner.domain
-    second = owner.sync(_draft(), _snapshots())
+    original_compile = owner_module.compile_mc2_domain_draft
+    compile_calls = []
+
+    def counted_compile(*args, **kwargs):
+        compile_calls.append(args)
+        return original_compile(*args, **kwargs)
+
+    owner_module.compile_mc2_domain_draft = counted_compile
+    try:
+        first = owner.sync(_draft(), _snapshots())
+        domain = owner.domain
+        second = owner.sync(_draft(), _snapshots())
+    finally:
+        owner_module.compile_mc2_domain_draft = original_compile
     assert first.action == "created" and first.fragment_builds == 2
     assert second.action == "reused" and second.fragment_cache_hits == 2
     assert second.compile_cache.exact_cache_hit
+    assert len(compile_calls) == 1
     assert owner.domain is domain and len(kernel.created) == 1
     owner.dispose()
     assert len(kernel.disposed) == 1

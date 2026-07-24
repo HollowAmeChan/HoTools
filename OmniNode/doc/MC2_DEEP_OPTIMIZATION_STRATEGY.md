@@ -6,7 +6,7 @@
 
 ## 结论摘要
 
-- P1-B 已消除普通 Mesh 热帧的全量静态扫描；authoring、topology、UV、Pin/radius 和审计失配仍按失效合同重读。
+- P1-B 已消除普通 Mesh 热帧的全量静态扫描；observation 身份与 fingerprint 不变时继续复用上一帧 frozen static snapshot、topology signature 和 fragment，draft signature 完全一致时 owner 跳过重复 domain compile。authoring、topology、UV、Pin/radius 和审计失配仍按失效合同重读与重编译。
 - E4/P2 已用一个 fused DomainV1 和一次 whole-domain self 取代普通多 task aggregate 的重复 primitive/grid/candidate/contact 流水。
 - P0 的请求式阶段计时已在当前产品批处理恢复：顶层IO/owner/solve/publish与CPU原子pass分别聚合，整域self再细分Primitive、Grid、相交、Candidate、Contact和四轮求解，热帧owner状态按`reused`、`parameters_updated`、`replaced`真实分类。关闭节点开关时不创建资源、不读阶段时钟，继续调用原无计时完整pipeline与native ABI；计时本身不请求debug确认或快照。
 - 当前1760粒子、495 collider回归首先按外碰与整域self实测分摊；合同上`collided_by_groups`只过滤外碰，域内self才把自身主组并入有效mask，二者不得在authoring冻结时混用。
@@ -212,6 +212,8 @@ native 固定阶段槽覆盖 Center/prediction、Tether、Distance A/B、Angle�
 
 - 以 source/data identity、depsgraph revision、相关 RNA/property revision 和 world generation 组成观察令牌；
 - 缓存 raw snapshot、fingerprint 和 frozen topology；
+- 产品 collector 在 observation fingerprint、source identity 与 output target identity 同时不变时，直接复用上一帧 immutable static snapshot 与 topology signature，不重复冻结数组和哈希；
+- fragment cache 全命中且 draft signature 不变时，owner 直接提交缓存事务并复用当前 compiled domain，不再为证明 exact hit 先完整编译一次；
 - depsgraph Mesh 更新、编辑模式提交、UV/拓扑/坐标/法线变化、pin/radius group变化、对象替换、undo/load、schema变化时失效；
 - 提供显式“保守审计模式”，低频或手动重新扫描并比较 fingerprint，用于发现漏失效；
 - 无法证明 revision 完整时宁可针对该 source 退回扫描，不能全局假定不变。

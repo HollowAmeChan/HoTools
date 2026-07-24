@@ -128,7 +128,13 @@ def _entry(
     )[0]
 
 
-def _collect_request(world, entries, *, force_audit=None):
+def _collect_request(
+    world,
+    entries,
+    *,
+    force_audit=None,
+    previous_collection=None,
+):
     request = authoring.make_mc2_mesh_product_request(entries)
     slot_id = product_slot.make_mc2_product_slot_id(
         request.setup_type,
@@ -140,6 +146,7 @@ def _collect_request(world, entries, *, force_audit=None):
             request.plan,
             receipt_slot_id=slot_id,
             force_audit=force_audit,
+            previous_collection=previous_collection,
         ),
         slot_id,
     )
@@ -184,6 +191,38 @@ def test_product_collector_observes_once_and_preserves_authoring_order():
         (0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
     )
     assert calls == [(entry.stable_id, slot_id, True) for entry in entries]
+
+
+def test_product_collector_reuses_unchanged_static_rows_before_repacking():
+    first, second = _Source(101), _Source(202)
+    _install_observer({101: _raw(first, 3), 202: _raw(second, 2)})
+    entries = (_entry(first), _entry(second))
+    world = _World()
+    previous, _slot_id = _collect_request(world, entries)
+    original_capture = collector.capture_mc2_mesh_partition_static_snapshot
+    original_topology = collector.mesh_topology_signature_from_arrays
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unchanged Mesh static row was rebuilt")
+
+    collector.capture_mc2_mesh_partition_static_snapshot = unexpected
+    collector.mesh_topology_signature_from_arrays = unexpected
+    try:
+        current, _slot_id = _collect_request(
+            world,
+            entries,
+            previous_collection=previous,
+        )
+    finally:
+        collector.capture_mc2_mesh_partition_static_snapshot = original_capture
+        collector.mesh_topology_signature_from_arrays = original_topology
+    assert all(
+        current_snapshot is previous_snapshot
+        for current_snapshot, previous_snapshot in zip(
+            current.static_snapshots, previous.static_snapshots
+        )
+    )
+    assert current.mesh_topology_signatures == previous.mesh_topology_signatures
 
 
 def test_product_collector_uses_frozen_unified_collision_masks():

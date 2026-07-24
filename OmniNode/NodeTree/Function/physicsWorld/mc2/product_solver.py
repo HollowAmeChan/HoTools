@@ -11,6 +11,7 @@ from .names import (
 from .parameters import MC2SolverSettingsSpec, make_mc2_solver_settings
 from .product_request import MC2ProductRequestV1
 from .setups.mesh_cloth.product import (
+    MC2MeshProductCollectionV1,
     collect_mc2_mesh_product_plan,
     validate_mc2_mesh_product_output_batch,
     validate_mc2_mesh_product_targets,
@@ -143,10 +144,20 @@ def _step_mc2_mesh_product(
     slot_id = make_mc2_product_slot_id(
         request.setup_type, request.domain_signature
     )
+    existing_slot = world.solver_slots.get(slot_id)
+    previous_collection = None
+    if (
+        existing_slot is not None
+        and int(existing_slot.world_generation) == int(world.generation)
+    ):
+        candidate = existing_slot.data.get("collection")
+        if isinstance(candidate, MC2MeshProductCollectionV1):
+            previous_collection = candidate
     collection = collect_mc2_mesh_product_plan(
         world,
         request.plan,
         receipt_slot_id=slot_id,
+        previous_collection=previous_collection,
     )
     validate_mc2_mesh_product_targets(collection)
     if timing is not None:
