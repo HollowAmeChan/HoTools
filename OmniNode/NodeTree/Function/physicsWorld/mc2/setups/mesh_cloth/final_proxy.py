@@ -49,11 +49,6 @@ class MC2MeshFinalProxyBuildResult:
     def vertex_bind_pose_rotations(self):
         return self.finalizer.vertex_bind_pose_rotations
 
-    @property
-    def every_vertex_has_triangle(self):
-        return all(self.finalizer.vertex_to_triangle_records)
-
-
 def _array(values, *, width: int, name: str) -> np.ndarray:
     array = np.asarray(values, dtype=np.float64)
     if array.ndim != 2 or array.shape[1] != width:

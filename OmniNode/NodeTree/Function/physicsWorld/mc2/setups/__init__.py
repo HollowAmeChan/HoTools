@@ -23,15 +23,10 @@ def get_mc2_setup_adapter(setup_type: object):
     return adapter
 
 
-def all_mc2_setup_adapters() -> dict:
-    return dict(MC2_SETUP_ADAPTERS)
-
-
 __all__ = [
     "MC2_BONE_CLOTH_SETUP_ADAPTER",
     "MC2_BONE_SPRING_SETUP_ADAPTER",
     "MC2_MESH_CLOTH_SETUP_ADAPTER",
     "MC2_SETUP_ADAPTERS",
-    "all_mc2_setup_adapters",
     "get_mc2_setup_adapter",
 ]

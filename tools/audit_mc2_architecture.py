@@ -114,8 +114,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.scheduler", "_f32"),
     ("mc2.scheduler", "debug_dict"),
     ("mc2.self_collision_static", "primitive_count"),
-    ("mc2.setups", "all_mc2_setup_adapters"),
-    ("mc2.setups.mesh_cloth.final_proxy", "every_vertex_has_triangle"),
     ("mc2.setups.mesh_cloth.final_proxy", "_tuple_vectors"),
     ("mc2.setups.bone_cloth.fragment_cache", "hit_count"),
     ("mc2.setups.bone_cloth.fragment_cache", "build_count"),

@@ -642,6 +642,8 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 
 同一调用计数审计确认 `compile_mc2_mesh_static_fragment` 没有任何生产消费者，只是把单个测试 fragment 包成集合。该入口已删除，fixture 直接调用 `compile_mc2_mesh_static_fragments((fragment,), (effective,))`；Domain E3 golden、CPU backend/native kernel 和 compiler 门禁全部通过，分类 forwarder 降为 80。
 
+零消费者审计还删除了 `MC2MeshFinalProxyBuildResult.every_vertex_has_triangle` 派生属性和 `all_mc2_setup_adapters()` registry 复制函数。前者不增加 `vertex_to_triangle_records` 之外的合同，后者不增加 setup registry/getter 之外的生命周期或只读边界；Mesh final-proxy Tier A 与注册能力门禁通过，分类 forwarder 降为 78。
+
 ## 明确的数据流
 
 ### 显式模式

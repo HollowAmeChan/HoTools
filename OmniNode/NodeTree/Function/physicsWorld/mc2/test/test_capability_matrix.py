@@ -175,6 +175,8 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "build_mc2_mesh_domain_collider_frame",
         "_product_slot_id",
         "compile_mc2_mesh_static_fragment",
+        "all_mc2_setup_adapters",
+        "every_vertex_has_triangle",
     }
     production = [
         path
