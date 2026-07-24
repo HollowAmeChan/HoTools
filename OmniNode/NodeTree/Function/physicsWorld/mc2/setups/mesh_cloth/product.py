@@ -199,7 +199,7 @@ def collect_mc2_mesh_product_plan(
     receipt_slot_id: str,
     force_audit: bool | None = None,
 ) -> MC2MeshProductCollectionV1:
-    """直接消费一个明确的 fused Mesh collector plan。"""
+    """直接消费一个明确的 Mesh product collector plan。"""
 
     if not isinstance(plan, MC2PartitionCollectorPlan):
         raise TypeError("plan must be MC2PartitionCollectorPlan")

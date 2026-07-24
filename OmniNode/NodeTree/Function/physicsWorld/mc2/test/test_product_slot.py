@@ -1,4 +1,4 @@
-"""E4 Physics World ownership tests for the staged fused Mesh slot."""
+"""E4 Physics World ownership tests for the staged Mesh product slot."""
 
 from __future__ import annotations
 
@@ -200,13 +200,13 @@ def _sync_mesh_product_slot(world, collection, *, kernel=None):
     return slot_module.sync_mc2_product_slot(
         world,
         collection,
-        slot_id=slot_module.MC2_FUSED_MESH_SLOT_ID,
+        slot_id=slot_module.MC2_MESH_PRODUCT_SLOT_ID,
         kernel=kernel,
     )
 
 
 def _capture_mesh_product_frame(world, **kwargs):
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     return slot_module.capture_and_publish_mc2_product_frame(
         world,
         slot,
@@ -218,13 +218,13 @@ def test_slot_create_update_and_world_dispose_own_one_handle():
     world = _world()
     kernel = _Kernel()
     created = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     owner = slot.data["owner"]
     scheduler_state = slot.data["scheduler_state"]
     updated = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     assert created.action == "created" and updated.action == "updated"
     assert updated.owner_report.action == "reused"
-    assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
+    assert world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID] is slot
     assert slot.data["owner"] is owner and len(kernel.created) == 1
     assert slot.data["scheduler_state"] is scheduler_state
     assert slot.data["product_enabled"] is False
@@ -236,10 +236,10 @@ def test_generation_change_stages_new_slot_then_disposes_old_owner():
     world = _world(generation=1)
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    old_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    old_slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     world.generation = 2
     replaced = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    new_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    new_slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     assert replaced.action == "replaced" and new_slot is not old_slot
     assert new_slot.world_generation == 2
     assert len(kernel.created) == 2 and len(kernel.disposed) == 1
@@ -249,7 +249,7 @@ def test_staged_create_failure_preserves_previous_generation_slot():
     world = _world(generation=1)
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    old_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    old_slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     world.generation = 2
     kernel.fail_create = True
     try:
@@ -260,7 +260,7 @@ def test_staged_create_failure_preserves_previous_generation_slot():
         assert "injected slot create failure" in str(exc)
     else:
         raise AssertionError("slot create failure was accepted")
-    assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is old_slot
+    assert world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID] is old_slot
     assert old_slot.data["owner"].domain is not None
     assert kernel.disposed == []
 
@@ -269,7 +269,7 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(gravity=5.0), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     owner = slot.data["owner"]
     compiled = owner.compiled
     kernel.fail_parameter_stage = True
@@ -281,7 +281,7 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
         assert "injected slot parameter stage failure" in str(exc)
     else:
         raise AssertionError("owner replacement failure was accepted")
-    assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
+    assert world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID] is slot
     assert slot.data["owner"] is owner and owner.compiled is compiled
     assert world._current_writer is None
 
@@ -292,7 +292,7 @@ def test_same_generation_parameter_update_preserves_product_scheduler_state():
     _sync_mesh_product_slot(
         world, _collection(gravity=5.0), kernel=kernel,
     )
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     old_scheduler = slot.data["scheduler_state"]
     updated = _sync_mesh_product_slot(
         world, _collection(gravity=6.0), kernel=kernel,
@@ -370,7 +370,7 @@ def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     program = slot.data["owner"].compiled.program
     frame = _domain_frame(program)
     scheduled = _scheduled(slot, frame)
@@ -405,7 +405,7 @@ def test_slot_commits_anchor_history_only_after_native_frame_publish():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     program = slot.data["owner"].compiled.program
     components = np.asarray(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)), dtype=np.float32)
     anchors = np.asarray(((10.0, 0.0, 0.0), (0.0, 10.0, 0.0)), dtype=np.float32)
@@ -463,7 +463,7 @@ def test_product_frame_feedback_stage_commits_only_after_native_publish():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     scheduled = _scheduled(slot, _domain_frame(slot.data["owner"].compiled.program))
 
     class _Stage:
@@ -511,7 +511,7 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     program = slot.data["owner"].compiled.program
     frame = _domain_frame(program, frame=9)
     world.frame_context.frame = 9
@@ -552,7 +552,7 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     program = slot.data["owner"].compiled.program
     scheduled = _scheduled(slot, _domain_frame(program, frame=10))
     slot_module.publish_mc2_product_frame(
@@ -591,7 +591,7 @@ def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     program = slot.data["owner"].compiled.program
     scheduled = _scheduled(slot, _domain_frame(program, frame=11))
     slot_module.publish_mc2_product_frame(
@@ -623,7 +623,7 @@ def test_paused_fused_frame_has_no_product_substeps():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
-    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
     world.frame_context = types.SimpleNamespace(frame=11)
     assert debug_module.request_mc2_debug_capture(
         world, filters={"show_step_basic": True},
@@ -666,7 +666,7 @@ def test_slot_native_executes_complete_compiled_frame():
         _sync_mesh_product_slot(
             world, _collection(constraints=True), kernel=kernel
         )
-        slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+        slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
         owner = slot.data["owner"]
         world.frame_context = types.SimpleNamespace(frame=12)
         assert debug_module.request_mc2_debug_capture(
@@ -714,7 +714,7 @@ def test_slot_native_executes_complete_compiled_frame():
         output = owner.read_output()
         assert output.frame == 13 and output.generation == 1
         assert np.isfinite(output.world_positions).all()
-        batch = slot_module.build_mc2_mesh_fused_output_batch(world, slot)
+        batch = slot_module.build_mc2_mesh_product_output_batch(world, slot)
         assert len(batch.commands) == 2
         assert [command.target_id for command in batch.commands] == [
             snapshot.output_target_id

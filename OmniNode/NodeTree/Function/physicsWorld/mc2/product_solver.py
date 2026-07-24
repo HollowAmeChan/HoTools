@@ -22,12 +22,12 @@ from .setups.bone_cloth.product import (
 from .product_slot import (
     MC2_FUSED_PRODUCT_SLOT_KIND,
     build_mc2_bone_product_output,
-    build_mc2_mesh_fused_output_batch,
+    build_mc2_mesh_product_output_batch,
     capture_and_publish_mc2_product_frame,
     discard_mc2_product_slots,
     make_mc2_product_slot_id,
     publish_mc2_bone_product_output_transaction,
-    publish_mc2_mesh_fused_output_transaction,
+    publish_mc2_mesh_product_output_transaction,
     publish_mc2_product_output_transaction,
     step_mc2_product_substep,
     sync_mc2_product_slot,
@@ -119,7 +119,7 @@ def _step_mc2_mesh_product(
     timing=None,
     publish_results: bool = True,
 ) -> tuple[object, bool, str]:
-    """执行一个明确 fused Mesh domain；不接受 task fallback。"""
+    """执行一个明确 Mesh product domain；不接受 task fallback。"""
 
     if timing is not None:
         timing.restart()
@@ -154,9 +154,9 @@ def _step_mc2_mesh_product(
     if _same_frame_product_reuse(world, slot):
         frame = slot.data["scheduled_frame"]
         if publish_results:
-            public_results = publish_mc2_mesh_fused_output_transaction(world, slot)
+            public_results = publish_mc2_mesh_product_output_transaction(world, slot)
         else:
-            batch = build_mc2_mesh_fused_output_batch(world, slot)
+            batch = build_mc2_mesh_product_output_batch(world, slot)
             validate_mc2_mesh_product_output_batch(collection, batch)
             public_results = make_mc2_mesh_domain_results(
                 batch=batch,
@@ -197,9 +197,9 @@ def _step_mc2_mesh_product(
     if timing is not None:
         timing.checkpoint("统一域求解")
     if publish_results:
-        public_results = publish_mc2_mesh_fused_output_transaction(world, slot)
+        public_results = publish_mc2_mesh_product_output_transaction(world, slot)
     else:
-        batch = build_mc2_mesh_fused_output_batch(world, slot)
+        batch = build_mc2_mesh_product_output_batch(world, slot)
         validate_mc2_mesh_product_output_batch(collection, batch)
         public_results = make_mc2_mesh_domain_results(
             batch=batch,

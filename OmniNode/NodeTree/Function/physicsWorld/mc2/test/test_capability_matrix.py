@@ -177,6 +177,8 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "sync_mc2_mesh_fused_slot",
         "step_mc2_mesh_fused_substep",
         "capture_and_publish_mc2_mesh_fused_frame",
+        "build_mc2_mesh_fused_output_batch",
+        "publish_mc2_mesh_fused_output_transaction",
     }
     production = [
         path
@@ -201,6 +203,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     assert "MC2_STATS_CHANNEL" not in names_source
     product_slot_source = (MC2_ROOT / "product_slot.py").read_text(encoding="utf-8")
     assert "MC2_FUSED_MESH_SLOT_KIND" not in product_slot_source
+    assert "MC2_FUSED_MESH_SLOT_ID" not in product_slot_source
     assert "publish_mc2_mesh_fused_frame" not in product_slot_source
 
 

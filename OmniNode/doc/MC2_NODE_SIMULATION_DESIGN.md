@@ -618,6 +618,8 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 产品 slot 审计继续删除 `sync/step/capture/publish_mc2_mesh_fused_*` 四个仅由旧测试消费的默认 Mesh slot wrapper/alias。测试现在显式传入 slot identity 并调用统一 `sync_mc2_product_slot`、`publish_mc2_product_frame`、`step_mc2_product_substep` 与 `capture_and_publish_mc2_product_frame`；生产路径不再通过隐式默认 slot 进入 DomainV1。仍有真实产品消费者的 Mesh output batch/transaction 保留，单独执行产品命名收敛。
 
+随后 Mesh 输出 API 已由 `build/publish_mc2_mesh_fused_output_*` 收敛为 `build/publish_mc2_mesh_product_output_*`，Python 常量改为 `MC2_MESH_PRODUCT_SLOT_ID`，相关诊断统一称为 Mesh product。底层 slot identity 仍是 `mc2.domain.mesh.product.v1`，该批不改变持久身份、执行顺序、输出事务或数值结果；Blender 5.2 三 setup 900 帧 digest 与改名前一致。
+
 ## 明确的数据流
 
 ### 显式模式

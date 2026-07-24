@@ -30,7 +30,7 @@ from .results import make_mc2_bone_domain_results
 from .results import publish_mc2_result_transaction
 
 
-MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
+MC2_MESH_PRODUCT_SLOT_ID = "mc2.domain.mesh.product.v1"
 _MC2_FUSED_PRODUCT_WRITER = "mc2_fused_cpu_product"
 _MC2_CONSTRAINT_DEBUG_ANGLE = 1
 _MC2_CONSTRAINT_DEBUG_MOTION = 2
@@ -90,9 +90,9 @@ class MC2FusedProductSlotSyncResultV1:
 
     def __post_init__(self) -> None:
         if self.action not in {"created", "updated", "replaced"}:
-            raise ValueError("invalid fused Mesh slot action")
+            raise ValueError("invalid Mesh product slot action")
         if not str(self.slot_id or "").strip():
-            raise ValueError("invalid fused product slot id")
+            raise ValueError("invalid product slot id")
         if self.world_generation < 0:
             raise ValueError("world_generation cannot be negative")
         if not isinstance(self.owner_report, MC2FusedCPUOwnerSyncReportV1):
@@ -336,7 +336,7 @@ def sync_mc2_product_slot(
     finally:
         world.release_write(_MC2_FUSED_PRODUCT_WRITER)
     if old_slot is not None:
-        old_slot.dispose("mc2_fused_mesh_staged_replacement")
+        old_slot.dispose("mc2_product_staged_replacement")
     return MC2FusedProductSlotSyncResultV1(
         action="created" if old_slot is None else "replaced",
         slot_id=slot_id,
@@ -466,7 +466,7 @@ def publish_mc2_product_frame(
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise TypeError("slot must be an MC2 fused product PhysicsSolverSlot")
+        raise TypeError("slot must be an MC2 product PhysicsSolverSlot")
     if not isinstance(scheduled_frame, MC2ProductScheduledFrameV1):
         raise TypeError("scheduled_frame must be MC2ProductScheduledFrameV1")
     frame_packet = scheduled_frame.frame_packet
@@ -480,19 +480,19 @@ def publish_mc2_product_frame(
     if not isinstance(owner, MC2FusedCPUOwnerV1) or not _is_product_collection(
         collection
     ):
-        raise RuntimeError("fused product slot is incomplete")
+        raise RuntimeError("product slot is incomplete")
     if owner.compiled is None:
-        raise RuntimeError("fused Mesh owner has no compiled program")
+        raise RuntimeError("Mesh product owner has no compiled program")
     if not isinstance(scheduler_state, MC2ProductSchedulerStateV1):
-        raise RuntimeError("fused product slot has no product scheduler state")
+        raise RuntimeError("product slot has no product scheduler state")
     program = owner.compiled.program
     if (
         frame_packet.domain_signature != program.domain_signature
         or frame_packet.layout_signature != program.layout_signature
     ):
-        raise ValueError("fused Mesh frame identity does not match the live owner")
+        raise ValueError("Mesh product frame identity does not match the live owner")
     if scheduler_state.partition_ids != tuple(program.partition_ids):
-        raise ValueError("fused Mesh scheduler partition identity is stale")
+        raise ValueError("Mesh product scheduler partition identity is stale")
     scheduler_state.validate_commit(scheduled_frame)
 
     world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
@@ -502,7 +502,7 @@ def publish_mc2_product_frame(
             or slot.world_generation != int(world.generation)
             or slot.data.get("owner") is not owner
         ):
-            raise RuntimeError("fused product slot changed while its frame was captured")
+            raise RuntimeError("product slot changed while its frame was captured")
         scheduler_state.validate_commit(scheduled_frame)
         if frame_state_stage is not None:
             frame_state_stage.validate(world)
@@ -552,23 +552,23 @@ def step_mc2_product_substep(
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise TypeError("slot must be an MC2 fused product PhysicsSolverSlot")
+        raise TypeError("slot must be an MC2 product PhysicsSolverSlot")
     owner = slot.data.get("owner")
     scheduler_state = slot.data.get("scheduler_state")
     scheduled_frame = slot.data.get("scheduled_frame")
     collider_frame = slot.data.get("collider_frame")
     if not isinstance(owner, MC2FusedCPUOwnerV1) or owner.compiled is None:
-        raise RuntimeError("fused product slot has no live owner")
+        raise RuntimeError("product slot has no live owner")
     if not isinstance(scheduler_state, MC2ProductSchedulerStateV1):
-        raise RuntimeError("fused product slot has no product scheduler state")
+        raise RuntimeError("product slot has no product scheduler state")
     if not isinstance(scheduled_frame, MC2ProductScheduledFrameV1) or not isinstance(
         collider_frame, MC2DomainColliderFrameSpec
     ):
-        raise RuntimeError("fused product slot has no published frame")
+        raise RuntimeError("product slot has no published frame")
     if not bool(slot.data.get("frame_ready", False)):
-        raise RuntimeError("fused Mesh frame is not ready")
+        raise RuntimeError("Mesh product frame is not ready")
     if bool(slot.data.get("frame_complete", False)):
-        raise RuntimeError("fused Mesh frame has no pending substeps")
+        raise RuntimeError("Mesh product frame has no pending substeps")
 
     world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
     try:
@@ -578,7 +578,7 @@ def step_mc2_product_substep(
             or slot.data.get("owner") is not owner
             or slot.data.get("scheduler_state") is not scheduler_state
         ):
-            raise RuntimeError("fused product slot changed before its substep")
+            raise RuntimeError("product slot changed before its substep")
         update_index = int(slot.data.get("completed_substeps", 0))
         staged_substep = scheduler_state.stage_substep(update_index)
         pose = owner.prepare_step_basic_pose()
@@ -692,7 +692,7 @@ def build_mc2_bone_product_output(
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise TypeError("slot must be an MC2 fused product PhysicsSolverSlot")
+        raise TypeError("slot must be an MC2 product PhysicsSolverSlot")
     owner = slot.data.get("owner")
     collection = slot.data.get("collection")
     frame_packet = slot.data.get("frame_packet")
@@ -754,7 +754,7 @@ def publish_mc2_bone_product_output_transaction(
         world.release_write(_MC2_FUSED_PRODUCT_WRITER)
 
 
-def build_mc2_mesh_fused_output_batch(
+def build_mc2_mesh_product_output_batch(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot | None = None,
 ) -> MC2MeshWritebackBatchV1:
@@ -763,17 +763,17 @@ def build_mc2_mesh_fused_output_batch(
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")
     if slot is None:
-        slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
+        slot = world.solver_slots.get(MC2_MESH_PRODUCT_SLOT_ID)
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise TypeError("slot must be the fused Mesh PhysicsSolverSlot")
+        raise TypeError("slot must be the Mesh product PhysicsSolverSlot")
     owner = slot.data.get("owner")
     frame_packet = slot.data.get("frame_packet")
     if not isinstance(owner, MC2FusedCPUOwnerV1) or owner.compiled is None:
-        raise RuntimeError("fused Mesh slot has no live owner")
+        raise RuntimeError("Mesh product slot has no live owner")
     if not isinstance(frame_packet, MC2DomainFramePacketV1):
-        raise RuntimeError("fused Mesh slot has no published frame packet")
+        raise RuntimeError("Mesh product slot has no published frame packet")
     if not bool(slot.data.get("frame_complete", False)):
-        raise RuntimeError("fused Mesh output is only available after the final substep")
+        raise RuntimeError("Mesh product output is only available after the final substep")
     output = owner.read_output()
     batch = make_mc2_mesh_writeback_batch(
         owner.compiled.program,
@@ -785,20 +785,20 @@ def build_mc2_mesh_fused_output_batch(
     return batch
 
 
-def publish_mc2_mesh_fused_output_transaction(
+def publish_mc2_mesh_product_output_transaction(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot | None = None,
 ) -> tuple[dict, ...]:
     """校验全部 live targets 后一次替换 MC2 公共结果流。"""
 
     if slot is None:
-        slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
+        slot = world.solver_slots.get(MC2_MESH_PRODUCT_SLOT_ID)
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise TypeError("slot must be the fused Mesh PhysicsSolverSlot")
+        raise TypeError("slot must be the Mesh product PhysicsSolverSlot")
     collection = slot.data.get("collection")
     if not isinstance(collection, MC2MeshProductCollectionV1):
-        raise RuntimeError("fused Mesh slot has no product collection")
-    batch = build_mc2_mesh_fused_output_batch(world, slot)
+        raise RuntimeError("Mesh product slot has no product collection")
+    batch = build_mc2_mesh_product_output_batch(world, slot)
     validate_mc2_mesh_product_output_batch(collection, batch)
     public_results = make_mc2_mesh_domain_results(
         batch=batch,
@@ -826,16 +826,16 @@ def capture_and_publish_mc2_product_frame(
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")
     if not isinstance(slot, PhysicsSolverSlot) or slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
-        raise RuntimeError("Physics World has no matching fused product slot")
+        raise RuntimeError("Physics World has no matching product slot")
     owner = slot.data.get("owner")
     collection = slot.data.get("collection")
     if not isinstance(owner, MC2FusedCPUOwnerV1) or not _is_product_collection(
         collection
     ):
-        raise RuntimeError("fused product slot is incomplete")
+        raise RuntimeError("product slot is incomplete")
     scheduler_state = slot.data.get("scheduler_state")
     if not isinstance(scheduler_state, MC2ProductSchedulerStateV1):
-        raise RuntimeError("fused product slot has no product scheduler state")
+        raise RuntimeError("product slot has no product scheduler state")
     from .parameters import MC2SolverSettingsSpec
     from .parameters import make_mc2_solver_settings
 
@@ -920,17 +920,17 @@ def capture_and_publish_mc2_product_frame(
 
 __all__ = [
     "MC2_FUSED_PRODUCT_SLOT_KIND",
-    "MC2_FUSED_MESH_SLOT_ID",
+    "MC2_MESH_PRODUCT_SLOT_ID",
     "MC2FusedProductFramePublishResultV1",
     "MC2FusedProductSubstepResultV1",
     "MC2FusedProductSlotSyncResultV1",
     "build_mc2_bone_product_output",
-    "build_mc2_mesh_fused_output_batch",
+    "build_mc2_mesh_product_output_batch",
     "capture_and_publish_mc2_product_frame",
     "discard_mc2_product_slots",
     "make_mc2_product_slot_id",
     "publish_mc2_product_frame",
-    "publish_mc2_mesh_fused_output_transaction",
+    "publish_mc2_mesh_product_output_transaction",
     "publish_mc2_bone_product_output_transaction",
     "publish_mc2_product_output_transaction",
     "step_mc2_product_substep",
