@@ -27,7 +27,7 @@ BoneSpring 与 BoneCloth 共用同一个 `DomainV1` backend 和 Bone 产品 coll
 
 1. 有价值的 topology/参数 helper 已由产品测试拥有；依赖旧 context 内部计数的断言已淘汰。
 2. capability matrix 已把强制关闭字段归入包装限制，并由 BoneSpring 自身产品证据覆盖，不借用 BoneCloth self/Bending 证据。
-3. Python 旧 owner、hidden task、普通 aggregate 入口、native V0 ABI/TU、专用头文件与纯旧测试均已删除。剩余工作与 Mesh/BoneCloth 共用：执行 E7-S、P6 合同收口和最终双 ABI/Blender 验收；全部门禁关闭后物理删除本文档。
+3. Python 旧 owner、hidden task、普通 aggregate 入口、native V0 ABI/TU、专用头文件与纯旧测试均已删除。剩余工作与 Mesh/BoneCloth 共用：执行 E7-S Python 文件职责收敛与兼容层清理、P6 合同收口和最终双 ABI/Blender 验收；全部门禁关闭后物理删除本文档。
 
 ## 删除门槛
 

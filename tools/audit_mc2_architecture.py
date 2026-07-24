@@ -165,6 +165,42 @@ E7_LEGACY_HEADERS = frozenset((
     "mc2_context_helpers.hpp",
     "mc2_context_internal.hpp",
 ))
+E7S_PYTHON_MERGE_TARGETS = {
+    "mc2.anchor": "mc2.center_state",
+    "mc2.bending_static": "mc2.constraint_static",
+    "mc2.capabilities": "mc2.declaration",
+    "mc2.distance_static": "mc2.constraint_static",
+    "mc2.domain_capabilities": "mc2.domain_compile",
+    "mc2.domain_collect": "mc2.domain_compile",
+    "mc2.domain_output": "mc2.results",
+    "mc2.domain_owner": "mc2.product_slot",
+    "mc2.frame_compile": "mc2.product_frame",
+    "mc2.frame_state": "mc2.runtime_state",
+    "mc2.mesh_baseline": "mc2.constraint_static",
+    "mc2.mesh_topology_identity": "mc2.topology",
+    "mc2.names": "mc2.declaration",
+    "mc2.product_authoring": "mc2.product_request",
+    "mc2.product_bone_authoring": "mc2.product_request",
+    "mc2.product_bone_collect": "mc2.product_collect",
+    "mc2.product_bone_frame": "mc2.product_frame",
+    "mc2.product_scheduler": "mc2.product_solver",
+    "mc2.runtime_parameters": "mc2.parameters",
+    "mc2.scheduler": "mc2.runtime_state",
+    "mc2.self_collision_static": "mc2.constraint_static",
+    "mc2.setups.contracts": "mc2.setups",
+    "mc2.setups.bone_cloth.fragment_cache": "mc2.setups.bone_cloth.static",
+    "mc2.setups.bone_cloth.static_build": "mc2.setups.bone_cloth.static",
+    "mc2.setups.bone_cloth.static_fragment": "mc2.setups.bone_cloth.static",
+    "mc2.setups.mesh_cloth.capabilities": "mc2.setups.mesh_cloth.registration",
+    "mc2.setups.mesh_cloth.delta_output": "mc2.setups.mesh_cloth.frame",
+    "mc2.setups.mesh_cloth.fragment_cache": "mc2.setups.mesh_cloth.static",
+    "mc2.setups.mesh_cloth.frame_input": "mc2.setups.mesh_cloth.frame",
+    "mc2.setups.mesh_cloth.properties": "mc2.setups.mesh_cloth.registration",
+    "mc2.setups.mesh_cloth.schema": "mc2.setups.mesh_cloth.registration",
+    "mc2.setups.mesh_cloth.static_build": "mc2.setups.mesh_cloth.static",
+    "mc2.setups.mesh_cloth.static_fragment": "mc2.setups.mesh_cloth.static",
+    "mc2.source_identity": "mc2.product_request",
+}
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",
 ))
@@ -561,6 +597,14 @@ def _python_facts() -> dict:
         for dependency in sorted(dependencies)
         if dependency in E7_LEGACY_MODULES
     ]
+    e7s_merge_sources = sorted(set(modules) & set(E7S_PYTHON_MERGE_TARGETS))
+    e7s_projected_modules = (
+        set(modules) - set(E7S_PYTHON_MERGE_TARGETS)
+    ) | {
+        target
+        for source, target in E7S_PYTHON_MERGE_TARGETS.items()
+        if source in modules
+    }
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -595,6 +639,12 @@ def _python_facts() -> dict:
             product_boundary_violations,
             key=lambda item: (item["module"], item["line"], item["name"]),
         ),
+        "e7s_python_layout": {
+            "merge_targets": dict(sorted(E7S_PYTHON_MERGE_TARGETS.items())),
+            "remaining_merge_sources": e7s_merge_sources,
+            "remaining_merge_source_count": len(e7s_merge_sources),
+            "projected_module_count": len(e7s_projected_modules),
+        },
         "e7_cpu": {
             "legacy_modules": sorted(E7_LEGACY_MODULES),
             "product_runtime_roots": list(E7_PRODUCT_RUNTIME_ROOTS),
@@ -866,6 +916,11 @@ def _print_summary(report: dict) -> None:
         "E7 debug reachable legacy modules: "
         f"{len(python['e7_cpu']['debug_reachable_legacy'])}"
     )
+    print(
+        "E7-S Python layout: "
+        f"{python['e7s_python_layout']['remaining_merge_source_count']} merge sources, "
+        f"{python['e7s_python_layout']['projected_module_count']} projected modules"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -915,6 +970,11 @@ def main() -> None:
         action="store_true",
         help="fail when MC2 debug modules import a legacy MC2 owner",
     )
+    parser.add_argument(
+        "--e7s-python-layout-check",
+        action="store_true",
+        help="fail while planned E7-S Python merge-source modules still exist",
+    )
     args = parser.parse_args()
     report = build_report()
     if args.json:
@@ -956,6 +1016,11 @@ def main() -> None:
     ):
         raise SystemExit(1)
     if args.e7_debug_import_check and report["python"]["e7_cpu"]["debug_reachable_legacy"]:
+        raise SystemExit(1)
+    if (
+        args.e7s_python_layout_check
+        and report["python"]["e7s_python_layout"]["remaining_merge_sources"]
+    ):
         raise SystemExit(1)
 
 

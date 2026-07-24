@@ -28,7 +28,7 @@ BoneCloth 只保留 Armature authoring、骨链拓扑、动画姿态采集和 Po
 
 1. 旧 Bone constraint runner 的唯一数值证据已全部迁入产品 runner；中立 Armature/几何 helper 已由产品测试直接拥有，读取旧 slot/context 的断言已淘汰。
 2. 产品、公开节点和 debug 可达性审计为零；`solver.py`、`native_context.py`、`interaction_scope.py`、`specs.py` 与纯旧 runner 已删除。
-3. BoneCloth 不再单独阻塞旧 owner 删除；native V0 ABI/TU、专用头文件和直接 V0 native tests 也已删除。剩余工作与 Mesh/BoneSpring 共用：执行 E7-S、P6 合同收口和最终双 ABI/Blender 验收；全部门禁关闭后物理删除本文档。
+3. BoneCloth 不再单独阻塞旧 owner 删除；native V0 ABI/TU、专用头文件和直接 V0 native tests 也已删除。剩余工作与 Mesh/BoneSpring 共用：执行 E7-S Python 文件职责收敛与兼容层清理、P6 合同收口和最终双 ABI/Blender 验收；全部门禁关闭后物理删除本文档。
 
 ## 删除门槛
 

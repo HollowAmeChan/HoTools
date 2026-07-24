@@ -585,31 +585,30 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 
 ## 文件职责重排
 
-目标文件边界如下，名称可在实现时微调，但职责不能重新混合：
+E7-S 开始时 Python 生产树共有 72 个模块、约 3.3 万行。迁移阶段按参数阶段、setup 名称和同名转发拆出的文件过多，目标不是把所有代码塞进少数大文件，而是让文件边界与真实 owner、生命周期和依赖方向一致。只有以下职责允许独立成文件：公开注册或持久化格式、Blender 主线程边界、不可变数据合同、跨帧 owner、native bridge、debug renderer。仅代表流水线中间阶段、同名转发、迁移别名或单个小 dataclass 的文件必须合并。
 
-| 模块 | 唯一职责 |
-|---|---|
-| `partition_specs.py` | authoring entry、sparse patch、merge provenance；不读 Blender、不建 task。 |
-| `domain_collect.py` | entry -> `MC2DomainDraft`、fusion compatibility 与装配报告。 |
-| `setups/mesh_cloth/source_capture.py` | Blender 主线程静态 source capture。 |
-| `setups/mesh_cloth/static_fragment.py` | 单 partition Mesh 拓扑/约束 fragment 构建；不注册 context。 |
-| `domain_ir.py` | 后端中立 compiled domain、index view、output map 数据合同。 |
-| `domain_capabilities.py` | allocation 前schema/setup/capability/容量检查；不加载或拥有backend。 |
-| `domain_compile.py` | 有序 fragment 的 partition-local -> logical 索引重定位、分级参数 SoA、collision/output table 编译与纯 cache-reuse 报告。 |
-| `cpu_backend.py` | E3 单 source CPU domain 生命周期适配器；能力门、frame/step/output identity、physical->logical 归一化、partition history 与 dispose 所有权；kernel 通过窄协议注入。 |
-| `cpu_native_kernel.py` | E3 显式 native kernel adapter；只允许 `data_path_only=True`，把 compiled/frame POD 交给独立 C++ owner，并以独立开关暴露已验证的 integration/Distance/Center frame-pose/Center evaluator slice；完整 solver 未就绪时拒绝 product step。 |
-| `frame_compile.py` | 各 partition 冻结 frame snapshot 的纯校验与 logical index view 打包；不读取 Blender、不拥有历史或 backend。 |
-| `domain_parameters.py` | resolved 参数 -> 热更新 parameter packet；不改变 topology layout。 |
-| `frame_capture.py` 及 setup adapter | Blender 主线程逐 partition frame snapshot。 |
-| `frame_compile.py` | snapshots -> domain frame packet；纯数据校验与 pack plan。 |
-| `backends/contracts.py` | create/update/step/read/inspect/dispose 接口。 |
-| `backends/cpu.py` | 新 CPU domain ABI 的薄适配；不读 Blender。 |
-| `backends/gpu.py` | 将同一 IR 转成 GPU 资源和 dispatch；不改变 authoring 合同。 |
-| `domain_output.py` | 纯 host domain output + output map -> target-local offset commands；不读 Blender、不发布事务。 |
-| `product_solver.py` | 多 request 的 staged prepare/execute/publish 事务编排，不构造 setup 拓扑细节。 |
-| `results.py` | 公共 result envelope 与事务校验，不推断 source 切片。 |
+目标布局由 `tools/audit_mc2_architecture.py::E7S_PYTHON_MERGE_TARGETS` 机器可读冻结。全部合并后预计从 72 个模块收敛到 44 个左右，不引入超过现有 `debug.py`、`debug_draw.py`、`cpu_native_kernel.py` 规模的新文件：
 
-永久边界不允许恢复 `shadow_pipeline.py`、旧 `solver.py` 或 `native_context.py`。不要在 `product_solver.py` 中临时拼接数组；E7-S 必须让 `static_build.py` 只构建中立静态数据，不再接受或初始化旧 native context。
+| 目标 owner | 合并内容 | 保持的边界 |
+|---|---|---|
+| `declaration.py` | `names.py`、setup capability 与声明常量 | 只描述注册和能力，不持有运行时状态。 |
+| `parameters.py` | profile/task/runtime 参数与唯一归一化入口 | preset 外部格式仍由 `presets.py` 隔离。 |
+| `product_request.py` | Mesh/Bone authoring、source identity、setup-neutral request | 不 capture Blender 数据，不创建 slot。 |
+| `product_collect.py` | Mesh/Bone request 的静态采集与 setup dispatch | setup 细节只经 adapter hook 进入。 |
+| `product_frame.py` | Mesh/Bone frame capture 后的校验、pack 与 DomainV1 packet | 不拥有历史，不执行 native step。 |
+| `domain_compile.py` | draft、capability gate、relocation、parameter SoA 与 output map | `domain_ir.py` 继续只放后端中立 immutable 合同。 |
+| `constraint_static.py` | Mesh baseline、Distance、Bending、self primitive 的纯派生构建 | 不接受 `native_context`，不初始化 backend。 |
+| `runtime_state.py` | fixed-step scheduler 与 frame/reset 连续性合同 | 不读取 Blender，不拥有 DomainV1 handle。 |
+| `product_slot.py` | domain transaction owner、world slot lifecycle、stage/commit/dispose | `cpu_backend.py` 继续只封装 native DomainV1 handle。 |
+| `product_solver.py` | 多 request 调度、Anchor 历史、prepare/execute/publish | 不拼静态数组，不内联 setup 细节。 |
+| `results.py` | logical output、公共 result envelope 与原子写回计划 | 不从 physical buffer 猜 source 切片。 |
+| setup `registration.py` | RNA schema、PropertyGroup 与 capability 声明 | 只服务 Blender 注册，不进入 solver。 |
+| setup `static.py` | fragment cache、单 partition static build 与 frozen fragment | Mesh final proxy/Bone 基础几何算法可保留独立大模块。 |
+| setup `frame.py` | setup frame capture 与对应 output adapter | 只处理 Blender 边界，不持有求解历史。 |
+
+`topology.py` 吸收 Mesh topology identity，`center_state.py` 吸收 Anchor 小适配器，`setups/__init__.py` 吸收轻量 setup 声明。三个 setup 的 `__init__.py` 作为注册 manifest 可以保留；`source_observation.py` 与 `source_observation_blender.py` 保持 pure/Blender 分界；native loader、kernel bridge、产品 debug snapshot 与 renderer 均保持独立。
+
+迁移按“声明与纯合同 -> static owner -> authoring/collect/frame -> runtime owner/result -> 兼容命名清理”分批提交。每批直接更新所有生产 import 和测试，不创建转发 shim；旧模块名只有在当前批尚未迁移时存在，最终 `--e7s-python-layout-check` 必须为零。永久边界不允许恢复 `shadow_pipeline.py`、旧 `solver.py` 或 `native_context.py`。
 
 ## 明确的数据流
 
@@ -900,6 +899,7 @@ E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V
 
 E7-S至少完成以下简化：
 
+- 按“文件职责重排”把 72 个 Python 生产模块收敛到约 44 个真实 owner 文件；删除阶段文件、同名转发和迁移 re-export，不以兼容 shim 保留旧 import 路径；
 - product authoring/collection/solver从Mesh专用命名收敛为setup-neutral核心，setup adapter只保留capture/fragment/frame/output hook；
 - 删除旧task到product request、V0 result到domain result、单target到事务batch的双向翻译层；
 - 合并重复的slot identity、scheduler、Center/Anchor history、debug request和dispose路径；
