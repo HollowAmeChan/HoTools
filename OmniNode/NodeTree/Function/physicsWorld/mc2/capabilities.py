@@ -9,7 +9,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
     "capability_id": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "identifier": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "owner": "physicsWorld.mc2",
-    "storage": "MC2PartitionCollectorPlan + MC2ParticleProfileSpec；旧MC2TaskSpec仅待E7迁移",
+    "storage": "MC2PartitionCollectorPlan + MC2ParticleProfileSpec",
     "fields": (
         {
             "name": "setup_type",

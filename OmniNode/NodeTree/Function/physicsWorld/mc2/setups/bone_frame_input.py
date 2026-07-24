@@ -88,19 +88,6 @@ def _stage_mc2_bone_frame_state(world) -> MC2BoneFrameStateStageV1:
     )
 
 
-def _task_frame_intent(task) -> _MC2BoneFrameIntentV1:
-    from ..specs import MC2TaskSpec
-
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
-    return _MC2BoneFrameIntentV1(
-        partition_id=task.task_id,
-        setup_type=task.setup_type,
-        sources=task.sources,
-        anchor_owner=task,
-    )
-
-
 def _partition_frame_intent(partition) -> _MC2BoneFrameIntentV1:
     from ..partition_specs import MC2ResolvedPartitionSpec
     from ..product_bone_authoring import MC2BonePartitionSourceV1
@@ -282,23 +269,6 @@ def _bone_armature_component_pose(armature):
     )
 
 
-def build_mc2_bone_frame_input(
-    task: MC2TaskSpec,
-    topology: MC2TopologySpec,
-    *,
-    frame: int,
-    generation: int,
-    world=None,
-) -> MC2FrameInputSpec:
-    return _build_mc2_bone_frame_input(
-        _task_frame_intent(task),
-        topology,
-        frame=frame,
-        generation=generation,
-        world=world,
-    )
-
-
 def build_mc2_bone_partition_frame_input(
     partition,
     topology: MC2TopologySpec,
@@ -307,7 +277,7 @@ def build_mc2_bone_partition_frame_input(
     generation: int,
     world=None,
 ) -> MC2FrameInputSpec:
-    """读取 resolved Bone partition，且不创建 MC2TaskSpec 或 V0 context。"""
+    """读取 resolved Bone partition 的逐帧输入。"""
 
     return _build_mc2_bone_frame_input(
         _partition_frame_intent(partition),
@@ -506,7 +476,6 @@ def capture_mc2_bone_product_frame_inputs(
 __all__ = [
     "MC2_BONE_FRAME_STATE_KEY",
     "MC2BoneFrameStateStageV1",
-    "build_mc2_bone_frame_input",
     "build_mc2_bone_partition_frame_input",
     "capture_mc2_bone_product_frame_inputs",
     "clear_mc2_bone_frame_state",

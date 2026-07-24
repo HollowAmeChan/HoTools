@@ -358,9 +358,9 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 | P6 | backend-neutral data/pass/buffer/IO、容量、增量更新和 CPU tolerance 足以让 GPU backend 直接开工。 |
 ## 后续工作顺序
 
-1. 在 E7 删除前迁移剩余旧 capability 证据，并完成 BoneCloth/BoneSpring 包装限制签字。
-2. 迁出 `specs.py` 中立合同，删除 Python V0 owner、普通 aggregate、native V0 ABI/TU。
-3. 执行 E7-S，清除迁移期 fallback、双 schema/result 翻译、旧 resource key 和无调用 forwarder。
+1. 旧 capability 证据迁移、BoneCloth/BoneSpring 包装限制签字、中立合同归位和 Python V0 owner/aggregate 入口删除已经完成。
+2. 删除 68 个 native V0 binding、5 个 context TU、API/CMake 残留和直接 V0 native tests，并用重新编译的 py313 产物验收。
+3. 执行 E7-S，清除迁移期可选 `native_context` 参数、fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
 4. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
 5. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
 6. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。

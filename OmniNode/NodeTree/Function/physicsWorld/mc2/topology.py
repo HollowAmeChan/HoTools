@@ -28,21 +28,6 @@ class _MC2TopologyIntentV1:
     setup_options: object
 
 
-def _task_intent(task) -> _MC2TopologyIntentV1:
-    from .specs import MC2TaskSpec
-
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task 必须是 MC2TaskSpec")
-    return _MC2TopologyIntentV1(
-        task_id=task.task_id,
-        setup_type=task.setup_type,
-        topology_signature=task.topology_signature,
-        sources=task.sources,
-        profile=task.profile,
-        setup_options=task.setup_options,
-    )
-
-
 def _partition_intent(partition) -> _MC2TopologyIntentV1:
     from .partition_specs import MC2ResolvedPartitionSpec
     from .product_bone_authoring import MC2BonePartitionSourceV1
@@ -331,25 +316,6 @@ def _mesh_input_fingerprint(
     ))
 
 
-def read_mc2_static_source_observation(
-    task: "MC2TaskSpec",
-    source,
-    *,
-    armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
-) -> tuple[
-    dict[str, str],
-    MC2MeshRawSnapshot | MC2BoneRawSnapshot | None,
-]:
-    """Read one source once and derive its topology/geometry/surface hashes."""
-
-    intent = _task_intent(task)
-    return _read_mc2_static_source_observation(
-        intent.setup_type,
-        source,
-        armature_rest_snapshots=armature_rest_snapshots,
-    )
-
-
 def read_mc2_partition_static_source_observation(partition, source):
     """从 resolved partition 读取一个 source，不创建旧 task spec。"""
 
@@ -371,23 +337,6 @@ def _read_mc2_static_source_observation(
         shared_rest = {}
     snapshot = _read_bone_raw_snapshot(source, shared_rest)
     return _bone_input_fingerprint(source, snapshot), snapshot
-
-
-def compose_mc2_static_inputs(
-    task: "MC2TaskSpec",
-    source_fingerprints,
-    raw_snapshots,
-) -> tuple[
-    MC2StaticInputFingerprint,
-    tuple[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...],
-]:
-    """Compose one task fingerprint from already observed source snapshots."""
-
-    return _compose_mc2_static_inputs(
-        _task_intent(task),
-        source_fingerprints,
-        raw_snapshots,
-    )
 
 
 def compose_mc2_partition_static_inputs(
@@ -452,17 +401,6 @@ def _compose_mc2_static_inputs(
     return fingerprint, snapshots
 
 
-def prepare_static_inputs_for_task(
-    task: "MC2TaskSpec",
-) -> tuple[
-    MC2StaticInputFingerprint,
-    tuple[MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...],
-]:
-    """Read each source once and derive the native static fingerprint."""
-
-    return _prepare_static_inputs_for_intent(_task_intent(task))
-
-
 def _prepare_static_inputs_for_intent(
     intent: _MC2TopologyIntentV1,
 ):
@@ -485,15 +423,9 @@ def _prepare_static_inputs_for_intent(
 
 
 def prepare_static_inputs_for_partition(partition):
-    """读取一个 resolved Bone partition，且不创建 MC2TaskSpec。"""
+    """读取一个 resolved partition 的静态输入。"""
 
     return _prepare_static_inputs_for_intent(_partition_intent(partition))
-
-
-def static_input_fingerprint_for_task(task: "MC2TaskSpec") -> MC2StaticInputFingerprint:
-    """Classify Blender static inputs without materializing frozen topology."""
-
-    return prepare_static_inputs_for_task(task)[0]
 
 
 def _vector3(value) -> tuple[float, float, float]:
@@ -1103,21 +1035,6 @@ def _build_mc2_topology_spec(
     )
 
 
-def build_mc2_topology_spec(
-    task,
-    *,
-    static_input_fingerprint: MC2StaticInputFingerprint | None = None,
-    static_input_snapshots: tuple[
-        MC2MeshRawSnapshot | MC2BoneRawSnapshot | None, ...
-    ] | None = None,
-) -> MC2TopologySpec:
-    return _build_mc2_topology_spec(
-        _task_intent(task),
-        static_input_fingerprint=static_input_fingerprint,
-        static_input_snapshots=static_input_snapshots,
-    )
-
-
 def build_mc2_partition_topology_spec(
     partition,
     *,
@@ -1142,13 +1059,8 @@ __all__ = [
     "build_mc2_bone_source_topology",
     "build_mc2_mesh_source_topology",
     "build_mc2_partition_topology_spec",
-    "build_mc2_topology_spec",
-    "compose_mc2_static_inputs",
     "compose_mc2_partition_static_inputs",
-    "prepare_static_inputs_for_task",
     "prepare_static_inputs_for_partition",
     "read_mc2_partition_static_source_observation",
-    "read_mc2_static_source_observation",
-    "static_input_fingerprint_for_task",
     "thaw_mc2_topology_payload",
 ]

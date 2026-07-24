@@ -23,11 +23,11 @@ BoneSpring 与 BoneCloth 共用同一个 `DomainV1` backend 和 Bone 产品 coll
 | External collision | 只接受 Sphere，并消费 soft collision limit | 已有过滤、响应和确定性证据 |
 | Rotation/writeback | 使用统一 Bone output 与事务 | 已有目标集合、多 request 和失败回滚证据 |
 
-## 删除前剩余工作
+## 删除签字状态
 
-1. 将旧 BoneSpring runner 中仍有价值的 topology/参数 helper 迁到产品测试公共模块；删除依赖 `native_context` 内部计数的断言。
-2. 确认 capability matrix 不把被强制关闭的字段登记为待实现功能，也不以 BoneCloth self/Bending 证据代替 BoneSpring 限制证据。
-3. 与 Mesh/BoneCloth 共用同一 E7-CPU 删除批次移除旧 owner、hidden task、普通 aggregate 和 V0 ABI；随后执行 E7-S 简化。
+1. 有价值的 topology/参数 helper 已由产品测试拥有；依赖旧 context 内部计数的断言已淘汰。
+2. capability matrix 已把强制关闭字段归入包装限制，并由 BoneSpring 自身产品证据覆盖，不借用 BoneCloth self/Bending 证据。
+3. Python 旧 owner、hidden task、普通 aggregate 入口与纯旧 runner 已删除。剩余工作与 Mesh/BoneCloth 共用：删除 native V0 ABI/TU 和直接 V0 native tests，再执行 E7-S 简化。
 
 ## 删除门槛
 

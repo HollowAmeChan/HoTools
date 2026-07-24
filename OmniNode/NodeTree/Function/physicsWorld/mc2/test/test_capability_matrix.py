@@ -114,45 +114,44 @@ def test_product_execution_boundary_has_no_v0_owner_imports():
         assert not (set(imports) & forbidden), (filename, set(imports) & forbidden)
 
 
-def test_specs_is_v0_only_and_resolved_topology_avoids_it():
-    """specs.py 只能保留待删 V0 task 合同，中立拓扑走 resolved partition。"""
+def test_python_v0_owner_modules_and_task_adapters_are_deleted():
+    """E7-CPU 后生产树只允许 resolved partition 与产品 domain owner。"""
 
-    root = MC2_ROOT
-    specs_tree = ast.parse(
-        (root / "specs.py").read_text(encoding="utf-8"),
-        filename=str(root / "specs.py"),
-    )
-    top_level = {
-        node.name
-        for node in specs_tree.body
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    removed_modules = {
+        "specs.py",
+        "solver.py",
+        "native_context.py",
+        "interaction_scope.py",
+        "shadow_pipeline.py",
     }
-    assert top_level == {
-        "_normalize_sources",
-        "_source_identity",
-        "_ordered_source_identity",
+    assert not {path.name for path in MC2_ROOT.iterdir()} & removed_modules
+
+    forbidden_symbols = {
         "MC2TaskSpec",
-        "_spec_signature",
-        "make_mc2_task_spec",
         "build_mc2_task_specs",
+        "make_mc2_task_spec",
+        "build_mc2_topology_spec",
+        "prepare_static_inputs_for_task",
+        "static_input_fingerprint_for_task",
+        "prepare_observed_static_inputs",
+        "build_mc2_bone_cloth_static_for_task",
+        "build_mc2_mesh_cloth_static_for_task",
+        "build_mc2_bone_frame_input",
     }
-
-    topology_tree = ast.parse(
-        (root / "topology.py").read_text(encoding="utf-8"),
-        filename=str(root / "topology.py"),
-    )
-    resolved = {
-        node.name: node
-        for node in topology_tree.body
-        if isinstance(node, ast.FunctionDef)
-    }
-    for function_name in ("_partition_intent", "prepare_static_inputs_for_partition"):
-        imports = {
-            ("." * node.level) + (node.module or "")
-            for node in ast.walk(resolved[function_name])
-            if isinstance(node, ast.ImportFrom)
+    production = [
+        path
+        for path in MC2_ROOT.rglob("*.py")
+        if "test" not in path.relative_to(MC2_ROOT).parts
+    ]
+    for path in production:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        defined = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        assert ".specs" not in imports, (function_name, imports)
+        assert not defined & forbidden_symbols, (path, defined & forbidden_symbols)
 
 
 def test_bone_frame_compatibility_entry_is_product_only():

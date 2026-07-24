@@ -45,19 +45,6 @@ class _MC2BoneStaticIntentV1:
     sources: tuple[object, ...]
 
 
-def _task_static_intent(task) -> _MC2BoneStaticIntentV1:
-    from ...specs import MC2TaskSpec
-
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
-    return _MC2BoneStaticIntentV1(
-        task_id=task.task_id,
-        setup_type=task.setup_type,
-        profile=task.profile,
-        sources=task.sources,
-    )
-
-
 def _partition_static_intent(partition) -> _MC2BoneStaticIntentV1:
     from ...partition_specs import MC2ResolvedPartitionSpec
     from ...product_bone_authoring import MC2BonePartitionSourceV1
@@ -456,21 +443,6 @@ def _initial_armature_world_columns(intent: _MC2BoneStaticIntentV1):
     return None
 
 
-def build_mc2_bone_cloth_static_for_task(
-    task: MC2TaskSpec,
-    topology: MC2TopologySpec,
-    *,
-    raw_snapshots=None,
-    native_context=None,
-) -> MC2BoneClothStaticBuildResult | None:
-    return _build_mc2_bone_static(
-        _task_static_intent(task),
-        topology,
-        raw_snapshots=raw_snapshots,
-        native_context=native_context,
-    )
-
-
 def build_mc2_bone_static_for_partition(
     partition,
     topology: MC2TopologySpec,
@@ -669,7 +641,6 @@ def _build_mc2_bone_static(
 __all__ = [
     "MC2BoneClothStaticBuildResult",
     "MC2BoneClothStaticMetadata",
-    "build_mc2_bone_cloth_static_for_task",
     "build_mc2_bone_static_for_partition",
     "mc2_bone_static_domain_error",
 ]

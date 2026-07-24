@@ -10,8 +10,8 @@ from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
 from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 from .capabilities import MC2_CAPABILITIES, MC2_UPDATE_FREQUENCY_TABLE
 from .names import (
+    MC2_FUSED_PRODUCT_SLOT_KIND,
     MC2_SETUP_TYPES,
-    MC2_SLOT_KIND,
     MC2_SOLVER_ID,
     MC2_STATS_CHANNEL,
 )
@@ -19,14 +19,12 @@ from .names import (
 
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
-    "slot_kind": MC2_SLOT_KIND,
-    "stage": "mesh_bone_e5b_product_nodes_multi_request",
+    "slot_kind": MC2_FUSED_PRODUCT_SLOT_KIND,
+    "stage": "e7_cpu_product_domain_only",
     "native_strategy": "one_domain_v1_per_explicit_product_collector",
-    "implementation_status": "mesh_and_bone_product_nodes_enabled_e7_cpu_pending",
+    "implementation_status": "python_v0_owner_removed_native_v0_pending",
     "slot_kinds": [
-        MC2_SLOT_KIND,
-        "mc2_fused_cpu_product_v1",
-        "mc2_fused_mesh_cpu_v1",
+        MC2_FUSED_PRODUCT_SLOT_KIND,
     ],
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
@@ -48,7 +46,6 @@ MC2_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
         "one or more explicit MC2ProductRequestV1 domains",
-        "list[MC2TaskSpec] only through explicit pre-E7 V0 oracle paths",
         "PhysicsWorldCache implicit tag mc2.mesh_partition.v1",
         "optional task.anchor_object evaluated world transform",
         "MC2 step time_scale/simulation_frequency/max_simulation_count_per_frame",
@@ -60,12 +57,6 @@ MC2_SOLVER_DECLARATION = {
         f'world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
-        "slot.data.topology",
-        "slot.data.effective_parameters",
-        "slot.data.runtime_state",
-        "slot.data.writeback_plan",
-        "slot.data.native_context",
-        "slot.data.result_candidate",
         "fused slot.data.owner",
         "fused slot.data.collection",
         "fused slot.data.scheduler_state",
@@ -74,22 +65,20 @@ MC2_SOLVER_DECLARATION = {
     ],
     "dirty_keys": [
         "world.generation",
-        "task.setup_type",
-        "task.sources",
-        "task.task_id",
-        "task.source_signature",
-        "task.topology_signature",
-        "task.config_signature",
-        "task.parameter_signature",
+        "request.setup_type",
+        "request.domain_signature",
+        "request.plan.report.topology_signature",
+        "request.plan.report.config_signature",
+        "request.plan.report.parameter_signature",
         "step.scheduler_settings_signature",
         "collider_snapshot.source_key",
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
         "node_execution": "always_run_then_frame_context_decides_step_reset_pause_or_same_frame",
-        "framework": "product_requests_use_dynamic_domain_v1_legacy_tasks_are_v0_oracle_until_e7",
+        "framework": "product_requests_use_dynamic_domain_v1_only",
         "solver_core": "all_product_domains_v1_fixed_full_pass_order",
-        "setup_dispatch": "explicit_product_request_batch_or_explicit_v0_oracle_never_implicit_fallback",
+        "setup_dispatch": "explicit_product_request_batch_only",
         "bone_cloth_partition": "one_control_bone_per_partition_same_armature_per_explicit_collector",
         "bone_frame_feedback": "mc2_owned_restore_read_barrier_preserves_current_animation_override",
         "bone_motion_mapping": "connected_rotation_only_disconnected_position_rotation",
@@ -129,5 +118,5 @@ MC2_SOLVER_DECLARATION = {
         "supports_bake": False,
         "solver_acceptance_blocker": False,
     },
-    "legacy_policy": "mesh_v0_task_and_aggregate_frozen_pending_e7_cpu_removal_no_collector_fallback",
+    "legacy_policy": "python_v0_owner_deleted_native_v0_pending_removal",
 }

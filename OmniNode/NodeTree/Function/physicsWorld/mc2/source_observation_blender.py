@@ -18,12 +18,9 @@ from .source_observation import (
 )
 from .topology import (
     MC2StaticInputFingerprint,
-    compose_mc2_static_inputs,
     compose_mc2_partition_static_inputs,
-    prepare_static_inputs_for_task,
     prepare_static_inputs_for_partition,
     read_mc2_partition_static_source_observation,
-    read_mc2_static_source_observation,
 )
 
 
@@ -283,28 +280,6 @@ def _prepare_observed_static_inputs(
         snapshots=frozen_snapshots,
         identities=tuple(identities),
         statuses=tuple(statuses),
-    )
-
-
-def prepare_observed_static_inputs(
-    world,
-    task,
-    *,
-    force_audit: bool | None = None,
-) -> MC2ObservedStaticInputs:
-    """旧V0 oracle入口；E7-CPU删除前只供显式task调用。"""
-
-    return _prepare_observed_static_inputs(
-        world,
-        setup_type=task.setup_type,
-        sources=tuple(task.sources),
-        receipt_slot_id=str(task.task_id),
-        read_source=lambda source: read_mc2_static_source_observation(task, source),
-        compose=lambda fingerprints, snapshots: compose_mc2_static_inputs(
-            task, fingerprints, snapshots
-        ),
-        prepare_uncached=lambda: prepare_static_inputs_for_task(task),
-        force_audit=force_audit,
     )
 
 

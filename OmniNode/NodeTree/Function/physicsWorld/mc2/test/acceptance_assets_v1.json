@@ -164,10 +164,10 @@
     {
       "id": "implicit_debug_capture",
       "setup_types": ["mesh_cloth", "bone_cloth"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_debug_draw.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_product_debug_acceptance.py",
       "production_surface": [
         "always-run implicit debug node and automatic world slot discovery",
-        "request-driven next-advance native context and interaction readback",
+        "request-driven next-advance DomainV1 debug readback",
         "semantic viewport layers from frozen slot snapshots",
         "world-owned draw store lifecycle"
       ],

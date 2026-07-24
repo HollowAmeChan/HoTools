@@ -33,9 +33,6 @@ for package_name, package_path in (
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
-specs = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
-)
 topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
 )
@@ -147,8 +144,8 @@ def _armature():
     return Armature(bones)
 
 
-def _task(armature):
-    sources = [
+def _sources(armature):
+    return [
         {
             "armature": armature,
             "root_bone": f"{prefix}0",
@@ -156,9 +153,11 @@ def _task(armature):
         }
         for prefix in ("A", "B", "C")
     ]
-    return specs.make_mc2_task_spec(
-        "bone_cloth",
-        sources,
+
+
+def _request(armature):
+    return product_authoring.make_mc2_bone_cloth_product_request(
+        _sources(armature),
         profile=parameters.make_mc2_particle_profile(),
         setup_options=parameters.make_mc2_setup_options(
             "bone_cloth",
@@ -169,19 +168,15 @@ def _task(armature):
 
 
 def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
-    task = _task(_armature())
-    built_topology = topology.build_mc2_topology_spec(task)
-    assert built_topology.connection_model == "hotools_product"
-    source_task = specs.make_mc2_task_spec(
-        "bone_cloth",
-        task.sources,
-        setup_options=parameters.make_mc2_setup_options(
-            "bone_cloth",
-            connection_mode=1,
-        ),
+    request = _request(_armature())
+    partition = request.plan.active_partitions[0]
+    fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+    built_topology = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=snapshots,
     )
-    assert source_task.task_id == task.task_id
-    assert source_task.topology_signature != task.topology_signature
+    assert built_topology.connection_model == "hotools_product"
     assert len(built_topology.sources) == 3
     assert built_topology.particle_count == 9
     assert {(0, 3), (1, 4), (2, 5), (3, 6), (4, 7), (5, 8)} <= set(
@@ -189,9 +184,10 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
     )
     assert built_topology.bone_connection.triangles
 
-    built_static = static_build.build_mc2_bone_cloth_static_for_task(
-        task,
+    built_static = static_build.build_mc2_bone_static_for_partition(
+        partition,
         built_topology,
+        raw_snapshots=snapshots,
     )
     assert built_static.connection_model == "hotools_product"
     assert built_static.final_proxy.vertex_count == 9
@@ -203,44 +199,32 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
 
 
 def test_product_task_rejects_sources_from_multiple_armatures() -> None:
-    task = _task(_armature())
+    armature = _armature()
     other = _armature()
     other._pointer = 2001
     other.data._pointer = 2002
-    mixed_sources = list(task.sources)
+    mixed_sources = _sources(armature)
     replacement = dict(mixed_sources[-1])
     replacement["armature"] = other
     mixed_sources[-1] = replacement
-    mixed = specs.make_mc2_task_spec(
-        "bone_cloth",
-        mixed_sources,
-        profile=task.profile,
-        setup_options=task.setup_options,
-    )
-    built_topology = topology.build_mc2_topology_spec(mixed)
     try:
-        static_build.build_mc2_bone_cloth_static_for_task(mixed, built_topology)
+        product_authoring.make_mc2_bone_cloth_product_request(
+            mixed_sources,
+            setup_options=parameters.make_mc2_setup_options(
+                "bone_cloth",
+                connection_model="hotools_product",
+                connection_mode=1,
+            ),
+        )
     except ValueError as exc:
-        assert "one Armature" in str(exc)
+        assert "一个 Armature" in str(exc)
     else:
-        raise AssertionError("multi-armature BoneCloth task was accepted")
+        raise AssertionError("multi-armature BoneCloth product was accepted")
 
 
-def test_product_partition_capture_matches_task_topology_without_task_creation() -> None:
+def test_product_partition_capture_builds_complete_static_contract() -> None:
     armature = _armature()
-    task = _task(armature)
-    legacy_fingerprint, legacy_snapshots = topology.prepare_static_inputs_for_task(task)
-    legacy = topology.build_mc2_topology_spec(
-        task,
-        static_input_fingerprint=legacy_fingerprint,
-        static_input_snapshots=legacy_snapshots,
-    )
-    request = product_authoring.make_mc2_bone_cloth_product_request(
-        list(task.sources),
-        profile=task.profile,
-        setup_options=task.setup_options,
-        task_parameters=task.task_parameters,
-    )
+    request = _request(armature)
     partition = request.plan.active_partitions[0]
     product_fingerprint, product_snapshots = (
         topology.prepare_static_inputs_for_partition(partition)
@@ -251,57 +235,31 @@ def test_product_partition_capture_matches_task_topology_without_task_creation()
         static_input_snapshots=product_snapshots,
     )
     assert product.task_id == partition.stable_id
-    assert product.particle_count == legacy.particle_count == 9
-    assert product.connection_mode == legacy.connection_mode
-    assert product.connection_model == legacy.connection_model == "hotools_product"
-    assert product.bone_connection.lines == legacy.bone_connection.lines
-    assert product.bone_connection.triangles == legacy.bone_connection.triangles
-    assert product.bone_connection.root_indices == legacy.bone_connection.root_indices
-    assert product_fingerprint.geometry == legacy_fingerprint.geometry
-    assert product_fingerprint.surface == legacy_fingerprint.surface
-
-    legacy_static = static_build.build_mc2_bone_cloth_static_for_task(
-        task,
-        legacy,
-        raw_snapshots=legacy_snapshots,
+    assert product.particle_count == 9
+    assert product.connection_mode == 1
+    assert product.connection_model == "hotools_product"
+    assert product.bone_connection.root_indices == (0, 0, 0, 1, 1, 1, 2, 2, 2)
+    assert {(0, 3), (1, 4), (2, 5), (3, 6), (4, 7), (5, 8)} <= set(
+        product.bone_connection.lines
     )
+    assert product.bone_connection.triangles
+    assert len(product_fingerprint.geometry) == 32
+    assert len(product_fingerprint.surface) == 32
+
     product_static = static_build.build_mc2_bone_static_for_partition(
         partition,
         product,
         raw_snapshots=product_snapshots,
     )
-    assert product_static.final_proxy.vertex_identities == (
-        legacy_static.final_proxy.vertex_identities
-    )
-    assert product_static.final_proxy.edges == legacy_static.final_proxy.edges
-    assert product_static.final_proxy.triangles == legacy_static.final_proxy.triangles
-    np.testing.assert_allclose(
-        product_static.final_proxy.local_positions,
-        legacy_static.final_proxy.local_positions,
-        rtol=0.0,
-        atol=0.0,
-    )
-    np.testing.assert_allclose(
-        product_static.baseline.depths,
-        legacy_static.baseline.depths,
-        rtol=0.0,
-        atol=0.0,
-    )
-    assert product_static.distance.distance_ranges == legacy_static.distance.distance_ranges
-    assert product_static.distance.distance_targets == legacy_static.distance.distance_targets
-    np.testing.assert_allclose(
-        product_static.distance.distance_rest_signed,
-        legacy_static.distance.distance_rest_signed,
-        rtol=0.0,
-        atol=0.0,
-    )
-    assert product_static.bending.bending_quads == legacy_static.bending.bending_quads
-    np.testing.assert_allclose(
-        product_static.bending.bending_rest_angle_or_volume,
-        legacy_static.bending.bending_rest_angle_or_volume,
-        rtol=0.0,
-        atol=0.0,
-    )
+    assert product_static.final_proxy.vertex_count == 9
+    assert product_static.final_proxy.edges
+    assert product_static.final_proxy.triangles
+    assert product_static.distance.distance_targets
+    assert product_static.bending.bending_quads
+    assert np.isfinite(product_static.final_proxy.local_positions).all()
+    assert np.isfinite(product_static.baseline.depths).all()
+    assert np.isfinite(product_static.distance.distance_rest_signed).all()
+    assert np.isfinite(product_static.bending.bending_rest_angle_or_volume).all()
     fragment = bone_fragment.build_mc2_bone_static_fragment(
         partition,
         product_fingerprint,
@@ -345,11 +303,9 @@ def test_product_partition_capture_matches_task_topology_without_task_creation()
 
 def test_bone_spring_partition_uses_the_same_domain_owner() -> None:
     armature = _armature()
-    source_task = _task(armature)
     request = product_authoring.make_mc2_bone_spring_product_request(
-        list(source_task.sources),
-        profile=source_task.profile,
-        task_parameters=source_task.task_parameters,
+        _sources(armature),
+        profile=parameters.make_mc2_particle_profile(),
     )
     partition = request.plan.active_partitions[0]
     fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
@@ -629,8 +585,8 @@ TESTS = (
     ),
     ("multi-armature task rejection", test_product_task_rejects_sources_from_multiple_armatures),
     (
-        "partition capture matches task topology",
-        test_product_partition_capture_matches_task_topology_without_task_creation,
+        "partition capture builds complete static contract",
+        test_product_partition_capture_builds_complete_static_contract,
     ),
     (
         "BoneSpring partition uses unified owner",

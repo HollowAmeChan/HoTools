@@ -24,7 +24,6 @@ from ...names import MC2_SETUP_MESH_CLOTH
 from ...self_collision_static import MC2SelfCollisionStaticMetadata
 from ...self_collision_static import MC2SelfCollisionStaticSpec
 from ...self_collision_static import build_mc2_self_collision_static
-from ...topology import MC2TopologySpec
 from .final_proxy import MC2MeshFinalProxyBuildResult
 from .final_proxy import build_blender_mesh_final_proxy
 
@@ -162,17 +161,6 @@ def _matrix_world_columns(obj) -> tuple[tuple[float, float, float, float], ...]:
     )
 
 
-def _resolve_mesh_object(source):
-    if isinstance(source, dict):
-        source = source.get("proxy_obj") or source.get("object")
-    if getattr(source, "type", None) != "MESH":
-        return None
-    mesh = getattr(source, "data", None)
-    if mesh is None or not hasattr(mesh, "vertices"):
-        return None
-    return source
-
-
 def _mesh_cloth_pin_settings(obj) -> tuple[bool, str]:
     properties = getattr(obj, "hotools_mesh_collision", None)
     if properties is None:
@@ -286,40 +274,7 @@ def build_mc2_mesh_cloth_static(
     return result
 
 
-def build_mc2_mesh_cloth_static_for_task(
-    task,
-    topology: MC2TopologySpec,
-    *,
-    native_context=None,
-    raw_snapshot=None,
-) -> MC2MeshClothStaticBuildResult | None:
-    from ...specs import MC2TaskSpec
-
-    if not isinstance(task, MC2TaskSpec):
-        raise TypeError("task must be MC2TaskSpec")
-    if not isinstance(topology, MC2TopologySpec):
-        raise TypeError("topology must be MC2TopologySpec")
-    if task.setup_type != MC2_SETUP_MESH_CLOTH:
-        return None
-    resolved = tuple(_resolve_mesh_object(source) for source in task.sources)
-    mesh_sources = tuple(source for source in resolved if source is not None)
-    if not mesh_sources:
-        return None
-    if len(task.sources) != 1 or len(mesh_sources) != 1:
-        raise ValueError("MeshCloth MC2 static build expects exactly one proxy mesh source")
-    obj = mesh_sources[0]
-    return build_mc2_mesh_cloth_static(
-        obj,
-        task_id=task.task_id,
-        topology_signature=None,
-        world_gravity_direction=task.profile.gravity_direction,
-        native_context=native_context,
-        raw_snapshot=raw_snapshot,
-    )
-
-
 __all__ = [
     "MC2MeshClothStaticBuildResult",
     "build_mc2_mesh_cloth_static",
-    "build_mc2_mesh_cloth_static_for_task",
 ]
