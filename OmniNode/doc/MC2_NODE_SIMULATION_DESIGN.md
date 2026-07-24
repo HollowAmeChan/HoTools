@@ -628,7 +628,7 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 兼容 runner 审计已物理删除 `test_blender_mc2_bone_constraint_soak.py`、`test_blender_mc2_bone_frame.py` 与 `test_blender_mc2_bone_static.py` 三份只转发产品测试的门面。`acceptance_assets_v1.json` 已直接指向 Bone 产品与 BoneSpring restrictions runner；能力矩阵验证旧文件及资产引用均不存在。替代证据由 Blender 5.2 Bone 产品集成、BoneSpring 599 帧限制和 BoneCloth 900 帧约束 soak 直接提供。
 
-同一审计继续删除 `test_blender_mc2_final_proxy.py` 与 `test_blender_mc2_base_pose.py` 两份 Mesh 转发门面，验收资产改指 Mesh product static 与 BasePose runner；final-proxy Tier A oracle 继续由纯 Python 测试直接提供。能力矩阵用一个不存在性断言覆盖全部 5 个旧 runner，不再逐文件验证“兼容门面是否足够干净”。
+同一审计继续删除 `test_blender_mc2_final_proxy.py` 与 `test_blender_mc2_base_pose.py` 两份 Mesh 转发门面，以及同时串行转发 mixed-output 与 Center 产品门禁的 `test_blender_mc2_mixed_output_soak.py`。验收资产直接指向 Mesh product static、BasePose、mixed-output 与 Center 产品 runner；final-proxy Tier A oracle 继续由纯 Python 测试直接提供。能力矩阵用一个不存在性断言覆盖全部 6 个旧 runner，不再逐文件验证“兼容门面是否足够干净”。Center World 产品门禁同时固定初始化帧已提交一次 Center shift，以及未启用 teleport 时组件显式跳变仍属于 Center 输入位移。
 
 ## 明确的数据流
 

@@ -214,6 +214,7 @@ def test_compatibility_runners_are_deleted():
         "test_blender_mc2_bone_static.py",
         "test_blender_mc2_final_proxy.py",
         "test_blender_mc2_base_pose.py",
+        "test_blender_mc2_mixed_output_soak.py",
     }
     assert not {path.name for path in BLENDER_TEST_ROOT.iterdir()} & removed
     acceptance = (MC2_ROOT / "test" / "acceptance_assets_v1.json").read_text(
