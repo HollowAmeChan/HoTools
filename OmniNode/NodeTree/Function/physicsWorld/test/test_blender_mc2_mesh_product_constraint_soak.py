@@ -39,10 +39,10 @@ def _request(
     angle_restoration_enabled=False,
     collision_mode=0,
 ):
-    entries, count = nodes.physicsMC2MeshObject([mesh])
-    assert count == 1 and len(entries) == 1
-    entries, count = nodes.physicsMC2MeshOverride(
-        entries,
+    objects, count = nodes.physicsMC2MeshObject([mesh])
+    assert count == 1 and len(objects) == 1
+    entries, _domain_ids = nodes.physicsMC2MeshClothTask(
+        objects,
         profile=parameters.make_mc2_particle_profile(
             gravity=gravity,
             gravity_direction=gravity_direction,
@@ -65,10 +65,8 @@ def _request(
             wind_influence=0.0,
         ),
     )
-    assert count == 1
-    requests, report = nodes.physicsMC2MeshCollector(
-        world, entries, include_implicit=False
-    )
+    assert len(entries) == 1
+    requests, report = nodes.physicsMC2MeshCollector(entries)
     assert len(requests) == 1 and report
     return requests[0]
 

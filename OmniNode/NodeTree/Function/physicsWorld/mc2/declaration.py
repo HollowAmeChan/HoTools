@@ -89,7 +89,7 @@ MC2_SOLVER_DECLARATION = {
         "bone_frame_feedback": "mc2_owned_restore_read_barrier_preserves_current_animation_override",
         "bone_motion_mapping": "connected_rotation_only_disconnected_position_rotation",
         "anchor_frame": "optional_object_evaluated_each_frame_no_static_rebuild",
-        "native_backend": "one_domain_v1_per_explicit_collector",
+        "native_backend": "one_domain_v1_per_mesh_domain_collector",
     },
     "capabilities": MC2_CAPABILITIES,
     "consumes_capabilities": [
@@ -98,14 +98,6 @@ MC2_SOLVER_DECLARATION = {
         MESH_COLLISION_CAPABILITY_ID,
     ],
     "update_frequency_table": MC2_UPDATE_FREQUENCY_TABLE,
-    "implicit_objects": {
-        "consumes": ["mc2.mesh_partition.v1"],
-        "planned": ["mc2.bone_cloth", "mc2.bone_spring"],
-        "producer_nodes": ["MC2 Mesh隐式注册"],
-        "planned_producer_nodes": [],
-        "update_policy": "stable_id_snapshot_upsert_and_disable_missing_entries",
-        "conflict_policy": "implicit_then_explicit_same_stable_id_field_resolution_or_explicit_conflict_failure",
-    },
     "writeback": {
         "owner": "physicsWorld.writeback",
         "target": "shared OBJECT_LOCAL mesh final offset or PoseBone.matrix_basis selected by setup adapter",

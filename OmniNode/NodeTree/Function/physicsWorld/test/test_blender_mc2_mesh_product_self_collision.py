@@ -51,16 +51,23 @@ def _profile():
 
 
 def _partition(mesh, *, group: int, mask: int, mass: float):
-    entries, count = nodes.physicsMC2MeshObject([mesh])
-    assert count == 1 and len(entries) == 1
-    entries, count = nodes.physicsMC2MeshOverride(
-        entries,
+    properties = mesh.hotools_mesh_collision
+    objects, count = nodes.physicsMC2MeshCustomObject(
+        [mesh],
+        mc2_base_pose_proxy=properties.mc2_base_pose_proxy,
+        radius_vertex_group=properties.radius_vertex_group,
+        pin_enabled=properties.pin_enabled,
+        pin_vertex_group=properties.pin_vertex_group,
+        primary_collision_group=group,
+        collided_by_groups=mask,
+    )
+    assert count == 1 and len(objects) == 1
+    entries, _domain_ids = nodes.physicsMC2MeshClothTask(
+        objects,
         profile=_profile(),
         cloth_mass=mass,
-        collision_group=group,
-        collision_mask=mask,
     )
-    assert count == 1 and len(entries) == 1
+    assert len(entries) == 1
     return entries[0]
 
 
@@ -70,11 +77,7 @@ def _request(world, meshes, *, accepted: bool):
         _partition(meshes[0], group=1, mask=masks[0], mass=0.25),
         _partition(meshes[1], group=2, mask=masks[1], mass=0.75),
     ]
-    requests, report = nodes.physicsMC2MeshCollector(
-        world,
-        entries,
-        include_implicit=False,
-    )
+    requests, report = nodes.physicsMC2MeshCollector(entries)
     assert len(requests) == 1 and report
     return requests[0]
 
@@ -154,7 +157,7 @@ def _run_scope_case(*, accepted: bool, run_index: int):
                 assert [int(row["self_collision_mode"]) for row in uint_rows] == [2, 2]
                 assert [int(row["self_collision_sync_mode"]) for row in uint_rows] == [2, 2]
                 assert [int(row["collision_group"]) for row in uint_rows] == [1, 2]
-                expected_masks = [2, 1] if accepted else [1, 2]
+                expected_masks = [3, 3] if accepted else [1, 2]
                 assert [int(row["collision_mask"]) for row in uint_rows] == expected_masks
 
                 particle = owner.compiled.parameters.particle_parameters

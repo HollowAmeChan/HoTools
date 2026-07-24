@@ -166,11 +166,10 @@ def test_mesh_product_base_pose_contract() -> None:
         source.scale = (1.0, 1.0, 1.0)
         bpy.context.view_layer.update()
 
-        entries, count = nodes.physicsMC2MeshObject([source])
-        assert count == 1 and len(entries) == 1
-        requests, report = nodes.physicsMC2MeshCollector(
-            world, entries, include_implicit=False
-        )
+        objects, count = nodes.physicsMC2MeshObject([source])
+        assert count == 1 and len(objects) == 1
+        entries, _domain_ids = nodes.physicsMC2MeshClothTask(objects)
+        requests, report = nodes.physicsMC2MeshCollector(entries)
         assert len(requests) == 1 and report
         request = requests[0]
         slot_id = product_slot.make_mc2_product_slot_id(

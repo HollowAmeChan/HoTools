@@ -60,20 +60,30 @@ def test_mc2_product_registry_contract():
 
     schema_names = tuple(str(field["name"]) for field in mesh_schema.MESH_COLLISION_RNA_FIELDS)
     assert tuple(mesh_property.PG_Hotools_MeshCollision.__annotations__) == schema_names
-    assert len(schema_names) == 7
-    assert mc2_nodes.physicsMC2MeshObject.__meta["bl_label"] == "MC2 Mesh对象"
-    assert mc2_nodes.physicsMC2MeshCollector.__meta["bl_label"] == "MC2 Mesh收集器"
+    assert len(schema_names) == 6
+    assert "enabled" not in schema_names
+    assert mc2_nodes.physicsMC2MeshObject.__meta["bl_label"] == "MC2 MeshCloth对象"
+    assert mc2_nodes.physicsMC2MeshCustomObject.__meta["bl_label"] == (
+        "MC2 MeshCloth自定义对象"
+    )
+    assert mc2_nodes.physicsMC2MeshCollector.__meta["bl_label"] == "MC2 Mesh域收集"
+    assert mc2_nodes.physicsMC2MeshCollector.__meta["_INPUT_NAME"] == ["Mesh分区"]
     assert mc2_nodes.physicsMC2MeshCollector.__meta["_OUTPUT_NAME"][0] == "MC2域"
     assert mc2_nodes.physicsMC2MeshClothTask.__meta["bl_label"] == "MC2 MeshCloth域"
+    assert mc2_nodes.physicsMC2MeshClothTask.__meta["_OUTPUT_NAME"] == [
+        "Mesh分区", "域标识"
+    ]
+    assert "启用" not in mc2_nodes.physicsMC2MeshClothTask.__meta["_INPUT_NAME"]
     assert mc2_nodes.physicsMC2BoneClothTask.__meta["bl_label"] == "MC2 BoneCloth域"
     assert mc2_nodes.physicsMC2BoneSpringTask.__meta["bl_label"] == "MC2 BoneSpring域"
     for domain_node in (
-        mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
         mc2_nodes.physicsMC2BoneSpringTask,
     ):
         assert domain_node.__meta["_OUTPUT_NAME"] == ["MC2域", "域标识"]
+        assert "启用" not in domain_node.__meta["_INPUT_NAME"]
     assert mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"][1] == "MC2域"
+    assert "启用" not in mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"]
 
     product_slot = importlib.import_module("test_product_slot")
     product_collect = importlib.import_module("test_product_collect")

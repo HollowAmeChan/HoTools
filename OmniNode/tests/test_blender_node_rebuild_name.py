@@ -64,15 +64,19 @@ try:
     tree = bpy.data.node_groups.new("NodeRebuildNameRegression", "OmniNodeTree")
 
     refreshed = tree.nodes.new("HO_OmniNode_physicsMC2MeshClothTask")
+    collector = tree.nodes.new("HO_OmniNode_physicsMC2MeshCollector")
     step = tree.nodes.new("HO_OmniNode_physicsMC2Step")
-    tree.links.new(refreshed.outputs["_OUTPUT0"], step.inputs["mc2_tasks"])
+    tree.links.new(refreshed.outputs["_OUTPUT0"], collector.inputs["mesh_partitions"])
+    tree.links.new(collector.outputs["_OUTPUT0"], step.inputs["mc2_tasks"])
     refreshed.name = "MC2 MeshCloth任务"
     rebuild.rebuild_single_node(tree, refreshed, refresh_node_name=True)
     assert refreshed.name == "MC2 MeshCloth域"
-    assert refreshed.outputs["_OUTPUT0"].name == "MC2域"
+    assert refreshed.outputs["_OUTPUT0"].name == "Mesh分区"
     assert refreshed.outputs["_OUTPUT1"].name == "域标识"
+    assert collector.inputs["mesh_partitions"].is_linked
+    assert collector.inputs["mesh_partitions"].links[0].from_node == refreshed
     assert step.inputs["mc2_tasks"].is_linked
-    assert step.inputs["mc2_tasks"].links[0].from_node == refreshed
+    assert step.inputs["mc2_tasks"].links[0].from_node == collector
 
     preserved = tree.nodes.new("HO_OmniNode_physicsMC2MeshClothTask")
     preserved.name = "用户自定义节点名"

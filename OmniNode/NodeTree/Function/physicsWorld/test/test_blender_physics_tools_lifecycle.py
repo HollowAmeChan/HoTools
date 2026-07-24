@@ -108,7 +108,7 @@ def main() -> None:
         assert source.modifiers.get(base_pose.DELTA_MODIFIER_NAME) is not None
         proxy = base_pose.ensure_base_pose_proxy(source)
         assert source.hotools_mesh_collision.mc2_base_pose_proxy == proxy
-        assert proxy.hotools_mesh_collision.enabled is False
+        assert proxy.hotools_mesh_collision.mc2_base_pose_proxy is None
         assert base_pose.mesh_light_key(source) == base_pose.mesh_light_key(proxy)
         assert bool(proxy.get(base_pose.CACHE_OBJECT_FLAG, False))
 

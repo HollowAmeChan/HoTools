@@ -101,10 +101,10 @@ def _requests(
         "teleport_distance": teleport_distance,
         "teleport_rotation": teleport_rotation,
     }
-    entries, count = nodes.physicsMC2MeshObject([mesh])
-    assert count == 1 and len(entries) == 1
-    entries, count = nodes.physicsMC2MeshOverride(
-        entries,
+    objects, count = nodes.physicsMC2MeshObject([mesh])
+    assert count == 1 and len(objects) == 1
+    entries, _domain_ids = nodes.physicsMC2MeshClothTask(
+        objects,
         profile=_profile(
             spring=False,
             stabilization_time_after_reset=stabilization_time_after_reset,
@@ -114,12 +114,8 @@ def _requests(
         anchor_object=anchor_object,
         **task_values,
     )
-    assert count == 1
-    mesh_requests, report = nodes.physicsMC2MeshCollector(
-        world,
-        entries,
-        include_implicit=False,
-    )
+    assert len(entries) == 1
+    mesh_requests, report = nodes.physicsMC2MeshCollector(entries)
     assert len(mesh_requests) == 1 and report
 
     cloth_requests, _cloth_report = nodes.physicsMC2BoneClothTask(
@@ -164,19 +160,15 @@ def _partition_scope_requests(world, meshes):
         "teleport_distance": 0.5,
         "teleport_rotation": 30.0,
     }
-    entries, count = nodes.physicsMC2MeshObject(list(meshes))
-    assert count == 2 and len(entries) == 2
-    entries, count = nodes.physicsMC2MeshOverride(
-        entries,
+    objects, count = nodes.physicsMC2MeshObject(list(meshes))
+    assert count == 2 and len(objects) == 2
+    entries, _domain_ids = nodes.physicsMC2MeshClothTask(
+        objects,
         profile=_profile(spring=False),
         **task_values,
     )
-    assert count == 2
-    mesh_requests, report = nodes.physicsMC2MeshCollector(
-        world,
-        entries,
-        include_implicit=False,
-    )
+    assert len(entries) == 2
+    mesh_requests, report = nodes.physicsMC2MeshCollector(entries)
     assert len(mesh_requests) == 1 and report
 
     assert mesh_requests[0].setup_type == "mesh_cloth"

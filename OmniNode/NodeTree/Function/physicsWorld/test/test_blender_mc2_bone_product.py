@@ -227,11 +227,6 @@ try:
         and partition.setup_options.self_collision_radius_model == "derived_radius"
         for partition in request.plan.active_partitions
     )
-    disabled, disabled_names = nodes.physicsMC2BoneClothTask(
-        [{"armature": rig_multi, "bone": "Parent0"}], enabled=False
-    )
-    assert disabled == [] and disabled_names == ""
-
     cloth_world = world_types.PhysicsWorldCache()
     worlds.append(cloth_world)
     cloth_slot = _run(cloth_world, requests, 1)[0]

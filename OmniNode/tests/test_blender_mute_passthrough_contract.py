@@ -569,6 +569,7 @@ try:
     mc2_read = mc2_contract_tree.nodes.new("HO_OmniNode_CacheRead")
     world_begin = mc2_contract_tree.nodes.new("HO_OmniNode_physicsWorldBegin")
     mc2_task = mc2_contract_tree.nodes.new("HO_OmniNode_physicsMC2MeshClothTask")
+    mc2_collector = mc2_contract_tree.nodes.new("HO_OmniNode_physicsMC2MeshCollector")
     mc2_step = mc2_contract_tree.nodes.new("HO_OmniNode_physicsMC2Step")
     world_commit = mc2_contract_tree.nodes.new("HO_OmniNode_physicsWorldCommit")
     mc2_write = mc2_contract_tree.nodes.new("HO_OmniNode_CacheWrite")
@@ -581,7 +582,10 @@ try:
         world_begin.outputs["_OUTPUT0"], mc2_step.inputs["world"]
     )
     mc2_contract_tree.links.new(
-        mc2_task.outputs["_OUTPUT0"], mc2_step.inputs["mc2_tasks"]
+        mc2_task.outputs["_OUTPUT0"], mc2_collector.inputs["mesh_partitions"]
+    )
+    mc2_contract_tree.links.new(
+        mc2_collector.outputs["_OUTPUT0"], mc2_step.inputs["mc2_tasks"]
     )
     mc2_contract_tree.links.new(
         mc2_step.outputs["_OUTPUT0"], world_commit.inputs["world"]
@@ -605,7 +609,7 @@ try:
         world_begin.outputs["_OUTPUT0"], replacement_step.inputs["world"]
     )
     mc2_contract_tree.links.new(
-        mc2_task.outputs["_OUTPUT0"], replacement_step.inputs["mc2_tasks"]
+        mc2_collector.outputs["_OUTPUT0"], replacement_step.inputs["mc2_tasks"]
     )
     mc2_contract_tree.links.new(
         replacement_step.outputs["_OUTPUT0"], world_commit.inputs["world"]

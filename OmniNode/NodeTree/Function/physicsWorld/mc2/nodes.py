@@ -713,7 +713,7 @@ def physicsMC2MeshClothTask(
     _INPUT_NAME=[
         "中控骨", "粒子配置", "Anchor",
         *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "连接模式", "旋转插值", "根旋转", "被碰撞组", "启用",
+        "连接模式", "旋转插值", "根旋转", "被碰撞组",
     ],
     input_init={
         "control_bones": {"description": "直接子骨生成显式分区\n每个Armature一个统一域"},
@@ -736,7 +736,6 @@ def physicsMC2MeshClothTask(
             "description": "Fixed根骨方向比例\nTriangle会覆盖",
         },
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
-        "enabled": {"description": "关闭时不产生统一域request"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=_task_long_description(
@@ -767,11 +766,8 @@ def physicsMC2BoneClothTask(
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
-    enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
-    if not bool(enabled):
-        return [], ""
     setup_options = make_mc2_setup_options(
         MC2_SETUP_BONE_CLOTH,
         connection_mode=connection_mode,
@@ -802,7 +798,7 @@ def physicsMC2BoneClothTask(
     _INPUT_NAME=[
         "根骨", "粒子配置", "Anchor",
         *(_TASK_PARAMETER_LABELS[name] for name in _TASK_SPRING_PARAMETER_FIELDS),
-        "旋转插值", "根旋转", "被碰撞组", "启用",
+        "旋转插值", "根旋转", "被碰撞组",
     ],
     input_init={
         "root_bones": {"description": "BoneSpring根骨显式分区\n每个Armature一个统一域"},
@@ -812,7 +808,6 @@ def physicsMC2BoneClothTask(
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "Move父骨方向比例\n仅影响骨骼旋转"},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "Fixed根骨方向比例\n仅影响骨骼旋转"},
         "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
-        "enabled": {"description": "关闭时不产生统一域request"},
     },
     omni_presets=_task_parameter_presets(_TASK_SPRING_PARAMETER_FIELDS),
     omni_description=_task_long_description(
@@ -840,11 +835,8 @@ def physicsMC2BoneSpringTask(
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
     collided_by_groups: _OmniBitMask = 0,
-    enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
-    if not bool(enabled):
-        return [], ""
     setup_options = make_mc2_setup_options(
         MC2_SETUP_BONE_SPRING,
         rotational_interpolation=rotational_interpolation,
@@ -872,7 +864,7 @@ def physicsMC2BoneSpringTask(
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界", "MC2域", "时间缩放", "模拟频率",
-        "每帧最大模拟次数", "启用", "热点时长调试",
+        "每帧最大模拟次数", "热点时长调试",
     ],
     input_init={
         "world": {"description": "Physics World统一时间源"},
@@ -885,7 +877,6 @@ def physicsMC2BoneSpringTask(
         "hotspot_timing": {
             "description": "浮层分步与控制台聚合\n关闭时零采集",
         },
-        "enabled": {"description": "关闭整个MC2模拟步，不推进任何MC2 task。"},
     },
     _OUTPUT_NAME=["物理世界", "就绪", "状态"],
     mute_passthrough={"_OUTPUT0": "world"},
@@ -896,7 +887,6 @@ def physicsMC2Step(
     time_scale: float = 1.0,
     simulation_frequency: int = 90,
     max_simulation_count_per_frame: int = 3,
-    enabled: bool = True,
     hotspot_timing: bool = False,
 ) -> tuple[PhysicsWorldCache, bool, str]:
     if (
@@ -912,7 +902,7 @@ def physicsMC2Step(
         max_simulation_count_per_frame=max_simulation_count_per_frame,
     )
     timing = None
-    if bool(hotspot_timing) and bool(enabled) and isinstance(world, PhysicsWorldCache):
+    if bool(hotspot_timing) and isinstance(world, PhysicsWorldCache):
         timing = make_mc2_hotspot_timing(
             world,
             overlay=OmniNodeTiming.current(),
@@ -931,7 +921,7 @@ def physicsMC2Step(
         world,
         tuple(flattened),
         settings=settings,
-        enabled=enabled,
+        enabled=True,
         timing=timing,
     )
 
