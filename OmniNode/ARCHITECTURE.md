@@ -1017,7 +1017,7 @@ Python 类型到 Blender socket 类型的映射表，包含 `_OmniCache`、`_Omn
 - 创建/销毁 Omni 树。
 - 跳转组树。
 - 编译、运行已编译结果、清理编译缓存、清理运行缓存。
-- 节点重建。
+- 节点重建：保留 identifier 匹配的 socket 默认值与链接；默认在恢复完成后尝试把 `node.name` 刷新为当前类型的 `bl_label`，操作符可关闭该选项以保留用户名称。
 - 菜单和 Node editor 操作。
 
 ### `NodeTree/OmniNodeDraw.py`

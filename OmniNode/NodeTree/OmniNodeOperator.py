@@ -1411,11 +1411,22 @@ class OmniNodeRebuild(Operator):
     # https://projects.blender.org/blender/blender/pulls/130204
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
-    bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
+    bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，并可刷新节点名称"
     bl_options = {'REGISTER'}
 
     node_tree_name: bpy.props.StringProperty()  # type: ignore
     node_name: bpy.props.StringProperty()  # type: ignore
+    refresh_node_name: BoolProperty(
+        name="刷新节点名称",
+        description="重建后尝试把node.name更新为当前节点类型名称；关闭时保留原名称",
+        default=True,
+    )  # type: ignore
+
+    def draw(self, context):
+        self.layout.prop(self, "refresh_node_name")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
 
     @classmethod
     def poll(cls, context):
@@ -1490,7 +1501,18 @@ class OmniNodeRebuild(Operator):
         sock.default_value = value
 
     @staticmethod
-    def rebuild_single_node(tree, node):
+    def _try_refresh_node_name(node):
+        target_name = str(getattr(node, "bl_label", "") or "").strip()
+        if not target_name:
+            return False
+        try:
+            node.name = target_name
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def rebuild_single_node(tree, node, *, refresh_node_name=True):
         if not hasattr(node, "build"):
             raise RuntimeError(f"Node '{node.name}' has no build() method")
 
@@ -1596,6 +1618,10 @@ class OmniNodeRebuild(Operator):
             if from_socket and to_socket:
                 tree.links.new(from_socket, to_socket)
 
+        # 名称最后刷新，避免前面的按名称重连受到影响。Blender负责重名后缀。
+        if refresh_node_name:
+            OmniNodeRebuild._try_refresh_node_name(node)
+
     def _resolve_target_nodes(self, context):
         if self.node_tree_name and self.node_name:
             tree = bpy.data.node_groups.get(self.node_tree_name)
@@ -1636,7 +1662,11 @@ class OmniNodeRebuild(Operator):
 
         for node in nodes:
             try:
-                OmniNodeRebuild.rebuild_single_node(tree, node)
+                OmniNodeRebuild.rebuild_single_node(
+                    tree,
+                    node,
+                    refresh_node_name=bool(self.refresh_node_name),
+                )
                 rebuilt_names.append(node.name)
             except Exception as exc:
                 if hasattr(node, "set_bug_state"):
