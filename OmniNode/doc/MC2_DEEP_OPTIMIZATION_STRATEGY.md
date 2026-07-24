@@ -364,9 +364,10 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。
 5. 首次后续审计已确认 Mesh 旧 `static_build.py` 与两个 task frame adapter 无调用方并完成删除，生产模块当前为 69 个。
 6. 第二次后续审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支，产品 debug 只消费 frozen product snapshot。
-7. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
-8. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
-9. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。
+7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。
+8. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
+9. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
+10. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。
 
 逻辑批次应覆盖完整所有权面并可独立回归、基准和回滚；不再按单 runner 提交。P4 不在此序列中。
 ## 外部依据

@@ -7,7 +7,6 @@ from .names import (
     MC2_FUSED_PRODUCT_SLOT_KIND,
     MC2_SETUP_TYPES,
     MC2_SOLVER_ID,
-    MC2_STATS_CHANNEL,
 )
 from ..collision.capabilities import (
     BONE_COLLISION_CAPABILITY_ID,
@@ -54,7 +53,6 @@ MC2_SOLVER_DECLARATION = {
     "produces": [
         f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
         f'world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
-        f'world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
         "fused slot.data.owner",
@@ -108,7 +106,7 @@ MC2_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [MC2_STATS_CHANNEL],
+        "result_channels": [],
         "shared_result_channels": [
             GN_ATTRIBUTE_CHANNEL,
             BONE_TRANSFORM_CHANNEL,

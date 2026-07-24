@@ -369,7 +369,7 @@ def test_solver_node_add_menu_uses_manifest_submenus():
 def test_solver_registry_separates_owned_shared_and_planned_result_channels():
     mc2_declaration = solver_registry.resolve_solver_declaration("mc2")
     summary = solver_declarations.solver_declaration_summary(mc2_declaration)
-    assert summary["result_channels"] == [mc2_names.MC2_STATS_CHANNEL]
+    assert summary["result_channels"] == []
     assert summary["shared_result_channels"] == [
         world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
@@ -395,8 +395,10 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
         "spring_vrm",
     }
     assert baseline["shared_result_channels"][world_names.GN_ATTRIBUTE_CHANNEL] == ["mc2"]
-    assert baseline["result_channels"][mc2_names.MC2_STATS_CHANNEL] == "mc2"
-    assert mc2_names.MC2_STATS_CHANNEL not in baseline["planned_result_channels"]
+    assert all(
+        owner != "mc2"
+        for owner in baseline["result_channels"].values()
+    )
     assert world_names.BONE_TRANSFORM_CHANNEL not in baseline["planned_shared_result_channels"]
     assert world_names.GN_ATTRIBUTE_CHANNEL not in baseline["planned_shared_result_channels"]
 

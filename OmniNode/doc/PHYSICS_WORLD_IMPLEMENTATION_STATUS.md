@@ -94,8 +94,9 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 5. E7-S 继续逐项清理迁移期 fallback、可选 `native_context` 参数、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名；途中只按真实依赖证据新增合并项。
 6. 首次后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 与两个 task frame adapter，生产模块当前为 69 个。
 7. 第二次后续依赖审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支；产品 debug 只消费 fused product snapshot。
-8. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
-9. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+8. 第三次后续依赖审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布 GN 与 Bone shared product results。
+9. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+10. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

@@ -11,6 +11,5 @@ MC2_SETUP_TYPES = (
     MC2_SETUP_BONE_SPRING,
 )
 
-MC2_STATS_CHANNEL = "mc2_stats"
 MC2_DEBUG_DRAW_MODE = "mc2"
 MC2_FUSED_PRODUCT_SLOT_KIND = "mc2_fused_cpu_product_v1"

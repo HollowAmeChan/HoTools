@@ -148,6 +148,13 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "build_mc2_mesh_frame_input",
         "build_mc2_mesh_frame_input_for_task",
         "capture_requested_mc2_debug",
+        "MC2ResultCandidateV1",
+        "make_mc2_result_candidate",
+        "make_mc2_mesh_result",
+        "make_mc2_bone_result",
+        "make_mc2_stats_result",
+        "iter_mc2_stats_results",
+        "get_mc2_stats_result",
     }
     production = [
         path
@@ -167,6 +174,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     names_source = (MC2_ROOT / "names.py").read_text(encoding="utf-8")
     assert "MC2_SLOT_KIND" not in names_source
     assert "MC2_INTERACTION_RESOURCE_KEY" not in names_source
+    assert "MC2_STATS_CHANNEL" not in names_source
 
 
 def test_bone_frame_compatibility_entry_is_product_only():

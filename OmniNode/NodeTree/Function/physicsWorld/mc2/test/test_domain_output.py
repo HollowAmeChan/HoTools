@@ -6,7 +6,6 @@ import importlib
 import os
 import sys
 import types
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -36,12 +35,6 @@ ir = importlib.import_module(
 )
 output = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_output"
-)
-legacy_results = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
-)
-frame_state = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
 domain_ir_test = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.test.test_domain_ir"
@@ -145,67 +138,7 @@ def test_domain_output_rejects_frame_identity_mismatch():
         raise AssertionError("writeback mapper accepted a mismatched frame")
 
 
-def test_single_target_domain_offsets_match_v0_result_candidate():
-    program = _program()
-    frame, frame_output, _expected = _frame_and_output(program)
-    command = output.make_mc2_mesh_writeback_commands(
-        program, frame, frame_output
-    )[0]
-
-    class _PointerOwner:
-        def __init__(self, pointer):
-            self._pointer = pointer
-
-        def as_pointer(self):
-            return self._pointer
-
-    source = _PointerOwner(101)
-    source.type = "MESH"
-    source.data = _PointerOwner(202)
-    spec = SimpleNamespace(
-        task_id="mc2:mesh:domain-output-v0",
-        setup_type="mesh_cloth",
-        topology_signature="domain-output-topology",
-        sources=(source,),
-    )
-    slot = SimpleNamespace(slot_id=spec.task_id, world_generation=frame.generation)
-    logical = command.logical_particle_indices
-    legacy_frame = frame_state.make_mc2_frame_input(
-        task_id=spec.task_id,
-        topology_signature=spec.topology_signature,
-        frame=frame.frame,
-        generation=frame.generation,
-        world_positions=frame.animated_base_world_positions[logical],
-        world_rotations_xyzw=frame.animated_base_world_rotations[logical],
-        source_world_linear=frame.partition_world_linear[command.partition_index],
-    )
-    candidate = legacy_results.make_mc2_result_candidate(
-        spec=spec,
-        slot=slot,
-        frame_input=legacy_frame,
-        revision=1,
-        native_info={
-            "schema": "mc2_context_v0",
-            "released": False,
-            "initialized": True,
-            "vertex_count": len(logical),
-            "frame": frame.frame,
-            "generation": frame.generation,
-            "reset_count": 1,
-            "step_count": 1,
-            "dynamic_revision": 1,
-        },
-        world_positions=frame_output.world_positions[logical],
-        world_rotations_xyzw=frame_output.world_rotations_xyzw[logical],
-    )
-    np.testing.assert_array_equal(
-        command.object_local_offsets,
-        candidate.mesh_object_local_offsets,
-    )
-
-
 if __name__ == "__main__":
     test_domain_output_splits_logical_particles_and_unscales_offsets()
     test_domain_output_rejects_frame_identity_mismatch()
-    test_single_target_domain_offsets_match_v0_result_candidate()
     print("PASS MC2 domain output mapping")
