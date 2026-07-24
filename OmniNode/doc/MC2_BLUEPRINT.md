@@ -501,7 +501,7 @@ P6 只冻结未来 backend 可直接消费的合同，不创建 GPU runtime：
 
 P6 不改变 CPU pass 顺序、调度或内存所有权，不实施 P4 CPU 并发，也不能用未来 GPU 解释 CPU 回归。E6 只有在 E7-S、P6、最终双 ABI 和规模基准稳定后才可独立开工。
 
-当前 P6 data/pass 批次已完成：现有 `domain_ir.py` 直接生成版本化的具体 buffer 与 pass manifest；native 产品顺序测试与合同反向对齐，candidate/contact/intersection 的组合硬上限在 backend allocation 前可计算。尚未完成的 P6 项是 dirty-span 增量上传、两阶段容量/溢出事务、单次结果 readback/原子发布和 CPU reference tolerance 分级。
+当前 P6 implementation package 已具备机器合同：现有 `domain_ir.py` 直接生成版本化的具体 SoA buffer/pass manifest；native 产品顺序测试与合同反向对齐；program/parameter/frame/collider 产生最小连续 dirty span；candidate/contact/intersection 采用 count-grow-emit、硬上限、统计和回滚规则；最终只进行一次 logical output readback 并沿既有多 target 事务原子发布；CPU reference exact 项、per-fixture tolerance 与 global cap 已分层。剩余工作是完整 py313/Blender 5.2 验收、蓝本状态收口和最终双 ABI 阶段。
 
 ## 构建与验收边界
 

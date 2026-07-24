@@ -1852,6 +1852,238 @@ class MC2BackendDataPassContractV1:
         }
 
 
+@dataclass(frozen=True)
+class MC2BackendDirtySpanV1:
+    """One half-open contiguous row range uploaded as a unit."""
+
+    buffer_name: str
+    start: int
+    stop: int
+    reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "buffer_name", _text(self.buffer_name, "dirty buffer name")
+        )
+        if (
+            isinstance(self.start, bool)
+            or isinstance(self.stop, bool)
+            or int(self.start) < 0
+            or int(self.stop) <= int(self.start)
+        ):
+            raise ValueError("dirty span must be a non-empty half-open row range")
+        object.__setattr__(self, "reason", _text(self.reason, "dirty span reason"))
+
+    def debug_dict(self) -> dict:
+        return {
+            "buffer_name": self.buffer_name,
+            "start": int(self.start),
+            "stop": int(self.stop),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class MC2BackendUploadPlanV1:
+    """P6 host-to-backend transfer plan; it performs no transfer itself."""
+
+    layout_signature: str
+    layout_rebuild: bool
+    parameter_rebuild: bool
+    reallocate_buffers: tuple[str, ...]
+    program_spans: tuple[MC2BackendDirtySpanV1, ...]
+    parameter_spans: tuple[MC2BackendDirtySpanV1, ...]
+    frame_spans: tuple[MC2BackendDirtySpanV1, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "layout_signature", _text(self.layout_signature, "layout_signature")
+        )
+        if type(self.layout_rebuild) is not bool or type(self.parameter_rebuild) is not bool:
+            raise TypeError("upload rebuild flags must be bool")
+        object.__setattr__(
+            self,
+            "reallocate_buffers",
+            _unique(self.reallocate_buffers, "reallocate_buffers"),
+        )
+        spans = self.program_spans + self.parameter_spans + self.frame_spans
+        if any(not isinstance(item, MC2BackendDirtySpanV1) for item in spans):
+            raise TypeError("upload spans must contain MC2BackendDirtySpanV1")
+        by_buffer: dict[str, list[MC2BackendDirtySpanV1]] = {}
+        for item in spans:
+            by_buffer.setdefault(item.buffer_name, []).append(item)
+        for name, items in by_buffer.items():
+            ordered = sorted(items, key=lambda item: item.start)
+            if any(left.stop > right.start for left, right in zip(ordered, ordered[1:])):
+                raise ValueError(f"upload spans overlap for {name!r}")
+
+    def debug_dict(self) -> dict:
+        return {
+            "layout_signature": self.layout_signature,
+            "layout_rebuild": self.layout_rebuild,
+            "parameter_rebuild": self.parameter_rebuild,
+            "reallocate_buffers": list(self.reallocate_buffers),
+            "program_spans": [item.debug_dict() for item in self.program_spans],
+            "parameter_spans": [item.debug_dict() for item in self.parameter_spans],
+            "frame_spans": [item.debug_dict() for item in self.frame_spans],
+        }
+
+
+@dataclass(frozen=True)
+class MC2BackendDynamicCapacityPolicyV1:
+    """Two-phase count/grow/emit transaction for one generated buffer."""
+
+    buffer_name: str
+    count_phase: str
+    emit_phase: str
+    hard_capacity: int
+    growth_policy: str = "next_power_of_two_capped_by_hard_capacity"
+    overflow_policy: str = "rollback_substep_and_fail_without_publish"
+    publishes_state_before_capacity_fit: bool = False
+    retry_limit: int = 1
+    required_statistics: tuple[str, ...] = (
+        "capacity",
+        "emitted_count",
+        "grow_count",
+        "overflow_count",
+        "required_count",
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "buffer_name", _text(self.buffer_name, "capacity buffer name")
+        )
+        object.__setattr__(self, "count_phase", _text(self.count_phase, "count phase"))
+        object.__setattr__(self, "emit_phase", _text(self.emit_phase, "emit phase"))
+        if isinstance(self.hard_capacity, bool) or int(self.hard_capacity) < 0:
+            raise ValueError("dynamic hard_capacity must be non-negative")
+        if self.growth_policy != "next_power_of_two_capped_by_hard_capacity":
+            raise ValueError("unsupported dynamic capacity growth policy")
+        if self.overflow_policy != "rollback_substep_and_fail_without_publish":
+            raise ValueError("dynamic overflow must roll back and fail without publishing")
+        if type(self.publishes_state_before_capacity_fit) is not bool:
+            raise TypeError("publishes_state_before_capacity_fit must be bool")
+        if self.publishes_state_before_capacity_fit:
+            raise ValueError("dynamic capacity must fit before staged state is published")
+        if self.retry_limit != 1:
+            raise ValueError("dynamic capacity emit may retry exactly once after growth")
+        object.__setattr__(
+            self,
+            "required_statistics",
+            _ordered_unique(self.required_statistics, "required_statistics"),
+        )
+
+    def debug_dict(self) -> dict:
+        return {
+            "buffer_name": self.buffer_name,
+            "count_phase": self.count_phase,
+            "emit_phase": self.emit_phase,
+            "hard_capacity": int(self.hard_capacity),
+            "growth_policy": self.growth_policy,
+            "overflow_policy": self.overflow_policy,
+            "publishes_state_before_capacity_fit": self.publishes_state_before_capacity_fit,
+            "retry_limit": self.retry_limit,
+            "required_statistics": list(self.required_statistics),
+        }
+
+
+@dataclass(frozen=True)
+class MC2BackendIOContractV1:
+    host_inputs: tuple[str, ...]
+    host_outputs: tuple[str, ...]
+    result_readback_phase: str
+    publish_policy: str
+    debug_readback_policy: str
+    substep_result_readback: bool
+    backend_may_access_blender: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "host_inputs", _ordered_unique(self.host_inputs, "host_inputs"))
+        object.__setattr__(self, "host_outputs", _ordered_unique(self.host_outputs, "host_outputs"))
+        if self.result_readback_phase != "once_after_final_substep":
+            raise ValueError("result readback must occur once after the final substep")
+        if self.publish_policy != "validate_all_targets_then_atomic_publish":
+            raise ValueError("backend output must use atomic multi-target publish")
+        if self.debug_readback_policy != "explicit_request_after_production_pass":
+            raise ValueError("debug readback must remain request-driven")
+        if type(self.substep_result_readback) is not bool or self.substep_result_readback:
+            raise ValueError("substep result readback is forbidden")
+        if type(self.backend_may_access_blender) is not bool or self.backend_may_access_blender:
+            raise ValueError("backend code cannot access Blender/RNA")
+
+
+@dataclass(frozen=True)
+class MC2BackendNumericalPolicyV1:
+    exact_channels: tuple[str, ...]
+    position_atol: float
+    position_rtol: float
+    rotation_component_atol: float
+    rotation_component_rtol: float
+    velocity_atol: float
+    velocity_rtol: float
+    finite_required: bool
+    tolerance_source: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "exact_channels", _ordered_unique(self.exact_channels, "exact_channels")
+        )
+        for name in (
+            "position_atol",
+            "position_rtol",
+            "rotation_component_atol",
+            "rotation_component_rtol",
+            "velocity_atol",
+            "velocity_rtol",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if type(self.finite_required) is not bool or not self.finite_required:
+            raise ValueError("backend numerical outputs must remain finite")
+        if self.tolerance_source != "shared_cpu_reference_fixture_per_pass_with_global_caps":
+            raise ValueError("unsupported backend tolerance source")
+
+
+MC2_BACKEND_IO_CONTRACT_V1 = MC2BackendIOContractV1(
+    host_inputs=(
+        "compiled_program",
+        "domain_parameters",
+        "frame_collider_packet",
+        "frame_packet",
+    ),
+    host_outputs=(
+        "logical_domain_output",
+        "optional_requested_debug_snapshot",
+    ),
+    result_readback_phase="once_after_final_substep",
+    publish_policy="validate_all_targets_then_atomic_publish",
+    debug_readback_policy="explicit_request_after_production_pass",
+    substep_result_readback=False,
+    backend_may_access_blender=False,
+)
+
+MC2_BACKEND_NUMERICAL_POLICY_V1 = MC2BackendNumericalPolicyV1(
+    exact_channels=(
+        "candidate_contact_counts",
+        "candidate_contact_keys",
+        "collision_filter_decisions",
+        "domain_partition_output_identity",
+        "frame_generation",
+        "topology_indices",
+        "validity_and_teleport_flags",
+    ),
+    position_atol=5.0e-4,
+    position_rtol=5.0e-4,
+    rotation_component_atol=5.0e-4,
+    rotation_component_rtol=5.0e-4,
+    velocity_atol=2.0e-3,
+    velocity_rtol=5.0e-3,
+    finite_required=True,
+    tolerance_source="shared_cpu_reference_fixture_per_pass_with_global_caps",
+)
+
+
 def _backend_array_spec(
     name: str,
     role: str,
@@ -2121,15 +2353,331 @@ def make_mc2_backend_data_pass_contract(
     )
 
 
+def _backend_program_arrays(program: MC2CompiledDomainProgramV1) -> dict[str, np.ndarray]:
+    result = {
+        "program.partition_flags": program.partition_flags,
+        "program.partition_center_local_position": program.partition_center_local_position,
+        "program.partition_initial_local_gravity_direction": (
+            program.partition_initial_local_gravity_direction
+        ),
+        "program.particle_partition_index": program.particle_partition_index,
+        "program.particle_source_element": program.particle_source_element,
+        "program.particle_bind_position": program.particle_bind_position,
+        "program.particle_bind_rotation": program.particle_bind_rotation,
+        "program.particle_attribute_flags": program.particle_attribute_flags,
+        "program.output_target_index": program.output_target_index,
+        "program.output_source_element": program.output_source_element,
+        "program.partition_particle_indices": np.concatenate(tuple(
+            view.resolved_indices() for view in program.partition_particle_views
+        )).astype(np.uint32, copy=False),
+    }
+    for table in program.constraint_tables:
+        result[f"program.constraint.{table.kind}.indices"] = table.indices
+        result[f"program.constraint.{table.kind}.owner_partition_index"] = (
+            table.owner_partition_index
+        )
+        result[f"program.constraint.{table.kind}.flags"] = table.flags
+    for table in program.primitive_tables:
+        result[f"program.primitive.{table.kind}.indices"] = table.indices
+        result[f"program.primitive.{table.kind}.owner_partition_index"] = (
+            table.owner_partition_index
+        )
+    for name in (
+        "baseline_parent_indices",
+        "baseline_line_start",
+        "baseline_line_count",
+        "baseline_line_data",
+        "baseline_vertex_local_position",
+        "baseline_vertex_local_rotation",
+    ):
+        values = getattr(program, name)
+        if values is not None:
+            result[f"program.{name}"] = values
+    return result
+
+
+def _backend_parameter_arrays(
+    parameters: MC2DomainParameterPacketV1,
+) -> dict[str, np.ndarray]:
+    tables = (
+        parameters.domain_scalars,
+        parameters.partition_parameters,
+        parameters.partition_uint_parameters,
+        parameters.particle_parameters,
+        *parameters.constraint_parameters,
+    )
+    return {
+        f"parameter.{table.name}": table.values
+        for table in tables
+        if table.values.shape[1] > 0
+    }
+
+
+def _backend_frame_arrays(
+    frame_packet: MC2DomainFramePacketV1,
+    collider_arrays: dict[str, object] | None,
+) -> dict[str, np.ndarray]:
+    result = {
+        "frame.animated_base_position": frame_packet.animated_base_world_positions,
+        "frame.animated_base_rotation": frame_packet.animated_base_world_rotations,
+        "frame.animated_base_normal": frame_packet.animated_base_world_normals,
+        "frame.partition_position": frame_packet.partition_world_position,
+        "frame.partition_rotation": frame_packet.partition_world_rotation,
+        "frame.partition_scale": frame_packet.partition_world_scale,
+        "frame.partition_linear": frame_packet.partition_world_linear,
+        "frame.anchor_position": frame_packet.anchor_world_position,
+        "frame.anchor_rotation": frame_packet.anchor_world_rotation,
+        "frame.anchor_present": frame_packet.anchor_present,
+        "frame.partition_flags": frame_packet.partition_frame_flags,
+        "frame.velocity_weight": frame_packet.velocity_weight,
+        "frame.gravity_ratio": frame_packet.gravity_ratio,
+    }
+    if collider_arrays is None:
+        collider_arrays = {
+            "collider_types": np.empty((0,), dtype=np.int32),
+            "collider_group_bits": np.empty((0,), dtype=np.int32),
+            "collider_centers": np.empty((0, 3), dtype=np.float32),
+            "collider_segment_a": np.empty((0, 3), dtype=np.float32),
+            "collider_segment_b": np.empty((0, 3), dtype=np.float32),
+            "collider_old_centers": np.empty((0, 3), dtype=np.float32),
+            "collider_old_segment_a": np.empty((0, 3), dtype=np.float32),
+            "collider_old_segment_b": np.empty((0, 3), dtype=np.float32),
+            "collider_radii": np.empty((0,), dtype=np.float32),
+        }
+    if not isinstance(collider_arrays, dict):
+        raise TypeError("collider_arrays must be a dict or None")
+    collider_names = {
+        "collider_types": "frame.collider_type",
+        "collider_group_bits": "frame.collider_group_bit",
+        "collider_centers": "frame.collider_center",
+        "collider_segment_a": "frame.collider_segment_a",
+        "collider_segment_b": "frame.collider_segment_b",
+        "collider_old_centers": "frame.collider_old_center",
+        "collider_old_segment_a": "frame.collider_old_segment_a",
+        "collider_old_segment_b": "frame.collider_old_segment_b",
+        "collider_radii": "frame.collider_radius",
+    }
+    if set(collider_arrays) != set(collider_names):
+        raise ValueError("collider_arrays must contain the complete native collider table")
+    counts = set()
+    for source_name, buffer_name in collider_names.items():
+        array = np.asarray(collider_arrays[source_name])
+        if array.ndim == 0:
+            raise ValueError(f"{source_name} must contain collider rows")
+        counts.add(int(array.shape[0]))
+        result[buffer_name] = array
+    if len(counts) != 1:
+        raise ValueError("collider arrays must share one row count")
+    return result
+
+
+def _backend_dirty_spans(
+    buffer_name: str,
+    previous: np.ndarray | None,
+    current: np.ndarray,
+    reason: str,
+) -> tuple[MC2BackendDirtySpanV1, ...]:
+    current = np.asarray(current)
+    row_count = int(current.shape[0]) if current.ndim else 1
+    if row_count == 0:
+        return ()
+    if previous is None:
+        return (MC2BackendDirtySpanV1(buffer_name, 0, row_count, reason),)
+    previous = np.asarray(previous)
+    if previous.dtype != current.dtype or previous.shape != current.shape:
+        return (MC2BackendDirtySpanV1(buffer_name, 0, row_count, reason),)
+    if current.ndim == 0:
+        changed = np.asarray([not np.array_equal(previous, current)], dtype=np.bool_)
+    elif current.ndim == 1:
+        changed = previous != current
+    else:
+        changed = np.any(previous != current, axis=tuple(range(1, current.ndim)))
+    indices = np.flatnonzero(changed)
+    if not len(indices):
+        return ()
+    spans = []
+    start = int(indices[0])
+    stop = start + 1
+    for value in indices[1:]:
+        value = int(value)
+        if value == stop:
+            stop += 1
+            continue
+        spans.append(MC2BackendDirtySpanV1(buffer_name, start, stop, reason))
+        start, stop = value, value + 1
+    spans.append(MC2BackendDirtySpanV1(buffer_name, start, stop, reason))
+    return tuple(spans)
+
+
+def make_mc2_backend_upload_plan(
+    program: MC2CompiledDomainProgramV1,
+    parameters: MC2DomainParameterPacketV1,
+    frame_packet: MC2DomainFramePacketV1,
+    *,
+    collider_arrays: dict[str, object] | None = None,
+    previous_program: MC2CompiledDomainProgramV1 | None = None,
+    previous_parameters: MC2DomainParameterPacketV1 | None = None,
+    previous_frame_packet: MC2DomainFramePacketV1 | None = None,
+    previous_collider_arrays: dict[str, object] | None = None,
+) -> MC2BackendUploadPlanV1:
+    """Compare immutable packets and emit exact contiguous host upload ranges."""
+
+    if not isinstance(program, MC2CompiledDomainProgramV1):
+        raise TypeError("program must be MC2CompiledDomainProgramV1")
+    if not isinstance(parameters, MC2DomainParameterPacketV1):
+        raise TypeError("parameters must be MC2DomainParameterPacketV1")
+    if not isinstance(frame_packet, MC2DomainFramePacketV1):
+        raise TypeError("frame_packet must be MC2DomainFramePacketV1")
+    if parameters.layout_signature != program.layout_signature:
+        raise ValueError("parameter packet layout does not match program")
+    if (
+        frame_packet.layout_signature != program.layout_signature
+        or frame_packet.domain_signature != program.domain_signature
+    ):
+        raise ValueError("frame packet identity does not match program")
+    if previous_program is not None and not isinstance(
+        previous_program, MC2CompiledDomainProgramV1
+    ):
+        raise TypeError("previous_program must be MC2CompiledDomainProgramV1 or None")
+    if previous_parameters is not None and not isinstance(
+        previous_parameters, MC2DomainParameterPacketV1
+    ):
+        raise TypeError(
+            "previous_parameters must be MC2DomainParameterPacketV1 or None"
+        )
+    if previous_frame_packet is not None and not isinstance(
+        previous_frame_packet, MC2DomainFramePacketV1
+    ):
+        raise TypeError(
+            "previous_frame_packet must be MC2DomainFramePacketV1 or None"
+        )
+
+    layout_rebuild = (
+        previous_program is None
+        or previous_program.layout_signature != program.layout_signature
+    )
+    parameter_rebuild = (
+        layout_rebuild
+        or previous_parameters is None
+        or previous_parameters.parameter_layout_signature
+        != parameters.parameter_layout_signature
+    )
+    current_program_arrays = _backend_program_arrays(program)
+    previous_program_arrays = (
+        {} if layout_rebuild else _backend_program_arrays(previous_program)
+    )
+    current_parameter_arrays = _backend_parameter_arrays(parameters)
+    previous_parameter_arrays = (
+        {} if parameter_rebuild else _backend_parameter_arrays(previous_parameters)
+    )
+    current_frame_arrays = _backend_frame_arrays(frame_packet, collider_arrays)
+    previous_frame_valid = (
+        not layout_rebuild
+        and previous_frame_packet is not None
+        and previous_frame_packet.layout_signature == frame_packet.layout_signature
+        and previous_frame_packet.domain_signature == frame_packet.domain_signature
+    )
+    previous_frame_arrays = (
+        _backend_frame_arrays(previous_frame_packet, previous_collider_arrays)
+        if previous_frame_valid
+        else {}
+    )
+
+    program_spans = tuple(
+        span
+        for name, current in current_program_arrays.items()
+        for span in _backend_dirty_spans(
+            name,
+            previous_program_arrays.get(name),
+            current,
+            "layout_rebuild" if layout_rebuild else "domain_value_update",
+        )
+    )
+    parameter_spans = tuple(
+        span
+        for name, current in current_parameter_arrays.items()
+        for span in _backend_dirty_spans(
+            name,
+            previous_parameter_arrays.get(name),
+            current,
+            "parameter_rebuild" if parameter_rebuild else "parameter_dirty_span",
+        )
+    )
+    frame_spans = tuple(
+        span
+        for name, current in current_frame_arrays.items()
+        for span in _backend_dirty_spans(
+            name,
+            previous_frame_arrays.get(name),
+            current,
+            "frame_dirty_span",
+        )
+    )
+    reallocate = []
+    for current_arrays, previous_arrays in (
+        (current_program_arrays, previous_program_arrays),
+        (current_parameter_arrays, previous_parameter_arrays),
+        (current_frame_arrays, previous_frame_arrays),
+    ):
+        for name, current in current_arrays.items():
+            previous = previous_arrays.get(name)
+            if (
+                previous is None
+                or np.asarray(previous).dtype != np.asarray(current).dtype
+                or np.asarray(previous).shape != np.asarray(current).shape
+            ):
+                reallocate.append(name)
+    return MC2BackendUploadPlanV1(
+        layout_signature=program.layout_signature,
+        layout_rebuild=layout_rebuild,
+        parameter_rebuild=parameter_rebuild,
+        reallocate_buffers=tuple(reallocate),
+        program_spans=program_spans,
+        parameter_spans=parameter_spans,
+        frame_spans=frame_spans,
+    )
+
+
+def make_mc2_backend_dynamic_capacity_policies(
+    contract: MC2BackendDataPassContractV1,
+) -> tuple[MC2BackendDynamicCapacityPolicyV1, ...]:
+    if not isinstance(contract, MC2BackendDataPassContractV1):
+        raise TypeError("contract must be MC2BackendDataPassContractV1")
+    phases = (
+        ("transient.self_candidates", "self_candidate_count", "self_candidate_emit"),
+        ("transient.self_contacts", "self_contact_count", "self_contact_emit"),
+        ("debug.self_intersections", "intersection_count", "intersection_emit"),
+    )
+    result = []
+    for buffer_name, count_phase, emit_phase in phases:
+        buffer = contract.buffer(buffer_name)
+        if buffer.hard_capacity is None:
+            raise ValueError(f"dynamic buffer {buffer_name!r} lacks a hard capacity")
+        result.append(MC2BackendDynamicCapacityPolicyV1(
+            buffer_name=buffer_name,
+            count_phase=count_phase,
+            emit_phase=emit_phase,
+            hard_capacity=buffer.hard_capacity,
+        ))
+    return tuple(result)
+
+
 __all__ = [
     "MC2_BACKEND_CONTRACT_SCHEMA_VERSION",
+    "MC2_BACKEND_IO_CONTRACT_V1",
+    "MC2_BACKEND_NUMERICAL_POLICY_V1",
     "MC2_DOMAIN_IR_SCHEMA_VERSION",
     "MC2_PARTITION_FRAME_DISABLED",
     "MC2_PARTITION_FRAME_KEEP",
     "MC2_PARTITION_FRAME_RESET",
     "MC2BackendBufferSpecV1",
     "MC2BackendDataPassContractV1",
+    "MC2BackendDirtySpanV1",
+    "MC2BackendDynamicCapacityPolicyV1",
+    "MC2BackendIOContractV1",
+    "MC2BackendNumericalPolicyV1",
     "MC2BackendPassSpecV1",
+    "MC2BackendUploadPlanV1",
     "MC2CompiledDomainProgramV1",
     "MC2ConstraintTopologyTableV1",
     "MC2DomainFrameOutputV1",
@@ -2143,6 +2691,8 @@ __all__ = [
     "MC2PrimitiveTopologyTableV1",
     "MC2UIntSoATableV1",
     "make_mc2_backend_data_pass_contract",
+    "make_mc2_backend_dynamic_capacity_policies",
+    "make_mc2_backend_upload_plan",
     "make_mc2_compiled_domain_program",
     "make_mc2_constraint_topology_table",
     "make_mc2_domain_frame_output",

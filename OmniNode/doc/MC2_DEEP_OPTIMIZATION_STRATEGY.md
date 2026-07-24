@@ -323,7 +323,11 @@ GPU前置交付应包括：
 
 P6 第一批已落地 `MC2BackendDataPassContractV1`，直接从 `MC2CompiledDomainProgramV1` 与 `MC2DomainParameterPacketV1` 生成具体 buffer 表，不另建 Python 模块或 runtime owner。每项 buffer 明确 role、dtype、分量数、逻辑计数、硬容量、计数来源、生命周期和传输策略；静态 topology/value、参数、frame、跨帧 state、substep transient、结果和请求式 debug 分开表达。pass 图固定为 StepBasic 准备、TaskReference Teleport、Center frame shift、Center、Center inertia、Integration、Tether、Distance A、Angle、Bending、external、Distance B、Motion、whole-domain self、post/history、publish，且每项都声明依赖、条件与读写 hazard。native compiled pipeline 测试把实际方法顺序反向映射到该合同，防止两者漂移。
 
-self 动态 buffer 的编译期硬上限已固定：candidate 为 `edge*(edge-1)/2 + point*triangle`，contact 不得超过 candidate，只有显式 debug 请求才存在的 intersection 为 `edge*triangle`；超过当前 signed 31-bit primitive key 表达能力的 domain 在 backend allocation 前拒绝。该上限不是要求 CPU 或未来 GPU 预分配最坏规模，实际 count/resize/overflow 事务在下一批 P6 合同中冻结。
+self 动态 buffer 的编译期硬上限已固定：candidate 为 `edge*(edge-1)/2 + point*triangle`，contact 不得超过 candidate，只有显式 debug 请求才存在的 intersection 为 `edge*triangle`；超过当前 signed 31-bit primitive key 表达能力的 domain 在 backend allocation 前拒绝。该上限不要求 CPU 或未来 GPU 预分配最坏规模，实际容量由下述 count/grow/emit 事务管理。
+
+P6 第二批已冻结增量上传、容量事务、IO 与数值策略。`MC2BackendUploadPlanV1` 对 program、parameter、frame/collider 的真实 SoA 做逐 row bit-exact 比较并合并连续 dirty span：layout 改变才重建静态布局，domain value、parameter layout/value 与 frame 分别处理；collider 数量改变只重分配九个 collider SoA，空表也显式表达为零行，不能遗留上一帧数据。candidate/contact/intersection 都先 count，再在硬上限内按二次幂扩容并只重跑 emit；所有 substep 写入 staged state，容量确认前不得发布，超过硬上限必须回滚整步并失败，禁止截断，并要求输出 required/capacity/emitted/grow/overflow 五项统计。
+
+IO 只允许 compiled program、domain parameter、frame packet/collider packet 单向进入 backend；最终 substep 后只读回一次 logical domain output，全部 target 验证成功后才原子发布。debug 只在显式请求后读取 production pass snapshot，backend 不得访问 Blender/RNA。CPU reference 验收中 identity、topology、filter、flags、candidate/contact key 与 count 必须 exact；共享 fixture 的每 pass tolerance 继续是权威，global cap 为 position/rotation component `atol=rtol=5e-4`、velocity `atol=2e-3/rtol=5e-3`，所有数值必须有限。fixture 若需要超过 global cap，必须作为数值设计变更单独审查，不能由 backend 私自放宽。
 
 GPU 之前必须成立：
 

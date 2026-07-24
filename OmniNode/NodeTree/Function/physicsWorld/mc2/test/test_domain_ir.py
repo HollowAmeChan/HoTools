@@ -298,6 +298,148 @@ def test_backend_data_pass_contract_rejects_unknown_buffer_dependency() -> None:
         raise AssertionError("backend contract accepted an unknown pass buffer")
 
 
+def test_backend_upload_plan_emits_only_changed_contiguous_rows() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    frame = _build_frame(program)
+
+    initial = ir.make_mc2_backend_upload_plan(program, parameters, frame)
+    assert initial.layout_rebuild is True
+    assert initial.parameter_rebuild is True
+    assert initial.program_spans and initial.parameter_spans and initial.frame_spans
+    assert "program.particle_bind_position" in initial.reallocate_buffers
+    assert "frame.collider_center" in initial.reallocate_buffers
+
+    unchanged = ir.make_mc2_backend_upload_plan(
+        program,
+        parameters,
+        frame,
+        previous_program=program,
+        previous_parameters=parameters,
+        previous_frame_packet=frame,
+    )
+    assert unchanged.layout_rebuild is False
+    assert unchanged.parameter_rebuild is False
+    assert unchanged.reallocate_buffers == ()
+    assert unchanged.program_spans == ()
+    assert unchanged.parameter_spans == ()
+    assert unchanged.frame_spans == ()
+
+    particle_values = parameters.particle_parameters.values.copy()
+    particle_values[1, 0] += np.float32(0.25)
+    changed_particles = ir.make_mc2_float_soa_table(
+        "particle",
+        parameters.particle_parameters.fields,
+        particle_values,
+    )
+    changed_parameters = ir.make_mc2_domain_parameter_packet(
+        program,
+        domain_scalars=parameters.domain_scalars,
+        partition_parameters=parameters.partition_parameters,
+        partition_uint_parameters=parameters.partition_uint_parameters,
+        particle_parameters=changed_particles,
+        constraint_parameters=parameters.constraint_parameters,
+    )
+    positions = frame.animated_base_world_positions.copy()
+    positions[3, 0] += np.float32(1.0)
+    positions.flags.writeable = False
+    changed_frame = replace(frame, animated_base_world_positions=positions)
+    changed = ir.make_mc2_backend_upload_plan(
+        program,
+        changed_parameters,
+        changed_frame,
+        previous_program=program,
+        previous_parameters=parameters,
+        previous_frame_packet=frame,
+    )
+    assert changed.layout_rebuild is False
+    assert changed.parameter_rebuild is False
+    assert changed.program_spans == ()
+    assert [item.debug_dict() for item in changed.parameter_spans] == [{
+        "buffer_name": "parameter.particle",
+        "start": 1,
+        "stop": 2,
+        "reason": "parameter_dirty_span",
+    }]
+    assert [item.debug_dict() for item in changed.frame_spans] == [{
+        "buffer_name": "frame.animated_base_position",
+        "start": 3,
+        "stop": 4,
+        "reason": "frame_dirty_span",
+    }]
+
+
+def test_backend_upload_plan_reallocates_complete_collider_soa_on_count_change() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    frame = _build_frame(program)
+    colliders = {
+        "collider_types": np.asarray((0,), dtype=np.int32),
+        "collider_group_bits": np.asarray((1,), dtype=np.int32),
+        "collider_centers": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_segment_a": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_segment_b": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_old_centers": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_old_segment_a": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_old_segment_b": np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32),
+        "collider_radii": np.asarray((0.5,), dtype=np.float32),
+    }
+    plan = ir.make_mc2_backend_upload_plan(
+        program,
+        parameters,
+        frame,
+        collider_arrays=colliders,
+        previous_program=program,
+        previous_parameters=parameters,
+        previous_frame_packet=frame,
+    )
+    collider_reallocations = tuple(
+        name for name in plan.reallocate_buffers if name.startswith("frame.collider_")
+    )
+    assert len(collider_reallocations) == 9
+    collider_spans = tuple(
+        item for item in plan.frame_spans if item.buffer_name.startswith("frame.collider_")
+    )
+    assert len(collider_spans) == 9
+    assert all((item.start, item.stop) == (0, 1) for item in collider_spans)
+
+
+def test_backend_capacity_io_and_numerical_policies_are_closed() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    contract = ir.make_mc2_backend_data_pass_contract(program, parameters)
+    policies = ir.make_mc2_backend_dynamic_capacity_policies(contract)
+    assert tuple(item.buffer_name for item in policies) == (
+        "transient.self_candidates",
+        "transient.self_contacts",
+        "debug.self_intersections",
+    )
+    assert all(item.retry_limit == 1 for item in policies)
+    assert all(item.publishes_state_before_capacity_fit is False for item in policies)
+    assert all(
+        item.overflow_policy == "rollback_substep_and_fail_without_publish"
+        for item in policies
+    )
+    assert tuple(item.hard_capacity for item in policies) == tuple(
+        contract.buffer(item.buffer_name).hard_capacity for item in policies
+    )
+
+    io = ir.MC2_BACKEND_IO_CONTRACT_V1
+    assert io.substep_result_readback is False
+    assert io.backend_may_access_blender is False
+    assert io.result_readback_phase == "once_after_final_substep"
+    assert io.publish_policy == "validate_all_targets_then_atomic_publish"
+    numerical = ir.MC2_BACKEND_NUMERICAL_POLICY_V1
+    assert numerical.position_atol == numerical.position_rtol == 5.0e-4
+    assert numerical.velocity_atol == 2.0e-3
+    assert numerical.velocity_rtol == 5.0e-3
+    assert "candidate_contact_keys" in numerical.exact_channels
+    assert "validity_and_teleport_flags" in numerical.exact_channels
+
+
 def test_single_mesh_fixture_uses_the_same_program_contract() -> None:
     fixture = _load_single_fixture()
     snapshots = _build_static_snapshots(fixture)
