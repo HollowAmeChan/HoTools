@@ -121,11 +121,6 @@ nanobind_add_module(hotools_native
     NB_STATIC
     src/hotools_native.cpp
     src/mc2_bindings.cpp
-    src/mc2_context_core.cpp
-    src/mc2_context_frame_step.cpp
-    src/mc2_context_interaction.cpp
-    src/mc2_context_readback.cpp
-    src/mc2_context_static.cpp
     src/mc2_fingerprint.cpp
     src/mc2_frame_orientations.cpp
     src/mc2_static_build.cpp
@@ -147,7 +142,6 @@ nanobind_add_module(hotools_native
 # object files tied to the headers so ABI/layout edits cannot leave a stale
 # producer paired with a freshly compiled kernel consumer.
 set_source_files_properties(
-    src/mc2_context_frame_step.cpp
     src/mc2_frame_orientations.cpp
     src/mc2_kernels.cpp
     src/mc2_domain_cpu.cpp

@@ -235,7 +235,7 @@ MC2TaskSpec
 
 当前产品运行时已完成统一域切换：三种 setup 只生成显式 `MC2ProductRequestV1`，DomainV1 按 request/domain identity 拥有动态 slot、编译程序、历史和 particle state；多 request 全部求解后由一次结果事务发布。旧 `MC2TaskSpec`、Python context owner、interaction owner 和 aggregate 入口已删除。
 
-当前阻塞点只在 native 删除与删除后简化：68 个 V0 binding、5 个 context 翻译单元、API/CMake 残留和直接 V0 native tests 尚在；随后还要执行 E7-S 清理共享 builder 中的可选 `native_context` 参数、旧结果统计/翻译和迁移命名。
+E7-CPU native 删除已经完成：68 个 V0 binding、5 个 context 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和直接 V0 native tests 已移除，并通过重新编译的 py313 产物验收。当前阻塞点转为 E7-S，清理共享 builder 中的可选 `native_context` 参数、旧结果统计/翻译和迁移命名。
 ## 统一粒子场流水线
 
 ### 四层对象
@@ -881,14 +881,14 @@ E7-CPU 的 Python 删除资格与实现已经关闭：
 
 1. capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用；Mesh Bending、Angle Limit、Distance/Tether、外部碰撞 scope、friction 与 whole-domain self 已由 Blender 5.2 产品数值验收接管，9 个能力族全部 `verified`。
 2. topology/setup/frame 中立合同已归入真实职责模块；`specs.py`、`solver.py`、`native_context.py`、`interaction_scope.py`、普通 aggregate 入口和纯旧 Blender runner 已删除。
-3. 剩余 E7-CPU 工作是删除 68 个 native V0 binding、5 个 `mc2_context_*` 翻译单元、API/CMake/required-symbol 残留和直接 V0 native tests。
+3. E7-CPU 已删除 68 个 native V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和直接 V0 native tests；重新编译的 py313 产物与 Blender 5.2 产品闸门已通过。
 
 #### E7-CPU 逻辑批次
 
 1. 9 个能力族的产品数值缺口、旧 capability runner 和 BoneCloth/BoneSpring 删除签字均已关闭。
 2. 中立合同迁移、Python V0 oracle/owner、普通 aggregate 入口和旧 runner 删除已经完成。
-3. 删除 68 个 V0 binding、5 个旧 context 翻译单元、直接 V0 native tests 及 CMake/API/required-symbol 残留。
-4. 用重新编译的 py313 native 执行静态符号、纯 native、产品事务和 Blender 5.2 验收，确认没有从旧 pyd 获得假通过。
+3. 已删除 68 个 V0 binding、5 个旧 context 翻译单元、2 个专用头文件、直接 V0 native tests 及 CMake/API/required-symbol 残留。
+4. 已用重新编译的 py313 native 完成静态符号、纯 native、产品事务和 Blender 5.2 验收，确认没有从旧 pyd 获得假通过。
 5. 执行 E7-S，清理 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
 6. 在旧面和 E7-S 收口后恢复 4.5/py311，完成最终双 ABI、Blender、持久化和性能验收。
 

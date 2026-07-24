@@ -21,6 +21,19 @@ def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def test_v0_native_owner_sources_are_deleted() -> None:
+    for leaf in (
+        "mc2_context_core.cpp",
+        "mc2_context_frame_step.cpp",
+        "mc2_context_helpers.hpp",
+        "mc2_context_interaction.cpp",
+        "mc2_context_internal.hpp",
+        "mc2_context_readback.cpp",
+        "mc2_context_static.cpp",
+    ):
+        assert not (NATIVE_SRC / leaf).exists()
+
+
 def test_whole_domain_self_has_no_v0_owner_dependency() -> None:
     source = _source(NATIVE_SRC / "mc2_whole_domain_self.cpp")
     assert "WholeDomainSelfState" in source

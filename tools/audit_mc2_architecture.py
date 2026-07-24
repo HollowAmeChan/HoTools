@@ -21,15 +21,12 @@ NATIVE_ROOT = REPO_ROOT / "_native" / "src"
 NATIVE_FILES = (
     "hotools_native.cpp",
     "mc2_bindings.cpp",
-    "mc2_context_core.cpp",
-    "mc2_context_frame_step.cpp",
-    "mc2_context_interaction.cpp",
-    "mc2_context_readback.cpp",
-    "mc2_context_static.cpp",
     "mc2_fingerprint.cpp",
+    "mc2_frame_orientations.cpp",
     "mc2_kernels.cpp",
     "mc2_static_build.cpp",
     "mc2_self_collision.cpp",
+    "mc2_whole_domain_self.cpp",
     "mc2_domain_cpu.cpp",
     "mc2_domain_cpu_bindings.cpp",
 )
@@ -44,7 +41,6 @@ LEGACY_TERMS = (
     "old physicsMC2 packages remain active",
 )
 PURE_NATIVE_FILES = (
-    "mc2_context_internal.hpp",
     "mc2_kernels.cpp",
     "mc2_kernels.hpp",
     "mc2_self_collision.cpp",
@@ -158,6 +154,17 @@ E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
 E7_DEBUG_ROOTS = ("mc2.debug", "mc2.debug_draw")
 E7_LEGACY_BINDING_PREFIXES = ("mc2_context_v0_", "mc2_interaction_v0_")
 E7_LEGACY_BINDING_NAMES = frozenset()
+E7_LEGACY_TRANSLATION_UNITS = frozenset((
+    "mc2_context_core.cpp",
+    "mc2_context_frame_step.cpp",
+    "mc2_context_interaction.cpp",
+    "mc2_context_readback.cpp",
+    "mc2_context_static.cpp",
+))
+E7_LEGACY_HEADERS = frozenset((
+    "mc2_context_helpers.hpp",
+    "mc2_context_internal.hpp",
+))
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",
 ))
@@ -780,7 +787,13 @@ def _cpp_facts() -> dict:
             "legacy_bindings": legacy_bindings,
             "legacy_required_symbols": legacy_required,
             "legacy_translation_units": sorted(
-                name for name in files if name.startswith("mc2_context_")
+                name
+                for name in E7_LEGACY_TRANSLATION_UNITS
+                if (NATIVE_ROOT / name).exists()
+            ),
+            "legacy_headers": sorted(
+                name for name in E7_LEGACY_HEADERS
+                if (NATIVE_ROOT / name).exists()
             ),
         },
     }
@@ -878,7 +891,8 @@ def _print_summary(report: dict) -> None:
     print(f"C++ pure-native Python dependencies: {len(cpp['pure_native_violations'])}")
     print(
         f"E7 native legacy surface: {len(cpp['e7_cpu']['legacy_bindings'])} bindings, "
-        f"{len(cpp['e7_cpu']['legacy_translation_units'])} translation units"
+        f"{len(cpp['e7_cpu']['legacy_translation_units'])} translation units, "
+        f"{len(cpp['e7_cpu']['legacy_headers'])} headers"
     )
 
 
@@ -924,6 +938,10 @@ def main() -> None:
                 for item in items
             ),
             report["cpp"]["pure_native_violations"],
+            report["cpp"]["e7_cpu"]["legacy_bindings"],
+            report["cpp"]["e7_cpu"]["legacy_required_symbols"],
+            report["cpp"]["e7_cpu"]["legacy_translation_units"],
+            report["cpp"]["e7_cpu"]["legacy_headers"],
             report["legacy_hits"],
             report["world_scope_product_hits"],
             report["e0_domain_boundary_hits"],
