@@ -219,49 +219,12 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU backend step requires update_frame first")
         if not isinstance(scheduler_settings, Mapping):
             raise TypeError("scheduler_settings must be a mapping")
-        settings = dict(scheduler_settings)
-        if settings.get("integration_slice") is True:
-            step_integration = getattr(self._kernel, "step_integration", None)
-            if not callable(step_integration):
-                raise RuntimeError("CPU kernel does not expose the integration slice")
-            settings.pop("integration_slice")
-            if settings.pop("data_path_only", False) is not True:
-                raise RuntimeError("integration_slice requires data_path_only=True")
-            if collider_snapshot is not None:
-                raise RuntimeError("integration_slice does not consume colliders")
-            step_integration(self._handle, settings)
-            self._step_count += 1
-            return
-        if settings.get("inertia_slice") is True:
-            step_inertia = getattr(self._kernel, "step_inertia", None)
-            if not callable(step_inertia):
-                raise RuntimeError("CPU kernel does not expose the inertia slice")
-            settings.pop("inertia_slice")
-            if settings.pop("data_path_only", False) is not True:
-                raise RuntimeError("inertia_slice requires data_path_only=True")
-            if collider_snapshot is not None:
-                raise RuntimeError("inertia_slice does not consume colliders")
-            step_inertia(self._handle, settings)
-            self._step_count += 1
-            return
-        if settings.get("distance_slice") is True:
-            step_distance = getattr(self._kernel, "step_distance", None)
-            if not callable(step_distance):
-                raise RuntimeError("CPU kernel does not expose the distance slice")
-            if settings.pop("distance_slice") is not True:
-                raise RuntimeError("distance_slice must be true when requested")
-            if settings != {"data_path_only": True} or collider_snapshot is not None:
-                raise RuntimeError(
-                    "distance_slice requires data_path_only=True and no colliders"
-                )
-            step_distance(self._handle, 1.0, 0)
-        else:
-            self._kernel.step(
-                self._handle,
-                self._latest_frame,
-                settings,
-                collider_snapshot,
-            )
+        self._kernel.step(
+            self._handle,
+            self._latest_frame,
+            dict(scheduler_settings),
+            collider_snapshot,
+        )
         self._step_count += 1
 
     def step_center_frame_shift(self, anchor_component_local_positions) -> None:
@@ -315,6 +278,55 @@ class MC2CPUBackendDomainV1:
         if not callable(step_distance):
             raise RuntimeError("CPU kernel does not expose the Distance slice")
         step_distance(self._handle, simulation_power, debug_phase)
+        self._step_count += 1
+
+    def step_tether(self, settings: Mapping[str, object]) -> None:
+        """Run one explicit native Tether pass."""
+        self._run_explicit_pass("step_tether", settings, "Tether")
+
+    def step_bending(self, simulation_power: float = 1.0) -> None:
+        """Run one explicit native Bending pass."""
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("Bending step requires update_frame first")
+        step_bending = getattr(self._kernel, "step_bending", None)
+        if not callable(step_bending):
+            raise RuntimeError("CPU kernel does not expose the Bending pass")
+        step_bending(self._handle, simulation_power)
+        self._step_count += 1
+
+    def step_angle(self, settings: Mapping[str, object]) -> None:
+        """Run one explicit native Angle pass."""
+        self._run_explicit_pass("step_angle", settings, "Angle")
+
+    def step_motion(self, settings: Mapping[str, object]) -> None:
+        """Run one explicit native Motion pass."""
+        self._run_explicit_pass("step_motion", settings, "Motion")
+
+    def step_inertia(self, settings: Mapping[str, object]) -> None:
+        """Run one explicit native Inertia pass."""
+        self._run_explicit_pass("step_inertia", settings, "Inertia")
+
+    def step_integration(self, settings: Mapping[str, object]) -> None:
+        """Run one explicit native Integration pass."""
+        self._run_explicit_pass("step_integration", settings, "Integration")
+
+    def _run_explicit_pass(
+        self,
+        method_name: str,
+        settings: Mapping[str, object],
+        display_name: str,
+    ) -> None:
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError(f"{display_name} step requires update_frame first")
+        if not isinstance(settings, Mapping):
+            raise TypeError(f"{display_name} settings must be a mapping")
+        method = getattr(self._kernel, method_name, None)
+        if not callable(method):
+            raise RuntimeError(f"CPU kernel does not expose the {display_name} pass")
+        method(self._handle, dict(settings))
+        self._step_count += 1
 
     def step_reference_slices(self, settings: Mapping[str, object]) -> None:
         """Run only the explicit landed native reference pass prefix."""

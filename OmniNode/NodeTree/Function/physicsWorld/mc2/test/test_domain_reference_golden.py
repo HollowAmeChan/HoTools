@@ -253,10 +253,8 @@ def test_domain_prediction_matches_frozen_e3_reference():
     try:
         domain.update_frame(_frame(compiled.program))
         powers = scheduler.derive_mc2_simulation_powers(0.1)
-        domain.step(
+        domain.step_integration(
             {
-                "data_path_only": True,
-                "integration_slice": True,
                 "dt": 0.1,
                 "simulation_power": powers.integration,
                 "velocity_weight": 1.0,
@@ -365,20 +363,16 @@ def test_domain_step_basic_and_angle_match_frozen_e3_reference():
             "step_basic_rotations_xyzw",
         )
         powers = scheduler.derive_mc2_simulation_powers(0.1)
-        domain.step(
+        domain.step_integration(
             {
-                "data_path_only": True,
-                "integration_slice": True,
                 "dt": 0.1,
                 "simulation_power": powers.integration,
                 "velocity_weight": 1.0,
                 "gravity": (0.0, -1.0, 0.0),
             }
         )
-        domain.step(
+        domain.step_angle(
             {
-                "data_path_only": True,
-                "angle_slice": True,
                 "step_basic_positions": pose["positions"],
                 "step_basic_rotations": pose["rotations"],
                 "restoration_values": np.full(
@@ -435,10 +429,8 @@ def test_domain_tether_motion_matches_frozen_e3_reference():
                 positions=base_positions,
             )
         )
-        domain.step(
+        domain.step_integration(
             {
-                "data_path_only": True,
-                "integration_slice": True,
                 "dt": 0.1,
                 "simulation_power": 1.0,
                 "velocity_weight": 1.0,
@@ -458,10 +450,8 @@ def test_domain_tether_motion_matches_frozen_e3_reference():
             )
         )
         step_basic = domain.prepare_step_basic_pose(0.0)
-        domain.step(
+        domain.step_integration(
             {
-                "data_path_only": True,
-                "integration_slice": True,
                 "dt": 0.1,
                 "simulation_power": 1.0,
                 "velocity_weight": 1.0,
@@ -488,10 +478,8 @@ def test_domain_tether_motion_matches_frozen_e3_reference():
         }
         partition_values = compiled.parameters.partition_parameters.values[0]
         particle_values = compiled.parameters.particle_parameters.values
-        domain.step(
+        domain.step_tether(
             {
-                "data_path_only": True,
-                "tether_slice": True,
                 "step_basic_positions": step_basic["positions"],
                 "compression": float(
                     partition_values[
@@ -503,10 +491,8 @@ def test_domain_tether_motion_matches_frozen_e3_reference():
                 ),
             }
         )
-        domain.step(
+        domain.step_motion(
             {
-                "data_path_only": True,
-                "motion_slice": True,
                 "base_positions": moved_base,
                 "base_rotations": base_rotations,
                 "max_distances": particle_values[
@@ -747,10 +733,8 @@ def _run_center_transaction(
         )
         domain.step_center_inertia()
         powers = scheduler.derive_mc2_simulation_powers(simulation_delta_time)
-        domain.step(
+        domain.step_integration(
             {
-                "integration_slice": True,
-                "data_path_only": True,
                 "dt": simulation_delta_time,
                 "simulation_power": powers.integration,
                 "velocity_weight": 1.0,
@@ -758,10 +742,8 @@ def _run_center_transaction(
             }
         )
         after_integration = domain.read_output().world_positions.copy()
-        domain.step(
+        domain.step_tether(
             {
-                "tether_slice": True,
-                "data_path_only": True,
                 "step_basic_positions": moved_positions,
                 "compression": tether_compression,
                 "stretch": tether_stretch,

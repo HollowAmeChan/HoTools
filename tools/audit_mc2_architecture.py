@@ -46,6 +46,14 @@ LEGACY_TERMS = (
     "no_python_fallback",
     "legacy_policy",
     "legacy E3 path",
+    "data_path_only",
+    "distance_slice",
+    "tether_slice",
+    "bending_slice",
+    "angle_slice",
+    "motion_slice",
+    "inertia_slice",
+    "integration_slice",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

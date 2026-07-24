@@ -429,7 +429,7 @@ def test_native_whole_domain_self_debug_reports_intersection():
         domain.dispose()
 
 
-def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
+def test_native_cpu_kernel_base_step_rejects_settings():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
@@ -438,11 +438,11 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
         domain.update_frame(frame)
         try:
             domain.step({"substeps": 1})
-        except RuntimeError as exc:
-            assert "numerical kernel is not ready" in str(exc)
+        except ValueError as exc:
+            assert "base step does not accept settings" in str(exc)
         else:
-            raise AssertionError("native data-path owner accepted a product step")
-        domain.step({"data_path_only": True})
+            raise AssertionError("native base step accepted scheduler settings")
+        domain.step({})
         output = domain.read_output()
         assert output.frame == frame.frame and output.generation == frame.generation
         assert np.array_equal(output.world_positions, frame.animated_base_world_positions)
@@ -450,7 +450,6 @@ def test_native_cpu_kernel_runs_only_explicit_data_path_mode():
             output.world_rotations_xyzw, frame.animated_base_world_rotations
         )
         inspection = domain.inspect()
-        assert inspection["kernel"]["numerical_kernel_ready"] is False
         assert inspection["kernel"]["baseline_ready"] is True
         assert inspection["kernel"]["baseline_line_count"] == 1
         assert inspection["kernel"]["baseline_data_count"] == 3
@@ -503,7 +502,7 @@ def test_native_debug_off_inspect_does_not_readback_dynamics():
         domain.inspect()
         assert module.output_read_count == 0
         assert module.dynamics_debug_read_count == 0
-        domain.step({"data_path_only": True})
+        domain.step({})
         domain.inspect()
         assert module.output_read_count == 0
         assert module.dynamics_debug_read_count == 0
@@ -517,23 +516,22 @@ def test_native_debug_off_inspect_does_not_readback_dynamics():
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_distance_slice_only_when_requested():
+def test_native_cpu_kernel_runs_explicit_distance_pass():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step({"data_path_only": True, "distance_slice": True})
+        domain.step_distance(1.0, 0)
         output = domain.read_output()
         assert output.world_positions.shape == (compiled.program.particle_count, 3)
-        assert domain.inspect()["kernel"]["distance_slice_ready"] is True
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
+def test_native_cpu_kernel_runs_explicit_tether_pass_with_step_basic_rest_lengths():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
@@ -541,9 +539,7 @@ def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
     try:
         domain.update_frame(frame)
         before = domain.read_output().world_positions.copy()
-        domain.step({
-            "data_path_only": True,
-            "tether_slice": True,
+        domain.step_tether({
             "step_basic_positions": np.asarray(
                 ((2.0, 2.0, 2.0), (1.5, 2.0, 2.0), (2.0, 1.5, 2.0)),
                 dtype=np.float32,
@@ -555,7 +551,6 @@ def test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths():
         assert np.array_equal(after[0], before[0])
         assert after[1, 0] > before[1, 0]
         assert after[2, 1] > before[2, 1]
-        assert domain.inspect()["kernel"]["tether_slice_ready"] is True
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
@@ -575,7 +570,7 @@ def test_native_constraint_debug_distance_and_tether_sum_to_pass_delta():
         domain.update_frame(frame)
         domain.begin_constraint_debug(4)
         before = domain.read_output().world_positions.copy()
-        domain.step({"data_path_only": True, "distance_slice": True})
+        domain.step_distance(1.0, 0)
         after = domain.read_output().world_positions.copy()
         domain.end_constraint_debug()
         distance = domain.read_constraint_debug_state()["distance_results"]
@@ -593,9 +588,7 @@ def test_native_constraint_debug_distance_and_tether_sum_to_pass_delta():
 
         domain.begin_constraint_debug(8)
         before = domain.read_output().world_positions.copy()
-        domain.step({
-            "data_path_only": True,
-            "tether_slice": True,
+        domain.step_tether({
             "step_basic_positions": np.asarray(
                 ((2.0, 2.0, 2.0), (1.5, 2.0, 2.0), (2.0, 1.5, 2.0)),
                 dtype=np.float32,
@@ -619,16 +612,14 @@ def test_native_constraint_debug_distance_and_tether_sum_to_pass_delta():
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
+def test_native_cpu_kernel_runs_explicit_angle_pass_with_baseline_transaction():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step({
-            "data_path_only": True,
-            "angle_slice": True,
+        domain.step_angle({
             "step_basic_positions": frame.animated_base_world_positions,
             "step_basic_rotations": frame.animated_base_world_rotations,
             "restoration_values": np.ones(compiled.program.particle_count, dtype=np.float32),
@@ -643,8 +634,6 @@ def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
         assert np.isfinite(output).all()
         assert domain.inspect()["kernel"]["angle_solve_count"] == 1
         disabled = {
-            "data_path_only": True,
-            "angle_slice": True,
             "step_basic_positions": frame.animated_base_world_positions,
             "step_basic_rotations": frame.animated_base_world_rotations,
             "restoration_values": np.ones(compiled.program.particle_count, dtype=np.float32),
@@ -655,23 +644,21 @@ def test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction():
             "restoration_enabled": False,
             "limit_enabled": False,
         }
-        domain.step(disabled)
+        domain.step_angle(disabled)
         assert domain.inspect()["kernel"]["angle_solve_count"] == 1
         assert domain.inspect()["kernel"]["step_count"] == 2
     finally:
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose():
+def test_native_cpu_kernel_runs_explicit_motion_pass_with_explicit_base_pose():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step({
-            "data_path_only": True,
-            "motion_slice": True,
+        domain.step_motion({
             "base_positions": frame.animated_base_world_positions,
             "base_rotations": frame.animated_base_world_rotations,
             "max_distances": np.zeros(compiled.program.particle_count, dtype=np.float32),
@@ -689,16 +676,14 @@ def test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose():
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
+def test_native_cpu_kernel_runs_explicit_inertia_pass():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step({
-            "data_path_only": True,
-            "inertia_slice": True,
+        domain.step_inertia({
             "old_world_position": (0.0, 0.0, 0.0),
             "step_vector": (1.0, 0.0, 0.0),
             "step_rotation": (0.0, 0.0, 0.0, 1.0),
@@ -714,22 +699,19 @@ def test_native_cpu_kernel_exposes_inertia_slice_only_when_requested():
         assert np.any(
             output.world_positions[1:] != frame.animated_base_world_positions[1:]
         )
-        assert domain.inspect()["kernel"]["inertia_slice_ready"] is True
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
 
 
-def test_native_cpu_kernel_exposes_integration_slice_only_when_requested():
+def test_native_cpu_kernel_runs_explicit_integration_pass():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
+        domain.step_integration({
             "dt": 0.5,
             "simulation_power": 1.0,
             "velocity_weight": 1.0,
@@ -743,7 +725,6 @@ def test_native_cpu_kernel_exposes_integration_slice_only_when_requested():
             output.world_positions[1:, 1],
             frame.animated_base_world_positions[1:, 1] - np.float32(0.5),
         )
-        assert domain.inspect()["kernel"]["integration_slice_ready"] is True
         assert domain.inspect()["step_count"] == 1
     finally:
         domain.dispose()
@@ -895,9 +876,7 @@ def test_native_task_reference_keep_uses_one_fixed_reference_and_partition_scope
     )
     try:
         domain.update_frame(first)
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
+        domain.step_integration({
             "dt": 0.1,
             "simulation_power": 1.0,
             "velocity_weight": 1.0,
@@ -958,9 +937,7 @@ def test_native_task_reference_reset_is_exact_and_invalidates_histories_once():
     )
     try:
         domain.update_frame(first)
-        domain.step({
-            "data_path_only": True,
-            "integration_slice": True,
+        domain.step_integration({
             "dt": 0.1,
             "simulation_power": 1.0,
             "velocity_weight": 1.0,
@@ -1620,24 +1597,24 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_backend_blocks_compiled_whole_domain_self_pair")
     test_native_whole_domain_self_debug_reports_intersection()
     print("PASS test_native_whole_domain_self_debug_reports_intersection")
-    test_native_cpu_kernel_runs_only_explicit_data_path_mode()
-    print("PASS test_native_cpu_kernel_runs_only_explicit_data_path_mode")
+    test_native_cpu_kernel_base_step_rejects_settings()
+    print("PASS test_native_cpu_kernel_base_step_rejects_settings")
     test_native_debug_off_inspect_does_not_readback_dynamics()
     print("PASS test_native_debug_off_inspect_does_not_readback_dynamics")
-    test_native_cpu_kernel_exposes_distance_slice_only_when_requested()
-    print("PASS test_native_cpu_kernel_exposes_distance_slice_only_when_requested")
-    test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths()
-    print("PASS test_native_cpu_kernel_exposes_tether_slice_with_step_basic_rest_lengths")
+    test_native_cpu_kernel_runs_explicit_distance_pass()
+    print("PASS test_native_cpu_kernel_runs_explicit_distance_pass")
+    test_native_cpu_kernel_runs_explicit_tether_pass_with_step_basic_rest_lengths()
+    print("PASS test_native_cpu_kernel_runs_explicit_tether_pass_with_step_basic_rest_lengths")
     test_native_constraint_debug_distance_and_tether_sum_to_pass_delta()
     print("PASS test_native_constraint_debug_distance_and_tether_sum_to_pass_delta")
-    test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction()
-    print("PASS test_native_cpu_kernel_exposes_angle_slice_with_baseline_transaction")
-    test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose()
-    print("PASS test_native_cpu_kernel_exposes_motion_slice_with_explicit_base_pose")
-    test_native_cpu_kernel_exposes_inertia_slice_only_when_requested()
-    print("PASS test_native_cpu_kernel_exposes_inertia_slice_only_when_requested")
-    test_native_cpu_kernel_exposes_integration_slice_only_when_requested()
-    print("PASS test_native_cpu_kernel_exposes_integration_slice_only_when_requested")
+    test_native_cpu_kernel_runs_explicit_angle_pass_with_baseline_transaction()
+    print("PASS test_native_cpu_kernel_runs_explicit_angle_pass_with_baseline_transaction")
+    test_native_cpu_kernel_runs_explicit_motion_pass_with_explicit_base_pose()
+    print("PASS test_native_cpu_kernel_runs_explicit_motion_pass_with_explicit_base_pose")
+    test_native_cpu_kernel_runs_explicit_inertia_pass()
+    print("PASS test_native_cpu_kernel_runs_explicit_inertia_pass")
+    test_native_cpu_kernel_runs_explicit_integration_pass()
+    print("PASS test_native_cpu_kernel_runs_explicit_integration_pass")
     test_native_cpu_kernel_tracks_multi_partition_frame_history()
     print("PASS test_native_cpu_kernel_tracks_multi_partition_frame_history")
     test_native_cpu_kernel_exposes_center_frame_shift_slice()

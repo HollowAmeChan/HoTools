@@ -260,41 +260,13 @@ class MC2NativeCPUKernelV1:
     ) -> None:
         key = self._require_handle(handle)
         settings = dict(scheduler_settings)
-        distance_slice = settings.pop("distance_slice", False) is True
-        tether_slice = settings.pop("tether_slice", False) is True
-        bending_slice = settings.pop("bending_slice", False) is True
-        angle_slice = settings.pop("angle_slice", False) is True
-        motion_slice = settings.pop("motion_slice", False) is True
-        data_path_only = settings.pop("data_path_only", False) is True
-        if not data_path_only:
-            raise RuntimeError(
-                "native MC2 CPU numerical kernel is not ready; "
-                "only data_path_only=True is accepted"
-            )
         if collider_snapshot is not None:
-            raise RuntimeError("native MC2 CPU data-path slice does not consume colliders")
+            raise RuntimeError("native MC2 CPU base pass does not consume colliders")
         if self._frames.get(key) is not frame_packet:
             raise ValueError("native MC2 CPU step frame is not the published frame packet")
-        if sum((distance_slice, tether_slice, bending_slice, angle_slice, motion_slice)) > 1:
-            raise ValueError("constraint slices are mutually exclusive")
-        if tether_slice:
-            self.step_tether(key, settings)
-        elif bending_slice:
-            if settings:
-                raise ValueError("bending_slice does not accept additional inputs")
-            self._module.mc2_domain_cpu_v1_step_bending(key)
-        elif angle_slice:
-            self.step_angle(key, settings)
-        elif motion_slice:
-            self.step_motion(key, settings)
-        elif distance_slice:
-            if settings:
-                raise ValueError("distance_slice does not accept additional inputs")
-            self.step_distance(key, debug_phase=0)
-        else:
-            if settings:
-                raise ValueError("data_path_only step does not accept additional inputs")
-            self._module.mc2_domain_cpu_v1_step(key)
+        if settings:
+            raise ValueError("native MC2 CPU base step does not accept settings")
+        self._module.mc2_domain_cpu_v1_step(key)
 
     def step_distance(
         self, handle, simulation_power: float = 1.0, debug_phase: int = -1
@@ -1262,26 +1234,7 @@ class MC2NativeCPUKernelV1:
 
     def inspect(self, handle) -> dict:
         key = self._require_handle(handle)
-        result = dict(self._module.mc2_domain_cpu_v1_inspect(key))
-        result.update({
-            "numerical_kernel_ready": False,
-            "data_path_only": True,
-            "baseline_slice_ready": bool(result.get("baseline_ready", False)),
-            "distance_slice_ready": any(
-                table.kind == "distance" for table in self._programs[key].constraint_tables
-            ),
-            "tether_slice_ready": any(
-                table.kind == "tether" for table in self._programs[key].constraint_tables
-            ),
-            "bending_slice_ready": any(
-                table.kind == "bending" for table in self._programs[key].constraint_tables
-            ),
-            "inertia_slice_ready": True,
-            "integration_slice_ready": True,
-            "center_slice_ready": True,
-            "center_frame_shift_slice_ready": True,
-        })
-        return result
+        return dict(self._module.mc2_domain_cpu_v1_inspect(key))
 
     def read_debug_state(self, handle) -> dict:
         """Read native dynamics/debug arrays only when explicitly requested."""
