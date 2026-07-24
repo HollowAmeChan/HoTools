@@ -218,6 +218,16 @@ E7S_ALLOWED_ZERO_INBOUND_MODULES = {
     "mc2.nodes": "SOLVER_MODULE node registry entry",
     "mc2.setups.mesh_cloth.properties": "COMPONENT_MODULE Blender properties entry",
 }
+E7S_EXTERNAL_ENTRY_MODULES = frozenset((
+    "mc2",
+    "mc2.capabilities",
+    "mc2.debug",
+    "mc2.declaration",
+    "mc2.nodes",
+    "mc2.setups.mesh_cloth.capabilities",
+    "mc2.setups.mesh_cloth.properties",
+    "mc2.source_observation_blender",
+))
 
 E7_LEGACY_MODULES = frozenset((
     "mc2.solver",
@@ -722,6 +732,9 @@ def _python_facts() -> dict:
         if count == 0
     }
     allowed_zero_inbound_modules = set(E7S_ALLOWED_ZERO_INBOUND_MODULES)
+    externally_reachable_modules = _reachable_modules(
+        edges, tuple(sorted(E7S_EXTERNAL_ENTRY_MODULES))
+    )
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -804,6 +817,18 @@ def _python_facts() -> dict:
             ),
             "stale_allowances": sorted(
                 allowed_zero_inbound_modules - zero_inbound_modules
+            ),
+        },
+        "e7s_external_reachability": {
+            "roots": sorted(E7S_EXTERNAL_ENTRY_MODULES),
+            "reachable_count": len(
+                production_module_names & externally_reachable_modules
+            ),
+            "unreachable_modules": sorted(
+                production_module_names - externally_reachable_modules
+            ),
+            "stale_roots": sorted(
+                set(E7S_EXTERNAL_ENTRY_MODULES) - production_module_names
             ),
         },
         "e7_cpu": {
@@ -1111,6 +1136,13 @@ def _print_summary(report: dict) -> None:
         f"{len(zero_inbound_report['unexplained'])} unexplained, "
         f"{len(zero_inbound_report['stale_allowances'])} stale allowances"
     )
+    external_reachability = python["e7s_external_reachability"]
+    print(
+        "E7-S Python external reachability: "
+        f"{external_reachability['reachable_count']} reachable, "
+        f"{len(external_reachability['unreachable_modules'])} unreachable, "
+        f"{len(external_reachability['stale_roots'])} stale roots"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -1189,6 +1221,8 @@ def main() -> None:
             report["python"]["e7s_python_responsibilities"]["duplicate_modules"],
             report["python"]["e7s_zero_inbound_modules"]["unexplained"],
             report["python"]["e7s_zero_inbound_modules"]["stale_allowances"],
+            report["python"]["e7s_external_reachability"]["unreachable_modules"],
+            report["python"]["e7s_external_reachability"]["stale_roots"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item
