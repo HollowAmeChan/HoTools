@@ -104,12 +104,12 @@ prediction
 
 ### MeshCloth 优先形成单一模拟域
 
-多个会互相接触的 MeshCloth 代理应默认编译为一个 fused simulation context。一个公开 `MC2 MeshCloth任务` 表示一个布料模拟域，而不是“输入多少对象就产生多少隐藏 task”。
+多个会互相接触的 MeshCloth 代理应默认编译为一个 fused simulation context。一个公开 `MC2 MeshCloth域` 表示一个布料模拟域，而不是“输入多少对象就产生多少隐藏 task”。
 
 融合后的结构为：
 
 ```text
-MC2 MeshCloth任务
+MC2 MeshCloth域
   source partition 0 -> particle range / constraint ranges / output mapping
   source partition 1 -> particle range / constraint ranges / output mapping
   ...
@@ -199,7 +199,7 @@ native 固定阶段槽覆盖 Center/prediction、Tether、Distance A/B、Angle�
 - 后端中立 `MC2CompiledDomain`、logical particle identity、constraint tables 和 output map；
 - 一个 collector domain 到 compiled program 的稳定编译结果。
 
-当前 `MC2 MeshCloth任务` 的 `List[Object] -> N个隐藏task` 行为不能直接改成另一种隐藏融合。必须先让节点图表达“哪些对象是partition、哪些字段被覆盖、哪些partition属于同一domain”，再让 runtime 消费编译结果。
+迁移前 `MC2 MeshCloth任务` 的 `List[Object] -> N个隐藏task` 行为不能直接改成另一种隐藏融合。当前公开入口已命名为 `MC2 MeshCloth域`，节点图通过 partition、覆盖和 domain 装配表达归属，再由 runtime 消费编译结果。
 
 这里不先扩展旧 `MC2TaskSpec.sources` 或 topology range。`partition_id` 是 authoring/state identity，physical particle span 是某次 CPU/GPU compile 的布局结果；两者通过 logical index view 和 output map 关联。否则一次看似简单的 range 改动会同时绑死静态构建、Center/Teleport、GPU 重排和多目标写回。
 

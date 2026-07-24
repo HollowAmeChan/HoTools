@@ -23,7 +23,7 @@ E0-E5 的数据依赖和验收门禁是强约束。未通过上一阶段的合�
 
 ## 设计结论
 
-`MC2模拟步`仍然是 Physics World 唯一公开的运行时 step，唯一输入是显式 `list[MC2ProductRequestV1]`。旧 `list[MC2TaskSpec]` 与其 Python owner 已删除；MC2 setup 的“任务节点”已经从 source 展开函数提升为 setup-domain collector：
+`MC2模拟步`仍然是 Physics World 唯一公开的运行时 step，唯一输入是显式 `list[MC2ProductRequestV1]`。旧 `list[MC2TaskSpec]` 与其 Python owner 已删除；MC2 setup 的公开“域节点”是 setup-domain collector：
 
 ```text
 上游细分节点
@@ -45,7 +45,7 @@ E0-E5 的数据依赖和验收门禁是强约束。未通过上一阶段的合�
 
 ## 为什么必须拆分节点职能
 
-当前 `MC2 MeshCloth任务`同时承担了：
+迁移前的 `MC2 MeshCloth任务`同时承担了：
 
 - 展开 Object 列表；
 - 选择 MeshCloth setup；
@@ -69,7 +69,7 @@ writeback         结果应该写回哪个 Blender owner？
 
 ## 节点层级
 
-### 1. `MC2 MeshCloth对象`
+### 1. `MC2 Mesh对象`
 
 这是显式 source 节点，输入一个 Mesh Object，输出一个 `MC2MeshClothPartitionEntry`。它不创建 slot、不扫描整个 world、不直接写 `world.implicit_objects`。
 
@@ -85,7 +85,7 @@ writeback         结果应该写回哪个 Blender owner？
 
 该节点可输出 source 的默认分区信息和 `partition_id`，但不应暴露 task scheduler、native context、substep 或 world step 参数。
 
-### 2. `MC2 MeshCloth覆盖`
+### 2. `MC2 Mesh覆盖`
 
 这是 sparse override 节点。它接收一个或多个 `MC2MeshClothPartitionEntry`，输出同类型 entry，但只保存显式连接或显式设置的字段 patch。
 
@@ -98,7 +98,7 @@ writeback         结果应该写回哪个 Blender owner？
 
 没有连接的字段必须保持 `unset`，不能把默认值写进 patch 后再假装用户覆盖。collector 才负责把 default + implicit + explicit patch 编译成 dense runtime arrays。
 
-### 3. `MC2 MeshCloth隐式对象`
+### 3. `MC2 Mesh隐式注册`
 
 这是 implicit object producer，负责把 Blender Object 或 object scope 选择注册为 `world.implicit_objects` 中的 `mc2.mesh_cloth` entry。它只写 registry，不创建 solver slot。
 
@@ -116,37 +116,37 @@ enabled
 
 该节点允许把对象面板、集合选择或其他上游域逻辑转成隐式 MeshCloth entry。它的输出是 world 更新状态和 entry 统计；collector 读取 registry 时不得依赖 producer 的 Python 对象顺序。
 
-### 4. `MC2 MeshCloth隐式收集`
+### 4. `MC2 Mesh收集器`
 
-这是纯读取节点，把 `world.implicit_objects[tag=mc2.mesh_cloth]` 转成与显式 `MC2 MeshCloth对象` 相同的 `MC2MeshClothPartitionEntry` 类型。显式 source 和 implicit source 因而可以在同一个 collector 合并。
+这是高级 setup-domain collector。它把 `MC2 Mesh对象`/`MC2 Mesh覆盖`产生的显式分区与 `world.implicit_objects[tag=mc2.mesh_cloth]` 中的隐式分区合并，完成去重、冲突检查和 Require-Fusion 装配。
 
-它不做最终融合，不生成 task identity，不拥有 native state。没有 implicit entry 时输出空列表和明确的零计数，而不是伪造一个空 task。
+它输出 `MC2域`和`装配报告`，不拥有 native state。没有有效分区时明确失败或输出零装配状态，不伪造空域。
 
-### 5. `MC2 MeshCloth任务`
+### 5. `MC2 MeshCloth域`
 
-这是 setup-domain collector，也是当前“MeshCloth任务”节点的产品语义。它接收显式/隐式 partition entry，输出 `list[MC2ProductRequestV1]` 和可观察的装配状态；Require-Fusion 的正常兼容输入只产生一个 fused request，冲突直接失败。
+这是面向常规使用的简化域节点：直接接收一个或多个 Mesh Object、粒子配置、Anchor 和域默认参数，输出一个 fused `MC2ProductRequestV1`。它与高级 `MC2 Mesh收集器`产生同一种 `MC2域`，但不暴露逐分区覆盖和隐式 registry。
 
-建议输入：
+高级 `MC2 Mesh收集器`的输入：
 
 | 输入 | 作用 |
 |---|---|
-| `显式分区` | 上游 `MC2 MeshCloth对象` 或覆盖节点输出。 |
-| `隐式分区` | 上游 `MC2 MeshCloth隐式收集` 输出。 |
+| `显式Mesh分区` | 上游 `MC2 Mesh对象` 或 `MC2 Mesh覆盖`输出。 |
+| `包含隐式` | 是否同时读取 Physics World 中已注册的隐式 Mesh 分区。 |
 | `域默认配置` | 只给未覆盖的 partition/profile 字段提供 default。 |
 | `融合策略` | 默认 Auto；Require Fusion 在不兼容时明确报错；Separate 只用于诊断/迁移，不得静默拆分。 |
 | `域级自碰与过滤` | 统一 domain contract；粒子/分区差异通过下游属性数组表达。 |
 | `启用` | 关闭 domain，但不删除上游 entry。 |
 
-collector 输出：
+两个入口统一输出：
 
-- `MC2任务`：`list[MC2ProductRequestV1]`，正常为一个 fused request；每一项都有独立 domain id；
-- `任务名称`：由 `setup_type + domain_signature` 生成的动态产品槽位 id；
+- `MC2域`：`list[MC2ProductRequestV1]`，正常为一个 fused request；每一项都有独立 domain id；
+- `域标识`：由 `setup_type + domain_signature` 生成的动态产品槽位 id；
 - `分区数量`、`粒子数量`、`融合状态`；
 - `冲突/不兼容报告`：包括 stable id、字段 owner 和阻止融合的具体原因。
 
-collector 不接收 `时间缩放`、`模拟频率`、`每帧最大模拟次数`。这些属于 `MC2模拟步`，避免 setup domain 和 world scheduler 混在一个节点。
+域节点和 collector 都不接收 `时间缩放`、`模拟频率`、`每帧最大模拟次数`。这些属于 `MC2模拟步`，避免 setup domain 和 world scheduler 混在一个节点。
 
-### 6. `MC2 BoneCloth任务` 与 `MC2 BoneSpring任务`
+### 6. `MC2 BoneCloth域` 与 `MC2 BoneSpring域`
 
 E5-B 在删除旧实现前完成这两个节点的产品迁移。它们不是第二、第三套 solver，而是统一粒子域外的薄 setup 包装：复用现有 `MC2PartitionEntry`、patch/collector 解析、`MC2CompiledDomain`、DomainV1、scheduler/Center 历史和公共结果事务，只保留 source capture、静态拓扑、帧输入与 Bone 写回差异。
 
@@ -670,19 +670,21 @@ E3 reference API 已删除 `data_path_only` 及 Distance/Tether/Bending/Angle/Mo
 
 ```text
 Object
-  -> MC2 MeshCloth对象
-  -> MC2 MeshCloth覆盖（可选，可串多个但冲突要显式）
-  -> MC2 MeshCloth任务.显式分区
+  -> MC2 Mesh对象
+  -> MC2 Mesh覆盖（可选，可串多个但冲突要显式）
+  -> MC2 Mesh收集器.显式Mesh分区
+  -> MC2模拟步.MC2域
 ```
+
+不需要逐分区覆盖或隐式注册时，可直接使用 `Object -> MC2 MeshCloth域 -> MC2模拟步.MC2域`。
 
 ### 隐式模式
 
 ```text
 Physics World Begin
-  -> MC2 MeshCloth隐式对象（写 world.implicit_objects）
-  -> MC2 MeshCloth隐式收集（读 registry）
-  -> MC2 MeshCloth覆盖（可选）
-  -> MC2 MeshCloth任务.隐式分区
+  -> MC2 Mesh隐式注册（写 world.implicit_objects）
+  -> MC2 Mesh收集器（包含隐式，读 registry）
+  -> MC2模拟步.MC2域
 ```
 
 ### 统一运行时

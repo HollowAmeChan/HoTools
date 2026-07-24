@@ -564,8 +564,8 @@ def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
     )
     return (
         f"{setup_label}的对象身份、组件运动修正、Teleport与交互参数。"
-        "这些值属于Task并走parameter hot update，不属于粒子Profile，"
-        "也不改变task id或拓扑。\n\n" + "\n".join(rows)
+        "这些值属于模拟域并走parameter hot update，不属于粒子Profile，"
+        "也不改变域标识或拓扑。\n\n" + "\n".join(rows)
     )
 
 
@@ -729,7 +729,7 @@ def physicsMC2MeshImplicitRegister(
         "把显式与隐式Mesh partition解析为一个Require-Fusion统一域。"
         "不兼容或冲突直接失败，不回退为每对象一个task。"
     ),
-    _OUTPUT_NAME=["MC2统一域", "装配报告"],
+    _OUTPUT_NAME=["MC2域", "装配报告"],
     mute_passthrough=False,
 )
 def physicsMC2MeshCollector(
@@ -783,7 +783,7 @@ def physicsMC2MeshCollector(
 
 @omni(
     enable=True,
-    bl_label="MC2 MeshCloth任务",
+    bl_label="MC2 MeshCloth域",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
@@ -792,17 +792,17 @@ def physicsMC2MeshCollector(
         "启用",
     ],
     input_init={
-        "mesh_objects": {"description": "MeshCloth网格列表\n每对象一个任务"},
+        "mesh_objects": {"description": "MeshCloth网格列表\n多个对象融合为一个域"},
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 MeshCloth配置\n留空使用默认值"},
         **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
-        "enabled": {"description": "保留任务但不参与模拟"},
+        "enabled": {"description": "关闭时不生成该模拟域"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=_task_long_description(
         "MeshCloth", _TASK_CLOTH_PARAMETER_FIELDS
     ),
-    _OUTPUT_NAME=["MC2任务", "任务名称"],
+    _OUTPUT_NAME=["MC2域", "域标识"],
     mute_passthrough=False,
 )
 def physicsMC2MeshClothTask(
@@ -838,7 +838,7 @@ def physicsMC2MeshClothTask(
 
 @omni(
     enable=True,
-    bl_label="MC2 BoneCloth任务",
+    bl_label="MC2 BoneCloth域",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
@@ -873,7 +873,7 @@ def physicsMC2MeshClothTask(
     omni_description=_task_long_description(
         "BoneCloth", _TASK_CLOTH_PARAMETER_FIELDS
     ),
-    _OUTPUT_NAME=["MC2任务", "任务名称"],
+    _OUTPUT_NAME=["MC2域", "域标识"],
     mute_passthrough=False,
 )
 def physicsMC2BoneClothTask(
@@ -927,7 +927,7 @@ def physicsMC2BoneClothTask(
 
 @omni(
     enable=True,
-    bl_label="MC2 BoneSpring任务",
+    bl_label="MC2 BoneSpring域",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
@@ -949,7 +949,7 @@ def physicsMC2BoneClothTask(
     omni_description=_task_long_description(
         "BoneSpring", _TASK_SPRING_PARAMETER_FIELDS
     ),
-    _OUTPUT_NAME=["MC2任务", "任务名称"],
+    _OUTPUT_NAME=["MC2域", "域标识"],
     mute_passthrough=False,
 )
 def physicsMC2BoneSpringTask(
@@ -1002,13 +1002,13 @@ def physicsMC2BoneSpringTask(
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "物理世界", "MC2任务", "时间缩放", "模拟频率",
+        "物理世界", "MC2域", "时间缩放", "模拟频率",
         "每帧最大模拟次数", "启用", "热点时长调试",
     ],
     input_init={
         "world": {"description": "Physics World统一时间源"},
         "mc2_tasks": {
-            "description": "连接显式MC2统一域\n不得与旧task混用",
+            "description": "连接一个或多个显式MC2域",
         },
         "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "MC2局部时间倍率\n缩放统一dt"},
         "simulation_frequency": {"min_value": 30, "max_value": 150, "description": "MC2固定步频率（Hz）"},
@@ -1054,7 +1054,7 @@ def physicsMC2Step(
     )
     if invalid_values:
         raise TypeError(
-            "MC2模拟步只接受显式产品request；旧task/owner入口已删除"
+            "MC2模拟步只接受显式MC2域"
         )
     from .product_solver import step_mc2_products
 
@@ -1078,16 +1078,16 @@ _MC2_DEBUG_DESCRIPTION_ITEMS = (
     ("物理世界", _mc2_debug_help(
         "选择要读取的Physics World，并把同一world原样传给下游；本节点只观察，不修改模拟。",
         "“调试状态”输出按task列出上一份冻结快照的捕获帧、记录数、接近数和真实触发数；首次启用通常要等下一次真实substep。",
-        "输出帧持续更新且task数量符合预期即正常；状态停在旧帧通常表示暂停、same-frame、zero-substep或任务筛选未命中。",
+        "输出帧持续更新且域数量符合预期即正常；状态停在旧帧通常表示暂停、same-frame、zero-substep或域筛选未命中。",
         "无MC2物理参数；只受上游物理世界、MC2模拟步是否启用以及时间推进影响。",
         "切换world、删除slot、停止时间推进、编译失败或world dispose会让快照消失或停止更新。",
     )),
-    ("任务筛选", _mc2_debug_help(
-        "只观察指定task id，避免多个布料叠画。MeshCloth、BoneCloth、BoneSpring任务节点的“任务名称”可直接连接。",
-        "空值=全部；多个id用换行或逗号分隔；状态输出会明确列出实际命中的task。",
-        "命中数量与预期一致即正常；视口完全为空且状态显示等待时先检查task id，而不是先怀疑solver。",
-        "仅本节点“任务筛选”，不改变任何Profile/Task参数或模拟结果。",
-        "task改名、对象重建导致task id变化、筛选拼写不完整都会改变命中范围。",
+    ("域筛选", _mc2_debug_help(
+        "只观察指定域标识，避免多个模拟域叠画。MeshCloth、BoneCloth、BoneSpring域节点的“域标识”可直接连接。",
+        "空值=全部；多个标识用换行或逗号分隔；状态输出会明确列出实际命中的域。",
+        "命中数量与预期一致即正常；视口完全为空且状态显示等待时先检查域标识，而不是先怀疑solver。",
+        "仅本节点“域筛选”，不改变任何Profile或模拟参数。",
+        "对象或拓扑重建可能改变域标识，筛选拼写不完整也会改变命中范围。",
     )),
     ("最大显示项", _mc2_debug_help(
         "限制每一种绘制图元的可见数量，保护viewport；默认10000、上限100000。",
@@ -1296,7 +1296,7 @@ def _mc2_debug_long_description() -> str:
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=[
-        "物理世界", "任务筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度", "深度粒子索引",
+        "物理世界", "域筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度", "深度粒子索引",
         "StepBasic参考姿态", "有效重力", "粒子速度", "Distance误差", "Tether状态",
         "Bending约束", "Motion BasePosition", "Motion约束",
         "Angle恢复目标", "Angle限制范围", "Center", "Teleport阈值与方向",
@@ -1341,7 +1341,7 @@ def _mc2_debug_long_description() -> str:
         "show_self_candidates": {"description": "自碰3：黄=宽相候选（非接触）"},
         "show_self_contacts": {"description": "自碰4：红=持续 橙=新增\n灰=失效 紫=穿插"},
         "show_output": {"description": "高级结果：显示实际写回的最终输出偏移。"},
-        "task_filter": {"description": "任务名/task id。\n换行/逗号分隔，空=全部。"},
+        "task_filter": {"description": "域标识。\n换行/逗号分隔，空=全部。"},
         "max_items": {"min_value": 1, "max_value": 100000, "description": "每种可视化最多绘制的项目数。"},
     },
     _OUTPUT_NAME=["物理世界", "调试状态"],

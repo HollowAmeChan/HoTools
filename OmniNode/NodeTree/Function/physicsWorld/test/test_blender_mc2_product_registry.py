@@ -63,6 +63,17 @@ def test_mc2_product_registry_contract():
     assert len(schema_names) == 7
     assert mc2_nodes.physicsMC2MeshObject.__meta["bl_label"] == "MC2 Mesh对象"
     assert mc2_nodes.physicsMC2MeshCollector.__meta["bl_label"] == "MC2 Mesh收集器"
+    assert mc2_nodes.physicsMC2MeshCollector.__meta["_OUTPUT_NAME"][0] == "MC2域"
+    assert mc2_nodes.physicsMC2MeshClothTask.__meta["bl_label"] == "MC2 MeshCloth域"
+    assert mc2_nodes.physicsMC2BoneClothTask.__meta["bl_label"] == "MC2 BoneCloth域"
+    assert mc2_nodes.physicsMC2BoneSpringTask.__meta["bl_label"] == "MC2 BoneSpring域"
+    for domain_node in (
+        mc2_nodes.physicsMC2MeshClothTask,
+        mc2_nodes.physicsMC2BoneClothTask,
+        mc2_nodes.physicsMC2BoneSpringTask,
+    ):
+        assert domain_node.__meta["_OUTPUT_NAME"] == ["MC2域", "域标识"]
+    assert mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"][1] == "MC2域"
 
     product_slot = importlib.import_module("test_product_slot")
     product_collect = importlib.import_module("test_product_collect")
