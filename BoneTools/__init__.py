@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Panel,Menu
-from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve,auxBone
+from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve,auxBone,hoAux
 
 
 # region 变量
@@ -10,6 +10,7 @@ def reg_props():
         ('PANEL_BONE_HUMANOID', "Humanoid", ""),
         ('PANEL_BONE_OPERATORS', "操作", ""),
         ('PANEL_BONE_AUX', "辅助骨", ""),
+        ('PANEL_BONE_HOAUX', "HoAux", ""),
         ('PANEL_BONE_RENAME', "命名", ""),
     ]
     bpy.types.Scene.ho_BoneToolsPanel_Mod = bpy.props.EnumProperty(
@@ -42,6 +43,8 @@ class PL_BoneTools(Panel):
             boneOperators.drawBoneOperatorsPanel(self.layout, context)
         elif panel_mode == "PANEL_BONE_AUX":
             auxBone.draw_panel(self.layout, context)
+        elif panel_mode == "PANEL_BONE_HOAUX":
+            hoAux.draw_panel(self.layout, context)
         elif panel_mode == "PANEL_BONE_RENAME":
             boneRename.drawBoneRenamePanel(self.layout, context)
 
@@ -86,6 +89,7 @@ cls = [
 
 
 def register():
+    hoAux.register()
     boneProperty.register()
     boneOperators.register()
     boneRename.register()
@@ -110,6 +114,7 @@ def unregister():
     auxBone.unregister()
     boneHumanoid.unregister()
     boneProperty.unregister()
+    hoAux.unregister()
 
     for i in cls:
         bpy.utils.unregister_class(i)

@@ -9,6 +9,7 @@ from bpy.props import (
 )
 
 from .boneUtils import BoneUtils
+from .hoAux.properties import PG_HoAuxBoneInfo
 
 
 # 辅助骨类型枚举：与命名体系中的 marker 一一对应。
@@ -99,6 +100,11 @@ class PG_Hotools_BoneProps(PropertyGroup):
         description="此骨作为 HoTools 辅助骨时的自描述信息",
         type=PG_Hotools_AuxBoneInfo,
     )  # type: ignore
+    hoAux: PointerProperty(
+        name="HoAux 信息",
+        description="此骨作为 HoAux 生成骨时的身份与归属",
+        type=PG_HoAuxBoneInfo,
+    )  # type: ignore
 
 
 def _active_aux(context):
@@ -159,6 +165,14 @@ class PT_Hotools_PosebonePanel(Panel):
             for ref in aux.sourceBones:
                 box.label(text=ref.name, icon="BONE_DATA")
             box.operator("hotools.aux_bone_clear", icon="TRASH", text="清除辅助骨信息")
+
+        hoaux = props.hoAux
+        if hoaux.isHoAuxBone:
+            box = layout.box()
+            box.label(text=f"HoAux：{hoaux.roleTag}")
+            box.label(text=f"Pipeline：{hoaux.pipelineId or '-'}")
+            box.label(text=f"Module：{hoaux.moduleId or '-'}")
+            box.label(text=f"Key：{hoaux.nameKey or '-'}")
 
 
 _AUX_TYPE_LABELS = dict((item[0], item[1]) for item in AUX_BONE_TYPE_ITEMS)
