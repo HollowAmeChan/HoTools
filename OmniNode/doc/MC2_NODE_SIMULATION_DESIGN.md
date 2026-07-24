@@ -624,7 +624,7 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 compiled-domain 审计已删除 `fragment`、`single_fragment`、`effective_parameter_signature` 与 `single_effective_parameter_signature` 四个 E1 单 partition compatibility/shadow 视图。当前对象只暴露真实 `fragments` 与 `effective_parameter_signatures` 集合；单 partition 测试也必须显式索引集合，不再形成第二套单 source 产品表面。
 
-native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/_v1` 后缀改为无版本名，并重新编译受版本控制的 py313 pyd。实际产物中旧符号为 0、新符号缺失为 0；注册 binding 仍为 102、产品必需 21。该规则只适用于后端中立 helper，正式 `mc2_domain_cpu_v1_*` DomainV1 ABI 继续保留版本标识。
+native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/_v1` 后缀改为无版本名，并重新编译受版本控制的 py313 pyd。实际产物中旧符号为 0、新符号缺失为 0；后续又删除一条无任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出，当前注册 binding 为 101、产品必需仍为 21。该规则只适用于后端中立 helper，正式 `mc2_domain_cpu_v1_*` DomainV1 ABI 继续保留版本标识。
 
 兼容 runner 审计已物理删除 `test_blender_mc2_bone_constraint_soak.py`、`test_blender_mc2_bone_frame.py` 与 `test_blender_mc2_bone_static.py` 三份只转发产品测试的门面。`acceptance_assets_v1.json` 已直接指向 Bone 产品与 BoneSpring restrictions runner；能力矩阵验证旧文件及资产引用均不存在。替代证据由 Blender 5.2 Bone 产品集成、BoneSpring 599 帧限制和 BoneCloth 900 帧约束 soak 直接提供。
 
@@ -643,6 +643,8 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 同一调用计数审计确认 `compile_mc2_mesh_static_fragment` 没有任何生产消费者，只是把单个测试 fragment 包成集合。该入口已删除，fixture 直接调用 `compile_mc2_mesh_static_fragments((fragment,), (effective,))`；Domain E3 golden、CPU backend/native kernel 和 compiler 门禁全部通过，分类 forwarder 降为 80。
 
 零消费者审计还删除了 `MC2MeshFinalProxyBuildResult.every_vertex_has_triangle` 派生属性和 `all_mc2_setup_adapters()` registry 复制函数。前者不增加 `vertex_to_triangle_records` 之外的合同，后者不增加 setup registry/getter 之外的生命周期或只读边界；Mesh final-proxy Tier A 与注册能力门禁通过，分类 forwarder 降为 78。
+
+调用计数不是删除资格本身。`make_mc2_partition_patch` 虽然当前只由合同测试直接调用，但它集中承担稀疏字段校验、排序和参数归一化；Mesh fragment cache 的 `entry_count` 也属于 cache owner 的只读状态面。两者均有独立职责和测试，不是迁移兼容转发。E7-S 后续必须同时证明“没有生产读取”和“没有合同/owner 价值”，才允许删除薄入口。
 
 ## 明确的数据流
 

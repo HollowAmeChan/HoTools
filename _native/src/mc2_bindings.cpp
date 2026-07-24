@@ -243,47 +243,6 @@ void hotools::bind_mc2(nb::module_& m) {
                 throw nb::value_error(error.what());
             }
         });
-    m.def("mc2_build_bone_registration_rotations_v0",
-        [](cf64_2d local_normals,
-           cf64_2d local_tangents,
-           cf64_2d transform_rotations,
-           cf64_2d adjustment_rotations,
-           f64_2d vertex_to_transform_rotations) {
-            check_cols(local_normals, 3, "local_normals");
-            check_cols(local_tangents, 3, "local_tangents");
-            check_cols(transform_rotations, 4, "transform_rotations");
-            check_cols(adjustment_rotations, 4, "adjustment_rotations");
-            check_cols(vertex_to_transform_rotations, 4, "vertex_to_transform_rotations");
-            const auto vertex_count = local_normals.shape(0);
-            check_len(local_tangents.shape(0), vertex_count, "local_tangents");
-            check_len(transform_rotations.shape(0), vertex_count, "transform_rotations");
-            check_len(adjustment_rotations.shape(0), vertex_count, "adjustment_rotations");
-            check_len(vertex_to_transform_rotations.shape(0), vertex_count, "vertex_to_transform_rotations");
-            try {
-                nb::gil_scoped_release release;
-                hotools::mc2_build_bone_vertex_to_transform_rotations(
-                    local_normals.data(),
-                    local_tangents.data(),
-                    transform_rotations.data(),
-                    vertex_count,
-                    vertex_to_transform_rotations.data()
-                );
-            } catch (const std::invalid_argument& error) {
-                throw nb::value_error(error.what());
-            }
-            nb::dict result;
-            result["normal_adjustment_rotations"] = owned_array_2d(
-                float_vector(adjustment_rotations.data(), vertex_count * 4),
-                vertex_count, 4, &result, "_bone_adjustment_rotations_owner",
-                "hotools_native.mc2.bone_adjustment_rotations.v0"
-            );
-            result["vertex_to_transform_rotations"] = owned_array_2d(
-                float_vector(vertex_to_transform_rotations.data(), vertex_count * 4),
-                vertex_count, 4, &result, "_bone_transform_rotations_owner",
-                "hotools_native.mc2.bone_transform_rotations.v0"
-            );
-            return result;
-        });
     m.def("mc2_build_bone_transform_baseline_derived",
         [](cf64_2d positions,
            cf64_2d local_normals,

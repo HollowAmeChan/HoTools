@@ -111,6 +111,8 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 
 最新 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。生产模块保持 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 
+native 后续清单发现并删除了没有任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出；py313 已重编，当前为 101 个注册 binding、21 个产品必需 symbol、0 native 旧面。native kernel 30 项、Bone Tier A 与产品静态门禁通过。生产读取为零不单独构成 Python 原子合同的删除依据，partition patch factory 和 fragment cache 只读状态继续按真实职责保留。
+
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
 ## 公共验收门槛
