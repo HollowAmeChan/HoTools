@@ -364,6 +364,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。当前 68 个 Python 生产模块已全部归入九类原子职责，缺失、残留、重复归类和既定 merge source 均为 0；后续发现的新合并点作为独立批次更新职责清单，不继续用模块数作为优化目标。
    生产零入站门禁只豁免 package manifest 及其三个字符串装载入口，当前允许 4、未解释 0、过期 0；新的测试专用或死生产模块不能再仅靠文件存在逃过 E7-S。
    外部入口全图可达性为 68/68，不可达模块和失效根均为 0；后续结构调整不再以寻找死子图为主要方向。
+   declaration 不再发布 `legacy_policy` 或 `no_python_fallback` 叙事，native E3 注释也已中立化；精确禁词覆盖这些下划线残项，不影响真实数值 fallback 算法。
 5. 首次后续审计已确认 Mesh 旧 `static_build.py` 与两个 task frame adapter 无调用方并完成删除，生产模块当前为 69 个。
 6. 第二次后续审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支，产品 debug 只消费 frozen product snapshot。
 7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。

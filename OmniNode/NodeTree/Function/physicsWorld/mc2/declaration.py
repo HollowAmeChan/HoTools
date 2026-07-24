@@ -81,7 +81,7 @@ MC2_SOLVER_DECLARATION = {
         "bone_frame_feedback": "mc2_owned_restore_read_barrier_preserves_current_animation_override",
         "bone_motion_mapping": "connected_rotation_only_disconnected_position_rotation",
         "anchor_frame": "optional_object_evaluated_each_frame_no_static_rebuild",
-        "native_backend": "one_domain_v1_per_explicit_collector_no_python_fallback",
+        "native_backend": "one_domain_v1_per_explicit_collector",
     },
     "capabilities": MC2_CAPABILITIES,
     "consumes_capabilities": [
@@ -116,5 +116,4 @@ MC2_SOLVER_DECLARATION = {
         "supports_bake": False,
         "solver_acceptance_blocker": False,
     },
-    "legacy_policy": "no_legacy_product_owner_or_native_abi",
 }

@@ -238,7 +238,7 @@ struct Mc2SelfCollisionView {
     float* collision_normals = nullptr;
     float* friction = nullptr;
     std::int64_t vertex_count = 0;
-    // Negative means the legacy E3 path where every vertex is a point.
+    // Negative selects the point-only primitive layout used by E3 reference calls.
     std::int64_t point_count = -1;
     std::int64_t edge_count = 0;
     std::int64_t triangle_count = 0;

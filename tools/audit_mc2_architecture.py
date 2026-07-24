@@ -43,6 +43,9 @@ LEGACY_TERMS = (
     "capture_requested_mc2_debug",
     "_mc2_bone_frame_state_v0",
     "mc2.hotspot_timing.v0",
+    "no_python_fallback",
+    "legacy_policy",
+    "legacy E3 path",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

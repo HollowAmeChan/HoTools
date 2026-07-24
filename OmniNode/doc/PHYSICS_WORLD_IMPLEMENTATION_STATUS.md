@@ -123,6 +123,8 @@ Python 文件职责门禁已覆盖全部 68 个生产模块，按九类 Physics 
 
 从 manifest 的八个真实外部入口遍历生产 import 图，当前 68/68 模块全部可达，不可达模块和失效根均为 0。E7-S 已无未解释生产孤岛；途中仍可发现新合并点，但必须由职责重叠而不是文件体量或可达性猜测驱动。
 
+solver declaration 已删除只描述旧面不存在的 `legacy_policy`，`native_backend` 只保留当前 collector/DomainV1 执行事实；native E3 注释也改为 point-only reference layout。三个下划线/短语残项已加入精确禁词，真实 fallback tangent/safe normal 数值算法不受影响。
+
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
 ## 公共验收门槛
