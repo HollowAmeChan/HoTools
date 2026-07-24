@@ -15,7 +15,7 @@
 - 各domain当前完成度：`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - OmniNode通用架构：`../ARCHITECTURE.md`
 - MC2性能热点、多代理融合、native并行与GPU前置策略：`MC2_DEEP_OPTIMIZATION_STRATEGY.md`
-- MC2新一代partition/覆盖/collector节点数据流：`MC2_NODE_SIMULATION_DESIGN.md`
+- MC2对象适配器/域/collector节点数据流：`MC2_NODE_SIMULATION_DESIGN.md`
 - 人工验收反例与已吸收决策：见本文“Debug收尾与产品踩坑”及对应能力章节；不再维护独立推进文档。
 
 代码事实源优先级：`mc2/declaration.py`、`mc2/capabilities.py`、生产solver/native owner、自动化测试、本文。
@@ -44,11 +44,13 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 E0-E5-B、P0、P1-B 和 E4/P2 已完成。当前产品事实如下：
 
 - `MC2ProductRequestV1` 是三种 setup 的唯一公开执行输入。
-- Mesh collector 将多 Object 编译为一个统一域；Bone collector 按 Armature 建域，同 Armature 多链是 partition，跨 Armature 是多个显式 request。
+- Mesh对象必须先经过`MC2 MeshCloth对象`或`MC2 MeshCloth自定义对象`包装，再由`MC2 MeshCloth域`生成完整分区，最后由`MC2 Mesh域收集`生成唯一Require-Fusion request；Bone collector按Armature建域，同Armature多链是partition，跨Armature是多个显式request。
 - `DomainV1` 独立拥有 static/program/parameter/frame SoA、particle state、Center/Anchor/Teleport history、scheduler、whole-domain external/self 和完整 mixed pass。
 - 全部 request 先求解，再由一次 logical output transaction 发布 GN offset 或 Bone transform；任一 request 失败则本批不部分写回。
 - 调试是请求驱动的产品快照；debug-off 不分配记录缓冲、不 readback，也不改变 pass 顺序。
 - `specs.py`、`solver.py`、`native_context.py`、`interaction_scope.py` 已物理删除；产品运行图、公开节点顶层图和 debug 图均无旧 owner 可达面。
+
+MeshCloth authoring只保留一条生产路径。面板对象适配器完整读取持久对象属性；自定义对象适配器用socket完整值替代面板。两者输出同一种`MC2MeshObjectSpec`，真实Object继续负责capture/writeback，冻结属性负责BasePose、Pin、半径顶点组和统一16组碰撞。域节点拒绝裸Object，collector不接Physics World、不读implicit registry、不补默认值、不接受patch；重复stable id直接失败。参与关系由连线表达，执行由节点mute表达，MC2对象/域/collector/模拟步不提供裸`enabled`。
 
 E7-CPU 已完成：capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用，9 个能力族均由产品数值闸门接管；topology/setup/frame 中立合同已归入真实职责模块；62 个 `mc2_context_v0_*`、6 个 `mc2_interaction_v0_*` binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和 7 个纯旧 ABI 测试已物理删除。混合静态构建测试只保留中立 kernel oracle。
 

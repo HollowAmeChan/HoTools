@@ -76,14 +76,14 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 三种 setup 的统一域产品路径可用；E7、P6 与最终双 ABI 已完成 | E0-E5-B、P0/P2 重建、P1-B、E4、E7 与 backend-neutral P6 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；能力矩阵 9/9 verified；Python/native 旧面与迁移 selector 已删除；py313/Blender 5.2 与 py311/Blender 4.5 最终门禁通过；Bone 过程计划已退役；未创建 GPU runtime | 保持 CPU 产品与 P6 合同基线；E6 GPU 作为未来独立里程碑另行立项 |
+| MC2 | 三种setup统一域产品路径可用；Mesh authoring已收敛为对象适配器→完整分区→纯collector单路径 | `MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三setup产品入口、多目标事务、产品debug和Bone writeback已成立；Mesh面板/自定义对象共享严格spec，域拒绝裸Object，collector不接world/default/patch/implicit，统一16组碰撞且无公开参与`enabled`；能力矩阵9/9 verified；未创建GPU runtime | 保持CPU产品与P6合同基线；继续E7-S职责复核；E6 GPU作为未来独立里程碑另行立项 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
 
 ## 当前优先级
 
-MC2 已完成 E7-CPU、E7-S、P6 与最终 4.5/py311 双 ABI 收尾。统一 MC2ProductRequestV1、DomainV1 whole-domain 执行、三种 setup collector、事务写回和请求驱动调试已经成立；9 个能力族的产品数值门禁全部通过；旧 owner/native ABI、兼容参数、双结果路径、迁移资源键/命名、测试专用生产模块和 selector 分发均已清除。P6 已冻结可直接实施的 SoA/pass/dirty-span/容量/IO/tolerance 合同且没有创建 GPU runtime；py313/Blender 5.2 与 py311/Blender 4.5 的功能、事务、P0/P2 及当前 native 产物门禁均已通过。BoneCloth/BoneSpring 过程计划在全部退出条件兑现后已删除。
+MC2已完成E7-CPU和backend-neutral P6，当前继续E7-S职责复核。最新Mesh authoring清理删除了旧覆盖节点、MC2隐式注册、collector defaults、裸Object域旁路和参与/执行类`enabled`；产品数值与事务行为未改变。P6已冻结可直接实施的SoA/pass/dirty-span/容量/IO/tolerance合同且没有创建GPU runtime；本轮实现与回归统一使用py313/Blender 5.2，Blender 4.5按当前开发约束暂停到确有最终旧代码删除收尾需求时再运行。
 
 后续只按以下逻辑批次推进：
 

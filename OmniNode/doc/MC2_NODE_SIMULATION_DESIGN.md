@@ -2,9 +2,9 @@
 
 本文规划 MC2 新一代节点数据流和 authoring 分层。它解决的不是某一个 socket 的命名，而是明确三个边界：
 
-1. Physics World 的公开 `solver + list[task]` 契约；
+1. Physics World 的公开 `solver + list[MC2ProductRequestV1]` 契约；
 2. MC2 内部 MeshCloth、BoneCloth、BoneSpring 三种 setup adapter 的收集和装配；
-3. 单个代理的 source、profile、隐式覆盖、显式覆盖、partition 状态和输出映射。
+3. 单个代理的显式对象属性、粒子属性、区域属性、partition状态和输出映射。
 
 本文同时维护目标设计、阶段门禁和当前主线位置。稳定生产合同以 `MC2_BLUEPRINT.md` 及代码事实为准；阶段状态不得把旧 `MC2TaskSpec` 路径误写成当前产品入口。
 
@@ -54,97 +54,44 @@ E0-E5 的数据依赖和验收门禁是强约束。未通过上一阶段的合�
 - 生成 source/task identity；
 - 决定每个 source 是一个 task 还是一个 fused domain。
 
-这导致节点表面写着“一个任务”，实际却把多个 Object 变成多个 `MC2TaskSpec`。它既不能表达隐式对象和显式覆盖，也让未来的粒子属性覆盖没有清晰的编译入口。
+这导致节点表面写着“一个任务”，实际却把多个 Object 变成多个隐藏任务，也让对象属性、粒子属性和区域属性没有清晰的所有权边界。
 
 新设计把“描述代理”和“组装模拟域”分开。这样每一层只有一个问题：
 
 ```text
-source node       我描述哪个代理？
-profile node      这个代理的默认粒子材料是什么？
-override node     哪些字段对哪些粒子/约束/分区不同？
-collector         哪些代理属于同一个 setup domain？能否融合？
+object adapter    我使用面板属性还是socket完整属性？
+profile node      这个域的粒子材料是什么？
+domain node       哪些对象共享区域属性并形成完整分区？
+collector         哪些完整分区属于同一个MeshCloth domain？
 MC2模拟步        这些已编译 task 如何按统一时间推进？
 writeback         结果应该写回哪个 Blender owner？
 ```
 
 ## 节点层级
 
-### 1. `MC2 Mesh对象`
+### 1. `MC2 MeshCloth对象`
 
-这是显式 source 节点，输入一个 Mesh Object，输出一个 `MC2MeshClothPartitionEntry`。它不创建 slot、不扫描整个 world、不直接写 `world.implicit_objects`。
+输入一个或多个 Mesh Object，完整读取 `Object.hotools_mesh_collision`，输出 `MC2MeshObjectSpec`。spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一16组碰撞属性。节点不创建分区、request、slot或native owner。
 
-建议输入：
+### 2. `MC2 MeshCloth自定义对象`
 
-| 输入 | 所有权 | 说明 |
-|---|---|---|
-| `对象` | source partition | 单个 Mesh Object，稳定 source identity 来自 Object/Data 双指针及持久 stable id。 |
-| `Anchor` | source partition | 可选 frame owner，不改变 topology identity。 |
-| `粒子配置` | profile default | 通常连接 `MC2 MeshCloth粒子配置`。 |
-| `分区启用` | partition | 关闭时保留 entry 但 collector 不纳入 active domain。 |
-| `分区名称/稳定ID` | identity | 默认由 Object/Data 产生；显式 ID 用于隐式/显式匹配和 debug。 |
+输入与面板节点相同的 Mesh Object，并把同一组对象属性完整暴露为socket。该节点使用schema默认值补齐未连接字段，但绝不读取或修改对象面板。选择该节点本身就表示用户接管这组完整对象属性，因此它不是sparse patch，也不存在字段优先级。
 
-该节点可输出 source 的默认分区信息和 `partition_id`，但不应暴露 task scheduler、native context、substep 或 world step 参数。
+两个对象节点输出同一种严格类型。相同Object与相同属性产生相同source identity和签名；面板来源与socket来源只用于诊断，不进入运行时分叉。
 
-### 2. `MC2 Mesh覆盖`
+### 3. `MC2 MeshCloth域`
 
-这是 sparse override 节点。它接收一个或多个 `MC2MeshClothPartitionEntry`，输出同类型 entry，但只保存显式连接或显式设置的字段 patch。
+只接受上述包装对象，拒绝裸 Object。域节点组合粒子Profile、Anchor、Center/Teleport等区域参数，为每个对象生成完整 `MC2PartitionEntry`：真实Object仍是source，冻结对象属性随分区进入捕获边界，profile/task/setup/anchor/碰撞字段均已解析，不含patch或collector默认值。输出是`Mesh分区`，不是`MC2域`。
 
-覆盖目标分四类：
+### 4. `MC2 Mesh域收集`
 
-- particle：半径、阻尼、质量、摩擦、重力响应、Motion/Backstop 等最终粒子系数；
-- constraint：Distance/Bending/Tether/Angle 的 rest、刚度和限制值；
-- partition：Anchor、Center/Teleport策略、source级 collision group、输出映射；
-- domain compatibility：只有明确允许的 setup/domain 字段，不能在覆盖节点偷偷改变 collector 的 context contract。
+只接收一个或多个完整Mesh分区，按输入顺序校验唯一stable id并生成一个Require-Fusion `MC2ProductRequestV1`。它不接收Physics World，不读取`world.implicit_objects`，不提供默认Profile/Anchor/区域参数/碰撞字段，也不拥有native state。空输入、不完整分区、重复stable id或非MeshCloth分区都必须显式失败。
 
-没有连接的字段必须保持 `unset`，不能把默认值写进 patch 后再假装用户覆盖。collector 才负责把 default + implicit + explicit patch 编译成 dense runtime arrays。
+### 5. `MC2模拟步`
 
-### 3. `MC2 Mesh隐式注册`
+接收collector输出的一个或多个显式product request和Physics World。MeshCloth分区不能绕过collector直接进入模拟步。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步；对象、域、collector和模拟步均不暴露参与/执行类`enabled`，连线决定成员关系，节点mute决定执行。
 
-这是 implicit object producer，负责把 Blender Object 或 object scope 选择注册为 `world.implicit_objects` 中的 `mc2.mesh_cloth` entry。它只写 registry，不创建 solver slot。
-
-entry 至少包含：
-
-```text
-tag = mc2.mesh_cloth
-stable_id
-source object/data identity
-base profile reference or sparse profile patch
-partition patch
-producer / version / signature
-enabled
-```
-
-该节点允许把对象面板、集合选择或其他上游域逻辑转成隐式 MeshCloth entry。它的输出是 world 更新状态和 entry 统计；collector 读取 registry 时不得依赖 producer 的 Python 对象顺序。
-
-### 4. `MC2 Mesh收集器`
-
-这是高级 setup-domain collector。它把 `MC2 Mesh对象`/`MC2 Mesh覆盖`产生的显式分区与 `world.implicit_objects[tag=mc2.mesh_cloth]` 中的隐式分区合并，完成去重、冲突检查和 Require-Fusion 装配。
-
-它输出 `MC2域`和`装配报告`，不拥有 native state。没有有效分区时明确失败或输出零装配状态，不伪造空域。
-
-### 5. `MC2 MeshCloth域`
-
-这是面向常规使用的简化域节点：直接接收一个或多个 Mesh Object、粒子配置、Anchor 和域默认参数，输出一个 fused `MC2ProductRequestV1`。它与高级 `MC2 Mesh收集器`产生同一种 `MC2域`，但不暴露逐分区覆盖和隐式 registry。
-
-高级 `MC2 Mesh收集器`的输入：
-
-| 输入 | 作用 |
-|---|---|
-| `显式Mesh分区` | 上游 `MC2 Mesh对象` 或 `MC2 Mesh覆盖`输出。 |
-| `包含隐式` | 是否同时读取 Physics World 中已注册的隐式 Mesh 分区。 |
-| `域默认配置` | 只给未覆盖的 partition/profile 字段提供 default。 |
-| `融合策略` | 默认 Auto；Require Fusion 在不兼容时明确报错；Separate 只用于诊断/迁移，不得静默拆分。 |
-| `域级自碰与过滤` | 统一 domain contract；粒子/分区差异通过下游属性数组表达。 |
-| `启用` | 关闭 domain，但不删除上游 entry。 |
-
-两个入口统一输出：
-
-- `MC2域`：`list[MC2ProductRequestV1]`，正常为一个 fused request；每一项都有独立 domain id；
-- `域标识`：由 `setup_type + domain_signature` 生成的动态产品槽位 id；
-- `分区数量`、`粒子数量`、`融合状态`；
-- `冲突/不兼容报告`：包括 stable id、字段 owner 和阻止融合的具体原因。
-
-域节点和 collector 都不接收 `时间缩放`、`模拟频率`、`每帧最大模拟次数`。这些属于 `MC2模拟步`，避免 setup domain 和 world scheduler 混在一个节点。
+碰撞只公开面板已有的16组合同：`primary_collision_group`表示对象所属主组，`collided_by_groups`表示允许碰撞到该对象的组。域内self会把自身主组并入有效mask，再由whole-domain self统一做共享粒子与一环拓扑剔除。内部`collision_group/mask`只是当前CPU编译层承载，不是第二套用户接口。
 
 ### 6. `MC2 BoneCloth域` 与 `MC2 BoneSpring域`
 
@@ -172,54 +119,47 @@ Bone 包装限制必须作为 collector compatibility rule 固定，而不是在
 
 BoneCloth、BoneSpring 和 MeshCloth 不共用 topology producer，但必须共用 product request envelope、domain owner 和完整混合 pass 顺序。一个 setup 尚未支持的能力由 capability/collector 明确拒绝，不能回退到 V0 context。E5-B 完成后，旧 Bone task 节点名称可以保留为用户界面，但其输出必须是 product request，不再是 `MC2TaskSpec`。
 
-## 参数合并与优先级
+## 参数所有权与解析
 
-同一个 source 的输入按以下顺序合并：
+MeshCloth不再做implicit/explicit/patch优先级合并，而是在进入域之前完成唯一解析：
 
 ```text
-collector domain defaults
-  < implicit object declaration
-  < explicit MC2对象 entry
-  < explicit MC2覆盖 patch
-  < collector-required normalization
-  -> compiled partition/profile/constraint arrays
+面板对象适配器 ─┐
+                 ├─> 完整MC2MeshObjectSpec
+自定义对象适配器 ┘
+                    + 粒子Profile
+                    + 区域参数/Anchor
+                 -> 完整Mesh分区
+                 -> 纯collector
+                 -> compiled particle/constraint arrays
 ```
 
 规则：
 
-1. 同一个 stable id 的 implicit + explicit entry 可以合并；explicit 字段优先于 implicit 同名字段。
-2. 两个不同显式 entry 同时覆盖同一字段，默认报冲突；只有明确的覆盖节点才能表达“后者覆盖前者”。
-3. collector default 不能覆盖显式 unset 语义；`unset` 与“显式设置为默认值”必须可区分。
-4. 合并结果必须保留来源链和字段 owner，供 debug/status 报告“这个参数来自哪里”。
-5. collector 只生成 resolved intent；完整 particle/constraint runtime arrays 只能由 domain compiler 生成一次，不能由每个 node 或 partition fragment 各复制一份。
+1. 对象适配器二选一；collector不再解释面板、socket来源或覆盖优先级。
+2. Profile写粒子/约束系数，MeshCloth域写区域参数，对象spec写显式对象属性；同一字段只能有一个owner。
+3. 自定义对象节点用完整值替代面板，而不是在面板之上打patch。
+4. collector只校验完整分区、顺序和stable id唯一性，不补默认值、不读取Physics World。
+5. 完整particle/constraint runtime arrays仍只由domain compiler生成一次，不能由节点或partition fragment复制。
 
-当前合同：`partition_specs.py`保留`unset`、implicit/explicit优先级、ordered patch、逐字段最终owner与覆盖历史；partition级`collision_group/mask`进入resolved intent，未指定group由domain draft避开显式bit后稳定分配。`domain_collect.py`只把active resolved partitions编成domain identity、per-partition effective参数和过滤draft，不读Blender、不建task/backend；统一 `compile_mc2_domain_draft` 在dense compile前严格校验fragment顺序等于stable partition顺序。不同gravity/damping/cloth mass/filter已证明进入同一个compiled domain，参数修改保持collector domain identity并只改变draft/parameter signature。产品节点、implicit registry读取和fusion policy报告均已由E5产品路径拥有。
+共享`partition_specs.py`暂时仍服务Bone产品合同并保留通用resolver结构；Mesh authoring只产生字段完整、`origin=explicit`、无patch且参与状态固定为真的entry。该内部兼容承载不是Mesh公开合同，E7-S职责合并时可继续收缩，但不得重新引入第二条Mesh生产路径。
 
-## TaskSpec 与 runtime 编译目标
+## Product request 与 runtime 编译目标
 
-`MC2TaskSpec` 是 collector 交给 `MC2模拟步` 的已归一化 domain intent，不是编译产物。它可以保留 Blender source/owner 引用供主线程 capture，但不得持有 dense particle arrays、constraint buffers、physical ranges、native handle 或 GPU 资源：
+`MC2ProductRequestV1` 是collector交给`MC2模拟步`的已归一化domain intent，不是编译产物。它持有collector plan与有序resolved partitions，可保留Blender source/owner引用供主线程capture，但不得持有dense particle arrays、constraint buffers、physical ranges、native handle或GPU资源。
 
-```text
-MC2TaskSpec
-  domain identity / setup type
-  tuple[MC2PartitionSpec]
-  resolved domain parameters
-  fusion policy / compiler schema requirement
-  enabled / provenance summary
-```
-
-`MC2PartitionSpec` 至少持有：
+resolved partition 至少持有：
 
 - stable partition id、source identity/reference；
 - Object/Data/BasePose/Anchor/output owner 描述；
 - resolved profile/task/setup 参数与字段 provenance；
 - Center/Teleport policy 和独立 history key；
-- collision group/mask、enabled 与 setup-specific capture options。
+- 内部碰撞过滤承载与setup-specific capture options；Mesh对象的公开16组属性另以冻结source properties保存。
 
 随后由 solver prepare 依次生成：
 
 ```text
-MC2TaskSpec
+MC2ProductRequestV1
   -> MC2DomainCapturePlan
   -> tuple[MC2PartitionStaticSnapshot]
   -> tuple[MC2PartitionStaticFragment]
@@ -244,7 +184,7 @@ E7-CPU native 删除已经完成：68 个 V0 binding、5 个 context 翻译单�
 
 | 层 | 核心对象 | 可以包含 | 禁止包含 |
 |---|---|---|---|
-| Authoring | `MC2PartitionEntry`、sparse patch、collector draft | Blender source 引用、用户参数、字段来源、stable id | 粒子下标、native handle、GPU buffer |
+| Authoring | 对象spec、完整`MC2PartitionEntry`、collector plan | Blender source 引用、用户参数、字段来源、stable id | 粒子下标、native handle、GPU buffer |
 | Capture | `MC2PartitionStaticSnapshot` / `MC2PartitionFrameSnapshot` | 从 Blender 主线程冻结的 POD 数组、transform、source/output token | solver 状态、后端资源、隐式 Python 回调 |
 | Compile | `MC2CompiledDomain` | 后端中立 SoA、逻辑索引、constraint records、partition table、output map | `bpy` 对象、节点实例、live depsgraph、native handle |
 | Execute | `MC2BackendDomain` / frame output | CPU/GPU 资源、历史状态、当前 frame、统一输出 buffer | authoring merge、Blender 读取、直接写回 Blender |
@@ -253,14 +193,7 @@ Capture 是 Blender IO 边界，Compile 是数值布局边界，Execute 是后�
 
 ### 阶段 0：收集与归一化
 
-输入：
-
-- collector domain defaults；
-- 显式与隐式 `MC2PartitionEntry`；
-- sparse override；
-- fusion policy。
-
-输出：`MC2DomainDraft`，包含有序 partition 描述、字段 owner、兼容性报告和 domain identity，但不包含顶点数组。
+Mesh输入是域节点已经解析完成的显式`MC2PartitionEntry`序列和Require-Fusion策略。输出`MC2DomainDraft`，包含有序partition描述、字段owner、兼容性报告和domain identity，但不包含顶点数组。Bone包装可继续复用共享resolver，但不能让Mesh collector重新获得defaults、patch或implicit registry解释权。
 
 该阶段只做纯 Python 数据处理，不读取 depsgraph，不调用 native，不分配 solver slot。相同输入必须产生相同 draft signature。
 
@@ -666,26 +599,17 @@ E3 reference API 已删除 `data_path_only` 及 Distance/Tether/Bending/Angle/Mo
 
 ## 明确的数据流
 
-### 显式模式
+### MeshCloth唯一模式
 
 ```text
-Object
-  -> MC2 Mesh对象
-  -> MC2 Mesh覆盖（可选，可串多个但冲突要显式）
-  -> MC2 Mesh收集器.显式Mesh分区
+Object -> MC2 MeshCloth对象（读取面板完整属性） ─┐
+                                                  ├─> MC2 MeshCloth域
+Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh分区
+                                                          -> MC2 Mesh域收集
   -> MC2模拟步.MC2域
 ```
 
-不需要逐分区覆盖或隐式注册时，可直接使用 `Object -> MC2 MeshCloth域 -> MC2模拟步.MC2域`。
-
-### 隐式模式
-
-```text
-Physics World Begin
-  -> MC2 Mesh隐式注册（写 world.implicit_objects）
-  -> MC2 Mesh收集器（包含隐式，读 registry）
-  -> MC2模拟步.MC2域
-```
+两种对象节点可以同时向同一个域提供包装对象；一个collector也可以收集多个域的分区。裸Object不能直连域，域输出不能绕过collector直连模拟步。MC2 MeshCloth不声明或消费Physics World implicit object tag。
 
 ### 统一运行时
 
@@ -722,7 +646,7 @@ collector 可以在图上有多个，但每个 collector 的一个输出项代�
 
 新节点必须让用户能回答：
 
-- 这个 Object 是否被收集？来自显式还是隐式 entry？
+- 这个包装对象是否经域节点形成完整分区并被collector收集？
 - 它属于哪个 MeshCloth domain/partition？
 - 哪些 profile/task/constraint 字段被覆盖，来源是谁？
 - domain 是否成功融合？如果没有，具体哪个字段阻止？
@@ -873,8 +797,8 @@ E3 native 门禁已经满足：新 owner 能在无 Blender 对象的 C++/headles
 
 - 一个 domain 输出多个 GN offset commands；
 - target validation 与全批 rollback；
-- 显式对象/覆盖/collector 节点；
-- implicit registry producer/reader；
+- 面板对象/自定义对象、域、collector节点；
+- 完整对象属性随分区进入capture/product边界；
 - 用户可读装配报告。
 
 退出条件：多 Mesh 每帧各自写回正确 Object local offsets；任一 target 失效时整批不发布；collector 显示真实 fusion 状态，不存在静默 `N Object -> N task` 回退。
@@ -887,13 +811,13 @@ E3 native 门禁已经满足：新 owner 能在无 Blender 对象的 C++/headles
 实施顺序：
 
 1. 先把Mesh专用product request、collection和solver入口抽成setup-neutral envelope；每个request严格对应一个显式domain，旧task与product request仍禁止混输。
-2. 为BoneCloth/BoneSpring建立基于现有`MC2PartitionEntry`的source/patch/implicit registry/collector，stable id包含Armature data、根/中控骨和setup type；同一Armature多链合为partition，跨Armature按首次出现顺序生成多个显式request，不在solver内部拆hidden task。
+2. 为BoneCloth/BoneSpring建立基于现有`MC2PartitionEntry`的显式source/collector，stable id包含Armature data、根/中控骨和setup type；同一Armature多链合为partition，跨Armature按首次出现顺序生成多个显式request，不在solver内部拆hidden task。
 3. 把`build_mc2_bone_cloth_static_for_task`拆成纯snapshot/fragment adapter，使Bone的Line/triangle、baseline、constraint、self primitive和output map进入同一compiled program；`domain_compile.py`不再硬编码Mesh setup。
 4. 把`build_mc2_bone_frame_input`接到partition frame packet，保留动画反馈屏障、Anchor、Center/Teleport和一次性frame shift；完整混合pass继续由DomainV1唯一拥有。
 5. 先构造全部Armature/PoseBone输出计划并验证身份、拓扑、connected/disconnected规则，再原子发布公共Bone结果；任一target失效必须零partial mutation并保持旧result stream。
 6. 最后把现有两个Bone任务节点切成薄collector并禁止生产代码创建Bone V0 context；V0只留作E7删除提交前的显式oracle。
 
-退出条件：BoneCloth Line/Seq/SeqLoop与triangle覆盖、BoneSpring Line/SPHERE限制、动画反馈、Anchor/Reset/Keep、参数热更新、外碰、自碰/禁用分支、connected/disconnected写回、多Armature显式分域和任一request失败时的整批原子性均有Domain/V0对照；现有BoneCloth/BoneSpring 900帧代表soak在py311/py313与Blender 4.5/5.2通过；产品路径不再产生`MC2TaskSpec`、`MC2NativeContextV0`或hidden task。
+退出条件：BoneCloth Line/Seq/SeqLoop与triangle覆盖、BoneSpring Line/SPHERE限制、动画反馈、Anchor/Reset/Keep、参数热更新、外碰、自碰、connected/disconnected写回、多Armature显式分域和任一request失败时的整批原子性均有产品数值验收；产品路径不再产生`MC2TaskSpec`、`MC2NativeContextV0`或hidden task。
 
 状态：E5-B 已完成。BoneCloth/BoneSpring 公开节点只生成产品 request；同 Armature 多链形成域内 partition，跨 Armature 形成多个显式 request；同 Armature 输出合并，任一 request 失败则整批不发布。旧 Bone builder 只在 E7-CPU 前作为隔离 oracle。
 ### E6：未来 GPU backend 原型与收益门禁
@@ -1023,7 +947,7 @@ Blender 主线程验收：`physicsWorld/test/test_blender_mc2_product_mixed_outp
 
 | 编号 | 验收项 | 固定证据 |
 |---|---|---|
-| A1-01 | implicit + explicit 同源 | stable id 只合并一次，字段优先级和 provenance 可观察。 |
+| A1-01 | 面板对象 + 自定义对象同源 | 重复stable id在collector边界显式失败，不做静默合并。 |
 | A1-02 | sparse unset | 未设置字段继承 default，显式默认值与 unset 可区分。 |
 | A1-03 | 冲突 | 双显式冲突给出 partition、字段和 producer，不静默 last-writer。 |
 | A1-04 | 禁用与顺序 | 禁用 entry 保留，active draft 排除；其他 stable identity 不漂移。 |
@@ -1095,7 +1019,7 @@ Blender 主线程验收：`physicsWorld/test/test_blender_mc2_product_mixed_outp
 
 ### A8：产品可观察性
 
-用户必须能从 collector 状态看见：收集了哪些对象、来自显式还是隐式、为何融合/分组、哪些参数被谁覆盖、最终使用哪个 backend/domain。MC2 debug 只展示运行中状态；两者关闭时均不触发额外 native readback。任何只输出数学数组名称、却不能说明“是否正常、谁触发、受哪个具体参数影响”的状态都不算验收通过。
+用户必须能从collector状态看见：收集了哪些完整分区、稳定顺序、Require-Fusion结果和最终domain签名。对象属性来源在对象spec中可审计，但collector不再解释覆盖优先级。MC2 debug只展示运行中状态；两者关闭时均不触发额外native readback。任何只输出数学数组名称、却不能说明“是否正常、谁触发、受哪个具体参数影响”的状态都不算验收通过。
 
 ## 与现有契约的关系
 

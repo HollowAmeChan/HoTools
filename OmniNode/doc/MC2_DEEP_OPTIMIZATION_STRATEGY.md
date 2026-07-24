@@ -138,18 +138,18 @@ MC2 MeshCloth域
 |---|---|---|
 | Context/Task | scheduler、substep、native context lifetime、统一 self broadphase、结果事务 | 决定一次如何推进整个模拟域，不能逐粒子变化。 |
 | Source partition | Object/source identity、source transform、Anchor、Center history、Teleport state、输出对象与粒子范围 | 每个代理仍有自己的帧状态和写回目标；融合不等于共享一个 Object transform。 |
-| Particle | depth、radius、mass/逆质量、damping、gravity response、friction、Motion/Backstop系数、collision group/mask、partition id | 由基础 profile、曲线和隐式覆盖编译成连续 SoA。 |
+| Particle | depth、radius、mass/逆质量、damping、gravity response、friction、Motion/Backstop系数、统一16组碰撞过滤、partition id | 由基础profile、曲线和已冻结对象/区域属性编译成连续SoA。 |
 | Constraint | constraint type、端点/四元组、rest value、stiffness/compliance、owner partition、color/batch | Distance/Bending/Tether/Angle 的差异必须落在约束记录，不能只靠端点粒子参数猜测。 |
 
 Center、Anchor 与 Teleport 不能简单下沉成粒子 float。它们是每个 source partition 的有历史状态系统；每个粒子只保存 `partition_id`，prediction 通过该 id 读取对应的 Center/Teleport 结果。
 
-### 隐式粒子属性覆盖
+### 粒子与区域属性编译
 
-未来的隐式覆盖应是编译步骤，不是 kernel 每次查询 Python/RNA：
+对象适配器、Profile和域参数的差异必须在编译步骤解决，不允许kernel每次查询Python/RNA：
 
 ```text
-task base profile
-  + source/profile override
+domain profile
+  + frozen object properties
   + vertex group / attribute override
   + depth curve sampling
   -> dense particle coefficients + dense constraint coefficients
@@ -162,7 +162,7 @@ task base profile
 
 - 可以直接粒子化：半径、阻尼、重力响应、摩擦、移动限速、Motion/Backstop最终系数、self质量权重。
 - 必须约束化：Distance/Bending/Tether/Angle 的 rest、刚度、限制值和迭代批次。
-- 必须 partition 化：Object/Anchor frame、Center惯性历史、Teleport模式/阈值/结果、源级启用状态、输出映射。
+- 必须partition化：Object/Anchor frame、Center惯性历史、Teleport模式/阈值/结果、输出映射。参与关系由连线表达，不编译源级`enabled`。
 - 必须 context 化：时间推进、substep策略、统一 broadphase 生命周期、事务 generation。
 
 如果某个字段不能在上述层级得到唯一 owner，就不能以“支持覆盖”为由先塞进 ABI。
@@ -178,7 +178,7 @@ Task compiler 应先尝试融合，再根据明确的 compatibility key 自动�
 - ABI/schema 版本一致；
 - 当前仍未下沉到 partition/particle/constraint 的 context-only 参数一致。
 
-Object、profile、Anchor、Teleport阈值和输出目标不应永久成为禁止融合的理由；它们应由 partition 和隐式覆盖系统承载。暂未完成该承载时允许保守拆组，但必须在诊断中报告具体的不兼容字段，不能静默退回 N 个 task。
+Object、profile、Anchor、Teleport阈值和输出目标由partition与参数SoA承载，不是禁止融合的理由。Mesh collector固定Require-Fusion，遇到重复或不完整分区直接失败，不能静默退回N个task。
 
 ## 分阶段优化路线
 
@@ -187,19 +187,19 @@ Object、profile、Anchor、Teleport阈值和输出目标不应永久成为禁�
 native 固定阶段槽覆盖 Center/prediction、Tether、Distance A/B、Angle、Bending、external、Motion、self primitive/grid/candidate/contact/four-round solve、intersection 和 post。只有显式 gate 开启时读取时钟并发布；Python 只补 native 边界和中文标签，不重复累计完整 solve。
 
 后续 benchmark 统一使用产品 DomainV1：固定 domain/partition、warmup、substep、collider、primitive/candidate/contact 数和编译配置，分别报告 owner step、产品事务与 frame capture。旧 aggregate benchmark 不再作为可执行基线。
-### P1-A：锁定节点数据流与partition compiler
+### P1-A：锁定节点数据流与partition compiler（已完成）
 
 在修改 `MC2TaskSpec`、fused context 或 GPU buffer 前，严格执行 `MC2_NODE_SIMULATION_DESIGN.md` 的 E0-E2 与 A0-A3。先冻结 authoring、capture、compile、execute 四层对象和逐阶段 IO，再实现纯数据合同：
 
 - 单 source 的 immutable partition entry；
-- 稀疏覆盖 patch 与字段来源；
-- implicit/explicit stable id 合并和冲突报告；
+- 面板对象与自定义对象两种完整属性适配器；
+- 重复stable id冲突报告，不做隐式合并；
 - setup collector 的 compatibility/fusion report；
 - Blender 主线程 source snapshot 与纯 partition static fragment；
 - 后端中立 `MC2CompiledDomain`、logical particle identity、constraint tables 和 output map；
 - 一个 collector domain 到 compiled program 的稳定编译结果。
 
-迁移前 `MC2 MeshCloth任务` 的 `List[Object] -> N个隐藏task` 行为不能直接改成另一种隐藏融合。当前公开入口已命名为 `MC2 MeshCloth域`，节点图通过 partition、覆盖和 domain 装配表达归属，再由 runtime 消费编译结果。
+迁移前`MC2 MeshCloth任务`的`List[Object] -> N个隐藏task`行为已删除。当前节点图通过对象适配器、完整partition、domain和collector显式表达归属，再由runtime消费编译结果。
 
 这里不先扩展旧 `MC2TaskSpec.sources` 或 topology range。`partition_id` 是 authoring/state identity，physical particle span 是某次 CPU/GPU compile 的布局结果；两者通过 logical index view 和 output map 关联。否则一次看似简单的 range 改动会同时绑死静态构建、Center/Teleport、GPU 重排和多目标写回。
 
@@ -225,11 +225,11 @@ native 固定阶段槽覆盖 Center/prediction、Tether、Distance A/B、Angle�
 1. **静态编译**：每个 source 先生成 partition-local fragment，再编译 logical particle table、重定位后的 constraint tables、collision filters 和显式 output map。
 2. **分区帧状态**：每个 source 独立读取 Object/Anchor frame，维护 Center/Teleport 历史；粒子通过 logical index view 消费。
 3. **统一 self**：一次 primitive update、一次 grid/candidate/contact/intersection 流水同时覆盖同 partition self 与跨 partition接触；topology neighbor 只来自真实结构边。
-4. **差异化配置**：接入粒子/约束隐式覆盖，去掉“必须同 profile 才能融合”的临时限制。
+4. **差异化配置**：把对象、粒子、区域和约束差异编译进partition/SoA，去掉“必须同profile才能融合”的临时限制。
 
 第一版 physical compiler 可以让 source 粒子连续，以获得 CPU cache locality 和简单 GPU dispatch，但连续性不是公开合同。writeback、debug 和缓存身份必须使用 logical identity/output map；后端可在不改节点合同的情况下重排 physical buffer。删除 source、重排输入或 topology 变化必须通过 staged replacement 建新 program/context，再原子发布，不能在 live context 上局部错位。
 
-融合后普通多代理不再进入 `Mc2InteractionV0`。旧 interaction 可以暂时服务于无法融合的 Mesh context，但必须统计 fallback 次数、参与 context、复制字节和 aggregate 各阶段耗时，以便最终判断是否继续保留。
+融合后普通多代理不再进入旧interaction或aggregate。Mesh collector没有Separate/Auto产品fallback，无法形成完整统一域时直接给出可诊断失败。
 
 ### P3：先建立纯 native 边界，暂不承诺粒子域并行
 
