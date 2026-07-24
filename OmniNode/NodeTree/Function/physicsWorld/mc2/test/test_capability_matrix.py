@@ -143,7 +143,10 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "prepare_observed_static_inputs",
         "build_mc2_bone_cloth_static_for_task",
         "build_mc2_mesh_cloth_static_for_task",
+        "build_mc2_mesh_cloth_static",
         "build_mc2_bone_frame_input",
+        "build_mc2_mesh_frame_input",
+        "build_mc2_mesh_frame_input_for_task",
     }
     production = [
         path
@@ -159,6 +162,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         }
         assert not defined & forbidden_symbols, (path, defined & forbidden_symbols)
+    assert not (MC2_ROOT / "setups" / "mesh_cloth" / "static_build.py").exists()
 
 
 def test_bone_frame_compatibility_entry_is_product_only():

@@ -172,6 +172,7 @@ E7S_PYTHON_MERGE_TARGETS = {
     "mc2.product_bone_authoring": "mc2.setups.bone_cloth.authoring",
     "mc2.product_bone_collect": "mc2.setups.bone_cloth.product",
     "mc2.product_bone_frame": "mc2.setups.bone_cloth.product",
+    "mc2.setups.mesh_cloth.static_build": "mc2.setups.mesh_cloth.static_fragment",
 }
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",

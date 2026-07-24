@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import bpy
 from mathutils import Matrix
 import numpy as np
 
-from ...center_state import MC2CenterFramePoseSpec
-from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
-from ...anchor import attach_mc2_task_anchor
 from ....utils.math3d import matrix4_to_numpy_f32
 from .base_pose import validate_base_pose_proxy
 
@@ -246,111 +243,7 @@ def read_base_pose_frame_snapshot(
     return snapshot
 
 
-def build_mc2_mesh_frame_input(
-    snapshot: MC2MeshFrameSnapshot,
-    mesh_static,
-    *,
-    topology_signature: str,
-) -> MC2FrameInputSpec:
-    """Build MC2 world pose using the frozen N0 triangle/UV orientation records."""
-    if not isinstance(snapshot, MC2MeshFrameSnapshot):
-        raise TypeError("snapshot must be MC2MeshFrameSnapshot")
-    final_proxy = getattr(mesh_static, "final_proxy", None)
-    finalizer = getattr(mesh_static, "finalizer", None)
-    if final_proxy is None or finalizer is None:
-        raise TypeError("mesh_static must be MC2MeshClothStaticBuildResult")
-    if final_proxy.vertex_count != snapshot.vertex_count:
-        raise ValueError("Mesh frame snapshot and static proxy vertex counts differ")
-    topology_signature = str(topology_signature or "")
-    if not topology_signature:
-        raise ValueError("Mesh frame input requires the task topology signature")
-    coverage = getattr(finalizer, "every_vertex_has_triangle", None)
-    if coverage is None:
-        records = tuple(finalizer.vertex_to_triangle_records)
-        coverage = len(records) == snapshot.vertex_count and all(records)
-    if not coverage:
-        raise ValueError("N3 Mesh frame orientation currently requires every vertex to belong to a triangle")
-
-    return make_mc2_frame_input(
-        task_id=final_proxy.task_id,
-        topology_signature=topology_signature,
-        frame=snapshot.frame,
-        generation=snapshot.generation,
-        world_positions=snapshot.animated_base_world_positions,
-        world_rotations_xyzw=None,
-        source_world_linear=snapshot.source_world_linear,
-        center_frame_pose=MC2CenterFramePoseSpec(
-            frame=snapshot.frame,
-            generation=snapshot.generation,
-            component_identity=f"object:{snapshot.source_object_ptr}",
-            component_world_position=snapshot.component_world_position,
-            component_world_rotation_xyzw=snapshot.component_world_rotation_xyzw,
-            component_world_scale=snapshot.component_world_scale,
-        ),
-    )
-
-
-def build_mc2_mesh_frame_input_for_task(
-    world,
-    task,
-    topology,
-    mesh_static,
-    *,
-    depsgraph=None,
-) -> MC2FrameInputSpec:
-    """Read the configured BasePose and build the active World's N3 snapshot."""
-    sources = tuple(getattr(task, "sources", ()) or ())
-    if getattr(task, "setup_type", None) != "mesh_cloth" or len(sources) != 1:
-        raise ValueError("automatic MC2 Mesh frame input requires one mesh_cloth source")
-    source_obj = sources[0]
-    if getattr(source_obj, "type", None) != "MESH" or getattr(source_obj, "data", None) is None:
-        raise ValueError("automatic MC2 Mesh frame input source is not a Mesh object")
-    properties = getattr(source_obj, "hotools_mesh_collision", None)
-    base_obj = getattr(properties, "mc2_base_pose_proxy", None) if properties is not None else None
-    if base_obj is None:
-        raise ValueError(
-            "MC2 Mesh source has no BasePose proxy; create or assign mc2_base_pose_proxy first"
-        )
-    frame_context = getattr(world, "frame_context", None)
-    frame = int(getattr(frame_context, "frame", 0) or 0)
-    generation = int(
-        getattr(frame_context, "generation", 0)
-        or getattr(world, "generation", 0)
-        or 0
-    )
-    if generation <= 0:
-        raise ValueError("automatic MC2 Mesh frame input requires an active Physics World")
-    expected_topology = str(getattr(mesh_static, "mesh_topology_signature", "") or "")
-    if not expected_topology:
-        raise ValueError("MC2 Mesh static bundle has no topology identity token")
-    depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
-    snapshot = read_base_pose_frame_snapshot(
-        source_obj,
-        base_obj,
-        mesh_topology_signature=expected_topology,
-        frame=frame,
-        generation=generation,
-        depsgraph=depsgraph,
-        cache=getattr(world, "runtime_caches", None),
-    )
-    frame_input = build_mc2_mesh_frame_input(
-        snapshot,
-        mesh_static,
-        topology_signature=str(getattr(topology, "topology_signature", "") or ""),
-    )
-    return replace(
-        frame_input,
-        center_frame_pose=attach_mc2_task_anchor(
-            frame_input.center_frame_pose,
-            task,
-            depsgraph=depsgraph,
-        ),
-    )
-
-
 __all__ = [
     "MC2MeshFrameSnapshot",
-    "build_mc2_mesh_frame_input",
-    "build_mc2_mesh_frame_input_for_task",
     "read_base_pose_frame_snapshot",
 ]
