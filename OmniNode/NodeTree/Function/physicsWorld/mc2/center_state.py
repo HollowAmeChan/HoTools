@@ -114,35 +114,12 @@ class MC2CenterStaticSpec:
         }
 
 
-@dataclass(frozen=True)
-class MC2CenterStaticMetadata:
-    task_id: str
-    proxy_signature: str
-    fixed_count: int
-    center_static_signature: str
-    schema_version: int = 0
-
-    def __post_init__(self) -> None:
-        if not self.task_id or not self.proxy_signature or not self.center_static_signature:
-            raise ValueError("Center static metadata requires stable signatures")
-        if self.fixed_count < 0:
-            raise ValueError("Center fixed_count cannot be negative")
-
-    def debug_dict(self) -> dict:
-        return {
-            "fixed_count": self.fixed_count,
-            "center_static_signature": self.center_static_signature,
-            "native_owned": True,
-        }
-
-
 def build_mc2_center_static(
     proxy: MC2ProxyStaticSpec,
     *,
     vertex_bind_pose_rotations,
     world_gravity_direction,
-    native_context=None,
-) -> MC2CenterStaticSpec | MC2CenterStaticMetadata:
+) -> MC2CenterStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
         getattr(proxy, "native_owned", False)
     ):
@@ -169,15 +146,6 @@ def build_mc2_center_static(
         local_center_position=derived["local_center_position"],
         initial_local_gravity_direction=derived["initial_local_gravity_direction"],
     )
-    if native_context is not None:
-        metadata = MC2CenterStaticMetadata(
-            task_id=proxy.task_id,
-            proxy_signature=proxy.proxy_signature,
-            fixed_count=len(derived["fixed_indices"]),
-            center_static_signature=signature,
-        )
-        native_context.update_center_derived(derived)
-        return metadata
     return MC2CenterStaticSpec(
         task_id=proxy.task_id,
         proxy_signature=proxy.proxy_signature,
@@ -1704,7 +1672,6 @@ def evaluate_mc2_center_step(
 
 
 __all__ = [
-    "MC2CenterStaticMetadata",
     "MC2CenterFramePoseSpec",
     "MC2CenterFrameShiftInputSpec",
     "MC2CenterFrameShiftResult",

@@ -8,30 +8,22 @@ import json
 
 import numpy as np
 
-from ...bending_static import MC2BendingStaticMetadata, MC2BendingStaticSpec
+from ...bending_static import MC2BendingStaticSpec
 from ...bending_static import build_mc2_bending_static
-from ...bone_static import MC2BoneNativeData, MC2BoneStaticSpec
+from ...bone_static import MC2BoneStaticSpec
 from ...bone_static import build_mc2_bone_static
-from ...center_state import MC2CenterStaticMetadata, MC2CenterStaticSpec
+from ...center_state import MC2CenterStaticSpec
 from ...center_state import build_mc2_center_static
-from ...distance_static import MC2DistanceStaticMetadata, MC2DistanceStaticSpec
+from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
-from ...mesh_baseline import MC2MeshBaselineMetadata
 from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...self_collision_static import (
-    MC2SelfCollisionStaticMetadata,
     MC2SelfCollisionStaticSpec,
 )
 from ...self_collision_static import build_mc2_self_collision_static
 from ...self_collision_static import make_empty_mc2_self_collision_static
 from ...topology import MC2BoneRawSnapshot, MC2TopologySpec
 from ...topology import thaw_mc2_topology_payload
-from ..mesh_cloth.final_proxy import (
-    MC2MeshFinalizerNativeData,
-    MC2MeshFinalizerNativeMetadata,
-    MC2MeshProxyNativeMetadata,
-)
-
 
 MC2_BONE_STATIC_SCHEMA_VERSION = 4
 MC2_LINE_BONE_SETUP_TYPES = (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING)
@@ -96,121 +88,7 @@ def _signature(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _readonly_array(values, dtype, width: int | None = None) -> np.ndarray:
-    result = np.array(values, dtype=dtype, copy=True, order="C")
-    if width is not None:
-        result = result.reshape((-1, width))
-    result.flags.writeable = False
-    return result
 
-
-@dataclass(frozen=True)
-class MC2BoneClothStaticMetadata:
-    topology_signature: str
-    connection_mode: int
-    connection_model: str
-    final_proxy: MC2MeshProxyNativeMetadata
-    finalizer: MC2MeshFinalizerNativeMetadata
-    baseline: MC2MeshBaselineMetadata
-    distance: MC2DistanceStaticMetadata
-    bending: MC2BendingStaticMetadata | None
-    center: MC2CenterStaticMetadata
-    self_collision: MC2SelfCollisionStaticMetadata
-    bone_static_signature: str
-    static_signature: str
-    schema_version: int = MC2_BONE_STATIC_SCHEMA_VERSION
-    native_owned: bool = True
-
-    def __post_init__(self) -> None:
-        if self.schema_version != MC2_BONE_STATIC_SCHEMA_VERSION:
-            raise ValueError("unsupported BoneCloth static metadata schema")
-        if not self.topology_signature or not self.bone_static_signature:
-            raise ValueError("BoneCloth static metadata signatures cannot be empty")
-        if self.connection_mode not in range(4):
-            raise ValueError("connection_mode must be in 0..3")
-        if self.connection_model not in ("mc2_source", "hotools_product"):
-            raise ValueError("unsupported BoneCloth connection_model")
-        if self.distance.proxy_signature != self.final_proxy.proxy_signature:
-            raise ValueError("distance and Bone proxy signatures must match")
-        if self.distance.baseline_signature != self.baseline.baseline_signature:
-            raise ValueError("distance and Bone baseline signatures must match")
-        if (
-            self.bending is not None
-            and self.bending.proxy_signature != self.final_proxy.proxy_signature
-        ):
-            raise ValueError("bending and Bone proxy signatures must match")
-        if self.center.proxy_signature != self.final_proxy.proxy_signature:
-            raise ValueError("center and Bone proxy signatures must match")
-        if self.self_collision.proxy_signature != self.final_proxy.proxy_signature:
-            raise ValueError("self collision and Bone proxy signatures must match")
-        if self.static_signature != _signature(self.signature_payload()):
-            raise ValueError("static_signature does not match BoneCloth metadata payload")
-
-    def signature_payload(self) -> dict:
-        return {
-            "schema_version": self.schema_version,
-            "topology_signature": self.topology_signature,
-            "connection_mode": self.connection_mode,
-            "connection_model": self.connection_model,
-            "bone_static_signature": self.bone_static_signature,
-            "distance_signature": self.distance.distance_signature,
-            "bending_signature": (
-                self.bending.bending_signature if self.bending is not None else "empty"
-            ),
-            "center_static_signature": self.center.center_static_signature,
-            "self_collision_static_signature": self.self_collision.static_signature,
-        }
-
-    def debug_dict(self) -> dict:
-        return {
-            "setup_type": self.final_proxy.setup_type,
-            "connection_mode": self.connection_mode,
-            "connection_model": self.connection_model,
-            "vertex_count": self.final_proxy.vertex_count,
-            "edge_count": len(self.final_proxy.edges),
-            "baseline_count": self.baseline.baseline_count,
-            "distance_record_count": self.distance.record_count,
-            "bending_record_count": (
-                self.bending.record_count if self.bending is not None else 0
-            ),
-            "center_fixed_count": self.center.fixed_count,
-            "self_collision_primitive_count": self.self_collision.primitive_count,
-            **self.signature_payload(),
-            "static_signature": self.static_signature,
-            "native_owned": True,
-        }
-
-    def with_center(self, center: MC2CenterStaticMetadata):
-        if not isinstance(center, MC2CenterStaticMetadata):
-            raise TypeError("center must be MC2CenterStaticMetadata")
-        payload = {
-            "schema_version": self.schema_version,
-            "topology_signature": self.topology_signature,
-            "connection_mode": self.connection_mode,
-            "connection_model": self.connection_model,
-            "bone_static_signature": self.bone_static_signature,
-            "distance_signature": self.distance.distance_signature,
-            "bending_signature": (
-                self.bending.bending_signature if self.bending is not None else "empty"
-            ),
-            "center_static_signature": center.center_static_signature,
-            "self_collision_static_signature": self.self_collision.static_signature,
-        }
-        return MC2BoneClothStaticMetadata(
-            topology_signature=self.topology_signature,
-            connection_mode=self.connection_mode,
-            connection_model=self.connection_model,
-            final_proxy=self.final_proxy,
-            finalizer=self.finalizer,
-            baseline=self.baseline,
-            distance=self.distance,
-            bending=self.bending,
-            center=center,
-            self_collision=self.self_collision,
-            bone_static_signature=self.bone_static_signature,
-            static_signature=_signature(payload),
-            schema_version=self.schema_version,
-        )
 
 
 @dataclass(frozen=True)
@@ -218,11 +96,11 @@ class MC2BoneClothStaticBuildResult:
     topology_signature: str
     connection_mode: int
     connection_model: str
-    bone: MC2BoneStaticSpec | MC2BoneNativeData
-    distance: MC2DistanceStaticSpec | MC2DistanceStaticMetadata
-    bending: MC2BendingStaticSpec | MC2BendingStaticMetadata | None
-    center: MC2CenterStaticSpec | MC2CenterStaticMetadata
-    self_collision: MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata
+    bone: MC2BoneStaticSpec
+    distance: MC2DistanceStaticSpec
+    bending: MC2BendingStaticSpec | None
+    center: MC2CenterStaticSpec
+    self_collision: MC2SelfCollisionStaticSpec
     static_signature: str
     schema_version: int = MC2_BONE_STATIC_SCHEMA_VERSION
 
@@ -238,95 +116,6 @@ class MC2BoneClothStaticBuildResult:
     def baseline(self):
         return self.bone.baseline
 
-    def compact_native_static(self) -> MC2BoneClothStaticMetadata:
-        proxy = self.final_proxy
-        finalizer = self.finalizer
-        baseline = self.baseline
-        return MC2BoneClothStaticMetadata(
-            topology_signature=self.topology_signature,
-            connection_mode=self.connection_mode,
-            connection_model=self.connection_model,
-            final_proxy=MC2MeshProxyNativeMetadata(
-                task_id=proxy.task_id,
-                setup_type=proxy.setup_type,
-                vertex_identities=proxy.vertex_identities,
-                vertex_attributes=_readonly_array(proxy.vertex_attributes, np.uint8),
-                edges=_readonly_array(proxy.edges, np.int32, 2),
-                triangles=_readonly_array(proxy.triangles, np.int32, 3),
-                proxy_signature=proxy.proxy_signature,
-            ),
-            finalizer=MC2MeshFinalizerNativeMetadata(
-                proxy_signature=finalizer.proxy_signature,
-                vertex_count=finalizer.vertex_count,
-                neighbor_count=len(finalizer.vertex_to_vertex_data),
-                triangle_record_count=(
-                    len(finalizer.vertex_to_triangle_data)
-                    if isinstance(finalizer, MC2MeshFinalizerNativeData)
-                    else sum(
-                        len(records) for records in finalizer.vertex_to_triangle_records
-                    )
-                ),
-                every_vertex_has_triangle=(
-                    finalizer.every_vertex_has_triangle
-                    if isinstance(finalizer, MC2MeshFinalizerNativeData)
-                    else all(
-                        bool(records) for records in finalizer.vertex_to_triangle_records
-                    )
-                ),
-            ),
-            baseline=MC2MeshBaselineMetadata(
-                proxy_signature=baseline.proxy_signature,
-                vertex_count=baseline.vertex_count,
-                baseline_count=len(baseline.baseline_ranges),
-                depths=_readonly_array(baseline.depths, np.float32),
-                baseline_signature=baseline.baseline_signature,
-            ),
-            distance=(
-                self.distance
-                if isinstance(self.distance, MC2DistanceStaticMetadata)
-                else MC2DistanceStaticMetadata(
-                    proxy_signature=self.distance.proxy_signature,
-                    baseline_signature=self.distance.baseline_signature,
-                    vertex_count=self.distance.vertex_count,
-                    record_count=self.distance.record_count,
-                    distance_signature=self.distance.distance_signature,
-                )
-            ),
-            bending=(
-                self.bending
-                if isinstance(self.bending, (MC2BendingStaticMetadata, type(None)))
-                else MC2BendingStaticMetadata(
-                    proxy_signature=self.bending.proxy_signature,
-                    vertex_count=self.bending.vertex_count,
-                    initial_local_to_world_columns=self.bending.initial_local_to_world_columns,
-                    record_count=self.bending.record_count,
-                    bending_signature=self.bending.bending_signature,
-                )
-            ),
-            center=(
-                self.center
-                if isinstance(self.center, MC2CenterStaticMetadata)
-                else MC2CenterStaticMetadata(
-                    task_id=self.center.task_id,
-                    proxy_signature=self.center.proxy_signature,
-                    fixed_count=self.center.fixed_count,
-                    center_static_signature=self.center.center_static_signature,
-                )
-            ),
-            self_collision=(
-                self.self_collision
-                if isinstance(self.self_collision, MC2SelfCollisionStaticMetadata)
-                else MC2SelfCollisionStaticMetadata(
-                    proxy_signature=self.self_collision.proxy_signature,
-                    point_count=self.self_collision.point_count,
-                    edge_count=self.self_collision.edge_count,
-                    triangle_count=self.self_collision.triangle_count,
-                    static_signature=self.self_collision.static_signature,
-                )
-            ),
-            bone_static_signature=self.bone.static_signature,
-            static_signature=self.static_signature,
-        )
 
     def __post_init__(self) -> None:
         if self.schema_version != MC2_BONE_STATIC_SCHEMA_VERSION:
@@ -337,20 +126,15 @@ class MC2BoneClothStaticBuildResult:
             raise ValueError("connection_mode must be in 0..3")
         if self.connection_model not in ("mc2_source", "hotools_product"):
             raise ValueError("unsupported BoneCloth connection_model")
-        if not isinstance(self.bone, (MC2BoneStaticSpec, MC2BoneNativeData)):
+        if not isinstance(self.bone, MC2BoneStaticSpec):
             raise TypeError("bone must be MC2 Bone static data")
-        if not isinstance(self.distance, (MC2DistanceStaticSpec, MC2DistanceStaticMetadata)):
+        if not isinstance(self.distance, MC2DistanceStaticSpec):
             raise TypeError("distance must be MC2 Distance static data")
-        if self.bending is not None and not isinstance(
-            self.bending, (MC2BendingStaticSpec, MC2BendingStaticMetadata)
-        ):
+        if self.bending is not None and not isinstance(self.bending, MC2BendingStaticSpec):
             raise TypeError("bending must be MC2 Bending static data or None")
-        if not isinstance(self.center, (MC2CenterStaticSpec, MC2CenterStaticMetadata)):
+        if not isinstance(self.center, MC2CenterStaticSpec):
             raise TypeError("center must be MC2 Center static data")
-        if not isinstance(
-            self.self_collision,
-            (MC2SelfCollisionStaticSpec, MC2SelfCollisionStaticMetadata),
-        ):
+        if not isinstance(self.self_collision, MC2SelfCollisionStaticSpec):
             raise TypeError("self_collision must be MC2 self-collision static data")
         if self.distance.proxy_signature != self.final_proxy.proxy_signature:
             raise ValueError("distance and Bone proxy signatures must match")
@@ -455,7 +239,6 @@ def build_mc2_bone_static_for_partition(
         _partition_static_intent(partition),
         topology,
         raw_snapshots=raw_snapshots,
-        native_context=None,
     )
 
 
@@ -464,7 +247,6 @@ def _build_mc2_bone_static(
     topology: MC2TopologySpec,
     *,
     raw_snapshots=None,
-    native_context=None,
 ) -> MC2BoneClothStaticBuildResult | None:
     if not isinstance(topology, MC2TopologySpec):
         raise TypeError("topology must be MC2TopologySpec")
@@ -480,8 +262,6 @@ def _build_mc2_bone_static(
         len(snapshots) == len(topology.sources)
         and all(isinstance(item, MC2BoneRawSnapshot) for item in snapshots)
     )
-    if native_context is not None and not use_snapshots:
-        raise RuntimeError("staged Bone static requires the shared raw snapshots")
     records = () if use_snapshots else _flatten_bone_records(topology)
     record_count = sum(len(item.names) for item in snapshots) if use_snapshots else len(records)
     if record_count != topology.particle_count:
@@ -580,29 +360,23 @@ def _build_mc2_bone_static(
         transform_local_rotations=transform_values,
         lines=topology.bone_connection.lines,
         triangles=topology.bone_connection.triangles,
-        native_context=native_context,
     )
-    if native_context is not None:
-        native_context.initialize_bone_proxy_baseline(bone)
     distance = build_mc2_distance_static(
         bone.proxy,
         bone.baseline,
         vertex_to_vertex_ranges=bone.finalizer.vertex_to_vertex_ranges,
         vertex_to_vertex_data=bone.finalizer.vertex_to_vertex_data,
-        native_context=native_context,
     )
     bending = build_mc2_bending_static(
         bone.proxy,
         initial_local_to_world_columns=_initial_armature_world_columns(intent),
-        native_context=native_context,
     )
     center = build_mc2_center_static(
         bone.proxy,
         vertex_bind_pose_rotations=bone.finalizer.vertex_bind_pose_rotations,
         world_gravity_direction=intent.profile.gravity_direction,
-        native_context=native_context,
     )
-    if intent.setup_type == MC2_SETUP_BONE_SPRING and native_context is None:
+    if intent.setup_type == MC2_SETUP_BONE_SPRING:
         self_collision = make_empty_mc2_self_collision_static(
             bone.proxy.proxy_signature
         )
@@ -610,7 +384,6 @@ def _build_mc2_bone_static(
         self_collision = build_mc2_self_collision_static(
             bone.proxy,
             bone.baseline.depths,
-            native_context=native_context,
         )
     signature_payload = {
         "schema_version": MC2_BONE_STATIC_SCHEMA_VERSION,
@@ -640,7 +413,6 @@ def _build_mc2_bone_static(
 
 __all__ = [
     "MC2BoneClothStaticBuildResult",
-    "MC2BoneClothStaticMetadata",
     "build_mc2_bone_static_for_partition",
     "mc2_bone_static_domain_error",
 ]

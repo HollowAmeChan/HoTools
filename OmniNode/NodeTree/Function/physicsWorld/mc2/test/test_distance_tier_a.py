@@ -113,7 +113,7 @@ def _has_record(records, target, rest):
     )
 
 
-def _build(fixture, *, native_context=None):
+def _build(fixture):
     payload = fixture["input"]
     count = len(payload["local_positions"])
     proxy = static_data.make_mc2_proxy_static_spec(
@@ -163,7 +163,6 @@ def _build(fixture, *, native_context=None):
         baseline,
         vertex_to_vertex_ranges=ranges,
         vertex_to_vertex_data=data,
-        native_context=native_context,
     )
 
 
@@ -317,30 +316,6 @@ def test_distance_signature_preserves_record_order() -> None:
     assert first.distance_signature != second.distance_signature
 
 
-def test_staged_distance_keeps_only_native_owned_metadata() -> None:
-    fixture = _fixtures()["distance_square_shear_001"]
-    full = _build(fixture)
-
-    class StagedContext:
-        record_count = -1
-
-        def update_distance_derived(self, derived):
-            self.record_count = len(derived["distance_targets"])
-
-    context = StagedContext()
-    staged = _build(fixture, native_context=context)
-    assert isinstance(staged, distance_static.MC2DistanceStaticMetadata)
-    assert staged.distance_signature == full.distance_signature
-    assert staged.record_count == context.record_count == 12
-    assert not hasattr(staged, "distance_targets")
-    try:
-        distance_static.pack_mc2_distance_static(staged)
-    except TypeError as exc:
-        assert "MC2DistanceStaticSpec" in str(exc)
-    else:
-        raise AssertionError("native-owned Distance metadata was accepted by the host packer")
-
-
 def test_distance_spec_quantizes_float32_before_signature() -> None:
     first = distance_static.make_mc2_distance_static_spec(
         proxy_signature="p",
@@ -381,7 +356,6 @@ TESTS = (
     ("Tier A Distance runtime order semantics", test_distance_runtime_fixtures_prove_order_is_semantic),
     ("Tier A ordered Distance host parity", test_distance_tier_a_fixtures_match_ordered_host_builder),
     ("Distance signature preserves order", test_distance_signature_preserves_record_order),
-    ("Distance staged metadata ownership", test_staged_distance_keeps_only_native_owned_metadata),
     ("Distance signature uses float32 values", test_distance_spec_quantizes_float32_before_signature),
 )
 

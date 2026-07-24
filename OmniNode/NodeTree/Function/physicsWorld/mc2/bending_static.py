@@ -179,41 +179,6 @@ class MC2BendingStaticSpec:
         return result
 
 
-@dataclass(frozen=True)
-class MC2BendingStaticMetadata:
-    proxy_signature: str
-    vertex_count: int
-    initial_local_to_world_columns: tuple[tuple[float, float, float, float], ...]
-    record_count: int
-    bending_signature: str
-    schema_version: int = MC2_BENDING_STATIC_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != MC2_BENDING_STATIC_SCHEMA_VERSION:
-            raise ValueError("unsupported MC2 Bending static schema")
-        if not self.proxy_signature or not self.bending_signature:
-            raise ValueError("Bending signatures cannot be empty")
-        if not 0 < self.vertex_count <= MC2_BENDING_MAX_INDEX + 1:
-            raise ValueError("vertex_count exceeds MC2 ushort domain")
-        if self.record_count < 0:
-            raise ValueError("Bending record_count cannot be negative")
-        if self.initial_local_to_world_columns != _matrix_columns(
-            self.initial_local_to_world_columns
-        ):
-            raise TypeError("initial transform must be immutable float32 columns")
-
-    def debug_dict(self, *, include_arrays: bool = False) -> dict:
-        if include_arrays:
-            raise ValueError("native-owned Bending metadata has no host arrays")
-        return {
-            "schema_version": self.schema_version,
-            "vertex_count": self.vertex_count,
-            "record_count": self.record_count,
-            "bending_signature": self.bending_signature,
-            "native_owned": True,
-        }
-
-
 def make_mc2_bending_static_spec(
     *,
     proxy_signature,
@@ -264,8 +229,7 @@ def build_mc2_bending_static(
     proxy: MC2ProxyStaticSpec,
     *,
     initial_local_to_world_columns=None,
-    native_context=None,
-) -> MC2BendingStaticSpec | MC2BendingStaticMetadata | None:
+) -> MC2BendingStaticSpec | None:
     if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
         getattr(proxy, "native_owned", False)
     ):
@@ -285,24 +249,6 @@ def build_mc2_bending_static(
         np.ascontiguousarray(proxy.triangles, dtype=np.int32).reshape((-1, 3)),
         np.ascontiguousarray(columns, dtype=np.float32),
     )
-    if native_context is not None:
-        metadata = MC2BendingStaticMetadata(
-            proxy_signature=proxy.proxy_signature,
-            vertex_count=proxy.vertex_count,
-            initial_local_to_world_columns=columns,
-            record_count=len(derived["bending_rest_angle_or_volume"]),
-            bending_signature=_content_signature(
-                proxy_signature=proxy.proxy_signature,
-                vertex_count=proxy.vertex_count,
-                initial_local_to_world_columns=columns,
-                bending_quads=derived["bending_quads"],
-                bending_rest_angle_or_volume=derived["bending_rest_angle_or_volume"],
-                bending_sign_or_volume=derived["bending_sign_or_volume"],
-            ),
-        )
-        native_context.update_bending_derived(derived)
-        return metadata
-
     return make_mc2_bending_static_spec(
         proxy_signature=proxy.proxy_signature,
         vertex_count=proxy.vertex_count,
@@ -334,7 +280,6 @@ def pack_mc2_bending_static(spec: MC2BendingStaticSpec) -> dict[str, np.ndarray]
 
 __all__ = [
     "MC2_BENDING_STATIC_SCHEMA_VERSION",
-    "MC2BendingStaticMetadata",
     "MC2BendingStaticSpec",
     "build_mc2_bending_static",
     "make_mc2_bending_static_spec",

@@ -69,35 +69,6 @@ class MC2SelfCollisionStaticSpec:
         }
 
 
-@dataclass(frozen=True)
-class MC2SelfCollisionStaticMetadata:
-    proxy_signature: str
-    point_count: int
-    edge_count: int
-    triangle_count: int
-    static_signature: str
-
-    def __post_init__(self) -> None:
-        if not self.proxy_signature or not self.static_signature:
-            raise ValueError("self-collision signatures cannot be empty")
-        if min(self.point_count, self.edge_count, self.triangle_count) < 0:
-            raise ValueError("self-collision primitive counts cannot be negative")
-
-    @property
-    def primitive_count(self) -> int:
-        return self.point_count + self.edge_count + self.triangle_count
-
-    def debug_dict(self) -> dict:
-        return {
-            "primitive_count": self.primitive_count,
-            "point_count": self.point_count,
-            "edge_count": self.edge_count,
-            "triangle_count": self.triangle_count,
-            "static_signature": self.static_signature,
-            "native_owned": True,
-        }
-
-
 def _readonly(values, dtype, shape):
     result = np.ascontiguousarray(values, dtype=dtype).reshape(shape)
     result.setflags(write=False)
@@ -154,9 +125,7 @@ def make_empty_mc2_self_collision_static(
 def build_mc2_self_collision_static(
     proxy: MC2ProxyStaticSpec,
     depths,
-    *,
-    native_context=None,
-) -> MC2SelfCollisionStaticSpec | MC2SelfCollisionStaticMetadata:
+) -> MC2SelfCollisionStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
         getattr(proxy, "native_owned", False)
     ):
@@ -186,16 +155,6 @@ def build_mc2_self_collision_static(
         packed_depths,
         (point_count, edge_count, triangle_count),
     )
-    if native_context is not None:
-        metadata = MC2SelfCollisionStaticMetadata(
-            proxy_signature=proxy.proxy_signature,
-            point_count=point_count,
-            edge_count=edge_count,
-            triangle_count=triangle_count,
-            static_signature=static_signature,
-        )
-        native_context.update_self_collision_derived(derived)
-        return metadata
     return MC2SelfCollisionStaticSpec(
         proxy_signature=proxy.proxy_signature,
         primitive_flags=tuple(int(value) for value in packed_flags),
@@ -209,7 +168,6 @@ def build_mc2_self_collision_static(
 
 
 __all__ = [
-    "MC2SelfCollisionStaticMetadata",
     "MC2SelfCollisionStaticSpec",
     "build_mc2_self_collision_static",
     "make_empty_mc2_self_collision_static",

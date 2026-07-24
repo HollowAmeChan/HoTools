@@ -155,6 +155,12 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "make_mc2_stats_result",
         "iter_mc2_stats_results",
         "get_mc2_stats_result",
+        "MC2CenterStaticMetadata",
+        "MC2DistanceStaticMetadata",
+        "MC2BendingStaticMetadata",
+        "MC2SelfCollisionStaticMetadata",
+        "MC2BoneClothStaticMetadata",
+        "compact_native_static",
     }
     production = [
         path

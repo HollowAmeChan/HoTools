@@ -29,7 +29,6 @@ from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.self_collision_static i
     FLAG_FIX0,
     FLAG_FIX1,
     FLAG_IGNORE,
-    MC2SelfCollisionStaticMetadata,
     build_mc2_self_collision_static,
     make_empty_mc2_self_collision_static,
     pack_mc2_self_collision_static,
@@ -96,46 +95,6 @@ def test_line_proxy_registers_only_edge_primitives():
     assert spec.particle_indices == ((0, 1, -1),)
 
 
-def test_staged_registration_returns_metadata_without_host_primitive_arrays():
-    proxy = make_mc2_proxy_static_spec(
-        task_id="self-staged",
-        setup_type="mesh_cloth",
-        vertex_identities=("v0", "v1", "v2"),
-        local_positions=((0, 0, 0), (1, 0, 0), (0, 1, 0)),
-        local_normals=((0, 0, 1),) * 3,
-        local_tangents=((1, 0, 0),) * 3,
-        uvs=((0, 0), (1, 0), (0, 1)),
-        vertex_attributes=(0x01, 0x02, 0x02),
-        edges=((0, 1), (1, 2), (2, 0)),
-        triangles=((0, 1, 2),),
-    )
-    depths = (0.0, 0.5, 1.0)
-    full = build_mc2_self_collision_static(proxy, depths)
-
-    class StagedContext:
-        primitive_count = -1
-
-        def update_self_collision_derived(self, derived):
-            self.primitive_count = len(derived["primitive_flags"])
-
-    context = StagedContext()
-    staged = build_mc2_self_collision_static(
-        proxy,
-        depths,
-        native_context=context,
-    )
-    assert isinstance(staged, MC2SelfCollisionStaticMetadata)
-    assert staged.static_signature == full.static_signature
-    assert staged.primitive_count == context.primitive_count == 7
-    assert not hasattr(staged, "primitive_flags")
-    try:
-        pack_mc2_self_collision_static(staged)
-    except TypeError as exc:
-        assert "full" in str(exc)
-    else:
-        raise AssertionError("native-owned Self metadata was accepted by the host packer")
-
-
 def test_explicitly_disabled_setup_uses_stable_empty_static_table():
     first = make_empty_mc2_self_collision_static("a" * 64)
     second = make_empty_mc2_self_collision_static("a" * 64)
@@ -152,6 +111,5 @@ def test_explicitly_disabled_setup_uses_stable_empty_static_table():
 if __name__ == "__main__":
     test_source_ordered_primitive_flags_indices_and_depths()
     test_line_proxy_registers_only_edge_primitives()
-    test_staged_registration_returns_metadata_without_host_primitive_arrays()
     test_explicitly_disabled_setup_uses_stable_empty_static_table()
     print("PASS MC2 self-collision static registration")

@@ -166,37 +166,6 @@ class MC2DistanceStaticSpec:
         return result
 
 
-@dataclass(frozen=True)
-class MC2DistanceStaticMetadata:
-    proxy_signature: str
-    baseline_signature: str
-    vertex_count: int
-    record_count: int
-    distance_signature: str
-    schema_version: int = MC2_DISTANCE_STATIC_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.schema_version != MC2_DISTANCE_STATIC_SCHEMA_VERSION:
-            raise ValueError("unsupported MC2 Distance static schema")
-        if not self.proxy_signature or not self.baseline_signature or not self.distance_signature:
-            raise ValueError("Distance signatures cannot be empty")
-        if not 0 < self.vertex_count <= MC2_DISTANCE_MAX_TARGET + 1:
-            raise ValueError("vertex_count exceeds MC2 ushort target domain")
-        if self.record_count < 0:
-            raise ValueError("Distance record_count cannot be negative")
-
-    def debug_dict(self, *, include_arrays: bool = False) -> dict:
-        if include_arrays:
-            raise ValueError("native-owned Distance metadata has no host arrays")
-        return {
-            "schema_version": self.schema_version,
-            "vertex_count": self.vertex_count,
-            "record_count": self.record_count,
-            "distance_signature": self.distance_signature,
-            "native_owned": True,
-        }
-
-
 def make_mc2_distance_static_spec(
     *,
     proxy_signature,
@@ -247,8 +216,7 @@ def build_mc2_distance_static(
     *,
     vertex_to_vertex_ranges,
     vertex_to_vertex_data,
-    native_context=None,
-) -> MC2DistanceStaticSpec | MC2DistanceStaticMetadata:
+) -> MC2DistanceStaticSpec:
     if not isinstance(proxy, MC2ProxyStaticSpec) and not bool(
         getattr(proxy, "native_owned", False)
     ):
@@ -274,24 +242,6 @@ def build_mc2_distance_static(
         np.ascontiguousarray(vertex_to_vertex_ranges, dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(vertex_to_vertex_data, dtype=np.int32),
     )
-    if native_context is not None:
-        metadata = MC2DistanceStaticMetadata(
-            proxy_signature=proxy.proxy_signature,
-            baseline_signature=baseline.baseline_signature,
-            vertex_count=proxy.vertex_count,
-            record_count=len(derived["distance_targets"]),
-            distance_signature=_content_signature(
-                proxy_signature=proxy.proxy_signature,
-                baseline_signature=baseline.baseline_signature,
-                vertex_count=proxy.vertex_count,
-                distance_ranges=derived["distance_ranges"],
-                distance_targets=derived["distance_targets"],
-                distance_rest_signed=derived["distance_rest_signed"],
-            ),
-        )
-        native_context.update_distance_derived(derived)
-        return metadata
-
     return make_mc2_distance_static_spec(
         proxy_signature=proxy.proxy_signature,
         baseline_signature=baseline.baseline_signature,
@@ -326,7 +276,6 @@ def pack_mc2_distance_static(spec: MC2DistanceStaticSpec) -> dict[str, np.ndarra
 
 __all__ = [
     "MC2_DISTANCE_STATIC_SCHEMA_VERSION",
-    "MC2DistanceStaticMetadata",
     "MC2DistanceStaticSpec",
     "build_mc2_distance_static",
     "make_mc2_distance_static_spec",

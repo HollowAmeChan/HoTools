@@ -365,6 +365,8 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 5. 首次后续审计已确认 Mesh 旧 `static_build.py` 与两个 task frame adapter 无调用方并完成删除，生产模块当前为 69 个。
 6. 第二次后续审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支，产品 debug 只消费 frozen product snapshot。
 7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。
+8. 第四次后续审计已把四个约束 static builder 和 Bone 产品静态装配器收敛为完整 spec-only 路径，删除 staged metadata、compact 转换与对应可选 `native_context` 参数；Mesh proxy/baseline 与 Bone native-owned 壳留给下一批独立审计。
+9. E7-S 后续按职责/调用图审计、单批所有权变更、架构门禁、产品验收、独立提交的循环推进；允许中途新增有证据的合并项，但 Physics World solver 原子化职责不因文件数量目标而合并。
 8. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
 9. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
 10. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。

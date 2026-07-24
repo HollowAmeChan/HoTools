@@ -69,7 +69,7 @@ def _axis_angle(value):
     )))
 
 
-def _fixture_and_spec(*, native_context=None):
+def _fixture_and_spec():
     with open(FIXTURE_PATH, "r", encoding="utf-8") as handle:
         fixture = json.load(handle)
     source = fixture["input"]
@@ -89,7 +89,6 @@ def _fixture_and_spec(*, native_context=None):
         built.proxy,
         vertex_bind_pose_rotations=built.vertex_bind_pose_rotations,
         world_gravity_direction=source["world_gravity_direction"],
-        native_context=native_context,
     )
     return fixture, spec
 
@@ -117,29 +116,6 @@ def test_center_static_packer_is_fixed_dtype_and_read_only() -> None:
     assert packed["local_center_position"].dtype == np.float32
     assert packed["initial_local_gravity_direction"].shape == (3,)
     assert all(not value.flags.writeable for value in packed.values())
-
-
-def test_staged_center_keeps_only_native_owned_metadata() -> None:
-    _fixture, full = _fixture_and_spec()
-
-    class StagedContext:
-        fixed_count = -1
-
-        def update_center_derived(self, derived):
-            self.fixed_count = len(derived["fixed_indices"])
-
-    context = StagedContext()
-    _fixture, staged = _fixture_and_spec(native_context=context)
-    assert isinstance(staged, center.MC2CenterStaticMetadata)
-    assert staged.center_static_signature == full.center_static_signature
-    assert staged.fixed_count == context.fixed_count == 3
-    assert not hasattr(staged, "fixed_indices")
-    try:
-        center.pack_mc2_center_static(staged)
-    except TypeError as exc:
-        assert "MC2CenterStaticSpec" in str(exc)
-    else:
-        raise AssertionError("native-owned Center metadata was accepted by the host packer")
 
 
 def test_center_persistent_reset_uses_frame_component_and_derived_center_pose() -> None:
