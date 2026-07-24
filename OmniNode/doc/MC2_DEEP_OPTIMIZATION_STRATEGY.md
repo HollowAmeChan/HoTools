@@ -321,6 +321,10 @@ GPU前置交付应包括：
 - 结果发布与 Blender writeback 的单向边界，禁止 GPU kernel 直接接触 Blender/RNA；
 - 能描述单线程 CPU、context Batch 和未来 GPU dispatch 的同一 execution plan，而不把某一种 backend 的调度对象暴露给产品节点。
 
+P6 第一批已落地 `MC2BackendDataPassContractV1`，直接从 `MC2CompiledDomainProgramV1` 与 `MC2DomainParameterPacketV1` 生成具体 buffer 表，不另建 Python 模块或 runtime owner。每项 buffer 明确 role、dtype、分量数、逻辑计数、硬容量、计数来源、生命周期和传输策略；静态 topology/value、参数、frame、跨帧 state、substep transient、结果和请求式 debug 分开表达。pass 图固定为 StepBasic 准备、TaskReference Teleport、Center frame shift、Center、Center inertia、Integration、Tether、Distance A、Angle、Bending、external、Distance B、Motion、whole-domain self、post/history、publish，且每项都声明依赖、条件与读写 hazard。native compiled pipeline 测试把实际方法顺序反向映射到该合同，防止两者漂移。
+
+self 动态 buffer 的编译期硬上限已固定：candidate 为 `edge*(edge-1)/2 + point*triangle`，contact 不得超过 candidate，只有显式 debug 请求才存在的 intersection 为 `edge*triangle`；超过当前 signed 31-bit primitive key 表达能力的 domain 在 backend allocation 前拒绝。该上限不是要求 CPU 或未来 GPU 预分配最坏规模，实际 count/resize/overflow 事务在下一批 P6 合同中冻结。
+
 GPU 之前必须成立：
 
 - 所有运行参数已经落入 context/partition/particle/constraint 明确层级；

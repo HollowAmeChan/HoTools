@@ -1215,7 +1215,7 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
 
             setattr(kernel, name, record)
         domain.step_compiled_domain_pipeline_full(settings)
-        assert order == [
+        expected_order = [
             "step_task_reference_teleport", "step_center_frame_shift",
             "step_center", "step_center_inertia",
             "step_integration_partitioned", "step_tether_partitioned",
@@ -1223,7 +1223,31 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             "_run_compiled_external_collision", "step_distance",
             "step_motion_partitioned", "step_whole_domain_self_owned",
             "step_post_owned_partitioned",
-        ], order
+        ]
+        assert order == expected_order, order
+        contract = ir.make_mc2_backend_data_pass_contract(
+            compiled.program, compiled.parameters
+        )
+        contract_to_method = {
+            "task_reference_teleport": "step_task_reference_teleport",
+            "center_frame_shift": "step_center_frame_shift",
+            "center": "step_center",
+            "center_inertia": "step_center_inertia",
+            "integration": "step_integration_partitioned",
+            "tether": "step_tether_partitioned",
+            "distance_a": "step_distance",
+            "angle": "step_angle_partitioned",
+            "external_collision": "_run_compiled_external_collision",
+            "distance_b": "step_distance",
+            "motion": "step_motion_partitioned",
+            "whole_domain_self": "step_whole_domain_self_owned",
+            "post_history": "step_post_owned_partitioned",
+        }
+        assert [
+            contract_to_method[name]
+            for name in (item.name for item in contract.passes)
+            if name in contract_to_method
+        ] == expected_order
         output = domain.read_output().world_positions
         state = domain.inspect()["kernel"]
         assert np.any(np.abs(output - positions) > np.float32(1.0e-6))

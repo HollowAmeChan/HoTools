@@ -16,6 +16,7 @@ import numpy as np
 
 
 MC2_DOMAIN_IR_SCHEMA_VERSION = 1
+MC2_BACKEND_CONTRACT_SCHEMA_VERSION = 1
 MC2_PARTITION_FRAME_RESET = 1 << 0
 MC2_PARTITION_FRAME_KEEP = 1 << 1
 MC2_PARTITION_FRAME_DISABLED = 1 << 2
@@ -1671,11 +1672,464 @@ def make_mc2_domain_frame_output(
     )
 
 
+_BACKEND_BUFFER_ROLES = frozenset((
+    "static_topology",
+    "static_value",
+    "parameter",
+    "frame",
+    "state",
+    "transient",
+    "output",
+    "debug",
+))
+_BACKEND_BUFFER_LIFETIMES = frozenset((
+    "domain",
+    "frame",
+    "substep",
+    "result",
+    "request",
+))
+_BACKEND_TRANSFER_POLICIES = frozenset((
+    "layout_rebuild",
+    "domain_value_update",
+    "parameter_dirty_span",
+    "frame_dirty_span",
+    "backend_owned",
+    "single_result_readback",
+    "request_only_readback",
+))
+_BACKEND_COUNT_SOURCES = frozenset((
+    "fixed",
+    "frame_collider_count",
+    "candidate_count",
+    "contact_count",
+    "intersection_count",
+    "debug_request",
+))
+_BACKEND_PASS_SCOPES = frozenset(("frame", "substep", "result"))
+
+
+@dataclass(frozen=True)
+class MC2BackendBufferSpecV1:
+    """Concrete backend allocation and transfer requirement for one buffer."""
+
+    name: str
+    role: str
+    dtype: str
+    components: int
+    logical_count: int
+    hard_capacity: int | None
+    count_source: str
+    lifetime: str
+    transfer_policy: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _text(self.name, "buffer name"))
+        if self.role not in _BACKEND_BUFFER_ROLES:
+            raise ValueError(f"unsupported backend buffer role: {self.role!r}")
+        if self.dtype not in ("float32", "uint32", "int32", "uint8"):
+            raise ValueError(f"unsupported backend buffer dtype: {self.dtype!r}")
+        if isinstance(self.components, bool) or int(self.components) <= 0:
+            raise ValueError("buffer components must be a positive integer")
+        if isinstance(self.logical_count, bool) or int(self.logical_count) < 0:
+            raise ValueError("buffer logical_count must be a non-negative integer")
+        if self.hard_capacity is not None and (
+            isinstance(self.hard_capacity, bool)
+            or int(self.hard_capacity) < int(self.logical_count)
+        ):
+            raise ValueError("buffer hard_capacity cannot be below logical_count")
+        if self.count_source not in _BACKEND_COUNT_SOURCES:
+            raise ValueError(f"unsupported backend count source: {self.count_source!r}")
+        if self.count_source == "fixed" and self.hard_capacity != self.logical_count:
+            raise ValueError("fixed backend buffers require exact hard_capacity")
+        if self.lifetime not in _BACKEND_BUFFER_LIFETIMES:
+            raise ValueError(f"unsupported backend buffer lifetime: {self.lifetime!r}")
+        if self.transfer_policy not in _BACKEND_TRANSFER_POLICIES:
+            raise ValueError(
+                f"unsupported backend transfer policy: {self.transfer_policy!r}"
+            )
+
+    def debug_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "role": self.role,
+            "dtype": self.dtype,
+            "components": self.components,
+            "logical_count": self.logical_count,
+            "hard_capacity": self.hard_capacity,
+            "count_source": self.count_source,
+            "lifetime": self.lifetime,
+            "transfer_policy": self.transfer_policy,
+        }
+
+
+@dataclass(frozen=True)
+class MC2BackendPassSpecV1:
+    """One ordered pass with explicit buffer hazards and activation condition."""
+
+    name: str
+    scope: str
+    reads: tuple[str, ...]
+    writes: tuple[str, ...]
+    depends_on: tuple[str, ...]
+    condition: str = "always"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _text(self.name, "pass name"))
+        if self.scope not in _BACKEND_PASS_SCOPES:
+            raise ValueError(f"unsupported backend pass scope: {self.scope!r}")
+        object.__setattr__(self, "reads", _unique(self.reads, "pass reads"))
+        object.__setattr__(self, "writes", _unique(self.writes, "pass writes"))
+        object.__setattr__(
+            self, "depends_on", _unique(self.depends_on, "pass dependencies")
+        )
+        object.__setattr__(self, "condition", _text(self.condition, "pass condition"))
+    def debug_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "scope": self.scope,
+            "reads": list(self.reads),
+            "writes": list(self.writes),
+            "depends_on": list(self.depends_on),
+            "condition": self.condition,
+        }
+
+
+@dataclass(frozen=True)
+class MC2BackendDataPassContractV1:
+    """P6 data/pass contract; it allocates or executes no backend resources."""
+
+    layout_signature: str
+    buffers: tuple[MC2BackendBufferSpecV1, ...]
+    passes: tuple[MC2BackendPassSpecV1, ...]
+    schema_version: int = MC2_BACKEND_CONTRACT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_BACKEND_CONTRACT_SCHEMA_VERSION:
+            raise ValueError("unsupported MC2 backend contract schema version")
+        object.__setattr__(
+            self, "layout_signature", _text(self.layout_signature, "layout_signature")
+        )
+        if any(not isinstance(item, MC2BackendBufferSpecV1) for item in self.buffers):
+            raise TypeError("buffers must contain MC2BackendBufferSpecV1")
+        if any(not isinstance(item, MC2BackendPassSpecV1) for item in self.passes):
+            raise TypeError("passes must contain MC2BackendPassSpecV1")
+        buffer_names = tuple(item.name for item in self.buffers)
+        pass_names = tuple(item.name for item in self.passes)
+        if len(set(buffer_names)) != len(buffer_names):
+            raise ValueError("backend buffer names must be unique")
+        if len(set(pass_names)) != len(pass_names):
+            raise ValueError("backend pass names must be unique")
+        known_buffers = set(buffer_names)
+        known_passes: set[str] = set()
+        for item in self.passes:
+            unknown_buffers = (set(item.reads) | set(item.writes)) - known_buffers
+            if unknown_buffers:
+                raise ValueError(
+                    f"backend pass {item.name!r} references unknown buffers: "
+                    + ", ".join(sorted(unknown_buffers))
+                )
+            unknown_dependencies = set(item.depends_on) - known_passes
+            if unknown_dependencies:
+                raise ValueError(
+                    f"backend pass {item.name!r} has forward/unknown dependencies: "
+                    + ", ".join(sorted(unknown_dependencies))
+                )
+            known_passes.add(item.name)
+
+    def buffer(self, name: str) -> MC2BackendBufferSpecV1:
+        for item in self.buffers:
+            if item.name == name:
+                return item
+        raise KeyError(name)
+
+    def debug_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "layout_signature": self.layout_signature,
+            "buffers": [item.debug_dict() for item in self.buffers],
+            "passes": [item.debug_dict() for item in self.passes],
+        }
+
+
+def _backend_array_spec(
+    name: str,
+    role: str,
+    values: np.ndarray,
+    *,
+    lifetime: str,
+    transfer_policy: str,
+) -> MC2BackendBufferSpecV1:
+    array = np.asarray(values)
+    if array.ndim == 0:
+        logical_count, components = 1, 1
+    else:
+        logical_count = int(array.shape[0])
+        components = int(np.prod(array.shape[1:], dtype=np.int64)) or 1
+    return MC2BackendBufferSpecV1(
+        name=name,
+        role=role,
+        dtype=str(array.dtype),
+        components=components,
+        logical_count=logical_count,
+        hard_capacity=logical_count,
+        count_source="fixed",
+        lifetime=lifetime,
+        transfer_policy=transfer_policy,
+    )
+
+
+def make_mc2_backend_data_pass_contract(
+    program: MC2CompiledDomainProgramV1,
+    parameters: MC2DomainParameterPacketV1,
+) -> MC2BackendDataPassContractV1:
+    """Build the concrete P6 allocation/pass manifest for one compiled layout."""
+
+    if not isinstance(program, MC2CompiledDomainProgramV1):
+        raise TypeError("program must be MC2CompiledDomainProgramV1")
+    if not isinstance(parameters, MC2DomainParameterPacketV1):
+        raise TypeError("parameters must be MC2DomainParameterPacketV1")
+    if parameters.layout_signature != program.layout_signature:
+        raise ValueError("parameter packet layout does not match program")
+
+    buffers: list[MC2BackendBufferSpecV1] = []
+    add = buffers.append
+    for name, role, values, policy in (
+        ("program.partition_flags", "static_topology", program.partition_flags, "layout_rebuild"),
+        ("program.partition_center_local_position", "static_value", program.partition_center_local_position, "domain_value_update"),
+        ("program.partition_initial_local_gravity_direction", "static_value", program.partition_initial_local_gravity_direction, "domain_value_update"),
+        ("program.particle_partition_index", "static_topology", program.particle_partition_index, "layout_rebuild"),
+        ("program.particle_source_element", "static_topology", program.particle_source_element, "layout_rebuild"),
+        ("program.particle_bind_position", "static_value", program.particle_bind_position, "domain_value_update"),
+        ("program.particle_bind_rotation", "static_value", program.particle_bind_rotation, "domain_value_update"),
+        ("program.particle_attribute_flags", "static_topology", program.particle_attribute_flags, "layout_rebuild"),
+        ("program.output_target_index", "static_topology", program.output_target_index, "layout_rebuild"),
+        ("program.output_source_element", "static_topology", program.output_source_element, "layout_rebuild"),
+    ):
+        add(_backend_array_spec(name, role, values, lifetime="domain", transfer_policy=policy))
+    particle_indices = np.concatenate(tuple(
+        view.resolved_indices() for view in program.partition_particle_views
+    )).astype(np.uint32, copy=False)
+    add(_backend_array_spec(
+        "program.partition_particle_indices",
+        "static_topology",
+        particle_indices,
+        lifetime="domain",
+        transfer_policy="layout_rebuild",
+    ))
+    for table in program.constraint_tables:
+        for suffix, values in (
+            ("indices", table.indices),
+            ("owner_partition_index", table.owner_partition_index),
+            ("flags", table.flags),
+        ):
+            add(_backend_array_spec(
+                f"program.constraint.{table.kind}.{suffix}",
+                "static_topology",
+                values,
+                lifetime="domain",
+                transfer_policy="layout_rebuild",
+            ))
+    for table in program.primitive_tables:
+        for suffix, values in (
+            ("indices", table.indices),
+            ("owner_partition_index", table.owner_partition_index),
+        ):
+            add(_backend_array_spec(
+                f"program.primitive.{table.kind}.{suffix}",
+                "static_topology",
+                values,
+                lifetime="domain",
+                transfer_policy="layout_rebuild",
+            ))
+    for name in (
+        "baseline_parent_indices",
+        "baseline_line_start",
+        "baseline_line_count",
+        "baseline_line_data",
+        "baseline_vertex_local_position",
+        "baseline_vertex_local_rotation",
+    ):
+        values = getattr(program, name)
+        if values is not None:
+            add(_backend_array_spec(
+                f"program.{name}",
+                "static_topology" if "position" not in name and "rotation" not in name else "static_value",
+                values,
+                lifetime="domain",
+                transfer_policy="layout_rebuild" if "position" not in name and "rotation" not in name else "domain_value_update",
+            ))
+    parameter_tables = (
+        parameters.domain_scalars,
+        parameters.partition_parameters,
+        parameters.partition_uint_parameters,
+        parameters.particle_parameters,
+        *parameters.constraint_parameters,
+    )
+    for table in parameter_tables:
+        if table.values.shape[1] == 0:
+            continue
+        add(_backend_array_spec(
+            f"parameter.{table.name}",
+            "parameter",
+            table.values,
+            lifetime="domain",
+            transfer_policy="parameter_dirty_span",
+        ))
+
+    particle_count = program.particle_count
+    partition_count = program.partition_count
+    for name, dtype, components, count in (
+        ("frame.animated_base_position", "float32", 3, particle_count),
+        ("frame.animated_base_rotation", "float32", 4, particle_count),
+        ("frame.animated_base_normal", "float32", 3, particle_count),
+        ("frame.partition_position", "float32", 3, partition_count),
+        ("frame.partition_rotation", "float32", 4, partition_count),
+        ("frame.partition_scale", "float32", 3, partition_count),
+        ("frame.partition_linear", "float32", 9, partition_count),
+        ("frame.anchor_position", "float32", 3, partition_count),
+        ("frame.anchor_rotation", "float32", 4, partition_count),
+        ("frame.anchor_present", "uint32", 1, partition_count),
+        ("frame.partition_flags", "uint32", 1, partition_count),
+        ("frame.velocity_weight", "float32", 1, partition_count),
+        ("frame.gravity_ratio", "float32", 1, partition_count),
+    ):
+        add(MC2BackendBufferSpecV1(
+            name, "frame", dtype, components, count, count, "fixed", "frame",
+            "frame_dirty_span",
+        ))
+    for name, dtype, components in (
+        ("frame.collider_type", "int32", 1),
+        ("frame.collider_group_bit", "int32", 1),
+        ("frame.collider_center", "float32", 3),
+        ("frame.collider_segment_a", "float32", 3),
+        ("frame.collider_segment_b", "float32", 3),
+        ("frame.collider_old_center", "float32", 3),
+        ("frame.collider_old_segment_a", "float32", 3),
+        ("frame.collider_old_segment_b", "float32", 3),
+        ("frame.collider_radius", "float32", 1),
+    ):
+        add(MC2BackendBufferSpecV1(
+            name, "frame", dtype, components, 0, None,
+            "frame_collider_count", "frame", "frame_dirty_span",
+        ))
+    for name, components, count in (
+        ("state.world_position", 3, particle_count),
+        ("state.world_rotation", 4, particle_count),
+        ("state.world_normal", 3, particle_count),
+        ("state.velocity_reference_position", 3, particle_count),
+        ("state.velocity", 3, particle_count),
+        ("state.real_velocity", 3, particle_count),
+        ("state.static_friction", 1, particle_count),
+        ("state.partition_previous_position", 3, partition_count),
+        ("state.partition_previous_rotation", 4, partition_count),
+        ("state.anchor_previous_position", 3, partition_count),
+        ("state.anchor_previous_rotation", 4, partition_count),
+        ("state.center_old_position", 3, partition_count),
+        ("state.center_old_rotation", 4, partition_count),
+        ("state.center_previous_frame_position", 3, partition_count),
+        ("state.center_previous_frame_rotation", 4, partition_count),
+        ("state.center_smoothing_velocity", 3, partition_count),
+        ("state.center_velocity_weight", 1, partition_count),
+        ("transient.step_basic_position", 3, particle_count),
+        ("transient.step_basic_rotation", 4, particle_count),
+    ):
+        add(MC2BackendBufferSpecV1(
+            name,
+            "state" if name.startswith("state.") else "transient",
+            "float32",
+            components,
+            count,
+            count,
+            "fixed",
+            "domain" if name.startswith("state.") else "substep",
+            "backend_owned",
+        ))
+
+    primitive_counts = {
+        kind: next(
+            (table.primitive_count for table in program.primitive_tables if table.kind == kind),
+            0,
+        )
+        for kind in _PRIMITIVE_WIDTHS
+    }
+    candidate_limit = (
+        primitive_counts["edge"] * max(primitive_counts["edge"] - 1, 0) // 2
+        + primitive_counts["point"] * primitive_counts["triangle"]
+    )
+    intersection_limit = primitive_counts["edge"] * primitive_counts["triangle"]
+    if max(candidate_limit, intersection_limit) > 0x7FFFFFFF:
+        raise OverflowError("MC2 self buffer bound exceeds signed 31-bit primitive keys")
+    for name, role, dtype, components, source, limit, lifetime, transfer in (
+        ("transient.self_candidates", "transient", "int32", 3, "candidate_count", candidate_limit, "substep", "backend_owned"),
+        ("transient.self_contacts", "transient", "float32", 12, "contact_count", candidate_limit, "substep", "backend_owned"),
+        ("debug.self_intersections", "debug", "int32", 5, "intersection_count", intersection_limit, "request", "request_only_readback"),
+        ("debug.pass_records", "debug", "float32", 16, "debug_request", None, "request", "request_only_readback"),
+    ):
+        add(MC2BackendBufferSpecV1(
+            name, role, dtype, components, 0, limit, source, lifetime, transfer
+        ))
+    for name, dtype, components, count in (
+        ("output.logical_world_position", "float32", 3, particle_count),
+        ("output.logical_world_rotation", "float32", 4, particle_count),
+        ("output.validity", "uint32", 1, 1),
+    ):
+        add(MC2BackendBufferSpecV1(
+            name,
+            "output",
+            dtype,
+            components,
+            count,
+            count,
+            "fixed",
+            "result",
+            "single_result_readback",
+        ))
+
+    topology = tuple(
+        item.name for item in buffers if item.role in ("static_topology", "static_value")
+    )
+    parameter_names = tuple(item.name for item in buffers if item.role == "parameter")
+    frame_names = tuple(item.name for item in buffers if item.role == "frame")
+    state = tuple(item.name for item in buffers if item.role == "state")
+    step_basic = (
+        "transient.step_basic_position",
+        "transient.step_basic_rotation",
+    )
+    passes = (
+        MC2BackendPassSpecV1("prepare_step_basic", "substep", topology + parameter_names + frame_names + state, step_basic, ()),
+        MC2BackendPassSpecV1("task_reference_teleport", "substep", frame_names + state, state, ("prepare_step_basic",)),
+        MC2BackendPassSpecV1("center_frame_shift", "substep", frame_names + parameter_names + state, state, ("task_reference_teleport",)),
+        MC2BackendPassSpecV1("center", "substep", frame_names + parameter_names + state, state, ("center_frame_shift",)),
+        MC2BackendPassSpecV1("center_inertia", "substep", parameter_names + state, state, ("center",)),
+        MC2BackendPassSpecV1("integration", "substep", parameter_names + frame_names + state, state, ("center_inertia",)),
+        MC2BackendPassSpecV1("tether", "substep", topology + parameter_names + step_basic + state, state, ("integration",), "constraint:tether"),
+        MC2BackendPassSpecV1("distance_a", "substep", topology + parameter_names + state, state, ("tether",), "constraint:distance"),
+        MC2BackendPassSpecV1("angle", "substep", topology + parameter_names + step_basic + state, state, ("distance_a",), "baseline:angle"),
+        MC2BackendPassSpecV1("bending", "substep", topology + parameter_names + state, state, ("angle",), "constraint:bending"),
+        MC2BackendPassSpecV1("external_collision", "substep", parameter_names + frame_names + state, state, ("bending",)),
+        MC2BackendPassSpecV1("distance_b", "substep", topology + parameter_names + state, state, ("external_collision",), "constraint:distance"),
+        MC2BackendPassSpecV1("motion", "substep", topology + parameter_names + frame_names + step_basic + state, state, ("distance_b",)),
+        MC2BackendPassSpecV1("whole_domain_self", "substep", topology + parameter_names + state, state + ("transient.self_candidates", "transient.self_contacts"), ("motion",), "capability:self_collision"),
+        MC2BackendPassSpecV1("post_history", "substep", parameter_names + state, state, ("whole_domain_self",)),
+        MC2BackendPassSpecV1("publish_output", "result", state, ("output.logical_world_position", "output.logical_world_rotation", "output.validity"), ("post_history",)),
+    )
+    return MC2BackendDataPassContractV1(
+        layout_signature=program.layout_signature,
+        buffers=tuple(buffers),
+        passes=passes,
+    )
+
+
 __all__ = [
+    "MC2_BACKEND_CONTRACT_SCHEMA_VERSION",
     "MC2_DOMAIN_IR_SCHEMA_VERSION",
     "MC2_PARTITION_FRAME_DISABLED",
     "MC2_PARTITION_FRAME_KEEP",
     "MC2_PARTITION_FRAME_RESET",
+    "MC2BackendBufferSpecV1",
+    "MC2BackendDataPassContractV1",
+    "MC2BackendPassSpecV1",
     "MC2CompiledDomainProgramV1",
     "MC2ConstraintTopologyTableV1",
     "MC2DomainFrameOutputV1",
@@ -1688,6 +2142,7 @@ __all__ = [
     "MC2PhysicalIndexMapV1",
     "MC2PrimitiveTopologyTableV1",
     "MC2UIntSoATableV1",
+    "make_mc2_backend_data_pass_contract",
     "make_mc2_compiled_domain_program",
     "make_mc2_constraint_topology_table",
     "make_mc2_domain_frame_output",

@@ -898,6 +898,8 @@ E3 native 门禁已经满足：新 owner 能在无 Blender 对象的 C++/headles
 
 E6 是确定的长期方向，但作为独立后续里程碑排期；它不阻塞 E3-E5 的统一域产品交付，也不要求当前立即实现 GPU solver。当前阶段只完成 P6-A/P6-B 的后端中立准备：同一 `MC2CompiledDomain`、frame/output contract、pass 读写集、buffer 容量/溢出、增量上传边界和 CPU reference tolerance。
 
+P6 data/pass 第一批已经机器化：`domain_ir.py` 在既有 immutable contract 职责内提供 `MC2BackendDataPassContractV1`，按一个 compiled layout 生成具体 buffer/容量表和 16 阶段有序 pass 图；没有新增 backend 文件、执行 owner 或调度抽象。固定 buffer 取现有 program/parameter 的真实 shape，frame collider 保持逐帧计数，self candidate/contact/intersection 使用可证明的组合硬上限；所有 pass 只引用合同内已声明 buffer，且依赖只能指向先前阶段。下一批补 dirty span、两阶段动态容量事务、单向 IO 和 tolerance，不改变该顺序。
+
 未来进入 E6 时，先实现 integration + Distance + whole-domain self-collision 的最小代表原型，保留 CPU reference 对照；通过规模曲线和传输成本决定剩余 pass 的覆盖顺序，而不是一开始复制完整 CPU solver。
 
 退出条件：

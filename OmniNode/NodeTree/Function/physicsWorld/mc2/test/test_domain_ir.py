@@ -219,6 +219,85 @@ def test_fixture_builds_one_logical_domain_with_ordered_partitions() -> None:
     assert program.layout_signature == _build_program(fixture).layout_signature
 
 
+def test_backend_data_pass_contract_freezes_concrete_buffers_and_order() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    contract = ir.make_mc2_backend_data_pass_contract(program, parameters)
+
+    assert contract.layout_signature == program.layout_signature
+    assert tuple(item.name for item in contract.passes) == (
+        "prepare_step_basic",
+        "task_reference_teleport",
+        "center_frame_shift",
+        "center",
+        "center_inertia",
+        "integration",
+        "tether",
+        "distance_a",
+        "angle",
+        "bending",
+        "external_collision",
+        "distance_b",
+        "motion",
+        "whole_domain_self",
+        "post_history",
+        "publish_output",
+    )
+    assert contract.buffer("program.particle_bind_position").logical_count == 5
+    bind_position = contract.buffer("program.particle_bind_position")
+    assert bind_position.components * np.dtype(bind_position.dtype).itemsize == 12
+    assert contract.buffer("output.logical_world_position").hard_capacity == 5
+    assert contract.buffer("frame.collider_center").hard_capacity is None
+
+    primitive_counts = {
+        table.kind: table.primitive_count for table in program.primitive_tables
+    }
+    edge_count = primitive_counts.get("edge", 0)
+    expected_candidates = (
+        edge_count * max(edge_count - 1, 0) // 2
+        + primitive_counts.get("point", 0) * primitive_counts.get("triangle", 0)
+    )
+    assert (
+        contract.buffer("transient.self_candidates").hard_capacity
+        == expected_candidates
+    )
+    assert (
+        contract.buffer("transient.self_contacts").hard_capacity
+        == expected_candidates
+    )
+    assert contract.buffer("debug.self_intersections").hard_capacity == (
+        edge_count * primitive_counts.get("triangle", 0)
+    )
+    whole_self = next(item for item in contract.passes if item.name == "whole_domain_self")
+    assert "state.world_position" in set(whole_self.reads) & set(whole_self.writes)
+    assert whole_self.condition == "capability:self_collision"
+
+
+def test_backend_data_pass_contract_rejects_unknown_buffer_dependency() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    contract = ir.make_mc2_backend_data_pass_contract(program, parameters)
+    bad_pass = ir.MC2BackendPassSpecV1(
+        name="bad",
+        scope="substep",
+        reads=("missing.buffer",),
+        writes=(),
+        depends_on=(),
+    )
+    try:
+        ir.MC2BackendDataPassContractV1(
+            layout_signature=program.layout_signature,
+            buffers=contract.buffers,
+            passes=(bad_pass,),
+        )
+    except ValueError as exc:
+        assert "unknown buffers" in str(exc)
+    else:
+        raise AssertionError("backend contract accepted an unknown pass buffer")
+
+
 def test_single_mesh_fixture_uses_the_same_program_contract() -> None:
     fixture = _load_single_fixture()
     snapshots = _build_static_snapshots(fixture)
