@@ -60,13 +60,13 @@ def _output_target_id(source) -> str:
 
 
 def _external_collision_mask(partition) -> int:
-    """在产品 IO 边界解析 Mesh 对象面板的外部碰撞组。"""
+    """读取域节点已经冻结的统一16组碰撞配置。"""
 
-    properties = getattr(partition.source, "hotools_mesh_collision", None)
+    properties = getattr(partition, "source_properties", None)
     value = (
         partition.setup_options.collided_by_groups
         if properties is None
-        else getattr(properties, "collided_by_groups", 0)
+        else getattr(properties, "self_collision_groups", 0)
     )
     return max(0, min(0xFFFF, int(value or 0)))
 
@@ -488,7 +488,7 @@ def capture_mc2_mesh_product_frame(
         zip(collection.draft.partitions, collection.mesh_topology_signatures)
     ):
         source = partition.source
-        properties = getattr(source, "hotools_mesh_collision", None)
+        properties = getattr(partition, "source_properties", None)
         base_obj = getattr(properties, "mc2_base_pose_proxy", None) if properties is not None else None
         if base_obj is None:
             raise ValueError(f"Mesh source {partition.stable_id} has no BasePose proxy")

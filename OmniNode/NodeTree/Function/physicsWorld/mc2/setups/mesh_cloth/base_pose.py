@@ -164,7 +164,6 @@ def _disable_runtime_flags(obj: bpy.types.Object) -> None:
     props = getattr(obj, "hotools_mesh_collision", None)
     if props is None:
         return
-    props.enabled = False
     props.mc2_base_pose_proxy = None
 
 

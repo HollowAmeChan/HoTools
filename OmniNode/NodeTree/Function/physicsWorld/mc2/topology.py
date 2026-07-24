@@ -190,7 +190,10 @@ def _unresolved_source_fingerprint(source, kind: str) -> dict[str, str]:
     }
 
 
-def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
+def _read_mesh_raw_snapshot(
+    source,
+    source_properties=None,
+) -> MC2MeshRawSnapshot | None:
     mesh = getattr(source, "data", None)
     if (
         mesh is None
@@ -223,7 +226,11 @@ def _read_mesh_raw_snapshot(source) -> MC2MeshRawSnapshot | None:
         uvs = np.empty(len(uv_layer.data) * 2, dtype=np.float32)
         uv_layer.data.foreach_get("uv", uvs)
 
-    properties = getattr(source, "hotools_mesh_collision", None)
+    properties = (
+        source_properties
+        if source_properties is not None
+        else getattr(source, "hotools_mesh_collision", None)
+    )
     pin_enabled = bool(getattr(properties, "pin_enabled", False))
     pin_name = str(getattr(properties, "pin_vertex_group", "") or "")
     weights = np.empty((0,), dtype=np.float32)
@@ -320,6 +327,11 @@ def read_mc2_partition_static_source_observation(partition, source):
     """从 resolved partition 读取一个 source，不创建旧 task spec。"""
 
     intent = _partition_intent(partition)
+    if intent.setup_type == "mesh_cloth":
+        snapshot = _read_mesh_raw_snapshot(
+            source, getattr(partition, "source_properties", None)
+        )
+        return _mesh_input_fingerprint(source, snapshot), snapshot
     return _read_mc2_static_source_observation(intent.setup_type, source)
 
 
@@ -425,7 +437,22 @@ def _prepare_static_inputs_for_intent(
 def prepare_static_inputs_for_partition(partition):
     """读取一个 resolved partition 的静态输入。"""
 
-    return _prepare_static_inputs_for_intent(_partition_intent(partition))
+    intent = _partition_intent(partition)
+    if intent.setup_type != "mesh_cloth":
+        return _prepare_static_inputs_for_intent(intent)
+    source_fingerprints = []
+    snapshots = []
+    for source in intent.sources:
+        fingerprint, snapshot = read_mc2_partition_static_source_observation(
+            partition, source
+        )
+        source_fingerprints.append(fingerprint)
+        snapshots.append(snapshot)
+    return _compose_mc2_static_inputs(
+        intent,
+        source_fingerprints,
+        snapshots,
+    )
 
 
 def _vector3(value) -> tuple[float, float, float]:

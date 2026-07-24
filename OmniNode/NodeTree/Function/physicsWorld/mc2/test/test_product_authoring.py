@@ -1,4 +1,4 @@
-"""MC2 Mesh 产品对象、覆盖、隐式 registry 与 collector 的纯宿主测试。"""
+"""MC2 Mesh对象、完整域分区与纯collector合同测试。"""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ for package_name, package_path in (
 authoring = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.authoring"
 )
-request_module = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"
+object_spec = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.object_spec"
 )
 parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
-world_types = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+request_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"
 )
 
 
@@ -58,69 +58,86 @@ class _Mesh(_Pointer):
         self.name = self.name_full = name
 
 
-def test_explicit_override_and_implicit_registry_merge_into_one_domain():
-    world = world_types.PhysicsWorldCache()
-    world.generation = 3
-    world.frame_context.frame = 12
-    sleeve, coat = _Mesh(101, "Sleeve"), _Mesh(102, "Coat")
-    sleeve_entry = authoring.make_mc2_mesh_partition_entries((sleeve,))[0]
+def _wrapped(pointer, name, *, group=1, collided=0):
+    source = _Mesh(pointer, name)
+    return object_spec.make_mc2_mesh_custom_object(
+        source,
+        primary_collision_group=group,
+        collided_by_groups=collided,
+    )
+
+
+def test_domain_outputs_complete_partitions_and_preserves_real_source():
+    sleeve = _wrapped(101, "Sleeve", group=3, collided=0b10000)
+    anchor = _Pointer(999)
     profile = parameters.make_mc2_particle_profile(
         gravity=7.5,
         self_collision_mode=2,
     )
-    implicit_entry = authoring.override_mc2_mesh_partition_entries(
-        (sleeve_entry,),
+    task = parameters.make_mc2_task_parameters(world_inertia=0.25)
+    partition = authoring.make_mc2_mesh_domain_partitions(
+        (sleeve,),
         profile=profile,
+        task_parameters=task,
+        anchor_object=anchor,
     )[0]
-    count, dirty = authoring.register_mc2_mesh_partition_entries(
-        world,
-        (implicit_entry,),
-    )
-    assert count == dirty == 1
+    assert partition.source is sleeve.source_object
+    assert partition.source_properties is sleeve.explicit_properties
+    assert partition.profile is profile
+    assert partition.task_parameters is task
+    assert partition.anchor_object is anchor
+    assert partition.enabled is True
+    assert partition.collision_group == 0b100
+    assert partition.collision_mask == 0b10100
+    assert partition.setup_options.collided_by_groups == 0b10100
+    assert not partition.patches
 
-    explicit = authoring.make_mc2_mesh_partition_entries((sleeve, coat))
-    request = authoring.make_mc2_mesh_product_request(world, explicit)
+
+def test_collector_only_collects_complete_partitions_in_input_order():
+    objects = (
+        _wrapped(201, "A", group=1),
+        _wrapped(202, "B", group=2, collided=1),
+    )
+    partitions = authoring.make_mc2_mesh_domain_partitions(objects)
+    request = authoring.make_mc2_mesh_product_request(partitions)
     assert isinstance(request, request_module.MC2ProductRequestV1)
     assert request.setup_type == "mesh_cloth"
     assert request.debug_dict()["schema"] == "mc2_product_request_v1"
-    assert len(request.plan.active_partitions) == 2
-    assert request.plan.report.merged_partition_count == 1
+    assert tuple(
+        value.stable_id for value in request.plan.active_partitions
+    ) == tuple(value.stable_id for value in partitions)
     assert request.plan.report.explicit_input_count == 2
-    assert request.plan.report.implicit_input_count == 1
-    sleeve_partition = request.plan.active_partitions[0]
-    assert sleeve_partition.profile.gravity == 7.5
-    assert sleeve_partition.field_source("profile.gravity").startswith("implicit:")
-    assert "融合 2 个分区" in request.report_text
-    assert "显隐合并 1" in request.report_text
+    assert request.plan.report.implicit_input_count == 0
+    assert request.plan.report.merged_partition_count == 0
+    assert "收集2个完整分区" in request.report_text
     assert "Require Fusion" in request.report_text
 
 
-def test_registry_snapshot_disables_entries_removed_by_the_same_producer():
-    world = world_types.PhysicsWorldCache()
-    entries = authoring.make_mc2_mesh_partition_entries(
-        (_Mesh(201, "A"), _Mesh(202, "B"))
-    )
-    assert authoring.register_mc2_mesh_partition_entries(world, entries) == (2, 2)
-    count, dirty = authoring.register_mc2_mesh_partition_entries(world, entries[:1])
-    assert count == 1 and dirty == 1
-    implicit = authoring.collect_implicit_mc2_mesh_partition_entries(world)
-    assert len(implicit) == 1 and implicit[0].stable_id == entries[0].stable_id
-
-
-def test_collector_rejects_empty_or_non_mesh_inputs():
-    world = world_types.PhysicsWorldCache()
+def test_collector_rejects_empty_raw_or_duplicate_inputs():
     try:
-        authoring.make_mc2_mesh_product_request(world, ())
+        authoring.make_mc2_mesh_product_request(())
     except ValueError as exc:
-        assert "没有启用" in str(exc)
+        assert "没有输入分区" in str(exc)
     else:
         raise AssertionError("empty collector request was accepted")
+
+    raw = _Mesh(301, "Raw")
     try:
-        authoring.make_mc2_mesh_partition_entries((_Pointer(99),))
+        authoring.make_mc2_mesh_domain_partitions((raw,))
     except TypeError as exc:
-        assert "Mesh Object" in str(exc)
+        assert "包装后的对象" in str(exc)
     else:
-        raise AssertionError("non-Mesh authoring source was accepted")
+        raise AssertionError("raw Mesh bypassed the object adapter")
+
+    partition = authoring.make_mc2_mesh_domain_partitions(
+        (_wrapped(302, "Duplicate"),)
+    )[0]
+    try:
+        authoring.make_mc2_mesh_product_request((partition, partition))
+    except ValueError as exc:
+        assert "重复stable id" in str(exc)
+    else:
+        raise AssertionError("duplicate stable id was accepted")
 
 
 if __name__ == "__main__":

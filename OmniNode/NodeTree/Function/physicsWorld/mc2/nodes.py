@@ -24,10 +24,12 @@ from .parameters import (
 )
 from .presets import MC2_PARTICLE_PRESETS
 from .setups.mesh_cloth.authoring import (
-    make_mc2_mesh_partition_entries,
+    make_mc2_mesh_domain_partitions,
     make_mc2_mesh_product_request,
-    override_mc2_mesh_partition_entries,
-    register_mc2_mesh_partition_entries,
+)
+from .setups.mesh_cloth.object_spec import (
+    make_mc2_mesh_custom_objects,
+    read_mc2_mesh_panel_objects,
 )
 from .product_request import MC2ProductRequestV1
 from .setups.bone_cloth.authoring import (
@@ -42,34 +44,6 @@ def _product_name_output(requests) -> str:
         make_mc2_product_slot_id(request.setup_type, request.domain_signature)
         for request in requests
     )
-
-
-def _mesh_cloth_tasks(
-    mesh_objects, anchor_object, profile, task_parameters, enabled: bool
-):
-    if profile is None:
-        profile = make_mc2_particle_profile(spring_enabled=False)
-    sources = _flatten_values(mesh_objects)
-    for source in sources:
-        if getattr(source, "type", None) != "MESH":
-            raise TypeError("MeshCloth product source must be a Mesh Object socket")
-    if not bool(enabled):
-        return []
-    entries = make_mc2_mesh_partition_entries(sources)
-    request = make_mc2_mesh_product_request(
-        None,
-        entries,
-        include_implicit=False,
-        default_profile=profile,
-        default_task_parameters=task_parameters,
-        default_setup_options=make_mc2_setup_options(
-            MC2_SETUP_MESH_CLOTH,
-            self_collision_radius_model="derived_radius",
-        ),
-        default_anchor_object=anchor_object,
-        default_enabled=True,
-    )
-    return [request]
 
 
 def _flatten_values(values) -> list:
@@ -571,213 +545,108 @@ def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
 
 @omni(
     enable=True,
-    bl_label="MC2 Mesh对象",
+    bl_label="MC2 MeshCloth对象",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["代理网格"],
+    _INPUT_NAME=["物体"],
     input_init={
         "mesh_objects": {
-            "description": "显式Mesh分区来源\n多个对象合入同一domain",
+            "description": "读取每个Mesh物体面板上的完整MeshCloth对象属性",
         },
     },
     omni_description=(
-        "把Mesh对象转换成稳定partition entry；不创建task、slot或native owner。"
+        "把一个或多个Mesh物体包装成MeshCloth对象；对象属性来自物体面板。"
     ),
-    _OUTPUT_NAME=["Mesh分区", "对象数量"],
+    _OUTPUT_NAME=["MeshCloth对象", "对象数量"],
     mute_passthrough=False,
 )
 def physicsMC2MeshObject(
     mesh_objects: list[bpy.types.Object],
 ) -> tuple[list[typing.Any], int]:
-    entries = make_mc2_mesh_partition_entries(mesh_objects)
-    return list(entries), len(entries)
+    objects = read_mc2_mesh_panel_objects(mesh_objects)
+    return list(objects), len(objects)
 
 
 @omni(
     enable=True,
-    bl_label="MC2 Mesh覆盖",
+    bl_label="MC2 MeshCloth自定义对象",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "Mesh分区", "粒子配置", "Anchor",
-        *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "碰撞组", "碰撞Mask", "启用",
+        "物体", "BasePose只读对象", "半径顶点组", "Pin启用",
+        "Pin顶点组", "主碰撞组", "被碰撞组",
     ],
     input_init={
-        "entries": {"description": "只接受MC2 Mesh对象产生的显式分区"},
-        "profile": {"description": "该组分区的完整粒子配置覆盖"},
-        "anchor_object": {"description": "该组分区共用的Anchor；留空表示无Anchor"},
-        **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
-        "collision_group": {
-            "mask_length": 32,
-            "description": "单个碰撞组bit；0表示未指定",
+        "mesh_objects": {
+            "description": "一个或多个Mesh物体；不读取它们的MeshCloth面板",
         },
-        "collision_mask": {
-            "mask_length": 32,
-            "description": "允许发生域内碰撞的分区组Mask",
+        "mc2_base_pose_proxy": {
+            "description": "每帧只读的Mesh基础姿态对象",
         },
-        "enabled": {"description": "关闭时分区保留在报告中但不进入domain"},
+        "radius_vertex_group": {
+            "description": "逐顶点缩放碰撞半径的顶点组",
+        },
+        "pin_enabled": {"description": "启用Pin顶点"},
+        "pin_vertex_group": {
+            "description": "Pin顶点组；启用且留空时固定全部顶点",
+        },
+        "primary_collision_group": {
+            "min_value": 1,
+            "max_value": 16,
+            "description": "该Mesh的主碰撞组，范围1..16",
+        },
+        "collided_by_groups": {
+            "mask_length": 16,
+            "description": "允许碰撞到该Mesh的主碰撞组；域内自碰会自动包含自身组",
+        },
     },
-    omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=(
-        "显式覆盖一组Mesh partition的Profile、Task参数、Anchor与过滤字段；"
-        "覆盖来源会进入collector报告。"
+        "用socket完整定义MeshCloth对象属性；它与面板对象节点输出同一种类型，"
+        "且不会读取或修改物体面板。"
     ),
-    _OUTPUT_NAME=["Mesh分区", "覆盖数量"],
+    _OUTPUT_NAME=["MeshCloth对象", "对象数量"],
     mute_passthrough=False,
 )
-def physicsMC2MeshOverride(
-    entries: list[typing.Any],
-    profile: typing.Any = None,
-    anchor_object: bpy.types.Object = None,
-    normal_axis: int = 1,
-    anchor_inertia: float = 0.0,
-    world_inertia: float = 1.0,
-    movement_inertia_smoothing: float = 0.4,
-    movement_speed_limit: float = 5.0,
-    rotation_speed_limit: float = 720.0,
-    local_inertia: float = 1.0,
-    local_movement_speed_limit: float = -1.0,
-    local_rotation_speed_limit: float = -1.0,
-    depth_inertia: float = 0.0,
-    teleport_mode: int = 0,
-    teleport_distance: float = 0.5,
-    teleport_rotation: float = 90.0,
-    cloth_mass: float = 0.0,
-    collision_group: _OmniBitMask = 0,
-    collision_mask: _OmniBitMask = 0xFFFFFFFF,
-    enabled: bool = True,
+def physicsMC2MeshCustomObject(
+    mesh_objects: list[bpy.types.Object],
+    mc2_base_pose_proxy: bpy.types.Object = None,
+    radius_vertex_group: str = "",
+    pin_enabled: bool = False,
+    pin_vertex_group: str = "",
+    primary_collision_group: int = 1,
+    collided_by_groups: _OmniBitMask = 0,
 ) -> tuple[list[typing.Any], int]:
-    if profile is None:
-        profile = make_mc2_particle_profile(spring_enabled=False)
-    task_parameters = _make_task_parameters(locals())
-    setup_options = make_mc2_setup_options(
-        MC2_SETUP_MESH_CLOTH,
-        self_collision_radius_model="derived_radius",
+    objects = make_mc2_mesh_custom_objects(
+        mesh_objects,
+        mc2_base_pose_proxy=mc2_base_pose_proxy,
+        radius_vertex_group=radius_vertex_group,
+        pin_enabled=bool(pin_enabled),
+        pin_vertex_group=pin_vertex_group,
+        primary_collision_group=int(primary_collision_group),
+        collided_by_groups=int(collided_by_groups),
     )
-    group = int(collision_group)
-    overridden = override_mc2_mesh_partition_entries(
-        entries,
-        profile=profile,
-        task_parameters=task_parameters,
-        setup_options=setup_options,
-        anchor_object=anchor_object,
-        enabled=bool(enabled),
-        collision_group=None if group == 0 else group,
-        collision_mask=int(collision_mask),
-    )
-    return list(overridden), len(overridden)
+    return list(objects), len(objects)
 
 
 @omni(
     enable=True,
-    always_run=True,
-    bl_label="MC2 Mesh隐式注册",
+    bl_label="MC2 Mesh域收集",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "Mesh分区", "启用"],
+    _INPUT_NAME=["Mesh分区"],
     input_init={
-        "world": {"description": "写入Physics World隐式分区registry"},
-        "entries": {"description": "注册到Physics World的隐式Mesh分区快照"},
-        "enabled": {"description": "关闭时撤销上次隐式分区快照"},
+        "mesh_partitions": {"description": "只接受MC2 MeshCloth域输出的完整分区"},
     },
     omni_description=(
-        "按stable id把Mesh partition producer写入Physics World隐式registry；"
-        "collector读取但不删除，world replace时保留。"
-    ),
-    _OUTPUT_NAME=["物理世界", "注册数量", "状态"],
-    mute_passthrough={"_OUTPUT0": "world"},
-)
-def physicsMC2MeshImplicitRegister(
-    world: PhysicsWorldCache,
-    entries: list[typing.Any],
-    enabled: bool = True,
-) -> tuple[PhysicsWorldCache, int, str]:
-    if not isinstance(world, PhysicsWorldCache):
-        return world, 0, "等待有效Physics World"
-    source = entries if bool(enabled) else ()
-    count, dirty = register_mc2_mesh_partition_entries(world, source)
-    return world, count, f"隐式Mesh分区 {count}，本帧变更 {dirty}"
-
-
-@omni(
-    enable=True,
-    bl_label="MC2 Mesh收集器",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=[
-        "物理世界", "显式Mesh分区", "包含隐式", "默认粒子配置", "默认Anchor",
-        *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "默认碰撞组", "默认碰撞Mask", "默认启用",
-    ],
-    input_init={
-        "world": {"description": "读取Physics World及其隐式分区"},
-        "explicit_entries": {"description": "显式对象/覆盖节点产生的分区"},
-        "include_implicit": {"description": "合并Physics World registry中的隐式producer"},
-        "default_profile": {"description": "未被entry覆盖时使用的默认粒子配置"},
-        "default_anchor_object": {"description": "未被entry覆盖时使用的默认Anchor"},
-        **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
-        "default_collision_group": {"mask_length": 32, "description": "0表示未指定"},
-        "default_collision_mask": {
-            "mask_length": 32,
-            "description": "未覆盖分区的域内碰撞Mask",
-        },
-        "default_enabled": {"description": "未被entry覆盖时的启用状态"},
-    },
-    omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
-    omni_description=(
-        "把显式与隐式Mesh partition解析为一个Require-Fusion统一域。"
-        "不兼容或冲突直接失败，不回退为每对象一个task。"
+        "收集一个或多个MeshCloth域的完整分区并生成唯一Require-Fusion统一域。"
     ),
     _OUTPUT_NAME=["MC2域", "装配报告"],
     mute_passthrough=False,
 )
 def physicsMC2MeshCollector(
-    world: PhysicsWorldCache,
-    explicit_entries: list[typing.Any],
-    include_implicit: bool = True,
-    default_profile: typing.Any = None,
-    default_anchor_object: bpy.types.Object = None,
-    normal_axis: int = 1,
-    anchor_inertia: float = 0.0,
-    world_inertia: float = 1.0,
-    movement_inertia_smoothing: float = 0.4,
-    movement_speed_limit: float = 5.0,
-    rotation_speed_limit: float = 720.0,
-    local_inertia: float = 1.0,
-    local_movement_speed_limit: float = -1.0,
-    local_rotation_speed_limit: float = -1.0,
-    depth_inertia: float = 0.0,
-    teleport_mode: int = 0,
-    teleport_distance: float = 0.5,
-    teleport_rotation: float = 90.0,
-    cloth_mass: float = 0.0,
-    default_collision_group: _OmniBitMask = 0,
-    default_collision_mask: _OmniBitMask = 0xFFFFFFFF,
-    default_enabled: bool = True,
+    mesh_partitions: list[typing.Any],
 ) -> tuple[list[typing.Any], str]:
-    if not isinstance(world, PhysicsWorldCache):
-        return [], "等待有效Physics World"
-    if default_profile is None:
-        default_profile = make_mc2_particle_profile(spring_enabled=False)
-    task_parameters = _make_task_parameters(locals())
-    setup_options = make_mc2_setup_options(
-        MC2_SETUP_MESH_CLOTH,
-        self_collision_radius_model="derived_radius",
-    )
-    group = int(default_collision_group)
-    request = make_mc2_mesh_product_request(
-        world,
-        explicit_entries,
-        include_implicit=bool(include_implicit),
-        default_profile=default_profile,
-        default_task_parameters=task_parameters,
-        default_setup_options=setup_options,
-        default_anchor_object=default_anchor_object,
-        default_enabled=bool(default_enabled),
-        default_collision_group=None if group == 0 else group,
-        default_collision_mask=int(default_collision_mask),
-    )
+    request = make_mc2_mesh_product_request(mesh_partitions)
     return [request], request.report_text
 
 
@@ -787,26 +656,26 @@ def physicsMC2MeshCollector(
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "代理网格", "粒子配置", "Anchor",
+        "MeshCloth对象", "粒子配置", "Anchor",
         *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "启用",
     ],
     input_init={
-        "mesh_objects": {"description": "MeshCloth网格列表\n多个对象融合为一个域"},
+        "mesh_objects": {
+            "description": "只接受MC2 MeshCloth对象或自定义对象节点的输出",
+        },
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 MeshCloth配置\n留空使用默认值"},
         **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
-        "enabled": {"description": "关闭时不生成该模拟域"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=_task_long_description(
         "MeshCloth", _TASK_CLOTH_PARAMETER_FIELDS
     ),
-    _OUTPUT_NAME=["MC2域", "域标识"],
+    _OUTPUT_NAME=["Mesh分区", "域标识"],
     mute_passthrough=False,
 )
 def physicsMC2MeshClothTask(
-    mesh_objects: list[bpy.types.Object],
+    mesh_objects: list[typing.Any],
     profile: typing.Any = None,
     anchor_object: bpy.types.Object = None,
     normal_axis: int = 1,
@@ -823,17 +692,17 @@ def physicsMC2MeshClothTask(
     teleport_distance: float = 0.5,
     teleport_rotation: float = 90.0,
     cloth_mass: float = 0.0,
-    enabled: bool = True,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
-    tasks = _mesh_cloth_tasks(
+    partitions = make_mc2_mesh_domain_partitions(
         mesh_objects,
-        anchor_object,
-        profile,
-        task_parameters,
-        enabled,
+        anchor_object=anchor_object,
+        profile=profile,
+        task_parameters=task_parameters,
     )
-    return tasks, _product_name_output(tasks)
+    return list(partitions), "\n".join(
+        partition.stable_id for partition in partitions
+    )
 
 
 @omni(

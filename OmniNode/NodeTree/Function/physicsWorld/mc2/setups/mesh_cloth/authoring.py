@@ -1,13 +1,10 @@
-"""MeshCloth setup 的纯请求与 partition authoring 合同。"""
+"""MeshCloth 对象、域分区与产品收集合同。"""
 
 from __future__ import annotations
-
-from dataclasses import replace
 
 from ...names import MC2_SETUP_MESH_CLOTH
 from ...parameters import (
     MC2ParticleProfileSpec,
-    MC2SetupOptionsSpec,
     MC2TaskParametersSpec,
     make_mc2_particle_profile,
     make_mc2_setup_options,
@@ -21,12 +18,28 @@ from ...partition_specs import (
     make_mc2_partition_entry,
 )
 from ...product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
+from .object_spec import MC2MeshExplicitPropertiesSpec, MC2MeshObjectSpec
 
 
-MC2_MESH_PARTITION_IMPLICIT_TAG = "mc2.mesh_partition.v1"
+def _flatten_mesh_object_specs(values) -> tuple[MC2MeshObjectSpec, ...]:
+    pending = [values]
+    result = []
+    while pending:
+        value = pending.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            pending[0:0] = list(value)
+            continue
+        if not isinstance(value, MC2MeshObjectSpec):
+            raise TypeError(
+                "MC2 MeshCloth域只接受MC2 MeshCloth对象节点包装后的对象"
+            )
+        result.append(value)
+    return tuple(result)
 
 
-def _flatten_entries(values) -> tuple[MC2PartitionEntry, ...]:
+def _flatten_domain_partitions(values) -> tuple[MC2PartitionEntry, ...]:
     pending = [values]
     result = []
     while pending:
@@ -38,226 +51,115 @@ def _flatten_entries(values) -> tuple[MC2PartitionEntry, ...]:
             continue
         if not isinstance(value, MC2PartitionEntry):
             raise TypeError(
-                f"MC2 Mesh collector 输入必须是 partition entry，收到 {type(value).__name__}"
+                f"MC2 Mesh域收集只接受Mesh分区，收到{type(value).__name__}"
             )
         if value.setup_type != MC2_SETUP_MESH_CLOTH:
-            raise ValueError("MC2 Mesh collector 只接受 mesh_cloth entry")
+            raise ValueError("MC2 Mesh域收集只接受mesh_cloth分区")
         result.append(value)
     return tuple(result)
 
 
-def make_mc2_mesh_partition_entries(
+def make_mc2_mesh_domain_partitions(
     mesh_objects,
     *,
-    producer: str = "mc2.mesh_object_node",
+    profile: MC2ParticleProfileSpec | None = None,
+    task_parameters: MC2TaskParametersSpec | None = None,
+    anchor_object=None,
+    producer: str = "mc2.mesh_cloth_domain",
 ) -> tuple[MC2PartitionEntry, ...]:
-    """把显式 Mesh 对象列表转换成稳定 partition entries。"""
+    """把包装对象与域参数组合成无需下游默认值的完整分区。"""
 
-    pending = list(mesh_objects) if isinstance(mesh_objects, (list, tuple)) else [mesh_objects]
-    sources = []
-    while pending:
-        source = pending.pop(0)
-        if source is None:
-            continue
-        if isinstance(source, (list, tuple)):
-            pending[0:0] = list(source)
-            continue
-        if getattr(source, "type", None) != "MESH":
-            raise TypeError("MC2 Mesh对象节点只接受 Mesh Object")
-        sources.append(source)
-    return tuple(
-        make_mc2_partition_entry(
-            source,
+    objects = _flatten_mesh_object_specs(mesh_objects)
+    if profile is None:
+        profile = make_mc2_particle_profile(spring_enabled=False)
+    if task_parameters is None:
+        task_parameters = make_mc2_task_parameters()
+    if not isinstance(profile, MC2ParticleProfileSpec):
+        raise TypeError("MC2 MeshCloth域的粒子配置类型错误")
+    if not isinstance(task_parameters, MC2TaskParametersSpec):
+        raise TypeError("MC2 MeshCloth域的区域参数类型错误")
+
+    result = []
+    for mesh_object in objects:
+        properties = mesh_object.explicit_properties
+        result.append(make_mc2_partition_entry(
+            mesh_object.source_object,
             setup_type=MC2_SETUP_MESH_CLOTH,
             origin="explicit",
-            producer=producer,
-        )
-        for source in sources
-    )
-
-
-def override_mc2_mesh_partition_entries(
-    entries,
-    *,
-    profile=MC2_UNSET,
-    task_parameters=MC2_UNSET,
-    setup_options=MC2_UNSET,
-    anchor_object=MC2_UNSET,
-    enabled=MC2_UNSET,
-    collision_group=MC2_UNSET,
-    collision_mask=MC2_UNSET,
-    producer: str = "mc2.mesh_override_node",
-) -> tuple[MC2PartitionEntry, ...]:
-    """对选定 entries 写入一层显式完整覆盖，不修改源对象属性。"""
-
-    normalized = _flatten_entries(entries)
-    result = []
-    for entry in normalized:
-        if entry.origin != "explicit":
-            raise ValueError("MC2 Mesh覆盖节点只修改显式 entry")
-        result.append(replace(
-            entry,
-            producer=str(producer or "mc2.mesh_override_node"),
+            producer=str(producer or "mc2.mesh_cloth_domain"),
+            source_properties=properties,
             profile=profile,
             task_parameters=task_parameters,
-            setup_options=setup_options,
+            setup_options=make_mc2_setup_options(
+                MC2_SETUP_MESH_CLOTH,
+                self_collision_radius_model="derived_radius",
+                collided_by_groups=properties.self_collision_groups,
+            ),
             anchor_object=anchor_object,
-            enabled=enabled,
-            collision_group=collision_group,
-            collision_mask=collision_mask,
+            enabled=True,
+            collision_group=properties.self_group_bit,
+            collision_mask=properties.self_collision_groups,
         ))
     return tuple(result)
 
 
-def register_mc2_mesh_partition_entries(
-    world,
-    entries,
-    *,
-    producer: str = "mc2.mesh_partition_registry",
-) -> tuple[int, int]:
-    """把 entries 作为隐式 producer 快照写入 Physics World registry。"""
-
-    append = getattr(world, "append_implicit_object", None)
-    iterate = getattr(world, "iter_implicit_objects", None)
-    if not callable(append) or not callable(iterate):
-        raise TypeError("world 不支持 Physics World implicit registry")
-    explicit = _flatten_entries(entries)
-    implicit = tuple(
-        replace(
-            entry,
-            origin="implicit",
-            producer=str(producer or "mc2.mesh_partition_registry"),
-        )
-        for entry in explicit
-    )
-    seen = set()
-    dirty_count = 0
-    for entry in implicit:
-        seen.add(entry.stable_id)
-        enabled = entry.enabled is not False
-        item = append(
-            tag=MC2_MESH_PARTITION_IMPLICIT_TAG,
-            producer=producer,
-            stable_id=entry.stable_id,
-            signature=entry.signature,
-            enabled=enabled,
-            schema=1,
-            payload={"entry": entry},
-        )
-        dirty_count += int(bool(item and item.get("dirty")))
-    for item in iterate(
-        tag=MC2_MESH_PARTITION_IMPLICIT_TAG,
-        producer=producer,
-        enabled=None,
+def _validate_complete_mesh_partition(entry: MC2PartitionEntry) -> None:
+    if entry.origin != "explicit":
+        raise ValueError("MC2 Mesh域收集不接受隐式分区")
+    if not isinstance(entry.source_properties, MC2MeshExplicitPropertiesSpec):
+        raise TypeError("MC2 Mesh分区缺少完整对象属性快照")
+    for name in (
+        "profile",
+        "task_parameters",
+        "setup_options",
+        "anchor_object",
+        "enabled",
+        "collision_group",
+        "collision_mask",
     ):
-        stable_id = str(item.get("stable_id") or "")
-        if stable_id in seen or not bool(item.get("enabled", True)):
-            continue
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        stale_entry = payload.get("entry")
-        stale_signature = (
-            stale_entry.signature
-            if isinstance(stale_entry, MC2PartitionEntry)
-            else str(item.get("signature") or "")
-        )
-        updated = append(
-            tag=MC2_MESH_PARTITION_IMPLICIT_TAG,
-            producer=producer,
-            stable_id=stable_id,
-            signature=stale_signature,
-            enabled=False,
-            schema=1,
-            payload={"entry": stale_entry},
-        )
-        dirty_count += int(bool(updated and updated.get("dirty")))
-    return len(implicit), dirty_count
-
-
-def collect_implicit_mc2_mesh_partition_entries(world) -> tuple[MC2PartitionEntry, ...]:
-    """读取全部启用的 MC2 Mesh 隐式 partition producers。"""
-
-    iterate = getattr(world, "iter_implicit_objects", None)
-    if not callable(iterate):
-        raise TypeError("world 不支持 Physics World implicit registry")
-    result = []
-    for item in iterate(tag=MC2_MESH_PARTITION_IMPLICIT_TAG, enabled=True):
-        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-        entry = payload.get("entry")
-        if not isinstance(entry, MC2PartitionEntry):
-            raise ValueError("MC2 Mesh implicit registry entry 已损坏")
-        if entry.origin != "implicit" or entry.stable_id != item.get("stable_id"):
-            raise ValueError("MC2 Mesh implicit registry identity 不一致")
-        result.append(entry)
-    result.sort(key=lambda entry: entry.stable_id)
-    return tuple(result)
+        if getattr(entry, name) is MC2_UNSET:
+            raise ValueError(f"MC2 Mesh分区字段{name}未在域节点完成解析")
+    if entry.enabled is not True:
+        raise ValueError("MC2 Mesh分区参与关系由连线决定，不接受enabled=False")
+    if entry.patches:
+        raise ValueError("MC2 Mesh域收集不接受partition patch")
 
 
 def _collector_report_text(plan: MC2PartitionCollectorPlan) -> str:
     report = plan.report
     lines = [
         (
-            f"MC2 Mesh统一域：融合 {report.active_partition_count} 个分区；"
-            f"显式 {report.explicit_input_count}，隐式 {report.implicit_input_count}，"
-            f"显隐合并 {report.merged_partition_count}；策略 Require Fusion；后端 CPU DomainV1。"
+            f"MC2 Mesh统一域：收集{report.partition_count}个完整分区；"
+            "策略Require Fusion；后端CPU DomainV1。"
         ),
         f"Domain签名：{report.domain_signature}",
     ]
-    for partition in plan.partitions:
-        sources = dict(partition.field_sources)
-        override_count = sum(
-            1
-            for owner in sources.values()
-            if "override" in str(owner).lower()
-        )
-        origin_text = " + ".join(partition.origins)
-        state = "启用" if partition.enabled else "停用"
-        lines.append(
-            f"[{partition.partition_index}] {partition.stable_id}：{state}；"
-            f"来源 {origin_text}；覆盖字段 {override_count}；输出 owner 唯一。"
-        )
+    lines.extend(
+        f"[{partition.partition_index}] {partition.stable_id}；来源"
+        f"{partition.origins[0]}；对象属性已解析。"
+        for partition in plan.partitions
+    )
     return "\n".join(lines)
 
 
-def make_mc2_mesh_product_request(
-    world,
-    explicit_entries=(),
-    *,
-    include_implicit: bool = True,
-    default_profile: MC2ParticleProfileSpec | None = None,
-    default_task_parameters: MC2TaskParametersSpec | None = None,
-    default_setup_options: MC2SetupOptionsSpec | None = None,
-    default_anchor_object=None,
-    default_enabled: bool = True,
-    default_collision_group: int | None = None,
-    default_collision_mask: int = 0xFFFFFFFF,
-) -> MC2ProductRequestV1:
-    """解析显式/隐式输入并生成唯一 Require-Fusion domain request。"""
+def make_mc2_mesh_product_request(entries) -> MC2ProductRequestV1:
+    """只收集完整Mesh分区，不读取World、隐式注册或collector默认值。"""
 
-    if default_profile is None:
-        default_profile = make_mc2_particle_profile(spring_enabled=False)
-    if default_task_parameters is None:
-        default_task_parameters = make_mc2_task_parameters()
-    if default_setup_options is None:
-        default_setup_options = make_mc2_setup_options(MC2_SETUP_MESH_CLOTH)
-    implicit = (
-        collect_implicit_mc2_mesh_partition_entries(world)
-        if include_implicit
-        else ()
-    )
+    partitions = _flatten_domain_partitions(entries)
+    if not partitions:
+        raise ValueError("MC2 Mesh域收集没有输入分区")
+    seen = set()
+    for entry in partitions:
+        _validate_complete_mesh_partition(entry)
+        if entry.stable_id in seen:
+            raise ValueError(f"MC2 Mesh域收集发现重复stable id：{entry.stable_id}")
+        seen.add(entry.stable_id)
+
     plan = collect_mc2_partition_entries(
         setup_type=MC2_SETUP_MESH_CLOTH,
-        explicit_entries=_flatten_entries(explicit_entries),
-        implicit_entries=implicit,
-        default_profile=default_profile,
-        default_task_parameters=default_task_parameters,
-        default_setup_options=default_setup_options,
-        default_anchor_object=default_anchor_object,
-        default_enabled=bool(default_enabled),
-        default_collision_group=default_collision_group,
-        default_collision_mask=default_collision_mask,
+        explicit_entries=partitions,
+        implicit_entries=(),
     )
-    if not plan.active_partitions:
-        raise ValueError("MC2 Mesh collector 没有启用的分区")
     return MC2ProductRequestV1(
         plan=plan,
         fusion_policy=MC2_FUSION_REQUIRE,
@@ -266,10 +168,6 @@ def make_mc2_mesh_product_request(
 
 
 __all__ = [
-    "MC2_MESH_PARTITION_IMPLICIT_TAG",
-    "collect_implicit_mc2_mesh_partition_entries",
-    "make_mc2_mesh_partition_entries",
+    "make_mc2_mesh_domain_partitions",
     "make_mc2_mesh_product_request",
-    "override_mc2_mesh_partition_entries",
-    "register_mc2_mesh_partition_entries",
 ]

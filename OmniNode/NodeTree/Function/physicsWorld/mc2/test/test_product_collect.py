@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import types
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -39,6 +40,7 @@ parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physics
 topology = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology")
 collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.product")
 authoring = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.authoring")
+object_spec = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.object_spec")
 partition_specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
 product_slot = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
 
@@ -105,27 +107,29 @@ def _raw(source, count):
     )
 
 
-def _entry(source, *, gravity_direction=(0.0, -1.0, 0.0), enabled=True):
-    entry = authoring.make_mc2_mesh_partition_entries((source,))[0]
-    return authoring.override_mc2_mesh_partition_entries(
-        (entry,),
+def _entry(
+    source,
+    *,
+    gravity_direction=(0.0, -1.0, 0.0),
+    primary_collision_group=1,
+    collided_by_groups=2,
+):
+    wrapped = object_spec.make_mc2_mesh_custom_object(
+        source,
+        primary_collision_group=primary_collision_group,
+        collided_by_groups=collided_by_groups,
+    )
+    return authoring.make_mc2_mesh_domain_partitions(
+        (wrapped,),
         profile=parameters.make_mc2_particle_profile(
             gravity_direction=gravity_direction, self_collision_mode=2,
         ),
-        setup_options=parameters.make_mc2_setup_options(
-            "mesh_cloth", collided_by_groups=3,
-        ),
         task_parameters=parameters.make_mc2_task_parameters(),
-        enabled=enabled,
     )[0]
 
 
 def _collect_request(world, entries, *, force_audit=None):
-    request = authoring.make_mc2_mesh_product_request(
-        world,
-        entries,
-        include_implicit=False,
-    )
+    request = authoring.make_mc2_mesh_product_request(entries)
     slot_id = product_slot.make_mc2_product_slot_id(
         request.setup_type,
         request.domain_signature,
@@ -182,9 +186,9 @@ def test_product_collector_observes_once_and_preserves_authoring_order():
     assert calls == [(entry.stable_id, slot_id, True) for entry in entries]
 
 
-def test_product_collector_captures_mesh_external_collision_masks():
-    first = _Source(101, collided_by_groups=1)
-    second = _Source(202, collided_by_groups=4)
+def test_product_collector_uses_frozen_unified_collision_masks():
+    first = _Source(101, collided_by_groups=0xFFFF)
+    second = _Source(202, collided_by_groups=0xFFFF)
     fallback = _Source(303)
     _install_observer({
         101: _raw(first, 3),
@@ -193,54 +197,36 @@ def test_product_collector_captures_mesh_external_collision_masks():
     })
     result, _slot_id = _collect_request(
         _World(),
-        (_entry(first), _entry(second), _entry(fallback)),
+        (
+            _entry(first, primary_collision_group=1, collided_by_groups=0),
+            _entry(second, primary_collision_group=2, collided_by_groups=4),
+            _entry(fallback, primary_collision_group=3, collided_by_groups=0),
+        ),
     )
-    assert result.draft.external_collision_masks == (1, 4, 3)
+    assert result.draft.external_collision_masks == (1, 6, 4)
+    assert result.draft.collision_groups == (1, 2, 4)
+    assert result.draft.collision_masks == (1, 6, 4)
 
 
-def test_product_collector_filters_disabled_explicit_entries():
+def test_mesh_collector_rejects_disabled_partition_compatibility_state():
     first, disabled = _Source(101), _Source(202)
-    calls = _install_observer({101: _raw(first, 3), 202: _raw(disabled, 2)})
-    active = _entry(first)
-    result, slot_id = _collect_request(
-        _World(),
-        (active, _entry(disabled, enabled=False)),
-    )
-    assert result.task_ids == (active.stable_id,)
-    assert calls == [(active.stable_id, slot_id, None)]
-
-
-def test_product_collector_rejects_no_active_mesh_partition():
-    source = _Source(101)
-    _install_observer({101: _raw(source, 3)})
     try:
-        plan = partition_specs.collect_mc2_partition_entries(
-            setup_type="mesh_cloth",
-            explicit_entries=(_entry(source, enabled=False),),
-            default_profile=parameters.make_mc2_particle_profile(),
-            default_task_parameters=parameters.make_mc2_task_parameters(),
-            default_setup_options=parameters.make_mc2_setup_options("mesh_cloth"),
-        )
-        collector.collect_mc2_mesh_product_plan(
-            _World(),
-            plan,
-            receipt_slot_id="mc2.domain.product.v1:mesh_cloth:" + "0" * 64,
+        authoring.make_mc2_mesh_product_request(
+            (_entry(first), replace(_entry(disabled), enabled=False))
         )
     except ValueError as exc:
-        assert "no active partitions" in str(exc)
+        assert "连线决定" in str(exc)
     else:
-        raise AssertionError("empty Mesh product domain was accepted")
+        raise AssertionError("disabled Mesh compatibility state was accepted")
 
 
 def test_product_collector_consumes_one_explicit_domain_plan_without_task_expansion():
     first, second = _Source(301), _Source(302)
     calls = _install_observer({301: _raw(first, 4), 302: _raw(second, 5)})
-    entries = authoring.make_mc2_mesh_partition_entries((first, second))
-    request = authoring.make_mc2_mesh_product_request(
-        _World(),
-        entries,
-        include_implicit=False,
+    entries = authoring.make_mc2_mesh_domain_partitions(
+        object_spec.make_mc2_mesh_custom_objects((first, second)),
     )
+    request = authoring.make_mc2_mesh_product_request(entries)
     result = collector.collect_mc2_mesh_product_plan(
         _World(),
         request.plan,

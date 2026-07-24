@@ -249,6 +249,7 @@ class MC2PartitionEntry:
     source: object
     origin: str
     producer: str
+    source_properties: object = MC2_UNSET
     profile: object = MC2_UNSET
     task_parameters: object = MC2_UNSET
     setup_options: object = MC2_UNSET
@@ -311,6 +312,7 @@ class MC2PartitionEntry:
             "source": token,
             "origin": self.origin,
             "producer": self.producer,
+            "source_properties": _debug_value(self.source_properties),
             "profile": _debug_value(self.profile),
             "task_parameters": _debug_value(self.task_parameters),
             "setup_options": _debug_value(self.setup_options),
@@ -334,6 +336,7 @@ def make_mc2_partition_entry(
     stable_id: str | None = None,
     origin: str = "explicit",
     producer: str = "mc2.partition_source",
+    source_properties=MC2_UNSET,
     profile=MC2_UNSET,
     task_parameters=MC2_UNSET,
     setup_options=MC2_UNSET,
@@ -350,6 +353,7 @@ def make_mc2_partition_entry(
         source=source,
         origin=origin,
         producer=producer,
+        source_properties=source_properties,
         profile=profile,
         task_parameters=task_parameters,
         setup_options=setup_options,
@@ -378,6 +382,7 @@ class MC2ResolvedPartitionSpec:
     setup_type: str
     source: object
     source_token: tuple
+    source_properties: object | None
     profile: MC2ParticleProfileSpec
     task_parameters: MC2TaskParametersSpec
     setup_options: MC2SetupOptionsSpec
@@ -423,6 +428,7 @@ class MC2ResolvedPartitionSpec:
             "partition_index": self.partition_index,
             "setup_type": self.setup_type,
             "source_token": dict(self.source_token),
+            "source_properties": _debug_value(self.source_properties),
             "profile_signature": self.profile.signature,
             "task_parameters_signature": self.task_parameters.signature,
             "setup_options_signature": self.setup_options.signature,
@@ -531,6 +537,8 @@ def _source_tuple(source) -> tuple:
 
 def _entry_field_assignments(entry: MC2PartitionEntry) -> dict[str, object]:
     result = {}
+    if entry.source_properties is not MC2_UNSET:
+        result["source.properties"] = _debug_value(entry.source_properties)
     if entry.profile is not MC2_UNSET:
         result.update({
             f"profile.{field.name}": _debug_value(getattr(entry.profile, field.name))
@@ -584,6 +592,11 @@ def _apply_entry(
     entry: MC2PartitionEntry,
 ) -> None:
     owner = f"{entry.origin}:{entry.producer}"
+    if entry.source_properties is not MC2_UNSET:
+        state["source_properties"] = entry.source_properties
+        _record_field_owner(
+            field_sources, field_history, "source.properties", owner
+        )
     if entry.profile is not MC2_UNSET:
         state["profile"] = entry.profile
         for name in _PROFILE_FIELDS:
@@ -713,6 +726,7 @@ def collect_mc2_partition_entries(
             merged_count += 1
 
         state = {
+            "source_properties": None,
             "profile": default_profile,
             "task_parameters": default_task_parameters,
             "setup_options": default_setup_options,
@@ -722,6 +736,7 @@ def collect_mc2_partition_entries(
             "collision_mask": default_collision_mask,
         }
         field_sources = {
+            "source.properties": "collector.default",
             **{f"profile.{name}": "collector.default" for name in _PROFILE_FIELDS},
             **{f"task.{name}": "collector.default" for name in _TASK_FIELDS},
             **{f"setup.{name}": "collector.default" for name in _SETUP_FIELDS},
@@ -747,6 +762,7 @@ def collect_mc2_partition_entries(
             setup_type=normalized_setup,
             source=source_entry.source,
             source_token=tuple(sorted(source_token.items())),
+            source_properties=state["source_properties"],
             profile=state["profile"],
             task_parameters=state["task_parameters"],
             setup_options=state["setup_options"],

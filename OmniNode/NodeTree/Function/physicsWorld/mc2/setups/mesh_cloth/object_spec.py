@@ -10,11 +10,9 @@ from ...source_identity import mc2_source_token
 from .schema import MESH_COLLISION_RNA_FIELDS
 
 
-_PARTICIPATION_FIELD = "enabled"
 MC2_MESH_EXPLICIT_PROPERTY_FIELDS = tuple(
     str(field["name"])
     for field in MESH_COLLISION_RNA_FIELDS
-    if str(field["name"]) != _PARTICIPATION_FIELD
 )
 
 
@@ -22,7 +20,6 @@ def _schema_defaults() -> dict[str, object]:
     return {
         str(field["name"]): (field.get("kwargs") or {}).get("default")
         for field in MESH_COLLISION_RNA_FIELDS
-        if str(field["name"]) != _PARTICIPATION_FIELD
     }
 
 

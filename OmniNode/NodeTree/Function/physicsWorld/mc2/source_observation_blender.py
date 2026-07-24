@@ -52,9 +52,13 @@ def _pointer(value) -> int:
         return 0
 
 
-def _mesh_source_config_signature(source) -> str:
+def _mesh_source_config_signature(source, source_properties=None) -> str:
     mesh = getattr(source, "data", None)
-    properties = getattr(source, "hotools_mesh_collision", None)
+    properties = (
+        source_properties
+        if source_properties is not None
+        else getattr(source, "hotools_mesh_collision", None)
+    )
     pin_name = str(getattr(properties, "pin_vertex_group", "") or "")
     radius_name = str(getattr(properties, "radius_vertex_group", "") or "")
     vertex_groups = getattr(source, "vertex_groups", None)
@@ -185,6 +189,7 @@ def _prepare_observed_static_inputs(
     read_source,
     compose,
     prepare_uncached,
+    source_config_signature=None,
     force_audit: bool | None = None,
 ) -> MC2ObservedStaticInputs:
     """按显式domain身份复用Mesh观察；其他setup保守全扫。"""
@@ -247,7 +252,11 @@ def _prepare_observed_static_inputs(
             data_pointer=data_pointer,
             source_revision=source_revision,
             data_revision=data_revision,
-            config_signature=_mesh_source_config_signature(source),
+            config_signature=(
+                source_config_signature(source)
+                if callable(source_config_signature)
+                else _mesh_source_config_signature(source)
+            ),
             cacheable=revision_complete,
         )
 
@@ -307,6 +316,9 @@ def prepare_observed_static_inputs_for_partition(
             partition, fingerprints, snapshots
         ),
         prepare_uncached=lambda: prepare_static_inputs_for_partition(partition),
+        source_config_signature=lambda source: _mesh_source_config_signature(
+            source, getattr(partition, "source_properties", None)
+        ),
         force_audit=force_audit,
     )
 
