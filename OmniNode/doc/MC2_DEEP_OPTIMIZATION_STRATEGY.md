@@ -388,9 +388,9 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 15. static/frame 中立 native helper 已去除迁移期版本后缀；正式 DomainV1 ABI 继续版本化，py313 产物必须同时证明旧符号为零和新符号完整。
 16. 三份 Bone compatibility runner 已删除，acceptance asset 与能力矩阵只承认直接产品 runner；不得用旧脚本名重新包装产品证据。
 17. Mesh final-proxy/BasePose compatibility runner 已按同一规则删除；Tier A 纯数据 oracle 与 Blender 产品 runner 分别直接承担各自门禁。
-8. 删除后的产品 DomainV1 性能基线已重建：hotspot 六个 case 全部通过 ceiling；P2 self-radius 同输入重复计数一致，增大半径会增加 candidate/contact 工作量。
-9. P6 的 data/pass/buffer/IO implementation package 与 py313/Blender 5.2 验收已完成；没有创建运行时 backend。
-10. 当前执行最终 4.5/py311 双 ABI 收尾；完成后才单独立项 E6 GPU prototype 和规模曲线。
+18. 删除后的产品 DomainV1 性能基线已重建：hotspot 六个 case 全部通过 ceiling；P2 self-radius 同输入重复计数一致，增大半径会增加 candidate/contact 工作量。
+19. P6 的 data/pass/buffer/IO implementation package 与 py313/Blender 5.2 验收已完成；没有创建运行时 backend。
+20. 最终 4.5/py311 双 ABI、Blender 产品、事务、P0/P2 与 raw native 收尾已通过。E6 GPU prototype 和规模曲线尚未启动，后续必须独立立项。
 
 逻辑批次应覆盖完整所有权面并可独立回归、基准和回滚；不再按单 runner 提交。P4 不在此序列中。
 ## 外部依据

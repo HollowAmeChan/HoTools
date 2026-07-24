@@ -970,9 +970,9 @@ E7-S至少完成以下简化：
 
 E7-S是P6-B最终收口和E6开工的硬门禁，不是可延期的代码整理。
 
-当前 E7-S 退出门禁已关闭：生产树 68 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；77 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。按当前环境冻结约束，4.5/py311 不作为 E7-S 日常退出步骤，留到 P6 完成后的最终双 ABI 收尾。
+当前 E7-S 退出门禁已关闭：生产树 68 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；77 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。4.5/py311 未参与 E7-S 日常迭代，只在 P6 完成后恢复一次并完成最终双 ABI 收尾。
 
-P6 退出门禁也已关闭：data/pass、真实 SoA buffer、dirty span、动态容量/硬溢出回滚、单向 IO 和 CPU reference tolerance 都有版本化机器合同；py313 下 26 项 Domain IR、compile/frame、owner/slot、CPU/native 与架构硬门禁通过。Blender 5.2 `--factory-startup` 三 setup 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`，debug、BoneSpring 限制、失败回滚、P0 六场景与 P2 self-radius 均通过并明确加载当前工作树 cp313 native。P6 未创建 GPU runtime、dispatch、staging 或 CPU 并发抽象；当前恢复 4.5/py311 只做最终双 ABI 收尾。
+P6 退出门禁也已关闭：data/pass、真实 SoA buffer、dirty span、动态容量/硬溢出回滚、单向 IO 和 CPU reference tolerance 都有版本化机器合同；py313 下 26 项 Domain IR、compile/frame、owner/slot、CPU/native 与架构硬门禁通过。Blender 5.2 `--factory-startup` 三 setup 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`，debug、BoneSpring 限制、失败回滚、P0 六场景与 P2 self-radius 均通过并明确加载当前工作树 cp313 native。最终 py311 验收通过 26 项 Domain IR、10 项 compile、30 项 native kernel、10 项 E3 golden 与全部保留 raw native smoke；Blender 4.5 的三 setup、debug、BoneSpring 限制、失败回滚、P0/P2 也通过并保持相同 900 帧 digest。P6 未创建 GPU runtime、dispatch、staging 或 CPU 并发抽象；E6 尚未启动。
 
 ## 验收目录
 
@@ -1114,4 +1114,4 @@ P0 只在显式开启时记录 native 固定阶段槽；关闭时不读时钟、
 
 ### 当前环境与未来边界
 
-常规开发、编译和 Blender 验收只使用 Python 3.13 / Blender 5.2，并明确排除 5.2 默认加载的 HoTools 备份。4.5/py311 在旧代码删除和 E7-S 基本完成前冻结。P4 CPU 并发不实施；P6 只冻结可直接实现的数据、pass、buffer 和 IO 合同；E6 GPU 是未来独立里程碑。
+常规开发、编译和 Blender 验收只使用 Python 3.13 / Blender 5.2，并明确排除 5.2 默认加载的 HoTools 备份。4.5/py311 只在旧代码删除、E7-S 与 P6 完成后恢复过一次并完成最终验收，后续不作为日常编译目标。P4 CPU 并发不实施；P6 只冻结可直接实现的数据、pass、buffer 和 IO 合同；E6 GPU 是未来独立里程碑。
