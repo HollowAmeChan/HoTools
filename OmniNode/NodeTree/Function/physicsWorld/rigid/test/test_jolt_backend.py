@@ -1,12 +1,13 @@
 """
-test_jolt.py — hotools_jolt 模块基础功能测试
+test_jolt_backend.py — hotools_jolt 后端模块基础功能测试
 用法：
-  "D:\\Blender\\Blender 4.5\\4.5\\python\\bin\\python.exe" test_jolt.py
+  Blender 5.2 内置 Python：python.exe test_jolt_backend.py
 """
 import sys, os
 
 # hotools_jolt 编译产物路径
-_HOTOOLS_ROOT = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
+_TEST_ROOT = os.path.dirname(os.path.abspath(__file__))
+_HOTOOLS_ROOT = os.path.abspath(os.path.join(_TEST_ROOT, *(("..",) * 6)))
 _PY_LIB      = "py313" if sys.version_info >= (3, 13) else "py311"
 _JOLT_LIB    = os.path.join(_HOTOOLS_ROOT, "_Lib", _PY_LIB, "HotoolsPackage")
 _ADDON_ROOT  = os.path.dirname(_HOTOOLS_ROOT)

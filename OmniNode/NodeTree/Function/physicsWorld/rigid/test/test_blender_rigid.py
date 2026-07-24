@@ -1,6 +1,6 @@
 """
 test_blender_rigid.py — Jolt 刚体物理 Blender 无头集成测试
-用法：blender.exe --background --python test_blender_rigid.py
+用法：blender.exe --factory-startup --background --python test_blender_rigid.py
 """
 import sys, os, importlib.util, types as _types
 

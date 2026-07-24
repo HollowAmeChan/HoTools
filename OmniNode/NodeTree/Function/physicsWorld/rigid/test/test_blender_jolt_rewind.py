@@ -3,7 +3,7 @@ Blender headless regression: rewinding the timeline must clear delta writeback
 before Jolt cold-starts from Object.matrix_world.
 
 Usage:
-  blender.exe --background --python _test_jolt_rewind_headless.py
+  blender.exe --factory-startup --background --python test_blender_jolt_rewind.py
 """
 
 import importlib.util
@@ -11,9 +11,11 @@ import os
 import sys
 import types as _types
 
-ADDONS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons"
-HOTOOLS = os.path.join(ADDONS, "HoTools")
-JOLT_LIB = os.path.join(HOTOOLS, "_Lib", "py311", "HotoolsPackage")
+TEST_ROOT = os.path.dirname(os.path.abspath(__file__))
+HOTOOLS = os.path.abspath(os.path.join(TEST_ROOT, *(("..",) * 6)))
+ADDONS = os.path.dirname(HOTOOLS)
+PYTHON_ABI = f"py{sys.version_info.major}{sys.version_info.minor}"
+JOLT_LIB = os.path.join(HOTOOLS, "_Lib", PYTHON_ABI, "HotoolsPackage")
 NT_DIR = os.path.join(HOTOOLS, "OmniNode", "NodeTree")
 PW_ROOT = os.path.join(NT_DIR, "Function", "physicsWorld")
 

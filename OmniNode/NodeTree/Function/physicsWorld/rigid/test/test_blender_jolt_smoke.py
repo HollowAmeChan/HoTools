@@ -1,12 +1,17 @@
 """
-无头 Blender 测试脚本：测试 hotools_jolt 在 Blender 进程内的完整行为
+无头 Blender 测试脚本：测试 hotools_jolt 在 Blender 进程内的基础行为
 包括：import、JoltWorld 创建、add_body、step
+
+用法：
+  blender.exe --factory-startup --background --python test_blender_jolt_smoke.py
 """
 import sys
 import os
 
-addon_root = os.path.dirname(os.path.abspath(__file__))
-lib_path = os.path.join(addon_root, "_Lib", "py311", "HotoolsPackage")
+test_root = os.path.dirname(os.path.abspath(__file__))
+addon_root = os.path.abspath(os.path.join(test_root, *(("..",) * 6)))
+python_abi = f"py{sys.version_info.major}{sys.version_info.minor}"
+lib_path = os.path.join(addon_root, "_Lib", python_abi, "HotoolsPackage")
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 

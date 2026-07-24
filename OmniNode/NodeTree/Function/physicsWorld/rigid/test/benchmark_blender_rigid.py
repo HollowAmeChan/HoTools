@@ -20,7 +20,7 @@ from typing import Any, Sequence
 HERE = Path(__file__).resolve().parent
 RIGID_ROOT = HERE.parent
 REPO_ROOT = HERE.parents[5]
-HARNESS_PATH = RIGID_ROOT / "backends" / "test_blender_rigid.py"
+HARNESS_PATH = HERE / "test_blender_rigid.py"
 
 
 def _load_harness():

@@ -25,7 +25,7 @@ def main() -> int:
         code, _summary = run(
             args,
             runtime_factory=lambda native: BlenderFixtureRuntime(
-                native, HERE.parent / "backends" / "test_blender_rigid.py"
+                native, HERE / "test_blender_rigid.py"
             ),
             summary_schema="hotools_jolt_blender_run_v1",
             runner_id=BlenderFixtureRuntime.RUNNER_ID,

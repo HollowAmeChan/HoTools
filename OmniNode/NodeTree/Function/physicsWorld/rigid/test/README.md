@@ -76,10 +76,10 @@ A/B frame。`frame_swing_limit` 从每帧 body 姿态重建两侧 live twist 轴
 5. 冻结性能阈值与审批首版 60-fixture golden（2026-07-11 已完成）；
 6. 恢复 Path、高级 shape/query 等能力扩展。
 
-旧式 `backends/test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
+`test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
 
 刚体容量门禁由 `_native/tests/test_jolt_rigid_native.py` 和
-`backends/test_blender_rigid.py` 共同覆盖：`max_bodies` 溢出必须抛出可诊断的
+`test_blender_rigid.py` 共同覆盖：`max_bodies` 溢出必须抛出可诊断的
 Python `RuntimeError`，失败创建保持原子性，已接纳刚体继续推进，释放容量后可以
 再次创建；生产 solver 只拒绝稳定排序后的超额 slot，并在 `rigid_solver_stats` 中
 发布准确的 `sync_error_count`。
