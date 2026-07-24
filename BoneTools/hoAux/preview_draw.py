@@ -1,12 +1,18 @@
-"""Shared declarative viewport primitives and the single HoAux draw handler."""
+"""Declarative HoAux preview scenes rendered with the ordinary aux utilities."""
 
 from dataclasses import dataclass, field
 from math import cos, pi, sin
 
+import blf
 import bpy
 import gpu
-from gpu_extras.batch import batch_for_shader
+from bpy_extras.view3d_utils import location_3d_to_region_2d
 from mathutils import Vector
+
+try:
+    from ..previewUtils import AuxPreviewUtils
+except ImportError:
+    from previewUtils import AuxPreviewUtils
 
 
 Color = tuple[float, float, float, float]
@@ -21,23 +27,32 @@ class LineStyle:
 @dataclass(frozen=True)
 class PointStyle:
     color: Color
-    size: float = 6.0
+    size: float = 8.0
+
+
+@dataclass(frozen=True)
+class LabelStyle:
+    color: Color = (0.95, 0.95, 0.95, 1.0)
+    size: int = 14
 
 
 ROLE_LINE_STYLES = {
-    "TRK": LineStyle((0.2, 0.75, 1.0, 0.9), 2.0),
-    "DEF": LineStyle((0.25, 1.0, 0.45, 0.95), 3.0),
-    "DIR": LineStyle((1.0, 0.7, 0.2, 1.0), 4.0),
-    "GUIDE": LineStyle((0.85, 0.85, 0.85, 0.65), 1.0),
+    "TRK": LineStyle((1.0, 0.72, 0.2, 0.95), 2.0),
+    "DEF": LineStyle((0.35, 0.95, 0.55, 0.95), 3.0),
+    "DIR": LineStyle((1.0, 0.3, 0.9, 0.95), 3.0),
+    "GUIDE": LineStyle((0.95, 0.95, 0.95, 0.85), 1.5),
 }
-JOINT_POINT_STYLE = PointStyle((1.0, 0.45, 0.2, 1.0), 7.0)
+JOINT_POINT_STYLE = PointStyle((1.0, 0.65, 0.15, 1.0), 8.0)
 
 
 @dataclass
 class PreviewScene:
     object_name: str
+    title: str = "HoAux"
+    message: str = ""
     lines: list[tuple[Vector, Vector, LineStyle]] = field(default_factory=list)
     points: list[tuple[Vector, PointStyle]] = field(default_factory=list)
+    labels: list[tuple[Vector, str, LabelStyle]] = field(default_factory=list)
 
     def add_segment(self, start, end, style):
         self.lines.append((Vector(start), Vector(end), style))
@@ -49,7 +64,7 @@ class PreviewScene:
         if closed and len(points) > 2:
             self.add_segment(points[-1], points[0], style)
 
-    def add_circle(self, center, normal, radius, style, *, segments=32):
+    def add_circle(self, center, normal, radius, style, *, segments=48):
         normal = Vector(normal).normalized()
         tangent = normal.orthogonal().normalized()
         bitangent = normal.cross(tangent).normalized()
@@ -57,8 +72,10 @@ class PreviewScene:
         points = [
             center
             + radius
-            * (tangent * cos(index * 2.0 * pi / segments)
-               + bitangent * sin(index * 2.0 * pi / segments))
+            * (
+                tangent * cos(index * 2.0 * pi / segments)
+                + bitangent * sin(index * 2.0 * pi / segments)
+            )
             for index in range(segments)
         ]
         self.add_polyline(points, style, closed=True)
@@ -66,34 +83,41 @@ class PreviewScene:
     def add_point(self, position, style=JOINT_POINT_STYLE):
         self.points.append((Vector(position), style))
 
-    def add_planned_bones(self, plans):
+    def add_label(self, position, text, style=LabelStyle()):
+        self.labels.append((Vector(position), text, style))
+
+    def add_planned_bones(self, plans, *, labels=False):
         for plan in plans:
             self.add_segment(
                 plan.head,
                 plan.tail,
                 ROLE_LINE_STYLES.get(plan.role_tag, ROLE_LINE_STYLES["GUIDE"]),
             )
+            if labels:
+                self.add_label(plan.tail, plan.preferred_name)
 
 
 class ViewportPreview:
-    _handler = None
+    _handler_3d = None
+    _handler_2d = None
     _owner_key = None
     _scene = None
 
     @classmethod
     def is_visible(cls, owner_key=None):
-        visible = cls._handler is not None and cls._scene is not None
+        visible = cls._scene is not None
         return visible and (owner_key is None or cls._owner_key == owner_key)
 
     @classmethod
+    def active_owner(cls):
+        return cls._owner_key if cls._scene is not None else None
+
+    @classmethod
     def show(cls, owner_key, scene):
+        AuxPreviewUtils.ensure_handlers(cls, cls._draw_3d, cls._draw_2d)
         cls._owner_key = owner_key
         cls._scene = scene
-        if cls._handler is None:
-            cls._handler = bpy.types.SpaceView3D.draw_handler_add(
-                cls._draw, (), "WINDOW", "POST_VIEW"
-            )
-        cls.tag_redraw()
+        AuxPreviewUtils.tag_redraw()
 
     @classmethod
     def clear(cls, owner_key=None):
@@ -101,39 +125,17 @@ class ViewportPreview:
             return
         cls._scene = None
         cls._owner_key = None
-        if cls._handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(cls._handler, "WINDOW")
-            cls._handler = None
-        cls.tag_redraw()
-
-    @staticmethod
-    def tag_redraw():
-        window_manager = getattr(bpy.context, "window_manager", None)
-        if window_manager is None:
-            return
-        for window in window_manager.windows:
-            if window.screen is None:
-                continue
-            for area in window.screen.areas:
-                if area.type == "VIEW_3D":
-                    area.tag_redraw()
-
-    @staticmethod
-    def _draw_group(shader, primitive_type, coordinates, color, size):
-        if not coordinates:
-            return
-        if primitive_type == "LINES":
-            gpu.state.line_width_set(size)
-        else:
-            gpu.state.point_size_set(size)
-        shader.bind()
-        shader.uniform_float("color", color)
-        batch_for_shader(shader, primitive_type, {"pos": coordinates}).draw(shader)
+        AuxPreviewUtils.tag_redraw()
 
     @classmethod
-    def _draw(cls):
+    def shutdown(cls):
+        cls.clear()
+        AuxPreviewUtils.remove_handlers(cls)
+
+    @classmethod
+    def _draw_3d(cls):
         scene = cls._scene
-        if scene is None:
+        if scene is None or scene.message:
             return
         obj = bpy.data.objects.get(scene.object_name)
         if obj is None:
@@ -142,21 +144,82 @@ class ViewportPreview:
         line_groups = {}
         for start, end, style in scene.lines:
             coordinates = line_groups.setdefault(style, [])
-            coordinates.extend((tuple(obj.matrix_world @ start), tuple(obj.matrix_world @ end)))
+            coordinates.extend(
+                (tuple(obj.matrix_world @ start), tuple(obj.matrix_world @ end))
+            )
         point_groups = {}
         for position, style in scene.points:
-            point_groups.setdefault(style, []).append(tuple(obj.matrix_world @ position))
+            point_groups.setdefault(style, []).append(
+                tuple(obj.matrix_world @ position)
+            )
 
         shader = gpu.shader.from_builtin("UNIFORM_COLOR")
         gpu.state.blend_set("ALPHA")
-        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_test_set("NONE")
         try:
             for style, coordinates in line_groups.items():
-                cls._draw_group(shader, "LINES", coordinates, style.color, style.width)
+                gpu.state.line_width_set(style.width)
+                AuxPreviewUtils.draw_lines(shader, coordinates, style.color)
             for style, coordinates in point_groups.items():
-                cls._draw_group(shader, "POINTS", coordinates, style.color, style.size)
+                AuxPreviewUtils.draw_points(shader, coordinates, style.color, style.size)
         finally:
             gpu.state.line_width_set(1.0)
-            gpu.state.point_size_set(1.0)
             gpu.state.depth_test_set("LESS_EQUAL")
+            gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_2d(cls):
+        scene = cls._scene
+        if scene is None:
+            return
+        font_id = 0
+        if scene.message:
+            AuxPreviewUtils.draw_label(
+                font_id,
+                f"{scene.title} 预览: {scene.message}",
+                (20.0, 40.0),
+                (1.0, 0.85, 0.2, 1.0),
+                14,
+            )
+            return
+
+        obj = bpy.data.objects.get(scene.object_name)
+        region = bpy.context.region
+        region_data = bpy.context.region_data
+        if obj is None or region is None or region_data is None:
+            return
+
+        line_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        gpu.state.blend_set("ALPHA")
+        gpu.state.line_width_set(1.5)
+        try:
+            for index, (position, label, style) in enumerate(scene.labels):
+                screen = location_3d_to_region_2d(
+                    region,
+                    region_data,
+                    obj.matrix_world @ position,
+                )
+                if screen is None:
+                    continue
+                direction = 1.0 if index % 2 == 0 else -1.0
+                elbow = (screen.x + direction * 24.0, screen.y + 12.0)
+                end = (elbow[0] + direction * 30.0, elbow[1])
+                AuxPreviewUtils.draw_lines(
+                    line_shader,
+                    (tuple(screen), elbow, elbow, end),
+                    (*style.color[:3], 0.7),
+                )
+                text_x = end[0] + (5.0 if direction > 0 else -5.0)
+                if direction < 0:
+                    blf.size(font_id, style.size)
+                    text_x -= blf.dimensions(font_id, label)[0]
+                AuxPreviewUtils.draw_label(
+                    font_id,
+                    label,
+                    (text_x, end[1] - style.size * 0.35),
+                    style.color,
+                    style.size,
+                )
+        finally:
+            gpu.state.line_width_set(1.0)
             gpu.state.blend_set("NONE")

@@ -553,7 +553,21 @@ ModuleSpec
 
 生成器创建 Blender 数据的同时写入同构 ResourceRecord。Unity 可以直接消费这些记录一比一求值；如果以后需要把固定组合优化成更低成本组件，再在不修改 Source IR 的前提下增加可选解析层。
 
-### 7.1 弯曲关节参考框架
+### 7.1 模块文件边界
+
+一个具体模块必须尽量自包含。每个 `modules/<type>.py` 同时提供：
+
+- 参数 `PropertyGroup` 与默认值；
+- `Parameters` 快照及 RNA 映射；
+- 模块 ID、标签、顺序、主骨角色需求和参数布局；
+- 预检、`JointFrame` 求值和 `PlannedBone` 生成；
+- Preview Scene 构建；
+- Blender 骨、约束、Driver 与元数据生成；
+- 唯一的 `DEFINITION` 注册对象。
+
+公共 `ModuleDefinition` 只处理折叠头、生成按钮、预览开关、角色搜索和参数行布局；公共 operator 只按 `module_type` 分发。增加模块时只能新增模块文件并在 `modules/__init__.py` 的清单登记，不能再修改公共面板、预览控制器或新增专用 operator。
+
+### 7.2 弯曲关节参考框架
 
 所有关节型模块默认输入关节已经弯曲，不能只用全局轴或下段骨方向生成辅助骨。生成器统一构造 `JointFrame`：
 
@@ -622,7 +636,9 @@ DIR 必须进入 `Infrastructure / Shared DIR` 及对应过滤集合，并且强
 - `resourceKey` 冲突、轴退化和依赖缺失直接在预览状态中显示为错误；显示名称冲突则展示 Name Allocator 计划采用的实际名称；
 - 切换对象、退出面板、加载文件或取消时必须可靠关闭预览。
 
-预览绘制使用一个公共 `ViewportPreview` 和一套声明式 `PreviewScene`，整个 HoAux 只维护一个 Draw Handler。模块不直接调用 GPU API，只提交骨段、线段、折线、闭合轮廓、圆和点等公共原语及样式；公共层负责对象空间到世界空间变换、按样式批处理和 handler 生命周期。这样后续复杂模块扩展的是 Preview Model，不复制绘制代码。
+预览交互与普通 `auxBone` 保持一致：模块折叠头使用可高亮的眼睛开关；公共层维护 `POST_VIEW + POST_PIXEL` handler 和 0.08 秒刷新定时器；3D 计划几何不受深度遮挡，2D 层显示名称、引线和预检错误；关闭预览只清状态，插件注销时才移除 handler。
+
+普通 aux 与 HoAux 共用 BoneTools 级 `AuxPreviewUtils`。HoAux 在其上使用一个公共 `ViewportPreview` 和声明式 `PreviewScene`，同一时间只允许一个模块预览。模块不直接调用 GPU API，只提交骨段、线段、折线、闭合轮廓、圆、点和标签等公共原语及样式；公共层负责空间变换、批处理、投影、文字和生命周期。这样后续复杂模块扩展的是 Preview Model，不复制绘制代码。
 
 ### 10.2 生成事务
 
@@ -865,7 +881,7 @@ BoneTools/hoAux/
   tests/
 ```
 
-普通 `auxBone` 和 `hoAux` 不互相导入具体生成器。可共享的只有无状态数学、Name Allocator 和 Blender 上下文工具。
+普通 `auxBone` 和 `hoAux` 不互相导入具体生成器。可共享的只有无状态数学、Name Allocator、Blender 上下文工具和 BoneTools 级预览工具。
 HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能力表和空间解析都归 `hoAux/ir` 所有；`Exporter` 只能调用其公开入口，不得另存一份 HoAux schema 或 mapper。
 
 ## 18. 实施阶段

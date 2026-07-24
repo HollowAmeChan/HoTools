@@ -32,6 +32,8 @@ assert info.isHoAuxBone is False
 info.isHoAuxBone = True
 info.nameKey = "TEST.REGISTRATION.BONE"
 assert info.nameKey == "TEST.REGISTRATION.BONE"
+assert hasattr(bpy.context.scene, "hoaux_shoulder_volume_settings")
+assert hasattr(bpy.context.scene, "hoaux_elbow_volume_settings")
 
 BoneTools.unregister()
 print("HOAUX_REGISTRATION_OK")

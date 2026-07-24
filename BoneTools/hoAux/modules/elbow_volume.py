@@ -1,13 +1,13 @@
-"""Shoulder Volume module based on the research armature."""
+"""Elbow Volume module reconstructed from WholeLeftArm_Constraint_Driver."""
 
-from uuid import uuid4
 from dataclasses import dataclass
-from math import cos, radians, sin
+from math import radians
+from uuid import uuid4
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty
 from bpy.types import PropertyGroup
-from mathutils import Vector
+from mathutils import Quaternion, Vector
 
 from ..collection_registry import assign_bone
 from ..generation import (
@@ -18,8 +18,8 @@ from ..generation import (
     response_expression,
     write_bone_metadata,
 )
-from ..module_spec import PlannedBone
 from ..joint_frame import build_joint_frame
+from ..module_spec import PlannedBone
 from ..module_base import ModuleDefinition, preview_toggle, refresh_preview
 from ..name_registry import allocate_bone_name, iter_hoaux_bones
 from ..properties import ensure_rig_id
@@ -31,37 +31,40 @@ from ..shared_direction import (
 from ..transaction import GenerationTransaction
 
 
-MODULE_TYPE = "SHOULDER_VOLUME"
-DIR_SHARED_KEY = "ROTATION_HALF:UPPER_ARM:{side}"
-SETTINGS_ATTR = "hoaux_shoulder_volume_settings"
+MODULE_TYPE = "ELBOW_VOLUME"
+DIR_SHARED_KEY = "ROTATION_HALF:LOWER_ARM:{side}"
+SETTINGS_ATTR = "hoaux_elbow_volume_settings"
 
 
 _toggle_preview = preview_toggle(MODULE_TYPE)
 
 
-class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
+class PG_HoAuxElbowVolumeSettings(PropertyGroup):
     ui_expanded: BoolProperty(default=True)  # type: ignore
     preview_enabled: BoolProperty(default=False, update=_toggle_preview)  # type: ignore
     track_length: FloatProperty(
-        name="TRK Length", default=0.5, min=0.05, max=2.0, update=refresh_preview
+        name="TRK Length", default=0.35, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
     deform_length: FloatProperty(
-        name="DEF Length", default=0.28, min=0.05, max=2.0, update=refresh_preview
+        name="DEF Length", default=0.21, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
     dir_length: FloatProperty(
-        name="DIR Length", default=0.05, min=0.005, max=0.5, update=refresh_preview
+        name="DIR Length", default=0.17, min=0.005, max=0.5, update=refresh_preview
     )  # type: ignore
     half_influence: FloatProperty(
-        name="Half Influence", default=0.5, min=0.0, max=1.0, update=refresh_preview
+        name="Half Influence", default=0.5, min=0.0, max=1.0
+    )  # type: ignore
+    track_rotation_influence: FloatProperty(
+        name="TRK Rotation", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
+    )  # type: ignore
+    deform_rotation_influence: FloatProperty(
+        name="DEF Rotation", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
     )  # type: ignore
     response_angle: FloatProperty(
         name="Full Response Angle", default=90.0, min=1.0, max=180.0
     )  # type: ignore
     head_tail: FloatProperty(
         name="Target Point", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
-    )  # type: ignore
-    x0_angle: FloatProperty(
-        name="X0 Direction Angle", default=45.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
     convex_axis: EnumProperty(
         name="Convex Axis",
@@ -81,11 +84,23 @@ class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
     straight_threshold: FloatProperty(
         name="Straight Threshold", default=5.0, min=0.0, max=45.0, update=refresh_preview
     )  # type: ignore
-    x1_scale: FloatProperty(
-        name="X1 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
+    track_head_along: FloatProperty(
+        name="TRK Head Along", default=0.0, min=-1.0, max=1.0, update=refresh_preview
     )  # type: ignore
-    x0_scale: FloatProperty(
-        name="X0 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
+    track_head_convex: FloatProperty(
+        name="TRK Head Convex", default=0.0, min=-1.0, max=1.0, update=refresh_preview
+    )  # type: ignore
+    deform_head_along: FloatProperty(
+        name="DEF Head Along", default=0.0, min=-1.0, max=1.0, update=refresh_preview
+    )  # type: ignore
+    deform_head_convex: FloatProperty(
+        name="DEF Head Convex", default=0.0, min=-1.0, max=1.0, update=refresh_preview
+    )  # type: ignore
+    z1_angle: FloatProperty(
+        name="Z1 Angle", default=0.0, min=-180.0, max=180.0, update=refresh_preview
+    )  # type: ignore
+    z0_angle: FloatProperty(
+        name="Z0 Angle", default=0.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
     z1_scale: FloatProperty(
         name="Z1 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
@@ -97,19 +112,24 @@ class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
 
 @dataclass(frozen=True)
 class Parameters:
-    track_length_ratio: float = 0.5
-    deform_length_ratio: float = 0.28
-    dir_length_ratio: float = 0.05
+    track_length_ratio: float = 0.35
+    deform_length_ratio: float = 0.21
+    dir_length_ratio: float = 0.17
     half_influence: float = 0.5
+    track_rotation_influence: float = 1.0
+    deform_rotation_influence: float = 1.0
     response_angle_degrees: float = 90.0
     copy_location_head_tail: float = 1.0
-    x0_angle_degrees: float = 45.0
     convex_axis: str = "X"
     roll_follow: float = 1.0
     twist_offset_degrees: float = 0.0
     straight_threshold_degrees: float = 5.0
-    x1_scale: float = 1.0
-    x0_scale: float = 1.0
+    track_head_along: float = 0.0
+    track_head_convex: float = 0.0
+    deform_head_along: float = 0.0
+    deform_head_convex: float = 0.0
+    z1_angle_degrees: float = 0.0
+    z0_angle_degrees: float = 0.0
     z1_scale: float = 1.0
     z0_scale: float = 1.0
 
@@ -120,170 +140,162 @@ def parameters_from_settings(settings):
         deform_length_ratio=settings.deform_length,
         dir_length_ratio=settings.dir_length,
         half_influence=settings.half_influence,
+        track_rotation_influence=settings.track_rotation_influence,
+        deform_rotation_influence=settings.deform_rotation_influence,
         response_angle_degrees=settings.response_angle,
         copy_location_head_tail=settings.head_tail,
-        x0_angle_degrees=settings.x0_angle,
         convex_axis=settings.convex_axis,
         roll_follow=settings.roll_follow,
         twist_offset_degrees=settings.twist_offset,
         straight_threshold_degrees=settings.straight_threshold,
-        x1_scale=settings.x1_scale,
-        x0_scale=settings.x0_scale,
+        track_head_along=settings.track_head_along,
+        track_head_convex=settings.track_head_convex,
+        deform_head_along=settings.deform_head_along,
+        deform_head_convex=settings.deform_head_convex,
+        z1_angle_degrees=settings.z1_angle,
+        z0_angle_degrees=settings.z0_angle,
         z1_scale=settings.z1_scale,
         z0_scale=settings.z0_scale,
     )
 
 
-def _direction_specs(parameters):
-    angle = radians(parameters.x0_angle_degrees)
-    return (
-        ("X1", Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)), parameters.x1_scale),
-        (
-            "X0",
-            Vector((0.0, sin(angle), -cos(angle))),
-            Vector((1.0, 0.0, 0.0)),
-            parameters.x0_scale,
-        ),
-        ("Z1", Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)), parameters.z1_scale),
-        ("Z0", Vector((1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)), parameters.z0_scale),
-    )
-
-
 def _module_id(side):
-    return f"SHOULDER_VOLUME.{side}"
+    return f"ELBOW_VOLUME.{side}"
 
 
 def _pipeline_id(side):
     return f"ARM.{side}"
 
 
-def _existing_module_bones(armature_data, side):
-    module_id = _module_id(side)
-    return [
-        bone
-        for bone in iter_hoaux_bones(armature_data)
-        if bone.hotools_boneprops.hoAux.moduleId == module_id
-    ]
-
-
-def validate_roles(armature_object, shoulder_name, upper_arm_name, side):
+def validate_roles(armature_object, upper_arm_name, lower_arm_name, side):
     if armature_object is None or armature_object.type != "ARMATURE":
         raise ValueError("请选择骨架")
     armature_data = armature_object.data
-    shoulder = armature_data.bones.get(shoulder_name)
     upper_arm = armature_data.bones.get(upper_arm_name)
-    if shoulder is None or upper_arm is None:
-        raise ValueError("请设置 Shoulder 和 UpperArm 主骨")
-    if shoulder == upper_arm:
-        raise ValueError("Shoulder 和 UpperArm 不能是同一根骨")
-    if upper_arm.length <= 1e-8:
-        raise ValueError("UpperArm 骨长无效")
-    if _existing_module_bones(armature_data, side):
+    lower_arm = armature_data.bones.get(lower_arm_name)
+    if upper_arm is None or lower_arm is None:
+        raise ValueError("请设置 UpperArm 和 LowerArm 主骨")
+    if upper_arm == lower_arm:
+        raise ValueError("UpperArm 和 LowerArm 不能是同一根骨")
+    if lower_arm.parent != upper_arm:
+        raise ValueError("LowerArm 必须直接以 UpperArm 为父级")
+    if upper_arm.length <= 1e-8 or lower_arm.length <= 1e-8:
+        raise ValueError("肘关节主骨长度无效")
+    if any(
+        bone.hotools_boneprops.hoAux.moduleId == _module_id(side)
+        for bone in iter_hoaux_bones(armature_data)
+    ):
         raise ValueError(f"{_module_id(side)} 已存在")
-    return shoulder, upper_arm
+    return upper_arm, lower_arm
 
 
-def build_plan(
-    armature_object,
-    shoulder_name,
-    upper_arm_name,
-    side,
-    parameters=None,
-):
-    shoulder, upper_arm = validate_roles(
-        armature_object, shoulder_name, upper_arm_name, side
+def _direction(frame, sign, angle_degrees):
+    direction = frame.x_axis * sign
+    if abs(angle_degrees) > 1e-8:
+        direction = Quaternion(frame.y_axis, radians(angle_degrees)) @ direction
+    return direction.normalized()
+
+
+def build_plan(armature_object, upper_arm_name, lower_arm_name, side, parameters=None):
+    upper_arm, lower_arm = validate_roles(
+        armature_object, upper_arm_name, lower_arm_name, side
     )
     parameters = parameters or Parameters()
     frame = build_joint_frame(
-        shoulder,
         upper_arm,
+        lower_arm,
         convex_axis=parameters.convex_axis,
         roll_follow=parameters.roll_follow,
         twist_offset_degrees=parameters.twist_offset_degrees,
         straight_threshold_degrees=parameters.straight_threshold_degrees,
     )
-    head = frame.origin
     result = []
-    for role_tag, ratio in (
-        ("TRK", parameters.track_length_ratio),
-        ("DEF", parameters.deform_length_ratio),
-    ):
-        for marker, local_direction, local_roll, scale in _direction_specs(parameters):
-            direction = frame.transform_direction(local_direction.normalized())
-            roll_reference = frame.transform_direction(local_roll)
+    marker_specs = (
+        ("Z1", 1.0, parameters.z1_angle_degrees, parameters.z1_scale),
+        ("Z0", -1.0, parameters.z0_angle_degrees, parameters.z0_scale),
+    )
+    role_specs = (
+        (
+            "TRK",
+            parameters.track_length_ratio,
+            parameters.track_head_along,
+            parameters.track_head_convex,
+        ),
+        (
+            "DEF",
+            parameters.deform_length_ratio,
+            parameters.deform_head_along,
+            parameters.deform_head_convex,
+        ),
+    )
+    for role_tag, length_ratio, head_along, head_convex in role_specs:
+        head = (
+            frame.origin
+            + frame.y_axis * lower_arm.length * head_along
+            + frame.x_axis * lower_arm.length * head_convex
+        )
+        for marker, sign, angle, scale in marker_specs:
+            direction = _direction(frame, sign, angle)
             result.append(
                 PlannedBone(
-                    resource_key=(
-                        f"ARM.{side}.SHOULDER_VOLUME.{role_tag}.{marker}"
-                    ),
-                    preferred_name=(
-                        f"{role_tag}_Shoulder_Volume_{marker}_{side}"
-                    ),
+                    resource_key=f"ARM.{side}.ELBOW_VOLUME.{role_tag}.{marker}",
+                    preferred_name=f"{role_tag}_Elbow_Volume_{marker}_{side}",
                     role_tag=role_tag,
                     marker=marker,
                     head=head.copy(),
-                    tail=head + direction * upper_arm.length * ratio * scale,
-                    roll_reference=roll_reference,
-                    parent_name=shoulder.name,
+                    tail=head + direction * lower_arm.length * length_ratio * scale,
+                    roll_reference=frame.z_axis,
+                    parent_name=upper_arm.name,
                 )
             )
     return result
 
 
-def generate(
-    armature_object,
-    shoulder_name,
-    upper_arm_name,
-    side,
-    parameters=None,
-):
+def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=None):
     parameters = parameters or Parameters()
     plans = build_plan(
-        armature_object,
-        shoulder_name,
-        upper_arm_name,
-        side,
-        parameters,
+        armature_object, upper_arm_name, lower_arm_name, side, parameters
     )
     armature_data = armature_object.data
-    shoulder = armature_data.bones[shoulder_name]
     upper_arm = armature_data.bones[upper_arm_name]
-    upper_head = upper_arm.head_local.copy()
-    upper_direction = (upper_arm.tail_local - upper_arm.head_local).normalized()
-    upper_length = upper_arm.length
-    upper_roll_reference = upper_arm.matrix_local.to_3x3() @ Vector((0, 0, 1))
+    lower_arm = armature_data.bones[lower_arm_name]
+    lower_head = lower_arm.head_local.copy()
+    lower_direction = (lower_arm.tail_local - lower_arm.head_local).normalized()
+    lower_length = lower_arm.length
+    lower_roll_reference = lower_arm.matrix_local.to_3x3() @ Vector((0, 0, 1))
+    expected_dir_tail = (
+        lower_head + lower_direction * lower_length * parameters.dir_length_ratio
+    )
     rig_id = ensure_rig_id(armature_data)
     generation_id = uuid4().hex
     pipeline_id = _pipeline_id(side)
     module_id = _module_id(side)
     shared_key = DIR_SHARED_KEY.format(side=side)
     existing_dir = find_shared_direction(armature_data, shared_key)
-    expected_dir_tail = (
-        upper_head
-        + upper_direction * upper_length * parameters.dir_length_ratio
-    )
     if existing_dir is not None:
         validate_shared_direction(
             armature_object,
             existing_dir,
             SharedDirectionSpec(
-                parent_name=shoulder_name,
-                source_name=upper_arm_name,
-                head=upper_head,
+                parent_name=upper_arm_name,
+                source_name=lower_arm_name,
+                head=lower_head,
                 tail=expected_dir_tail,
-                roll_reference=upper_roll_reference,
+                roll_reference=lower_roll_reference,
+                owner_space="WORLD",
+                target_space="WORLD",
                 influence=parameters.half_influence,
             ),
         )
 
     actual_names = {
-        plan.resource_key: allocate_bone_name(
-            armature_data, plan.preferred_name
-        )
+        plan.resource_key: allocate_bone_name(armature_data, plan.preferred_name)
         for plan in plans
     }
-    dir_name = existing_dir.name if existing_dir is not None else allocate_bone_name(
-        armature_data, f"DIR_UpperArm_Rotation_HALF_{side}"
+    dir_name = (
+        existing_dir.name
+        if existing_dir is not None
+        else allocate_bone_name(armature_data, f"DIR_LowerArm_Rotation_HALF_{side}")
     )
 
     with GenerationTransaction(armature_object) as transaction:
@@ -296,11 +308,11 @@ def generate(
             edit_bones = armature_data.edit_bones
             if existing_dir is None:
                 direction = edit_bones.new(dir_name)
-                direction.head = upper_head
+                direction.head = lower_head
                 direction.tail = expected_dir_tail
-                direction.parent = edit_bones.get(shoulder_name)
+                direction.parent = edit_bones.get(upper_arm_name)
                 direction.use_connect = False
-                direction.align_roll(upper_roll_reference)
+                direction.align_roll(lower_roll_reference)
                 transaction.track_bone(dir_name)
             for plan in plans:
                 actual_name = actual_names[plan.resource_key]
@@ -316,27 +328,27 @@ def generate(
                 rig_id=rig_id,
                 pipeline_id=pipeline_id,
                 module_id="INFRASTRUCTURE",
+                module_type="ROTATION_HALF",
                 generation_id=generation_id,
                 role_tag="DIR",
-                part="UpperArm",
+                part="LowerArm",
                 function="RotationHalf",
-                marker="UPPER_ARM_HALF",
+                marker="LOWER_ARM_HALF",
                 side=side,
-                name_key=f"ARM.{side}.ROTATION_HALF.DIR.UPPER_ARM",
+                name_key=f"ARM.{side}.ROTATION_HALF.DIR.LOWER_ARM",
                 shared_key=shared_key,
-                module_type="ROTATION_HALF",
             )
             assign_bone(armature_data, direction_bone)
-            direction_pose = armature_object.pose.bones[dir_name]
-            direction_constraint = direction_pose.constraints.new("COPY_ROTATION")
-            direction_constraint.name = "HoAux Half Rotation"
-            direction_constraint.target = armature_object
-            direction_constraint.subtarget = upper_arm_name
-            direction_constraint.owner_space = "LOCAL"
-            direction_constraint.target_space = "LOCAL"
-            direction_constraint.mix_mode = "REPLACE"
-            direction_constraint.influence = parameters.half_influence
-            transaction.track_constraint(dir_name, direction_constraint)
+            add_copy_rotation(
+                armature_object.pose.bones[dir_name],
+                armature_object,
+                lower_arm_name,
+                transaction,
+                name="HoAux Half Rotation",
+                owner_space="WORLD",
+                target_space="WORLD",
+                influence=parameters.half_influence,
+            )
 
         for plan in plans:
             actual_name = actual_names[plan.resource_key]
@@ -349,7 +361,7 @@ def generate(
                 module_type=MODULE_TYPE,
                 generation_id=generation_id,
                 role_tag=plan.role_tag,
-                part="Shoulder",
+                part="Elbow",
                 function="Volume",
                 marker=plan.marker,
                 side=side,
@@ -357,22 +369,28 @@ def generate(
             )
             assign_bone(armature_data, data_bone)
 
-        plan_name_by_role_marker = {
+        names_by_role_marker = {
             (plan.role_tag, plan.marker): actual_names[plan.resource_key]
             for plan in plans
         }
-        for marker, _direction, _roll, _scale in _direction_specs(parameters):
-            trk_name = plan_name_by_role_marker[("TRK", marker)]
-            def_name = plan_name_by_role_marker[("DEF", marker)]
+        for marker in ("Z1", "Z0"):
+            trk_name = names_by_role_marker[("TRK", marker)]
+            def_name = names_by_role_marker[("DEF", marker)]
             add_copy_rotation(
                 armature_object.pose.bones[trk_name],
                 armature_object,
                 dir_name,
                 transaction,
+                influence=parameters.track_rotation_influence,
             )
             def_pose = armature_object.pose.bones[def_name]
             add_copy_rotation(
-                def_pose, armature_object, dir_name, transaction
+                def_pose,
+                armature_object,
+                trk_name,
+                transaction,
+                target_space="LOCAL_WITH_PARENT",
+                influence=parameters.deform_rotation_influence,
             )
             copy_location = add_copy_location(
                 def_pose,
@@ -385,8 +403,8 @@ def generate(
                 copy_location,
                 "influence",
                 armature_object,
-                dir_name,
-                f"ROT_{marker[0]}",
+                trk_name,
+                "ROT_Z",
                 response_expression(parameters.response_angle_degrees),
                 transaction,
             )
@@ -400,24 +418,26 @@ def generate(
     }
 
 
-class ShoulderVolumeDefinition(ModuleDefinition):
+class ElbowVolumeDefinition(ModuleDefinition):
     type_id = MODULE_TYPE
-    label = "Shoulder Volume"
-    order = 80
-    settings_class = PG_HoAuxShoulderVolumeSettings
+    label = "Elbow Volume"
+    order = 40
+    settings_class = PG_HoAuxElbowVolumeSettings
     settings_attr = SETTINGS_ATTR
     required_roles = (
-        ("shoulderBone", "Shoulder"),
         ("upperArmBone", "UpperArm"),
+        ("lowerArmBone", "LowerArm"),
     )
     parameter_rows = (
         ("track_length", "deform_length"),
         ("dir_length", "half_influence"),
+        ("track_rotation_influence", "deform_rotation_influence"),
         ("response_angle", "head_tail"),
         ("convex_axis", "roll_follow"),
         ("twist_offset", "straight_threshold"),
-        ("x0_angle",),
-        ("x1_scale", "x0_scale"),
+        ("track_head_along", "track_head_convex"),
+        ("deform_head_along", "deform_head_convex"),
+        ("z1_angle", "z0_angle"),
         ("z1_scale", "z0_scale"),
     )
 
@@ -425,8 +445,8 @@ class ShoulderVolumeDefinition(ModuleDefinition):
         root = context.scene.hoaux_settings
         return generate(
             context.object,
-            root.shoulderBone,
             root.upperArmBone,
+            root.lowerArmBone,
             root.side,
             parameters_from_settings(self.settings(context.scene)),
         )
@@ -439,24 +459,24 @@ class ShoulderVolumeDefinition(ModuleDefinition):
         parameters = parameters_from_settings(self.settings(context.scene))
         plans = build_plan(
             obj,
-            root.shoulderBone,
             root.upperArmBone,
+            root.lowerArmBone,
             root.side,
             parameters,
         )
-        upper_arm = obj.data.bones[root.upperArmBone]
-        direction_tail = upper_arm.head_local + (
-            upper_arm.tail_local - upper_arm.head_local
-        ).normalized() * upper_arm.length * parameters.dir_length_ratio
+        lower_arm = obj.data.bones[root.lowerArmBone]
+        direction_tail = lower_arm.head_local + (
+            lower_arm.tail_local - lower_arm.head_local
+        ).normalized() * lower_arm.length * parameters.dir_length_ratio
         scene = PreviewScene(obj.name, title=self.label)
         scene.add_planned_bones(plans, labels=True)
         scene.add_segment(
-            upper_arm.head_local,
+            lower_arm.head_local,
             direction_tail,
             ROLE_LINE_STYLES["DIR"],
         )
-        scene.add_label(direction_tail, f"DIR UpperArm HALF ({parameters.half_influence:.2f})")
-        scene.add_point(upper_arm.head_local)
+        scene.add_label(direction_tail, f"DIR LowerArm HALF ({parameters.half_influence:.2f})")
+        scene.add_point(lower_arm.head_local)
         return scene
 
-DEFINITION = ShoulderVolumeDefinition()
+DEFINITION = ElbowVolumeDefinition()

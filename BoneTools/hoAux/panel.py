@@ -2,6 +2,7 @@
 
 from collections import Counter
 
+from bpy.props import StringProperty
 from bpy.types import Operator
 
 from .collection_registry import assign_all
@@ -9,8 +10,7 @@ from .ir.blender_reader import snapshot_armature
 from .ir.writer import to_json
 from .name_registry import iter_hoaux_bones
 from .operations import scope_is_enabled
-from .modules import shoulder_volume
-from .preview import ShoulderVolumePreview
+from .module_registry import definitions, get_definition
 
 
 class OT_HoAuxEnsureCollections(Operator):
@@ -47,10 +47,12 @@ class OT_HoAuxCopySourceIR(Operator):
         return {"FINISHED"}
 
 
-class OT_HoAuxGenerateShoulderVolume(Operator):
-    bl_idname = "hoaux.generate_shoulder_volume"
-    bl_label = "生成 Shoulder Volume"
+class OT_HoAuxGenerateModule(Operator):
+    bl_idname = "hoaux.generate_module"
+    bl_label = "生成 HoAux 模块"
     bl_options = {"REGISTER", "UNDO"}
+
+    module_type: StringProperty(default="")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -58,17 +60,11 @@ class OT_HoAuxGenerateShoulderVolume(Operator):
         return obj is not None and obj.type == "ARMATURE"
 
     def execute(self, context):
-        settings = context.scene.hoaux_settings
-        ShoulderVolumePreview.clear()
         try:
-            parameters = shoulder_volume.parameters_from_settings(settings)
-            result = shoulder_volume.generate(
-                context.object,
-                settings.shoulderBone,
-                settings.upperArmBone,
-                settings.side,
-                parameters,
-            )
+            definition = get_definition(self.module_type)
+            settings = definition.settings(context.scene)
+            settings.preview_enabled = False
+            result = definition.generate_from_context(context)
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -77,32 +73,10 @@ class OT_HoAuxGenerateShoulderVolume(Operator):
         return {"FINISHED"}
 
 
-class OT_HoAuxPreviewShoulderVolume(Operator):
-    bl_idname = "hoaux.preview_shoulder_volume"
-    bl_label = "预览 Shoulder Volume"
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.type == "ARMATURE"
-
-    def execute(self, context):
-        if ShoulderVolumePreview.is_visible():
-            ShoulderVolumePreview.clear()
-            return {"FINISHED"}
-        try:
-            ShoulderVolumePreview.show(context)
-        except (KeyError, TypeError, ValueError) as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-        return {"FINISHED"}
-
-
 CLASSES = (
     OT_HoAuxEnsureCollections,
     OT_HoAuxCopySourceIR,
-    OT_HoAuxGenerateShoulderVolume,
-    OT_HoAuxPreviewShoulderVolume,
+    OT_HoAuxGenerateModule,
 )
 
 
@@ -151,47 +125,5 @@ def draw_panel(layout, context):
             for bone in group:
                 box.label(text=bone.name, icon="BONE_DATA")
 
-    settings = context.scene.hoaux_settings
-    box = layout.box()
-    box.label(text="Shoulder Volume")
-    box.prop(settings, "side", expand=True)
-    box.prop_search(settings, "shoulderBone", obj.data, "bones", text="Shoulder")
-    box.prop_search(settings, "upperArmBone", obj.data, "bones", text="UpperArm")
-    row = box.row(align=True)
-    row.prop(settings, "shoulderTrackLength")
-    row.prop(settings, "shoulderDefLength")
-    disclosure = box.row(align=True)
-    disclosure.prop(
-        settings,
-        "showShoulderParameters",
-        text="Parameters",
-        icon="TRIA_DOWN" if settings.showShoulderParameters else "TRIA_RIGHT",
-        emboss=False,
-    )
-    if settings.showShoulderParameters:
-        column = box.column(align=True)
-        row = column.row(align=True)
-        row.prop(settings, "shoulderDirLength")
-        row.prop(settings, "shoulderHalfInfluence")
-        row = column.row(align=True)
-        row.prop(settings, "shoulderResponseAngle")
-        row.prop(settings, "shoulderHeadTail")
-        row = column.row(align=True)
-        row.prop(settings, "shoulderConvexAxis")
-        row.prop(settings, "shoulderRollFollow")
-        row = column.row(align=True)
-        row.prop(settings, "shoulderTwistOffset")
-        row.prop(settings, "shoulderStraightThreshold")
-        column.prop(settings, "shoulderX0Angle")
-        row = column.row(align=True)
-        row.prop(settings, "shoulderX1Scale")
-        row.prop(settings, "shoulderX0Scale")
-        row = column.row(align=True)
-        row.prop(settings, "shoulderZ1Scale")
-        row.prop(settings, "shoulderZ0Scale")
-    row = box.row(align=True)
-    row.operator(
-        "hoaux.preview_shoulder_volume",
-        icon="HIDE_OFF" if ShoulderVolumePreview.is_visible() else "HIDE_ON",
-    )
-    row.operator("hoaux.generate_shoulder_volume", icon="BONE_DATA")
+    for definition in definitions():
+        definition.draw_panel(layout, context)
