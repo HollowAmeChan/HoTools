@@ -316,6 +316,7 @@ void DomainV1::swap_parameter_configuration(DomainV1& staging) {
     swap(whole_domain_self_points_, staging.whole_domain_self_points_);
     swap(whole_domain_self_triangles_, staging.whole_domain_self_triangles_);
     swap(whole_domain_self_modes_, staging.whole_domain_self_modes_);
+    swap(whole_domain_self_sync_modes_, staging.whole_domain_self_sync_modes_);
     swap(whole_domain_collision_groups_, staging.whole_domain_collision_groups_);
     swap(whole_domain_collision_masks_, staging.whole_domain_collision_masks_);
     swap(whole_domain_self_friction_, staging.whole_domain_self_friction_);
@@ -2184,6 +2185,7 @@ void DomainV1::configure_whole_domain_self(
     const std::int32_t* triangles,
     std::size_t triangle_count,
     const std::uint32_t* partition_self_collision_modes,
+    const std::uint32_t* partition_self_collision_sync_modes,
     const std::uint32_t* partition_collision_groups,
     const std::uint32_t* partition_collision_masks,
     const float* particle_friction,
@@ -2196,7 +2198,8 @@ void DomainV1::configure_whole_domain_self(
         (triangle_count != 0 && triangles == nullptr)) {
         throw std::invalid_argument("MC2 whole-domain self topology cannot be null");
     }
-    if (partition_self_collision_modes == nullptr || partition_collision_groups == nullptr ||
+    if (partition_self_collision_modes == nullptr ||
+        partition_self_collision_sync_modes == nullptr || partition_collision_groups == nullptr ||
         partition_collision_masks == nullptr) {
         throw std::invalid_argument("MC2 whole-domain self partition policy cannot be null");
     }
@@ -2207,6 +2210,10 @@ void DomainV1::configure_whole_domain_self(
         if (partition_self_collision_modes[partition] != 0u &&
             partition_self_collision_modes[partition] != 2u) {
             throw std::invalid_argument("MC2 whole-domain self mode must be 0 or 2");
+        }
+        if (partition_self_collision_sync_modes[partition] != 0u &&
+            partition_self_collision_sync_modes[partition] != 2u) {
+            throw std::invalid_argument("MC2 whole-domain self sync mode must be 0 or 2");
         }
     }
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
@@ -2253,6 +2260,10 @@ void DomainV1::configure_whole_domain_self(
         partition_self_collision_modes,
         partition_self_collision_modes + partition_count_
     );
+    whole_domain_self_sync_modes_.assign(
+        partition_self_collision_sync_modes,
+        partition_self_collision_sync_modes + partition_count_
+    );
     whole_domain_collision_groups_.assign(
         partition_collision_groups, partition_collision_groups + partition_count_
     );
@@ -2278,6 +2289,7 @@ void DomainV1::configure_whole_domain_self(
         particle_partition_index_.data(),
         particle_attribute_flags_.data(),
         partition_self_collision_modes,
+        partition_self_collision_sync_modes,
         partition_collision_groups,
         partition_collision_masks,
         partition_count_
@@ -3121,6 +3133,7 @@ void DomainV1::dispose() noexcept {
     whole_domain_self_edges_.clear();
     whole_domain_self_triangles_.clear();
     whole_domain_self_modes_.clear();
+    whole_domain_self_sync_modes_.clear();
     whole_domain_collision_groups_.clear();
     whole_domain_collision_masks_.clear();
     whole_domain_self_friction_.clear();

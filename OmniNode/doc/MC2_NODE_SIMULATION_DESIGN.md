@@ -323,7 +323,9 @@ backend 的公开 step 只接收：
 step(domain_handle, frame_packet, scheduler_settings, collider_snapshot)
 ```
 
-它不接收 Blender Object、节点或 sparse patch。每个 substep 内部对统一粒子场执行 integration、constraint、self collision、external collision 和 Center/Teleport；跨 Mesh 自碰因此是同一 broadphase/solver pass，不再经过跨 task pair context。
+它不接收 Blender Object、节点或 sparse patch。每个 substep 内部对统一粒子场执行 integration、constraint、self collision、external collision 和 Center/Teleport；跨 Mesh 自碰因此是同一 broadphase/solver pass，不再经过跨 task pair context。跨 partition self 只有在双方 `self_collision_sync_mode=2` 时才进入 owner/group/mask 过滤；默认关闭不能仅停留在 authoring 参数中。
+
+self primitive 构建把 Pin 粒子对应的 Point 与完全固定的 Edge/Triangle 标记为 Ignore，使它们不进入 grid、candidate 或 contact。包含 Pin 但仍有可动顶点的 Edge/Triangle 保留，防止固定边界产生拓扑空洞；固定障碍职责属于外部 collider，不由 self collision 隐式承担。
 
 Center/Teleport 语义按 partition 执行，但结果作用于该 partition 的 `MC2IndexView`。Anchor 可以由多个 partition 共享同一个 transform snapshot，却不能因此共享历史状态。
 
@@ -992,7 +994,8 @@ Blender 主线程验收：`physicsWorld/test/test_blender_mc2_product_mixed_outp
 |---|---|---|
 | A5-01 | 单 source reference | 新 backend 对现有 D-01 至 D-10 资产无行为回退。 |
 | A5-02 | fused self collision | 两个 Mesh 在一个 domain 内真实接触，不经过跨 task interaction context。 |
-| A5-03 | filter off | 禁止跨 partition pair 后两者不互碰，域内各自自碰仍正常。 |
+| A5-03 | filter off | 任一 partition 未开启跨物体自碰时，两者不产生跨 partition candidate/contact，域内各自自碰仍正常。 |
+| A5-04 | Pin primitive pruning | Pin Point 与完全固定 Edge/Triangle 不出现在 candidate 两端；部分固定 Edge/Triangle 保留。 |
 | A5-04 | 参数差异 | 不同粒子参数对各自 partition 生效，性能不退化为逐 task dispatch。 |
 | A5-05 | failure atomicity | allocation/update/step/read 任一点注入失败，旧 live domain 或完整失效状态可恢复。 |
 

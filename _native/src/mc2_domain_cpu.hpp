@@ -184,6 +184,7 @@ public:
         const std::int32_t* triangles,
         std::size_t triangle_count,
         const std::uint32_t* partition_self_collision_modes,
+        const std::uint32_t* partition_self_collision_sync_modes,
         const std::uint32_t* partition_collision_groups,
         const std::uint32_t* partition_collision_masks,
         const float* particle_friction,
@@ -787,6 +788,7 @@ private:
     std::vector<std::int32_t> whole_domain_self_points_;
     std::vector<std::int32_t> whole_domain_self_triangles_;
     std::vector<std::uint32_t> whole_domain_self_modes_;
+    std::vector<std::uint32_t> whole_domain_self_sync_modes_;
     std::vector<std::uint32_t> whole_domain_collision_groups_;
     std::vector<std::uint32_t> whole_domain_collision_masks_;
     std::vector<float> whole_domain_self_friction_;

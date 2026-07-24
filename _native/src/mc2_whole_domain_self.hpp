@@ -87,6 +87,7 @@ public:
         const std::uint32_t* particle_partition_indices,
         const std::uint32_t* particle_attribute_flags,
         const std::uint32_t* partition_self_collision_modes,
+        const std::uint32_t* partition_self_collision_sync_modes,
         const std::uint32_t* partition_collision_groups,
         const std::uint32_t* partition_collision_masks,
         std::size_t partition_count

@@ -193,7 +193,7 @@ Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有�
 | `碰撞摩擦` | 碰撞接触后的切向速度衰减 | runtime同时写入dynamic/static friction，post用接触法线和速度处理；`M/C`可调，`S`固定为`0.5`。 |
 | `碰撞限制距离`、`碰撞限制曲线` | 限制BoneSpring粒子被soft-sphere碰撞推离动画基准的最大距离 | BoneSpring Point collision使用animated base和深度曲线执行soft-sphere投影；仅`S`有效，cloth节点不公开且runtime置零。 |
 | `自碰撞` | 启用 partition primitive 的 FullMesh EE/PT 接触、grid broadphase 和 intersection history | bool 稳定转换为 `self_collision_mode=2`；`M/C` 有效，`S` 强制关闭。 |
-| `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
+| `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；跨 partition 配对要求双方都显式开启，任一方关闭都在 broadphase 配对前拒绝。BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
 | `自碰交互质量` | 改变 self primitive 的粒子相对修正权重 | 由粒子Profile持有；`cloth_mass` 在 primitive 构建时进入 inverse-mass，`M/C` 的同/跨 partition contact 使用同一权重规则，BoneSpring不公开且不消费。 |
 
 MeshCloth与BoneCloth产品只公开一个半径模型：`particle_radius = profile.radius(depth) * object_radius_weight`，self thickness统一由profile radius按`0.25`派生。对象顶点组仍只调制实际particle radius，不另外创造self厚度输入；BoneSpring强制关闭自碰并拒绝派生模型。独立`self_collision_thickness`仍只属于source oracle，不得重新暴露第二套用户半径。
@@ -201,6 +201,8 @@ MeshCloth与BoneCloth产品只公开一个半径模型：`particle_radius = prof
 人工验收曾发现：无拓扑交叉、无非流形的单层Mesh中，红色self contact大量聚集并伴随持续微动。完成一环过滤与final intersection debug纠正后，实际模型中的洋红几何穿插完全消失；红色contact只剩在代理本身真实拥挤的区域，布料和接触区域均完全收敛且不再运动。该结果确认一环误碰是原扰动的主要根因，并完成D-04人工验收。红箭头表示有效接触法线，不等于非零持续修正；同一world-space曲面的密度分档、contact churn和RMS速度继续作为未来自动回归，不再作为当前发布阻断。
 
 Whole-domain self 的拓扑排除以各 partition 的 final proxy edges 为事实源。static compile 一次性生成排序去重的一环邻接键；EE/PT candidate 和 Edge-Triangle intersection 拒绝共享 particle 或任一端点一环相邻的同 partition primitive。不同 partition 不共享结构邻接，只由 owner/group/mask 过滤。不得在没有新反例和局部厚度/边长证据时扩大固定 k-ring。
+
+Pin 粒子不作为 Point 自碰图元参与 grid/candidate/contact；全部顶点均固定的 Edge/Triangle 同样忽略。只要 Edge/Triangle 仍含可移动粒子就继续参与，以维持 Pin 边界附近的连续碰撞表面。固定粒子不会借 self pass 充当静态障碍；需要该行为时必须使用独立 collider。该规则同时减少固定点重复候选和单边修正导致的持续接触抖动。
 
 独立Edge-Triangle穿插检测按`frame % 2`在grid排序后索引为奇数/偶数的Edge之间跨帧时间分片，以降低每帧窄相成本；普通EE/PT厚度contact仍每个真实step执行。`self_intersect_records`在非final阶段保存当前分片经过grid/AABB与邻接过滤的broadphase record，final线段-三角形测试后原地剔除未命中项，并设置particle intersect flags；debug专用readback只允许读取final结果，所以洋红现只表示确认穿插。新帧候选生成开始时必须撤销上一帧final-ready，本帧final完成后才重新发布；内部历史flags可保留，但不能授权debug读新候选。真实命中仍会按分片隔帧显示，这种规律切换不得解释为浮点随机或普通contact停止；稳定两帧观察只能作为明确标注的renderer窗口。
 

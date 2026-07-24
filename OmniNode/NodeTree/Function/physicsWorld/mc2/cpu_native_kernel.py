@@ -34,6 +34,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_external_collision",
     "mc2_domain_cpu_v1_step_self_collision",
     "mc2_domain_cpu_v1_configure_whole_domain_self",
+    "mc2_domain_cpu_v1_configure_whole_domain_self_policy",
     "mc2_domain_cpu_v1_step_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self_owned",
     "mc2_domain_cpu_v1_step_whole_domain_self_owned_timed",
@@ -1976,7 +1977,8 @@ class MC2NativeCPUKernelV1:
             for index, name in enumerate(parameters.partition_uint_parameters.fields)
         }
         required_partition = {
-            "self_collision_mode", "collision_group", "collision_mask",
+            "self_collision_mode", "self_collision_sync_mode",
+            "collision_group", "collision_mask",
         }
         missing_partition = required_partition - set(partition_fields)
         if missing_partition:
@@ -1987,6 +1989,10 @@ class MC2NativeCPUKernelV1:
         partition_values = parameters.partition_uint_parameters.values
         modes = np.asarray(
             partition_values[:, partition_fields["self_collision_mode"]], dtype=np.uint32
+        )
+        sync_modes = np.asarray(
+            partition_values[:, partition_fields["self_collision_sync_mode"]],
+            dtype=np.uint32,
         )
         groups = np.asarray(
             partition_values[:, partition_fields["collision_group"]], dtype=np.uint32
@@ -2021,12 +2027,13 @@ class MC2NativeCPUKernelV1:
             particle_values[:, particle_fields["cloth_mass"]], dtype=np.float32
         )
         for array in (
-            points, edges, triangles, modes, groups, masks, friction, thickness, cloth_mass,
+            points, edges, triangles, modes, sync_modes, groups, masks,
+            friction, thickness, cloth_mass,
         ):
             array.flags.writeable = False
-        self._module.mc2_domain_cpu_v1_configure_whole_domain_self(
-            handle, points, edges, triangles, modes, groups, masks, friction, thickness,
-            cloth_mass,
+        self._module.mc2_domain_cpu_v1_configure_whole_domain_self_policy(
+            handle, points, edges, triangles, modes, sync_modes, groups, masks,
+            friction, thickness, cloth_mass,
         )
 
     def _configure_compiled_external_collision(

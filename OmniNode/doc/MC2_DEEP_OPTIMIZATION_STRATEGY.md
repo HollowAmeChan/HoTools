@@ -298,6 +298,7 @@ native 分阶段计时完成后，优先检查以下代码形态：
 - self grid 当前每 substep 对 point/edge/triangle 分别 `stable_sort`，并按排序结果逐一重排 flags、indices、depth、inverse mass、AABB、thickness、owner 和 grid 等多个 vector；评估排序 index/key 而不是反复物理搬运所有 SoA。
 - aggregate 路径反复 clear/insert/copy；fused context 应直接删除这部分普通路径成本。
 - candidate 临时 vector、去重 sort 和 self solve 的 sum/count buffer 应按容量复用，避免每 substep 重新分配/清零超出有效范围。
+- primitive 进入 broadphase 前按运动能力裁剪：Pin Point 与完全固定 Edge/Triangle 不进入 grid/candidate/contact；部分固定 Edge/Triangle 保留。跨 partition candidate 只有双方显式开启跨物体自碰时才允许，不能只依赖 group/mask。
 - grid hash/run 查找可比较稳定 radix sort、Morton key 和 cell range table；必须用真实 candidate 分布验证，不能只测空场景。
 - uniform 参数保持标量，只有真实 override 才物化 dense array，控制缓存带宽。
 - 检查 Release 编译、LTO、目标 SIMD 指令和浮点模式；不得以 fast-math 破坏 NaN/有限性、Teleport阈值或确定性合同。

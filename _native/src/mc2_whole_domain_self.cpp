@@ -209,6 +209,7 @@ struct WholeDomainSelfState {
     std::vector<float> self_primitive_aabb_max;
     std::vector<float> self_primitive_thickness;
     std::vector<std::int32_t> self_primitive_owner_indices;
+    std::vector<std::int32_t> self_owner_sync_modes;
     std::vector<std::int32_t> self_owner_primary_group_bits;
     std::vector<std::int32_t> self_owner_collided_by_groups;
     std::vector<std::int32_t> self_primitive_grids;
@@ -290,7 +291,12 @@ bool self_owner_pair_allowed(
     const auto owner_count = context.self_owner_primary_group_bits.size();
     if (static_cast<std::size_t>(owner0) >= owner_count ||
         static_cast<std::size_t>(owner1) >= owner_count ||
+        context.self_owner_sync_modes.size() != owner_count ||
         context.self_owner_collided_by_groups.size() != owner_count) {
+        return false;
+    }
+    if (context.self_owner_sync_modes[owner0] != 2 ||
+        context.self_owner_sync_modes[owner1] != 2) {
         return false;
     }
     const auto mask0 = context.self_owner_collided_by_groups[owner0];
@@ -1342,6 +1348,7 @@ void Mc2WholeDomainSelfEngine::configure(
     const std::uint32_t* particle_partition_indices,
     const std::uint32_t* particle_attribute_flags,
     const std::uint32_t* partition_self_collision_modes,
+    const std::uint32_t* partition_self_collision_sync_modes,
     const std::uint32_t* partition_collision_groups,
     const std::uint32_t* partition_collision_masks,
     std::size_t partition_count
@@ -1376,7 +1383,7 @@ void Mc2WholeDomainSelfEngine::configure(
                 ++fixed_count;
             }
         }
-        if (fixed_count == axis_count) flags |= kSelfAllFix;
+        if (fixed_count == axis_count) flags |= kSelfAllFix | kSelfIgnore;
         if (owner < 0 || partition_self_collision_modes[owner] != 2u) {
             flags |= kSelfIgnore;
         }
@@ -1401,9 +1408,13 @@ void Mc2WholeDomainSelfEngine::configure(
         };
         append_primitive(2u, indices);
     }
+    state.self_owner_sync_modes.assign(partition_count, 0);
     state.self_owner_primary_group_bits.assign(partition_count, 0);
     state.self_owner_collided_by_groups.assign(partition_count, 0);
     for (std::size_t partition = 0; partition < partition_count; ++partition) {
+        state.self_owner_sync_modes[partition] = static_cast<std::int32_t>(
+            partition_self_collision_sync_modes[partition]
+        );
         state.self_owner_primary_group_bits[partition] =
             static_cast<std::int32_t>(partition_collision_groups[partition]);
         state.self_owner_collided_by_groups[partition] =

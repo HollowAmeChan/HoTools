@@ -313,7 +313,12 @@ def test_native_cpu_backend_rolls_back_parameters_when_host_commit_fails():
 
 
 def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
-    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    interaction = ({"self_collision_sync_mode": 2},) * 2
+    compiled = _compiled_multi(
+        collision_groups=(1, 2),
+        collision_masks=(0, 0),
+        profile_overrides=interaction,
+    )
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
@@ -350,6 +355,26 @@ def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
         assert set(map(int, debug["owner_indices"])) == {0, 1}
         assert np.array_equal(debug["owner_group_bits"], (1, 2))
         assert np.array_equal(debug["owner_collision_masks"], (0, 0))
+        point_flags = debug["primitive_flags"][:debug["point_primitive_count"]]
+        point_particles = debug["particle_indices"][:debug["point_primitive_count"], 0]
+        fixed_point_flags = [
+            int(flag)
+            for flag, particle in zip(point_flags, point_particles)
+            if int(compiled.program.particle_attribute_flags[int(particle)]) & 0x02 == 0
+        ]
+        assert fixed_point_flags
+        assert all(flag & 0x40000000 for flag in fixed_point_flags)
+        ignored_primitives = {
+            index
+            for index, flag in enumerate(debug["primitive_flags"])
+            if int(flag) & 0x40000000
+        }
+        assert ignored_primitives
+        assert all(
+            int(candidate[0]) not in ignored_primitives
+            and int(candidate[1]) not in ignored_primitives
+            for candidate in debug["candidates"]
+        )
         np.testing.assert_allclose(
             np.sum(debug["contact_corrections"], axis=(0, 1)),
             np.sum(output - positions, axis=0),
@@ -373,7 +398,12 @@ def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
 
 
 def test_native_cpu_backend_blocks_compiled_whole_domain_self_pair():
-    compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(2, 2))
+    interaction = ({"self_collision_sync_mode": 2},) * 2
+    compiled = _compiled_multi(
+        collision_groups=(1, 2),
+        collision_masks=(2, 2),
+        profile_overrides=interaction,
+    )
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
@@ -393,8 +423,32 @@ def test_native_cpu_backend_blocks_compiled_whole_domain_self_pair():
         domain.dispose()
 
 
-def test_native_whole_domain_self_debug_reports_intersection():
+def test_native_cpu_backend_disables_cross_partition_self_by_default():
     compiled = _compiled_multi(collision_groups=(1, 2), collision_masks=(0, 0))
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    positions = np.asarray(frame.animated_base_world_positions, dtype=np.float32).copy()
+    edge_midpoint = (positions[0] + positions[1]) / np.float32(2.0)
+    positions[3] = edge_midpoint + np.asarray((0.0, -0.5, 0.001), dtype=np.float32)
+    positions[4] = edge_midpoint + np.asarray((0.0, 0.5, 0.001), dtype=np.float32)
+    positions.flags.writeable = False
+    frame = replace(frame, animated_base_world_positions=positions)
+    try:
+        domain.update_frame(frame)
+        domain.step_whole_domain_self(positions)
+        np.testing.assert_array_equal(domain.read_output().world_positions, positions)
+        assert domain.inspect()["kernel"]["whole_domain_self_last_contact_count"] == 0
+    finally:
+        domain.dispose()
+
+
+def test_native_whole_domain_self_debug_reports_intersection():
+    compiled = _compiled_multi(
+        collision_groups=(1, 2),
+        collision_masks=(0, 0),
+        profile_overrides=({"self_collision_sync_mode": 2},) * 2,
+    )
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
@@ -1146,6 +1200,7 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         collision_groups=(1, 2),
         collision_masks=(0, 0),
         task_normal_axes=(0, 5),
+        profile_overrides=({"self_collision_sync_mode": 2},) * 2,
     )
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
@@ -1661,6 +1716,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_backend_runs_compiled_whole_domain_self_policy")
     test_native_cpu_backend_blocks_compiled_whole_domain_self_pair()
     print("PASS test_native_cpu_backend_blocks_compiled_whole_domain_self_pair")
+    test_native_cpu_backend_disables_cross_partition_self_by_default()
+    print("PASS test_native_cpu_backend_disables_cross_partition_self_by_default")
     test_native_whole_domain_self_debug_reports_intersection()
     print("PASS test_native_whole_domain_self_debug_reports_intersection")
     test_native_cpu_kernel_base_step_rejects_settings()
