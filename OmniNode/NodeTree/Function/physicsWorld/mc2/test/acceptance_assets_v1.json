@@ -13,7 +13,7 @@
       "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_base_pose.py",
       "production_surface": [
         "dual-object evaluated BasePose",
-        "slot-owned native context",
+        "DomainV1 产品 slot owner",
         "GN object-local offset result/writeback",
         "scheduler and Center state",
         "external collider and single-cloth self collision"
@@ -34,7 +34,7 @@
     {
       "id": "bone_cloth_line_chain",
       "setup_types": ["bone_cloth"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_static.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_product.py",
       "production_surface": [
         "real Armature and PoseBone frame snapshot",
         "Line final proxy/baseline/Distance/Center upload",
@@ -61,12 +61,12 @@
       "production_surface": [
         "Bone socket common-parent chain expansion",
         "ordered-chain lateral edges and product triangles",
-        "one solver step with per-task native contexts",
+        "一个 DomainV1 产品 slot 与 partition 参数包",
         "same-Armature multi-component atomic writeback"
       ],
       "expected": [
         "node input order remains topology-authoritative",
-        "multiple Armatures split into independent tasks",
+        "多 Armature 拆为显式产品 request",
         "different profile+task groups on one Armature merge into one writeback target",
         "a later task preparation failure preserves prior world state and public results"
       ],
@@ -80,7 +80,7 @@
     {
       "id": "bone_spring_line_soft_sphere",
       "setup_types": ["bone_spring"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_static.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_bone_spring_product_restrictions.py",
       "production_surface": [
         "BoneSpring normalized N2 parameters",
         "shared Line static/native/result path",

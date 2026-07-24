@@ -103,8 +103,9 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 14. 当前运行参数产品类型已统一为 `MC2RuntimeParameters`；packed ABI 0、字段布局和签名不变，旧 `MC2RuntimeParametersV0` 不保留兼容别名。
 15. compiled-domain 已删除四个 E1 单 partition compatibility/shadow 属性，只保留多 partition 的真实 fragment 与参数签名集合。
 16. 12 个 static/frame 中立 native helper 已去除版本后缀并重新编译 py313 pyd；旧符号为 0、新符号完整，正式 DomainV1 ABI 版本名不变。
-17. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
-18. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+17. 三份 Bone compatibility runner 已删除，验收资产直接指向真实产品 runner，并通过 Bone 产品集成、BoneSpring 599 帧限制与 BoneCloth 900 帧约束 soak。
+18. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+19. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

@@ -81,15 +81,6 @@ def test_debug_acceptance_layers_are_inventory_not_coverage_claims():
     assert len(MC2_DEBUG_ACCEPTANCE_LAYERS) == len(set(MC2_DEBUG_ACCEPTANCE_LAYERS))
 
 
-def test_bone_constraint_runner_does_not_import_mixed_v0_helpers():
-    path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_constraint_soak.py"
-    source = path.read_text(encoding="utf-8")
-    assert "test_blender_mc2_mixed_output_soak" not in source
-    assert "_physicsMC2BoneClothTaskV0Oracle" not in source
-    assert '"native_context"' not in source
-    assert "test_blender_mc2_bone_product_constraint_soak" in source
-
-
 def test_product_execution_boundary_has_no_v0_owner_imports():
     """产品执行边界不得重新依赖待删除的 V0 owner 模块。"""
 
@@ -216,36 +207,17 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         assert f"def {name}(" not in domain_compile_source
 
 
-def test_bone_frame_compatibility_entry_is_product_only():
-    path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_frame.py"
-    source = path.read_text(encoding="utf-8")
-    assert "native_context" not in source
-    assert "mc2.specs" not in source
-    assert "mc2.solver" not in source
-    assert "test_blender_mc2_bone_product_constraint_soak" in source
-
-
-def test_bone_static_compatibility_entry_is_product_only():
-    path = BLENDER_TEST_ROOT / "test_blender_mc2_bone_static.py"
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-    imports = {
-        ("." * node.level) + (node.module or "")
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
+def test_bone_compatibility_runners_are_deleted():
+    removed = {
+        "test_blender_mc2_bone_constraint_soak.py",
+        "test_blender_mc2_bone_frame.py",
+        "test_blender_mc2_bone_static.py",
     }
-    imported_names = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    assert not {"native_context", "solver", "specs"} & imported_names
-    assert not any(name.endswith(".native_context") for name in imports)
-    assert not any(name.endswith(".solver") for name in imports)
-    assert not any(name.endswith(".specs") for name in imports)
-    assert "test_bone_product_static" in source
-    assert "test_blender_mc2_bone_product" in source
+    assert not {path.name for path in BLENDER_TEST_ROOT.iterdir()} & removed
+    acceptance = (MC2_ROOT / "test" / "acceptance_assets_v1.json").read_text(
+        encoding="utf-8"
+    )
+    assert not any(name in acceptance for name in removed)
 
 
 def test_mesh_final_proxy_compatibility_entry_is_product_only():

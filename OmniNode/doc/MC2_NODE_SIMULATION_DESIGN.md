@@ -626,6 +626,8 @@ compiled-domain 审计已删除 `fragment`、`single_fragment`、`effective_para
 
 native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/_v1` 后缀改为无版本名，并重新编译受版本控制的 py313 pyd。实际产物中旧符号为 0、新符号缺失为 0；注册 binding 仍为 102、产品必需 21。该规则只适用于后端中立 helper，正式 `mc2_domain_cpu_v1_*` DomainV1 ABI 继续保留版本标识。
 
+兼容 runner 审计已物理删除 `test_blender_mc2_bone_constraint_soak.py`、`test_blender_mc2_bone_frame.py` 与 `test_blender_mc2_bone_static.py` 三份只转发产品测试的门面。`acceptance_assets_v1.json` 已直接指向 Bone 产品与 BoneSpring restrictions runner；能力矩阵验证旧文件及资产引用均不存在。替代证据由 Blender 5.2 Bone 产品集成、BoneSpring 599 帧限制和 BoneCloth 900 帧约束 soak 直接提供。
+
 ## 明确的数据流
 
 ### 显式模式
