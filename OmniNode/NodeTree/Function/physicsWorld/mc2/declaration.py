@@ -19,9 +19,18 @@ from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_FUSED_PRODUCT_SLOT_KIND,
-    "stage": "e7_cpu_product_domain_only",
+    "stage": "p6_contract_complete_cpu_product_domain_only",
     "native_strategy": "one_domain_v1_per_explicit_product_collector",
-    "implementation_status": "e7_cpu_complete_e7s_layout",
+    "implementation_status": "e7_complete_p6_complete_no_gpu_runtime",
+    "backend_contract": {
+        "schema_version": 1,
+        "data_pass": "MC2BackendDataPassContractV1",
+        "upload": "MC2BackendUploadPlanV1",
+        "dynamic_capacity": "MC2BackendDynamicCapacityPolicyV1",
+        "io": "MC2_BACKEND_IO_CONTRACT_V1",
+        "numerical": "MC2_BACKEND_NUMERICAL_POLICY_V1",
+        "runtime_backend_created": False,
+    },
     "slot_kinds": [
         MC2_FUSED_PRODUCT_SLOT_KIND,
     ],

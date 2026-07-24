@@ -501,13 +501,13 @@ P6 只冻结未来 backend 可直接消费的合同，不创建 GPU runtime：
 
 P6 不改变 CPU pass 顺序、调度或内存所有权，不实施 P4 CPU 并发，也不能用未来 GPU 解释 CPU 回归。E6 只有在 E7-S、P6、最终双 ABI 和规模基准稳定后才可独立开工。
 
-当前 P6 implementation package 已具备机器合同：现有 `domain_ir.py` 直接生成版本化的具体 SoA buffer/pass manifest；native 产品顺序测试与合同反向对齐；program/parameter/frame/collider 产生最小连续 dirty span；candidate/contact/intersection 采用 count-grow-emit、硬上限、统计和回滚规则；最终只进行一次 logical output readback 并沿既有多 target 事务原子发布；CPU reference exact 项、per-fixture tolerance 与 global cap 已分层。剩余工作是完整 py313/Blender 5.2 验收、蓝本状态收口和最终双 ABI 阶段。
+P6 implementation package 与当前 ABI 验收已完成：现有 `domain_ir.py` 直接生成版本化的具体 SoA buffer/pass manifest；native 产品顺序测试与合同反向对齐；program/parameter/frame/collider 产生最小连续 dirty span；candidate/contact/intersection 采用 count-grow-emit、硬上限、统计和回滚规则；最终只进行一次 logical output readback 并沿既有多 target 事务原子发布；CPU reference exact 项、per-fixture tolerance 与 global cap 已分层。py313 纯数据/owner/slot/native 与 Blender 5.2 三 setup、debug、失败回滚、P0/P2 已通过，且未创建 GPU runtime。当前进入最终 4.5/py311 双 ABI 阶段。
 
 ## 构建与验收边界
 
 - 常规开发、native 编译和 Blender 验收只使用 Python 3.13 / Blender 5.2。
 - Blender 5.2 必须清除默认 HoTools 备份模块，并确认加载当前工作树 `_Lib/py313`。
-- 4.5/py311 在旧面删除和 E7-S 基本完成前冻结；不得启动、编译或触碰用户的 4.5 进程。
+- 4.5/py311 日常开发已冻结到 P6 完成；当前只为最终双 ABI/Blender 收尾恢复，不回到双版本日常编译。
 - 纯 Python 覆盖 schema、compile、DomainV1、transaction 和 capability matrix；Blender 5.2 覆盖三 setup、多 source、多 target、debug、长程确定性与失败回滚。
 - architecture audit 必须保持依赖环、私有边界、生产测试反向依赖、raw readback、persistent ndarray、产品旧模块可达性和 binding contract 全部无未解释违规。
 - benchmark 只使用产品 DomainV1，固定资产、warmup、substep、collider 和工作量计数，分开 capture/pack/solve/readback/output/publish；绝对毫秒不作为跨机器合同。
