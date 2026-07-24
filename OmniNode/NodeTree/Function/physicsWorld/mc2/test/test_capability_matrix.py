@@ -207,62 +207,19 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         assert f"def {name}(" not in domain_compile_source
 
 
-def test_bone_compatibility_runners_are_deleted():
+def test_compatibility_runners_are_deleted():
     removed = {
         "test_blender_mc2_bone_constraint_soak.py",
         "test_blender_mc2_bone_frame.py",
         "test_blender_mc2_bone_static.py",
+        "test_blender_mc2_final_proxy.py",
+        "test_blender_mc2_base_pose.py",
     }
     assert not {path.name for path in BLENDER_TEST_ROOT.iterdir()} & removed
     acceptance = (MC2_ROOT / "test" / "acceptance_assets_v1.json").read_text(
         encoding="utf-8"
     )
     assert not any(name in acceptance for name in removed)
-
-
-def test_mesh_final_proxy_compatibility_entry_is_product_only():
-    path = BLENDER_TEST_ROOT / "test_blender_mc2_final_proxy.py"
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-    imports = {
-        ("." * node.level) + (node.module or "")
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
-    imported_names = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    assert not {"native_context", "solver", "specs"} & imported_names
-    assert not any(name.endswith(".native_context") for name in imports)
-    assert not any(name.endswith(".solver") for name in imports)
-    assert not any(name.endswith(".specs") for name in imports)
-    assert "test_mesh_final_proxy" in source
-    assert "test_blender_mc2_mesh_product_static" in source
-
-
-def test_base_pose_compatibility_entry_is_product_only():
-    path = BLENDER_TEST_ROOT / "test_blender_mc2_base_pose.py"
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-    imports = {
-        ("." * node.level) + (node.module or "")
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
-    imported_names = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    assert not {"native_context", "solver", "specs"} & imported_names
-    assert not any(name.endswith(".native_context") for name in imports)
-    assert not any(name.endswith(".solver") for name in imports)
-    assert not any(name.endswith(".specs") for name in imports)
-    assert "test_blender_mc2_mesh_product_base_pose" in source
 
 
 def test_capability_matrix_has_no_legacy_constraint_runner_evidence():

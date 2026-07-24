@@ -374,6 +374,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 14. compiled-domain 已删除 E1 单 partition compatibility/shadow 视图，只保留多 partition 真实集合，单 source 测试不得重新形成第二产品表面。
 15. static/frame 中立 native helper 已去除迁移期版本后缀；正式 DomainV1 ABI 继续版本化，py313 产物必须同时证明旧符号为零和新符号完整。
 16. 三份 Bone compatibility runner 已删除，acceptance asset 与能力矩阵只承认直接产品 runner；不得用旧脚本名重新包装产品证据。
+17. Mesh final-proxy/BasePose compatibility runner 已按同一规则删除；Tier A 纯数据 oracle 与 Blender 产品 runner 分别直接承担各自门禁。
 8. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
 9. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
 10. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。

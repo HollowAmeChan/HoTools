@@ -10,7 +10,7 @@
     {
       "id": "mesh_cloth_armature_base_pose",
       "setup_types": ["mesh_cloth"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_base_pose.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_mesh_product_base_pose.py",
       "production_surface": [
         "dual-object evaluated BasePose",
         "DomainV1 产品 slot owner",
@@ -102,7 +102,7 @@
     {
       "id": "mesh_final_proxy_rejections",
       "setup_types": ["mesh_cloth"],
-      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_final_proxy.py",
+      "script": "OmniNode/NodeTree/Function/physicsWorld/test/test_blender_mc2_mesh_product_static.py",
       "production_surface": [
         "Blender loop-triangle final proxy",
         "Pin vertex-group identity",
