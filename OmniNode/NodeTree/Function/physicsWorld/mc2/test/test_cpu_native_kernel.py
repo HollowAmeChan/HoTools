@@ -1011,14 +1011,14 @@ def test_native_cpu_reset_teleport_restarts_center_stabilization_once():
         domain.dispose()
 
 
-def test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order():
+def test_native_cpu_reference_pass_prefix_keeps_fixed_order():
     compiled = _compiled()
     kernel = native_kernel.MC2NativeCPUKernelV1()
     domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
     frame = _frame(compiled.program)
     try:
         domain.update_frame(frame)
-        domain.step_reference_slices({
+        domain.step_reference_pass_prefix({
             "anchor_component_local_positions": np.zeros((1, 3), dtype=np.float32),
             "dt": 0.1,
             "frame_interpolation": 1.0,
@@ -1625,8 +1625,8 @@ if __name__ == "__main__":
     print("PASS task_reference_teleport_contracts")
     test_native_cpu_reset_teleport_restarts_center_stabilization_once()
     print("PASS test_native_cpu_reset_teleport_restarts_center_stabilization_once")
-    test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order()
-    print("PASS test_native_cpu_reference_slice_prefix_keeps_fixed_pass_order")
+    test_native_cpu_reference_pass_prefix_keeps_fixed_order()
+    print("PASS test_native_cpu_reference_pass_prefix_keeps_fixed_order")
     test_native_cpu_reference_pipeline_runs_structural_order_through_motion()
     print("PASS test_native_cpu_reference_pipeline_runs_structural_order_through_motion")
     test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots()

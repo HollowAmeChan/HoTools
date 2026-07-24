@@ -366,6 +366,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
    外部入口全图可达性为 68/68，不可达模块和失效根均为 0；后续结构调整不再以寻找死子图为主要方向。
    declaration 不再发布 `legacy_policy` 或 `no_python_fallback` 叙事，native E3 注释也已中立化；精确禁词覆盖这些下划线残项，不影响真实数值 fallback 算法。
    E3 reference 的 `data_path_only`、七个 scheduler selector 和 readiness 合成字段已删除；显式 pass 直接消费自己的数值输入，compiled product pipeline 与 900 帧 digest 不变。
+   reference 固定前缀入口已正名为 `step_reference_pass_prefix`，生产 Python 的 slice/data-path 迁移叙事归零。
 5. 首次后续审计已确认 Mesh 旧 `static_build.py` 与两个 task frame adapter 无调用方并完成删除，生产模块当前为 69 个。
 6. 第二次后续审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支，产品 debug 只消费 frozen product snapshot。
 7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。

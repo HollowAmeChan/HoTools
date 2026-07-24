@@ -234,7 +234,7 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("Center frame shift requires update_frame first")
         step_frame_shift = getattr(self._kernel, "step_center_frame_shift", None)
         if not callable(step_frame_shift):
-            raise RuntimeError("CPU kernel does not expose the Center frame-shift slice")
+            raise RuntimeError("CPU kernel does not expose the Center frame-shift pass")
         step_frame_shift(self._handle, anchor_component_local_positions)
 
     def step_task_reference_teleport(self) -> None:
@@ -254,7 +254,7 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("Center step requires update_frame first")
         step_center = getattr(self._kernel, "step_center", None)
         if not callable(step_center):
-            raise RuntimeError("CPU kernel does not expose the Center slice")
+            raise RuntimeError("CPU kernel does not expose the Center pass")
         step_center(self._handle, settings)
 
     def step_center_inertia(self) -> None:
@@ -276,7 +276,7 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("Distance step requires update_frame first")
         step_distance = getattr(self._kernel, "step_distance", None)
         if not callable(step_distance):
-            raise RuntimeError("CPU kernel does not expose the Distance slice")
+            raise RuntimeError("CPU kernel does not expose the Distance pass")
         step_distance(self._handle, simulation_power, debug_phase)
         self._step_count += 1
 
@@ -328,14 +328,14 @@ class MC2CPUBackendDomainV1:
         method(self._handle, dict(settings))
         self._step_count += 1
 
-    def step_reference_slices(self, settings: Mapping[str, object]) -> None:
+    def step_reference_pass_prefix(self, settings: Mapping[str, object]) -> None:
         """Run only the explicit landed native reference pass prefix."""
         self._ensure_live()
         if self._latest_frame is None:
-            raise RuntimeError("reference slices require update_frame first")
-        run_reference = getattr(self._kernel, "step_reference_slices", None)
+            raise RuntimeError("reference pass prefix requires update_frame first")
+        run_reference = getattr(self._kernel, "step_reference_pass_prefix", None)
         if not callable(run_reference):
-            raise RuntimeError("CPU kernel does not expose reference slices")
+            raise RuntimeError("CPU kernel does not expose the reference pass prefix")
         run_reference(self._handle, settings)
         self._step_count += 1
 
@@ -398,7 +398,7 @@ class MC2CPUBackendDomainV1:
         return prepare_pose(self._handle, animation_pose_ratio)
 
     def step_external_collision(self, settings: Mapping[str, object]) -> None:
-        """Run the explicit native point external-collision slice."""
+        """Run the explicit native point external-collision pass."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("external collision requires update_frame first")
@@ -409,7 +409,7 @@ class MC2CPUBackendDomainV1:
         self._step_count += 1
 
     def step_self_collision(self, settings: Mapping[str, object]) -> None:
-        """Run the explicit native self-collision slice."""
+        """Run the explicit native self-collision pass."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("self collision requires update_frame first")
@@ -442,7 +442,7 @@ class MC2CPUBackendDomainV1:
         self._step_count += 1
 
     def step_external_edge_collision(self, settings: Mapping[str, object]) -> None:
-        """Run the explicit native edge external-collision slice."""
+        """Run the explicit native edge external-collision pass."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("external edge collision requires update_frame first")
@@ -537,7 +537,7 @@ class MC2CPUBackendDomainV1:
         return read_state(self._handle)
 
     def read_task_reference_teleport_state(self) -> Mapping[str, object]:
-        """Read the explicit task-reference Teleport observation slice."""
+        """Read the explicit task-reference Teleport observation state."""
         self._ensure_live()
         if self._latest_frame is None:
             raise RuntimeError("task-reference Teleport debug requires update_frame first")

@@ -127,6 +127,8 @@ solver declaration 已删除只描述旧面不存在的 `legacy_policy`，`nativ
 
 E3 reference 已删除 `data_path_only`、七个 scheduler slice selector 与旧 readiness inspect 字段；base step 和各显式 pass 不再共享第二套 settings 分发。py313 native kernel 30 项、Domain E3 golden 10 项、CPU backend 5 项、Domain owner 9 项通过，Blender 5.2 mixed-output 900 帧 digest 仍为 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`。产品 compiled pipeline 未改。
 
+固定 reference 多 pass 前缀已从 `step_reference_slices` 正名为 `step_reference_pass_prefix`；生产 Python 中剩余 slice/data-path 职责描述归零，旧方法名由精确禁词禁止回流。
+
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
 ## 公共验收门槛

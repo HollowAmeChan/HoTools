@@ -1,9 +1,4 @@
-"""Native E3 data-path kernel for ``MC2CPUBackendDomainV1``.
-
-The default product step remains unavailable.  Explicit data-path, Distance,
-and Center inertia slices are opt-in so they cannot be mistaken for the
-product solver.
-"""
+"""Native CPU bridge for base, reference, and compiled DomainV1 passes."""
 
 from __future__ import annotations
 
@@ -101,7 +96,7 @@ class MC2NativeCPUKernelV1:
         )
         if missing:
             raise RuntimeError(
-                "MC2 native CPU data-path symbols are unavailable: "
+                "MC2 native CPU DomainV1 symbols are unavailable: "
                 + ", ".join(missing)
             )
         self._programs: dict[int, MC2CompiledDomainProgramV1] = {}
@@ -280,7 +275,7 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         required = {"step_basic_positions", "compression", "stretch"}
         if set(settings) != required:
-            raise ValueError("tether slice requires exactly its explicit step inputs")
+            raise ValueError("tether pass requires exactly its explicit step inputs")
         positions = np.ascontiguousarray(settings["step_basic_positions"], dtype=np.float32)
         program = self._programs[key]
         if positions.shape != (program.particle_count, 3):
@@ -322,7 +317,7 @@ class MC2NativeCPUKernelV1:
             "restoration_enabled", "limit_enabled",
         }
         if set(settings) != required:
-            raise ValueError("angle slice requires exactly its explicit step inputs")
+            raise ValueError("angle pass requires exactly its explicit step inputs")
         program = self._programs[key]
         arrays = {}
         for name, width in (
@@ -393,7 +388,7 @@ class MC2NativeCPUKernelV1:
             "max_distance_enabled", "backstop_enabled",
         }
         if set(settings) != required:
-            raise ValueError("motion slice requires exactly its explicit step inputs")
+            raise ValueError("motion pass requires exactly its explicit step inputs")
         program = self._programs[key]
         arrays = {}
         for name, width in (("base_positions", 3), ("base_rotations", 4)):
@@ -458,7 +453,7 @@ class MC2NativeCPUKernelV1:
             "particle_speed_limit", "velocity_weight",
         }
         if set(settings) != required:
-            raise ValueError("post slice requires exactly its explicit inputs")
+            raise ValueError("post pass requires exactly its explicit inputs")
         program = self._programs[key]
         old_positions = np.ascontiguousarray(settings["old_positions"], dtype=np.float32)
         if old_positions.shape != (program.particle_count, 3):
@@ -482,7 +477,7 @@ class MC2NativeCPUKernelV1:
             "particle_speed_limit", "velocity_weight",
         }
         if set(settings) != required:
-            raise ValueError("owned post slice requires exactly its scalar inputs")
+            raise ValueError("owned post pass requires exactly its scalar inputs")
         self._module.mc2_domain_cpu_v1_step_post_owned(
             key,
             float(settings["dt"]),
@@ -533,7 +528,7 @@ class MC2NativeCPUKernelV1:
             "collider_old_segment_a", "collider_old_segment_b", "collider_radii",
         }
         if set(settings) != required:
-            raise ValueError("external collision slice requires exactly its explicit inputs")
+            raise ValueError("external collision pass requires exactly its explicit inputs")
         program = self._programs[key]
         arrays = {}
         for name in ("base_positions", "collider_centers", "collider_segment_a", "collider_segment_b",
@@ -572,7 +567,7 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         required = {"old_positions", "edges", "triangles", "friction", "surface_thickness"}
         if set(settings) != required:
-            raise ValueError("self collision slice requires exactly its explicit inputs")
+            raise ValueError("self collision pass requires exactly its explicit inputs")
         program = self._programs[key]
         old_positions = np.ascontiguousarray(settings["old_positions"], dtype=np.float32)
         if old_positions.shape != (program.particle_count, 3):
@@ -691,7 +686,7 @@ class MC2NativeCPUKernelV1:
             "collider_old_centers", "collider_old_segment_a", "collider_old_segment_b", "collider_radii",
         }
         if set(settings) != required:
-            raise ValueError("external edge collision slice requires exactly its explicit inputs")
+            raise ValueError("external edge collision pass requires exactly its explicit inputs")
         program = self._programs[key]
         particle_radii = np.ascontiguousarray(settings["collision_radii"], dtype=np.float32)
         friction = np.ascontiguousarray(settings["friction"], dtype=np.float32)
@@ -732,7 +727,7 @@ class MC2NativeCPUKernelV1:
             "inertia_vector", "inertia_rotation", "depth_inertia",
         }
         if set(settings) != required:
-            raise ValueError("inertia slice requires exactly its explicit frame inputs")
+            raise ValueError("inertia pass requires exactly its explicit frame inputs")
         arrays = {
             name: np.ascontiguousarray(settings[name], dtype=np.float32)
             for name in required - {"depth_inertia"}
@@ -758,7 +753,7 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         required = {"dt", "simulation_power", "velocity_weight", "gravity"}
         if set(settings) != required:
-            raise ValueError("integration slice requires exactly its explicit step inputs")
+            raise ValueError("integration pass requires exactly its explicit step inputs")
         gravity = np.ascontiguousarray(settings["gravity"], dtype=np.float32)
         if gravity.shape != (3,):
             raise ValueError("gravity must be a flat vector of length 3")
@@ -775,7 +770,7 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         required = {"dt", "frame_interpolation", "distance_weights"}
         if set(settings) != required:
-            raise ValueError("Center slice requires exactly dt/frame_interpolation/distance_weights")
+            raise ValueError("Center pass requires exactly dt/frame_interpolation/distance_weights")
         weights = np.ascontiguousarray(settings["distance_weights"], dtype=np.float32)
         program = self._programs[key]
         if weights.shape != (program.partition_count,):
@@ -801,7 +796,7 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_task_reference_teleport(key)
 
-    def step_reference_slices(self, handle, settings: Mapping[str, object]) -> None:
+    def step_reference_pass_prefix(self, handle, settings: Mapping[str, object]) -> None:
         """Run the currently landed native reference pass prefix in fixed order."""
         required = {
             "anchor_component_local_positions", "dt", "frame_interpolation",
@@ -812,7 +807,7 @@ class MC2NativeCPUKernelV1:
         if has_tether:
             required.update({"step_basic_positions", "tether_compression", "tether_stretch"})
         if set(settings) != required:
-            raise ValueError("reference slices require exactly their explicit pass inputs")
+            raise ValueError("reference pass prefix requires exactly its explicit inputs")
         key = self._require_handle(handle)
         has_distance = any(table.kind == "distance" for table in program.constraint_tables)
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
@@ -1164,7 +1159,7 @@ class MC2NativeCPUKernelV1:
         self.step_post_owned_partitioned(key, post_values)
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
-        """Run the explicit native Center frame-shift slice only."""
+        """Run the explicit native Center frame-shift pass only."""
         key_set = {
             "old_component_position", "component_position",
             "old_component_rotation", "component_rotation", "component_scale",
@@ -1179,7 +1174,7 @@ class MC2NativeCPUKernelV1:
             "teleport_mode", "teleport_distance", "teleport_rotation",
         }
         if set(settings) != key_set:
-            raise ValueError("Center frame-shift slice requires exactly its explicit inputs")
+            raise ValueError("Center frame-shift pass requires exactly its explicit inputs")
         arrays = {}
         for name, width in (
             ("old_component_position", 3), ("component_position", 3),
@@ -1425,7 +1420,7 @@ class MC2NativeCPUKernelV1:
         self._module.mc2_domain_cpu_v1_clear_constraint_debug(key)
 
     def read_center_debug_state(self, handle) -> dict:
-        """Read the native partitioned Center/Teleport observation slice."""
+        """Read the native partitioned Center/Teleport observation state."""
         key = self._require_handle(handle)
         return dict(self._module.mc2_domain_cpu_v1_read_center_debug(key))
 

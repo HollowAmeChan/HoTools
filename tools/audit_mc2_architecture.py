@@ -54,6 +54,7 @@ LEGACY_TERMS = (
     "motion_slice",
     "inertia_slice",
     "integration_slice",
+    "step_reference_slices",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

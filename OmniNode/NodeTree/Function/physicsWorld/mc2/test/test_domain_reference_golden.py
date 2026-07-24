@@ -651,7 +651,7 @@ def _run_center_transaction(
         )
         domain.update_frame(frame_one)
         frame_one_powers = scheduler.derive_mc2_simulation_powers(0.1)
-        domain.step_reference_slices(
+        domain.step_reference_pass_prefix(
             {
                 "anchor_component_local_positions": np.zeros(
                     (1, 3),
