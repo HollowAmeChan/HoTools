@@ -362,6 +362,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 2. 68 个 native V0 binding、5 个 context TU、2 个专用头文件、API/CMake 残留和直接 V0 native tests 已删除，并已用重新编译的 py313 产物验收。
 3. 执行 E7-S：六个顶层 setup 产品钩子先按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；不以文件数量为 KPI。可选 `native_context` 参数和两个纯内存 `v0` 资源键已经清除；生产 `V0/_v0` 门禁只豁免一个内容签名和一个活动结果 schema，精确迁移词违规也已归零。后续又删除 1 个 Mesh domain 类型别名、3 个无逻辑产品 wrapper、1 个测试专用 compiler wrapper、2 个零消费者入口和 1 条无消费者 native 复合导出，并把测试专用 Bone rotation reference 移出生产根；分类 forwarder 为 77，native 注册 binding 为 101。薄入口只有在生产读取、合同价值和 owner 边界均证明多余后才删除；forwarder 分类表同时以未分类和过期豁免为失败条件，当前两者均为 0。
 4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。当前 68 个 Python 生产模块已全部归入九类原子职责，缺失、残留、重复归类和既定 merge source 均为 0；后续发现的新合并点作为独立批次更新职责清单，不继续用模块数作为优化目标。
+   生产零入站门禁只豁免 package manifest 及其三个字符串装载入口，当前允许 4、未解释 0、过期 0；新的测试专用或死生产模块不能再仅靠文件存在逃过 E7-S。
 5. 首次后续审计已确认 Mesh 旧 `static_build.py` 与两个 task frame adapter 无调用方并完成删除，生产模块当前为 69 个。
 6. 第二次后续审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支，产品 debug 只消费 frozen product snapshot。
 7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。

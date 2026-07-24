@@ -212,6 +212,12 @@ E7S_PYTHON_RESPONSIBILITY_MODULES = {
         "mc2.timing",
     )),
 }
+E7S_ALLOWED_ZERO_INBOUND_MODULES = {
+    "mc2": "Physics World package manifest",
+    "mc2.declaration": "SOLVER_MODULE declaration entry",
+    "mc2.nodes": "SOLVER_MODULE node registry entry",
+    "mc2.setups.mesh_cloth.properties": "COMPONENT_MODULE Blender properties entry",
+}
 
 E7_LEGACY_MODULES = frozenset((
     "mc2.solver",
@@ -705,6 +711,17 @@ def _python_facts() -> dict:
             responsibility_by_module[module_name] = responsibility
     production_module_names = set(modules)
     classified_module_names = set(responsibility_by_module)
+    inbound_counts = {module_name: 0 for module_name in production_module_names}
+    for dependencies in edges.values():
+        for dependency in dependencies:
+            if dependency in inbound_counts:
+                inbound_counts[dependency] += 1
+    zero_inbound_modules = {
+        module_name
+        for module_name, count in inbound_counts.items()
+        if count == 0
+    }
+    allowed_zero_inbound_modules = set(E7S_ALLOWED_ZERO_INBOUND_MODULES)
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -777,6 +794,16 @@ def _python_facts() -> dict:
             "duplicate_modules": sorted(
                 duplicate_responsibilities,
                 key=lambda item: item["module"],
+            ),
+        },
+        "e7s_zero_inbound_modules": {
+            "allowed": dict(sorted(E7S_ALLOWED_ZERO_INBOUND_MODULES.items())),
+            "actual": sorted(zero_inbound_modules),
+            "unexplained": sorted(
+                zero_inbound_modules - allowed_zero_inbound_modules
+            ),
+            "stale_allowances": sorted(
+                allowed_zero_inbound_modules - zero_inbound_modules
             ),
         },
         "e7_cpu": {
@@ -1077,6 +1104,13 @@ def _print_summary(report: dict) -> None:
         f"{len(responsibility_report['stale_modules'])} stale, "
         f"{len(responsibility_report['duplicate_modules'])} duplicate"
     )
+    zero_inbound_report = python["e7s_zero_inbound_modules"]
+    print(
+        "E7-S Python zero-inbound roots: "
+        f"{len(zero_inbound_report['actual'])} allowed, "
+        f"{len(zero_inbound_report['unexplained'])} unexplained, "
+        f"{len(zero_inbound_report['stale_allowances'])} stale allowances"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -1153,6 +1187,8 @@ def main() -> None:
             report["python"]["e7s_python_responsibilities"]["missing_modules"],
             report["python"]["e7s_python_responsibilities"]["stale_modules"],
             report["python"]["e7s_python_responsibilities"]["duplicate_modules"],
+            report["python"]["e7s_zero_inbound_modules"]["unexplained"],
+            report["python"]["e7s_zero_inbound_modules"]["stale_allowances"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item

@@ -119,6 +119,8 @@ Python 文件职责门禁已覆盖全部 68 个生产模块，按九类 Physics 
 
 反向依赖审计把只有两份 Tier A 测试消费的 `bone_rotation.py` 从生产根迁入 `mc2/test/bone_rotation_reference.py`；Line/Triangle oracle 各 2/2、Blender 5.2 factory-startup 能力矩阵 7/7 通过。正式 Bone post rotation/writeback 仍只由 native DomainV1 产品路径负责，能力门禁禁止测试 reference 回流生产根。
 
+零入站生产模块门禁当前只允许 package manifest 及其字符串装载的 declaration、nodes、Blender properties 四个外部入口；允许 4、未解释 0、过期豁免 0。新增死模块或测试算法误放生产根会直接使架构检查失败。
+
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
 ## 公共验收门槛
