@@ -616,6 +616,8 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 后续命名审计已删除 `MC2MeshFusedCPUOwnerV1`、三个 `MC2FusedMesh*ResultV1` 与 `MC2_FUSED_MESH_SLOT_KIND` 纯兼容别名，测试直接消费统一 owner/result 类型。该批不修改持久 slot ID、slot kind 字符串或 schema identity；这些外部身份必须在独立迁移批次中评估，不能与 Python 无逻辑别名删除混合。
 
+产品 slot 审计继续删除 `sync/step/capture/publish_mc2_mesh_fused_*` 四个仅由旧测试消费的默认 Mesh slot wrapper/alias。测试现在显式传入 slot identity 并调用统一 `sync_mc2_product_slot`、`publish_mc2_product_frame`、`step_mc2_product_substep` 与 `capture_and_publish_mc2_product_frame`；生产路径不再通过隐式默认 slot 进入 DomainV1。仍有真实产品消费者的 Mesh output batch/transaction 保留，单独执行产品命名收敛。
+
 ## 明确的数据流
 
 ### 显式模式

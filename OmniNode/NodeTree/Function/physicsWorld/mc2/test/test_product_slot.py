@@ -196,14 +196,32 @@ def _world(generation=1):
     return world
 
 
+def _sync_mesh_product_slot(world, collection, *, kernel=None):
+    return slot_module.sync_mc2_product_slot(
+        world,
+        collection,
+        slot_id=slot_module.MC2_FUSED_MESH_SLOT_ID,
+        kernel=kernel,
+    )
+
+
+def _capture_mesh_product_frame(world, **kwargs):
+    slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
+    return slot_module.capture_and_publish_mc2_product_frame(
+        world,
+        slot,
+        **kwargs,
+    )
+
+
 def test_slot_create_update_and_world_dispose_own_one_handle():
     world = _world()
     kernel = _Kernel()
-    created = slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    created = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     owner = slot.data["owner"]
     scheduler_state = slot.data["scheduler_state"]
-    updated = slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    updated = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     assert created.action == "created" and updated.action == "updated"
     assert updated.owner_report.action == "reused"
     assert world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID] is slot
@@ -217,10 +235,10 @@ def test_slot_create_update_and_world_dispose_own_one_handle():
 def test_generation_change_stages_new_slot_then_disposes_old_owner():
     world = _world(generation=1)
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     old_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     world.generation = 2
-    replaced = slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    replaced = _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     new_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     assert replaced.action == "replaced" and new_slot is not old_slot
     assert new_slot.world_generation == 2
@@ -230,12 +248,12 @@ def test_generation_change_stages_new_slot_then_disposes_old_owner():
 def test_staged_create_failure_preserves_previous_generation_slot():
     world = _world(generation=1)
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     old_slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     world.generation = 2
     kernel.fail_create = True
     try:
-        slot_module.sync_mc2_mesh_fused_slot(
+        _sync_mesh_product_slot(
             world, _collection(), kernel=kernel
         )
     except RuntimeError as exc:
@@ -250,13 +268,13 @@ def test_staged_create_failure_preserves_previous_generation_slot():
 def test_same_generation_parameter_failure_preserves_slot_owner_state():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(gravity=5.0), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(gravity=5.0), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     owner = slot.data["owner"]
     compiled = owner.compiled
     kernel.fail_parameter_stage = True
     try:
-        slot_module.sync_mc2_mesh_fused_slot(
+        _sync_mesh_product_slot(
             world, _collection(gravity=6.0), kernel=kernel,
         )
     except RuntimeError as exc:
@@ -271,12 +289,12 @@ def test_same_generation_parameter_failure_preserves_slot_owner_state():
 def test_same_generation_parameter_update_preserves_product_scheduler_state():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(
+    _sync_mesh_product_slot(
         world, _collection(gravity=5.0), kernel=kernel,
     )
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     old_scheduler = slot.data["scheduler_state"]
-    updated = slot_module.sync_mc2_mesh_fused_slot(
+    updated = _sync_mesh_product_slot(
         world, _collection(gravity=6.0), kernel=kernel,
     )
     assert updated.owner_report.action == "parameters_updated"
@@ -351,13 +369,13 @@ def _scheduled(slot, frame, *, frame_delta_time=0.1, world_time_scale=1.0):
 def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
     frame = _domain_frame(program)
     scheduled = _scheduled(slot, frame)
     try:
-        slot_module.publish_mc2_mesh_fused_frame(
+        slot_module.publish_mc2_product_frame(
             world, slot, scheduled, _empty_collider_frame(8),
         )
     except ValueError as exc:
@@ -367,7 +385,7 @@ def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
     assert kernel.frames == [] and "frame_packet" not in slot.data
     assert slot.data["scheduler_state"].revision == 0
 
-    report = slot_module.publish_mc2_mesh_fused_frame(
+    report = slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(7),
     )
     assert report.partition_ids == program.partition_ids
@@ -386,7 +404,7 @@ def test_slot_publishes_one_domain_frame_and_collider_table_atomically():
 def test_slot_commits_anchor_history_only_after_native_frame_publish():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
     components = np.asarray(((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)), dtype=np.float32)
@@ -406,7 +424,7 @@ def test_slot_commits_anchor_history_only_after_native_frame_publish():
 
     kernel.fail_update = True
     try:
-        slot_module.publish_mc2_mesh_fused_frame(
+        slot_module.publish_mc2_product_frame(
             world, slot, first, _empty_collider_frame(7),
         )
     except RuntimeError as exc:
@@ -419,7 +437,7 @@ def test_slot_commits_anchor_history_only_after_native_frame_publish():
     assert "frame_packet" not in slot.data
 
     kernel.fail_update = False
-    slot_module.publish_mc2_mesh_fused_frame(
+    slot_module.publish_mc2_product_frame(
         world, slot, first, _empty_collider_frame(7),
     )
     assert state.revision == 1
@@ -444,7 +462,7 @@ def test_slot_commits_anchor_history_only_after_native_frame_publish():
 def test_product_frame_feedback_stage_commits_only_after_native_publish():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     scheduled = _scheduled(slot, _domain_frame(slot.data["owner"].compiled.program))
 
@@ -492,7 +510,7 @@ def test_product_frame_feedback_stage_commits_only_after_native_publish():
 def test_capture_path_publishes_world_and_solver_timing_atomically():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
     frame = _domain_frame(program, frame=9)
@@ -510,7 +528,7 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
         lambda *_args, **_kwargs: _empty_collider_frame(9)
     )
     try:
-        report = slot_module.capture_and_publish_mc2_mesh_fused_frame(
+        report = _capture_mesh_product_frame(
             world,
             settings=parameters.make_mc2_solver_settings(
                 time_scale=0.5,
@@ -533,15 +551,15 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
 def test_slot_executes_and_commits_compiled_substeps_sequentially():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
     scheduled = _scheduled(slot, _domain_frame(program, frame=10))
-    slot_module.publish_mc2_mesh_fused_frame(
+    slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(10),
     )
     results = tuple(
-        slot_module.step_mc2_mesh_fused_substep(world, slot)
+        slot_module.step_mc2_product_substep(world, slot)
         for _ in range(scheduled.schedule.update_count)
     )
     assert tuple(result.update_index for result in results) == tuple(
@@ -562,7 +580,7 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
         )
         assert settings["external_collision"]["collider_types"].shape == (0,)
     try:
-        slot_module.step_mc2_mesh_fused_substep(world, slot)
+        slot_module.step_mc2_product_substep(world, slot)
     except RuntimeError as exc:
         assert "no pending substeps" in str(exc)
     else:
@@ -572,17 +590,17 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
 def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     program = slot.data["owner"].compiled.program
     scheduled = _scheduled(slot, _domain_frame(program, frame=11))
-    slot_module.publish_mc2_mesh_fused_frame(
+    slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(11),
     )
     revision = slot.data["scheduler_state"].revision
     kernel.fail_step = True
     try:
-        slot_module.step_mc2_mesh_fused_substep(world, slot)
+        slot_module.step_mc2_product_substep(world, slot)
     except RuntimeError as exc:
         assert "injected fused substep failure" in str(exc)
     else:
@@ -595,7 +613,7 @@ def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
     assert slot.data["completed_substeps"] == 0
     assert "injected fused substep failure" in slot.data["last_step_failure"]
     kernel.fail_step = False
-    result = slot_module.step_mc2_mesh_fused_substep(world, slot)
+    result = slot_module.step_mc2_product_substep(world, slot)
     assert result.update_index == 0
     assert slot.data["scheduler_state"].revision == revision + 1
     assert "last_step_failure" not in slot.data
@@ -604,7 +622,7 @@ def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
 def test_paused_fused_frame_has_no_product_substeps():
     world = _world()
     kernel = _Kernel()
-    slot_module.sync_mc2_mesh_fused_slot(world, _collection(), kernel=kernel)
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
     slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
     world.frame_context = types.SimpleNamespace(frame=11)
     assert debug_module.request_mc2_debug_capture(
@@ -615,7 +633,7 @@ def test_paused_fused_frame_has_no_product_substeps():
         slot, _domain_frame(program, frame=12), world_time_scale=0.0,
     )
     assert scheduled.schedule.update_count == 0
-    slot_module.publish_mc2_mesh_fused_frame(
+    slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(12),
     )
     assert slot.data["frame_complete"] is True
@@ -628,7 +646,7 @@ def test_paused_fused_frame_has_no_product_substeps():
         scheduled.anchor_component_local_positions,
     )
     try:
-        slot_module.step_mc2_mesh_fused_substep(world, slot)
+        slot_module.step_mc2_product_substep(world, slot)
     except RuntimeError as exc:
         assert "no pending substeps" in str(exc)
     else:
@@ -645,7 +663,7 @@ def test_slot_native_executes_complete_compiled_frame():
     world = _world()
     kernel = native_kernel_module.MC2NativeCPUKernelV1()
     try:
-        slot_module.sync_mc2_mesh_fused_slot(
+        _sync_mesh_product_slot(
             world, _collection(constraints=True), kernel=kernel
         )
         slot = world.solver_slots[slot_module.MC2_FUSED_MESH_SLOT_ID]
@@ -682,11 +700,11 @@ def test_slot_native_executes_complete_compiled_frame():
         ) == 1
         frame = _domain_frame(owner.compiled.program, frame=13)
         scheduled = _scheduled(slot, frame)
-        slot_module.publish_mc2_mesh_fused_frame(
+        slot_module.publish_mc2_product_frame(
             world, slot, scheduled, _empty_collider_frame(13),
         )
         results = tuple(
-            slot_module.step_mc2_mesh_fused_substep(world, slot)
+            slot_module.step_mc2_product_substep(world, slot)
             for _ in range(scheduled.schedule.update_count)
         )
         assert tuple(result.update_index for result in results) == tuple(

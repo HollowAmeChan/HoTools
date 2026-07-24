@@ -111,7 +111,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.bone_cloth.authoring", "task_sources"),
     ("mc2.setups.bone_cloth.product", "world_gravity_directions"),
     ("mc2.product_slot", "_is_product_collection"),
-    ("mc2.product_slot", "sync_mc2_mesh_fused_slot"),
     ("mc2.product_solver", "_product_slot_id"),
     ("mc2.runtime_parameters", "_multiply_float32"),
     ("mc2.scheduler", "_f32"),

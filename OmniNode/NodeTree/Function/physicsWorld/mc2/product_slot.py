@@ -345,20 +345,6 @@ def sync_mc2_product_slot(
     )
 
 
-def sync_mc2_mesh_fused_slot(
-    world: PhysicsWorldCache,
-    collection: MC2MeshProductCollectionV1,
-    *,
-    kernel=None,
-) -> MC2FusedProductSlotSyncResultV1:
-    return sync_mc2_product_slot(
-        world,
-        collection,
-        slot_id=MC2_FUSED_MESH_SLOT_ID,
-        kernel=kernel,
-    )
-
-
 def discard_mc2_product_slots(
     world: PhysicsWorldCache,
     slot_ids,
@@ -697,15 +683,6 @@ def step_mc2_product_substep(
         world.release_write(_MC2_FUSED_PRODUCT_WRITER)
 
 
-def step_mc2_mesh_fused_substep(
-    world: PhysicsWorldCache,
-    slot: PhysicsSolverSlot | None = None,
-) -> MC2FusedProductSubstepResultV1:
-    if slot is None:
-        slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
-    return step_mc2_product_substep(world, slot)
-
-
 def build_mc2_bone_product_output(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot,
@@ -941,30 +918,6 @@ def capture_and_publish_mc2_product_frame(
     )
 
 
-def capture_and_publish_mc2_mesh_fused_frame(
-    world: PhysicsWorldCache,
-    *,
-    settings=None,
-    depsgraph=None,
-    partition_frame_flags=None,
-    velocity_weights=None,
-    gravity_ratios=None,
-) -> MC2FusedProductFramePublishResultV1:
-    slot = world.solver_slots.get(MC2_FUSED_MESH_SLOT_ID)
-    return capture_and_publish_mc2_product_frame(
-        world,
-        slot,
-        settings=settings,
-        depsgraph=depsgraph,
-        partition_frame_flags=partition_frame_flags,
-        velocity_weights=velocity_weights,
-        gravity_ratios=gravity_ratios,
-    )
-
-
-publish_mc2_mesh_fused_frame = publish_mc2_product_frame
-
-
 __all__ = [
     "MC2_FUSED_PRODUCT_SLOT_KIND",
     "MC2_FUSED_MESH_SLOT_ID",
@@ -973,17 +926,13 @@ __all__ = [
     "MC2FusedProductSlotSyncResultV1",
     "build_mc2_bone_product_output",
     "build_mc2_mesh_fused_output_batch",
-    "capture_and_publish_mc2_mesh_fused_frame",
     "capture_and_publish_mc2_product_frame",
     "discard_mc2_product_slots",
     "make_mc2_product_slot_id",
     "publish_mc2_product_frame",
-    "publish_mc2_mesh_fused_frame",
     "publish_mc2_mesh_fused_output_transaction",
     "publish_mc2_bone_product_output_transaction",
     "publish_mc2_product_output_transaction",
-    "step_mc2_mesh_fused_substep",
     "step_mc2_product_substep",
     "sync_mc2_product_slot",
-    "sync_mc2_mesh_fused_slot",
 ]
