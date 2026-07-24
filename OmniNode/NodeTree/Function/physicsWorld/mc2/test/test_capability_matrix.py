@@ -161,6 +161,15 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "MC2SelfCollisionStaticMetadata",
         "MC2BoneClothStaticMetadata",
         "compact_native_static",
+        "MC2BoneNativeData",
+        "MC2MeshBaselineMetadata",
+        "MC2MeshBaselineNativeData",
+        "MC2MeshProxyNativeMetadata",
+        "MC2MeshProxyNativeData",
+        "MC2MeshFinalizerNativeMetadata",
+        "MC2MeshFinalizerNativeData",
+        "compact_native_baseline",
+        "compact_native_finalizer",
     }
     production = [
         path
@@ -169,6 +178,8 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     ]
     for path in production:
         source = path.read_text(encoding="utf-8")
+        assert "native_context" not in source, path
+        assert "native_owner_kind" not in source, path
         tree = ast.parse(source, filename=str(path))
         defined = {
             node.name

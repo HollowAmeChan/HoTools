@@ -367,6 +367,7 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 7. 第三次后续审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel，公共事务只接受两类真实 shared product result。
 8. 第四次后续审计已把四个约束 static builder 和 Bone 产品静态装配器收敛为完整 spec-only 路径，删除 staged metadata、compact 转换与对应可选 `native_context` 参数；Mesh proxy/baseline 与 Bone native-owned 壳留给下一批独立审计。
 9. E7-S 后续按职责/调用图审计、单批所有权变更、架构门禁、产品验收、独立提交的循环推进；允许中途新增有证据的合并项，但 Physics World solver 原子化职责不因文件数量目标而合并。
+10. 第五次后续审计已删除剩余 native-owned proxy/finalizer/baseline/Bone DTO、registration capsule、`native_owner_kind` 与生产侧全部 `native_context` 参数；native 中立派生 API 继续由完整 static spec builder 消费。
 8. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
 9. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
 10. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。

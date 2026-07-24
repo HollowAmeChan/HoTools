@@ -610,6 +610,8 @@ E7-S 不预先冻结最终文件树，而按可重复的小批次循环推进：
 
 第四次后续依赖审计确认 Center、Distance、Bending、Self Collision 四个约束构建器以及 Bone 产品静态装配器的 staged metadata 分支已经没有产品消费者。上述构建器现只返回后端中立的完整 static spec；`MC2*StaticMetadata`、`MC2BoneClothStaticMetadata`、`compact_native_static` 和对应的可选 `native_context` 参数已删除。Mesh proxy/baseline 与 Bone static 中剩余的 native-owned 代理壳尚未归入本结论，必须在下一批独立证明消费者和生命周期后处理。
 
+第五次后续依赖审计确认剩余 native-owned proxy、finalizer、baseline 与 Bone DTO 只服务旧 context 注册，没有独立产品生命周期。`MC2Mesh*NativeData/Metadata`、`MC2BoneNativeData`、compact 转换、registration capsule、`native_owner_kind` 和剩余 `native_context` 参数已删除；生产 Python 树只产生完整 immutable static spec。native 中立派生 API 继续保留并由 spec builder 消费，不因删除旧 owner 而复制为 Python 算法。
+
 ## 明确的数据流
 
 ### 显式模式
