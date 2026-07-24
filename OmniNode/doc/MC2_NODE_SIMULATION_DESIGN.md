@@ -630,6 +630,8 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 同一审计继续删除 `test_blender_mc2_final_proxy.py` 与 `test_blender_mc2_base_pose.py` 两份 Mesh 转发门面，以及同时串行转发 mixed-output 与 Center 产品门禁的 `test_blender_mc2_mixed_output_soak.py`。验收资产直接指向 Mesh product static、BasePose、mixed-output 与 Center 产品 runner；final-proxy Tier A oracle 继续由纯 Python 测试直接提供。能力矩阵用一个不存在性断言覆盖全部 6 个旧 runner，不再逐文件验证“兼容门面是否足够干净”。Center World 产品门禁同时固定初始化帧已提交一次 Center shift，以及未启用 teleport 时组件显式跳变仍属于 Center 输入位移。
 
+内部资源身份审计确认 Bone frame 反馈状态和按需 hotspot timing profile 都只存活于当前 `PhysicsWorldCache.backend_resources`，不写入 `.blend`、manifest、公开 ABI 或跨进程缓存。两者的迁移期 `v0` 键已直接改为 `mc2.bone.frame_state` 与 `mc2.hotspot_timing.profile`，不读取旧键、不双写、不保留别名；架构门禁禁止旧字面量回流。版本化内容签名和结果 schema 不属于这一批，必须按各自消费边界单独审计。
+
 ## 明确的数据流
 
 ### 显式模式

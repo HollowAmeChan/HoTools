@@ -6,7 +6,7 @@ import math
 import time
 
 
-MC2_HOTSPOT_TIMING_RESOURCE_KEY = "mc2.hotspot_timing.v0"
+MC2_HOTSPOT_TIMING_RESOURCE_KEY = "mc2.hotspot_timing.profile"
 
 
 def _range_text(minimum, maximum, *, digits=0, suffix="") -> str:

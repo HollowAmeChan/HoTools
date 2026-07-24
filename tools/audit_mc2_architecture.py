@@ -41,6 +41,8 @@ LEGACY_TERMS = (
     "old physicsMC2 packages remain active",
     "mc2_interaction_v0",
     "capture_requested_mc2_debug",
+    "_mc2_bone_frame_state_v0",
+    "mc2.hotspot_timing.v0",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

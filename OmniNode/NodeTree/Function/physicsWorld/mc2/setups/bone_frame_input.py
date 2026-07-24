@@ -18,7 +18,7 @@ from ..topology import MC2TopologySpec, thaw_mc2_topology_payload
 
 _TRANSFORM_EPSILON = 1.0e-8
 _WRITEBACK_MATCH_EPSILON = 1.0e-6
-MC2_BONE_FRAME_STATE_KEY = "_mc2_bone_frame_state_v0"
+MC2_BONE_FRAME_STATE_KEY = "mc2.bone.frame_state"
 
 
 @dataclass(frozen=True)
