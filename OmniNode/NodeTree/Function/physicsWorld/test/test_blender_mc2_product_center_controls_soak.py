@@ -759,6 +759,8 @@ def _run_center_world_suite(run_index: int):
         dtype=np.float32,
     )
     input_delta = input_velocity / np.float32(_FRAME_RATE)
+    # 默认用例在第 301 帧注入组件跳变；未启用 teleport 时它仍属于 Center 输入位移。
+    input_delta[301 - 2] += np.float32(2.0)
     for setup in _SETUPS:
         follow = cases["follow"][setup]
         hold = cases["hold"][setup]
@@ -767,7 +769,8 @@ def _run_center_world_suite(run_index: int):
         rotation_limited = cases["rotation_limited"][setup]
         np.testing.assert_array_equal(
             follow["shift_count"],
-            np.arange(1, 600, dtype=np.float32),
+            # 第 1 帧已经完成一次 Center 初始化迁移；观测从第 2 帧开始。
+            np.arange(2, 601, dtype=np.float32),
         )
         step_deltas = np.diff(
             np.concatenate(
