@@ -83,7 +83,7 @@ physicsWorld/
 
 ## 当前优先级
 
-MC2已完成E7-CPU和backend-neutral P6，当前继续E7-S职责复核。最新Mesh authoring清理删除了旧覆盖节点、MC2隐式注册、collector defaults、裸Object域旁路和参与/执行类`enabled`；产品数值与事务行为未改变。P6已冻结可直接实施的SoA/pass/dirty-span/容量/IO/tolerance合同且没有创建GPU runtime；本轮实现与回归统一使用py313/Blender 5.2，Blender 4.5按当前开发约束暂停到确有最终旧代码删除收尾需求时再运行。
+MC2已完成E7-CPU、E7-S和backend-neutral P6，当前执行E6开工前的host-path收口。最新Mesh authoring清理删除了旧覆盖节点、MC2隐式注册、collector defaults、裸Object域旁路和参与/执行类`enabled`；产品数值与事务行为未改变。P6已冻结可直接实施的SoA/pass/dirty-span/容量/IO/tolerance合同且没有创建GPU runtime；host-path每个优化点独立记录改前/改后基线，并完成py311/py313与隔离Blender 5.2验收后提交。
 
 后续只按以下逻辑批次推进：
 
@@ -110,6 +110,7 @@ MC2已完成E7-CPU和backend-neutral P6，当前继续E7-S职责复核。最新M
 21. 旧代码删除、E7-S 和 P6 合同复核完成后，已恢复 Python 3.11 / Blender 4.5 完成一次最终双 ABI 与 Blender 收尾验收；后续常规开发仍只使用 py313/Blender 5.2。
 22. 产品批处理已恢复MC2请求式热点计时：节点开关关闭时仍走原完整pipeline与无计时native ABI，且不创建计时资源；开启时分别报告输入、采集、同步、Frame、求解、结果构造、事务发布、CPU原子pass，以及整域self内部的Primitive/Grid/相交/Candidate/Contact/四轮求解。计时不主动请求debug确认或快照；同步统计读取owner真实action，普通热帧不再误报为`updated`。
 23. 1760粒子/495 collider性能回归排查发现的authoring语义风险已经关闭：Mesh产品外碰mask只读取原始`collided_by_groups`，仅域内self的`collision_mask`并入自身主组；修正后的隔离Blender 5.2代表场景已完成600帧外碰范围、摩擦和确定性验收。
+24. E6前置结果路径审计已确认native输出本来就是连续NumPy数组；Domain output现在直接执行一次受控只读拷贝，不再逐标量转换为Python tuple后重建数组。多目标事务、logical顺序、有限值和只读所有权合同不变；静态target split实测成本低于当前优化阈值，不为此增加缓存owner。
 
 此前 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。该批时生产模块为 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 

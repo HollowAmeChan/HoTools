@@ -1639,8 +1639,6 @@ def make_mc2_domain_frame_output(
     if frame_packet.domain_signature != program.domain_signature:
         raise ValueError("frame packet domain signature does not match program")
     rotations = () if world_rotations_xyzw is None else world_rotations_xyzw
-    position_values = tuple(tuple(float(value) for value in row) for row in world_positions)
-    rotation_values = tuple(tuple(float(value) for value in row) for row in rotations)
     physical_values = None
     if physical_to_logical is not None:
         physical_values = _readonly_uint(
@@ -1654,12 +1652,12 @@ def make_mc2_domain_frame_output(
         frame=frame_packet.frame,
         generation=frame_packet.generation,
         world_positions=_readonly_float(
-            position_values,
+            world_positions,
             (program.particle_count, 3),
             "world_positions",
         ),
         world_rotations_xyzw=_readonly_float(
-            rotation_values,
+            rotations,
             (0, 4) if world_rotations_xyzw is None else (program.particle_count, 4),
             "world_rotations_xyzw",
         ),

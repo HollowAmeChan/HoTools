@@ -100,7 +100,8 @@ prediction
 2. 产品统一域只执行一次 external/self 流水；普通多代理不得回退到 `N context + aggregate`，也不得用减少 candidate/contact 工作量伪造收益。
 3. benchmark 必须区分 capture、pack/upload、owner step、readback、output split 和 publish，并同时记录 particle、primitive、constraint、candidate、contact 与复制字节。
 4. debug 与 timing 都是显式观察成本；关闭时只能保留常数级 gate，不能常驻 record、readback 或字符串格式化。
-5. 绝对毫秒属于同机同资产结果，不写入稳定策略。长期判断看工作量一致时的 p50/p95、内存曲线和规模增长斜率。
+5. backend readback若已经提供目标dtype、shape和连续布局的数组，domain output只允许一次明确的只读所有权拷贝；禁止为了类型归一化先逐标量构造Python tuple再重建数组。logical到target的静态映射只有在独立测量达到收益阈值后才缓存，不能仅凭调用位于热路径增加新owner。
+6. 绝对毫秒属于同机同资产结果，不写入稳定策略。长期判断看工作量一致时的 p50/p95、内存曲线和规模增长斜率。
 ## 产品架构决定
 
 ### MeshCloth 优先形成单一模拟域

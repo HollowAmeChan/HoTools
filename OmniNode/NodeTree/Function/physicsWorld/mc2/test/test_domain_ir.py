@@ -736,6 +736,32 @@ def test_optional_frame_normals_and_output_rotations_are_explicitly_empty() -> N
     assert output.world_rotations_xyzw.shape == (0, 4)
 
 
+def test_output_factory_takes_readonly_ownership_without_python_scalar_roundtrip() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    frame = _build_frame(program)
+    positions = np.array(frame.animated_base_world_positions, copy=True)
+    rotations = np.array(frame.animated_base_world_rotations, copy=True)
+    expected_positions = positions.copy()
+    expected_rotations = rotations.copy()
+    output = ir.make_mc2_domain_frame_output(
+        program,
+        frame,
+        world_positions=positions,
+        world_rotations_xyzw=rotations,
+        backend_revision=3,
+        backend_kind="cpu_reference",
+    )
+    positions[:] = 99.0
+    rotations[:] = (0.0, 0.0, 0.0, 1.0)
+    np.testing.assert_array_equal(output.world_positions, expected_positions)
+    np.testing.assert_array_equal(output.world_rotations_xyzw, expected_rotations)
+    assert output.world_positions.flags.c_contiguous
+    assert output.world_rotations_xyzw.flags.c_contiguous
+    assert not output.world_positions.flags.writeable
+    assert not output.world_rotations_xyzw.flags.writeable
+
+
 def test_frame_packet_rejects_singular_source_transform() -> None:
     fixture = _load_fixture()
     program = _build_program(fixture)
