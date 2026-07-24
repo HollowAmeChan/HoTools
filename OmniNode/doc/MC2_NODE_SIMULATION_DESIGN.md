@@ -612,6 +612,8 @@ E7-S 不预先冻结最终文件树，而按可重复的小批次循环推进：
 
 第五次后续依赖审计确认剩余 native-owned proxy、finalizer、baseline 与 Bone DTO 只服务旧 context 注册，没有独立产品生命周期。`MC2Mesh*NativeData/Metadata`、`MC2BoneNativeData`、compact 转换、registration capsule、`native_owner_kind` 和剩余 `native_context` 参数已删除；生产 Python 树只产生完整 immutable static spec。native 中立派生 API 继续保留并由 spec builder 消费，不因删除旧 owner 而复制为 Python 算法。
 
+E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已物理删除的旧模块/adapter/metadata 方法和已经不再是单调用转发器的产品函数。豁免集合必须只描述当前确有原子职责的薄访问器，不能作为历史删除清单；失效项留在 Git 历史，不继续降低未来审计灵敏度。
+
 ## 明确的数据流
 
 ### 显式模式
