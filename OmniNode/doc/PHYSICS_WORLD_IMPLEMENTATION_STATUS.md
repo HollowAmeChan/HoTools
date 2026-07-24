@@ -108,6 +108,8 @@ MC2已完成E7-CPU和backend-neutral P6，当前继续E7-S职责复核。最新M
 19. 两份 Mesh final-proxy/BasePose 门面和一份 mixed-output/Center 串行门面也已删除；6 个旧 runner 由不存在性门禁禁止回流，验收资产直接指向真实产品 runner。
 20. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
 21. 旧代码删除、E7-S 和 P6 合同复核完成后，已恢复 Python 3.11 / Blender 4.5 完成一次最终双 ABI 与 Blender 收尾验收；后续常规开发仍只使用 py313/Blender 5.2。
+22. 产品批处理已恢复MC2请求式热点计时：节点开关关闭时仍走原完整pipeline与无计时native ABI，且不创建计时资源；开启时分别报告输入、采集、同步、Frame、求解、结果构造、事务发布、CPU原子pass，以及整域self内部的Primitive/Grid/相交/Candidate/Contact/四轮求解。计时不主动请求debug确认或快照；同步统计读取owner真实action，普通热帧不再误报为`updated`。
+23. 当前1760粒子/495 collider性能回归已定位出明确的authoring语义风险：Mesh产品外碰mask正在读取并入自身主组后的`self_collision_groups`，与正式合同中“外碰使用`collided_by_groups`、仅域内self并入自身组”不一致；修正前必须用新阶段计时在代表资产上记录外碰/self占比和数值差异。
 
 此前 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。该批时生产模块为 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 

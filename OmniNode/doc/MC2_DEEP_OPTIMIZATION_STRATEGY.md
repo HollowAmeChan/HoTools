@@ -8,7 +8,8 @@
 
 - P1-B 已消除普通 Mesh 热帧的全量静态扫描；authoring、topology、UV、Pin/radius 和审计失配仍按失效合同重读。
 - E4/P2 已用一个 fused DomainV1 和一次 whole-domain self 取代普通多 task aggregate 的重复 primitive/grid/candidate/contact 流水。
-- P0 的请求式固定阶段计时已成立；关闭态不读时钟、不构造诊断结构。
+- P0 的请求式阶段计时已在当前产品批处理恢复：顶层IO/owner/solve/publish与CPU原子pass分别聚合，整域self再细分Primitive、Grid、相交、Candidate、Contact和四轮求解，热帧owner状态按`reused`、`parameters_updated`、`replaced`真实分类。关闭节点开关时不创建资源、不读阶段时钟，继续调用原无计时完整pipeline与native ABI；计时本身不请求debug确认或快照。
+- 当前1760粒子、495 collider回归首先按外碰与整域self实测分摊；合同上`collided_by_groups`只过滤外碰，域内self才把自身主组并入有效mask，二者不得在authoring冻结时混用。
 - 当前性能工作只服务 E7 删除回归与 P6 合同，不再优化即将删除的 V0 owner/aggregate。
 - P4 CPU 并发不实施，也不预埋 worker、job DAG 或 grain threshold。
 - P6 只交付可直接实现的 data/pass/buffer/IO 合同；E6 GPU 是 E7-S 后的独立里程碑。

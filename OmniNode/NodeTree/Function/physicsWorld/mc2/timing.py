@@ -225,21 +225,24 @@ class MC2HotspotTimingProfile:
             )
             lines.append(f"    .. other_stages = {hidden_ms:.3f}ms")
 
-        solve_total = self._stage_totals.get("模拟求解", 0.0) / samples * 1000.0
+        solve_total = (
+            self._stage_totals.get("统一域求解", 0.0)
+            + self._stage_totals.get("模拟求解", 0.0)
+        ) / samples * 1000.0
         detail_order = sorted(
             self._detail_totals,
             key=lambda stage: self._detail_totals[stage],
             reverse=True,
         )
         if detail_order:
-            lines.append("  Solve Detail (nested in 模拟求解):")
+            lines.append("  求解明细（包含于统一域求解）:")
             for index, stage in enumerate(detail_order, start=1):
                 average_ms = self._detail_totals[stage] / samples * 1000.0
                 maximum_ms = self._detail_maxima[stage] * 1000.0
                 percentage = average_ms / max(solve_total, 1e-6) * 100.0
                 lines.append(
                     f"    {index:02d}. {stage} = {average_ms:.3f}ms  "
-                    f"({percentage:.0f}% of solve, max={maximum_ms:.3f}ms)"
+                    f"({percentage:.0f}% 求解占比, max={maximum_ms:.3f}ms)"
                 )
         return lines
 
@@ -323,7 +326,11 @@ class MC2HotspotTimingSession:
             native_total += seconds
         residual = max(elapsed - native_total, 0.0)
         if residual > 0.0:
-            stage = "native · 边界与未归类"
+            stage = str(
+                native_timing.get("residual_stage", "native · 边界与未归类")
+            ).strip()
+            if not stage:
+                raise ValueError("MC2 native detail residual stage must not be empty")
             self._details[stage] = self._details.get(stage, 0.0) + residual
         self._detail_cursor = now
         return elapsed

@@ -134,7 +134,7 @@ def test_profile_aggregates_until_interval_and_reports_ranges():
     assert "substeps=2..6" in report
     assert "01. 模拟求解 = 15.000ms" in report
     assert "max=20.000ms" in report
-    assert "Solve Detail (nested in 模拟求解)" in report
+    assert "求解明细（包含于统一域求解）" in report
     assert "01. native组求解 = 13.500ms" in report
 
 
@@ -149,6 +149,7 @@ def test_native_details_replace_full_bridge_time_with_stages_and_residual():
             "native · 粒子预测": 0.004,
             "native · 自碰网格排序构建": 0.003,
         },
+        "residual_stage": "native · 测试边界",
     })
 
     assert abs(elapsed - 0.010) < 1e-12
@@ -156,11 +157,11 @@ def test_native_details_replace_full_bridge_time_with_stages_and_residual():
     assert set(session._details) == {
         "native · 粒子预测",
         "native · 自碰网格排序构建",
-        "native · 边界与未归类",
+        "native · 测试边界",
     }
     assert abs(session._details["native · 粒子预测"] - 0.004) < 1e-12
     assert abs(session._details["native · 自碰网格排序构建"] - 0.003) < 1e-12
-    assert abs(session._details["native · 边界与未归类"] - 0.003) < 1e-12
+    assert abs(session._details["native · 测试边界"] - 0.003) < 1e-12
 
 
 def test_world_factory_reuses_owned_profile_and_rejects_key_collision():

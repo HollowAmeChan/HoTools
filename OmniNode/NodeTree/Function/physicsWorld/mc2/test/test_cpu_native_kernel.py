@@ -1204,12 +1204,18 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             "step_integration_partitioned", "step_tether_partitioned",
             "step_distance", "step_angle_partitioned", "step_bending",
             "_run_compiled_external_collision", "step_motion_partitioned",
-            "step_whole_domain_self_owned", "step_post_owned_partitioned",
+            "step_whole_domain_self_owned", "step_whole_domain_self_owned_timed",
+            "step_post_owned_partitioned",
         )
         for name in ordered_methods:
             original = getattr(kernel, name)
+            record_name = (
+                "step_whole_domain_self_owned"
+                if name == "step_whole_domain_self_owned_timed"
+                else name
+            )
 
-            def record(*args, _name=name, _original=original, **kwargs):
+            def record(*args, _name=record_name, _original=original, **kwargs):
                 order.append(_name)
                 return _original(*args, **kwargs)
 
@@ -1225,6 +1231,42 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             "step_post_owned_partitioned",
         ]
         assert order == expected_order, order
+        timed_stages = []
+        native_timings = []
+        domain.step_compiled_domain_pipeline_timed(
+            settings,
+            timed_stages.append,
+            native_timings.append,
+        )
+        assert order == expected_order * 2, order
+        assert timed_stages == [
+            "CPU · 参数校验与碰撞体打包",
+            "CPU · Teleport",
+            "CPU · Center位移",
+            "CPU · Center",
+            "CPU · Center惯性",
+            "CPU · Integration",
+            "CPU · Tether",
+            "CPU · Distance A",
+            "CPU · Angle",
+            "CPU · 外部碰撞",
+            "CPU · Distance B",
+            "CPU · Motion/Backstop",
+            "CPU · Post/历史",
+        ]
+        assert len(native_timings) == 1
+        native_timing = native_timings[0]
+        assert native_timing["schema"] == "mc2_whole_domain_self_timing_v1"
+        assert native_timing["clock_reads"] == sum(native_timing["calls"].values()) * 2
+        assert {
+            "CPU Self · Primitive更新",
+            "CPU Self · Grid构建与排序",
+            "CPU Self · Candidate生成",
+            "CPU Self · Contact构建",
+            "CPU Self · 求解轮次1",
+            "CPU Self · 求解轮次4",
+        }.issubset(native_timing["stages"])
+        assert "CPU Self · Debug确认与快照" not in native_timing["stages"]
         contract = ir.make_mc2_backend_data_pass_contract(
             compiled.program, compiled.parameters
         )
@@ -1251,12 +1293,12 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         output = domain.read_output().world_positions
         state = domain.inspect()["kernel"]
         assert np.any(np.abs(output - positions) > np.float32(1.0e-6))
-        assert state["whole_domain_self_step_count"] == 1
+        assert state["whole_domain_self_step_count"] == 2
         assert state["whole_domain_self_last_contact_count"] > 0
         assert state["compiled_external_ready"] is True
-        assert state["compiled_external_step_count"] == 1
+        assert state["compiled_external_step_count"] == 2
         assert np.any(np.abs(domain.read_debug_state()["real_velocities"]) > 1.0e-6)
-        assert domain.inspect()["step_count"] == 1
+        assert domain.inspect()["step_count"] == 2
     finally:
         domain.dispose()
 

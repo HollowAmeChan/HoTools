@@ -36,6 +36,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_configure_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self",
     "mc2_domain_cpu_v1_step_whole_domain_self_owned",
+    "mc2_domain_cpu_v1_step_whole_domain_self_owned_timed",
     "mc2_domain_cpu_v1_configure_compiled_external_collision",
     "mc2_domain_cpu_v1_step_compiled_external_collision",
     "mc2_domain_cpu_v1_step_external_edge_collision",
@@ -603,6 +604,55 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         self._module.mc2_domain_cpu_v1_step_whole_domain_self_owned(key)
 
+    def step_whole_domain_self_owned_timed(self, handle) -> dict:
+        """仅在显式热点计时请求下运行 E4，并返回 native 内部阶段耗时。"""
+
+        key = self._require_handle(handle)
+        raw = self._module.mc2_domain_cpu_v1_step_whole_domain_self_owned_timed(key)
+        if not isinstance(raw, Mapping) or raw.get("schema") != (
+            "mc2_whole_domain_self_timing_v1"
+        ):
+            raise RuntimeError("native whole-domain self timing schema is invalid")
+        raw_stages = raw.get("stages")
+        raw_calls = raw.get("calls")
+        if not isinstance(raw_stages, Mapping) or not isinstance(raw_calls, Mapping):
+            raise RuntimeError("native whole-domain self timing payload is invalid")
+        labels = {
+            "primitive_update": "CPU Self · Primitive更新",
+            "grid": "CPU Self · Grid构建与排序",
+            "intersection": "CPU Self · 相交检测",
+            "candidates": "CPU Self · Candidate生成",
+            "contact_build": "CPU Self · Contact构建",
+            "solve_prepare": "CPU Self · 求解准备",
+            "solve_round_1": "CPU Self · 求解轮次1",
+            "solve_round_2": "CPU Self · 求解轮次2",
+            "solve_round_3": "CPU Self · 求解轮次3",
+            "solve_round_4": "CPU Self · 求解轮次4",
+            "debug_finalize": "CPU Self · Debug确认与快照",
+        }
+        unknown = set(raw_stages) - set(labels)
+        if unknown:
+            raise RuntimeError(f"native whole-domain self timing has unknown stages: {unknown}")
+        stages = {}
+        calls = {}
+        for name, raw_seconds in raw_stages.items():
+            seconds = float(raw_seconds)
+            call_count = int(raw_calls.get(name, 0))
+            if not np.isfinite(seconds) or seconds < 0.0 or call_count <= 0:
+                raise RuntimeError("native whole-domain self timing sample is invalid")
+            stages[labels[name]] = seconds
+            calls[labels[name]] = call_count
+        clock_reads = int(raw.get("clock_reads", 0))
+        if clock_reads != sum(calls.values()) * 2:
+            raise RuntimeError("native whole-domain self timing clock count is invalid")
+        return {
+            "schema": "mc2_whole_domain_self_timing_v1",
+            "stages": stages,
+            "calls": calls,
+            "clock_reads": clock_reads,
+            "residual_stage": "CPU Self · ABI边界与未归类",
+        }
+
     def _prepare_compiled_external_collision(
         self,
         handle: int,
@@ -1157,6 +1207,171 @@ class MC2NativeCPUKernelV1:
         })
         self.step_whole_domain_self_owned(key)
         self.step_post_owned_partitioned(key, post_values)
+
+    def step_compiled_domain_pipeline_timed(
+        self,
+        handle,
+        settings: Mapping[str, object],
+        checkpoint,
+        native_checkpoint,
+    ) -> None:
+        """按同一固定顺序执行诊断路径，并在每个原子 pass 后读时钟。"""
+
+        if not callable(checkpoint):
+            raise TypeError("timed compiled domain pipeline requires a checkpoint callback")
+        if not callable(native_checkpoint):
+            raise TypeError("timed compiled domain pipeline requires a native checkpoint callback")
+        settings = dict(settings)
+        if "external_collision" not in settings:
+            raise ValueError("compiled domain pipeline requires external_collision")
+        external_collision = settings.pop("external_collision")
+        if not isinstance(external_collision, (Mapping, MC2DomainColliderFrameSpec)):
+            raise TypeError("external_collision must be a public domain collider table")
+        if "post_step" not in settings:
+            raise ValueError("compiled domain pipeline requires post_step")
+        post_step = settings.pop("post_step")
+        if not isinstance(post_step, Mapping):
+            raise TypeError("post_step must be a mapping")
+        post_required = {
+            "dt", "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
+        }
+        if set(post_step) != post_required:
+            raise ValueError("compiled domain post_step requires exactly its particle inputs")
+        key = self._require_handle(handle)
+        program = self._programs[key]
+        post_values = {"dt": float(post_step["dt"])}
+        if not np.isfinite(post_values["dt"]) or post_values["dt"] <= 0.0:
+            raise ValueError("compiled domain post_step dt is invalid")
+        for name in (
+            "dynamic_friction_values", "static_friction_speed_values",
+            "particle_speed_limit_values",
+        ):
+            array = np.ascontiguousarray(post_step[name], dtype=np.float32)
+            if array.shape != (program.particle_count,) or not np.isfinite(array).all():
+                raise ValueError(f"compiled domain post_step {name} is invalid")
+            array.flags.writeable = False
+            post_values[name] = array
+        if (
+            np.any(post_values["dynamic_friction_values"] < 0.0)
+            or np.any(post_values["dynamic_friction_values"] > 1.0)
+            or np.any(post_values["static_friction_speed_values"] < 0.0)
+        ):
+            raise ValueError("compiled domain post_step particle values are invalid")
+        collider_arrays = self._prepare_compiled_external_collision(
+            key,
+            external_collision,
+        )
+        required = {
+            "anchor_component_local_positions", "dt", "frame_interpolation",
+            "distance_weights", "simulation_power", "distance_simulation_power",
+            "bending_simulation_power", "step_basic_positions",
+            "tether_compression_values", "tether_stretch_values",
+            "step_basic_rotations", "angle_restoration_values", "angle_limit_values",
+            "angle_restoration_velocity_attenuation_values",
+            "angle_restoration_gravity_falloff_values", "angle_limit_stiffness_values",
+            "angle_restoration_enabled_values", "angle_limit_enabled_values",
+            "motion_base_positions", "motion_base_rotations", "motion_max_distances",
+            "motion_stiffness_values", "motion_backstop_radii", "motion_backstop_distances",
+            "motion_normal_axis_values", "motion_max_distance_enabled_values",
+            "motion_backstop_enabled_values",
+        }
+        if set(settings) != required:
+            raise ValueError("compiled domain pipeline requires exactly its structural inputs")
+        has_distance = any(
+            table.kind == "distance" for table in program.constraint_tables
+        )
+        has_bending = any(
+            table.kind == "bending" for table in program.constraint_tables
+        )
+        has_tether = any(
+            table.kind == "tether" for table in program.constraint_tables
+        )
+        has_angle = program.baseline_parent_indices is not None
+        checkpoint("CPU · 参数校验与碰撞体打包")
+
+        self.step_task_reference_teleport(key)
+        checkpoint("CPU · Teleport")
+        self.step_center_frame_shift(
+            key,
+            settings["anchor_component_local_positions"],
+        )
+        checkpoint("CPU · Center位移")
+        self.step_center(key, {
+            "dt": settings["dt"],
+            "frame_interpolation": settings["frame_interpolation"],
+            "distance_weights": settings["distance_weights"],
+        })
+        checkpoint("CPU · Center")
+        self.step_center_inertia(key)
+        checkpoint("CPU · Center惯性")
+        self.step_integration_partitioned(key, {
+            "dt": settings["dt"],
+            "simulation_power": settings["simulation_power"],
+        })
+        checkpoint("CPU · Integration")
+        if has_tether:
+            self.step_tether_partitioned(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "compression_values": settings["tether_compression_values"],
+                "stretch_values": settings["tether_stretch_values"],
+            })
+            checkpoint("CPU · Tether")
+        if has_distance:
+            self.step_distance(
+                key,
+                settings["distance_simulation_power"],
+                debug_phase=0,
+            )
+            checkpoint("CPU · Distance A")
+        if has_angle:
+            self.step_angle_partitioned(key, {
+                "step_basic_positions": settings["step_basic_positions"],
+                "step_basic_rotations": settings["step_basic_rotations"],
+                "restoration_values": settings["angle_restoration_values"],
+                "limit_values": settings["angle_limit_values"],
+                "restoration_velocity_attenuation_values": settings[
+                    "angle_restoration_velocity_attenuation_values"
+                ],
+                "restoration_gravity_falloff_values": settings[
+                    "angle_restoration_gravity_falloff_values"
+                ],
+                "limit_stiffness_values": settings["angle_limit_stiffness_values"],
+                "restoration_enabled_values": settings[
+                    "angle_restoration_enabled_values"
+                ],
+                "limit_enabled_values": settings["angle_limit_enabled_values"],
+            })
+            checkpoint("CPU · Angle")
+        if has_bending:
+            self.step_bending(key, settings["bending_simulation_power"])
+            checkpoint("CPU · Bending")
+        self._run_compiled_external_collision(key, collider_arrays)
+        checkpoint("CPU · 外部碰撞")
+        if has_distance:
+            self.step_distance(
+                key,
+                settings["distance_simulation_power"],
+                debug_phase=1,
+            )
+            checkpoint("CPU · Distance B")
+        self.step_motion_partitioned(key, {
+            "base_positions": settings["motion_base_positions"],
+            "base_rotations": settings["motion_base_rotations"],
+            "max_distances": settings["motion_max_distances"],
+            "stiffness_values": settings["motion_stiffness_values"],
+            "backstop_radii": settings["motion_backstop_radii"],
+            "backstop_distances": settings["motion_backstop_distances"],
+            "normal_axis_values": settings["motion_normal_axis_values"],
+            "max_distance_enabled_values": settings[
+                "motion_max_distance_enabled_values"
+            ],
+            "backstop_enabled_values": settings["motion_backstop_enabled_values"],
+        })
+        checkpoint("CPU · Motion/Backstop")
+        native_checkpoint(self.step_whole_domain_self_owned_timed(key))
+        self.step_post_owned_partitioned(key, post_values)
+        checkpoint("CPU · Post/历史")
 
     def evaluate_center_frame_shift(self, settings: Mapping[str, object]) -> dict:
         """Run the explicit native Center frame-shift pass only."""

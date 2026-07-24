@@ -2353,6 +2353,71 @@ void DomainV1::step_whole_domain_self_owned() {
     step_whole_domain_self_impl(substep_old_positions_.data(), false);
 }
 
+hotools::Mc2WholeDomainSelfTiming DomainV1::step_whole_domain_self_timed_impl(
+    const float* old_positions,
+    bool reset_friction
+) {
+    ensure_live();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 whole-domain self step requires update_frame");
+    }
+    if (!inertia_ready_) {
+        throw std::logic_error("MC2 whole-domain self step requires particle configuration");
+    }
+    if (!whole_domain_self_ready_) {
+        throw std::logic_error("MC2 whole-domain self step requires configuration");
+    }
+    require_finite(old_positions, particle_count_ * 3, "whole-domain self old positions");
+    if (reset_friction || !collision_state_ready_) {
+        collision_friction_ = whole_domain_self_friction_;
+    }
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        const auto offset = partition * 3;
+        const float current_length = std::sqrt(
+            partition_world_scales_[offset] * partition_world_scales_[offset] +
+            partition_world_scales_[offset + 1] * partition_world_scales_[offset + 1] +
+            partition_world_scales_[offset + 2] * partition_world_scales_[offset + 2]
+        );
+        const float initial_length = std::sqrt(
+            center_initial_scales_[offset] * center_initial_scales_[offset] +
+            center_initial_scales_[offset + 1] * center_initial_scales_[offset + 1] +
+            center_initial_scales_[offset + 2] * center_initial_scales_[offset + 2]
+        );
+        whole_domain_self_partition_scale_ratios_[partition] = std::max(
+            current_length / std::max(initial_length, 0.00000001f), 0.000001f
+        );
+    }
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        whole_domain_self_scaled_thickness_[vertex] = whole_domain_self_thickness_[vertex] *
+            whole_domain_self_partition_scale_ratios_[particle_partition_index_[vertex]];
+    }
+    auto timing = whole_domain_self_engine_->solve_timed(
+        world_positions_.data(),
+        old_positions,
+        whole_domain_self_scaled_thickness_.data(),
+        collision_friction_.data(),
+        whole_domain_self_cloth_mass_.data(),
+        frame_,
+        generation_,
+        whole_domain_self_last_candidate_count_,
+        whole_domain_self_last_contact_count_
+    );
+    collision_state_ready_ = true;
+    ++whole_domain_self_step_count_;
+    ++step_count_;
+    return timing;
+}
+
+hotools::Mc2WholeDomainSelfTiming DomainV1::step_whole_domain_self_owned_timed() {
+    ensure_live();
+    if (!substep_snapshot_ready_) {
+        throw std::logic_error(
+            "MC2 whole-domain self owned step requires the substep snapshot"
+        );
+    }
+    return step_whole_domain_self_timed_impl(substep_old_positions_.data(), false);
+}
+
 void DomainV1::configure_compiled_external_collision(
     const std::int32_t* edges,
     std::size_t edge_count,

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -142,17 +143,40 @@ std::uint64_t self_particle_pair_key(std::int32_t first, std::int32_t second) {
         static_cast<std::uint64_t>(upper);
 }
 
-enum class NoopTimingStage {
-    SelfSolvePrepare,
-    SelfSolveRound1,
-    SelfSolveRound2,
-    SelfSolveRound3,
-    SelfSolveRound4,
+template <bool Enabled>
+class SelfTimingScope;
+
+template <>
+class SelfTimingScope<false> {
+public:
+    SelfTimingScope(Mc2WholeDomainSelfTiming*, Mc2WholeDomainSelfTimingStage) noexcept {}
 };
 
-class NoopTimingScope {
+template <>
+class SelfTimingScope<true> {
 public:
-    NoopTimingScope(void*, NoopTimingStage) {}
+    SelfTimingScope(
+        Mc2WholeDomainSelfTiming* timing,
+        Mc2WholeDomainSelfTimingStage stage
+    ) noexcept
+        : timing_(timing), stage_(stage), started_(std::chrono::steady_clock::now()) {
+        ++timing_->clock_reads;
+    }
+
+    ~SelfTimingScope() noexcept {
+        const auto finished = std::chrono::steady_clock::now();
+        ++timing_->clock_reads;
+        const auto index = static_cast<std::size_t>(stage_);
+        timing_->seconds[index] += std::chrono::duration<double>(
+            finished - started_
+        ).count();
+        ++timing_->calls[index];
+    }
+
+private:
+    Mc2WholeDomainSelfTiming* timing_;
+    Mc2WholeDomainSelfTimingStage stage_;
+    std::chrono::steady_clock::time_point started_;
 };
 
 struct WholeDomainSelfState {
@@ -1083,9 +1107,10 @@ void add_wrapped_int32(std::int32_t& destination, std::int32_t value) {
     std::memcpy(&destination, &sum, sizeof(destination));
 }
 
+template <bool TrackTiming>
 void solve_self_collision_contacts(
     WholeDomainSelfState& context,
-    void* timing
+    Mc2WholeDomainSelfTiming* timing
 ) {
     if (!context.self_contact_ready) return;
     const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
@@ -1094,8 +1119,8 @@ void solve_self_collision_contacts(
     std::vector<std::int32_t> counts;
     std::vector<std::int32_t> sums;
     {
-        NoopTimingScope stage(
-            timing, NoopTimingStage::SelfSolvePrepare
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::SolvePrepare
         );
         context.self_contact_debug_ready = false;
         if (capture_debug) {
@@ -1152,15 +1177,15 @@ void solve_self_collision_contacts(
     };
 
     constexpr int kSolverIterations = 4;
-    constexpr std::array<NoopTimingStage, kSolverIterations>
+    constexpr std::array<Mc2WholeDomainSelfTimingStage, kSolverIterations>
         kIterationStages {
-            NoopTimingStage::SelfSolveRound1,
-            NoopTimingStage::SelfSolveRound2,
-            NoopTimingStage::SelfSolveRound3,
-            NoopTimingStage::SelfSolveRound4,
+            Mc2WholeDomainSelfTimingStage::SolveRound1,
+            Mc2WholeDomainSelfTimingStage::SolveRound2,
+            Mc2WholeDomainSelfTimingStage::SolveRound3,
+            Mc2WholeDomainSelfTimingStage::SolveRound4,
         };
     for (int iteration = 0; iteration < kSolverIterations; ++iteration) {
-        NoopTimingScope stage(timing, kIterationStages[iteration]);
+        SelfTimingScope<TrackTiming> stage(timing, kIterationStages[iteration]);
         for (std::size_t contact = 0; contact < contact_count; ++contact) {
             if (context.self_contact_enabled[contact] == 0) continue;
             const auto primitive0 = static_cast<std::size_t>(
@@ -1418,7 +1443,8 @@ void Mc2WholeDomainSelfEngine::configure(
     clear_self_collision_contacts(state);
 }
 
-void Mc2WholeDomainSelfEngine::solve(
+template <bool TrackTiming>
+void Mc2WholeDomainSelfEngine::solve_impl(
     float* positions,
     const float* old_positions,
     const float* particle_thickness,
@@ -1427,20 +1453,25 @@ void Mc2WholeDomainSelfEngine::solve(
     std::int64_t frame,
     std::int64_t generation,
     std::int64_t& candidate_count,
-    std::int64_t& contact_count
+    std::int64_t& contact_count,
+    Mc2WholeDomainSelfTiming* timing
 ) {
     auto& state = impl_->state;
     const auto vertex_count = static_cast<std::size_t>(state.vertex_count);
     const auto primitive_count = state.self_primitive_flags.size();
-    state.frame = frame;
-    state.generation = generation;
-    state.state_positions.assign(positions, positions + vertex_count * 3);
-    state.velocity_reference_positions.assign(
-        old_positions, old_positions + vertex_count * 3
-    );
-    float edge_max_size = 0.0f;
-    float fallback_max_size = 0.0f;
-    for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::PrimitiveUpdate
+        );
+        state.frame = frame;
+        state.generation = generation;
+        state.state_positions.assign(positions, positions + vertex_count * 3);
+        state.velocity_reference_positions.assign(
+            old_positions, old_positions + vertex_count * 3
+        );
+        float edge_max_size = 0.0f;
+        float fallback_max_size = 0.0f;
+        for (std::size_t primitive = 0; primitive < primitive_count; ++primitive) {
         const auto kind = (state.self_primitive_flags[primitive] >> 24u) & 0x03u;
         const auto axis_count = static_cast<std::size_t>(kind + 1u);
         float minimum[3] {
@@ -1493,58 +1524,82 @@ void Mc2WholeDomainSelfEngine::solve(
         });
         fallback_max_size = std::max(fallback_max_size, primitive_size);
         if (kind == 1u) edge_max_size = std::max(edge_max_size, primitive_size);
+        }
+        if (edge_max_size <= kMc2Epsilon) edge_max_size = fallback_max_size;
+        state.self_max_primitive_size = edge_max_size;
+        state.self_grid_size = edge_max_size * 3.0f;
+        state.self_primitive_frame = frame;
+        state.self_primitive_generation = generation;
+        state.self_primitive_dynamic_ready = true;
     }
-    if (edge_max_size <= kMc2Epsilon) edge_max_size = fallback_max_size;
-    state.self_max_primitive_size = edge_max_size;
-    state.self_grid_size = edge_max_size * 3.0f;
-    state.self_primitive_frame = frame;
-    state.self_primitive_generation = generation;
-    state.self_primitive_dynamic_ready = true;
-    update_self_collision_grid(state);
-    detect_self_collision_intersections(state);
-    update_self_collision_candidates(state);
-    build_self_collision_contacts(state, state.velocity_reference_positions);
-    solve_self_collision_contacts(state, nullptr);
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::Grid
+        );
+        update_self_collision_grid(state);
+    }
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::Intersection
+        );
+        detect_self_collision_intersections(state);
+    }
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::Candidates
+        );
+        update_self_collision_candidates(state);
+    }
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::ContactBuild
+        );
+        build_self_collision_contacts(state, state.velocity_reference_positions);
+    }
+    solve_self_collision_contacts<TrackTiming>(state, timing);
     if (state.self_contact_debug_requested) {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::DebugFinalize
+        );
         confirm_self_collision_intersections(state);
-    }
-    if (state.self_contact_debug_requested && state.self_contact_debug_ready) {
-        auto& snapshot = impl_->debug_snapshot;
-        snapshot.frame = state.frame;
-        snapshot.generation = state.generation;
-        snapshot.point_primitive_count = state.self_point_primitive_count;
-        snapshot.edge_primitive_count = state.self_edge_primitive_count;
-        snapshot.triangle_primitive_count = state.self_triangle_primitive_count;
-        snapshot.point_grid_count = state.self_point_grid_count;
-        snapshot.edge_grid_count = state.self_edge_grid_count;
-        snapshot.triangle_grid_count = state.self_triangle_grid_count;
-        snapshot.max_primitive_size = state.self_max_primitive_size;
-        snapshot.grid_size = state.self_grid_size;
-        snapshot.primitive_flags = state.self_primitive_flags;
-        snapshot.particle_indices = state.self_particle_indices;
-        snapshot.primitive_depths = state.self_primitive_depths;
-        snapshot.inverse_masses = state.self_primitive_inverse_masses;
-        snapshot.aabb_min = state.self_primitive_aabb_min;
-        snapshot.aabb_max = state.self_primitive_aabb_max;
-        snapshot.thickness = state.self_primitive_thickness;
-        snapshot.owner_indices = state.self_primitive_owner_indices;
-        snapshot.owner_group_bits = state.self_owner_primary_group_bits;
-        snapshot.owner_collision_masks = state.self_owner_collided_by_groups;
-        snapshot.primitive_grids = state.self_primitive_grids;
-        snapshot.grid_hashes = state.self_grid_hashes;
-        snapshot.grid_starts = state.self_grid_starts;
-        snapshot.grid_counts = state.self_grid_counts;
-        snapshot.candidates = state.self_contact_candidates;
-        snapshot.contact_indices = state.self_contact_primitive_indices;
-        snapshot.contact_types = state.self_contact_types;
-        snapshot.contact_enabled = state.self_contact_enabled;
-        snapshot.contact_thickness = state.self_contact_thickness;
-        snapshot.contact_s = state.self_contact_s;
-        snapshot.contact_t = state.self_contact_t;
-        snapshot.contact_normals = state.self_contact_normals;
-        snapshot.contact_corrections = state.debug_self_contact_corrections;
-        snapshot.intersect_records = state.self_intersect_records;
-        impl_->debug_snapshot_ready = true;
+        if (state.self_contact_debug_ready) {
+            auto& snapshot = impl_->debug_snapshot;
+            snapshot.frame = state.frame;
+            snapshot.generation = state.generation;
+            snapshot.point_primitive_count = state.self_point_primitive_count;
+            snapshot.edge_primitive_count = state.self_edge_primitive_count;
+            snapshot.triangle_primitive_count = state.self_triangle_primitive_count;
+            snapshot.point_grid_count = state.self_point_grid_count;
+            snapshot.edge_grid_count = state.self_edge_grid_count;
+            snapshot.triangle_grid_count = state.self_triangle_grid_count;
+            snapshot.max_primitive_size = state.self_max_primitive_size;
+            snapshot.grid_size = state.self_grid_size;
+            snapshot.primitive_flags = state.self_primitive_flags;
+            snapshot.particle_indices = state.self_particle_indices;
+            snapshot.primitive_depths = state.self_primitive_depths;
+            snapshot.inverse_masses = state.self_primitive_inverse_masses;
+            snapshot.aabb_min = state.self_primitive_aabb_min;
+            snapshot.aabb_max = state.self_primitive_aabb_max;
+            snapshot.thickness = state.self_primitive_thickness;
+            snapshot.owner_indices = state.self_primitive_owner_indices;
+            snapshot.owner_group_bits = state.self_owner_primary_group_bits;
+            snapshot.owner_collision_masks = state.self_owner_collided_by_groups;
+            snapshot.primitive_grids = state.self_primitive_grids;
+            snapshot.grid_hashes = state.self_grid_hashes;
+            snapshot.grid_starts = state.self_grid_starts;
+            snapshot.grid_counts = state.self_grid_counts;
+            snapshot.candidates = state.self_contact_candidates;
+            snapshot.contact_indices = state.self_contact_primitive_indices;
+            snapshot.contact_types = state.self_contact_types;
+            snapshot.contact_enabled = state.self_contact_enabled;
+            snapshot.contact_thickness = state.self_contact_thickness;
+            snapshot.contact_s = state.self_contact_s;
+            snapshot.contact_t = state.self_contact_t;
+            snapshot.contact_normals = state.self_contact_normals;
+            snapshot.contact_corrections = state.debug_self_contact_corrections;
+            snapshot.intersect_records = state.self_intersect_records;
+            impl_->debug_snapshot_ready = true;
+        }
     }
     state.self_contact_debug_requested = false;
     candidate_count = static_cast<std::int64_t>(
@@ -1552,6 +1607,44 @@ void Mc2WholeDomainSelfEngine::solve(
     );
     contact_count = static_cast<std::int64_t>(state.self_contact_types.size());
     std::copy(state.state_positions.begin(), state.state_positions.end(), positions);
+}
+
+void Mc2WholeDomainSelfEngine::solve(
+    float* positions,
+    const float* old_positions,
+    const float* particle_thickness,
+    const float* particle_friction,
+    const float* particle_cloth_mass,
+    std::int64_t frame,
+    std::int64_t generation,
+    std::int64_t& candidate_count,
+    std::int64_t& contact_count
+) {
+    solve_impl<false>(
+        positions, old_positions, particle_thickness, particle_friction,
+        particle_cloth_mass, frame, generation, candidate_count, contact_count,
+        nullptr
+    );
+}
+
+Mc2WholeDomainSelfTiming Mc2WholeDomainSelfEngine::solve_timed(
+    float* positions,
+    const float* old_positions,
+    const float* particle_thickness,
+    const float* particle_friction,
+    const float* particle_cloth_mass,
+    std::int64_t frame,
+    std::int64_t generation,
+    std::int64_t& candidate_count,
+    std::int64_t& contact_count
+) {
+    Mc2WholeDomainSelfTiming timing;
+    solve_impl<true>(
+        positions, old_positions, particle_thickness, particle_friction,
+        particle_cloth_mass, frame, generation, candidate_count, contact_count,
+        &timing
+    );
+    return timing;
 }
 
 void Mc2WholeDomainSelfEngine::request_debug_capture() {

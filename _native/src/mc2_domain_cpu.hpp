@@ -9,6 +9,7 @@
 namespace hotools {
 class Mc2WholeDomainSelfEngine;
 struct Mc2WholeDomainSelfDebugSnapshot;
+struct Mc2WholeDomainSelfTiming;
 struct Mc2ExternalCollisionDebugRecord;
 }
 
@@ -191,6 +192,7 @@ public:
     );
     void step_whole_domain_self(const float* old_positions);
     void step_whole_domain_self_owned();
+    hotools::Mc2WholeDomainSelfTiming step_whole_domain_self_owned_timed();
     void configure_compiled_external_collision(
         const std::int32_t* edges,
         std::size_t edge_count,
@@ -579,6 +581,10 @@ private:
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
     void prepare_prediction_state();
     void step_whole_domain_self_impl(const float* old_positions, bool reset_friction);
+    hotools::Mc2WholeDomainSelfTiming step_whole_domain_self_timed_impl(
+        const float* old_positions,
+        bool reset_friction
+    );
 
     std::size_t particle_count_ = 0;
     std::size_t partition_count_ = 0;

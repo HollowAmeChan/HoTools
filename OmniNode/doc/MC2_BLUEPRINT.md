@@ -446,6 +446,8 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 3. 68 个 V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、`mc2_api.hpp` 声明、CMake/object dependency、required-symbol 和直接 V0 native tests 已删除；4 个中立 frame/static API 与产品 DomainV1 ABI 保留。
 4. py313 native 已 clean rebuild；架构审计、全部保留 raw ABI smoke、55 项 Python 产品/能力测试以及 Blender 5.2 property registry、source observation、product debug、BoneCloth/BoneSpring 产品集成均通过，验收明确加载当前工作树产物。
 5. E7-S 与 P6 已完成；删除后产品 DomainV1 的 P0 hotspot 六个 case 全部通过 ceiling，P2 whole-domain self 同半径重复计数一致且较大半径产生更多 candidate/contact。最终 4.5/py311 双 ABI 与 Blender 收尾也已通过。
+6. E7-S后的产品批处理已恢复请求式热点计时：关闭节点开关时不创建资源并保持原完整pipeline与无计时native ABI；开启时顶层拆分输入/采集/同步/Frame/求解/结果/发布，CPU求解按backend-neutral原子pass继续细分，整域self提供Primitive/Grid/相交/Candidate/Contact/四轮求解明细。计时不主动请求debug确认或快照；owner热帧统计使用真实`reused/parameters_updated/replaced`，不再把slot复用统称为`updated`。
+7. Mesh碰撞组仍需完成一次语义修正：外碰mask必须保持对象冻结的`collided_by_groups`，只有whole-domain self的有效mask允许额外并入自身主组。当前统一authoring把`self_collision_groups`送入外碰，可能令默认组1的全部collider意外参与；先用产品阶段计时记录代表资产外碰/self占比，再独立修正并做数值与性能验收。
 
 逻辑批次必须覆盖完整所有权面，同时包含代码、测试、审计和唯一蓝本更新；不再按单 runner 或单个断言提交。
 

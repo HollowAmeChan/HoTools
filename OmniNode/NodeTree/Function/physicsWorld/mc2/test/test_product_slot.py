@@ -129,6 +129,7 @@ class _Kernel:
         self.frame_shifts = []
         self.poses = []
         self.full_steps = []
+        self.timed_steps = []
         self.fail_create = False
         self.fail_parameter_stage = False
         self.fail_update = False
@@ -184,6 +185,17 @@ class _Kernel:
         if self.fail_step:
             raise RuntimeError("injected fused substep failure")
         self.full_steps.append((handle, settings))
+    def step_compiled_domain_pipeline_timed(
+        self, handle, settings, checkpoint, native_checkpoint
+    ):
+        if self.fail_step:
+            raise RuntimeError("injected fused substep failure")
+        self.timed_steps.append((handle, settings))
+        checkpoint("CPU · 测试pass")
+        native_checkpoint({
+            "stages": {"CPU Self · 测试": 0.0},
+            "residual_stage": "CPU Self · 测试边界",
+        })
     def step(self, handle, frame, settings, colliders): pass
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
@@ -585,6 +597,44 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
         assert "no pending substeps" in str(exc)
     else:
         raise AssertionError("completed fused frame accepted an extra substep")
+
+
+def test_slot_uses_timed_pipeline_only_when_hotspot_timing_is_requested():
+    world = _world()
+    kernel = _Kernel()
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(slot, _domain_frame(program, frame=12))
+    assert scheduled.schedule.update_count >= 2
+    slot_module.publish_mc2_product_frame(
+        world, slot, scheduled, _empty_collider_frame(12),
+    )
+
+    slot_module.step_mc2_product_substep(world, slot)
+    assert len(kernel.full_steps) == 1
+    assert kernel.timed_steps == []
+
+    class _Timing:
+        def __init__(self):
+            self.details = []
+
+        def detail_checkpoint(self, stage):
+            self.details.append(stage)
+
+        def detail_native_checkpoint(self, payload):
+            self.details.extend(payload["stages"])
+
+    timing = _Timing()
+    slot_module.step_mc2_product_substep(world, slot, timing=timing)
+    assert len(kernel.full_steps) == 1
+    assert len(kernel.timed_steps) == 1
+    assert timing.details == [
+        "CPU · StepBasic准备",
+        "CPU · 子步参数构建",
+        "CPU · 测试pass",
+        "CPU Self · 测试",
+    ]
 
 
 def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():

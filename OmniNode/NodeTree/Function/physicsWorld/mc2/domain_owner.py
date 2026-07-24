@@ -272,6 +272,15 @@ class MC2FusedCPUOwnerV1:
 
         self._require_domain().step_compiled_domain_pipeline_full(settings)
 
+    def step_timed(self, settings, checkpoint, native_checkpoint) -> None:
+        """仅为节点显式开启的热点计时执行逐 pass 观测路径。"""
+
+        self._require_domain().step_compiled_domain_pipeline_timed(
+            settings,
+            checkpoint,
+            native_checkpoint,
+        )
+
     def apply_zero_substep_frame(self, anchor_component_local_positions) -> None:
         """Apply Center/Teleport state for a frame with no physics substep."""
 

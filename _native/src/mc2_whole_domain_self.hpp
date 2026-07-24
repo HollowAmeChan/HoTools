@@ -2,10 +2,34 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <memory>
 #include <vector>
 
 namespace hotools {
+
+enum class Mc2WholeDomainSelfTimingStage : std::size_t {
+    PrimitiveUpdate,
+    Grid,
+    Intersection,
+    Candidates,
+    ContactBuild,
+    SolvePrepare,
+    SolveRound1,
+    SolveRound2,
+    SolveRound3,
+    SolveRound4,
+    DebugFinalize,
+    Count,
+};
+
+struct Mc2WholeDomainSelfTiming {
+    static constexpr std::size_t stage_count =
+        static_cast<std::size_t>(Mc2WholeDomainSelfTimingStage::Count);
+    std::array<double, stage_count> seconds {};
+    std::array<std::uint32_t, stage_count> calls {};
+    std::uint32_t clock_reads = 0;
+};
 
 struct Mc2WholeDomainSelfDebugSnapshot {
     std::int64_t frame = -1;
@@ -80,6 +104,18 @@ public:
         std::int64_t& contact_count
     );
 
+    Mc2WholeDomainSelfTiming solve_timed(
+        float* positions,
+        const float* old_positions,
+        const float* particle_thickness,
+        const float* particle_friction,
+        const float* particle_cloth_mass,
+        std::int64_t frame,
+        std::int64_t generation,
+        std::int64_t& candidate_count,
+        std::int64_t& contact_count
+    );
+
     void request_debug_capture();
     void invalidate_history() noexcept;
     void clear_debug_capture() noexcept;
@@ -87,6 +123,20 @@ public:
     const Mc2WholeDomainSelfDebugSnapshot& debug_snapshot() const noexcept;
 
 private:
+    template <bool TrackTiming>
+    void solve_impl(
+        float* positions,
+        const float* old_positions,
+        const float* particle_thickness,
+        const float* particle_friction,
+        const float* particle_cloth_mass,
+        std::int64_t frame,
+        std::int64_t generation,
+        std::int64_t& candidate_count,
+        std::int64_t& contact_count,
+        Mc2WholeDomainSelfTiming* timing
+    );
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

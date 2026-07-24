@@ -545,6 +545,8 @@ def publish_mc2_product_frame(
 def step_mc2_product_substep(
     world: PhysicsWorldCache,
     slot: PhysicsSolverSlot,
+    *,
+    timing=None,
 ) -> MC2FusedProductSubstepResultV1:
     """执行并提交一个完整混合 pass 顺序的 whole-domain substep。"""
 
@@ -581,6 +583,8 @@ def step_mc2_product_substep(
         update_index = int(slot.data.get("completed_substeps", 0))
         staged_substep = scheduler_state.stage_substep(update_index)
         pose = owner.prepare_step_basic_pose()
+        if timing is not None:
+            timing.detail_checkpoint("CPU · StepBasic准备")
         # 当前产品合同不提供 distance-culling weights；逐 partition 显式提交
         # 全启用值，避免 backend 猜测缺省语义。
         distance_weights = np.ones(
@@ -600,6 +604,8 @@ def step_mc2_product_substep(
             distance_weights=distance_weights,
             external_collision=collider_frame.native_mapping(),
         )
+        if timing is not None:
+            timing.detail_checkpoint("CPU · 子步参数构建")
         debug_state = slot.data.get("_debug_capture_state") or {}
         debug_filters = debug_state.get("filters") or {}
         debug_requested = bool(debug_state.get("requested"))
@@ -623,7 +629,14 @@ def step_mc2_product_substep(
             if constraint_debug_mask:
                 owner.begin_constraint_debug(constraint_debug_mask)
                 constraint_debug_started = True
-            owner.step(settings)
+            if timing is None:
+                owner.step(settings)
+            else:
+                owner.step_timed(
+                    settings,
+                    timing.detail_checkpoint,
+                    timing.detail_native_checkpoint,
+                )
             if constraint_debug_started:
                 owner.end_constraint_debug()
         except Exception as exc:

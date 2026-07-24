@@ -78,10 +78,14 @@ def _finish_single_timing(
     frame,
     public_results,
     settings,
+    finish: bool = True,
 ) -> None:
     if timing is None:
         return
     timing.checkpoint("统一域结果")
+    if not finish:
+        return
+    owner_action = sync.owner_report.action
     timing.finish({
         "frame": int(world.frame_context.frame),
         "generation": int(world.generation),
@@ -98,8 +102,11 @@ def _finish_single_timing(
         "ready_frames": 1,
         "writeback_results": len(public_results),
         "created": int(sync.action == "created"),
-        "rebuilt": int(sync.action == "replaced"),
-        "updated": int(sync.action == "updated"),
+        "rebuilt": int(
+            sync.action == "replaced" or owner_action == "replaced"
+        ),
+        "updated": int(owner_action == "parameters_updated"),
+        "reused": int(owner_action == "reused"),
     })
 
 
@@ -111,10 +118,11 @@ def _step_mc2_mesh_product(
     enabled: bool = True,
     timing=None,
     publish_results: bool = True,
+    owns_timing: bool = True,
 ) -> tuple[object, bool, str]:
     """执行一个明确的 Mesh product domain。"""
 
-    if timing is not None:
+    if timing is not None and owns_timing:
         timing.restart()
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 Mesh统一域需要PhysicsWorldCache"
@@ -146,6 +154,9 @@ def _step_mc2_mesh_product(
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action
+    slot.data["product_owner_sync_action"] = sync.owner_report.action
+    if timing is not None:
+        timing.checkpoint("统一域同步")
     if _same_frame_product_reuse(world, slot):
         frame = slot.data["scheduled_frame"]
         if publish_results:
@@ -173,13 +184,12 @@ def _step_mc2_mesh_product(
             frame=frame,
             public_results=public_results,
             settings=settings,
+            finish=owns_timing,
         )
         return world, True, (
             f"MC2 Mesh product same-frame reuse: partitions {len(collection.draft.partitions)}, "
-            f"owner {sync.action}"
+            f"owner {sync.owner_report.action}"
         )
-    if timing is not None:
-        timing.checkpoint("统一域同步")
     frame = capture_and_publish_mc2_product_frame(
         world,
         slot,
@@ -187,8 +197,9 @@ def _step_mc2_mesh_product(
     )
     if timing is not None:
         timing.checkpoint("统一域Frame")
+        timing.detail_restart()
     for _index in range(frame.update_count):
-        step_mc2_product_substep(world, slot)
+        step_mc2_product_substep(world, slot, timing=timing)
     if timing is not None:
         timing.checkpoint("统一域求解")
     if publish_results:
@@ -216,12 +227,13 @@ def _step_mc2_mesh_product(
         frame=frame,
         public_results=public_results,
         settings=settings,
+        finish=owns_timing,
     )
     status = (
         f"MC2 Mesh统一域就绪：分区 {len(collection.draft.partitions)}，"
         f"粒子 {slot.data['owner'].compiled.program.particle_count}，"
         f"子步 {frame.update_count}，目标 {len(public_results)}，"
-        f"BasePose新建 {created_base_poses}，owner {sync.action}"
+        f"BasePose新建 {created_base_poses}，owner {sync.owner_report.action}"
     )
     return world, True, status
 
@@ -234,10 +246,11 @@ def _step_mc2_bone_product(
     enabled: bool = True,
     timing=None,
     publish_results: bool = True,
+    owns_timing: bool = True,
 ) -> tuple[object, bool, str]:
     """执行一个显式 Bone whole-domain 产品请求，不创建旧 task/context。"""
 
-    if timing is not None:
+    if timing is not None and owns_timing:
         timing.restart()
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 Bone 统一域需要 PhysicsWorldCache"
@@ -262,6 +275,9 @@ def _step_mc2_bone_product(
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action
+    slot.data["product_owner_sync_action"] = sync.owner_report.action
+    if timing is not None:
+        timing.checkpoint("统一域同步")
     if _same_frame_product_reuse(world, slot):
         frame = slot.data["scheduled_frame"]
         if publish_results:
@@ -282,13 +298,13 @@ def _step_mc2_bone_product(
             frame=frame,
             public_results=public_results,
             settings=settings,
+            finish=owns_timing,
         )
         return world, True, (
             f"MC2 {request.setup_type} product same-frame reuse: "
-            f"partitions {len(collection.draft.partitions)}, owner {sync.action}"
+            f"partitions {len(collection.draft.partitions)}, "
+            f"owner {sync.owner_report.action}"
         )
-    if timing is not None:
-        timing.checkpoint("统一域同步")
     frame = capture_and_publish_mc2_product_frame(
         world,
         slot,
@@ -296,8 +312,9 @@ def _step_mc2_bone_product(
     )
     if timing is not None:
         timing.checkpoint("统一域Frame")
+        timing.detail_restart()
     for _index in range(frame.update_count):
-        step_mc2_product_substep(world, slot)
+        step_mc2_product_substep(world, slot, timing=timing)
     if timing is not None:
         timing.checkpoint("统一域求解")
     if publish_results:
@@ -317,13 +334,14 @@ def _step_mc2_bone_product(
         frame=frame,
         public_results=public_results,
         settings=settings,
+        finish=owns_timing,
     )
     status = (
         f"MC2 {request.setup_type} 统一域就绪："
         f"分区 {len(collection.draft.partitions)}，"
         f"粒子 {slot.data['owner'].compiled.program.particle_count}，"
         f"子步 {frame.update_count}，目标 {len(public_results)}，"
-        f"owner {sync.action}"
+        f"owner {sync.owner_report.action}"
     )
     return world, True, status
 
@@ -336,6 +354,7 @@ def _dispatch_product(
     enabled,
     timing,
     publish_results,
+    owns_timing=True,
 ):
     if request.setup_type == MC2_SETUP_MESH_CLOTH:
         return _step_mc2_mesh_product(
@@ -345,6 +364,7 @@ def _dispatch_product(
             enabled=enabled,
             timing=timing,
             publish_results=publish_results,
+            owns_timing=owns_timing,
         )
     if request.setup_type in _BONE_SETUP_TYPES:
         return _step_mc2_bone_product(
@@ -354,6 +374,7 @@ def _dispatch_product(
             enabled=enabled,
             timing=timing,
             publish_results=publish_results,
+            owns_timing=owns_timing,
         )
     raise NotImplementedError(
         f"MC2 {request.setup_type} 产品统一域尚未完成 E5-B 接线"
@@ -451,8 +472,9 @@ def step_mc2_products(
                 request,
                 settings=settings,
                 enabled=True,
-                timing=None,
+                timing=timing,
                 publish_results=False,
+                owns_timing=False,
             )
             if not ready:
                 raise RuntimeError(status)
@@ -461,9 +483,6 @@ def step_mc2_products(
                 raise RuntimeError("产品执行完成但对应 domain slot 不存在")
             slots.append(slot)
             statuses.append(status)
-        if timing is not None:
-            timing.checkpoint("统一域求解")
-
         mesh_results = []
         bone_entries = []
         for request, slot in zip(frozen_requests, slots):
@@ -513,7 +532,7 @@ def step_mc2_products(
         raise
 
     if timing is not None:
-        timing.checkpoint("统一域结果")
+        timing.checkpoint("统一域发布")
         setup_counts = {}
         for request, slot in zip(frozen_requests, slots):
             collection = slot.data["collection"]
@@ -547,11 +566,19 @@ def step_mc2_products(
                 slot.data.get("product_sync_action") == "created" for slot in slots
             ),
             "rebuilt": sum(
-                slot.data.get("product_sync_action") == "replaced" for slot in slots
+                slot.data.get("product_sync_action") == "replaced"
+                or slot.data.get("product_owner_sync_action") == "replaced"
+                for slot in slots
             ),
             "updated": sum(
-                slot.data.get("product_sync_action") == "updated" for slot in slots
+                slot.data.get("product_owner_sync_action") == "parameters_updated"
+                for slot in slots
             ),
+            "reused": sum(
+                slot.data.get("product_owner_sync_action") == "reused"
+                for slot in slots
+            ),
+            "pruned": len(removed),
         })
     status = (
         f"MC2 显式统一域批次就绪：域 {len(slots)}，"

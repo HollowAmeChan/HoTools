@@ -372,6 +372,31 @@ class MC2CPUBackendDomainV1:
         run_pipeline(self._handle, settings)
         self._step_count += 1
 
+    def step_compiled_domain_pipeline_timed(
+        self,
+        settings: Mapping[str, object],
+        checkpoint,
+        native_checkpoint,
+    ) -> None:
+        """仅在显式请求热点计时时执行逐 pass 观测路径。"""
+
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("timed compiled domain pipeline requires update_frame first")
+        if not callable(checkpoint):
+            raise TypeError("timed compiled domain pipeline requires a checkpoint callback")
+        if not callable(native_checkpoint):
+            raise TypeError("timed compiled domain pipeline requires a native checkpoint callback")
+        run_pipeline = getattr(
+            self._kernel,
+            "step_compiled_domain_pipeline_timed",
+            None,
+        )
+        if not callable(run_pipeline):
+            raise RuntimeError("CPU kernel does not expose timed compiled domain pipeline")
+        run_pipeline(self._handle, settings, checkpoint, native_checkpoint)
+        self._step_count += 1
+
     def prepare_step_basic_pose(self, animation_pose_ratio: float | None = None) -> dict:
         """Build StepBasic from compiled ratio unless an explicit test override is supplied."""
         self._ensure_live()

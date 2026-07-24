@@ -6,6 +6,7 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 
+#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -803,6 +804,41 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         },
         nb::arg("handle"),
         "Run compiled whole-domain self collision from the owned substep snapshot."
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_whole_domain_self_owned_timed",
+        [](std::uint64_t handle) {
+            const auto timing = require_domain(handle)->step_whole_domain_self_owned_timed();
+            constexpr std::array<const char*, hotools::Mc2WholeDomainSelfTiming::stage_count>
+                stage_names {
+                    "primitive_update",
+                    "grid",
+                    "intersection",
+                    "candidates",
+                    "contact_build",
+                    "solve_prepare",
+                    "solve_round_1",
+                    "solve_round_2",
+                    "solve_round_3",
+                    "solve_round_4",
+                    "debug_finalize",
+                };
+            nb::dict stages;
+            nb::dict calls;
+            for (std::size_t index = 0; index < stage_names.size(); ++index) {
+                if (timing.calls[index] == 0) continue;
+                stages[stage_names[index]] = timing.seconds[index];
+                calls[stage_names[index]] = timing.calls[index];
+            }
+            nb::dict result;
+            result["schema"] = "mc2_whole_domain_self_timing_v1";
+            result["stages"] = stages;
+            result["calls"] = calls;
+            result["clock_reads"] = timing.clock_reads;
+            return result;
+        },
+        nb::arg("handle"),
+        "Run owned whole-domain self collision and return diagnostic-only stage timing."
     );
     module.def(
         "mc2_domain_cpu_v1_configure_compiled_external_collision",
