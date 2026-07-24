@@ -1283,22 +1283,15 @@ class OP_MergeArmatures(Operator):
                 _copy_writable_rna_properties(
                     source_constraint,
                     target_constraint,
-                    {"type"},
+                    {
+                        "influence",
+                        "owner_space",
+                        "subtarget",
+                        "target",
+                        "target_space",
+                        "type",
+                    },
                 )
-                for property_name in (
-                    "owner_space",
-                    "target_space",
-                    "influence",
-                ):
-                    if not hasattr(source_constraint, property_name):
-                        continue
-                    if not hasattr(target_constraint, property_name):
-                        continue
-                    setattr(
-                        target_constraint,
-                        property_name,
-                        getattr(source_constraint, property_name),
-                    )
                 if hasattr(source_constraint, "target"):
                     try:
                         target_constraint.target = (
@@ -1319,6 +1312,22 @@ class OP_MergeArmatures(Operator):
                     asset,
                     main,
                 )
+                # Constraint space enum items depend on the resolved target type.
+                # Assign these only after target/subtarget have been remapped.
+                for property_name in (
+                    "owner_space",
+                    "target_space",
+                    "influence",
+                ):
+                    if not hasattr(source_constraint, property_name):
+                        continue
+                    if not hasattr(target_constraint, property_name):
+                        continue
+                    setattr(
+                        target_constraint,
+                        property_name,
+                        getattr(source_constraint, property_name),
+                    )
                 _copy_custom_properties(source_constraint, target_constraint)
                 created_drivers.extend(cls._copy_constraint_drivers(
                     main,
