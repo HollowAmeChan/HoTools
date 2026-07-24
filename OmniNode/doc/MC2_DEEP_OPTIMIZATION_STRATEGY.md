@@ -325,13 +325,15 @@ GPU前置交付应包括：
 - 结果发布与 Blender writeback 的单向边界，禁止 GPU kernel 直接接触 Blender/RNA；
 - 能描述单线程 CPU、context Batch 和未来 GPU dispatch 的同一 execution plan，而不把某一种 backend 的调度对象暴露给产品节点。
 
-P6 第一批已落地 `MC2BackendDataPassContractV1`，直接从 `MC2CompiledDomainProgramV1` 与 `MC2DomainParameterPacketV1` 生成具体 buffer 表，不另建 Python 模块或 runtime owner。每项 buffer 明确 role、dtype、分量数、逻辑计数、硬容量、计数来源、生命周期和传输策略；静态 topology/value、参数、frame、跨帧 state、substep transient、结果和请求式 debug 分开表达。pass 图固定为 StepBasic 准备、TaskReference Teleport、Center frame shift、Center、Center inertia、Integration、Tether、Distance A、Angle、Bending、external、Distance B、Motion、whole-domain self、post/history、publish，且每项都声明依赖、条件与读写 hazard。native compiled pipeline 测试把实际方法顺序反向映射到该合同，防止两者漂移。
+P6 已落地 backend contract schema V2：`MC2BackendDataPassContractV1` 直接从 `MC2CompiledDomainProgramV1` 与 `MC2DomainParameterPacketV1` 生成具体 buffer 表，不另建 Python 模块或 runtime owner。每项 buffer 明确 role、dtype、分量数、逻辑计数、硬容量、计数来源、生命周期和传输策略；静态 topology/value、参数、frame、跨帧 state、substep transient、结果和请求式 debug 分开表达。16阶段 production pass 图固定为 StepBasic 准备、TaskReference Teleport、Center frame shift、Center、Center inertia、Integration、Tether、Distance A、Angle、Bending、external、Distance B、Motion、whole-domain self、post/history、publish，且每项都声明依赖、条件、普通读写 hazard 和独立 `request_writes`。debug buffer 必须由显式请求生产，禁止作为普通 state/output 写入；native compiled pipeline 测试把实际方法顺序反向映射到该合同，防止两者漂移。
 
 self 动态 buffer 的编译期硬上限已固定：candidate 为 `edge*(edge-1)/2 + point*triangle`，contact 不得超过 candidate，只有显式 debug 请求才存在的 intersection 为 `edge*triangle`；超过当前 signed 31-bit primitive key 表达能力的 domain 在 backend allocation 前拒绝。该上限不要求 CPU 或未来 GPU 预分配最坏规模，实际容量由下述 count/grow/emit 事务管理。
 
 P6 第二批已冻结增量上传、容量事务、IO 与数值策略。`MC2BackendUploadPlanV1` 对 program、parameter、frame/collider 的真实 SoA 做逐 row bit-exact 比较并合并连续 dirty span：layout 改变才重建静态布局，domain value、parameter layout/value 与 frame 分别处理；collider 数量改变只重分配九个 collider SoA，空表也显式表达为零行，不能遗留上一帧数据。candidate/contact/intersection 都先 count，再在硬上限内按二次幂扩容并只重跑 emit；所有 substep 写入 staged state，容量确认前不得发布，超过硬上限必须回滚整步并失败，禁止截断，并要求输出 required/capacity/emitted/grow/overflow 五项统计。
 
 IO 只允许 compiled program、domain parameter、frame packet/collider packet 单向进入 backend；最终 substep 后只读回一次 logical domain output，全部 target 验证成功后才原子发布。debug 只在显式请求后读取 production pass snapshot，backend 不得访问 Blender/RNA。CPU reference 验收中 identity、topology、filter、flags、candidate/contact key 与 count 必须 exact；共享 fixture 的每 pass tolerance 继续是权威，global cap 为 position/rotation component `atol=rtol=5e-4`、velocity `atol=2e-3/rtol=5e-3`，所有数值必须有限。fixture 若需要超过 global cap，必须作为数值设计变更单独审查，不能由 backend 私自放宽。
+
+其中 self exact 合同明确包含 Pin/全固定 primitive 的参与标志与跨 owner 双向 `self_collision_sync_mode`、group/mask 过滤决策。未来 GPU 不得用“候选最终没有形成接触”掩盖 primitive 或 owner pair 工作量不等价。
 
 GPU 之前必须成立：
 
@@ -372,10 +374,10 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 
 1. 旧 capability 证据迁移、BoneCloth/BoneSpring 包装限制签字、中立合同归位和 Python V0 owner/aggregate 入口删除已经完成。
 2. 68 个 native V0 binding、5 个 context TU、2 个专用头文件、API/CMake 残留和直接 V0 native tests 已删除，并已用重新编译的 py313 产物验收。
-3. 执行 E7-S：六个顶层 setup 产品钩子先按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；不以文件数量为 KPI。可选 `native_context` 参数和两个纯内存 `v0` 资源键已经清除；生产 `V0/_v0` 门禁只豁免一个内容签名和一个活动结果 schema，精确迁移词违规也已归零。后续又删除 1 个 Mesh domain 类型别名、3 个无逻辑产品 wrapper、1 个测试专用 compiler wrapper、2 个零消费者入口和 1 条无消费者 native 复合导出，并把测试专用 Bone rotation reference 移出生产根；分类 forwarder 为 77，native 注册 binding 为 101。薄入口只有在生产读取、合同价值和 owner 边界均证明多余后才删除；forwarder 分类表同时以未分类和过期豁免为失败条件，当前两者均为 0。
-4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。当前 68 个 Python 生产模块已全部归入九类原子职责，缺失、残留、重复归类和既定 merge source 均为 0；后续发现的新合并点作为独立批次更新职责清单，不继续用模块数作为优化目标。
+3. 执行 E7-S：六个顶层 setup 产品钩子先按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；不以文件数量为 KPI。可选 `native_context` 参数和两个纯内存 `v0` 资源键已经清除；生产 `V0/_v0` 门禁只豁免一个内容签名和一个活动结果 schema，精确迁移词违规也已归零。后续又删除 1 个 Mesh domain 类型别名、3 个无逻辑产品 wrapper、1 个测试专用 compiler wrapper、2 个零消费者入口和 1 条无消费者 native 复合导出，并把测试专用 Bone rotation reference 移出生产根；新 Mesh 对象包装边界和 self policy ABI 落地后，当前分类 forwarder 为 82，native 注册 binding 为 103。薄入口只有在生产读取、合同价值和 owner 边界均证明多余后才删除；forwarder 分类表同时以未分类和过期豁免为失败条件，当前两者均为 0。
+4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。当前 69 个 Python 生产模块已全部归入九类原子职责，缺失、残留、重复归类和既定 merge source 均为 0；后续发现的新合并点作为独立批次更新职责清单，不继续用模块数作为优化目标。
    生产零入站门禁只豁免 package manifest 及其三个字符串装载入口，当前允许 4、未解释 0、过期 0；新的测试专用或死生产模块不能再仅靠文件存在逃过 E7-S。
-   外部入口全图可达性为 68/68，不可达模块和失效根均为 0；后续结构调整不再以寻找死子图为主要方向。
+   外部入口全图可达性为 69/69，不可达模块和失效根均为 0；后续结构调整不再以寻找死子图为主要方向。
    declaration 不再发布 `legacy_policy` 或 `no_python_fallback` 叙事，native E3 注释也已中立化；精确禁词覆盖这些下划线残项，不影响真实数值 fallback 算法。
    E3 reference 的 `data_path_only`、七个 scheduler selector 和 readiness 合成字段已删除；显式 pass 直接消费自己的数值输入，compiled product pipeline 与 900 帧 digest 不变。
    reference 固定前缀入口已正名为 `step_reference_pass_prefix`，生产 Python 的 slice/data-path 迁移叙事归零。

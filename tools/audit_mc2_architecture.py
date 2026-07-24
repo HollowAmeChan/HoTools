@@ -102,6 +102,10 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.mesh_cloth.product", "_canonical_source_identity"),
     ("mc2.setups.mesh_cloth.product", "world_gravity_directions"),
     ("mc2.setups.mesh_cloth.product", "vertex_count"),
+    ("mc2.setups.mesh_cloth.object_spec", "signature"),
+    ("mc2.setups.mesh_cloth.object_spec", "source_identity"),
+    ("mc2.setups.mesh_cloth.object_spec", "read_mc2_mesh_panel_objects"),
+    ("mc2.setups.mesh_cloth.object_spec", "make_mc2_mesh_custom_objects"),
     ("mc2.setups.mesh_cloth.static_fragment", "_matrix_columns"),
     ("mc2.setups.mesh_cloth.fragment_cache", "hit_count"),
     ("mc2.setups.mesh_cloth.fragment_cache", "build_count"),
@@ -216,6 +220,7 @@ E7S_PYTHON_RESPONSIBILITY_MODULES = {
         "mc2.setups.mesh_cloth.authoring",
         "mc2.setups.mesh_cloth.delta_output",
         "mc2.setups.mesh_cloth.frame_input",
+        "mc2.setups.mesh_cloth.object_spec",
         "mc2.setups.mesh_cloth.product",
         "mc2.setups.mesh_cloth.properties",
         "mc2.setups.mesh_cloth.source_capture",
@@ -308,7 +313,7 @@ FORBIDDEN_PRODUCT_FUNCTIONS = {
 }
 FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
 TASK_SOURCE_SOCKET_CONTRACTS = {
-    "physicsMC2MeshClothTask": ("mesh_objects", "list[bpy.types.Object]"),
+    "physicsMC2MeshClothTask": ("mesh_objects", "list[typing.Any]"),
     "physicsMC2BoneClothTask": ("control_bones", "list[_OmniBone]"),
     "physicsMC2BoneSpringTask": ("root_bones", "list[_OmniBone]"),
 }

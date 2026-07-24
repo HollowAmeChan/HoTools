@@ -125,9 +125,6 @@ class MC2MeshObjectSpec:
             "explicit_properties": self.explicit_properties.debug_dict(),
         })
 
-    def mc2_source_token(self) -> dict:
-        return mc2_source_token(self.source_object)
-
     def debug_dict(self) -> dict:
         return {
             "source": mc2_source_token(self.source_object),

@@ -23,7 +23,7 @@ MC2_SOLVER_DECLARATION = {
     "native_strategy": "one_domain_v1_per_mesh_domain_collector",
     "implementation_status": "e7_complete_p6_complete_no_gpu_runtime",
     "backend_contract": {
-        "schema_version": 1,
+        "schema_version": 2,
         "data_pass": "MC2BackendDataPassContractV1",
         "upload": "MC2BackendUploadPlanV1",
         "dynamic_capacity": "MC2BackendDynamicCapacityPolicyV1",

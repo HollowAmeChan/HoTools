@@ -583,15 +583,15 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 
 调用计数不是删除资格本身。`make_mc2_partition_patch` 虽然当前只由合同测试直接调用，但它集中承担稀疏字段校验、排序和参数归一化；Mesh fragment cache 的 `entry_count` 也属于 cache owner 的只读状态面。两者均有独立职责和测试，不是迁移兼容转发。E7-S 后续必须同时证明“没有生产读取”和“没有合同/owner 价值”，才允许删除薄入口。
 
-forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 77 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
+forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 82 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
 
-Python 文件职责复核已把当前 68 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、17 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、14 个 Blender/product boundary、4 个 observation。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
+Python 文件职责复核已把当前 69 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、17 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、15 个 Blender/product boundary、4 个 observation。Mesh 对象 spec 与面板/socket 适配器是新节点模式的独立产品边界，不与 domain authoring 合并。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
 
 反向依赖审计确认原生产 `bone_rotation.py` 只有两份 Tier A oracle 测试消费，正式产品图入站为 0；其 Line/Triangle 纯 Python 算法是 Unity fixture 的 reference，不是 DomainV1 产品 compile stage。该文件已迁入 `mc2/test/bone_rotation_reference.py`，两份 Tier A 测试继续通过；能力门禁禁止 `bone_rotation.py` 回到生产根。正式 Bone post rotation、transform output 与 writeback 仍由 native DomainV1 和统一产品事务负责。
 
 生产零入站模块也已改为双向门禁。当前只允许 `mc2` 包 manifest、manifest 字符串加载的 `declaration`、`nodes` 和 Mesh Blender properties 四个外部入口；额外零入站模块或已经获得真实入站调用的过期豁免都会失败。当前允许 4、未解释 0、过期 0，测试 reference 错放生产根一类问题因此可被自动发现。
 
-外部入口全图可达性门禁进一步从 package manifest、declaration、nodes、capabilities、debug、Blender lifecycle 和 properties 八个真实根遍历全部 import 边。当前 68/68 个生产模块可达，不可达模块和失效根均为 0；互相引用但不接入产品/注册图的孤岛也不能通过。后续 E7-S 合并候选只能来自职责重叠的新证据，不再来自未解释死子图。
+外部入口全图可达性门禁进一步从 package manifest、declaration、nodes、capabilities、debug、Blender lifecycle 和 properties 八个真实根遍历全部 import 边。当前 69/69 个生产模块可达，不可达模块和失效根均为 0；互相引用但不接入产品/注册图的孤岛也不能通过。后续 E7-S 合并候选只能来自职责重叠的新证据，不再来自未解释死子图。
 
 迁移词复核又删除了 solver declaration 中只描述“没有旧路径”的 `legacy_policy` 字段，并把 `native_backend` 收敛为当前事实 `one_domain_v1_per_explicit_collector`；native E3 注释也改为 point-only reference layout。`no_python_fallback`、`legacy_policy` 和 `legacy E3 path` 已加入精确禁词，不能再借下划线绕过词级门禁。数值算法中的 fallback tangent/safe normal 表示真实退化输入处理，不属于迁移兼容层。
 
@@ -826,7 +826,7 @@ E3 native 门禁已经满足：新 owner 能在无 Blender 对象的 C++/headles
 
 E6 是确定的长期方向，但作为独立后续里程碑排期；它不阻塞 E3-E5 的统一域产品交付，也不要求当前立即实现 GPU solver。当前阶段只完成 P6-A/P6-B 的后端中立准备：同一 `MC2CompiledDomain`、frame/output contract、pass 读写集、buffer 容量/溢出、增量上传边界和 CPU reference tolerance。
 
-P6 data/pass 第一批已经机器化：`domain_ir.py` 在既有 immutable contract 职责内提供 `MC2BackendDataPassContractV1`，按一个 compiled layout 生成具体 buffer/容量表和 16 阶段有序 pass 图；没有新增 backend 文件、执行 owner 或调度抽象。固定 buffer 取现有 program/parameter 的真实 shape，frame collider 保持逐帧计数，self candidate/contact/intersection 使用可证明的组合硬上限；所有 pass 只引用合同内已声明 buffer，且依赖只能指向先前阶段。下一批补 dirty span、两阶段动态容量事务、单向 IO 和 tolerance，不改变该顺序。
+P6 data/pass 已机器化为 backend contract schema V2：`domain_ir.py` 在既有 immutable contract 职责内提供 `MC2BackendDataPassContractV1`，按一个 compiled layout 生成具体 buffer/容量表和 16 阶段有序 production pass 图；没有新增 backend 文件、执行 owner 或调度抽象。固定 buffer 取现有 program/parameter 的真实 shape，frame collider 保持逐帧计数，self candidate/contact/intersection 使用可证明的组合硬上限；所有 pass 只引用合同内已声明 buffer，且依赖只能指向先前阶段。V2 为 pass 增加独立 `request_writes`：约束/碰撞调试记录和 self intersection 只有显式 debug 请求才生成，不能混入常驻 production 写集，也不能请求写入 state/output buffer。
 
 P6 第二批已补齐上述缺口：`MC2BackendUploadPlanV1` 对同 layout 的 program/parameter/frame/collider 输出最小连续 row span，并把 layout rebuild、parameter rebuild 与单 buffer reallocation 分开；九个 collider SoA 的行数变化不会触发静态 topology 重建。三个动态 self buffer 使用 count -> grow -> emit 事务，硬溢出回滚 staged substep 且零发布，不能 silent truncate。`MC2_BACKEND_IO_CONTRACT_V1` 禁止 substep readback 和 backend 访问 Blender，最终只发布一次 logical output；`MC2_BACKEND_NUMERICAL_POLICY_V1` 把 identity/workload exact 项与共享 fixture 的浮点 tolerance/global cap 分开。所有对象仍只描述合同，不分配 backend 资源。
 
@@ -898,9 +898,9 @@ E7-S至少完成以下简化：
 
 E7-S是P6-B最终收口和E6开工的硬门禁，不是可延期的代码整理。
 
-当前 E7-S 退出门禁已关闭：生产树 68 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；77 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。4.5/py311 未参与 E7-S 日常迭代，只在 P6 完成后恢复一次并完成最终双 ABI 收尾。
+当前 E7-S 退出门禁已关闭：生产树 69 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；82 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。4.5/py311 未参与 E7-S 日常迭代，只在 P6 完成后恢复一次并完成最终双 ABI 收尾。
 
-P6 退出门禁也已关闭：data/pass、真实 SoA buffer、dirty span、动态容量/硬溢出回滚、单向 IO 和 CPU reference tolerance 都有版本化机器合同；py313 下 26 项 Domain IR、compile/frame、owner/slot、CPU/native 与架构硬门禁通过。Blender 5.2 `--factory-startup` 三 setup 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`，debug、BoneSpring 限制、失败回滚、P0 六场景与 P2 self-radius 均通过并明确加载当前工作树 cp313 native。最终 py311 验收通过 26 项 Domain IR、10 项 compile、30 项 native kernel、10 项 E3 golden 与全部保留 raw native smoke；Blender 4.5 的三 setup、debug、BoneSpring 限制、失败回滚、P0/P2 也通过并保持相同 900 帧 digest。P6 未创建 GPU runtime、dispatch、staging 或 CPU 并发抽象；E6 尚未启动。
+P6 退出门禁也已关闭：data/pass、真实 SoA buffer、dirty span、动态容量/硬溢出回滚、单向 IO 和 CPU reference tolerance 都有版本化机器合同；schema V2 明确分离 production writes 与 request-only debug writes，并要求 Pin primitive 参与标志、跨 owner 过滤决策 exact。py313 下 27 项 Domain IR、compile/frame、owner/slot、CPU/native 与架构硬门禁通过。Blender 5.2 `--factory-startup` 三 setup 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`，debug、BoneSpring 限制、失败回滚、P0 六场景与 P2 self-radius 均通过并明确加载当前工作树 cp313 native。最终 py311 验收通过 27 项 Domain IR、10 项 compile、30 项 native kernel、10 项 E3 golden 与全部保留 raw native smoke；Blender 4.5 的三 setup、debug、BoneSpring 限制、失败回滚、P0/P2 也通过并保持相同 900 帧 digest。P6 未创建 GPU runtime、dispatch、staging 或 CPU 并发抽象；E6 尚未启动。
 
 ## 验收目录
 

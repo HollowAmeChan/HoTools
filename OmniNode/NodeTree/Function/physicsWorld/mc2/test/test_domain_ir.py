@@ -225,6 +225,7 @@ def test_backend_data_pass_contract_freezes_concrete_buffers_and_order() -> None
     parameters = _build_parameters(fixture, program)
     contract = ir.make_mc2_backend_data_pass_contract(program, parameters)
 
+    assert contract.schema_version == 2
     assert contract.layout_signature == program.layout_signature
     assert tuple(item.name for item in contract.passes) == (
         "prepare_step_basic",
@@ -272,6 +273,18 @@ def test_backend_data_pass_contract_freezes_concrete_buffers_and_order() -> None
     whole_self = next(item for item in contract.passes if item.name == "whole_domain_self")
     assert "state.world_position" in set(whole_self.reads) & set(whole_self.writes)
     assert whole_self.condition == "capability:self_collision"
+    assert whole_self.request_writes == (
+        "debug.pass_records",
+        "debug.self_intersections",
+    )
+    assert all(
+        not item.request_writes
+        for item in contract.passes[:6]
+    )
+    assert all(
+        item.request_writes == ("debug.pass_records",)
+        for item in contract.passes[6:13]
+    )
 
 
 def test_backend_data_pass_contract_rejects_unknown_buffer_dependency() -> None:
@@ -296,6 +309,42 @@ def test_backend_data_pass_contract_rejects_unknown_buffer_dependency() -> None:
         assert "unknown buffers" in str(exc)
     else:
         raise AssertionError("backend contract accepted an unknown pass buffer")
+
+
+def test_backend_data_pass_contract_closes_request_only_debug_writers() -> None:
+    fixture = _load_fixture()
+    program = _build_program(fixture)
+    parameters = _build_parameters(fixture, program)
+    contract = ir.make_mc2_backend_data_pass_contract(program, parameters)
+    invalid = tuple(
+        replace(item, request_writes=("state.world_position",))
+        if item.name == "motion" else item
+        for item in contract.passes
+    )
+    try:
+        ir.MC2BackendDataPassContractV1(
+            layout_signature=program.layout_signature,
+            buffers=contract.buffers,
+            passes=invalid,
+        )
+    except ValueError as exc:
+        assert "request-writes non-debug buffers" in str(exc)
+    else:
+        raise AssertionError("backend pass request-wrote a production buffer")
+
+    no_debug_writers = tuple(
+        replace(item, request_writes=()) for item in contract.passes
+    )
+    try:
+        ir.MC2BackendDataPassContractV1(
+            layout_signature=program.layout_signature,
+            buffers=contract.buffers,
+            passes=no_debug_writers,
+        )
+    except ValueError as exc:
+        assert "lack request-only producers" in str(exc)
+    else:
+        raise AssertionError("backend debug buffers lacked request-only producers")
 
 
 def test_backend_upload_plan_emits_only_changed_contiguous_rows() -> None:
@@ -438,6 +487,8 @@ def test_backend_capacity_io_and_numerical_policies_are_closed() -> None:
     assert numerical.velocity_rtol == 5.0e-3
     assert "candidate_contact_keys" in numerical.exact_channels
     assert "validity_and_teleport_flags" in numerical.exact_channels
+    assert "self_owner_pair_filter_decisions" in numerical.exact_channels
+    assert "self_primitive_participation_flags" in numerical.exact_channels
 
 
 def test_single_mesh_fixture_uses_the_same_program_contract() -> None:

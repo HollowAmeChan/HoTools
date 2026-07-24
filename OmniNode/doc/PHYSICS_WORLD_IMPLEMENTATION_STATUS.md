@@ -106,24 +106,24 @@ MC2已完成E7-CPU和backend-neutral P6，当前继续E7-S职责复核。最新M
 17. 12 个 static/frame 中立 native helper 已去除版本后缀并重新编译 py313 pyd；旧符号为 0、新符号完整，正式 DomainV1 ABI 版本名不变。
 18. 三份 Bone compatibility runner 已删除，验收资产直接指向真实产品 runner，并通过 Bone 产品集成、BoneSpring 599 帧限制与 BoneCloth 900 帧约束 soak。
 19. 两份 Mesh final-proxy/BasePose 门面和一份 mixed-output/Center 串行门面也已删除；6 个旧 runner 由不存在性门禁禁止回流，验收资产直接指向真实产品 runner。
-20. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+20. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。当前 schema V2 已把 production writes 与请求式 debug `request_writes` 分离，并把 Pin primitive 参与标志和跨 owner 过滤决策列为 exact；不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
 21. 旧代码删除、E7-S 和 P6 合同复核完成后，已恢复 Python 3.11 / Blender 4.5 完成一次最终双 ABI 与 Blender 收尾验收；后续常规开发仍只使用 py313/Blender 5.2。
 22. 产品批处理已恢复MC2请求式热点计时：节点开关关闭时仍走原完整pipeline与无计时native ABI，且不创建计时资源；开启时分别报告输入、采集、同步、Frame、求解、结果构造、事务发布、CPU原子pass，以及整域self内部的Primitive/Grid/相交/Candidate/Contact/四轮求解。计时不主动请求debug确认或快照；同步统计读取owner真实action，普通热帧不再误报为`updated`。
-23. 当前1760粒子/495 collider性能回归已定位出明确的authoring语义风险：Mesh产品外碰mask正在读取并入自身主组后的`self_collision_groups`，与正式合同中“外碰使用`collided_by_groups`、仅域内self并入自身组”不一致；修正前必须用新阶段计时在代表资产上记录外碰/self占比和数值差异。
+23. 1760粒子/495 collider性能回归排查发现的authoring语义风险已经关闭：Mesh产品外碰mask只读取原始`collided_by_groups`，仅域内self的`collision_mask`并入自身主组；修正后的隔离Blender 5.2代表场景已完成600帧外碰范围、摩擦和确定性验收。
 
 此前 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。该批时生产模块为 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 
 native 后续清单发现并删除了没有任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出；py313 已重编，当前为 101 个注册 binding、21 个产品必需 symbol、0 native 旧面。native kernel 30 项、Bone Tier A 与产品静态门禁通过。生产读取为零不单独构成 Python 原子合同的删除依据，partition patch factory 和 fragment cache 只读状态继续按真实职责保留。
 
-架构审计已增加 `stale_forwarder_allowances` 硬门禁；77 项 forwarder 分类与当前生产 AST 双向一致，未分类入口和过期历史豁免均为 0。后续删除、改写或新增长薄入口都会要求同批更新职责分类。
+架构审计已增加 `stale_forwarder_allowances` 硬门禁；82 项 forwarder 分类与当前生产 AST 双向一致，未分类入口和过期历史豁免均为 0。后续删除、改写或新增长薄入口都会要求同批更新职责分类。
 
-Python 文件职责门禁已覆盖全部 68 个生产模块，按九类 Physics World 原子职责统计为 5/8/7/17/6/5/2/14/4；缺失、已删除残留、重复归类和既定 merge source 均为 0。E7-S 可以继续发现新合并点，但必须按 owner、生命周期和依赖方向逐批证明，不再默认把剩余模块视为待压缩文件。
+Python 文件职责门禁已覆盖全部 69 个生产模块，按九类 Physics World 原子职责统计为 5/8/7/17/6/5/2/15/4；新增的 Mesh 对象 spec/面板与 socket 适配器属于 Blender/product boundary。缺失、已删除残留、重复归类和既定 merge source 均为 0。E7-S 可以继续发现新合并点，但必须按 owner、生命周期和依赖方向逐批证明，不再默认把剩余模块视为待压缩文件。
 
 反向依赖审计把只有两份 Tier A 测试消费的 `bone_rotation.py` 从生产根迁入 `mc2/test/bone_rotation_reference.py`；Line/Triangle oracle 各 2/2、Blender 5.2 factory-startup 能力矩阵 7/7 通过。正式 Bone post rotation/writeback 仍只由 native DomainV1 产品路径负责，能力门禁禁止测试 reference 回流生产根。
 
 零入站生产模块门禁当前只允许 package manifest 及其字符串装载的 declaration、nodes、Blender properties 四个外部入口；允许 4、未解释 0、过期豁免 0。新增死模块或测试算法误放生产根会直接使架构检查失败。
 
-从 manifest 的八个真实外部入口遍历生产 import 图，当前 68/68 模块全部可达，不可达模块和失效根均为 0。E7-S 已无未解释生产孤岛；途中仍可发现新合并点，但必须由职责重叠而不是文件体量或可达性猜测驱动。
+从 manifest 的八个真实外部入口遍历生产 import 图，当前 69/69 模块全部可达，不可达模块和失效根均为 0。E7-S 已无未解释生产孤岛；途中仍可发现新合并点，但必须由职责重叠而不是文件体量或可达性猜测驱动。
 
 solver declaration 已删除只描述旧面不存在的 `legacy_policy`，`native_backend` 只保留当前 collector/DomainV1 执行事实；native E3 注释也改为 point-only reference layout。三个下划线/短语残项已加入精确禁词，真实 fallback tangent/safe normal 数值算法不受影响。
 

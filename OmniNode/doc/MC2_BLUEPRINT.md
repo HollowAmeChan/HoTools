@@ -460,11 +460,11 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 - 一次 request 对应一个 DomainV1 owner、一个 frame transaction 和一个 logical output envelope。
 - 六个顶层 setup 产品钩子已经按 owner/lifecycle 归位为四个 setup 模块，Python 生产模块由 72 个变为 70 个；文件数量不是 KPI，符合 Physics World 原子化标准的依赖根、合同、独立阶段和 owner 保持独立。
 - 后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 和两个 task frame adapter，并把只有 Tier A 测试消费的 Bone rotation reference 移出生产根；当前生产模块为 68 个。
-- forwarder 分类门禁同时拒绝未分类入口和已经失效的历史豁免；当前 77 项与生产 AST 双向一致，未分类和过期豁免均为 0。
-- 68 个生产模块已按 Physics World 原子职责完整归入 9 类：package shell 5、identity/capability 8、immutable contract 7、compile stage 17、runtime owner 6、solver execution 5、native bridge 2、Blender/product boundary 14、observation 4；缺失、残留、重复归类和既定 merge source 均为 0。后续新合并点仍按证据独立处理，不把该清单当作冻结文件布局。
+- forwarder 分类门禁同时拒绝未分类入口和已经失效的历史豁免；当前 82 项与生产 AST 双向一致，未分类和过期豁免均为 0。
+- 69 个生产模块已按 Physics World 原子职责完整归入 9 类：package shell 5、identity/capability 8、immutable contract 7、compile stage 17、runtime owner 6、solver execution 5、native bridge 2、Blender/product boundary 15、observation 4；Mesh 对象 spec/适配器保持独立产品边界。缺失、残留、重复归类和既定 merge source 均为 0。后续新合并点仍按证据独立处理，不把该清单当作冻结文件布局。
 - Bone Line/Triangle 纯 Python rotation 算法现在明确属于 `mc2/test/bone_rotation_reference.py` 的 Unity Tier A oracle；能力门禁禁止同名生产模块回流，正式产品继续只走 native DomainV1 post/writeback。
 - 零入站生产模块只允许 package manifest 及其字符串装载的 declaration、nodes、Blender properties 四个外部入口；当前未解释与过期豁免均为 0。
-- manifest 的八个真实外部入口可达全部 68 个生产模块；不可达模块和失效根均为 0，互相引用的死子图不能再留在生产树。
+- manifest 的八个真实外部入口可达全部 69 个生产模块；不可达模块和失效根均为 0，互相引用的死子图不能再留在生产树。
 - solver declaration 已删除 `legacy_policy`，backend 描述只保留当前唯一 collector/DomainV1 事实；下划线连接的旧迁移词与 native E3 旧注释已纳入精确禁词。
 - E3 reference 已删除 `data_path_only`、七个 scheduler slice selector 与伪造 readiness inspect 字段；base step 和七个显式 pass 现在各有唯一入口。产品 compiled pipeline 未改，Blender 5.2 mixed-output 900 帧 digest 不变。
 - 固定多 pass 前缀入口已从 `step_reference_slices` 正名为 `step_reference_pass_prefix`；生产 Python 不再使用 slice/data-path 描述当前执行职责。
@@ -505,7 +505,7 @@ P6 只冻结未来 backend 可直接消费的合同，不创建 GPU runtime：
 - Frame：task reference/Center/Anchor/Teleport -> frame packet -> StepBasic，frame shift 每帧只消费一次。
 - Substep：Center evaluator -> prediction -> Tether -> Distance A -> Angle -> Bending -> external Point/Edge -> Distance B -> Motion -> whole-domain self -> post/history。
 - IO：一个 request 对应一个 domain output；多个 target 由一次结果事务发布，失败整批回滚。
-- Debug/measurement：请求式旁路记录与 production 求和等价，但不成为常驻 staging 或 backend ABI。
+- Debug/measurement：backend contract schema V2 用每个 pass 的 `request_writes` 单独声明请求式记录；普通 production writes 不包含 debug buffer。Pin primitive 参与标志与跨 owner 配对过滤决策属于 CPU/GPU exact 通道。请求式旁路记录与 production 求和等价，但不成为常驻 staging 或 backend ABI。
 
 P6 不改变 CPU pass 顺序、调度或内存所有权，不实施 P4 CPU 并发，也不能用未来 GPU 解释 CPU 回归。E6 只有在 E7-S、P6、最终双 ABI 和规模基准稳定后才可独立开工。
 

@@ -16,7 +16,7 @@ import numpy as np
 
 
 MC2_DOMAIN_IR_SCHEMA_VERSION = 1
-MC2_BACKEND_CONTRACT_SCHEMA_VERSION = 1
+MC2_BACKEND_CONTRACT_SCHEMA_VERSION = 2
 MC2_PARTITION_FRAME_RESET = 1 << 0
 MC2_PARTITION_FRAME_KEEP = 1 << 1
 MC2_PARTITION_FRAME_DISABLED = 1 << 2
@@ -1773,6 +1773,7 @@ class MC2BackendPassSpecV1:
     writes: tuple[str, ...]
     depends_on: tuple[str, ...]
     condition: str = "always"
+    request_writes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _text(self.name, "pass name"))
@@ -1784,6 +1785,11 @@ class MC2BackendPassSpecV1:
             self, "depends_on", _unique(self.depends_on, "pass dependencies")
         )
         object.__setattr__(self, "condition", _text(self.condition, "pass condition"))
+        object.__setattr__(
+            self,
+            "request_writes",
+            _unique(self.request_writes, "pass request writes"),
+        )
     def debug_dict(self) -> dict:
         return {
             "name": self.name,
@@ -1792,6 +1798,7 @@ class MC2BackendPassSpecV1:
             "writes": list(self.writes),
             "depends_on": list(self.depends_on),
             "condition": self.condition,
+            "request_writes": list(self.request_writes),
         }
 
 
@@ -1821,9 +1828,15 @@ class MC2BackendDataPassContractV1:
         if len(set(pass_names)) != len(pass_names):
             raise ValueError("backend pass names must be unique")
         known_buffers = set(buffer_names)
+        debug_buffers = {
+            item.name for item in self.buffers if item.role == "debug"
+        }
+        request_written_buffers: set[str] = set()
         known_passes: set[str] = set()
         for item in self.passes:
-            unknown_buffers = (set(item.reads) | set(item.writes)) - known_buffers
+            unknown_buffers = (
+                set(item.reads) | set(item.writes) | set(item.request_writes)
+            ) - known_buffers
             if unknown_buffers:
                 raise ValueError(
                     f"backend pass {item.name!r} references unknown buffers: "
@@ -1835,7 +1848,20 @@ class MC2BackendDataPassContractV1:
                     f"backend pass {item.name!r} has forward/unknown dependencies: "
                     + ", ".join(sorted(unknown_dependencies))
                 )
+            invalid_request_writes = set(item.request_writes) - debug_buffers
+            if invalid_request_writes:
+                raise ValueError(
+                    f"backend pass {item.name!r} request-writes non-debug buffers: "
+                    + ", ".join(sorted(invalid_request_writes))
+                )
+            request_written_buffers.update(item.request_writes)
             known_passes.add(item.name)
+        missing_debug_producers = debug_buffers - request_written_buffers
+        if missing_debug_producers:
+            raise ValueError(
+                "backend debug buffers lack request-only producers: "
+                + ", ".join(sorted(missing_debug_producers))
+            )
 
     def buffer(self, name: str) -> MC2BackendBufferSpecV1:
         for item in self.buffers:
@@ -2070,6 +2096,8 @@ MC2_BACKEND_NUMERICAL_POLICY_V1 = MC2BackendNumericalPolicyV1(
         "collision_filter_decisions",
         "domain_partition_output_identity",
         "frame_generation",
+        "self_owner_pair_filter_decisions",
+        "self_primitive_participation_flags",
         "topology_indices",
         "validity_and_teleport_flags",
     ),
@@ -2335,14 +2363,14 @@ def make_mc2_backend_data_pass_contract(
         MC2BackendPassSpecV1("center", "substep", frame_names + parameter_names + state, state, ("center_frame_shift",)),
         MC2BackendPassSpecV1("center_inertia", "substep", parameter_names + state, state, ("center",)),
         MC2BackendPassSpecV1("integration", "substep", parameter_names + frame_names + state, state, ("center_inertia",)),
-        MC2BackendPassSpecV1("tether", "substep", topology + parameter_names + step_basic + state, state, ("integration",), "constraint:tether"),
-        MC2BackendPassSpecV1("distance_a", "substep", topology + parameter_names + state, state, ("tether",), "constraint:distance"),
-        MC2BackendPassSpecV1("angle", "substep", topology + parameter_names + step_basic + state, state, ("distance_a",), "baseline:angle"),
-        MC2BackendPassSpecV1("bending", "substep", topology + parameter_names + state, state, ("angle",), "constraint:bending"),
-        MC2BackendPassSpecV1("external_collision", "substep", parameter_names + frame_names + state, state, ("bending",)),
-        MC2BackendPassSpecV1("distance_b", "substep", topology + parameter_names + state, state, ("external_collision",), "constraint:distance"),
-        MC2BackendPassSpecV1("motion", "substep", topology + parameter_names + frame_names + step_basic + state, state, ("distance_b",)),
-        MC2BackendPassSpecV1("whole_domain_self", "substep", topology + parameter_names + state, state + ("transient.self_candidates", "transient.self_contacts"), ("motion",), "capability:self_collision"),
+        MC2BackendPassSpecV1("tether", "substep", topology + parameter_names + step_basic + state, state, ("integration",), "constraint:tether", ("debug.pass_records",)),
+        MC2BackendPassSpecV1("distance_a", "substep", topology + parameter_names + state, state, ("tether",), "constraint:distance", ("debug.pass_records",)),
+        MC2BackendPassSpecV1("angle", "substep", topology + parameter_names + step_basic + state, state, ("distance_a",), "baseline:angle", ("debug.pass_records",)),
+        MC2BackendPassSpecV1("bending", "substep", topology + parameter_names + state, state, ("angle",), "constraint:bending", ("debug.pass_records",)),
+        MC2BackendPassSpecV1("external_collision", "substep", parameter_names + frame_names + state, state, ("bending",), request_writes=("debug.pass_records",)),
+        MC2BackendPassSpecV1("distance_b", "substep", topology + parameter_names + state, state, ("external_collision",), "constraint:distance", ("debug.pass_records",)),
+        MC2BackendPassSpecV1("motion", "substep", topology + parameter_names + frame_names + step_basic + state, state, ("distance_b",), request_writes=("debug.pass_records",)),
+        MC2BackendPassSpecV1("whole_domain_self", "substep", topology + parameter_names + state, state + ("transient.self_candidates", "transient.self_contacts"), ("motion",), "capability:self_collision", ("debug.pass_records", "debug.self_intersections")),
         MC2BackendPassSpecV1("post_history", "substep", parameter_names + state, state, ("whole_domain_self",)),
         MC2BackendPassSpecV1("publish_output", "result", state, ("output.logical_world_position", "output.logical_world_rotation", "output.validity"), ("post_history",)),
     )
