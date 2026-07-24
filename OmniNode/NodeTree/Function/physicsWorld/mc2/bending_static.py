@@ -242,7 +242,7 @@ def build_mc2_bending_static(
     columns = _matrix_columns(initial_local_to_world_columns)
     from .native import native_module
 
-    derived = native_module().mc2_build_bending_derived_v0(
+    derived = native_module().mc2_build_bending_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float32),
         np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),

@@ -173,7 +173,7 @@ def _mesh_uvs(snapshot: MC2MeshPartitionStaticSnapshotV1):
 def _fallback_tangents(normals: np.ndarray) -> np.ndarray:
     values = np.ascontiguousarray(normals, dtype=np.float64)
     tangents = np.empty(values.shape, dtype=np.float64)
-    native_module().mc2_build_mesh_fallback_tangents_v0(values, tangents)
+    native_module().mc2_build_mesh_fallback_tangents(values, tangents)
     return tangents
 
 

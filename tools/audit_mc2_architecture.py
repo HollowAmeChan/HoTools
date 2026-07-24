@@ -139,7 +139,20 @@ E7_PRODUCT_RUNTIME_ROOTS = ("mc2.product_solver",)
 E7_PUBLIC_NODE_ROOTS = ("mc2.nodes",)
 E7_DEBUG_ROOTS = ("mc2.debug", "mc2.debug_draw")
 E7_LEGACY_BINDING_PREFIXES = ("mc2_context_v0_", "mc2_interaction_v0_")
-E7_LEGACY_BINDING_NAMES = frozenset()
+E7_LEGACY_BINDING_NAMES = frozenset((
+    "mc2_optimize_triangle_direction_v0",
+    "mc2_build_mesh_fallback_tangents_v0",
+    "mc2_build_bone_rest_frames_v0",
+    "mc2_build_bone_vertex_to_transform_rotations_v0",
+    "mc2_build_bone_transform_baseline_derived_v0",
+    "mc2_build_mesh_final_proxy_derived_v1",
+    "mc2_build_mesh_baseline_derived_v0",
+    "mc2_build_baseline_pose_depth_derived_v0",
+    "mc2_build_distance_derived_v0",
+    "mc2_build_bending_derived_v0",
+    "mc2_build_self_collision_derived_v0",
+    "mc2_build_center_static_derived_v0",
+))
 E7_LEGACY_TRANSLATION_UNITS = frozenset((
     "mc2_context_core.cpp",
     "mc2_context_frame_step.cpp",

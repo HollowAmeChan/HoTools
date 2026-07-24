@@ -32,7 +32,7 @@ def test_triangle_direction_unifies_connected_surface() -> None:
     triangles = np.asarray(((0, 1, 2), (0, 3, 2)), dtype=np.int32)
     normals = np.empty((2, 3), dtype=np.float64)
 
-    hotools_native.mc2_optimize_triangle_direction_v0(
+    hotools_native.mc2_optimize_triangle_direction(
         positions,
         triangles,
         normals,
@@ -50,7 +50,7 @@ def test_triangle_direction_rejects_degenerate_input() -> None:
     triangles = np.asarray(((0, 1, 2),), dtype=np.int32)
     normals = np.empty((1, 3), dtype=np.float64)
     try:
-        hotools_native.mc2_optimize_triangle_direction_v0(
+        hotools_native.mc2_optimize_triangle_direction(
             positions,
             triangles,
             normals,
@@ -64,13 +64,13 @@ def test_triangle_direction_rejects_degenerate_input() -> None:
 def test_mesh_fallback_tangents() -> None:
     normals = np.asarray(((0.0, 0.0, 2.0), (0.0, 3.0, 0.0)), dtype=np.float64)
     tangents = np.empty((2, 3), dtype=np.float64)
-    hotools_native.mc2_build_mesh_fallback_tangents_v0(normals, tangents)
+    hotools_native.mc2_build_mesh_fallback_tangents(normals, tangents)
     np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)), atol=1.0e-12)
     np.testing.assert_allclose(tangents, ((-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)), atol=1.0e-12)
 
     invalid = np.zeros((1, 3), dtype=np.float64)
     try:
-        hotools_native.mc2_build_mesh_fallback_tangents_v0(
+        hotools_native.mc2_build_mesh_fallback_tangents(
             invalid,
             np.empty_like(invalid),
         )
@@ -101,7 +101,7 @@ def test_mesh_final_proxy_derived_arrays() -> None:
     bind_positions = np.empty((4, 3), dtype=np.float64)
     bind_rotations = np.empty((4, 4), dtype=np.float64)
 
-    counts = hotools_native.mc2_build_mesh_final_proxy_derived_v1(
+    counts = hotools_native.mc2_build_mesh_final_proxy_derived(
         positions,
         normals,
         tangents,
@@ -156,7 +156,7 @@ def test_mesh_baseline_derived_arrays() -> None:
     local_positions = np.empty((3, 3), dtype=np.float64)
     local_rotations = np.empty((3, 4), dtype=np.float64)
 
-    counts = hotools_native.mc2_build_mesh_baseline_derived_v0(
+    counts = hotools_native.mc2_build_mesh_baseline_derived(
         positions,
         normals,
         tangents,
@@ -195,7 +195,7 @@ def test_mesh_baseline_derived_arrays() -> None:
     shared_depths = np.empty(3, dtype=np.float64)
     shared_positions = np.empty((3, 3), dtype=np.float64)
     shared_rotations = np.empty((3, 4), dtype=np.float64)
-    hotools_native.mc2_build_baseline_pose_depth_derived_v0(
+    hotools_native.mc2_build_baseline_pose_depth_derived(
         positions,
         normals,
         tangents,
@@ -253,7 +253,7 @@ def test_mesh_depth_blends_parent_path_with_fixed_surface_distance() -> None:
     local_positions = np.empty((vertex_count, 3), dtype=np.float64)
     local_rotations = np.empty((vertex_count, 4), dtype=np.float64)
 
-    counts = hotools_native.mc2_build_mesh_baseline_derived_v0(
+    counts = hotools_native.mc2_build_mesh_baseline_derived(
         positions, normals, tangents, attributes, edges,
         parents, child_ranges, child_data, baseline_flags, baseline_ranges,
         baseline_data, roots, depths, local_positions, local_rotations,
@@ -321,7 +321,7 @@ def test_distance_derived_arrays_and_owner() -> None:
     adjacency_ranges = np.asarray(((0, 3), (3, 2), (5, 3), (8, 2)), dtype=np.int32)
     adjacency_data = np.asarray((3, 2, 1, 2, 0, 3, 1, 0, 2, 0), dtype=np.int32)
 
-    derived = hotools_native.mc2_build_distance_derived_v0(
+    derived = hotools_native.mc2_build_distance_derived(
         positions,
         attributes,
         parents,
@@ -363,7 +363,7 @@ def test_bending_derived_arrays() -> None:
     triangles = np.asarray(((0, 2, 3), (1, 3, 2)), dtype=np.int32)
     columns = np.eye(4, dtype=np.float32).T.copy()
 
-    derived = hotools_native.mc2_build_bending_derived_v0(
+    derived = hotools_native.mc2_build_bending_derived(
         positions,
         attributes,
         edges,
@@ -385,7 +385,7 @@ def test_self_collision_derived_arrays() -> None:
     edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
     triangles = np.asarray(((0, 1, 3),), dtype=np.int32)
 
-    derived = hotools_native.mc2_build_self_collision_derived_v0(
+    derived = hotools_native.mc2_build_self_collision_derived(
         attributes,
         depths,
         edges,
@@ -438,7 +438,7 @@ def test_center_static_derived_arrays_and_owner() -> None:
     edges = np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32)
     gravity = np.asarray((0.436435759, -0.8728715, 0.21821788), dtype=np.float64)
 
-    derived = hotools_native.mc2_build_center_static_derived_v0(
+    derived = hotools_native.mc2_build_center_static_derived(
         positions,
         normals,
         tangents,
@@ -463,7 +463,7 @@ def test_center_static_derived_arrays_and_owner() -> None:
     invalid_bind_rotations = bind_rotations.copy()
     invalid_bind_rotations[1] = 0.0
     try:
-        hotools_native.mc2_build_center_static_derived_v0(
+        hotools_native.mc2_build_center_static_derived(
             positions,
             normals,
             tangents,

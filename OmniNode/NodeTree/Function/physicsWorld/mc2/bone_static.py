@@ -106,7 +106,7 @@ def _build_native_transform_baseline(proxy, parents, roots) -> dict:
     local_rotations = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
 
-    counts = native_module().mc2_build_bone_transform_baseline_derived_v0(
+    counts = native_module().mc2_build_bone_transform_baseline_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
         np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
         np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
@@ -386,7 +386,7 @@ def build_mc2_bone_static(
         np.ascontiguousarray(final_proxy.local_tangents, dtype=np.float64),
         np.ascontiguousarray(transform_rotations, dtype=np.float64),
     )
-    native_module().mc2_build_bone_vertex_to_transform_rotations_v0(
+    native_module().mc2_build_bone_vertex_to_transform_rotations(
         *rotation_arguments,
         to_transform_values,
     )

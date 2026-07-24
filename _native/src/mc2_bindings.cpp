@@ -152,7 +152,7 @@ void hotools::bind_mc2(nb::module_& m) {
         [](nb::args a) { return steal_or_throw(hotools::mc2_mesh_static_fingerprint_v1(nullptr, a.ptr())); });
     m.def("mc2_bone_static_fingerprint_v1",
         [](nb::args a) { return steal_or_throw(hotools::mc2_bone_static_fingerprint_v1(nullptr, a.ptr())); });
-    m.def("mc2_optimize_triangle_direction_v0",
+    m.def("mc2_optimize_triangle_direction",
         [](cf64_2d positions, i32_2d triangles, f64_2d triangle_normals) {
             check_cols(positions, 3, "positions");
             check_cols(triangles, 3, "triangles");
@@ -177,7 +177,7 @@ void hotools::bind_mc2(nb::module_& m) {
                 throw nb::value_error(error.what());
             }
         });
-    m.def("mc2_build_mesh_fallback_tangents_v0",
+    m.def("mc2_build_mesh_fallback_tangents",
         [](f64_2d local_normals, f64_2d local_tangents) {
             check_cols(local_normals, 3, "local_normals");
             check_cols(local_tangents, 3, "local_tangents");
@@ -193,7 +193,7 @@ void hotools::bind_mc2(nb::module_& m) {
                 throw nb::value_error(error.what());
             }
         });
-    m.def("mc2_build_bone_rest_frames_v0",
+    m.def("mc2_build_bone_rest_frames",
         [](cf32_2d matrices,
            f64_2d transform_rotations,
            f64_2d local_normals,
@@ -218,7 +218,7 @@ void hotools::bind_mc2(nb::module_& m) {
                 throw nb::value_error(error.what());
             }
         });
-    m.def("mc2_build_bone_vertex_to_transform_rotations_v0",
+    m.def("mc2_build_bone_vertex_to_transform_rotations",
         [](cf64_2d local_normals,
            cf64_2d local_tangents,
            cf64_2d transform_rotations,
@@ -284,7 +284,7 @@ void hotools::bind_mc2(nb::module_& m) {
             );
             return result;
         });
-    m.def("mc2_build_bone_transform_baseline_derived_v0",
+    m.def("mc2_build_bone_transform_baseline_derived",
         [](cf64_2d positions,
            cf64_2d local_normals,
            cf64_2d local_tangents,
@@ -417,7 +417,7 @@ void hotools::bind_mc2(nb::module_& m) {
         nb::arg("out_roots"), nb::arg("out_depths"),
         nb::arg("out_local_positions"), nb::arg("out_local_rotations"),
         nb::arg("produce_owned") = false);
-    m.def("mc2_build_mesh_final_proxy_derived_v1",
+    m.def("mc2_build_mesh_final_proxy_derived",
         [](cf64_2d positions,
            f64_2d local_normals,
            f64_2d local_tangents,
@@ -635,7 +635,7 @@ void hotools::bind_mc2(nb::module_& m) {
         nb::arg("out_bind_positions"),
         nb::arg("out_bind_rotations"),
         nb::arg("owner_mode") = 0);
-    m.def("mc2_build_mesh_baseline_derived_v0",
+    m.def("mc2_build_mesh_baseline_derived",
         [](cf64_2d positions,
            cf64_2d local_normals,
            cf64_2d local_tangents,
@@ -791,7 +791,7 @@ void hotools::bind_mc2(nb::module_& m) {
         nb::arg("out_local_positions"),
         nb::arg("out_local_rotations"),
         nb::arg("produce_owned") = false);
-    m.def("mc2_build_baseline_pose_depth_derived_v0",
+    m.def("mc2_build_baseline_pose_depth_derived",
         [](cf64_2d positions,
            cf64_2d local_normals,
            cf64_2d local_tangents,
@@ -851,7 +851,7 @@ void hotools::bind_mc2(nb::module_& m) {
             );
         });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
-    m.def("mc2_build_distance_derived_v0",
+    m.def("mc2_build_distance_derived",
         [](cf64_2d positions,
            cu8_1d vertex_attributes,
            ci32_1d parent_indices,
@@ -910,7 +910,7 @@ void hotools::bind_mc2(nb::module_& m) {
             );
             return result;
         });
-    m.def("mc2_build_bending_derived_v0",
+    m.def("mc2_build_bending_derived",
         [](cf32_2d positions,
            cu8_1d vertex_attributes,
            ci32_2d edges,
@@ -962,7 +962,7 @@ void hotools::bind_mc2(nb::module_& m) {
             );
             return result;
         });
-    m.def("mc2_build_self_collision_derived_v0",
+    m.def("mc2_build_self_collision_derived",
         [](cu8_1d vertex_attributes,
            cf64_1d vertex_depths,
            ci32_2d edges,
@@ -1012,7 +1012,7 @@ void hotools::bind_mc2(nb::module_& m) {
             result["triangle_count"] = derived.triangle_count;
             return result;
         });
-    m.def("mc2_build_center_static_derived_v0",
+    m.def("mc2_build_center_static_derived",
         [](cf64_2d positions,
            cf64_2d local_normals,
            cf64_2d local_tangents,

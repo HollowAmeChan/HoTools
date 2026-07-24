@@ -77,7 +77,7 @@ def _build_native_baseline(proxy: MC2ProxyStaticSpec) -> dict:
     local_rotations = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
 
-    counts = native_module().mc2_build_mesh_baseline_derived_v0(
+    counts = native_module().mc2_build_mesh_baseline_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
         np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
         np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
@@ -133,7 +133,7 @@ def _build_native_baseline_pose_depth(
     local_rotations = np.empty((count, 4), dtype=np.float64)
     from .native import native_module
 
-    native_module().mc2_build_baseline_pose_depth_derived_v0(
+    native_module().mc2_build_baseline_pose_depth_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
         np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
         np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),

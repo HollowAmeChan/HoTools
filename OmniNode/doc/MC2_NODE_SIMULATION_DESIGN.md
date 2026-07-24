@@ -624,6 +624,8 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 compiled-domain 审计已删除 `fragment`、`single_fragment`、`effective_parameter_signature` 与 `single_effective_parameter_signature` 四个 E1 单 partition compatibility/shadow 视图。当前对象只暴露真实 `fragments` 与 `effective_parameter_signatures` 集合；单 partition 测试也必须显式索引集合，不再形成第二套单 source 产品表面。
 
+native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/_v1` 后缀改为无版本名，并重新编译受版本控制的 py313 pyd。实际产物中旧符号为 0、新符号缺失为 0；注册 binding 仍为 102、产品必需 21。该规则只适用于后端中立 helper，正式 `mc2_domain_cpu_v1_*` DomainV1 ABI 继续保留版本标识。
+
 ## 明确的数据流
 
 ### 显式模式

@@ -94,7 +94,7 @@ def _optimize_triangle_direction(
     normals = np.empty((len(triangles), 3), dtype=np.float64)
     from ...native import native_module
 
-    native_module().mc2_optimize_triangle_direction_v0(
+    native_module().mc2_optimize_triangle_direction(
         np.ascontiguousarray(positions, dtype=np.float64),
         final_triangles,
         normals,
@@ -142,7 +142,7 @@ def _build_final_proxy_derived(
     bind_rotations = np.empty((vertex_count, 4), dtype=np.float64)
     from ...native import native_module
 
-    counts = native_module().mc2_build_mesh_final_proxy_derived_v1(
+    counts = native_module().mc2_build_mesh_final_proxy_derived(
         np.ascontiguousarray(positions, dtype=np.float64),
         normals,
         tangents,
@@ -450,7 +450,7 @@ def build_blender_mesh_final_proxy(
     tangents = tangents.reshape((-1, 3))
     from ...native import native_module
 
-    native_module().mc2_build_mesh_fallback_tangents_v0(normals, tangents)
+    native_module().mc2_build_mesh_fallback_tangents(normals, tangents)
     if not pin_enabled:
         attributes = tuple(MC2_VERTEX_MOVE for _ in range(vertex_count))
     elif not pin_vertex_group:

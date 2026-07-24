@@ -233,7 +233,7 @@ def build_mc2_distance_static(
         raise ValueError("MC2 Distance supports at most 65536 proxy vertices")
     from .native import native_module
 
-    derived = native_module().mc2_build_distance_derived_v0(
+    derived = native_module().mc2_build_distance_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
         np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
         np.ascontiguousarray(baseline.parent_indices, dtype=np.int32),

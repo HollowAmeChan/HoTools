@@ -136,7 +136,7 @@ def build_mc2_self_collision_static(
 
     from .native import native_module
 
-    derived = native_module().mc2_build_self_collision_derived_v0(
+    derived = native_module().mc2_build_self_collision_derived(
         np.ascontiguousarray(proxy.vertex_attributes, dtype=np.uint8),
         depth_values,
         np.ascontiguousarray(proxy.edges, dtype=np.int32).reshape((-1, 2)),

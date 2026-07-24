@@ -324,7 +324,7 @@ def _build_mc2_bone_static(
     tangent_values = np.empty((record_count, 3), dtype=np.float64)
     from ...native import native_module
 
-    native_module().mc2_build_bone_rest_frames_v0(
+    native_module().mc2_build_bone_rest_frames(
         matrices,
         transform_values,
         normal_values,

@@ -130,7 +130,7 @@ def build_mc2_center_static(
 
     from .native import native_module
 
-    derived = native_module().mc2_build_center_static_derived_v0(
+    derived = native_module().mc2_build_center_static_derived(
         np.ascontiguousarray(proxy.local_positions, dtype=np.float64),
         np.ascontiguousarray(proxy.local_normals, dtype=np.float64),
         np.ascontiguousarray(proxy.local_tangents, dtype=np.float64),
