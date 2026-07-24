@@ -600,6 +600,10 @@ def _python_facts() -> dict:
         for source, target in E7S_PYTHON_MERGE_TARGETS.items()
         if source in modules
     }
+    forwarder_keys = {
+        (item["module"], item["name"])
+        for item in forwarders
+    }
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -621,6 +625,10 @@ def _python_facts() -> dict:
             ),
             key=lambda item: (item["module"], item["line"]),
         ),
+        "stale_forwarder_allowances": [
+            {"module": module, "name": name}
+            for module, name in sorted(ALLOWED_FORWARDERS - forwarder_keys)
+        ],
         "test_imports": sorted(test_imports, key=lambda item: (item["module"], item["line"])),
         "raw_readback_calls": sorted(
             raw_readback_calls,
@@ -909,7 +917,8 @@ def _print_summary(report: dict) -> None:
     print(f"Python lazy re-exports: {python['reexport_count']}")
     print(
         f"Python one-call forwarders: {len(python['forwarders'])} classified, "
-        f"{len(python['unexpected_forwarders'])} unexpected"
+        f"{len(python['unexpected_forwarders'])} unexpected, "
+        f"{len(python['stale_forwarder_allowances'])} stale allowances"
     )
     print(f"Python production test imports: {len(python['test_imports'])}")
     print(f"Python raw readback boundary violations: {len(python['raw_readback_calls'])}")
@@ -1008,6 +1017,7 @@ def main() -> None:
             report["python"]["private_imports"],
             report["python"]["reexport_count"],
             report["python"]["unexpected_forwarders"],
+            report["python"]["stale_forwarder_allowances"],
             report["python"]["test_imports"],
             report["python"]["raw_readback_calls"],
             report["python"]["persistent_array_fields"],

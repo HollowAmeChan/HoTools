@@ -113,6 +113,8 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 
 native 后续清单发现并删除了没有任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出；py313 已重编，当前为 101 个注册 binding、21 个产品必需 symbol、0 native 旧面。native kernel 30 项、Bone Tier A 与产品静态门禁通过。生产读取为零不单独构成 Python 原子合同的删除依据，partition patch factory 和 fragment cache 只读状态继续按真实职责保留。
 
+架构审计已增加 `stale_forwarder_allowances` 硬门禁；78 项 forwarder 分类与当前生产 AST 双向一致，未分类入口和过期历史豁免均为 0。后续删除、改写或新增长薄入口都会要求同批更新职责分类。
+
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 
 ## 公共验收门槛

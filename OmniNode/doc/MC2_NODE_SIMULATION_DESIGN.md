@@ -646,6 +646,8 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 
 调用计数不是删除资格本身。`make_mc2_partition_patch` 虽然当前只由合同测试直接调用，但它集中承担稀疏字段校验、排序和参数归一化；Mesh fragment cache 的 `entry_count` 也属于 cache owner 的只读状态面。两者均有独立职责和测试，不是迁移兼容转发。E7-S 后续必须同时证明“没有生产读取”和“没有合同/owner 价值”，才允许删除薄入口。
 
+forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 78 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
+
 ## 明确的数据流
 
 ### 显式模式
