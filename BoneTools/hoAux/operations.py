@@ -78,6 +78,79 @@ def _external_children(bones, deleting_names):
     return result
 
 
+def _referencing_owners(armature_object, target_names, excluded_owner_names):
+    result = []
+    for pose_bone in armature_object.pose.bones:
+        if pose_bone.name in excluded_owner_names:
+            continue
+        for constraint in pose_bone.constraints:
+            if getattr(constraint, "target", None) == armature_object:
+                if getattr(constraint, "subtarget", "") in target_names:
+                    result.append(f"{pose_bone.name}:{constraint.name}")
+    animation_data = armature_object.animation_data
+    if animation_data is not None:
+        for fcurve in animation_data.drivers:
+            owner_name = bone_name_from_path(fcurve.data_path)
+            if owner_name in excluded_owner_names:
+                continue
+            for variable in fcurve.driver.variables:
+                for target in variable.targets:
+                    if getattr(target, "id", None) == armature_object:
+                        if getattr(target, "bone_target", "") in target_names:
+                            result.append(f"{fcurve.data_path}:{variable.name}")
+    return result
+
+
+def _referenced_dir_names(armature_object, owner_names):
+    result = set()
+    for owner_name in owner_names:
+        pose_bone = armature_object.pose.bones.get(owner_name)
+        if pose_bone is None:
+            continue
+        for constraint in pose_bone.constraints:
+            if getattr(constraint, "target", None) != armature_object:
+                continue
+            target_name = getattr(constraint, "subtarget", "")
+            target_bone = armature_object.data.bones.get(target_name)
+            if target_bone is None:
+                continue
+            info = getattr(target_bone.hotools_boneprops, "hoAux", None)
+            if info is not None and info.isHoAuxBone and info.roleTag == "DIR":
+                result.add(target_name)
+    for fcurve in _scope_fcurves(armature_object, owner_names):
+        for variable in fcurve.driver.variables:
+            for target in variable.targets:
+                target_name = getattr(target, "bone_target", "")
+                target_bone = armature_object.data.bones.get(target_name)
+                if target_bone is None:
+                    continue
+                info = getattr(target_bone.hotools_boneprops, "hoAux", None)
+                if info is not None and info.isHoAuxBone and info.roleTag == "DIR":
+                    result.add(target_name)
+    return result
+
+
+def _remove_edit_bones(armature_object, bone_names):
+    if not bone_names:
+        return 0
+    armature_data = armature_object.data
+    bpy.context.view_layer.objects.active = armature_object
+    armature_object.select_set(True)
+    if armature_object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.mode_set(mode="EDIT")
+    removed = 0
+    try:
+        for bone_name in bone_names:
+            edit_bone = armature_data.edit_bones.get(bone_name)
+            if edit_bone is not None:
+                armature_data.edit_bones.remove(edit_bone)
+                removed += 1
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    return removed
+
+
 def remove_scope(armature_object, pipeline_id="", module_id=""):
     if armature_object is None or armature_object.type != "ARMATURE":
         raise TypeError("remove_scope requires an Armature object")
@@ -92,29 +165,44 @@ def remove_scope(armature_object, pipeline_id="", module_id=""):
         detail = ", ".join(f"{parent}->{child}" for parent, child in blocked)
         raise HoAuxRemovalBlockedError(f"HoAux 骨下存在非删除范围子骨：{detail}")
 
+    references = _referencing_owners(
+        armature_object, deleting_names, deleting_names
+    )
+    if references:
+        detail = ", ".join(references)
+        raise HoAuxRemovalBlockedError(f"删除范围仍被其他资源使用：{detail}")
+
+    candidate_dirs = _referenced_dir_names(armature_object, deleting_names)
+
     drivers = _scope_fcurves(armature_object, deleting_names)
     animation_data = armature_object.animation_data
     if animation_data is not None:
         for fcurve in drivers:
             animation_data.drivers.remove(fcurve)
 
-    view_layer = bpy.context.view_layer
-    view_layer.objects.active = armature_object
-    armature_object.select_set(True)
-    if armature_object.mode != "OBJECT":
-        bpy.ops.object.mode_set(mode="OBJECT")
-    bpy.ops.object.mode_set(mode="EDIT")
-    try:
-        for bone_name in deleting_names:
-            edit_bone = armature_data.edit_bones.get(bone_name)
-            if edit_bone is not None:
-                armature_data.edit_bones.remove(edit_bone)
-    finally:
-        bpy.ops.object.mode_set(mode="OBJECT")
+    removed_bones = _remove_edit_bones(armature_object, deleting_names)
+
+    orphan_dirs = {
+        bone_name
+        for bone_name in candidate_dirs
+        if bone_name in armature_data.bones
+        and not _referencing_owners(armature_object, {bone_name}, set())
+    }
+    orphan_bones = [armature_data.bones[name] for name in orphan_dirs]
+    blocked_dir_names = {
+        parent_name
+        for parent_name, _child_name in _external_children(orphan_bones, orphan_dirs)
+    }
+    orphan_dirs = {
+        name
+        for name in orphan_dirs
+        if name not in blocked_dir_names
+    }
+    removed_bones += _remove_edit_bones(armature_object, orphan_dirs)
 
     collection_count = prune_empty_system_collections(armature_data)
     return {
-        "bones": len(deleting_names),
+        "bones": removed_bones,
         "drivers": len(drivers),
         "collections": collection_count,
     }

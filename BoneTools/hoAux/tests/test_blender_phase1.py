@@ -143,9 +143,9 @@ assert enabled["drivers"] == 1
 assert not fcurve.mute
 
 removed = remove_scope(obj, "ARM.L", "ELBOW_VOLUME.L")
-assert removed["bones"] == 1
+assert removed["bones"] == 2
 assert deform_name not in armature.bones
-assert direction_name in armature.bones
+assert direction_name not in armature.bones
 assert "Main_L" in armature.bones
 assert armature.collections.get("User Collection") is not None
 

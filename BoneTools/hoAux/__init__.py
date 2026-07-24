@@ -2,7 +2,7 @@
 
 import bpy
 
-from . import operations, panel, properties
+from . import operations, panel, preview, properties
 
 
 _CLASSES = properties.CLASSES + operations.CLASSES + panel.CLASSES
@@ -19,6 +19,7 @@ def register():
 
 
 def unregister():
+    preview.ShoulderVolumePreview.shutdown()
     properties.unregister_rna()
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
