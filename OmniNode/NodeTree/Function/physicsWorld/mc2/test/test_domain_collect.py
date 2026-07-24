@@ -111,7 +111,7 @@ def _plan(*, gravity=3.0):
 
 
 def test_domain_draft_resolves_effectives_filters_and_provenance() -> None:
-    draft = collect.build_mc2_mesh_domain_draft(_plan())
+    draft = collect.build_mc2_domain_draft(_plan())
     assert draft.partition_ids == ("sleeve", "coat")
     assert draft.collision_groups == (1, 8)
     assert draft.collision_masks == (9, 8)
@@ -133,18 +133,18 @@ def test_domain_draft_resolves_effectives_filters_and_provenance() -> None:
 
 
 def test_parameter_change_keeps_domain_identity_but_changes_draft_signature() -> None:
-    first = collect.build_mc2_mesh_domain_draft(_plan(gravity=3.0))
-    changed = collect.build_mc2_mesh_domain_draft(_plan(gravity=4.0))
+    first = collect.build_mc2_domain_draft(_plan(gravity=3.0))
+    changed = collect.build_mc2_domain_draft(_plan(gravity=4.0))
     assert first.domain_id == changed.domain_id
     assert first.collector_domain_signature == changed.collector_domain_signature
     assert first.draft_signature != changed.draft_signature
 
 
 def test_domain_draft_external_collision_masks_are_parameter_state() -> None:
-    first = collect.build_mc2_mesh_domain_draft(
+    first = collect.build_mc2_domain_draft(
         _plan(), external_collision_masks=(1, 2),
     )
-    changed = collect.build_mc2_mesh_domain_draft(
+    changed = collect.build_mc2_domain_draft(
         _plan(), external_collision_masks=(1, 4),
     )
     assert first.external_collision_masks == (1, 2)
@@ -158,7 +158,7 @@ def test_domain_draft_rejects_no_active_partitions() -> None:
         explicit_entries=_entry(301, "disabled", enabled=False),
     )
     try:
-        collect.build_mc2_mesh_domain_draft(plan)
+        collect.build_mc2_domain_draft(plan)
     except ValueError as exc:
         assert "no active partitions" in str(exc)
     else:
@@ -166,7 +166,7 @@ def test_domain_draft_rejects_no_active_partitions() -> None:
 
 
 def test_domain_draft_captures_one_unfiltered_collider_table() -> None:
-    draft = collect.build_mc2_mesh_domain_draft(_plan())
+    draft = collect.build_mc2_domain_draft(_plan())
     external = FakeMeshSource(501)
     world = SimpleNamespace(
         collider_snapshot={
@@ -180,7 +180,7 @@ def test_domain_draft_captures_one_unfiltered_collider_table() -> None:
         },
         previous_collider_snapshot=None,
     )
-    frame = collect.build_mc2_mesh_domain_collider_frame(world, draft)
+    frame = collect.build_mc2_domain_collider_frame_for_draft(world, draft)
     assert frame.frame == 12
     assert frame.source_pointers == (101, 102)
     assert frame.collider_keys == ("external_1", "external_3")

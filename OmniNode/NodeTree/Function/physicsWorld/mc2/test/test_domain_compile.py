@@ -142,7 +142,7 @@ def _domain_draft():
         setup_type="mesh_cloth",
         explicit_entries=entries,
     )
-    return collector.build_mc2_mesh_domain_draft(
+    return collector.build_mc2_domain_draft(
         plan,
         domain_id="mc2.domain:test-two",
     )

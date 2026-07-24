@@ -108,7 +108,7 @@ def _collection(*, gravity=5.0, constraints=False):
     plan = partitions.collect_mc2_partition_entries(
         setup_type="mesh_cloth", explicit_entries=entries,
     )
-    draft = collector.build_mc2_mesh_domain_draft(
+    draft = collector.build_mc2_domain_draft(
         plan, domain_id="mc2.domain:product-slot-test",
     )
     return product.MC2MeshProductCollectionV1(
@@ -520,11 +520,11 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
     world.frame_context.dt = 0.05
     world.frame_context.time_scale = 0.5
     original_capture = product_frame_module.capture_mc2_mesh_product_frame
-    original_collider = slot_module.build_mc2_mesh_domain_collider_frame
+    original_collider = slot_module.build_mc2_domain_collider_frame_for_draft
     product_frame_module.capture_mc2_mesh_product_frame = (
         lambda *_args, **_kwargs: (frame, ("first", "second"))
     )
-    slot_module.build_mc2_mesh_domain_collider_frame = (
+    slot_module.build_mc2_domain_collider_frame_for_draft = (
         lambda *_args, **_kwargs: _empty_collider_frame(9)
     )
     try:
@@ -538,7 +538,7 @@ def test_capture_path_publishes_world_and_solver_timing_atomically():
         )
     finally:
         product_frame_module.capture_mc2_mesh_product_frame = original_capture
-        slot_module.build_mc2_mesh_domain_collider_frame = original_collider
+        slot_module.build_mc2_domain_collider_frame_for_draft = original_collider
     packet = slot.data["frame_packet"]
     assert packet.frame == 9 and packet.frame_delta_time == np.float32(0.1)
     assert packet.time_scale == np.float32(0.25)

@@ -102,7 +102,7 @@ def _draft(*, gravity=5.0):
     plan = partition_specs.collect_mc2_partition_entries(
         setup_type="mesh_cloth", explicit_entries=entries,
     )
-    return collector.build_mc2_mesh_domain_draft(
+    return collector.build_mc2_domain_draft(
         plan, domain_id="mc2.domain:fused-owner-test",
     )
 

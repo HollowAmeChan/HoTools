@@ -171,6 +171,9 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "build_mc2_mesh_fused_output_batch",
         "publish_mc2_mesh_fused_output_transaction",
         "MC2RuntimeParametersV0",
+        "build_mc2_mesh_domain_draft",
+        "build_mc2_mesh_domain_collider_frame",
+        "_product_slot_id",
     }
     production = [
         path
@@ -203,6 +206,10 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     assert "MC2_BONE_FRAME_STATE_KEY" not in product_solver_source
     assert "backend_resources" not in product_solver_source
     domain_compile_source = (MC2_ROOT / "domain_compile.py").read_text(encoding="utf-8")
+    domain_collect_source = (MC2_ROOT / "domain_collect.py").read_text(
+        encoding="utf-8"
+    )
+    assert "MC2MeshDomainDraftV1" not in domain_collect_source
     for name in (
         "single_fragment",
         "fragment",

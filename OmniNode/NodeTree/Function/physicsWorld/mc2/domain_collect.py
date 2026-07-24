@@ -221,32 +221,8 @@ def build_mc2_domain_collider_frame_for_draft(
     )
 
 
-# E5-B 迁移包装；E7-S 在产品调用点全部切换后删除。
-MC2MeshDomainDraftV1 = MC2DomainDraftV1
-
-
-def build_mc2_mesh_domain_draft(
-    plan: MC2PartitionCollectorPlan,
-    *,
-    domain_id: str | None = None,
-    external_collision_masks=None,
-) -> MC2DomainDraftV1:
-    return build_mc2_domain_draft(
-        plan,
-        domain_id=domain_id,
-        external_collision_masks=external_collision_masks,
-    )
-
-
-def build_mc2_mesh_domain_collider_frame(world, draft: MC2DomainDraftV1):
-    return build_mc2_domain_collider_frame_for_draft(world, draft)
-
-
 __all__ = [
     "MC2DomainDraftV1",
-    "MC2MeshDomainDraftV1",
     "build_mc2_domain_draft",
     "build_mc2_domain_collider_frame_for_draft",
-    "build_mc2_mesh_domain_draft",
-    "build_mc2_mesh_domain_collider_frame",
 ]

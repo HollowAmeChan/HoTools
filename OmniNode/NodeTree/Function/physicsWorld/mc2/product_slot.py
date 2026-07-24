@@ -10,7 +10,6 @@ from ..types import PhysicsSolverSlot
 from ..types import PhysicsWorldCache
 from .collider_frame import MC2DomainColliderFrameSpec
 from .domain_collect import build_mc2_domain_collider_frame_for_draft
-from .domain_collect import build_mc2_mesh_domain_collider_frame
 from .domain_ir import MC2DomainFramePacketV1
 from .domain_output import MC2MeshWritebackBatchV1
 from .domain_output import make_mc2_mesh_writeback_batch
@@ -899,10 +898,8 @@ def capture_and_publish_mc2_product_frame(
         world_time_scale=world_time_scale,
         initialize_only=initialization_only,
     )
-    collider_frame = (
-        build_mc2_mesh_domain_collider_frame(world, collection.draft)
-        if isinstance(collection, MC2MeshProductCollectionV1)
-        else build_mc2_domain_collider_frame_for_draft(world, collection.draft)
+    collider_frame = build_mc2_domain_collider_frame_for_draft(
+        world, collection.draft
     )
     return publish_mc2_product_frame(
         world,

@@ -57,13 +57,6 @@ def _same_frame_product_reuse(world, slot) -> bool:
     )
 
 
-def _product_slot_id(request: MC2ProductRequestV1) -> str:
-    return make_mc2_product_slot_id(
-        request.setup_type,
-        request.domain_signature,
-    )
-
-
 def _initialize_product_base_poses(request: MC2ProductRequestV1) -> int:
     from .setups.mesh_cloth.base_pose import initialize_base_pose_proxy_if_missing
 
@@ -139,7 +132,9 @@ def _step_mc2_mesh_product(
     created_base_poses = _initialize_product_base_poses(request)
     if timing is not None:
         timing.checkpoint("统一域输入")
-    slot_id = _product_slot_id(request)
+    slot_id = make_mc2_product_slot_id(
+        request.setup_type, request.domain_signature
+    )
     collection = collect_mc2_mesh_product_plan(
         world,
         request.plan,
@@ -261,7 +256,9 @@ def _step_mc2_bone_product(
     validate_mc2_bone_product_targets(collection)
     if timing is not None:
         timing.checkpoint("统一域采集")
-    slot_id = _product_slot_id(request)
+    slot_id = make_mc2_product_slot_id(
+        request.setup_type, request.domain_signature
+    )
     sync = sync_mc2_product_slot(world, collection, slot_id=slot_id)
     slot = world.solver_slots[slot_id]
     slot.data["product_sync_action"] = sync.action
@@ -399,7 +396,10 @@ def step_mc2_products(
         raise TypeError("requests 必须是 MC2ProductRequestV1 序列")
     if any(request.setup_type not in _PRODUCT_SETUP_TYPES for request in frozen_requests):
         raise NotImplementedError("产品批次包含尚未实现的 setup")
-    slot_ids = tuple(_product_slot_id(request) for request in frozen_requests)
+    slot_ids = tuple(
+        make_mc2_product_slot_id(request.setup_type, request.domain_signature)
+        for request in frozen_requests
+    )
     if len(set(slot_ids)) != len(slot_ids):
         raise ValueError("MC2模拟步不能重复执行同一个显式 domain request")
     if timing is not None:

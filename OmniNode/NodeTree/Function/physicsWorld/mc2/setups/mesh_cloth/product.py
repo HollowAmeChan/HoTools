@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
-from ...domain_collect import MC2MeshDomainDraftV1
-from ...domain_collect import build_mc2_mesh_domain_draft
+from ...domain_collect import MC2DomainDraftV1
+from ...domain_collect import build_mc2_domain_draft
 from ...domain_ir import MC2MeshPartitionStaticSnapshotV1
 from ...domain_output import MC2MeshWritebackBatchV1
 from ...names import MC2_SETUP_MESH_CLOTH
@@ -73,7 +73,7 @@ def _external_collision_mask(partition) -> int:
 
 @dataclass(frozen=True)
 class MC2MeshProductCollectionV1:
-    draft: MC2MeshDomainDraftV1
+    draft: MC2DomainDraftV1
     static_snapshots: tuple[MC2MeshPartitionStaticSnapshotV1, ...]
     task_ids: tuple[str, ...]
     observation_identities: tuple[tuple, ...]
@@ -81,8 +81,8 @@ class MC2MeshProductCollectionV1:
     mesh_topology_signatures: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.draft, MC2MeshDomainDraftV1):
-            raise TypeError("draft must be MC2MeshDomainDraftV1")
+        if not isinstance(self.draft, MC2DomainDraftV1):
+            raise TypeError("draft must be MC2DomainDraftV1")
         count = len(self.static_snapshots)
         if (
             count != len(self.task_ids)
@@ -248,7 +248,7 @@ def collect_mc2_mesh_product_plan(
         identities.extend(observation.identities)
         statuses.extend(observation.statuses)
         task_ids.append(partition.stable_id)
-    draft = build_mc2_mesh_domain_draft(
+    draft = build_mc2_domain_draft(
         plan,
         external_collision_masks=tuple(
             _external_collision_mask(partition) for partition in partitions

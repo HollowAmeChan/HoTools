@@ -638,6 +638,8 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 `legacy/fallback/shadow/compat/compatibility` 的精确词级门禁也已启用，当前生产违规为 0。backend 的 `MC2BackendCompatibilityReportV1` 与 `compatible` 字段表示真实能力匹配，不属于精确迁移词，继续保留；preset 解析器原 `fallback` 参数实际只表达坏值或缺字段的缺省值，已统一改名为 `default`。产品 slot/solver 和包根不再用“拒绝旧回退”描述当前职责。
 
+forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2_mesh_domain_draft`、`build_mc2_mesh_domain_collider_frame` 与私有 `_product_slot_id`。Mesh collector、所有 setup 的 collider capture 和产品 slot identity 现在直接调用统一合同；测试不再通过 Mesh 名称门面 monkeypatch。生产模块仍为 69 个，已分类一调用转发器由 84 降为 81；Blender 5.2 三 setup mixed-output 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`。
+
 ## 明确的数据流
 
 ### 显式模式
