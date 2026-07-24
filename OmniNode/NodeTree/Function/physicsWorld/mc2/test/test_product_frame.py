@@ -71,7 +71,7 @@ def _compiled():
         parameters.make_mc2_setup_options("mesh_cloth"),
         parameters.make_mc2_task_parameters(),
     )
-    return compile_module.compile_mc2_mesh_static_fragments(
+    return compile_module.compile_mc2_static_fragments(
         fragments,
         (effective, effective),
         domain_id="mc2.domain:product-frame-test",

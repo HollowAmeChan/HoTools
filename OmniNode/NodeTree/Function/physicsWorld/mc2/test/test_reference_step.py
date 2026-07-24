@@ -83,7 +83,7 @@ def _compiled():
         parameters.make_mc2_setup_options("mesh_cloth"),
         parameters.make_mc2_task_parameters(),
     )
-    return compiler.compile_mc2_mesh_static_fragments(
+    return compiler.compile_mc2_static_fragments(
         (fragment,), (effective,)
     )
 

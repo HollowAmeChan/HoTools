@@ -64,7 +64,7 @@ def _compiled():
     effective = runtime.make_mc2_runtime_parameters(
         profile, options, parameters.make_mc2_task_parameters()
     )
-    return compiler.compile_mc2_mesh_static_fragments(
+    return compiler.compile_mc2_static_fragments(
         tuple(fragments), (effective, effective), domain_id="mc2.domain:frames"
     )
 

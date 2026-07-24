@@ -268,7 +268,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ...domain_compile import MC2MeshCompiledDomainV1
+from ...domain_compile import MC2CompiledDomainV1
 from ...frame_compile import MC2PartitionFrameSnapshotV1
 from ...frame_compile import compile_mc2_domain_frame_packet
 from ...native import native_module
@@ -399,11 +399,11 @@ def _frame_row_from_snapshot(
 
 
 def compile_mc2_mesh_product_frame(
-    compiled: MC2MeshCompiledDomainV1,
+    compiled: MC2CompiledDomainV1,
     rows,
 ):
-    if not isinstance(compiled, MC2MeshCompiledDomainV1):
-        raise TypeError("compiled must be MC2MeshCompiledDomainV1")
+    if not isinstance(compiled, MC2CompiledDomainV1):
+        raise TypeError("compiled must be MC2CompiledDomainV1")
     rows = tuple(rows)
     if len(rows) != compiled.program.partition_count or any(
         not isinstance(row, MC2MeshProductFrameRowV1) for row in rows
@@ -462,7 +462,7 @@ def capture_mc2_mesh_product_frame(
     if not isinstance(collection, MC2MeshProductCollectionV1):
         raise TypeError("collection must be MC2MeshProductCollectionV1")
     compiled = getattr(owner, "compiled", None)
-    if not isinstance(compiled, MC2MeshCompiledDomainV1):
+    if not isinstance(compiled, MC2CompiledDomainV1):
         raise RuntimeError("MC2 Mesh product owner has no compiled domain")
     from ...anchor import attach_mc2_task_anchor
     from ...center_state import MC2CenterFramePoseSpec

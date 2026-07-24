@@ -55,6 +55,9 @@ LEGACY_TERMS = (
     "inertia_slice",
     "integration_slice",
     "step_reference_slices",
+    "MC2MeshCompiledDomainV1",
+    "compile_mc2_mesh_domain_draft",
+    "compile_mc2_mesh_static_fragments",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

@@ -629,34 +629,10 @@ def compare_mc2_domain_compile_cache(
     )
 
 
-# E5-B 迁移包装；E7-S 删除 Mesh 专名。
-MC2MeshCompiledDomainV1 = MC2CompiledDomainV1
-
-
-def compile_mc2_mesh_static_fragments(
-    fragments,
-    effectives,
-    **kwargs,
-) -> MC2CompiledDomainV1:
-    fragments = tuple(fragments)
-    if any(fragment.setup_type != MC2_SETUP_MESH_CLOTH for fragment in fragments):
-        raise ValueError("Mesh compiler wrapper only accepts mesh_cloth fragments")
-    return compile_mc2_static_fragments(fragments, effectives, **kwargs)
-
-
-def compile_mc2_mesh_domain_draft(draft, fragments) -> MC2CompiledDomainV1:
-    if getattr(draft, "setup_type", None) != MC2_SETUP_MESH_CLOTH:
-        raise ValueError("Mesh compiler wrapper only accepts mesh_cloth drafts")
-    return compile_mc2_domain_draft(draft, fragments)
-
-
 __all__ = [
     "MC2CompiledDomainV1",
     "MC2DomainCompileCacheReportV1",
-    "MC2MeshCompiledDomainV1",
     "compare_mc2_domain_compile_cache",
     "compile_mc2_domain_draft",
-    "compile_mc2_mesh_domain_draft",
-    "compile_mc2_mesh_static_fragments",
     "compile_mc2_static_fragments",
 ]

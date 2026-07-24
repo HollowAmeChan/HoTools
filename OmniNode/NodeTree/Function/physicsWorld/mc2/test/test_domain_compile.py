@@ -149,7 +149,7 @@ def _domain_draft():
 
 
 def test_compiler_builds_one_program_and_parameter_packet() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         (_fragment(),), (_effective(),)
     )
     assert compiled.program.partition_count == 1
@@ -177,7 +177,7 @@ def test_compiler_builds_one_program_and_parameter_packet() -> None:
 
 
 def test_compiler_preserves_local_constraint_partition_and_output_identity() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         (_fragment(),), (_effective(),)
     )
     for table in compiled.program.constraint_tables:
@@ -199,10 +199,10 @@ def test_bending_marker_encoding_preserves_volume_marker_for_native_domain() -> 
 def test_collision_mask_is_parameter_hot_update_not_program_rebuild() -> None:
     fragment = _fragment()
     effective = _effective()
-    first = compiler.compile_mc2_mesh_static_fragments(
+    first = compiler.compile_mc2_static_fragments(
         (fragment,), (effective,), collision_groups=(1,), collision_masks=(0xFFFF,)
     )
-    second = compiler.compile_mc2_mesh_static_fragments(
+    second = compiler.compile_mc2_static_fragments(
         (fragment,), (effective,), collision_groups=(1,), collision_masks=(0,)
     )
     assert first.program.layout_signature == second.program.layout_signature
@@ -212,10 +212,10 @@ def test_collision_mask_is_parameter_hot_update_not_program_rebuild() -> None:
 
 
 def test_compiler_is_deterministic() -> None:
-    first = compiler.compile_mc2_mesh_static_fragments(
+    first = compiler.compile_mc2_static_fragments(
         (_fragment(),), (_effective(),)
     )
-    second = compiler.compile_mc2_mesh_static_fragments(
+    second = compiler.compile_mc2_static_fragments(
         (_fragment(),), (_effective(),)
     )
     assert first.program.domain_signature == second.program.domain_signature
@@ -225,7 +225,7 @@ def test_compiler_is_deterministic() -> None:
 
 def test_multi_compiler_merges_particles_and_keeps_structural_constraints_local() -> None:
     fragments = _fragments()
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         fragments,
         (_effective(), _effective(gravity=8.0, damping=0.2, cloth_mass=0.6)),
         domain_id="mc2.domain:test-two",
@@ -255,7 +255,7 @@ def test_multi_compiler_merges_particles_and_keeps_structural_constraints_local(
 
 
 def test_multi_compiler_preserves_partition_parameter_differences_and_filters() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         _fragments(),
         (_effective(gravity=5.0, damping=0.05, cloth_mass=0.1),
          _effective(gravity=9.0, damping=0.3, cloth_mass=0.8)),
@@ -278,7 +278,7 @@ def test_multi_compiler_preserves_partition_parameter_differences_and_filters() 
 
 def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
     draft = _domain_draft()
-    compiled = compiler.compile_mc2_mesh_domain_draft(draft, _fragments())
+    compiled = compiler.compile_mc2_domain_draft(draft, _fragments())
     assert compiled.program.partition_ids == draft.partition_ids
     table = compiled.parameters.particle_parameters
     mass = table.fields.index("cloth_mass")
@@ -289,7 +289,7 @@ def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
         [8, 8, 2],
     ]
     try:
-        compiler.compile_mc2_mesh_domain_draft(draft, tuple(reversed(_fragments())))
+        compiler.compile_mc2_domain_draft(draft, tuple(reversed(_fragments())))
     except ValueError as exc:
         assert "fragment order" in str(exc)
     else:
@@ -297,7 +297,7 @@ def test_domain_draft_bridge_binds_resolved_rows_to_fragment_order() -> None:
 
 
 def test_compiler_carries_animation_pose_ratio_outside_the_v0_native_abi() -> None:
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         _fragments(),
         (_effective(animation_pose_ratio=0.25), _effective(animation_pose_ratio=0.75)),
     )
@@ -309,19 +309,19 @@ def test_compiler_carries_animation_pose_ratio_outside_the_v0_native_abi() -> No
 
 def test_multi_compile_cache_report_distinguishes_reuse_parameter_update_and_reorder() -> None:
     fragments = _fragments()
-    first = compiler.compile_mc2_mesh_static_fragments(
+    first = compiler.compile_mc2_static_fragments(
         fragments, (_effective(), _effective()), domain_id="mc2.domain:cache",
         collision_groups=(1, 2), collision_masks=(3, 3),
     )
     cold = compiler.compare_mc2_domain_compile_cache(None, first)
     assert not cold.exact_cache_hit
-    same = compiler.compile_mc2_mesh_static_fragments(
+    same = compiler.compile_mc2_static_fragments(
         fragments, (_effective(), _effective()), domain_id="mc2.domain:cache",
         collision_groups=(1, 2), collision_masks=(3, 3),
     )
     exact = compiler.compare_mc2_domain_compile_cache(first, same)
     assert exact.exact_cache_hit
-    mask_update = compiler.compile_mc2_mesh_static_fragments(
+    mask_update = compiler.compile_mc2_static_fragments(
         fragments, (_effective(), _effective()), domain_id="mc2.domain:cache",
         collision_groups=(1, 2), collision_masks=(1, 2),
     )
@@ -330,14 +330,14 @@ def test_multi_compile_cache_report_distinguishes_reuse_parameter_update_and_reo
     assert updated.program_cache_hit
     assert updated.parameter_layout_cache_hit
     assert not updated.parameter_value_cache_hit
-    reordered = compiler.compile_mc2_mesh_static_fragments(
+    reordered = compiler.compile_mc2_static_fragments(
         tuple(reversed(fragments)), (_effective(), _effective()),
         domain_id="mc2.domain:cache", collision_groups=(1, 2), collision_masks=(3, 3),
     )
     reorder_report = compiler.compare_mc2_domain_compile_cache(first, reordered)
     assert reorder_report.common_order_changed
     assert not reorder_report.program_cache_hit
-    deleted = compiler.compile_mc2_mesh_static_fragments(
+    deleted = compiler.compile_mc2_static_fragments(
         (fragments[1],), (_effective(),), domain_id="mc2.domain:cache",
         collision_groups=(1,), collision_masks=(3,),
     )

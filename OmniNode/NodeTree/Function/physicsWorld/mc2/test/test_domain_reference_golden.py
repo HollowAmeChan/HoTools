@@ -107,7 +107,7 @@ def _domain_from_snapshot(snapshot, profile, task_parameters=None):
             else task_parameters
         ),
     )
-    compiled = compiler.compile_mc2_mesh_static_fragments(
+    compiled = compiler.compile_mc2_static_fragments(
         (fragment,), (effective,)
     )
     domain = cpu_backend.create_mc2_cpu_backend_domain(

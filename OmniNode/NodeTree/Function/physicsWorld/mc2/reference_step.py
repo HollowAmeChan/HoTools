@@ -11,7 +11,7 @@ from typing import Mapping
 
 import numpy as np
 
-from .domain_compile import MC2MeshCompiledDomainV1
+from .domain_compile import MC2CompiledDomainV1
 from .domain_ir import MC2DomainFramePacketV1
 from .scheduler import MC2SubstepPlan
 
@@ -61,9 +61,9 @@ def _scaled_particle_column(
     return values
 
 
-def _require_single_partition(compiled: MC2MeshCompiledDomainV1) -> None:
-    if not isinstance(compiled, MC2MeshCompiledDomainV1):
-        raise TypeError("compiled must be MC2MeshCompiledDomainV1")
+def _require_single_partition(compiled: MC2CompiledDomainV1) -> None:
+    if not isinstance(compiled, MC2CompiledDomainV1):
+        raise TypeError("compiled must be MC2CompiledDomainV1")
     if compiled.program.partition_count != 1:
         raise ValueError("reference settings currently require exactly one partition")
 
@@ -80,7 +80,7 @@ def _validate_vector(values, shape: tuple[int, ...], name: str) -> np.ndarray:
 
 
 def make_mc2_reference_pipeline_settings(
-    compiled: MC2MeshCompiledDomainV1,
+    compiled: MC2CompiledDomainV1,
     frame_packet: MC2DomainFramePacketV1,
     substep_plan: MC2SubstepPlan,
     *,
@@ -242,7 +242,7 @@ def make_mc2_reference_pipeline_settings(
 
 
 def make_mc2_compiled_domain_pipeline_settings(
-    compiled: MC2MeshCompiledDomainV1,
+    compiled: MC2CompiledDomainV1,
     frame_packet: MC2DomainFramePacketV1,
     substep_plan: MC2SubstepPlan,
     *,
@@ -254,8 +254,8 @@ def make_mc2_compiled_domain_pipeline_settings(
 ) -> dict[str, object]:
     """Compile one E4 whole-domain substep without collapsing partition values."""
 
-    if not isinstance(compiled, MC2MeshCompiledDomainV1):
-        raise TypeError("compiled must be MC2MeshCompiledDomainV1")
+    if not isinstance(compiled, MC2CompiledDomainV1):
+        raise TypeError("compiled must be MC2CompiledDomainV1")
     if not isinstance(frame_packet, MC2DomainFramePacketV1):
         raise TypeError("frame_packet must be MC2DomainFramePacketV1")
     if not isinstance(substep_plan, MC2SubstepPlan):
