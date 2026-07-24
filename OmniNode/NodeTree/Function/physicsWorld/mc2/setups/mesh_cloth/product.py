@@ -62,12 +62,7 @@ def _output_target_id(source) -> str:
 def _external_collision_mask(partition) -> int:
     """读取域节点已经冻结的统一16组碰撞配置。"""
 
-    properties = getattr(partition, "source_properties", None)
-    value = (
-        partition.setup_options.collided_by_groups
-        if properties is None
-        else getattr(properties, "self_collision_groups", 0)
-    )
+    value = partition.setup_options.collided_by_groups
     return max(0, min(0xFFFF, int(value or 0)))
 
 

@@ -93,7 +93,7 @@ def make_mc2_mesh_domain_partitions(
             setup_options=make_mc2_setup_options(
                 MC2_SETUP_MESH_CLOTH,
                 self_collision_radius_model="derived_radius",
-                collided_by_groups=properties.self_collision_groups,
+                collided_by_groups=properties.collided_by_groups,
             ),
             anchor_object=anchor_object,
             enabled=True,

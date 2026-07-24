@@ -89,7 +89,7 @@ def test_domain_outputs_complete_partitions_and_preserves_real_source():
     assert partition.enabled is True
     assert partition.collision_group == 0b100
     assert partition.collision_mask == 0b10100
-    assert partition.setup_options.collided_by_groups == 0b10100
+    assert partition.setup_options.collided_by_groups == 0b10000
     assert not partition.patches
 
 

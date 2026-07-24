@@ -191,6 +191,7 @@ Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有�
 | `粒子半径`、`半径曲线` | 定义粒子参与外部碰撞的厚度 | native按baseline depth采样；`M/C/S`有效。MeshCloth再乘对象面板的`radius_vertex_group`权重。 |
 | `碰撞模式` | `0:None`关闭，`1:Point`按粒子点碰撞，`2:Edge`按final proxy边连续碰撞 | 外部collider上传后由Point或Edge pass消费；Mesh triangle边和BoneCloth横向/三角补边都属于final proxy边。`M/C`可调，`S`固定Point。 |
 | `碰撞摩擦` | 碰撞接触后的切向速度衰减 | runtime同时写入dynamic/static friction，post用接触法线和速度处理；`M/C`可调，`S`固定为`0.5`。 |
+| `碰撞组` | 过滤允许参与普通外碰的Physics World collider | Mesh对象冻结的`collided_by_groups`原样进入外碰参数；`0`保持“不筛选”。whole-domain self另用`collision_mask = collided_by_groups | self_group_bit`，两者不得共用并入自身组后的mask。 |
 | `碰撞限制距离`、`碰撞限制曲线` | 限制BoneSpring粒子被soft-sphere碰撞推离动画基准的最大距离 | BoneSpring Point collision使用animated base和深度曲线执行soft-sphere投影；仅`S`有效，cloth节点不公开且runtime置零。 |
 | `自碰撞` | 启用 partition primitive 的 FullMesh EE/PT 接触、grid broadphase 和 intersection history | bool 稳定转换为 `self_collision_mode=2`；`M/C` 有效，`S` 强制关闭。 |
 | `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；跨 partition 配对要求双方都显式开启，任一方关闭都在 broadphase 配对前拒绝。BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
@@ -450,7 +451,7 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 5. E7-S 与 P6 已完成；删除后产品 DomainV1 的 P0 hotspot 六个 case 全部通过 ceiling，P2 whole-domain self 同半径重复计数一致且较大半径产生更多 candidate/contact。最终 4.5/py311 双 ABI 与 Blender 收尾也已通过。
 6. E7-S后的产品批处理已恢复请求式热点计时：关闭节点开关时不创建资源并保持原完整pipeline与无计时native ABI；开启时顶层拆分输入/采集/同步/Frame/求解/结果/发布，CPU求解按backend-neutral原子pass继续细分，整域self提供Primitive/Grid/相交/Candidate/Contact/四轮求解明细。计时不主动请求debug确认或快照；owner热帧统计使用真实`reused/parameters_updated/replaced`，不再把slot复用统称为`updated`。
 7. Mesh 热帧 observation 命中后直接复用上一帧 immutable static snapshot 与 topology signature；fragment 全命中且 draft signature 不变时 owner 跳过重复 domain compile。失效、参数热更新、重排和失败回滚仍走原事务路径；Blender 5.2 产品热点基准已覆盖 cold/hot/config/static-change/debug 与分配上限。
-8. Mesh碰撞组仍需完成一次语义修正：外碰mask必须保持对象冻结的`collided_by_groups`，只有whole-domain self的有效mask允许额外并入自身主组。当前统一authoring把`self_collision_groups`送入外碰，可能令默认组1的全部collider意外参与；先用产品阶段计时记录代表资产外碰/self占比，再独立修正并做数值与性能验收。
+8. Mesh碰撞组语义已分离：外碰mask保持对象冻结的`collided_by_groups`，只有whole-domain self的`collision_mask`额外并入自身主组。产品编译表与600帧accepted/rejected collider scope、摩擦确定性验收均已覆盖该边界。
 
 逻辑批次必须覆盖完整所有权面，同时包含代码、测试、审计和唯一蓝本更新；不再按单 runner 或单个断言提交。
 
