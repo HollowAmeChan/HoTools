@@ -648,6 +648,8 @@ forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2
 
 forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 78 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
 
+Python 文件职责复核已把当前 69 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、18 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、14 个 Blender/product boundary、4 个 observation。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
+
 ## 明确的数据流
 
 ### 显式模式

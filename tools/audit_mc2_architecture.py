@@ -125,6 +125,96 @@ ALLOWED_FORWARDERS = {
     ("mc2.topology", "build_mc2_bone_source_topology"),
 }
 
+E7S_PYTHON_RESPONSIBILITY_MODULES = {
+    "package_shell": frozenset((
+        "mc2",
+        "mc2.setups",
+        "mc2.setups.bone_cloth",
+        "mc2.setups.bone_spring",
+        "mc2.setups.mesh_cloth",
+    )),
+    "identity_capability": frozenset((
+        "mc2.capabilities",
+        "mc2.declaration",
+        "mc2.domain_capabilities",
+        "mc2.names",
+        "mc2.source_identity",
+        "mc2.setups.contracts",
+        "mc2.setups.mesh_cloth.capabilities",
+        "mc2.setups.mesh_cloth.schema",
+    )),
+    "immutable_contract": frozenset((
+        "mc2.domain_ir",
+        "mc2.parameters",
+        "mc2.partition_specs",
+        "mc2.product_request",
+        "mc2.results",
+        "mc2.runtime_parameters",
+        "mc2.static_data",
+    )),
+    "compile_stage": frozenset((
+        "mc2.bending_static",
+        "mc2.bone_connection",
+        "mc2.bone_rotation",
+        "mc2.bone_static",
+        "mc2.collider_frame",
+        "mc2.distance_static",
+        "mc2.domain_collect",
+        "mc2.domain_compile",
+        "mc2.frame_compile",
+        "mc2.mesh_baseline",
+        "mc2.mesh_topology_identity",
+        "mc2.self_collision_static",
+        "mc2.topology",
+        "mc2.setups.bone_cloth.static_build",
+        "mc2.setups.bone_cloth.static_fragment",
+        "mc2.setups.mesh_cloth.base_pose",
+        "mc2.setups.mesh_cloth.final_proxy",
+        "mc2.setups.mesh_cloth.static_fragment",
+    )),
+    "runtime_owner": frozenset((
+        "mc2.center_state",
+        "mc2.domain_owner",
+        "mc2.frame_state",
+        "mc2.product_slot",
+        "mc2.setups.bone_cloth.fragment_cache",
+        "mc2.setups.mesh_cloth.fragment_cache",
+    )),
+    "solver_execution": frozenset((
+        "mc2.cpu_backend",
+        "mc2.product_scheduler",
+        "mc2.product_solver",
+        "mc2.reference_step",
+        "mc2.scheduler",
+    )),
+    "native_bridge": frozenset((
+        "mc2.cpu_native_kernel",
+        "mc2.native",
+    )),
+    "blender_product_boundary": frozenset((
+        "mc2.anchor",
+        "mc2.domain_output",
+        "mc2.nodes",
+        "mc2.presets",
+        "mc2.source_observation_blender",
+        "mc2.setups.bone_cloth.authoring",
+        "mc2.setups.bone_cloth.product",
+        "mc2.setups.bone_frame_input",
+        "mc2.setups.mesh_cloth.authoring",
+        "mc2.setups.mesh_cloth.delta_output",
+        "mc2.setups.mesh_cloth.frame_input",
+        "mc2.setups.mesh_cloth.product",
+        "mc2.setups.mesh_cloth.properties",
+        "mc2.setups.mesh_cloth.source_capture",
+    )),
+    "observation": frozenset((
+        "mc2.debug",
+        "mc2.debug_draw",
+        "mc2.source_observation",
+        "mc2.timing",
+    )),
+}
+
 E7_LEGACY_MODULES = frozenset((
     "mc2.solver",
     "mc2.specs",
@@ -604,6 +694,19 @@ def _python_facts() -> dict:
         (item["module"], item["name"])
         for item in forwarders
     }
+    responsibility_by_module = {}
+    duplicate_responsibilities = []
+    for responsibility, module_names in E7S_PYTHON_RESPONSIBILITY_MODULES.items():
+        for module_name in module_names:
+            previous = responsibility_by_module.get(module_name)
+            if previous is not None:
+                duplicate_responsibilities.append({
+                    "module": module_name,
+                    "responsibilities": sorted((previous, responsibility)),
+                })
+            responsibility_by_module[module_name] = responsibility
+    production_module_names = set(modules)
+    classified_module_names = set(responsibility_by_module)
     return {
         "module_count": len(modules),
         "line_count": sum(module["lines"] for module in modules.values()),
@@ -660,6 +763,23 @@ def _python_facts() -> dict:
             "remaining_merge_sources": e7s_merge_sources,
             "remaining_merge_source_count": len(e7s_merge_sources),
             "projected_module_count": len(e7s_projected_modules),
+        },
+        "e7s_python_responsibilities": {
+            "counts": {
+                responsibility: len(module_names)
+                for responsibility, module_names
+                in sorted(E7S_PYTHON_RESPONSIBILITY_MODULES.items())
+            },
+            "missing_modules": sorted(
+                production_module_names - classified_module_names
+            ),
+            "stale_modules": sorted(
+                classified_module_names - production_module_names
+            ),
+            "duplicate_modules": sorted(
+                duplicate_responsibilities,
+                key=lambda item: item["module"],
+            ),
         },
         "e7_cpu": {
             "legacy_modules": sorted(E7_LEGACY_MODULES),
@@ -951,6 +1071,14 @@ def _print_summary(report: dict) -> None:
         f"{python['e7s_python_layout']['remaining_merge_source_count']} merge sources, "
         f"{python['e7s_python_layout']['projected_module_count']} projected modules"
     )
+    responsibility_report = python["e7s_python_responsibilities"]
+    print(
+        "E7-S Python responsibilities: "
+        f"{sum(responsibility_report['counts'].values())} classified, "
+        f"{len(responsibility_report['missing_modules'])} missing, "
+        f"{len(responsibility_report['stale_modules'])} stale, "
+        f"{len(responsibility_report['duplicate_modules'])} duplicate"
+    )
     print(f"C++ MC2/module shell: {cpp['translation_unit_count']} units, {cpp['line_count']} lines")
     for name, facts in cpp["files"].items():
         print(
@@ -1024,6 +1152,9 @@ def main() -> None:
             report["python"]["product_boundary_violations"],
             report["python"]["e7s_migration_v0"]["violations"],
             report["python"]["e7s_migration_words"],
+            report["python"]["e7s_python_responsibilities"]["missing_modules"],
+            report["python"]["e7s_python_responsibilities"]["stale_modules"],
+            report["python"]["e7s_python_responsibilities"]["duplicate_modules"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item
