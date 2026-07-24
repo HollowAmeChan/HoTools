@@ -39,6 +39,8 @@ LEGACY_TERMS = (
     "solve_mc2_bonecloth_io",
     "call_legacy",
     "old physicsMC2 packages remain active",
+    "mc2_interaction_v0",
+    "capture_requested_mc2_debug",
 )
 PURE_NATIVE_FILES = (
     "mc2_kernels.cpp",

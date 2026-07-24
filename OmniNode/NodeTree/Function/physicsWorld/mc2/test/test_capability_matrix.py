@@ -147,6 +147,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "build_mc2_bone_frame_input",
         "build_mc2_mesh_frame_input",
         "build_mc2_mesh_frame_input_for_task",
+        "capture_requested_mc2_debug",
     }
     production = [
         path
@@ -163,6 +164,9 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         }
         assert not defined & forbidden_symbols, (path, defined & forbidden_symbols)
     assert not (MC2_ROOT / "setups" / "mesh_cloth" / "static_build.py").exists()
+    names_source = (MC2_ROOT / "names.py").read_text(encoding="utf-8")
+    assert "MC2_SLOT_KIND" not in names_source
+    assert "MC2_INTERACTION_RESOURCE_KEY" not in names_source
 
 
 def test_bone_frame_compatibility_entry_is_product_only():

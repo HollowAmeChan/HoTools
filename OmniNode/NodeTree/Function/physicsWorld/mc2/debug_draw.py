@@ -34,8 +34,6 @@ from .debug import (
 )
 from .names import (
     MC2_FUSED_PRODUCT_SLOT_KIND,
-    MC2_INTERACTION_RESOURCE_KEY,
-    MC2_SLOT_KIND,
 )
 
 
@@ -158,10 +156,6 @@ _MC2_DRAW_STORE: dict[str, dict] = {}
 _MC2_DRAW_HANDLE = None
 
 
-def _supports_interaction_snapshot(value) -> bool:
-    return value is not None and callable(
-        getattr(value, "debug_draw_snapshot", None)
-    )
 
 
 def _values(value):
@@ -327,7 +321,7 @@ def _matching_slot_snapshots(world: PhysicsWorldCache, filters: dict) -> list[di
     task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
     snapshots = []
     for slot in world.solver_slots.values():
-        if slot.kind not in (MC2_SLOT_KIND, MC2_FUSED_PRODUCT_SLOT_KIND):
+        if slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
             continue
         snapshot = slot.data.get("_debug_draw_snapshot")
         if not isinstance(snapshot, dict):
@@ -569,28 +563,6 @@ def _build_world_status_text(world: PhysicsWorldCache, filters: dict) -> str:
     ]
     for snapshot in snapshots:
         lines.extend(_build_slot_status_lines(snapshot, filters))
-    interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
-    if filters.get("show_collision_contacts") and _supports_interaction_snapshot(
-        interaction
-    ):
-        state = interaction.debug_draw_snapshot() or {}
-        enabled = np.asarray(
-            _values(state.get("contact_enabled")), dtype=np.uint8
-        ).reshape((-1,))
-        owners = np.asarray(_values(state.get("owner_indices")), dtype=np.int32)
-        contacts = np.asarray(
-            _values(state.get("contact_indices")), dtype=np.int32
-        ).reshape((-1, 2))
-        cross_task = 0
-        for index, pair in enumerate(contacts):
-            first, second = map(int, pair)
-            if (
-                index < len(enabled) and enabled[index]
-                and 0 <= first < len(owners) and 0 <= second < len(owners)
-                and int(owners[first]) != int(owners[second])
-            ):
-                cross_task += 1
-        lines.append(f"跨task实际接触：当前启用{cross_task}。")
     return "\n".join(lines)
 
 
@@ -600,7 +572,7 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
     triangle_meshes = {}
     task_filters = normalize_mc2_task_filters(filters["task_filter"])
     for slot in world.solver_slots.values():
-        if slot.kind not in (MC2_SLOT_KIND, MC2_FUSED_PRODUCT_SLOT_KIND):
+        if slot.kind != MC2_FUSED_PRODUCT_SLOT_KIND:
             continue
         snapshot = slot.data.get("_debug_draw_snapshot")
         if not isinstance(snapshot, dict):
@@ -612,18 +584,6 @@ def _build_world_batches(world: PhysicsWorldCache, filters: dict) -> tuple[list,
         _append_slot_batches(
             batches, point_batches, triangle_meshes, snapshot, filters
         )
-
-    interaction = world.backend_resources.get(MC2_INTERACTION_RESOURCE_KEY)
-    if _supports_interaction_snapshot(interaction):
-        snapshot = interaction.debug_draw_snapshot()
-        if isinstance(snapshot, dict):
-            if filters["show_collision_contacts"]:
-                _append_interaction_contact_batches(
-                    batches, snapshot, filters
-                )
-            _append_self_batches(
-                batches, point_batches, snapshot, filters, interaction=True
-            )
     triangle_batches = [
         (mesh["vertices"], mesh["indices"], _COLORS[color_name])
         for color_name, mesh in triangle_meshes.items()
@@ -2508,72 +2468,6 @@ def _append_self_batches(
         _batch(batches, lost_intersections, "intersection_lost", 1.6)
 
 
-def _append_interaction_contact_batches(batches, state, filters):
-    positions = np.asarray(
-        _values(state.get("positions")), dtype=np.float32
-    ).reshape((-1, 3))
-    primitives = np.asarray(
-        _values(state.get("particle_indices")), dtype=np.int32
-    ).reshape((-1, 3))
-    owners = np.asarray(
-        _values(state.get("owner_indices")), dtype=np.int32
-    ).reshape((-1,))
-    contacts = np.asarray(
-        _values(state.get("contact_indices")), dtype=np.int32
-    ).reshape((-1, 2))
-    enabled = np.asarray(
-        _values(state.get("contact_enabled")), dtype=np.uint8
-    ).reshape((-1,))
-    corrections = np.asarray(
-        _values(state.get("contact_corrections")), dtype=np.float32
-    ).reshape((-1, 2, 3))
-    if not len(contacts) or len(owners) != len(primitives):
-        return
-    participants = tuple(state.get("participants") or ())
-    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
-    allowed_owners = None
-    if task_filters:
-        allowed_owners = {
-            index
-            for index, participant in enumerate(participants)
-            if any(
-                token in str(participant.get("task_id") or "")
-                for token in task_filters
-            )
-        }
-    centers = [_primitive_center(positions, primitive) for primitive in primitives]
-    contact_lines = []
-    correction_lines = []
-    for index, (first, second) in enumerate(contacts[:filters["max_items"]]):
-        first = int(first)
-        second = int(second)
-        if (
-            index >= len(enabled)
-            or not enabled[index]
-            or not (0 <= first < len(owners) and 0 <= second < len(owners))
-            or int(owners[first]) == int(owners[second])
-        ):
-            continue
-        if allowed_owners is not None and not (
-            int(owners[first]) in allowed_owners
-            or int(owners[second]) in allowed_owners
-        ):
-            continue
-        _add_center_line(contact_lines, centers, first, second)
-        if index < len(corrections):
-            for side, primitive in enumerate((first, second)):
-                if centers[primitive] is None:
-                    continue
-                correction = vector3(corrections[index, side])
-                if correction.length > 1.0e-8:
-                    add_arrow_lines(
-                        correction_lines,
-                        centers[primitive],
-                        vector3(centers[primitive])
-                        + correction * _CONTACT_CORRECTION_DISPLAY_SCALE,
-                    )
-    _batch(batches, contact_lines, "cross_task_contact", 0.8)
-    _batch(batches, correction_lines, "contact_correction", 2.2)
 
 
 def _append_output_batches(batches, point_batches, snapshot, limit):
