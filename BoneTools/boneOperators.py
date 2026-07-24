@@ -1,11 +1,96 @@
+import ast
+
 import bpy
 from mathutils import Vector
 from bpy.types import Operator
 from bpy.types import UILayout, Context
-from bpy.props import StringProperty, FloatProperty, IntProperty
+from bpy.props import StringProperty, FloatProperty, IntProperty, PointerProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
 from . import boneProperty, auxBone
+
+
+def _armature_filter(_self, obj):
+    return obj.type == 'ARMATURE'
+
+
+def _copy_custom_properties(source, target, *, overwrite=True):
+    try:
+        keys = source.keys()
+        target_keys = set(target.keys())
+    except (AttributeError, RuntimeError, TypeError):
+        return
+
+    for key in keys:
+        if not overwrite and key in target_keys:
+            continue
+        try:
+            target[key] = source[key]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+
+        try:
+            ui_data = source.id_properties_ui(key).as_dict()
+            if ui_data:
+                target.id_properties_ui(key).update(**ui_data)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+
+
+def _copy_custom_property(source, target, source_key, target_key):
+    try:
+        target[target_key] = source[source_key]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+    try:
+        ui_data = source.id_properties_ui(source_key).as_dict()
+        if ui_data:
+            target.id_properties_ui(target_key).update(**ui_data)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        pass
+    return True
+
+
+def _direct_custom_property_key(data_path):
+    if not data_path.startswith("[") or not data_path.endswith("]"):
+        return None
+    try:
+        key = ast.literal_eval(data_path[1:-1])
+    except (SyntaxError, ValueError):
+        return None
+    return key if isinstance(key, str) else None
+
+
+def _copy_writable_rna_properties(source, target, skip=()):
+    skipped = set(skip)
+    skipped.add("rna_type")
+
+    for prop in source.bl_rna.properties:
+        identifier = prop.identifier
+        if identifier in skipped or prop.is_readonly:
+            continue
+        if not hasattr(target, identifier):
+            continue
+
+        try:
+            value = getattr(source, identifier)
+            if prop.is_array:
+                value = value[:]
+            setattr(target, identifier, value)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
+
+def _copy_bone_color(source, target):
+    try:
+        target.color.palette = source.color.palette
+        if source.color.palette == 'CUSTOM':
+            for attr in ("normal", "select", "active"):
+                value = getattr(source.color.custom, attr)[:]
+                setattr(target.color.custom, attr, value)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
 
 
 class OP_ApplyRestPose(Operator):
@@ -765,6 +850,708 @@ def _drawBoneOperatorsPanelLegacy(layout: UILayout, context: Context):
     auxBone.draw_panel(layout, context)
        
 
+class OP_MergeArmatures(Operator):
+    bl_idname = "ho.mod_weight_merge_armatures"
+    bl_label = "融合骨架"
+    bl_description = (
+        "保留主骨架的同名骨，将素材骨架的非同名骨原地复制到主骨架，"
+        "并把父级转接到主骨架的同名骨；完成后移除素材骨架"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _BONE_SKIP_PROPERTIES = {
+        "name",
+        "parent",
+        "children",
+        "collections",
+        "color",
+        "head",
+        "head_local",
+        "tail",
+        "tail_local",
+        "center",
+        "vector",
+        "length",
+        "matrix",
+        "matrix_local",
+    }
+    _POSE_SKIP_PROPERTIES = {
+        "name",
+        "bone",
+        "parent",
+        "children",
+        "constraints",
+        "custom_shape_transform",
+        "head",
+        "tail",
+        "center",
+        "vector",
+        "length",
+        "matrix",
+        "matrix_basis",
+        "channel_matrix",
+        "location",
+        "rotation_axis_angle",
+        "rotation_euler",
+        "rotation_quaternion",
+        "scale",
+    }
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        main = scene.ho_mod_weight_merge_main_armature
+        asset = scene.ho_mod_weight_merge_asset_armature
+        return (
+            main is not None
+            and asset is not None
+            and main.type == 'ARMATURE'
+            and asset.type == 'ARMATURE'
+        )
+
+    @staticmethod
+    def _object_in_view_layer(context, obj):
+        return obj is not None and obj.name in context.view_layer.objects
+
+    @staticmethod
+    def _enter_object_mode(context):
+        active = context.view_layer.objects.active
+        if active is not None and active.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+    @classmethod
+    def _enter_edit_mode(cls, context, obj):
+        cls._enter_object_mode(context)
+        for selected in context.selected_objects:
+            selected.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT')
+
+    @staticmethod
+    def _snapshot_bones(asset):
+        snapshots = []
+        for bone in asset.data.bones:
+            snapshots.append({
+                "name": bone.name,
+                "parent_name": bone.parent.name if bone.parent else None,
+                "head": bone.head_local.copy(),
+                "tail": bone.tail_local.copy(),
+                "roll_axis": bone.z_axis.copy(),
+                "use_connect": bone.use_connect,
+                "collection_names": [
+                    collection.name for collection in bone.collections
+                ],
+            })
+        return snapshots
+
+    @staticmethod
+    def _restore_context(
+        context,
+        previous_active,
+        previous_active_was_asset,
+        previous_selected,
+        asset_was_selected,
+        previous_mode,
+        main,
+        merge_succeeded,
+    ):
+        active = context.view_layer.objects.active
+        if active is not None and active.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        for obj in context.view_layer.objects:
+            try:
+                should_select = obj in previous_selected
+                if merge_succeeded and obj == main and asset_was_selected:
+                    should_select = True
+                obj.select_set(should_select)
+            except RuntimeError:
+                pass
+
+        if merge_succeeded and previous_active_was_asset:
+            target_active = main
+        elif OP_MergeArmatures._object_in_view_layer(context, previous_active):
+            target_active = previous_active
+        else:
+            target_active = main
+
+        context.view_layer.objects.active = target_active
+        if target_active is not None and previous_mode != 'OBJECT':
+            try:
+                target_active.select_set(True)
+                bpy.ops.object.mode_set(mode=previous_mode)
+            except RuntimeError:
+                pass
+
+    @classmethod
+    def _remove_created_bones(cls, context, main, created_names):
+        if not created_names or not cls._object_in_view_layer(context, main):
+            return
+
+        cls._enter_edit_mode(context, main)
+        for bone_name in created_names:
+            bone = main.data.edit_bones.get(bone_name)
+            if bone is not None:
+                main.data.edit_bones.remove(bone)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    @staticmethod
+    def _copy_bone_collections(main, source_bone, target_bone, created_collections):
+        for source_collection in source_bone.collections:
+            target_collection = main.data.collections.get(source_collection.name)
+            if target_collection is None:
+                target_collection = main.data.collections.new(source_collection.name)
+                created_collections.add(source_collection.name)
+                _copy_custom_properties(source_collection, target_collection)
+            target_collection.assign(target_bone)
+
+    @classmethod
+    def _copy_bone_data(cls, main, asset, copied_names, created_collections):
+        for bone_name in copied_names:
+            source_bone = asset.data.bones[bone_name]
+            target_bone = main.data.bones[bone_name]
+            _copy_writable_rna_properties(
+                source_bone,
+                target_bone,
+                cls._BONE_SKIP_PROPERTIES,
+            )
+            for handle_property in (
+                "bbone_custom_handle_start",
+                "bbone_custom_handle_end",
+            ):
+                source_handle = getattr(source_bone, handle_property, None)
+                if source_handle is None:
+                    continue
+                target_handle = main.data.bones.get(source_handle.name)
+                if target_handle is not None:
+                    try:
+                        setattr(target_bone, handle_property, target_handle)
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+            _copy_custom_properties(source_bone, target_bone)
+            _copy_bone_color(source_bone, target_bone)
+            cls._copy_bone_collections(
+                main,
+                source_bone,
+                target_bone,
+                created_collections,
+            )
+
+    @staticmethod
+    def _remap_driver_target_id(source_id, asset, main):
+        if source_id == asset:
+            return main
+        if source_id == asset.data:
+            return main.data
+        return source_id
+
+    @classmethod
+    def _remap_driver_target_data_path(
+        cls,
+        source_target,
+        source_id,
+        target_id,
+        asset,
+    ):
+        data_path = getattr(source_target, "data_path", "")
+        if source_id not in {asset, asset.data}:
+            return data_path
+
+        source_key = _direct_custom_property_key(data_path)
+        if source_key is None or source_key not in source_id.keys():
+            return data_path
+        if source_key not in target_id.keys():
+            _copy_custom_property(source_id, target_id, source_key, source_key)
+            return data_path
+
+        try:
+            if target_id[source_key] == source_id[source_key]:
+                return data_path
+        except (TypeError, ValueError):
+            pass
+
+        base_key = f"{source_key}__{asset.name}"
+        target_key = base_key
+        suffix = 1
+        while target_key in target_id.keys():
+            target_key = f"{base_key}_{suffix}"
+            suffix += 1
+        if not _copy_custom_property(
+            source_id,
+            target_id,
+            source_key,
+            target_key,
+        ):
+            return data_path
+        return f'["{bpy.utils.escape_identifier(target_key)}"]'
+
+    @classmethod
+    def _copy_driver_variable(cls, source, target, asset, main):
+        target.name = source.name
+        target.type = source.type
+
+        for source_target, target_target in zip(source.targets, target.targets):
+            try:
+                target_target.id_type = source_target.id_type
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+            _copy_writable_rna_properties(
+                source_target,
+                target_target,
+                {"id", "id_type"},
+            )
+            source_id = getattr(source_target, "id", None)
+            target_id = cls._remap_driver_target_id(source_id, asset, main)
+            if source_id is not None and hasattr(target_target, "id"):
+                try:
+                    target_target.id = target_id
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+            for property_name in (
+                "bone_target",
+                "context_property",
+                "data_path",
+                "rotation_mode",
+                "transform_space",
+                "transform_type",
+            ):
+                if not hasattr(source_target, property_name):
+                    continue
+                if not hasattr(target_target, property_name):
+                    continue
+                try:
+                    value = getattr(source_target, property_name)
+                    if property_name == "data_path" and target_id is not None:
+                        value = cls._remap_driver_target_data_path(
+                            source_target,
+                            source_id,
+                            target_id,
+                            asset,
+                        )
+                    setattr(
+                        target_target,
+                        property_name,
+                        value,
+                    )
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+    @classmethod
+    def _copy_driver_fcurve(
+        cls,
+        source_fcurve,
+        target_id,
+        target_data_path,
+        asset,
+        main,
+    ):
+        target_id.animation_data_create()
+        drivers = target_id.animation_data.drivers
+        existing = drivers.find(target_data_path, index=source_fcurve.array_index)
+        if existing is not None:
+            drivers.remove(existing)
+
+        target_fcurve = drivers.new(
+            target_data_path,
+            index=source_fcurve.array_index,
+        )
+        _copy_writable_rna_properties(
+            source_fcurve,
+            target_fcurve,
+            {
+                "array_index",
+                "data_path",
+                "driver",
+                "group",
+                "keyframe_points",
+                "modifiers",
+                "sampled_points",
+            },
+        )
+
+        source_driver = source_fcurve.driver
+        target_driver = target_fcurve.driver
+        target_driver.type = source_driver.type
+        target_driver.expression = source_driver.expression
+        target_driver.use_self = source_driver.use_self
+        for variable in list(target_driver.variables):
+            target_driver.variables.remove(variable)
+        for source_variable in source_driver.variables:
+            cls._copy_driver_variable(
+                source_variable,
+                target_driver.variables.new(),
+                asset,
+                main,
+            )
+
+        for source_modifier in source_fcurve.modifiers:
+            target_modifier = target_fcurve.modifiers.new(source_modifier.type)
+            _copy_writable_rna_properties(
+                source_modifier,
+                target_modifier,
+                {"type"},
+            )
+
+        return (target_data_path, source_fcurve.array_index)
+
+    @classmethod
+    def _copy_constraint_drivers(
+        cls,
+        main,
+        asset,
+        source_constraint,
+        target_constraint,
+    ):
+        animation_data = asset.animation_data
+        if animation_data is None:
+            return []
+
+        source_path = source_constraint.path_from_id()
+        target_path = target_constraint.path_from_id()
+        created = []
+        for source_fcurve in animation_data.drivers:
+            data_path = source_fcurve.data_path
+            if not (
+                data_path == source_path
+                or data_path.startswith(source_path + ".")
+                or data_path.startswith(source_path + "[")
+            ):
+                continue
+
+            target_data_path = target_path + data_path[len(source_path):]
+            created.append(cls._copy_driver_fcurve(
+                source_fcurve,
+                main,
+                target_data_path,
+                asset,
+                main,
+            ))
+        return created
+
+    @staticmethod
+    def _copy_constraint_targets(source_constraint, target_constraint, asset, main):
+        source_targets = getattr(source_constraint, "targets", None)
+        target_targets = getattr(target_constraint, "targets", None)
+        if source_targets is None or target_targets is None:
+            return
+        if not hasattr(target_targets, "new"):
+            return
+
+        for source_target in source_targets:
+            target = target_targets.new()
+            _copy_writable_rna_properties(source_target, target)
+            if hasattr(source_target, "target"):
+                target.target = (
+                    main if source_target.target == asset else source_target.target
+                )
+            for property_name in ("subtarget", "weight"):
+                if not hasattr(source_target, property_name):
+                    continue
+                if not hasattr(target, property_name):
+                    continue
+                setattr(target, property_name, getattr(source_target, property_name))
+
+    @classmethod
+    def _copy_pose_data(cls, main, asset, copied_names, created_drivers):
+        custom_shape_transform_names = {}
+
+        for bone_name in copied_names:
+            source_pose_bone = asset.pose.bones.get(bone_name)
+            target_pose_bone = main.pose.bones.get(bone_name)
+            if source_pose_bone is None or target_pose_bone is None:
+                continue
+
+            _copy_writable_rna_properties(
+                source_pose_bone,
+                target_pose_bone,
+                cls._POSE_SKIP_PROPERTIES,
+            )
+            _copy_custom_properties(source_pose_bone, target_pose_bone)
+
+            transform_bone = source_pose_bone.custom_shape_transform
+            if transform_bone is not None:
+                custom_shape_transform_names[bone_name] = transform_bone.name
+
+            for source_constraint in source_pose_bone.constraints:
+                target_constraint = target_pose_bone.constraints.new(
+                    source_constraint.type
+                )
+                target_constraint.name = source_constraint.name
+                _copy_writable_rna_properties(
+                    source_constraint,
+                    target_constraint,
+                    {"type"},
+                )
+                for property_name in (
+                    "owner_space",
+                    "target_space",
+                    "influence",
+                ):
+                    if not hasattr(source_constraint, property_name):
+                        continue
+                    if not hasattr(target_constraint, property_name):
+                        continue
+                    setattr(
+                        target_constraint,
+                        property_name,
+                        getattr(source_constraint, property_name),
+                    )
+                if hasattr(source_constraint, "target"):
+                    try:
+                        target_constraint.target = (
+                            main
+                            if source_constraint.target == asset
+                            else source_constraint.target
+                        )
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                if hasattr(source_constraint, "subtarget"):
+                    try:
+                        target_constraint.subtarget = source_constraint.subtarget
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                cls._copy_constraint_targets(
+                    source_constraint,
+                    target_constraint,
+                    asset,
+                    main,
+                )
+                _copy_custom_properties(source_constraint, target_constraint)
+                created_drivers.extend(cls._copy_constraint_drivers(
+                    main,
+                    asset,
+                    source_constraint,
+                    target_constraint,
+                ))
+
+        for bone_name, transform_name in custom_shape_transform_names.items():
+            transform_bone = main.pose.bones.get(transform_name)
+            if transform_bone is not None:
+                main.pose.bones[bone_name].custom_shape_transform = transform_bone
+
+        return created_drivers
+
+    @staticmethod
+    def _remove_created_drivers(main, created_drivers):
+        animation_data = main.animation_data
+        if animation_data is None:
+            return
+        for data_path, array_index in created_drivers:
+            fcurve = animation_data.drivers.find(data_path, index=array_index)
+            if fcurve is not None:
+                animation_data.drivers.remove(fcurve)
+
+    @staticmethod
+    def _remove_empty_created_collections(main, created_collections):
+        for collection_name in created_collections:
+            collection = main.data.collections.get(collection_name)
+            if collection is None or collection.bones:
+                continue
+            try:
+                main.data.collections.remove(collection)
+            except RuntimeError:
+                pass
+
+    @staticmethod
+    def _remap_object_references(asset, main):
+        """Some RNA pointers created during the merge are not covered by ID.user_remap."""
+        for obj in bpy.data.objects:
+            for modifier in obj.modifiers:
+                if hasattr(modifier, "object") and modifier.object == asset:
+                    modifier.object = main
+
+            for constraint in obj.constraints:
+                if hasattr(constraint, "target") and constraint.target == asset:
+                    constraint.target = main
+
+            if obj.pose is None:
+                continue
+            for pose_bone in obj.pose.bones:
+                for constraint in pose_bone.constraints:
+                    if (
+                        hasattr(constraint, "target")
+                        and constraint.target == asset
+                    ):
+                        constraint.target = main
+
+    def execute(self, context):
+        scene = context.scene
+        main = scene.ho_mod_weight_merge_main_armature
+        asset = scene.ho_mod_weight_merge_asset_armature
+
+        if main == asset:
+            self.report({'ERROR'}, "主骨架与素材骨架不能是同一个对象")
+            return {'CANCELLED'}
+        if not self._object_in_view_layer(context, main):
+            self.report({'ERROR'}, "主骨架不在当前视图层中")
+            return {'CANCELLED'}
+        if not self._object_in_view_layer(context, asset):
+            self.report({'ERROR'}, "素材骨架不在当前视图层中")
+            return {'CANCELLED'}
+        if not main.data.is_editable:
+            self.report({'ERROR'}, "主骨架数据不可编辑")
+            return {'CANCELLED'}
+        if not asset.is_editable:
+            self.report({'ERROR'}, "素材骨架对象不可编辑")
+            return {'CANCELLED'}
+
+        previous_active = context.view_layer.objects.active
+        previous_active_was_asset = previous_active == asset
+        previous_selected = {
+            obj for obj in context.view_layer.objects if obj.select_get()
+        }
+        asset_was_selected = asset in previous_selected
+        previous_mode = (
+            previous_active.mode if previous_active is not None else 'OBJECT'
+        )
+
+        existing_names = {bone.name for bone in main.data.bones}
+        source_snapshots = self._snapshot_bones(asset)
+        copied_snapshots = [
+            snapshot
+            for snapshot in source_snapshots
+            if snapshot["name"] not in existing_names
+        ]
+        copied_names = [snapshot["name"] for snapshot in copied_snapshots]
+        duplicate_count = len(source_snapshots) - len(copied_snapshots)
+        created_names = []
+        created_collections = set()
+        created_drivers = []
+        disconnected_count = 0
+        merge_succeeded = False
+        operation_error = None
+        asset_data = asset.data
+        parented_world_matrices = {
+            obj: obj.matrix_world.copy()
+            for obj in bpy.data.objects
+            if obj.parent == asset
+        }
+
+        try:
+            source_to_main = main.matrix_world.inverted_safe() @ asset.matrix_world
+            direction_to_main = source_to_main.to_3x3()
+
+            self._enter_edit_mode(context, main)
+            edit_bones = main.data.edit_bones
+
+            for snapshot in copied_snapshots:
+                bone = edit_bones.new(snapshot["name"])
+                created_names.append(bone.name)
+                bone.head = source_to_main @ snapshot["head"]
+                bone.tail = source_to_main @ snapshot["tail"]
+                roll_axis = direction_to_main @ snapshot["roll_axis"]
+                if roll_axis.length_squared > 1e-20:
+                    bone.align_roll(roll_axis)
+
+            for snapshot in copied_snapshots:
+                bone = edit_bones[snapshot["name"]]
+                parent_name = snapshot["parent_name"]
+                if parent_name is not None:
+                    bone.parent = edit_bones.get(parent_name)
+
+                if snapshot["use_connect"] and bone.parent is not None:
+                    if (bone.head - bone.parent.tail).length <= 1e-6:
+                        bone.use_connect = True
+                    else:
+                        disconnected_count += 1
+
+            bpy.ops.object.mode_set(mode='OBJECT')
+            context.view_layer.update()
+
+            self._copy_bone_data(
+                main,
+                asset,
+                copied_names,
+                created_collections,
+            )
+            # Driver variables that point at the source object or Armature data
+            # keep working after their IDs are remapped to the main armature.
+            _copy_custom_properties(asset, main, overwrite=False)
+            _copy_custom_properties(asset.data, main.data, overwrite=False)
+            self._copy_pose_data(
+                main,
+                asset,
+                copied_names,
+                created_drivers,
+            )
+
+            self._remap_object_references(asset, main)
+            asset.user_remap(main)
+            self._remap_object_references(asset, main)
+            for child, world_matrix in parented_world_matrices.items():
+                try:
+                    child.matrix_world = world_matrix
+                except (ReferenceError, RuntimeError):
+                    pass
+            scene.ho_mod_weight_merge_asset_armature = None
+            bpy.data.objects.remove(asset, do_unlink=True)
+            if asset_data.users == 0:
+                bpy.data.armatures.remove(asset_data)
+
+            merge_succeeded = True
+        except Exception as error:
+            operation_error = error
+            try:
+                self._remove_created_drivers(main, created_drivers)
+                self._remove_created_bones(context, main, created_names)
+                self._remove_empty_created_collections(main, created_collections)
+            except Exception as rollback_error:
+                print(
+                    "[Mod Weight Armature Merge] failed to roll back: "
+                    f"{rollback_error}"
+                )
+        finally:
+            try:
+                self._restore_context(
+                    context,
+                    previous_active,
+                    previous_active_was_asset,
+                    previous_selected,
+                    asset_was_selected,
+                    previous_mode,
+                    main,
+                    merge_succeeded,
+                )
+            except Exception as restore_error:
+                print(
+                    "[Mod Weight Armature Merge] failed to restore context: "
+                    f"{restore_error}"
+                )
+
+        if operation_error is not None:
+            self.report({'ERROR'}, f"融合骨架失败：{operation_error}")
+            return {'CANCELLED'}
+
+        self.report(
+            {'INFO'},
+            f"骨架融合完成：新增 {len(copied_names)} 根骨，"
+            f"忽略同名骨 {duplicate_count} 根，"
+            f"迁移约束驱动 {len(created_drivers)} 条，"
+            f"为保持原位断开连接 {disconnected_count} 根",
+        )
+        return {'FINISHED'}
+
+
+def drawMergeArmaturesPanel(layout: UILayout, context: Context):
+    box = layout.box()
+    box.label(text="融合骨架")
+    row = box.row(align=True)
+    row.prop(
+        context.scene,
+        "ho_mod_weight_merge_main_armature",
+        text="主骨架",
+    )
+    row.prop(
+        context.scene,
+        "ho_mod_weight_merge_asset_armature",
+        text="素材骨架",
+    )
+    box.operator(OP_MergeArmatures.bl_idname, text="融合骨架")
+
+
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     """Draw common bone operations, then delegate all aux UI to auxBone."""
     row = layout.row(align=True)
@@ -784,6 +1571,9 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row = col.row(align=True)
     row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
     row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
+
+    layout.separator()
+    drawMergeArmaturesPanel(layout, context)
 
     auxBone.draw_panel(layout, context)
 
@@ -807,11 +1597,24 @@ cls = [
     OP_ResetAllBonePose,
     OP_BoneApplyConstraint,
     OP_BoneRemoveConstraints,
+    OP_MergeArmatures,
 ]
 
 
 
 def register():
+    bpy.types.Scene.ho_mod_weight_merge_main_armature = PointerProperty(
+        name="主骨架",
+        description="保留现有骨骼及其自定义信息的目标骨架",
+        type=bpy.types.Object,
+        poll=_armature_filter,
+    )
+    bpy.types.Scene.ho_mod_weight_merge_asset_armature = PointerProperty(
+        name="素材骨架",
+        description="融合到主骨架并在完成后移除的素材骨架",
+        type=bpy.types.Object,
+        poll=_armature_filter,
+    )
     for i in cls:
         bpy.utils.register_class(i)
     # 骨骼操作面板里“辅助骨总览”详情的折叠开关，默认折叠。
@@ -826,3 +1629,5 @@ def unregister():
         del bpy.types.Scene.ho_aux_overview_expanded
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
+    del bpy.types.Scene.ho_mod_weight_merge_asset_armature
+    del bpy.types.Scene.ho_mod_weight_merge_main_armature
