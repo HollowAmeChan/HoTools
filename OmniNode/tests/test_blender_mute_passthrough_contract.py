@@ -431,7 +431,9 @@ try:
     assert not hasattr(OmniNodeDraw.DrawCompileFlow, "_timer_running")
 
     assert cache_tree.debug_runtime_timing is False
-    assert cache_tree.show_runtime_timing is False
+    assert cache_tree.show_runtime_timing is True
+    cache_tree.show_runtime_timing = False
+    assert not OmniRuntimeTiming.is_enabled(cache_tree)
     assert cache_tree.runtime_timing_sample_interval == 3.0
     cache_tree.runtime_timing_sample_interval = 4.0
     assert cache_tree.runtime_timing_sample_interval == 4.0
