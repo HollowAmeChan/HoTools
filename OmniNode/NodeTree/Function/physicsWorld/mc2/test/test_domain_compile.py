@@ -77,11 +77,11 @@ def _effective(*, gravity=5.0, damping=0.05, cloth_mass=0.0, animation_pose_rati
         self_collision_mode=2,
         gravity=gravity,
         damping=damping,
+        cloth_mass=cloth_mass,
         animation_pose_ratio=animation_pose_ratio,
     )
     options = parameters.make_mc2_setup_options("mesh_cloth")
-    task = parameters.make_mc2_task_parameters(cloth_mass=cloth_mass)
-    return runtime.make_mc2_runtime_parameters(profile, options, task)
+    return runtime.make_mc2_runtime_parameters(profile, options)
 
 
 def _fragments():
@@ -115,9 +115,8 @@ def _domain_draft():
             setup_type="mesh_cloth",
             stable_id="sleeve",
             profile=parameters.make_mc2_particle_profile(
-                gravity=5.0, damping=0.1, self_collision_mode=2
+                gravity=5.0, damping=0.1, self_collision_mode=2, cloth_mass=0.2
             ),
-            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.2),
             setup_options=parameters.make_mc2_setup_options(
                 "mesh_cloth", collided_by_groups=1,
             ),
@@ -128,9 +127,8 @@ def _domain_draft():
             setup_type="mesh_cloth",
             stable_id="coat",
             profile=parameters.make_mc2_particle_profile(
-                gravity=8.0, damping=0.3, self_collision_mode=2
+                gravity=8.0, damping=0.3, self_collision_mode=2, cloth_mass=0.8
             ),
-            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.8),
             setup_options=parameters.make_mc2_setup_options(
                 "mesh_cloth", collided_by_groups=2,
             ),

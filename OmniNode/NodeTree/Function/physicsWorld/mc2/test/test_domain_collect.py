@@ -79,9 +79,9 @@ def _plan(*, gravity=3.0):
         profile=parameters.make_mc2_particle_profile(
             gravity=2.0,
             damping=0.1,
+            cloth_mass=0.2,
             spring_enabled=False,
         ),
-        task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.2),
     )
     sleeve = _entry(101, "sleeve", producer="node").with_patch(
         partitions.make_mc2_partition_patch(
@@ -97,9 +97,9 @@ def _plan(*, gravity=3.0):
         profile=parameters.make_mc2_particle_profile(
             gravity=8.0,
             damping=0.3,
+            cloth_mass=0.8,
             spring_enabled=False,
         ),
-        task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.8),
         collision_group=8,
         collision_mask=8,
     )

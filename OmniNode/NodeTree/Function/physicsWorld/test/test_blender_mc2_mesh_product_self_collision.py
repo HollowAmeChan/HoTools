@@ -25,7 +25,7 @@ world_types = mixed.world_types
 physics_blender = mixed.physics_blender
 
 
-def _profile():
+def _profile(*, cloth_mass: float):
     return parameters.make_mc2_particle_profile(
         gravity=0.0,
         damping=0.1,
@@ -45,6 +45,7 @@ def _profile():
         self_collision_mode=2,
         self_collision_sync_mode=2,
         self_collision_thickness=0.05,
+        cloth_mass=cloth_mass,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -64,8 +65,7 @@ def _partition(mesh, *, group: int, mask: int, mass: float):
     assert count == 1 and len(objects) == 1
     entries, _domain_ids = nodes.physicsMC2MeshClothTask(
         objects,
-        profile=_profile(),
-        cloth_mass=mass,
+        profile=_profile(cloth_mass=mass),
     )
     assert len(entries) == 1
     return entries[0]

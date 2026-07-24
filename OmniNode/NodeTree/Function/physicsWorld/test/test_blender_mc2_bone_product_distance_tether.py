@@ -42,6 +42,7 @@ def _request(armature, *, spring: bool, distance_stiffness: float):
         backstop_enabled=False,
         collision_mode=0,
         self_collision_mode=0,
+        cloth_mass=0.4,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -60,7 +61,6 @@ def _request(armature, *, spring: bool, distance_stiffness: float):
             [{"armature": armature, "bone": "Parent"}],
             profile=profile,
             connection_mode=0,
-            cloth_mass=0.4,
             teleport_mode=0,
         )
     assert len(requests) == 1

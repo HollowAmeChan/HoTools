@@ -42,6 +42,7 @@ def _profile(*, bending_stiffness: float):
         backstop_enabled=False,
         collision_mode=0,
         self_collision_mode=0,
+        cloth_mass=0.4,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -52,7 +53,6 @@ def _cloth_request(armature, *, bending_stiffness: float):
         [{"armature": armature, "bone": "Parent"}],
         profile=_profile(bending_stiffness=bending_stiffness),
         connection_mode=1,
-        cloth_mass=0.4,
         teleport_mode=0,
     )
     assert len(requests) == 1

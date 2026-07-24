@@ -197,6 +197,7 @@ class MC2ParticleProfileSpec:
     self_collision_mode: int = 0
     self_collision_sync_mode: int = 0
     self_collision_thickness: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.005))
+    cloth_mass: float = 0.0
     spring_enabled: bool = True
     spring_power: float = 0.04
     spring_limit_distance: float = 0.1
@@ -239,7 +240,7 @@ class MC2ParticleProfileSpec:
 
 @dataclass(frozen=True)
 class MC2TaskParametersSpec:
-    """Per-task corrections and interaction policy, separate from particle material."""
+    """独立于粒子材料的逐任务运动修正参数。"""
 
     normal_axis: int = 1
     anchor_inertia: float = 0.0
@@ -255,7 +256,6 @@ class MC2TaskParametersSpec:
     teleport_mode: int = 0
     teleport_distance: float = 0.5
     teleport_rotation: float = 90.0
-    cloth_mass: float = 0.0
 
     def __post_init__(self) -> None:
         if self.normal_axis not in range(6):
@@ -287,7 +287,6 @@ def make_mc2_task_parameters(
     teleport_mode=0,
     teleport_distance=0.5,
     teleport_rotation=90.0,
-    cloth_mass=0.0,
 ) -> MC2TaskParametersSpec:
     normal_axis = int(normal_axis)
     teleport_mode = int(teleport_mode)
@@ -322,7 +321,6 @@ def make_mc2_task_parameters(
         teleport_mode=teleport_mode,
         teleport_distance=_non_negative(teleport_distance, "teleport_distance"),
         teleport_rotation=_non_negative(teleport_rotation, "teleport_rotation"),
-        cloth_mass=_clamp(cloth_mass, "cloth_mass", 0.0, 1.0),
     )
 
 
@@ -371,6 +369,7 @@ def make_mc2_particle_profile(
     self_collision_sync_mode=0,
     self_collision_thickness=0.005,
     self_collision_curve=None,
+    cloth_mass=0.0,
     spring_enabled=True,
     spring_power=0.04,
     spring_limit_distance=0.1,
@@ -428,6 +427,7 @@ def make_mc2_particle_profile(
         self_collision_mode=self_collision_mode,
         self_collision_sync_mode=self_collision_sync_mode,
         self_collision_thickness=make_mc2_curve_spec(self_collision_thickness, self_collision_curve, minimum=0.001, maximum=0.05, name="self_collision_thickness"),
+        cloth_mass=_clamp(cloth_mass, "cloth_mass", 0.0, 1.0),
         spring_enabled=bool(spring_enabled),
         spring_power=_clamp(spring_power, "spring_power", 0.001, 1.0),
         spring_limit_distance=_non_negative(spring_limit_distance, "spring_limit_distance"),
@@ -737,7 +737,7 @@ def make_mc2_effective_parameters(
                 profile.self_collision_thickness
             ),
             "radius_model": setup_options.self_collision_radius_model,
-            "cloth_mass": task_parameters.cloth_mass,
+            "cloth_mass": profile.cloth_mass,
         },
         "wind": {
             "influence": profile.wind_influence,

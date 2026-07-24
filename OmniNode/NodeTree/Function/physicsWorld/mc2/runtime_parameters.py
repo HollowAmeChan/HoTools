@@ -234,7 +234,7 @@ def make_mc2_runtime_parameters(
         "motion_stiffness": 0.0 if is_spring else profile.motion_stiffness,
         "collision_dynamic_friction": friction,
         "collision_static_friction": friction,
-        "cloth_mass": task_parameters.cloth_mass,
+        "cloth_mass": profile.cloth_mass,
         "wind_influence": profile.wind_influence,
         "wind_frequency": profile.wind_frequency,
         "wind_turbulence": profile.wind_turbulence,

@@ -182,6 +182,7 @@ def _profile(
     gravity: float | None = None,
     gravity_direction: tuple[float, float, float] | None = None,
     gravity_falloff: float = 0.0,
+    cloth_mass: float = 0.4,
 ):
     return parameters.make_mc2_particle_profile(
         gravity=(0.0 if bone_spring else 3.0) if gravity is None else gravity,
@@ -214,6 +215,7 @@ def _profile(
         collision_limit_distance=0.035,
         self_collision_mode=0 if bone_spring else 2,
         self_collision_thickness=self_collision_thickness,
+        cloth_mass=cloth_mass,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -234,9 +236,9 @@ def _requests(
             bone_spring=False,
             hot=hot,
             self_collision_thickness=self_collision_thickness,
+            cloth_mass=cloth_mass,
         ),
         connection_mode=1,
-        cloth_mass=cloth_mass,
         collided_by_groups=1,
         teleport_mode=2,
         teleport_distance=0.24 if hot else 0.5,
@@ -471,9 +473,9 @@ def _run_self_scope_once(run_index: int):
                 bone_spring=False,
                 self_collision_thickness=0.008,
                 gravity=0.0,
+                cloth_mass=0.4,
             ),
             connection_mode=1,
-            cloth_mass=0.4,
             collided_by_groups=1,
             teleport_mode=2,
             teleport_distance=0.5,

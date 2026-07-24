@@ -159,6 +159,7 @@ _PROFILE_LABELS = {
     "collision_friction": "碰撞摩擦", "collision_limit_distance": "碰撞限制距离",
     "collision_limit_curve": "碰撞限制曲线", "self_collision_enabled": "自碰撞",
     "self_collision_interaction": "跨物体自碰撞",
+    "cloth_mass": "自碰交互质量",
 }
 
 _PROFILE_INPUT_INIT = {
@@ -204,6 +205,7 @@ _PROFILE_INPUT_INIT = {
     "collision_limit_curve": _profile_input("BoneSpring碰撞距离的深度曲线"),
     "self_collision_enabled": _profile_input("启用FullMesh自碰撞；内部转换为MC2模式2。"),
     "self_collision_interaction": _profile_input("跨任务自碰撞\n范围：同一Physics World"),
+    "cloth_mass": _profile_input("自碰接触的粒子相对质量；影响双方修正比例。", min_value=0.0, max_value=1.0),
 }
 
 _MESH_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
@@ -219,7 +221,7 @@ _SPRING_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
     "max_distance_enabled", "max_distance",
     "max_distance_curve", "backstop_enabled", "backstop_radius", "backstop_distance",
     "backstop_distance_curve", "collision_mode", "collision_friction", "self_collision_enabled",
-    "self_collision_interaction",
+    "self_collision_interaction", "cloth_mass",
 })
 
 
@@ -311,6 +313,7 @@ def physicsMC2MeshClothProfile(
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
     self_collision_interaction: bool = False,
+    cloth_mass: float = 0.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_MESH_CLOTH)
@@ -357,6 +360,7 @@ def physicsMC2BoneClothProfile(
     collision_mode: int = 1,
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
+    cloth_mass: float = 0.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_BONE_CLOTH)
@@ -407,7 +411,6 @@ _TASK_PARAMETER_LABELS = {
     "teleport_mode": "Teleport模式",
     "teleport_distance": "Teleport距离",
     "teleport_rotation": "Teleport旋转",
-    "cloth_mass": "自碰交互质量",
 }
 
 _TASK_PARAMETER_INPUT_INIT = {
@@ -474,11 +477,6 @@ _TASK_PARAMETER_INPUT_INIT = {
         "description": "Task基准旋转阈值（度）；与位移条件为OR",
         "min_value": 0.0,
     },
-    "cloth_mass": {
-        "description": "自碰接触相对质量；影响双方修正比例",
-        "min_value": 0.0,
-        "max_value": 1.0,
-    },
 }
 
 _TASK_INERTIA_FIELDS = (
@@ -501,7 +499,6 @@ _TASK_CLOTH_PARAMETER_FIELDS = (
     "normal_axis",
     *_TASK_INERTIA_FIELDS,
     *_TASK_TELEPORT_FIELDS,
-    "cloth_mass",
 )
 _TASK_SPRING_PARAMETER_FIELDS = (*_TASK_INERTIA_FIELDS, *_TASK_TELEPORT_FIELDS)
 
@@ -691,7 +688,6 @@ def physicsMC2MeshClothTask(
     teleport_mode: int = 0,
     teleport_distance: float = 0.5,
     teleport_rotation: float = 90.0,
-    cloth_mass: float = 0.0,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
     partitions = make_mc2_mesh_domain_partitions(
@@ -761,7 +757,6 @@ def physicsMC2BoneClothTask(
     teleport_mode: int = 0,
     teleport_distance: float = 0.5,
     teleport_rotation: float = 90.0,
-    cloth_mass: float = 0.0,
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,

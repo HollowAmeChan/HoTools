@@ -89,11 +89,11 @@ product request
 
 | 节点 | 显示字段 | 隐藏/固定字段 | 统一输出 |
 |---|---|---|---|
-| `MC2 MeshCloth粒子配置` | cloth重力、粒子速度/阻尼/半径、结构/Motion约束、普通碰撞、自碰开关 | Task修正字段、Spring/wind与BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
-| `MC2 BoneCloth粒子配置` | 与 cloth runtime 一致的粒子材料、结构/Motion约束、普通碰撞和域内 self | Task 修正字段、Mesh 专用跨 Object authoring、Spring/wind 与 BoneSpring soft-collision limit 隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 MeshCloth粒子配置` | cloth重力、粒子速度/阻尼/半径、结构/Motion约束、普通碰撞、自碰开关、跨物体自碰与自碰交互质量 | Task修正字段、Spring/wind与BoneSpring soft-collision limit隐藏 | `MC2ParticleProfileSpec` |
+| `MC2 BoneCloth粒子配置` | 与 cloth runtime 一致的粒子材料、结构/Motion约束、普通碰撞、域内 self 与自碰交互质量 | Task 修正字段、Mesh 专用跨 Object authoring、Spring/wind 与 BoneSpring soft-collision limit 隐藏 | `MC2ParticleProfileSpec` |
 | `MC2 BoneSpring粒子配置` | 半径/阻尼/粒子限速、角度约束、soft-collision limit | Task修正字段、gravity、tether/distance、Motion、普通碰撞模式/摩擦、自碰撞及未被native消费的Spring/wind字段隐藏 | `MC2ParticleProfileSpec` |
 
-三个节点只是同一immutable profile构造器的产品视图，不创建三套solver DTO、runtime ABI或native参数结构。Teleport、组件惯性、Normal Axis与自碰交互质量由独立immutable `MC2TaskParametersSpec`持有；Task按`setup_type`通过唯一`make_mc2_runtime_parameters(profile, setup_options, task_parameters)`入口完成float32采样和源码固定值归一化。三个Profile节点和task空配置默认都显式写入`spring_enabled=False`；当前native未读取`spring_power/spring_limit_distance/spring_normal_limit_ratio/spring_noise`，这些内部兼容字段在真实kernel落地前不得作为产品旋钮公开。
+三个节点只是同一immutable profile构造器的产品视图，不创建三套solver DTO、runtime ABI或native参数结构。自碰交互质量是粒子接触权重，由`MC2ParticleProfileSpec.cloth_mass`持有；Teleport、组件惯性与Normal Axis由独立immutable `MC2TaskParametersSpec`持有。Task按`setup_type`通过唯一`make_mc2_runtime_parameters(profile, setup_options, task_parameters)`入口完成float32采样和源码固定值归一化。三个Profile节点和task空配置默认都显式写入`spring_enabled=False`；当前native未读取`spring_power/spring_limit_distance/spring_normal_limit_ratio/spring_noise`，这些内部兼容字段在真实kernel落地前不得作为产品旋钮公开。
 
 公开cloth Profile节点把自碰撞表达为bool，内部稳定转换成MC2 `self_collision_mode=0/2`，不允许int滑块产生无效模式1。官方JSON预设按owner拆成同名Profile部分与Task部分，并在各节点按真实输入裁剪；应用两个节点上的同名preset恢复完整源预设，不能向用户报告一批本setup不存在的“缺失项”。
 
@@ -194,7 +194,7 @@ Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有�
 | `碰撞限制距离`、`碰撞限制曲线` | 限制BoneSpring粒子被soft-sphere碰撞推离动画基准的最大距离 | BoneSpring Point collision使用animated base和深度曲线执行soft-sphere投影；仅`S`有效，cloth节点不公开且runtime置零。 |
 | `自碰撞` | 启用 partition primitive 的 FullMesh EE/PT 接触、grid broadphase 和 intersection history | bool 稳定转换为 `self_collision_mode=2`；`M/C` 有效，`S` 强制关闭。 |
 | `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
-| `自碰交互质量` | 改变 self primitive 的相对修正权重 | `cloth_mass` 在 primitive 构建时进入 inverse-mass；`M/C` 的同/跨 partition contact 使用同一权重规则。 |
+| `自碰交互质量` | 改变 self primitive 的粒子相对修正权重 | 由粒子Profile持有；`cloth_mass` 在 primitive 构建时进入 inverse-mass，`M/C` 的同/跨 partition contact 使用同一权重规则，BoneSpring不公开且不消费。 |
 
 MeshCloth与BoneCloth产品只公开一个半径模型：`particle_radius = profile.radius(depth) * object_radius_weight`，self thickness统一由profile radius按`0.25`派生。对象顶点组仍只调制实际particle radius，不另外创造self厚度输入；BoneSpring强制关闭自碰并拒绝派生模型。独立`self_collision_thickness`仍只属于source oracle，不得重新暴露第二套用户半径。
 

@@ -80,8 +80,8 @@ def _draft(*, gravity=5.0):
             _FakeSource(1), setup_type="mesh_cloth", stable_id="sleeve",
             profile=parameters.make_mc2_particle_profile(
                 gravity=gravity, damping=0.1, self_collision_mode=2,
+                cloth_mass=0.2,
             ),
-            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.2),
             setup_options=parameters.make_mc2_setup_options(
                 "mesh_cloth", collided_by_groups=1,
             ),
@@ -91,8 +91,8 @@ def _draft(*, gravity=5.0):
             _FakeSource(2), setup_type="mesh_cloth", stable_id="coat",
             profile=parameters.make_mc2_particle_profile(
                 gravity=8.0, damping=0.3, self_collision_mode=2,
+                cloth_mass=0.8,
             ),
-            task_parameters=parameters.make_mc2_task_parameters(cloth_mass=0.8),
             setup_options=parameters.make_mc2_setup_options(
                 "mesh_cloth", collided_by_groups=2,
             ),

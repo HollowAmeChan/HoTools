@@ -61,8 +61,9 @@ def _runtime_maps(value):
     )
 
 
-def test_profile_has_no_task_owned_fields() -> None:
+def test_profile_owns_particle_fields_but_not_task_fields() -> None:
     profile = parameters.make_mc2_particle_profile()
+    assert profile.cloth_mass == 0.0
     for name in (
         "normal_axis",
         "anchor_inertia",
@@ -78,13 +79,12 @@ def test_profile_has_no_task_owned_fields() -> None:
         "teleport_mode",
         "teleport_distance",
         "teleport_rotation",
-        "cloth_mass",
     ):
         assert not hasattr(profile, name), name
 
 
-def test_task_parameters_are_the_only_runtime_owner() -> None:
-    profile = parameters.make_mc2_particle_profile()
+def test_profile_and_task_parameters_feed_their_runtime_fields() -> None:
+    profile = parameters.make_mc2_particle_profile(cloth_mass=0.8)
     options = parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
     task_parameters = parameters.make_mc2_task_parameters(
         normal_axis=4,
@@ -94,7 +94,6 @@ def test_task_parameters_are_the_only_runtime_owner() -> None:
         teleport_mode=2,
         teleport_distance=1.25,
         teleport_rotation=45.0,
-        cloth_mass=0.8,
     )
     value = runtime.make_mc2_runtime_parameters(profile, options, task_parameters)
     floats, ints = _runtime_maps(value)

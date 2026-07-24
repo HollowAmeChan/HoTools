@@ -73,6 +73,7 @@ def _profile():
         backstop_enabled=False,
         collision_mode=0,
         self_collision_mode=0,
+        cloth_mass=0.4,
         spring_enabled=False,
         wind_influence=0.0,
     )
@@ -83,7 +84,6 @@ def _request(armature):
         [{"armature": armature, "bone": "Parent"}],
         profile=_profile(),
         connection_mode=1,
-        cloth_mass=0.4,
         teleport_mode=0,
     )
     assert len(requests) == 1
