@@ -964,6 +964,8 @@ E7-S至少完成以下简化：
 
 E7-S是P6-B最终收口和E6开工的硬门禁，不是可延期的代码整理。
 
+当前 E7-S 退出门禁已关闭：生产树 68 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；77 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。按当前环境冻结约束，4.5/py311 不作为 E7-S 日常退出步骤，留到 P6 完成后的最终双 ABI 收尾。
+
 ## 验收目录
 
 验收资产按流水线边界组织，不按某个临时类名组织。计划目录如下；E0 先建立 schema/fixture，后续阶段只补证据，不另起一套测试体系：

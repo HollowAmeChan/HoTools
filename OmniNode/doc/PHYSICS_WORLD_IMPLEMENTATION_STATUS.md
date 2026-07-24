@@ -76,14 +76,14 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership固定归Physics World；solver只消费公共数值快照 | channel/schema/采样布局和首个active vertical slice均未冻结 |
 | SpringBone VRM | world-aware vertical slice完成 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice可用，P0门禁闭环 | body/constraint spec、resource、scope、result/writeback、query/event/debug、dispose、soak与golden | 清除`frame_context.dt <= 0`时私自回退`1/60`的时间合同偏差；Path及剩余高级shape/query |
-| MC2 | 三种 setup 的统一域产品路径可用；E7-CPU 的 Python/native 旧面均已删除 | E0-E5-B、P0、P1-B、E4/P2 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；能力矩阵 9/9 verified；Python V0 owner、68 个 native V0 binding、5 个 context TU、2 个专用头文件及纯旧测试已删除 | 执行 E7-S、P6 合同收口和最终双 ABI 验收；全部门禁关闭后退役 BoneCloth/BoneSpring 过程计划文档 |
+| MC2 | 三种 setup 的统一域产品路径可用；E7-CPU/E7-S 已完成 | E0-E5-B、P0/P2 重建、P1-B、E4 与 E7 已闭环；`MC2ProductRequestV1`、DomainV1 whole-domain mixed pass、三 setup collector、多目标事务、产品 debug 和 Bone writeback 已成立；能力矩阵 9/9 verified；Python/native 旧面、测试专用生产模块与迁移 selector 已删除 | 收口 P6 合同并执行最终双 ABI/Blender 验收；全部门禁关闭后退役 BoneCloth/BoneSpring 过程计划文档 |
 | Mesh XPBD | 旧路径 | 仅作简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有active能力。wind只是未来kind；MC2中的`wind_*`兼容字段不代表场输入、采样或native消费。
 
 ## 当前优先级
 
-MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductRequestV1、DomainV1 whole-domain 执行、三种 setup collector、事务写回和请求驱动调试已经成立；9 个能力族的产品数值门禁全部通过；旧 Python task/solver/context/interaction owner、native V0 ABI/TU/专用头文件与纯旧测试均已删除，剩余工作集中在删除后需要审查的兼容参数、结果翻译、资源键和迁移命名。
+MC2 已完成 E7-CPU 与 E7-S，当前进入 P6 合同收口。统一 MC2ProductRequestV1、DomainV1 whole-domain 执行、三种 setup collector、事务写回和请求驱动调试已经成立；9 个能力族的产品数值门禁全部通过；旧 owner/native ABI、兼容参数、双结果路径、迁移资源键/命名、测试专用生产模块和 selector 分发均已清除。删除后 P0/P2 产品基线已经用 Blender 5.2 重建并通过现有 ceiling 与工作量一致性门禁。
 
 后续只按以下逻辑批次推进：
 
