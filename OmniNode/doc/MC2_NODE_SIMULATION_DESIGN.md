@@ -614,6 +614,8 @@ E7-S 不预先冻结最终文件树，而按可重复的小批次循环推进：
 
 E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已物理删除的旧模块/adapter/metadata 方法和已经不再是单调用转发器的产品函数。豁免集合必须只描述当前确有原子职责的薄访问器，不能作为历史删除清单；失效项留在 Git 历史，不继续降低未来审计灵敏度。
 
+后续命名审计已删除 `MC2MeshFusedCPUOwnerV1`、三个 `MC2FusedMesh*ResultV1` 与 `MC2_FUSED_MESH_SLOT_KIND` 纯兼容别名，测试直接消费统一 owner/result 类型。该批不修改持久 slot ID、slot kind 字符串或 schema identity；这些外部身份必须在独立迁移批次中评估，不能与 Python 无逻辑别名删除混合。
+
 ## 明确的数据流
 
 ### 显式模式

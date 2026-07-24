@@ -208,7 +208,7 @@ class _FailingBuilder:
 
 def test_owner_creates_once_then_reuses_exact_native_domain():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     first = owner.sync(_draft(), _snapshots())
     domain = owner.domain
     second = owner.sync(_draft(), _snapshots())
@@ -222,7 +222,7 @@ def test_owner_creates_once_then_reuses_exact_native_domain():
 
 def test_owner_delegates_frame_full_pipeline_and_logical_output():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     owner.sync(_draft(), _snapshots())
     program = owner.compiled.program
     particle_count = program.particle_count
@@ -251,7 +251,7 @@ def test_owner_delegates_frame_full_pipeline_and_logical_output():
 
 def test_owner_exposes_explicit_product_debug_state():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     owner.sync(_draft(), _snapshots())
     program = owner.compiled.program
     rotations = np.zeros((program.particle_count, 4), dtype=np.float32)
@@ -283,7 +283,7 @@ def test_owner_exposes_explicit_product_debug_state():
 
 def test_parameter_change_updates_same_domain_and_preserves_history():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     owner.sync(_draft(gravity=5.0), _snapshots())
     old_domain = owner.domain
     old_handle = kernel.created[0]
@@ -303,7 +303,7 @@ def test_parameter_change_updates_same_domain_and_preserves_history():
 
 def test_partition_gravity_direction_change_rebuilds_only_its_fragment():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     snapshots = _snapshots()
     owner.sync(
         _draft(), snapshots,
@@ -320,7 +320,7 @@ def test_partition_gravity_direction_change_rebuilds_only_its_fragment():
 
 def test_native_parameter_stage_failure_preserves_live_domain_and_cache_commit():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     owner.sync(_draft(), _snapshots())
     old_domain = owner.domain
     old_compiled = owner.compiled
@@ -341,7 +341,7 @@ def test_native_parameter_stage_failure_preserves_live_domain_and_cache_commit()
 
 def test_host_commit_failure_rolls_back_applied_native_parameters():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     owner.sync(_draft(gravity=5.0), _snapshots())
     old_domain = owner.domain
     old_compiled = owner.compiled
@@ -373,7 +373,7 @@ def test_fragment_failure_preserves_live_domain_and_fragment_cache():
     builder = _FailingBuilder()
     cache = cache_module.MC2MeshFragmentCacheV1(builder)
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel, fragment_cache=cache)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel, fragment_cache=cache)
     owner.sync(_draft(), snapshots)
     old_domain = owner.domain
     old_revision = cache.revision
@@ -395,7 +395,7 @@ def test_fragment_failure_preserves_live_domain_and_fragment_cache():
 
 def test_snapshot_order_mismatch_fails_before_any_staging():
     kernel = _FakeKernel()
-    owner = owner_module.MC2MeshFusedCPUOwnerV1(kernel)
+    owner = owner_module.MC2FusedCPUOwnerV1(kernel)
     snapshots = _snapshots()
     try:
         owner.sync(_draft(), tuple(reversed(snapshots)))

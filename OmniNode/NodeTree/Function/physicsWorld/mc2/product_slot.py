@@ -31,7 +31,6 @@ from .results import publish_mc2_result_transaction
 
 
 MC2_FUSED_MESH_SLOT_ID = "mc2.domain.mesh.product.v1"
-MC2_FUSED_MESH_SLOT_KIND = MC2_FUSED_PRODUCT_SLOT_KIND
 _MC2_FUSED_PRODUCT_WRITER = "mc2_fused_cpu_product"
 _MC2_CONSTRAINT_DEBUG_ANGLE = 1
 _MC2_CONSTRAINT_DEBUG_MOTION = 2
@@ -963,22 +962,15 @@ def capture_and_publish_mc2_mesh_fused_frame(
     )
 
 
-MC2FusedMeshFramePublishResultV1 = MC2FusedProductFramePublishResultV1
-MC2FusedMeshSubstepResultV1 = MC2FusedProductSubstepResultV1
-MC2FusedMeshSlotSyncResultV1 = MC2FusedProductSlotSyncResultV1
 publish_mc2_mesh_fused_frame = publish_mc2_product_frame
 
 
 __all__ = [
     "MC2_FUSED_PRODUCT_SLOT_KIND",
     "MC2_FUSED_MESH_SLOT_ID",
-    "MC2_FUSED_MESH_SLOT_KIND",
     "MC2FusedProductFramePublishResultV1",
     "MC2FusedProductSubstepResultV1",
     "MC2FusedProductSlotSyncResultV1",
-    "MC2FusedMeshFramePublishResultV1",
-    "MC2FusedMeshSubstepResultV1",
-    "MC2FusedMeshSlotSyncResultV1",
     "build_mc2_bone_product_output",
     "build_mc2_mesh_fused_output_batch",
     "capture_and_publish_mc2_mesh_fused_frame",

@@ -170,6 +170,10 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "MC2MeshFinalizerNativeData",
         "compact_native_baseline",
         "compact_native_finalizer",
+        "MC2MeshFusedCPUOwnerV1",
+        "MC2FusedMeshFramePublishResultV1",
+        "MC2FusedMeshSubstepResultV1",
+        "MC2FusedMeshSlotSyncResultV1",
     }
     production = [
         path
@@ -192,6 +196,8 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
     assert "MC2_SLOT_KIND" not in names_source
     assert "MC2_INTERACTION_RESOURCE_KEY" not in names_source
     assert "MC2_STATS_CHANNEL" not in names_source
+    product_slot_source = (MC2_ROOT / "product_slot.py").read_text(encoding="utf-8")
+    assert "MC2_FUSED_MESH_SLOT_KIND" not in product_slot_source
 
 
 def test_bone_frame_compatibility_entry_is_product_only():

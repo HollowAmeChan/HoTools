@@ -375,11 +375,7 @@ class MC2FusedCPUOwnerV1:
 
 
 # E5-B 迁移包装；E7-S 删除 Mesh 专名。
-MC2MeshFusedCPUOwnerV1 = MC2FusedCPUOwnerV1
-
-
 __all__ = [
     "MC2FusedCPUOwnerV1",
     "MC2FusedCPUOwnerSyncReportV1",
-    "MC2MeshFusedCPUOwnerV1",
 ]
