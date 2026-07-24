@@ -166,9 +166,22 @@ def test_mesh_product_base_pose_contract() -> None:
         source.scale = (1.0, 1.0, 1.0)
         bpy.context.view_layer.update()
 
-        objects, count = nodes.physicsMC2MeshObject([source])
+        properties = source.hotools_mesh_collision
+        objects, count = nodes.physicsMC2MeshCustomObject(
+            [source],
+            mc2_base_pose_proxy=base_proxy,
+            radius_vertex_group=properties.radius_vertex_group,
+            pin_enabled=properties.pin_enabled,
+            pin_vertex_group=properties.pin_vertex_group,
+            primary_collision_group=7,
+            collided_by_groups=2,
+        )
         assert count == 1 and len(objects) == 1
+        properties.mc2_base_pose_proxy = None
         entries, _domain_ids = nodes.physicsMC2MeshClothTask(objects)
+        assert entries[0].source_properties.mc2_base_pose_proxy is base_proxy
+        assert entries[0].collision_group == 64
+        assert entries[0].collision_mask == 66
         requests, report = nodes.physicsMC2MeshCollector(entries)
         assert len(requests) == 1 and report
         request = requests[0]
