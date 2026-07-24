@@ -92,7 +92,7 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 3. 68 个 native V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、`mc2_api.hpp` 声明/CMake 残留和直接 V0 native tests 已删除；4 个 frame/static 中立 API 与 DomainV1 产品 ABI 已保留并通过 py313/Blender 5.2 验收。
 4. E7-S 已把六个顶层 setup 产品钩子按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；文件数量不是 KPI，符合 Physics World 原子化标准的依赖根、合同、独立阶段和 owner 保持独立。
 5. E7-S 已删除可选 `native_context` 参数，并把仅存于当前 world 内存的 Bone frame 与 hotspot timing `v0` 资源键改为职责名且不保留兼容读取；继续逐项清理双 schema/result 翻译、无调用 forwarder 和误导命名，途中只按真实依赖证据新增合并项。
-6. `mc2_bone_writeback_plan_v0` 经审计是公共 Bone result/writeback 边界的唯一活动 schema，不是兼容层；保留其版本身份。产品多 request 失败回滚改为调用 Bone frame owner 的 checkpoint，不再跨模块读写 setup 私有资源键。生产 `V0/_v0` 审计只允许该 schema 与 `mc2_center_static_v0` 内容签名，当前违规为 0。
+6. `mc2_bone_writeback_plan_v0` 经审计是公共 Bone result/writeback 边界的唯一活动 schema，不是兼容层；保留其版本身份。产品多 request 失败回滚改为调用 Bone frame owner 的 checkpoint，不再跨模块读写 setup 私有资源键。生产 `V0/_v0` 审计只允许该 schema 与 `mc2_center_static_v0` 内容签名，精确迁移词审计也已启用，两类当前违规均为 0。
 7. 首次后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 与两个 task frame adapter，生产模块当前为 69 个。
 8. 第二次后续依赖审计已删除旧 debug slot/interaction 聚合器、`mc2_interaction_v0` resource key 与 renderer 兼容分支；产品 debug 只消费 fused product snapshot。
 9. 第三次后续依赖审计已删除旧 result candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布 GN 与 Bone shared product results。

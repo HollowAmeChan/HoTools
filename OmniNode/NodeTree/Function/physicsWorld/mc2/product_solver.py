@@ -119,7 +119,7 @@ def _step_mc2_mesh_product(
     timing=None,
     publish_results: bool = True,
 ) -> tuple[object, bool, str]:
-    """执行一个明确 Mesh product domain；不接受 task fallback。"""
+    """执行一个明确的 Mesh product domain。"""
 
     if timing is not None:
         timing.restart()

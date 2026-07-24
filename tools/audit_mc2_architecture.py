@@ -180,6 +180,9 @@ E7S_ALLOWED_VERSIONED_V0_IDENTITIES = frozenset((
     "mc2_bone_writeback_plan_v0",
 ))
 E7S_MIGRATION_V0_PATTERN = re.compile(r"(?i)(?:\bv0\b|_v0\b)")
+E7S_MIGRATION_WORD_PATTERN = re.compile(
+    r"(?i)\b(?:legacy|fallback|shadow|compat|compatibility)\b"
+)
 ALLOWED_BINDING_OVERLOADS = frozenset((
     "mc2_domain_cpu_v1_configure_whole_domain_self",
 ))
@@ -384,6 +387,7 @@ def _python_facts() -> dict:
     persistent_array_fields = []
     product_boundary_violations = []
     migration_v0_violations = []
+    migration_word_violations = []
     seen_profile_nodes = set()
     for path in _production_python_files():
         source = path.read_text(encoding="utf-8")
@@ -395,6 +399,12 @@ def _python_facts() -> dict:
                 candidate = candidate.replace(identity, "")
             if E7S_MIGRATION_V0_PATTERN.search(candidate):
                 migration_v0_violations.append({
+                    "module": module_name,
+                    "line": line_number,
+                    "text": line.strip(),
+                })
+            if E7S_MIGRATION_WORD_PATTERN.search(line):
+                migration_word_violations.append({
                     "module": module_name,
                     "line": line_number,
                     "text": line.strip(),
@@ -638,6 +648,10 @@ def _python_facts() -> dict:
                 key=lambda item: (item["module"], item["line"]),
             ),
         },
+        "e7s_migration_words": sorted(
+            migration_word_violations,
+            key=lambda item: (item["module"], item["line"]),
+        ),
         "e7s_python_layout": {
             "merge_targets": dict(sorted(E7S_PYTHON_MERGE_TARGETS.items())),
             "remaining_merge_sources": e7s_merge_sources,
@@ -913,6 +927,10 @@ def _print_summary(report: dict) -> None:
         "versioned identities"
     )
     print(
+        "E7-S migration words: "
+        f"{len(python['e7s_migration_words'])} violations"
+    )
+    print(
         "E7 product runtime reachable legacy modules: "
         f"{len(python['e7_cpu']['product_runtime_reachable_legacy'])}"
     )
@@ -1000,6 +1018,7 @@ def main() -> None:
             report["python"]["persistent_array_fields"],
             report["python"]["product_boundary_violations"],
             report["python"]["e7s_migration_v0"]["violations"],
+            report["python"]["e7s_migration_words"],
             report["cpp"]["api_definition_violations"],
             tuple(
                 item

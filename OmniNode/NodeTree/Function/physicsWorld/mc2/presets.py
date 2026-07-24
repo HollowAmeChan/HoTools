@@ -1,10 +1,9 @@
-"""Official MagicaCloth2 presets adapted to Profile and Task authoring.
+"""把官方 MagicaCloth2 preset 转换为统一 Profile 与 Task authoring。
 
-The JSON files in ``presets`` are copied without modification from
-``MagicaCloth2/Runtime/Res/Preset``. This module translates source fields into
-the unified authoring vocabulary. Public Profile and Task nodes filter the same
-named preset by their owned inputs, so applying both halves restores the source
-configuration. Source self-collision thickness is not exposed as a second radius.
+``presets`` 中的 JSON 原样来自 ``MagicaCloth2/Runtime/Res/Preset``。
+本模块只负责把源字段转换为统一 authoring 词汇；公开 Profile 与 Task 节点
+按各自拥有的输入筛选同名 preset，两部分共同恢复源配置。源 self-collision
+thickness 不作为第二套 radius 暴露。
 """
 
 from __future__ import annotations
@@ -32,42 +31,42 @@ _PRESET_FILES = (
 )
 
 
-def _float(value, fallback=0.0) -> float:
+def _float(value, default=0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return float(fallback)
+        return float(default)
 
 
-def _int(value, fallback=0) -> int:
+def _int(value, default=0) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
-        return int(fallback)
+        return int(default)
 
 
-def _bool(value, fallback=False) -> bool:
+def _bool(value, default=False) -> bool:
     if value is None:
-        return bool(fallback)
+        return bool(default)
     return bool(value)
 
 
 def _unity_vector_to_blender(
     value,
-    fallback=(0.0, 0.0, -1.0),
+    default=(0.0, 0.0, -1.0),
 ) -> tuple[float, float, float]:
     if not isinstance(value, dict):
-        return tuple(float(item) for item in fallback)
-    x = _float(value.get("x"), fallback[0])
-    y = _float(value.get("y"), fallback[2])
-    z = _float(value.get("z"), -fallback[1])
+        return tuple(float(item) for item in default)
+    x = _float(value.get("x"), default[0])
+    y = _float(value.get("y"), default[2])
+    z = _float(value.get("z"), -default[1])
     return (x, -z, y)
 
 
-def _curve_value(data, fallback=0.0) -> float:
+def _curve_value(data, default=0.0) -> float:
     if not isinstance(data, dict):
-        return _float(data, fallback)
-    return _float(data.get("value"), fallback)
+        return _float(data, default)
+    return _float(data.get("value"), default)
 
 
 def _unity_curve_weight(key, side: str) -> float:
@@ -145,12 +144,12 @@ def _curve_payload(data) -> dict:
     )
 
 
-def _check_slider_value(data, fallback, disabled=-1.0) -> float:
+def _check_slider_value(data, default, disabled=-1.0) -> float:
     if not isinstance(data, dict):
-        return _float(data, fallback)
+        return _float(data, default)
     if not _bool(data.get("use"), True):
         return float(disabled)
-    return _float(data.get("value"), fallback)
+    return _float(data.get("value"), default)
 
 
 def _constraint(data, key) -> dict:

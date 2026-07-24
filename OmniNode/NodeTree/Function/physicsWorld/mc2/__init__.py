@@ -1,7 +1,6 @@
-"""Physics World MC2 solver registration manifest.
+"""Physics World MC2 solver 注册清单。
 
-Public behavior lives in explicit submodules. This package root intentionally
-does not re-export solver APIs or provide compatibility attribute forwarding.
+公开行为属于显式子模块；包根不重导出 solver API。
 """
 
 

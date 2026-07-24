@@ -253,7 +253,7 @@ def sync_mc2_product_slot(
     slot_id: str,
     kernel=None,
 ) -> MC2FusedProductSlotSyncResultV1:
-    """创建或更新一个显式产品域，不启用任何旧 task fallback。"""
+    """创建或更新一个显式产品域。"""
 
     if not isinstance(world, PhysicsWorldCache):
         raise TypeError("world must be PhysicsWorldCache")

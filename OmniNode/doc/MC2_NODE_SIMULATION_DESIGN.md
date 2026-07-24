@@ -636,6 +636,8 @@ native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/
 
 生产源码的迁移命名门禁进一步把 `V0/_v0` 收敛为机器可读白名单：只允许 `mc2_center_static_v0` 内容签名命名空间和 `mc2_bone_writeback_plan_v0` 活动结果 schema。CPU backend、reference kernel、Center、产品 slot 与节点错误信息中的旧阶段叙述已改为当前职责和固定 pass 顺序；任何新的非版本合同 `V0` 字样都会使架构审计失败。该门禁不重命名 DomainV1 ABI，也不改变数值顺序。
 
+`legacy/fallback/shadow/compat/compatibility` 的精确词级门禁也已启用，当前生产违规为 0。backend 的 `MC2BackendCompatibilityReportV1` 与 `compatible` 字段表示真实能力匹配，不属于精确迁移词，继续保留；preset 解析器原 `fallback` 参数实际只表达坏值或缺字段的缺省值，已统一改名为 `default`。产品 slot/solver 和包根不再用“拒绝旧回退”描述当前职责。
+
 ## 明确的数据流
 
 ### 显式模式
