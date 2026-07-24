@@ -11,7 +11,7 @@ class MC2SetupAdapterContract:
     source_kind: str
     writeback_channel: str
     topology_builder_name: str
-    implementation_status: str = "native_context_framework"
+    implementation_status: str = "domain_v1_product"
 
     def debug_dict(self) -> dict:
         return {

@@ -101,7 +101,14 @@ def test_product_execution_boundary_has_no_v0_owner_imports():
         ".interaction_scope",
         ".shadow_pipeline",
     }
-    for filename in ("nodes.py", "product_solver.py", "product_collect.py", "product_bone_collect.py"):
+    for filename in (
+        "nodes.py",
+        "product_solver.py",
+        "setups/mesh_cloth/authoring.py",
+        "setups/mesh_cloth/product.py",
+        "setups/bone_cloth/authoring.py",
+        "setups/bone_cloth/product.py",
+    ):
         path = root / filename
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         imports = []

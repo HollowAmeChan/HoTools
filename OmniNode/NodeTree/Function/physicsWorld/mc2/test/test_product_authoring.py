@@ -28,7 +28,7 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 authoring = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.authoring"
 )
 request_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_request"

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
-from .parameters import (
+from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
+from ...parameters import (
     MC2ParticleProfileSpec,
     MC2SetupOptionsSpec,
     MC2TaskParametersSpec,
@@ -13,9 +13,9 @@ from .parameters import (
     make_mc2_setup_options,
     make_mc2_task_parameters,
 )
-from .partition_specs import collect_mc2_partition_entries, make_mc2_partition_entry
-from .product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
-from .source_identity import mc2_source_token
+from ...partition_specs import collect_mc2_partition_entries, make_mc2_partition_entry
+from ...product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
+from ...source_identity import mc2_source_token
 
 
 @dataclass(frozen=True)

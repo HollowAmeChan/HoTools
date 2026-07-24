@@ -74,7 +74,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
             "update_frequency": "parameter",
         },
     ),
-    "implementation_status": "mesh_e5_fused_domain_product_bone_v0_migration",
+    "implementation_status": "domain_v1_product",
 }
 
 MC2_CAPABILITIES = {

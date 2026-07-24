@@ -10,12 +10,12 @@ from .names import (
 )
 from .parameters import MC2SolverSettingsSpec, make_mc2_solver_settings
 from .product_request import MC2ProductRequestV1
-from .product_collect import (
+from .setups.mesh_cloth.product import (
     collect_mc2_mesh_product_plan,
     validate_mc2_mesh_product_output_batch,
     validate_mc2_mesh_product_targets,
 )
-from .product_bone_collect import (
+from .setups.bone_cloth.product import (
     collect_mc2_bone_product_plan,
     validate_mc2_bone_product_targets,
 )

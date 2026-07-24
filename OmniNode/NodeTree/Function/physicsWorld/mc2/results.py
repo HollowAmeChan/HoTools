@@ -610,7 +610,7 @@ def make_mc2_bone_domain_results(
 
     from .domain_compile import MC2CompiledDomainV1
     from .domain_ir import MC2DomainFrameOutputV1, MC2DomainFramePacketV1
-    from .product_bone_collect import MC2BoneProductCollectionV1
+    from .setups.bone_cloth.product import MC2BoneProductCollectionV1
     from .setups.bone_cloth.static_fragment import MC2BoneStaticFragmentV1
 
     if not isinstance(collection, MC2BoneProductCollectionV1):

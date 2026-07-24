@@ -1,4 +1,4 @@
-"""MC2 solver 自有标识。"""
+"""MC2 solver 的稳定 identity 与 setup 常量。"""
 
 MC2_SOLVER_ID = "mc2"
 MC2_SLOT_KIND = "mc2"

@@ -585,30 +585,20 @@ Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy
 
 ## 文件职责重排
 
-E7-S 开始时 Python 生产树共有 72 个模块、约 3.3 万行。迁移阶段按参数阶段、setup 名称和同名转发拆出的文件过多，目标不是把所有代码塞进少数大文件，而是让文件边界与真实 owner、生命周期和依赖方向一致。只有以下职责允许独立成文件：公开注册或持久化格式、Blender 主线程边界、不可变数据合同、跨帧 owner、native bridge、debug renderer。仅代表流水线中间阶段、同名转发、迁移别名或单个小 dataclass 的文件必须合并。
+E7-S 开始时 Python 生产树共有 72 个模块、约 3.3 万行。文件数量不是验收指标；职责、生命周期、依赖方向和独立可测试性才是。Physics World 已冻结 `physicsWorld/<domain>/` 下 `names/capabilities/declaration/nodes/specs/solver` 的原子化标准，因此稳定 identity 依赖根、capability/declaration、setup manifest/contract、不可变数据合同、独立编译阶段、跨帧 owner、Blender 主线程边界、native bridge 和 debug renderer 都可以保持独立，即使文件较小。
 
-目标布局由 `tools/audit_mc2_architecture.py::E7S_PYTHON_MERGE_TARGETS` 机器可读冻结。全部合并后预计从 72 个模块收敛到 44 个左右，不引入超过现有 `debug.py`、`debug_draw.py`、`cpu_native_kernel.py` 规模的新文件：
+本轮只归位迁移期间遗留在 `mc2/` 顶层的六个 setup 产品钩子，不改动 Physics World 原子模块：
 
-| 目标 owner | 合并内容 | 保持的边界 |
+| setup owner | 吸收的旧模块 | 职责 |
 |---|---|---|
-| `declaration.py` | `names.py`、setup capability 与声明常量 | 只描述注册和能力，不持有运行时状态。 |
-| `parameters.py` | profile/task/runtime 参数与唯一归一化入口 | preset 外部格式仍由 `presets.py` 隔离。 |
-| `product_request.py` | Mesh/Bone authoring、source identity、setup-neutral request | 不 capture Blender 数据，不创建 slot。 |
-| `product_collect.py` | Mesh/Bone request 的静态采集与 setup dispatch | setup 细节只经 adapter hook 进入。 |
-| `product_frame.py` | Mesh/Bone frame capture 后的校验、pack 与 DomainV1 packet | 不拥有历史，不执行 native step。 |
-| `domain_compile.py` | draft、capability gate、relocation、parameter SoA 与 output map | `domain_ir.py` 继续只放后端中立 immutable 合同。 |
-| `constraint_static.py` | Mesh baseline、Distance、Bending、self primitive 的纯派生构建 | 不接受 `native_context`，不初始化 backend。 |
-| `runtime_state.py` | fixed-step scheduler 与 frame/reset 连续性合同 | 不读取 Blender，不拥有 DomainV1 handle。 |
-| `product_slot.py` | domain transaction owner、world slot lifecycle、stage/commit/dispose | `cpu_backend.py` 继续只封装 native DomainV1 handle。 |
-| `product_solver.py` | 多 request 调度、Anchor 历史、prepare/execute/publish | 不拼静态数组，不内联 setup 细节。 |
-| `results.py` | logical output、公共 result envelope 与原子写回计划 | 不从 physical buffer 猜 source 切片。 |
-| setup `registration.py` | RNA schema、PropertyGroup 与 capability 声明 | 只服务 Blender 注册，不进入 solver。 |
-| setup `static.py` | fragment cache、单 partition static build 与 frozen fragment | Mesh final proxy/Bone 基础几何算法可保留独立大模块。 |
-| setup `frame.py` | setup frame capture 与对应 output adapter | 只处理 Blender 边界，不持有求解历史。 |
+| `setups/mesh_cloth/authoring.py` | `product_authoring.py` | 纯 request/partition authoring，不导入 Blender 或运行期 owner。 |
+| `setups/mesh_cloth/product.py` | `product_collect.py`、`product_frame.py` | Mesh 产品静态采集与逐帧 hook。 |
+| `setups/bone_cloth/authoring.py` | `product_bone_authoring.py` | BoneCloth/BoneSpring 纯 source/request authoring。 |
+| `setups/bone_cloth/product.py` | `product_bone_collect.py`、`product_bone_frame.py` | Bone 产品静态采集与逐帧 hook。 |
 
-`topology.py` 吸收 Mesh topology identity，`center_state.py` 吸收 Anchor 小适配器，`setups/__init__.py` 吸收轻量 setup 声明。三个 setup 的 `__init__.py` 作为注册 manifest 可以保留；`source_observation.py` 与 `source_observation_blender.py` 保持 pure/Blender 分界；native loader、kernel bridge、产品 debug snapshot 与 renderer 均保持独立。
+`setups/mesh_cloth/source_capture.py` 保持主线程静态 capture 边界；`setups/mesh_cloth/frame_input.py` 因直接依赖 `bpy/mathutils` 保持独立，避免纯 authoring 在 Blender 外不可导入。完成后生产模块从 72 个变为 70 个，这只是六入四的自然结果，不是继续压缩文件数的配额。
 
-迁移按“声明与纯合同 -> static owner -> authoring/collect/frame -> runtime owner/result -> 兼容命名清理”分批提交。每批直接更新所有生产 import 和测试，不创建转发 shim；旧模块名只有在当前批尚未迁移时存在，最终 `--e7s-python-layout-check` 必须为零。永久边界不允许恢复 `shadow_pipeline.py`、旧 `solver.py` 或 `native_context.py`。
+`tools/audit_mc2_architecture.py::E7S_PYTHON_MERGE_TARGETS` 只冻结本轮有证据的迁移映射，并要求旧模块物理消失、旧 import 路径不通过 shim 保留。随后继续 E7-S 清理 fallback、双 schema/result、旧 resource key、无调用 forwarder 和误导命名；过程中若发现新的合并点，必须先证明 owner、生命周期和依赖方向一致，再分批更新蓝本、审计与测试。
 
 ## 明确的数据流
 
@@ -899,7 +889,7 @@ E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V
 
 E7-S至少完成以下简化：
 
-- 按“文件职责重排”把 72 个 Python 生产模块收敛到约 44 个真实 owner 文件；删除阶段文件、同名转发和迁移 re-export，不以兼容 shim 保留旧 import 路径；
+- 按“文件职责重排”把六个顶层 setup 产品钩子归位为四个 setup owner，生产模块由 72 个变为 70 个；不以文件数量为 KPI，不合并符合 Physics World 原子化标准的依赖根、合同、独立阶段或 owner；
 - product authoring/collection/solver从Mesh专用命名收敛为setup-neutral核心，setup adapter只保留capture/fragment/frame/output hook；
 - 删除旧task到product request、V0 result到domain result、单target到事务batch的双向翻译层；
 - 合并重复的slot identity、scheduler、Center/Anchor history、debug request和dispose路径；

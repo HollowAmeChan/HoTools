@@ -37,8 +37,8 @@ for package_name, package_path in (
 
 parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
 topology = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology")
-collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
-authoring = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_authoring")
+collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.product")
+authoring = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.authoring")
 partition_specs = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
 product_slot = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
 

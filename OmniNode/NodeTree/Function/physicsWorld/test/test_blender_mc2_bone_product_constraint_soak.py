@@ -60,7 +60,7 @@ writeback = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
 )
 product_bone_authoring = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.authoring"
 )
 topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"

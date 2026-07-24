@@ -1,11 +1,11 @@
-"""MC2 Mesh 统一域的显式对象、覆盖、隐式 registry 与 collector 合同。"""
+"""MeshCloth setup 的纯请求与 partition authoring 合同。"""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from .names import MC2_SETUP_MESH_CLOTH
-from .parameters import (
+from ...names import MC2_SETUP_MESH_CLOTH
+from ...parameters import (
     MC2ParticleProfileSpec,
     MC2SetupOptionsSpec,
     MC2TaskParametersSpec,
@@ -13,14 +13,14 @@ from .parameters import (
     make_mc2_setup_options,
     make_mc2_task_parameters,
 )
-from .partition_specs import (
+from ...partition_specs import (
     MC2PartitionCollectorPlan,
     MC2PartitionEntry,
     MC2_UNSET,
     collect_mc2_partition_entries,
     make_mc2_partition_entry,
 )
-from .product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
+from ...product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
 
 
 MC2_MESH_PARTITION_IMPLICIT_TAG = "mc2.mesh_partition.v1"

@@ -23,14 +23,14 @@ from .parameters import (
     make_mc2_task_parameters,
 )
 from .presets import MC2_PARTICLE_PRESETS
-from .product_authoring import (
+from .setups.mesh_cloth.authoring import (
     make_mc2_mesh_partition_entries,
     make_mc2_mesh_product_request,
     override_mc2_mesh_partition_entries,
     register_mc2_mesh_partition_entries,
 )
 from .product_request import MC2ProductRequestV1
-from .product_bone_authoring import (
+from .setups.bone_cloth.authoring import (
     make_mc2_bone_cloth_product_request,
     make_mc2_bone_spring_product_request,
 )

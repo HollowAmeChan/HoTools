@@ -30,7 +30,7 @@ class _MC2TopologyIntentV1:
 
 def _partition_intent(partition) -> _MC2TopologyIntentV1:
     from .partition_specs import MC2ResolvedPartitionSpec
-    from .product_bone_authoring import MC2BonePartitionSourceV1
+    from .setups.bone_cloth.authoring import MC2BonePartitionSourceV1
 
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition 必须是 MC2ResolvedPartitionSpec")

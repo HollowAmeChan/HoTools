@@ -360,10 +360,11 @@ GPU 是确定的长期产品方向，但完整 backend 不在当前 E3-E5 时限
 
 1. 旧 capability 证据迁移、BoneCloth/BoneSpring 包装限制签字、中立合同归位和 Python V0 owner/aggregate 入口删除已经完成。
 2. 68 个 native V0 binding、5 个 context TU、2 个专用头文件、API/CMake 残留和直接 V0 native tests 已删除，并已用重新编译的 py313 产物验收。
-3. 执行 E7-S，先按真实 owner/lifecycle 把 72 个 Python 生产模块收敛到约 44 个，再清除迁移期可选 `native_context` 参数、fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
-4. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
-5. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
-6. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。
+3. 执行 E7-S：六个顶层 setup 产品钩子先按真实 owner/lifecycle 归位为四个 setup 模块，生产模块由 72 个变为 70 个；不以文件数量为 KPI，并继续清除迁移期可选 `native_context` 参数、fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
+4. E7-S 中若发现新的合并点，只在 owner、生命周期、依赖方向一致且不破坏 Physics World 原子化标准时实施。
+5. 以删除后的产品 DomainV1 重建性能基线，任何变化按实际工作量解释。
+6. 收口 P6 的 data/pass/buffer/IO implementation package；不创建运行时 backend。
+7. 完成最终 4.5/py311 双 ABI 收尾后，才单独立项 E6 GPU prototype 和规模曲线。
 
 逻辑批次应覆盖完整所有权面并可独立回归、基准和回滚；不再按单 runner 提交。P4 不在此序列中。
 ## 外部依据

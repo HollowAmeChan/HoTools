@@ -19,9 +19,9 @@ from .domain_owner import MC2FusedCPUOwnerV1
 from .names import MC2_FUSED_PRODUCT_SLOT_KIND
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .names import MC2_SETUP_MESH_CLOTH
-from .product_bone_collect import MC2BoneProductCollectionV1
-from .product_collect import MC2MeshProductCollectionV1
-from .product_collect import validate_mc2_mesh_product_output_batch
+from .setups.bone_cloth.product import MC2BoneProductCollectionV1
+from .setups.mesh_cloth.product import MC2MeshProductCollectionV1
+from .setups.mesh_cloth.product import validate_mc2_mesh_product_output_batch
 from .product_scheduler import MC2ProductScheduledFrameV1
 from .product_scheduler import MC2ProductSchedulerStateV1
 from .reference_step import make_mc2_compiled_domain_pipeline_settings
@@ -728,7 +728,7 @@ def build_mc2_bone_product_output(
         raise RuntimeError("Bone product slot has no published frame")
     if not bool(slot.data.get("frame_complete", False)):
         raise RuntimeError("Bone product output is only available after the final substep")
-    from .product_bone_collect import validate_mc2_bone_product_targets
+    from .setups.bone_cloth.product import validate_mc2_bone_product_targets
 
     validate_mc2_bone_product_targets(collection)
     output = owner.read_output()
@@ -879,7 +879,7 @@ def capture_and_publish_mc2_product_frame(
         partition_frame_flags = (1,) * len(collection.draft.partitions)
 
     if isinstance(collection, MC2MeshProductCollectionV1):
-        from .product_frame import capture_mc2_mesh_product_frame
+        from .setups.mesh_cloth.product import capture_mc2_mesh_product_frame
 
         frame_packet, partition_snapshots = capture_mc2_mesh_product_frame(
             world,
@@ -891,7 +891,7 @@ def capture_and_publish_mc2_product_frame(
             gravity_ratios=gravity_ratios,
         )
     else:
-        from .product_bone_frame import compile_mc2_bone_product_frame
+        from .setups.bone_cloth.product import compile_mc2_bone_product_frame
         from .setups.bone_frame_input import capture_mc2_bone_product_frame_inputs
 
         frame_inputs, frame_state_stage = capture_mc2_bone_product_frame_inputs(

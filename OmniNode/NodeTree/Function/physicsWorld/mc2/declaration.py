@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from ..collision.capabilities import (
-    BONE_COLLISION_CAPABILITY_ID,
-    OBJECT_COLLISION_CAPABILITY_ID,
-)
-from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
-from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 from .capabilities import MC2_CAPABILITIES, MC2_UPDATE_FREQUENCY_TABLE
 from .names import (
     MC2_FUSED_PRODUCT_SLOT_KIND,
@@ -15,6 +9,12 @@ from .names import (
     MC2_SOLVER_ID,
     MC2_STATS_CHANNEL,
 )
+from ..collision.capabilities import (
+    BONE_COLLISION_CAPABILITY_ID,
+    OBJECT_COLLISION_CAPABILITY_ID,
+)
+from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
+from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 
 
 MC2_SOLVER_DECLARATION = {
@@ -22,7 +22,7 @@ MC2_SOLVER_DECLARATION = {
     "slot_kind": MC2_FUSED_PRODUCT_SLOT_KIND,
     "stage": "e7_cpu_product_domain_only",
     "native_strategy": "one_domain_v1_per_explicit_product_collector",
-    "implementation_status": "python_v0_owner_removed_native_v0_pending",
+    "implementation_status": "e7_cpu_complete_e7s_layout",
     "slot_kinds": [
         MC2_FUSED_PRODUCT_SLOT_KIND,
     ],
@@ -118,5 +118,5 @@ MC2_SOLVER_DECLARATION = {
         "supports_bake": False,
         "solver_acceptance_blocker": False,
     },
-    "legacy_policy": "python_v0_owner_deleted_native_v0_pending_removal",
+    "legacy_policy": "no_legacy_product_owner_or_native_abi",
 }

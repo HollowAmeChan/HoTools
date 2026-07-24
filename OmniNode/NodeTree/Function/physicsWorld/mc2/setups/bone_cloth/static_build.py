@@ -47,7 +47,7 @@ class _MC2BoneStaticIntentV1:
 
 def _partition_static_intent(partition) -> _MC2BoneStaticIntentV1:
     from ...partition_specs import MC2ResolvedPartitionSpec
-    from ...product_bone_authoring import MC2BonePartitionSourceV1
+    from .authoring import MC2BonePartitionSourceV1
 
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition must be MC2ResolvedPartitionSpec")

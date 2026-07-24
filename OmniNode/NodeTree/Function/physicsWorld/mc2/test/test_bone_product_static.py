@@ -40,7 +40,7 @@ static_build = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.static_build"
 )
 product_authoring = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_authoring"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.authoring"
 )
 domain_collect = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect"
@@ -64,10 +64,10 @@ frame_state = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
 product_bone_frame = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_frame"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.product"
 )
 product_bone_collect = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_bone_collect"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.bone_cloth.product"
 )
 product_slot = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot"

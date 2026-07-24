@@ -40,10 +40,10 @@ ir = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc
 collector = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.domain_collect")
 parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
 partitions = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.partition_specs")
-product = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_collect")
+product = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.product")
 slot_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_slot")
 product_frame_module = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_frame"
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.product"
 )
 collider_module = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.collider_frame")
 native_kernel_module = importlib.import_module(

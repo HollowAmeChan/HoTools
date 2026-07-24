@@ -43,7 +43,7 @@ fragment_module = importlib.import_module(
 )
 parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
 runtime = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters")
-product_frame = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.product_frame")
+product_frame = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.product")
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
