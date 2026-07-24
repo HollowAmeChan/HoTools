@@ -7,7 +7,6 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty, PointerProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
-from . import boneProperty, auxBone
 
 
 def _armature_filter(_self, obj):
@@ -796,60 +795,6 @@ class OP_BoneRemoveConstraints(Operator):
         return {'FINISHED'}
 
 
-def _drawBoneOperatorsPanelLegacy(layout: UILayout, context: Context):
-
-    row = layout.row(align=True)
-    row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
-    row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
-
-    #细分与融并骨骼
-    row = layout.row(align=True)
-    row.operator(OP_SplitBoneWithWeight.bl_idname, text="细分骨骼")
-    row.operator(OP_DissolveBoneWithWeight.bl_idname, text="融并骨骼")
-    row.operator(OP_SimpleDissolveBone.bl_idname, text="简单融并")
-
-    scene = context.scene
-    obj = context.object
-
-    # 活动骨架的辅助骨详情（与骨架数据属性页的总览面板共用同一套绘制），可折叠
-    if obj is not None and obj.type == "ARMATURE":
-        box = layout.box()
-        expanded = scene.ho_aux_overview_expanded
-        header = box.row(align=True)
-        header.prop(
-            scene,
-            "ho_aux_overview_expanded",
-            text="",
-            icon="TRIA_DOWN" if expanded else "TRIA_RIGHT",
-            emboss=False,
-        )
-        header.label(text="辅助骨总览", icon="BONE_DATA")
-        if expanded:
-            boneProperty.draw_aux_overview(box, context)
-
-    col = layout.column(align=True)
-
-    # 重置所有骨骼姿态
-    col.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
-    
-    # 一键开关骨架内所有约束
-    row = col.row(align=True)
-    row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
-    row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
-
-    # 仅 Humanoid 映射骨的约束
-    row = col.row(align=True)
-    row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
-    row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
-
-    # 仅辅助骨的约束
-    row = col.row(align=True)
-    row.operator(OP_DisableAuxBoneConstraints.bl_idname, text="禁用辅助骨约束")
-    row.operator(OP_EnableAuxBoneConstraints.bl_idname, text="启用辅助骨约束")
-
-    auxBone.draw_panel(layout, context)
-       
-
 class OP_MergeArmatures(Operator):
     bl_idname = "ho.mod_weight_merge_armatures"
     bl_label = "融合骨架"
@@ -1562,7 +1507,7 @@ def drawMergeArmaturesPanel(layout: UILayout, context: Context):
 
 
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
-    """Draw common bone operations, then delegate all aux UI to auxBone."""
+    """Draw common bone operations."""
     row = layout.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
     row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
@@ -1583,8 +1528,6 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 
     layout.separator()
     drawMergeArmaturesPanel(layout, context)
-
-    auxBone.draw_panel(layout, context)
 
 
 cls = [
@@ -1626,16 +1569,9 @@ def register():
     )
     for i in cls:
         bpy.utils.register_class(i)
-    # 骨骼操作面板里“辅助骨总览”详情的折叠开关，默认折叠。
-    bpy.types.Scene.ho_aux_overview_expanded = bpy.props.BoolProperty(
-        name="辅助骨总览展开",
-        default=False,
-    )
 
 
 def unregister():
-    if hasattr(bpy.types.Scene, "ho_aux_overview_expanded"):
-        del bpy.types.Scene.ho_aux_overview_expanded
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
     del bpy.types.Scene.ho_mod_weight_merge_asset_armature

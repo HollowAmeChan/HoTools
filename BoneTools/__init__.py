@@ -9,6 +9,7 @@ def reg_props():
     enum_items = [
         ('PANEL_BONE_HUMANOID', "Humanoid", ""),
         ('PANEL_BONE_OPERATORS', "操作", ""),
+        ('PANEL_BONE_AUX', "辅助骨", ""),
         ('PANEL_BONE_RENAME', "命名", ""),
     ]
     bpy.types.Scene.ho_BoneToolsPanel_Mod = bpy.props.EnumProperty(
@@ -33,13 +34,15 @@ class PL_BoneTools(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="骨骼操作")
         row.prop(context.scene, "ho_BoneToolsPanel_Mod", expand=True,)
-        if context.scene.ho_BoneToolsPanel_Mod == "PANEL_BONE_HUMANOID":
+        panel_mode = context.scene.ho_BoneToolsPanel_Mod
+        if panel_mode == "PANEL_BONE_HUMANOID":
             boneHumanoid.drawBoneHumanoidPanel(self.layout, context)
-        if context.scene.ho_BoneToolsPanel_Mod == "PANEL_BONE_OPERATORS":
+        elif panel_mode == "PANEL_BONE_OPERATORS":
             boneOperators.drawBoneOperatorsPanel(self.layout, context)
-        if context.scene.ho_BoneToolsPanel_Mod == "PANEL_BONE_RENAME":
+        elif panel_mode == "PANEL_BONE_AUX":
+            auxBone.draw_panel(self.layout, context)
+        elif panel_mode == "PANEL_BONE_RENAME":
             boneRename.drawBoneRenamePanel(self.layout, context)
 
 
