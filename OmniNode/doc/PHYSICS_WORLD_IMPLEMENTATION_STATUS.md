@@ -100,8 +100,9 @@ MC2 已完成 E7-CPU native 删除，当前进入 E7-S。统一 MC2ProductReques
 11. 第五次后续依赖审计已删除剩余 native-owned proxy/finalizer/baseline/Bone DTO、registration capsule、`native_owner_kind` 与生产侧全部 `native_context` 参数；native 中立派生 API 与完整 static spec 合同继续保留。
 12. 产品 slot 已删除仅供旧测试使用的 Mesh fused 默认 slot wrapper；统一 sync/frame/substep/capture 入口只接受显式产品 slot identity，Mesh output batch/transaction 的准确命名继续单独收敛。
 13. Mesh output batch/transaction 与 Python slot 常量已完成 `mesh_product` 命名收敛；底层 slot identity、事务、执行顺序和数值 digest 保持不变。
-14. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
-15. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
+14. 当前运行参数产品类型已统一为 `MC2RuntimeParameters`；packed ABI 0、字段布局和签名不变，旧 `MC2RuntimeParametersV0` 不保留兼容别名。
+15. P6 只冻结 backend-neutral data/pass/buffer/IO 合同。不实施 P4 CPU 并发，不实现 E6 GPU，不允许为未来 GPU 引入无法解释的 CPU 回归。
+16. 旧代码删除、E7-S 和 P6 合同复核完成后，才恢复 Python 3.11 / Blender 4.5 做最终双 ABI 与 Blender 收尾验收。
 
 当前开发和常规验收只使用 Python 3.13 / Blender 5.2，并确认实际工作树源码与 _Lib/py313 native 产物一致。4.5/py311 在旧代码删除收尾前保持冻结。
 

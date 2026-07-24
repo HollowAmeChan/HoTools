@@ -120,7 +120,7 @@ def sample_mc2_curve16(
 
 
 @dataclass(frozen=True)
-class MC2RuntimeParametersV0:
+class MC2RuntimeParameters:
     """Immutable, float32-normalized MC2 ``ClothParameters`` value block."""
 
     setup_type: str
@@ -182,7 +182,7 @@ def make_mc2_runtime_parameters(
     task_parameters: MC2TaskParametersSpec | None = None,
     *,
     curve_sampler: CurveSampler | None = None,
-) -> MC2RuntimeParametersV0:
+) -> MC2RuntimeParameters:
     """Apply MC2 setup overrides and build the N2 runtime value block."""
     if not isinstance(profile, MC2ParticleProfileSpec):
         raise TypeError("profile must be MC2ParticleProfileSpec")
@@ -294,7 +294,7 @@ def make_mc2_runtime_parameters(
         for name in MC2_RUNTIME_CURVE_FIELDS
     )
     animation_pose_ratio = _float32(profile.animation_pose_ratio)
-    return MC2RuntimeParametersV0(
+    return MC2RuntimeParameters(
         setup_type=setup_type,
         float_values=floats,
         int_values=ints,
@@ -306,10 +306,10 @@ def make_mc2_runtime_parameters(
     )
 
 
-def pack_mc2_runtime_parameters(spec: MC2RuntimeParametersV0) -> dict[str, np.ndarray]:
-    """Pack the fixed V0 layout; array order is defined by the schema constants."""
-    if not isinstance(spec, MC2RuntimeParametersV0):
-        raise TypeError("spec must be MC2RuntimeParametersV0")
+def pack_mc2_runtime_parameters(spec: MC2RuntimeParameters) -> dict[str, np.ndarray]:
+    """Pack the current ABI layout; array order is defined by the schema constants."""
+    if not isinstance(spec, MC2RuntimeParameters):
+        raise TypeError("spec must be MC2RuntimeParameters")
     arrays = {
         "float_values": np.ascontiguousarray(spec.float_values, dtype=np.float32),
         "int_values": np.ascontiguousarray(spec.int_values, dtype=np.int32),
@@ -326,7 +326,7 @@ __all__ = [
     "MC2_RUNTIME_FLOAT_FIELDS",
     "MC2_RUNTIME_INT_FIELDS",
     "MC2_RUNTIME_PARAMETERS_ABI",
-    "MC2RuntimeParametersV0",
+    "MC2RuntimeParameters",
     "make_mc2_runtime_parameters",
     "pack_mc2_runtime_parameters",
     "sample_mc2_curve16",

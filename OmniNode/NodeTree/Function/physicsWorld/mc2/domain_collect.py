@@ -12,7 +12,7 @@ from .partition_specs import (
     MC2ResolvedPartitionSpec,
 )
 from .runtime_parameters import (
-    MC2RuntimeParametersV0,
+    MC2RuntimeParameters,
     make_mc2_runtime_parameters,
 )
 
@@ -60,7 +60,7 @@ class MC2DomainDraftV1:
     domain_id: str
     collector_domain_signature: str
     partitions: tuple[MC2ResolvedPartitionSpec, ...]
-    effectives: tuple[MC2RuntimeParametersV0, ...]
+    effectives: tuple[MC2RuntimeParameters, ...]
     collision_groups: tuple[int, ...]
     collision_masks: tuple[int, ...]
     external_collision_masks: tuple[int, ...]
@@ -97,7 +97,7 @@ class MC2DomainDraftV1:
         ):
             raise TypeError("MC2 domain draft requires one setup type of active partitions")
         if any(
-            not isinstance(effective, MC2RuntimeParametersV0)
+            not isinstance(effective, MC2RuntimeParameters)
             for effective in self.effectives
         ):
             raise TypeError("MC2 domain draft effectives are invalid")

@@ -20,7 +20,7 @@ from .names import MC2_SETUP_MESH_CLOTH
 from .runtime_parameters import MC2_RUNTIME_FLOAT_FIELDS
 from .runtime_parameters import MC2_RUNTIME_INT_FIELDS
 from .runtime_parameters import MC2_RUNTIME_CURVE_FIELDS
-from .runtime_parameters import MC2RuntimeParametersV0
+from .runtime_parameters import MC2RuntimeParameters
 from .setups.mesh_cloth.static_fragment import MC2MeshStaticFragmentV1
 from .setups.bone_cloth.static_fragment import MC2BoneStaticFragmentV1
 
@@ -152,9 +152,9 @@ def _bending_marker_flag(sign: int) -> int:
     return 100 if value == 100 else (1 if value < 0 else 0)
 
 
-def _runtime_maps(effective: MC2RuntimeParametersV0) -> tuple[dict, dict, dict]:
-    if not isinstance(effective, MC2RuntimeParametersV0):
-        raise TypeError("effective must be MC2RuntimeParametersV0")
+def _runtime_maps(effective: MC2RuntimeParameters) -> tuple[dict, dict, dict]:
+    if not isinstance(effective, MC2RuntimeParameters):
+        raise TypeError("effective must be MC2RuntimeParameters")
     floats = dict(zip(MC2_RUNTIME_FLOAT_FIELDS, effective.float_values))
     floats["animation_pose_ratio"] = float(effective.animation_pose_ratio)
     return (
@@ -360,7 +360,7 @@ def _program_for_fragments(
 
 def _parameter_packet_for_fragments(
     fragments: tuple[object, ...],
-    effectives: tuple[MC2RuntimeParametersV0, ...],
+    effectives: tuple[MC2RuntimeParameters, ...],
     program: MC2CompiledDomainProgramV1,
     *,
     collision_groups: tuple[int, ...],
@@ -533,9 +533,9 @@ def compile_mc2_static_fragments(
     if len(setup_types) != 1:
         raise ValueError("MC2 domain fragments must share one setup type")
     if len(effectives) != len(fragments) or any(
-        not isinstance(effective, MC2RuntimeParametersV0) for effective in effectives
+        not isinstance(effective, MC2RuntimeParameters) for effective in effectives
     ):
-        raise TypeError("effectives must match fragments with MC2RuntimeParametersV0")
+        raise TypeError("effectives must match fragments with MC2RuntimeParameters")
     partition_ids = tuple(fragment.partition_id for fragment in fragments)
     if len(set(partition_ids)) != len(partition_ids):
         raise ValueError("MC2 domain partition ids must be unique")
@@ -582,7 +582,7 @@ def compile_mc2_static_fragments(
 
 def compile_mc2_mesh_static_fragment(
     fragment: MC2MeshStaticFragmentV1,
-    effective: MC2RuntimeParametersV0,
+    effective: MC2RuntimeParameters,
     *,
     collision_group: int = 1,
     collision_mask: int = 0xFFFF,

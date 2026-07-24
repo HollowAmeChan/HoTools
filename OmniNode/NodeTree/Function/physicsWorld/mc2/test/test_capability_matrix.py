@@ -179,6 +179,7 @@ def test_python_v0_owner_modules_and_task_adapters_are_deleted():
         "capture_and_publish_mc2_mesh_fused_frame",
         "build_mc2_mesh_fused_output_batch",
         "publish_mc2_mesh_fused_output_transaction",
+        "MC2RuntimeParametersV0",
     }
     production = [
         path

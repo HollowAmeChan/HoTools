@@ -1549,12 +1549,12 @@ def evaluate_mc2_center_step(
     *,
     initial_local_gravity_direction,
 ) -> MC2CenterStepResult:
-    from .runtime_parameters import MC2_RUNTIME_FLOAT_FIELDS, MC2RuntimeParametersV0
+    from .runtime_parameters import MC2_RUNTIME_FLOAT_FIELDS, MC2RuntimeParameters
 
     if not isinstance(step, MC2CenterStepInputSpec):
         raise TypeError("step must be MC2CenterStepInputSpec")
-    if not isinstance(runtime_parameters, MC2RuntimeParametersV0):
-        raise TypeError("runtime_parameters must be MC2RuntimeParametersV0")
+    if not isinstance(runtime_parameters, MC2RuntimeParameters):
+        raise TypeError("runtime_parameters must be MC2RuntimeParameters")
     parameter = dict(zip(MC2_RUNTIME_FLOAT_FIELDS, runtime_parameters.float_values))
     dt = _f32(step.simulation_delta_time)
     ratio = _f32(step.frame_interpolation)

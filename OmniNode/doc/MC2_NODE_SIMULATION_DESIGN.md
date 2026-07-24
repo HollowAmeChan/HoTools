@@ -620,6 +620,8 @@ E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已
 
 随后 Mesh 输出 API 已由 `build/publish_mc2_mesh_fused_output_*` 收敛为 `build/publish_mc2_mesh_product_output_*`，Python 常量改为 `MC2_MESH_PRODUCT_SLOT_ID`，相关诊断统一称为 Mesh product。底层 slot identity 仍是 `mc2.domain.mesh.product.v1`，该批不改变持久身份、执行顺序、输出事务或数值结果；Blender 5.2 三 setup 900 帧 digest 与改名前一致。
 
+运行参数命名审计已把当前三 setup 共用值对象由 `MC2RuntimeParametersV0` 改为 `MC2RuntimeParameters`，不保留旧类名别名。`MC2_RUNTIME_PARAMETERS_ABI = 0`、字段顺序、curve 采样、dtype 与 parameter signature 保持不变；Python 产品类型去除迁移后缀不等于 packed ABI 升版。
+
 ## 明确的数据流
 
 ### 显式模式
