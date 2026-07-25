@@ -396,6 +396,27 @@ def response_expression(full_response_angle_degrees):
     return f"abs(asin(var)*{scale:.9g}/pi)"
 
 
+def signed_response_expression(
+    full_response_angle_degrees,
+    *,
+    sign=1.0,
+    multiplier=1.0,
+):
+    scale = 360.0 / full_response_angle_degrees
+    scale *= sign * multiplier
+    return f"clamp(asin(var)*{scale:.9g}/pi)"
+
+
+def delayed_response_expression(
+    full_response_angle_degrees,
+    *,
+    onset=0.5,
+):
+    base = response_expression(full_response_angle_degrees)
+    multiplier = 1.0 / (1.0 - onset)
+    return f"clamp({base}-{onset:.9g})*{multiplier:.9g}"
+
+
 def add_transform_driver(
     driven_owner,
     driven_property,
