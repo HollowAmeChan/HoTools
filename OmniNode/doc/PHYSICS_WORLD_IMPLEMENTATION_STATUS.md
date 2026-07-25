@@ -64,7 +64,7 @@ physicsWorld/
 | 通用力场 | 未来兼容区 | ownership 固定归 Physics World，solver 只消费公共数值快照 | channel/schema/采样布局和首个 active vertical slice 未冻结 |
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
-| MC2 | 三 setup 统一域 CPU 产品可用，E6 GPU 设计已立项 | 显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
+| MC2 | 三 setup 统一域 CPU 产品可用，E6 GPU 设计已立项 | 显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
 | Mesh XPBD | 旧路径 | 简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
 
 通用力场当前没有 active 能力。任何 solver 中遗留的 wind 名称不代表公共场输入已经存在。

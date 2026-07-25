@@ -1123,6 +1123,18 @@ void DomainV1::invalidate_teleport_history(
     whole_domain_self_last_contact_count_ = 0;
 }
 
+bool DomainV1::teleport_invalidates_external_history() const noexcept {
+    const auto triggered = [](const std::vector<std::uint32_t>& flags) {
+        return std::any_of(
+            flags.begin(),
+            flags.end(),
+            [](std::uint32_t value) { return (value & 1u) != 0u; }
+        );
+    };
+    return triggered(task_reference_teleport_flags_) ||
+        triggered(center_shift_teleport_flags_);
+}
+
 void DomainV1::enforce_teleport_reset_barrier() {
     bool has_reset = false;
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
@@ -2208,6 +2220,8 @@ void DomainV1::step_external_collision(
         }
     }
     collision_friction_.assign(friction, friction + particle_count_);
+    const bool invalidate_collider_history =
+        teleport_invalidates_external_history();
     hotools::Mc2CollisionView view;
     view.positions = world_positions_.data();
     view.base_positions = base_positions;
@@ -2222,9 +2236,12 @@ void DomainV1::step_external_collision(
     view.collider_centers = collider_centers;
     view.collider_segment_a = collider_segment_a;
     view.collider_segment_b = collider_segment_b;
-    view.collider_old_centers = collider_old_centers;
-    view.collider_old_segment_a = collider_old_segment_a;
-    view.collider_old_segment_b = collider_old_segment_b;
+    view.collider_old_centers = invalidate_collider_history
+        ? collider_centers : collider_old_centers;
+    view.collider_old_segment_a = invalidate_collider_history
+        ? collider_segment_a : collider_old_segment_a;
+    view.collider_old_segment_b = invalidate_collider_history
+        ? collider_segment_b : collider_old_segment_b;
     view.collider_radii = collider_radii;
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -2678,6 +2695,8 @@ void DomainV1::step_compiled_external_collision(
         external_debug_radii_ = scaled_radii;
     }
     std::fill(world_normals_.begin(), world_normals_.end(), 0.0f);
+    const bool invalidate_collider_history =
+        teleport_invalidates_external_history();
 
     hotools::Mc2CollisionView point_view;
     point_view.positions = world_positions_.data();
@@ -2691,9 +2710,12 @@ void DomainV1::step_compiled_external_collision(
     point_view.collider_centers = collider_centers;
     point_view.collider_segment_a = collider_segment_a;
     point_view.collider_segment_b = collider_segment_b;
-    point_view.collider_old_centers = collider_old_centers;
-    point_view.collider_old_segment_a = collider_old_segment_a;
-    point_view.collider_old_segment_b = collider_old_segment_b;
+    point_view.collider_old_centers = invalidate_collider_history
+        ? collider_centers : collider_old_centers;
+    point_view.collider_old_segment_a = invalidate_collider_history
+        ? collider_segment_a : collider_old_segment_a;
+    point_view.collider_old_segment_b = invalidate_collider_history
+        ? collider_segment_b : collider_old_segment_b;
     point_view.collider_radii = collider_radii;
     point_view.particle_partition_index = particle_partition_index_.data();
     point_view.partition_collision_modes = compiled_external_modes_.data();
@@ -2717,9 +2739,12 @@ void DomainV1::step_compiled_external_collision(
     edge_view.collider_centers = collider_centers;
     edge_view.collider_segment_a = collider_segment_a;
     edge_view.collider_segment_b = collider_segment_b;
-    edge_view.collider_old_centers = collider_old_centers;
-    edge_view.collider_old_segment_a = collider_old_segment_a;
-    edge_view.collider_old_segment_b = collider_old_segment_b;
+    edge_view.collider_old_centers = invalidate_collider_history
+        ? collider_centers : collider_old_centers;
+    edge_view.collider_old_segment_a = invalidate_collider_history
+        ? collider_segment_a : collider_old_segment_a;
+    edge_view.collider_old_segment_b = invalidate_collider_history
+        ? collider_segment_b : collider_old_segment_b;
     edge_view.collider_radii = collider_radii;
     edge_view.particle_partition_index = particle_partition_index_.data();
     edge_view.partition_collision_modes = compiled_external_modes_.data();
@@ -2799,6 +2824,8 @@ void DomainV1::step_external_edge_collision(
         }
     }
     collision_friction_.assign(friction, friction + particle_count_);
+    const bool invalidate_collider_history =
+        teleport_invalidates_external_history();
     std::vector<std::uint8_t> attributes(particle_count_, 0u);
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if ((particle_attribute_flags_[vertex] & 0x02u) != 0u) {
@@ -2818,9 +2845,12 @@ void DomainV1::step_external_edge_collision(
     view.collider_centers = collider_centers;
     view.collider_segment_a = collider_segment_a;
     view.collider_segment_b = collider_segment_b;
-    view.collider_old_centers = collider_old_centers;
-    view.collider_old_segment_a = collider_old_segment_a;
-    view.collider_old_segment_b = collider_old_segment_b;
+    view.collider_old_centers = invalidate_collider_history
+        ? collider_centers : collider_old_centers;
+    view.collider_old_segment_a = invalidate_collider_history
+        ? collider_segment_a : collider_old_segment_a;
+    view.collider_old_segment_b = invalidate_collider_history
+        ? collider_segment_b : collider_old_segment_b;
     view.collider_radii = collider_radii;
     view.vertex_count = static_cast<std::int64_t>(particle_count_);
     view.edge_count = static_cast<std::int64_t>(edge_count);

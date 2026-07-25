@@ -1034,10 +1034,64 @@ def test_native_task_reference_reset_is_exact_and_invalidates_histories_once():
         domain.dispose()
 
 
+def test_native_task_reference_keep_closes_external_collider_history():
+    compiled = _compiled(task_overrides={
+        "teleport_mode": 2, "teleport_distance": 0.1,
+    })
+    frame = _frame(compiled.program)
+    offset = np.asarray((3.0, 0.0, 0.0), dtype=np.float32)
+    moved_animation = np.asarray(frame.animated_base_world_positions).copy() + offset
+    moved_components = np.asarray(frame.partition_world_position).copy() + offset
+    moved_animation.flags.writeable = False
+    moved_components.flags.writeable = False
+    moved = replace(
+        frame,
+        frame=frame.frame + 1,
+        animated_base_world_positions=moved_animation,
+        partition_world_position=moved_components,
+    )
+    current_center = moved_animation[[1]].copy()
+    old_center = current_center - offset
+
+    def run(collider_old_center):
+        kernel = native_kernel.MC2NativeCPUKernelV1()
+        domain = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+        collider = collider_frame.MC2DomainColliderFrameSpec(
+            frame=moved.frame,
+            source_pointers=(10, 11),
+            collider_keys=("sphere",),
+            collider_types=np.asarray((0,), dtype=np.int32),
+            collider_group_bits=np.asarray((1,), dtype=np.int32),
+            collider_centers=current_center,
+            collider_segment_a=current_center,
+            collider_segment_b=current_center,
+            collider_old_centers=collider_old_center,
+            collider_old_segment_a=collider_old_center,
+            collider_old_segment_b=collider_old_center,
+            collider_radii=np.asarray((0.75,), dtype=np.float32),
+        )
+        try:
+            domain.update_frame(frame)
+            domain.update_frame(moved)
+            domain.step_task_reference_teleport()
+            np.testing.assert_array_equal(
+                domain.read_task_reference_teleport_state()["flags"], (3,)
+            )
+            domain.step_compiled_external_collision(collider)
+            return domain.read_output().world_positions.copy()
+        finally:
+            domain.dispose()
+
+    swept_input = run(old_center)
+    closed_history_control = run(current_center)
+    np.testing.assert_array_equal(swept_input, closed_history_control)
+
+
 def task_reference_teleport_contracts():
     test_native_task_reference_teleport_uses_fixed_world_motion()
     test_native_task_reference_keep_uses_one_fixed_reference_and_partition_scope()
     test_native_task_reference_reset_is_exact_and_invalidates_histories_once()
+    test_native_task_reference_keep_closes_external_collider_history()
 
 
 def test_native_cpu_reset_teleport_restarts_center_stabilization_once():

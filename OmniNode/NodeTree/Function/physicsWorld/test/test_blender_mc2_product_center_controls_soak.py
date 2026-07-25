@@ -229,6 +229,7 @@ def _run_world_case(
     capture_candidates: bool = False,
     same_frame_probe: bool = False,
     teleport_jump: bool = True,
+    teleport_jump_distance: float = 2.0,
     zero_substep_frame: int | None = None,
     source_scales=None,
     debug_layer_probe: bool = False,
@@ -346,7 +347,7 @@ def _run_world_case(
                     component_rotation_speed / _FRAME_RATE
                 )
             if teleport_jump and frame == 301:
-                component_x += 2.0
+                component_x += float(teleport_jump_distance)
             for source, initial_x in zip(sources, base_x):
                 source.location.x = initial_x + component_x
                 source.rotation_mode = "XYZ"
@@ -1007,10 +1008,11 @@ def center_depth_controls():
 
 
 def center_teleport_controls():
-    def run(run_index, teleport_mode):
+    def run(run_index, teleport_mode, *, teleport_jump=True):
         return _run_world_case(
             f"Teleport{teleport_mode}",
             run_index,
+            component_translation=False,
             world_inertia=1.0,
             movement_inertia_smoothing=0.0,
             movement_speed_limit=-1.0,
@@ -1021,6 +1023,8 @@ def center_teleport_controls():
             read_center_debug=True,
             capture_candidates=True,
             same_frame_probe=True,
+            teleport_jump=teleport_jump,
+            teleport_jump_distance=100.0,
             source_scales=(
                 (0.75, 0.75, 0.75),
                 (0.5, 0.5, 0.5),
@@ -1033,6 +1037,7 @@ def center_teleport_controls():
 
     first = {mode: run(mode - 1, mode) for mode in (1, 2)}
     second = {mode: run(mode + 9, mode) for mode in (1, 2)}
+    keep_control = run(20, 2, teleport_jump=False)
     for mode in first:
         for setup in _SETUPS:
             left = first[mode][0][setup]
@@ -1088,6 +1093,22 @@ def center_teleport_controls():
             if keep_index is not None:
                 frame_index = keep_index + 1
                 assert int(left["update_count"][frame_index]) == 3
+                pre_keep_velocity = float(left["velocity_max"][keep_index - 1])
+                pre_keep_real_velocity = float(
+                    left["real_velocity_max"][keep_index - 1]
+                )
+                assert float(left["velocity_max"][keep_index]) <= (
+                    pre_keep_velocity + 1.0e-4
+                )
+                assert float(left["real_velocity_max"][keep_index]) <= (
+                    pre_keep_real_velocity + 1.0e-4
+                )
+                assert float(left["velocity_max"][keep_index + 1]) <= (
+                    pre_keep_velocity + 1.0e-4
+                )
+                assert float(left["real_velocity_max"][keep_index + 1]) <= (
+                    pre_keep_real_velocity + 1.0e-4
+                )
                 expected = np.array(
                     left["candidate_positions"][frame_index - 1],
                     dtype=np.float32,
@@ -1104,7 +1125,7 @@ def center_teleport_controls():
                     left["candidate_positions"][frame_index][fixed_mask],
                     expected[fixed_mask],
                     rtol=0.0,
-                    atol=1.0e-6,
+                    atol=1.0e-5,
                     err_msg=(
                         f"mode={mode} setup={setup} shift="
                         f"{delta.tolist()}"
@@ -1133,6 +1154,51 @@ def center_teleport_controls():
             )
             assert int(invalidations[-1]) == 1, (mode, setup, invalidations)
             assert np.all(np.isfinite(left["candidate_positions"]))
+            if mode == 2 and setup == "mesh_cloth":
+                control = keep_control[0][setup]
+                translation = (
+                    left["task_reference_position"][keep_index]
+                    - control["task_reference_position"][keep_index]
+                )
+                for sample_index in range(
+                    frame_index, len(left["candidate_positions"])
+                ):
+                    residual = float(np.max(np.abs(
+                        left["candidate_positions"][sample_index]
+                        - translation
+                        - control["candidate_positions"][sample_index]
+                    )))
+                    assert residual <= 1.0e-4, (
+                        "Keep后续轨迹不等价",
+                        setup,
+                        sample_index + 1,
+                        residual,
+                        float(left["velocity_max"][sample_index - 1]),
+                        float(control["velocity_max"][sample_index - 1]),
+                        float(left["real_velocity_max"][sample_index - 1]),
+                        float(control["real_velocity_max"][sample_index - 1]),
+                    )
+                np.testing.assert_allclose(
+                    left["velocity_max"][keep_index:],
+                    control["velocity_max"][keep_index:],
+                    rtol=0.0,
+                    atol=1.0e-4,
+                    err_msg=f"Keep保存速度不等价: setup={setup}",
+                )
+                np.testing.assert_allclose(
+                    left["real_velocity_max"][keep_index:],
+                    control["real_velocity_max"][keep_index:],
+                    rtol=0.0,
+                    atol=1.0e-4,
+                    err_msg=f"Keep真实速度不等价: setup={setup}",
+                )
+                np.testing.assert_allclose(
+                    left["gn_offsets"][frame_index:],
+                    control["gn_offsets"][frame_index:],
+                    rtol=0.0,
+                    atol=1.0e-4,
+                    err_msg="Keep后Mesh本地offset不等价",
+                )
     print(
         "PASS 产品Center Teleport Reset/Keep与确定性："
         "3 setup x 2 mode x 2 run x 600 frame"
