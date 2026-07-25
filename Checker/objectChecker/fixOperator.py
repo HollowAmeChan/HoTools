@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Operator
 import bmesh
+from Utils.bone_selection import select_bones
 
 # region 变量
 def reg_props():
@@ -131,19 +132,15 @@ class OP_Checker_selectBones(Operator):
         for pbone in obj.pose.bones:
             pbone.bone.hide = False
 
-        # 取消所有骨骼的选择
-        for pbone in obj.pose.bones:
-            pbone.bone.select = False
-
         try:
             bone_names = eval(self.input)
+            found_names = []
             for name in bone_names:
                 if name in obj.pose.bones:
-                    pbone = obj.pose.bones[name]
-                    pbone.bone.select = True
-                    obj.data.bones.active = pbone.bone  # 设置活动骨骼
+                    found_names.append(name)
                 else:
                     self.report({'WARNING'}, f"未找到骨骼: {name}")
+            select_bones(obj, found_names, extend=False)
         except Exception as e:
             self.report({'ERROR'}, f"输入错误: {e}")
             return {'CANCELLED'}

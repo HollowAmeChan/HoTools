@@ -11,6 +11,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from bpy_extras import view3d_utils
+from Utils.bone_selection import selected_bone_names
 
 def PF_armature_filter(self, obj):
     return obj.type == 'ARMATURE'
@@ -667,6 +668,11 @@ class OP_Humanoid_ForceAlign(Operator):
 
         prev_active = context.view_layer.objects.active
         prev_mode = context.mode
+        moving_selected_names = (
+            set(selected_bone_names(context, moving_obj))
+            if self.only_selected
+            else set()
+        )
 
         aligned_count = 0
         missing_count = 0
@@ -746,7 +752,7 @@ class OP_Humanoid_ForceAlign(Operator):
                 skipped_count += 1
                 continue
 
-            if self.only_selected and not bone.select:
+            if self.only_selected and moving_eb.name not in moving_selected_names:
                 continue
 
             if hasattr(bone, "visible") and not bone.visible:
@@ -1198,14 +1204,15 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
 
         return True
 
-    def _collect_selected_visible_bones(self, obj):
+    def _collect_selected_visible_bones(self, context, obj):
         armature = obj.data
+        selected_names = set(selected_bone_names(context, obj))
 
         selected = []
         hidden_selected_count = 0
 
         for bone in armature.bones:
-            if not bone.select:
+            if bone.name not in selected_names:
                 continue
 
             if not self._is_bone_visible(bone):
@@ -1223,7 +1230,7 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             self.report({'ERROR'}, "请选择一个Armature")
             return {'CANCELLED'}
 
-        bones, hidden_selected_count = self._collect_selected_visible_bones(obj)
+        bones, hidden_selected_count = self._collect_selected_visible_bones(context, obj)
 
         if not bones:
             if hidden_selected_count:
@@ -1380,9 +1387,10 @@ class OP_Mapping_WriteDeformTagsFromHumanoid(Operator):
         skipped_no_props_count = 0
         skipped_no_humanoid_count = 0
         missing_preset_count = 0
+        selected_names = set(selected_bone_names(context, obj)) if self.only_selected else set()
 
         for bone in obj.data.bones:
-            if self.only_selected and not bone.select:
+            if self.only_selected and bone.name not in selected_names:
                 continue
 
             processed_count += 1
@@ -1475,9 +1483,10 @@ class OP_Mapping_ClearHumanoidBoneProps(Operator):
 
         cleared_count = 0
         skipped_count = 0
+        selected_names = set(selected_bone_names(context, obj)) if self.only_selected else set()
 
         for bone in bones:
-            if self.only_selected and not bone.select:
+            if self.only_selected and bone.name not in selected_names:
                 continue
 
             props = getattr(bone, "hotools_boneprops", None)

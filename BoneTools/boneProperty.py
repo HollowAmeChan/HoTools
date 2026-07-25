@@ -10,6 +10,7 @@ from bpy.props import (
 
 from .boneUtils import BoneUtils
 from .hoAux.properties import PG_HoAuxBoneInfo
+from Utils.bone_selection import select_bones
 
 
 # 辅助骨类型枚举：与命名体系中的 marker 一一对应。
@@ -245,43 +246,6 @@ class OT_Hotools_AuxGroupToggle(Operator):
         return {"FINISHED"}
 
 
-def _select_bones(armature: bpy.types.Object, names, extend: bool) -> None:
-    """在活动骨架上按名字选择骨；extend=False 时先清空已有选择。
-
-    编辑模式走 edit_bones（含 head/tail），其余模式（姿态/物体）走 data.bones。
-    最后一根设为活动骨。
-    """
-    name_set = [n for n in names if n]
-    if armature.mode == "EDIT":
-        edit_bones = armature.data.edit_bones
-        if not extend:
-            for eb in edit_bones:
-                eb.select = eb.select_head = eb.select_tail = False
-        last = None
-        for name in name_set:
-            eb = edit_bones.get(name)
-            if eb is None:
-                continue
-            eb.select = eb.select_head = eb.select_tail = True
-            last = eb
-        if last is not None:
-            edit_bones.active = last
-    else:
-        bones = armature.data.bones
-        if not extend:
-            for b in bones:
-                b.select = False
-        last = None
-        for name in name_set:
-            b = bones.get(name)
-            if b is None:
-                continue
-            b.select = True
-            last = b
-        if last is not None:
-            bones.active = last
-
-
 class OT_Hotools_AuxGroupSelect(Operator):
     bl_idname = "hotools.aux_group_select"
     bl_label = "选择辅助骨分组"
@@ -323,7 +287,7 @@ class OT_Hotools_AuxGroupSelect(Operator):
             names = list(target["sources"]) + list(target["bones"])
         else:
             names = list(target["sources"])
-        _select_bones(armature, names, self.extend)
+        select_bones(armature, names, extend=self.extend)
         return {"FINISHED"}
 
 
@@ -348,7 +312,7 @@ class OT_Hotools_AuxBoneSelect(Operator):
     def execute(self, context):
         if not self.bone:
             return {"CANCELLED"}
-        _select_bones(context.object, [self.bone], self.extend)
+        select_bones(context.object, [self.bone], extend=self.extend)
         return {"FINISHED"}
 
 

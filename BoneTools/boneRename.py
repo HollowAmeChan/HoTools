@@ -5,6 +5,8 @@ import json
 from bpy.types import Operator, UILayout, Context, PropertyGroup, UIList
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty
 
+from Utils.bone_selection import selected_armature_bones, selected_bone_names
+
 # region 变量
 
 
@@ -96,55 +98,6 @@ def ureg_props():
 
 # region 操作
 
-
-def get_selected_armature_bones(context, obj=None):
-    """
-    blender5.0+bone.select被删除
-    此方法兼容了edit/pose/object模式下获取选中骨骼的情况，并且在object模式下增加了对select属性的兼容，以适应不同版本的blender。
-    """
-    obj = obj or context.active_object
-    if not (obj and obj.type == 'ARMATURE'):
-        return []
-
-    if obj.mode == 'EDIT':
-        selected = getattr(context, "selected_editable_bones", None)
-        if selected is None:
-            selected = getattr(context, "selected_bones", None)
-        if selected:
-            return list(selected)
-
-        selected = []
-        for bone in obj.data.edit_bones:
-            if (
-                getattr(bone, "select", False)
-                or getattr(bone, "select_head", False)
-                or getattr(bone, "select_tail", False)
-            ):
-                selected.append(bone)
-        return selected
-
-    if obj.mode == 'POSE':
-        pose_bones = getattr(context, "selected_pose_bones", None) or []
-        if pose_bones:
-            selected = []
-            for pose_bone in pose_bones:
-                bone = obj.data.bones.get(pose_bone.name)
-                if bone is not None:
-                    selected.append(bone)
-            if selected:
-                return selected
-
-        selected = getattr(context, "selected_bones", None)
-        if selected:
-            return list(selected)
-
-        return [bone for bone in obj.data.bones if getattr(bone, "select", False)]
-
-    selected = getattr(context, "selected_bones", None)
-    if selected:
-        return list(selected)
-
-    return [bone for bone in obj.data.bones if getattr(bone, "select", False)]
 
 class OP_SaveRules(Operator):
     # TODO
@@ -350,14 +303,14 @@ class OP_RemoveNumberTail(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        armature = bpy.context.active_object
+        armature = context.active_object
         # 检查对象是否是骨骼
         if armature and armature.type == 'ARMATURE':
             suffix_pattern = r'\.\d{3}$'
 
             # 遍历所有选中的骨骼
-            for bone in get_selected_armature_bones(context, armature):
-                    # 修改骨骼名称，去掉后缀
+            for bone in selected_armature_bones(context, armature):
+                # 修改骨骼名称，去掉后缀
                 original_name = bone.name
                 new_name = re.sub(suffix_pattern, '', original_name)
                 bone.name = new_name
@@ -372,14 +325,14 @@ class OP_RemoveSideTail(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        armature = bpy.context.active_object
+        armature = context.active_object
         # 检查对象是否是骨骼
         if armature and armature.type == 'ARMATURE':
             suffix_pattern = r'\.[RrLl]$'
 
             # 遍历所有选中的骨骼
-            for bone in get_selected_armature_bones(context, armature):
-                    # 修改骨骼名称，去掉后缀
+            for bone in selected_armature_bones(context, armature):
+                # 修改骨骼名称，去掉后缀
                 original_name = bone.name
                 new_name = re.sub(suffix_pattern, '', original_name)
                 bone.name = new_name
@@ -425,7 +378,7 @@ class OP_RuleRenameBoneSelected(Operator):
     def execute(self, context):
         obj = context.active_object
         rules = context.scene.ho_boneRename_rules
-        selected_bones = get_selected_armature_bones(context, obj)
+        selected_bones = selected_armature_bones(context, obj)
         
         if not selected_bones:
             return {'CANCELLED'}
@@ -500,41 +453,43 @@ class OP_RuleChangeNameBoneSelected(Operator):
     index: IntProperty(name="Index", default=0)  # type: ignore
 
     def execute(self, context):
-        armature = bpy.context.active_object
+        armature = context.active_object
 
         if not (armature and armature.type == 'ARMATURE'):
-            return {'FINISHED'}
-        
+            return {'CANCELLED'}
+
+        selected_names = selected_bone_names(context, armature)
+        if not selected_names:
+            self.report({'WARNING'}, "未选择任何骨骼")
+            return {'CANCELLED'}
+
         current_mode = armature.mode
-        bpy.ops.object.mode_set(mode='OBJECT')#强制更新
-        
-        # 获取当前选中的骨骼列表
-        selected_bones = get_selected_armature_bones(context, armature)
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            selected_bones = [
+                bone
+                for name in selected_names
+                if (bone := armature.data.bones.get(name)) is not None
+            ]
+            changerule = context.scene.ho_boneRename_change_rules[self.index]
 
-        changerule = context.scene.ho_boneRename_change_rules[self.index]
-
-        if changerule.type == "MOD_HEAD":
-            for bone in selected_bones:
-                bone.name = changerule.targetStr + bone.name
-        if changerule.type == "MOD_TAIL":
-            for bone in selected_bones:
-                bone.name = bone.name + changerule.targetStr
-        if changerule.type == "MOD_REPLACE":
-            #转义sourceStr，防止用户填入正则表达式
-            pattern = re.compile(re.escape(changerule.sourceStr), flags=re.IGNORECASE)
-            for bone in selected_bones:
-                if changerule.isCheckLower:  # 匹配大小写
-                    # bone.name = re.sub(
-                    #     changerule.sourceStr, changerule.targetStr, bone.name)
-                    bone.name = bone.name.replace(changerule.sourceStr, changerule.targetStr)
-                else:
-                    # 忽略大小写
-                    # bone.name = re.sub(
-                    #     changerule.sourceStr, changerule.targetStr, bone.name, flags=re.IGNORECASE)
-                    bone.name = pattern.sub(changerule.targetStr, bone.name)
-
-        
-        bpy.ops.object.mode_set(mode=current_mode)
+            if changerule.type == "MOD_HEAD":
+                for bone in selected_bones:
+                    bone.name = changerule.targetStr + bone.name
+            if changerule.type == "MOD_TAIL":
+                for bone in selected_bones:
+                    bone.name = bone.name + changerule.targetStr
+            if changerule.type == "MOD_REPLACE":
+                # 转义 sourceStr，防止用户填入正则表达式。
+                pattern = re.compile(re.escape(changerule.sourceStr), flags=re.IGNORECASE)
+                for bone in selected_bones:
+                    if changerule.isCheckLower:
+                        bone.name = bone.name.replace(changerule.sourceStr, changerule.targetStr)
+                    else:
+                        bone.name = pattern.sub(changerule.targetStr, bone.name)
+        finally:
+            if armature.mode != current_mode:
+                bpy.ops.object.mode_set(mode=current_mode)
 
         return {'FINISHED'}
 

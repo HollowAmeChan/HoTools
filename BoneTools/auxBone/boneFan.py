@@ -1382,11 +1382,8 @@ class OP_FanGenerate(Operator):
         if obj is None or obj.type != "ARMATURE":
             return False
 
-        if obj.mode == "POSE":
-            return len(context.selected_pose_bones) == 2
-
-        if obj.mode == "EDIT":
-            return len([bone for bone in obj.data.edit_bones if bone.select]) == 2
+        if obj.mode in {"POSE", "EDIT"}:
+            return len(BoneUtils.selected_bone_names(context, obj)) == 2
 
         return False
 

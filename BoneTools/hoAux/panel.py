@@ -1,7 +1,6 @@
 """HoAux panel composition and first-phase maintenance operators."""
 
 from collections import Counter
-
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator
 
@@ -15,6 +14,7 @@ from .module_base import (
     role_name_sets,
     whole_arm_pipeline_definitions,
 )
+from Utils.bone_selection import select_bones, selected_bone_names
 
 
 class OT_HoAuxCopySourceIR(Operator):
@@ -211,45 +211,6 @@ def _group_expanded(armature_data, key):
     return False if state is None else state.expanded
 
 
-def _selected_bone_names(armature_object):
-    if armature_object.mode == "EDIT":
-        return {
-            bone.name for bone in armature_object.data.edit_bones if bone.select
-        }
-    return {bone.name for bone in armature_object.data.bones if bone.select}
-
-
-def _select_bones(armature_object, names, extend):
-    names = [name for name in names if name]
-    if armature_object.mode == "EDIT":
-        bones = armature_object.data.edit_bones
-        if not extend:
-            for bone in bones:
-                bone.select = bone.select_head = bone.select_tail = False
-        last = None
-        for name in names:
-            bone = bones.get(name)
-            if bone is not None:
-                bone.select = bone.select_head = bone.select_tail = True
-                last = bone
-        if last is not None:
-            bones.active = last
-        return
-
-    bones = armature_object.data.bones
-    if not extend:
-        for bone in bones:
-            bone.select = False
-    last = None
-    for name in names:
-        bone = bones.get(name)
-        if bone is not None:
-            bone.select = True
-            last = bone
-    if last is not None:
-        bones.active = last
-
-
 class OT_HoAuxGroupToggle(Operator):
     bl_idname = "hoaux.group_toggle"
     bl_label = "展开或折叠 HoAux 模块"
@@ -290,7 +251,7 @@ class OT_HoAuxGroupSelect(Operator):
                 context.object.data, self.pipeline_id, self.module_id
             )
         ]
-        _select_bones(context.object, names, self.extend)
+        select_bones(context.object, names, extend=self.extend)
         return {"FINISHED"}
 
 
@@ -308,7 +269,7 @@ class OT_HoAuxBoneSelect(Operator):
         return self.execute(context)
 
     def execute(self, context):
-        _select_bones(context.object, [self.bone], self.extend)
+        select_bones(context.object, [self.bone], extend=self.extend)
         return {"FINISHED"}
 
 
@@ -365,7 +326,7 @@ def draw_panel(layout, context):
             key = _group_key(pipeline_id, module_id)
             group_expanded = _group_expanded(obj.data, key)
             group_names = {bone.name for bone in group}
-            selected = _selected_bone_names(obj)
+            selected = set(selected_bone_names(context, obj))
             row = box.row(align=True)
             row.alert = bool(group_names & selected)
             toggle = row.operator(

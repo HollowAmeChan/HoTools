@@ -7,6 +7,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 import subprocess
 from ..BoneTools import humanoid_auto_mapping
+from Utils.bone_selection import selected_bone_names
 
 
 
@@ -665,24 +666,7 @@ class MappingCore:
                     return True
             return False
 
-        selected_names = set()
-        if armature.mode == "POSE":
-            pose_bones = bpy.context.selected_pose_bones_from_active_object or []
-            selected_names = {
-                pose_bone.name for pose_bone in pose_bones
-                if pose_bone and bone_is_visible(pose_bone.bone)
-            }
-        elif armature.mode == "EDIT":
-            edit_bones = bpy.context.selected_editable_bones or []
-            selected_names = {
-                bone.name for bone in edit_bones
-                if bone and bone_is_visible(bone)
-            }
-        else:
-            selected_names = {
-                bone.name for bone in armature.data.bones
-                if bone.select and bone_is_visible(bone)
-            }
+        selected_names = set(selected_bone_names(bpy.context, armature))
 
         return [
             bone.name for bone in armature.data.bones

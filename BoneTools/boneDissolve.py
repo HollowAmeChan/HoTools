@@ -247,10 +247,8 @@ class OP_DissolveBoneWithWeight(Operator):
 
         #选择骨架时,没有选中骨骼，跳过
         if obj.type == 'ARMATURE':
-            if obj.mode == 'POSE':
-                return bool(context.selected_pose_bones)
-            elif obj.mode == 'EDIT':
-                return any(b.select for b in obj.data.edit_bones)
+            if obj.mode in {'POSE', 'EDIT'}:
+                return bool(BoneUtils.selected_bone_names(context, obj))
             else:
                 return False
         
@@ -284,10 +282,7 @@ class OP_DissolveBoneWithWeight(Operator):
             
         if original_active.type == 'ARMATURE':
             armature_obj = original_active
-            if armature_obj.mode == 'POSE':
-                bones = [bone.name for bone in context.selected_pose_bones]
-            elif armature_obj.mode == 'EDIT':
-                bones = [bone.name for bone in armature_obj.data.edit_bones if bone.select]
+            bones = BoneUtils.selected_bone_names(context, armature_obj)
             #搜索所有子级物体
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -305,7 +300,7 @@ class OP_DissolveBoneWithWeight(Operator):
                     armature_obj = mod.object
                     break
             #直接拿到选择的骨（必定权重绘制模式）
-            bones = [bone.name for bone in context.selected_pose_bones]
+            bones = BoneUtils.selected_bone_names(context, armature_obj)
 
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -534,21 +529,15 @@ class OP_SimpleDissolveBone(Operator):
         obj = context.active_object
         if not obj or obj.type != 'ARMATURE':
             return False
-        if obj.mode == 'POSE':
-            return len(context.selected_pose_bones or []) == 1
-        if obj.mode == 'EDIT':
-            return len([b for b in obj.data.edit_bones if b.select]) == 1
+        if obj.mode in {'POSE', 'EDIT'}:
+            return len(BoneUtils.selected_bone_names(context, obj)) == 1
         return False
 
     # ── 打开对话框前自动填入父级名 ──────────────────────────────────────────
     def invoke(self, context, event):
         obj = context.active_object
-        if obj.mode == 'POSE':
-            bone = (context.selected_pose_bones or [])[0]
-            parent = bone.parent
-        else:  # EDIT
-            bone = [b for b in obj.data.edit_bones if b.select][0]
-            parent = bone.parent
+        bone = BoneUtils.selected_bones(context, obj)[0]
+        parent = bone.parent
         self.target_bone = parent.name if parent else ""
         return context.window_manager.invoke_props_dialog(self, width=340)
 
@@ -578,10 +567,7 @@ class OP_SimpleDissolveBone(Operator):
             return {'CANCELLED'}
 
         # 取被删骨骼名（在切换模式前）
-        if armature_obj.mode == 'POSE':
-            src_bn = (context.selected_pose_bones or [])[0].name
-        else:
-            src_bn = [b for b in armature_obj.data.edit_bones if b.select][0].name
+        src_bn = BoneUtils.selected_bone_names(context, armature_obj)[0]
 
         if src_bn == tgt_bn:
             self.report({'ERROR'}, "目标骨骼不能与被删骨骼相同")

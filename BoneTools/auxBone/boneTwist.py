@@ -1352,10 +1352,8 @@ class OP_TwistBoneWithWeight(Operator):
             return False
 
         if obj.type == "ARMATURE":
-            if obj.mode == "POSE":
-                return bool(context.selected_pose_bones)
-            if obj.mode == "EDIT":
-                return any(b.select for b in obj.data.edit_bones)
+            if obj.mode in {"POSE", "EDIT"}:
+                return bool(BoneUtils.selected_bone_names(context, obj))
             return False
 
         armature = None
@@ -1389,10 +1387,7 @@ class OP_TwistBoneWithWeight(Operator):
             obj = context.active_object
             selected_count = 0
             if obj and obj.type == "ARMATURE":
-                if obj.mode == "POSE":
-                    selected_count = len(context.selected_pose_bones or [])
-                elif obj.mode == "EDIT":
-                    selected_count = sum(1 for bone in obj.data.edit_bones if bone.select)
+                selected_count = len(BoneUtils.selected_bone_names(context, obj))
             if selected_count > 1:
                 self.report({"ERROR"}, "当前只支持单个活动骨骼")
                 return {"CANCELLED"}

@@ -11,6 +11,7 @@ if str(BONE_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(BONE_TOOLS_DIR))
 
 import hoAux
+from Utils.bone_selection import selected_bone_names
 from hoAux.generation import assign_bone, find_collection
 from hoAux.ir.blender_reader import snapshot_armature
 from hoAux.ir.codec import parse_json, to_dict, to_json
@@ -108,7 +109,7 @@ bpy.ops.hoaux.group_toggle(key=group_key)
 assert armature.hoaux_group_states[group_key].expanded
 bpy.ops.hoaux.bone_select(bone=deform_name)
 assert armature.bones.active.name == deform_name
-assert armature.bones[deform_name].select
+assert selected_bone_names(bpy.context, obj) == [deform_name]
 
 copy_rotation = obj.pose.bones[deform_name].constraints.new("COPY_ROTATION")
 copy_rotation.name = "HoAux Test Copy Rotation"

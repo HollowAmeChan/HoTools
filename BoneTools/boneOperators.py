@@ -7,6 +7,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty, PointerProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
+from .boneUtils import BoneUtils
 
 
 def _armature_filter(_self, obj):
@@ -392,7 +393,13 @@ class OP_RelaxBoneChain(Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'EDIT_ARMATURE' and context.selected_editable_bones
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'ARMATURE'
+            and context.mode == 'EDIT_ARMATURE'
+            and bool(BoneUtils.selected_bone_names(context, obj))
+        )
 
     def execute(self, context):
 
@@ -737,7 +744,7 @@ class OP_BoneApplyConstraint(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        pose_bones = context.selected_pose_bones
+        pose_bones = BoneUtils.selected_bones(context, obj)
 
         if not pose_bones:
             self.report({'WARNING'}, "未选择任何骨骼")
@@ -775,7 +782,7 @@ class OP_BoneRemoveConstraints(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        pose_bones = context.selected_pose_bones
+        pose_bones = BoneUtils.selected_bones(context, obj)
 
         if not pose_bones:
             self.report({'WARNING'}, "未选择任何骨骼")

@@ -1,6 +1,7 @@
 import bpy
 
 from importlib import import_module
+from Utils.bone_selection import selected_bone_names as _compat_selected_bone_names
 
 
 _PACKAGE_ROOT = __package__.split(".", 1)[0] if "." in __package__ else "HoTools"
@@ -242,70 +243,9 @@ def _rigid_body_group_target_props(context, apply_selected):
     return targets
 
 
-def _append_unique_bone_name(names, seen_names, bone):
-    """
-    将骨骼名称加入列表，并避免重复记录。
-    """
-    if bone is None or bone.name in seen_names:
-        return
-    names.append(bone.name)
-    seen_names.add(bone.name)
-
-
 def _selected_bone_names(context, armature_obj) -> list[str]:
-    """
-    统一读取编辑、姿态、物体模式下的骨骼选择结果。
-    """
-    mode = getattr(context, "mode", "")
-    object_mode = getattr(armature_obj, "mode", "")
-    names = []
-    seen_names = set()
-
-    if mode == "EDIT_ARMATURE" or object_mode == "EDIT":
-        selected_editable_bones = getattr(context, "selected_editable_bones", None) or []
-        for bone in selected_editable_bones:
-            _append_unique_bone_name(names, seen_names, bone)
-
-        selected_bones = getattr(context, "selected_bones", None) or []
-        for bone in selected_bones:
-            _append_unique_bone_name(names, seen_names, bone)
-
-        for bone in armature_obj.data.edit_bones:
-            if (
-                getattr(bone, "select", False)
-                or getattr(bone, "select_head", False)
-                or getattr(bone, "select_tail", False)
-            ):
-                _append_unique_bone_name(names, seen_names, bone)
-        return names
-
-    if mode == "POSE" or object_mode == "POSE":
-        selected_pose_bones = getattr(context, "selected_pose_bones", None) or []
-        for pose_bone in selected_pose_bones:
-            _append_unique_bone_name(names, seen_names, pose_bone)
-
-        selected_bones = getattr(context, "selected_bones", None) or []
-        for bone in selected_bones:
-            _append_unique_bone_name(names, seen_names, bone)
-
-        if armature_obj.pose is not None:
-            for pose_bone in armature_obj.pose.bones:
-                if pose_bone.bone.select:
-                    _append_unique_bone_name(names, seen_names, pose_bone)
-
-        for bone in armature_obj.data.bones:
-            if bone.select:
-                _append_unique_bone_name(names, seen_names, bone)
-        return names
-
-    selected_bones = getattr(context, "selected_bones", None) or []
-    for bone in selected_bones:
-        _append_unique_bone_name(names, seen_names, bone)
-
-    for bone in armature_obj.data.bones:
-        if getattr(bone, "select", False):
-            _append_unique_bone_name(names, seen_names, bone)
-    return names
+    """统一读取编辑、姿态、物体模式下的骨骼选择结果。"""
+    return _compat_selected_bone_names(context, armature_obj)
 
 
 def _bone_topology_data(bones):

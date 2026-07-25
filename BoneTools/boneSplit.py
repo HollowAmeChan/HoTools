@@ -230,10 +230,8 @@ class OP_SplitBoneWithWeight(Operator):
 
         #选择骨架时,没有选中骨骼，跳过
         if obj.type == 'ARMATURE':
-            if obj.mode == 'POSE':
-                return bool(context.selected_pose_bones)
-            elif obj.mode == 'EDIT':
-                return any(b.select for b in obj.data.edit_bones)
+            if obj.mode in {'POSE', 'EDIT'}:
+                return bool(BoneUtils.selected_bone_names(context, obj))
             else:
                 return False
         
@@ -269,10 +267,7 @@ class OP_SplitBoneWithWeight(Operator):
             
         if original_active.type == 'ARMATURE':
             armature_obj = original_active
-            if armature_obj.mode == 'POSE':
-                bones = [bone.name for bone in context.selected_pose_bones]
-            elif armature_obj.mode == 'EDIT':
-                bones = [bone.name for bone in armature_obj.data.edit_bones if bone.select]
+            bones = BoneUtils.selected_bone_names(context, armature_obj)
             #搜索所有子级物体
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -290,7 +285,7 @@ class OP_SplitBoneWithWeight(Operator):
                     armature_obj = mod.object
                     break
             #直接拿到选择的骨（必定权重绘制模式）
-            bones = [bone.name for bone in context.selected_pose_bones]
+            bones = BoneUtils.selected_bone_names(context, armature_obj)
 
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':

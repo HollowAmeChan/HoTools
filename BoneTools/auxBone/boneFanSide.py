@@ -785,10 +785,8 @@ class OP_FanSideGenerate(Operator):
         obj = context.active_object
         if obj is None or obj.type != "ARMATURE":
             return False
-        if obj.mode == "POSE":
-            return len(context.selected_pose_bones or []) == 2
-        if obj.mode == "EDIT":
-            return len([b for b in obj.data.edit_bones if b.select]) == 2
+        if obj.mode in {"POSE", "EDIT"}:
+            return len(BoneUtils.selected_bone_names(context, obj)) == 2
         return False
 
     def execute(self, context):

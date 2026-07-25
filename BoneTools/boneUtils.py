@@ -1,6 +1,24 @@
 import bpy
 from mathutils import Vector
 
+try:
+    from Utils.bone_selection import (
+        selected_bone_names as _selected_bone_names,
+        selected_mode_bones as _selected_mode_bones,
+    )
+except ModuleNotFoundError:
+    # 兼容旧的独立脚本入口：它只把 BoneTools 目录加入 sys.path。
+    import os
+    import sys
+
+    addon_root = os.path.dirname(os.path.dirname(__file__))
+    if addon_root not in sys.path:
+        sys.path.insert(0, addon_root)
+    from Utils.bone_selection import (
+        selected_bone_names as _selected_bone_names,
+        selected_mode_bones as _selected_mode_bones,
+    )
+
 
 class BoneUtils:
     """骨骼命名与对称的通用工具。
@@ -291,36 +309,13 @@ class BoneUtils:
 
     @staticmethod
     def selected_bone_names(context, armature: bpy.types.Object) -> list[str]:
-        """返回当前选中骨骼的名字列表。
-
-        POSE 模式优先取 selected_pose_bones_from_active_object（多骨架场景下只拿活动
-        骨架的选择），取不到再退回 selected_pose_bones；EDIT 模式遍历 edit_bones 的
-        选中位。其它模式返回空列表。
-        """
-        if armature.mode == "POSE":
-            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
-            if pose_bones is None:
-                pose_bones = context.selected_pose_bones or []
-            return [bone.name for bone in pose_bones if getattr(bone, "name", None)]
-        if armature.mode == "EDIT":
-            return [bone.name for bone in armature.data.edit_bones if bone.select]
-        return []
+        """返回当前选中骨骼的名字列表，兼容 Blender 4.5 与 5.x。"""
+        return _selected_bone_names(context, armature)
 
     @staticmethod
     def selected_bones(context, armature: bpy.types.Object):
-        """返回当前选中的骨骼对象（而非名字）：POSE 取 pose_bone、EDIT 取 edit_bone。
-
-        与 selected_bone_names 同样的取选规则；POSE 模式过滤掉没有底层 bone 的项。
-        其它模式返回空列表。
-        """
-        if armature.mode == "POSE":
-            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
-            if pose_bones is None:
-                pose_bones = context.selected_pose_bones or []
-            return [pb for pb in pose_bones if getattr(pb, "bone", None) is not None]
-        if armature.mode == "EDIT":
-            return [bone for bone in armature.data.edit_bones if bone.select]
-        return []
+        """返回 PoseBone 或 EditBone，兼容 Blender 4.5 与 5.x。"""
+        return _selected_mode_bones(context, armature)
 
     @staticmethod
     def bone_head_tail(bone):
