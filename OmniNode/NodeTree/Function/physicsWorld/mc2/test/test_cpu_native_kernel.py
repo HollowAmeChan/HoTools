@@ -348,6 +348,7 @@ def test_native_cpu_backend_runs_compiled_whole_domain_self_policy():
         assert debug["generation"] == frame.generation
         assert debug["particle_indices"].shape == (primitive_count, 3)
         assert debug["primitive_grids"].shape == (primitive_count, 3)
+        assert np.isclose(debug["grid_size"], debug["max_primitive_size"])
         assert debug["candidates"].shape[1:] == (3,)
         assert debug["contact_indices"].shape[1:] == (2,)
         assert debug["contact_corrections"].shape[1:] == (2, 3)

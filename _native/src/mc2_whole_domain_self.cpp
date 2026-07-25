@@ -1621,7 +1621,9 @@ void Mc2WholeDomainSelfEngine::solve_impl(
         }
         if (edge_max_size <= kMc2Epsilon) edge_max_size = fallback_max_size;
         state.self_max_primitive_size = edge_max_size;
-        state.self_grid_size = edge_max_size * 3.0f;
+        // Targets are indexed by AABB center; candidate queries already add the
+        // maximum target half-extent, so one primitive extent is sufficient.
+        state.self_grid_size = edge_max_size;
         state.self_primitive_frame = frame;
         state.self_primitive_generation = generation;
         state.self_primitive_dynamic_ready = true;

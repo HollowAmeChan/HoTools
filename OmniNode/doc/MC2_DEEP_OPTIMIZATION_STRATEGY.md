@@ -105,6 +105,8 @@ prediction
 7. E6前置Host Frame观测必须把Blender BasePose读取、Anchor/Row、朝向构建、Partition快照、Domain Packet、scheduler、collider打包、发布校验、native上传和状态提交分开；这些记录只由热点计时节点请求，关闭时不得创建明细容器或读取额外时钟。
 8. collider snapshot仍是Physics World共享输入，MC2只负责域排除和SoA封装。Sphere/Capsule的当前/历史vector3必须直接量化为float32标量tuple，避免按collider创建短命NumPy数组；Plane/Box的归一化、叉积和符号半轴继续保持既定float32运算顺序，性能整理不能偷换外碰输入。覆盖九组SoA的`frame_signature`只属于按需观察身份，普通Frame不得为了未消费的debug字段预先计算SHA256。
 9. whole-domain self 的Candidate观测必须把网格遍历/过滤/发射、排序去重和最终扁平化分开，并同时报告grid probe、run命中、pair访问、分原因拒绝、raw/unique/duplicate；只有热点计时请求可以执行这些计数。若`raw/unique`接近1而AABB晚拒绝占主导，不得重写排序或引入去重缓存，应先修正保证覆盖性的网格尺度；CPU实现仍须保持与未来GPU count/scan/emit相同的确定性候选顺序和过滤合同。
+10. 当前CPU broadphase把target按AABB中心放入grid，source查询以全域最大target半尺寸扩张，因此一倍最大edge AABB尺寸已满足覆盖性；旧三倍尺度只扩大run占用和AABB晚拒绝。更细的`0.5x`在代表场景中使probe显著增加且没有稳定整帧收益，不作为默认值，也不把该backend布局暴露成节点参数。
+11. narrowphase/contact geometry 是broadphase之后的独立重大优化面。必须分别观察Edge-Edge最近线段、Point-Triangle最近点、半径与预测位移判定、法线/符号/half量化、初次Contact构建和四轮Contact更新；优先验证平方距离与位移上界的保守早退，再评估SoA/SIMD批处理。可以调研成熟C++碰撞/几何内核，但只能通过内部backend适配器和固定fixture做精度、退化输入、确定性与吞吐对照，不能直接让库的默认epsilon、double精度、并行顺序或接触约定取代MC2 CPU reference。
 ## 产品架构决定
 
 ### MeshCloth 优先形成单一模拟域
