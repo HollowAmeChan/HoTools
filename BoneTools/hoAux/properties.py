@@ -60,8 +60,11 @@ class PG_HoAuxGroupState(PropertyGroup):
 
 
 class PG_HoAuxSettings(PropertyGroup):
-    side: EnumProperty(
-        items=SIDE_ITEMS[1:3], default="L", update=_preview_update
+    processSymmetry: BoolProperty(
+        name="同时处理对称侧",
+        description="同时预览并生成严格匹配的对侧角色骨",
+        default=False,
+        update=_preview_update,
     )  # type: ignore
     shoulderBone: StringProperty(default="", update=_preview_update)  # type: ignore
     upperArmBone: StringProperty(default="", update=_preview_update)  # type: ignore

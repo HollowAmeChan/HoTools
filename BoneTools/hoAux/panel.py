@@ -50,7 +50,9 @@ class OT_HoAuxGenerateModule(Operator):
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        created_count = len(result["bones"]) + int(result["createdDir"])
+        created_count = len(result["bones"]) + result.get(
+            "createdDirCount", int(result["createdDir"])
+        )
         self.report({"INFO"}, f"已生成 {created_count} 根 HoAux 骨")
         return {"FINISHED"}
 

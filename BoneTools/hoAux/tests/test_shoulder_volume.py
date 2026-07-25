@@ -71,7 +71,7 @@ plans = shoulder_volume.build_plan(
     "Shoulder_L",
     "UpperArm_L",
     "L",
-    shoulder_volume.Parameters(roll_follow=1.0),
+    shoulder_volume.Parameters(),
 )
 x1_plan = next(
     plan for plan in plans if plan.role_tag == "TRK" and plan.marker == "X1"
@@ -105,12 +105,14 @@ with GenerationTransaction(obj) as transaction:
     bpy.ops.object.mode_set(mode="OBJECT")
 assert "HoAux_Rollback_Probe" not in armature.bones
 
+bpy.ops.object.mode_set(mode="POSE")
 result = shoulder_volume.generate(
     obj,
     "Shoulder_L",
     "UpperArm_L",
     "L",
 )
+assert obj.mode == "POSE"
 generated = list(iter_hoaux_bones(armature))
 assert len(generated) == 9
 assert len(result["bones"]) == 8
@@ -130,6 +132,12 @@ constraint_count = sum(
 )
 assert constraint_count == 13
 assert len(obj.animation_data.drivers) == 4
+assert all(
+    target.rotation_mode == "QUATERNION"
+    for fcurve in obj.animation_data.drivers
+    for variable in fcurve.driver.variables
+    for target in variable.targets
+)
 
 dir_bone = armature.bones[result["dir"]]
 dir_constraint = obj.pose.bones[result["dir"]].constraints["HoAux Half Rotation"]

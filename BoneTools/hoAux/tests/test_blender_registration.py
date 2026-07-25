@@ -9,6 +9,7 @@ if str(ADDON_DIR) not in sys.path:
     sys.path.insert(0, str(ADDON_DIR))
 
 import BoneTools
+from BoneTools.boneUtils import BoneUtils
 
 
 BoneTools.register()
@@ -40,20 +41,44 @@ shoulder_settings = bpy.context.scene.hoaux_shoulder_volume_settings
 elbow_settings = bpy.context.scene.hoaux_elbow_volume_settings
 twist_settings = bpy.context.scene.hoaux_forearm_twist_settings
 assert shoulder_settings.bl_rna.properties["track_length"].name == "TRK长度"
-assert elbow_settings.bl_rna.properties["response_angle"].name == "完全响应角度"
+assert elbow_settings.bl_rna.properties["twist_offset"].name == "扭转偏移"
 assert twist_settings.bl_rna.properties["segment_count"].name == "分段数"
-for removed_property in (
-    "dir_length",
-    "half_influence",
-    "x1_scale",
-    "x0_scale",
-    "z1_scale",
-    "z0_scale",
-):
-    assert removed_property not in shoulder_settings.bl_rna.properties
-    assert removed_property not in elbow_settings.bl_rna.properties
-assert "bone_length_scale" not in twist_settings.bl_rna.properties
-assert "rest_length_scale" not in twist_settings.bl_rna.properties
+assert {prop.identifier for prop in shoulder_settings.bl_rna.properties} == {
+    "rna_type",
+    "name",
+    "ui_expanded",
+    "preview_enabled",
+    "track_length",
+    "deform_length",
+    "x0_angle",
+    "twist_offset",
+}
+assert {prop.identifier for prop in elbow_settings.bl_rna.properties} == {
+    "rna_type",
+    "name",
+    "ui_expanded",
+    "preview_enabled",
+    "track_length",
+    "deform_length",
+    "twist_offset",
+}
+assert {prop.identifier for prop in twist_settings.bl_rna.properties} == {
+    "rna_type",
+    "name",
+    "ui_expanded",
+    "preview_enabled",
+    "segment_count",
+    "influence_start",
+    "influence_end",
+}
+assert "side" not in bpy.context.scene.hoaux_settings.bl_rna.properties
+assert BoneUtils.require_same_side("UpperArm_L", "LowerArm.L") == "L"
+try:
+    BoneUtils.require_same_side("UpperArm_L", "LowerArm_R")
+except ValueError:
+    pass
+else:
+    raise AssertionError("mixed role sides were accepted")
 
 BoneTools.unregister()
 print("HOAUX_REGISTRATION_OK")

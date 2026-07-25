@@ -125,7 +125,7 @@ Blender 对 Transform Channel 变量 `LOCAL_SPACE` 的说明是：包含约束�
 
 1. 先完成该信号源依赖的 DIR/TRK 约束；
 2. 从当前虚拟 pose buffer 计算 `LOCAL_DELTA(source)`；
-3. 提取旋转并按 Driver Variable 原始 `rotation_mode` 或解析后的实际模式得到 X/Z 有符号角；
+3. HoAux 生成的 Transform Variable 固定使用 `QUATERNION`，读取 X/Z 四元数分量并用 `2 * asin(component)` 还原对应有符号角；外部或旧数据仍按 Source IR 原始 `rotation_mode` 解释；
 4. 规范到 `[-pi, pi]`；
 5. 应用命名曲线 `ABS_0_TO_90` 或 `ABS_45_TO_90`；
 6. 将结果绑定到后续 Position/Rotation 操作的 influence。
@@ -156,7 +156,7 @@ analysis (optional)
   recognizedExpression
 ```
 
-样例 Driver 使用 `AUTO`。Source IR 同时保存原始值和导出时解析到的源 PoseBone rotation mode；Unity 一比一执行时使用 `resolvedRotationMode`，原始值用于溯源与重新解析。`recognizedExpression` 可以标记当前两类曲线供快速执行，但原始 `expression` 始终保留。
+研究样例 Driver 使用 `AUTO`，但 HoAux 正式生成器固定写入 `QUATERNION`。因此 `ABS_0_TO_90` 的生成表达式先以 `asin` 把四元数分量还原为角度，再做归一化。Source IR 始终保存实际原始值；Unity 一比一执行时按该值选择分解路径。`recognizedExpression` 可以标记已识别曲线供快速执行，但原始 `expression` 始终保留。
 
 如果以后需要 quaternion swing/twist angle，应作为新的 Driver Variable 类型或后端优化记录；不能覆盖当前 Transform Channel 原始记录。
 
@@ -311,7 +311,7 @@ scale <= 1e-4
 
 最后才运行 `WholeLeftArm_Constraint_Driver` 全臂测试。按模块逐个启用，先 DIR，再 Volume/Slide，最后 Twist/Stretch；任一模块失败都能定位到具体 resourceKey、原始记录和 capability。
 
-若 Gate C 中 `LOCAL_WITH_PARENT` 或 Euler signal 无法稳定达标，先把对应 capability 标记为 unsupported，再修正 Unity 空间实现或增加显式导出代理骨。Source IR 原始记录不改写，也不允许增加骨名特判。
+若 Gate C 中 `LOCAL_WITH_PARENT` 或 quaternion signal 无法稳定达标，先把对应 capability 标记为 unsupported，再修正 Unity 空间实现或增加显式导出代理骨。Source IR 原始记录不改写，也不允许增加骨名特判。
 
 ## 10. IR 所有权与目录
 

@@ -62,6 +62,48 @@ class BoneUtils:
         return ""
 
     @staticmethod
+    def require_same_side(*names: str, expected: str | None = None) -> str:
+        """严格解析多根骨的 L/R 后缀，并要求全部属于同一侧。"""
+        if len(names) < 2:
+            raise ValueError("左右判定至少需要两根骨")
+        sides = []
+        for name in names:
+            _stem, suffix = BoneUtils.split_side_suffix(name)
+            if not suffix:
+                raise ValueError(
+                    f"无法从骨骼 {name} 判定左右；名称必须以 .L/.R、_L/_R 或 -L/-R 结尾"
+                )
+            sides.append(suffix[-1].upper())
+        if len(set(sides)) != 1:
+            detail = ", ".join(
+                f"{name}={side}" for name, side in zip(names, sides)
+            )
+            raise ValueError(f"角色骨左右侧不一致：{detail}")
+        side = sides[0]
+        if expected is not None and expected != side:
+            raise ValueError(
+                f"传入侧别 {expected} 与角色骨解析结果 {side} 不一致"
+            )
+        return side
+
+    @staticmethod
+    def mirrored_role_names(armature_data, *names: str) -> tuple[str, ...]:
+        """严格取得一组角色骨的对侧名称；缺失或不能翻转时直接报错。"""
+        source_side = BoneUtils.require_same_side(*names)
+        mirrored = []
+        for name in names:
+            flipped = bpy.utils.flip_name(name)
+            if flipped == name:
+                raise ValueError(f"骨骼 {name} 无法翻转到对称侧")
+            if armature_data.bones.get(flipped) is None:
+                raise ValueError(f"找不到对称骨 {flipped}")
+            mirrored.append(flipped)
+        mirrored_side = BoneUtils.require_same_side(*mirrored)
+        if mirrored_side == source_side:
+            raise ValueError("镜像角色骨没有切换到对侧")
+        return tuple(mirrored)
+
+    @staticmethod
     def find_suffixless(bone_names) -> list[str]:
         """返回这批骨名里没有方向后缀的那些（保持原顺序）。
 

@@ -1,13 +1,12 @@
 """Elbow Volume module reconstructed from WholeLeftArm_Constraint_Driver."""
 
 from dataclasses import dataclass
-from math import radians
 from uuid import uuid4
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty
+from bpy.props import BoolProperty, FloatProperty
 from bpy.types import PropertyGroup
-from mathutils import Quaternion, Vector
+from mathutils import Vector
 
 from ..collection_registry import assign_bone
 from ..generation import (
@@ -20,7 +19,14 @@ from ..generation import (
 )
 from ..joint_frame import build_joint_frame
 from ..module_spec import PlannedBone
-from ..module_base import ModuleDefinition, preview_toggle, refresh_preview
+from ..module_base import (
+    ModuleDefinition,
+    generate_role_sets,
+    preview_toggle,
+    refresh_preview,
+    require_side,
+    role_name_sets,
+)
 from ..name_registry import allocate_bone_name, iter_hoaux_bones
 from ..properties import ensure_rig_id
 from ..shared_direction import (
@@ -36,6 +42,13 @@ DIR_SHARED_KEY = "ROTATION_HALF:LOWER_ARM:{side}"
 SETTINGS_ATTR = "hoaux_elbow_volume_settings"
 DIR_LENGTH_RATIO = 0.17
 HALF_INFLUENCE = 0.5
+TRACK_ROTATION_INFLUENCE = 1.0
+DEFORM_ROTATION_INFLUENCE = 1.0
+RESPONSE_ANGLE_DEGREES = 90.0
+COPY_LOCATION_HEAD_TAIL = 1.0
+CONVEX_AXIS = "X"
+ROLL_FOLLOW = 1.0
+STRAIGHT_THRESHOLD_DEGREES = 5.0
 
 
 _toggle_preview = preview_toggle(MODULE_TYPE)
@@ -50,53 +63,8 @@ class PG_HoAuxElbowVolumeSettings(PropertyGroup):
     deform_length: FloatProperty(
         name="DEF长度", default=0.21, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
-    track_rotation_influence: FloatProperty(
-        name="TRK旋转影响", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
-    )  # type: ignore
-    deform_rotation_influence: FloatProperty(
-        name="DEF旋转影响", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
-    )  # type: ignore
-    response_angle: FloatProperty(
-        name="完全响应角度", default=90.0, min=1.0, max=180.0
-    )  # type: ignore
-    head_tail: FloatProperty(
-        name="目标位置", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
-    )  # type: ignore
-    convex_axis: EnumProperty(
-        name="凸角轴",
-        items=(
-            ("X", "局部X", "把关节凸角映射到参考框架X轴"),
-            ("Z", "局部Z", "把关节凸角映射到参考框架Z轴"),
-        ),
-        default="X",
-        update=refresh_preview,
-    )  # type: ignore
-    roll_follow: FloatProperty(
-        name="骨骼扭转跟随", default=1.0, min=0.0, max=1.0, subtype="FACTOR", update=refresh_preview
-    )  # type: ignore
     twist_offset: FloatProperty(
         name="扭转偏移", default=0.0, min=-180.0, max=180.0, update=refresh_preview
-    )  # type: ignore
-    straight_threshold: FloatProperty(
-        name="直线判定角度", default=5.0, min=0.0, max=45.0, update=refresh_preview
-    )  # type: ignore
-    track_head_along: FloatProperty(
-        name="TRK头部纵向偏移", default=0.0, min=-1.0, max=1.0, update=refresh_preview
-    )  # type: ignore
-    track_head_convex: FloatProperty(
-        name="TRK头部凸角偏移", default=0.0, min=-1.0, max=1.0, update=refresh_preview
-    )  # type: ignore
-    deform_head_along: FloatProperty(
-        name="DEF头部纵向偏移", default=0.0, min=-1.0, max=1.0, update=refresh_preview
-    )  # type: ignore
-    deform_head_convex: FloatProperty(
-        name="DEF头部凸角偏移", default=0.0, min=-1.0, max=1.0, update=refresh_preview
-    )  # type: ignore
-    z1_angle: FloatProperty(
-        name="Z1方向角度", default=0.0, min=-180.0, max=180.0, update=refresh_preview
-    )  # type: ignore
-    z0_angle: FloatProperty(
-        name="Z0方向角度", default=0.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
 
 
@@ -104,40 +72,14 @@ class PG_HoAuxElbowVolumeSettings(PropertyGroup):
 class Parameters:
     track_length_ratio: float = 0.35
     deform_length_ratio: float = 0.21
-    track_rotation_influence: float = 1.0
-    deform_rotation_influence: float = 1.0
-    response_angle_degrees: float = 90.0
-    copy_location_head_tail: float = 1.0
-    convex_axis: str = "X"
-    roll_follow: float = 1.0
     twist_offset_degrees: float = 0.0
-    straight_threshold_degrees: float = 5.0
-    track_head_along: float = 0.0
-    track_head_convex: float = 0.0
-    deform_head_along: float = 0.0
-    deform_head_convex: float = 0.0
-    z1_angle_degrees: float = 0.0
-    z0_angle_degrees: float = 0.0
 
 
 def parameters_from_settings(settings):
     return Parameters(
         track_length_ratio=settings.track_length,
         deform_length_ratio=settings.deform_length,
-        track_rotation_influence=settings.track_rotation_influence,
-        deform_rotation_influence=settings.deform_rotation_influence,
-        response_angle_degrees=settings.response_angle,
-        copy_location_head_tail=settings.head_tail,
-        convex_axis=settings.convex_axis,
-        roll_follow=settings.roll_follow,
         twist_offset_degrees=settings.twist_offset,
-        straight_threshold_degrees=settings.straight_threshold,
-        track_head_along=settings.track_head_along,
-        track_head_convex=settings.track_head_convex,
-        deform_head_along=settings.deform_head_along,
-        deform_head_convex=settings.deform_head_convex,
-        z1_angle_degrees=settings.z1_angle,
-        z0_angle_degrees=settings.z0_angle,
     )
 
 
@@ -159,8 +101,7 @@ def validate_roles(armature_object, upper_arm_name, lower_arm_name, side):
         raise ValueError("请设置 UpperArm 和 LowerArm 主骨")
     if upper_arm == lower_arm:
         raise ValueError("UpperArm 和 LowerArm 不能是同一根骨")
-    if lower_arm.parent != upper_arm:
-        raise ValueError("LowerArm 必须直接以 UpperArm 为父级")
+    side = require_side(side, upper_arm_name, lower_arm_name)
     if upper_arm.length <= 1e-8 or lower_arm.length <= 1e-8:
         raise ValueError("肘关节主骨长度无效")
     if any(
@@ -168,46 +109,43 @@ def validate_roles(armature_object, upper_arm_name, lower_arm_name, side):
         for bone in iter_hoaux_bones(armature_data)
     ):
         raise ValueError(f"{_module_id(side)} 已存在")
-    return upper_arm, lower_arm
+    return upper_arm, lower_arm, side
 
 
-def _direction(frame, sign, angle_degrees):
-    direction = frame.x_axis * sign
-    if abs(angle_degrees) > 1e-8:
-        direction = Quaternion(frame.y_axis, radians(angle_degrees)) @ direction
-    return direction.normalized()
+def _direction(frame, sign):
+    return (frame.x_axis * sign).normalized()
 
 
 def build_plan(armature_object, upper_arm_name, lower_arm_name, side, parameters=None):
-    upper_arm, lower_arm = validate_roles(
+    upper_arm, lower_arm, side = validate_roles(
         armature_object, upper_arm_name, lower_arm_name, side
     )
     parameters = parameters or Parameters()
     frame = build_joint_frame(
         upper_arm,
         lower_arm,
-        convex_axis=parameters.convex_axis,
-        roll_follow=parameters.roll_follow,
+        convex_axis=CONVEX_AXIS,
+        roll_follow=ROLL_FOLLOW,
         twist_offset_degrees=parameters.twist_offset_degrees,
-        straight_threshold_degrees=parameters.straight_threshold_degrees,
+        straight_threshold_degrees=STRAIGHT_THRESHOLD_DEGREES,
     )
     result = []
     marker_specs = (
-        ("Z1", 1.0, parameters.z1_angle_degrees),
-        ("Z0", -1.0, parameters.z0_angle_degrees),
+        ("Z1", 1.0),
+        ("Z0", -1.0),
     )
     role_specs = (
         (
             "TRK",
             parameters.track_length_ratio,
-            parameters.track_head_along,
-            parameters.track_head_convex,
+            0.0,
+            0.0,
         ),
         (
             "DEF",
             parameters.deform_length_ratio,
-            parameters.deform_head_along,
-            parameters.deform_head_convex,
+            0.0,
+            0.0,
         ),
     )
     for role_tag, length_ratio, head_along, head_convex in role_specs:
@@ -216,8 +154,8 @@ def build_plan(armature_object, upper_arm_name, lower_arm_name, side, parameters
             + frame.y_axis * lower_arm.length * head_along
             + frame.x_axis * lower_arm.length * head_convex
         )
-        for marker, sign, angle in marker_specs:
-            direction = _direction(frame, sign, angle)
+        for marker, sign in marker_specs:
+            direction = _direction(frame, sign)
             result.append(
                 PlannedBone(
                     resource_key=f"ARM.{side}.ELBOW_VOLUME.{role_tag}.{marker}",
@@ -235,6 +173,7 @@ def build_plan(armature_object, upper_arm_name, lower_arm_name, side, parameters
 
 def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=None):
     parameters = parameters or Parameters()
+    side = require_side(side, upper_arm_name, lower_arm_name)
     plans = build_plan(
         armature_object, upper_arm_name, lower_arm_name, side, parameters
     )
@@ -363,7 +302,7 @@ def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=N
                 armature_object,
                 dir_name,
                 transaction,
-                influence=parameters.track_rotation_influence,
+                influence=TRACK_ROTATION_INFLUENCE,
             )
             def_pose = armature_object.pose.bones[def_name]
             add_copy_rotation(
@@ -372,14 +311,14 @@ def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=N
                 trk_name,
                 transaction,
                 target_space="LOCAL_WITH_PARENT",
-                influence=parameters.deform_rotation_influence,
+                influence=DEFORM_ROTATION_INFLUENCE,
             )
             copy_location = add_copy_location(
                 def_pose,
                 armature_object,
                 trk_name,
                 transaction,
-                head_tail=parameters.copy_location_head_tail,
+                head_tail=COPY_LOCATION_HEAD_TAIL,
             )
             add_transform_driver(
                 copy_location,
@@ -387,7 +326,7 @@ def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=N
                 armature_object,
                 trk_name,
                 "ROT_Z",
-                response_expression(parameters.response_angle_degrees),
+                response_expression(RESPONSE_ANGLE_DEGREES),
                 transaction,
             )
 
@@ -412,23 +351,23 @@ class ElbowVolumeDefinition(ModuleDefinition):
     )
     parameter_rows = (
         ("track_length", "deform_length"),
-        ("track_rotation_influence", "deform_rotation_influence"),
-        ("response_angle", "head_tail"),
-        ("convex_axis", "roll_follow"),
-        ("twist_offset", "straight_threshold"),
-        ("track_head_along", "track_head_convex"),
-        ("deform_head_along", "deform_head_convex"),
-        ("z1_angle", "z0_angle"),
+        ("twist_offset",),
     )
 
     def generate_from_context(self, context):
         root = context.scene.hoaux_settings
-        return generate(
-            context.object,
-            root.upperArmBone,
-            root.lowerArmBone,
-            root.side,
-            parameters_from_settings(self.settings(context.scene)),
+        parameters = parameters_from_settings(self.settings(context.scene))
+        bone_names = (root.upperArmBone, root.lowerArmBone)
+        return generate_role_sets(
+            context,
+            self.type_id,
+            bone_names,
+            lambda names, side: build_plan(
+                context.object, *names, side, parameters
+            ),
+            lambda names, side: generate(
+                context.object, *names, side, parameters
+            ),
         )
 
     def build_preview_scene(self, context):
@@ -437,26 +376,23 @@ class ElbowVolumeDefinition(ModuleDefinition):
         obj = context.object
         root = context.scene.hoaux_settings
         parameters = parameters_from_settings(self.settings(context.scene))
-        plans = build_plan(
-            obj,
-            root.upperArmBone,
-            root.lowerArmBone,
-            root.side,
-            parameters,
-        )
-        lower_arm = obj.data.bones[root.lowerArmBone]
-        direction_tail = lower_arm.head_local + (
-            lower_arm.tail_local - lower_arm.head_local
-        ).normalized() * lower_arm.length * DIR_LENGTH_RATIO
         scene = PreviewScene(obj.name, title=self.label)
-        scene.add_planned_bones(plans, labels=True)
-        scene.add_segment(
-            lower_arm.head_local,
-            direction_tail,
-            ROLE_LINE_STYLES["DIR"],
-        )
-        scene.add_label(direction_tail, "DIR 小臂半旋转（0.50）")
-        scene.add_point(lower_arm.head_local)
+        for names, side in role_name_sets(
+            context, root.upperArmBone, root.lowerArmBone
+        ):
+            plans = build_plan(obj, *names, side, parameters)
+            lower_arm = obj.data.bones[names[1]]
+            direction_tail = lower_arm.head_local + (
+                lower_arm.tail_local - lower_arm.head_local
+            ).normalized() * lower_arm.length * DIR_LENGTH_RATIO
+            scene.add_planned_bones(plans, labels=True)
+            scene.add_segment(
+                lower_arm.head_local,
+                direction_tail,
+                ROLE_LINE_STYLES["DIR"],
+            )
+            scene.add_label(direction_tail, f"DIR 小臂半旋转 {side}（0.50）")
+            scene.add_point(lower_arm.head_local)
         return scene
 
 DEFINITION = ElbowVolumeDefinition()

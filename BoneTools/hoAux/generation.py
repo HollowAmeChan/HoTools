@@ -135,8 +135,8 @@ def add_stretch_to(
 
 
 def response_expression(full_response_angle_degrees):
-    scale = 180.0 / full_response_angle_degrees
-    return f"abs(var*{scale:.9g}/pi)"
+    scale = 360.0 / full_response_angle_degrees
+    return f"abs(asin(var)*{scale:.9g}/pi)"
 
 
 def add_transform_driver(
@@ -149,7 +149,7 @@ def add_transform_driver(
     transaction,
     *,
     transform_space="LOCAL_SPACE",
-    rotation_mode="AUTO",
+    rotation_mode="QUATERNION",
 ):
     fcurve = driven_owner.driver_add(driven_property)
     driver = fcurve.driver

@@ -33,7 +33,6 @@ lower.parent = upper
 bpy.ops.object.mode_set(mode="OBJECT")
 
 root = bpy.context.scene.hoaux_settings
-root.side = "L"
 root.shoulderBone = "Shoulder_L"
 root.upperArmBone = "UpperArm_L"
 root.lowerArmBone = "LowerArm_L"

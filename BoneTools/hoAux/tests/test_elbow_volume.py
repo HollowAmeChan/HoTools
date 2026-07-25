@@ -42,7 +42,6 @@ lower = armature.edit_bones.new("LowerArm_L")
 lower.head = upper.tail
 lower.tail = (0.8, 1.65, 0.35)
 lower.roll = -0.47
-lower.parent = upper
 bpy.ops.object.mode_set(mode="OBJECT")
 
 armature.bones["UpperArm_L"].use_deform = False
@@ -59,7 +58,6 @@ assert frame.uses_bend_plane
 assert frame.bend_angle_degrees > 5.0
 
 root = bpy.context.scene.hoaux_settings
-root.side = "L"
 root.upperArmBone = "UpperArm_L"
 root.lowerArmBone = "LowerArm_L"
 definition = get_definition("ELBOW_VOLUME")
@@ -108,11 +106,12 @@ for bone in generated:
         assert abs(location.head_tail - 1.0) < 1e-8
 
 for fcurve in obj.animation_data.drivers:
-    assert fcurve.driver.expression == "abs(var*2/pi)"
+    assert fcurve.driver.expression == "abs(asin(var)*4/pi)"
     target = fcurve.driver.variables[0].targets[0]
     assert target.bone_target.startswith("TRK_Elbow_Volume_Z")
     assert target.transform_type == "ROT_Z"
     assert target.transform_space == "LOCAL_SPACE"
+    assert target.rotation_mode == "QUATERNION"
 
 snapshot = snapshot_armature(obj)
 assert all(

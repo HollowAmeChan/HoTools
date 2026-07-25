@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from math import cos, radians, sin
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty
+from bpy.props import BoolProperty, FloatProperty
 from bpy.types import PropertyGroup
 from mathutils import Vector
 
@@ -20,7 +20,14 @@ from ..generation import (
 )
 from ..module_spec import PlannedBone
 from ..joint_frame import build_joint_frame
-from ..module_base import ModuleDefinition, preview_toggle, refresh_preview
+from ..module_base import (
+    ModuleDefinition,
+    generate_role_sets,
+    preview_toggle,
+    refresh_preview,
+    require_side,
+    role_name_sets,
+)
 from ..name_registry import allocate_bone_name, iter_hoaux_bones
 from ..properties import ensure_rig_id
 from ..shared_direction import (
@@ -36,6 +43,11 @@ DIR_SHARED_KEY = "ROTATION_HALF:UPPER_ARM:{side}"
 SETTINGS_ATTR = "hoaux_shoulder_volume_settings"
 DIR_LENGTH_RATIO = 0.05
 HALF_INFLUENCE = 0.5
+RESPONSE_ANGLE_DEGREES = 90.0
+COPY_LOCATION_HEAD_TAIL = 1.0
+CONVEX_AXIS = "X"
+ROLL_FOLLOW = 1.0
+STRAIGHT_THRESHOLD_DEGREES = 5.0
 
 
 _toggle_preview = preview_toggle(MODULE_TYPE)
@@ -50,32 +62,11 @@ class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
     deform_length: FloatProperty(
         name="DEF长度", default=0.28, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
-    response_angle: FloatProperty(
-        name="完全响应角度", default=90.0, min=1.0, max=180.0
-    )  # type: ignore
-    head_tail: FloatProperty(
-        name="目标位置", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
-    )  # type: ignore
     x0_angle: FloatProperty(
         name="X0方向角度", default=45.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
-    convex_axis: EnumProperty(
-        name="凸角轴",
-        items=(
-            ("X", "局部X", "把关节凸角映射到参考框架X轴"),
-            ("Z", "局部Z", "把关节凸角映射到参考框架Z轴"),
-        ),
-        default="X",
-        update=refresh_preview,
-    )  # type: ignore
-    roll_follow: FloatProperty(
-        name="骨骼扭转跟随", default=1.0, min=0.0, max=1.0, subtype="FACTOR", update=refresh_preview
-    )  # type: ignore
     twist_offset: FloatProperty(
         name="扭转偏移", default=0.0, min=-180.0, max=180.0, update=refresh_preview
-    )  # type: ignore
-    straight_threshold: FloatProperty(
-        name="直线判定角度", default=5.0, min=0.0, max=45.0, update=refresh_preview
     )  # type: ignore
 
 
@@ -83,26 +74,16 @@ class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
 class Parameters:
     track_length_ratio: float = 0.5
     deform_length_ratio: float = 0.28
-    response_angle_degrees: float = 90.0
-    copy_location_head_tail: float = 1.0
     x0_angle_degrees: float = 45.0
-    convex_axis: str = "X"
-    roll_follow: float = 1.0
     twist_offset_degrees: float = 0.0
-    straight_threshold_degrees: float = 5.0
 
 
 def parameters_from_settings(settings):
     return Parameters(
         track_length_ratio=settings.track_length,
         deform_length_ratio=settings.deform_length,
-        response_angle_degrees=settings.response_angle,
-        copy_location_head_tail=settings.head_tail,
         x0_angle_degrees=settings.x0_angle,
-        convex_axis=settings.convex_axis,
-        roll_follow=settings.roll_follow,
         twist_offset_degrees=settings.twist_offset,
-        straight_threshold_degrees=settings.straight_threshold,
     )
 
 
@@ -147,11 +128,12 @@ def validate_roles(armature_object, shoulder_name, upper_arm_name, side):
         raise ValueError("请设置 Shoulder 和 UpperArm 主骨")
     if shoulder == upper_arm:
         raise ValueError("Shoulder 和 UpperArm 不能是同一根骨")
+    side = require_side(side, shoulder_name, upper_arm_name)
     if upper_arm.length <= 1e-8:
         raise ValueError("UpperArm 骨长无效")
     if _existing_module_bones(armature_data, side):
         raise ValueError(f"{_module_id(side)} 已存在")
-    return shoulder, upper_arm
+    return shoulder, upper_arm, side
 
 
 def build_plan(
@@ -161,17 +143,17 @@ def build_plan(
     side,
     parameters=None,
 ):
-    shoulder, upper_arm = validate_roles(
+    shoulder, upper_arm, side = validate_roles(
         armature_object, shoulder_name, upper_arm_name, side
     )
     parameters = parameters or Parameters()
     frame = build_joint_frame(
         shoulder,
         upper_arm,
-        convex_axis=parameters.convex_axis,
-        roll_follow=parameters.roll_follow,
+        convex_axis=CONVEX_AXIS,
+        roll_follow=ROLL_FOLLOW,
         twist_offset_degrees=parameters.twist_offset_degrees,
-        straight_threshold_degrees=parameters.straight_threshold_degrees,
+        straight_threshold_degrees=STRAIGHT_THRESHOLD_DEGREES,
     )
     head = frame.origin
     result = []
@@ -209,6 +191,7 @@ def generate(
     parameters=None,
 ):
     parameters = parameters or Parameters()
+    side = require_side(side, shoulder_name, upper_arm_name)
     plans = build_plan(
         armature_object,
         shoulder_name,
@@ -350,7 +333,7 @@ def generate(
                 armature_object,
                 trk_name,
                 transaction,
-                head_tail=parameters.copy_location_head_tail,
+                head_tail=COPY_LOCATION_HEAD_TAIL,
             )
             add_transform_driver(
                 copy_location,
@@ -358,7 +341,7 @@ def generate(
                 armature_object,
                 dir_name,
                 f"ROT_{marker[0]}",
-                response_expression(parameters.response_angle_degrees),
+                response_expression(RESPONSE_ANGLE_DEGREES),
                 transaction,
             )
 
@@ -383,20 +366,24 @@ class ShoulderVolumeDefinition(ModuleDefinition):
     )
     parameter_rows = (
         ("track_length", "deform_length"),
-        ("response_angle", "head_tail"),
-        ("convex_axis", "roll_follow"),
-        ("twist_offset", "straight_threshold"),
+        ("twist_offset",),
         ("x0_angle",),
     )
 
     def generate_from_context(self, context):
         root = context.scene.hoaux_settings
-        return generate(
-            context.object,
-            root.shoulderBone,
-            root.upperArmBone,
-            root.side,
-            parameters_from_settings(self.settings(context.scene)),
+        parameters = parameters_from_settings(self.settings(context.scene))
+        bone_names = (root.shoulderBone, root.upperArmBone)
+        return generate_role_sets(
+            context,
+            self.type_id,
+            bone_names,
+            lambda names, side: build_plan(
+                context.object, *names, side, parameters
+            ),
+            lambda names, side: generate(
+                context.object, *names, side, parameters
+            ),
         )
 
     def build_preview_scene(self, context):
@@ -405,26 +392,23 @@ class ShoulderVolumeDefinition(ModuleDefinition):
         obj = context.object
         root = context.scene.hoaux_settings
         parameters = parameters_from_settings(self.settings(context.scene))
-        plans = build_plan(
-            obj,
-            root.shoulderBone,
-            root.upperArmBone,
-            root.side,
-            parameters,
-        )
-        upper_arm = obj.data.bones[root.upperArmBone]
-        direction_tail = upper_arm.head_local + (
-            upper_arm.tail_local - upper_arm.head_local
-        ).normalized() * upper_arm.length * DIR_LENGTH_RATIO
         scene = PreviewScene(obj.name, title=self.label)
-        scene.add_planned_bones(plans, labels=True)
-        scene.add_segment(
-            upper_arm.head_local,
-            direction_tail,
-            ROLE_LINE_STYLES["DIR"],
-        )
-        scene.add_label(direction_tail, "DIR 大臂半旋转（0.50）")
-        scene.add_point(upper_arm.head_local)
+        for names, side in role_name_sets(
+            context, root.shoulderBone, root.upperArmBone
+        ):
+            plans = build_plan(obj, *names, side, parameters)
+            upper_arm = obj.data.bones[names[1]]
+            direction_tail = upper_arm.head_local + (
+                upper_arm.tail_local - upper_arm.head_local
+            ).normalized() * upper_arm.length * DIR_LENGTH_RATIO
+            scene.add_planned_bones(plans, labels=True)
+            scene.add_segment(
+                upper_arm.head_local,
+                direction_tail,
+                ROLE_LINE_STYLES["DIR"],
+            )
+            scene.add_label(direction_tail, f"DIR 大臂半旋转 {side}（0.50）")
+            scene.add_point(upper_arm.head_local)
         return scene
 
 DEFINITION = ShoulderVolumeDefinition()

@@ -58,7 +58,6 @@ main_deform_before = {
 }
 
 root = bpy.context.scene.hoaux_settings
-root.side = "L"
 root.upperArmBone = "UpperArm_L"
 root.lowerArmBone = "LowerArm_L"
 root.handBone = "Hand_L"

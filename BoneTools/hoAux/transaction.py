@@ -5,9 +5,21 @@ import bpy
 from .collection_registry import prune_empty_system_collections
 
 
+def restore_armature_mode(obj, desired_mode):
+    if obj.mode == desired_mode:
+        return
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    if obj.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    if desired_mode != "OBJECT":
+        bpy.ops.object.mode_set(mode=desired_mode)
+
+
 class GenerationTransaction:
     def __init__(self, armature_object):
         self.armature_object = armature_object
+        self.original_mode = armature_object.mode
         self.created_bones = []
         self.created_constraints = []
         self.created_drivers = []
@@ -63,6 +75,12 @@ class GenerationTransaction:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if not self._committed:
-            self.rollback()
+        try:
+            if not self._committed:
+                self.rollback()
+        finally:
+            self.restore_original_mode()
         return False
+
+    def restore_original_mode(self):
+        restore_armature_mode(self.armature_object, self.original_mode)
