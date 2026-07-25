@@ -149,13 +149,15 @@ product request
 | `Teleport模式` | `0:None`不检测；`1:Reset`越阈值重置整个task；`2:Keep`整体搬运模拟形状并清除传送造成的不连续状态 | 判定基准是最终proxy顺序中的首个Fixed；无Fixed时回退模拟对象原点。触发作用于整个task；逐粒子实验实现及其debug数组已移除，Keep/Reset真实场景安全性已人工验证。 |
 | `Teleport距离`、`Teleport旋转` | 设置判定基准帧姿态发生不连续跃迁的位移和旋转阈值 | 距离阈值乘当前组件scale ratio，旋转单位为度，两者为OR；三个setup使用相同task级触发语义。 |
 
-MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新动画world pose；没有Fixed时比较模拟对象原点，Bone task即Armature Object原点。位移或旋转任一越阈值即处理整个task，基准身份不得随帧改变。
+MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准曾作为OmniMC2产品实验实现，但人工验收确认它造成阈值/状态难以解释且不能可靠抑制高速穿模，现已决定回退到单基准、整task触发。OmniMC2产品差异明确为：每个新Physics World帧、fixed-step scheduler之前比较最终proxy顺序中首个Fixed粒子的旧/新完整动画world pose；没有Fixed时直接比较模拟对象原点，Bone task即Armature Object原点。不得先从Fixed姿态减去组件运动再交给Center重复判定；位移或旋转任一越阈值即由task-reference处理整个task，Center同帧只提交重映射后的新基线，基准身份不得随帧改变。
 
-`Reset`把触发 partition 的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和接触历史对齐本帧动画基准；`Keep`按判定基准姿态 delta 搬运该 partition 的 state、velocity reference、StepBasic、Motion base 和 rotation，并只旋转已有真实物理速度。两种模式都重定基 old dynamic/component 与 collider previous pose，避免第一 substep 沿传送路径重复插值；相关 external/self 历史失效后由 whole-domain pass 重建。判定发生在 scheduler 之前，zero-substep frame 也必须提交新的 task-reference 状态。
+`Reset`把触发 partition 的粒子状态、rotation、velocity reference、StepBasic/动态历史、速度、摩擦和接触历史对齐本帧动画基准；触发帧即使继续运行多个substep，也必须在每个Post末端执行Reset屏障，防止Distance、Tether、碰撞或自碰在同一帧重新污染刚清理的状态。`Keep`按判定基准姿态delta搬运该partition的state、velocity reference、StepBasic、Motion base和rotation，并只旋转已有真实物理速度；Center第一substep消费frame shift后，必须把重映射后的old frame提交为本帧剩余substep的正式基线，禁止后续substep重新使用跳变前坐标系而撤销搬移。两种模式都重定基old animated/dynamic历史，清除受影响partition的摩擦、碰撞法线与external debug残留，并使whole-domain self历史失效后重建。判定发生在scheduler之前，zero-substep frame也必须提交新的task-reference状态。
+
+Teleport产品验收必须使用默认可见语义的`world_inertia=1`，并让触发帧真实运行三个substep和最终writeback；不得再以`world_inertia=0`让普通跟随与Keep退化为同一行为，也不得只用zero-substep证明触发瞬间的内部状态。MeshCloth还必须读取真实GN offset：Reset触发帧最终offset为零，Keep的Fixed点保持原offset并精确随组件搬移；Move点允许在同帧继续物理解算，但不得回落到跳变前坐标系。BoneCloth与BoneSpring执行同一Reset/Keep语义。
 
 真实高速平移/旋转与collider场景已人工确认Keep/Reset均安全，不再属于发布阻断。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何表达判定输入，不表示粒子速度。
 
-可视化调试只消费请求后冻结的产品快照。`native.positions`保存统一域位置，`native.dynamics`保存速度与法线，whole-domain self记录由顶层`self_collision`独立持有；renderer不得依赖旧aggregate遗留的重复嵌套。Teleport视图必须读取真实task-reference判定记录，包括reference索引、旧/新位置与旋转、测量值、阈值和触发flags；只有该partition确实没有Fixed时，才使用Center记录表达合同规定的对象原点回退，不能把普通Center frame-shift冒充Fixed reference。调试验收除了检查字段形状，还必须在Blender中对速度、Teleport、自碰primitive/grid/candidate/contact逐层断言非空绘制批次；否则数据存在但视口全空仍会假通过。
+可视化调试只消费请求后冻结的产品快照。`native.positions`保存统一域位置，`native.dynamics`保存速度与法线，whole-domain self记录由顶层`self_collision`独立持有；renderer不得依赖旧aggregate遗留的重复嵌套。Teleport视图必须读取真实task-reference判定记录，包括reference索引、旧/新位置与旋转、测量值、阈值和触发flags；`reference_index=-1`只表示该partition使用对象原点，位置、旋转与测量仍由同一task-reference记录提供，不能回读Center结果拼成第二套判定。调试验收除了检查字段形状，还必须在Blender中对速度、Teleport、自碰primitive/grid/candidate/contact逐层断言非空绘制批次；否则数据存在但视口全空仍会假通过。
 
 Teleport判定姿态由task帧适配器按首个Fixed或对象原点统一提供；MeshCloth与Bone setup在应用整体Keep/Reset时仍需各自正确转换代理/骨骼世界空间。Anchor抵消、world frame shift与Teleport的先后顺序必须对照MC2 Team Center重审，不能把同一基准delta重复应用到粒子。
 
@@ -321,17 +323,18 @@ Mesh动画固定使用BasePose读取对象与Source/写回对象：
 
 ```text
 BasePose read object
-  -> 保留Armature/Shape Key等topology-preserving基础变形
+  -> 只拥有Armature/Shape Key等topology-preserving局部基础变形
   -> 永久移除物理GN output
-  -> evaluated positions/normals
+  -> evaluated局部positions/normals使用Source当前world matrix转到世界空间
 
 Source/write object
   -> 相同final-proxy topology/identity
+  -> 唯一拥有组件world transform、Center与最终写回坐标系
   -> 物理GN modifier常驻栈末端
   -> POINT object-local offset attribute
 ```
 
-新Mesh source不要求用户预先执行手工刷新：第一次进入active automatic MC2 frame时隐式创建缺失的BasePose缓存，首帧即可完成static/frame构建。手工创建/刷新operator只用于显式修复或替换已分配代理，不属于正常逐帧路径。
+新Mesh source不要求用户预先执行手工刷新：第一次进入active automatic MC2 frame时隐式创建缺失的BasePose缓存，首帧即可完成static/frame构建。手工创建/刷新operator只用于显式修复或替换已分配代理，不属于正常逐帧路径。生成后的BasePose是独立只读对象，它自己的`matrix_world`不得成为组件运动来源；否则Source平移/旋转后animated base仍停留在创建位置，Keep会被后续Tether/Distance拉回，Reset也会在错误世界坐标上清理。
 
 不得用逐帧Shape Key写回、单对象modifier开关/重排或单对象双阶段读取替代。Mesh source observation由MC2拥有，token包含原始source/data identity、MC2 depsgraph revision、相关RNA轻量签名和world generation；普通热帧复用只读snapshot/fingerprint。观察器不得调用`mesh.update()`，update由真实写入owner提交。GN offset写回通过通用成功receipt在下一安全depsgraph批次排除自身更新；同批authoring歧义由默认低频或显式强制全扫审计检测。Bone在Armature/Pose revision矩阵成立前继续保守全扫。
 

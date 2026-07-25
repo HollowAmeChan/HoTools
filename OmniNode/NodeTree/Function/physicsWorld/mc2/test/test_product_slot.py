@@ -715,18 +715,22 @@ def test_product_teleport_debug_uses_object_origin_without_fixed_particle():
         particle_attribute_flags=np.asarray((2, 2), dtype=np.uint32),
     )
     task = {
-        "flags": np.asarray((0,), dtype=np.uint32),
+        "flags": np.asarray((3,), dtype=np.uint32),
         "reference_indices": np.asarray((-1,), dtype=np.int32),
         "modes": np.asarray((2,), dtype=np.int32),
-        "old_reference_positions": np.zeros((1, 3), dtype=np.float32),
-        "reference_positions": np.zeros((1, 3), dtype=np.float32),
+        "old_reference_positions": np.asarray(
+            ((1.0, 2.0, 3.0),), dtype=np.float32
+        ),
+        "reference_positions": np.asarray(
+            ((2.0, 2.0, 3.0),), dtype=np.float32
+        ),
         "old_reference_rotations_xyzw": np.asarray(
             ((0.0, 0.0, 0.0, 1.0),), dtype=np.float32
         ),
         "reference_rotations_xyzw": np.asarray(
             ((0.0, 0.0, 0.0, 1.0),), dtype=np.float32
         ),
-        "measured_distances": np.zeros(1, dtype=np.float32),
+        "measured_distances": np.asarray((1.0,), dtype=np.float32),
         "distance_thresholds": np.asarray((0.5,), dtype=np.float32),
         "measured_rotation_degrees": np.zeros(1, dtype=np.float32),
         "rotation_threshold_degrees": np.asarray((90.0,), dtype=np.float32),

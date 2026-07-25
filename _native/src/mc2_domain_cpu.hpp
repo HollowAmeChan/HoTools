@@ -586,6 +586,8 @@ public:
 private:
     void ensure_live() const;
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
+    void invalidate_teleport_history(const std::vector<std::uint32_t>& flags);
+    void enforce_teleport_reset_barrier();
     void prepare_prediction_state();
     void step_whole_domain_self_impl(const float* old_positions, bool reset_friction);
     hotools::Mc2WholeDomainSelfTiming step_whole_domain_self_timed_impl(

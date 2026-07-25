@@ -129,6 +129,8 @@ def test_mesh_product_base_pose_contract() -> None:
         assert base_proxy[base_pose.CACHE_TOPOLOGY_SIGNATURE_KEY] == topology_signature
 
         armature.pose.bones["BasePoseBone"].location = (0.5, 0.0, 0.0)
+        source.location = (2.0, 0.0, 0.0)
+        assert tuple(base_proxy.location) == (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
         depsgraph = bpy.context.evaluated_depsgraph_get()
         snapshot = frame_input.read_base_pose_frame_snapshot(
@@ -145,8 +147,9 @@ def test_mesh_product_base_pose_contract() -> None:
         assert snapshot.animated_base_world_normals.flags.writeable is False
         assert snapshot.source_world_linear.flags.writeable is False
         np.testing.assert_allclose(
-            snapshot.animated_base_world_positions[:, 0], (0.5, 1.5, 0.5)
+            snapshot.animated_base_world_positions[:, 0], (2.5, 3.5, 2.5)
         )
+        np.testing.assert_allclose(snapshot.component_world_position, (2.0, 0.0, 0.0))
         np.testing.assert_allclose(snapshot.component_world_scale, (1.0, 1.0, 1.0))
 
         source.scale = (-1.0, 1.0, 1.0)

@@ -730,14 +730,8 @@ def _product_task_teleport_payload(program, raw, center_raw=None) -> dict:
             & ((particle_attributes & np.uint32(1)) != 0)
         ))
         use_object_origin = reference < 0 and not has_fixed_reference
-        eligible = reference >= 0 or (
-            use_object_origin and isinstance(center_raw, dict)
-        )
-        flag = int(
-            center_raw["teleport_flags"][index]
-            if use_object_origin and isinstance(center_raw, dict)
-            else flags[index]
-        )
+        eligible = reference >= 0 or use_object_origin
+        flag = int(flags[index])
         partitions.append({
             "partition_id": str(partition_id),
             "reference_index": reference,
@@ -745,45 +739,17 @@ def _product_task_teleport_payload(program, raw, center_raw=None) -> dict:
                 "object_origin" if use_object_origin else "first_fixed"
             ),
             "eligible": eligible,
-            "old_reference_position": (
-                center_raw["old_frame_world_positions"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["old_reference_positions"][index]
-            ),
-            "reference_position": (
-                center_raw["now_world_positions"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["reference_positions"][index]
-            ),
-            "old_reference_rotation_xyzw": (
-                center_raw["old_frame_world_rotations_xyzw"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["old_reference_rotations_xyzw"][index]
-            ),
-            "reference_rotation_xyzw": (
-                center_raw["now_world_rotations_xyzw"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["reference_rotations_xyzw"][index]
-            ),
+            "old_reference_position": raw["old_reference_positions"][index],
+            "reference_position": raw["reference_positions"][index],
+            "old_reference_rotation_xyzw": raw["old_reference_rotations_xyzw"][index],
+            "reference_rotation_xyzw": raw["reference_rotations_xyzw"][index],
             "mode": int(modes[index]),
             "applied": bool(flag & 1),
             "keep": bool(flag & 2),
             "reset": bool(flag & 4),
-            "measured_distance": float(
-                center_raw["teleport_measured_distances"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["measured_distances"][index]
-            ),
-            "distance_threshold": float(
-                center_raw["teleport_distance_thresholds"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["distance_thresholds"][index]
-            ),
-            "measured_rotation_degrees": float(
-                center_raw["teleport_measured_rotation_degrees"][index]
-                if use_object_origin and isinstance(center_raw, dict)
-                else raw["measured_rotation_degrees"][index]
-            ),
+            "measured_distance": float(raw["measured_distances"][index]),
+            "distance_threshold": float(raw["distance_thresholds"][index]),
+            "measured_rotation_degrees": float(raw["measured_rotation_degrees"][index]),
             "rotation_threshold_degrees": float(
                 raw["rotation_threshold_degrees"][index]
             ),

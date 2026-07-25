@@ -796,10 +796,8 @@ void DomainV1::step_task_reference_teleport() {
     if (!hotools::apply_task_reference_teleport_mc2(view)) {
         throw std::runtime_error("MC2 CPU task-reference teleport rejected the frame");
     }
-    bool triggered = false;
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         if ((next_flags[partition] & 1u) == 0u) continue;
-        triggered = true;
         if ((next_flags[partition] & 4u) != 0u) {
             const auto position_offset = partition * 3;
             const auto rotation_offset = partition * 4;
@@ -837,26 +835,11 @@ void DomainV1::step_task_reference_teleport() {
                 center_stabilization_time_[partition] > 1.0e-6f ? 0.0f : 1.0f;
         }
     }
-    if (triggered) {
-        for (std::size_t particle = 0; particle < particle_count_; ++particle) {
-            const auto partition = particle_partition_index_[particle];
-            if ((next_flags[partition] & 1u) == 0u) continue;
-            static_friction_[particle] = 0.0f;
-            if (particle < collision_friction_.size()) collision_friction_[particle] = 0.0f;
-            std::fill_n(world_normals_.data() + particle * 3, 3, 0.0f);
-        }
-        external_debug_contacts_.clear();
-        external_debug_friction_before_.clear();
-        external_debug_friction_after_.clear();
-        external_debug_radii_.clear();
-        if (whole_domain_self_engine_ != nullptr) {
-            whole_domain_self_engine_->invalidate_history();
-            ++whole_domain_self_invalidation_count_;
-        }
-        whole_domain_self_last_candidate_count_ = 0;
-        whole_domain_self_last_contact_count_ = 0;
-        ++task_reference_teleport_count_;
-    }
+    const bool triggered = std::any_of(
+        next_flags.begin(),
+        next_flags.end(),
+        [](std::uint32_t flags) { return (flags & 1u) != 0u; }
+    );
     world_positions_.swap(next_positions);
     world_rotations_.swap(next_rotations);
     velocity_positions_.swap(next_velocity_positions);
@@ -871,6 +854,10 @@ void DomainV1::step_task_reference_teleport() {
     task_reference_measured_distances_.swap(next_measured_distances);
     task_reference_distance_thresholds_.swap(next_distance_thresholds);
     task_reference_measured_rotation_degrees_.swap(next_measured_rotation_degrees);
+    if (triggered) {
+        invalidate_teleport_history(task_reference_teleport_flags_);
+        ++task_reference_teleport_count_;
+    }
     task_reference_teleport_consumed_ = true;
 }
 
@@ -912,7 +899,7 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     for (std::size_t partition = 0; partition < partition_count_; ++partition) {
         const auto position_offset = partition * 3;
         const auto rotation_offset = partition * 4;
-        if ((task_reference_teleport_flags_[partition] & 4u) != 0u) {
+        if ((task_reference_teleport_flags_[partition] & 1u) != 0u) {
             next_shift_rotations[rotation_offset + 3] = 1.0f;
             std::copy_n(
                 center_frame_world_positions_.data() + position_offset,
@@ -1028,6 +1015,11 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     if (!hotools::apply_particle_frame_shift_mc2(particle_shift)) {
         throw std::runtime_error("MC2 CPU Center particle frame shift rejected the domain state");
     }
+    const bool center_teleport_triggered = std::any_of(
+        next_teleport_flags.begin(),
+        next_teleport_flags.end(),
+        [](std::uint32_t flags) { return (flags & 1u) != 0u; }
+    );
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         const auto partition = static_cast<std::size_t>(particle_partition_index_[vertex]);
         if ((next_teleport_flags[partition] & 4u) == 0u) continue;
@@ -1076,9 +1068,111 @@ void DomainV1::step_center_frame_shift(const float* anchor_component_local_posit
     );
     center_debug_movement_speed_limited_.swap(next_movement_speed_limited);
     center_debug_rotation_speed_limited_.swap(next_rotation_speed_limited);
+    if (center_teleport_triggered) {
+        invalidate_teleport_history(center_shift_teleport_flags_);
+    }
     center_frame_shift_ready_ = true;
     center_frame_shift_consumed_ = true;
     ++center_shift_count_;
+}
+
+void DomainV1::invalidate_teleport_history(
+    const std::vector<std::uint32_t>& flags
+) {
+    if (flags.size() != partition_count_) {
+        throw std::logic_error("MC2 CPU teleport history flags do not match partitions");
+    }
+    for (std::size_t particle = 0; particle < particle_count_; ++particle) {
+        const auto partition = particle_partition_index_[particle];
+        if ((flags[partition] & 1u) == 0u) continue;
+        static_friction_[particle] = 0.0f;
+        if (particle < collision_friction_.size()) {
+            collision_friction_[particle] = 0.0f;
+        }
+        std::fill_n(world_normals_.data() + particle * 3, 3, 0.0f);
+        std::copy_n(
+            animated_base_world_positions_.data() + particle * 3,
+            3,
+            previous_animated_base_world_positions_.data() + particle * 3
+        );
+        std::copy_n(
+            animated_base_world_rotations_.data() + particle * 4,
+            4,
+            previous_animated_base_world_rotations_.data() + particle * 4
+        );
+        std::copy_n(
+            world_positions_.data() + particle * 3,
+            3,
+            post_old_positions_.data() + particle * 3
+        );
+        std::copy_n(
+            world_positions_.data() + particle * 3,
+            3,
+            substep_old_positions_.data() + particle * 3
+        );
+    }
+    external_debug_contacts_.clear();
+    external_debug_friction_before_.clear();
+    external_debug_friction_after_.clear();
+    external_debug_radii_.clear();
+    if (whole_domain_self_engine_ != nullptr) {
+        whole_domain_self_engine_->invalidate_history();
+        ++whole_domain_self_invalidation_count_;
+    }
+    whole_domain_self_last_candidate_count_ = 0;
+    whole_domain_self_last_contact_count_ = 0;
+}
+
+void DomainV1::enforce_teleport_reset_barrier() {
+    bool has_reset = false;
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        has_reset =
+            (task_reference_teleport_flags_[partition] & 4u) != 0u ||
+            (center_shift_teleport_flags_[partition] & 4u) != 0u;
+        if (has_reset) break;
+    }
+    if (!has_reset) return;
+    for (std::size_t particle = 0; particle < particle_count_; ++particle) {
+        const auto partition = particle_partition_index_[particle];
+        const bool reset =
+            (task_reference_teleport_flags_[partition] & 4u) != 0u ||
+            (center_shift_teleport_flags_[partition] & 4u) != 0u;
+        if (!reset) continue;
+        const auto position_offset = particle * 3;
+        const auto rotation_offset = particle * 4;
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            world_positions_.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            velocity_positions_.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            post_old_positions_.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_positions_.data() + position_offset,
+            3,
+            substep_old_positions_.data() + position_offset
+        );
+        std::copy_n(
+            animated_base_world_rotations_.data() + rotation_offset,
+            4,
+            world_rotations_.data() + rotation_offset
+        );
+        std::fill_n(state_velocities_.data() + position_offset, 3, 0.0f);
+        std::fill_n(real_velocities_.data() + position_offset, 3, 0.0f);
+        static_friction_[particle] = 0.0f;
+        if (particle < collision_friction_.size()) {
+            collision_friction_[particle] = 0.0f;
+        }
+        std::fill_n(world_normals_.data() + position_offset, 3, 0.0f);
+    }
 }
 
 void DomainV1::step_center(
@@ -1203,6 +1297,10 @@ void DomainV1::step_center(
     }
     center_old_world_positions_ = center_now_world_positions_;
     center_old_world_rotations_ = center_now_world_rotations_;
+    if (center_frame_shift_ready_) {
+        center_previous_frame_world_positions_ = center_shift_old_frame_positions_;
+        center_previous_frame_world_rotations_ = center_shift_old_frame_rotations_;
+    }
     center_frame_shift_ready_ = false;
     center_inertia_pending_ = true;
     ++center_step_count_;
@@ -3045,6 +3143,7 @@ void DomainV1::step_post(
     view.particle_speed_limit = particle_speed_limit;
     view.velocity_weight = velocity_weight;
     hotools::apply_post_step_mc2(view);
+    enforce_teleport_reset_barrier();
     substep_snapshot_ready_ = false;
     collision_state_ready_ = false;
     ++step_count_;
@@ -3115,6 +3214,7 @@ void DomainV1::step_post_owned_partitioned(
     view.particle_speed_limit_values = particle_speed_limit_values;
     view.velocity_weight_values = velocity_weight_values.data();
     hotools::apply_post_step_mc2(view);
+    enforce_teleport_reset_barrier();
     substep_snapshot_ready_ = false;
     collision_state_ready_ = false;
     ++step_count_;

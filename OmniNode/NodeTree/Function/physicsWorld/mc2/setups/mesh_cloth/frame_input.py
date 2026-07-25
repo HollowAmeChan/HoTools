@@ -155,6 +155,7 @@ def _read_evaluated_world_pose(
     base_obj: bpy.types.Object,
     depsgraph,
     expected_vertex_count: int,
+    source_world_matrix,
 ) -> tuple[np.ndarray, np.ndarray]:
     evaluated = base_obj.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
@@ -173,7 +174,9 @@ def _read_evaluated_world_pose(
         mesh.vertices.foreach_get("normal", normals)
         positions = positions.reshape((vertex_count, 3))
         normals = normals.reshape((vertex_count, 3))
-        matrix = matrix4_to_numpy_f32(evaluated.matrix_world)
+        # BasePose owns evaluated local deformation; the live source owns the
+        # component transform and final writeback coordinate system.
+        matrix = matrix4_to_numpy_f32(source_world_matrix)
         world_positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
         world_normals = normals @ matrix[:3, :3].T
         lengths = np.linalg.norm(world_normals, axis=1)
@@ -206,13 +209,14 @@ def read_base_pose_frame_snapshot(
             return cached
 
     depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
+    evaluated_source = source_obj.evaluated_get(depsgraph)
+    source_matrix = evaluated_source.matrix_world.copy()
     positions, normals = _read_evaluated_world_pose(
         base_obj,
         depsgraph,
         len(source_obj.data.vertices),
+        source_matrix,
     )
-    evaluated_source = source_obj.evaluated_get(depsgraph)
-    source_matrix = evaluated_source.matrix_world.copy()
     component_position, component_rotation, component_scale = (
         _decompose_component_transform(evaluated_source, source_matrix)
     )

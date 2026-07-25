@@ -260,6 +260,7 @@ def _run_world_case(
             "configured_blend_weight": [],
             "candidate_positions": [],
             "animated_positions": [],
+            "gn_offsets": [],
             "update_count": [],
             "depths": [],
             "move_mask": [],
@@ -657,6 +658,10 @@ def _run_world_case(
                     )
 
             assert writeback.writeback_gn_attributes(world) == 1
+            if capture_candidates:
+                observations["mesh_cloth"]["gn_offsets"].append(
+                    np.array(mixed_soak._mesh_offsets(mesh), dtype=np.float32, copy=True)
+                )
             bone_results = tuple(
                 world.result_streams.get("bone_transform", ())
             )
@@ -908,13 +913,10 @@ def center_local_controls():
         movement = first["movement_limited"][0][setup]
         movement_speed = np.abs(movement["step_x"]) * _FRAME_RATE
         active = movement_speed > 0.2001
-        if setup == "mesh_cloth":
-            np.testing.assert_allclose(movement["inertia_x"], 0.0, atol=2.0e-6)
-        else:
-            assert np.max(np.abs(movement["inertia_x"])) > 1.0e-4
-            assert np.max(np.abs(movement["inertia_x"])) < np.max(
-                np.abs(movement["step_x"])
-            )
+        assert np.max(np.abs(movement["inertia_x"])) > 1.0e-4
+        assert np.max(np.abs(movement["inertia_x"])) < np.max(
+            np.abs(movement["step_x"])
+        )
     print("PASS 产品Center Local惯性/平移与旋转限速")
 
 
@@ -1009,7 +1011,7 @@ def center_teleport_controls():
         return _run_world_case(
             f"Teleport{teleport_mode}",
             run_index,
-            world_inertia=0.0,
+            world_inertia=1.0,
             movement_inertia_smoothing=0.0,
             movement_speed_limit=-1.0,
             rotation_speed_limit=-1.0,
@@ -1019,7 +1021,6 @@ def center_teleport_controls():
             read_center_debug=True,
             capture_candidates=True,
             same_frame_probe=True,
-            zero_substep_frame=301,
             source_scales=(
                 (0.75, 0.75, 0.75),
                 (0.5, 0.5, 0.5),
@@ -1038,14 +1039,9 @@ def center_teleport_controls():
             right = second[mode][0][setup]
             for field in left:
                 np.testing.assert_array_equal(left[field], right[field])
-            flags = np.asarray(left["teleport_flags"], dtype=np.uint32)
-            task_flags = np.asarray(left["task_flags"], dtype=np.uint32)
-            assert not np.any(task_flags), (
-                mode,
-                setup,
-                task_flags,
-                np.asarray(left["task_measured_distance"], dtype=np.float32),
-            )
+            flags = np.asarray(left["task_flags"], dtype=np.uint32)
+            center_flags = np.asarray(left["teleport_flags"], dtype=np.uint32)
+            assert not np.any(center_flags), (mode, setup, center_flags)
             assert np.any((flags & 1) != 0), (mode, setup, flags)
             if mode == 1:
                 assert np.all((flags & 2) == 0)
@@ -1062,45 +1058,80 @@ def center_teleport_controls():
                 assert np.all((flags & 4) == 0)
                 assert np.any((flags & 2) != 0), (mode, setup, flags)
             measured = np.asarray(
-                left["teleport_measured_distance"], dtype=np.float32
+                left["task_measured_distance"], dtype=np.float32
             )
             threshold = np.asarray(
-                left["teleport_distance_threshold"], dtype=np.float32
-            )
-            measured_rotation = np.asarray(
-                left["teleport_measured_rotation_degrees"], dtype=np.float32
+                left["task_distance_threshold"], dtype=np.float32
             )
             triggered = (flags & 1) != 0
             assert np.all(
-                (measured[triggered] >= threshold[triggered] - 1.0e-6)
-                | (measured_rotation[triggered] >= 30.0 - 1.0e-5)
+                measured[triggered] >= threshold[triggered] - 1.0e-6
             ), (mode, setup)
             reset_index = int(np.flatnonzero((flags & 4) != 0)[0]) if mode == 1 else None
             if reset_index is not None:
                 frame_index = reset_index + 1
-                assert int(left["update_count"][frame_index]) == 0
+                assert int(left["update_count"][frame_index]) == 3
                 np.testing.assert_allclose(
                     left["candidate_positions"][frame_index],
                     left["animated_positions"][frame_index],
                     rtol=0.0,
                     atol=1.0e-6,
                 )
+                if setup == "mesh_cloth":
+                    np.testing.assert_allclose(
+                        left["gn_offsets"][frame_index],
+                        0.0,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
             keep_index = int(np.flatnonzero((flags & 2) != 0)[0]) if mode == 2 else None
             if keep_index is not None:
                 frame_index = keep_index + 1
-                assert int(left["update_count"][frame_index]) == 0
+                assert int(left["update_count"][frame_index]) == 3
                 expected = np.array(
                     left["candidate_positions"][frame_index - 1],
                     dtype=np.float32,
                     copy=True,
                 )
-                expected[:, 0] += float(left["shift_x"][keep_index])
+                delta = (
+                    left["task_reference_position"][keep_index]
+                    - left["task_old_reference_position"][keep_index]
+                )
+                expected += delta
+                fixed_mask = ~left["move_mask"][0].astype(bool)
+                assert int(np.count_nonzero(fixed_mask)) > 0
                 np.testing.assert_allclose(
-                    left["candidate_positions"][frame_index],
-                    expected,
+                    left["candidate_positions"][frame_index][fixed_mask],
+                    expected[fixed_mask],
                     rtol=0.0,
                     atol=1.0e-6,
+                    err_msg=(
+                        f"mode={mode} setup={setup} shift="
+                        f"{delta.tolist()}"
+                    ),
                 )
+                movable_residual = np.linalg.norm(
+                    left["candidate_positions"][frame_index][~fixed_mask]
+                    - expected[~fixed_mask],
+                    axis=1,
+                )
+                assert float(np.max(movable_residual, initial=0.0)) < 0.1
+                if setup == "mesh_cloth":
+                    np.testing.assert_allclose(
+                        left["gn_offsets"][frame_index][fixed_mask],
+                        left["gn_offsets"][frame_index - 1][fixed_mask],
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    assert float(np.max(np.linalg.norm(
+                        left["gn_offsets"][frame_index]
+                        - left["gn_offsets"][frame_index - 1],
+                        axis=1,
+                    ), initial=0.0)) < 0.1
+            invalidations = np.asarray(
+                left["task_self_invalidation_count"], dtype=np.int64
+            )
+            assert int(invalidations[-1]) == 1, (mode, setup, invalidations)
             assert np.all(np.isfinite(left["candidate_positions"]))
     print(
         "PASS 产品Center Teleport Reset/Keep与确定性："
@@ -1195,8 +1226,6 @@ def _run_task_reference_partition_scope(run_index: int):
             bone_soak._set_frame(world, frame, generation)
             world.frame_context.raw_dt = 1.0 / _FRAME_RATE
             world.frame_context.dt = 1.0 / _FRAME_RATE
-            if frame == 301:
-                world.frame_context.time_scale = 0.0
             world.collider_snapshot = {"frame": frame, "colliders": []}
             returned, ready, status = nodes.physicsMC2Step(
                 world,
@@ -1327,7 +1356,7 @@ def task_reference_partition_scope_controls():
         np.testing.assert_array_equal(following["flags"], (0, 0))
         assert event["teleport_count"] == 1
         assert event["self_invalidation_count"] == 1
-        assert event["update_count"] == 0
+        assert event["update_count"] == 3
         expected_references = []
         for partition_index in range(2):
             indices = np.flatnonzero(
@@ -1351,20 +1380,25 @@ def task_reference_partition_scope_controls():
             event["reference_positions"][0]
             - event["old_reference_positions"][0]
         )
+        moved_fixed = moved & ((event["particle_attributes"] & 1) != 0)
+        moved_dynamic = moved & ~moved_fixed
         np.testing.assert_allclose(
-            event["positions"][moved],
-            previous["positions"][moved] + delta,
+            event["positions"][moved_fixed],
+            previous["positions"][moved_fixed] + delta,
             rtol=0.0,
             atol=1.0e-6,
         )
-        np.testing.assert_array_equal(
-            event["positions"][untouched], previous["positions"][untouched]
+        moved_residual = np.linalg.norm(
+            event["positions"][moved_dynamic]
+            - (previous["positions"][moved_dynamic] + delta),
+            axis=1,
         )
-        np.testing.assert_array_equal(
-            event["velocities"], previous["velocities"]
-        )
-        np.testing.assert_array_equal(
-            event["real_velocities"], previous["real_velocities"]
+        assert float(np.max(moved_residual, initial=0.0)) < 0.1
+        np.testing.assert_allclose(
+            event["positions"][untouched],
+            previous["positions"][untouched],
+            rtol=0.0,
+            atol=1.0e-6,
         )
         np.testing.assert_allclose(
             event["velocity_reference_positions"][moved],

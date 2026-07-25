@@ -880,7 +880,7 @@ def test_native_cpu_domain_commits_center_frame_shift_transaction():
         domain.dispose()
 
 
-def test_native_task_reference_teleport_ignores_object_only_motion():
+def test_native_task_reference_teleport_uses_fixed_world_motion():
     compiled = _compiled(task_overrides={
         "teleport_mode": 2, "teleport_distance": 0.1,
     })
@@ -900,11 +900,17 @@ def test_native_task_reference_teleport_ignores_object_only_motion():
     )
     try:
         domain.update_frame(first)
+        before = domain.read_output().world_positions.copy()
         domain.update_frame(second)
         domain.step_task_reference_teleport()
         state = domain.read_task_reference_teleport_state()
-        np.testing.assert_array_equal(state["flags"], (0,))
-        np.testing.assert_allclose(state["measured_distances"], (0.0,), atol=1.0e-6)
+        np.testing.assert_array_equal(state["flags"], (3,))
+        np.testing.assert_allclose(state["measured_distances"], (3.0,), atol=1.0e-6)
+        np.testing.assert_allclose(
+            domain.read_output().world_positions,
+            before + offset,
+            atol=1.0e-6,
+        )
         assert int(state["reference_indices"][0]) == 0
         np.testing.assert_allclose(
             np.linalg.norm(state["old_reference_rotations_xyzw"], axis=1),
@@ -1029,7 +1035,7 @@ def test_native_task_reference_reset_is_exact_and_invalidates_histories_once():
 
 
 def task_reference_teleport_contracts():
-    test_native_task_reference_teleport_ignores_object_only_motion()
+    test_native_task_reference_teleport_uses_fixed_world_motion()
     test_native_task_reference_keep_uses_one_fixed_reference_and_partition_scope()
     test_native_task_reference_reset_is_exact_and_invalidates_histories_once()
 

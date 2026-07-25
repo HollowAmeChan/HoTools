@@ -831,62 +831,48 @@ bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view) {
             ? scale_length / initial_scale_length : 1.0f;
         view.output_distance_thresholds[partition] =
             std::max(view.teleport_distances[partition] * std::fabs(scale_ratio), 0.0f);
-        if (reference < 0) continue;
-        const auto r3 = static_cast<std::int64_t>(reference) * 3;
-        const auto r4 = static_cast<std::int64_t>(reference) * 4;
-        const float* old_reference = view.previous_animated_positions + r3;
-        const float* current_reference = view.animated_positions + r3;
+        const auto r3 = static_cast<std::int64_t>(std::max(reference, 0)) * 3;
+        const auto r4 = static_cast<std::int64_t>(std::max(reference, 0)) * 4;
+        const float* old_reference = reference >= 0
+            ? view.previous_animated_positions + r3
+            : view.old_partition_positions + p3;
+        const float* current_reference = reference >= 0
+            ? view.animated_positions + r3
+            : view.partition_positions + p3;
+        const float* old_reference_rotation = reference >= 0
+            ? view.previous_animated_rotations + r4
+            : view.old_partition_rotations + p4;
+        const float* current_reference_rotation = reference >= 0
+            ? view.animated_rotations + r4
+            : view.partition_rotations + p4;
         std::copy_n(old_reference, 3, view.output_old_reference_positions + p3);
-        const float component_delta[3] = {
-            view.partition_positions[p3 + 0] - view.old_partition_positions[p3 + 0],
-            view.partition_positions[p3 + 1] - view.old_partition_positions[p3 + 1],
-            view.partition_positions[p3 + 2] - view.old_partition_positions[p3 + 2],
-        };
-        const float neutral_reference[3] = {
-            current_reference[0] - component_delta[0],
-            current_reference[1] - component_delta[1],
-            current_reference[2] - component_delta[2],
-        };
-        std::copy_n(neutral_reference, 3, view.output_reference_positions + p3);
-        const float raw_distance = length3(
+        std::copy_n(current_reference, 3, view.output_reference_positions + p3);
+        const float measured_distance = length3(
             current_reference[0] - old_reference[0],
             current_reference[1] - old_reference[1],
             current_reference[2] - old_reference[2]
         );
-        const float measured_distance = raw_distance > kMc2Epsilon ? length3(
-            neutral_reference[0] - old_reference[0],
-            neutral_reference[1] - old_reference[1],
-            neutral_reference[2] - old_reference[2]
-        ) : 0.0f;
-        float old_component_inverse[4];
-        float component_inverse[4];
-        float old_local_rotation[4];
-        float local_rotation[4];
-        float old_local_inverse[4];
-        quat_inverse(view.old_partition_rotations + p4, old_component_inverse);
-        quat_inverse(view.partition_rotations + p4, component_inverse);
-        quat_multiply(old_component_inverse, view.previous_animated_rotations + r4, old_local_rotation);
-        quat_multiply(component_inverse, view.animated_rotations + r4, local_rotation);
-        quat_inverse(old_local_rotation, old_local_inverse);
         std::copy_n(
-            old_local_rotation,
+            old_reference_rotation,
             4,
             view.output_old_reference_rotations + p4
         );
         std::copy_n(
-            local_rotation,
+            current_reference_rotation,
             4,
             view.output_reference_rotations + p4
         );
+        float old_reference_inverse[4];
+        quat_inverse(old_reference_rotation, old_reference_inverse);
         quat_multiply(
-            local_rotation,
-            old_local_inverse,
+            current_reference_rotation,
+            old_reference_inverse,
             delta_rotations.data() + p4
         );
         const float measured_rotation = 2.0f * std::acos(clamp_float(
             quat_dot_abs(
-                old_local_rotation,
-                local_rotation
+                old_reference_rotation,
+                current_reference_rotation
             ),
             0.0f,
             1.0f
