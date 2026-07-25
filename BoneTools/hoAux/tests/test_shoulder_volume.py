@@ -15,12 +15,15 @@ import hoAux
 from hoAux.ir.blender_reader import snapshot_armature
 from hoAux.joint_frame import build_joint_frame
 from hoAux.modules import shoulder_volume
-from hoAux.name_registry import iter_hoaux_bones
+from hoAux.generation import (
+    GenerationTransaction,
+    SharedDirectionSpec,
+    iter_hoaux_bones,
+    validate_shared_direction,
+)
 from hoAux.operations import remove_scope
-from hoAux.preview_draw import PreviewScene, ROLE_LINE_STYLES
+from hoAux.preview import PreviewScene, ROLE_LINE_STYLES
 from hoAux.properties import PG_HoAuxBoneInfo
-from hoAux.shared_direction import SharedDirectionSpec, validate_shared_direction
-from hoAux.transaction import GenerationTransaction
 
 
 class _TestBoneProps(PropertyGroup):

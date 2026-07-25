@@ -1,4 +1,261 @@
-"""Concrete Blender creation helpers shared by HoAux modules."""
+"""HoAux creation, naming, collections, shared bones, and rollback."""
+
+from dataclasses import dataclass
+
+import bpy
+
+from .properties import ensure_rig_id
+
+
+COLLECTION_KEY_PROP = "hoaux_key"
+COLLECTION_RIG_PROP = "hoaux_rig_id"
+
+
+def iter_hoaux_bones(armature_data):
+    for bone in armature_data.bones:
+        props = getattr(bone, "hotools_boneprops", None)
+        info = getattr(props, "hoAux", None) if props else None
+        if info is not None and info.isHoAuxBone:
+            yield bone
+
+
+def find_bone_by_key(armature_data, name_key: str):
+    if not name_key:
+        return None
+    for bone in iter_hoaux_bones(armature_data):
+        if bone.hotools_boneprops.hoAux.nameKey == name_key:
+            return bone
+    return None
+
+
+def allocate_bone_name(armature_data, preferred_name: str) -> str:
+    if armature_data.bones.get(preferred_name) is None:
+        return preferred_name
+    index = 1
+    while armature_data.bones.get(f"{preferred_name}.{index:03d}") is not None:
+        index += 1
+    return f"{preferred_name}.{index:03d}"
+
+
+def find_collection(armature_data, collection_key: str):
+    collections = getattr(armature_data, "collections_all", armature_data.collections)
+    for collection in collections:
+        if collection.get(COLLECTION_KEY_PROP) == collection_key:
+            return collection
+    return None
+
+
+def ensure_collection(
+    armature_data,
+    collection_key: str,
+    preferred_name: str,
+    parent=None,
+    *,
+    visible_on_create=True,
+):
+    collection = find_collection(armature_data, collection_key)
+    if collection is None:
+        collection = armature_data.collections.new(preferred_name)
+        collection[COLLECTION_KEY_PROP] = collection_key
+        collection[COLLECTION_RIG_PROP] = ensure_rig_id(armature_data)
+        collection.is_visible = visible_on_create
+    if parent is not None and collection.parent != parent:
+        collection.parent = parent
+    return collection
+
+
+def ensure_base_tree(armature_data):
+    return {
+        "root": ensure_collection(
+            armature_data,
+            "HOAUX:ROOT",
+            "HoAux",
+            visible_on_create=True,
+        )
+    }
+
+
+def collections_for_bone(armature_data, info):
+    root = ensure_base_tree(armature_data)["root"]
+    tag = info.roleTag if info.roleTag in {"DEF", "TRK", "DIR"} else "OTHER"
+    return [
+        ensure_collection(
+            armature_data,
+            f"HOAUX:TAG:{tag}",
+            tag,
+            root,
+            visible_on_create=tag == "DEF",
+        )
+    ]
+
+
+def assign_bone(armature_data, bone):
+    info = bone.hotools_boneprops.hoAux
+    if not info.isHoAuxBone:
+        return []
+    assigned = []
+    for collection in collections_for_bone(armature_data, info):
+        collection.assign(bone)
+        assigned.append(collection)
+    return assigned
+
+
+def restore_armature_mode(obj, desired_mode):
+    if obj.mode == desired_mode:
+        return
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    if obj.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    if desired_mode != "OBJECT":
+        bpy.ops.object.mode_set(mode=desired_mode)
+
+
+class GenerationTransaction:
+    def __init__(self, armature_object):
+        self.armature_object = armature_object
+        self.original_mode = armature_object.mode
+        self.created_bones = []
+        self.created_constraints = []
+        self.created_drivers = []
+        self._committed = False
+
+    def track_bone(self, bone_name):
+        self.created_bones.append(bone_name)
+
+    def track_constraint(self, owner_name, constraint):
+        self.created_constraints.append((owner_name, constraint))
+
+    def track_driver(self, fcurve):
+        self.created_drivers.append(fcurve)
+
+    def commit(self):
+        self._committed = True
+
+    def rollback(self):
+        obj = self.armature_object
+        animation_data = obj.animation_data
+        if animation_data is not None:
+            for fcurve in reversed(self.created_drivers):
+                try:
+                    animation_data.drivers.remove(fcurve)
+                except (ReferenceError, RuntimeError):
+                    pass
+
+        for owner_name, constraint in reversed(self.created_constraints):
+            pose_bone = obj.pose.bones.get(owner_name)
+            if pose_bone is None:
+                continue
+            try:
+                pose_bone.constraints.remove(constraint)
+            except (ReferenceError, RuntimeError):
+                pass
+
+        if self.created_bones:
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            if obj.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.ops.object.mode_set(mode="EDIT")
+            try:
+                for bone_name in reversed(self.created_bones):
+                    edit_bone = obj.data.edit_bones.get(bone_name)
+                    if edit_bone is not None:
+                        obj.data.edit_bones.remove(edit_bone)
+            finally:
+                bpy.ops.object.mode_set(mode="OBJECT")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            if not self._committed:
+                self.rollback()
+        finally:
+            self.restore_original_mode()
+        return False
+
+    def restore_original_mode(self):
+        restore_armature_mode(self.armature_object, self.original_mode)
+
+
+@dataclass(frozen=True)
+class SharedDirectionSpec:
+    parent_name: str
+    source_name: str
+    head: object
+    tail: object
+    roll_reference: object
+    owner_space: str = "LOCAL"
+    target_space: str = "LOCAL"
+    mix_mode: str = "REPLACE"
+    influence: float = 0.5
+
+
+def _close_vector(actual, expected, tolerance):
+    return (actual - expected).length <= tolerance
+
+
+def find_shared_direction(armature_data, shared_key):
+    if not shared_key:
+        return None
+    matches = [
+        bone
+        for bone in iter_hoaux_bones(armature_data)
+        if bone.hotools_boneprops.hoAux.roleTag == "DIR"
+        and bone.hotools_boneprops.hoAux.sharedKey == shared_key
+    ]
+    if len(matches) > 1:
+        names = ", ".join(bone.name for bone in matches)
+        raise ValueError(f"共享 DIR 键 {shared_key} 存在多个实例：{names}")
+    return matches[0] if matches else None
+
+
+def validate_shared_direction(armature_object, bone, spec, *, tolerance=1e-5):
+    errors = []
+    if bone.parent is None or bone.parent.name != spec.parent_name:
+        errors.append(f"parent={bone.parent.name if bone.parent else '<none>'}")
+    if not _close_vector(bone.head_local, spec.head, tolerance):
+        errors.append("head")
+    if not _close_vector(bone.tail_local, spec.tail, tolerance):
+        errors.append("tail")
+    direction = (bone.tail_local - bone.head_local).normalized()
+    actual_roll = bone.matrix_local.to_3x3().col[2]
+    expected_roll = spec.roll_reference - direction * spec.roll_reference.dot(direction)
+    if expected_roll.length <= tolerance:
+        errors.append("rollReferenceDegenerate")
+    elif actual_roll.normalized().dot(expected_roll.normalized()) < 1.0 - tolerance:
+        errors.append("roll")
+
+    pose_bone = armature_object.pose.bones.get(bone.name)
+    constraints = [] if pose_bone is None else [
+        constraint
+        for constraint in pose_bone.constraints
+        if constraint.type == "COPY_ROTATION"
+        and getattr(constraint, "target", None) == armature_object
+        and getattr(constraint, "subtarget", "") == spec.source_name
+    ]
+    if len(constraints) != 1:
+        errors.append(f"copyRotationCount={len(constraints)}")
+    else:
+        constraint = constraints[0]
+        for field_name, expected in (
+            ("owner_space", spec.owner_space),
+            ("target_space", spec.target_space),
+            ("mix_mode", spec.mix_mode),
+        ):
+            actual = getattr(constraint, field_name)
+            if actual != expected:
+                errors.append(f"{field_name}={actual}")
+        if abs(constraint.influence - spec.influence) > tolerance:
+            errors.append(f"influence={constraint.influence:.6g}")
+
+    if errors:
+        raise ValueError(
+            f"共享 DIR {bone.name} 与请求签名不一致：{', '.join(errors)}"
+        )
+    return bone
 
 
 def create_edit_bone(edit_bones, plan, actual_name):

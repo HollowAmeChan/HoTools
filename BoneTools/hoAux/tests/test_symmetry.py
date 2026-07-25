@@ -12,8 +12,8 @@ if str(BONE_TOOLS_DIR) not in sys.path:
 
 import hoAux
 from boneUtils import BoneUtils
-from hoAux.module_registry import get_definition
-from hoAux.name_registry import iter_hoaux_bones
+from hoAux.module_base import get_definition
+from hoAux.generation import iter_hoaux_bones
 from hoAux.operations import remove_scope
 from hoAux.properties import PG_HoAuxBoneInfo
 

@@ -13,9 +13,9 @@ if str(BONE_TOOLS_DIR) not in sys.path:
 import hoAux
 from hoAux.ir.blender_reader import snapshot_armature
 from hoAux.joint_frame import build_joint_frame
-from hoAux.module_registry import get_definition
+from hoAux.module_base import get_definition
 from hoAux.modules import elbow_volume
-from hoAux.name_registry import iter_hoaux_bones
+from hoAux.generation import iter_hoaux_bones
 from hoAux.operations import remove_scope
 from hoAux.properties import PG_HoAuxBoneInfo
 

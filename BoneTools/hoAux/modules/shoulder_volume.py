@@ -9,33 +9,32 @@ from bpy.props import BoolProperty, FloatProperty
 from bpy.types import PropertyGroup
 from mathutils import Vector
 
-from ..collection_registry import assign_bone
 from ..generation import (
+    GenerationTransaction,
+    SharedDirectionSpec,
     add_copy_location,
     add_copy_rotation,
     add_transform_driver,
+    allocate_bone_name,
+    assign_bone,
     create_edit_bone,
+    find_shared_direction,
+    iter_hoaux_bones,
     response_expression,
+    validate_shared_direction,
     write_bone_metadata,
 )
-from ..module_spec import PlannedBone
 from ..joint_frame import build_joint_frame
 from ..module_base import (
     ModuleDefinition,
+    PlannedBone,
     generate_role_sets,
     preview_toggle,
     refresh_preview,
     require_side,
     role_name_sets,
 )
-from ..name_registry import allocate_bone_name, iter_hoaux_bones
 from ..properties import ensure_rig_id
-from ..shared_direction import (
-    SharedDirectionSpec,
-    find_shared_direction,
-    validate_shared_direction,
-)
-from ..transaction import GenerationTransaction
 
 
 MODULE_TYPE = "SHOULDER_VOLUME"
@@ -387,7 +386,7 @@ class ShoulderVolumeDefinition(ModuleDefinition):
         )
 
     def build_preview_scene(self, context):
-        from ..preview_draw import PreviewScene, ROLE_LINE_STYLES
+        from ..preview import PreviewScene, ROLE_LINE_STYLES
 
         obj = context.object
         root = context.scene.hoaux_settings

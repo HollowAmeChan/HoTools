@@ -9,7 +9,7 @@ if str(BONE_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(BONE_TOOLS_DIR))
 
 import hoAux
-from hoAux.preview_draw import ViewportPreview
+from hoAux.preview import ViewportPreview
 
 
 hoAux.register()

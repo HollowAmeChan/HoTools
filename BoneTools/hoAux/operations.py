@@ -5,7 +5,7 @@ from bpy.props import StringProperty
 from bpy.types import Operator
 
 from .ir.blender_reader import bone_name_from_path
-from .name_registry import iter_hoaux_bones
+from .generation import iter_hoaux_bones
 
 
 class HoAuxRemovalBlockedError(RuntimeError):

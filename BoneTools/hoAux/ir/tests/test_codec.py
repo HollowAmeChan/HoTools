@@ -8,8 +8,7 @@ if str(HOAUX_DIR) not in sys.path:
     sys.path.insert(0, str(HOAUX_DIR))
 
 from ir.model import HoAuxSourceIR, ResourceEdge, ResourceRecord
-from ir.parser import HoAuxIRParseError, parse_json
-from ir.writer import to_dict, to_json
+from ir.codec import HoAuxIRParseError, parse_json, to_dict, to_json
 
 
 class HoAuxCodecTests(unittest.TestCase):

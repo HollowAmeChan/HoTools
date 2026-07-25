@@ -3,11 +3,14 @@
 import json
 import re
 
-from ..collection_registry import COLLECTION_KEY_PROP
-from ..name_registry import iter_hoaux_bones
-from .capabilities import derive_capabilities
-from .graph import build_reverse_edges
-from .model import HoAuxSourceIR, ResourceEdge, ResourceRecord
+from ..generation import COLLECTION_KEY_PROP, iter_hoaux_bones
+from .model import (
+    HoAuxSourceIR,
+    ResourceEdge,
+    ResourceRecord,
+    build_reverse_edges,
+    derive_capabilities,
+)
 
 
 _POSE_BONE_RE = re.compile(r'pose\.bones\["((?:\\.|[^"\\])*)"\]')

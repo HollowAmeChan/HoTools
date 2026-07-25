@@ -8,25 +8,26 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty
 from bpy.types import PropertyGroup
 from mathutils import Vector
 
-from ..collection_registry import assign_bone
 from ..generation import (
+    GenerationTransaction,
     add_copy_rotation,
     add_stretch_to,
+    allocate_bone_name,
+    assign_bone,
     create_edit_bone,
+    iter_hoaux_bones,
     write_bone_metadata,
 )
 from ..module_base import (
     ModuleDefinition,
+    PlannedBone,
     generate_role_sets,
     preview_toggle,
     refresh_preview,
     require_side,
     role_name_sets,
 )
-from ..module_spec import PlannedBone
-from ..name_registry import allocate_bone_name, iter_hoaux_bones
 from ..properties import ensure_rig_id
-from ..transaction import GenerationTransaction
 
 
 def _settings_annotations(module_type):
@@ -317,7 +318,7 @@ class TwistDefinition(ModuleDefinition):
         )
 
     def build_preview_scene(self, context):
-        from ..preview_draw import LineStyle, PreviewScene, ROLE_LINE_STYLES
+        from ..preview import LineStyle, PreviewScene, ROLE_LINE_STYLES
 
         root = context.scene.hoaux_settings
         obj = context.object

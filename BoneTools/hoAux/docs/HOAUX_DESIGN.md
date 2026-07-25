@@ -808,40 +808,26 @@ BoneTools/hoAux/
   __init__.py
   panel.py
   properties.py
-  name_registry.py
-  collection_registry.py
-  manifest.py
+  operations.py
+  generation.py
+  module_base.py
+  joint_frame.py
   preview.py
-  transaction.py
-  shared_direction.py
-  module_spec.py
   modules/
-    wrist_volume.py
-    forearm_bulge.py
-    forearm_twist.py
+    __init__.py
+    limb_twist.py
     elbow_volume.py
-    upper_arm_bulge.py
-    upper_arm_twist.py
-    upper_arm_slide.py
     shoulder_volume.py
-  pipelines/
-    whole_arm.py
   ir/
     __init__.py
     model.py
-    schema.py
-    writer.py
-    parser.py
-    validator.py
-    graph.py
-    capabilities.py
+    codec.py
     blender_reader.py
-    resolver.py
-    export_binding.py
-    coordinate.py
-    reference_solver.py
     tests/
   tests/
+  docs/
+    HOAUX_DESIGN.md
+    UNITY_IR_FEASIBILITY.md
 ```
 
 普通 `auxBone` 和 `hoAux` 不互相导入具体生成器。可共享的只有无状态数学、Name Allocator、Blender 上下文工具和 BoneTools 级预览工具。

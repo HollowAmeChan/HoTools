@@ -6,11 +6,10 @@ from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator
 
 from .ir.blender_reader import snapshot_armature
-from .ir.writer import to_json
-from .name_registry import iter_hoaux_bones
+from .ir.codec import to_json
+from .generation import iter_hoaux_bones, restore_armature_mode
 from .operations import scope_bones, scope_is_enabled
-from .module_registry import definitions, get_definition
-from .transaction import restore_armature_mode
+from .module_base import definitions, get_definition
 
 
 class OT_HoAuxCopySourceIR(Operator):
