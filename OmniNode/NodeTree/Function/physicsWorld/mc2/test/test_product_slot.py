@@ -328,7 +328,6 @@ def _empty_collider_frame(frame):
         collider_old_segment_a=np.empty((0, 3), dtype=np.float32),
         collider_old_segment_b=np.empty((0, 3), dtype=np.float32),
         collider_radii=np.empty(0, dtype=np.float32),
-        frame_signature="e" * 64,
     )
 
 

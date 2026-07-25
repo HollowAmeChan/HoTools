@@ -111,7 +111,7 @@ MC2已完成E7-CPU、E7-S和backend-neutral P6，当前执行E6开工前的host-
 22. 产品批处理已恢复MC2请求式热点计时：节点开关关闭时仍走原完整pipeline与无计时native ABI，且不创建计时资源；开启时分别报告输入、采集、同步、Frame、求解、结果构造、事务发布、Host Frame子阶段、CPU原子pass，以及整域self内部的Primitive/Grid/相交/Candidate/Contact/四轮求解。Host Frame继续细分BasePose读取、Anchor/Row、Mesh朝向、Partition快照、Domain Packet、scheduler、collider打包、发布校验、native上传和状态提交。计时不主动请求debug确认或快照；同步统计读取owner真实action，普通热帧不再误报为`updated`。
 23. 1760粒子/495 collider性能回归排查发现的authoring语义风险已经关闭：Mesh产品外碰mask只读取原始`collided_by_groups`，仅域内self的`collision_mask`并入自身主组；修正后的隔离Blender 5.2代表场景已完成600帧外碰范围、摩擦和确定性验收。
 24. E6前置结果路径审计已确认native输出本来就是连续NumPy数组；Domain output现在直接执行一次受控只读拷贝，不再逐标量转换为Python tuple后重建数组。多目标事务、logical顺序、有限值和只读所有权合同不变；静态target split实测成本低于当前优化阈值，不为此增加缓存owner。
-25. Host Frame细分确认大规模外碰场景首先受Python collider vector3短命数组支配；公共Sphere/Capsule打包现用标量float32 tuple完成校验和量化，不再为每个当前/历史向量创建NumPy小数组。Plane归一化和Box轴计算仍保持原float32 NumPy运算顺序，最终SoA、摘要、过滤和只读合同不变。
+25. Host Frame细分确认大规模外碰场景首先受Python collider vector3短命数组支配；公共Sphere/Capsule打包现用标量float32 tuple完成校验和量化，不再为每个当前/历史向量创建NumPy小数组。Plane归一化和Box轴计算仍保持原float32 NumPy运算顺序，最终SoA、过滤和只读合同不变。`frame_signature`继续提供同一SHA256观察身份，但改为debug/test实际读取属性时才计算，普通Frame不再常驻扫描九组SoA。
 
 此前 E7-S forwarder 批次删除了 Mesh domain draft 纯类型别名、两个 setup 名称 wrapper、产品 solver 私有 slot-id wrapper、只供测试使用的单 fragment compiler wrapper，以及两个零消费者派生/registry 复制入口；统一 collector/collider/slot identity、集合 compiler、原始 final-proxy records 与 setup registry/getter 直接成为唯一入口。该批时生产模块为 69 个，已分类 forwarder 由 84 降为 78；Blender 5.2 mixed-output 900 帧 digest 不变，Domain E3 golden 与 Mesh final-proxy Tier A 全部通过。
 

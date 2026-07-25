@@ -1480,7 +1480,6 @@ def test_native_cpu_compiled_external_collision_filters_each_partition():
         collider_old_segment_a=center,
         collider_old_segment_b=center,
         collider_radii=np.asarray((2.0,), dtype=np.float32),
-        frame_signature="0" * 64,
     )
     try:
         domain.update_frame(frame)

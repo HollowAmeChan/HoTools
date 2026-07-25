@@ -110,7 +110,6 @@ class MC2DomainColliderFrameSpec:
     collider_old_segment_a: np.ndarray
     collider_old_segment_b: np.ndarray
     collider_radii: np.ndarray
-    frame_signature: str
 
     def __post_init__(self) -> None:
         if type(self.frame) is not int:
@@ -144,12 +143,8 @@ class MC2DomainColliderFrameSpec:
             raise ValueError("domain collider groups must contain one positive bit")
         if np.any(radii < 0.0):
             raise ValueError("domain collider radii cannot be negative")
-        signature = str(self.frame_signature or "")
-        if len(signature) != 64:
-            raise ValueError("domain collider frame signature must contain 64 characters")
         object.__setattr__(self, "source_pointers", pointers)
         object.__setattr__(self, "collider_keys", keys)
-        object.__setattr__(self, "frame_signature", signature)
         for name, value in zip((
             "collider_types", "collider_group_bits", "collider_centers",
             "collider_segment_a", "collider_segment_b", "collider_old_centers",
@@ -160,6 +155,19 @@ class MC2DomainColliderFrameSpec:
     @property
     def collider_count(self) -> int:
         return int(self.collider_types.shape[0])
+
+    @property
+    def frame_signature(self) -> str:
+        """Compute the debug identity only when an observer requests it."""
+
+        digest = hashlib.sha256()
+        digest.update(np.asarray(
+            (self.frame, *self.source_pointers), dtype=np.int64
+        ).tobytes())
+        digest.update("\0".join(self.collider_keys).encode("utf-8"))
+        for value in self.native_mapping().values():
+            digest.update(value.tobytes())
+        return digest.hexdigest()
 
     def native_mapping(self) -> dict[str, np.ndarray]:
         return {
@@ -364,17 +372,11 @@ def build_mc2_domain_collider_frame(
         allowed_types=allowed_types,
     )
     frame = int(snapshot.get("frame", -1) or -1)
-    digest = hashlib.sha256()
-    digest.update(np.asarray((frame, *source_pointers), dtype=np.int64).tobytes())
-    digest.update("\0".join(keys).encode("utf-8"))
-    for value in arrays:
-        digest.update(value.tobytes())
     return MC2DomainColliderFrameSpec(
         frame,
         source_pointers,
         keys,
         *arrays,
-        digest.hexdigest(),
     )
 
 
