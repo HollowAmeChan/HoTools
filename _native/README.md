@@ -126,7 +126,7 @@ _native/
 
 **Python 侧**：读 Blender 数据 → 整理连续数组 → 管理缓存和脏标记 → 写回场景对象
 
-**C++ 侧**：MC2 约束迭代、Jolt 刚体步进、高频碰撞内核；保持 ABI 稳定，字段/数组形状改动必须通知 Python 侧同步
+**Native 侧**：MC2 CPU 约束迭代、Jolt 刚体步进和高频碰撞内核；可选 GPU provider 必须与 CPU owner 独立。保持 ABI 稳定，字段/数组形状改动必须通知 Python 侧同步
 
 ---
 
@@ -141,4 +141,5 @@ _native/
 - `OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - `OmniNode/doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - `OmniNode/doc/MC2_BLUEPRINT.md`
+- `OmniNode/doc/MC2_GPU_BACKEND_DESIGN.md`
 - `OmniNode/ARCHITECTURE.md`

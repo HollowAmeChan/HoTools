@@ -6,16 +6,16 @@
 
 - **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
 - **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
-- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定产品/实现合同写`MC2_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
 - **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
 
 ## 文档路由
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
-- **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界、debug、性能与扩展合同的稳定入口。
+- **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界和debug的稳定入口；E6实现只路由到`MC2_GPU_BACKEND_DESIGN.md`。
 - **`PHYSICS_BAKE_NODE_BLUEPRINT.md`（通用 Bake 蓝图）**：Physics World结果到Bone/Object关键帧、Mesh外部缓存、跳帧清理、播放代理和Finalize的产品与实施合同。
-- **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
+- **`../ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
 本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。
 
@@ -63,7 +63,7 @@ Cache Read
 3. **通用世界状态输入**：frame / dt / reset / 跳帧 / 倒放 / object scope / collider snapshot 由 `Physics World Begin` 统一产出，solver 只消费不重算。
 4. **通用写回**：solver 只发布写回指令到 result stream，真实 Blender 写入（Object delta / PoseBone / GN 属性）和 `update_tag` 由统一 writeback 执行，`solver_inline_writeback=False` 是硬约束。
 5. **支持隐式表达**：authoring 对象通过 `world.implicit_objects`（跨帧、按 tag/stable_id/signature 收集）进入 solver，用户无需手连大批 socket。
-6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧实现只在删除前作审查/数值参考。
+6. **Native 后端隔离**：solver 不维护平行 Python 数值实现，也不按 backend 暴露双节点；CPU/GPU 等 native backend 共享 logical contract，但各自拥有状态、布局、失败域和性能基线。
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
 9. **物理属性由物理世界动态注册**：共享 component 或 solver capability 是字段、默认值、范围、RNA metadata 和 resolver 的单一事实源；`physicsWorld.registry` 按依赖注册/注销 Blender property，外部模块不得定义第二份 PropertyGroup 或 binding。
@@ -414,7 +414,7 @@ debug_markers
 - 成功重编译是统一物理世界的兼容性边界：框架按 namespace manifest 比较 Cache producer 与 owner 上游结构。合同相同则保留 world，由 solver 的 config/param/static fingerprint 决定热更新或 slot 重建；合同变化、动态 cache key 或缺少 manifest 时释放对应 namespace，active 注册节点在新图第一次运行时重新填充 registry。编译缓存命中和编译失败都不清理。
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
 - 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
-- MC2 MeshCloth选择强类型显式装配：面板对象或自定义对象先归一化为同一种完整对象spec，再经域节点形成完整分区并由纯collector生成product request。它不声明implicit object tag，collector不接Physics World；这不取消刚体等domain对通用`implicit_objects`的合法使用。
+- solver 可以选择强类型显式装配，也可以选择通用 implicit object registry。选择显式装配时，collector 不接 Physics World 或 implicit registry；选择 implicit registry 时，注册节点只处理声明过的通用 tag。具体 domain 的节点拓扑由其蓝本维护。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
 
@@ -722,7 +722,7 @@ PhysicsWorldCache / solver slot
 - 只影响单个 solver/setup 的拓扑、参数或后端同步策略的字段留在所属 domain。
 - UI 展开、过滤和叠加层状态属于 `physicsWorld.ui`，不进入 solver capability 或 world generation。
 - Operator 自身参数只服务单次命令，不进入持久 property registry。
-- 同一domain若同时选择显式RNA与隐式override，两者必须进入同一个resolver并生成同一种profile/spec，solver不得分别实现两套字段解释。已经选择单一显式装配的domain（当前MC2 MeshCloth）不得为了“覆盖”重新增加implicit旁路。
+- 同一 domain 若同时选择显式 RNA 与隐式 override，两者必须进入同一个 resolver 并生成同一种 profile/spec，solver 不得分别实现两套字段解释。已经选择单一显式装配的 domain 不得为了“覆盖”重新增加 implicit 旁路。
 - 面板、preview、scope 和 solver 只能消费 capability，不得复制默认值、枚举、范围或字段表。
 
 稳定存储契约：
@@ -1057,8 +1057,8 @@ C++ native context:
 - solver 自有 debug draw 必须使用 result stream 或 `read_{solver}_debug()` 读回的后端真实快照。不得在 Python 绘制层根据 Blender 当前对象、属性面板或 result matrix 重新推导一套可能与后端不一致的状态。
 - solver可视化debug默认采用SpringBone VRM式隐式请求：debug入口声明world/scope、语义层和过滤条件，自动发现匹配solver slot，不要求用户为每个constraint或中间数组接线。请求在该语义层声明的后续生产阶段捕获；substep层等待真实推进，scheduler前帧判定层可在zero-substep新帧捕获。一次性请求消费后清除，只有continuous模式持续readback。
 - 无debug请求时不得执行native中间态readback、per-item对象展开或viewport几何构建。复杂solver通过分层snapshot、按需buffer和renderer registry扩展，不通过常驻全量快照换取实现简单。
-- 每个会改变空间边界、连接membership或重要分支判定的用户参数，必须在solver专项验收中登记可观测方式：直接绘制、数值overlay/diagnostic或明确说明其为何不是空间量。debug coverage属于产品验收，不以“MC2/第三方原版没有可视化”作为豁免。
-- 同一产品词下存在多个真实基准时必须拆分模式。MC2的Motion BasePosition来自animated base pose，Angle Restoration target来自StepBasic父子目标，Final Output Offset来自result/writeback；三者不得共用一个模糊Motion快照。外部碰撞debug必须消费每个task实际上传、经过owner/group/type过滤后的collider frame，不能直接绘制world全量collider snapshot。
+- 每个会改变空间边界、连接 membership 或重要分支判定的用户参数，必须在 solver 专项验收中登记可观测方式：直接绘制、数值 overlay/diagnostic 或明确说明其为何不是空间量。debug coverage 属于产品验收，不能以第三方原版没有可视化作为豁免。
+- 同一产品词下存在多个真实基准时必须拆分 debug 模式。外部碰撞 debug 必须消费该 solver 实际上传并经过 owner/group/type 过滤的 collider frame，不能直接绘制 world 全量 snapshot。具体基准名称和数组含义由 solver 蓝本维护。
 - 当某个 domain 的调试语义因类型而显著不同（例如 Fixed/Hinge/Slider/Cone）时，应在 solver 子模块内拆分按类型 renderer registry。renderer 只把“后端实际消费的 spec 快照 + 后端发布的动态 state”转换成纯绘制 primitives；viewport handler 只聚合、着色和提交 GPU batch。未知类型必须显式降级并进入 debug audit，不能套用一个看似成功的通用图形。
 - solver 用户文档应与实现一起放在 solver 子模块的 `docs/` 中，并区分 backend 原生能力、当前 binding 能力和节点已暴露能力；新增约束类型的验收必须同时覆盖 spec/binding、result state、专用 renderer、用户文档和测试。
 
@@ -1171,31 +1171,31 @@ re_run_and_reset：
 
 旧 solver 的 Python 包装层默认不直接迁移，但删除前必须作为产品语义、生产行为、性能和依赖审查材料；它不是source parity oracle。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
 
-MC2删除后的永久构建边界不再包含legacy开关：旧数组solve、旧context、旧BoneCloth IO、旧package和公开ABI均不存在；新Physics World V0、static producer、self collision与共享`mc2_kernels`必须通过`311 native`/`313 native`独立构建和生产符号门禁。共享kernel的保留不构成旧solver兼容；任何恢复旧package/context/公开ABI或让测试反向依赖删除项的改动都构成违规。
+迁移完成后的永久边界只保留当前产品 owner、公开 schema 和有独立职责的数值 kernel。历史 package、context、ABI、测试门面和迁移开关不得继续作为并行权威；架构审计应禁止生产或测试反向依赖已经删除的入口。具体删除清单和数字只留 Git，不写入公共合同。
 
-MC2已通过P-08替代资格总门禁，允许按独立提交进入旧路径删除。准入只授权删除已审计的legacy node/package/context/IO，不改变公开world step一次处理全部active tasks、profile+task component、自动self scope、单半径authoring和全隐式debug合同；删除后正确性、职责重组、依赖洁净度、稳定蓝本和热点基线全部关闭前不得关闭solver acceptance blocker。
+同一 solver 可以提供多个 native backend，但它们必须共享逻辑输入/输出合同并各自拥有 mutable state、physical layout、生命周期和失败域。新增 backend 不得修改既有 backend 的算法、热路径或依赖；可选运行库缺失时，其他 backend 必须仍可独立构建、加载和执行。backend 失败不得在当前 generation 内透明切换另一 backend 续跑。
 
 属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 
-MeshCloth BasePose是automatic frame prepare前的惰性场景资源，不是逐帧solver输入：帧首只允许对active live Mesh做属性组与空pointer检查，且仅在`mc2_base_pose_proxy`为空时创建独立Object/Mesh缓存。已有pointer必须零创建工作量返回，不得为了“保险”逐帧执行完整ensure、拓扑hash、复制或刷新；后续只读frame adapter消费已分配代理。
+惰性场景资源必须在 frame prepare 之前由其 domain owner 创建并显式缓存。普通热帧只允许执行身份与空指针级检查；不得为了“保险”逐帧重复完整 ensure、拓扑 hash、复制或刷新。资源的具体失效、刷新和只读消费合同写入 domain 蓝本。
 
-## 新迁移 solver 的 C++ 单实现策略
+## Solver 的 native 实现策略
 
-新迁移进统一物理世界的 solver 默认只保留一条计算实现：C++ / native 侧。Python 层只负责：
+统一物理世界中的 solver 不维护 Python 与 native 两套产品数值实现。CPU、GPU 等多个 native backend 可以并列存在，但每个 backend 都是独立 owner，并遵循同一 logical contract。Python 层只负责：
 
 1. 从 Blender / 节点输入构建 spec。
 2. 管理 `PhysicsWorldCache`、solver slot、dirty key、生命周期和 dispose。
 3. 把 spec / world snapshot 打包成 native buffer。
-4. 调用 native context / step / readback。
+4. 按显式 backend 选择调用对应 native context / step / readback。
 5. 发布 result stream / exchange，并由统一 writeback 执行 bpy 写回。
 
-不再新增 Python solver 与 C++ solver 双实现，也不再暴露 `xxx` / `xxx_CPP` 两套节点。节点数量应按“语义能力”组织，而不是按 backend 数量组织。需要调试或降级时，只允许以下方式：
+不再新增 Python solver 与 native solver 双实现，也不为每个 backend 复制一套节点。节点按语义能力组织，backend 选择只决定 allocation owner。需要调试或降级时，只允许以下方式：
 
-- native 后端不可用时节点报错或输出明确的 stats/error result，不自动切回 Python 计算。
+- 选定 backend 不可用时节点报错或输出明确的 stats/error result，不自动切回 Python，也不在当前 generation 内透明切换另一 native backend。
 - 单元测试可以有 Python 参考函数，但只能放在 test / reference 区，不作为运行时 backend。
 - 数值算法的可读性应通过 C++ 侧拆函数、注释、测试和小型 reference case 解决，不靠维护第二套 Python solver。
 
-这一策略的目标是减少节点数量、减少行为分叉、避免 Python / C++ 实时性不一致，并让调度、跳帧、缓存生命周期都只在世界层表达一次。
+这一策略的目标是减少节点数量、避免 Python/native 行为分叉，并让调度、跳帧、缓存生命周期和 backend 选择都在世界层表达一次。
 
 C++边界必须由生产链计时和分配数据决定，而不是按语言偏好扩大。逐帧的大数组遍历、list/dict到buffer转换、重复矩阵/碰撞体转换和数值kernel是优先候选；Blender RNA读取、生命周期、spec/identity、result transaction和writeback owner仍归Python。一次性静态构建只有在代表性大资产上被证明为瓶颈时才迁入C++。
 

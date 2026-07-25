@@ -1,162 +1,130 @@
 # MC2 节点模拟设计
 
-本文规划 MC2 新一代节点数据流和 authoring 分层。它解决的不是某一个 socket 的命名，而是明确三个边界：
-
-1. Physics World 的公开 `solver + list[MC2ProductRequestV1]` 契约；
-2. MC2 内部 MeshCloth、BoneCloth、BoneSpring 三种 setup adapter 的收集和装配；
-3. 单个代理的显式对象属性、粒子属性、区域属性、partition状态和输出映射。
-
-本文同时维护目标设计、阶段门禁和当前主线位置。稳定生产合同以 `MC2_BLUEPRINT.md` 及代码事实为准；阶段状态不得把旧 `MC2TaskSpec` 路径误写成当前产品入口。
-
-## 执行目录
-
-1. 设计结论与节点职责
-2. authoring 参数合并与 identity
-3. 当前运行时事实和融合阻塞点
-4. 统一粒子场流水线及逐阶段 IO
-5. 后端中立中间表示与 CPU/GPU 边界
-6. Python/native 文件职责重排
-7. 分阶段执行计划与变更门禁
-8. 验收目录、固定产物与性能门槛
-
-E0-E5 的数据依赖和验收门禁是强约束。未通过上一阶段的合同和固定夹具验收，不进入依赖它的产品实现；尤其不能先把多个 `Object` 塞进旧 `MC2TaskSpec.sources`，再让旧的单对象静态构建、Center 和 writeback 路径猜测其含义。E6 是未来 GPU 分支，不是当前 CPU 统一域上线的前置条件；E7 中只依赖 E5 的 CPU 迁移清理可以先完成，GPU 专属清理留到 E6 真正立项后。
+本文定义 MC2 当前节点装配、authoring 分层、统一粒子域、编译对象和后端边界。稳定产品能力与数值语义见 `MC2_BLUEPRINT.md`；GPU 实施见 `MC2_GPU_BACKEND_DESIGN.md`；历史迁移阶段只留 Git。
 
 ## 设计结论
 
-`MC2模拟步`仍然是 Physics World 唯一公开的运行时 step，唯一输入是显式 `list[MC2ProductRequestV1]`。旧 `list[MC2TaskSpec]` 与其 Python owner 已删除；MC2 setup 的公开“域节点”是 setup-domain collector：
+`MC2模拟步`是 Physics World 中 MC2 唯一公开运行时 step，输入是显式 `list[MC2ProductRequestV1]`。一个 request 明确表示一个 setup simulation domain；不存在 hidden task、普通 aggregate 或由模拟步猜测裸 Object 类型的路径。
 
 ```text
-上游细分节点
-  -> MC2PartitionEntry / sparse override
+setup authoring
+  -> 完整 partition
   -> setup collector
   -> 一个或多个显式 MC2ProductRequestV1
-  -> MC2模拟步(world, list[MC2ProductRequestV1])
-  -> result stream
-  -> Physics Writeback
+  -> MC2模拟步(world, requests)
+  -> logical outputs
+  -> Physics World 多目标事务
 ```
 
-其中：
+节点负责表达对象、粒子和区域参数；compiler 负责把它们编译成连续的 domain 数据；backend 只消费已冻结的 POD/SoA，不访问节点或 Blender authoring。
 
-- `MC2PartitionEntry` 表示一个代理或一条骨骼细分链，不是 solver slot，也不拥有 native context。
-- Profile 节点只生成默认材料/粒子配置；覆盖节点生成稀疏 patch，不在上游复制完整 runtime ABI。
-- collector 负责收集、去重、冲突检查、参数分级、fusion compatibility 和最终 domain identity。
-- `MC2ProductRequestV1` 明确表示一个 setup simulation domain；Mesh collector 正常输出一个 fused request，Bone 公开节点按 Armature 首次出现顺序输出一个或多个显式 request，不生成 hidden task。
-- `MC2模拟步`只负责统一时间、全部显式 domain 的调度、native step 和一次结果事务，不知道每个 source 如何被 authoring 收集。
-
-## 为什么必须拆分节点职能
-
-迁移前的 `MC2 MeshCloth任务`同时承担了：
-
-- 展开 Object 列表；
-- 选择 MeshCloth setup；
-- 绑定默认 Profile；
-- 绑定 Anchor、Teleport、Center 和 collision task 参数；
-- 生成 source/task identity；
-- 决定每个 source 是一个 task 还是一个 fused domain。
-
-这导致节点表面写着“一个任务”，实际却把多个 Object 变成多个隐藏任务，也让对象属性、粒子属性和区域属性没有清晰的所有权边界。
-
-新设计把“描述代理”和“组装模拟域”分开。这样每一层只有一个问题：
+## MeshCloth 节点拓扑
 
 ```text
-object adapter    我使用面板属性还是socket完整属性？
-profile node      这个域的粒子材料是什么？
-domain node       哪些对象共享区域属性并形成完整分区？
-collector         哪些完整分区属于同一个MeshCloth domain？
-MC2模拟步        这些已编译 task 如何按统一时间推进？
-writeback         结果应该写回哪个 Blender owner？
+Object -> MC2 MeshCloth对象（读取面板完整属性） ─┐
+                                                  ├─> MC2 MeshCloth域
+Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh分区
+                                                          -> MC2 Mesh域收集
+                                                          -> MC2模拟步.MC2域
 ```
 
-## 节点层级
+### `MC2 MeshCloth对象`
 
-### 1. `MC2 MeshCloth对象`
+输入一个或多个 Mesh Object，完整读取 `Object.hotools_mesh_collision`，输出 `MC2MeshObjectSpec`。spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一 16 组碰撞属性。节点不创建 partition、request、slot 或 native owner。
 
-输入一个或多个 Mesh Object，完整读取 `Object.hotools_mesh_collision`，输出 `MC2MeshObjectSpec`。spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一16组碰撞属性。节点不创建分区、request、slot或native owner。
+### `MC2 MeshCloth自定义对象`
 
-### 2. `MC2 MeshCloth自定义对象`
+输入同样的 Mesh Object，并把同一组对象属性完整暴露为 socket。未连接字段使用 schema 默认值，但节点不读取或修改对象面板。选择该节点表示由 socket 完整定义对象属性；它不是 sparse patch，也不存在与面板的覆盖优先级。
 
-输入与面板节点相同的 Mesh Object，并把同一组对象属性完整暴露为socket。该节点使用schema默认值补齐未连接字段，但绝不读取或修改对象面板。选择该节点本身就表示用户接管这组完整对象属性，因此它不是sparse patch，也不存在字段优先级。
+两个对象节点输出同一种严格类型。相同 Object 与相同属性形成相同 source identity 和签名；面板来源或 socket 来源只用于诊断，不形成运行时分支。
 
-两个对象节点输出同一种严格类型。相同Object与相同属性产生相同source identity和签名；面板来源与socket来源只用于诊断，不进入运行时分叉。
+### `MC2 MeshCloth域`
 
-### 3. `MC2 MeshCloth域`
+只接受包装后的 `MC2MeshObjectSpec`，拒绝裸 Object。域节点组合粒子 Profile、Anchor、Center/Teleport 等区域参数，为每个对象生成完整 `MC2PartitionEntry`。真实 Object 仍是 source；对象属性、粒子/约束参数、区域参数和碰撞策略在 partition 边界已有唯一 owner。
 
-只接受上述包装对象，拒绝裸 Object。域节点组合粒子Profile、Anchor、Center/Teleport等区域参数，为每个对象生成完整 `MC2PartitionEntry`：真实Object仍是source，冻结对象属性随分区进入捕获边界，profile/task/setup/anchor/碰撞字段均已解析，不含patch或collector默认值。输出是`Mesh分区`，不是`MC2域`。
+域节点输出 `Mesh分区`，不输出已经可执行的 domain。多个对象可以共享一个域节点，也可以由多个域节点产生分区后交给同一 collector。
 
-### 4. `MC2 Mesh域收集`
+### `MC2 Mesh域收集`
 
-只接收一个或多个完整Mesh分区，按输入顺序校验唯一stable id并生成一个Require-Fusion `MC2ProductRequestV1`。它不接收Physics World，不读取`world.implicit_objects`，不提供默认Profile/Anchor/区域参数/碰撞字段，也不拥有native state。空输入、不完整分区、重复stable id或非MeshCloth分区都必须显式失败。
+只接收一个或多个完整 Mesh 分区，按输入顺序校验 stable id 唯一性并生成一个 Require-Fusion `MC2ProductRequestV1`。它不接收 Physics World，不读取 `world.implicit_objects`，不提供默认 Profile/Anchor/区域参数/碰撞字段，也不拥有 backend state。
 
-### 5. `MC2模拟步`
+空输入、不完整分区、重复 stable id、非 MeshCloth 分区或无法融合的组合必须显式失败；collector 不拆成多个隐藏 request。
 
-接收collector输出的一个或多个显式product request和Physics World。MeshCloth分区不能绕过collector直接进入模拟步。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步；对象、域、collector和模拟步均不暴露参与/执行类`enabled`，连线决定成员关系，节点mute决定执行。
+### `MC2模拟步`
 
-碰撞只公开面板已有的16组合同：`primary_collision_group`表示对象所属主组，`collided_by_groups`表示允许碰撞到该对象的组。域内self会把自身主组并入有效mask，再由whole-domain self统一做共享粒子与一环拓扑剔除。内部`collision_group/mask`只是当前CPU编译层承载，不是第二套用户接口。
+接收一个或多个 collector 输出和 Physics World。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步。成员关系由连线表达，节点执行由 Blender mute 表达；对象、域、collector 和模拟步不提供重复的参与类 `enabled`。
 
-### 6. `MC2 BoneCloth域` 与 `MC2 BoneSpring域`
+## Bone setup
 
-E5-B 在删除旧实现前完成这两个节点的产品迁移。它们不是第二、第三套 solver，而是统一粒子域外的薄 setup 包装：复用现有 `MC2PartitionEntry`、patch/collector 解析、`MC2CompiledDomain`、DomainV1、scheduler/Center 历史和公共结果事务，只保留 source capture、静态拓扑、帧输入与 Bone 写回差异。
+`MC2 BoneCloth域` 和 `MC2 BoneSpring域` 是统一产品域的 setup adapter，不是独立 solver。它们复用 `MC2ProductRequestV1`、compiled domain、DomainV1 owner、scheduler、Center history 和公共结果事务，只保留 source capture、静态拓扑、frame input 和 Bone output 的差异。
 
 ```text
 Bone socket / chain descriptor
-  -> setup-specific MC2PartitionEntry
-  -> MC2PartitionCollectorPlan
-  -> MC2ProductRequestV1（一个 request 明确对应一个 domain）
-  -> setup-neutral compile / product owner / DomainV1
+  -> setup-specific partition
+  -> collector plan
+  -> MC2ProductRequestV1
+  -> setup-neutral compile / backend owner
   -> Bone output adapter
   -> BONE_TRANSFORM_CHANNEL 原子批次
 ```
 
-现有 `MC2MeshProductRequestV1` 在 E5-B 内直接收敛为 setup-neutral `MC2ProductRequestV1`，不并行保留第二套长期 request。`MC2模拟步`可以接收多个**显式** product request，但每个 request 都必须在装配报告中拥有独立 domain id、setup type、partition 列表和输出 owner；不得把一个 Bone 列表静默展开成 hidden task。
-
-Bone 包装限制必须作为 collector compatibility rule 固定，而不是在 solver 中临时分支：
-
-| setup | 一个 product domain 的来源 | 必须保留的限制与语义 |
+| setup | 一个 product domain 的来源 | 稳定限制 |
 |---|---|---|
-| BoneCloth | 同一个 Armature component 下的一个或多个中控骨链 partition | 支持 Line/Seq/SeqLoop；`hotools_product` 横向 triangle、旋转插值、根旋转及 triangle 最终覆盖顺序保持不变；单个request不得跨Armature，公开节点对不同Armature输出多个可观察request。 |
-| BoneSpring | 同一个 Armature component 下的一个或多个根骨链 partition | 只允许 Line 连接；保留当前只消费 SPHERE 外碰的产品限制、Line 方向输出及 connected/disconnected 写回语义；单个request不得跨Armature，公开节点按首次出现顺序显式分域。 |
-| 两者共同 | Armature world pose + 每骨 pose snapshot | 继续使用 RestoreTransform/ReadTransform 屏障，区分动画新输入与上一帧 MC2 写回；负缩放、失效骨、重叠链和输出 owner 冲突必须在 native mutation 前失败。 |
+| BoneCloth | 同一 Armature component 下的一条或多条中控骨链 | 支持 Line/Seq/SeqLoop；保留横向 triangle、旋转插值、根旋转和 triangle 最终覆盖；单 request 不跨 Armature。 |
+| BoneSpring | 同一 Armature component 下的一条或多条根骨链 | 只允许 Line；外碰只消费 SPHERE；保留 Line 方向和 connected/disconnected 写回；单 request 不跨 Armature。 |
+| 两者共同 | Armature world pose 与逐骨 pose snapshot | RestoreTransform/ReadTransform 屏障区分动画输入和上一帧写回；负缩放、失效骨、重叠链和 owner 冲突在 backend mutation 前失败。 |
 
-BoneCloth、BoneSpring 和 MeshCloth 不共用 topology producer，但必须共用 product request envelope、domain owner 和完整混合 pass 顺序。一个 setup 尚未支持的能力由 capability/collector 明确拒绝，不能回退到 V0 context。E5-B 完成后，旧 Bone task 节点名称可以保留为用户界面，但其输出必须是 product request，不再是 `MC2TaskSpec`。
+不同 Armature 按首次出现顺序生成多个显式 request。同一 Armature 内的 partition 共享一个 domain；跨 Armature 不伪装成一个 task。
 
-## 参数所有权与解析
+## 参数所有权
 
-MeshCloth不再做implicit/explicit/patch优先级合并，而是在进入域之前完成唯一解析：
+MeshCloth 在进入域之前完成唯一解析：
 
 ```text
 面板对象适配器 ─┐
-                 ├─> 完整MC2MeshObjectSpec
+                 ├─> 完整 MC2MeshObjectSpec
 自定义对象适配器 ┘
-                    + 粒子Profile
-                    + 区域参数/Anchor
-                 -> 完整Mesh分区
-                 -> 纯collector
-                 -> compiled particle/constraint arrays
+                    + 粒子 Profile
+                    + 区域参数 / Anchor
+                 -> 完整 Mesh partition
+                 -> 纯 collector
+                 -> compiled particle / constraint arrays
 ```
+
+| 层级 | 拥有内容 |
+|---|---|
+| domain/context | scheduler、substep、backend lifetime、统一 broadphase、generation 和结果事务。 |
+| partition | source/output identity、Object/Anchor frame、Center/Teleport history、区域参数和 logical index view。 |
+| object spec | BasePose、Pin/radius group、对象碰撞属性及其来源。 |
+| particle | depth、radius、mass/inverse mass、damping、gravity response、friction、Motion/Backstop 系数和 partition index。 |
+| constraint | 类型、端点、rest、stiffness/compliance、owner partition 和 batch/color。 |
 
 规则：
 
-1. 对象适配器二选一；collector不再解释面板、socket来源或覆盖优先级。
-2. Profile写粒子/约束系数，MeshCloth域写区域参数，对象spec写显式对象属性；同一字段只能有一个owner。
-3. 自定义对象节点用完整值替代面板，而不是在面板之上打patch。
-4. collector只校验完整分区、顺序和stable id唯一性，不补默认值、不读取Physics World。
-5. 完整particle/constraint runtime arrays仍只由domain compiler生成一次，不能由节点或partition fragment复制。
+1. 面板对象和自定义对象二选一；collector 不解释属性来源或覆盖优先级。
+2. Profile 写粒子/约束系数，域节点写区域参数，对象 spec 写显式对象属性；同一字段只能有一个 authoring owner。
+3. compiler 只为 kernel 实际消费的最终参数生成 runtime array；节点不复制 packed ABI。
+4. Center、Anchor 和 Teleport 是 partition 级有历史状态，不是逐粒子 float。
+5. 时间、substep 和统一 broadphase 是 context 级策略，不能因局部参数差异隐式拆 domain。
 
-共享`partition_specs.py`暂时仍服务Bone产品合同并保留通用resolver结构；Mesh authoring只产生字段完整、`origin=explicit`、无patch且参与状态固定为真的entry。该内部兼容承载不是Mesh公开合同，E7-S职责合并时可继续收缩，但不得重新引入第二条Mesh生产路径。
+碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是对象主组，`collided_by_groups` 是允许碰撞到该对象的组。外碰使用冻结的 `collided_by_groups`；whole-domain self 才把自身主组并入有效 mask，并继续执行共享粒子和一环拓扑过滤。
 
-## Product request 与 runtime 编译目标
+## 四层运行对象
 
-`MC2ProductRequestV1` 是collector交给`MC2模拟步`的已归一化domain intent，不是编译产物。它持有collector plan与有序resolved partitions，可保留Blender source/owner引用供主线程capture，但不得持有dense particle arrays、constraint buffers、physical ranges、native handle或GPU资源。
+| 层 | 核心对象 | 可以包含 | 禁止包含 |
+|---|---|---|---|
+| Authoring | 对象 spec、完整 partition、collector plan | Blender source 引用、用户参数、字段来源、stable id | 粒子下标、native handle、GPU buffer |
+| Capture | static/frame snapshot | 主线程冻结的 POD 数组、transform、source/output token | solver state、后端资源、隐式 Python callback |
+| Compile | `MC2CompiledDomain` | 后端中立 SoA、logical index、constraint、partition table、output map | `bpy`、节点、live depsgraph、native handle |
+| Execute | backend domain / frame output | CPU 或 GPU 私有资源、history、当前 frame、logical output | authoring merge、Blender 读取、直接 Blender 写回 |
 
-resolved partition 至少持有：
+Capture 是 Blender IO 边界，Compile 是逻辑数值布局边界，Execute 是后端边界。三者必须可独立测试和计时。
 
-- stable partition id、source identity/reference；
-- Object/Data/BasePose/Anchor/output owner 描述；
-- resolved profile/task/setup 参数与字段 provenance；
-- Center/Teleport policy 和独立 history key；
-- 内部碰撞过滤承载与setup-specific capture options；Mesh对象的公开16组属性另以冻结source properties保存。
+## Product request 与编译
 
-随后由 solver prepare 依次生成：
+`MC2ProductRequestV1` 是 collector 交给模拟步的已归一化 domain intent，不是编译产物。它持有 collector plan、有序 partition 和供主线程 capture 的 source/output 引用，但不持有 dense particle array、constraint buffer、physical range、native handle 或设备资源。
+
+编译链：
 
 ```text
 MC2ProductRequestV1
@@ -164,883 +132,191 @@ MC2ProductRequestV1
   -> tuple[MC2PartitionStaticSnapshot]
   -> tuple[MC2PartitionStaticFragment]
   -> MC2CompiledDomain
-  -> MC2BackendDomain
+  -> backend allocation
 ```
 
-粒子/约束索引、参数 SoA、partition index view 和 output mapping 只存在于 `MC2CompiledDomain`。source 删除、重排、拓扑变化或兼容性变化通过 staged replacement 生成新的 compiled program/context，不能修改 live backend domain 的逻辑编号。
+`partition_id` 是 authoring identity 和状态所有权，不是 physical buffer 地址。particle span 只是某次 backend compile 的布局视图。CPU 可以保持连续 partition range；GPU 可以重排、分块或压缩，只要 logical identity、debug mapping 和 output map 不变。
 
-`partition_id` 是 authoring identity 和状态所有权，不是物理 buffer 地址。`particle range` 只是某次 domain compile 产生的布局视图。V1 编译器可以为了 CPU/GPU 顺序访问而让每个 Mesh partition 连续，但公开节点、缓存 key、结果协议和 debug 都不得假设 `partition_id == [start, stop)`。未来 GPU 后端可以重排、分块或压缩粒子，只要保留稳定的逻辑索引和输出映射。
+source 墠删、重排、拓扑或 capability 变化通过 staged replacement 创建新 program/backend owner。参数值变化只更新参数包；frame 变化只更新 frame packet。禁止在 live backend domain 上原地改变 logical numbering。
 
-## 当前运行时事实与阻塞点
+## 统一粒子域流水线
 
-当前产品运行时已完成统一域切换：三种 setup 只生成显式 `MC2ProductRequestV1`，DomainV1 按 request/domain identity 拥有动态 slot、编译程序、历史和 particle state；多 request 全部求解后由一次结果事务发布。旧 `MC2TaskSpec`、Python context owner、interaction owner 和 aggregate 入口已删除。
+### 收集与归一化
 
-E7-CPU native 删除已经完成：68 个 V0 binding、5 个 context 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和直接 V0 native tests 已移除，并通过重新编译的 py313 产物验收。当前阻塞点转为 E7-S，清理共享 builder 中的可选 `native_context` 参数、旧结果统计/翻译和迁移命名。
-## 统一粒子场流水线
+collector 校验 setup、stable identity、完整字段、输出 owner 和 Require-Fusion。输出只描述 domain intent，不读取 Mesh/Bone 数组。
 
-### 四层对象
+### 主线程 static capture
 
-流水线必须区分四种生命周期，避免一个 Python dataclass 同时持有 Blender 对象、编译数组、native handle 和写回状态：
+从 Blender 冻结 topology、local position/normal、UV、vertex group、BasePose/Anchor identity 和 source/output token。snapshot 是只读 POD；离开 capture 后不得访问 live Object。
 
-| 层 | 核心对象 | 可以包含 | 禁止包含 |
-|---|---|---|---|
-| Authoring | 对象spec、完整`MC2PartitionEntry`、collector plan | Blender source 引用、用户参数、字段来源、stable id | 粒子下标、native handle、GPU buffer |
-| Capture | `MC2PartitionStaticSnapshot` / `MC2PartitionFrameSnapshot` | 从 Blender 主线程冻结的 POD 数组、transform、source/output token | solver 状态、后端资源、隐式 Python 回调 |
-| Compile | `MC2CompiledDomain` | 后端中立 SoA、逻辑索引、constraint records、partition table、output map | `bpy` 对象、节点实例、live depsgraph、native handle |
-| Execute | `MC2BackendDomain` / frame output | CPU/GPU 资源、历史状态、当前 frame、统一输出 buffer | authoring merge、Blender 读取、直接写回 Blender |
+### Partition static build
 
-Capture 是 Blender IO 边界，Compile 是数值布局边界，Execute 是后端边界。三者必须可分别测试和计时。
-
-### 阶段 0：收集与归一化
-
-Mesh输入是域节点已经解析完成的显式`MC2PartitionEntry`序列和Require-Fusion策略。输出`MC2DomainDraft`，包含有序partition描述、字段owner、兼容性报告和domain identity，但不包含顶点数组。Bone包装可继续复用共享resolver，但不能让Mesh collector重新获得defaults、patch或implicit registry解释权。
-
-该阶段只做纯 Python 数据处理，不读取 depsgraph，不调用 native，不分配 solver slot。相同输入必须产生相同 draft signature。
-
-### 阶段 1：主线程 source capture
-
-输入：`MC2DomainDraft` 和当前 Blender/depsgraph view。
-
-每个 Mesh partition 独立采集：
-
-- Object/Data identity 与 topology revision；
-- local positions、normals、edges、triangles、UV；
-- pin/radius 等 source attribute；
-- BasePose owner 与静态输出 owner；
-- source local/world bind transform；
-- 仅用于写回的 object/data token。
-
-输出：`tuple[MC2PartitionStaticSnapshot]`。Snapshot 必须是只读 POD；离开 capture 后的编译和后端不得再访问 `bpy.types.Object`。这既隔离 Blender 线程约束，也为离线测试、native 编译和 GPU 上传建立共同输入。
-
-### 阶段 2：partition static build
-
-每个 setup adapter 把单个 snapshot 转成 `MC2PartitionStaticFragment`：
-
-- MeshCloth：final proxy、baseline、Distance、Bending、Tether/Angle、自碰 primitive；
-- BoneCloth/BoneSpring：保留各自的 line/bone topology producer，不强行复用 Mesh 数据结构；
+- MeshCloth：final proxy、baseline、Distance、Bending、Tether/Angle 和 self primitive；
+- BoneCloth/BoneSpring：各自的 line/bone topology producer；
 - 所有索引仍是 partition-local；
-- fragment 不注册 native context，不产生全局 particle index，不决定 GPU buffer。
+- fragment 不创建 backend context，不决定 physical layout。
 
-这一步允许复用现有 Mesh 单对象构建算法，但要把“构建静态数据”和“立即写入一个 native context”拆开。静态 fragment 由 topology/source fingerprint 缓存，热帧不重建。
+### Domain compile
 
-### 阶段 3：domain compile
+compiler 按稳定 partition 顺序：
 
-输入：有序 partition fragments、归一化参数和 fusion policy。
+1. 分配 logical particle identity；
+2. 重定位 constraint/primitive index；
+3. 编译 partition、particle 和 constraint 参数；
+4. 生成 output map 和 capability/过滤表；
+5. 产生 program、parameter 和 layout signature。
 
-输出：唯一的 `MC2CompiledDomain`，至少包含：
+结构约束只引用自身 partition。跨 partition 相互作用只由 whole-domain self 的双向 policy、owner/group/mask 决定。
 
-```text
-domain_header
-partition_table
-logical_particle_table
-particle_static_soa
-constraint_tables
-collision_filter_tables
-center_teleport_table
-frame_input_layout
-output_map
-backend_capabilities_required
-```
-
-编译规则：
-
-1. partition-local topology 索引在这里统一重定位；不同 Mesh 之间不生成 Distance/Bending/Tether 等结构约束。
-2. self collision 读取整个 domain 的粒子/primitive 场，再由 collision group/mask 决定同 partition、跨 partition和禁碰关系。
-3. 参数依次降级为 domain scalar、partition table、particle SoA、constraint SoA；不能为了兼容旧 ABI 把真实差异退化成多个 task。
-4. `logical_particle_id = (partition_id, source_vertex_id)` 是稳定身份；physical index 只是本次 compiled layout。
-5. `output_map` 显式记录 logical/physical particle 到 source vertex 和 writeback target 的映射。结果拆分不根据连续 range 猜测 owner。
-6. V1 编译器可以生成每 partition 一个连续 span 作为优化，但 contract 使用 `MC2IndexView`；它允许连续 span、多个 span或显式 index buffer。
-7. program 的 domain/layout signature 覆盖 topology、output mapping 和 backend requirement；parameter layout 由独立 signature 覆盖。两类结构变化分别 staged replacement 自己拥有的资源，纯参数值变化只做热更新。
-
-### 坐标空间与索引合同
-
-V1 先冻结以下 canonical space，不允许每个 backend 自己解释：
-
-| 数据 | canonical space / identity |
-|---|---|
-| Mesh 静态 positions/normals/topology | source object-local；topology identity 不烘入每帧 Object transform。 |
-| partition fragment 约束索引 | partition-local particle index。 |
-| compiled constraint 索引 | logical domain particle index；physical compiler 必须显式重定位。 |
-| frame animated base positions/normals | world-space，逐 partition capture。 |
-| Center/Teleport component transform | 每 partition 的 world TRS，独立 history key。 |
-| backend dynamic positions/统一输出 | world-space。 |
-| Mesh writeback offsets | 每 target 使用自己的 `inverse(source_world_linear)` 把 `solved_world - animated_base_world` 转回 object-local。 |
-
-非均匀缩放、负缩放和 Anchor 不得被静默烘入静态 topology signature；它们属于 frame/Center contract。若某类 constraint rest 值需要 source scale，fragment 必须记录其 `space_kind`，domain compiler 或 backend adapter 按 schema 明确转换，不能仅凭数组名称猜测单位。
-
-索引转换只允许沿一条可审计链发生：
-
-```text
-source vertex id
-  -> partition-local particle index
-  -> logical domain particle id
-  -> backend physical index
-  -> logical output map
-  -> target source element id
-```
-
-每一步都有 version/signature 和逆向 debug 查询。任何约束、碰撞 primitive 或写回记录绕开这条链保存裸 physical index，都视为架构违规。
-
-### 阶段 4：backend allocation
-
-`MC2CompiledDomain` 交给后端适配器：
+### Backend allocation
 
 ```text
 MC2CompiledDomain
-  -> CPUBackend.create_domain(program)
-  -> GPUBackend.create_domain(program)
+  -> CPU backend.create_domain(program)
+  -> GPU backend.create_domain(program)
 ```
 
-CPU 和 GPU 必须消费同一逻辑 program，不共享内部存储实现。CPU 可以保留 host SoA 或转换成 SIMD 友好的块；GPU 可以重排为 SSBO/storage buffer、建立间接 dispatch 和临时工作区。转换后的 physical layout 由 backend 私有，不能回写进 authoring spec。
+CPU 和 GPU 消费同一 logical program，但不共享 physical layout、mutable state 或 solver 实现。CPU owner 的隔离是硬合同；详细规则见 `MC2_GPU_BACKEND_DESIGN.md`。
 
-后端返回 `MC2BackendDomain`，只拥有：
+### Frame capture 与 pack
 
-- 资源句柄；
-- physical layout revision；
-- per-partition Center/Teleport history；
-- self-contact cache 和其他跨帧状态；
-- inspect/timing/debug 的显式只读接口。
+每帧主线程冻结 source/Anchor transform、BasePose frame、Bone pose、Teleport/reset、partition 时间参数和公共 collider snapshot。纯 compiler 生成 `MC2DomainFramePacket`，backend 再 pack/upload 到私有布局。
 
-### 阶段 5：每帧 capture 与 pack
+Blender IO 次数仍可能与对象数相关，但 solver 调度、碰撞和约束只面对一个 domain。静态 buffer 不随普通 frame 重传。
 
-主线程逐 partition 读取 BasePose/evaluated pose，产生 `MC2PartitionFrameSnapshot`：
-
-- partition id 与 frame/generation；
-- animated base positions/normals 或 setup-specific pose；
-- component transform；
-- Anchor transform；
-- partition 级 velocity/gravity/scale/teleport 输入。
-
-纯编译函数把这些 snapshot 写入 `MC2DomainFramePacket`。Packet 使用 logical layout，并携带缺失、重复、topology mismatch 的完整校验结果。backend adapter 再把 packet pack/upload 到自己的 physical layout。
-
-因此 Blender IO 次数仍与对象数量相关，但 solver 调度、碰撞 broadphase、self collision 和约束求解只面对一个 domain。GPU 后端还可以对静态 buffer 常驻，只上传每帧变化的 position/transform/少量参数。
-
-### 阶段 6：统一求解
-
-backend 的公开 step 只接收：
+### 固定求解顺序
 
 ```text
-step(domain_handle, frame_packet, scheduler_settings, collider_snapshot)
+StepBasic prepare
+  -> TaskReference / Teleport
+  -> Center frame shift
+  -> Center
+  -> Center inertia
+  -> Integration
+  -> Tether
+  -> Distance A
+  -> Angle
+  -> Bending
+  -> external Point / Edge
+  -> Distance B
+  -> Motion
+  -> whole-domain self
+  -> post / history
 ```
 
-它不接收 Blender Object、节点或 sparse patch。每个 substep 内部对统一粒子场执行 integration、constraint、self collision、external collision 和 Center/Teleport；跨 Mesh 自碰因此是同一 broadphase/solver pass，不再经过跨 task pair context。跨 partition self 只有在双方 `self_collision_sync_mode=2` 时才进入 owner/group/mask 过滤；默认关闭不能仅停留在 authoring 参数中。
+所有 setup 的能力差异由 compiled tables 和 capability 决定，不通过第二条 pass sequence 实现。
 
-self primitive 构建把 Pin 粒子对应的 Point 与完全固定的 Edge/Triangle 标记为 Ignore，使它们不进入 grid、candidate 或 contact。包含 Pin 但仍有可动顶点的 Edge/Triangle 保留，防止固定边界产生拓扑空洞；固定障碍职责属于外部 collider，不由 self collision 隐式承担。
+### 输出与原子写回
 
-Center/Teleport 语义按 partition 执行，但结果作用于该 partition 的 `MC2IndexView`。Anchor 可以由多个 partition 共享同一个 transform snapshot，却不能因此共享历史状态。
+backend 只产生 logical output。host 根据 output map 构造 GN object-local offset 或 Bone transform command；全部 target、element count、generation 和有限值在发布前验证。任一 request 或 target 失败时，本批结果零部分发布。
 
-### 阶段 7：输出拆分与原子写回
+GPU 初期可以回读统一 logical buffer 后由 host 拆分；成熟实现可以在 device 生成按 target 排列的 output，但必须进入同一个 command envelope 和事务。
 
-backend 输出 `MC2DomainFrameOutput`：统一 world position/rotation buffer、frame identity、physical layout revision 和有效性状态。输出 adapter 使用 compiled `output_map` 生成：
+## 后端中立数据合同
 
-```text
-tuple[MC2MeshWritebackCommand]
-  target object/data token
-  source vertex count
-  logical/physical index view
-  source world inverse linear
-  object-local offsets
-```
-
-一个 fused domain 可以产生多个 Mesh writeback command。所有命令先校验 target、vertex count、frame/generation 和有限值，再作为一个 Physics World result transaction 发布；任一 target 失败时不能只写回部分对象。
-
-GPU 方案允许两种输出路径：初期把统一 position buffer readback 后在 host 拆分；成熟后由 GPU scatter 直接产生每 target offset buffer。两者共享同一 output map 和事务语义，差别只在后端适配器。
-
-## 后端中立 IO 合同
-
-### `MC2CompiledDomain` 必须是 POD/SoA
-
-为兼容统一粒子场和 GPU，compile 产物必须满足：
+`MC2CompiledDomain` 必须满足：
 
 - 不含 `bpy`、Python callback、节点实例或 live depsgraph；
-- 数组 dtype、shape、alignment、单位、坐标空间和读写权限显式；
-- 所有关系通过整数表、span/index view 和稳定 signature 表达；
+- dtype、shape、alignment、单位、坐标空间、读写权限和生命周期显式；
+- 关系由整数表、index view 和稳定 signature 表达；
 - domain/partition/particle/constraint 四级参数边界明确；
-- CPU/GPU 转换可以完全在 native/backend 层完成；
-- 可从固定 fixture 重建，不要求打开 `.blend`。
+- 可以由固定 fixture 重建，不要求打开 `.blend`；
+- NumPy 只是 host carrier，不是最终 ABI。
 
-推荐的最小逻辑表：
+最小逻辑表：
 
 | 表 | 关键字段 | 主要消费者 |
 |---|---|---|
-| partition table | stable id hash、setup kind、logical index view、frame owner index、output owner index | frame pack、Center/Teleport、debug |
-| logical particle table | partition index、source vertex id、attribute flags | 参数编译、结果映射 |
-| particle static SoA | bind position/rotation、normal、radius multiplier、depth | CPU/GPU solver |
-| particle parameter SoA | mass/inertia、damping、radius、gravity、friction | CPU/GPU solver |
-| partition uint parameter SoA | collision group/mask、离散 policy/flags | broadphase、partition policy |
-| constraint tables | type-specific indices、rest、stiffness、flags | constraint kernels |
+| partition table | stable id、setup、logical view、frame/output owner index | frame、Center/Teleport、debug |
+| logical particle table | partition index、source element、flags | parameter compile、output map |
+| particle static/parameter SoA | bind pose、normal、depth、mass、radius、damping、gravity、friction | solver |
+| partition parameter SoA | transform policy、Center/Teleport、collision group/mask | frame、broadphase |
+| constraint tables | type-specific indices、rest、stiffness、flags | constraint pass |
 | collision tables | primitive indices、thickness、primitive flags | broadphase/narrowphase |
-| output map | target index、source element id、logical index view、space contract | result/writeback |
+| output map | target index、source element、logical view、space | result/writeback |
 
-### V1 IO schema 草案
+## P6 机器合同
 
-E0 必须把 `MC2CompiledDomain` 再拆成“静态 program + 可热更新参数”。下面是需要冻结的最小 envelope；setup-specific payload 可以增加表，但不能绕开这些 identity、space 和生命周期字段。
+当前 backend contract schema 固定以下内容：
 
-#### `MC2DomainCapturePlanV1`
+- program、parameter、frame/collider buffer 的 role、dtype、components、logical count、容量、生命周期和传输策略；
+- 16 个有序 production pass 的依赖、reads、writes 和独立 `request_writes`；
+- program、parameter、frame 和 collider 的最小连续 dirty span；
+- candidate/contact/intersection 的组合硬上限和 count-grow-emit 事务；
+- 最终 substep 只读回一次 logical output；
+- debug buffer 只由显式 request 产生，不能成为 production state/output；
+- identity、topology、filter、Pin participation、candidate/contact key/count 等 exact 项；
+- 共享 fixture 的逐 pass tolerance 与全局 position/rotation/velocity cap。
 
-只在 Blender 主线程存活，不传入 native/GPU：
+该合同描述数据和行为，不分配 backend 资源，不要求 CPU 使用 GPU physical layout。GPU 的 count-scan-emit、sort、reduction、queue 和 device buffer 都属于 provider 私有实现。
 
-| 字段 | 类型/shape | 语义 |
-|---|---|---|
-| `domain_id` | string | collector 生成的稳定 domain identity。 |
-| `setup_type` | enum | MeshCloth/BoneCloth/BoneSpring；一个 plan 只有一种 setup。 |
-| `partition_specs` | tuple[P] | resolved source/profile/policy/provenance。 |
-| `source_refs` | tuple[P] | live Blender Object/Data/BasePose/Anchor 引用，仅 capture 使用。 |
-| `output_target_refs` | tuple[Q] | live Blender target 引用，仅生成 host writeback command。 |
-| `fusion_policy` | enum | Auto/Require Fusion/Separate。 |
-| `capture_schema` | u32 | 未知版本在读 Blender 前拒绝。 |
+## Fusion 与显式分域
 
-#### `MC2PartitionStaticSnapshotV1`（MeshCloth）
+Mesh collector 固定 Require-Fusion：同一个 collector 的所有完整 Mesh partition 必须形成一个 domain，失败时给出具体不兼容项，不存在 Auto/Separate 产品回退。
 
-每个 partition 一份，只读 host POD：
+Bone setup 可以因 Armature owner 不同产生多个显式 request，但每个 request 和分组原因都在节点输出中可见。模拟步只调度这些显式 request，不再二次拆组。
 
-| 字段 | dtype/shape | space | 生命周期 |
-|---|---|---|---|
-| `partition_id` | string + stable hash | identity | topology revision |
-| `source_revision` | fixed signature | identity | topology revision |
-| `local_positions` | f32[V,3] | object-local | topology/geometry revision |
-| `local_normals` | f32[V,3] | object-local unit vector | geometry revision |
-| `edges` | u32[E,2] | source vertex id | topology revision |
-| `triangles` | u32[T,3] | source vertex id | topology revision |
-| `triangle_loops` | u32[T,3] | loop id | topology/UV revision |
-| `loop_vertices` | u32[L] | source vertex id | topology revision |
-| `loop_uvs` | f32[L,2] | UV | UV revision |
-| `pin_weights` | f32[V] | 0..1 | source attribute revision |
-| `radius_multipliers` | f32[V] | 0..1 | source attribute revision |
-| `source_bind_matrix` | f32[4,4] | object-local -> world bind reference | source revision |
-| `source_element_ids` | u32[V] | stable source vertex id | topology revision |
+需要拒绝的情况至少包括：
 
-Snapshot 不含 output target 指针。它只持有可序列化的 target identity token；live target ref 留在 capture plan/host transaction 层。
+- setup type 不一致；
+- scheduler/context-only 策略不兼容；
+- self/filter 或 topology producer 不兼容；
+- ABI/schema/capability 不兼容；
+- output owner 无法唯一映射；
+- partition 所需的 Center/Teleport/frame 合同不成立。
 
-#### `MC2CompiledDomainProgramV1`
+Object、Profile、Anchor、Teleport 阈值和输出目标本身由 partition/SoA 承载，不是禁止融合的理由。
 
-不可变、后端中立，变化时 staged replacement：
+## Debug 与可观察性
 
-| 字段 | dtype/shape | 说明 |
-|---|---|---|
-| `schema_version` | u32 | 逻辑 program schema。 |
-| `domain_signature` | 128/256-bit | 覆盖有序 partition、setup、topology、output map 和 capability。 |
-| `layout_signature` | 128/256-bit | 覆盖所有 logical table shape/relationship，不覆盖热更新参数值。 |
-| `setup_type` | enum | 决定 setup-specific static payload。 |
-| `partition_ids` | tuple[P] | host/debug identity；GPU 使用编译后的 partition index。 |
-| `partition_flags` | u32[P] | enabled、输出、碰撞和 setup flags。 |
-| `partition_particle_views` | `MC2IndexView[P]` | logical particle membership；V1 可为 contiguous span。 |
-| `partition_center_local_position` | f32[P,3] | setup static build 产生的 Center 本地基准。 |
-| `partition_initial_local_gravity_direction` | f32[P,3] | Center 重力衰减的初始局地方向。 |
-| `particle_partition_index` | u32[N] | logical particle -> partition。 |
-| `particle_source_element` | u32[N] | logical particle -> source vertex/bone element。 |
-| `particle_bind_position` | f32[N,3] | setup 声明的 static space。 |
-| `particle_bind_rotation` | f32[N,4] | xyzw；不需要的 setup 可为空。 |
-| `particle_attribute_flags` | u32[N] | Fixed/Move/Ignore 等静态属性。 |
-| `constraint_payloads` | typed SoA tables | Distance/Bending/Tether/Angle 等，索引为 logical particle。 |
-| `self_collision_primitives` | typed index tables | whole-domain logical primitive。 |
-| `output_targets` | metadata[Q] | target identity、element count、space contract；无 live Object。 |
-| `output_map` | typed map[N or records] | logical particle -> target/source element。 |
-| `required_capabilities` | bitset | backend allocation 前完整核对。 |
+collector 状态解释“装配了什么”：partition 顺序、stable id、字段来源、Require-Fusion 结果、domain signature 和 output owner。它不读取 native 中间态。
 
-Program 中的 `logical particle index` 在该 program 生命周期内稳定。backend 生成的 physical index 不写回 program；backend 若重排，必须私有保存 logical <-> physical 双向表。
+MC2 debug 解释“解算发生了什么”：只在显式请求后的下一真实 step，从 production pass 旁路记录冻结 snapshot。debug-off 不分配记录、不 readback、不安装绘制 handler，也不改变 pass 顺序。
 
-#### `MC2DomainParameterPacketV1`
+logical particle/partition identity 必须贯穿 CPU/GPU physical 重排、debug 和 writeback。renderer 只能筛选已冻结 snapshot，不能读取当前 RNA 或最终网格反推中间态。
 
-layout 不变时允许原地上传/更新：
+## 文件职责
 
-| 字段 | dtype/shape | 更新粒度 |
-|---|---|---|
-| `layout_signature` | fixed signature | 必须匹配 program。 |
-| `parameter_layout_signature` | fixed signature | 覆盖参数表名称、字段顺序、dtype 和 shape，不覆盖值。 |
-| `parameter_signature` | fixed signature | 去重和 debug。 |
-| `domain_scalars` | typed fixed struct | domain 热更新。 |
-| `partition_parameters` | f32 SoA[P] | Center/Teleport 等连续参数。 |
-| `partition_uint_parameters` | u32 SoA[P] | `collision_group`、`collision_mask` 等离散策略；位语义禁止转成 float。 |
-| `particle_parameters` | typed SoA[N] | radius、mass/inertia、damping、gravity、friction 等。 |
-| `constraint_parameters` | typed SoA per table | rest/stiffness/limit/damping 等。 |
+文件按 Physics World 原子职责拆分，数量不是目标：
 
-仅数值变化只改变 `parameter_signature` 并原地上传；参数字段、dtype 或 shape 变化改变 `parameter_layout_signature`，要求参数存储 staged replacement，但不伪造 topology 变化。logical membership、topology、output map 或 capability 变化才产生新 program/backend domain。CPU/GPU 都必须报告 parameter upload/update 成本。
+| 类别 | 职责 |
+|---|---|
+| identity/capability | 稳定 id、setup registry、能力和 compatibility 判定 |
+| immutable contract | request、partition、program、parameter、frame、result DTO |
+| compile stage | capture、static fragment、domain compile、parameter/frame pack |
+| runtime owner | slot、scheduler、backend lifecycle、history、failure rollback |
+| solver execution | 固定 pass、logical output、产品批次 |
+| native bridge | buffer view、ABI 验证、错误翻译、显式 readback |
+| Blender/product boundary | RNA、节点、Object/Bone capture、writeback adapter |
+| observation | debug request/snapshot、热点计时和架构审计 |
 
-E0 envelope 的 producer/owner/consumer 固定如下；NumPy 数组在这些 envelope 内一律 C-contiguous、只读，不允许任何层借此取得跨层可变所有权：
+只有 owner、生命周期和依赖方向一致时才合并文件。零调用方不自动等于可删；独立合同、注册根、测试 oracle 或外部装载入口必须按真实职责判断。历史文件名、模块数量、forwarder 数和逐批删除记录不写入本文。
 
-| Envelope | Producer | 生命周期 owner | 主要消费者 |
-|---|---|---|---|
-| static snapshot | setup capture adapter | partition static cache，source revision | domain compiler |
-| compiled program | domain compiler | compiled-domain cache，program revision | capability gate、backend allocation、output mapper |
-| parameter packet | parameter compiler | 单次 staged update / parameter revision | backend parameter upload |
-| frame packet | frame compiler | Physics World 单帧事务 | backend update/step、output conversion |
-| physical index map | backend allocation | backend domain state/revision | output adapter、debug identity |
-| frame output | backend read/step result | Physics World result transaction | domain output、统一 writeback |
+## 验收矩阵
 
-#### `MC2DomainFramePacketV1`
+| 边界 | 必须证明 |
+|---|---|
+| authoring | 面板对象与自定义对象同类型；域拒绝裸 Object；collector 不补默认值或读取 world。 |
+| capture | 离开主线程后不访问 Blender；topology/attribute/owner 失效准确。 |
+| compile | 多 partition logical identity、结构约束隔离、参数分级和 output map 正确。 |
+| frame | 独立 transform、Center/Teleport/Anchor history、reset/rewind 和 collider scope。 |
+| CPU backend | 完整固定 pass、三 setup 能力、whole-domain self、失败原子性和长期 reference。 |
+| GPU backend | CPU owner 无改动；相同 logical program、工作量 exact、逐 pass tolerance、独立资源和失败回滚。 |
+| result | 多 target、坐标空间、generation、topology replacement 和零部分写回。 |
+| observation | debug/timing 关闭态零额外工作；开启态只观察 production 数据。 |
+| 性能 | 固定工作量 P50/P95、内存、上传/readback 和规模曲线；不只报告 kernel。 |
 
-每帧只读输入：
+固定 fixture 保存 POD、schema、signature 和 tolerance，不保存 Blender 指针。CPU/GPU 共用同一组 compiled-domain/frame fixture，不维护两套“正确答案”。Blender 产品验收覆盖三 setup、多 source、mixed output、失败回滚、debug、reset/rewind 和长期 soak。
 
-| 字段 | dtype/shape | space/语义 |
-|---|---|---|
-| `domain_signature` / `layout_signature` | fixed signature | 防止旧 frame 写入新 domain。 |
-| `frame` / `generation` | i64/u64 | Physics World identity。 |
-| `animated_base_world_positions` | f32[N,3] | world-space logical particle order。 |
-| `animated_base_world_rotations` | f32[N,4] | world-space unit xyzw；固定根 Center 朝向、Bone 输出和状态旋转共同使用。 |
-| `animated_base_world_normals` | f32[N,3] 或空 | world-space；setup 可选。 |
-| `partition_world_position` | f32[P,3] | component world translation。 |
-| `partition_world_rotation` | f32[P,4] | unit xyzw。 |
-| `partition_world_scale` | f32[P,3] | signed scale。 |
-| `partition_world_linear` | f32[P,3,3] | exact source world linear matrix，用于非均匀/负缩放回写和可逆性校验。 |
-| `anchor_world_position/rotation` | f32[P,3]/f32[P,4] | 无 Anchor 时由 flags 标记。 |
-| `partition_frame_flags` | u32[P] | reset/keep/disable/anchor-present 等。 |
-| `velocity_weight/gravity_ratio` | f32[P] | partition 级 frame control。 |
+## 开发环境
 
-Scheduler 的 `dt/frequency/max_steps/time_scale` 属于 step call，不复制进每粒子 frame packet。external collider snapshot 属于 Physics World frame scope，由 step 作为独立只读输入传入。
+日常 native/GPU 开发和 Blender 验收使用 Python 3.13 / Blender 5.2，并明确排除 5.2 默认加载的 HoTools 备份，确认绑定当前工作树 `_Lib/py313`。共享合同、loader 或打包发生变化时验证 py311/py313 的 CPU-only 路径；E6 阶段出口执行完整双 ABI 收尾。GPU 支持矩阵按 provider 和设备单独记录，不借 CPU ABI 通过声称 GPU 已支持。
 
-#### `MC2DomainFrameOutputV1`
+## 禁止恢复
 
-backend 统一输出：
-
-| 字段 | dtype/shape | 说明 |
-|---|---|---|
-| domain/layout/frame/generation identity | fixed header | 必须与 program/frame 完全匹配。 |
-| `world_positions` | f32[N,3] | logical order view，或携带 physical->logical map 的 backend view。 |
-| `world_rotations_xyzw` | f32[N,4] 或空 | Bone/setup 需要时提供。 |
-| `validity_flags` | u32 | finite、complete、teleport/reset、readback 状态。 |
-| `backend_revision` | u64 | 防止读取已替换资源。 |
-| `timing_token` | optional handle | 只有热点开关开启时可解析，关闭时不得构造详情。 |
-
-Output 本身不含 object-local offsets。`domain_output.py` 在 host 侧用 frame packet 的每 partition transform 和 program output map 生成多个 writeback command；GPU direct-scatter 也必须产生等价 command envelope。
-
-### 不把 NumPy 当成架构 ABI
-
-Python 侧可以用只读 NumPy 数组表达 capture/compile fixture，但 NumPy 只是 host carrier，不是最终 ABI。native ABI 应按“typed buffer view + schema/version + shape/stride contract”接收数据；GPU 后端可从相同 schema 创建 device buffer。这样不会把 Python 版本、NumPy owner 或 C contiguous 假设扩散进 solver 内核。
-
-### 编译与执行缓存
-
-缓存分三层：
-
-1. `PartitionStaticFragmentCache`：按单 source topology/surface fingerprint 复用；
-2. `CompiledDomainCache`：program 按有序 fragments、output map 和 backend capability 复用；参数存储在其下按 `parameter_layout_signature` 独立复用或替换；
-3. `BackendDomainState`：跨帧 mutable 状态，只能由对应 backend handle 拥有。
-
-热帧只允许执行 frame capture、frame pack、step、必要 readback 和结果发布。任何静态 fingerprint 全量重算、拓扑重建或参数 dense compile 都必须在 profiler 中单列，不能藏进“模拟求解”。
-
-## 文件职责重排
-
-E7-S 开始时 Python 生产树共有 72 个模块、约 3.3 万行。文件数量不是验收指标；职责、生命周期、依赖方向和独立可测试性才是。Physics World 已冻结 `physicsWorld/<domain>/` 下 `names/capabilities/declaration/nodes/specs/solver` 的原子化标准，因此稳定 identity 依赖根、capability/declaration、setup manifest/contract、不可变数据合同、独立编译阶段、跨帧 owner、Blender 主线程边界、native bridge 和 debug renderer 都可以保持独立，即使文件较小。
-
-本轮只归位迁移期间遗留在 `mc2/` 顶层的六个 setup 产品钩子，不改动 Physics World 原子模块：
-
-| setup owner | 吸收的旧模块 | 职责 |
-|---|---|---|
-| `setups/mesh_cloth/authoring.py` | `product_authoring.py` | 纯 request/partition authoring，不导入 Blender 或运行期 owner。 |
-| `setups/mesh_cloth/product.py` | `product_collect.py`、`product_frame.py` | Mesh 产品静态采集与逐帧 hook。 |
-| `setups/bone_cloth/authoring.py` | `product_bone_authoring.py` | BoneCloth/BoneSpring 纯 source/request authoring。 |
-| `setups/bone_cloth/product.py` | `product_bone_collect.py`、`product_bone_frame.py` | Bone 产品静态采集与逐帧 hook。 |
-
-`setups/mesh_cloth/source_capture.py` 保持主线程静态 capture 边界；`setups/mesh_cloth/frame_input.py` 因直接依赖 `bpy/mathutils` 保持独立，避免纯 authoring 在 Blender 外不可导入。完成后生产模块从 72 个变为 70 个，这只是六入四的自然结果，不是继续压缩文件数的配额。
-
-`tools/audit_mc2_architecture.py::E7S_PYTHON_MERGE_TARGETS` 只冻结本轮有证据的迁移映射，并要求旧模块物理消失、旧 import 路径不通过 shim 保留。随后继续 E7-S 清理 fallback、双 schema/result、旧 resource key、无调用 forwarder 和误导命名；过程中若发现新的合并点，必须先证明 owner、生命周期和依赖方向一致，再分批更新蓝本、审计与测试。
-
-E7-S 不预先冻结最终文件树，而按可重复的小批次循环推进：职责/调用图审计，确认保留、合并或删除，实施单一所有权变更，更新架构门禁，完成纯 Python 与 Blender 产品验收后提交。后续批次可以继续发现合并点；但文件较少本身不是依据，符合 Physics World solver 原子化标准的 identity 根、不可变合同、独立编译阶段、跨帧 owner、Blender 边界和 native bridge 必须保持独立。
-
-首次后续依赖审计确认 `setups/mesh_cloth/static_build.py` 已无任何调用方，Mesh 产品静态构建完全由 `static_fragment.py` 拥有；同一旧路径的 `build_mc2_mesh_frame_input*` task adapter 也不可达。因此该模块和两个 adapter 直接删除，生产模块进一步由 70 个变为 69 个。这是删除重复 owner 的结果，不改变原子化标准。
-
-第二次后续依赖审计确认旧 `capture_requested_mc2_debug` 聚合器无调用方，`request_mc2_debug_capture` 与 renderer 中对旧 `mc2` slot、`mc2_interaction_v0` resource 的扫描也不再有生产来源。该聚合器、专用 payload helper、resource key 和 renderer 分支均已删除；产品调试只登记和消费 `MC2_FUSED_PRODUCT_SLOT_KIND` 的 frozen product snapshot。
-
-第三次后续依赖审计确认 `MC2ResultCandidateV1`、单目标 Mesh/Bone result、旧 stats aggregate/schema 及 stats 读取 API 全部只有兼容测试调用。上述表面已删除，结果事务只接受 `gn_attribute` 与 `bone_transform` 两个真实 shared product channel；MC2 不再声明一个没有产品 producer 的自有 stats channel。
-
-第四次后续依赖审计确认 Center、Distance、Bending、Self Collision 四个约束构建器以及 Bone 产品静态装配器的 staged metadata 分支已经没有产品消费者。上述构建器现只返回后端中立的完整 static spec；`MC2*StaticMetadata`、`MC2BoneClothStaticMetadata`、`compact_native_static` 和对应的可选 `native_context` 参数已删除。Mesh proxy/baseline 与 Bone static 中剩余的 native-owned 代理壳尚未归入本结论，必须在下一批独立证明消费者和生命周期后处理。
-
-第五次后续依赖审计确认剩余 native-owned proxy、finalizer、baseline 与 Bone DTO 只服务旧 context 注册，没有独立产品生命周期。`MC2Mesh*NativeData/Metadata`、`MC2BoneNativeData`、compact 转换、registration capsule、`native_owner_kind` 和剩余 `native_context` 参数已删除；生产 Python 树只产生完整 immutable static spec。native 中立派生 API 继续保留并由 spec builder 消费，不因删除旧 owner 而复制为 Python 算法。
-
-E7-S 架构门禁同步删除 15 条已经失效的 forwarder 豁免，包括已物理删除的旧模块/adapter/metadata 方法和已经不再是单调用转发器的产品函数。豁免集合必须只描述当前确有原子职责的薄访问器，不能作为历史删除清单；失效项留在 Git 历史，不继续降低未来审计灵敏度。
-
-后续命名审计已删除 `MC2MeshFusedCPUOwnerV1`、三个 `MC2FusedMesh*ResultV1` 与 `MC2_FUSED_MESH_SLOT_KIND` 纯兼容别名，测试直接消费统一 owner/result 类型。该批不修改持久 slot ID、slot kind 字符串或 schema identity；这些外部身份必须在独立迁移批次中评估，不能与 Python 无逻辑别名删除混合。
-
-产品 slot 审计继续删除 `sync/step/capture/publish_mc2_mesh_fused_*` 四个仅由旧测试消费的默认 Mesh slot wrapper/alias。测试现在显式传入 slot identity 并调用统一 `sync_mc2_product_slot`、`publish_mc2_product_frame`、`step_mc2_product_substep` 与 `capture_and_publish_mc2_product_frame`；生产路径不再通过隐式默认 slot 进入 DomainV1。仍有真实产品消费者的 Mesh output batch/transaction 保留，单独执行产品命名收敛。
-
-随后 Mesh 输出 API 已由 `build/publish_mc2_mesh_fused_output_*` 收敛为 `build/publish_mc2_mesh_product_output_*`，Python 常量改为 `MC2_MESH_PRODUCT_SLOT_ID`，相关诊断统一称为 Mesh product。底层 slot identity 仍是 `mc2.domain.mesh.product.v1`，该批不改变持久身份、执行顺序、输出事务或数值结果；Blender 5.2 三 setup 900 帧 digest 与改名前一致。
-
-运行参数命名审计已把当前三 setup 共用值对象由 `MC2RuntimeParametersV0` 改为 `MC2RuntimeParameters`，不保留旧类名别名。`MC2_RUNTIME_PARAMETERS_ABI = 0`、字段顺序、curve 采样、dtype 与 parameter signature 保持不变；Python 产品类型去除迁移后缀不等于 packed ABI 升版。
-
-compiled-domain 审计已删除 `fragment`、`single_fragment`、`effective_parameter_signature` 与 `single_effective_parameter_signature` 四个 E1 单 partition compatibility/shadow 视图。当前对象只暴露真实 `fragments` 与 `effective_parameter_signatures` 集合；单 partition 测试也必须显式索引集合，不再形成第二套单 source 产品表面。
-
-native helper 命名审计已把 12 个 static/frame 纯派生 binding 从 `_v0/_v1` 后缀改为无版本名，并重新编译受版本控制的 py313 pyd。实际产物中旧符号为 0、新符号缺失为 0；后续又删除一条无任何 Python/native 消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出，当前注册 binding 为 101、产品必需仍为 21。该规则只适用于后端中立 helper，正式 `mc2_domain_cpu_v1_*` DomainV1 ABI 继续保留版本标识。
-
-兼容 runner 审计已物理删除 `test_blender_mc2_bone_constraint_soak.py`、`test_blender_mc2_bone_frame.py` 与 `test_blender_mc2_bone_static.py` 三份只转发产品测试的门面。`acceptance_assets_v1.json` 已直接指向 Bone 产品与 BoneSpring restrictions runner；能力矩阵验证旧文件及资产引用均不存在。替代证据由 Blender 5.2 Bone 产品集成、BoneSpring 599 帧限制和 BoneCloth 900 帧约束 soak 直接提供。
-
-同一审计继续删除 `test_blender_mc2_final_proxy.py` 与 `test_blender_mc2_base_pose.py` 两份 Mesh 转发门面，以及同时串行转发 mixed-output 与 Center 产品门禁的 `test_blender_mc2_mixed_output_soak.py`。验收资产直接指向 Mesh product static、BasePose、mixed-output 与 Center 产品 runner；final-proxy Tier A oracle 继续由纯 Python 测试直接提供。能力矩阵用一个不存在性断言覆盖全部 6 个旧 runner，不再逐文件验证“兼容门面是否足够干净”。Center World 产品门禁同时固定初始化帧已提交一次 Center shift，以及未启用 teleport 时组件显式跳变仍属于 Center 输入位移。
-
-内部资源身份审计确认 Bone frame 反馈状态和按需 hotspot timing profile 都只存活于当前 `PhysicsWorldCache.backend_resources`，不写入 `.blend`、manifest、公开 ABI 或跨进程缓存。两者的迁移期 `v0` 键已直接改为 `mc2.bone.frame_state` 与 `mc2.hotspot_timing.profile`，不读取旧键、不双写、不保留别名；架构门禁禁止旧字面量回流。版本化内容签名和结果 schema 不属于这一批，必须按各自消费边界单独审计。
-
-结果 schema 审计确认 `mc2_bone_writeback_plan_v0` 是当前唯一的 MC2 Bone plan schema，并通过公共 `bone_transform_batch.plan_schema` 跨越 MC2/Physics World writeback 与 debug 边界；代码中不存在旧格式读取、双 schema 翻译或 fallback。它因此保留版本身份，只有实际布局或消费合同变化时才升级。相邻审计同时把产品多 request 失败时的 Bone frame 状态快照/恢复归还给 `setups/bone_frame_input.py`，`product_solver.py` 不再读取或写入该 setup 私有资源键。
-
-生产源码的迁移命名门禁进一步把 `V0/_v0` 收敛为机器可读白名单：只允许 `mc2_center_static_v0` 内容签名命名空间和 `mc2_bone_writeback_plan_v0` 活动结果 schema。CPU backend、reference kernel、Center、产品 slot 与节点错误信息中的旧阶段叙述已改为当前职责和固定 pass 顺序；任何新的非版本合同 `V0` 字样都会使架构审计失败。该门禁不重命名 DomainV1 ABI，也不改变数值顺序。
-
-`legacy/fallback/shadow/compat/compatibility` 的精确词级门禁也已启用，当前生产违规为 0。backend 的 `MC2BackendCompatibilityReportV1` 与 `compatible` 字段表示真实能力匹配，不属于精确迁移词，继续保留；preset 解析器原 `fallback` 参数实际只表达坏值或缺字段的缺省值，已统一改名为 `default`。产品 slot/solver 和包根不再用“拒绝旧回退”描述当前职责。
-
-forwarder 复核随后删除 `MC2MeshDomainDraftV1` 纯类型别名、`build_mc2_mesh_domain_draft`、`build_mc2_mesh_domain_collider_frame` 与私有 `_product_slot_id`。Mesh collector、所有 setup 的 collider capture 和产品 slot identity 现在直接调用统一合同；测试不再通过 Mesh 名称门面 monkeypatch。生产模块仍为 69 个，已分类一调用转发器由 84 降为 81；Blender 5.2 三 setup mixed-output 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`。
-
-同一调用计数审计确认 `compile_mc2_mesh_static_fragment` 没有任何生产消费者，只是把单个测试 fragment 包成集合。该入口已删除，fixture 直接调用统一 `compile_mc2_static_fragments((fragment,), (effective,))`；Domain E3 golden、CPU backend/native kernel 和 compiler 门禁全部通过，分类 forwarder 降为 80。
-
-进入 P6 后的尾项复核又删除了 `MC2MeshCompiledDomainV1`、`compile_mc2_mesh_static_fragments` 和 `compile_mc2_mesh_domain_draft`。三者没有独立数据、所有权或生命周期：Mesh 产品与单 source reference 现在直接类型检查统一 `MC2CompiledDomainV1`，全部 fixture 直接调用统一 compiler；架构审计禁止这三个专名重新进入生产。该收口没有移动 `MC2CompiledDomainV1`，它仍属于 compile stage，而不是纯 POD 的 `domain_ir.py`。
-
-零消费者审计还删除了 `MC2MeshFinalProxyBuildResult.every_vertex_has_triangle` 派生属性和 `all_mc2_setup_adapters()` registry 复制函数。前者不增加 `vertex_to_triangle_records` 之外的合同，后者不增加 setup registry/getter 之外的生命周期或只读边界；Mesh final-proxy Tier A 与注册能力门禁通过，分类 forwarder 降为 78。
-
-调用计数不是删除资格本身。`make_mc2_partition_patch` 虽然当前只由合同测试直接调用，但它集中承担稀疏字段校验、排序和参数归一化；Mesh fragment cache 的 `entry_count` 也属于 cache owner 的只读状态面。两者均有独立职责和测试，不是迁移兼容转发。E7-S 后续必须同时证明“没有生产读取”和“没有合同/owner 价值”，才允许删除薄入口。
-
-forwarder 豁免现在是双向门禁：实际一调用转发器不在分类表中会失败，分类表中的入口已经不再是一调用转发器或已被删除也会因 `stale_forwarder_allowances` 失败。当前 82 项全部与生产 AST 对齐，未分类与过期豁免均为 0。该门禁把分类表限定为当前职责快照，不允许它演化成历史删除清单。
-
-Python 文件职责复核已把当前 69 个生产模块全部归入九类：5 个 package shell、8 个 identity/capability、7 个 immutable contract、17 个 compile stage、6 个 runtime owner、5 个 solver execution、2 个 native bridge、15 个 Blender/product boundary、4 个 observation。Mesh 对象 spec 与面板/socket 适配器是新节点模式的独立产品边界，不与 domain authoring 合并。缺失、已删除残留和重复归类均为 0；原计划的 merge source 也为 0。这里的分类是所有权门禁而不是永远禁止合并：E7-S 中若发现 owner、生命周期和依赖方向一致的新合并点，先独立验证再同批修改模块、测试和职责表；没有新证据时不继续按文件数量压缩。
-
-反向依赖审计确认原生产 `bone_rotation.py` 只有两份 Tier A oracle 测试消费，正式产品图入站为 0；其 Line/Triangle 纯 Python 算法是 Unity fixture 的 reference，不是 DomainV1 产品 compile stage。该文件已迁入 `mc2/test/bone_rotation_reference.py`，两份 Tier A 测试继续通过；能力门禁禁止 `bone_rotation.py` 回到生产根。正式 Bone post rotation、transform output 与 writeback 仍由 native DomainV1 和统一产品事务负责。
-
-生产零入站模块也已改为双向门禁。当前只允许 `mc2` 包 manifest、manifest 字符串加载的 `declaration`、`nodes` 和 Mesh Blender properties 四个外部入口；额外零入站模块或已经获得真实入站调用的过期豁免都会失败。当前允许 4、未解释 0、过期 0，测试 reference 错放生产根一类问题因此可被自动发现。
-
-外部入口全图可达性门禁进一步从 package manifest、declaration、nodes、capabilities、debug、Blender lifecycle 和 properties 八个真实根遍历全部 import 边。当前 69/69 个生产模块可达，不可达模块和失效根均为 0；互相引用但不接入产品/注册图的孤岛也不能通过。后续 E7-S 合并候选只能来自职责重叠的新证据，不再来自未解释死子图。
-
-迁移词复核又删除了 solver declaration 中只描述“没有旧路径”的 `legacy_policy` 字段，并把 `native_backend` 收敛为当前事实 `one_domain_v1_per_explicit_collector`；native E3 注释也改为 point-only reference layout。`no_python_fallback`、`legacy_policy` 和 `legacy E3 path` 已加入精确禁词，不能再借下划线绕过词级门禁。数值算法中的 fallback tangent/safe normal 表示真实退化输入处理，不属于迁移兼容层。
-
-E3 reference API 已删除 `data_path_only` 及 Distance/Tether/Bending/Angle/Motion/Inertia/Integration 七个 scheduler selector。通用 `step` 只接受空 settings 并执行 base pass；各 reference 阶段由同名显式 pass 方法直接调用，不再通过第二套 settings 分发。`inspect()` 同时删除仅供旧测试读取的 `numerical_kernel_ready`、`data_path_only` 和 `*_slice_ready` 合成字段。八个旧 key 已进入生产禁词；native kernel 30 项、Domain E3 golden 10 项、CPU backend 5 项、Domain owner 9 项均通过，Blender 5.2 mixed-output 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`。
-
-同源命名批次把执行固定前缀的 `step_reference_slices` 改为 `step_reference_pass_prefix`，并把生产 Python 中剩余的 slice/data-path 描述改为 pass/DomainV1 职责。旧方法名已加入禁词；这只修改 reference API 命名和错误文本，不修改 native ABI、pass 顺序或产品 pipeline。
-
-## 明确的数据流
-
-### MeshCloth唯一模式
-
-```text
-Object -> MC2 MeshCloth对象（读取面板完整属性） ─┐
-                                                  ├─> MC2 MeshCloth域
-Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh分区
-                                                          -> MC2 Mesh域收集
-  -> MC2模拟步.MC2域
-```
-
-两种对象节点可以同时向同一个域提供包装对象；一个collector也可以收集多个域的分区。裸Object不能直连域，域输出不能绕过collector直连模拟步。MC2 MeshCloth不声明或消费Physics World implicit object tag。
-
-### 统一运行时
-
-```text
-MeshCloth collector -> [MC2ProductRequestV1]
-BoneCloth collector  -> [MC2ProductRequestV1, ...]
-BoneSpring collector -> [MC2ProductRequestV1, ...]
-                           \
-                            -> MC2模拟步(world, all explicit requests)
-                                -> 全 request 预检/prepare/stage
-                                -> capture plan / static snapshots
-                                -> partition fragments / compiled domain
-                                -> CPU DomainV1 step
-                                -> 一次跨 request 结果事务
-                                -> Physics Writeback
-```
-
-collector 可以在图上有多个，但每个 collector 的一个输出项代表一个明确 domain。`MC2模拟步`不再猜测某个 list item 是 Object、partition 还是 task；非法 entry 在 collector 边界拒绝。
-
-## Fusion 与分组规则
-
-一个 MeshCloth collector 默认只产出一个 fused domain。以下情况必须显式报告并按策略处理：
-
-- setup type 不同；
-- scheduler/context-only 参数不兼容；
-- self collision 算法或过滤合同不兼容；
-- ABI/schema 或 topology producer 不兼容；
-- source output owner 无法唯一映射；
-- partition 需要的 Center/Teleport contract 尚未被当前 compiler 支持。
-
-`Auto` 可以把 entry 分到多个兼容组，但必须输出多个明确的 domain result 和分组报告，不能仍然把它伪装成一个 task。`Require Fusion` 遇到任意不兼容直接失败，适合性能验收和 GPU 规模基准。`Separate` 只用于迁移诊断，不能成为普通用户的隐式回退。
-
-## Debug 与用户可见状态
-
-新节点必须让用户能回答：
-
-- 这个包装对象是否经域节点形成完整分区并被collector收集？
-- 它属于哪个 MeshCloth domain/partition？
-- 哪些 profile/task/constraint 字段被覆盖，来源是谁？
-- domain 是否成功融合？如果没有，具体哪个字段阻止？
-- 最终 backend domain、logical particle index view、physical layout revision 和 writeback owner 是什么？
-
-collector 的状态输出是轻量编译摘要，不读取 native 中间态；MC2 debug node 继续读取 solver slot 的冻结 native snapshot。两者不能混合：前者解释“装配了什么”，后者解释“解算发生了什么”。
-
-## 分阶段执行计划
-
-### 当前主线与真实混合执行顺序
-
-本轮架构工作的起点不是抽象地“重写 solver”，也不是先追求 CPU 极限性能，而是解决 MeshCloth 多代理自碰的结构性重复：多个 task 开启跨 task 碰撞时，既各自运行内部 self 流水，又复制 primitive 到 aggregate 再做一次 grid/candidate/contact。产品需要的是多个代理在同一个 MeshCloth 粒子域中自然互碰，而不是更快地维护两套碰撞流水。
-
-因此因果链固定为：
-
-```text
-MeshCloth 多代理自碰重复
-  -> 多 Object 编译为一个统一粒子域
-  -> partition 参数、Center/Anchor/Teleport 与输出所有权显式化
-  -> 同域 self collision 和多目标原子写回
-  -> 后端中立 SoA、pass 依赖、容量和 IO 合同
-  -> 未来 GPU persistent domain / dispatch
-```
-
-E 阶段描述功能门禁，P 阶段描述穿插其中的性能与后端工作；它们不是两条做完一条再做另一条的队列。真实实施顺序如下：
-
-| 顺序 | 合并阶段 | 当前交付 | 明确不做 |
-|---:|---|---|---|
-| 1 | E0-E2 + P1-A 前半 | 冻结 partition、capture、compile、logical/physical identity、参数 SoA 和 output map；已完成。 | 不创建 fused runtime，不改产品 task。 |
-| 2 | E3 + P2 分区状态 + P3 + P6-A | 已完成单 source 纯 native CPU reference、每 partition Center/Anchor/Teleport、完整 pass 顺序和 V0 tolerance；同时冻结 GPU 可复用的数据/pass 基础边界。 | 不建 CPU worker/job DAG，不做产品切换。 |
-| 3 | P0（已完成，产品路径已恢复） | 产品批处理重新接通请求式阶段计时：顶层分别聚合输入、采集、同步、Frame、求解、结果构造与事务发布，CPU诊断路径再按Teleport、Center、Integration、Tether、Distance A/B、Angle、Bending、外碰、Motion、整域self和Post原子pass计时；整域self继续拆为Primitive更新、Grid、相交检测、Candidate、Contact、准备与四轮求解，Candidate内部再区分网格遍历/过滤/发射、排序去重和扁平化，并报告probe、pair、拒绝原因与raw/unique/duplicate工作量。关闭节点开关时仍直接调用原完整pipeline和无计时native ABI，C++模板在编译期移除Candidate计数，不创建timing resource、不读取阶段时钟、不执行诊断pipeline。计时开关不请求debug确认或快照，debug额外计算只受原debug请求控制。 | 不依据尚未拆开的总时长猜优化项；不得把self有效mask当作外碰mask。 |
-| 4 | P1-B（已完成） | Mesh source observation cache已消除普通热帧全量扫描；失效矩阵、GN receipt、安全帧、强制审计和120样本性能门禁通过。 | Bone保持保守全扫；不把同批depsgraph歧义伪装成完整revision。 |
-| 5 | E4 + P2 + 证据驱动的 P5 | 执行多 source fused CPU domain，一次 whole-domain self 流水覆盖同/跨 partition；接入差异化粒子与约束参数。只做 P0 已证明的低风险布局/容量优化。 | 不保留普通多代理的 aggregate 双流水，不做粒子域 CPU 并发。 |
-| 6 | E5 + P1-A 后半 | 先闭环多目标结果事务，再接产品 collector、隐式/显式覆盖和可读 fusion report；通过 soak 后切换 MeshCloth 主路径。 | 不静默回退为 `N Object -> N task`。 |
-| 7 | E5-B：Bone统一域包装（已完成） | BoneCloth/BoneSpring公开节点已切为setup-neutral product request；按Armature显式分域，同Armature多request结果合并，全部request同一事务发布。 | 不复制solver；不把多Armature输入静默拆成hidden task。 |
-| 8 | E7-A：删除前资格审计 | 逐项确认三种setup的生产可达性、旧/新语义、性能、依赖和代表资产证据；形成精确删除清单。 | 不因自动化全过直接跳过旧包装行为审查。 |
-| 9 | E7-CPU | 审计关闭后删除旧隐式拆task、aggregate常规路径、V0产品owner与binding，并重跑双ABI/Blender/P0/P2。 | 不等待GPU，也不保留产品fallback。 |
-| 10 | E7-S：兼容层收敛审计 | 逐项review迁移中引入的legacy/compat/fallback/shadow/双schema处理，删除已无外部合同依据的分支并简化命名、所有权和事务层。 | 不把“测试仍通过”当作保留中间态适配器的理由。 |
-| 11 | P6-B（贯穿 2-10，最终收口） | 把已落地的 SoA、pass 读写集、buffer 容量/溢出、增量上传、CPU tolerance 和单向 writeback 汇成 GPU implementation package。 | 不因此创建 GPU runtime，也不让 CPU 为 GPU 准备发生不可解释退化。 |
-| 12 | E6（未来独立里程碑） | 在统一域产品路径、E7-S和规模基准稳定后，实现最小 GPU 原型并测 `2k/10k/50k/100k` 收益曲线，再决定完整覆盖顺序。 | 不以单个1760粒子样本或只报kernel时间宣称成功。 |
-
-P4 CPU 并发不在默认实施序列。只有未来平台约束使 GPU 路线不可用、并且 P0 证明某个无写冲突 kernel 的收益足以覆盖长期维护成本时，才允许作为单独决策重新打开；当前实现不得为它预埋 worker object、grain threshold 或调度 DAG。
-
-### E0：合同冻结与固定夹具
-
-范围：只改文档、纯 dataclass/schema、fixture generator 和合同测试，不改生产节点或 native ABI。
-
-交付物：
-
-- 四层对象和逐阶段 IO schema；
-- 两个独立 Mesh partition 的固定静态 snapshot；
-- 两帧 frame snapshot，包含不同 transform、Anchor 和 Teleport 条件；
-- 期望 logical particle identity、constraint local indices、collision filters 和 output map；
-- CPU/GPU backend capability 表。
-
-退出条件：仅从 fixture 就能构建并完整校验 `MC2CompiledDomain` 的目标 schema；任何字段都能说明 producer、owner、坐标空间、生命周期和消费者。
-
-禁止事项：不得修改 `MC2TaskSpec` 生产语义，不得给旧 topology 直接添加含义未冻结的 `particle_range`，不得注册新产品节点。
-
-当前合同：E0 已完成。`schema_v1/manifest.json` 串联单 Mesh、双 Mesh 静态与双帧 fixture；合同测试可仅从这些 POD 重建并校验 logical identity、结构约束分区隔离、typed collision filters、output map、signed transform、独立 Keep/Reset、logical/physical 重排和 CPU/GPU capability 拒绝。Python 3.11/3.13 共用同一 oracle。架构审计同时禁止 E0 模块读取 Blender/Physics World/native owner，并禁止任何生产消费者在 E1 前提前导入 E0 合同。
-
-### E1：单 source shadow pipeline
-
-范围：让一个 Mesh source 同时经过旧 V0 路径和新的 capture -> fragment -> compile 流水线，但求解和写回仍使用旧路径。
-
-交付物：
-
-- `source_capture.py`、`static_fragment.py`、`domain_ir.py`、`domain_compile.py` 的最小实现；
-- shadow compile timing；
-- 旧静态构建与新 compiled domain 的 topology/constraint/parameter 对照报告。
-
-退出条件：代表资产上的单 source 粒子数、结构约束、自碰 primitive、半径、深度和参数数组逐项一致；shadow 关闭时没有额外 capture/compile 成本。
-
-状态：E1 的 capture/fragment/compile 对照已经完成，迁移期 `shadow_pipeline.py` 和产品开关均已删除。保留下来的 source capture、static fragment 与 compile 合同已成为统一域产品路径的一部分，不存在 V0 产品 fallback。
-
-### E2：多 source 静态 domain compile
-
-范围：只实现多 partition 静态合并，不创建 fused native context，不运行模拟。
-
-交付物：
-
-- partition-local -> logical domain index 重定位；
-- domain/partition/particle/constraint 参数分级；
-- whole-domain self collision primitives 与 group/mask；
-- 多 target output map；
-- deterministic compile signature 和缓存命中报告。
-
-退出条件：两个 Mesh 编译成一个 domain；无跨 source Distance/Bending/Tether 记录；跨 partition self-collision 仅由过滤表决定；输入顺序、显式稳定顺序和 source 删除的 identity 行为符合合同。
-
-当前合同：E2 已完成静态编译部分。统一 `compile_mc2_static_fragments` 保留调用方的显式 fragment 顺序，为每个 partition 生成连续但仅作为 `MC2IndexView` 的物理视图，并将所有 constraint/primitive 索引按偏移重定位；结构表的 endpoint owner 校验确保不存在跨 source Distance/Bending/Tether。输出 target、logical source element 和 partition owner 全部显式写入 program。每个 partition 的 runtime floats、uint32 group/mask、particle curve 采样和 constraint 参数独立进入统一 SoA，空的 domain scalar 表表示当前字段没有可安全提升到 world-scope 的值。`compare_mc2_domain_compile_cache` 只生成复用资格报告，不持有缓存或 backend；可区分 exact、layout/program 复用、纯参数值更新、重排和 source 删除。E2 仍不创建 native context，不运行模拟。
-
-### E3：新 CPU backend 单 source 等价
-
-范围：建立新的 domain backend ABI，先只运行一个 partition。旧 `MC2NativeContextV0` 保留作为 reference，不在原类上叠加双模式。
-
-交付物：
-
-- `create_domain/update_frame/step/read_output/inspect/dispose`；
-- partition 级 Center/Teleport state table，即使当前只有一个 partition；
-- 单 source 双路径数值对照和 staged failure rollback。
-
-退出条件：D-01 至 D-10 已验收行为不回退；相同输入下旧/新 CPU 输出误差在既定 tolerance 内；debug-off 无新增 readback；dispose/reset/rewind 无泄漏和悬空状态。
-
-状态：E3 已满足单 source CPU reference 退出条件。`DomainV1` 拥有独立 lifecycle、frame/parameter SoA、partition Center/Anchor/Teleport history、完整 native pass 顺序和 post/history；共享 kernel 覆盖 Center pose/shift/evaluator、分区 inertia、integration、Tether、Distance、Angle、Bending、point/edge/self collision、Motion 与 post。`cpu_native_kernel.py` 的 reference endpoints 只用于隔离数值 oracle；产品 step 已由 E4/E5 在同一 DomainV1 上扩展为多 partition 与多目标事务。
-
-稳定设计约束：Angle 必须消费 baseline parent 与 line `start/count/data`、StepBasic pose 和逐粒子 restoration/limit，不能退化成二元 endpoint 表；Angle Restoration 乘 scheduler angle power，Angle Limit 不乘。Tether rest 每个 substep 来自 StepBasic；Mesh point collision 的 base position 与 BoneSpring soft sphere 分离；point/edge 互斥；self thickness 按双方总厚度解释。Center 粒子状态必须区分 position reference、state velocity 和 real velocity，Fixed 只在 prediction preparation 跟随动画。
-
-E3 native handoff 的执行顺序固定为：
-
-1. 新增独立 `mc2_domain_cpu.hpp/.cpp` owner，只依赖后端中立的 `ProgramView`、`ParameterView`、`FrameView` 和 output view；不得 include `mc2_context_internal.hpp`，不得把 `PyObject*` 带入 kernel 核心。
-2. owner allocation 一次复制或绑定经过 schema 校验的静态 SoA、constraint/primitive table 和 partition filter；所有数组记录 domain/layout signature 与 physical layout revision。
-3. 每帧只接收 `MC2DomainFramePacketV1` 的 native view，先验证 domain/layout/frame/generation，再更新 per-partition Center/Teleport history；失败不能发布半更新 frame。
-4. 全部数值 pass 在新 owner 内按固定顺序消费同一粒子状态，V0 context 只作为同输入 reference；禁止在 Python 侧复制 solver 公式或重排 pass。
-5. native binding 只负责 ndarray -> POD view、handle 生命周期和 output envelope，不负责 authoring merge、Blender IO、slot 注册或 writeback。
-
-E3 验收目录固定为以下四个已完成小段，后一段不得替代前一段：
-
-| 小段 | 执行内容 | 必须留下的证据 | 明确不做 |
-|---|---|---|---|
-| E3-B frame-shift contract | 扩展 `MC2DomainFramePacketV1`/`FrameViewV1` 的 frame delta、simulation delta、time scale、skip count、running 状态和每 partition Center frame-shift 参数；增加独立 `Mc2CenterFrameShiftView`，输入/输出必须是 backend-neutral POD。 | ABI layout/signature 更新、非法输入整帧回滚、Reset/Keep/zero-substep 原子计数、同一 frame 的 old/current pose 对照。 | 不把 Python `center_state.py` 公式复制到 owner；不让 frame shift 读取 Blender 或 slot。 |
-| E3-C Center ordering | 以同一 native kernel 固定 `anchor -> teleport 判定 -> Reset/Keep 分支 -> smoothing -> world inertia/speed limit -> frame pose shift -> Center evaluator` 顺序；所有历史在 scheduler 前提交，失败不发布半帧。 | `test_center_frame_shift_tier_a.py`、`test_center_anchor_shift_tier_a.py`、Teleport raw native tests 与 DomainV1 双 ABI 对照；debug-off readback 计数保持零。 | 不实现完整粒子 substep、collision 或 product slot 切换。 |
-| E3-D single-source tolerance | 同一冻结 frame/parameter fixture 同时喂 V0 和 DomainV1，按 `step_reference_pipeline` 固定顺序比较 Center frame pose、shift、rotation、velocity history、integration、Tether StepBasic rest、Distance A、Angle、Bending、Distance B、Motion、Reset/Keep、paused/catch-up 和零子步结果。 | 固定 tolerance 摘要、有限性/确定性重复跑、端到端 V0 oracle；误差来源必须按 pass 标注，Tether 必须证明 rest 来源是 StepBasic，Angle/Motion 必须有分支级结果。 | 不用更新后的产品差异 fixture 掩盖旧/新差异；不在 tolerance 之前删除 V0。 |
-| E3-E performance gate | 关闭所有 Center/debug 请求时确认无额外 frame-shift scratch、时钟读取或 readback；打开显式 slice 时只测该 slice。 | py311/py313 headless、Blender 4.5 debug-off soak、native allocation/readback counters。 | 不在 E3 内做 CPU worker/job DAG 或 GPU runtime。 |
-
-E3-B 的字段进入顺序也固定：先更新 domain IR 与 frame compiler，再更新 native ABI/binding，随后才接 DomainV1；任何只改 binding 或只改 Python 的临时兼容字段都不得进入提交。E3-C 的历史提交必须把 Center frame、anchor、teleport 和 smoothing 的 old/current state 作为一个事务交换，不能由 renderer 或 debug snapshot 重建。
-
-E3 native 门禁已经满足：新 owner 能在无 Blender 对象的 C++/headless fixture 中 create/update/step/read/dispose；创建或 frame 校验失败时资源计数归零；单 source 与冻结 oracle 的位置/旋转、Center/Teleport、完整约束/碰撞和 post history 在固定 tolerance 内一致；debug-off 不触发额外 readback。`cpu_backend.py` 现在同时是长期 CPU reference 和统一域产品 backend。
-
-### E4：多 source fused CPU execution
-
-范围：让 E2 compiled domain 在一个 CPU backend context 中执行，打开同域跨 partition self collision。
-
-交付物：
-
-- 多 partition frame capture/compile；
-- 每 partition Center/Teleport/Anchor 历史；
-- 一个 broadphase/self-collision domain；
-- 统一 output buffer。
-
-退出条件：两个原本独立的 MeshCloth 对象在一个 context 中稳定碰撞；关闭跨 partition filter 后退化为互不碰撞但仍共享 context；不同粒子参数通过 SoA 生效，不要求拆 task。
-
-状态：E4/P2 已完成。DomainV1 已拥有多 partition frame、Center/Anchor/Teleport、partitioned StepBasic、compiled external 和一次 whole-domain self；fragment cache、同布局参数事务和 fused CPU owner 均由产品 slot 管理。普通多代理不再走 aggregate 双流水。
-### E5：多目标结果事务与产品节点
-
-范围：先完成多 target output adapter 和原子 writeback，再把 collector 接到产品节点；不能反过来。
-
-交付物：
-
-- 一个 domain 输出多个 GN offset commands；
-- target validation 与全批 rollback；
-- 面板对象/自定义对象、域、collector节点；
-- 完整对象属性随分区进入capture/product边界；
-- 用户可读装配报告。
-
-退出条件：多 Mesh 每帧各自写回正确 Object local offsets；任一 target 失效时整批不发布；collector 显示真实 fusion 状态，不存在静默 `N Object -> N task` 回退。
-
-状态：E5 已完成。一个 domain 的 logical output 可生成多个有序 target command；公共结果和 Blender writeback 在发布前完整预检，提交失败按整批恢复，不能留下 partial offset 或 receipt。
-### E5-B：BoneCloth/BoneSpring统一域包装与产品切换
-
-范围：只把已有Bone setup差异包装到统一product/domain边界，不重写数值kernel，不创建Bone专用backend，不扩大当前已声明的产品能力。
-
-实施顺序：
-
-1. 先把Mesh专用product request、collection和solver入口抽成setup-neutral envelope；每个request严格对应一个显式domain，旧task与product request仍禁止混输。
-2. 为BoneCloth/BoneSpring建立基于现有`MC2PartitionEntry`的显式source/collector，stable id包含Armature data、根/中控骨和setup type；同一Armature多链合为partition，跨Armature按首次出现顺序生成多个显式request，不在solver内部拆hidden task。
-3. 把`build_mc2_bone_cloth_static_for_task`拆成纯snapshot/fragment adapter，使Bone的Line/triangle、baseline、constraint、self primitive和output map进入同一compiled program；`domain_compile.py`不再硬编码Mesh setup。
-4. 把`build_mc2_bone_frame_input`接到partition frame packet，保留动画反馈屏障、Anchor、Center/Teleport和一次性frame shift；完整混合pass继续由DomainV1唯一拥有。
-5. 先构造全部Armature/PoseBone输出计划并验证身份、拓扑、connected/disconnected规则，再原子发布公共Bone结果；任一target失效必须零partial mutation并保持旧result stream。
-6. 最后把现有两个Bone任务节点切成薄collector并禁止生产代码创建Bone V0 context；V0只留作E7删除提交前的显式oracle。
-
-退出条件：BoneCloth Line/Seq/SeqLoop与triangle覆盖、BoneSpring Line/SPHERE限制、动画反馈、Anchor/Reset/Keep、参数热更新、外碰、自碰、connected/disconnected写回、多Armature显式分域和任一request失败时的整批原子性均有产品数值验收；产品路径不再产生`MC2TaskSpec`、`MC2NativeContextV0`或hidden task。
-
-状态：E5-B 已完成。BoneCloth/BoneSpring 公开节点只生成产品 request；同 Armature 多链形成域内 partition，跨 Armature 形成多个显式 request；同 Armature 输出合并，任一 request 失败则整批不发布。旧 Bone builder 只在 E7-CPU 前作为隔离 oracle。
-### E6：未来 GPU backend 原型与收益门禁
-
-E6 是确定的长期方向，但作为独立后续里程碑排期；它不阻塞 E3-E5 的统一域产品交付，也不要求当前立即实现 GPU solver。当前阶段只完成 P6-A/P6-B 的后端中立准备：同一 `MC2CompiledDomain`、frame/output contract、pass 读写集、buffer 容量/溢出、增量上传边界和 CPU reference tolerance。
-
-P6 data/pass 已机器化为 backend contract schema V2：`domain_ir.py` 在既有 immutable contract 职责内提供 `MC2BackendDataPassContractV1`，按一个 compiled layout 生成具体 buffer/容量表和 16 阶段有序 production pass 图；没有新增 backend 文件、执行 owner 或调度抽象。固定 buffer 取现有 program/parameter 的真实 shape，frame collider 保持逐帧计数，self candidate/contact/intersection 使用可证明的组合硬上限；所有 pass 只引用合同内已声明 buffer，且依赖只能指向先前阶段。V2 为 pass 增加独立 `request_writes`：约束/碰撞调试记录和 self intersection 只有显式 debug 请求才生成，不能混入常驻 production 写集，也不能请求写入 state/output buffer。
-
-P6 第二批已补齐上述缺口：`MC2BackendUploadPlanV1` 对同 layout 的 program/parameter/frame/collider 输出最小连续 row span，并把 layout rebuild、parameter rebuild 与单 buffer reallocation 分开；九个 collider SoA 的行数变化不会触发静态 topology 重建。三个动态 self buffer 使用 count -> grow -> emit 事务，硬溢出回滚 staged substep 且零发布，不能 silent truncate。`MC2_BACKEND_IO_CONTRACT_V1` 禁止 substep readback 和 backend 访问 Blender，最终只发布一次 logical output；`MC2_BACKEND_NUMERICAL_POLICY_V1` 把 identity/workload exact 项与共享 fixture 的浮点 tolerance/global cap 分开。所有对象仍只描述合同，不分配 backend 资源。
-
-未来进入 E6 时，先实现 integration + Distance + whole-domain self-collision 的最小代表原型，保留 CPU reference 对照；通过规模曲线和传输成本决定剩余 pass 的覆盖顺序，而不是一开始复制完整 CPU solver。
-
-退出条件：
-
-- 当前2k级CPU代表基线为约22.73ms求解、26.78ms产品整帧和4.27ms host floor；GPU数值接近3-8ms、含传输产品整帧进入7.8-13.8ms，或者规模提升一个数量级后曲线仍显著优于CPU；
-- upload/readback 单独计时，不能只报告 kernel 时间；
-- 结果误差、确定性范围、设备丢失和 CPU fallback 合同明确；
-- 若收益不足，不污染生产 node/data contract，可完整撤下 backend。
-
-### E7：迁移收尾
-
-E7 按资格审计和所有权分四次收口。E5-B通过双ABI与代表soak后先执行E7-A：盘点旧包装的输入解释、排序/identity、业务限制、错误域、生命周期、性能和生产依赖，确认新入口零fallback并形成精确删除清单。审计关闭后执行E7-CPU，同时删除MeshCloth、BoneCloth、BoneSpring旧隐式拆task路径、普通aggregate、V0产品owner与binding；这部分不等待E6。随后立即执行E7-S，对迁移中积累的兼容处理做专项review和简化。未来GPU产品化后再执行E7-GPU，删除原型适配、临时readback/fallback和已经被正式backend owner取代的资源路径。任何旧实现都只能在替代路径有明确产品依据时保留。
-
-最终状态不是“旧单 task solver + 新 fused solver”长期双轨。单 Object 是统一 domain 只有一个 partition 的退化情况；C++ 数值层只拥有一个 whole-domain program、一个 particle state owner 和一条 pass sequence。MeshCloth、BoneCloth、BoneSpring 可以保留不同的 capture/static fragment/result adapter，但不得各自复制粒子积分、约束、碰撞、Center 状态机或 backend 生命周期。若某个 setup 尚未达到全功能等价，它留在迁移清单中并阻止对应旧 owner 删除，不能据此把双模式宣布为目标架构。
-
-E7-CPU 的删除对象至少包括：
-
-- 旧 `MC2NativeContextV0` 的产品 owner、创建/update/step/read/dispose binding，以及只为该 owner 存在的 Python adapter；
-- 普通 MeshCloth 多代理的 `Mc2InteractionV0` aggregate copy/build/solve/scatter 路径；只有经产品明确保留且无法融合的兼容 fallback 才能独立存在，并必须有调用计数和移除条件；
-- `List[Object] -> N hidden task`、单对象专用 slot/cache identity 和绕过 compiled domain/output map 的写回分支；
-- 已被共享 kernel 或 DomainV1 接管的重复 Center、integration、constraint、collision、debug readback 实现；
-- 迁移期 `data_path_only`、slice 开关、shadow solve adapter 和双路径结果翻译层。
-
-#### E7-A 当前删除资格
-
-E7-A 的产品边界审计已经关闭：
-
-- `MC2ProductRequestV1` 是公开 step 的唯一 MC2 输入，空批次按产品事务处理，不调用旧 solver。
-- 产品运行图、公开节点顶层图和 debug 图到旧 Python owner 的可达性均为零。
-- DomainV1、共享 kernel、whole-domain self、frame orientation、static build 和产品 debug 不包含旧 context 类型。
-- Mesh/Bone collector、动态产品 slot、多 request 求解、logical output、GN/Bone writeback 和失败回滚均由产品路径拥有。
-
-E7-CPU 的 Python 删除资格与实现已经关闭：
-
-1. capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用；Mesh Bending、Angle Limit、Distance/Tether、外部碰撞 scope、friction 与 whole-domain self 已由 Blender 5.2 产品数值验收接管，9 个能力族全部 `verified`。
-2. topology/setup/frame 中立合同已归入真实职责模块；`specs.py`、`solver.py`、`native_context.py`、`interaction_scope.py`、普通 aggregate 入口和纯旧 Blender runner 已删除。
-3. E7-CPU 已删除 68 个 native V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和直接 V0 native tests；重新编译的 py313 产物与 Blender 5.2 产品闸门已通过。
-
-#### E7-CPU 逻辑批次
-
-1. 9 个能力族的产品数值缺口、旧 capability runner 和 BoneCloth/BoneSpring 删除签字均已关闭。
-2. 中立合同迁移、Python V0 oracle/owner、普通 aggregate 入口和旧 runner 删除已经完成。
-3. 已删除 68 个 V0 binding、5 个旧 context 翻译单元、2 个专用头文件、直接 V0 native tests 及 CMake/API/required-symbol 残留。
-4. 已用重新编译的 py313 native 完成静态符号、纯 native、产品事务和 Blender 5.2 验收，确认没有从旧 pyd 获得假通过。
-5. 执行 E7-S，清理 fallback、双 schema/result 翻译、旧 resource key、无调用 forwarder 和误导命名。
-6. 在旧面和 E7-S 收口后恢复 4.5/py311，完成最终双 ABI、Blender、持久化和性能验收。
-
-每个批次应覆盖一个完整所有权面，包含代码、测试、审计和唯一蓝本更新；不再按单 runner 或单个小断言提交。
-### E7-S：删除后的兼容层收敛审计
-
-
-E7-CPU删除通过后，不直接开始GPU工作。先对生产代码中所有`V0`、`legacy`、`compat`、`fallback`、`shadow`、旧schema、旧result翻译、双签名overload、迁移feature flag和“仅测试使用”入口建立机器可读清单，并逐项给出外部合同依据。没有当前资产格式、公开ABI或明确oracle责任的处理必须删除；仍需保留的边界必须重命名为真实职责，不能继续用迁移期术语掩盖所有权。
-
-E7-S至少完成以下简化：
-
-- 按“文件职责重排”把六个顶层 setup 产品钩子归位为四个 setup owner，生产模块由 72 个变为 70 个；不以文件数量为 KPI，不合并符合 Physics World 原子化标准的依赖根、合同、独立阶段或 owner；
-- 删除无调用方的 Mesh 旧 `static_build.py` owner、两个 task frame adapter，并把测试专用 Bone rotation reference 移出生产根，当前生产模块为 68 个；
-- 删除旧 debug slot/interaction 聚合器、专用 helper、resource key 与 renderer 分支；debug 只消费产品快照；
-- 删除旧 candidate、单目标 result、stats aggregate/schema 与无 producer 的 MC2 stats channel；公共事务只发布两类真实产品结果；
-- product authoring/collection/solver从Mesh专用命名收敛为setup-neutral核心，setup adapter只保留capture/fragment/frame/output hook；
-- 删除旧task到product request、V0 result到domain result、单target到事务batch的双向翻译层；
-- 合并重复的slot identity、scheduler、Center/Anchor history、debug request和dispose路径；
-- 删除不再可达的旧nanobind overload、Python adapter、capability声明和测试夹具，保留的oracle改为直接kernel/Domain fixture；
-- 增加架构审计，禁止生产import或字符串引用重新引入V0 owner、hidden task、普通aggregate和静默fallback；
-- 在简化前后复跑双ABI、Blender代表soak和同夹具P0/P2，任何性能或数值变化都必须由实际工作量解释。
-
-E7-S是P6-B最终收口和E6开工的硬门禁，不是可延期的代码整理。
-
-当前 E7-S 退出门禁已关闭：生产树 69 个模块全部有唯一原子职责并从 manifest 外部入口可达；零入站只保留 4 个注册根；82 个 forwarder 分类无未解释项或过期豁免；迁移 V0/词、旧 native binding/TU/header、双 schema/result、测试专用生产模块和 scheduler selector 均为零残留。py313 native/kernel/golden/产品事务与 Blender 5.2 代表 soak 已通过；删除后 P0 hotspot 六个产品 case 全部通过 ceiling，P2 self-radius 重复计数一致并对厚度增长产生单调工作量响应。4.5/py311 未参与 E7-S 日常迭代，只在 P6 完成后恢复一次并完成最终双 ABI 收尾。
-
-P6 退出门禁也已关闭：data/pass、真实 SoA buffer、dirty span、动态容量/硬溢出回滚、单向 IO 和 CPU reference tolerance 都有版本化机器合同；schema V2 明确分离 production writes 与 request-only debug writes，并要求 Pin primitive 参与标志、跨 owner 过滤决策 exact。py313 下 27 项 Domain IR、compile/frame、owner/slot、CPU/native 与架构硬门禁通过。Blender 5.2 `--factory-startup` 三 setup 900 帧 digest 保持 `af7cccaac676963da5d10db28c4925f13859da437b866285bfaa42ebbfe16031`，debug、BoneSpring 限制、失败回滚、P0 六场景与 P2 self-radius 均通过并明确加载当前工作树 cp313 native。最终 py311 验收通过 27 项 Domain IR、10 项 compile、30 项 native kernel、10 项 E3 golden 与全部保留 raw native smoke；Blender 4.5 的三 setup、debug、BoneSpring 限制、失败回滚、P0/P2 也通过并保持相同 900 帧 digest。P6 未创建 GPU runtime、dispatch、staging 或 CPU 并发抽象；E6 尚未启动。
-
-## 验收目录
-
-验收资产按流水线边界组织，不按某个临时类名组织。计划目录如下；E0 先建立 schema/fixture，后续阶段只补证据，不另起一套测试体系：
-
-```text
-mc2/test/
-  fixtures/domain_pipeline/
-    schema_v1/manifest.json        # E0 已有
-    single_mesh/                   # E0 已有
-    two_mesh_static/               # E0 已有
-    two_mesh_frames/               # E0 已有
-    output_maps/
-    backend_reference/
-  test_domain_ir.py                # E0 已有
-  test_domain_contract.py
-  test_domain_collect.py
-  test_partition_capture.py       # E1 已有
-  test_partition_static_fragment.py # E1 已有
-  test_domain_compile.py           # E1/E2 已有
-  test_cpu_backend.py               # E3 ABI/lifecycle 已有
-  test_frame_compile.py              # E3 frame pack 已有
-  test_cpu_native_kernel.py          # E3 Python/native data-path 已有
-  test_domain_frame_packet.py
-  test_domain_backend_cpu.py
-  test_domain_output.py
-  test_domain_failure_atomicity.py
-  benchmark_domain_pipeline.py
-  acceptance_assets_v2.json
-```
-
-Blender 主线程验收：`physicsWorld/test/test_blender_mc2_product_mixed_output_soak.py`（E7-CPU，真实 Mesh/Bone product request、统一 scheduler、900 帧双跑与写回摘要）。
-
-固定 JSON/NPZ fixture 只保存 POD、schema version、signature 和 tolerance，不保存 Blender 指针。需要真实 Blender IO 的 capture/writeback 验收由 `acceptance_assets_v2.json` 指向版本化 `.blend` 资产，并输出机器可读报告。CPU/GPU 共用同一组 compiled-domain/frame fixtures；后端不得各自维护不同的“正确答案”。
-
-### A0：合同与 schema
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A0-01 | 四层对象无职责穿透 | schema 审计证明 compiled/execute 对象不含 `bpy`、节点或 depsgraph。 |
-| A0-02 | 每个数组字段定义完整 | dtype、shape、单位、坐标空间、owner、mutable/lifetime 表。 |
-| A0-03 | logical identity 与 physical layout 分离 | 相同 logical domain 用两种 physical 排列编译，output map 仍产生相同逻辑结果。 |
-| A0-04 | ABI 版本拒绝策略 | 未知 schema/capability 在 allocation 前失败，不创建半初始化 handle。 |
-
-### A1：authoring 与 collector
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A1-01 | 面板对象 + 自定义对象同源 | 重复stable id在collector边界显式失败，不做静默合并。 |
-| A1-02 | sparse unset | 未设置字段继承 default，显式默认值与 unset 可区分。 |
-| A1-03 | 冲突 | 双显式冲突给出 partition、字段和 producer，不静默 last-writer。 |
-| A1-04 | 禁用与顺序 | 禁用 entry 保留，active draft 排除；其他 stable identity 不漂移。 |
-| A1-05 | fusion policy | Require Fusion 明确失败；Auto 的每个分组和原因可见；无隐藏 fallback。 |
-
-### A2：静态 capture 与 fragment
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A2-01 | Blender IO 边界 | capture 后销毁/替换 live object 引用，纯 fragment 测试仍可运行。 |
-| A2-02 | 单 source 等价 | proxy/baseline/constraint/self primitive 与现有单对象路径一致。 |
-| A2-03 | 局部索引 | 每个 fragment 的约束索引只引用本 partition 粒子。 |
-| A2-04 | 缓存失效 | topology/surface/profile 各自只使声明的缓存层失效。 |
-| A2-05 | 热帧零静态扫描 | 无拓扑变化时不重读 Mesh 静态数组、不重建 fragment。 |
-
-### A3：domain compile 与统一粒子场
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A3-01 | 多 Mesh 合并 | 两个 partition 编译成一个 domain、一个 logical particle field。 |
-| A3-02 | 结构约束隔离 | 跨 partition Distance/Bending/Tether 记录数严格为零。 |
-| A3-03 | 自碰覆盖 | whole-domain primitive 表含两个 partition，group/mask 精确控制跨 partition pair。 |
-| A3-04 | 参数分级 | 两个 partition 使用不同 radius/damping/mass，dense SoA 正确且不拆 domain。 |
-| A3-05 | output map 双射 | 每个 source vertex 恰好映射一个 logical particle 和一个 target element。 |
-| A3-06 | physical 重排 | contiguous 与重排 layout 产生相同 output mapping 和 debug identity。 |
-| A3-07 | staged replacement | source 增删/拓扑变化生成新 program；旧 program 不原地重编号。 |
-| A3-08 | 参数热更新 | 只改 radius/damping/stiffness 时 layout/program signature 不变，仅 parameter signature 和对应 buffer 更新。 |
-
-### A4：frame、Center 与 Teleport
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A4-01 | 独立 transform | 两个 Mesh 不同平移/旋转/非均匀缩放时 frame packet 正确。 |
-| A4-02 | 独立 Center history | 一个 partition 移动不污染另一个 partition 的惯性/平滑状态。 |
-| A4-03 | 独立 Teleport | 一个 partition Keep/Reset 时另一个连续运行；状态和速度均安全。 |
-| A4-04 | Anchor 共享与隔离 | 可共享 Anchor snapshot，但每 partition history key 独立。 |
-| A4-05 | rewind/reset | generation、倒帧、跳帧和 user reset 对全部 partition 原子生效。 |
-
-### A5：CPU backend 与数值行为
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A5-01 | 单 source reference | 新 backend 对现有 D-01 至 D-10 资产无行为回退。 |
-| A5-02 | fused self collision | 两个 Mesh 在一个 domain 内真实接触，不经过跨 task interaction context。 |
-| A5-03 | filter off | 任一 partition 未开启跨物体自碰时，两者不产生跨 partition candidate/contact，域内各自自碰仍正常。 |
-| A5-04 | Pin primitive pruning | Pin Point 与完全固定 Edge/Triangle 不出现在 candidate 两端；部分固定 Edge/Triangle 保留。 |
-| A5-04 | 参数差异 | 不同粒子参数对各自 partition 生效，性能不退化为逐 task dispatch。 |
-| A5-05 | failure atomicity | allocation/update/step/read 任一点注入失败，旧 live domain 或完整失效状态可恢复。 |
-
-### A6：结果与写回
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A6-01 | 多 target | 一个 domain 每帧产生多个目标明确的 GN writeback command。 |
-| A6-02 | 坐标空间 | 每个 target 使用自己的 source transform 转 object-local offsets。 |
-| A6-03 | 原子事务 | 任一 target/data/vertex count 失效时零对象被部分写回。 |
-| A6-04 | topology replacement | Object Data 替换后旧 output map 被拒绝，新 map 原子发布。 |
-| A6-05 | debug 对齐 | debug partition/particle identity 与实际 writeback target/element 一致。 |
-
-### A7：性能与 GPU 可迁移性
-
-| 编号 | 验收项 | 固定证据 |
-|---|---|---|
-| A7-01 | debug-off 零拖累 | 无 debug snapshot/readback/格式化；只保留常数级开关判断。 |
-| A7-02 | 热帧阶段计时 | capture、pack/upload、solve、readback、output split、publish 独立聚合。 |
-| A7-03 | 融合收益 | 同资产 `2 task + cross-task` 对比 `1 fused domain`，记录 P50/P95 和粒子规模。 |
-| A7-04 | 内存曲线 | compiled host、CPU backend、GPU resident、scratch、readback 分项随粒子数增长。 |
-| A7-05 | GPU backend 可替换 | 不改节点和 authoring fixture 即可切换 CPU/GPU，并得到相同 output contract。 |
-| A7-06 | 规模收益曲线 | 优先证明粒子量提升后的增长斜率，而不是只优化小场景最低延迟。 |
-
-### A8：产品可观察性
-
-用户必须能从collector状态看见：收集了哪些完整分区、稳定顺序、Require-Fusion结果和最终domain签名。对象属性来源在对象spec中可审计，但collector不再解释覆盖优先级。MC2 debug只展示运行中状态；两者关闭时均不触发额外native readback。任何只输出数学数组名称、却不能说明“是否正常、谁触发、受哪个具体参数影响”的状态都不算验收通过。
-
-## 与现有契约的关系
-
-该设计遵循 Physics World 的既有边界：spec build 可以由独立节点或 solver 内部完成；solver step 仍一次接收多个规范化 task；solver 不写 Blender，结果通过 result stream 交给统一 writeback。新节点只是把 MC2 setup 内部原来混在 task 函数中的 spec build/collect/compile 职能显式化，不新增第二个 world step，也不把 MeshCloth、BoneCloth、BoneSpring 拆成三个 Physics World solver。
-## 已验证的关键设计决策
-
-### 单 source reference 与完整 pass
-
-E3 的 reference 必须运行完整流水线，不能用若干 endpoint 拼接冒充等价。DomainV1 将 `state_velocities`、`velocity_reference_positions` 和 `real_velocities` 分开持有；Fixed、Center shift、Teleport、post/history 和 debug-off readback 均按真实产品顺序验证。旧 reference endpoint 只在 E7-CPU 前作为隔离 oracle，不是产品 fallback。
-
-### 统一域所有权
-
-E4/E5 已证明 partitioned StepBasic、一次 compiled external、一次 whole-domain self、多目标 logical output 和原子写回。结构约束不跨 partition 自动生成；跨 partition 交互只由 whole-domain self 过滤合同决定。同一 Armature 的 Bone 链共享一个域，跨 Armature 使用多个显式 request。
-
-### 性能观测边界
-
-P0 只在显式开启时记录 native 固定阶段槽；关闭时不读时钟、不分配诊断结构。P1-B 的 Mesh observation cache 只缓存只读 raw snapshot/fingerprint，并由 depsgraph revision、写回 receipt 和保守审计失效；Bone 继续保守观察。绝对毫秒和单次 runner 摘要不属于设计合同。
-
-### 当前环境与未来边界
-
-常规开发、编译和 Blender 验收只使用 Python 3.13 / Blender 5.2，并明确排除 5.2 默认加载的 HoTools 备份。4.5/py311 只在旧代码删除、E7-S 与 P6 完成后恢复过一次并完成最终验收，后续不作为日常编译目标。P4 CPU 并发不实施；P6 只冻结可直接实现的数据、pass、buffer 和 IO 合同；E6 GPU 是未来独立里程碑。
+- 裸 Object 直连域、域绕过 collector、collector 读取 Physics World 或 implicit registry；
+- Mesh sparse patch、面板与 socket 双来源优先级、collector defaults；
+- hidden task、普通 aggregate、逐 source world step 或单目标非事务写回；
+- 第二套 Python solver、setup 私有 mixed pass 或从最终结果反推 debug；
+- CPU/GPU 共享 mutable state，或为 GPU 重构 CPU hot loop；
+- backend 在 substep 中访问 Blender、逐 substep readback 或失败后静默跨 backend 续跑。

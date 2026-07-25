@@ -336,7 +336,7 @@ return result
 
 ### 9. native backend 只接管经测量确认的热点
 
-native 后端不替代 OmniNode 编译器和执行器，也不应把同一业务拆成 Python/CPP 两套公开节点或用隐式 backend selector 切换。一个业务语义只保留一个公开入口；需要加速时，在该入口内部替换计算实现，保持输入、输出、runtime cache 和错误语义稳定。旧实现只能在删除前用于行为、性能和依赖审计，不能长期作为第二套产品路径。
+native 后端不替代 OmniNode 编译器和执行器，也不应把同一业务按 Python/CPU/GPU 复制成多套公开节点。一个业务语义只保留一个公开入口；多个 native backend 可以在 allocation 前显式选择，但必须共享 logical input/output 和错误合同，各自拥有 mutable state、physical layout 与生命周期。新增 backend 不得修改既有 backend 的热路径或依赖，也不得在一次运行中透明切换 backend 续算。
 
 Python 侧负责：
 
@@ -860,7 +860,7 @@ README.md
 
 跨帧 native context 必须由明确的 runtime owner 持有，owner 负责 slot/context 生命周期、输入指纹、重建和 dispose。迁移旧实现时，旧路径只作为审计材料；达到替代条件后应删除旧入口、旧 ABI 和无意义的兼容转发，不保留平行产品面。
 
-常用构建命令见 `_native/README.md`。核心入口是：
+常用构建命令见 `../_native/README.md`。核心入口是：
 
 ```powershell
 & "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
@@ -994,7 +994,7 @@ IR 级特殊节点定义。这里的节点不是普通业务函数节点的替�
 
 自动匹配只适用于语义明确的普通值节点。`Any/object`、multi input、资源生命周期、任务/配置生成器以及多输出副作用节点必须显式声明 `mute_passthrough` 或 `False`，不得让相同 socket 类型替代业务语义。多输出节点逐输出审计：对象、名称、路径等原样返回值都要映射；计数、命中、查询结果和新建 datablock 没有合法输入时保持未映射。高风险 domain 的公开函数节点应显式声明 mute 合同；`tests/test_blender_mute_passthrough_contract.py` 同时验证注册映射和真实 muted 图编译。
 
-业务节点的成员关系优先由拓扑连线表达，执行开关优先使用Blender节点mute，不应再为同一语义增加裸`enabled`socket。当前MC2的对象适配器、MeshCloth域、Mesh域收集、Bone域和模拟步均遵循该约束；Pin、自碰、角度限制等功能型`*_enabled`仍是物理参数，不属于执行开关。强类型链路必须在每一层拒绝上一层之前的裸值，例如MC2 MeshCloth域只接受包装对象，模拟步只接受collector生成的product request，不能依赖运行时猜测list元素类型来补拓扑顺序。
+业务节点的成员关系优先由拓扑连线表达，执行开关优先使用 Blender 节点 mute，不应再为同一语义增加裸 `enabled` socket。功能型 `*_enabled` 可以继续表示业务参数，但不能与节点参与/执行开关混为一谈。强类型链路必须在每一层拒绝上一层之前的裸值：包装对象、完整分区、collector result 和可执行 request 各自使用不同类型，不能依赖运行时猜测 list 元素来补拓扑顺序。具体 domain 的节点名称和装配规则写入其专项蓝本。
 
 维护重点：
 

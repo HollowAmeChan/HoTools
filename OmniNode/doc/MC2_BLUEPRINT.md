@@ -14,9 +14,9 @@
 - 物理世界公共架构：`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - 各domain当前完成度：`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - OmniNode通用架构：`../ARCHITECTURE.md`
-- MC2性能热点、多代理融合、native并行与GPU前置策略：`MC2_DEEP_OPTIMIZATION_STRATEGY.md`
+- MC2性能事实、CPU优化边界与算法研究：`MC2_DEEP_OPTIMIZATION_STRATEGY.md`
 - MC2对象适配器/域/collector节点数据流：`MC2_NODE_SIMULATION_DESIGN.md`
-- 人工验收反例与已吸收决策：见本文“Debug收尾与产品踩坑”及对应能力章节；不再维护独立推进文档。
+- E6 GPU后端隔离、数据映射、碰撞算法和验收：`MC2_GPU_BACKEND_DESIGN.md`
 
 代码事实源优先级：`mc2/declaration.py`、`mc2/capabilities.py`、生产solver/native owner、自动化测试、本文。
 
@@ -33,26 +33,26 @@ MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 - 全隐式debug请求与native真实中间态快照。
 - 官方MC2粒子预设到三个setup-specific profile节点真实输入的裁剪转换。
 
-旧节点 package、旧数组 solve、旧 BoneCloth IO、`MC2TaskSpec`、Python V0 solver/context/interaction owner、普通 aggregate 入口、V0 native ABI、5 个 context 翻译单元及其 2 个专用头文件均已删除。生产树不再保留旧 owner fallback。
+生产运行时只保留统一 product request、DomainV1 和公共结果事务。架构审计负责阻止 hidden task、普通 aggregate、第二套 Python solver、旧 native owner 或绕过 collector 的产品入口重新出现；具体历史删除对象只留 Git。
 
 能力覆盖以 `mc2/test/capability_matrix.py` 为代码级清单。`verified` 必须由实际字段变化和数值不变量支持；finite、非空 debug 或 data-path 记录不能冒充响应等价。
 
 当前公开范围是restricted realtime。Bake/export、通用力场、Bone imported triangle和MC2 reduction/render mapping不属于已支持能力。
 
-## 统一粒子域当前状态
+## 统一粒子域产品基线
 
-E0-E5-B、P0、P1-B 和 E4/P2 已完成。当前产品事实如下：
+当前产品事实如下：
 
 - `MC2ProductRequestV1` 是三种 setup 的唯一公开执行输入。
 - Mesh对象必须先经过`MC2 MeshCloth对象`或`MC2 MeshCloth自定义对象`包装，再由`MC2 MeshCloth域`生成完整分区，最后由`MC2 Mesh域收集`生成唯一Require-Fusion request；Bone collector按Armature建域，同Armature多链是partition，跨Armature是多个显式request。
 - `DomainV1` 独立拥有 static/program/parameter/frame SoA、particle state、Center/Anchor/Teleport history、scheduler、whole-domain external/self 和完整 mixed pass。
 - 全部 request 先求解，再由一次 logical output transaction 发布 GN offset 或 Bone transform；任一 request 失败则本批不部分写回。
 - 调试是请求驱动的产品快照；debug-off 不分配记录缓冲、不 readback，也不改变 pass 顺序。
-- `specs.py`、`solver.py`、`native_context.py`、`interaction_scope.py` 已物理删除；产品运行图、公开节点顶层图和 debug 图均无旧 owner 可达面。
+- 产品运行图、公开节点顶层图和 debug 图只连接统一 owner，不存在第二套求解或结果通道。
 
 MeshCloth authoring只保留一条生产路径。面板对象适配器完整读取持久对象属性；自定义对象适配器用socket完整值替代面板。两者输出同一种`MC2MeshObjectSpec`，真实Object继续负责capture/writeback，冻结属性负责BasePose、Pin、半径顶点组和统一16组碰撞。域节点拒绝裸Object，collector不接Physics World、不读implicit registry、不补默认值、不接受patch；重复stable id直接失败。参与关系由连线表达，执行由节点mute表达，MC2对象/域/collector/模拟步不提供裸`enabled`。
 
-E7-CPU 已完成：capability matrix 已清除全部旧 Mesh/Bone constraint runner 引用，9 个能力族均由产品数值闸门接管；topology/setup/frame 中立合同已归入真实职责模块；62 个 `mc2_context_v0_*`、6 个 `mc2_interaction_v0_*` binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、API/CMake/required-symbol 残留和 7 个纯旧 ABI 测试已物理删除。混合静态构建测试只保留中立 kernel oracle。
+CPU DomainV1 是完整产品 backend 和长期数值 reference。E6 只能新增独立 GPU backend，不能修改 CPU 算法、状态布局、pass 顺序、ABI 或性能特征；完整隔离合同见 `MC2_GPU_BACKEND_DESIGN.md`。
 
 ## 一句话数据流
 
@@ -419,89 +419,19 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 | result/writeback | `domain_output.py`、`results.py` 和 Physics World 公共 writeback 生成 logical output 并原子发布 GN/Bone 结果。 |
 | debug | 产品 debug request/snapshot/renderer 只观察显式请求的冻结状态，不拥有第二套求解公式。 |
 
-旧 `specs.py`、`solver.py`、`native_context.py` 和 `interaction_scope.py` 已删除。topology、static build、frame capture 和参数合同由表中真实职责模块直接拥有；架构审计必须阻止这些文件或同名 owner 被重新引入。
+topology、static build、frame capture、参数、runtime owner 和 observation 各自只有一个生产职责。架构审计必须阻止第二套 solver/context/interaction owner、测试专用生产入口或无合同转发层重新出现；历史文件名不再作为维护事实。
 
 ## C++ 与 native ABI 所有权
 
 - `mc2_domain_cpu.*` 拥有 DomainV1 lifecycle、persistent state、frame/parameter update、完整 mixed pass 和 output/readback。
 - `mc2_kernels.*`、`mc2_static_build.*`、`mc2_self_collision.*` 等中立单元只处理插件自有 POD/SoA，不访问 Python、Blender 或旧 context 类型。
 - `mc2_domain_cpu_bindings.cpp` 只负责 nanobind 验证、buffer view、错误翻译和显式 readback；pure native step 不持有 `PyObject*`。
-- 旧 `mc2_context_*` 翻译单元、专用头文件及其 68 个 binding 已删除；架构审计把旧 binding、TU 和头文件零残留作为硬门禁。
+- 架构审计禁止旧 context/interaction owner、重复 translation unit、测试专用生产入口和无合同转发层回流；不在蓝本冻结易漂移的文件或 binding 数量。
 - Python host 只持有 opaque handle、编译合同和可复用 output/debug buffer，不保存第二份 C++ state。
 
-当前架构审计基线为：4 个中立 C++ PyObject API 定义无所有权违规；101 个注册 binding、21 个加载器必需 MC2 symbol 无缺失；产品/公开节点/debug 到旧模块的可达性为零；native 旧面为 0 binding / 0 翻译单元 / 0 专用头文件。运行时 py313 产物导出 71 个 `mc2_*` symbol，旧 context/interaction symbol 为零。减少的一项是没有任何消费者的 `mc2_build_bone_registration_rotations_v0` 复合导出；数字变化必须由明确产品 ABI 变更解释。
+## Backend 扩展边界
 
-## 当前 E7/P6 状态
-
-统一产品域、E7-CPU 旧面删除、E7-S 结构复核、P6 backend-neutral implementation package 与最终双 ABI 收尾均已成立。代码级能力矩阵共有 9 个能力族，全部 `verified`；全部证据已清除旧 Mesh/Bone constraint runner 引用。E6 GPU 尚未启动，必须作为独立后续里程碑立项。
-
-已关闭的删除资格：
-
-- Mesh Distance/Tether 已验证固定 stretch/velocity attenuation 参数、rest/range、拉伸/压缩分支和刚度响应变化。
-- Mesh self 已验证跨 partition scope、candidate/contact/cache 上界和单一半径模型一致性。
-- Mesh Bending、Angle Limit、collider scope 和 friction 已由 Blender 5.2 产品 runner 提供确定性数值证据，不再依赖旧 runner。
-- BoneCloth 的 dihedral/signed-volume 与 BoneSpring 的 Bending/self/Motion/gravity 固定或关闭输入隔离均已由独立产品 runner 签字；包装限制与删除前置项已经关闭，对应过程计划文档已退役。
-
-## E7-CPU 删除顺序
-
-1. 产品数值门禁与全部旧 constraint runner 迁移已经签字关闭，不再重复实施。
-2. 中立 topology/setup/frame 合同迁移与 Python V0 oracle、solver/context/interaction owner、hidden task、普通 aggregate 入口和纯旧 runner 删除已经完成。
-3. 68 个 V0 binding、5 个 `mc2_context_*` 翻译单元、2 个专用头文件、`mc2_api.hpp` 声明、CMake/object dependency、required-symbol 和直接 V0 native tests 已删除；4 个中立 frame/static API 与产品 DomainV1 ABI 保留。
-4. py313 native 已 clean rebuild；架构审计、全部保留 raw ABI smoke、55 项 Python 产品/能力测试以及 Blender 5.2 property registry、source observation、product debug、BoneCloth/BoneSpring 产品集成均通过，验收明确加载当前工作树产物。
-5. E7-S 与 P6 已完成；删除后产品 DomainV1 的 P0 hotspot 六个 case 全部通过 ceiling，P2 whole-domain self 同半径重复计数一致且较大半径产生更多 candidate/contact。最终 4.5/py311 双 ABI 与 Blender 收尾也已通过。
-6. E7-S后的产品批处理已恢复请求式热点计时：关闭节点开关时不创建资源并保持原完整pipeline与无计时native ABI；开启时顶层拆分输入/采集/同步/Frame/求解/结果/发布，CPU求解按backend-neutral原子pass继续细分，整域self提供Primitive/Grid/相交/Candidate/Contact/四轮求解明细。计时不主动请求debug确认或快照；owner热帧统计使用真实`reused/parameters_updated/replaced`，不再把slot复用统称为`updated`。
-7. Mesh 热帧 observation 命中后直接复用上一帧 immutable static snapshot 与 topology signature；fragment 全命中且 draft signature 不变时 owner 跳过重复 domain compile。失效、参数热更新、重排和失败回滚仍走原事务路径；Blender 5.2 产品热点基准已覆盖 cold/hot/config/static-change/debug 与分配上限。
-8. Mesh碰撞组语义已分离：外碰mask保持对象冻结的`collided_by_groups`，只有whole-domain self的`collision_mask`额外并入自身主组。产品编译表与600帧accepted/rejected collider scope、摩擦确定性验收均已覆盖该边界。
-9. whole-domain self 的请求式计时现将Candidate稳定总阶段拆成网格遍历/过滤/发射、排序去重、扁平化，并携带probe、pair、拒绝原因和raw/unique/duplicate计数；无计时native ABI不执行这些计数。该观测证明代表场景的主要冗余是粗网格导致的AABB晚拒绝，而不是重复候选；backend私有grid已收紧为一倍最大edge AABB尺寸，查询padding继续保证候选覆盖，固定debug合同锁定该尺度，确定性产品digest、过滤、contact/cache和输出均保持等价。
-10. self求交半径判定与contact geometry保留为未来重大优化点，当前不实施复杂改写：后续先对Edge-Edge/Point-Triangle closest、预测位移阈值、法线/符号、half量化和四轮投影独立计时，再验证类型分离、保守平方距离早退、SoA/SIMD和成熟C++几何内核。外部库不获得产品所有权，也不得改变MC2退化行为、确定性顺序或单一半径模型。
-11. E6前置host/调度review已经关闭：代表1800粒子/495 collider场景timing-off中位数26.78ms，其中求解22.73ms、不可由GPU solver消除的host floor约4.27ms；低于阈值的collider重复复验实验未保留。首版2k级GPU产品整帧预期区间为7.8-13.8ms、约1.9-3.4倍，成熟persistent/fused路径目标约7-9ms、3-4倍；数学上限6.3倍不作为承诺，验收必须包含传输、同步、readback和发布。
-
-逻辑批次必须覆盖完整所有权面，同时包含代码、测试、审计和唯一蓝本更新；不再按单 runner 或单个断言提交。
-
-## E7-S 复核清单
-
-- 一次 request 对应一个 DomainV1 owner、一个 frame transaction 和一个 logical output envelope。
-- 六个顶层 setup 产品钩子已经按 owner/lifecycle 归位为四个 setup 模块，Python 生产模块由 72 个变为 70 个；文件数量不是 KPI，符合 Physics World 原子化标准的依赖根、合同、独立阶段和 owner 保持独立。
-- 后续依赖审计已删除无调用方的 Mesh 旧 `static_build.py` owner 和两个 task frame adapter，并把只有 Tier A 测试消费的 Bone rotation reference 移出生产根；当前生产模块为 68 个。
-- forwarder 分类门禁同时拒绝未分类入口和已经失效的历史豁免；当前 82 项与生产 AST 双向一致，未分类和过期豁免均为 0。
-- 69 个生产模块已按 Physics World 原子职责完整归入 9 类：package shell 5、identity/capability 8、immutable contract 7、compile stage 17、runtime owner 6、solver execution 5、native bridge 2、Blender/product boundary 15、observation 4；Mesh 对象 spec/适配器保持独立产品边界。缺失、残留、重复归类和既定 merge source 均为 0。后续新合并点仍按证据独立处理，不把该清单当作冻结文件布局。
-- Bone Line/Triangle 纯 Python rotation 算法现在明确属于 `mc2/test/bone_rotation_reference.py` 的 Unity Tier A oracle；能力门禁禁止同名生产模块回流，正式产品继续只走 native DomainV1 post/writeback。
-- 零入站生产模块只允许 package manifest 及其字符串装载的 declaration、nodes、Blender properties 四个外部入口；当前未解释与过期豁免均为 0。
-- manifest 的八个真实外部入口可达全部 69 个生产模块；不可达模块和失效根均为 0，互相引用的死子图不能再留在生产树。
-- solver declaration 已删除 `legacy_policy`，backend 描述只保留当前唯一 collector/DomainV1 事实；下划线连接的旧迁移词与 native E3 旧注释已纳入精确禁词。
-- E3 reference 已删除 `data_path_only`、七个 scheduler slice selector 与伪造 readiness inspect 字段；base step 和七个显式 pass 现在各有唯一入口。产品 compiled pipeline 未改，Blender 5.2 mixed-output 900 帧 digest 不变。
-- 固定多 pass 前缀入口已从 `step_reference_slices` 正名为 `step_reference_pass_prefix`；生产 Python 不再使用 slice/data-path 描述当前执行职责。
-- 旧 `capture_requested_mc2_debug`、`mc2_interaction_v0` resource key 及 renderer 兼容分支已删除；产品调试只读 fused product snapshot。
-- 旧 result candidate、单目标 Mesh/Bone result、stats aggregate/schema 与 MC2 自有 stats channel 已删除；产品事务只发布 GN 与 Bone shared results。
-- 四个约束 static builder 与 Bone 产品静态装配器已经收敛为只返回完整后端中立 spec；对应 staged metadata、compact 转换和可选 `native_context` 参数已删除。剩余 Mesh proxy/baseline 与 Bone native-owned 壳继续单独审计。
-- 后续审计已确认剩余 native-owned proxy/finalizer/baseline/Bone DTO 仅服务旧 context 注册并完成删除；生产 Python 树不再包含 `native_context`、`native_owner_kind`、registration capsule 或 compact 转换，native 中立派生 API 与完整 static spec 合同继续保留。
-- 后续 E7-S 若发现新的合并点，必须先证明 owner、生命周期与依赖方向一致，再同步更新架构审计；禁止用转发 shim 保留阶段文件或旧 import 路径。
-- E7-S 采用循环小批次而非一次性目录重排：每批先审计职责和调用图，再完成保留/合并/删除、门禁更新、产品验收与独立提交。允许中途继续发现可合并职责，但不得合并符合 Physics World solver 原子化标准的独立合同、阶段、owner 或边界模块。
-- forwarder 豁免只保留当前真实存在且符合原子职责的薄访问器；旧模块、旧 adapter、旧 metadata 方法或已具备实际逻辑的函数必须从豁免中移除，防止历史白名单遮蔽后续 E7-S 新债务。
-- Bone frame 反馈状态与 hotspot timing profile 是当前 Physics World 内存资源，不是持久 schema；资源键已无兼容分支地改为职责名 `mc2.bone.frame_state` 与 `mc2.hotspot_timing.profile`，旧 `v0` 键由架构门禁禁止回流。
-- `mc2_bone_writeback_plan_v0` 是当前唯一且仍被公共 `bone_transform_batch.plan_schema` 消费的版本化结果合同，不存在双 schema 翻译，因此保留；Bone frame 失败回滚已封装回 setup owner，产品 solver 不直接操作其资源键。
-- 生产代码的 `V0/_v0` 机器审计只豁免 `mc2_center_static_v0` 内容签名与 `mc2_bone_writeback_plan_v0` 结果 schema；CPU/reference/Center/product 中的迁移期叙述已清除，新出现的非合同 `V0` 命名直接阻断架构门禁。
-- 精确迁移词 `legacy/fallback/shadow/compat/compatibility` 在生产树中为 0；preset 的缺省参数已按真实语义命名为 `default`。backend capability 的 `CompatibilityReport/compatible` 是能力判定类型和字段，不是迁移兼容分支。
-- Mesh domain draft 类型别名、draft/collider 两个 setup 名称 wrapper 与产品 solver 私有 slot-id wrapper 已删除；collector、collider capture 与 slot identity 直接使用统一合同，生产模块仍为 69 个，已分类 forwarder 由 84 降为 81。
-- 仅供测试使用的单 fragment compiler wrapper 也已删除；fixture 显式使用单元素 fragment/effective 集合，分类 forwarder 进一步降为 80。
-- 无生产消费者的 final-proxy 三角覆盖派生属性与 setup registry 复制函数已删除；原始 records、registry 和按类型 getter 保持权威，分类 forwarder 降为 78。
-- Mesh 专用 owner/result/slot-kind Python 纯别名已删除，测试直接使用统一产品类型；持久 slot ID、slot kind 字符串和 schema identity 不在同一批次改名。
-- 仅由旧测试消费的四个 Mesh fused 默认 slot wrapper/alias 已删除；slot sync、frame publish、substep 与 capture 只保留要求显式 slot identity 的统一产品入口。Mesh output batch/transaction 仍有产品消费者，后续只改为准确的 `mesh_product` 命名，不改变行为。
-- Mesh output batch/transaction 已改为 `mesh_product` 命名，Python slot 常量为 `MC2_MESH_PRODUCT_SLOT_ID`；底层 `mc2.domain.mesh.product.v1` identity、事务和数值行为保持不变。
-- 当前运行参数产品值对象统一命名为 `MC2RuntimeParameters`，旧 `MC2RuntimeParametersV0` 不保留别名；packed ABI 版本仍为 0，字段布局和 parameter signature 不变。
-- compiled-domain 只保留 `fragments` 与 `effective_parameter_signatures` 集合；E1 单 partition 的 `fragment`/`effective_parameter_signature` compatibility/shadow 视图及其中间属性已删除。
-- 12 个 static/frame 中立 native helper 已去除 `_v0/_v1` 后缀并随 py313 pyd 重编译；旧 binding 名由架构门禁禁止，正式 DomainV1 ABI 的 `v1` 标识保持不变。
-- 三份 Bone 兼容 runner 已物理删除，验收资产直接指向真实 Bone 产品、BoneSpring restrictions 与 Bone constraint runner；旧文件名只允许出现在禁止回流断言中。
-- Mesh final-proxy/BasePose 两份兼容 runner 和串行转发 mixed-output/Center 的混合门面也已删除，验收资产直接指向真实 Mesh、mixed-output 与 Center 产品 runner；6 个旧 runner 统一由不存在性门禁禁止回流。
-- 删除 fallback、shadow、普通 aggregate、双 schema/result 翻译和已无调用方的 overload/forwarder。
-- compatibility 只保留有资产格式、公开 ABI 或跨版本持久化依据的边界，并按真实职责命名。
-- debug 只按请求读取 production snapshot；不能恢复逐帧 readback或从最终结果反推中间态。
-- 失败、重入、空请求、拓扑失效、slot prune 和 multi-target writeback 保持原子与幂等。
-- 简化前后复跑架构、DomainV1、产品 Blender 与同工作量性能门禁；差异必须可解释。
-
-## P6 合同边界
-
-P6 只冻结未来 backend 可直接消费的合同，不创建 GPU runtime：
+后端中立层冻结可由 CPU 或 GPU 消费的合同：
 
 - Data：稳定 domain/partition/source/logical particle identity，拓扑/参数/primitive SoA，版本、容量和溢出规则。
 - Compile：capture -> static fragment -> domain compile -> backend allocation；静态数据只在失效范围上传。
@@ -510,25 +440,25 @@ P6 只冻结未来 backend 可直接消费的合同，不创建 GPU runtime：
 - IO：一个 request 对应一个 domain output；多个 target 由一次结果事务发布，失败整批回滚。
 - Debug/measurement：backend contract schema V2 用每个 pass 的 `request_writes` 单独声明请求式记录；普通 production writes 不包含 debug buffer。Pin primitive 参与标志与跨 owner 配对过滤决策属于 CPU/GPU exact 通道。请求式旁路记录与 production 求和等价，但不成为常驻 staging 或 backend ABI。
 
-P6 不改变 CPU pass 顺序、调度或内存所有权，不实施 P4 CPU 并发，也不能用未来 GPU 解释 CPU 回归。E6 只有在 E7-S、P6、最终双 ABI 和规模基准稳定后才可独立开工。
+现有机器合同由 `domain_ir.py` 生成具体 SoA buffer/pass manifest；program、parameter、frame 和 collider 产生最小连续 dirty span；candidate/contact/intersection 使用 count-grow-emit、硬上限、统计和回滚；最终只读取一次 logical output 并沿公共多目标事务发布。
 
-P6 implementation package 与双 ABI 验收已完成：现有 `domain_ir.py` 直接生成版本化的具体 SoA buffer/pass manifest；native 产品顺序测试与合同反向对齐；program/parameter/frame/collider 产生最小连续 dirty span；candidate/contact/intersection 采用 count-grow-emit、硬上限、统计和回滚规则；最终只进行一次 logical output readback 并沿既有多 target 事务原子发布；CPU reference exact 项、per-fixture tolerance 与 global cap 已分层。py313/Blender 5.2 与 py311/Blender 4.5 均已通过三 setup、debug、失败回滚、P0/P2 和当前 native 产物门禁，且未创建 GPU runtime。
+CPU 与 GPU 只能共享这些逻辑合同，不能共享 mutable state 或 physical layout。`mc2_domain_cpu.*`、CPU ABI、算法和热路径保持独立；E6 的 provider、碰撞映射、设备差异和退出门槛只在 `MC2_GPU_BACKEND_DESIGN.md` 维护。
 
 ## 构建与验收边界
 
 - 常规开发、native 编译和 Blender 验收只使用 Python 3.13 / Blender 5.2。
 - Blender 5.2 必须清除默认 HoTools 备份模块，并确认加载当前工作树 `_Lib/py313`。
-- 最终 4.5/py311 双 ABI/Blender 收尾已完成；后续常规开发仍只使用 py313/Blender 5.2，不回到双版本日常编译。
+- E6 日常开发使用 py313/Blender 5.2；共享合同、loader 或打包变化必须验证 py311/py313 CPU-only，阶段出口执行完整双 ABI 门禁。
 - 纯 Python 覆盖 schema、compile、DomainV1、transaction 和 capability matrix；Blender 5.2 覆盖三 setup、多 source、多 target、debug、长程确定性与失败回滚。
 - architecture audit 必须保持依赖环、私有边界、生产测试反向依赖、raw readback、persistent ndarray、产品旧模块可达性和 binding contract 全部无未解释违规。
 - benchmark 只使用产品 DomainV1，固定资产、warmup、substep、collider 和工作量计数，分开 capture/pack/solve/readback/output/publish；绝对毫秒不作为跨机器合同。
 
 ## 明确不支持与不得恢复
 
-当前不支持 Bake/export 时间轴、通用力场、Bone imported triangle、MC2 reduction/render mapping、shear/零 scale 或不满足 PoseBone proper transform 的输入。
+当前不支持通用力场、Bone imported triangle、MC2 reduction/render mapping、shear/零 scale 或不满足 PoseBone proper transform 的输入。Bake/export 只通过 Physics World 公共结果与 Bake 合同扩展，不进入 solver 私有路径。
 
 不得恢复旧节点别名、full-array solve、逐 source world step、hidden task、普通 aggregate fallback、solver 内联 GN/PoseBone writeback、无请求 debug readback、Python shadow solver、第二套 self thickness 或未被 native 消费的公开字段。
 
 ## 文档维护
 
-本文只记录稳定产品合同、当前缺口和删除/扩展门槛。节点与统一域设计写入 `MC2_NODE_SIMULATION_DESIGN.md`，性能与 P6/E6 策略写入 `MC2_DEEP_OPTIMIZATION_STRATEGY.md`，Physics World 摘要写入 `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`。单次提交、runner、临时性能数字和调试过程只留在 Git、测试或 benchmark 输出。
+本文只记录稳定产品合同和扩展边界。节点与统一域设计写入 `MC2_NODE_SIMULATION_DESIGN.md`，性能事实写入 `MC2_DEEP_OPTIMIZATION_STRATEGY.md`，E6 GPU 写入 `MC2_GPU_BACKEND_DESIGN.md`，Physics World 摘要写入 `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`。单次提交、runner、临时性能数字和删除过程只留在 Git、测试或 benchmark 输出。
