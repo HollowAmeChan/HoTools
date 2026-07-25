@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import math
+import struct
 
 import numpy as np
 
 
 _TYPE_CODES = {"SPHERE": 0, "CAPSULE": 1, "PLANE": 2, "BOX": 3}
 _EPSILON = 1.0e-8
+_FLOAT3 = struct.Struct("=3f")
 
 
 def _array(values, dtype, shape) -> np.ndarray:
@@ -18,14 +21,17 @@ def _array(values, dtype, shape) -> np.ndarray:
     return result
 
 
-def _vec3(value) -> np.ndarray | None:
+def _vec3(value) -> tuple[float, float, float] | None:
     if value is None:
         return None
     try:
-        result = np.asarray(tuple(value), dtype=np.float32).reshape(3)
-    except (TypeError, ValueError):
+        components = tuple(value)
+        if len(components) != 3:
+            return None
+        result = _FLOAT3.unpack(_FLOAT3.pack(*components))
+    except (TypeError, ValueError, OverflowError, struct.error):
         return None
-    if not np.all(np.isfinite(result)):
+    if not all(math.isfinite(component) for component in result):
         return None
     return result
 
@@ -40,6 +46,9 @@ def _pointer(value) -> int:
 def _box_signed_half_z(axis_x, axis_y, axis_z) -> float | None:
     if axis_x is None or axis_y is None or axis_z is None:
         return None
+    axis_x = np.asarray(axis_x, dtype=np.float32)
+    axis_y = np.asarray(axis_y, dtype=np.float32)
+    axis_z = np.asarray(axis_z, dtype=np.float32)
     x_length = float(np.linalg.norm(axis_x))
     y_length = float(np.linalg.norm(axis_y))
     z_length = float(np.linalg.norm(axis_z))
@@ -226,9 +235,15 @@ def _pack_colliders(
                 continue
         elif collider_type == "PLANE":
             segment_a = _vec3(collider.get("normal"))
-            if segment_a is None or float(np.linalg.norm(segment_a)) <= _EPSILON:
+            normal = (
+                np.asarray(segment_a, dtype=np.float32)
+                if segment_a is not None
+                else None
+            )
+            normal_length = float(np.linalg.norm(normal)) if normal is not None else 0.0
+            if normal is None or normal_length <= _EPSILON:
                 continue
-            segment_a = segment_a / np.linalg.norm(segment_a)
+            segment_a = normal / normal_length
             segment_b = center
             radius = 0.0
         elif collider_type == "BOX":

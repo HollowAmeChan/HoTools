@@ -125,7 +125,8 @@ def test_domain_frame_excludes_all_partition_owners_without_group_prefilter():
 
 
 def test_domain_frame_owns_immutable_array_copies():
-    center = np.asarray(((1.0, 2.0, 3.0),), dtype=np.float32)
+    original_center = (1.123456789, 2.234567891, 3.345678912)
+    center = np.asarray((original_center,), dtype=np.float64)
     world = SimpleNamespace(
         collider_snapshot={
             "frame": 9,
@@ -137,7 +138,10 @@ def test_domain_frame_owns_immutable_array_copies():
     )
     result = build_mc2_domain_collider_frame(world, (_Object(10),))
     center[0, 0] = 99.0
-    np.testing.assert_array_equal(result.collider_centers, ((1.0, 2.0, 3.0),))
+    np.testing.assert_array_equal(
+        result.collider_centers,
+        np.asarray((original_center,), dtype=np.float32),
+    )
 
 
 if __name__ == "__main__":

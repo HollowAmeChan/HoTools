@@ -103,6 +103,7 @@ prediction
 5. backend readback若已经提供目标dtype、shape和连续布局的数组，domain output只允许一次明确的只读所有权拷贝；禁止为了类型归一化先逐标量构造Python tuple再重建数组。logical到target的静态映射只有在独立测量达到收益阈值后才缓存，不能仅凭调用位于热路径增加新owner。
 6. 绝对毫秒属于同机同资产结果，不写入稳定策略。长期判断看工作量一致时的 p50/p95、内存曲线和规模增长斜率。
 7. E6前置Host Frame观测必须把Blender BasePose读取、Anchor/Row、朝向构建、Partition快照、Domain Packet、scheduler、collider打包、发布校验、native上传和状态提交分开；这些记录只由热点计时节点请求，关闭时不得创建明细容器或读取额外时钟。
+8. collider snapshot仍是Physics World共享输入，MC2只负责域排除和SoA封装。Sphere/Capsule的当前/历史vector3必须直接量化为float32标量tuple，避免按collider创建短命NumPy数组；Plane/Box的归一化、叉积和符号半轴继续保持既定float32运算顺序，性能整理不能偷换外碰输入。
 ## 产品架构决定
 
 ### MeshCloth 优先形成单一模拟域
