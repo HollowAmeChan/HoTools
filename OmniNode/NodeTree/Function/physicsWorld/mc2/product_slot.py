@@ -459,6 +459,7 @@ def publish_mc2_product_frame(
     *,
     partition_snapshots=(),
     frame_state_stage=None,
+    timing=None,
 ) -> MC2FusedProductFramePublishResultV1:
     """把准备完成的整域帧原子发布到仍为 current 的产品 owner。"""
 
@@ -493,6 +494,8 @@ def publish_mc2_product_frame(
     if scheduler_state.partition_ids != tuple(program.partition_ids):
         raise ValueError("Mesh product scheduler partition identity is stale")
     scheduler_state.validate_commit(scheduled_frame)
+    if timing is not None:
+        timing.host_detail_checkpoint("Host Frame · 发布校验")
 
     world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
     try:
@@ -506,6 +509,8 @@ def publish_mc2_product_frame(
         if frame_state_stage is not None:
             frame_state_stage.validate(world)
         owner.update_frame(frame_packet)
+        if timing is not None:
+            timing.host_detail_checkpoint("Host Frame · Native上传")
         if scheduled_frame.schedule.update_count == 0:
             owner.apply_zero_substep_frame(
                 scheduled_frame.anchor_component_local_positions
@@ -532,6 +537,8 @@ def publish_mc2_product_frame(
         slot.data.pop("writeback_plan", None)
     finally:
         world.release_write(_MC2_FUSED_PRODUCT_WRITER)
+    if timing is not None:
+        timing.host_detail_checkpoint("Host Frame · 状态提交")
     return MC2FusedProductFramePublishResultV1(
         frame=int(frame_packet.frame),
         generation=int(frame_packet.generation),
@@ -832,6 +839,7 @@ def capture_and_publish_mc2_product_frame(
     partition_frame_flags=None,
     velocity_weights=None,
     gravity_ratios=None,
+    timing=None,
 ) -> MC2FusedProductFramePublishResultV1:
     """先采集完整 partition/collider POD，再在 World 锁内发布。"""
 
@@ -865,6 +873,8 @@ def capture_and_publish_mc2_product_frame(
     )
     if partition_frame_flags is None and initialization_only:
         partition_frame_flags = (1,) * len(collection.draft.partitions)
+    if timing is not None:
+        timing.host_detail_restart()
 
     if isinstance(collection, MC2MeshProductCollectionV1):
         from .setups.mesh_cloth.product import capture_mc2_mesh_product_frame
@@ -877,6 +887,7 @@ def capture_and_publish_mc2_product_frame(
             partition_frame_flags=partition_frame_flags,
             velocity_weights=velocity_weights,
             gravity_ratios=gravity_ratios,
+            timing_checkpoint=timing.host_detail_checkpoint if timing is not None else None,
         )
     else:
         from .setups.bone_cloth.product import compile_mc2_bone_product_frame
@@ -895,6 +906,8 @@ def capture_and_publish_mc2_product_frame(
             velocity_weights=velocity_weights,
             gravity_ratios=gravity_ratios,
         )
+        if timing is not None:
+            timing.host_detail_checkpoint("Host Frame · Bone读取与Packet")
     world_time_scale = float(getattr(frame_context, "time_scale", 0.0) or 0.0)
     frame_delta_time = float(getattr(frame_context, "raw_dt", 0.0) or 0.0)
     effective_time_scale = world_time_scale * float(settings.time_scale)
@@ -911,9 +924,13 @@ def capture_and_publish_mc2_product_frame(
         world_time_scale=world_time_scale,
         initialize_only=initialization_only,
     )
+    if timing is not None:
+        timing.host_detail_checkpoint("Host Frame · Scheduler")
     collider_frame = build_mc2_domain_collider_frame_for_draft(
         world, collection.draft
     )
+    if timing is not None:
+        timing.host_detail_checkpoint("Host Frame · Collider打包")
     return publish_mc2_product_frame(
         world,
         slot,
@@ -925,6 +942,7 @@ def capture_and_publish_mc2_product_frame(
             if isinstance(collection, MC2BoneProductCollectionV1)
             else None
         ),
+        timing=timing,
     )
 
 

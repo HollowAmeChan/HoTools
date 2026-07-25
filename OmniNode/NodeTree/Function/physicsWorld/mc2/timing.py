@@ -41,6 +41,8 @@ class MC2HotspotTimingProfile:
         self._stage_maxima = {}
         self._detail_totals = {}
         self._detail_maxima = {}
+        self._host_detail_totals = {}
+        self._host_detail_maxima = {}
         self._metrics = {}
         self._setup_totals = {}
         self._action_totals = {
@@ -77,6 +79,7 @@ class MC2HotspotTimingProfile:
         self,
         stage_seconds: dict[str, float],
         detail_seconds: dict[str, float],
+        host_detail_seconds: dict[str, float],
         total_seconds: float,
         context: dict,
         *,
@@ -105,6 +108,14 @@ class MC2HotspotTimingProfile:
             self._detail_totals[stage] = self._detail_totals.get(stage, 0.0) + seconds
             self._detail_maxima[stage] = max(
                 self._detail_maxima.get(stage, 0.0), seconds
+            )
+        for stage, seconds in host_detail_seconds.items():
+            seconds = max(float(seconds), 0.0)
+            self._host_detail_totals[stage] = (
+                self._host_detail_totals.get(stage, 0.0) + seconds
+            )
+            self._host_detail_maxima[stage] = max(
+                self._host_detail_maxima.get(stage, 0.0), seconds
             )
 
         for name in (
@@ -225,6 +236,23 @@ class MC2HotspotTimingProfile:
             )
             lines.append(f"    .. other_stages = {hidden_ms:.3f}ms")
 
+        host_detail_order = sorted(
+            self._host_detail_totals,
+            key=lambda stage: self._host_detail_totals[stage],
+            reverse=True,
+        )
+        host_detail_total = sum(self._host_detail_totals.values()) / samples * 1000.0
+        if host_detail_order:
+            lines.append("  Host Frame明细（包含于统一域Frame）:")
+            for index, stage in enumerate(host_detail_order, start=1):
+                average_ms = self._host_detail_totals[stage] / samples * 1000.0
+                maximum_ms = self._host_detail_maxima[stage] * 1000.0
+                percentage = average_ms / max(host_detail_total, 1e-6) * 100.0
+                lines.append(
+                    f"    {index:02d}. {stage} = {average_ms:.3f}ms  "
+                    f"({percentage:.0f}% Frame占比, max={maximum_ms:.3f}ms)"
+                )
+
         solve_total = (
             self._stage_totals.get("统一域求解", 0.0)
             + self._stage_totals.get("模拟求解", 0.0)
@@ -266,6 +294,8 @@ class MC2HotspotTimingSession:
         self._stages = {}
         self._detail_cursor = None
         self._details = {}
+        self._host_detail_cursor = None
+        self._host_details = {}
 
     def restart(self) -> None:
         now = self._clock()
@@ -274,6 +304,8 @@ class MC2HotspotTimingSession:
         self._stages = {}
         self._detail_cursor = None
         self._details = {}
+        self._host_detail_cursor = None
+        self._host_details = {}
 
     def checkpoint(self, stage: str) -> float:
         stage = str(stage or "").strip()
@@ -293,6 +325,22 @@ class MC2HotspotTimingSession:
 
     def detail_restart(self) -> None:
         self._detail_cursor = self._clock()
+
+    def host_detail_restart(self) -> None:
+        self._host_detail_cursor = self._clock()
+
+    def host_detail_checkpoint(self, stage: str) -> float:
+        stage = str(stage or "").strip()
+        if not stage:
+            raise ValueError("MC2 host detail timing stage must not be empty")
+        now = self._clock()
+        if self._host_detail_cursor is None:
+            self._host_detail_cursor = now
+            return 0.0
+        seconds = max(now - self._host_detail_cursor, 0.0)
+        self._host_details[stage] = self._host_details.get(stage, 0.0) + seconds
+        self._host_detail_cursor = now
+        return seconds
 
     def detail_checkpoint(self, stage: str) -> float:
         stage = str(stage or "").strip()
@@ -348,6 +396,7 @@ class MC2HotspotTimingSession:
         self._profile.add_sample(
             stages,
             dict(self._details),
+            dict(self._host_details),
             total_seconds,
             dict(context),
             now=now,

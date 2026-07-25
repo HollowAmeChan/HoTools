@@ -205,6 +205,7 @@ def _step_mc2_mesh_product(
         world,
         slot,
         settings=settings,
+        timing=timing,
     )
     if timing is not None:
         timing.checkpoint("统一域Frame")
@@ -320,6 +321,7 @@ def _step_mc2_bone_product(
         world,
         slot,
         settings=settings,
+        timing=timing,
     )
     if timing is not None:
         timing.checkpoint("统一域Frame")

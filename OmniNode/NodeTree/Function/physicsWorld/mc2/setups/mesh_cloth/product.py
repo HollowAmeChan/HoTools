@@ -424,6 +424,8 @@ def _frame_row_from_snapshot(
 def compile_mc2_mesh_product_frame(
     compiled: MC2CompiledDomainV1,
     rows,
+    *,
+    timing_checkpoint=None,
 ):
     if not isinstance(compiled, MC2CompiledDomainV1):
         raise TypeError("compiled must be MC2CompiledDomainV1")
@@ -449,6 +451,8 @@ def compile_mc2_mesh_product_frame(
             fragment.frame_triangle_records,
             output,
         )
+        if timing_checkpoint is not None:
+            timing_checkpoint("Host Frame · Mesh朝向")
         frame_snapshots.append(MC2PartitionFrameSnapshotV1(
             partition_id=row.partition_id,
             frame=row.frame,
@@ -467,7 +471,11 @@ def compile_mc2_mesh_product_frame(
             velocity_weight=row.velocity_weight,
             gravity_ratio=row.gravity_ratio,
         ))
+        if timing_checkpoint is not None:
+            timing_checkpoint("Host Frame · Partition快照")
     packet = compile_mc2_domain_frame_packet(compiled.program, frame_snapshots)
+    if timing_checkpoint is not None:
+        timing_checkpoint("Host Frame · Domain Packet")
     return packet, tuple(frame_snapshots)
 
 
@@ -480,6 +488,7 @@ def capture_mc2_mesh_product_frame(
     partition_frame_flags=None,
     velocity_weights=None,
     gravity_ratios=None,
+    timing_checkpoint=None,
 ):
     """Capture BasePose/Anchor once per source, then compile one domain frame."""
     if not isinstance(collection, MC2MeshProductCollectionV1):
@@ -524,6 +533,8 @@ def capture_mc2_mesh_product_frame(
             depsgraph=depsgraph,
             cache=getattr(world, "runtime_caches", None),
         )
+        if timing_checkpoint is not None:
+            timing_checkpoint("Host Frame · BasePose读取")
         center_frame_pose = MC2CenterFramePoseSpec(
             frame=frame,
             generation=generation,
@@ -546,7 +557,13 @@ def capture_mc2_mesh_product_frame(
             velocity_weight=float(velocities[index]),
             gravity_ratio=float(gravities[index]),
         ))
-    return compile_mc2_mesh_product_frame(compiled, rows)
+        if timing_checkpoint is not None:
+            timing_checkpoint("Host Frame · Anchor与Row")
+    return compile_mc2_mesh_product_frame(
+        compiled,
+        rows,
+        timing_checkpoint=timing_checkpoint,
+    )
 
 __all__ = [
     "MC2MeshProductCollectionV1",

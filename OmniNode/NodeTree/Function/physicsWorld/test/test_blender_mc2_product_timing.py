@@ -57,6 +57,18 @@ try:
         "统一域发布",
     }.issubset(profile._stage_totals)
     assert {
+        "Host Frame · BasePose读取",
+        "Host Frame · Anchor与Row",
+        "Host Frame · Mesh朝向",
+        "Host Frame · Partition快照",
+        "Host Frame · Domain Packet",
+        "Host Frame · Scheduler",
+        "Host Frame · Collider打包",
+        "Host Frame · 发布校验",
+        "Host Frame · Native上传",
+        "Host Frame · 状态提交",
+    }.issubset(profile._host_detail_totals), profile._host_detail_totals
+    assert {
         "CPU · StepBasic准备",
         "CPU · 子步参数构建",
         "CPU · 参数校验与碰撞体打包",
