@@ -119,6 +119,8 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       task_reference_indices_(program.partition_count, -1),
       task_reference_old_positions_(program.partition_count * 3, 0.0f),
       task_reference_positions_(program.partition_count * 3, 0.0f),
+      task_reference_old_rotations_(program.partition_count * 4, 0.0f),
+      task_reference_rotations_(program.partition_count * 4, 0.0f),
       task_reference_measured_distances_(program.partition_count, 0.0f),
       task_reference_distance_thresholds_(program.partition_count, 0.0f),
       task_reference_measured_rotation_degrees_(program.partition_count, 0.0f),
@@ -217,6 +219,10 @@ DomainV1::DomainV1(const ProgramViewV1& program)
     world_positions_ = bind_positions_;
     world_rotations_ = bind_rotations_;
     velocity_positions_ = world_positions_;
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        task_reference_old_rotations_[partition * 4 + 3] = 1.0f;
+        task_reference_rotations_[partition * 4 + 3] = 1.0f;
+    }
     whole_domain_self_engine_ = std::make_unique<hotools::Mc2WholeDomainSelfEngine>();
 }
 
@@ -746,6 +752,12 @@ void DomainV1::step_task_reference_teleport() {
     std::vector<std::int32_t> next_reference_indices(partition_count_, -1);
     std::vector<float> next_old_reference_positions(partition_count_ * 3, 0.0f);
     std::vector<float> next_reference_positions(partition_count_ * 3, 0.0f);
+    std::vector<float> next_old_reference_rotations(partition_count_ * 4, 0.0f);
+    std::vector<float> next_reference_rotations(partition_count_ * 4, 0.0f);
+    for (std::size_t partition = 0; partition < partition_count_; ++partition) {
+        next_old_reference_rotations[partition * 4 + 3] = 1.0f;
+        next_reference_rotations[partition * 4 + 3] = 1.0f;
+    }
     std::vector<float> next_measured_distances(partition_count_, 0.0f);
     std::vector<float> next_distance_thresholds(partition_count_, 0.0f);
     std::vector<float> next_measured_rotation_degrees(partition_count_, 0.0f);
@@ -774,6 +786,8 @@ void DomainV1::step_task_reference_teleport() {
     view.output_reference_indices = next_reference_indices.data();
     view.output_old_reference_positions = next_old_reference_positions.data();
     view.output_reference_positions = next_reference_positions.data();
+    view.output_old_reference_rotations = next_old_reference_rotations.data();
+    view.output_reference_rotations = next_reference_rotations.data();
     view.output_measured_distances = next_measured_distances.data();
     view.output_distance_thresholds = next_distance_thresholds.data();
     view.output_measured_rotation_degrees = next_measured_rotation_degrees.data();
@@ -852,6 +866,8 @@ void DomainV1::step_task_reference_teleport() {
     task_reference_indices_.swap(next_reference_indices);
     task_reference_old_positions_.swap(next_old_reference_positions);
     task_reference_positions_.swap(next_reference_positions);
+    task_reference_old_rotations_.swap(next_old_reference_rotations);
+    task_reference_rotations_.swap(next_reference_rotations);
     task_reference_measured_distances_.swap(next_measured_distances);
     task_reference_distance_thresholds_.swap(next_distance_thresholds);
     task_reference_measured_rotation_degrees_.swap(next_measured_rotation_degrees);
@@ -3216,6 +3232,8 @@ void DomainV1::dispose() noexcept {
     task_reference_indices_.clear();
     task_reference_old_positions_.clear();
     task_reference_positions_.clear();
+    task_reference_old_rotations_.clear();
+    task_reference_rotations_.clear();
     task_reference_measured_distances_.clear();
     task_reference_distance_thresholds_.clear();
     task_reference_measured_rotation_degrees_.clear();

@@ -779,6 +779,8 @@ bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view) {
         view.output_flags == nullptr || view.output_reference_indices == nullptr ||
         view.output_old_reference_positions == nullptr ||
         view.output_reference_positions == nullptr ||
+        view.output_old_reference_rotations == nullptr ||
+        view.output_reference_rotations == nullptr ||
         view.output_measured_distances == nullptr ||
         view.output_distance_thresholds == nullptr ||
         view.output_measured_rotation_degrees == nullptr) {
@@ -792,6 +794,12 @@ bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view) {
     std::fill_n(view.output_reference_indices, view.partition_count, -1);
     std::fill_n(view.output_old_reference_positions, view.partition_count * 3, 0.0f);
     std::fill_n(view.output_reference_positions, view.partition_count * 3, 0.0f);
+    std::fill_n(view.output_old_reference_rotations, view.partition_count * 4, 0.0f);
+    std::fill_n(view.output_reference_rotations, view.partition_count * 4, 0.0f);
+    for (std::int64_t partition = 0; partition < view.partition_count; ++partition) {
+        view.output_old_reference_rotations[partition * 4 + 3] = 1.0f;
+        view.output_reference_rotations[partition * 4 + 3] = 1.0f;
+    }
     std::fill_n(view.output_measured_distances, view.partition_count, 0.0f);
     std::fill_n(view.output_distance_thresholds, view.partition_count, 0.0f);
     std::fill_n(view.output_measured_rotation_degrees, view.partition_count, 0.0f);
@@ -860,6 +868,16 @@ bool apply_task_reference_teleport_mc2(Mc2TaskReferenceTeleportView& view) {
         quat_multiply(old_component_inverse, view.previous_animated_rotations + r4, old_local_rotation);
         quat_multiply(component_inverse, view.animated_rotations + r4, local_rotation);
         quat_inverse(old_local_rotation, old_local_inverse);
+        std::copy_n(
+            old_local_rotation,
+            4,
+            view.output_old_reference_rotations + p4
+        );
+        std::copy_n(
+            local_rotation,
+            4,
+            view.output_reference_rotations + p4
+        );
         quat_multiply(
             local_rotation,
             old_local_inverse,

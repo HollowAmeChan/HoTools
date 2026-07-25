@@ -906,6 +906,16 @@ def test_native_task_reference_teleport_ignores_object_only_motion():
         np.testing.assert_array_equal(state["flags"], (0,))
         np.testing.assert_allclose(state["measured_distances"], (0.0,), atol=1.0e-6)
         assert int(state["reference_indices"][0]) == 0
+        np.testing.assert_allclose(
+            np.linalg.norm(state["old_reference_rotations_xyzw"], axis=1),
+            1.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            np.linalg.norm(state["reference_rotations_xyzw"], axis=1),
+            1.0,
+            atol=1.0e-6,
+        )
     finally:
         domain.dispose()
 

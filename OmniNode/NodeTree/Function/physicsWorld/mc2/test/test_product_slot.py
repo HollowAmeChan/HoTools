@@ -708,6 +708,55 @@ def test_paused_fused_frame_has_no_product_substeps():
     assert debug_state["waiting_for_substep"] is True
 
 
+def test_product_teleport_debug_uses_object_origin_without_fixed_particle():
+    program = types.SimpleNamespace(
+        partition_ids=("partition:no-fixed",),
+        particle_partition_index=np.asarray((0, 0), dtype=np.uint32),
+        particle_attribute_flags=np.asarray((2, 2), dtype=np.uint32),
+    )
+    task = {
+        "flags": np.asarray((0,), dtype=np.uint32),
+        "reference_indices": np.asarray((-1,), dtype=np.int32),
+        "modes": np.asarray((2,), dtype=np.int32),
+        "old_reference_positions": np.zeros((1, 3), dtype=np.float32),
+        "reference_positions": np.zeros((1, 3), dtype=np.float32),
+        "old_reference_rotations_xyzw": np.asarray(
+            ((0.0, 0.0, 0.0, 1.0),), dtype=np.float32
+        ),
+        "reference_rotations_xyzw": np.asarray(
+            ((0.0, 0.0, 0.0, 1.0),), dtype=np.float32
+        ),
+        "measured_distances": np.zeros(1, dtype=np.float32),
+        "distance_thresholds": np.asarray((0.5,), dtype=np.float32),
+        "measured_rotation_degrees": np.zeros(1, dtype=np.float32),
+        "rotation_threshold_degrees": np.asarray((90.0,), dtype=np.float32),
+    }
+    center = {
+        "teleport_flags": np.asarray((3,), dtype=np.uint32),
+        "old_frame_world_positions": np.asarray(
+            ((1.0, 2.0, 3.0),), dtype=np.float32
+        ),
+        "now_world_positions": np.asarray(
+            ((2.0, 2.0, 3.0),), dtype=np.float32
+        ),
+        "old_frame_world_rotations_xyzw": task[
+            "old_reference_rotations_xyzw"
+        ],
+        "now_world_rotations_xyzw": task["reference_rotations_xyzw"],
+        "teleport_measured_distances": np.asarray((1.0,), dtype=np.float32),
+        "teleport_distance_thresholds": np.asarray((0.5,), dtype=np.float32),
+        "teleport_measured_rotation_degrees": np.zeros(1, dtype=np.float32),
+    }
+    item = debug_module._product_task_teleport_payload(
+        program, task, center
+    )["partitions"][0]
+    assert item["eligible"] is True
+    assert item["reference_source"] == "object_origin"
+    assert item["reference_index"] == -1
+    assert item["applied"] is True and item["keep"] is True
+    np.testing.assert_array_equal(item["reference_position"], (2.0, 2.0, 3.0))
+
+
 def test_slot_native_executes_complete_compiled_frame():
     world = _world()
     kernel = native_kernel_module.MC2NativeCPUKernelV1()
@@ -789,7 +838,9 @@ def test_slot_native_executes_complete_compiled_frame():
             "show_self_candidates", "show_self_contacts",
         }.intersection(snapshot["unsupported_filters"])
         assert snapshot["native"]["positions"].flags.writeable is False
-        assert snapshot["native"]["real_velocities"].flags.writeable is False
+        dynamics = snapshot["native"]["dynamics"]
+        assert dynamics["velocities"].flags.writeable is False
+        assert dynamics["real_velocities"].flags.writeable is False
         contacts = snapshot["native"]["external_contacts"]
         assert contacts["vertices"].shape[1:] == (2,)
         assert contacts["origins"].shape[1:] == (2, 3)
@@ -812,11 +863,10 @@ def test_slot_native_executes_complete_compiled_frame():
         assert collision["friction_before"].flags.writeable is False
         assert collision["friction_after"].flags.writeable is False
         self_collision = snapshot["self_collision"]
-        self_info = snapshot["native"]["native"]
         self_primitive_count = (
-            self_info["self_point_primitive_count"]
-            + self_info["self_edge_primitive_count"]
-            + self_info["self_triangle_primitive_count"]
+            self_collision["point_primitive_count"]
+            + self_collision["edge_primitive_count"]
+            + self_collision["triangle_primitive_count"]
         )
         assert self_collision["particle_indices"].shape == (
             self_primitive_count, 3,
@@ -891,6 +941,9 @@ def test_slot_native_executes_complete_compiled_frame():
         assert debug_inspect["constraint_debug_captured_mask"] == 0
         center_partitions = snapshot["center"]["partitions"]
         teleport_partitions = snapshot["teleport"]["partitions"]
+        assert snapshot["teleport"]["schema"] == (
+            "mc2_product_task_teleport_debug_v1"
+        )
         assert len(center_partitions) == len(teleport_partitions) == 2
         for center in center_partitions:
             shift = center["frame_shift"]
@@ -907,10 +960,23 @@ def test_slot_native_executes_complete_compiled_frame():
             assert np.isfinite(shift["raw_component_delta"]).all()
         for teleport in teleport_partitions:
             assert teleport["mode"] in (0, 1, 2)
+            assert isinstance(teleport["eligible"], bool)
+            assert teleport["reference_index"] >= -1
             assert teleport["distance_threshold"] >= 0.0
             assert teleport["rotation_threshold_degrees"] >= 0.0
             assert teleport["measured_distance"] >= 0.0
             assert teleport["measured_rotation_degrees"] >= 0.0
+            if teleport["eligible"]:
+                np.testing.assert_allclose(
+                    np.linalg.norm(teleport["old_reference_rotation_xyzw"]),
+                    1.0,
+                    atol=1.0e-6,
+                )
+                np.testing.assert_allclose(
+                    np.linalg.norm(teleport["reference_rotation_xyzw"]),
+                    1.0,
+                    atol=1.0e-6,
+                )
         assert snapshot["output"]["target_positions"].shape == (
             owner.compiled.program.particle_count,
             3,

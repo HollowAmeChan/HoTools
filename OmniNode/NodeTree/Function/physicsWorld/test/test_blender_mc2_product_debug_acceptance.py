@@ -27,6 +27,10 @@ def _run_product_debug_contracts():
     product_slot.test_slot_native_executes_complete_compiled_frame()
     owner.test_owner_exposes_explicit_product_debug_state()
     product_frame.test_product_frame_compiles_two_partition_pose_and_metadata()
+    self_collision = importlib.import_module(
+        "test_blender_mc2_mesh_product_self_collision"
+    )
+    self_collision.test_mesh_product_debug_draw_emits_requested_native_layers()
 
 
 def test_mc2_product_debug_acceptance():

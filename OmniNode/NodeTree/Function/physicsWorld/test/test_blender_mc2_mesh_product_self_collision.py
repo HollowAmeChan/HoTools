@@ -23,6 +23,9 @@ parameters = mixed.parameters
 product_slot = mixed.product_slot
 world_types = mixed.world_types
 physics_blender = mixed.physics_blender
+debug_draw = mixed.importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.debug_draw"
+)
 
 
 def _profile(*, cloth_mass: float):
@@ -249,5 +252,89 @@ def test_mesh_product_self_collision_cross_partition_scope_and_cache() -> None:
     print("PASS test_mesh_product_self_collision_cross_partition_scope_and_cache")
 
 
+def test_mesh_product_debug_draw_emits_requested_native_layers() -> None:
+    world = world_types.PhysicsWorldCache()
+    generation = 4800
+    meshes = [None, None]
+    proxies = [None, None]
+    node_uid = str(id(world))
+    try:
+        physics_blender.register()
+        meshes[0], proxies[0] = mixed._mesh_object("MC2ProductDebugDrawA")
+        meshes[1], proxies[1] = mixed._mesh_object("MC2ProductDebugDrawB")
+        for obj in (meshes[1], proxies[1]):
+            obj.location.x += 0.01
+            obj.location.z += 0.005
+        bpy.context.view_layer.update()
+        request = _request(world, meshes, accepted=True)
+        slot_id = product_slot.make_mc2_product_slot_id(
+            request.setup_type, request.domain_signature
+        )
+
+        for frame in (1, 2):
+            bone_soak._set_frame(world, frame, generation)
+            world.collider_snapshot = {"frame": frame, "colliders": []}
+            returned, ready, status = nodes.physicsMC2Step(
+                world,
+                [request],
+                simulation_frequency=90,
+                max_simulation_count_per_frame=3,
+            )
+            assert returned is world and ready is True, status
+            status_world, _status = nodes.physicsMC2DebugDraw(
+                world,
+                show_velocity=True,
+                show_teleport_threshold=True,
+                show_teleport_status=True,
+                show_self_primitives=True,
+                show_self_grid=True,
+                show_self_candidates=True,
+                show_self_contacts=True,
+            )
+            assert status_world is world
+
+        slot = world.solver_slots[slot_id]
+        snapshot = slot.data["_debug_draw_snapshot"]
+        dynamics = snapshot["native"]["dynamics"]
+        assert len(dynamics["velocities"]) > 0
+        assert np.max(np.linalg.norm(dynamics["real_velocities"], axis=1)) > 0.0
+        teleport = snapshot["teleport"]
+        assert teleport["schema"] == "mc2_product_task_teleport_debug_v1"
+        assert all(item["eligible"] for item in teleport["partitions"])
+        self_state = snapshot["self_collision"]
+        assert len(self_state["particle_indices"]) > 0
+        assert len(self_state["primitive_grids"]) > 0
+        assert len(self_state["candidates"]) > 0
+        assert len(self_state["contact_indices"]) > 0
+
+        draw = debug_draw.mc2_debug_draw_store_snapshot(node_uid)
+        assert draw is not None and draw["batch_count"] > 0
+        line_colors = set(draw["line_batch_colors"])
+        point_colors = set(draw["point_batch_colors"])
+        colors = debug_draw._COLORS
+        assert line_colors.intersection({
+            colors["velocity"], colors["real_velocity"],
+            colors["velocity_delta"], colors["velocity_clamped"],
+        })
+        assert colors["teleport_threshold"] in line_colors
+        assert colors["teleport_measure"] in point_colors
+        assert colors["primitive"] in line_colors | point_colors
+        assert colors["grid"] in line_colors
+        assert colors["candidate"] in line_colors
+        assert line_colors.intersection({
+            colors["contact"], colors["contact_new"],
+            colors["disabled_contact"], colors["intersection"],
+            colors["intersection_new"],
+        })
+    finally:
+        debug_draw.clear_mc2_debug_draw_store(node_uid=node_uid)
+        world.omni_cache_dispose("mesh_product_debug_draw_cleanup")
+        for obj in (*meshes, *proxies):
+            mixed._remove_mesh(obj)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+
+
 if __name__ == "__main__":
     test_mesh_product_self_collision_cross_partition_scope_and_cache()
+    test_mesh_product_debug_draw_emits_requested_native_layers()

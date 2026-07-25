@@ -417,6 +417,12 @@ public:
     const std::vector<float>& task_reference_positions() const noexcept {
         return task_reference_positions_;
     }
+    const std::vector<float>& task_reference_old_rotations() const noexcept {
+        return task_reference_old_rotations_;
+    }
+    const std::vector<float>& task_reference_rotations() const noexcept {
+        return task_reference_rotations_;
+    }
     const std::vector<float>& task_reference_measured_distances() const noexcept {
         return task_reference_measured_distances_;
     }
@@ -656,6 +662,8 @@ private:
     std::vector<std::int32_t> task_reference_indices_;
     std::vector<float> task_reference_old_positions_;
     std::vector<float> task_reference_positions_;
+    std::vector<float> task_reference_old_rotations_;
+    std::vector<float> task_reference_rotations_;
     std::vector<float> task_reference_measured_distances_;
     std::vector<float> task_reference_distance_thresholds_;
     std::vector<float> task_reference_measured_rotation_degrees_;

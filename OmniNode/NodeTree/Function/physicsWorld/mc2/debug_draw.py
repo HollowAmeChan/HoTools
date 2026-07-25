@@ -764,9 +764,8 @@ def _append_slot_batches(
     _append_self_batches(
         batches,
         point_batches,
-        snapshot.get("native") or {},
+        snapshot,
         filters,
-        interaction=False,
     )
     if filters["show_output"]:
         _append_output_batches(batches, point_batches, snapshot, limit)
@@ -1688,6 +1687,8 @@ def _append_task_teleport_batches(
             )
         return
     if "reference_position" in teleport:
+        if not bool(teleport.get("eligible", True)):
+            return
         old_position = vector3(teleport.get("old_reference_position", (0.0, 0.0, 0.0)))
         position = vector3(teleport.get("reference_position", (0.0, 0.0, 0.0)))
         radius = max(float(teleport.get("distance_threshold", 0.0) or 0.0), 0.0)
@@ -2280,43 +2281,20 @@ def _append_radius_batches(batches, snapshot, limit):
     _batch(batches, lines, "self_radius")
 
 
-def _append_self_batches(
-    batches, point_batches, native_snapshot, filters, *, interaction
-):
-    state = native_snapshot if interaction else native_snapshot.get("self_collision")
-    if not isinstance(state, dict) or state.get("positions") is None and interaction:
+def _append_self_batches(batches, point_batches, snapshot, filters):
+    state = snapshot.get("self_collision")
+    if not isinstance(state, dict):
         return
-    positions = np.asarray(_values(native_snapshot.get("positions")), dtype=np.float32).reshape((-1, 3))
+    native = snapshot.get("native") or {}
+    positions = np.asarray(
+        _values(native.get("positions")), dtype=np.float32
+    ).reshape((-1, 3))
     indices = np.asarray(_values(state.get("particle_indices")), dtype=np.int32).reshape((-1, 3))
-    info = native_snapshot.get("native") or {}
-    prefix = "" if interaction else "self_"
-    point_count = int(info.get(f"{prefix}point_primitive_count", 0) or 0)
-    edge_count = int(info.get(f"{prefix}edge_primitive_count", 0) or 0)
+    point_count = int(state.get("point_primitive_count", 0) or 0)
+    edge_count = int(state.get("edge_primitive_count", 0) or 0)
     limit = filters["max_items"]
     visible_primitives = np.ones((len(indices),), dtype=bool)
     visible_particles = np.ones((len(positions),), dtype=bool)
-    task_filters = normalize_mc2_task_filters(filters.get("task_filter"))
-    if interaction and task_filters:
-        participants = tuple(native_snapshot.get("participants") or ())
-        allowed_owners = {
-            index
-            for index, participant in enumerate(participants)
-            if any(
-                token in str(participant.get("task_id") or "")
-                for token in task_filters
-            )
-        }
-        owners = np.asarray(_values(state.get("owner_indices")), dtype=np.int32)
-        visible_primitives = np.asarray(
-            [int(owner) in allowed_owners for owner in owners], dtype=bool
-        )
-        visible_particles[:] = False
-        offset = 0
-        for owner, participant in enumerate(participants):
-            count = int(participant.get("vertex_count", 0) or 0)
-            if owner in allowed_owners:
-                visible_particles[offset:offset + count] = True
-            offset += count
     if filters["show_self_primitives"]:
         lines = []
         points = []
@@ -2335,7 +2313,7 @@ def _append_self_batches(
         _point_batch(point_batches, points, "primitive", 6.0)
     if filters["show_self_grid"]:
         lines = []
-        grid_size = float(info.get("grid_size" if interaction else "self_grid_size", 0.0) or 0.0)
+        grid_size = float(state.get("grid_size", 0.0) or 0.0)
         grids = np.asarray(_values(state.get("primitive_grids")), dtype=np.int32).reshape((-1, 3))
         seen = set()
         for primitive_index, grid in enumerate(grids):

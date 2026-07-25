@@ -1745,6 +1745,12 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["reference_positions"] = owned_array_2d<float>(
                 std::vector<float>(domain->task_reference_positions()), partitions, 3
             );
+            result["old_reference_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->task_reference_old_rotations()), partitions, 4
+            );
+            result["reference_rotations_xyzw"] = owned_array_2d<float>(
+                std::vector<float>(domain->task_reference_rotations()), partitions, 4
+            );
             result["measured_distances"] = owned_array_1d<float>(
                 std::vector<float>(domain->task_reference_measured_distances())
             );
@@ -1756,6 +1762,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             );
             result["rotation_threshold_degrees"] = owned_array_1d<float>(
                 std::vector<float>(domain->center_teleport_rotations())
+            );
+            result["modes"] = owned_array_1d<std::int32_t>(
+                std::vector<std::int32_t>(domain->center_teleport_modes())
             );
             result["teleport_count"] = domain->task_reference_teleport_count();
             result["self_history_invalidation_count"] =

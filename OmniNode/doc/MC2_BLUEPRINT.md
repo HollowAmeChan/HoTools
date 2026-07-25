@@ -155,6 +155,8 @@ MC2源码基线以Team Center整体判定Teleport。逐粒子比较动画基准�
 
 真实高速平移/旋转与collider场景已人工确认Keep/Reset均安全，不再属于发布阻断。Teleport状态视图把旧到新判定基准的真实位移箭头和旋转测量弧按None绿色、Keep黄色、Reset红色着色，并保留同色终点；这些几何表达判定输入，不表示粒子速度。
 
+可视化调试只消费请求后冻结的产品快照。`native.positions`保存统一域位置，`native.dynamics`保存速度与法线，whole-domain self记录由顶层`self_collision`独立持有；renderer不得依赖旧aggregate遗留的重复嵌套。Teleport视图必须读取真实task-reference判定记录，包括reference索引、旧/新位置与旋转、测量值、阈值和触发flags；只有该partition确实没有Fixed时，才使用Center记录表达合同规定的对象原点回退，不能把普通Center frame-shift冒充Fixed reference。调试验收除了检查字段形状，还必须在Blender中对速度、Teleport、自碰primitive/grid/candidate/contact逐层断言非空绘制批次；否则数据存在但视口全空仍会假通过。
+
 Teleport判定姿态由task帧适配器按首个Fixed或对象原点统一提供；MeshCloth与Bone setup在应用整体Keep/Reset时仍需各自正确转换代理/骨骼世界空间。Anchor抵消、world frame shift与Teleport的先后顺序必须对照MC2 Team Center重审，不能把同一基准delta重复应用到粒子。
 
 `distance_culling_enabled/length/fade_ratio`仍存在于统一profile和runtime ABI，但三个产品节点均不公开，当前生产step也没有按相机距离停算或淡出的consumer；它们不是当前产品能力。

@@ -658,11 +658,8 @@ def _product_gravity_payload(compiled, frame_packet, center_raw) -> dict:
     }
 
 
-def _product_center_payload(program, frame_packet, raw) -> tuple[dict, dict]:
+def _product_center_payload(program, frame_packet, raw) -> dict:
     center_partitions = []
-    teleport_partitions = []
-    flags = np.asarray(raw["teleport_flags"], dtype=np.uint32)
-    modes = np.asarray(raw["teleport_modes"], dtype=np.int32)
     for index, partition_id in enumerate(program.partition_ids):
         frame_pose = {
             "component_world_position": frame_packet.partition_world_position[index],
@@ -709,33 +706,92 @@ def _product_center_payload(program, frame_packet, raw) -> tuple[dict, dict]:
             "negative_scale_transition": {},
             "frame_sync": {},
         })
-        flag = int(flags[index])
-        teleport_partitions.append({
+    return {
+        "schema": "mc2_product_center_debug_v1",
+        "partitions": tuple(center_partitions),
+    }
+
+
+def _product_task_teleport_payload(program, raw, center_raw=None) -> dict:
+    flags = np.asarray(raw["flags"], dtype=np.uint32).reshape((-1,))
+    references = np.asarray(raw["reference_indices"], dtype=np.int32).reshape((-1,))
+    modes = np.asarray(raw["modes"], dtype=np.int32).reshape((-1,))
+    particle_partitions = np.asarray(
+        program.particle_partition_index, dtype=np.int32
+    ).reshape((-1,))
+    particle_attributes = np.asarray(
+        program.particle_attribute_flags, dtype=np.uint32
+    ).reshape((-1,))
+    partitions = []
+    for index, partition_id in enumerate(program.partition_ids):
+        reference = int(references[index])
+        has_fixed_reference = bool(np.any(
+            (particle_partitions == index)
+            & ((particle_attributes & np.uint32(1)) != 0)
+        ))
+        use_object_origin = reference < 0 and not has_fixed_reference
+        eligible = reference >= 0 or (
+            use_object_origin and isinstance(center_raw, dict)
+        )
+        flag = int(
+            center_raw["teleport_flags"][index]
+            if use_object_origin and isinstance(center_raw, dict)
+            else flags[index]
+        )
+        partitions.append({
             "partition_id": str(partition_id),
-            "old_reference_position": raw["old_frame_world_positions"][index],
-            "reference_position": raw["now_world_positions"][index],
-            "old_reference_rotation_xyzw": raw[
-                "old_frame_world_rotations_xyzw"
-            ][index],
-            "reference_rotation_xyzw": raw["now_world_rotations_xyzw"][index],
-            "rotation_axis": raw["teleport_rotation_axes"][index],
+            "reference_index": reference,
+            "reference_source": (
+                "object_origin" if use_object_origin else "first_fixed"
+            ),
+            "eligible": eligible,
+            "old_reference_position": (
+                center_raw["old_frame_world_positions"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["old_reference_positions"][index]
+            ),
+            "reference_position": (
+                center_raw["now_world_positions"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["reference_positions"][index]
+            ),
+            "old_reference_rotation_xyzw": (
+                center_raw["old_frame_world_rotations_xyzw"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["old_reference_rotations_xyzw"][index]
+            ),
+            "reference_rotation_xyzw": (
+                center_raw["now_world_rotations_xyzw"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["reference_rotations_xyzw"][index]
+            ),
             "mode": int(modes[index]),
             "applied": bool(flag & 1),
             "keep": bool(flag & 2),
             "reset": bool(flag & 4),
-            "measured_distance": float(raw["teleport_measured_distances"][index]),
-            "distance_threshold": float(raw["teleport_distance_thresholds"][index]),
+            "measured_distance": float(
+                center_raw["teleport_measured_distances"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["measured_distances"][index]
+            ),
+            "distance_threshold": float(
+                center_raw["teleport_distance_thresholds"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["distance_thresholds"][index]
+            ),
             "measured_rotation_degrees": float(
-                raw["teleport_measured_rotation_degrees"][index]
+                center_raw["teleport_measured_rotation_degrees"][index]
+                if use_object_origin and isinstance(center_raw, dict)
+                else raw["measured_rotation_degrees"][index]
             ),
             "rotation_threshold_degrees": float(
-                raw["teleport_rotation_threshold_degrees"][index]
+                raw["rotation_threshold_degrees"][index]
             ),
         })
-    return (
-        {"schema": "mc2_product_center_debug_v1", "partitions": tuple(center_partitions)},
-        {"schema": "mc2_product_teleport_debug_v1", "partitions": tuple(teleport_partitions)},
-    )
+    return {
+        "schema": "mc2_product_task_teleport_debug_v1",
+        "partitions": tuple(partitions),
+    }
 
 
 def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
@@ -947,7 +1003,7 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
             positions = _readonly(output.world_positions)
             native = {"positions": positions}
             if filters.get("show_velocity", False):
-                native.update(_freeze_value(owner.read_debug_state()))
+                native["dynamics"] = _freeze_value(owner.read_debug_state())
             constraint_native = {}
             if int((constraint_capture or {}).get("mask", 0)):
                 constraint_native = _freeze_value(
@@ -956,15 +1012,32 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                 native.update(constraint_native)
             center = {}
             teleport = {}
+            center_raw = None
             if (
                 filters.get("show_center", False)
-                or filters.get("show_teleport_threshold", False)
-                or filters.get("show_teleport_status", False)
                 or filters.get("show_gravity", False)
             ):
                 center_raw = _freeze_value(owner.read_center_debug_state())
-                center, teleport = _product_center_payload(
+                center = _product_center_payload(
                     program, frame_packet, center_raw
+                )
+            if (
+                filters.get("show_teleport_threshold", False)
+                or filters.get("show_teleport_status", False)
+            ):
+                task_teleport_raw = _freeze_value(
+                    owner.read_task_reference_teleport_state()
+                )
+                if center_raw is None and np.any(
+                    np.asarray(
+                        task_teleport_raw["reference_indices"], dtype=np.int32
+                    ) < 0
+                ):
+                    center_raw = _freeze_value(owner.read_center_debug_state())
+                teleport = _product_task_teleport_payload(
+                    program,
+                    task_teleport_raw,
+                    center_raw,
                 )
             needs_topology = any(filters.get(name, False) for name in (
                 "show_topology", "show_attributes", "show_depth",
@@ -1081,30 +1154,6 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                         "产品 whole-domain self 调试缺少原生生产记录"
                     )
                 self_collision = self_results
-                native["native"] = {
-                    "self_point_primitive_count": int(
-                        self_results["point_primitive_count"]
-                    ),
-                    "self_edge_primitive_count": int(
-                        self_results["edge_primitive_count"]
-                    ),
-                    "self_triangle_primitive_count": int(
-                        self_results["triangle_primitive_count"]
-                    ),
-                    "self_point_grid_count": int(
-                        self_results["point_grid_count"]
-                    ),
-                    "self_edge_grid_count": int(
-                        self_results["edge_grid_count"]
-                    ),
-                    "self_triangle_grid_count": int(
-                        self_results["triangle_grid_count"]
-                    ),
-                    "self_max_primitive_size": float(
-                        self_results["max_primitive_size"]
-                    ),
-                    "self_grid_size": float(self_results["grid_size"]),
-                }
                 if filters.get("show_self_contacts", False):
                     history = slot.data.setdefault(
                         "_debug_self_temporal_history", {}

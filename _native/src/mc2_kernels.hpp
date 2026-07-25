@@ -156,6 +156,8 @@ struct Mc2TaskReferenceTeleportView {
     std::int32_t* output_reference_indices = nullptr;
     float* output_old_reference_positions = nullptr;
     float* output_reference_positions = nullptr;
+    float* output_old_reference_rotations = nullptr;
+    float* output_reference_rotations = nullptr;
     float* output_measured_distances = nullptr;
     float* output_distance_thresholds = nullptr;
     float* output_measured_rotation_degrees = nullptr;
