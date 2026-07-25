@@ -661,10 +661,40 @@ void confirm_self_collision_intersections(WholeDomainSelfState& context) {
     context.self_intersect_records.swap(confirmed);
 }
 
-void update_self_collision_candidates(WholeDomainSelfState& context) {
+template <bool TrackTiming>
+void update_self_collision_candidates(
+    WholeDomainSelfState& context,
+    Mc2WholeDomainSelfTiming* timing
+) {
     context.self_contact_candidates.clear();
     context.self_candidate_ready = false;
-    if (!context.self_grid_dynamic_ready) return;
+    if (!context.self_grid_dynamic_ready) {
+        {
+            SelfTimingScope<TrackTiming> stage(
+                timing, Mc2WholeDomainSelfTimingStage::CandidateDetect
+            );
+        }
+        {
+            SelfTimingScope<TrackTiming> stage(
+                timing, Mc2WholeDomainSelfTimingStage::CandidateSortUnique
+            );
+        }
+        {
+            SelfTimingScope<TrackTiming> stage(
+                timing, Mc2WholeDomainSelfTimingStage::CandidateFlatten
+            );
+        }
+        return;
+    }
+
+    auto add_metric = [&](Mc2WholeDomainSelfTimingMetric metric, std::uint64_t value = 1) {
+        if constexpr (TrackTiming) {
+            timing->metrics[static_cast<std::size_t>(metric)] += value;
+        } else {
+            (void)metric;
+            (void)value;
+        }
+    };
 
     struct Candidate {
         std::int32_t primitive0;
@@ -678,119 +708,172 @@ void update_self_collision_candidates(WholeDomainSelfState& context) {
         context.self_point_primitive_count + context.self_edge_primitive_count
     );
 
-    auto detect = [&](std::size_t my_start,
-                      std::size_t my_count,
-                      std::size_t target_start,
-                      std::size_t target_count,
-                      std::size_t target_grid_count,
-                      std::int32_t contact_type,
-                      bool duplicate_detection) {
-        if (my_count == 0 || target_count == 0 || target_grid_count == 0) return;
-        for (std::size_t primitive = my_start; primitive < my_start + my_count; ++primitive) {
-            const auto flag = context.self_primitive_flags[primitive];
-            if ((flag & kSelfIgnore) != 0u) continue;
-            std::array<std::int32_t, 3> start_grid {};
-            std::array<std::int32_t, 3> end_grid {};
-            for (std::size_t component = 0; component < 3; ++component) {
-                const float padding = context.self_max_primitive_size * 0.5f;
-                start_grid[component] = static_cast<std::int32_t>(std::floor(
-                    (context.self_primitive_aabb_min[primitive * 3 + component] - padding) /
-                    context.self_grid_size
-                ));
-                end_grid[component] = static_cast<std::int32_t>(std::floor(
-                    (context.self_primitive_aabb_max[primitive * 3 + component] + padding) /
-                    context.self_grid_size
-                ));
-            }
-            for (std::int64_t z = start_grid[2]; z <= end_grid[2]; ++z) {
-                for (std::int64_t y = start_grid[1]; y <= end_grid[1]; ++y) {
-                    for (std::int64_t x = start_grid[0]; x <= end_grid[0]; ++x) {
-                        const auto hash = self_grid_hash(
-                            static_cast<std::int32_t>(x),
-                            static_cast<std::int32_t>(y),
-                            static_cast<std::int32_t>(z)
-                        );
-                        const auto run_index = self_binary_search_grid_hash(
-                            context,
-                            target_start,
-                            target_grid_count,
-                            hash
-                        );
-                        if (run_index < 0) continue;
-                        const auto buffer_index = target_start + static_cast<std::size_t>(run_index);
-                        const auto run_start = static_cast<std::size_t>(
-                            context.self_grid_starts[buffer_index]
-                        );
-                        const auto run_end = run_start + static_cast<std::size_t>(
-                            context.self_grid_counts[buffer_index]
-                        );
-                        if (duplicate_detection && run_end < primitive) continue;
-                        auto target = duplicate_detection
-                            ? std::max(run_start, primitive)
-                            : run_start;
-                        for (; target < run_end; ++target) {
-                            if (duplicate_detection && primitive == target) continue;
-                            const auto target_flag = context.self_primitive_flags[target];
-                            if (!self_owner_pair_allowed(context, primitive, target) ||
-                                !self_aabbs_overlap(context, primitive, target) ||
-                                (target_flag & kSelfIgnore) != 0u ||
-                                ((flag & kSelfAllFix) != 0u &&
-                                 (target_flag & kSelfAllFix) != 0u) ||
-                                self_primitives_are_topology_neighbors(
-                                    context,
-                                    primitive,
-                                    target
-                                )) {
-                                continue;
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::CandidateDetect
+        );
+        auto detect = [&](std::size_t my_start,
+                          std::size_t my_count,
+                          std::size_t target_start,
+                          std::size_t target_count,
+                          std::size_t target_grid_count,
+                          std::int32_t contact_type,
+                          bool duplicate_detection) {
+            if (my_count == 0 || target_count == 0 || target_grid_count == 0) return;
+            for (std::size_t primitive = my_start; primitive < my_start + my_count; ++primitive) {
+                const auto flag = context.self_primitive_flags[primitive];
+                if ((flag & kSelfIgnore) != 0u) {
+                    add_metric(Mc2WholeDomainSelfTimingMetric::CandidateSourceIgnored);
+                    continue;
+                }
+                std::array<std::int32_t, 3> start_grid {};
+                std::array<std::int32_t, 3> end_grid {};
+                for (std::size_t component = 0; component < 3; ++component) {
+                    const float padding = context.self_max_primitive_size * 0.5f;
+                    start_grid[component] = static_cast<std::int32_t>(std::floor(
+                        (context.self_primitive_aabb_min[primitive * 3 + component] - padding) /
+                        context.self_grid_size
+                    ));
+                    end_grid[component] = static_cast<std::int32_t>(std::floor(
+                        (context.self_primitive_aabb_max[primitive * 3 + component] + padding) /
+                        context.self_grid_size
+                    ));
+                }
+                for (std::int64_t z = start_grid[2]; z <= end_grid[2]; ++z) {
+                    for (std::int64_t y = start_grid[1]; y <= end_grid[1]; ++y) {
+                        for (std::int64_t x = start_grid[0]; x <= end_grid[0]; ++x) {
+                            add_metric(Mc2WholeDomainSelfTimingMetric::CandidateGridProbes);
+                            const auto hash = self_grid_hash(
+                                static_cast<std::int32_t>(x),
+                                static_cast<std::int32_t>(y),
+                                static_cast<std::int32_t>(z)
+                            );
+                            const auto run_index = self_binary_search_grid_hash(
+                                context,
+                                target_start,
+                                target_grid_count,
+                                hash
+                            );
+                            if (run_index < 0) continue;
+                            add_metric(Mc2WholeDomainSelfTimingMetric::CandidateGridRunHits);
+                            const auto buffer_index = target_start + static_cast<std::size_t>(run_index);
+                            const auto run_start = static_cast<std::size_t>(
+                                context.self_grid_starts[buffer_index]
+                            );
+                            const auto run_end = run_start + static_cast<std::size_t>(
+                                context.self_grid_counts[buffer_index]
+                            );
+                            if (duplicate_detection && run_end < primitive) continue;
+                            auto target = duplicate_detection
+                                ? std::max(run_start, primitive)
+                                : run_start;
+                            for (; target < run_end; ++target) {
+                                if (duplicate_detection && primitive == target) continue;
+                                add_metric(Mc2WholeDomainSelfTimingMetric::CandidatePairVisits);
+                                const auto target_flag = context.self_primitive_flags[target];
+                                if constexpr (TrackTiming) {
+                                    if (!self_owner_pair_allowed(context, primitive, target)) {
+                                        add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRejectedOwner);
+                                        continue;
+                                    }
+                                    if (!self_aabbs_overlap(context, primitive, target)) {
+                                        add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRejectedAabb);
+                                        continue;
+                                    }
+                                    if ((target_flag & kSelfIgnore) != 0u) {
+                                        add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRejectedTargetIgnored);
+                                        continue;
+                                    }
+                                    if ((flag & kSelfAllFix) != 0u &&
+                                        (target_flag & kSelfAllFix) != 0u) {
+                                        add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRejectedAllFixed);
+                                        continue;
+                                    }
+                                    if (self_primitives_are_topology_neighbors(
+                                            context, primitive, target)) {
+                                        add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRejectedTopology);
+                                        continue;
+                                    }
+                                } else if (!self_owner_pair_allowed(context, primitive, target) ||
+                                           !self_aabbs_overlap(context, primitive, target) ||
+                                           (target_flag & kSelfIgnore) != 0u ||
+                                           ((flag & kSelfAllFix) != 0u &&
+                                            (target_flag & kSelfAllFix) != 0u) ||
+                                           self_primitives_are_topology_neighbors(
+                                               context, primitive, target)) {
+                                    continue;
+                                }
+                                candidates.push_back(Candidate {
+                                    static_cast<std::int32_t>(primitive),
+                                    static_cast<std::int32_t>(target),
+                                    contact_type,
+                                });
+                                add_metric(Mc2WholeDomainSelfTimingMetric::CandidateRaw);
                             }
-                            candidates.push_back(Candidate {
-                                static_cast<std::int32_t>(primitive),
-                                static_cast<std::int32_t>(target),
-                                contact_type,
-                            });
                         }
                     }
                 }
             }
-        }
-    };
+        };
 
-    detect(
-        edge_start,
-        static_cast<std::size_t>(context.self_edge_primitive_count),
-        edge_start,
-        static_cast<std::size_t>(context.self_edge_primitive_count),
-        static_cast<std::size_t>(context.self_edge_grid_count),
-        0,
-        true
-    );
-    detect(
-        point_start,
-        static_cast<std::size_t>(context.self_point_primitive_count),
-        triangle_start,
-        static_cast<std::size_t>(context.self_triangle_primitive_count),
-        static_cast<std::size_t>(context.self_triangle_grid_count),
-        1,
-        false
-    );
-    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
-        if (left.type != right.type) return left.type < right.type;
-        if (left.primitive0 != right.primitive0) return left.primitive0 < right.primitive0;
-        return left.primitive1 < right.primitive1;
-    });
-    candidates.erase(
-        std::unique(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
-            return left.type == right.type &&
-                left.primitive0 == right.primitive0 &&
-                left.primitive1 == right.primitive1;
-        }),
-        candidates.end()
-    );
-    context.self_contact_candidates.reserve(candidates.size() * 3);
-    for (const auto& candidate : candidates) {
-        context.self_contact_candidates.push_back(candidate.primitive0);
-        context.self_contact_candidates.push_back(candidate.primitive1);
-        context.self_contact_candidates.push_back(candidate.type);
+        detect(
+            edge_start,
+            static_cast<std::size_t>(context.self_edge_primitive_count),
+            edge_start,
+            static_cast<std::size_t>(context.self_edge_primitive_count),
+            static_cast<std::size_t>(context.self_edge_grid_count),
+            0,
+            true
+        );
+        detect(
+            point_start,
+            static_cast<std::size_t>(context.self_point_primitive_count),
+            triangle_start,
+            static_cast<std::size_t>(context.self_triangle_primitive_count),
+            static_cast<std::size_t>(context.self_triangle_grid_count),
+            1,
+            false
+        );
+    }
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::CandidateSortUnique
+        );
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+            if (left.type != right.type) return left.type < right.type;
+            if (left.primitive0 != right.primitive0) return left.primitive0 < right.primitive0;
+            return left.primitive1 < right.primitive1;
+        });
+        candidates.erase(
+            std::unique(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+                return left.type == right.type &&
+                    left.primitive0 == right.primitive0 &&
+                    left.primitive1 == right.primitive1;
+            }),
+            candidates.end()
+        );
+        if constexpr (TrackTiming) {
+            const auto unique_count = static_cast<std::uint64_t>(candidates.size());
+            add_metric(Mc2WholeDomainSelfTimingMetric::CandidateUnique, unique_count);
+            const auto raw_count = timing->metrics[static_cast<std::size_t>(
+                Mc2WholeDomainSelfTimingMetric::CandidateRaw
+            )];
+            add_metric(
+                Mc2WholeDomainSelfTimingMetric::CandidateDuplicates,
+                raw_count >= unique_count ? raw_count - unique_count : 0
+            );
+        }
+    }
+    {
+        SelfTimingScope<TrackTiming> stage(
+            timing, Mc2WholeDomainSelfTimingStage::CandidateFlatten
+        );
+        context.self_contact_candidates.reserve(candidates.size() * 3);
+        for (const auto& candidate : candidates) {
+            context.self_contact_candidates.push_back(candidate.primitive0);
+            context.self_contact_candidates.push_back(candidate.primitive1);
+            context.self_contact_candidates.push_back(candidate.type);
+        }
     }
     context.self_candidate_ready = true;
     ++context.self_candidate_update_count;
@@ -1555,12 +1638,7 @@ void Mc2WholeDomainSelfEngine::solve_impl(
         );
         detect_self_collision_intersections(state);
     }
-    {
-        SelfTimingScope<TrackTiming> stage(
-            timing, Mc2WholeDomainSelfTimingStage::Candidates
-        );
-        update_self_collision_candidates(state);
-    }
+    update_self_collision_candidates<TrackTiming>(state, timing);
     {
         SelfTimingScope<TrackTiming> stage(
             timing, Mc2WholeDomainSelfTimingStage::ContactBuild

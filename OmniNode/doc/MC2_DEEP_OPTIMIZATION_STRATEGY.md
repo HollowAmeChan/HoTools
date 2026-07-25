@@ -104,6 +104,7 @@ prediction
 6. 绝对毫秒属于同机同资产结果，不写入稳定策略。长期判断看工作量一致时的 p50/p95、内存曲线和规模增长斜率。
 7. E6前置Host Frame观测必须把Blender BasePose读取、Anchor/Row、朝向构建、Partition快照、Domain Packet、scheduler、collider打包、发布校验、native上传和状态提交分开；这些记录只由热点计时节点请求，关闭时不得创建明细容器或读取额外时钟。
 8. collider snapshot仍是Physics World共享输入，MC2只负责域排除和SoA封装。Sphere/Capsule的当前/历史vector3必须直接量化为float32标量tuple，避免按collider创建短命NumPy数组；Plane/Box的归一化、叉积和符号半轴继续保持既定float32运算顺序，性能整理不能偷换外碰输入。覆盖九组SoA的`frame_signature`只属于按需观察身份，普通Frame不得为了未消费的debug字段预先计算SHA256。
+9. whole-domain self 的Candidate观测必须把网格遍历/过滤/发射、排序去重和最终扁平化分开，并同时报告grid probe、run命中、pair访问、分原因拒绝、raw/unique/duplicate；只有热点计时请求可以执行这些计数。若`raw/unique`接近1而AABB晚拒绝占主导，不得重写排序或引入去重缓存，应先修正保证覆盖性的网格尺度；CPU实现仍须保持与未来GPU count/scan/emit相同的确定性候选顺序和过滤合同。
 ## 产品架构决定
 
 ### MeshCloth 优先形成单一模拟域

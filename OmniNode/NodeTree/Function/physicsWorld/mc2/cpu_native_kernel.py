@@ -611,18 +611,22 @@ class MC2NativeCPUKernelV1:
         key = self._require_handle(handle)
         raw = self._module.mc2_domain_cpu_v1_step_whole_domain_self_owned_timed(key)
         if not isinstance(raw, Mapping) or raw.get("schema") != (
-            "mc2_whole_domain_self_timing_v1"
+            "mc2_whole_domain_self_timing_v2"
         ):
             raise RuntimeError("native whole-domain self timing schema is invalid")
         raw_stages = raw.get("stages")
         raw_calls = raw.get("calls")
-        if not isinstance(raw_stages, Mapping) or not isinstance(raw_calls, Mapping):
+        raw_metrics = raw.get("metrics")
+        if (
+            not isinstance(raw_stages, Mapping)
+            or not isinstance(raw_calls, Mapping)
+            or not isinstance(raw_metrics, Mapping)
+        ):
             raise RuntimeError("native whole-domain self timing payload is invalid")
         labels = {
             "primitive_update": "CPU Self · Primitive更新",
             "grid": "CPU Self · Grid构建与排序",
             "intersection": "CPU Self · 相交检测",
-            "candidates": "CPU Self · Candidate生成",
             "contact_build": "CPU Self · Contact构建",
             "solve_prepare": "CPU Self · 求解准备",
             "solve_round_1": "CPU Self · 求解轮次1",
@@ -631,25 +635,69 @@ class MC2NativeCPUKernelV1:
             "solve_round_4": "CPU Self · 求解轮次4",
             "debug_finalize": "CPU Self · Debug确认与快照",
         }
-        unknown = set(raw_stages) - set(labels)
+        candidate_labels = {
+            "candidate_detect": "CPU Self Candidate · 网格遍历/过滤/发射",
+            "candidate_sort_unique": "CPU Self Candidate · 排序去重",
+            "candidate_flatten": "CPU Self Candidate · 扁平化",
+        }
+        metric_names = {
+            "candidate_source_ignored",
+            "candidate_grid_probes",
+            "candidate_grid_run_hits",
+            "candidate_pair_visits",
+            "candidate_rejected_owner",
+            "candidate_rejected_aabb",
+            "candidate_rejected_target_ignored",
+            "candidate_rejected_all_fixed",
+            "candidate_rejected_topology",
+            "candidate_raw",
+            "candidate_unique",
+            "candidate_duplicates",
+        }
+        unknown = set(raw_stages) - set(labels) - set(candidate_labels)
         if unknown:
             raise RuntimeError(f"native whole-domain self timing has unknown stages: {unknown}")
+        if set(raw_metrics) != metric_names:
+            raise RuntimeError("native whole-domain self timing metrics are incomplete")
         stages = {}
         calls = {}
+        candidate_breakdown = {}
+        candidate_call_count = 0
         for name, raw_seconds in raw_stages.items():
             seconds = float(raw_seconds)
             call_count = int(raw_calls.get(name, 0))
             if not np.isfinite(seconds) or seconds < 0.0 or call_count <= 0:
                 raise RuntimeError("native whole-domain self timing sample is invalid")
-            stages[labels[name]] = seconds
-            calls[labels[name]] = call_count
+            if name in candidate_labels:
+                candidate_breakdown[candidate_labels[name]] = seconds
+                candidate_call_count += call_count
+            else:
+                stages[labels[name]] = seconds
+                calls[labels[name]] = call_count
+        if candidate_breakdown:
+            candidate_stage = "CPU Self · Candidate生成"
+            stages[candidate_stage] = sum(candidate_breakdown.values())
+            calls[candidate_stage] = candidate_call_count
+        metrics = {name: int(raw_metrics[name]) for name in metric_names}
+        if any(value < 0 for value in metrics.values()):
+            raise RuntimeError("native whole-domain self timing metrics must be non-negative")
+        if metrics["candidate_raw"] != (
+            metrics["candidate_unique"] + metrics["candidate_duplicates"]
+        ):
+            raise RuntimeError("native whole-domain self candidate counts are inconsistent")
+        if metrics["candidate_grid_run_hits"] > metrics["candidate_grid_probes"]:
+            raise RuntimeError("native whole-domain self grid counts are inconsistent")
+        if metrics["candidate_raw"] > metrics["candidate_pair_visits"]:
+            raise RuntimeError("native whole-domain self pair counts are inconsistent")
         clock_reads = int(raw.get("clock_reads", 0))
         if clock_reads != sum(calls.values()) * 2:
             raise RuntimeError("native whole-domain self timing clock count is invalid")
         return {
-            "schema": "mc2_whole_domain_self_timing_v1",
+            "schema": "mc2_whole_domain_self_timing_v2",
             "stages": stages,
             "calls": calls,
+            "candidate_breakdown": candidate_breakdown,
+            "candidate_metrics": metrics,
             "clock_reads": clock_reads,
             "residual_stage": "CPU Self · ABI边界与未归类",
         }

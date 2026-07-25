@@ -865,7 +865,9 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                     "primitive_update",
                     "grid",
                     "intersection",
-                    "candidates",
+                    "candidate_detect",
+                    "candidate_sort_unique",
+                    "candidate_flatten",
                     "contact_build",
                     "solve_prepare",
                     "solve_round_1",
@@ -881,10 +883,30 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 stages[stage_names[index]] = timing.seconds[index];
                 calls[stage_names[index]] = timing.calls[index];
             }
+            constexpr std::array<const char*, hotools::Mc2WholeDomainSelfTiming::metric_count>
+                metric_names {
+                    "candidate_source_ignored",
+                    "candidate_grid_probes",
+                    "candidate_grid_run_hits",
+                    "candidate_pair_visits",
+                    "candidate_rejected_owner",
+                    "candidate_rejected_aabb",
+                    "candidate_rejected_target_ignored",
+                    "candidate_rejected_all_fixed",
+                    "candidate_rejected_topology",
+                    "candidate_raw",
+                    "candidate_unique",
+                    "candidate_duplicates",
+                };
+            nb::dict metrics;
+            for (std::size_t index = 0; index < metric_names.size(); ++index) {
+                metrics[metric_names[index]] = timing.metrics[index];
+            }
             nb::dict result;
-            result["schema"] = "mc2_whole_domain_self_timing_v1";
+            result["schema"] = "mc2_whole_domain_self_timing_v2";
             result["stages"] = stages;
             result["calls"] = calls;
+            result["metrics"] = metrics;
             result["clock_reads"] = timing.clock_reads;
             return result;
         },

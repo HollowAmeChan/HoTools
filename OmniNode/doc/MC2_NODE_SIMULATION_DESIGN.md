@@ -679,7 +679,7 @@ E 阶段描述功能门禁，P 阶段描述穿插其中的性能与后端工作�
 |---:|---|---|---|
 | 1 | E0-E2 + P1-A 前半 | 冻结 partition、capture、compile、logical/physical identity、参数 SoA 和 output map；已完成。 | 不创建 fused runtime，不改产品 task。 |
 | 2 | E3 + P2 分区状态 + P3 + P6-A | 已完成单 source 纯 native CPU reference、每 partition Center/Anchor/Teleport、完整 pass 顺序和 V0 tolerance；同时冻结 GPU 可复用的数据/pass 基础边界。 | 不建 CPU worker/job DAG，不做产品切换。 |
-| 3 | P0（已完成，产品路径已恢复） | 产品批处理重新接通请求式阶段计时：顶层分别聚合输入、采集、同步、Frame、求解、结果构造与事务发布，CPU诊断路径再按Teleport、Center、Integration、Tether、Distance A/B、Angle、Bending、外碰、Motion、整域self和Post原子pass计时；整域self继续拆为Primitive更新、Grid、相交检测、Candidate、Contact、准备与四轮求解。关闭节点开关时仍直接调用原完整pipeline和无计时native ABI，不创建timing resource、不读取阶段时钟、不执行诊断pipeline。计时开关不请求debug确认或快照，debug额外计算只受原debug请求控制。 | 不依据尚未拆开的总时长猜优化项；不得把self有效mask当作外碰mask。 |
+| 3 | P0（已完成，产品路径已恢复） | 产品批处理重新接通请求式阶段计时：顶层分别聚合输入、采集、同步、Frame、求解、结果构造与事务发布，CPU诊断路径再按Teleport、Center、Integration、Tether、Distance A/B、Angle、Bending、外碰、Motion、整域self和Post原子pass计时；整域self继续拆为Primitive更新、Grid、相交检测、Candidate、Contact、准备与四轮求解，Candidate内部再区分网格遍历/过滤/发射、排序去重和扁平化，并报告probe、pair、拒绝原因与raw/unique/duplicate工作量。关闭节点开关时仍直接调用原完整pipeline和无计时native ABI，C++模板在编译期移除Candidate计数，不创建timing resource、不读取阶段时钟、不执行诊断pipeline。计时开关不请求debug确认或快照，debug额外计算只受原debug请求控制。 | 不依据尚未拆开的总时长猜优化项；不得把self有效mask当作外碰mask。 |
 | 4 | P1-B（已完成） | Mesh source observation cache已消除普通热帧全量扫描；失效矩阵、GN receipt、安全帧、强制审计和120样本性能门禁通过。 | Bone保持保守全扫；不把同批depsgraph歧义伪装成完整revision。 |
 | 5 | E4 + P2 + 证据驱动的 P5 | 执行多 source fused CPU domain，一次 whole-domain self 流水覆盖同/跨 partition；接入差异化粒子与约束参数。只做 P0 已证明的低风险布局/容量优化。 | 不保留普通多代理的 aggregate 双流水，不做粒子域 CPU 并发。 |
 | 6 | E5 + P1-A 后半 | 先闭环多目标结果事务，再接产品 collector、隐式/显式覆盖和可读 fusion report；通过 soak 后切换 MeshCloth 主路径。 | 不静默回退为 `N Object -> N task`。 |

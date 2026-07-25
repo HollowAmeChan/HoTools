@@ -43,6 +43,9 @@ class MC2HotspotTimingProfile:
         self._detail_maxima = {}
         self._host_detail_totals = {}
         self._host_detail_maxima = {}
+        self._candidate_detail_totals = {}
+        self._candidate_detail_maxima = {}
+        self._candidate_metric_totals = {}
         self._metrics = {}
         self._setup_totals = {}
         self._action_totals = {
@@ -80,6 +83,8 @@ class MC2HotspotTimingProfile:
         stage_seconds: dict[str, float],
         detail_seconds: dict[str, float],
         host_detail_seconds: dict[str, float],
+        candidate_detail_seconds: dict[str, float],
+        candidate_metrics: dict[str, int],
         total_seconds: float,
         context: dict,
         *,
@@ -116,6 +121,21 @@ class MC2HotspotTimingProfile:
             )
             self._host_detail_maxima[stage] = max(
                 self._host_detail_maxima.get(stage, 0.0), seconds
+            )
+        for stage, seconds in candidate_detail_seconds.items():
+            seconds = max(float(seconds), 0.0)
+            self._candidate_detail_totals[stage] = (
+                self._candidate_detail_totals.get(stage, 0.0) + seconds
+            )
+            self._candidate_detail_maxima[stage] = max(
+                self._candidate_detail_maxima.get(stage, 0.0), seconds
+            )
+        for name, value in candidate_metrics.items():
+            value = int(value)
+            if value < 0:
+                raise ValueError("MC2 candidate timing metrics must be non-negative")
+            self._candidate_metric_totals[name] = (
+                self._candidate_metric_totals.get(name, 0) + value
             )
 
         for name in (
@@ -272,6 +292,50 @@ class MC2HotspotTimingProfile:
                     f"    {index:02d}. {stage} = {average_ms:.3f}ms  "
                     f"({percentage:.0f}% 求解占比, max={maximum_ms:.3f}ms)"
                 )
+        candidate_order = sorted(
+            self._candidate_detail_totals,
+            key=lambda stage: self._candidate_detail_totals[stage],
+            reverse=True,
+        )
+        candidate_total_ms = (
+            sum(self._candidate_detail_totals.values()) / samples * 1000.0
+        )
+        if candidate_order:
+            lines.append("  Candidate生成明细（包含于CPU Self · Candidate生成）:")
+            for index, stage in enumerate(candidate_order, start=1):
+                average_ms = self._candidate_detail_totals[stage] / samples * 1000.0
+                maximum_ms = self._candidate_detail_maxima[stage] * 1000.0
+                percentage = average_ms / max(candidate_total_ms, 1e-6) * 100.0
+                lines.append(
+                    f"    {index:02d}. {stage} = {average_ms:.3f}ms  "
+                    f"({percentage:.0f}% Candidate占比, max={maximum_ms:.3f}ms)"
+                )
+        if self._candidate_metric_totals:
+            average = {
+                name: value / samples
+                for name, value in self._candidate_metric_totals.items()
+            }
+            raw = average.get("candidate_raw", 0.0)
+            unique = average.get("candidate_unique", 0.0)
+            duplicates = average.get("candidate_duplicates", 0.0)
+            ratio = raw / max(unique, 1.0)
+            lines.append(
+                "    工作量(avg): "
+                f"grid探测={average.get('candidate_grid_probes', 0.0):.1f}  "
+                f"run命中={average.get('candidate_grid_run_hits', 0.0):.1f}  "
+                f"pair访问={average.get('candidate_pair_visits', 0.0):.1f}  "
+                f"raw={raw:.1f}  unique={unique:.1f}  "
+                f"duplicates={duplicates:.1f}  raw/unique={ratio:.2f}x"
+            )
+            lines.append(
+                "    过滤(avg): "
+                f"source忽略={average.get('candidate_source_ignored', 0.0):.1f}  "
+                f"owner={average.get('candidate_rejected_owner', 0.0):.1f}  "
+                f"AABB={average.get('candidate_rejected_aabb', 0.0):.1f}  "
+                f"target忽略={average.get('candidate_rejected_target_ignored', 0.0):.1f}  "
+                f"全固定={average.get('candidate_rejected_all_fixed', 0.0):.1f}  "
+                f"拓扑邻接={average.get('candidate_rejected_topology', 0.0):.1f}"
+            )
         return lines
 
     def dispose(self, _reason: str = "") -> None:
@@ -296,6 +360,8 @@ class MC2HotspotTimingSession:
         self._details = {}
         self._host_detail_cursor = None
         self._host_details = {}
+        self._candidate_details = {}
+        self._candidate_metrics = {}
 
     def restart(self) -> None:
         now = self._clock()
@@ -306,6 +372,8 @@ class MC2HotspotTimingSession:
         self._details = {}
         self._host_detail_cursor = None
         self._host_details = {}
+        self._candidate_details = {}
+        self._candidate_metrics = {}
 
     def checkpoint(self, stage: str) -> float:
         stage = str(stage or "").strip()
@@ -372,6 +440,26 @@ class MC2HotspotTimingSession:
                 raise ValueError("MC2 native detail timing contains an invalid sample")
             self._details[stage] = self._details.get(stage, 0.0) + seconds
             native_total += seconds
+        candidate_breakdown = native_timing.get("candidate_breakdown", {})
+        candidate_metrics = native_timing.get("candidate_metrics", {})
+        if not isinstance(candidate_breakdown, dict) or not isinstance(
+            candidate_metrics, dict
+        ):
+            raise ValueError("MC2 native candidate timing payload is invalid")
+        for raw_stage, raw_seconds in candidate_breakdown.items():
+            stage = str(raw_stage or "").strip()
+            seconds = float(raw_seconds)
+            if not stage or not math.isfinite(seconds) or seconds < 0.0:
+                raise ValueError("MC2 native candidate breakdown is invalid")
+            self._candidate_details[stage] = (
+                self._candidate_details.get(stage, 0.0) + seconds
+            )
+        for raw_name, raw_value in candidate_metrics.items():
+            name = str(raw_name or "").strip()
+            value = int(raw_value)
+            if not name or value < 0:
+                raise ValueError("MC2 native candidate metric is invalid")
+            self._candidate_metrics[name] = self._candidate_metrics.get(name, 0) + value
         residual = max(elapsed - native_total, 0.0)
         if residual > 0.0:
             stage = str(
@@ -397,6 +485,8 @@ class MC2HotspotTimingSession:
             stages,
             dict(self._details),
             dict(self._host_details),
+            dict(self._candidate_details),
+            dict(self._candidate_metrics),
             total_seconds,
             dict(context),
             now=now,

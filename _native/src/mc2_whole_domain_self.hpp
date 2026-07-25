@@ -12,7 +12,9 @@ enum class Mc2WholeDomainSelfTimingStage : std::size_t {
     PrimitiveUpdate,
     Grid,
     Intersection,
-    Candidates,
+    CandidateDetect,
+    CandidateSortUnique,
+    CandidateFlatten,
     ContactBuild,
     SolvePrepare,
     SolveRound1,
@@ -23,11 +25,30 @@ enum class Mc2WholeDomainSelfTimingStage : std::size_t {
     Count,
 };
 
+enum class Mc2WholeDomainSelfTimingMetric : std::size_t {
+    CandidateSourceIgnored,
+    CandidateGridProbes,
+    CandidateGridRunHits,
+    CandidatePairVisits,
+    CandidateRejectedOwner,
+    CandidateRejectedAabb,
+    CandidateRejectedTargetIgnored,
+    CandidateRejectedAllFixed,
+    CandidateRejectedTopology,
+    CandidateRaw,
+    CandidateUnique,
+    CandidateDuplicates,
+    Count,
+};
+
 struct Mc2WholeDomainSelfTiming {
     static constexpr std::size_t stage_count =
         static_cast<std::size_t>(Mc2WholeDomainSelfTimingStage::Count);
+    static constexpr std::size_t metric_count =
+        static_cast<std::size_t>(Mc2WholeDomainSelfTimingMetric::Count);
     std::array<double, stage_count> seconds {};
     std::array<std::uint32_t, stage_count> calls {};
+    std::array<std::uint64_t, metric_count> metrics {};
     std::uint32_t clock_reads = 0;
 };
 

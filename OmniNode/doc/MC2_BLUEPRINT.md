@@ -452,6 +452,7 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 6. E7-S后的产品批处理已恢复请求式热点计时：关闭节点开关时不创建资源并保持原完整pipeline与无计时native ABI；开启时顶层拆分输入/采集/同步/Frame/求解/结果/发布，CPU求解按backend-neutral原子pass继续细分，整域self提供Primitive/Grid/相交/Candidate/Contact/四轮求解明细。计时不主动请求debug确认或快照；owner热帧统计使用真实`reused/parameters_updated/replaced`，不再把slot复用统称为`updated`。
 7. Mesh 热帧 observation 命中后直接复用上一帧 immutable static snapshot 与 topology signature；fragment 全命中且 draft signature 不变时 owner 跳过重复 domain compile。失效、参数热更新、重排和失败回滚仍走原事务路径；Blender 5.2 产品热点基准已覆盖 cold/hot/config/static-change/debug 与分配上限。
 8. Mesh碰撞组语义已分离：外碰mask保持对象冻结的`collided_by_groups`，只有whole-domain self的`collision_mask`额外并入自身主组。产品编译表与600帧accepted/rejected collider scope、摩擦确定性验收均已覆盖该边界。
+9. whole-domain self 的请求式计时现将Candidate稳定总阶段拆成网格遍历/过滤/发射、排序去重、扁平化，并携带probe、pair、拒绝原因和raw/unique/duplicate计数；无计时native ABI不执行这些计数。该观测已证明当前代表场景的主要冗余是粗网格导致的AABB晚拒绝，而不是重复候选；后续CPU收口只允许在保持确定性候选集合、过滤顺序与产品输出等价时优化broadphase尺度。
 
 逻辑批次必须覆盖完整所有权面，同时包含代码、测试、审计和唯一蓝本更新；不再按单 runner 或单个断言提交。
 

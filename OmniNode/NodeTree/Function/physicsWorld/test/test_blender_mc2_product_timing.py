@@ -82,6 +82,16 @@ try:
         "CPU · Post/历史",
     }.issubset(profile._detail_totals), profile._detail_totals
     assert "CPU Self · Debug确认与快照" not in profile._detail_totals
+    assert {
+        "CPU Self Candidate · 网格遍历/过滤/发射",
+        "CPU Self Candidate · 排序去重",
+        "CPU Self Candidate · 扁平化",
+    }.issubset(profile._candidate_detail_totals)
+    assert profile._candidate_metric_totals["candidate_grid_probes"] > 0
+    assert profile._candidate_metric_totals["candidate_raw"] == (
+        profile._candidate_metric_totals["candidate_unique"]
+        + profile._candidate_metric_totals["candidate_duplicates"]
+    )
     assert profile._action_totals["reused"] == 3
     assert profile._action_totals["updated"] == 0
     report = "\n".join(profile.format_report(profile._window_started + 1.0))
@@ -89,6 +99,8 @@ try:
     assert "CPU · 外部碰撞" in report
     assert "CPU Self · Grid构建与排序" in report
     assert "CPU Self · 求解轮次1" in report
+    assert "Candidate生成明细" in report
+    assert "raw/unique=" in report
     print("MC2 Blender product timing: PASS")
 finally:
     world.omni_cache_dispose("mc2_product_timing_cleanup")

@@ -1311,7 +1311,7 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         ]
         assert len(native_timings) == 1
         native_timing = native_timings[0]
-        assert native_timing["schema"] == "mc2_whole_domain_self_timing_v1"
+        assert native_timing["schema"] == "mc2_whole_domain_self_timing_v2"
         assert native_timing["clock_reads"] == sum(native_timing["calls"].values()) * 2
         assert {
             "CPU Self · Primitive更新",
@@ -1322,6 +1322,18 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
             "CPU Self · 求解轮次4",
         }.issubset(native_timing["stages"])
         assert "CPU Self · Debug确认与快照" not in native_timing["stages"]
+        assert set(native_timing["candidate_breakdown"]) == {
+            "CPU Self Candidate · 网格遍历/过滤/发射",
+            "CPU Self Candidate · 排序去重",
+            "CPU Self Candidate · 扁平化",
+        }
+        candidate_metrics = native_timing["candidate_metrics"]
+        assert candidate_metrics["candidate_grid_probes"] > 0
+        assert candidate_metrics["candidate_pair_visits"] > 0
+        assert candidate_metrics["candidate_raw"] == (
+            candidate_metrics["candidate_unique"]
+            + candidate_metrics["candidate_duplicates"]
+        )
         contract = ir.make_mc2_backend_data_pass_contract(
             compiled.program, compiled.parameters
         )
