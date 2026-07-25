@@ -2,8 +2,6 @@
 
 import bpy
 
-from .collection_registry import prune_empty_system_collections
-
 
 def restore_armature_mode(obj, desired_mode):
     if obj.mode == desired_mode:
@@ -69,8 +67,6 @@ class GenerationTransaction:
                         obj.data.edit_bones.remove(edit_bone)
             finally:
                 bpy.ops.object.mode_set(mode="OBJECT")
-        prune_empty_system_collections(obj.data)
-
     def __enter__(self):
         return self
 

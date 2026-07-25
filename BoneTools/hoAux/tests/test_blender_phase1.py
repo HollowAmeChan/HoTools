@@ -92,6 +92,9 @@ assert find_collection(armature, "HOAUX:ROOT") is not None
 assert find_collection(armature, "HOAUX:TAG:DEF") is not None
 assert find_collection(armature, "HOAUX:TAG:DIR") is not None
 assert find_collection(armature, "HOAUX:FILTER:ROLE:DEF") is None
+assert find_collection(armature, "HOAUX:TAG:DEF").is_visible
+assert not find_collection(armature, "HOAUX:TAG:DIR").is_visible
+find_collection(armature, "HOAUX:TAG:DIR").is_visible = True
 
 system_collections = lambda bone: [
     collection
@@ -160,9 +163,14 @@ assert not fcurve.mute
 
 removed = remove_scope(obj, "ARM.L", "ELBOW_VOLUME.L")
 assert removed["bones"] == 2
+assert removed["collections"] == 0
 assert deform_name not in armature.bones
 assert direction_name not in armature.bones
 assert "Main_L" in armature.bones
 assert armature.collections.get("User Collection") is not None
+assert find_collection(armature, "HOAUX:ROOT") is not None
+assert find_collection(armature, "HOAUX:TAG:DEF") is not None
+assert find_collection(armature, "HOAUX:TAG:DIR") is not None
+assert find_collection(armature, "HOAUX:TAG:DIR").is_visible
 
 print(f"HOAUX_PHASE1_OK resources={len(snapshot.resources)}")

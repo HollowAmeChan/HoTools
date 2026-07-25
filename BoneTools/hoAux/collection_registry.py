@@ -20,19 +20,27 @@ def ensure_collection(
     collection_key: str,
     preferred_name: str,
     parent=None,
+    *,
+    visible_on_create=True,
 ):
     collection = find_collection(armature_data, collection_key)
     if collection is None:
         collection = armature_data.collections.new(preferred_name)
         collection[COLLECTION_KEY_PROP] = collection_key
         collection[COLLECTION_RIG_PROP] = ensure_rig_id(armature_data)
+        collection.is_visible = visible_on_create
     if parent is not None and collection.parent != parent:
         collection.parent = parent
     return collection
 
 
 def ensure_base_tree(armature_data):
-    root = ensure_collection(armature_data, "HOAUX:ROOT", "HoAux")
+    root = ensure_collection(
+        armature_data,
+        "HOAUX:ROOT",
+        "HoAux",
+        visible_on_create=True,
+    )
     return {"root": root}
 
 
@@ -45,6 +53,7 @@ def collections_for_bone(armature_data, info):
             f"HOAUX:TAG:{tag}",
             tag,
             tree["root"],
+            visible_on_create=tag == "DEF",
         )
     ]
 
@@ -58,26 +67,3 @@ def assign_bone(armature_data, bone):
         collection.assign(bone)
         assigned.append(collection)
     return assigned
-
-
-def prune_empty_system_collections(armature_data) -> int:
-    removed = 0
-    while True:
-        collections = list(
-            getattr(armature_data, "collections_all", armature_data.collections)
-        )
-        candidate = next(
-            (
-                collection
-                for collection in reversed(collections)
-                if collection.get(COLLECTION_KEY_PROP)
-                and len(collection.bones) == 0
-                and len(collection.children) == 0
-            ),
-            None,
-        )
-        if candidate is None:
-            break
-        armature_data.collections.remove(candidate)
-        removed += 1
-    return removed

@@ -10,6 +10,7 @@ from .ir.writer import to_json
 from .name_registry import iter_hoaux_bones
 from .operations import scope_bones, scope_is_enabled
 from .module_registry import definitions, get_definition
+from .transaction import restore_armature_mode
 
 
 class OT_HoAuxCopySourceIR(Operator):
@@ -42,6 +43,8 @@ class OT_HoAuxGenerateModule(Operator):
         return obj is not None and obj.type == "ARMATURE"
 
     def execute(self, context):
+        armature_object = context.object
+        original_mode = armature_object.mode
         try:
             definition = get_definition(self.module_type)
             settings = definition.settings(context.scene)
@@ -50,6 +53,8 @@ class OT_HoAuxGenerateModule(Operator):
         except (ValueError, RuntimeError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        finally:
+            restore_armature_mode(armature_object, original_mode)
         created_count = len(result["bones"]) + result.get(
             "createdDirCount", int(result["createdDir"])
         )

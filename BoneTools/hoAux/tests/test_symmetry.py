@@ -64,11 +64,10 @@ assert len(preview.lines) == 18
 assert len(preview.points) == 2
 assert len(preview.labels) == 18
 
-bpy.ops.object.mode_set(mode="POSE")
-result = definition.generate_from_context(bpy.context)
-assert obj.mode == "POSE"
-assert len(result["bones"]) == 16
-assert result["createdDirCount"] == 2
+bpy.ops.object.mode_set(mode="EDIT")
+operator_result = bpy.ops.hoaux.generate_module(module_type="SHOULDER_VOLUME")
+assert operator_result == {"FINISHED"}
+assert obj.mode == "EDIT"
 generated = list(iter_hoaux_bones(armature))
 assert len(generated) == 18
 assert sum(bone.hotools_boneprops.hoAux.side == "L" for bone in generated) == 9
@@ -95,4 +94,4 @@ removed = remove_scope(obj)
 assert removed["bones"] == 18
 assert "Shoulder_L" in armature.bones
 assert "Shoulder_R" in armature.bones
-print("HOAUX_SYMMETRY_OK bones=18 drivers=8 mode=POSE")
+print("HOAUX_SYMMETRY_OK bones=18 drivers=8 mode=EDIT")

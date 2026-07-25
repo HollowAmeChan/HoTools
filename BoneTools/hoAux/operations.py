@@ -4,7 +4,6 @@ import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator
 
-from .collection_registry import prune_empty_system_collections
 from .ir.blender_reader import bone_name_from_path
 from .name_registry import iter_hoaux_bones
 
@@ -200,11 +199,10 @@ def remove_scope(armature_object, pipeline_id="", module_id=""):
     }
     removed_bones += _remove_edit_bones(armature_object, orphan_dirs)
 
-    collection_count = prune_empty_system_collections(armature_data)
     return {
         "bones": removed_bones,
         "drivers": len(drivers),
-        "collections": collection_count,
+        "collections": 0,
     }
 
 
