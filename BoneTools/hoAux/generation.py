@@ -92,6 +92,48 @@ def add_copy_location(
     return constraint
 
 
+def add_stretch_to(
+    owner,
+    target_object,
+    target_bone,
+    transaction,
+    *,
+    name="HoAux Stretch To",
+    owner_space="WORLD",
+    target_space="WORLD",
+    head_tail=0.0,
+    rest_length=0.0,
+    influence=1.0,
+    volume="NO_VOLUME",
+    keep_axis="SWING_Y",
+    bulge=1.0,
+    use_bulge_min=False,
+    use_bulge_max=False,
+    bulge_min=1.0,
+    bulge_max=1.0,
+    bulge_smooth=0.0,
+):
+    constraint = owner.constraints.new("STRETCH_TO")
+    constraint.name = name
+    constraint.target = target_object
+    constraint.subtarget = target_bone
+    constraint.owner_space = owner_space
+    constraint.target_space = target_space
+    constraint.head_tail = head_tail
+    constraint.rest_length = rest_length
+    constraint.influence = influence
+    constraint.volume = volume
+    constraint.keep_axis = keep_axis
+    constraint.bulge = bulge
+    constraint.use_bulge_min = use_bulge_min
+    constraint.use_bulge_max = use_bulge_max
+    constraint.bulge_min = bulge_min
+    constraint.bulge_max = bulge_max
+    constraint.bulge_smooth = bulge_smooth
+    transaction.track_constraint(owner.name, constraint)
+    return constraint
+
+
 def response_expression(full_response_angle_degrees):
     scale = 180.0 / full_response_angle_degrees
     return f"abs(var*{scale:.9g}/pi)"

@@ -44,7 +44,7 @@ HoAux 追求：
 11. Unity 首先尝试按 Source IR 一比一执行。语义归并、优化或降级是可选后端步骤，不是 Source IR 的前置条件。
 12. 每次采集 Source IR 时，每个 HoAux 资源都生成“属于谁、拥有谁、使用谁、提供什么能力、要求什么能力”，从任意 Pipeline、Module 或骨都能闭包查询出本次快照的完整实现。
 13. 主骨的 `use_deform` 和骨骼集合成员关系完全属于用户；HoAux 系统不检查、不修改、不恢复。
-14. 每根新生成骨必须进入系统骨骼集合，并允许同时属于模块、角色、部位、侧别等多个集合；系统不得为此移除它已有的非系统集合成员关系。
+14. 每根新生成骨只进入一个按 `roleTag` 划分的 HoAux 系统集合：`DEF`、`TRK` 或 `DIR`；系统不得为此移除它已有的非系统集合成员关系。
 
 研究文件中的 `use_deform` 尚未整理，存在 `DEF` 关闭、`TRK/DIR` 开启的情况。样本只作为结构和行为参考；正式生成器只整理自己新建的 DEF/TRK/DIR，不处理角色映射中的主骨。
 
@@ -329,73 +329,26 @@ ARM.L.ROTATION_HALF.DIR.LOWER_ARM
 
 ### 5.3 系统骨骼集合
 
-普通 aux 的 `BoneUtils.assign_bones_to_collection()` 会先从全部旧集合移除再加入单一目标集合。HoAux 系统需要多集合过滤，不能复用该破坏性行为，应提供独立接口：
-
-```text
-ensure_system_collection(collectionKey, preferredName, parentCollectionKey)
-add_bone_membership(boneKey, collectionKey)
-remove_bone_membership(boneKey, collectionKey)
-sync_bone_memberships(boneKey)
-prune_empty_system_collections()
-```
-
-这些接口只增减 HoAux 系统拥有的集合成员关系，不触碰用户集合、普通 aux 集合或其他插件集合。
-
-建议的折叠嵌套结构：
+Blender 的一骨多集合可见性是并集，不适合承担 HoAux 过滤。HoAux 不再建立 Pipeline、Module、Part、Side 或 Filter 集合，只按骨名前缀对应的结构化 `roleTag` 划分：
 
 ```text
 HoAux
-  Pipelines
-    Left Arm
-      01 Wrist Volume
-      02 Forearm Bulge
-      03 Forearm Twist
-      04 Elbow Volume
-      05 Upper Arm Longitudinal Bulge
-      06 Upper Arm Twist
-      07 Upper Arm Muscle Slide
-      08 Shoulder Volume
-  Infrastructure
-    Shared DIR
-  Filters
-    Role
-      DEF
-      TRK
-      DIR
-    Part
-      Shoulder
-      Upper Arm
-      Elbow
-      Forearm
-      Wrist
-    Side
-      L
-      R
+  DEF
+  TRK
+  DIR
 ```
 
-集合层级负责折叠浏览，骨的多集合成员关系为正交过滤提供索引。例如 `DEF_Elbow_Volume_Z1_L` 同时属于：
+每根新生成骨只加入其中一个系统集合：`DEF -> DEF`、`TRK -> TRK`、`DIR -> DIR`。Pipeline 和 Module 分组只由骨元数据及 HoAux 总览表达，不映射成 Bone Collection。`DIR` 的共享关系由 `sharedKey` 和 Source IR 的 `SHARES/usedBy` 表达。
+
+Collection Registry 只需要：
 
 ```text
-Pipelines / Left Arm / 04 Elbow Volume
-Filters / Role / DEF
-Filters / Part / Elbow
-Filters / Side / L
+ensure_system_collection(collectionKey, preferredName, parentCollectionKey)
+assign_role_collection(boneKey, roleTag)
+prune_empty_system_collections()
 ```
 
-Blender 的原生骨集合可见性是并集：一根骨只要属于任意可见集合就仍会显示，因此多集合本身不能直接表达 `Role=DEF AND Part=Elbow`。规则如下：
-
-- `Pipelines` 与 `Infrastructure` 是主要结构集合，承担常规折叠和原生可见性；
-- `Filters` 下的索引集合默认关闭可见性，主要供 HoAux 面板查询、选择和列表过滤；
-- 多条件过滤由 HoAux 面板扫描骨的实际 `bone.collections` 并求交集，不能依赖同时打开多个 Blender 集合；
-- 若提供“视图聚焦”，只临时修改 HoAux 生成骨的 hide 状态，并保存/恢复之前状态，不影响主骨和非 HoAux 骨。
-
-共享 DIR 不加入任何单一模块集合，只进入 `Infrastructure / Shared DIR`、`Filters / Role / DIR`、对应 Part 和 Side。模块通过资源图的 `SHARES/usedBy` 找到 DIR。
-
-每个系统集合都是 `BONE_COLLECTION` ResourceRecord，保存稳定 `collectionKey`、父集合 Key、当前显示名和成员骨 Key。显示名冲突时由 Name Allocator 分配其他名称；不能接管同名但不属于本系统的集合。
-
-上面的英文集合名只是默认显示模板，不是固定解析格式；系统身份和父子关系仍由 collectionKey 与资源图决定。
-
-删除或重建时，先通过 Collection Registry 解析本系统集合，再扫描骨的实际集合成员并只解除命中的系统集合。清理集合必须自底向上，并且只有集合没有成员、没有子集合且仍由本系统拥有时才允许删除。
+这些接口不移除用户集合、普通 aux 集合或其他插件集合。新骨生成前没有其他集合，因此正常结果是一根骨只有一个 HoAux 系统集合；若用户之后自行加入其他集合，HoAux 不检查也不修复。每个系统集合仍是 `BONE_COLLECTION` ResourceRecord，并通过 `hoaux_key` 识别。删除后仅清理空且仍由 HoAux 拥有的集合。
 
 ### 5.4 按需定位
 
@@ -578,7 +531,7 @@ ModuleSpec
 5. `twistOffset` 在上述结果上提供模块级人工修正；
 6. 仅当弯曲角低于 `straightThreshold` 时，才退回下段骨静置局部轴。
 
-每个关节模块至少暴露凸角轴、roll 跟随、twist offset、直线阈值、骨长比例和响应范围。各模块可以再增加方向角、单方向缩放、约束 influence、目标 head/tail 等参数，先保留较宽的手测空间，再根据实际测试删减。
+每个关节模块至少暴露凸角轴、roll 跟随、twist offset、直线阈值、公共骨长比例和响应范围。各模块可以再增加方向角、约束 influence、目标 head/tail 等真正影响效果的参数。不同 marker 不提供独立长度缩放；同角色共用 TRK/DEF 长度。DIR 的长度是内部显示尺寸，半旋转 influence 固定为 `0.5`，两者都不暴露为用户参数。
 
 ## 8. DIR 共享基础设施
 
@@ -603,7 +556,9 @@ ROTATION_HALF:HAND:L
 7. 只有没有任何模块依赖时才删除 DIR；
 8. 单模块关闭时共享 DIR 保持运行；整条流水线关闭后才可连同无消费者 DIR 一起停用。
 
-DIR 必须进入 `Infrastructure / Shared DIR` 及对应过滤集合，并且强制 `use_deform=False`。
+DIR 表达强语义而不是可调效果：所有 `ROTATION_HALF:*` 的 Copy Rotation influence 固定为 `0.5`。模块参数不能覆盖该值；如果未来需要其他比例，应定义新的共享语义键，而不是把 HALF 改成任意权重。
+
+DIR 必须进入 `HoAux / DIR`，并且强制 `use_deform=False`。
 
 ## 9. 流水线工作流
 
@@ -648,7 +603,7 @@ DIR 必须进入 `Infrastructure / Shared DIR` 及对应过滤集合，并且强
 2. 固化全部 `resourceKey`、实际显示名称和依赖；
 3. 创建或复用 DIR；
 4. 创建 TRK、DEF；
-5. 创建或复用嵌套骨骼集合，并为新骨追加多集合成员关系；
+5. 创建或复用对应的单一 tag 骨骼集合；
 6. 创建约束；
 7. 创建驱动；
 8. 写入骨级元数据和 Armature 清单；
@@ -691,7 +646,7 @@ DIR 必须进入 `Infrastructure / Shared DIR` 及对应过滤集合，并且强
 - 生成或重建；
 - 删除。
 
-展开模块后显示生成骨列表、DIR 依赖和关键参数。共享 DIR 放在独立折叠区，不混入普通模块删除按钮。
+生成参数面板沿用普通 aux 的折叠头、生成按钮和高亮预览眼睛；所有面向用户的参数名称使用中文。展开模块后显示主骨角色与关键参数，DIR 固定语义不显示参数。
 
 ### 11.4 总览分组
 
@@ -706,6 +661,8 @@ Pipeline
 ```
 
 不要按普通辅助骨的 `(auxType, sourceBones)` 聚合。
+
+总览交互与普通 aux 对齐：总览本身可折叠；每个 Pipeline/Module 分组默认折叠并记忆状态；点击分组标题选择该组全部骨，点击骨名选择单骨，`Shift` 加选；当前选中骨命中的组标题与骨行使用 `alert` 高亮；约束开关使用 `CON_TRACKTO / TRACKING_CLEAR_FORWARDS`，删除使用 `TRASH`，骨行使用 `BONE_DATA`。共享 DIR 作为 Infrastructure 分组显示，不提供普通模块删除按钮。
 
 ## 12. 分区关闭
 
@@ -802,7 +759,7 @@ Unity 导出数据需要携带：
 - 静态 influence；
 - 原始表达式以及可选的已识别曲线标签；
 - Stretch To 参数；
-- 骨骼集合层级、多集合成员关系和 DIR 共享关系；
+- `DEF/TRK/DIR` 骨骼集合成员关系和 DIR 共享关系；
 - 模块求值顺序。
 
 Unity 组件必须以相同顺序求值，并对以下姿态建立黄金测试：
@@ -891,7 +848,7 @@ HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能�
 - 确认八段流水线的最终顺序；
 - 冻结 Name Table、稳定 Key 和默认名称模板的边界；
 - 冻结 `DEF/TRK/DIR` 的 deform 规则；
-- 冻结系统集合树、collectionKey 与多集合成员规则；
+- 冻结 `HoAux / DEF|TRK|DIR` 集合与单系统集合成员规则；
 - 冻结 Source IR ResourceRecord、图边和 capability 命名；
 - 完成 writer/parser 往返样例，确认 Blender 原始字段不会丢失；
 - 先通过 `LOCAL`、`LOCAL_WITH_PARENT`、owner orientation correction 和 Driver 局部角的合成矩阵预演。
@@ -901,7 +858,7 @@ HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能�
 - HoAux 骨 PropertyGroup；
 - Armature 清单与 Source IR 快照模型；
 - Name Table 与 Name Allocator；
-- Collection Registry、嵌套集合和 additive 多集合成员 API；
+- Collection Registry 与 `DEF/TRK/DIR` 单集合分配；
 - 按需 Source IR 快照与资源闭包查询；
 - capability 推导、聚合和 unsupported 报告；
 - HoAux 总览；
@@ -972,7 +929,7 @@ HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能�
 10. Blender 和 Unity 在规定测试姿态下输出一致。
 11. IR writer/parser 往返一致；未知 schema 或缺失结构主键被拒绝，当前断裂引用保留为 `UNRESOLVED`，尚未实现的能力保留原始 payload 并明确报告。
 12. 从任意 Module 或 HoAux 骨执行资源闭包查询，都能找到它拥有、使用和依赖的全部骨、约束、Driver、变量与共享资源。
-13. 每根新骨进入模块集合和对应过滤集合；生成、重建、删除均不移除用户已有集合成员关系。
+13. 每根新骨只进入对应的 `DEF/TRK/DIR` 系统集合；生成、重建、删除均不移除用户已有集合成员关系。
 14. Unity 每个骨架只需要一个 `HoAuxRig`；骨和尾端锚点保持纯 Transform，一条 Source IR 记录对应一条中央运行记录。
 
 ## 20. 实现前待确认

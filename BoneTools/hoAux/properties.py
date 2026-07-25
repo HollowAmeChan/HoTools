@@ -5,6 +5,7 @@ from uuid import uuid4
 import bpy
 from bpy.props import (
     BoolProperty,
+    CollectionProperty,
     EnumProperty,
     IntProperty,
     PointerProperty,
@@ -53,6 +54,11 @@ class PG_HoAuxBoneInfo(PropertyGroup):
     nameKey: StringProperty(default="")  # type: ignore
 
 
+class PG_HoAuxGroupState(PropertyGroup):
+    name: StringProperty(default="")  # type: ignore
+    expanded: BoolProperty(default=True)  # type: ignore
+
+
 class PG_HoAuxSettings(PropertyGroup):
     side: EnumProperty(
         items=SIDE_ITEMS[1:3], default="L", update=_preview_update
@@ -60,10 +66,12 @@ class PG_HoAuxSettings(PropertyGroup):
     shoulderBone: StringProperty(default="", update=_preview_update)  # type: ignore
     upperArmBone: StringProperty(default="", update=_preview_update)  # type: ignore
     lowerArmBone: StringProperty(default="", update=_preview_update)  # type: ignore
+    handBone: StringProperty(default="", update=_preview_update)  # type: ignore
 
 
 CLASSES = (
     PG_HoAuxBoneInfo,
+    PG_HoAuxGroupState,
     PG_HoAuxSettings,
 )
 
@@ -86,6 +94,9 @@ def register_rna():
         name="HoAux Rig ID",
         default="",
     )
+    bpy.types.Armature.hoaux_group_states = CollectionProperty(
+        type=PG_HoAuxGroupState
+    )
     bpy.types.Scene.hoaux_overview_expanded = BoolProperty(
         name="HoAux Overview",
         default=True,
@@ -98,6 +109,7 @@ def unregister_rna():
         (bpy.types.Scene, "hoaux_overview_expanded"),
         (bpy.types.Scene, "hoaux_settings"),
         (bpy.types.Armature, "hoaux_rig_id"),
+        (bpy.types.Armature, "hoaux_group_states"),
         (bpy.types.Armature, "hoaux_schema_version"),
     ):
         if hasattr(owner, name):

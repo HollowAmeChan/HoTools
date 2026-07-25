@@ -1,7 +1,12 @@
 """HoAux body-specific generation modules."""
 
-from . import elbow_volume, shoulder_volume
+from . import elbow_volume, limb_twist, shoulder_volume
 
-DEFINITIONS = (elbow_volume.DEFINITION, shoulder_volume.DEFINITION)
+DEFINITIONS = (
+    limb_twist.FOREARM_DEFINITION,
+    elbow_volume.DEFINITION,
+    limb_twist.UPPER_ARM_DEFINITION,
+    shoulder_volume.DEFINITION,
+)
 
-__all__ = ("DEFINITIONS", "elbow_volume", "shoulder_volume")
+__all__ = ("DEFINITIONS", "elbow_volume", "limb_twist", "shoulder_volume")

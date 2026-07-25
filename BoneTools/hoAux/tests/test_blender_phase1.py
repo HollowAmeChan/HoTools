@@ -11,7 +11,7 @@ if str(BONE_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(BONE_TOOLS_DIR))
 
 import hoAux
-from hoAux.collection_registry import assign_all, find_collection
+from hoAux.collection_registry import assign_bone, find_collection
 from hoAux.ir.blender_reader import snapshot_armature
 from hoAux.ir.parser import parse_json
 from hoAux.ir.writer import to_dict, to_json
@@ -85,12 +85,28 @@ direction_constraint.influence = 0.5
 user_collection = armature.collections.new("User Collection")
 user_collection.assign(armature.bones[deform_name])
 
-assigned = assign_all(armature)
-assert assigned == 2
+assert len(assign_bone(armature, armature.bones[direction_name])) == 1
+assert len(assign_bone(armature, armature.bones[deform_name])) == 1
 assert deform_name in user_collection.bones
 assert find_collection(armature, "HOAUX:ROOT") is not None
-assert find_collection(armature, "HOAUX:FILTER:ROLE:DEF") is not None
-assert find_collection(armature, "HOAUX:INFRASTRUCTURE:SHARED_DIR") is not None
+assert find_collection(armature, "HOAUX:TAG:DEF") is not None
+assert find_collection(armature, "HOAUX:TAG:DIR") is not None
+assert find_collection(armature, "HOAUX:FILTER:ROLE:DEF") is None
+
+system_collections = lambda bone: [
+    collection
+    for collection in bone.collections
+    if collection.get("hoaux_key")
+]
+assert len(system_collections(armature.bones[direction_name])) == 1
+assert len(system_collections(armature.bones[deform_name])) == 1
+
+group_key = "ARM.L||ELBOW_VOLUME.L"
+bpy.ops.hoaux.group_toggle(key=group_key)
+assert armature.hoaux_group_states[group_key].expanded
+bpy.ops.hoaux.bone_select(bone=deform_name)
+assert armature.bones.active.name == deform_name
+assert armature.bones[deform_name].select
 
 copy_rotation = obj.pose.bones[deform_name].constraints.new("COPY_ROTATION")
 copy_rotation.name = "HoAux Test Copy Rotation"

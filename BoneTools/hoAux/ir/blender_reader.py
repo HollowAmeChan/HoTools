@@ -71,6 +71,11 @@ def _constraint_payload(constraint) -> dict:
         "euler_order": "eulerOrder",
         "rest_length": "restLength",
         "bulge": "bulge",
+        "use_bulge_min": "useBulgeMin",
+        "use_bulge_max": "useBulgeMax",
+        "bulge_min": "bulgeMin",
+        "bulge_max": "bulgeMax",
+        "bulge_smooth": "bulgeSmooth",
         "volume": "volume",
         "keep_axis": "keepAxis",
     }

@@ -34,64 +34,48 @@ from ..transaction import GenerationTransaction
 MODULE_TYPE = "SHOULDER_VOLUME"
 DIR_SHARED_KEY = "ROTATION_HALF:UPPER_ARM:{side}"
 SETTINGS_ATTR = "hoaux_shoulder_volume_settings"
+DIR_LENGTH_RATIO = 0.05
+HALF_INFLUENCE = 0.5
 
 
 _toggle_preview = preview_toggle(MODULE_TYPE)
 
 
 class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
-    ui_expanded: BoolProperty(default=True)  # type: ignore
-    preview_enabled: BoolProperty(default=False, update=_toggle_preview)  # type: ignore
+    ui_expanded: BoolProperty(name="肩部体积保持设置", default=False)  # type: ignore
+    preview_enabled: BoolProperty(name="预览", default=False, update=_toggle_preview)  # type: ignore
     track_length: FloatProperty(
-        name="TRK Length", default=0.5, min=0.05, max=2.0, update=refresh_preview
+        name="TRK长度", default=0.5, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
     deform_length: FloatProperty(
-        name="DEF Length", default=0.28, min=0.05, max=2.0, update=refresh_preview
-    )  # type: ignore
-    dir_length: FloatProperty(
-        name="DIR Length", default=0.05, min=0.005, max=0.5, update=refresh_preview
-    )  # type: ignore
-    half_influence: FloatProperty(
-        name="Half Influence", default=0.5, min=0.0, max=1.0, update=refresh_preview
+        name="DEF长度", default=0.28, min=0.05, max=2.0, update=refresh_preview
     )  # type: ignore
     response_angle: FloatProperty(
-        name="Full Response Angle", default=90.0, min=1.0, max=180.0
+        name="完全响应角度", default=90.0, min=1.0, max=180.0
     )  # type: ignore
     head_tail: FloatProperty(
-        name="Target Point", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
+        name="目标位置", default=1.0, min=0.0, max=1.0, subtype="FACTOR"
     )  # type: ignore
     x0_angle: FloatProperty(
-        name="X0 Direction Angle", default=45.0, min=-180.0, max=180.0, update=refresh_preview
+        name="X0方向角度", default=45.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
     convex_axis: EnumProperty(
-        name="Convex Axis",
+        name="凸角轴",
         items=(
-            ("X", "Local X", "Map joint convexity to frame X"),
-            ("Z", "Local Z", "Map joint convexity to frame Z"),
+            ("X", "局部X", "把关节凸角映射到参考框架X轴"),
+            ("Z", "局部Z", "把关节凸角映射到参考框架Z轴"),
         ),
         default="X",
         update=refresh_preview,
     )  # type: ignore
     roll_follow: FloatProperty(
-        name="Roll Follow", default=1.0, min=0.0, max=1.0, subtype="FACTOR", update=refresh_preview
+        name="骨骼扭转跟随", default=1.0, min=0.0, max=1.0, subtype="FACTOR", update=refresh_preview
     )  # type: ignore
     twist_offset: FloatProperty(
-        name="Twist Offset", default=0.0, min=-180.0, max=180.0, update=refresh_preview
+        name="扭转偏移", default=0.0, min=-180.0, max=180.0, update=refresh_preview
     )  # type: ignore
     straight_threshold: FloatProperty(
-        name="Straight Threshold", default=5.0, min=0.0, max=45.0, update=refresh_preview
-    )  # type: ignore
-    x1_scale: FloatProperty(
-        name="X1 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
-    )  # type: ignore
-    x0_scale: FloatProperty(
-        name="X0 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
-    )  # type: ignore
-    z1_scale: FloatProperty(
-        name="Z1 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
-    )  # type: ignore
-    z0_scale: FloatProperty(
-        name="Z0 Scale", default=1.0, min=0.05, max=3.0, update=refresh_preview
+        name="直线判定角度", default=5.0, min=0.0, max=45.0, update=refresh_preview
     )  # type: ignore
 
 
@@ -99,8 +83,6 @@ class PG_HoAuxShoulderVolumeSettings(PropertyGroup):
 class Parameters:
     track_length_ratio: float = 0.5
     deform_length_ratio: float = 0.28
-    dir_length_ratio: float = 0.05
-    half_influence: float = 0.5
     response_angle_degrees: float = 90.0
     copy_location_head_tail: float = 1.0
     x0_angle_degrees: float = 45.0
@@ -108,18 +90,12 @@ class Parameters:
     roll_follow: float = 1.0
     twist_offset_degrees: float = 0.0
     straight_threshold_degrees: float = 5.0
-    x1_scale: float = 1.0
-    x0_scale: float = 1.0
-    z1_scale: float = 1.0
-    z0_scale: float = 1.0
 
 
 def parameters_from_settings(settings):
     return Parameters(
         track_length_ratio=settings.track_length,
         deform_length_ratio=settings.deform_length,
-        dir_length_ratio=settings.dir_length,
-        half_influence=settings.half_influence,
         response_angle_degrees=settings.response_angle,
         copy_location_head_tail=settings.head_tail,
         x0_angle_degrees=settings.x0_angle,
@@ -127,25 +103,20 @@ def parameters_from_settings(settings):
         roll_follow=settings.roll_follow,
         twist_offset_degrees=settings.twist_offset,
         straight_threshold_degrees=settings.straight_threshold,
-        x1_scale=settings.x1_scale,
-        x0_scale=settings.x0_scale,
-        z1_scale=settings.z1_scale,
-        z0_scale=settings.z0_scale,
     )
 
 
 def _direction_specs(parameters):
     angle = radians(parameters.x0_angle_degrees)
     return (
-        ("X1", Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0)), parameters.x1_scale),
+        ("X1", Vector((0.0, 0.0, 1.0)), Vector((1.0, 0.0, 0.0))),
         (
             "X0",
             Vector((0.0, sin(angle), -cos(angle))),
             Vector((1.0, 0.0, 0.0)),
-            parameters.x0_scale,
         ),
-        ("Z1", Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)), parameters.z1_scale),
-        ("Z0", Vector((1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0)), parameters.z0_scale),
+        ("Z1", Vector((-1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0))),
+        ("Z0", Vector((1.0, 0.0, 0.0)), Vector((0.0, 0.0, 1.0))),
     )
 
 
@@ -208,7 +179,7 @@ def build_plan(
         ("TRK", parameters.track_length_ratio),
         ("DEF", parameters.deform_length_ratio),
     ):
-        for marker, local_direction, local_roll, scale in _direction_specs(parameters):
+        for marker, local_direction, local_roll in _direction_specs(parameters):
             direction = frame.transform_direction(local_direction.normalized())
             roll_reference = frame.transform_direction(local_roll)
             result.append(
@@ -222,7 +193,7 @@ def build_plan(
                     role_tag=role_tag,
                     marker=marker,
                     head=head.copy(),
-                    tail=head + direction * upper_arm.length * ratio * scale,
+                    tail=head + direction * upper_arm.length * ratio,
                     roll_reference=roll_reference,
                     parent_name=shoulder.name,
                 )
@@ -260,7 +231,7 @@ def generate(
     existing_dir = find_shared_direction(armature_data, shared_key)
     expected_dir_tail = (
         upper_head
-        + upper_direction * upper_length * parameters.dir_length_ratio
+        + upper_direction * upper_length * DIR_LENGTH_RATIO
     )
     if existing_dir is not None:
         validate_shared_direction(
@@ -272,7 +243,7 @@ def generate(
                 head=upper_head,
                 tail=expected_dir_tail,
                 roll_reference=upper_roll_reference,
-                influence=parameters.half_influence,
+                influence=HALF_INFLUENCE,
             ),
         )
 
@@ -335,7 +306,7 @@ def generate(
             direction_constraint.owner_space = "LOCAL"
             direction_constraint.target_space = "LOCAL"
             direction_constraint.mix_mode = "REPLACE"
-            direction_constraint.influence = parameters.half_influence
+            direction_constraint.influence = HALF_INFLUENCE
             transaction.track_constraint(dir_name, direction_constraint)
 
         for plan in plans:
@@ -361,7 +332,7 @@ def generate(
             (plan.role_tag, plan.marker): actual_names[plan.resource_key]
             for plan in plans
         }
-        for marker, _direction, _roll, _scale in _direction_specs(parameters):
+        for marker, _direction, _roll in _direction_specs(parameters):
             trk_name = plan_name_by_role_marker[("TRK", marker)]
             def_name = plan_name_by_role_marker[("DEF", marker)]
             add_copy_rotation(
@@ -402,23 +373,20 @@ def generate(
 
 class ShoulderVolumeDefinition(ModuleDefinition):
     type_id = MODULE_TYPE
-    label = "Shoulder Volume"
+    label = "肩部体积保持"
     order = 80
     settings_class = PG_HoAuxShoulderVolumeSettings
     settings_attr = SETTINGS_ATTR
     required_roles = (
-        ("shoulderBone", "Shoulder"),
-        ("upperArmBone", "UpperArm"),
+        ("shoulderBone", "肩骨"),
+        ("upperArmBone", "大臂骨"),
     )
     parameter_rows = (
         ("track_length", "deform_length"),
-        ("dir_length", "half_influence"),
         ("response_angle", "head_tail"),
         ("convex_axis", "roll_follow"),
         ("twist_offset", "straight_threshold"),
         ("x0_angle",),
-        ("x1_scale", "x0_scale"),
-        ("z1_scale", "z0_scale"),
     )
 
     def generate_from_context(self, context):
@@ -447,7 +415,7 @@ class ShoulderVolumeDefinition(ModuleDefinition):
         upper_arm = obj.data.bones[root.upperArmBone]
         direction_tail = upper_arm.head_local + (
             upper_arm.tail_local - upper_arm.head_local
-        ).normalized() * upper_arm.length * parameters.dir_length_ratio
+        ).normalized() * upper_arm.length * DIR_LENGTH_RATIO
         scene = PreviewScene(obj.name, title=self.label)
         scene.add_planned_bones(plans, labels=True)
         scene.add_segment(
@@ -455,7 +423,7 @@ class ShoulderVolumeDefinition(ModuleDefinition):
             direction_tail,
             ROLE_LINE_STYLES["DIR"],
         )
-        scene.add_label(direction_tail, f"DIR UpperArm HALF ({parameters.half_influence:.2f})")
+        scene.add_label(direction_tail, "DIR 大臂半旋转（0.50）")
         scene.add_point(upper_arm.head_local)
         return scene
 
