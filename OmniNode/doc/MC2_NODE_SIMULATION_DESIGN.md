@@ -834,7 +834,7 @@ P6 第二批已补齐上述缺口：`MC2BackendUploadPlanV1` 对同 layout 的 p
 
 退出条件：
 
-- 25 ms 级纯数值代表场景有明确接近或达到 5 ms 的证据，或者规模收益曲线证明粒子量提升一个数量级仍优于 CPU；
+- 当前2k级CPU代表基线为约22.73ms求解、26.78ms产品整帧和4.27ms host floor；GPU数值接近3-8ms、含传输产品整帧进入7.8-13.8ms，或者规模提升一个数量级后曲线仍显著优于CPU；
 - upload/readback 单独计时，不能只报告 kernel 时间；
 - 结果误差、确定性范围、设备丢失和 CPU fallback 合同明确；
 - 若收益不足，不污染生产 node/data contract，可完整撤下 backend。

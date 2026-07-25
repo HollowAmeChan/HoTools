@@ -10,7 +10,7 @@
 - E4/P2 已用一个 fused DomainV1 和一次 whole-domain self 取代普通多 task aggregate 的重复 primitive/grid/candidate/contact 流水。
 - P0 的请求式阶段计时已在当前产品批处理恢复：顶层IO/owner/solve/publish与CPU原子pass分别聚合，整域self再细分Primitive、Grid、相交、Candidate、Contact和四轮求解，热帧owner状态按`reused`、`parameters_updated`、`replaced`真实分类。关闭节点开关时不创建资源、不读阶段时钟，继续调用原无计时完整pipeline与native ABI；计时本身不请求debug确认或快照。
 - 当前1760粒子、495 collider回归已按外碰与整域self实测分摊；`collided_by_groups`现只过滤外碰，域内self才把自身主组并入有效mask，二者不再在authoring冻结时混用。
-- 当前性能工作只服务 E7 删除回归与 P6 合同，不再优化即将删除的 V0 owner/aggregate。
+- E6前置host/调度收口已完成；求交几何留作未来独立优化，其余低于阈值的CPU小项不再增加旁路、缓存或owner。
 - P4 CPU 并发不实施，也不预埋 worker、job DAG 或 grain threshold。
 - P6 只交付可直接实现的 data/pass/buffer/IO 合同；E6 GPU 是 E7-S 后的独立里程碑。
 ## CPU并行与GPU前置的路线决策
@@ -40,6 +40,14 @@
 真实结果还会低于该表，因为 worker barrier、cache line竞争、线程局部buffer合并、排序和小批次都会消耗预算；整帧收益又会被 Blender engine/redraw、静态观察和其他节点按 Amdahl 再次压低。因此在 native 内部阶段比例未知时，不能用“8核”推导接近 `8x` 的产品收益。
 
 GPU 对 prediction、primitive生成、grid/candidate 和大规模约束 pass 可能获得远高于 CPU worker 的吞吐，但 1760 粒子是否足以摊薄 dispatch、上传和同步尚未证明。GPU 路线的优势首先是规模上限和数据并行模型更匹配，不是对当前资产预先承诺固定倍数。
+
+### 当前E6开工基线与收益预演
+
+隔离Blender 5.2下，1800粒子、两个Mesh partition、495 collider、三个substep的代表场景，timing-off五次中位数为`26.78 ms`。同工作量请求式阶段表中，统一域求解为`22.73 ms`，Frame为`3.06 ms`，采集为`0.72 ms`，结果为`0.34 ms`，其余顶层合计约`0.12 ms`；因此当前不可由GPU solver消除的host floor约为`4.27 ms`。这些数字只用于同机E6决策，不是跨机器性能合同。
+
+求解内部约`14.74 ms`属于whole-domain self Candidate，Contact构建与四轮求解合计约`6.53 ms`，两者构成首个GPU原型的主要覆盖面。按“GPU数值`3-8 ms` + upload/sync/readback`0.5-1.5 ms`”估算，2k级产品整帧约为`7.8-13.8 ms`，相对当前基线约`1.9-3.4x`；persistent buffer、融合dispatch和稳定容量策略成熟后可争取`7-9 ms`、约`3-4x`。把全部求解视为零成本得到的`4.27 ms / 6.3x`只是Amdahl数学上限，禁止作为产品目标。
+
+最终host review还测量了domain collider SoA的重复构造与typed bridge复验，495 collider合计仅约`0.07 ms`；为此增加trusted构造旁路不划算，实验改动未保留。其余Host Frame子项除必要collider pack外均低于`0.5 ms`。E6前不再为这些小项增加缓存、所有权或兼容分支。
 
 ### 规模收益曲线优先于小样本极限
 
@@ -106,7 +114,7 @@ prediction
 8. collider snapshot仍是Physics World共享输入，MC2只负责域排除和SoA封装。Sphere/Capsule的当前/历史vector3必须直接量化为float32标量tuple，避免按collider创建短命NumPy数组；Plane/Box的归一化、叉积和符号半轴继续保持既定float32运算顺序，性能整理不能偷换外碰输入。覆盖九组SoA的`frame_signature`只属于按需观察身份，普通Frame不得为了未消费的debug字段预先计算SHA256。
 9. whole-domain self 的Candidate观测必须把网格遍历/过滤/发射、排序去重和最终扁平化分开，并同时报告grid probe、run命中、pair访问、分原因拒绝、raw/unique/duplicate；只有热点计时请求可以执行这些计数。若`raw/unique`接近1而AABB晚拒绝占主导，不得重写排序或引入去重缓存，应先修正保证覆盖性的网格尺度；CPU实现仍须保持与未来GPU count/scan/emit相同的确定性候选顺序和过滤合同。
 10. 当前CPU broadphase把target按AABB中心放入grid，source查询以全域最大target半尺寸扩张，因此一倍最大edge AABB尺寸已满足覆盖性；旧三倍尺度只扩大run占用和AABB晚拒绝。更细的`0.5x`在代表场景中使probe显著增加且没有稳定整帧收益，不作为默认值，也不把该backend布局暴露成节点参数。
-11. narrowphase/contact geometry 是broadphase之后的独立重大优化面。必须分别观察Edge-Edge最近线段、Point-Triangle最近点、半径与预测位移判定、法线/符号/half量化、初次Contact构建和四轮Contact更新；优先验证平方距离与位移上界的保守早退，再评估SoA/SIMD批处理。可以调研成熟C++碰撞/几何内核，但只能通过内部backend适配器和固定fixture做精度、退化输入、确定性与吞吐对照，不能直接让库的默认epsilon、double精度、并行顺序或接触约定取代MC2 CPU reference。
+11. narrowphase/contact geometry 是broadphase之后的未来重大优化面，当前不实施复杂改写。未来必须分别观察Edge-Edge最近线段、Point-Triangle最近点、半径与预测位移判定、法线/符号/half量化、初次Contact构建和四轮投影；Edge-Edge当前复用初建参数，Point-Triangle每轮重算几何。再依据拒绝覆盖率评估类型分离、平方距离上界和SoA/SIMD。可以调研成熟C++碰撞/几何内核，但只能通过内部backend适配器和固定fixture做精度、退化输入、确定性与吞吐对照，不能让库的默认epsilon、精度、并行顺序或接触约定取代MC2 CPU reference。
 ## 产品架构决定
 
 ### MeshCloth 优先形成单一模拟域
