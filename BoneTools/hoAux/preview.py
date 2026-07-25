@@ -9,7 +9,11 @@ import gpu
 from bpy_extras.view3d_utils import location_3d_to_region_2d
 from mathutils import Vector
 
-from .module_base import definitions, get_definition
+from .module_base import (
+    definitions,
+    get_definition,
+    whole_arm_pipeline_definitions,
+)
 
 try:
     from ..previewUtils import AuxPreviewUtils
@@ -230,6 +234,7 @@ class ViewportPreview:
 _timer_running = False
 _toggle_guard = False
 _timer_interval = 0.08
+PIPELINE_PREVIEW_OWNER = "WHOLE_ARM_PIPELINE"
 
 
 def _settings(definition, scene):
@@ -243,18 +248,52 @@ def _start_timer():
         bpy.app.timers.register(_timer)
 
 
-def _show(context, module_type):
-    definition = get_definition(module_type)
+def _build_pipeline_preview(context):
+    obj = context.object
+    scene = PreviewScene(obj.name if obj else "", title="整臂流水线")
+    existing_types = (
+        {
+            bone.hotools_boneprops.hoAux.moduleType
+            for bone in obj.data.bones
+            if getattr(
+                getattr(bone, "hotools_boneprops", None), "hoAux", None
+            )
+            and bone.hotools_boneprops.hoAux.isHoAuxBone
+        }
+        if obj
+        else set()
+    )
+    for definition in whole_arm_pipeline_definitions():
+        if definition.type_id in existing_types:
+            continue
+        part = definition.build_preview_scene(context)
+        scene.lines.extend(part.lines)
+        scene.points.extend(part.points)
+        scene.labels.extend(part.labels)
+    if not scene.lines:
+        scene.message = "整臂流水线已生成"
+    return scene
+
+
+def _show(context, owner_key):
+    definition = None
+    if owner_key == PIPELINE_PREVIEW_OWNER:
+        label = "整臂流水线"
+        build = _build_pipeline_preview
+    else:
+        definition = get_definition(owner_key)
+        label = definition.label
+        build = definition.build_preview_scene
     try:
-        scene = definition.build_preview_scene(context)
+        scene = build(context)
     except (KeyError, TypeError, ValueError, ReferenceError) as exc:
         obj = context.object
         scene = PreviewScene(
             obj.name if obj is not None else "",
-            title=definition.label,
+            title=label,
             message=str(exc),
         )
-    ViewportPreview.show(module_type, scene)
+    ViewportPreview.show(owner_key, scene)
     _start_timer()
 
 
@@ -265,6 +304,9 @@ def set_module_preview_enabled(context, module_type, enabled):
     _toggle_guard = True
     try:
         if enabled:
+            root = context.scene.hoaux_settings
+            if root.pipelinePreviewEnabled:
+                root.pipelinePreviewEnabled = False
             for definition in definitions():
                 if definition.type_id == module_type:
                     continue
@@ -278,9 +320,33 @@ def set_module_preview_enabled(context, module_type, enabled):
         _toggle_guard = False
 
 
+def set_pipeline_preview_enabled(context, enabled):
+    global _toggle_guard
+    if _toggle_guard:
+        return
+    _toggle_guard = True
+    try:
+        if enabled:
+            for definition in definitions():
+                settings = _settings(definition, context.scene)
+                if settings.preview_enabled:
+                    settings.preview_enabled = False
+            _show(context, PIPELINE_PREVIEW_OWNER)
+        else:
+            ViewportPreview.clear(PIPELINE_PREVIEW_OWNER)
+    finally:
+        _toggle_guard = False
+
+
 def refresh_active_preview(context):
     module_type = ViewportPreview.active_owner()
     if module_type is None:
+        return
+    if module_type == PIPELINE_PREVIEW_OWNER:
+        if not context.scene.hoaux_settings.pipelinePreviewEnabled:
+            ViewportPreview.clear(module_type)
+            return
+        _show(context, module_type)
         return
     definition = get_definition(module_type)
     if not _settings(definition, context.scene).preview_enabled:

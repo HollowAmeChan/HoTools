@@ -22,6 +22,13 @@ def _preview_update(_self, context):
 
     refresh_active_preview(context)
 
+
+def _pipeline_preview_update(self, context):
+    from .preview import set_pipeline_preview_enabled
+
+    set_pipeline_preview_enabled(context, self.pipelinePreviewEnabled)
+
+
 ROLE_ITEMS = (
     ("NONE", "None", "Not a generated HoAux bone"),
     ("DEF", "DEF", "Deformation output bone"),
@@ -60,6 +67,12 @@ class PG_HoAuxGroupState(PropertyGroup):
 
 
 class PG_HoAuxSettings(PropertyGroup):
+    pipelineExpanded: BoolProperty(name="整臂流水线", default=True)  # type: ignore
+    pipelinePreviewEnabled: BoolProperty(
+        name="预览整臂流水线",
+        default=False,
+        update=_pipeline_preview_update,
+    )  # type: ignore
     processSymmetry: BoolProperty(
         name="同时处理对称侧",
         description="同时预览并生成严格匹配的对侧角色骨",

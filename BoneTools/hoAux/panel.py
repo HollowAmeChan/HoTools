@@ -9,7 +9,12 @@ from .ir.blender_reader import snapshot_armature
 from .ir.codec import to_json
 from .generation import iter_hoaux_bones, restore_armature_mode
 from .operations import scope_bones, scope_is_enabled
-from .module_base import definitions, get_definition
+from .module_base import (
+    definitions,
+    get_definition,
+    role_name_sets,
+    whole_arm_pipeline_definitions,
+)
 
 
 class OT_HoAuxCopySourceIR(Operator):
@@ -58,6 +63,142 @@ class OT_HoAuxGenerateModule(Operator):
             "createdDirCount", int(result["createdDir"])
         )
         self.report({"INFO"}, f"已生成 {created_count} 根 HoAux 骨")
+        return {"FINISHED"}
+
+
+def _pipeline_role_names(context):
+    root = context.scene.hoaux_settings
+    return (
+        root.shoulderBone,
+        root.upperArmBone,
+        root.lowerArmBone,
+        root.handBone,
+    )
+
+
+def _pipeline_sides(context):
+    return tuple(
+        side
+        for _names, side in role_name_sets(
+            context, *_pipeline_role_names(context)
+        )
+    )
+
+
+def _module_generated_sides(armature_data, module_type):
+    return {
+        bone.hotools_boneprops.hoAux.side
+        for bone in iter_hoaux_bones(armature_data)
+        if bone.hotools_boneprops.hoAux.moduleType == module_type
+    }
+
+
+class OT_HoAuxGeneratePipeline(Operator):
+    bl_idname = "hoaux.generate_pipeline"
+    bl_label = "生成整臂流水线"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def execute(self, context):
+        from .operations import remove_scope
+
+        armature_object = context.object
+        original_mode = armature_object.mode
+        generated_types = []
+        sides = set()
+        missing = []
+        created_count = 0
+        try:
+            sides = set(_pipeline_sides(context))
+            for definition in whole_arm_pipeline_definitions():
+                present = _module_generated_sides(
+                    armature_object.data, definition.type_id
+                )
+                relevant = present & sides
+                if relevant == sides:
+                    continue
+                if relevant:
+                    detail = ", ".join(sorted(relevant))
+                    raise ValueError(
+                        f"{definition.label} 仅存在部分侧别：{detail}"
+                    )
+                missing.append(definition)
+
+            for definition in missing:
+                definition.build_preview_scene(context)
+
+            root = context.scene.hoaux_settings
+            root.pipelinePreviewEnabled = False
+            for definition in definitions():
+                definition.settings(context.scene).preview_enabled = False
+
+            for definition in missing:
+                result = definition.generate_from_context(context)
+                generated_types.append(definition.type_id)
+                created_count += len(result["bones"]) + result.get(
+                    "createdDirCount", int(result["createdDir"])
+                )
+        except (ValueError, RuntimeError) as exc:
+            for module_type in reversed(generated_types):
+                for side in sides:
+                    remove_scope(
+                        armature_object,
+                        f"ARM.{side}",
+                        f"{module_type}.{side}",
+                    )
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        finally:
+            restore_armature_mode(armature_object, original_mode)
+
+        if missing:
+            self.report(
+                {"INFO"},
+                f"已生成 {len(missing)} 段流水线，新增 {created_count} 根 HoAux 骨",
+            )
+        else:
+            self.report({"INFO"}, "整臂流水线已经完整")
+        return {"FINISHED"}
+
+
+class OT_HoAuxRemovePipeline(Operator):
+    bl_idname = "hoaux.remove_pipeline"
+    bl_label = "删除整臂流水线"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def execute(self, context):
+        from .operations import HoAuxRemovalBlockedError, remove_scope
+
+        armature_object = context.object
+        original_mode = armature_object.mode
+        pipeline_ids = sorted(
+            {
+                bone.hotools_boneprops.hoAux.pipelineId
+                for bone in iter_hoaux_bones(armature_object.data)
+                if bone.hotools_boneprops.hoAux.pipelineId.startswith("ARM.")
+            }
+        )
+        removed_count = 0
+        try:
+            for pipeline_id in pipeline_ids:
+                removed_count += remove_scope(
+                    armature_object, pipeline_id=pipeline_id
+                )["bones"]
+        except HoAuxRemovalBlockedError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        finally:
+            restore_armature_mode(armature_object, original_mode)
+        self.report({"INFO"}, f"已删除 {removed_count} 根整臂 HoAux 骨")
         return {"FINISHED"}
 
 
@@ -174,6 +315,8 @@ class OT_HoAuxBoneSelect(Operator):
 CLASSES = (
     OT_HoAuxCopySourceIR,
     OT_HoAuxGenerateModule,
+    OT_HoAuxGeneratePipeline,
+    OT_HoAuxRemovePipeline,
     OT_HoAuxGroupToggle,
     OT_HoAuxGroupSelect,
     OT_HoAuxBoneSelect,
@@ -266,6 +409,51 @@ def draw_panel(layout, context):
                         emboss=False,
                     )
                     pick.bone = bone.name
+
+    root = context.scene.hoaux_settings
+    pipeline = layout.box()
+    pipeline_header = pipeline.row(align=True)
+    pipeline_header.prop(
+        root,
+        "pipelineExpanded",
+        text="",
+        icon="TRIA_DOWN" if root.pipelineExpanded else "TRIA_RIGHT",
+        emboss=False,
+    )
+    pipeline_header.label(text="整臂流水线", icon="ARMATURE_DATA")
+    pipeline_header.operator("hoaux.generate_pipeline", text="生成全部", icon="PLAY")
+    pipeline_preview = pipeline_header.row(align=True)
+    pipeline_preview.alert = root.pipelinePreviewEnabled
+    pipeline_preview.prop(
+        root,
+        "pipelinePreviewEnabled",
+        text="",
+        icon="HIDE_OFF" if root.pipelinePreviewEnabled else "HIDE_ON",
+    )
+    pipeline_header.operator("hoaux.remove_pipeline", text="", icon="TRASH")
+    if root.pipelineExpanded:
+        roles = pipeline.column(align=True)
+        for property_name, label in (
+            ("shoulderBone", "肩骨"),
+            ("upperArmBone", "大臂骨"),
+            ("lowerArmBone", "小臂骨"),
+            ("handBone", "手骨"),
+        ):
+            roles.prop_search(root, property_name, obj.data, "bones", text=label)
+        roles.prop(root, "processSymmetry")
+        module_types = {
+            bone.hotools_boneprops.hoAux.moduleType for bone in bones
+        }
+        for definition in whole_arm_pipeline_definitions():
+            row = pipeline.row(align=True)
+            row.label(
+                text=definition.label,
+                icon=(
+                    "CHECKMARK"
+                    if definition.type_id in module_types
+                    else "RADIOBUT_OFF"
+                ),
+            )
 
     for definition in definitions():
         definition.draw_panel(layout, context)

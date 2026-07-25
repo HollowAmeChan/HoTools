@@ -1,6 +1,6 @@
 # HoTools HoAux 系统设计草案
 
-状态：规划中，尚未进入实现
+状态：Blender 首版八段流水线已实现；Unity 后端仍处于预演阶段
 研究样本：`C:\Users\hhh12\Desktop\辅助骨研究.blend`
 主要参考对象：`WholeLeftArm_Constraint_Driver`
 目标运行环境：Blender；Unity + HoTools 等效约束组件
@@ -345,10 +345,9 @@ Collection Registry 只需要：
 ```text
 ensure_system_collection(collectionKey, preferredName, parentCollectionKey)
 assign_role_collection(boneKey, roleTag)
-prune_empty_system_collections()
 ```
 
-这些接口不移除用户集合、普通 aux 集合或其他插件集合。新骨生成前没有其他集合，因此正常结果是一根骨只有一个 HoAux 系统集合；若用户之后自行加入其他集合，HoAux 不检查也不修复。每个系统集合仍是 `BONE_COLLECTION` ResourceRecord，并通过 `hoaux_key` 识别。删除后仅清理空且仍由 HoAux 拥有的集合。
+这些接口不移除用户集合、普通 aux 集合或其他插件集合。新骨生成前没有其他集合，因此正常结果是一根骨只有一个 HoAux 系统集合；若用户之后自行加入其他集合，HoAux 不检查也不修复。每个系统集合仍是 `BONE_COLLECTION` ResourceRecord，并通过 `hoaux_key` 识别。系统集合创建后长期保留，即使已经为空也不删除，从而保留用户的可见性和折叠状态；首次创建时只默认显示 `DEF`，`TRK/DIR` 默认隐藏。
 
 ### 5.4 按需定位
 
@@ -394,7 +393,7 @@ HoAux 不注册为了保持一致性的 rename 监听、msgbus 同步、depsgrap
 - Constraint、Driver 和 Variable 按当前 owner 的实际内容重新采集，不尝试证明它们仍是生成时的同一个实例；
 - Blender 已经同步更新的名称引用直接使用当前值；
 - Blender 没有同步、当前已经断裂的字符串引用原样保留为 `UNRESOLVED`，HoAux 不替用户改写；
-- 删除只处理身份明确的 HoAux 骨、系统集合，以及当前能明确定位的 FCurve；不确定项保留并列入结果。
+- 删除只处理身份明确的 HoAux 骨以及当前能明确定位的 FCurve；系统集合保留，不确定项保留并列入结果。
 
 因此改名不会触发维护成本；代价是 Constraint/Driver 的 resourceKey 只保证在一次 Source IR 快照内稳定，而不是承诺跨任意用户编辑保持不变。
 
@@ -701,7 +700,7 @@ Pipeline
 4. 删除模块拥有的约束；
 5. 逆父子顺序删除 HoAux；
 6. 删除无消费者的 DIR；
-7. 只解除系统集合成员关系，并自底向上清理无成员、无子级的系统 Bone Collection；
+7. 删除骨时由 Blender 自动解除集合成员关系，系统 Bone Collection 本身保持不变；
 8. 清理清单。
 
 明确不做：
@@ -815,8 +814,11 @@ BoneTools/hoAux/
   preview.py
   modules/
     __init__.py
+    wrist_volume.py
+    limb_bulge.py
     limb_twist.py
     elbow_volume.py
+    upper_arm_slide.py
     shoulder_volume.py
   ir/
     __init__.py
@@ -887,12 +889,12 @@ HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能�
 
 随后实现 Twist，用于补齐 Stretch To 和分段权重。
 
-### Phase 5：整臂流水线
+### Phase 5：整臂流水线（Blender 已实现）
 
 - 八段顺序；
 - 单段和全量预览；
-- 生成下一段；
-- 全量生成；
+- 单模块生成与全量顺序生成；
+- 已完整模块跳过、部分侧别阻止续跑；
 - 依赖状态显示；
 - 左右镜像。
 
@@ -914,7 +916,7 @@ HoAux 导出 IR 的 model、schema、写入、解析、验证、资源图、能�
 3. 所有生成骨可在 HoAux 列表中按 Pipeline/Module 查看。
 4. 任意模块可以独立关闭和恢复。
 5. 删除一个模块不会误删共享 DIR 或其他模块数据。
-6. 删除整条流水线时移除身份明确的系统骨、集合和 FCurve；无法确认的对象保留并在结果中列出。
+6. 删除整条流水线时移除身份明确的系统骨和 FCurve，保留系统集合及其显示状态；无法确认的对象保留并在结果中列出。
 7. 预览取消不产生任何 Blender 数据块变化。
 8. 同名非系统骨存在时不自动接管，由 Name Allocator 分配其他显示名称。
 9. 左右流水线可以同时存在且互不影响。

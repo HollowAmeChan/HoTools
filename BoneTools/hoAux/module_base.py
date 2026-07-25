@@ -184,6 +184,25 @@ def definitions():
     return tuple(sorted(DEFINITIONS, key=lambda definition: definition.order))
 
 
+WHOLE_ARM_PIPELINE_TYPES = (
+    "WRIST_VOLUME",
+    "FOREARM_BULGE",
+    "FOREARM_TWIST",
+    "ELBOW_VOLUME",
+    "UPPER_ARM_LONGITUDINAL_BULGE",
+    "UPPER_ARM_TWIST",
+    "UPPER_ARM_MUSCLE_SLIDE",
+    "SHOULDER_VOLUME",
+)
+
+
+def whole_arm_pipeline_definitions():
+    return tuple(
+        get_definition(module_type)
+        for module_type in WHOLE_ARM_PIPELINE_TYPES
+    )
+
+
 def get_definition(module_type):
     try:
         return _BY_TYPE[module_type]

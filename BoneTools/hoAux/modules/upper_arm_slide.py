@@ -238,6 +238,8 @@ def generate(
                 head=lower_head,
                 tail=dir_tail,
                 roll_reference=lower_roll,
+                owner_space="WORLD",
+                target_space="WORLD",
                 influence=HALF_INFLUENCE,
             ),
         )
@@ -295,8 +297,8 @@ def generate(
                 lower_arm_name,
                 transaction,
                 name="HoAux Half Rotation",
-                owner_space="LOCAL",
-                target_space="LOCAL",
+                owner_space="WORLD",
+                target_space="WORLD",
                 influence=HALF_INFLUENCE,
             )
 
