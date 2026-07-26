@@ -351,6 +351,52 @@ class OP_SelectBone_by_Nochild(Operator):
         bone_utils.select_bones(arm_obj, end_bone_names)
         return {'FINISHED'}
 
+
+class OP_SelectAllChildBones(Operator):
+    bl_idname = "ho.select_all_child_bones"
+    bl_label = "选择所有子级骨"
+    bl_description = "选择当前所有选中骨的全部后代骨骼"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'ARMATURE'
+            and context.mode in {'EDIT_ARMATURE', 'POSE'}
+            and bool(bone_utils.selected_bone_names(context, obj))
+        )
+
+    def execute(self, context):
+        armature = context.active_object
+        selected_bones = bone_utils.selected_bones(context, armature)
+        if not selected_bones:
+            self.report({'WARNING'}, "未选择任何骨骼")
+            return {'CANCELLED'}
+
+        descendant_names = []
+        visited_names = set()
+        pending = [
+            child
+            for bone in reversed(selected_bones)
+            for child in reversed(bone.children)
+        ]
+        while pending:
+            bone = pending.pop()
+            if bone.name in visited_names:
+                continue
+            visited_names.add(bone.name)
+            descendant_names.append(bone.name)
+            pending.extend(reversed(bone.children))
+
+        if not descendant_names:
+            self.report({'WARNING'}, "选中骨没有子级骨")
+            return {'CANCELLED'}
+
+        bone_utils.select_bones(armature, descendant_names, extend=True)
+        return {'FINISHED'}
+
 class OP_Fix_EmptyRotate_Bone(Operator):
     bl_idname = "ho.fix_empty_rotate_bone"
     bl_label = "修复空旋转的骨骼"
@@ -1523,6 +1569,8 @@ def drawMergeArmaturesPanel(layout: UILayout, context: Context):
 
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     """Draw common bone operations."""
+    layout.operator(OP_SelectAllChildBones.bl_idname, text="选择所有子级骨")
+
     row = layout.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
     row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
@@ -1550,6 +1598,7 @@ cls = [
     OP_ForceClearBoneRotation,
     OP_SelectBoneBy_by_GenerateMCH,
     OP_SelectBone_by_Nochild,
+    OP_SelectAllChildBones,
     OP_AddEndBone,
     OP_SelectBone_by_endBone,
     OP_Fix_EmptyRotate_Bone,
