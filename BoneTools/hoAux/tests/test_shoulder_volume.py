@@ -7,23 +7,23 @@ from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
 
-BONE_TOOLS_DIR = Path(__file__).resolve().parents[2]
-if str(BONE_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(BONE_TOOLS_DIR))
+ADDON_DIR = Path(__file__).resolve().parents[3]
+if str(ADDON_DIR) not in sys.path:
+    sys.path.insert(0, str(ADDON_DIR))
 
-import hoAux
-from hoAux.ir.blender_reader import snapshot_armature
-from hoAux.joint_frame import build_joint_frame
-from hoAux.modules import shoulder_volume
-from hoAux.generation import (
+from BoneTools import hoAux
+from BoneTools.hoAux.ir.blender_reader import snapshot_armature
+from BoneTools.hoAux.joint_frame import build_joint_frame
+from BoneTools.hoAux.modules import shoulder_volume
+from BoneTools.hoAux.generation import (
     GenerationTransaction,
     SharedDirectionSpec,
     iter_hoaux_bones,
     validate_shared_direction,
 )
-from hoAux.operations import remove_scope
-from hoAux.preview import PreviewScene, ROLE_LINE_STYLES
-from hoAux.properties import PG_HoAuxBoneInfo
+from BoneTools.hoAux.operations import remove_scope
+from BoneTools.hoAux.preview import PreviewScene, ROLE_LINE_STYLES
+from BoneTools.hoAux.properties import PG_HoAuxBoneInfo
 
 
 class _TestBoneProps(PropertyGroup):

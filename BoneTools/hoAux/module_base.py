@@ -6,17 +6,7 @@ import bpy
 from bpy.props import PointerProperty
 from mathutils import Vector
 
-try:
-    from Utils import bone_utils
-except ModuleNotFoundError:
-    # 兼容只将 BoneTools 加入 sys.path 的旧独立脚本入口。
-    import os
-    import sys
-
-    addon_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    if addon_root not in sys.path:
-        sys.path.insert(0, addon_root)
-    from Utils import bone_utils
+from Utils import bone_utils
 
 
 @dataclass(frozen=True)

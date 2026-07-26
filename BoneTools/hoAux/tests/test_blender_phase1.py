@@ -6,17 +6,17 @@ from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
 
-BONE_TOOLS_DIR = Path(__file__).resolve().parents[2]
-if str(BONE_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(BONE_TOOLS_DIR))
+ADDON_DIR = Path(__file__).resolve().parents[3]
+if str(ADDON_DIR) not in sys.path:
+    sys.path.insert(0, str(ADDON_DIR))
 
-import hoAux
+from BoneTools import hoAux
 from Utils.bone_selection import selected_bone_names
-from hoAux.generation import assign_bone, find_collection
-from hoAux.ir.blender_reader import snapshot_armature
-from hoAux.ir.codec import parse_json, to_dict, to_json
-from hoAux.properties import PG_HoAuxBoneInfo
-from hoAux.operations import remove_scope, set_scope_enabled
+from BoneTools.hoAux.generation import assign_bone, find_collection
+from BoneTools.hoAux.ir.blender_reader import snapshot_armature
+from BoneTools.hoAux.ir.codec import parse_json, to_dict, to_json
+from BoneTools.hoAux.properties import PG_HoAuxBoneInfo
+from BoneTools.hoAux.operations import remove_scope, set_scope_enabled
 
 
 class _TestBoneProps(PropertyGroup):

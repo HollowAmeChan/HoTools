@@ -4,12 +4,12 @@ from pathlib import Path
 import bpy
 
 
-BONE_TOOLS_DIR = Path(__file__).resolve().parents[2]
-if str(BONE_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(BONE_TOOLS_DIR))
+ADDON_DIR = Path(__file__).resolve().parents[3]
+if str(ADDON_DIR) not in sys.path:
+    sys.path.insert(0, str(ADDON_DIR))
 
-import hoAux
-from hoAux.preview import ViewportPreview
+from BoneTools import hoAux
+from BoneTools.hoAux.preview import ViewportPreview
 
 
 hoAux.register()

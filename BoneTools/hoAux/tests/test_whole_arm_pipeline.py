@@ -6,15 +6,15 @@ from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
 
-BONE_TOOLS_DIR = Path(__file__).resolve().parents[2]
-if str(BONE_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(BONE_TOOLS_DIR))
+ADDON_DIR = Path(__file__).resolve().parents[3]
+if str(ADDON_DIR) not in sys.path:
+    sys.path.insert(0, str(ADDON_DIR))
 
-import hoAux
-from hoAux.generation import find_collection, iter_hoaux_bones
-from hoAux.module_base import WHOLE_ARM_PIPELINE_TYPES
-from hoAux.preview import PIPELINE_PREVIEW_OWNER, ViewportPreview
-from hoAux.properties import PG_HoAuxBoneInfo
+from BoneTools import hoAux
+from BoneTools.hoAux.generation import find_collection, iter_hoaux_bones
+from BoneTools.hoAux.module_base import WHOLE_ARM_PIPELINE_TYPES
+from BoneTools.hoAux.preview import PIPELINE_PREVIEW_OWNER, ViewportPreview
+from BoneTools.hoAux.properties import PG_HoAuxBoneInfo
 
 
 class _TestBoneProps(PropertyGroup):
