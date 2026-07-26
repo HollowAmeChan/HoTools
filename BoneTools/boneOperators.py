@@ -252,32 +252,8 @@ class OP_AddEndBone(Operator):
         ebones = arm.edit_bones
 
         selected_bones = BoneUtils.selected_bones(context, obj)
-        selected_names = {bone.name for bone in selected_bones}
-
-        # 断连的子骨仍属于同一父子层级。从最上层的选中骨开始，
-        # 沿每个分支向下找到真正无子级的末端骨。
-        roots = []
-        for bone in selected_bones:
-            parent = bone.parent
-            while parent is not None and parent.name not in selected_names:
-                parent = parent.parent
-            if parent is None:
-                roots.append(bone)
-
-        target_bones = []
-        visited_names = set()
-        pending = list(reversed(roots))
-        while pending:
-            bone = pending.pop()
-            if bone.name in visited_names:
-                continue
-            visited_names.add(bone.name)
-
-            children = list(bone.children)
-            if children:
-                pending.extend(reversed(children))
-            else:
-                target_bones.append(bone)
+        # 只处理选中骨中真正无子级的末端骨，断连状态不影响父子层级。
+        target_bones = [bone for bone in selected_bones if not bone.children]
 
         end_bones = []
         for bone in target_bones:
