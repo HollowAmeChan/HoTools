@@ -5,8 +5,8 @@ import re
 from nodeitems_utils import NodeCategory, NodeItem, NodeItemCustom
 from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,Armature
-from .Function.physicsWorld import nodes as physicsWorld
-from .Function.physicsWorld import registry as physicsWorldRegistry
+from .PhysicsWorld import nodes as physicsWorld
+from .PhysicsWorld import registry as physicsWorldRegistry
 from .GraphNode import CLS_GRAPH
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类

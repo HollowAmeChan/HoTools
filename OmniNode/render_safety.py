@@ -107,7 +107,7 @@ def _refresh_tree_physics_armature_refs(tree) -> None:
 def _get_physics_world_caches_from_tree(tree) -> list:
     """从 tree 的 runtime cache 中找出所有 PhysicsWorldCache 实例。"""
     try:
-        from .Function.physicsWorld.types import PhysicsWorldCache
+        from .PhysicsWorld.types import PhysicsWorldCache
     except Exception:
         return []
 

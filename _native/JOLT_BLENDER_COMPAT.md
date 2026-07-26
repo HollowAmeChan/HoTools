@@ -258,7 +258,7 @@ $msbuild = 'D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuil
 无头 Blender 运行测试脚本（位于插件根目录）：
 
 ```bat
-"D:\Blender\blender-5.2.0-windows-x64\blender.exe" --factory-startup --background --python OmniNode\NodeTree\Function\physicsWorld\rigid\test\test_blender_jolt_smoke.py
+"D:\Blender\blender-5.2.0-windows-x64\blender.exe" --factory-startup --background --python OmniNode\PhysicsWorld\rigid\test\test_blender_jolt_smoke.py
 ```
 
 期望输出（最后几行）：

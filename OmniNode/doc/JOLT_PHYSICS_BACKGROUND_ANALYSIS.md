@@ -15,11 +15,11 @@
 
 - JoltPhysics：`v5.2.0`，本地源码位于 `_native/build/vs2022-py311/_deps/joltphysics-src`。
 - 本地 binding：`_native/src/jolt_rigid.cpp`。
-- Python adapter：`OmniNode/Function/physicsWorld/rigid/backends/jolt.py`。
+- Python adapter：`OmniNode/PhysicsWorld/rigid/backends/jolt.py`。
 - HoTools 刚体属性：`PhysicsTools/physicsProperty.py`、`PhysicsTools/physicsPanel.py`。
 - 统一物理流程契约：`OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`。
 - Blender 兼容记录：`_native/JOLT_BLENDER_COMPAT.md`。
-- 语义测试设计：`OmniNode/Function/physicsWorld/rigid/docs/JOLT_TEST_STRATEGY.md`。
+- 语义测试设计：`OmniNode/PhysicsWorld/rigid/docs/JOLT_TEST_STRATEGY.md`。
 
 外部资料：
 

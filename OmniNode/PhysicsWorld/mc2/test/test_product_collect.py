@@ -1,0 +1,290 @@
+"""E7-A：Mesh产品collector直接消费resolved partition。"""
+
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+import types
+from dataclasses import replace
+from types import SimpleNamespace
+
+import numpy as np
+
+
+MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
+FUNCTION = os.path.dirname(PHYSICS_WORLD)
+NODETREE = os.path.dirname(FUNCTION)
+OMNINODE = NODETREE
+HOTOOLS = os.path.dirname(OMNINODE)
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.Function", FUNCTION),
+    ("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.PhysicsWorld.mc2", MC2_ROOT),
+    ("HoTools.OmniNode.PhysicsWorld.mc2.setups", os.path.join(MC2_ROOT, "setups")),
+    (
+        "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth",
+        os.path.join(MC2_ROOT, "setups", "mesh_cloth"),
+    ),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+parameters = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.parameters")
+topology = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.topology")
+collector = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.product")
+authoring = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.authoring")
+object_spec = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.object_spec")
+partition_specs = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.partition_specs")
+product_slot = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.product_slot")
+
+
+class _Data:
+    def __init__(self, pointer):
+        self._pointer = pointer
+
+    def as_pointer(self):
+        return self._pointer
+
+
+class _Source:
+    type = "MESH"
+
+    def __init__(self, pointer, *, collided_by_groups=None):
+        self._pointer = pointer
+        self.data = _Data(pointer + 1000)
+        self.name = self.name_full = f"Mesh{pointer}"
+        self.matrix_world = np.eye(4, dtype=np.float32)
+        if collided_by_groups is not None:
+            self.hotools_mesh_collision = SimpleNamespace(
+                collided_by_groups=collided_by_groups,
+            )
+
+    def as_pointer(self):
+        return self._pointer
+
+
+class _World:
+    def __init__(self):
+        self.generation = 4
+        self.frame_context = SimpleNamespace(frame=12)
+        self.runtime_caches = {}
+
+    def runtime_cache(self, name):
+        return self.runtime_caches.get(name)
+
+    def set_runtime_cache(self, name, value):
+        self.runtime_caches[name] = value
+
+
+def _raw(source, count):
+    positions = np.zeros((count, 3), dtype=np.float32)
+    positions[:, 0] = np.arange(count, dtype=np.float32)
+    normals = np.zeros((count, 3), dtype=np.float32)
+    normals[:, 2] = 1.0
+    edges = np.asarray(tuple((index, index + 1) for index in range(count - 1)), dtype=np.int32).reshape((-1, 2))
+    triangles = np.empty((0, 3), dtype=np.int32)
+    empty = np.empty((0,), dtype=np.int32)
+    arrays = (
+        positions, normals, edges, triangles, triangles.copy(), empty,
+        np.arange(count, dtype=np.int32), np.empty((0, 2), dtype=np.float32),
+        np.empty((0,), dtype=np.float32), np.ones(count, dtype=np.float32),
+    )
+    for value in arrays:
+        value.flags.writeable = False
+    return topology.MC2MeshRawSnapshot(
+        source_pointer=source.as_pointer(), mesh_pointer=source.data.as_pointer(),
+        positions=arrays[0], normals=arrays[1], edges=arrays[2], triangles=arrays[3],
+        triangle_loops=arrays[4], polygon_loop_totals=arrays[5], loop_vertices=arrays[6],
+        loop_uvs=arrays[7], pin_weights=arrays[8], radius_multipliers=arrays[9],
+        pin_enabled=False, pin_name="", radius_group_name="", has_uv=False,
+    )
+
+
+def _entry(
+    source,
+    *,
+    gravity_direction=(0.0, -1.0, 0.0),
+    primary_collision_group=1,
+    collided_by_groups=2,
+):
+    wrapped = object_spec.make_mc2_mesh_custom_object(
+        source,
+        primary_collision_group=primary_collision_group,
+        collided_by_groups=collided_by_groups,
+    )
+    return authoring.make_mc2_mesh_domain_partitions(
+        (wrapped,),
+        profile=parameters.make_mc2_particle_profile(
+            gravity_direction=gravity_direction, self_collision_mode=2,
+        ),
+        task_parameters=parameters.make_mc2_task_parameters(),
+    )[0]
+
+
+def _collect_request(
+    world,
+    entries,
+    *,
+    force_audit=None,
+    previous_collection=None,
+):
+    request = authoring.make_mc2_mesh_product_request(entries)
+    slot_id = product_slot.make_mc2_product_slot_id(
+        request.setup_type,
+        request.domain_signature,
+    )
+    return (
+        collector.collect_mc2_mesh_product_plan(
+            world,
+            request.plan,
+            receipt_slot_id=slot_id,
+            force_audit=force_audit,
+            previous_collection=previous_collection,
+        ),
+        slot_id,
+    )
+
+
+def _install_observer(monkey_rows):
+    calls = []
+
+    def observe(world, partition, *, receipt_slot_id, force_audit=None):
+        calls.append((partition.stable_id, receipt_slot_id, force_audit))
+        raw = monkey_rows[partition.source.as_pointer()]
+        fingerprint = topology.MC2StaticInputFingerprint(
+            topology="1" * 32, geometry="2" * 32, surface="3" * 32,
+            config="4" * 32, source="5" * 32,
+            overall=("a" if raw.source_pointer == 101 else "b") * 32,
+        )
+        return SimpleNamespace(
+            fingerprint=fingerprint, snapshots=(raw,),
+            identities=((1, "mesh_cloth", raw.source_pointer, raw.mesh_pointer),),
+            statuses=("hit",),
+        )
+
+    collector._prepare_observed_static_inputs = observe
+    return calls
+
+
+def test_product_collector_observes_once_and_preserves_authoring_order():
+    first, second = _Source(101), _Source(202)
+    calls = _install_observer({101: _raw(first, 3), 202: _raw(second, 2)})
+    entries = (
+        _entry(first, gravity_direction=(0.0, -1.0, 0.0)),
+        _entry(second, gravity_direction=(1.0, 0.0, 0.0)),
+    )
+    result, slot_id = _collect_request(_World(), entries, force_audit=True)
+    assert result.task_ids == tuple(entry.stable_id for entry in entries)
+    assert result.draft.partition_ids == result.task_ids
+    assert [snapshot.vertex_count for snapshot in result.static_snapshots] == [3, 2]
+    assert [snapshot.output_target_id for snapshot in result.static_snapshots] == [
+        "mesh:101:1101", "mesh:202:1202",
+    ]
+    assert result.world_gravity_directions == (
+        (0.0, -1.0, 0.0), (1.0, 0.0, 0.0),
+    )
+    assert calls == [(entry.stable_id, slot_id, True) for entry in entries]
+
+
+def test_product_collector_reuses_unchanged_static_rows_before_repacking():
+    first, second = _Source(101), _Source(202)
+    _install_observer({101: _raw(first, 3), 202: _raw(second, 2)})
+    entries = (_entry(first), _entry(second))
+    world = _World()
+    previous, _slot_id = _collect_request(world, entries)
+    original_capture = collector.capture_mc2_mesh_partition_static_snapshot
+    original_topology = collector.mesh_topology_signature_from_arrays
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unchanged Mesh static row was rebuilt")
+
+    collector.capture_mc2_mesh_partition_static_snapshot = unexpected
+    collector.mesh_topology_signature_from_arrays = unexpected
+    try:
+        current, _slot_id = _collect_request(
+            world,
+            entries,
+            previous_collection=previous,
+        )
+    finally:
+        collector.capture_mc2_mesh_partition_static_snapshot = original_capture
+        collector.mesh_topology_signature_from_arrays = original_topology
+    assert all(
+        current_snapshot is previous_snapshot
+        for current_snapshot, previous_snapshot in zip(
+            current.static_snapshots, previous.static_snapshots
+        )
+    )
+    assert current.mesh_topology_signatures == previous.mesh_topology_signatures
+
+
+def test_product_collector_uses_frozen_unified_collision_masks():
+    first = _Source(101, collided_by_groups=0xFFFF)
+    second = _Source(202, collided_by_groups=0xFFFF)
+    fallback = _Source(303)
+    _install_observer({
+        101: _raw(first, 3),
+        202: _raw(second, 2),
+        303: _raw(fallback, 2),
+    })
+    result, _slot_id = _collect_request(
+        _World(),
+        (
+            _entry(first, primary_collision_group=1, collided_by_groups=0),
+            _entry(second, primary_collision_group=2, collided_by_groups=4),
+            _entry(fallback, primary_collision_group=3, collided_by_groups=0),
+        ),
+    )
+    assert result.draft.external_collision_masks == (0, 4, 0)
+    assert result.draft.collision_groups == (1, 2, 4)
+    assert result.draft.collision_masks == (1, 6, 4)
+
+
+def test_mesh_collector_rejects_disabled_partition_compatibility_state():
+    first, disabled = _Source(101), _Source(202)
+    try:
+        authoring.make_mc2_mesh_product_request(
+            (_entry(first), replace(_entry(disabled), enabled=False))
+        )
+    except ValueError as exc:
+        assert "连线决定" in str(exc)
+    else:
+        raise AssertionError("disabled Mesh compatibility state was accepted")
+
+
+def test_product_collector_consumes_one_explicit_domain_plan_without_task_expansion():
+    first, second = _Source(301), _Source(302)
+    calls = _install_observer({301: _raw(first, 4), 302: _raw(second, 5)})
+    entries = authoring.make_mc2_mesh_domain_partitions(
+        object_spec.make_mc2_mesh_custom_objects((first, second)),
+    )
+    request = authoring.make_mc2_mesh_product_request(entries)
+    result = collector.collect_mc2_mesh_product_plan(
+        _World(),
+        request.plan,
+        receipt_slot_id="mc2.domain.product.v1:mesh_cloth:" + request.domain_signature,
+    )
+    assert result.task_ids == tuple(entry.stable_id for entry in entries)
+    assert result.draft.partition_ids == result.task_ids
+    assert len(calls) == 2
+    assert result.draft.collector_domain_signature == request.domain_signature
+
+
+TESTS = tuple(
+    (name, value)
+    for name, value in sorted(globals().items())
+    if name.startswith("test_") and callable(value)
+)
+
+
+if __name__ == "__main__":
+    for name, test in TESTS:
+        test()
+        print(f"PASS {name}")
+    print(f"MC2 product collector: {len(TESTS)} passed")

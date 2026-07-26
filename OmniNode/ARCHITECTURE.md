@@ -39,6 +39,17 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 ## 核心边界
 
+### 0. 重型业务域与 Function 并列
+
+`Function/` 是通用函数节点入口，不是所有业务实现的容器。拥有独立注册、生命周期、后端、测试和持续增长子域的重型系统，应作为 `OmniNode/` 根下的一级包维护。
+
+物理世界遵循这一边界：
+
+- `PhysicsWorld/` 与 `Function/` 并列，拥有物理世界运行时、MC2、Rigid、Spring VRM、Bake、UI 和各自测试。
+- `Function/` 中只保留适合由 `@omni(...)` 暴露的轻量节点函数；需要物理实现时直接导入 `PhysicsWorld` 的公开模块。
+- 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
+- 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
+
 ### 1. 函数生成是默认节点模型
 
 OmniNode 的默认扩展点是 `Function/*.py` 中的 Python 函数和 `@omni(...)` 元数据。`FunctionNodeCore.py` 解析函数签名，生成 socket、默认值、multi input 标记和继承 `OmniNode` 的节点类。编译器看到这类节点时生成 `OpCall`，执行器只调用 `_func(*args)` 并把返回值写回寄存器。

@@ -1,0 +1,196 @@
+"""Tier A checks for the MC2 fixed-step scheduler producer."""
+
+from __future__ import annotations
+
+import importlib
+import json
+from pathlib import Path
+import sys
+import types
+
+import numpy as np
+
+
+MC2_ROOT = Path(__file__).resolve().parents[1]
+PHYSICS_WORLD = MC2_ROOT.parent
+FUNCTION = PHYSICS_WORLD.parent / "Function"
+NODETREE = FUNCTION.parent
+OMNINODE = NODETREE
+HOTOOLS = OMNINODE.parent
+
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.Function", FUNCTION),
+    ("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.PhysicsWorld.mc2", MC2_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [str(package_path)]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+scheduler = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.scheduler"
+)
+parameters = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.parameters"
+)
+
+
+FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "tier_a"
+    / "center_frame_shift_skip_count_001.json"
+)
+EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
+
+
+def test_scheduler_matches_fixed_mc2_oracle() -> None:
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    values = fixture["input"]
+    expected = fixture["expected"]
+    assert fixture["mc2_commit"] == EXPECTED_COMMIT
+    assert fixture["source"]["producer"][0].endswith(
+        "::AlwaysTeamUpdatePostJob.Execute"
+    )
+    state = scheduler.MC2TimeSchedulerState()
+    frame = state.plan_frame(
+        frame_delta_time=values["frame_delta_time"],
+        now_time_scale=values["now_time_scale"],
+        simulation_delta_time=values["simulation_delta_time"],
+        max_simulation_count_per_frame=values[
+            "max_simulation_count_per_frame"
+        ],
+    )
+    assert frame.update_count == expected["update_count"]
+    assert frame.skip_count == expected["skip_count"]
+    assert frame.planned_update_count == (
+        expected["update_count"] + expected["skip_count"]
+    )
+    for name in (
+        "time",
+        "old_time",
+        "now_update_time",
+        "old_update_time",
+        "frame_update_time",
+        "frame_old_time",
+    ):
+        np.testing.assert_allclose(
+            getattr(frame, name), expected[name], rtol=1.0e-6, atol=1.0e-7
+        )
+    ratios = [state.advance_step(index) for index in range(frame.update_count)]
+    np.testing.assert_allclose(
+        ratios,
+        expected["step_frame_interpolations"],
+        rtol=1.0e-6,
+        atol=1.0e-7,
+    )
+    assert state.frame_revision == 1
+    assert state.step_revision == frame.update_count
+
+
+def test_scheduler_publishes_complete_substep_plan() -> None:
+    state = scheduler.MC2TimeSchedulerState()
+    frame = state.plan_frame(
+        frame_delta_time=0.1,
+        now_time_scale=1.0,
+        simulation_delta_time=0.02,
+        max_simulation_count_per_frame=3,
+    )
+    plans = [state.advance_substep(index) for index in range(frame.update_count)]
+    assert plans
+    assert plans[0].update_index == 0
+    assert plans[0].simulation_delta_time == frame.simulation_delta_time
+    assert plans[-1].is_final_substep is True
+    assert all(plan.is_final_substep is (index == len(plans) - 1) for index, plan in enumerate(plans))
+    assert all(plan.powers.integration > 0.0 for plan in plans)
+
+
+def test_scheduler_rejects_overlapping_frames() -> None:
+    state = scheduler.MC2TimeSchedulerState()
+    frame = state.plan_frame(
+        frame_delta_time=0.1,
+        now_time_scale=1.0,
+        simulation_delta_time=0.02,
+        max_simulation_count_per_frame=3,
+    )
+    try:
+        state.plan_frame(
+            frame_delta_time=0.1,
+            now_time_scale=1.0,
+            simulation_delta_time=0.02,
+            max_simulation_count_per_frame=3,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("scheduler accepted a frame with pending steps")
+    for index in range(frame.update_count):
+        state.advance_step(index)
+    state.plan_frame(
+        frame_delta_time=0.02,
+        now_time_scale=1.0,
+        simulation_delta_time=0.02,
+        max_simulation_count_per_frame=3,
+    )
+
+
+def test_solver_settings_expose_source_scheduler_bounds() -> None:
+    default = parameters.make_mc2_solver_settings()
+    assert tuple(default.debug_dict()) == (
+        "time_scale",
+        "simulation_frequency",
+        "max_simulation_count_per_frame",
+    )
+    assert default.simulation_frequency == 90
+    assert default.max_simulation_count_per_frame == 3
+    configured = parameters.make_mc2_solver_settings(
+        simulation_frequency=50,
+        max_simulation_count_per_frame=3,
+    )
+    assert configured.debug_dict()["simulation_frequency"] == 50
+    for name, value in (
+        ("simulation_frequency", 29),
+        ("simulation_frequency", 151),
+        ("simulation_frequency", 50.5),
+        ("max_simulation_count_per_frame", 0),
+        ("max_simulation_count_per_frame", 6),
+        ("max_simulation_count_per_frame", True),
+    ):
+        try:
+            parameters.make_mc2_solver_settings(**{name: value})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"MC2 scheduler setting accepted {name}={value!r}")
+
+
+def test_substep_powers_freeze_the_v0_scheduler_handoff() -> None:
+    low = scheduler.derive_mc2_simulation_powers(1.0 / 180.0)
+    np.testing.assert_allclose(low.distance_bending, 0.5, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(low.integration, 0.5, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(low.angle, 0.5 ** 1.8, rtol=0.0, atol=1.0e-12)
+
+    high = scheduler.derive_mc2_simulation_powers(0.1)
+    np.testing.assert_allclose(high.distance_bending, 3.0, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(high.integration, 9.0 ** 0.3, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(high.angle, 9.0 ** 1.8, rtol=0.0, atol=1.0e-10)
+
+    for value in (0.0, -0.1, float("inf"), float("nan")):
+        try:
+            scheduler.derive_mc2_simulation_powers(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"simulation power handoff accepted {value!r}")
+
+
+if __name__ == "__main__":
+    test_scheduler_matches_fixed_mc2_oracle()
+    test_scheduler_publishes_complete_substep_plan()
+    test_scheduler_rejects_overlapping_frames()
+    test_solver_settings_expose_source_scheduler_bounds()
+    test_substep_powers_freeze_the_v0_scheduler_handoff()
+    print("PASS MC2 scheduler Tier A oracle")

@@ -16,7 +16,9 @@ sys.modules["HoTools"] = hotools_package
 OmniNode = importlib.import_module("HoTools.OmniNode")
 nodeColors = importlib.import_module("HoTools.OmniNode.config.nodeColors")
 assert nodeColors.colorCat["Math"] == nodeColors.hsv2rgb(0.58, 0.35, 0.3)
-mc2_native = importlib.import_module("HoTools.OmniNode.Function.physicsWorld.mc2.native")
+assert (HOTOOLS / "OmniNode" / "PhysicsWorld").is_dir()
+assert not (HOTOOLS / "OmniNode" / "Function" / "physicsWorld").exists()
+mc2_native = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.native")
 native_backend = mc2_native.native_module()
 assert Path(native_backend.__file__).resolve().is_relative_to(HOTOOLS / "_Lib")
 

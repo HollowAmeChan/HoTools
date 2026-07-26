@@ -6,9 +6,9 @@ contain adjacent `test_*.py` files.
 
 Domain-specific tests stay with their owner, for example:
 
-- `Function/physicsWorld/test/`
-- `Function/physicsWorld/rigid/test/`
-- `Function/physicsWorld/spring_vrm/test/`
+- `PhysicsWorld/test/`
+- `PhysicsWorld/rigid/test/`
+- `PhysicsWorld/spring_vrm/test/`
 
 Run the core suite with Blender's Python environment:
 

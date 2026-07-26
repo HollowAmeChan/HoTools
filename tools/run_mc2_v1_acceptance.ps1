@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if (-not $ManifestPath) {
-    $ManifestPath = Join-Path $RepoRoot "OmniNode\NodeTree\Function\physicsWorld\mc2\test\acceptance_assets_v1.json"
+    $ManifestPath = Join-Path $RepoRoot "OmniNode\PhysicsWorld\mc2\test\acceptance_assets_v1.json"
 }
 $ManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
 

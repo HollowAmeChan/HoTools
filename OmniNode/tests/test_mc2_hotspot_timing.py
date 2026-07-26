@@ -6,8 +6,7 @@ import sys
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 _PATH = os.path.join(
     os.path.dirname(_TEST_DIR),
-    "Function",
-    "physicsWorld",
+    "PhysicsWorld",
     "mc2",
     "timing.py",
 )

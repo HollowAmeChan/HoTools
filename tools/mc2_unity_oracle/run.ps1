@@ -29,7 +29,7 @@ if ($ManifestMC2Path -ne $ExpectedMC2Path) {
 }
 
 if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $ProjectPath "..\..\OmniNode\NodeTree\Function\physicsWorld\mc2\test\fixtures\tier_a"
+    $OutputDirectory = Join-Path $ProjectPath "..\..\OmniNode\PhysicsWorld\mc2\test\fixtures\tier_a"
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

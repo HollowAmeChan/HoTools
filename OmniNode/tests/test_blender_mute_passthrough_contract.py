@@ -16,16 +16,16 @@ OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
 NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
-PHYSICS_WORLD = os.path.join(FUNCTION, "physicsWorld")
+PHYSICS_WORLD = os.path.join(OMNINODE, "PhysicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
     ("HoTools.OmniNode", OMNINODE),
     ("HoTools.OmniNode.Function", FUNCTION),
-    ("HoTools.OmniNode.Function.physicsWorld", PHYSICS_WORLD),
-    ("HoTools.OmniNode.Function.physicsWorld.mc2", os.path.join(PHYSICS_WORLD, "mc2")),
-    ("HoTools.OmniNode.Function.physicsWorld.rigid", os.path.join(PHYSICS_WORLD, "rigid")),
-    ("HoTools.OmniNode.Function.physicsWorld.spring_vrm", os.path.join(PHYSICS_WORLD, "spring_vrm")),
+    ("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.PhysicsWorld.mc2", os.path.join(PHYSICS_WORLD, "mc2")),
+    ("HoTools.OmniNode.PhysicsWorld.rigid", os.path.join(PHYSICS_WORLD, "rigid")),
+    ("HoTools.OmniNode.PhysicsWorld.spring_vrm", os.path.join(PHYSICS_WORLD, "spring_vrm")),
 ):
     module = types.ModuleType(package_name)
     module.__path__ = [package_path]
@@ -41,16 +41,16 @@ uv = importlib.import_module("HoTools.OmniNode.Function.UV")
 vertex_color = importlib.import_module("HoTools.OmniNode.Function.VertexColor")
 vertex_group = importlib.import_module("HoTools.OmniNode.Function.VertexGroup")
 physics_nodes = importlib.import_module(
-    "HoTools.OmniNode.Function.physicsWorld.nodes"
+    "HoTools.OmniNode.PhysicsWorld.nodes"
 )
 mc2_nodes = importlib.import_module(
-    "HoTools.OmniNode.Function.physicsWorld.mc2.nodes"
+    "HoTools.OmniNode.PhysicsWorld.mc2.nodes"
 )
 rigid_nodes = importlib.import_module(
-    "HoTools.OmniNode.Function.physicsWorld.rigid.nodes"
+    "HoTools.OmniNode.PhysicsWorld.rigid.nodes"
 )
 spring_nodes = importlib.import_module(
-    "HoTools.OmniNode.Function.physicsWorld.spring_vrm.nodes"
+    "HoTools.OmniNode.PhysicsWorld.spring_vrm.nodes"
 )
 
 

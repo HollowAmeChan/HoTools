@@ -15,15 +15,15 @@ OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
 NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
-PHYSICS_WORLD = os.path.join(FUNCTION, "physicsWorld")
+PHYSICS_WORLD = os.path.join(OMNINODE, "PhysicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
     ("HoTools.OmniNode", OMNINODE),
     ("HoTools.OmniNode.Function", FUNCTION),
-    ("HoTools.OmniNode.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.PhysicsWorld", PHYSICS_WORLD),
     (
-        "HoTools.OmniNode.Function.physicsWorld.mc2",
+        "HoTools.OmniNode.PhysicsWorld.mc2",
         os.path.join(PHYSICS_WORLD, "mc2"),
     ),
 ):
