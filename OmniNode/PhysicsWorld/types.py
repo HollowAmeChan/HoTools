@@ -5,7 +5,7 @@ physicsWorld.types — 统一物理世界的基础数据类型
   PhysicsObjectScope    — 本帧物理世界的对象范围（纯运行值，无跨帧生命周期）
   PhysicsFrameContext   — 统一帧状态（连续性、重置、dt、generation）
   PhysicsColliderSource — 从 scope 解析出的单个碰撞源（轻量中间值）
-  PhysicsWorldCache     — 跨帧共享的物理世界 owner（实现 omni_cache_dispose 协议）
+  PhysicsWorldCache     — 跨帧共享的物理世界 owner（实现 cache 生命周期协议）
 """
 
 from __future__ import annotations
@@ -218,7 +218,7 @@ class PhysicsWorldCache:
     """
     跨帧共享的物理世界 owner。
 
-    实现 omni_cache_dispose 协议，走零拷贝 cache 路径。
+    实现 omni_cache_dispose 与 omni_cache_refresh_references 协议。
     持有：
       frame_context          — 统一帧状态
       object_scope_key       — 上帧 scope key（用于检测 scope 变化）
@@ -555,6 +555,14 @@ class PhysicsWorldCache:
 
     def result_stream_counts(self) -> dict[str, int]:
         return {str(channel): len(items) for channel, items in self.result_streams.items()}
+
+    # ---- 持久引用门禁协议 ----------------------------------------------
+
+    def omni_cache_refresh_references(self, reason: str) -> int:
+        """在 Blender 生命周期边界重新绑定 world 内的 bpy 引用。"""
+        from .reference_guard import refresh_physics_world_references
+
+        return refresh_physics_world_references(self, reason)
 
     # ---- omni_cache_dispose 协议 ---------------------------------------
 

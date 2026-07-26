@@ -297,6 +297,8 @@ def make_bone_collision_override_properties(
     return {
         "capability_id": BONE_COLLISION_CAPABILITY_ID,
         "armature": armature_obj,
+        "armature_ptr": as_pointer(armature_obj),
+        "armature_data_ptr": data_pointer(armature_obj),
         "bone_name": bone_name,
         "fields": fields,
         "enabled": bool(enabled),
@@ -316,6 +318,10 @@ def _copy_bone_collision_override_object(setting: dict) -> dict:
     return {
         "capability_id": BONE_COLLISION_CAPABILITY_ID,
         "armature": armature,
+        "armature_ptr": int(setting.get("armature_ptr", 0) or as_pointer(armature)),
+        "armature_data_ptr": int(
+            setting.get("armature_data_ptr", 0) or data_pointer(armature)
+        ),
         "bone_name": bone_name,
         "fields": fields,
         "enabled": bool(setting.get("enabled", True)),

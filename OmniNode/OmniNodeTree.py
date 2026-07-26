@@ -123,10 +123,10 @@ def _omni_frame_change_post(scene, depsgraph=None):
             if not getattr(tree, "is_frame_run_enabled", False):
                 continue
             try:
-                # 渲染期间每帧触发前，先通知物理系统刷新 bpy 对象引用，
-                # 防止上一渲染帧释放评估资源后悬空指针导致崩溃
+                # 渲染期间每帧触发前刷新持久 bpy 引用，避免上一帧释放
+                # 评估资源后留下悬空引用。
                 if _IS_RENDERING:
-                    _notify_render_frame_start()
+                    _notify_reference_guard("render_frame_start")
                 tree.run_frame_cached()
             except Exception as exc:
                 try:
@@ -139,21 +139,22 @@ def _omni_frame_change_post(scene, depsgraph=None):
         _FRAME_HANDLER_RUNNING = False
 
 
-def _notify_render_frame_start():
-    """渲染期间每帧触发，通知物理模块刷新 bpy 引用，避免跨帧悬空指针崩溃。"""
+def _notify_reference_guard(reason):
+    """通知 OmniNode 持久引用门禁处理一个宿主生命周期边界。"""
     try:
-        from .render_safety import on_render_frame_start
-        on_render_frame_start()
+        from .OmniReferenceGuard import refresh_persistent_references
+
+        refresh_persistent_references(reason)
     except Exception:
         pass
 
 
 @persistent
 def _omni_render_pre(scene):
-    """渲染开始前：设置渲染标志，并清除物理世界缓存中的直接 bpy 引用。"""
+    """渲染开始前设置渲染标志并刷新持久 bpy 引用。"""
     global _IS_RENDERING
     _IS_RENDERING = True
-    _notify_render_frame_start()
+    _notify_reference_guard("render_pre")
 
 
 @persistent
@@ -165,10 +166,10 @@ def _omni_render_complete(scene):
 
 @persistent
 def _omni_render_cancel(scene):
-    """渲染被取消：清除渲染标志，同时清理物理缓存防止脏状态残留。"""
+    """渲染被取消时清除标志并执行最后一次引用门禁。"""
     global _IS_RENDERING
     _IS_RENDERING = False
-    _notify_render_frame_start()
+    _notify_reference_guard("render_cancel")
 
 
 def _ensure_frame_handler():
@@ -184,7 +185,7 @@ def _remove_frame_handler():
 
 
 def _ensure_render_handlers():
-    """注册渲染生命周期 handlers，防止渲染期间 bpy 引用失效崩溃。"""
+    """注册渲染生命周期 handlers，驱动持久引用门禁。"""
     for handler_list, func in (
         (bpy.app.handlers.render_pre, _omni_render_pre),
         (bpy.app.handlers.render_complete, _omni_render_complete),

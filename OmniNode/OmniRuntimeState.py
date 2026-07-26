@@ -111,6 +111,16 @@ def _committed_value_ids():
     return result
 
 
+def iter_committed_cache_values():
+    """迭代当前已提交的 cache 值快照，不暴露内部 namespace 容器。"""
+    namespaces = tuple(_COMMITTED_CACHE.values())
+    for values in namespaces:
+        if not isinstance(values, dict):
+            continue
+        for value in tuple(values.values()):
+            yield _intent_visible_value(value)
+
+
 def _pending_replace_value_ids(run):
     result = set()
     for values in run.pending.values():

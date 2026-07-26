@@ -1295,10 +1295,14 @@ def _get_valid_armature(spec):
             return armature
 
     try:
-        from ....render_safety import resolve_armature_by_ptr
+        from ...OmniReferenceGuard import resolve_bpy_object_reference
         ptr      = int(getattr(spec, "armature_ptr", 0) or 0)
         data_ptr = int(getattr(spec, "armature_data_ptr", 0) or 0)
-        fresh = resolve_armature_by_ptr(ptr, data_ptr)
+        fresh = resolve_bpy_object_reference(
+            ptr,
+            data_ptr,
+            object_type="ARMATURE",
+        )
         if fresh is not None:
             try:
                 spec.armature = fresh

@@ -304,6 +304,25 @@ return result
 
 维护约定：新增对象、节点或 domain 配置时，先问“这个语义是否已经能从节点输入、已有数据或结构中确定”。能确定就不要再加并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。UI 和预览也不应维护业务实现不读取的旁路状态。
 
+### 7.5 持久 bpy 引用门禁
+
+Runtime cache owner 不得假设其中保存的 `bpy` 引用在渲染、文件加载、undo 或 depsgraph 重建后仍然有效。OmniNode 通过 `OmniReferenceGuard.py` 在宿主生命周期边界统一枚举 committed cache owner；需要重新绑定引用的 owner 实现：
+
+```python
+def omni_cache_refresh_references(self, reason: str) -> None:
+    ...
+```
+
+架构层只调用协议，不检查具体业务类型，也不递归猜测 owner 的私有字段。业务域负责保存足以重新解析引用的身份信息，并在自己的适配模块中完成内部遍历。例如 `PhysicsWorldCache` 由 `PhysicsWorld/reference_guard.py` 刷新 solver spec、chain 和 implicit object 中的 Armature 引用。
+
+门禁约定：
+
+- 同一 owner 即使被多个 cache key 引用，每个边界也只刷新一次。
+- 单个 owner 刷新失败不得阻断其他 owner，但必须产生可见诊断。
+- 没有稳定身份信息时不得按名称猜测或绑定到任意同名数据。
+- 指针身份只适用于同一 Blender 会话内的宿主资源重建；需要跨 load/undo 重建时，业务域必须补充 library、ID 名称或持久 UUID 等稳定身份。
+- `OmniNodeTree.py` 只负责发布生命周期原因，不持有 PhysicsWorld 等业务域的引用修复逻辑。
+
 ### 8. 编译缓存和 runtime cache 是两套系统，重编译按合同核对运行态
 
 `OmniNodeTree._COMPILED_TREE_CACHE` 缓存的是 `CompiledGraph`，目的是避免每帧重复编译图。
