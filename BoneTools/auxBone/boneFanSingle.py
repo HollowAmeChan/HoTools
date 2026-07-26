@@ -4,7 +4,7 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from ..boneUtils import BoneUtils
+from Utils import bone_utils
 from .auxUtils import AuxPreviewUtils
 from .boneFan import (
     BoneFanCore,
@@ -445,8 +445,8 @@ class BoneFanSingleCore(BoneFanCore):
 
         bpy.context.view_layer.objects.active = armature
         try:
-            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneUtils.set_object_mode(armature, "OBJECT")
+            bone_utils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            bone_utils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
             cls._apply_hotools_bone_props(
@@ -459,7 +459,7 @@ class BoneFanSingleCore(BoneFanCore):
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, "EDIT")
+                    bone_utils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -488,7 +488,7 @@ class BoneFanSingleCore(BoneFanCore):
         if error:
             raise Exception(error)
 
-        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
+        mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -549,7 +549,7 @@ class BoneFanSingleCore(BoneFanCore):
                 "frame": frame,
             })
 
-        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
+        mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -904,7 +904,7 @@ class BoneFanSinglePreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected = BoneUtils.selected_bone_names(context, armature)
+            selected = bone_utils.selected_bone_names(context, armature)
             if len(selected) != 2:
                 state["message"] = "请正好选择两根骨骼（上级骨 + 主骨）"
             else:
@@ -1239,7 +1239,7 @@ class OP_FanSingleGenerate(Operator):
         if obj is None or obj.type != "ARMATURE":
             return False
         if obj.mode in {"POSE", "EDIT"}:
-            return len(BoneUtils.selected_bone_names(context, obj)) == 2
+            return len(bone_utils.selected_bone_names(context, obj)) == 2
         return False
 
     def execute(self, context):
@@ -1254,7 +1254,7 @@ class OP_FanSingleGenerate(Operator):
             self.report({"ERROR"}, "缺少单骨 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneUtils.selected_bone_names(context, armature)
+        selected_names = bone_utils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根骨骼（上级骨 + 主骨）")
             return {"CANCELLED"}
@@ -1278,7 +1278,7 @@ class OP_FanSingleGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, "EDIT")
+                bone_utils.set_object_mode(armature, "EDIT")
 
             # 按骨架层级判定上级骨（权重来源）与主骨（fan 跟随）
             upper_name, main_name, role_error = BoneFanSingleCore._resolve_roles(
@@ -1291,7 +1291,7 @@ class OP_FanSingleGenerate(Operator):
             # 朝上级骨方向的 fan/pin 会落在上级骨上；若上级骨是无后缀的中线骨（如
             # pelvis），左右两侧会拼出同名而冲突。后缀从选中骨对里带后缀的那根取；
             # 两根都没有后缀又开了对称，无从区分左右，直接报错退出。
-            this_suffix = BoneUtils.pair_side_suffix(upper_name, main_name)
+            this_suffix = bone_utils.pair_side_suffix(upper_name, main_name)
             if settings.process_symmetry and not this_suffix:
                 raise Exception(
                     "对称生成需要方向后缀：选中的两根骨都没有 .L/.R 等后缀，"
@@ -1313,7 +1313,7 @@ class OP_FanSingleGenerate(Operator):
                     mirror_dir = BoneFanSingleCore._mirror_virtual_direction(
                         armature, virtual_dir,
                     )
-                    mirror_suffix = BoneUtils.pair_side_suffix(flipped_upper, flipped_main)
+                    mirror_suffix = bone_utils.pair_side_suffix(flipped_upper, flipped_main)
                     pairs.append((flipped_upper, flipped_main, mirror_dir, mirror_suffix))
 
             total_created = 0
@@ -1363,7 +1363,7 @@ class OP_FanSingleGenerate(Operator):
                 total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, original_mode)
+                bone_utils.set_object_mode(armature, original_mode)
 
             sym_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -1381,7 +1381,7 @@ class OP_FanSingleGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, original_mode)
+                    bone_utils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:

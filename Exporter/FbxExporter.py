@@ -233,9 +233,9 @@ class FBXExporter:
         - scene.tool_settings.use_auto_normalize：内置自动归一化会在每步后自动重算，
           干扰“删微小权重/限制组数”的中间态，须整体关闭，最后由第 3 步显式归一化；
         - 每个物体的网格镜像（use_mesh_mirror_x/y/z）：对称模式会把操作镜像到对侧，
-          污染清理结果。复用 BoneUtils 的探测/恢复（属性可能挂物体或数据块）。
+          污染清理结果。复用公共 bone_utils 的探测/恢复（属性可能挂物体或数据块）。
         """
-        from ..BoneTools.boneUtils import BoneUtils
+        from Utils import bone_utils
 
         processed = 0
         prev_active = bpy.context.view_layer.objects.active
@@ -243,7 +243,7 @@ class FBXExporter:
         prev_auto_normalize = getattr(tool_settings, "use_auto_normalize", None)
         if prev_auto_normalize is not None:
             tool_settings.use_auto_normalize = False
-        mirror_states = []  # BoneUtils.set_temp_mesh_mirror_off 返回的状态，逐物体恢复
+        mirror_states = []  # bone_utils.set_temp_mesh_mirror_off 返回的状态，逐物体恢复
         try:
             for ob in mesh_objects:
                 if ob.type != 'MESH' or not ob.vertex_groups:
@@ -254,7 +254,7 @@ class FBXExporter:
                 if ob.find_armature() is None:
                     continue
                 # 临时关闭该物体的网格镜像，避免清理被镜像到对侧
-                mirror_states.append(BoneUtils.set_temp_mesh_mirror_off(ob))
+                mirror_states.append(bone_utils.set_temp_mesh_mirror_off(ob))
                 bpy.context.view_layer.objects.active = ob
                 # 1. 删微小权重
                 try:
@@ -286,7 +286,7 @@ class FBXExporter:
             # 恢复网格镜像与自动归一化开关
             for mirror_state in mirror_states:
                 try:
-                    BoneUtils.restore_mesh_mirror_state(mirror_state)
+                    bone_utils.restore_mesh_mirror_state(mirror_state)
                 except (AttributeError, ReferenceError):
                     pass
             if prev_auto_normalize is not None:

@@ -1,10 +1,10 @@
-﻿import bpy
+import bpy
 from bpy.types import Context, Operator, PropertyGroup, UILayout
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty, EnumProperty
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from ..boneUtils import BoneUtils
+from Utils import bone_utils
 from .auxUtils import AuxPreviewUtils
 import gpu
 from bpy_extras import view3d_utils
@@ -328,7 +328,7 @@ class BoneFanPreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected_bones = BoneUtils.selected_bones(context, armature)
+            selected_bones = bone_utils.selected_bones(context, armature)
             if len(selected_bones) != 2:
                 state["message"] = "请正好选择两根骨骼"
             else:
@@ -342,7 +342,7 @@ class BoneFanPreview:
                     # 开启对称处理时，把镜像骨对的预览几何也算进来，直接看到两边。
                     if getattr(settings, "process_symmetry", False):
                         selected_names = [b.name for b in selected_bones]
-                        mirrored = BoneUtils.mirror_pair(armature, selected_names)
+                        mirrored = bone_utils.mirror_pair(armature, selected_names)
                         if mirrored is not None:
                             mb_a = armature.data.edit_bones.get(mirrored[0]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[0])
                             mb_b = armature.data.edit_bones.get(mirrored[1]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[1])
@@ -619,7 +619,7 @@ class BoneFanCore:
         # force_suffix 非 None 时强制用它替换基名自带的后缀：对称生成里基名可能是
         # 无后缀的中线骨（如 pelvis），左右两侧都会拼出同名 → 冲突；此时由调用方
         # 传入从选中骨推出的 .L/.R 后缀来区分两侧。
-        stem, side_suffix = BoneUtils.split_side_suffix(base_name)
+        stem, side_suffix = bone_utils.split_side_suffix(base_name)
         if force_suffix is not None:
             side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_MARKERS).get(fan_kind, "_fan_out_")
@@ -627,7 +627,7 @@ class BoneFanCore:
 
     @staticmethod
     def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
-        stem, side_suffix = BoneUtils.split_side_suffix(base_name)
+        stem, side_suffix = bone_utils.split_side_suffix(base_name)
         if force_suffix is not None:
             side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_PIN_MARKERS).get(fan_kind, "_fan_pin_out_")
@@ -635,7 +635,7 @@ class BoneFanCore:
 
     @staticmethod
     def _parse_fan_name(name: str):
-        stem, side_suffix = BoneUtils.split_side_suffix(name)
+        stem, side_suffix = bone_utils.split_side_suffix(name)
         for fan_kind, marker in BoneFanCore._FAN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
@@ -659,7 +659,7 @@ class BoneFanCore:
 
     @staticmethod
     def _parse_fan_pin_name(name: str):
-        stem, side_suffix = BoneUtils.split_side_suffix(name)
+        stem, side_suffix = bone_utils.split_side_suffix(name)
         for fan_kind, marker in BoneFanCore._FAN_PIN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
@@ -1122,7 +1122,7 @@ class BoneFanCore:
         if error:
             raise Exception(error)
 
-        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
+        mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
 
@@ -1155,7 +1155,7 @@ class BoneFanCore:
 
     @classmethod
     def _ensure_copy_rotation_constraint(cls, pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
-        name = BoneUtils.aux_constraint_name(cls.AUX_TYPE, "CopyRotation")
+        name = bone_utils.aux_constraint_name(cls.AUX_TYPE, "CopyRotation")
         constraint = None
         for item in pose_bone.constraints:
             if item.type == "COPY_ROTATION" and item.name == name:
@@ -1204,7 +1204,7 @@ class BoneFanCore:
         try:
             armature.select_set(True)
             bpy.context.view_layer.objects.active = armature
-            BoneUtils.set_object_mode(armature, "POSE")
+            bone_utils.set_object_mode(armature, "POSE")
             for fan_name, pin_name in zip(fan_names, pin_names):
                 parsed = cls._parse_fan_name(fan_name)
                 if parsed is None:
@@ -1228,7 +1228,7 @@ class BoneFanCore:
                 except Exception:
                     pass
             try:
-                BoneUtils.set_object_mode(armature, old_mode)
+                bone_utils.set_object_mode(armature, old_mode)
             except Exception:
                 pass
 
@@ -1349,8 +1349,8 @@ class BoneFanCore:
 
         bpy.context.view_layer.objects.active = armature
         try:
-            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneUtils.set_object_mode(armature, "OBJECT")
+            bone_utils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            bone_utils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
             cls._apply_hotools_bone_props(
@@ -1363,7 +1363,7 @@ class BoneFanCore:
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, "EDIT")
+                    bone_utils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -1383,7 +1383,7 @@ class OP_FanGenerate(Operator):
             return False
 
         if obj.mode in {"POSE", "EDIT"}:
-            return len(BoneUtils.selected_bone_names(context, obj)) == 2
+            return len(bone_utils.selected_bone_names(context, obj)) == 2
 
         return False
 
@@ -1398,7 +1398,7 @@ class OP_FanGenerate(Operator):
             self.report({"ERROR"}, "缺少 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneUtils.selected_bone_names(context, armature)
+        selected_names = bone_utils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根骨骼")
             return {"CANCELLED"}
@@ -1421,13 +1421,13 @@ class OP_FanGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, "EDIT")
+                bone_utils.set_object_mode(armature, "EDIT")
 
             # 组装要处理的骨对：选中的那一对，外加开启对称时的镜像骨对
             # （仅当镜像骨对真实存在时才加入）。
             pairs = [selected_names]
             if settings.process_symmetry:
-                mirrored = BoneUtils.mirror_pair(armature, selected_names)
+                mirrored = bone_utils.mirror_pair(armature, selected_names)
                 if mirrored is not None:
                     pairs.append(mirrored)
 
@@ -1464,7 +1464,7 @@ class OP_FanGenerate(Operator):
                     total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, original_mode)
+                bone_utils.set_object_mode(armature, original_mode)
 
             pair_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -1482,7 +1482,7 @@ class OP_FanGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, original_mode)
+                    bone_utils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
 

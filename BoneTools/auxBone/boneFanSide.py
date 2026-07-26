@@ -4,7 +4,7 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from ..boneUtils import BoneUtils
+from Utils import bone_utils
 from .auxUtils import AuxPreviewUtils
 from .boneFan import (
     BoneFanCore,
@@ -227,8 +227,8 @@ class BoneFanSideCore(BoneFanSingleCore):
         else:
             return None, "两根骨骼必须是直接的父子级关系"
 
-        parent_head, parent_tail = BoneUtils.bone_head_tail(parent_bone)
-        child_head, child_tail = BoneUtils.bone_head_tail(child_bone)
+        parent_head, parent_tail = bone_utils.bone_head_tail(parent_bone)
+        child_head, child_tail = bone_utils.bone_head_tail(child_bone)
         if (parent_tail - child_head).length > tolerance:
             return None, "父子骨骼未相连：父骨末端与子骨头部不重合"
 
@@ -396,8 +396,8 @@ class BoneFanSideCore(BoneFanSingleCore):
 
         bpy.context.view_layer.objects.active = armature
         try:
-            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneUtils.set_object_mode(armature, "OBJECT")
+            bone_utils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            bone_utils.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(
                 armature,
                 created_names + pin_names,
@@ -408,7 +408,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, "EDIT")
+                    bone_utils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -446,7 +446,7 @@ class BoneFanSideCore(BoneFanSingleCore):
                 "frame": frame,
             })
 
-        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
+        mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -502,7 +502,7 @@ class BoneFanSidePreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected = BoneUtils.selected_bone_names(context, armature)
+            selected = bone_utils.selected_bone_names(context, armature)
             if len(selected) != 2:
                 state["message"] = "请正好选择两根相连的父子骨"
             else:
@@ -525,7 +525,7 @@ class BoneFanSidePreview:
                         # 对称：把镜像骨对的预览几何也算进来。镜像通过重建几何得到，
                         # 自然处理自定义/任意朝向的工作面，无需手动取反某个轴。
                         if getattr(settings, "process_symmetry", False):
-                            mirrored = BoneUtils.mirror_pair(armature, list(selected))
+                            mirrored = bone_utils.mirror_pair(armature, list(selected))
                             if mirrored is not None:
                                 mb_a = _get_bone(mirrored[0])
                                 mb_b = _get_bone(mirrored[1])
@@ -786,7 +786,7 @@ class OP_FanSideGenerate(Operator):
         if obj is None or obj.type != "ARMATURE":
             return False
         if obj.mode in {"POSE", "EDIT"}:
-            return len(BoneUtils.selected_bone_names(context, obj)) == 2
+            return len(bone_utils.selected_bone_names(context, obj)) == 2
         return False
 
     def execute(self, context):
@@ -801,7 +801,7 @@ class OP_FanSideGenerate(Operator):
             self.report({"ERROR"}, "缺少侧向 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneUtils.selected_bone_names(context, armature)
+        selected_names = bone_utils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根相连的父子骨")
             return {"CANCELLED"}
@@ -816,7 +816,7 @@ class OP_FanSideGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, "EDIT")
+                bone_utils.set_object_mode(armature, "EDIT")
 
             # 校验是否相连父子骨，并取回真正的 (父骨, 子骨) 名
             edit_bones = armature.data.edit_bones
@@ -833,7 +833,7 @@ class OP_FanSideGenerate(Operator):
             # 组装骨对：选中那对，外加开启对称时的镜像对（仅当镜像对真实存在）
             pairs = [(parent_name, child_name)]
             if settings.process_symmetry:
-                mirrored = BoneUtils.mirror_pair(armature, [parent_name, child_name])
+                mirrored = bone_utils.mirror_pair(armature, [parent_name, child_name])
                 if mirrored is not None:
                     # 镜像后仍需按层级判定父/子，重建 frame 取回正确顺序
                     m_a = edit_bones.get(mirrored[0])
@@ -880,7 +880,7 @@ class OP_FanSideGenerate(Operator):
                 total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, original_mode)
+                bone_utils.set_object_mode(armature, original_mode)
 
             sym_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -898,7 +898,7 @@ class OP_FanSideGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneUtils.set_object_mode(armature, original_mode)
+                    bone_utils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:

@@ -9,7 +9,7 @@ import gpu
 from bpy_extras import view3d_utils
 import blf
 
-from ..boneUtils import BoneUtils
+from Utils import bone_utils
 from .auxUtils import AuxPreviewUtils
 
 
@@ -305,7 +305,7 @@ class TwistBonePreview:
         选中一根主骨；若开启对称处理，则把镜像骨（.L/.R）的圆盘也一并算出，
         这样预览里能直接同时看到两侧。
         """
-        selected = BoneUtils.selected_bone_names(context, armature)
+        selected = bone_utils.selected_bone_names(context, armature)
         if len(selected) != 1:
             return None, "请正好选择一根主骨"
 
@@ -563,12 +563,12 @@ class TwistBoneCore:
 
     @staticmethod
     def _twist_name(base_name: str, index: int, padding: int) -> str:
-        stem, side_suffix = BoneUtils.split_side_suffix(base_name)
+        stem, side_suffix = bone_utils.split_side_suffix(base_name)
         return f"{stem}_twist_{index:0{padding}d}{side_suffix}"
 
     @staticmethod
     def _parse_twist_name(name: str) -> tuple[str, int] | None:
-        stem, side_suffix = BoneUtils.split_side_suffix(name)
+        stem, side_suffix = bone_utils.split_side_suffix(name)
         marker = "_twist_"
         marker_index = stem.rfind(marker)
         if marker_index < 0:
@@ -646,7 +646,7 @@ class TwistBoneCore:
         target_bone_name: str,
         influence: float = 1.0,
     ):
-        name = BoneUtils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "CopyRotation")
+        name = bone_utils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "CopyRotation")
         constraint = None
         for item in pose_bone.constraints:
             if item.type == "COPY_ROTATION" and item.name == name:
@@ -674,7 +674,7 @@ class TwistBoneCore:
         target_armature: bpy.types.Object,
         target_bone_name: str,
     ):
-        name = BoneUtils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "StretchTo")
+        name = bone_utils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "StretchTo")
         constraint = None
         for item in pose_bone.constraints:
             if item.type == "STRETCH_TO" and item.name == name:
@@ -724,7 +724,7 @@ class TwistBoneCore:
         try:
             armature.select_set(True)
             context.view_layer.objects.active = armature
-            BoneUtils.set_object_mode(armature, "POSE")
+            bone_utils.set_object_mode(armature, "POSE")
             for source_index, (source_bone_name, twist_list) in enumerate(source_to_twists.items()):
                 target_manual = manual_target if source_index == 0 else ""
                 target_bone_name = TwistBoneCore._find_copy_rotation_target_bone(
@@ -760,7 +760,7 @@ class TwistBoneCore:
                     added += 1
         finally:
             context.view_layer.objects.active = old_active
-            BoneUtils.set_object_mode(armature, old_mode)
+            bone_utils.set_object_mode(armature, old_mode)
 
         return added, targets
 
@@ -840,7 +840,7 @@ class TwistBoneCore:
         """在保留主骨的前提下，生成 Twist 子骨链。"""
         was_hidden = armature.hide_viewport
         old_mode = armature.mode
-        mirror_state = BoneUtils.set_temp_armature_mirror_off(armature)
+        mirror_state = bone_utils.set_temp_armature_mirror_off(armature)
         result = {
             "source_bone": bn,
             "created_names": [],
@@ -857,7 +857,7 @@ class TwistBoneCore:
         bpy.context.view_layer.objects.active = armature
 
         try:
-            BoneUtils.set_object_mode(armature, "EDIT")
+            bone_utils.set_object_mode(armature, "EDIT")
 
             edit_bones = armature.data.edit_bones
             old_bone = edit_bones.get(bn)
@@ -913,9 +913,9 @@ class TwistBoneCore:
                 new_bone.parent = old_bone
                 new_bone.use_connect = False
 
-            BoneUtils.assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
+            bone_utils.assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
             bpy.context.view_layer.objects.active = armature
-            BoneUtils.set_object_mode(armature, "OBJECT")
+            bone_utils.set_object_mode(armature, "OBJECT")
             # 设置 hotools 属性：辅助骨不走 MCH 流程(保留旋转)，并写入辅助骨自描述信息
             TwistBoneCore._apply_hotools_bone_props(
                 armature,
@@ -928,12 +928,12 @@ class TwistBoneCore:
 
             return result
         finally:
-            BoneUtils.restore_armature_mirror_state(mirror_state)
+            bone_utils.restore_armature_mirror_state(mirror_state)
 
             try:
                 if armature.mode != old_mode:
                     bpy.context.view_layer.objects.active = armature
-                    BoneUtils.set_object_mode(armature, old_mode)
+                    bone_utils.set_object_mode(armature, old_mode)
             except Exception:
                 pass
 
@@ -953,12 +953,12 @@ class TwistBoneCore:
         source_vg,
     ):
         old_mode = obj.mode
-        mirror_state = BoneUtils.set_temp_mesh_mirror_off(obj)
+        mirror_state = bone_utils.set_temp_mesh_mirror_off(obj)
 
         try:
             if old_mode == "EDIT":
                 bpy.context.view_layer.objects.active = obj
-                BoneUtils.set_object_mode(obj, "OBJECT")
+                bone_utils.set_object_mode(obj, "OBJECT")
 
             if source_vg is None:
                 raise Exception(f"未找到源顶点组: {source_bone_name}")
@@ -1077,9 +1077,9 @@ class TwistBoneCore:
 
             obj.vertex_groups.remove(tmp_vg)
         finally:
-            BoneUtils.restore_mesh_mirror_state(mirror_state)
+            bone_utils.restore_mesh_mirror_state(mirror_state)
             if old_mode == "EDIT":
-                BoneUtils.set_object_mode(obj, "EDIT")
+                bone_utils.set_object_mode(obj, "EDIT")
 
     @staticmethod
     def obj_twist_transfer(
@@ -1178,7 +1178,7 @@ class TwistBoneCore:
                 active_bone = armature_obj.data.edit_bones.active
                 if active_bone:
                     bones = [active_bone.name]
-            mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature_obj)
+            mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature_obj)
         elif original_active.type == "MESH":
             for mod in original_active.modifiers:
                 if mod.type == "ARMATURE" and mod.object:
@@ -1188,7 +1188,7 @@ class TwistBoneCore:
             if active_bone:
                 bones = [active_bone.name]
             if armature_obj:
-                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature_obj)
+                mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature_obj)
         else:
             raise Exception("不支持的对象")
 
@@ -1233,7 +1233,7 @@ class TwistBoneCore:
                 # 对称生成需要方向后缀来区分左右：无后缀的中线骨（如 spine、pelvis）
                 # 翻转后还是自己，镜像不会产生任何对侧骨，对称形同虚设。此时直接报错
                 # 退出，避免用户以为生成了对称骨却没有。
-                suffixless = BoneUtils.find_suffixless(bones)
+                suffixless = bone_utils.find_suffixless(bones)
                 if suffixless:
                     raise Exception(
                         "对称生成需要方向后缀：骨骼 "
@@ -1245,7 +1245,7 @@ class TwistBoneCore:
                 mirrored = []
                 for bone_name in bones:
                     mirrored.extend(
-                        BoneUtils.get_mirrored_bone(
+                        bone_utils.get_mirrored_bone(
                             bone_name,
                             armature_obj.data,
                         )
@@ -1304,15 +1304,15 @@ class TwistBoneCore:
         finally:
             if original_active:
                 context.view_layer.objects.active = original_active
-                BoneUtils.set_object_mode(original_active, mode=original_mode)
+                bone_utils.set_object_mode(original_active, mode=original_mode)
 
             if original_mode == "WEIGHT_PAINT" and armature_obj is not None:
                 armature_obj.select_set(True)
                 context.view_layer.objects.active = armature_obj
-                BoneUtils.set_object_mode(armature_obj, "POSE")
+                bone_utils.set_object_mode(armature_obj, "POSE")
                 original_active.select_set(True)
                 context.view_layer.objects.active = original_active
-                BoneUtils.set_object_mode(original_active, "WEIGHT_PAINT")
+                bone_utils.set_object_mode(original_active, "WEIGHT_PAINT")
 
         return {
             "created_count": sum(item.get("created_count", 0) for item in results),
@@ -1353,7 +1353,7 @@ class OP_TwistBoneWithWeight(Operator):
 
         if obj.type == "ARMATURE":
             if obj.mode in {"POSE", "EDIT"}:
-                return bool(BoneUtils.selected_bone_names(context, obj))
+                return bool(bone_utils.selected_bone_names(context, obj))
             return False
 
         armature = None
@@ -1387,7 +1387,7 @@ class OP_TwistBoneWithWeight(Operator):
             obj = context.active_object
             selected_count = 0
             if obj and obj.type == "ARMATURE":
-                selected_count = len(BoneUtils.selected_bone_names(context, obj))
+                selected_count = len(bone_utils.selected_bone_names(context, obj))
             if selected_count > 1:
                 self.report({"ERROR"}, "当前只支持单个活动骨骼")
                 return {"CANCELLED"}
@@ -1425,7 +1425,7 @@ class OP_TwistBoneWithWeight(Operator):
         # 打开弹窗时自动推断目标骨，用户可在弹窗里确认或修改
         armature = context.active_object
         if armature and armature.type == "ARMATURE":
-            selected = BoneUtils.selected_bone_names(context, armature)
+            selected = bone_utils.selected_bone_names(context, armature)
             target = TwistBoneCore._find_copy_rotation_target_bone(armature, selected, "")
             if target:
                 self.copy_rotation_target_bone = target

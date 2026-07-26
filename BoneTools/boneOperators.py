@@ -7,7 +7,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty, PointerProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
-from .boneUtils import BoneUtils
+from Utils import bone_utils
 
 
 def _armature_filter(_self, obj):
@@ -212,7 +212,7 @@ class OP_ForceClearBoneRotation(Operator):
             obj = context.object
             armature = obj.data
             armature.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
-            selected_bones = BoneUtils.selected_bones(context, obj)
+            selected_bones = bone_utils.selected_bones(context, obj)
 
             for bone in selected_bones:
                 for cb in bone.children:#清空所有子骨的相连，防止影响子骨头部位置
@@ -251,7 +251,7 @@ class OP_AddEndBone(Operator):
         arm = obj.data
         ebones = arm.edit_bones
 
-        selected_bones = BoneUtils.selected_bones(context, obj)
+        selected_bones = bone_utils.selected_bones(context, obj)
         # 只处理选中骨中真正无子级的末端骨，断连状态不影响父子层级。
         target_bones = [bone for bone in selected_bones if not bone.children]
 
@@ -285,7 +285,7 @@ class OP_AddEndBone(Operator):
         bpy.ops.object.mode_set(mode="EDIT")
 
         if end_bones:
-            BoneUtils.select_bones(obj, end_bones)
+            bone_utils.select_bones(obj, end_bones)
 
         return {'FINISHED'}
 
@@ -308,7 +308,7 @@ class OP_SelectBoneBy_by_GenerateMCH(Operator):
             if bone.hotools_boneprops.generateMCH
             == active_bone.hotools_boneprops.generateMCH
         ]
-        BoneUtils.select_bones(arm_obj, bone_names, extend=True)
+        bone_utils.select_bones(arm_obj, bone_names, extend=True)
         return {'FINISHED'}
     
 class OP_SelectBone_by_endBone(Operator):
@@ -325,7 +325,7 @@ class OP_SelectBone_by_endBone(Operator):
         arm_obj = context.object
         arm_data = arm_obj.data
         bone_names = [b.name for b in arm_data.bones if b.hotools_boneprops.endBone]
-        BoneUtils.select_bones(arm_obj, bone_names, extend=True)
+        bone_utils.select_bones(arm_obj, bone_names, extend=True)
 
         return {'FINISHED'}
 
@@ -341,14 +341,14 @@ class OP_SelectBone_by_Nochild(Operator):
 
     def execute(self, context):
         arm_obj = context.object
-        selected_bones = BoneUtils.selected_bones(context, arm_obj)
+        selected_bones = bone_utils.selected_bones(context, arm_obj)
         end_bone_names = [
             bone.name for bone in selected_bones if not bone.children
         ]
         if not end_bone_names:
             self.report({'WARNING'}, "当前选中骨骼中没有末端骨")
             return {'CANCELLED'}
-        BoneUtils.select_bones(arm_obj, end_bone_names)
+        bone_utils.select_bones(arm_obj, end_bone_names)
         return {'FINISHED'}
 
 class OP_Fix_EmptyRotate_Bone(Operator):
@@ -367,7 +367,7 @@ class OP_Fix_EmptyRotate_Bone(Operator):
         armature = obj.data
         armature.use_mirror_x = False  # 禁用对称，否则有同步问题
 
-        selected_bones = BoneUtils.selected_bones(context, obj)
+        selected_bones = bone_utils.selected_bones(context, obj)
 
         for bone in selected_bones:
             children = [b for b in armature.edit_bones if b.parent == bone]
@@ -405,7 +405,7 @@ class OP_RelaxBoneChain(Operator):
             obj is not None
             and obj.type == 'ARMATURE'
             and context.mode == 'EDIT_ARMATURE'
-            and bool(BoneUtils.selected_bone_names(context, obj))
+            and bool(bone_utils.selected_bone_names(context, obj))
         )
 
     def execute(self, context):
@@ -414,7 +414,7 @@ class OP_RelaxBoneChain(Operator):
         arm = obj.data
         arm.use_mirror_x = False
 
-        selected = BoneUtils.selected_bones(context, obj)
+        selected = bone_utils.selected_bones(context, obj)
         selected_set = set(selected)
 
         if len(selected) < 3:
@@ -752,7 +752,7 @@ class OP_BoneApplyConstraint(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        pose_bones = BoneUtils.selected_bones(context, obj)
+        pose_bones = bone_utils.selected_bones(context, obj)
 
         if not pose_bones:
             self.report({'WARNING'}, "未选择任何骨骼")
@@ -790,7 +790,7 @@ class OP_BoneRemoveConstraints(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        pose_bones = BoneUtils.selected_bones(context, obj)
+        pose_bones = bone_utils.selected_bones(context, obj)
 
         if not pose_bones:
             self.report({'WARNING'}, "未选择任何骨骼")

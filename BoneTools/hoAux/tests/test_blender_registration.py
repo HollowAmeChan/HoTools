@@ -9,7 +9,7 @@ if str(ADDON_DIR) not in sys.path:
     sys.path.insert(0, str(ADDON_DIR))
 
 import BoneTools
-from BoneTools.boneUtils import BoneUtils
+from Utils import bone_utils
 
 
 BoneTools.register()
@@ -72,9 +72,9 @@ assert {prop.identifier for prop in twist_settings.bl_rna.properties} == {
     "influence_end",
 }
 assert "side" not in bpy.context.scene.hoaux_settings.bl_rna.properties
-assert BoneUtils.require_same_side("UpperArm_L", "LowerArm.L") == "L"
+assert bone_utils.require_same_side("UpperArm_L", "LowerArm.L") == "L"
 try:
-    BoneUtils.require_same_side("UpperArm_L", "LowerArm_R")
+    bone_utils.require_same_side("UpperArm_L", "LowerArm_R")
 except ValueError:
     pass
 else:

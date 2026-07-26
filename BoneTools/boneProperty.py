@@ -8,7 +8,7 @@ from bpy.props import (
     StringProperty,
 )
 
-from .boneUtils import BoneUtils
+from Utils import bone_utils
 from .hoAux.properties import PG_HoAuxBoneInfo
 from Utils.bone_selection import select_bones
 
@@ -485,14 +485,14 @@ class AuxBoneRemover:
         # 这正是生成时按通道转移权重的逆操作。
         old_mode = obj.mode
         old_active = bpy.context.view_layer.objects.active
-        mirror_state = BoneUtils.set_temp_mesh_mirror_off(obj)
+        mirror_state = bone_utils.set_temp_mesh_mirror_off(obj)
         mode_changed = False
         removed_groups = 0
 
         try:
             if old_mode != "OBJECT":
                 bpy.context.view_layer.objects.active = obj
-                BoneUtils.set_object_mode(obj, "OBJECT")
+                bone_utils.set_object_mode(obj, "OBJECT")
                 mode_changed = True
 
             for target_name, aux_names in target_to_aux.items():
@@ -534,11 +534,11 @@ class AuxBoneRemover:
                         obj.vertex_groups.remove(aux_vg)
                         removed_groups += 1
         finally:
-            BoneUtils.restore_mesh_mirror_state(mirror_state)
+            bone_utils.restore_mesh_mirror_state(mirror_state)
 
             if mode_changed:
                 bpy.context.view_layer.objects.active = obj
-                BoneUtils.set_object_mode(obj, old_mode)
+                bone_utils.set_object_mode(obj, old_mode)
 
             if old_active:
                 try:
@@ -566,7 +566,7 @@ class AuxBoneRemover:
         original_mode = armature.mode
         old_active = bpy.context.view_layer.objects.active
         was_hidden = armature.hide_viewport
-        mirror_state = BoneUtils.set_temp_armature_mirror_off(armature)
+        mirror_state = bone_utils.set_temp_armature_mirror_off(armature)
 
         # 阻断检查与目标解析都在数据层进行，避免无谓地切换模式。
         target_to_aux, orphans = cls._resolve_targets(armature, removal_names)
@@ -584,7 +584,7 @@ class AuxBoneRemover:
 
         try:
             if process_vertex_groups and target_to_aux:
-                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
+                mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature)
                 if only_selected:
                     mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
                 for obj in mesh_objs:
@@ -594,20 +594,20 @@ class AuxBoneRemover:
                     removed_groups += groups
 
             bpy.context.view_layer.objects.active = armature
-            BoneUtils.set_object_mode(armature, "EDIT")
+            bone_utils.set_object_mode(armature, "EDIT")
             edit_bones = armature.data.edit_bones
             for name in removal_names:
                 bone = edit_bones.get(name)
                 if bone is not None:
                     edit_bones.remove(bone)
                     removed += 1
-            BoneUtils.set_object_mode(armature, "OBJECT")
+            bone_utils.set_object_mode(armature, "OBJECT")
         finally:
-            BoneUtils.restore_armature_mirror_state(mirror_state)
+            bone_utils.restore_armature_mirror_state(mirror_state)
             try:
                 if armature.mode != original_mode:
                     bpy.context.view_layer.objects.active = armature
-                    BoneUtils.set_object_mode(armature, original_mode)
+                    bone_utils.set_object_mode(armature, original_mode)
             except Exception:
                 pass
             if old_active is not None:
@@ -773,7 +773,7 @@ def draw_aux_overview(layout, context):
     remove_all.operator("hotools.aux_remove_all", icon="TRASH", text="全部删除")
 
     # 当前选中骨：命中某组的关联骨或辅助骨时，把该组表头标红（alert）提示归属。
-    selected = set(BoneUtils.selected_bone_names(context, obj))
+    selected = set(bone_utils.selected_bone_names(context, obj))
     for group in groups:
         box = layout.box()
         type_label = _AUX_TYPE_LABELS.get(group["auxType"], group["auxType"])

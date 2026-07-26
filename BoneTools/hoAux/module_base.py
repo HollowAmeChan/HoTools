@@ -7,9 +7,16 @@ from bpy.props import PointerProperty
 from mathutils import Vector
 
 try:
-    from ..boneUtils import BoneUtils
-except ImportError:
-    from boneUtils import BoneUtils
+    from Utils import bone_utils
+except ModuleNotFoundError:
+    # 兼容只将 BoneTools 加入 sys.path 的旧独立脚本入口。
+    import os
+    import sys
+
+    addon_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    if addon_root not in sys.path:
+        sys.path.insert(0, addon_root)
+    from Utils import bone_utils
 
 
 @dataclass(frozen=True)
@@ -25,11 +32,11 @@ class PlannedBone:
 
 
 def require_side(expected_side, *bone_names):
-    return BoneUtils.require_same_side(*bone_names, expected=expected_side)
+    return bone_utils.require_same_side(*bone_names, expected=expected_side)
 
 
 def mirrored_role_names(armature_data, *bone_names):
-    return BoneUtils.mirrored_role_names(armature_data, *bone_names)
+    return bone_utils.mirrored_role_names(armature_data, *bone_names)
 
 
 def role_name_sets(context, *bone_names):

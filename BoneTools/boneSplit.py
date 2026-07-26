@@ -4,7 +4,7 @@ import math
 from bpy.types import Operator
 from bpy.props import BoolProperty,IntProperty,FloatProperty
 
-from .boneUtils import BoneUtils
+from Utils import bone_utils
 
 
 def reg_props():
@@ -25,7 +25,7 @@ class BoneSplitCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'EDIT')
+        bone_utils.set_object_mode(armature,'EDIT')
 
 
         edit_bones = armature.data.edit_bones
@@ -62,7 +62,7 @@ class BoneSplitCore:
 
         #刷新
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'OBJECT')   
+        bone_utils.set_object_mode(armature,'OBJECT')
            
         if was_hidden:
             armature.hide_set(True)
@@ -75,7 +75,7 @@ class BoneSplitCore:
         old_mode = obj.mode
         if old_mode == 'EDIT':
             bpy.context.view_layer.objects.active = obj
-            BoneUtils.set_object_mode(obj,'OBJECT')
+            bone_utils.set_object_mode(obj,'OBJECT')
         #新建顶点组
         new_vgs :list[bpy.types.VertexGroup]= []
         for new_name in new_bone_names:
@@ -166,7 +166,7 @@ class BoneSplitCore:
         obj.vertex_groups.remove(tmp_vg)
         #还原模式
         if old_mode == 'EDIT':
-            BoneUtils.set_object_mode(obj,'EDIT')
+            bone_utils.set_object_mode(obj,'EDIT')
     @staticmethod    
     def objs_bone_split(bn, count, armature,soft_factor,objs):
         """处理骨架-骨骼-物体的细分"""
@@ -231,7 +231,7 @@ class OP_SplitBoneWithWeight(Operator):
         #选择骨架时,没有选中骨骼，跳过
         if obj.type == 'ARMATURE':
             if obj.mode in {'POSE', 'EDIT'}:
-                return bool(BoneUtils.selected_bone_names(context, obj))
+                return bool(bone_utils.selected_bone_names(context, obj))
             else:
                 return False
         
@@ -267,7 +267,7 @@ class OP_SplitBoneWithWeight(Operator):
             
         if original_active.type == 'ARMATURE':
             armature_obj = original_active
-            bones = BoneUtils.selected_bone_names(context, armature_obj)
+            bones = bone_utils.selected_bone_names(context, armature_obj)
             #搜索所有子级物体
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -285,7 +285,7 @@ class OP_SplitBoneWithWeight(Operator):
                     armature_obj = mod.object
                     break
             #直接拿到选择的骨（必定权重绘制模式）
-            bones = BoneUtils.selected_bone_names(context, armature_obj)
+            bones = bone_utils.selected_bone_names(context, armature_obj)
 
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -316,7 +316,7 @@ class OP_SplitBoneWithWeight(Operator):
             tmp = []
             for bone_name in bones:
                 if self.process_symmetry:                    
-                    tmp.extend(BoneUtils.get_mirrored_bone(bone_name, armature_obj.data))
+                    tmp.extend(bone_utils.get_mirrored_bone(bone_name, armature_obj.data))
             bones = tmp
         #逐骨骼
         for bn in bones:
@@ -330,14 +330,14 @@ class OP_SplitBoneWithWeight(Operator):
         
         #还原原本的视图状态
         context.view_layer.objects.active = original_active
-        BoneUtils.set_object_mode(original_active,mode=original_mode)
+        bone_utils.set_object_mode(original_active,mode=original_mode)
         if original_mode == 'WEIGHT_PAINT':
             armature_obj.select_set(True)
             bpy.context.view_layer.objects.active = armature_obj
-            BoneUtils.set_object_mode(armature_obj,'POSE')
+            bone_utils.set_object_mode(armature_obj,'POSE')
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
-            BoneUtils.set_object_mode(original_active,'WEIGHT_PAINT')
+            bone_utils.set_object_mode(original_active,'WEIGHT_PAINT')
         self.report({'INFO'},"细分成功")
         return {'FINISHED'}
     

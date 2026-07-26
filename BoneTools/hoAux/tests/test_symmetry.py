@@ -9,9 +9,12 @@ from bpy.types import PropertyGroup
 BONE_TOOLS_DIR = Path(__file__).resolve().parents[2]
 if str(BONE_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(BONE_TOOLS_DIR))
+ADDON_DIR = BONE_TOOLS_DIR.parent
+if str(ADDON_DIR) not in sys.path:
+    sys.path.insert(0, str(ADDON_DIR))
 
 import hoAux
-from boneUtils import BoneUtils
+from Utils import bone_utils
 from hoAux.module_base import get_definition
 from hoAux.generation import iter_hoaux_bones
 from hoAux.operations import remove_scope
@@ -48,7 +51,7 @@ unpaired.tail = (0.0, 0.2, 0.0)
 bpy.ops.object.mode_set(mode="OBJECT")
 
 try:
-    BoneUtils.mirrored_role_names(armature, "Unpaired_L", "UpperArm_L")
+    bone_utils.mirrored_role_names(armature, "Unpaired_L", "UpperArm_L")
 except ValueError as exc:
     assert "Unpaired_R" in str(exc)
 else:

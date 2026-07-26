@@ -3,7 +3,7 @@
 
 识别规则:
 1. 只识别约束到当前骨架内部骨的约束(target 是同一骨架);跨骨架约束全部过滤。
-2. 按约束名前缀 HoTools_<AUX>_<KIND> 识别辅助骨约束类型(依赖 BoneUtils 命名规范)。
+2. 按约束名前缀 HoTools_<AUX>_<KIND> 识别辅助骨约束类型（依赖公共 bone_utils 命名规范）。
 3. Twist 链聚合:同源骨的多个 twist 骨识别为一个 TwistChainGroup。
 4. 通用约束当前不导出,接口预留。
 """
@@ -21,7 +21,7 @@ from .ConstraintSemantics import (
 class ConstraintAnalyzer:
     """约束语义识别器。"""
 
-    # HoTools 辅助骨约束的统一前缀,与 BoneUtils.AUX_CONSTRAINT_PREFIX 对齐
+    # HoTools 辅助骨约束的统一前缀,与 bone_utils.AUX_CONSTRAINT_PREFIX 对齐
     AUX_PREFIX = "HoTools"
 
     @staticmethod

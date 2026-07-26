@@ -4,7 +4,7 @@ import math
 from bpy.types import Operator
 from bpy.props import BoolProperty, IntProperty, FloatProperty, StringProperty
 
-from .boneUtils import BoneUtils
+from Utils import bone_utils
 
 
 def reg_props():
@@ -88,7 +88,7 @@ class DissolveBoneCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'EDIT')
+        bone_utils.set_object_mode(armature,'EDIT')
 
         edit_bones = armature.data.edit_bones
         # 按父子链首尾决定新骨段，不再按世界轴高低推断。
@@ -121,7 +121,7 @@ class DissolveBoneCore:
 
         #刷新并回到物体模式
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'OBJECT')   
+        bone_utils.set_object_mode(armature,'OBJECT')
         if was_hidden:
             armature.hide_set(True)
         
@@ -137,7 +137,7 @@ class DissolveBoneCore:
             #切换模式
             if obj.visible_get():
                 bpy.context.view_layer.objects.active = obj
-                BoneUtils.set_object_mode(obj,'OBJECT')
+                bone_utils.set_object_mode(obj,'OBJECT')
             else:
                 return False
 
@@ -204,7 +204,7 @@ class DissolveBoneCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'EDIT')
+        bone_utils.set_object_mode(armature,'EDIT')
         edit_bones = armature.data.edit_bones
         for bn in bns:
             edit_bones.remove(edit_bones.get(bn))
@@ -214,7 +214,7 @@ class DissolveBoneCore:
 
         #刷新并回到物体模式
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature,'OBJECT')   
+        bone_utils.set_object_mode(armature,'OBJECT')
            
         if was_hidden:
             armature.hide_set(True)
@@ -248,7 +248,7 @@ class OP_DissolveBoneWithWeight(Operator):
         #选择骨架时,没有选中骨骼，跳过
         if obj.type == 'ARMATURE':
             if obj.mode in {'POSE', 'EDIT'}:
-                return bool(BoneUtils.selected_bone_names(context, obj))
+                return bool(bone_utils.selected_bone_names(context, obj))
             else:
                 return False
         
@@ -282,7 +282,7 @@ class OP_DissolveBoneWithWeight(Operator):
             
         if original_active.type == 'ARMATURE':
             armature_obj = original_active
-            bones = BoneUtils.selected_bone_names(context, armature_obj)
+            bones = bone_utils.selected_bone_names(context, armature_obj)
             #搜索所有子级物体
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -300,7 +300,7 @@ class OP_DissolveBoneWithWeight(Operator):
                     armature_obj = mod.object
                     break
             #直接拿到选择的骨（必定权重绘制模式）
-            bones = BoneUtils.selected_bone_names(context, armature_obj)
+            bones = bone_utils.selected_bone_names(context, armature_obj)
 
             for obj in bpy.data.objects:
                 if obj.type != 'MESH':
@@ -327,7 +327,7 @@ class OP_DissolveBoneWithWeight(Operator):
             self.report({'ERROR'}, "只有一个选中的骨骼")
             return {'CANCELLED'}
         bpy.context.view_layer.objects.active = armature_obj
-        BoneUtils.set_object_mode(armature_obj,'EDIT')
+        bone_utils.set_object_mode(armature_obj,'EDIT')
 
         edit_bones = armature_obj.data.edit_bones
         chain_bones, chain_error = DissolveBoneCore.resolve_bone_chain(edit_bones, bones)
@@ -347,14 +347,14 @@ class OP_DissolveBoneWithWeight(Operator):
 
         #还原原本的视图状态
         context.view_layer.objects.active = original_active
-        BoneUtils.set_object_mode(original_active,mode=original_mode)
+        bone_utils.set_object_mode(original_active,mode=original_mode)
         if original_mode == 'WEIGHT_PAINT':
             armature_obj.select_set(True)
             bpy.context.view_layer.objects.active = armature_obj
-            BoneUtils.set_object_mode(armature_obj,'POSE')
+            bone_utils.set_object_mode(armature_obj,'POSE')
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
-            BoneUtils.set_object_mode(original_active,'WEIGHT_PAINT')
+            bone_utils.set_object_mode(original_active,'WEIGHT_PAINT')
         self.report({'INFO'},"融并成功")
 
     
@@ -384,7 +384,7 @@ class SimpleDissolveCore:
             if not obj.visible_get():
                 return False
             bpy.context.view_layer.objects.active = obj
-            BoneUtils.set_object_mode(obj, 'OBJECT')
+            bone_utils.set_object_mode(obj, 'OBJECT')
 
             src_vg = obj.vertex_groups.get(src_bn)
             if not src_vg:
@@ -458,12 +458,12 @@ class SimpleDissolveCore:
             bpy.context.view_layer.update()
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature, 'EDIT')
+        bone_utils.set_object_mode(armature, 'EDIT')
 
         edit_bones = armature.data.edit_bones
         bone = edit_bones.get(src_bn)
         if not bone:
-            BoneUtils.set_object_mode(armature, 'OBJECT')
+            bone_utils.set_object_mode(armature, 'OBJECT')
             if was_hidden:
                 armature.hide_set(True)
             return False
@@ -477,7 +477,7 @@ class SimpleDissolveCore:
         edit_bones.remove(bone)
 
         bpy.context.view_layer.objects.active = armature
-        BoneUtils.set_object_mode(armature, 'OBJECT')
+        bone_utils.set_object_mode(armature, 'OBJECT')
         if was_hidden:
             armature.hide_set(True)
         return True
@@ -530,13 +530,13 @@ class OP_SimpleDissolveBone(Operator):
         if not obj or obj.type != 'ARMATURE':
             return False
         if obj.mode in {'POSE', 'EDIT'}:
-            return len(BoneUtils.selected_bone_names(context, obj)) == 1
+            return len(bone_utils.selected_bone_names(context, obj)) == 1
         return False
 
     # ── 打开对话框前自动填入父级名 ──────────────────────────────────────────
     def invoke(self, context, event):
         obj = context.active_object
-        bone = BoneUtils.selected_bones(context, obj)[0]
+        bone = bone_utils.selected_bones(context, obj)[0]
         parent = bone.parent
         self.target_bone = parent.name if parent else ""
         return context.window_manager.invoke_props_dialog(self, width=340)
@@ -567,7 +567,7 @@ class OP_SimpleDissolveBone(Operator):
             return {'CANCELLED'}
 
         # 取被删骨骼名（在切换模式前）
-        src_bn = BoneUtils.selected_bone_names(context, armature_obj)[0]
+        src_bn = bone_utils.selected_bone_names(context, armature_obj)[0]
 
         if src_bn == tgt_bn:
             self.report({'ERROR'}, "目标骨骼不能与被删骨骼相同")
@@ -575,7 +575,7 @@ class OP_SimpleDissolveBone(Operator):
 
         # 切到 OBJECT 模式以访问 pose 数据（transfer_bone_constraints 需要）
         bpy.context.view_layer.objects.active = armature_obj
-        BoneUtils.set_object_mode(armature_obj, 'OBJECT')
+        bone_utils.set_object_mode(armature_obj, 'OBJECT')
 
         if not armature_obj.data.bones.get(tgt_bn):
             self.report({'ERROR'}, f"目标骨骼「{tgt_bn}」不存在于该骨架中")
@@ -596,7 +596,7 @@ class OP_SimpleDissolveBone(Operator):
                 pairs.append((m_src, m_tgt))
 
         # ── 收集网格物体 ──
-        all_mesh = BoneUtils.collect_mesh_objects_for_armature(armature_obj)
+        all_mesh = bone_utils.collect_mesh_objects_for_armature(armature_obj)
         mesh_objs = [o for o in all_mesh if o.select_get()] if self.only_selected_objects else all_mesh
 
         # ── 聚合报告数据 ──
@@ -616,7 +616,7 @@ class OP_SimpleDissolveBone(Operator):
             # 2. 约束转移（需骨架在 OBJECT 模式）
             if self.transfer_constraints:
                 bpy.context.view_layer.objects.active = armature_obj
-                BoneUtils.set_object_mode(armature_obj, 'OBJECT')
+                bone_utils.set_object_mode(armature_obj, 'OBJECT')
                 changed = SimpleDissolveCore.transfer_bone_constraints(armature_obj, s_bn, t_bn)
                 total_con_transfers += len(changed)
                 if changed:
@@ -632,7 +632,7 @@ class OP_SimpleDissolveBone(Operator):
         # ── 还原模式 ──
         try:
             bpy.context.view_layer.objects.active = armature_obj
-            BoneUtils.set_object_mode(armature_obj, original_mode)
+            bone_utils.set_object_mode(armature_obj, original_mode)
         except Exception:
             pass
 
