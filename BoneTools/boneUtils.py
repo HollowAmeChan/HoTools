@@ -3,6 +3,7 @@ from mathutils import Vector
 
 try:
     from Utils.bone_selection import (
+        select_bones as _select_bones,
         selected_bone_names as _selected_bone_names,
         selected_mode_bones as _selected_mode_bones,
     )
@@ -15,6 +16,7 @@ except ModuleNotFoundError:
     if addon_root not in sys.path:
         sys.path.insert(0, addon_root)
     from Utils.bone_selection import (
+        select_bones as _select_bones,
         selected_bone_names as _selected_bone_names,
         selected_mode_bones as _selected_mode_bones,
     )
@@ -316,6 +318,16 @@ class BoneUtils:
     def selected_bones(context, armature: bpy.types.Object):
         """返回 PoseBone 或 EditBone，兼容 Blender 4.5 与 5.x。"""
         return _selected_mode_bones(context, armature)
+
+    @staticmethod
+    def select_bones(
+        armature: bpy.types.Object,
+        bone_names,
+        *,
+        extend: bool = False,
+    ) -> None:
+        """按名称选择骨骼，兼容 Blender 4.5 与 5.x。"""
+        _select_bones(armature, bone_names, extend=extend)
 
     @staticmethod
     def bone_head_tail(bone):

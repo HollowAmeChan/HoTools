@@ -209,9 +209,10 @@ class OP_ForceClearBoneRotation(Operator):
         if bpy.context.mode != 'EDIT_ARMATURE':
             print("不在骨骼编辑模式下")
         else:
-            armature = bpy.context.object.data
+            obj = context.object
+            armature = obj.data
             armature.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
-            selected_bones = [b for b in armature.edit_bones if b.select]
+            selected_bones = BoneUtils.selected_bones(context, obj)
 
             for bone in selected_bones:
                 for cb in bone.children:#清空所有子骨的相连，防止影响子骨头部位置
@@ -250,9 +251,36 @@ class OP_AddEndBone(Operator):
         arm = obj.data
         ebones = arm.edit_bones
 
-        selected_bones = [bone for bone in ebones if bone.select]
-        end_bones = []
+        selected_bones = BoneUtils.selected_bones(context, obj)
+        selected_names = {bone.name for bone in selected_bones}
+
+        # 断连的子骨仍属于同一父子层级。从最上层的选中骨开始，
+        # 沿每个分支向下找到真正无子级的末端骨。
+        roots = []
         for bone in selected_bones:
+            parent = bone.parent
+            while parent is not None and parent.name not in selected_names:
+                parent = parent.parent
+            if parent is None:
+                roots.append(bone)
+
+        target_bones = []
+        visited_names = set()
+        pending = list(reversed(roots))
+        while pending:
+            bone = pending.pop()
+            if bone.name in visited_names:
+                continue
+            visited_names.add(bone.name)
+
+            children = list(bone.children)
+            if children:
+                pending.extend(reversed(children))
+            else:
+                target_bones.append(bone)
+
+        end_bones = []
+        for bone in target_bones:
             end_bone_name = bone.name + "_end"
             if end_bone_name in ebones:
                 self.report({'WARNING'}, f"{end_bone_name} 已存在，跳过")
@@ -280,6 +308,9 @@ class OP_AddEndBone(Operator):
             b.hotools_boneprops.endBone = True
         bpy.ops.object.mode_set(mode="EDIT")
 
+        if end_bones:
+            BoneUtils.select_bones(obj, end_bones)
+
         return {'FINISHED'}
 
 class OP_SelectBoneBy_by_GenerateMCH(Operator):
@@ -294,10 +325,14 @@ class OP_SelectBoneBy_by_GenerateMCH(Operator):
 
     def execute(self, context):
         active_bone = context.active_bone
-        bones = context.active_object.data.bones
-        for bone in bones:
-            if bone.hotools_boneprops.generateMCH == active_bone.hotools_boneprops.generateMCH:
-                bone.select = True
+        arm_obj = context.active_object
+        bone_names = [
+            bone.name
+            for bone in arm_obj.data.bones
+            if bone.hotools_boneprops.generateMCH
+            == active_bone.hotools_boneprops.generateMCH
+        ]
+        BoneUtils.select_bones(arm_obj, bone_names, extend=True)
         return {'FINISHED'}
     
 class OP_SelectBone_by_endBone(Operator):
@@ -313,10 +348,8 @@ class OP_SelectBone_by_endBone(Operator):
     def execute(self, context):
         arm_obj = context.object
         arm_data = arm_obj.data
-        bones = arm_data.bones
-        for b in bones:
-            if b.hotools_boneprops.endBone:
-                b.select = True
+        bone_names = [b.name for b in arm_data.bones if b.hotools_boneprops.endBone]
+        BoneUtils.select_bones(arm_obj, bone_names, extend=True)
 
         return {'FINISHED'}
 
@@ -332,17 +365,14 @@ class OP_SelectBone_by_Nochild(Operator):
 
     def execute(self, context):
         arm_obj = context.object
-        arm_data = arm_obj.data
-        bones = arm_data.bones
-        end_bones = [eb for eb in bones if eb.select and len(eb.children) == 0]
-        if not end_bones:
+        selected_bones = BoneUtils.selected_bones(context, arm_obj)
+        end_bone_names = [
+            bone.name for bone in selected_bones if not bone.children
+        ]
+        if not end_bone_names:
             self.report({'WARNING'}, "当前选中骨骼中没有末端骨")
             return {'CANCELLED'}
-        for eb in bones:
-            eb.select = False
-        for eb in end_bones:
-            eb.select = True
-        arm_obj.data.bones.active = end_bones[0]
+        BoneUtils.select_bones(arm_obj, end_bone_names)
         return {'FINISHED'}
 
 class OP_Fix_EmptyRotate_Bone(Operator):
@@ -357,10 +387,11 @@ class OP_Fix_EmptyRotate_Bone(Operator):
         return context.mode == 'EDIT_ARMATURE' and context.active_bone is not None
 
     def execute(self, context):
-        armature = context.object.data
+        obj = context.object
+        armature = obj.data
         armature.use_mirror_x = False  # 禁用对称，否则有同步问题
 
-        selected_bones = [b for b in armature.edit_bones if b.select]
+        selected_bones = BoneUtils.selected_bones(context, obj)
 
         for bone in selected_bones:
             children = [b for b in armature.edit_bones if b.parent == bone]
@@ -403,10 +434,11 @@ class OP_RelaxBoneChain(Operator):
 
     def execute(self, context):
 
-        arm = context.object.data
+        obj = context.object
+        arm = obj.data
         arm.use_mirror_x = False
 
-        selected = [b for b in arm.edit_bones if b.select]
+        selected = BoneUtils.selected_bones(context, obj)
         selected_set = set(selected)
 
         if len(selected) < 3:
