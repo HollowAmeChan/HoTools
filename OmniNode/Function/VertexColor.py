@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniColorAttribute
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 
@@ -111,7 +111,7 @@ def _get_render_color_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
 @omni(
     enable=True,
     bl_label="创建顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "属性名称", "颜色类型", "属性域"],
     _OUTPUT_NAME=["物体", "顶点色属性", "属性名称"],
@@ -145,7 +145,7 @@ def objectCreateColorAttribute(
 @omni(
     enable=True,
     bl_label="按名称获取顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "属性名称"],
     _OUTPUT_NAME=["顶点色属性"],
@@ -160,7 +160,7 @@ def objectGetColorAttributeByName(
 @omni(
     enable=True,
     bl_label="按索引获取顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "属性索引"],
     _OUTPUT_NAME=["顶点色属性"],
@@ -175,7 +175,7 @@ def objectGetColorAttributeByIndex(
 @omni(
     enable=True,
     bl_label="获取活动顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点色属性"],
@@ -189,7 +189,7 @@ def objectGetActiveColorAttribute(
 @omni(
     enable=True,
     bl_label="获取渲染顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点色属性"],
@@ -203,7 +203,7 @@ def objectGetRenderColorAttribute(
 @omni(
     enable=True,
     bl_label="获取顶点色属性名称",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["属性名称"],
@@ -218,7 +218,7 @@ def colorAttributeGetName(
 @omni(
     enable=True,
     bl_label="获取顶点色属性类型",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["颜色类型"],
@@ -233,7 +233,7 @@ def colorAttributeGetType(
 @omni(
     enable=True,
     bl_label="获取顶点色属性域",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["属性域"],
@@ -248,7 +248,7 @@ def colorAttributeGetDomain(
 @omni(
     enable=True,
     bl_label="获取顶点色属性索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["属性索引"],
@@ -267,7 +267,7 @@ def objectGetColorAttributeIndex(
 @omni(
     enable=True,
     bl_label="重命名顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点色属性", "新名称"],
     _OUTPUT_NAME=["顶点色属性", "属性名称"],
@@ -286,7 +286,7 @@ def colorAttributeRename(
 @omni(
     enable=True,
     bl_label="设置活动顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
@@ -308,7 +308,7 @@ def objectSetActiveColorAttribute(
 @omni(
     enable=True,
     bl_label="设置活动顶点色属性索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "属性索引"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
@@ -327,7 +327,7 @@ def objectSetActiveColorAttributeByIndex(
 @omni(
     enable=True,
     bl_label="设置渲染顶点色属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
@@ -356,7 +356,7 @@ def objectSetRenderColorAttribute(
 @omni(
     enable=True,
     bl_label="删除顶点色属性对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体"],

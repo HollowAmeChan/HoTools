@@ -9,7 +9,7 @@ from .physicsWorld.mc2.setups.mesh_cloth.delta_output import ensure_delta_output
 from .physicsWorld.mc2.setups.mesh_cloth.delta_output import write_world_delta_attribute as _write_world_delta_attribute
 from ..OmniDebug import OmniDebug
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 import hashlib
@@ -1466,7 +1466,7 @@ def _run_mesh_xpbd_node(
     enable=True,
     always_run=True,   # 物理解算器，每帧推进XPBD状态
     bl_label="网格物理-XPBD",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "缓存",
@@ -1570,7 +1570,7 @@ def meshPhysicsXPBD(
     enable=True,
     always_run=True,   # 物理解算器，每帧推进XPBD状态
     bl_label="网格物理-XPBD-CPP",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "缓存",
@@ -1667,7 +1667,7 @@ def meshPhysicsXPBDCpp(
     enable=True,
     always_run=True,   # 写入 bpy keyframe，有副作用
     bl_label="骨骼姿态K帧",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["骨骼", "启用"],
     _OUTPUT_NAME=["骨骼", "写入数量"],

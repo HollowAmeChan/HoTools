@@ -8,7 +8,7 @@ import mathutils
 from ....FunctionNodeCore import omni
 from ....OmniTiming import OmniNodeTiming
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
-from ....config import colors as _Color
+from ....config import nodeColors
 from ..types import PhysicsWorldCache
 from .names import (
     MC2_SETUP_BONE_CLOTH,
@@ -249,7 +249,7 @@ def _profile_meta(fields: tuple[str, ...], *, label: str, description: str) -> d
     return {
         "enable": True,
         "bl_label": label,
-        "base_color": _Color.colorCat["Operator"],
+        "base_color": nodeColors.colorCat["Operator"],
         "is_output_node": False,
         "_INPUT_NAME": [_PROFILE_LABELS[name] for name in fields],
         "input_init": {name: _PROFILE_INPUT_INIT[name] for name in fields},
@@ -543,7 +543,7 @@ def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     input_init={
@@ -567,7 +567,7 @@ def physicsMC2MeshObject(
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth自定义对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "物体", "BasePose只读对象", "半径顶点组", "Pin启用",
@@ -628,7 +628,7 @@ def physicsMC2MeshCustomObject(
 @omni(
     enable=True,
     bl_label="MC2 Mesh域收集",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["Mesh分区"],
     input_init={
@@ -650,7 +650,7 @@ def physicsMC2MeshCollector(
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth域",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "MeshCloth对象", "粒子配置", "Anchor",
@@ -704,7 +704,7 @@ def physicsMC2MeshClothTask(
 @omni(
     enable=True,
     bl_label="MC2 BoneCloth域",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "中控骨", "粒子配置", "Anchor",
@@ -788,7 +788,7 @@ def physicsMC2BoneClothTask(
 @omni(
     enable=True,
     bl_label="MC2 BoneSpring域",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "根骨", "粒子配置", "Anchor",
@@ -855,7 +855,7 @@ def physicsMC2BoneSpringTask(
     enable=True,
     always_run=True,
     bl_label="MC2模拟步",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界", "MC2域", "时间缩放", "模拟频率",
@@ -1147,7 +1147,7 @@ def _mc2_debug_long_description() -> str:
     enable=True,
     always_run=True,
     bl_label="MC2可视化调试",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界", "域筛选", "最大显示项", "拓扑连接", "Fixed/Move", "粒子深度", "深度粒子索引",

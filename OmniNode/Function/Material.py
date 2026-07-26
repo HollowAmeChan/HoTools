@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniMaterialSlot
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 
@@ -79,7 +79,7 @@ def _get_material_slot_by_material(
 @omni(
     enable=True,
     bl_label="添加材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "材质"],
     _OUTPUT_NAME=["物体", "材质槽", "槽索引"],
@@ -103,7 +103,7 @@ def objectAddMaterialSlot(
 @omni(
     enable=True,
     bl_label="按索引获取材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["材质槽"],
@@ -122,7 +122,7 @@ def objectGetMaterialSlotByIndex(
 @omni(
     enable=True,
     bl_label="按名称获取材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "槽名称"],
     _OUTPUT_NAME=["材质槽"],
@@ -141,7 +141,7 @@ def objectGetMaterialSlotByName(
 @omni(
     enable=True,
     bl_label="按材质获取材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "材质", "匹配索引"],
     _OUTPUT_NAME=["材质槽"],
@@ -162,7 +162,7 @@ def objectGetMaterialSlotByMaterial(
 @omni(
     enable=True,
     bl_label="获取激活材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["材质槽"],
@@ -183,7 +183,7 @@ def objectGetActiveMaterialSlot(
 @omni(
     enable=True,
     bl_label="获取材质槽材质",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["材质"],
@@ -205,7 +205,7 @@ def materialSlotGetMaterial(
 @omni(
     enable=True,
     bl_label="获取材质槽索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["槽索引"],
@@ -230,7 +230,7 @@ def materialSlotGetIndex(
 @omni(
     enable=True,
     bl_label="获取材质槽名称",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["槽名称"],
@@ -249,7 +249,7 @@ def materialSlotGetName(
 @omni(
     enable=True,
     bl_label="获取材质槽物体",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["物体"],
@@ -271,7 +271,7 @@ def materialSlotGetObject(
 @omni(
     enable=True,
     bl_label="设置材质槽材质",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽", "材质"],
     _OUTPUT_NAME=["材质槽", "材质"],
@@ -293,7 +293,7 @@ def materialSlotSetMaterial(
 @omni(
     enable=True,
     bl_label="清空材质槽材质",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["材质槽"],
@@ -313,7 +313,7 @@ def materialSlotClearMaterial(
 @omni(
     enable=True,
     bl_label="设置活动材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["物体", "材质槽"],
@@ -336,7 +336,7 @@ def objectSetActiveMaterialSlot(
 @omni(
     enable=True,
     bl_label="移除材质槽",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["物体"],
@@ -361,7 +361,7 @@ def objectRemoveMaterialSlotByIndex(
 @omni(
     enable=True,
     bl_label="移除材质槽对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["物体"],
@@ -385,7 +385,7 @@ def materialSlotRemove(
 @omni(
     enable=True,
     bl_label="获取材质所在槽索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "材质"],
     _OUTPUT_NAME=["槽索引"],

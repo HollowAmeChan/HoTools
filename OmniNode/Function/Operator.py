@@ -1,7 +1,7 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniFloatCurve, _OmniColorCurve
 from ...PropertyCurve import sample_color_curve, sample_float_curve
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 from bpy.types import NodeSocketVector, NodeSocketColor
 import ast
@@ -168,7 +168,7 @@ def _euler_order(obj: bpy.types.Object) -> str:
 @omni(enable=True,
       always_run=True,   # 写入 bpy 变换，有副作用
       bl_label="写入物体变换",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",
       bl_icon="OBJECT_DATAMODE",
@@ -196,7 +196,7 @@ def objectWriteFullTransform(
 
 @omni(enable=True,
       bl_label="采样浮点曲线",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="CONVERTER",
       bl_icon="IPO_BEZIER",
@@ -216,7 +216,7 @@ def sampleFloatCurve(
 
 @omni(enable=True,
       bl_label="采样颜色曲线",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="CONVERTER",
       bl_icon="IPO_BEZIER",
@@ -245,7 +245,7 @@ def sampleColorCurve(
 
 @omni(enable=False,
       bl_label="按曲线设置位置",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",
       bl_icon="OBJECT_DATAMODE",
@@ -272,7 +272,7 @@ def objectSetLocationByColorCurve(
 
 @omni(enable=True,
       bl_label="变换合成",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",
       bl_icon="OBJECT_DATAMODE",
@@ -340,7 +340,7 @@ def composeTransform(
 @omni(enable=True,
       always_run=True,   # 写入 bpy delta 变换，有副作用
       bl_label="写入增量变换",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",
       bl_icon="OBJECT_DATAMODE",
@@ -367,7 +367,7 @@ def objectWriteDeltaTransform(
 @omni(enable=True,
       always_run=True,   # 写入 bpy 属性，有副作用
       bl_label="设置Datablock数据",
-      base_color=_Color.colorCat["Operator"],
+      base_color=nodeColors.colorCat["Operator"],
       is_output_node=False,
       _INPUT_NAME=["数据块","属性名称","属性值"],
       mute_passthrough={"_OUTPUT0": "value"},
@@ -380,7 +380,7 @@ def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) 
 @omni(enable=True,
     always_run=True,   # 修改 bpy mesh UV层，有副作用
     bl_label="创建UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体","UV层"],
     _OUTPUT_NAME=["物体","UV层"],
@@ -400,7 +400,7 @@ def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.ty
 
 @omni(enable=True,
     bl_label="获取集合中的物体",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["集合"],
     _OUTPUT_NAME=["物体列表"],
@@ -412,7 +412,7 @@ def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
 @omni(
     enable=True,
     bl_label="文件路径识别(正则)",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["文件夹路径", "正则表达式"],
     _OUTPUT_NAME=["文件路径列表"],
@@ -453,7 +453,7 @@ def scanFilePath(
 
 @omni(enable=True,
     bl_label="字符串连接",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["字符串1","字符串2"],
     _OUTPUT_NAME=["字符串"],

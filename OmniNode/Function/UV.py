@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniUVLayer
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 
@@ -61,7 +61,7 @@ def _find_uv_layer_index(obj: bpy.types.Object, uv_layer: bpy.types.MeshUVLoopLa
 @omni(
     enable=True,
     bl_label="创建UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层名称"],
     _OUTPUT_NAME=["物体", "UV层", "UV层名称"],
@@ -89,7 +89,7 @@ def objectCreateUVLayer(
 @omni(
     enable=True,
     bl_label="按名称获取UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层名称"],
     _OUTPUT_NAME=["UV层"],
@@ -107,7 +107,7 @@ def objectGetUVLayerByName(
 @omni(
     enable=True,
     bl_label="按索引获取UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层索引"],
     _OUTPUT_NAME=["UV层"],
@@ -125,7 +125,7 @@ def objectGetUVLayerByIndex(
 @omni(
     enable=True,
     bl_label="获取激活UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["UV层"],
@@ -146,7 +146,7 @@ def objectGetActiveUVLayer(
 @omni(
     enable=True,
     bl_label="获取渲染UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["UV层"],
@@ -167,7 +167,7 @@ def objectGetRenderUVLayer(
 @omni(
     enable=True,
     bl_label="获取UV层名称",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["UV层"],
     _OUTPUT_NAME=["UV层名称"],
@@ -185,7 +185,7 @@ def uvLayerGetName(
 @omni(
     enable=True,
     bl_label="获取UV层索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["UV层索引"],
@@ -208,7 +208,7 @@ def objectGetUVLayerIndex(
 @omni(
     enable=True,
     bl_label="重命名UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["UV层", "新名称"],
     _OUTPUT_NAME=["UV层", "UV层名称"],
@@ -232,7 +232,7 @@ def uvLayerRename(
 @omni(
     enable=True,
     bl_label="设置激活UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体", "UV层"],
@@ -257,7 +257,7 @@ def objectSetActiveUVLayer(
 @omni(
     enable=True,
     bl_label="设置激活UV层索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层索引"],
     _OUTPUT_NAME=["物体", "UV层"],
@@ -279,7 +279,7 @@ def objectSetActiveUVLayerByIndex(
 @omni(
     enable=True,
     bl_label="设置渲染UV层",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体", "UV层"],
@@ -306,7 +306,7 @@ def objectSetRenderUVLayer(
 @omni(
     enable=True,
     bl_label="删除UV层对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体"],

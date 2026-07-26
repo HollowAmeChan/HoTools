@@ -19,7 +19,7 @@ import bpy
 
 from ...FunctionNodeCore import omni
 from ...OmniNodeSocketMapping import _OmniCache
-from ...config import colors as _Color
+from ...config import nodeColors
 
 from .types import PhysicsObjectScope, PhysicsWorldCache
 from .scope import (
@@ -50,7 +50,7 @@ from .bake import (
 @omni(
     enable=True,
     bl_label="物理对象-从集合",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["集合", "递归子集合"],
     _OUTPUT_NAME=["对象列表"],
@@ -74,7 +74,7 @@ def physicsObjectsFromCollection(
 @omni(
     enable=True,
     bl_label="物理对象-从场景",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["场景", "包含隐藏"],
     _OUTPUT_NAME=["对象列表"],
@@ -98,7 +98,7 @@ def physicsObjectsFromScene(
 @omni(
     enable=True,
     bl_label="物理对象范围",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "对象",
@@ -149,7 +149,7 @@ def physicsObjectScope(
     enable=True,
     always_run=True,   # 每帧必须更新帧上下文和碰撞快照
     bl_label="物理世界-帧开始",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "缓存",
@@ -204,7 +204,7 @@ def physicsWorldBegin(
     enable=True,
     always_run=True,   # 每帧必须提交 cache intent
     bl_label="物理世界-帧提交",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["缓存值", "物理世界", "Solver数量"],
@@ -231,7 +231,7 @@ def physicsWorldCommit(
     enable=True,
     always_run=True,
     bl_label="物理烘焙",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界",
@@ -349,7 +349,7 @@ def physicsBake(
     enable=True,
     always_run=True,
     bl_label="清除物理Bake动画",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "物理世界",
@@ -439,7 +439,7 @@ def clearPhysicsBake(
     enable=True,
     always_run=True,   # debug输出，每帧刷新快照
     bl_label="物理世界-调试快照",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "快照"],
@@ -466,7 +466,7 @@ def physicsWorldDebugSnapshot(
     enable=True,
     always_run=True,
     bl_label="物理世界-结果流",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "通道", "Solver", "仅当前帧", "仅当前代"],
     _OUTPUT_NAME=["物理世界", "结果列表", "数量", "结果文本"],
@@ -512,7 +512,7 @@ def physicsWorldResultStream(
     enable=True,
     always_run=True,   # 可能有 print 副作用，每帧刷新
     bl_label="物理世界-调试文本",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "打印到控制台"],
     _OUTPUT_NAME=["物理世界", "调试文本", "问题列表"],
@@ -552,7 +552,7 @@ def physicsWorldDebugText(
     enable=True,
     always_run=True,
     bl_label="物理写回",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "写回数量"],

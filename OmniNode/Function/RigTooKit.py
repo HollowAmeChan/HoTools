@@ -1,12 +1,12 @@
 import bpy
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 
 @omni(enable=True,
     bl_label="创建集合",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     omni_description="""
     在指定的父集合下创建一个集合
     如果没有则在活动场景下创建

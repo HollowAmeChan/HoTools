@@ -9,7 +9,7 @@ import bpy
 import mathutils
 
 from ....FunctionNodeCore import omni
-from ....config import colors as _Color
+from ....config import nodeColors
 from .names import (
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_BODY_SLOT_KIND,
@@ -139,7 +139,7 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     enable=True,
     always_run=True,   # 物理解算器，每个新帧必须推进 Jolt state
     bl_label="刚体模拟步",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "刚体数量", "耗时ms"],
@@ -171,7 +171,7 @@ def physicsRigidSolver(
     enable=True,
     always_run=True,
     bl_label="刚体结果-读取状态",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体"],
     _OUTPUT_NAME=["物理世界", "命中", "位置", "旋转", "线速度", "角速度", "激活", "睡眠", "结果"],
@@ -214,7 +214,7 @@ def physicsRigidReadState(
     enable=True,
     always_run=True,
     bl_label="刚体约束结果-读取状态",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "约束对象"],
     _OUTPUT_NAME=[
@@ -266,7 +266,7 @@ def physicsRigidConstraintReadState(
     enable=True,
     always_run=True,
     bl_label="Jolt刚体可视化调试",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "显示刚体", "显示约束", "显示问题", "显示接触", "显示传感器"],
     _OUTPUT_NAME=["物理世界"],
@@ -304,7 +304,7 @@ def physicsRigidJoltDebugDraw(
     enable=True,
     always_run=True,
     bl_label="刚体查询-RayCast",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "起点", "方向", "最大距离", "包含传感器", "忽略对象"],
     input_init={
@@ -353,7 +353,7 @@ def physicsRigidRayCast(
 @omni(
     enable=True,
     bl_label="刚体世界-Jolt设置属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["重力", "最大刚体数", "最大刚体对", "最大接触约束", "来源ID", "优先级"],
     input_init={
@@ -393,7 +393,7 @@ def physicsRigidJoltWorldSettingsProperties(
 @omni(
     enable=True,
     bl_label="刚体世界-Jolt设置注册",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "Jolt刚体世界设置属性"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
@@ -421,7 +421,7 @@ def physicsRigidJoltWorldSettingsRegister(
 @omni(
     enable=True,
     bl_label="刚体生成约束属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
@@ -691,7 +691,7 @@ def physicsRigidGeneratedConstraintProperties(
 @omni(
     enable=True,
     bl_label="刚体生成约束注册",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "生成约束属性"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
@@ -722,7 +722,7 @@ def physicsRigidGeneratedConstraintRegister(
     enable=True,
     always_run=True,
     bl_label="刚体命令-设置速度",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "线速度", "角速度"],
     _OUTPUT_NAME=["物理世界", "命令"],
@@ -754,7 +754,7 @@ def physicsRigidSetVelocity(
     enable=True,
     always_run=True,
     bl_label="刚体命令-施加力",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "力", "扭矩"],
     _OUTPUT_NAME=["物理世界", "命令"],
@@ -785,7 +785,7 @@ def physicsRigidAddForce(
     enable=True,
     always_run=True,
     bl_label="刚体命令-施加冲量",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "冲量", "角冲量"],
     _OUTPUT_NAME=["物理世界", "命令"],
@@ -816,7 +816,7 @@ def physicsRigidAddImpulse(
     enable=True,
     always_run=True,
     bl_label="刚体命令-重力倍率",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "重力倍率"],
     input_init={"gravity_factor": {"min_value": -10.0, "max_value": 10.0}},
@@ -846,7 +846,7 @@ def physicsRigidSetGravityFactor(
     enable=True,
     always_run=True,
     bl_label="刚体命令-材质响应",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "摩擦", "弹性"],
     input_init={
@@ -883,7 +883,7 @@ def physicsRigidSetMaterialResponse(
     enable=True,
     always_run=True,
     bl_label="刚体命令-运动质量",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "运动质量"],
     _OUTPUT_NAME=["物理世界", "命令"],
@@ -915,7 +915,7 @@ def physicsRigidSetMotionQuality(
     enable=True,
     always_run=True,
     bl_label="刚体命令-激活状态",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "目标刚体", "激活"],
     _OUTPUT_NAME=["物理世界", "命令"],

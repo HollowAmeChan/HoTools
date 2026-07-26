@@ -1,6 +1,6 @@
 from ..FunctionNodeCore import omni
 from ..OmniNodeSocketMapping import _OmniBone, _OmniGlob
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 import re
@@ -115,7 +115,7 @@ def _append_bone_value(result: list, seen: set, armature_obj: bpy.types.Object, 
 @omni(
     enable=True,
     bl_label="从根获取骨骼",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["根骨骼", "包含全部骨"],
     _OUTPUT_NAME=["骨骼"],
@@ -145,7 +145,7 @@ def bonesFromRoot(
 @omni(
     enable=True,
     bl_label="寻找骨骼",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物体", "Glob表达式"],
     _OUTPUT_NAME=["骨骼"],

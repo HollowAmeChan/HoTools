@@ -3,7 +3,7 @@ from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketColor
 import math
 import mathutils
-from ..config import colors as _Color
+from ..config import nodeColors
 
 
 def _to_vector(value) -> mathutils.Vector:
@@ -14,7 +14,7 @@ def _to_vector(value) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="Lerp",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     mute_passthrough={"_OUTPUT0": "a"},)
 def lerp(a: NodeSocketColor, b: NodeSocketColor, weight: float) -> NodeSocketColor:
     return a*(1-weight)+b*weight
@@ -22,7 +22,7 @@ def lerp(a: NodeSocketColor, b: NodeSocketColor, weight: float) -> NodeSocketCol
 
 @omni(enable=True,
     bl_label="SmoothStep",
-    base_color=_Color.colorCat["Math"],)
+    base_color=nodeColors.colorCat["Math"],)
 def smoothStep(x: float) -> float:
     out = x*x*(3 - 2*x)
     if out >= 1:
@@ -33,7 +33,7 @@ def smoothStep(x: float) -> float:
 
 @omni(enable=True,
     bl_label="Float加法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     color_tag = "CONVERTER",
     mute_passthrough={"_OUTPUT0": "a"},
     )
@@ -43,7 +43,7 @@ def floatAdd(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Float减法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatSubtract(a: float, b: float) -> float:
@@ -52,7 +52,7 @@ def floatSubtract(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Float乘法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatMultiply(a: float, b: float) -> float:
@@ -61,7 +61,7 @@ def floatMultiply(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Float除法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatDivide(a: float, b: float) -> float:
@@ -72,7 +72,7 @@ def floatDivide(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Clamp",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值", "最小值", "最大值"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "x"},
@@ -85,7 +85,7 @@ def clamp(x: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
 
 @omni(enable=True,
     bl_label="Remap",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值", "输入最小", "输入最大", "输出最小", "输出最大", "钳制结果"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "x"},
@@ -113,7 +113,7 @@ def remap(
 
 @omni(enable=True,
     bl_label="Float绝对值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
     )
@@ -123,7 +123,7 @@ def floatAbs(x: float) -> float:
 
 @omni(enable=True,
     bl_label="Float最小值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值A", "值B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -134,7 +134,7 @@ def floatMin(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Float最大值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值A", "值B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -145,7 +145,7 @@ def floatMax(a: float, b: float) -> float:
 
 @omni(enable=True,
     bl_label="Float幂",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["底数", "指数"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "base"},
@@ -156,7 +156,7 @@ def floatPower(base: float, exponent: float) -> float:
 
 @omni(enable=True,
     bl_label="Float开方",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
     )
@@ -168,7 +168,7 @@ def floatSqrt(x: float) -> float:
 
 @omni(enable=True,
     bl_label="Float取整",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值", "小数位"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "x"},
@@ -179,7 +179,7 @@ def floatRound(x: float, digits: int = 0) -> float:
 
 @omni(enable=True,
     bl_label="Float向下取整",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
     )
@@ -189,7 +189,7 @@ def floatFloor(x: float) -> int:
 
 @omni(enable=True,
     bl_label="Float向上取整",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
     )
@@ -199,7 +199,7 @@ def floatCeil(x: float) -> int:
 
 @omni(enable=True,
     bl_label="Sin",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["弧度"],
     _OUTPUT_NAME=["结果"],
     )
@@ -209,7 +209,7 @@ def sinValue(x: float) -> float:
 
 @omni(enable=True,
     bl_label="Cos",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["弧度"],
     _OUTPUT_NAME=["结果"],
     )
@@ -219,7 +219,7 @@ def cosValue(x: float) -> float:
 
 @omni(enable=True,
     bl_label="向量加法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -230,7 +230,7 @@ def vectorAdd(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="向量减法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -241,7 +241,7 @@ def vectorSubtract(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector
 
 @omni(enable=True,
     bl_label="向量缩放",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量", "缩放"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "vec"},
@@ -252,7 +252,7 @@ def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="向量点乘",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
     )
@@ -262,7 +262,7 @@ def vectorDot(a: mathutils.Vector, b: mathutils.Vector) -> float:
 
 @omni(enable=True,
     bl_label="向量叉乘",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -273,7 +273,7 @@ def vectorCross(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="向量长度",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量"],
     _OUTPUT_NAME=["长度"],
     )
@@ -283,7 +283,7 @@ def vectorLength(vec: mathutils.Vector) -> float:
 
 @omni(enable=True,
     bl_label="向量归一化",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量"],
     _OUTPUT_NAME=["结果"],
     )
@@ -296,7 +296,7 @@ def vectorNormalize(vec: mathutils.Vector) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="拆分向量",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量"],
     _OUTPUT_NAME=["X", "Y", "Z"],
     )
@@ -307,7 +307,7 @@ def separateVector(vec: mathutils.Vector) -> tuple[float, float, float]:
 
 @omni(enable=True,
     bl_label="拆分颜色",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["颜色"],
     _OUTPUT_NAME=["R", "G", "B"],
     )
@@ -317,7 +317,7 @@ def separateColor(color: mathutils.Color) -> tuple[float, float, float]:
 
 @omni(enable=True,
     bl_label="Float求和",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["浮点列表"],
     _OUTPUT_NAME=["结果"],
     )
@@ -327,7 +327,7 @@ def sumFloat(values: list[float]) -> float:
 
 @omni(enable=True,
     bl_label="Float平均值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["浮点列表"],
     _OUTPUT_NAME=["结果"],
     )
@@ -339,7 +339,7 @@ def averageFloat(values: list[float]) -> float:
 
 @omni(enable=True,
     bl_label="向量求和",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量列表"],
     _OUTPUT_NAME=["结果"],
     )
@@ -352,7 +352,7 @@ def sumVector(values: list[mathutils.Vector]) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="整数加法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -363,7 +363,7 @@ def intAdd(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数减法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -374,7 +374,7 @@ def intSubtract(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数乘法",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -385,7 +385,7 @@ def intMultiply(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数整除",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -398,7 +398,7 @@ def intFloorDivide(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数取模",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -411,7 +411,7 @@ def intModulo(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数整除和余数",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["商", "余数"],
     )
@@ -423,7 +423,7 @@ def intDivmod(a: int, b: int) -> tuple[int, int]:
 
 @omni(enable=True,
     bl_label="整数绝对值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数"],
     _OUTPUT_NAME=["结果"],
     )
@@ -433,7 +433,7 @@ def intAbs(x: int) -> int:
 
 @omni(enable=True,
     bl_label="整数最小值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -444,7 +444,7 @@ def intMin(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数最大值",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "a"},
@@ -455,7 +455,7 @@ def intMax(a: int, b: int) -> int:
 
 @omni(enable=True,
     bl_label="整数幂",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["底数", "指数"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "base"},
@@ -468,7 +468,7 @@ def intPower(base: int, exponent: int) -> int:
 
 @omni(enable=True,
     bl_label="整数Clamp",
-    base_color=_Color.colorCat["Math"],
+    base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["整数", "最小值", "最大值"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "x"},
@@ -482,7 +482,7 @@ def intClamp(x: int, min_value: int, max_value: int) -> int:
 @omni(
     enable=True,
     bl_label="整数加合",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["整数列表"],
     _OUTPUT_NAME=["和"],

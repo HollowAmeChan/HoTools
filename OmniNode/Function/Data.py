@@ -6,7 +6,7 @@ import bpy
 from datetime import datetime
 from typing import Any
 import mathutils
-from ..config import colors as _Color
+from ..config import nodeColors
 
 
 def _parse_custom_property_token(token: str):
@@ -108,7 +108,7 @@ def _resolve_bone_value(value):
 
 @omni(enable=True,
       bl_label="颜色",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       )
 def colorInput(color: mathutils.Color) -> mathutils.Color:
     return color
@@ -116,14 +116,14 @@ def colorInput(color: mathutils.Color) -> mathutils.Color:
 
 @omni(enable=True,
       bl_label="矢量",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       )
 def vectorInput(vec: NodeSocketVector) -> NodeSocketVector:
     return vec
 
 @omni(enable=True,
       bl_label="整数",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def intInput(v: int) -> int:
     return v
 
@@ -135,7 +135,7 @@ def _bitmask_result(mask: _OmniBitMask, hex_width: int) -> tuple[_OmniBitMask, i
 
 @omni(enable=True,
       bl_label="掩码 4位",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       _INPUT_NAME=["掩码"],
       _OUTPUT_NAME=["掩码", "整数", "十六进制"],
       input_init={
@@ -151,7 +151,7 @@ def bitMask4Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
 
 @omni(enable=True,
       bl_label="掩码 8位",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       _INPUT_NAME=["掩码"],
       _OUTPUT_NAME=["掩码", "整数", "十六进制"],
       input_init={
@@ -167,7 +167,7 @@ def bitMask8Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
 
 @omni(enable=True,
       bl_label="掩码 16位",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       _INPUT_NAME=["掩码"],
       _OUTPUT_NAME=["掩码", "整数", "十六进制"],
       input_init={
@@ -182,25 +182,25 @@ def bitMask16Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
 
 @omni(enable=True,
       bl_label="浮点数",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def floatInput(v: float) -> float:
     return v
 
 @omni(enable=True, 
       bl_label="布尔",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def boolInput(v: bool) -> bool:
     return v
 
 @omni(enable=True, 
       bl_label="字符串",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def stringInput(v: str) -> str:
     return v
 
 @omni(enable=True,
       bl_label="骨骼",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       _INPUT_NAME=["骨骼"],
       _OUTPUT_NAME=["骨骼"],
       omni_description="透传单个 Bone socket 值。用于把 Armature+Bone 选择作为普通数据接入后续节点。",
@@ -214,7 +214,7 @@ def boneInput(v: _OmniBone) -> _OmniBone:
 
 @omni(enable=True,
       bl_label="当前时间",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="输出当前系统本地时间，以及拆分后的年月日时分秒。",
       _OUTPUT_NAME=["时间", "年", "月", "日", "时", "分", "秒"],
       )
@@ -232,7 +232,7 @@ def currentTime() -> tuple[str, int, int, int, int, int, int]:
 
 @omni(enable=True,
       bl_label="当前帧",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="""
       输出当前场景的当前帧、帧范围和预览范围设置。
       在每帧运行模式下，OmniNode 会在 Blender 完成帧切换后运行，
@@ -254,7 +254,7 @@ def currentFrame() -> tuple[int, int, int, int, int, bool]:
 
 @omni(enable=True,
       bl_label="场景帧率",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="输出当前场景的实际帧率，以及每帧对应的秒数。",
       _OUTPUT_NAME=["帧率", "帧间隔"],
       )
@@ -269,49 +269,49 @@ def sceneFrameRate() -> tuple[float, float]:
 
 @omni(enable=True, 
       bl_label="文件路径",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def filepathInput(v: _OmniFolderPath) -> _OmniFolderPath:
     return v
 
 @omni(enable=True,
       bl_label="图像格式",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def imageFormatInput(v:_OmniImageFormat) -> _OmniImageFormat:
     return v
 
 @omni(enable=True,
       bl_label="Modifier Type",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def modifierTypeInput(v: _OmniModifierType) -> _OmniModifierType:
     return v
 
 @omni(enable=True,
       bl_label="修改器",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def modifierInput(v: _OmniModifier) -> _OmniModifier:
     return v
 
 @omni(enable=True,
       bl_label="Material Slot",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def materialSlotInput(v: _OmniMaterialSlot) -> _OmniMaterialSlot:
     return v
 
 @omni(enable=True,
       bl_label="UV槽",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def uvLayerInput(v: _OmniUVLayer) -> _OmniUVLayer:
     return v
 
 @omni(enable=True,
       bl_label="顶点色属性",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def colorAttributeInput(v: _OmniColorAttribute) -> _OmniColorAttribute:
     return v
 
 @omni(enable=True,
       bl_label="顶点组",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def vertexGroupInput(v: _OmniVertexGroup) -> _OmniVertexGroup:
     if v is None or not isinstance(v, bpy.types.VertexGroup):
         raise ValueError("vertex group input is empty or invalid")
@@ -319,7 +319,7 @@ def vertexGroupInput(v: _OmniVertexGroup) -> _OmniVertexGroup:
 
 @omni(enable=True,
       bl_label="形态键",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def shapeKeyInput(v: _OmniShapeKey) -> _OmniShapeKey:
     if not isinstance(v, dict):
         raise ValueError("shape key input is empty or invalid")
@@ -331,13 +331,13 @@ def shapeKeyInput(v: _OmniShapeKey) -> _OmniShapeKey:
 
 @omni(enable=True,
       bl_label="Datablock",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def datablockInput(v: _OmniDatablock) -> _OmniDatablock:
     return v
 
 @omni(enable=True,
       bl_label="获取Datablock数据",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       _INPUT_NAME=["数据块","属性名称"],
       )
 def getDatablockProperty(datablock: _OmniDatablock, prop_name: str) -> Any:
@@ -346,39 +346,39 @@ def getDatablockProperty(datablock: _OmniDatablock, prop_name: str) -> Any:
 @omni(enable=True,
       bl_label="物体",
       bl_icon = "OBJECT_DATAMODE",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       )
 def objectInput(obj: bpy.types.Object) -> bpy.types.Object:
     return obj
 
 @omni(enable=True, 
       bl_label="集合",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def collectionInput(col: bpy.types.Collection) -> bpy.types.Collection:
     return col
 
 @omni(enable=True, 
       bl_label="材质",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def materialInput(mat: bpy.types.Material) -> bpy.types.Material:
     return mat
 
 @omni(enable=True,
       bl_label="图像",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       )
 def imageInput(img: bpy.types.Image) -> bpy.types.Image:
     return img
 
 @omni(enable=True, 
       bl_label="纹理",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def textureInput(tex: bpy.types.Texture) -> bpy.types.Texture:
     return tex
 
 @omni(enable=True,
       bl_label="浮点曲线",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="透传浮点曲线数据。",
       _INPUT_NAME=["曲线"],
       _OUTPUT_NAME=["曲线"],
@@ -388,7 +388,7 @@ def floatCurveInput(v: _OmniFloatCurve) -> _OmniFloatCurve:
 
 @omni(enable=True,
       bl_label="颜色曲线",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="透传颜色曲线数据。",
       _INPUT_NAME=["曲线"],
       _OUTPUT_NAME=["曲线"],
@@ -594,7 +594,7 @@ _CURVE_PREVIEW_STACK_PRESETS = [
 
 @omni(enable=True,
       bl_label="测试多曲线预览",
-      base_color=_Color.colorCat["GetData"],
+      base_color=nodeColors.colorCat["GetData"],
       omni_description="用于测试同一个节点上多个曲线预览的从上到下排列。",
       _INPUT_NAME=["浮点曲线 A", "颜色曲线 A", "浮点曲线 B", "颜色曲线 B"],
       _OUTPUT_NAME=["浮点曲线", "颜色曲线"],
@@ -611,39 +611,39 @@ def curvePreviewStackTest(
 
 # @meta(enable=True, 
 #       bl_label="Mesh",
-#       base_color=_Color.colorCat["GetData"],)
+#       base_color=nodeColors.colorCat["GetData"],)
 # def meshInput(mesh: bpy.types.Mesh) -> bpy.types.Mesh:
 #     return mesh
 
 
 # @meta(enable=True, 
 #       bl_label="曲线",
-#       base_color=_Color.colorCat["GetData"],)
+#       base_color=nodeColors.colorCat["GetData"],)
 # def curveInput(curve: bpy.types.Curve) -> bpy.types.Curve:
 #     return curve
 
 
 @omni(enable=True, 
       bl_label="骨架",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def armatureInput(arm: bpy.types.Armature) -> bpy.types.Armature:
     return arm
 
 
 @omni(enable=True, 
       bl_label="矩阵",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=nodeColors.colorCat["GetData"],)
 def matrixInput(m: mathutils.Matrix) -> mathutils.Matrix:
     return m
 
 @omni(enable=True,
       bl_label="正则表达式"
-      ,base_color=_Color.colorCat["GetData"],)
+      ,base_color=nodeColors.colorCat["GetData"],)
 def regexInput(r: _OmniRegex) -> _OmniRegex:
       return r
 
 @omni(enable=True,
       bl_label="Glob表达式"
-      ,base_color=_Color.colorCat["GetData"],)
+      ,base_color=nodeColors.colorCat["GetData"],)
 def globInput(g: _OmniGlob) -> _OmniGlob:
       return g

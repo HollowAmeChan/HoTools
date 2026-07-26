@@ -4,7 +4,7 @@ import mathutils
 
 from ....FunctionNodeCore import omni
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone
-from ....config import colors as _Color
+from ....config import nodeColors
 from ..types import PhysicsWorldCache
 from ..collision.capabilities import BONE_COLLISION_CAPABILITY
 from .debug_draw import update_spring_vrm_debug_draw_store
@@ -118,7 +118,7 @@ def _bone_collision_type_from_socket(value) -> str:
 @omni(
     enable=True,
     bl_label="VRM骨链属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["骨链", "刚度", "阻尼", "重力方向", "重力强度"],
     input_init={
@@ -156,7 +156,7 @@ def physicsSpringVRMChainProperties(
 @omni(
     enable=True,
     bl_label="VRM骨链任务",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["骨链属性"],
     input_init={
@@ -178,7 +178,7 @@ def physicsSpringVRMChainTask(
 @omni(
     enable=True,
     bl_label="骨骼碰撞覆写属性",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "骨骼", "启用",
@@ -262,7 +262,7 @@ def physicsBoneCollisionOverrideProperties(
 @omni(
     enable=True,
     bl_label="骨骼碰撞覆写注册",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "骨骼碰撞覆写", "启用"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
@@ -291,7 +291,7 @@ def physicsBoneCollisionOverrideRegister(
     enable=True,
     always_run=True,
     bl_label="SpringBone VRM模拟步",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "VRM骨链任务", "子步数"],
     input_init={
@@ -346,7 +346,7 @@ def physicsSpringVRMSolver(
     enable=True,
     always_run=True,
     bl_label="SpringBone VRM可视化调试",
-    base_color=_Color.colorCat["GetData"],
+    base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
     _INPUT_NAME=["物理世界", "显示解算链条", "显示根骨", "显示碰撞体", "碰撞组颜色"],
     _OUTPUT_NAME=["物理世界"],

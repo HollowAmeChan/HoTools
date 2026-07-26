@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniModifierType, _OmniModifier
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 
@@ -132,7 +132,7 @@ def _apply_modifier_operator(obj: bpy.types.Object, modifier: bpy.types.Modifier
 @omni(
     enable=True,
     bl_label="添加修改器",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器类型", "修改器名称"],
     _OUTPUT_NAME=["物体", "修改器名称", "修改器"],
@@ -155,7 +155,7 @@ def objectAddModifier(
 @omni(
     enable=True,
     bl_label="按名称获取修改器",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器名称"],
     _OUTPUT_NAME=["修改器"],
@@ -170,7 +170,7 @@ def objectGetModifierByName(
 @omni(
     enable=True,
     bl_label="按索引获取修改器",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器索引"],
     _OUTPUT_NAME=["修改器"],
@@ -185,7 +185,7 @@ def objectGetModifierByIndex(
 @omni(
     enable=True,
     bl_label="按类型获取修改器",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器类型", "匹配索引"],
     _OUTPUT_NAME=["修改器"],
@@ -205,7 +205,7 @@ def objectGetModifierByType(
 @omni(
     enable=True,
     bl_label="获取修改器名称",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器名称"],
@@ -220,7 +220,7 @@ def modifierGetName(
 @omni(
     enable=True,
     bl_label="获取修改器类型",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器类型"],
@@ -235,7 +235,7 @@ def modifierGetType(
 @omni(
     enable=True,
     bl_label="获取修改器索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器索引"],
@@ -251,7 +251,7 @@ def modifierGetIndex(
 @omni(
     enable=True,
     bl_label="获取修改器物体",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
@@ -266,7 +266,7 @@ def modifierGetObject(
 @omni(
     enable=True,
     bl_label="移除修改器对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
@@ -283,7 +283,7 @@ def modifierRemove(
 @omni(
     enable=True,
     bl_label="移动修改器对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "目标索引"],
     _OUTPUT_NAME=["物体", "修改器"],
@@ -313,7 +313,7 @@ def modifierMove(
 @omni(
     enable=True,
     bl_label="应用修改器对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
@@ -334,7 +334,7 @@ def modifierApply(
 @omni(
     enable=True,
     bl_label="设置修改器对象显示",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "视图显示", "渲染显示", "编辑模式显示", "罩体显示"],
     _OUTPUT_NAME=["修改器"],
@@ -360,7 +360,7 @@ def modifierSetDisplay(
 @omni(
     enable=True,
     bl_label="设置修改器对象视图显示",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
@@ -377,7 +377,7 @@ def modifierSetViewport(
 @omni(
     enable=True,
     bl_label="设置修改器对象渲染显示",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
@@ -394,7 +394,7 @@ def modifierSetRender(
 @omni(
     enable=True,
     bl_label="设置修改器对象编辑模式显示",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
@@ -411,7 +411,7 @@ def modifierSetEditmode(
 @omni(
     enable=True,
     bl_label="设置修改器对象罩体显示",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],

@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 from bpy.types import NodeSocketVector, NodeSocketColor
 import bpy
@@ -23,7 +23,7 @@ elif sys.version_info[:2] == (3, 11):
 
 @omni(enable=True,
     bl_label="导入图片",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
     _OUTPUT_NAME=["图片"],
@@ -62,7 +62,7 @@ def importImage2Blender(
 
 @omni(enable=True,
     bl_label="批量导入图片",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
     _OUTPUT_NAME=["图片"],
@@ -104,7 +104,7 @@ def importMultiImage2Blender(
 
 @omni(enable=True,
     bl_label="设置图像颜色",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图像","颜色"],
     _OUTPUT_NAME=["图像"],
@@ -263,7 +263,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
 @omni(
     enable=True,
     bl_label="纹理UV重定向",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
     _OUTPUT_NAME=["图像","图像路径"],
@@ -540,7 +540,7 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 @omni(
     enable=True,
     bl_label="合成图片",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","是法线贴图","是灰度数据图"],
     _OUTPUT_NAME=["合成图像"],
@@ -712,7 +712,7 @@ def _load_pil_rgba(path: _OmniFolderPath) -> Image.Image:
 @omni(
     enable=True,
     bl_label="合成图片(外部)",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片路径列表", "保存位置", "背景颜色", "输出名称", "格式", "覆盖同名文件", "是数据贴图"],
     _OUTPUT_NAME=["文件路径"],
@@ -780,7 +780,7 @@ def combineImageFiles(
 
 @omni(enable=True,
     bl_label="保存图片",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片","文件路径","格式"],
     _OUTPUT_NAME=["文件路径"],
@@ -913,7 +913,7 @@ def _single_channel_to_rgba(channel: np.ndarray) -> np.ndarray:
 @omni(
     enable=True,
     bl_label="拆分图片通道",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片", "输出名称前缀", "覆盖同名图像"],
     _OUTPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图"],
@@ -963,7 +963,7 @@ def splitImageChannels(
 @omni(
     enable=True,
     bl_label="合并图片通道",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图", "新建图像名称", "覆盖同名图像", "是数据图"],
     _OUTPUT_NAME=["合并图像"],
@@ -1028,7 +1028,7 @@ def mergeImageChannels(
 @omni(
     enable=True,
     bl_label="调整法线贴图强度",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["法线贴图", "强度", "新建图像名称", "覆盖同名图像", "文件路径", "图像格式"],
     _OUTPUT_NAME=["法线贴图", "图像路径"],

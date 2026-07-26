@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniCache
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import math
 import bpy
@@ -217,7 +217,7 @@ def _degrees_vector_to_quaternion(value) -> mathutils.Quaternion:
 @omni(
     enable=True,
     bl_label="软跟随",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "目标物体",
@@ -431,7 +431,7 @@ def softFollow(
 @omni(
     enable=True,
     bl_label="漂浮",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "启用波动",

@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniVertexGroup
 from ..FunctionNodeCore import omni
-from ..config import colors as _Color
+from ..config import nodeColors
 
 import bpy
 
@@ -64,7 +64,7 @@ def _get_vertex_group_by_index(obj: bpy.types.Object, group_index: int) -> bpy.t
 @omni(
     enable=True,
     bl_label="创建顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组名称"],
     _OUTPUT_NAME=["物体", "顶点组", "顶点组名称"],
@@ -89,7 +89,7 @@ def objectCreateVertexGroup(
 @omni(
     enable=True,
     bl_label="按名称获取顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组名称"],
     _OUTPUT_NAME=["顶点组"],
@@ -104,7 +104,7 @@ def objectGetVertexGroupByName(
 @omni(
     enable=True,
     bl_label="按索引获取顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组索引"],
     _OUTPUT_NAME=["顶点组"],
@@ -119,7 +119,7 @@ def objectGetVertexGroupByIndex(
 @omni(
     enable=True,
     bl_label="获取活动顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点组"],
@@ -137,7 +137,7 @@ def objectGetActiveVertexGroup(
 @omni(
     enable=True,
     bl_label="获取顶点组名称",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["顶点组名称"],
@@ -152,7 +152,7 @@ def vertexGroupGetName(
 @omni(
     enable=True,
     bl_label="获取顶点组索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["顶点组索引"],
@@ -167,7 +167,7 @@ def vertexGroupGetIndex(
 @omni(
     enable=True,
     bl_label="获取顶点组物体",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["物体"],
@@ -182,7 +182,7 @@ def vertexGroupGetObject(
 @omni(
     enable=True,
     bl_label="重命名顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点组", "新名称"],
     _OUTPUT_NAME=["顶点组", "顶点组名称"],
@@ -201,7 +201,7 @@ def vertexGroupRename(
 @omni(
     enable=True,
     bl_label="设置活动顶点组",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组"],
     _OUTPUT_NAME=["物体", "顶点组"],
@@ -223,7 +223,7 @@ def objectSetActiveVertexGroup(
 @omni(
     enable=True,
     bl_label="设置活动顶点组索引",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组索引"],
     _OUTPUT_NAME=["物体", "顶点组"],
@@ -242,7 +242,7 @@ def objectSetActiveVertexGroupByIndex(
 @omni(
     enable=True,
     bl_label="删除顶点组对象",
-    base_color=_Color.colorCat["Operator"],
+    base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["物体"],
