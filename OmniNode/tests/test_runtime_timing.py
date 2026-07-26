@@ -4,7 +4,7 @@ import sys
 
 
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
-_PATH = os.path.join(os.path.dirname(_TEST_DIR), "NodeTree", "OmniTiming.py")
+_PATH = os.path.join(os.path.dirname(_TEST_DIR), "OmniTiming.py")
 _SPEC = importlib.util.spec_from_file_location("omni_runtime_timing_test_module", _PATH)
 _MODULE = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _MODULE

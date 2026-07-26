@@ -6,14 +6,15 @@ contain adjacent `test_*.py` files.
 
 Domain-specific tests stay with their owner, for example:
 
-- `NodeTree/Function/physicsWorld/test/`
-- `NodeTree/Function/physicsWorld/rigid/test/`
-- `NodeTree/Function/physicsWorld/spring_vrm/test/`
+- `Function/physicsWorld/test/`
+- `Function/physicsWorld/rigid/test/`
+- `Function/physicsWorld/spring_vrm/test/`
 
 Run the core suite with Blender's Python environment:
 
 ```powershell
 blender --background --factory-startup --python OmniNode/tests/test_runtime_timing.py
+blender --background --factory-startup --python OmniNode/tests/test_blender_package_layout.py
 blender --background --factory-startup --python OmniNode/tests/test_blender_compile_cache_lifecycle.py
 blender --background --factory-startup --python OmniNode/tests/test_blender_mute_passthrough_contract.py
 ```

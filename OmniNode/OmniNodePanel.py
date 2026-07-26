@@ -2,7 +2,7 @@ import bpy
 from bpy.props import BoolProperty
 from bpy.types import Panel
 
-from .NodeTree.OmniNodeOperator import (
+from .OmniNodeOperator import (
     LayerRunning,
     OmniTreeBindMount,
     OmniTreeClearCompileCache,

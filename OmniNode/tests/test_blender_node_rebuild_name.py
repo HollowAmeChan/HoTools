@@ -13,18 +13,17 @@ import bpy
 TESTS = os.path.dirname(os.path.abspath(__file__))
 OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
-NODETREE = os.path.join(OMNINODE, "NodeTree")
+NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
 PHYSICS_WORLD = os.path.join(FUNCTION, "physicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
     ("HoTools.OmniNode", OMNINODE),
-    ("HoTools.OmniNode.NodeTree", NODETREE),
-    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
-    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.Function", FUNCTION),
+    ("HoTools.OmniNode.Function.physicsWorld", PHYSICS_WORLD),
     (
-        "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2",
+        "HoTools.OmniNode.Function.physicsWorld.mc2",
         os.path.join(PHYSICS_WORLD, "mc2"),
     ),
 ):
@@ -35,11 +34,11 @@ for package_name, package_path in (
 
 
 from HoTools import PropertyCurve
-from HoTools.OmniNode.NodeTree import OmniNodeDraw
-from HoTools.OmniNode.NodeTree import OmniNodeOperator
-from HoTools.OmniNode.NodeTree import OmniNodeRegister
-from HoTools.OmniNode.NodeTree import OmniNodeSocket
-from HoTools.OmniNode.NodeTree import OmniNodeTree
+from HoTools.OmniNode import OmniNodeDraw
+from HoTools.OmniNode import OmniNodeOperator
+from HoTools.OmniNode import OmniNodeRegister
+from HoTools.OmniNode import OmniNodeSocket
+from HoTools.OmniNode import OmniNodeTree
 
 
 registered = []

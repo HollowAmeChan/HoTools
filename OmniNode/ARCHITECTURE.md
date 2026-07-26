@@ -41,7 +41,7 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 ### 1. 函数生成是默认节点模型
 
-OmniNode 的默认扩展点是 `NodeTree/Function/*.py` 中的 Python 函数和 `@omni(...)` 元数据。`FunctionNodeCore.py` 解析函数签名，生成 socket、默认值、multi input 标记和继承 `OmniNode` 的节点类。编译器看到这类节点时生成 `OpCall`，执行器只调用 `_func(*args)` 并把返回值写回寄存器。
+OmniNode 的默认扩展点是 `Function/*.py` 中的 Python 函数和 `@omni(...)` 元数据。`FunctionNodeCore.py` 解析函数签名，生成 socket、默认值、multi input 标记和继承 `OmniNode` 的节点类。编译器看到这类节点时生成 `OpCall`，执行器只调用 `_func(*args)` 并把返回值写回寄存器。
 
 维护时应把这个模型当作默认答案：
 
@@ -184,7 +184,7 @@ dispose 必须幂等且不得抛异常。高封装节点或 domain owner 如果�
 Cache Write 节点的 socket 不暴露写入模式，编译器仍然只生成同一种 `CacheWriteCall`。写入模式是函数节点返回值上的内部意图：
 
 ```python
-from OmniNode.NodeTree.OmniRuntimeState import cache_replace, cache_mutate
+from OmniNode.OmniRuntimeState import cache_replace, cache_mutate
 
 return cache_replace(new_cache)
 return cache_mutate(existing_cache)
@@ -365,8 +365,8 @@ Python模块按真实owner和生命周期拆分，不按“每个dataclass/参�
 主要文件：
 
 ```text
-NodeTree/OmniCompiler.py
-NodeTree/OmniIR.py
+OmniCompiler.py
+OmniIR.py
 ```
 
 当前编译器已经拆成两层：
@@ -437,8 +437,8 @@ NodeTree/OmniIR.py
 主要文件：
 
 ```text
-NodeTree/OmniExecutor.py
-NodeTree/OmniRuntimeState.py
+OmniExecutor.py
+OmniRuntimeState.py
 ```
 
 执行器不读取 Blender links，只执行 `CompiledGraph.instructions`。
@@ -501,10 +501,10 @@ CONST 的语义边界（不是缺口，是设计）：
 主要文件：
 
 ```text
-NodeTree/OmniDebug.py
-NodeTree/OmniTiming.py
-NodeTree/OmniNodeTree.py
-NodeTree/OmniExecutor.py
+OmniDebug.py
+OmniTiming.py
+OmniNodeTree.py
+OmniExecutor.py
 ```
 
 当前有四类 debug。
@@ -746,7 +746,7 @@ Tracy GUI 工具：`D:\BlenderAdvance\tracy_gui\tracy-profiler.exe`（启动后�
 
 #### 5.2 OmniTracy.py 封装原理
 
-封装文件：`NodeTree/OmniTracy.py`
+封装文件：`OmniTracy.py`
 
 ```python
 # 尝试导入 tracy_client；失败则静默降级
@@ -896,11 +896,11 @@ OmniNode 模块入口。负责注册/注销 NodeTree、socket、节点、操作�
 
 ### `tests/`
 
-OmniNode 核心测试目录。编译器、执行器、runtime state、注册合同、timing 等跨模块测试统一放在这里；`NodeTree/` 运行时代码目录禁止直接放置 `test_*.py`。
+OmniNode 核心测试目录。编译器、执行器、runtime state、注册合同、timing 等跨模块测试统一放在这里；OmniNode 根目录禁止直接放置 `test_*.py`。
 
 domain 自有测试继续由对应模块拥有，不得为了目录表面统一而拆散 fixtures、runner 与被测实现。测试脚本必须从 `__file__` 推导仓库路径，禁止写开发机绝对路径。具体运行方式见 `tests/README.md`。
 
-### `NodeTree/OmniNodeTree.py`
+### `OmniNodeTree.py`
 
 定义 `OmniNodeTree` 数据块。
 
@@ -912,11 +912,11 @@ domain 自有测试继续由对应模块拥有，不得为了目录表面统一�
 - frame change handler。
 - Node editor 树属性面板。
 
-### `NodeTree/OmniIR.py`
+### `OmniIR.py`
 
 运行时 IR 定义。该文件不应该依赖 Blender link 结构，也不应该包含执行逻辑。`CompiledGraph.compile_flow` 只承载编译器生成的不可变字符串/整数可视化快照，不参与执行。
 
-### `NodeTree/OmniCompiler.py`
+### `OmniCompiler.py`
 
 编译器。负责从 Blender 图生成 `CompiledGraph`。
 
@@ -927,7 +927,7 @@ domain 自有测试继续由对应模块拥有，不得为了目录表面统一�
 - 不要让没有 `_func` 的节点进入普通函数调用。
 - 编译流程可视化必须在实际分配/消费寄存器的位置记录 link；特殊 emitter 不得绕过 `compile_flow` 合同后让绘制层补猜。
 
-### `NodeTree/OmniExecutor.py`
+### `OmniExecutor.py`
 
 执行器。负责按 IR 顺序运行。
 
@@ -937,11 +937,11 @@ domain 自有测试继续由对应模块拥有，不得为了目录表面统一�
 - 新增 IR 类型时，应同时补执行逻辑、trace 输出和 timing stage 名称。
 - 运行时临时状态不要放进执行器，应走 GraphNode cache 或函数节点返回值。
 
-### `NodeTree/OmniRuntimeState.py`
+### `OmniRuntimeState.py`
 
 runtime cache 系统。负责 committed cache、pending write、pending delete、namespace、snapshot、提交和失败回滚。
 
-### `NodeTree/OmniDebug.py`
+### `OmniDebug.py`
 
 debug 格式化工具。
 
@@ -951,7 +951,7 @@ debug 格式化工具。
 - runtime trace 标签和颜色。
 - runtime timing 命令行报告格式化。
 
-### `NodeTree/OmniTiming.py`
+### `OmniTiming.py`
 
 独立的运行时计时聚合器。
 
@@ -961,7 +961,7 @@ debug 格式化工具。
 - 维护命令行聚合窗口，并调度节点叠加的低频单帧采样。
 - 输出不依赖 Blender 绘制或终端格式的 timing snapshot。
 
-### `NodeTree/GraphNode.py`
+### `GraphNode.py`
 
 IR 级特殊节点定义。这里的节点不是普通业务函数节点的替代方案，只放需要改变编译、执行上下文、组/批处理语义或 runtime cache 语义的节点。
 
@@ -973,7 +973,7 @@ IR 级特殊节点定义。这里的节点不是普通业务函数节点的替�
 - runtime cache 读写/删除/调试节点。
 - 节点重建时的 link/default value 缓存恢复工具。
 
-### `NodeTree/FunctionNodeCore.py`
+### `FunctionNodeCore.py`
 
 函数节点生成器。
 
@@ -1002,15 +1002,15 @@ IR 级特殊节点定义。这里的节点不是普通业务函数节点的替�
 - 改函数签名可能影响旧树链接。
 - 新增业务节点应优先走这里的函数生成路径，而不是手写 GraphNode。
 
-### `NodeTree/OmniNodeSocketMapping.py`
+### `OmniNodeSocketMapping.py`
 
 Python 类型到 Blender socket 类型的映射表，包含 `_OmniCache`、`_OmniBone`、`_OmniVertexGroup` 等 marker 类型。
 
-### `NodeTree/OmniNodeSocket.py`
+### `OmniNodeSocket.py`
 
 自定义 socket 定义。负责 Scene、Text、Regex、Glob、Datablock、Cache、Bone、Modifier、MaterialSlot、VertexGroup、ShapeKey 等 socket。
 
-### `NodeTree/OmniNodeOperator.py`
+### `OmniNodeOperator.py`
 
 编辑器操作符和辅助 UI。
 
@@ -1022,7 +1022,7 @@ Python 类型到 Blender socket 类型的映射表，包含 `_OmniCache`、`_Omn
 - 节点重建：保留 identifier 匹配的 socket 默认值与链接；默认在恢复完成后尝试把 `node.name` 刷新为当前类型的 `bl_label`，操作符可关闭该选项以保留用户名称。
 - 菜单和 Node editor 操作。
 
-### `NodeTree/OmniNodeDraw.py`
+### `OmniNodeDraw.py`
 
 Node Editor overlay 集中实现。bug/description、socket preview、运行计时和编译流程动画都在这里维护各自 payload、handler、状态同步和清理。编译流程动画的相位数学属于绘制实现，不单独拆模块；动画关闭时不得保留 timer 或持续 redraw。
 
@@ -1036,13 +1036,13 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 - 默认只提供每树一行的“编译运行”和“每帧运行”开关。
 - 用一个布尔开关折叠高级操作。
 - 高级模式下提供编译、运行已编译结果、清理编译缓存、清理运行缓存和状态显示。
-- 面板只负责批量入口 UI，具体操作复用 `NodeTree/OmniNodeOperator.py` 中支持 `tree_name` 参数的内部 operator。
+- 面板只负责批量入口 UI，具体操作复用 `OmniNodeOperator.py` 中支持 `tree_name` 参数的内部 operator。
 
-### `NodeTree/OmniNodeRegister.py`
+### `OmniNodeRegister.py`
 
 节点注册和分类。负责注册 Graph 节点，从 `Function/` 加载 `@omni(enable=True)` 函数并生成节点类，建立 Blender add node 菜单分类。
 
-### `NodeTree/Function/*.py`
+### `Function/*.py`
 
 函数节点库。提供实际业务逻辑。
 
@@ -1066,7 +1066,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### 新增普通函数节点
 
-1. 在 `NodeTree/Function/` 合适模块中写 Python 函数。
+1. 在 `Function/` 合适模块中写 Python 函数。
 2. 加 `@omni(enable=True, ...)`。
 3. 用类型注解定义 socket 类型。
 4. multi input 使用 `list[T]`。

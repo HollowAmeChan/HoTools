@@ -14,19 +14,18 @@ import bpy
 TESTS = os.path.dirname(os.path.abspath(__file__))
 OMNINODE = os.path.dirname(TESTS)
 HOTOOLS = os.path.dirname(OMNINODE)
-NODETREE = os.path.join(OMNINODE, "NodeTree")
+NODETREE = OMNINODE
 FUNCTION = os.path.join(NODETREE, "Function")
 PHYSICS_WORLD = os.path.join(FUNCTION, "physicsWorld")
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
     ("HoTools.OmniNode", OMNINODE),
-    ("HoTools.OmniNode.NodeTree", NODETREE),
-    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
-    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
-    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2", os.path.join(PHYSICS_WORLD, "mc2")),
-    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid", os.path.join(PHYSICS_WORLD, "rigid")),
-    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm", os.path.join(PHYSICS_WORLD, "spring_vrm")),
+    ("HoTools.OmniNode.Function", FUNCTION),
+    ("HoTools.OmniNode.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.Function.physicsWorld.mc2", os.path.join(PHYSICS_WORLD, "mc2")),
+    ("HoTools.OmniNode.Function.physicsWorld.rigid", os.path.join(PHYSICS_WORLD, "rigid")),
+    ("HoTools.OmniNode.Function.physicsWorld.spring_vrm", os.path.join(PHYSICS_WORLD, "spring_vrm")),
 ):
     module = types.ModuleType(package_name)
     module.__path__ = [package_path]
@@ -34,24 +33,24 @@ for package_name, package_path in (
     sys.modules[package_name] = module
 
 
-core = importlib.import_module("HoTools.OmniNode.NodeTree.FunctionNodeCore")
-data = importlib.import_module("HoTools.OmniNode.NodeTree.Function.Data")
-image = importlib.import_module("HoTools.OmniNode.NodeTree.Function.Image")
-modifier = importlib.import_module("HoTools.OmniNode.NodeTree.Function.Modifier")
-uv = importlib.import_module("HoTools.OmniNode.NodeTree.Function.UV")
-vertex_color = importlib.import_module("HoTools.OmniNode.NodeTree.Function.VertexColor")
-vertex_group = importlib.import_module("HoTools.OmniNode.NodeTree.Function.VertexGroup")
+core = importlib.import_module("HoTools.OmniNode.FunctionNodeCore")
+data = importlib.import_module("HoTools.OmniNode.Function.Data")
+image = importlib.import_module("HoTools.OmniNode.Function.Image")
+modifier = importlib.import_module("HoTools.OmniNode.Function.Modifier")
+uv = importlib.import_module("HoTools.OmniNode.Function.UV")
+vertex_color = importlib.import_module("HoTools.OmniNode.Function.VertexColor")
+vertex_group = importlib.import_module("HoTools.OmniNode.Function.VertexGroup")
 physics_nodes = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.nodes"
+    "HoTools.OmniNode.Function.physicsWorld.nodes"
 )
 mc2_nodes = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+    "HoTools.OmniNode.Function.physicsWorld.mc2.nodes"
 )
 rigid_nodes = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.nodes"
+    "HoTools.OmniNode.Function.physicsWorld.rigid.nodes"
 )
 spring_nodes = importlib.import_module(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm.nodes"
+    "HoTools.OmniNode.Function.physicsWorld.spring_vrm.nodes"
 )
 
 
@@ -126,16 +125,16 @@ assert _mapping(rigid_nodes.physicsRigidSolver) == {"_OUTPUT0": "world"}
 
 
 from HoTools import PropertyCurve
-from HoTools.OmniNode.NodeTree import OmniNodeDraw
-from HoTools.OmniNode.NodeTree import OmniNodeOperator
-from HoTools.OmniNode.NodeTree import OmniNodeRegister
-from HoTools.OmniNode.NodeTree import OmniNodeSocket
-from HoTools.OmniNode.NodeTree import OmniNodeTree
-from HoTools.OmniNode.NodeTree import OmniRuntimeState
-from HoTools.OmniNode.NodeTree.OmniExecutor import OmniExecutor
-from HoTools.OmniNode.NodeTree.OmniTiming import OmniNodeTiming, OmniRuntimeTiming
-from HoTools.OmniNode.NodeTree.OmniCompiler import OmniCompiler
-from HoTools.OmniNode.NodeTree.OmniIR import (
+from HoTools.OmniNode import OmniNodeDraw
+from HoTools.OmniNode import OmniNodeOperator
+from HoTools.OmniNode import OmniNodeRegister
+from HoTools.OmniNode import OmniNodeSocket
+from HoTools.OmniNode import OmniNodeTree
+from HoTools.OmniNode import OmniRuntimeState
+from HoTools.OmniNode.OmniExecutor import OmniExecutor
+from HoTools.OmniNode.OmniTiming import OmniNodeTiming, OmniRuntimeTiming
+from HoTools.OmniNode.OmniCompiler import OmniCompiler
+from HoTools.OmniNode.OmniIR import (
     CacheReadCall,
     CacheWriteCall,
     CompiledGraph,
@@ -372,7 +371,7 @@ try:
         graph.instructions = tuple(instructions)
         graph.reg_count = 5
         graph.output_regs = {"result": 4}
-        from HoTools.OmniNode.NodeTree.OmniCompiler import CompilerContext
+        from HoTools.OmniNode.OmniCompiler import CompilerContext
         CompilerContext._build_runtime_cache_contract(graph)
         return graph
 

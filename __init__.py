@@ -162,7 +162,7 @@ def register():
     VertexColorTools.register()
     VertexGroupTools.register()
     ShapekeyTools.register()
-    from .OmniNode.NodeTree.Function.physicsWorld.blender import register as register_physics_world
+    from .OmniNode.Function.physicsWorld.blender import register as register_physics_world
     register_physics_world()
     BoneTools.register()
     AnimationTools.register()
@@ -189,7 +189,7 @@ def unregister():
     VertexGroupTools.unregister()
     ShapekeyTools.unregister()
     BoneTools.unregister()
-    from .OmniNode.NodeTree.Function.physicsWorld.blender import unregister as unregister_physics_world
+    from .OmniNode.Function.physicsWorld.blender import unregister as unregister_physics_world
     unregister_physics_world()
     AnimationTools.unregister()
     Exporter.unregister()

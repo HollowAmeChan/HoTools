@@ -1,0 +1,188 @@
+{
+  "schema": "mc2_v1_acceptance_assets_v0",
+  "acceptance_profile": "V1-R",
+  "environment": {
+    "python": "3.13",
+    "blender": "5.2",
+    "blender_arguments": ["--background", "--factory-startup"]
+  },
+  "assets": [
+    {
+      "id": "mesh_cloth_armature_base_pose",
+      "setup_types": ["mesh_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_mesh_product_base_pose.py",
+      "production_surface": [
+        "dual-object evaluated BasePose",
+        "DomainV1 产品 slot owner",
+        "GN object-local offset result/writeback",
+        "scheduler and Center state",
+        "external collider and single-cloth self collision"
+      ],
+      "expected": [
+        "continuous and same-frame result revisions remain coherent",
+        "static rebuild and failed publish preserve the previous complete transaction",
+        "single and three-substep frames publish one final candidate",
+        "signed component transitions preserve finite state and writeback"
+      ],
+      "rejection_boundaries": [
+        "missing BasePose",
+        "topology mismatch",
+        "feedback through the source evaluated mesh",
+        "unsupported inherited negative scale or shear"
+      ]
+    },
+    {
+      "id": "bone_cloth_line_chain",
+      "setup_types": ["bone_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_bone_product.py",
+      "production_surface": [
+        "real Armature and PoseBone frame snapshot",
+        "Line final proxy/baseline/Distance/Center upload",
+        "bone_transform result transaction",
+        "parent-local matrix_basis writeback"
+      ],
+      "expected": [
+        "stable bone identity and three-bone batch",
+        "continuous frame solve and same-frame reuse",
+        "batch writeback rollback on injected failure",
+        "positive-negative-positive component scale keeps PoseBone scale at one"
+      ],
+      "rejection_boundaries": [
+        "Automatic or Sequential membership containing imported triangles",
+        "zero component scale",
+        "inherited negative scale",
+        "world-linear shear"
+      ]
+    },
+    {
+      "id": "bone_cloth_hotools_product_groups",
+      "setup_types": ["bone_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_bone_product.py",
+      "production_surface": [
+        "Bone socket common-parent chain expansion",
+        "ordered-chain lateral edges and product triangles",
+        "一个 DomainV1 产品 slot 与 partition 参数包",
+        "same-Armature multi-component atomic writeback"
+      ],
+      "expected": [
+        "node input order remains topology-authoritative",
+        "多 Armature 拆为显式产品 request",
+        "different profile+task groups on one Armature merge into one writeback target",
+        "a later task preparation failure preserves prior world state and public results"
+      ],
+      "rejection_boundaries": [
+        "internal chain forks beyond children[0] require another explicit group",
+        "component bone-name overlap",
+        "multiple Armatures inside one task",
+        "zero component scale"
+      ]
+    },
+    {
+      "id": "bone_spring_line_soft_sphere",
+      "setup_types": ["bone_spring"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_bone_spring_product_restrictions.py",
+      "production_surface": [
+        "BoneSpring normalized N2 parameters",
+        "shared Line static/native/result path",
+        "Sphere-only collider snapshot",
+        "soft-sphere limit and PoseBone writeback"
+      ],
+      "expected": [
+        "gravity/max-distance/self-collision overrides remain disabled",
+        "tether compression and distance stiffness use BoneSpring constants",
+        "non-Sphere colliders are filtered",
+        "point collision executes on the continuous frame"
+      ],
+      "rejection_boundaries": [
+        "non-Line topology",
+        "Capsule, Plane or Box soft primitive",
+        "private wind or self-collision expansion"
+      ]
+    },
+    {
+      "id": "mesh_final_proxy_rejections",
+      "setup_types": ["mesh_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_mesh_product_static.py",
+      "production_surface": [
+        "Blender loop-triangle final proxy",
+        "Pin vertex-group identity",
+        "UV/static signature rebuild"
+      ],
+      "expected": [
+        "n-gon triangulation preserves input vertex identity",
+        "Pin and UV changes rebuild the static bundle",
+        "active-world Mesh step requires configured BasePose"
+      ],
+      "rejection_boundaries": [
+        "one vertex with inconsistent loop-domain UVs",
+        "topology-changing BasePose",
+        "missing configured BasePose"
+      ]
+    },
+    {
+      "id": "mesh_unified_domain_e5",
+      "setup_types": ["mesh_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_product_mixed_output_soak.py",
+      "production_surface": [
+        "MeshCloth、BoneCloth、BoneSpring公开product request",
+        "统一product solver、动态slot与完整混合pass",
+        "参数热更新、Angle/Motion与三种setup的限速证据",
+        "GN Object-local offset与Bone PoseBone逐帧写回",
+        "900帧双跑摘要与同一产品槽复用"
+      ],
+      "expected": [
+        "三种setup均只接受MC2ProductRequestV1",
+        "301和601帧参数热更新不替换产品slot owner",
+        "900帧双跑的输出与调试摘要逐字节相等",
+        "Mesh目标与Bone目标均完成逐帧写回"
+      ],
+      "rejection_boundaries": [
+        "旧task或V0请求混输",
+        "产品slot identity或domain signature不一致",
+        "参数更新改变静态拓扑而未触发合法重建",
+        "GN/Bone写回目标失效"
+      ]
+    },
+    {
+      "id": "component_transform_rejections",
+      "setup_types": ["mesh_cloth", "bone_cloth", "bone_spring"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_component_transform.py",
+      "production_surface": [
+        "Blender matrix decomposition boundary",
+        "proper component rotation plus signed scale"
+      ],
+      "expected": [
+        "local signed scale is reconstructed under a positive-scale parent",
+        "proper rotation remains shear-free"
+      ],
+      "rejection_boundaries": [
+        "inherited negative scale",
+        "zero scale",
+        "non-representable world-linear shear"
+      ]
+    },
+    {
+      "id": "implicit_debug_capture",
+      "setup_types": ["mesh_cloth", "bone_cloth"],
+      "script": "OmniNode/Function/physicsWorld/test/test_blender_mc2_product_debug_acceptance.py",
+      "production_surface": [
+        "always-run implicit debug node and automatic world slot discovery",
+        "request-driven next-advance DomainV1 debug readback",
+        "semantic viewport layers from frozen slot snapshots",
+        "world-owned draw store lifecycle"
+      ],
+      "expected": [
+        "debug disabled performs zero native debug readback",
+        "same-frame evaluation preserves a pending request",
+        "the next true native advance freezes topology, motion, Center, collision, self and output state",
+        "renderer output is unchanged by current RNA mutation and world dispose removes it"
+      ],
+      "rejection_boundaries": [
+        "no intermediate-state wiring sockets",
+        "no current RNA or final-result inference",
+        "no capture on reset-only or same-frame evaluations",
+        "draw item caps cannot alter solver state"
+      ]
+    }
+  ]
+}

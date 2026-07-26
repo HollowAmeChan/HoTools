@@ -13,8 +13,7 @@ import bpy
 
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 _OMNINODE_DIR = os.path.dirname(_TEST_DIR)
-_NODE_TREE_DIR = os.path.join(_OMNINODE_DIR, "NodeTree")
-_PACKAGE = "HoTools.OmniNode.NodeTree"
+_PACKAGE = "HoTools.OmniNode"
 
 
 def _install_package(name, path):
@@ -26,13 +25,12 @@ def _install_package(name, path):
     sys.modules[name] = module
 
 
-_install_package("HoTools", os.path.dirname(os.path.dirname(_NODE_TREE_DIR)))
-_install_package("HoTools.OmniNode", os.path.dirname(_NODE_TREE_DIR))
-_install_package(_PACKAGE, _NODE_TREE_DIR)
+_install_package("HoTools", os.path.dirname(_OMNINODE_DIR))
+_install_package(_PACKAGE, _OMNINODE_DIR)
 
 
 def _load_module(name, filename):
-    spec = importlib.util.spec_from_file_location(name, os.path.join(_NODE_TREE_DIR, filename))
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_OMNINODE_DIR, filename))
     module = importlib.util.module_from_spec(spec)
     module.__package__ = name.rsplit(".", 1)[0]
     sys.modules[name] = module

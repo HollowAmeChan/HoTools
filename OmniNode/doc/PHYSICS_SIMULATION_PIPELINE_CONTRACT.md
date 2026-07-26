@@ -1201,7 +1201,7 @@ C++边界必须由生产链计时和分配数据决定，而不是按语言偏�
 
 ## physicsWorld/utils 抽取计划
 
-迁移过程中明显通用的数学和实用函数，应从旧 solver 包装层抽到 `OmniNode/NodeTree/Function/physicsWorld/utils/`。这个目录只放与统一物理世界相关、且不属于某个单一 solver 的 helper。
+迁移过程中明显通用的数学和实用函数，应从旧 solver 包装层抽到 `OmniNode/Function/physicsWorld/utils/`。这个目录只放与统一物理世界相关、且不属于某个单一 solver 的 helper。
 
 初始建议分层：
 

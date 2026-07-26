@@ -1,0 +1,1097 @@
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA
+from ..FunctionNodeCore import omni
+from . import _Color
+
+from bpy.types import NodeSocketVector, NodeSocketColor
+import bpy
+import bmesh
+import typing
+from types import SimpleNamespace
+from typing import Any
+import time
+import mathutils
+from mathutils import Vector
+import numpy as np
+import re
+
+import os
+import sys
+if sys.version_info[:2] == (3, 13):
+    from ..._Lib.py313.PIL import Image, ImageDraw
+elif sys.version_info[:2] == (3, 11):
+    from ..._Lib.py311.PIL import Image, ImageDraw
+
+@omni(enable=True,
+    bl_label="导入图片",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
+    _OUTPUT_NAME=["图片"],
+    omni_description = """
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
+    """,
+        )
+def importImage2Blender(
+    imagePath: _OmniFolderPath,
+    isNonColor: bool,
+    isoverwrite: bool = False,
+) -> bpy.types.Image:
+    img_name = os.path.basename(imagePath)
+    old_img = bpy.data.images.get(img_name)
+
+    if old_img:
+        if isoverwrite:
+            bpy.data.images.remove(old_img)
+            img = bpy.data.images.load(imagePath)
+            img.name = img_name
+        else:
+            old_img.filepath = imagePath
+            old_img.reload()
+            img = old_img
+    else:
+        img = bpy.data.images.load(imagePath)
+        img.name = img_name
+
+    if isNonColor:
+        img.colorspace_settings.name = "Non-Color"
+    else:
+        img.colorspace_settings.name = "sRGB"
+    return img
+
+
+@omni(enable=True,
+    bl_label="批量导入图片",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
+    _OUTPUT_NAME=["图片"],
+    omni_description = """
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
+    """,
+        )
+def importMultiImage2Blender(
+    imagePaths: list[_OmniFolderPath],
+    isNonColor: bool,
+    isoverwrite: bool = True,
+) -> list[bpy.types.Image]:
+    imgs = []
+    for path in imagePaths:
+        img_name = os.path.basename(path)
+        old_img = bpy.data.images.get(img_name)
+
+        if old_img:
+            if isoverwrite:
+                bpy.data.images.remove(old_img)
+                img = bpy.data.images.load(path)
+                img.name = img_name
+            else:
+                old_img.filepath = path
+                old_img.reload()
+                img = old_img
+        else:
+            img = bpy.data.images.load(path)
+            img.name = img_name
+
+        if isNonColor:
+            img.colorspace_settings.name = "Non-Color"
+        else:
+            img.colorspace_settings.name = "sRGB"
+        imgs.append(img)
+    return imgs
+
+
+@omni(enable=True,
+    bl_label="设置图像颜色",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图像","颜色"],
+    _OUTPUT_NAME=["图像"],
+    )
+def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.Image:
+    length = len(img.pixels)//4
+    col = list(color)*length
+    img.pixels = col
+    return img
+
+
+def dilate_image_with_colors(pil_img, radius):
+    if radius <= 0:
+        return pil_img
+
+    pil_img = pil_img.convert("RGBA")
+    img = np.array(pil_img, dtype=np.uint8)
+    h, w = img.shape[:2]
+
+    rgb = img[..., :3].copy()
+    alpha = img[..., 3].copy()
+
+    mask = alpha > 0
+    neighbors = [
+        (-1, 0), (1, 0), (0, -1), (0, 1),
+        (-1, -1), (-1, 1), (1, -1), (1, 1)
+    ]
+
+    for _ in range(radius):
+        if mask.all():
+            break
+
+        new_mask = mask.copy()
+
+        # 8邻域
+        for dy, dx in neighbors:
+            src_y0 = max(0, -dy)
+            src_y1 = h - max(0, dy)
+            src_x0 = max(0, -dx)
+            src_x1 = w - max(0, dx)
+            dst_y0 = max(0, dy)
+            dst_y1 = h - max(0, -dy)
+            dst_x0 = max(0, dx)
+            dst_x1 = w - max(0, -dx)
+
+            if src_y0 >= src_y1 or src_x0 >= src_x1:
+                continue
+
+            src_mask = mask[src_y0:src_y1, src_x0:src_x1]
+            dst_mask = mask[dst_y0:dst_y1, dst_x0:dst_x1]
+            fill = (~dst_mask) & src_mask
+            if not fill.any():
+                continue
+
+            rgb[dst_y0:dst_y1, dst_x0:dst_x1][fill] = rgb[src_y0:src_y1, src_x0:src_x1][fill]
+            alpha[dst_y0:dst_y1, dst_x0:dst_x1][fill] = 255
+            new_mask[dst_y0:dst_y1, dst_x0:dst_x1] |= fill
+
+        mask = new_mask
+
+    return Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
+
+def tri_area(uv):
+    return abs(
+        (uv[1][0] - uv[0][0]) * (uv[2][1] - uv[0][1]) -
+        (uv[2][0] - uv[0][0]) * (uv[1][1] - uv[0][1])
+    ) * 0.5
+
+def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
+    def wrap_repeat(uv):
+        return uv - np.floor(uv)
+    # 模式选择
+    if not enable_aa or scale < 1.2:
+        mode = 0
+    elif scale < 2.5:
+        mode = 1
+    elif scale < 6.0:
+        mode = 2
+    else:
+        mode = 3
+
+    # nearest
+    if mode == 0:
+        wrapped_uvs = wrap_repeat(src_uvs)
+        sx = np.clip((wrapped_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
+        sy = np.clip((wrapped_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
+        return src_pixels[sy, sx]
+    
+    # bilinear函数
+    def bilinear(u, v):
+        u = wrap_repeat(u)
+        v = wrap_repeat(v)
+        sx = u * (src_w - 1)
+        sy = v * (src_h - 1)
+
+        x0 = np.clip(np.floor(sx).astype(np.int32), 0, src_w - 1)
+        x1 = np.clip(x0 + 1, 0, src_w - 1)
+        y0 = np.clip(np.floor(sy).astype(np.int32), 0, src_h - 1)
+        y1 = np.clip(y0 + 1, 0, src_h - 1)
+
+        wx = sx - x0
+        wy = sy - y0
+
+        c00 = src_pixels[y0, x0]
+        c10 = src_pixels[y0, x1]
+        c01 = src_pixels[y1, x0]
+        c11 = src_pixels[y1, x1]
+
+        return (
+            c00 * (1 - wx)[..., None] * (1 - wy)[..., None] +
+            c10 * wx[..., None] * (1 - wy)[..., None] +
+            c01 * (1 - wx)[..., None] * wy[..., None] +
+            c11 * wx[..., None] * wy[..., None]
+        )
+
+    # 纯bilinear
+    if mode == 1:
+        return bilinear(src_uvs[..., 0], src_uvs[..., 1])
+
+    # 多采样
+    radius = min(2.0, np.sqrt(scale) * 0.5)
+
+    if mode == 2:
+        offsets = [
+            (-radius, -radius),
+            ( radius, -radius),
+            (-radius,  radius),
+            ( radius,  radius),
+        ]
+    else:
+        offsets = [
+            (-radius, -radius), (0, -radius), (radius, -radius),
+            (-radius, 0),       (0, 0),       (radius, 0),
+            (-radius, radius),  (0, radius),  (radius, radius),
+        ]
+
+    acc = 0
+    weight = 0
+
+    for dx, dy in offsets:
+        u = wrap_repeat(src_uvs[..., 0] + dx / src_w)
+        v = wrap_repeat(src_uvs[..., 1] + dy / src_h)
+
+        sample = bilinear(u, v)
+
+        a = sample[..., 3:4]  # alpha
+
+        acc += sample * a
+        weight += a
+
+    # 防止除0
+    weight = np.clip(weight, 1e-6, None)
+
+    return acc / weight
+
+@omni(
+    enable=True,
+    bl_label="纹理UV重定向",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物体","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
+    _OUTPUT_NAME=["图像","图像路径"],
+    omni_description="""
+    该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射(UV Reprojection Transfer)
+    1. 总是创建新图像，使用指定的分辨率
+    2. isNormal=True
+    - 自动设置 colorspace = Non-Color
+    - 初始化值为 (0.5, 0.5, 1.0)
+    - 不进行 alpha 混合，直接覆盖写入
+    否则
+    - 使用 alpha 进行混合写入
+    - 支持透明区域叠加
+    3. 直接保存图像到指定文件路径，支持的格式：PNG, JPG, JPEG, TGA, BMP，然后导入到Blender中
+    4. 膨胀像素数用于消除UV边缘缝隙
+    """,
+    mute_passthrough={"_OUTPUT0": "img", "_OUTPUT1": "file_path"},
+    )
+def uv_reprojectionTransfer(
+    objs:list[bpy.types.Object],
+    uv_source: str,
+    uv_target: str,
+    img: bpy.types.Image,
+    dilate_radius: int = 2,
+    resolution: int = 2048,
+    isNormal: bool = False,
+    new_name: str = "UVBakeResult",
+    file_path: _OmniFolderPath = "",
+    format: _OmniImageFormat = "PNG",
+    enable_aa: bool = True,
+) -> tuple[bpy.types.Image, _OmniFolderPath]:
+
+    # 检查是否在编辑模式下
+    if bpy.context.mode == 'EDIT_MESH':
+        raise RuntimeError("无法在编辑模式下运行，请切换到物体模式")
+
+    total_start = time.perf_counter()
+    timings = {k: 0.0 for k in [
+        "collect_meshes","reproject","dilate","fill_normal",
+        "save","load_blender","create_blender_image"
+    ]}
+
+    # Source image
+    src_w, src_h = img.size
+    src_pixels = np.empty(src_w * src_h * 4, dtype=np.float32)
+    img.pixels.foreach_get(src_pixels)
+    src_pixels = src_pixels.reshape(src_h, src_w, 4)
+
+    # Output
+    out_w = out_h = resolution
+
+    if isNormal:
+        out = np.zeros((out_h, out_w, 4), dtype=np.float32)
+        out[..., :3] = (0.5, 0.5, 1.0)
+    else:
+        out = np.zeros((out_h, out_w, 4), dtype=np.float32)
+
+    # Collect meshes
+    collect_start = time.perf_counter()
+    meshes = [o for o in objs if o.type == 'MESH']
+    timings["collect_meshes"] = time.perf_counter() - collect_start
+
+    # Reproject
+    repro_start = time.perf_counter()
+
+    for obj in meshes:
+        me = obj.data
+
+        if uv_source not in me.uv_layers or uv_target not in me.uv_layers:
+            continue
+
+        me.calc_loop_triangles()
+        tris = me.loop_triangles
+
+        uv_src_layer = me.uv_layers[uv_source].data
+        uv_dst_layer = me.uv_layers[uv_target].data
+
+        for tri in tris:
+            idx = tri.loops
+            if len(idx) != 3:
+                continue
+
+            src_layer_len = len(uv_src_layer)
+            dst_layer_len = len(uv_dst_layer)
+            if any(i < 0 or i >= src_layer_len or i >= dst_layer_len for i in idx):
+                continue
+
+            # ---- 取UV（numpy化）----
+            src_uv = np.array([uv_src_layer[i].uv[:] for i in idx], dtype=np.float32)
+            dst_uv = np.array([uv_dst_layer[i].uv[:] for i in idx], dtype=np.float32)
+
+            # ---- bounding box ----
+            uv_min = np.clip(dst_uv.min(axis=0), 0.0, 1.0)
+            uv_max = np.clip(dst_uv.max(axis=0), 0.0, 1.0)
+
+            min_x = int(uv_min[0] * (out_w - 1))
+            max_x = int(uv_max[0] * (out_w - 1))
+
+            min_y = int((1.0 - uv_max[1]) * (out_h - 1))
+            max_y = int((1.0 - uv_min[1]) * (out_h - 1))
+
+            if min_x > max_x or min_y > max_y:
+                continue
+
+            # ---- 像素grid ----
+            xs = np.arange(min_x, max_x + 1)
+            ys = np.arange(min_y, max_y + 1)
+
+            grid_x, grid_y = np.meshgrid(xs, ys)
+
+            px = (grid_x + 0.5) / out_w
+            py = 1.0 - (grid_y + 0.5) / out_h
+
+            p = np.stack([px, py], axis=-1)
+
+            # ---- barycentric（向量化）----
+            a, b, c = dst_uv
+
+            v0 = b - a
+            v1 = c - a
+            v2 = p - a
+
+            d00 = np.dot(v0, v0)
+            d01 = np.dot(v0, v1)
+            d11 = np.dot(v1, v1)
+
+            denom = d00 * d11 - d01 * d01
+            if denom == 0:
+                continue
+
+            d20 = v2[..., 0] * v0[0] + v2[..., 1] * v0[1]
+            d21 = v2[..., 0] * v1[0] + v2[..., 1] * v1[1]
+
+            v = (d11 * d20 - d01 * d21) / denom
+            w = (d00 * d21 - d01 * d20) / denom
+            u = 1.0 - v - w
+
+            mask = (u >= 0) & (v >= 0) & (w >= 0)
+            if not mask.any():
+                continue
+
+            # ---- src uv ----
+            src_uvs = (
+                src_uv[0] * u[..., None] +
+                src_uv[1] * v[..., None] +
+                src_uv[2] * w[..., None]
+            )
+
+            # ---- 采样 ----
+            sx = np.clip((src_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
+            sy = np.clip((src_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
+
+            #是否抗锯齿
+            scale = (tri_area(src_uv) * src_w * src_h) / (tri_area(dst_uv) * out_w * out_h + 1e-8)
+            colors = sample_texture(
+                src_pixels,
+                src_uvs,
+                src_w,
+                src_h,
+                scale,
+                enable_aa
+            )
+
+            region = out[min_y:max_y+1, min_x:max_x+1]
+            masked_colors = colors[mask]
+
+            if isNormal:
+                region[mask] = masked_colors
+                region[mask, 3] = 1.0
+            else:
+                src_a = masked_colors[:, 3:4]
+                dst_rgb = region[mask, :3]
+                dst_a = region[mask, 3]
+                region[mask, :3] = masked_colors[:, :3] * src_a + dst_rgb * (1.0 - src_a)
+                region[mask, 3] = np.maximum(dst_a, masked_colors[:, 3])
+
+            out[min_y:max_y+1, min_x:max_x+1] = region
+
+    timings["reproject"] = time.perf_counter() - repro_start
+
+    # 后处理
+    def fill_normal_background(img):
+        arr = np.array(img, dtype=np.uint8)
+        mask = arr[:, :, 3] == 0
+        if mask.any():
+            arr[mask, 0] = 128
+            arr[mask, 1] = 128
+            arr[mask, 2] = 255
+            arr[mask, 3] = 255
+        return Image.fromarray(arr, mode='RGBA')
+
+    file_format = format.upper()
+    output_path = ""
+
+    if file_path:
+        abs_file_path = bpy.path.abspath(file_path)
+        dir_path = os.path.dirname(abs_file_path)
+        full_path = os.path.join(dir_path, new_name + '.' + file_format.lower())
+        os.makedirs(dir_path, exist_ok=True)
+
+        img_array = (out * 255).astype(np.uint8)
+        pil_img = Image.fromarray(img_array, 'RGBA')
+
+        t = time.perf_counter()
+        pil_img = dilate_image_with_colors(pil_img, dilate_radius)
+        timings["dilate"] = time.perf_counter() - t
+
+        if isNormal:
+            t = time.perf_counter()
+            pil_img = fill_normal_background(pil_img)
+            timings["fill_normal"] = time.perf_counter() - t
+
+        t = time.perf_counter()
+        pil_img.save(full_path, format=file_format)
+        timings["save"] = time.perf_counter() - t
+
+        output_path = full_path
+
+        t = time.perf_counter()
+        if new_name in bpy.data.images:
+            bpy.data.images.remove(bpy.data.images[new_name])
+        out_img = bpy.data.images.load(full_path)
+        out_img.name = new_name
+        if isNormal:
+            out_img.colorspace_settings.name = "Non-Color"
+        timings["load_blender"] = time.perf_counter() - t
+
+    else:
+        t = time.perf_counter()
+        out_img = bpy.data.images.new(
+            name=new_name,
+            width=out_w,
+            height=out_h,
+            alpha=True
+        )
+        if isNormal:
+            out_img.colorspace_settings.name = "Non-Color"
+
+        flat = out.ravel()  # 不复制
+        out_img.pixels.foreach_set(flat)
+        out_img.update()
+        timings["create_blender_image"] = time.perf_counter() - t
+
+    total_time = time.perf_counter() - total_start
+
+    print(
+        f"[uv_reprojectionTransfer OPT] "
+        f"collect_meshes={timings['collect_meshes']:.4f}s "
+        f"reproject={timings['reproject']:.4f}s "
+        f"dilate={timings['dilate']:.4f}s "
+        f"fill_normal={timings['fill_normal']:.4f}s "
+        f"save={timings['save']:.4f}s "
+        f"load_blender={timings['load_blender']:.4f}s "
+        f"create_blender_image={timings['create_blender_image']:.4f}s "
+        f"total={total_time:.4f}s"
+    )
+
+    return out_img, output_path
+
+
+def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
+    out_a = src_a + dst_a * (1.0 - src_a)
+
+    # 防止除0
+    safe_out_a = np.maximum(out_a, 1e-8)
+
+    out_rgb = (
+        src_rgb * src_a[..., None] +
+        dst_rgb * dst_a[..., None] * (1.0 - src_a[..., None])
+    ) / safe_out_a[..., None]
+
+    return out_rgb, out_a
+
+@omni(
+    enable=True,
+    bl_label="合成图片",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","是法线贴图","是灰度数据图"],
+    _OUTPUT_NAME=["合成图像"],
+    omni_description="""
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
+    """
+)
+def combineImages(
+    imgs: list[bpy.types.Image],
+    backgroundColor: _OmniColorRGBA,
+    name: str,
+    overwrite: bool = True,
+    is_normalMap: bool = False,
+    is_GrayscaleData:bool = False,
+) -> bpy.types.Image:
+
+    if not imgs:
+        raise ValueError("[combineImages] empty image list")
+
+    # 0. 覆写逻辑
+    old_img = bpy.data.images.get(name)
+    if overwrite:
+        if old_img:
+            old_img.user_clear()
+            bpy.data.images.remove(old_img)
+            old_img = None
+
+    # 1. 尺寸
+    base = imgs[0]
+    width = base.size[0]
+    height = base.size[1]
+
+    # 2. 背景
+    bg_rgb = np.ones((height, width, 3), dtype=np.float32)
+
+    bg_rgba = tuple(backgroundColor)
+    backgroundColor = SimpleNamespace(
+        r=bg_rgba[0],
+        g=bg_rgba[1],
+        b=bg_rgba[2],
+        a=bg_rgba[3] if len(bg_rgba) > 3 else 1.0,
+    )
+
+    bg_rgb[..., 0] *= backgroundColor.r
+    bg_rgb[..., 1] *= backgroundColor.g
+    bg_rgb[..., 2] *= backgroundColor.b
+
+    bg_a = np.full((height, width), backgroundColor.a, dtype=np.float32)
+
+    # 3. 合成
+    acc_rgb = bg_rgb
+    acc_a = bg_a
+
+    for img in imgs:
+
+        if img.size[0] != width or img.size[1] != height:
+            raise ValueError(
+                f"[combineImages] size mismatch: {img.name} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+
+        img_pixels = np.array(img.pixels[:], dtype=np.float32)
+        img_pixels = img_pixels.reshape((height, width, 4))
+
+        src_rgb = img_pixels[..., :3]
+        src_a = img_pixels[..., 3]
+
+        acc_rgb, acc_a = alpha_over(src_rgb, src_a, acc_rgb, acc_a)
+
+    # 4. 创建 Image
+    if not overwrite and old_img:
+        result = old_img
+        if result.size[0] != width or result.size[1] != height:
+            result.scale(width, height)
+    else:
+        result = bpy.data.images.new(
+            name=name,
+            width=width,
+            height=height,
+            alpha=True,
+            float_buffer=is_normalMap  #法线贴图需要半精度渲染（）
+    )
+    if is_GrayscaleData or is_normalMap:# 必须在创建后立刻设置
+        result.colorspace_settings.name = 'Non-Color'
+    else:
+        result.colorspace_settings.name = 'sRGB'
+    # 5. 写入
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., :3] = acc_rgb
+    out[..., 3] = acc_a
+
+    flat = np.ascontiguousarray(out, dtype=np.float32).ravel()
+    result.pixels.foreach_set(flat)
+    result.update()
+    return result
+
+
+def _pil_save_format_and_ext(format: _OmniImageFormat) -> tuple[str, str, bool]:
+    fmt = str(format or "PNG").upper()
+    if fmt == "OPEN_EXR":
+        fmt = "EXR"
+
+    format_map = {
+        "PNG": ("PNG", ".png", True),
+        "JPG": ("JPEG", ".jpg", False),
+        "JPEG": ("JPEG", ".jpg", False),
+        "TGA": ("TGA", ".tga", True),
+        "BMP": ("BMP", ".bmp", False),
+    }
+
+    if fmt == "EXR":
+        raise ValueError("[combineImageFiles] EXR needs Blender/OpenEXR IO and is not supported by the direct Pillow path")
+
+    try:
+        return format_map[fmt]
+    except KeyError:
+        raise ValueError(f"[combineImageFiles] unsupported format: {format}")
+
+
+def _color_to_rgba8(color: _OmniColorRGBA) -> tuple[int, int, int, int]:
+    values = tuple(color) if color is not None else ()
+    r = values[0] if len(values) > 0 else 0.0
+    g = values[1] if len(values) > 1 else 0.0
+    b = values[2] if len(values) > 2 else 0.0
+    a = values[3] if len(values) > 3 else 1.0
+
+    return tuple(
+        int(round(float(np.clip(channel, 0.0, 1.0)) * 255.0))
+        for channel in (r, g, b, a)
+    )
+
+
+def _resolve_direct_image_output_path(
+    file_path: _OmniFolderPath,
+    name: str,
+    format: _OmniImageFormat,
+) -> str:
+    if not file_path:
+        raise ValueError("[combineImageFiles] file_path is empty")
+
+    _, ext, _ = _pil_save_format_and_ext(format)
+    output_path = bpy.path.abspath(str(file_path))
+
+    is_folder = (
+        output_path.endswith(("/", "\\"))
+        or os.path.isdir(output_path)
+        or not os.path.splitext(output_path)[1]
+    )
+
+    if is_folder:
+        output_name = str(name or "CombinedImage")
+        output_path = os.path.join(output_path, output_name + ext)
+
+    return output_path
+
+
+def _load_pil_rgba(path: _OmniFolderPath) -> Image.Image:
+    abs_path = bpy.path.abspath(str(path))
+    if not abs_path:
+        raise ValueError("[combineImageFiles] image path is empty")
+    if not os.path.isfile(abs_path):
+        raise FileNotFoundError(f"[combineImageFiles] image file not found: {abs_path}")
+
+    with Image.open(abs_path) as src:
+        return src.convert("RGBA")
+
+
+@omni(
+    enable=True,
+    bl_label="合成图片(外部)",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径列表", "保存位置", "背景颜色", "输出名称", "格式", "覆盖同名文件", "是数据贴图"],
+    _OUTPUT_NAME=["文件路径"],
+    omni_description="""
+    直接从磁盘读取多张图片，用 Pillow 合成后保存到磁盘。
+    不导入、不创建 Blender Image，适合批量纹理合成。
+    如果保存位置是目录或没有文件后缀，会使用输出名称和格式自动生成文件名。
+    数据贴图不会做色彩空间转换，但会阻止保存为 JPEG，避免数据被有损压缩。
+    """,
+    mute_passthrough={"_OUTPUT0": "file_path"},
+)
+def combineImageFiles(
+    imagePaths: list[_OmniFolderPath],
+    file_path: _OmniFolderPath,
+    backgroundColor: _OmniColorRGBA = (0.0, 0.0, 0.0, 0.0),
+    name: str = "CombinedImage",
+    format: _OmniImageFormat = "PNG",
+    overwrite: bool = True,
+    is_data: bool = False,
+) -> _OmniFolderPath:
+    if isinstance(imagePaths, str):
+        image_paths = [imagePaths]
+    else:
+        image_paths = list(imagePaths or [])
+
+    image_paths = [path for path in image_paths if path]
+    if not image_paths:
+        raise ValueError("[combineImageFiles] empty image path list")
+
+    pil_format, _, supports_alpha = _pil_save_format_and_ext(format)
+    if is_data and pil_format == "JPEG":
+        raise ValueError("[combineImageFiles] data maps should not be saved as JPEG")
+
+    output_path = _resolve_direct_image_output_path(file_path, name, format)
+
+    if os.path.exists(output_path) and not overwrite:
+        raise FileExistsError(f"[combineImageFiles] output file exists: {output_path}")
+
+    first_img = _load_pil_rgba(image_paths[0])
+    width, height = first_img.size
+    bg_rgba = _color_to_rgba8(backgroundColor)
+    acc = Image.new("RGBA", (width, height), bg_rgba)
+    acc = Image.alpha_composite(acc, first_img)
+
+    for image_path in image_paths[1:]:
+        img = _load_pil_rgba(image_path)
+        if img.size != (width, height):
+            raise ValueError(
+                f"[combineImageFiles] size mismatch: {bpy.path.abspath(str(image_path))} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+        acc = Image.alpha_composite(acc, img)
+
+    if not supports_alpha:
+        opaque_bg = Image.new("RGBA", acc.size, (bg_rgba[0], bg_rgba[1], bg_rgba[2], 255))
+        acc = Image.alpha_composite(opaque_bg, acc).convert("RGB")
+
+    folder = os.path.dirname(output_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    acc.save(output_path, format=pil_format)
+    return output_path
+
+
+@omni(enable=True,
+    bl_label="保存图片",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片","文件路径","格式"],
+    _OUTPUT_NAME=["文件路径"],
+    omni_description="""
+    该节点用于将Blender图片保存到指定路径，支持 PNG、JPEG、EXR 等格式
+    """,
+    mute_passthrough={"_OUTPUT0": "file_path"},
+)
+def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniImageFormat) -> _OmniFolderPath:
+
+    if not bl_img:
+        raise ValueError("[saveImage] bl_img is None")
+
+    if not file_path:
+        raise ValueError("[saveImage] file_path is empty")
+
+    # 1. 转换路径
+    file_path = bpy.path.abspath(file_path)
+
+    # 2. 如果传进来是目录 -> 自动补文件名
+    if file_path.endswith(os.sep) or os.path.isdir(file_path):
+        name = bl_img.name
+
+        fmt = format.lower()
+        ext_map = {
+            "png": ".png",
+            "jpg": ".jpg",
+            "jpeg": ".jpg",
+            "exr": ".exr",
+            "open_exr": ".exr",
+            "tga": ".tga",
+            "bmp": ".bmp",
+        }
+
+        ext = ext_map.get(fmt, ".png")
+
+        file_path = os.path.join(file_path, name + ext)
+
+    # 3. 创建目录
+    folder = os.path.dirname(file_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    # 4. format
+    fmt = format.upper()
+
+    if fmt == "PNG":
+        bl_img.file_format = 'PNG'
+
+    elif fmt in ("EXR", "OPEN_EXR"):
+        bl_img.file_format = 'OPEN_EXR'
+        bl_img.exr_codec = 'ZIP'
+
+    elif fmt in ("JPG", "JPEG"):
+        bl_img.file_format = 'JPEG'
+
+    elif fmt == "TGA":
+        bl_img.file_format = 'TARGA'
+
+    elif fmt == "BMP":
+        bl_img.file_format = 'BMP'
+
+    else:
+        raise ValueError(f"[saveImage] unsupported format: {format}")
+
+    # 5. 保存
+    bl_img.filepath_raw = file_path
+
+    bl_img.save()
+
+    return file_path
+
+
+def _image_to_numpy_rgba(img: bpy.types.Image) -> np.ndarray:
+    width = img.size[0]
+    height = img.size[1]
+    pixels = np.array(img.pixels[:], dtype=np.float32)
+    return pixels.reshape((height, width, 4))
+
+
+def _prepare_image_output(
+    name: str,
+    width: int,
+    height: int,
+    overwrite: bool,
+    float_buffer: bool = False,
+    is_non_color: bool = True,
+) -> bpy.types.Image:
+    old_img = bpy.data.images.get(name)
+
+    if overwrite and old_img:
+        old_img.user_clear()
+        bpy.data.images.remove(old_img)
+        old_img = None
+
+    if not overwrite and old_img:
+        result = old_img
+        if result.size[0] != width or result.size[1] != height:
+            result.scale(width, height)
+    else:
+        result = bpy.data.images.new(
+            name=name,
+            width=width,
+            height=height,
+            alpha=True,
+            float_buffer=float_buffer,
+        )
+
+    result.colorspace_settings.name = "Non-Color" if is_non_color else "sRGB"
+    return result
+
+
+def _write_numpy_to_image(img: bpy.types.Image, pixels: np.ndarray) -> bpy.types.Image:
+    flat = np.ascontiguousarray(pixels, dtype=np.float32).ravel()
+    img.pixels.foreach_set(flat)
+    img.update()
+    return img
+
+
+def _single_channel_to_rgba(channel: np.ndarray) -> np.ndarray:
+    height, width = channel.shape
+    out = np.ones((height, width, 4), dtype=np.float32)
+    out[..., 0] = channel
+    out[..., 1] = channel
+    out[..., 2] = channel
+    out[..., 3] = 1.0
+    return out
+
+
+@omni(
+    enable=True,
+    bl_label="拆分图片通道",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片", "输出名称前缀", "覆盖同名图像"],
+    _OUTPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图"],
+    omni_description="""
+    将输入图片拆分为 R/G/B/A 四张灰度通道图。
+    输出图会自动命名为 前缀_R、前缀_G、前缀_B、前缀_A，且默认使用 Non-Color 色彩空间。
+    """,
+    mute_passthrough={
+        "_OUTPUT0": "img",
+        "_OUTPUT1": "img",
+        "_OUTPUT2": "img",
+        "_OUTPUT3": "img",
+    },
+)
+def splitImageChannels(
+    img: bpy.types.Image,
+    output_name_prefix: str = "",
+    overwrite: bool = True,
+) -> tuple[bpy.types.Image, bpy.types.Image, bpy.types.Image, bpy.types.Image]:
+    if not img:
+        raise ValueError("[splitImageChannels] img is None")
+
+    width = img.size[0]
+    height = img.size[1]
+    img_array = _image_to_numpy_rgba(img)
+
+    base_name = output_name_prefix if output_name_prefix else img.name
+    float_buffer = bool(getattr(img, "is_float", False))
+
+    outputs = []
+    for channel_index, suffix in enumerate(("R", "G", "B", "A")):
+        out_img = _prepare_image_output(
+            name=f"{base_name}_{suffix}",
+            width=width,
+            height=height,
+            overwrite=overwrite,
+            float_buffer=float_buffer,
+            is_non_color=True,
+        )
+        channel_pixels = _single_channel_to_rgba(img_array[..., channel_index])
+        _write_numpy_to_image(out_img, channel_pixels)
+        outputs.append(out_img)
+
+    return tuple(outputs)
+
+
+@omni(
+    enable=True,
+    bl_label="合并图片通道",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图", "新建图像名称", "覆盖同名图像", "是数据图"],
+    _OUTPUT_NAME=["合并图像"],
+    omni_description="""
+    将四张通道图合并为一张 RGBA 图片。
+    每个输入图片默认读取其 R 通道作为目标通道值；若 A 通道图为空，则 Alpha 默认为 1。
+    """,
+    mute_passthrough={"_OUTPUT0": "r_img"},
+)
+def mergeImageChannels(
+    r_img: bpy.types.Image,
+    g_img: bpy.types.Image,
+    b_img: bpy.types.Image,
+    a_img: bpy.types.Image = None,
+    name: str = "",
+    overwrite: bool = True,
+    is_data: bool = True,
+) -> bpy.types.Image:
+    if not r_img or not g_img or not b_img:
+        raise ValueError("[mergeImageChannels] R/G/B images cannot be None")
+
+    base_img = r_img
+    width = base_img.size[0]
+    height = base_img.size[1]
+
+    for img in (g_img, b_img, a_img):
+        if img and (img.size[0] != width or img.size[1] != height):
+            raise ValueError(
+                f"[mergeImageChannels] size mismatch: {img.name} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+
+    r_pixels = _image_to_numpy_rgba(r_img)[..., 0]
+    g_pixels = _image_to_numpy_rgba(g_img)[..., 0]
+    b_pixels = _image_to_numpy_rgba(b_img)[..., 0]
+
+    if a_img:
+        a_pixels = _image_to_numpy_rgba(a_img)[..., 0]
+    else:
+        a_pixels = np.ones((height, width), dtype=np.float32)
+
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., 0] = r_pixels
+    out[..., 1] = g_pixels
+    out[..., 2] = b_pixels
+    out[..., 3] = a_pixels
+    out = np.clip(out, 0.0, 1.0)
+
+    result_name = name if name else f"{base_img.name}_Merged"
+    result = _prepare_image_output(
+        name=result_name,
+        width=width,
+        height=height,
+        overwrite=overwrite,
+        float_buffer=any(bool(getattr(img, "is_float", False)) for img in (r_img, g_img, b_img, a_img) if img),
+        is_non_color=is_data,
+    )
+    _write_numpy_to_image(result, out)
+    return result
+
+
+@omni(
+    enable=True,
+    bl_label="调整法线贴图强度",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["法线贴图", "强度", "新建图像名称", "覆盖同名图像", "文件路径", "图像格式"],
+    _OUTPUT_NAME=["法线贴图", "图像路径"],
+    omni_description="""
+    调整输入切线空间法线贴图的强度。
+    强度为 0 时输出平面法线，强度为 1 时保持原图，强度大于 1 时增强凹凸。
+    输出图像自动使用 Non-Color 色彩空间；填写文件路径时会同时保存到磁盘。
+    """,
+    mute_passthrough={"_OUTPUT0": "img", "_OUTPUT1": "file_path"},
+)
+def adjustNormalMapStrength(
+    img: bpy.types.Image,
+    strength: float = 1.0,
+    name: str = "",
+    overwrite: bool = True,
+    file_path: _OmniFolderPath = "",
+    format: _OmniImageFormat = "PNG",
+) -> tuple[bpy.types.Image, _OmniFolderPath]:
+    if not img:
+        raise ValueError("[adjustNormalMapStrength] img is None")
+
+    width = img.size[0]
+    height = img.size[1]
+    if width <= 0 or height <= 0:
+        raise ValueError(f"[adjustNormalMapStrength] invalid image size: {width}x{height}")
+
+    normal_strength = max(0.0, float(strength))
+    img_array = _image_to_numpy_rgba(img)
+
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., 3] = img_array[..., 3]
+
+    if normal_strength <= 1e-8:
+        out[..., :3] = (0.5, 0.5, 1.0)
+    elif abs(normal_strength - 1.0) <= 1e-8:
+        out[..., :3] = img_array[..., :3]
+    else:
+        normal = img_array[..., :3] * 2.0 - 1.0
+        normal[..., :2] *= normal_strength
+
+        length = np.linalg.norm(normal, axis=2)
+        valid = length > 1e-8
+
+        adjusted_normal = np.zeros_like(normal, dtype=np.float32)
+        adjusted_normal[..., 2] = 1.0
+        adjusted_normal[valid] = normal[valid] / length[valid, None]
+        out[..., :3] = adjusted_normal * 0.5 + 0.5
+
+    out = np.clip(out, 0.0, 1.0)
+
+    result_name = name if name else f"{img.name}_NormalStrength"
+    result = _prepare_image_output(
+        name=result_name,
+        width=width,
+        height=height,
+        overwrite=overwrite,
+        float_buffer=bool(getattr(img, "is_float", False)),
+        is_non_color=True,
+    )
+    _write_numpy_to_image(result, out)
+
+    output_path = ""
+    if file_path:
+        output_path = saveImage(result, file_path, format)
+
+    return result, output_path
