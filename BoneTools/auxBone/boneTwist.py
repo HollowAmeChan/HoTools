@@ -1180,10 +1180,7 @@ class TwistBoneCore:
                     bones = [active_bone.name]
             mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature_obj)
         elif original_active.type == "MESH":
-            for mod in original_active.modifiers:
-                if mod.type == "ARMATURE" and mod.object:
-                    armature_obj = mod.object
-                    break
+            armature_obj = bone_utils.find_deforming_armature_for_object(original_active)
             active_bone = context.active_pose_bone
             if active_bone:
                 bones = [active_bone.name]
@@ -1356,11 +1353,7 @@ class OP_TwistBoneWithWeight(Operator):
                 return bool(bone_utils.selected_bone_names(context, obj))
             return False
 
-        armature = None
-        for mod in obj.modifiers:
-            if mod.type == "ARMATURE" and mod.object:
-                armature = mod.object
-                break
+        armature = bone_utils.find_deforming_armature_for_object(obj)
 
         if not armature:
             return False

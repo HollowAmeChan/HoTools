@@ -15,6 +15,7 @@ import random
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 from bpy.app.handlers import persistent
+from Utils import bone_utils
 # TODO:自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
 
@@ -287,7 +288,7 @@ class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
             return {'CANCELLED'}
 
         # armature过滤
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         bone_names = {b.name for b in arm.data.bones} if arm else None
 
         vg_lock = {vg.index: vg.lock_weight for vg in obj.vertex_groups}
@@ -345,7 +346,7 @@ class OP_VertexGroupTools_RemoveGroupVertex_by_value(Operator):
 
         threshold = context.scene.hoVertexGroupTools_remove_max
 
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         bone_names = {b.name for b in arm.data.bones} if arm else None
 
         vg_lock = {vg.index: vg.lock_weight for vg in obj.vertex_groups}
@@ -505,7 +506,7 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
     }
 
     def _get_armature_bone_names(self, obj):
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定骨骼")
             return None
@@ -753,7 +754,7 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
             return {'CANCELLED'}
 
         # === 找骨架 ===
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定骨骼")
             return {'CANCELLED'}
@@ -1005,13 +1006,7 @@ class VGSwitchHUD:
         VGSwitchHUD._start_time = time.time()
 
         obj = context.active_object
-        rig = None
-
-        if obj:
-            for mod in obj.modifiers:
-                if mod.type == 'ARMATURE' and mod.object:
-                    rig = mod.object
-                    break
+        rig = bone_utils.find_armature_for_object(obj)
 
         if rig:
             pb = rig.pose.bones.get(bone_name)
@@ -1178,10 +1173,7 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
 
     @staticmethod
     def _find_rig(obj):
-        for mod in obj.modifiers:
-            if mod.type == 'ARMATURE' and mod.object:
-                return mod.object
-        return obj.find_armature()
+        return bone_utils.find_armature_for_object(obj)
 
     @staticmethod
     def _distance_point_to_segment_2d(point, start, end):
@@ -1386,7 +1378,7 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
         dvert_layer = bm.verts.layers.deform.verify()
 
         # 找到骨骼绑定的顶点组
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定骨骼")
             return {'CANCELLED'}
@@ -1570,7 +1562,7 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
         dvert_layer = bm.verts.layers.deform.verify()
 
         # 找到骨骼绑定的顶点组
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定骨骼")
             return {'CANCELLED'}
@@ -1926,7 +1918,7 @@ class OP_SelectNonWeightVertices(Operator):
 
         bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='VERT')
 
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
             return {'CANCELLED'}
@@ -1992,7 +1984,7 @@ class OP_GenegateNoneMirroredGroup(Operator):
     def execute(self, context):
         obj = context.active_object
 
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
             return {'CANCELLED'}
@@ -2049,7 +2041,7 @@ class OP_RemoveNoneWeightGroup(Operator):
     def execute(self, context):
         obj = context.active_object
 
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
             return {'CANCELLED'}
@@ -2318,7 +2310,7 @@ class OP_DebugBoneWeightGroupSwitch(Operator):
                     area.tag_redraw()
 
         # ===== 检查骨架 =====
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
             return {'CANCELLED'}

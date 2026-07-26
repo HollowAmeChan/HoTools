@@ -7,6 +7,7 @@ import json
 import math
 from mathutils import Vector
 from bpy.app.handlers import persistent
+from Utils import bone_utils
 
 
 SHAPE_KEY_RENAME_MAP = {
@@ -2634,7 +2635,7 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
 
         # 显示当前寻找的骨骼名称，并提示是否真的存在同名骨
         if vg is not None:
-            arm = obj.find_armature()
+            arm = bone_utils.find_armature_for_object(obj)
             bone = arm.data.bones.get(vg.name) if arm else None
             if bone is not None:
                 layout.label(text=f"目标骨骼：{vg.name}", icon='BONE_DATA')
@@ -2676,7 +2677,7 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
     def _generate(self, obj, vg):
 
         # === 检测骨架 ===
-        arm = obj.find_armature()
+        arm = bone_utils.find_armature_for_object(obj)
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
             return {'CANCELLED'}

@@ -163,19 +163,103 @@ def set_object_mode(obj, mode):
         bpy.ops.object.mode_set(mode=mode)
 
 
+def find_deforming_armatures_for_object(
+    obj: bpy.types.Object,
+) -> tuple[bpy.types.Object, ...]:
+    """查找真正形变该物体的骨架，可能返回多个修改器目标。"""
+    if obj is None:
+        return ()
+    if obj.type == "ARMATURE":
+        return (obj,)
+
+    # 修改器是明确绑定关系，优先于场景层级；保留修改器栈顺序并去重。
+    armatures = []
+    seen = set()
+    for modifier in obj.modifiers:
+        if modifier.type != "ARMATURE":
+            continue
+        armature = modifier.object
+        if armature is None or armature.type != "ARMATURE":
+            continue
+        pointer = armature.as_pointer()
+        if pointer in seen:
+            continue
+        seen.add(pointer)
+        armatures.append(armature)
+    parent = obj.parent
+    if (
+        parent is not None
+        and obj.parent_type == "ARMATURE"
+        and parent.type == "ARMATURE"
+    ):
+        pointer = parent.as_pointer()
+        if pointer not in seen:
+            armatures.append(parent)
+    return tuple(armatures)
+
+
+def find_armatures_for_object(obj: bpy.types.Object) -> tuple[bpy.types.Object, ...]:
+    """查找物体所属的骨架，显式形变关系优先于父级资产层级。"""
+    if obj is None:
+        return ()
+
+    armatures = find_deforming_armatures_for_object(obj)
+    if armatures:
+        return armatures
+
+    # 游戏资产常在骨架与网格之间插入多层 LOD Empty，内置 find_armature 不会穿透它们。
+    parent = obj.parent
+    visited = set()
+    while parent is not None:
+        pointer = parent.as_pointer()
+        if pointer in visited:
+            break
+        visited.add(pointer)
+        if parent.type == "ARMATURE":
+            return (parent,)
+        parent = parent.parent
+    return ()
+
+
+def find_armature_for_object(obj: bpy.types.Object) -> bpy.types.Object | None:
+    """仅在物体能唯一确定一个骨架时返回它，歧义时返回 None。"""
+    armatures = find_armatures_for_object(obj)
+    return armatures[0] if len(armatures) == 1 else None
+
+
+def find_deforming_armature_for_object(
+    obj: bpy.types.Object,
+) -> bpy.types.Object | None:
+    """仅在物体能唯一确定一个形变骨架时返回它，歧义时返回 None。"""
+    armatures = find_deforming_armatures_for_object(obj)
+    return armatures[0] if len(armatures) == 1 else None
+
+
+def object_uses_armature(
+    obj: bpy.types.Object,
+    armature_obj: bpy.types.Object,
+) -> bool:
+    """判断物体是否按统一解析规则关联到指定骨架。"""
+    return armature_obj in find_armatures_for_object(obj)
+
+
+def object_is_deformed_by_armature(
+    obj: bpy.types.Object,
+    armature_obj: bpy.types.Object,
+) -> bool:
+    """判断物体是否确实通过修改器或 Armature Parenting 被指定骨架形变。"""
+    return armature_obj in find_deforming_armatures_for_object(obj)
+
+
 def collect_mesh_objects_for_armature(
     armature_obj: bpy.types.Object,
 ) -> list[bpy.types.Object]:
-    """收集所有通过骨架修改器绑定到指定骨架的网格物体。"""
-    mesh_objects = []
-    for obj in bpy.data.objects:
-        if obj.type != "MESH":
-            continue
-        for modifier in obj.modifiers:
-            if modifier.type == "ARMATURE" and modifier.object == armature_obj:
-                mesh_objects.append(obj)
-                break
-    return mesh_objects
+    """收集由指定骨架真正形变的所有网格物体。"""
+    return [
+        obj
+        for obj in bpy.data.objects
+        if obj.type == "MESH" and object_is_deformed_by_armature(obj, armature_obj)
+    ]
 
 
 def set_temp_mesh_mirror_off(obj: bpy.types.Object) -> dict:
@@ -308,12 +392,18 @@ __all__ = [
     "bone_head_tail",
     "collect_mesh_objects_for_armature",
     "ensure_bone_collection",
+    "find_armature_for_object",
+    "find_armatures_for_object",
+    "find_deforming_armature_for_object",
+    "find_deforming_armatures_for_object",
     "find_suffixless",
     "get_mirrored_bone",
     "has_side_suffix",
     "inherit_bone_collections",
     "mirror_pair",
     "mirrored_role_names",
+    "object_is_deformed_by_armature",
+    "object_uses_armature",
     "pair_side_suffix",
     "replace_bone_collections",
     "require_same_side",

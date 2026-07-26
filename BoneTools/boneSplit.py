@@ -238,12 +238,7 @@ class OP_SplitBoneWithWeight(Operator):
         
         #选择物体时（仅考虑多选了骨架并且在权重绘制模式的情况）
         else :            
-            armature = None
-            #找到活动物体的第一个骨架
-            for mod in obj.modifiers:
-                if mod.type == 'ARMATURE' and mod.object:
-                    armature = mod.object
-                    break
+            armature = bone_utils.find_deforming_armature_for_object(obj)
             #没找到骨架跳过
             if not armature:
                 return False
@@ -269,32 +264,18 @@ class OP_SplitBoneWithWeight(Operator):
         if original_active.type == 'ARMATURE':
             armature_obj = original_active
             bones = bone_utils.selected_bone_names(context, armature_obj)
-            #搜索所有子级物体
-            for obj in bpy.data.objects:
-                if obj.type != 'MESH':
-                    continue
-                for mod in obj.modifiers:
-                    if mod.type == 'ARMATURE' and mod.object == armature_obj:
-                        mesh_objs.append(obj)
-                        break
+            mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature_obj)
 
         elif original_active.type == 'MESH':
             mesh_obj = original_active
-            #找到选择物体的骨架
-            for mod in mesh_obj.modifiers:
-                if mod.type == 'ARMATURE' and mod.object:
-                    armature_obj = mod.object
-                    break
+            armature_obj = bone_utils.find_deforming_armature_for_object(mesh_obj)
+            if armature_obj is None:
+                self.report({'ERROR'}, "无法唯一确定网格的形变骨架")
+                return {'CANCELLED'}
             #直接拿到选择的骨（必定权重绘制模式）
             bones = bone_utils.selected_bone_names(context, armature_obj)
 
-            for obj in bpy.data.objects:
-                if obj.type != 'MESH':
-                    continue                
-                for mod in obj.modifiers:
-                    if mod.type == 'ARMATURE' and mod.object == armature_obj:
-                        mesh_objs.append(obj)
-                        break
+            mesh_objs = bone_utils.collect_mesh_objects_for_armature(armature_obj)
 
         else:
             self.report({'ERROR'}, "不支持的对象")

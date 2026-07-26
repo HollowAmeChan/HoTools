@@ -8,6 +8,7 @@ from mathutils import Vector
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
 from bl_operators.presets import AddPresetBase
+from Utils import bone_utils
 
 
 # ── 预设：主导出器 ─────────────────────────────────────────
@@ -190,17 +191,8 @@ class FBXExporter:
         """
         bone_names = {b.name for b in armature_ob.data.bones}
         weighted = set()
-        for mesh_ob in bpy.data.objects:
-            if mesh_ob.type != 'MESH':
-                continue
-            # 判断该网格是否被本骨架形变
-            deformed = any(
-                mod.type == 'ARMATURE' and mod.object == armature_ob
-                for mod in mesh_ob.modifiers
-            )
-            if not deformed and mesh_ob.parent == armature_ob and mesh_ob.parent_type == 'ARMATURE':
-                deformed = True
-            if not deformed or not mesh_ob.vertex_groups:
+        for mesh_ob in bone_utils.collect_mesh_objects_for_armature(armature_ob):
+            if not mesh_ob.vertex_groups:
                 continue
 
             group_names = {i: vg.name for i, vg in enumerate(mesh_ob.vertex_groups)}
@@ -235,8 +227,6 @@ class FBXExporter:
         - 每个物体的网格镜像（use_mesh_mirror_x/y/z）：对称模式会把操作镜像到对侧，
           污染清理结果。复用公共 bone_utils 的探测/恢复（属性可能挂物体或数据块）。
         """
-        from Utils import bone_utils
-
         processed = 0
         prev_active = bpy.context.view_layer.objects.active
         tool_settings = bpy.context.scene.tool_settings
@@ -251,7 +241,7 @@ class FBXExporter:
                 if ob.name not in bpy.context.view_layer.objects:
                     continue
                 # 没有骨架形变就谈不上骨骼权重，跳过（BONE_DEFORM 也需要绑定骨架）
-                if ob.find_armature() is None:
+                if not bone_utils.find_deforming_armatures_for_object(ob):
                     continue
                 # 临时关闭该物体的网格镜像，避免清理被镜像到对侧
                 mirror_states.append(bone_utils.set_temp_mesh_mirror_off(ob))

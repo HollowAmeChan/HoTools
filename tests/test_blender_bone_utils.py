@@ -157,6 +157,68 @@ other_modifier.object = other_armature
 
 assert bone_utils.collect_mesh_objects_for_armature(armature) == [mesh]
 
+# Armature Parenting 是真实形变关系；指向同一骨架的重复修改器只返回一个候选。
+parented_mesh_data = bpy.data.meshes.new("BoneUtilsParentedMeshData")
+parented_mesh = bpy.data.objects.new("BoneUtilsParentedMesh", parented_mesh_data)
+bpy.context.scene.collection.objects.link(parented_mesh)
+parented_mesh.parent = armature
+parented_mesh.parent_type = "ARMATURE"
+assert bone_utils.find_deforming_armatures_for_object(parented_mesh) == (armature,)
+assert bone_utils.find_deforming_armature_for_object(parented_mesh) == armature
+parent_conflict = parented_mesh.modifiers.new("ParentConflict", "ARMATURE")
+parent_conflict.object = other_armature
+assert bone_utils.find_deforming_armatures_for_object(parented_mesh) == (
+    other_armature,
+    armature,
+)
+assert bone_utils.find_deforming_armature_for_object(parented_mesh) is None
+parented_mesh.modifiers.remove(parent_conflict)
+duplicate_modifier = mesh.modifiers.new("DuplicateArmature", "ARMATURE")
+duplicate_modifier.object = armature
+assert bone_utils.find_deforming_armatures_for_object(mesh) == (armature,)
+assert bone_utils.collect_mesh_objects_for_armature(armature) == [mesh, parented_mesh]
+
+# 内置 find_armature 不会穿过 LOD Empty，公共函数必须覆盖真实游戏资产层级。
+lod_root = bpy.data.objects.new("BoneUtilsLOD0", None)
+lod_group = bpy.data.objects.new("BoneUtilsLODGroup", None)
+bpy.context.scene.collection.objects.link(lod_root)
+bpy.context.scene.collection.objects.link(lod_group)
+lod_root.parent = armature
+lod_group.parent = lod_root
+lod_mesh_data = bpy.data.meshes.new("BoneUtilsLODMeshData")
+lod_mesh = bpy.data.objects.new("BoneUtilsLODMesh", lod_mesh_data)
+bpy.context.scene.collection.objects.link(lod_mesh)
+lod_mesh.parent = lod_group
+
+assert lod_mesh.find_armature() is None
+assert bone_utils.find_armatures_for_object(armature) == (armature,)
+assert bone_utils.find_armatures_for_object(lod_mesh) == (armature,)
+assert bone_utils.find_armature_for_object(lod_mesh) == armature
+assert bone_utils.object_uses_armature(lod_mesh, armature)
+assert bone_utils.find_deforming_armatures_for_object(lod_mesh) == ()
+assert bone_utils.find_deforming_armature_for_object(lod_mesh) is None
+assert not bone_utils.object_is_deformed_by_armature(lod_mesh, armature)
+assert bone_utils.collect_mesh_objects_for_armature(armature) == [mesh, parented_mesh]
+
+# 显式修改器优先于层级；多个不同目标必须暴露歧义，不能静默取第一个。
+explicit_modifier = lod_mesh.modifiers.new("ExplicitOtherRig", "ARMATURE")
+explicit_modifier.object = other_armature
+assert bone_utils.find_armatures_for_object(lod_mesh) == (other_armature,)
+assert bone_utils.find_armature_for_object(lod_mesh) == other_armature
+second_modifier = lod_mesh.modifiers.new("SecondRig", "ARMATURE")
+second_modifier.object = armature
+assert bone_utils.find_armatures_for_object(lod_mesh) == (
+    other_armature,
+    armature,
+)
+assert bone_utils.find_armature_for_object(lod_mesh) is None
+assert bone_utils.find_deforming_armature_for_object(lod_mesh) is None
+assert bone_utils.object_uses_armature(lod_mesh, armature)
+assert bone_utils.object_uses_armature(lod_mesh, other_armature)
+assert bone_utils.object_is_deformed_by_armature(lod_mesh, armature)
+assert bone_utils.object_is_deformed_by_armature(lod_mesh, other_armature)
+assert bone_utils.find_armatures_for_object(None) == ()
+
 mesh_mirror_owners = []
 for property_name in ("use_mesh_mirror_x", "use_mesh_mirror_y", "use_mesh_mirror_z"):
     owner = mesh if hasattr(mesh, property_name) else mesh_data

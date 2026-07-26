@@ -4,6 +4,7 @@ import bmesh
 import re
 import math
 from mathutils import Vector
+from Utils import bone_utils
 
 
 #TODO 物体是否是实例化物体
@@ -280,17 +281,10 @@ def check_geometry_zero_weight_vertices(obj: Object):
     if obj.type != 'MESH':
         return []
 
-    # 获取骨架对象（modifier 优先，其次 parent）
-    armature_obj = None
-    for mod in obj.modifiers:
-        if mod.type == 'ARMATURE' and mod.object and mod.object.type == 'ARMATURE':
-            armature_obj = mod.object
-            break
-    if not armature_obj and obj.parent and obj.parent.type == 'ARMATURE':
-        armature_obj = obj.parent
+    armature_objects = bone_utils.find_deforming_armatures_for_object(obj)
 
     # 如果没有骨骼控制，也没有顶点组，则视为通过检查
-    if armature_obj is None:
+    if not armature_objects:
         return []
 
     # 如果有骨架控制，但没有顶点组，全部顶点都视为不合格
@@ -298,7 +292,11 @@ def check_geometry_zero_weight_vertices(obj: Object):
         return [v.index for v in obj.data.vertices]
 
     # 获取所有骨架骨骼名
-    bone_names = {bone.name for bone in armature_obj.data.bones}
+    bone_names = {
+        bone.name
+        for armature_obj in armature_objects
+        for bone in armature_obj.data.bones
+    }
     group_names = {i: vg.name for i, vg in enumerate(obj.vertex_groups)}
 
     unweighted_verts = []

@@ -154,9 +154,10 @@ class OP_ApplyRestPose(Operator):
 
         # 获取所有绑定物体（包含间接子级）
         mesh_objects = [
-            obj for obj in armature.children_recursive
-            if obj.type == 'MESH' and
-            any(m.type == 'ARMATURE' for m in obj.modifiers)
+            obj
+            for obj in armature.children_recursive
+            if obj.type == 'MESH'
+            and bone_utils.object_is_deformed_by_armature(obj, armature)
         ]
         # print(mesh_objects[:])
 
