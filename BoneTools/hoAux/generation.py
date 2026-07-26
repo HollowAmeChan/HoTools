@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import bpy
 
+from Utils import bone_utils
+
 from .properties import ensure_rig_id
 
 
@@ -265,6 +267,8 @@ def create_edit_bone(edit_bones, plan, actual_name):
     bone.parent = edit_bones.get(plan.parent_name)
     bone.use_connect = False
     bone.align_roll(plan.roll_reference)
+    if bone.parent is not None:
+        bone_utils.inherit_bone_collections(bone.parent, bone)
     return bone
 
 

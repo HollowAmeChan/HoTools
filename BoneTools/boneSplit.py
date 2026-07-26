@@ -45,6 +45,7 @@ class BoneSplitCore:
             new_bone.head = corrected_points[i - 1].copy()
             new_bone.tail = corrected_points[i].copy()
             new_bone.roll = old_bone.roll
+            bone_utils.inherit_bone_collections(old_bone, new_bone)
             #父级指定
             if i > 1:
                 new_bone.parent = new_bones[i - 2]

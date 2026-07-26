@@ -114,6 +114,7 @@ class DissolveBoneCore:
         new_bone.tail = tail
         new_bone.parent = parent
         new_bone.roll = root_bone.roll#取最浅根骨的扭转
+        bone_utils.inherit_bone_collections(root_bone, new_bone)
 
         for child in childrens:
             child.parent = new_bone

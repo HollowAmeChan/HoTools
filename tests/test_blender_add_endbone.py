@@ -45,6 +45,16 @@ tip_b.tail = (0.5, 0.0, 2.2)
 tip_b.parent = root
 tip_b.use_connect = False
 
+parent_collection_a = armature_data.collections.new("Parent A")
+parent_collection_b = armature_data.collections.new("Parent B")
+creation_collection = armature_data.collections.new("Creation Target")
+parent_collection_a.assign(tip_a)
+parent_collection_b.assign(tip_a)
+for collection in list(tip_a.collections):
+    if collection not in {parent_collection_a, parent_collection_b}:
+        collection.unassign(tip_a)
+armature_data.collections.active = creation_collection
+
 # 只选中父骨时，不能遍历并处理未选中的末端骨。
 bone_utils.select_bones(armature, ["root"])
 assert bpy.ops.ho.add_endbone(length_factor=0.1) == {"FINISHED"}
@@ -58,5 +68,9 @@ assert armature_data.edit_bones.get("tip_a_end") is not None
 assert armature_data.edit_bones.get("tip_b_end") is None
 assert bone_utils.selected_bone_names(bpy.context, armature) == ["tip_a_end"]
 assert armature_data.edit_bones.active.name == "tip_a_end"
+assert {
+    collection.name
+    for collection in armature_data.edit_bones["tip_a_end"].collections
+} == {"Parent A", "Parent B"}
 
 print("ADD_ENDBONE_CONTRACT_OK", bpy.app.version_string)

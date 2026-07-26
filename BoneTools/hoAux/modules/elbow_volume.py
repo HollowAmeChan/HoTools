@@ -8,6 +8,8 @@ from bpy.props import BoolProperty, FloatProperty
 from bpy.types import PropertyGroup
 from mathutils import Vector
 
+from Utils import bone_utils
+
 from ..generation import (
     GenerationTransaction,
     SharedDirectionSpec,
@@ -233,6 +235,7 @@ def generate(armature_object, upper_arm_name, lower_arm_name, side, parameters=N
                 direction.parent = edit_bones.get(upper_arm_name)
                 direction.use_connect = False
                 direction.align_roll(lower_roll_reference)
+                bone_utils.inherit_bone_collections(direction.parent, direction)
                 transaction.track_bone(dir_name)
             for plan in plans:
                 actual_name = actual_names[plan.resource_key]

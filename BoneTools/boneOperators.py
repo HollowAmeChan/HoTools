@@ -275,6 +275,7 @@ class OP_AddEndBone(Operator):
             new_bone.parent = bone
             new_bone.use_connect = True #相连项开
             new_bone.use_deform = False #形变关
+            bone_utils.inherit_bone_collections(bone, new_bone)
             end_bones.append(new_bone.name)
 
         #刷新bones，再修改属性
@@ -1004,13 +1005,15 @@ class OP_MergeArmatures(Operator):
 
     @staticmethod
     def _copy_bone_collections(main, source_bone, target_bone, created_collections):
+        target_collections = []
         for source_collection in source_bone.collections:
             target_collection = main.data.collections.get(source_collection.name)
             if target_collection is None:
                 target_collection = main.data.collections.new(source_collection.name)
                 created_collections.add(source_collection.name)
                 _copy_custom_properties(source_collection, target_collection)
-            target_collection.assign(target_bone)
+            target_collections.append(target_collection)
+        bone_utils.replace_bone_collections(target_bone, target_collections)
 
     @classmethod
     def _copy_bone_data(cls, main, asset, copied_names, created_collections):

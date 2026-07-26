@@ -262,9 +262,31 @@ def assign_bones_to_collection(
         bone = edit_bones.get(bone_name)
         if bone is None:
             continue
-        for old_collection in list(bone.collections):
-            old_collection.unassign(bone)
-        collection.assign(bone)
+        replace_bone_collections(bone, [collection])
+
+
+def replace_bone_collections(target_bone, collections) -> None:
+    """清除骨骼当前集合，并精确替换为给定集合。"""
+    target_collections = getattr(target_bone, "collections", None)
+    if target_collections is None:
+        return
+
+    new_collections = list(collections)
+    for collection in list(target_collections):
+        collection.unassign(target_bone)
+    for collection in new_collections:
+        collection.assign(target_bone)
+
+
+def inherit_bone_collections(source_bone, target_bone) -> None:
+    """清除目标骨的默认集合，并完整继承源骨的集合成员关系。"""
+    if source_bone is None or source_bone == target_bone:
+        return
+
+    replace_bone_collections(
+        target_bone,
+        getattr(source_bone, "collections", ()) or (),
+    )
 
 
 def bone_head_tail(bone):
@@ -289,9 +311,11 @@ __all__ = [
     "find_suffixless",
     "get_mirrored_bone",
     "has_side_suffix",
+    "inherit_bone_collections",
     "mirror_pair",
     "mirrored_role_names",
     "pair_side_suffix",
+    "replace_bone_collections",
     "require_same_side",
     "restore_armature_mirror_state",
     "restore_mesh_mirror_state",

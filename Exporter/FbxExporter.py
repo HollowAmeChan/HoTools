@@ -310,6 +310,8 @@ class FBXExporter:
         - 叶骨 use_deform=False，不写任何 HoTools 属性，generateMCH 保持默认关闭
           （因此后续 MCH 步骤不会处理它；本步在 MCH 之前执行）。
         """
+        from Utils import bone_utils
+
         edit_bones = ob.data.edit_bones
         data_bones = ob.data.bones
 
@@ -332,8 +334,6 @@ class FBXExporter:
             length = vec.length
             if length <= 0.0:
                 continue
-            # 先取主骨所属的骨骼集合（Blender 4.0+；低版本无 collections 属性时为空）
-            member_collections = list(getattr(eb, "collections", []) or [])
             leaf = edit_bones.new(name + FBXExporter.LEAF_SUFFIX)
             leaf.head = eb.tail.copy()
             leaf.tail = eb.tail + vec.normalized() * (length * 0.5)
@@ -341,12 +341,7 @@ class FBXExporter:
             leaf.parent = eb
             leaf.use_connect = True
             leaf.use_deform = False
-            # 叶骨与主骨同属一批骨骼集合
-            for bcoll in member_collections:
-                try:
-                    bcoll.assign(leaf)
-                except (RuntimeError, AttributeError):
-                    continue
+            bone_utils.inherit_bone_collections(eb, leaf)
 
     @staticmethod
     def add_leaf_bones_to_armatures(armature_objects, selection, active_object):
@@ -598,6 +593,8 @@ class FBXExporter:
         2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
         3. 重新扫描 generateMCH 主骨，按“强制骨骼变换”的全打断方式把主骨清零竖直。
         """
+        from Utils import bone_utils
+
         arm = ob.data
         edit_bones = arm.edit_bones
 
@@ -638,7 +635,7 @@ class FBXExporter:
             # 归入 MCH 专属集合
             if mch_collection is not None:
                 try:
-                    mch_collection.assign(mch)
+                    bone_utils.replace_bone_collections(mch, [mch_collection])
                 except (RuntimeError, AttributeError):
                     pass
             name_map[src_name] = mch_name

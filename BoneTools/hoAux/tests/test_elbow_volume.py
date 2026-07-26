@@ -42,6 +42,17 @@ lower = armature.edit_bones.new("LowerArm_L")
 lower.head = upper.tail
 lower.tail = (0.8, 1.65, 0.35)
 lower.roll = -0.47
+
+source_collection_a = armature.collections.new("Source A")
+source_collection_b = armature.collections.new("Source B")
+creation_collection = armature.collections.new("Creation Target")
+for source_bone in (upper, lower):
+    source_collection_a.assign(source_bone)
+    source_collection_b.assign(source_bone)
+    for collection in list(source_bone.collections):
+        if collection not in {source_collection_a, source_collection_b}:
+            collection.unassign(source_bone)
+armature.collections.active = creation_collection
 bpy.ops.object.mode_set(mode="OBJECT")
 
 armature.bones["UpperArm_L"].use_deform = False
@@ -73,6 +84,16 @@ assert result["createdDir"] is True
 assert len(result["bones"]) == 4
 assert len(generated) == 5
 assert sum(bone.use_deform for bone in generated) == 2
+assert all(
+    {"Source A", "Source B"}.issubset(
+        {collection.name for collection in bone.collections}
+    )
+    for bone in generated
+)
+assert all(
+    "Creation Target" not in {collection.name for collection in bone.collections}
+    for bone in generated
+)
 assert main_deform_before == {
     name: armature.bones[name].use_deform
     for name in ("UpperArm_L", "LowerArm_L")
