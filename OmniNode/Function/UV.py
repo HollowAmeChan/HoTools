@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniUVLayer
 from ..FunctionNodeCore import omni
-from . import _Color
+from ..config import colors as _Color
 
 import bpy
 

@@ -1,6 +1,6 @@
 from ..FunctionNodeCore import omni
 from ..OmniNodeSocketMapping import _OmniBone, _OmniGlob
-from . import _Color
+from ..config import colors as _Color
 
 import bpy
 import re

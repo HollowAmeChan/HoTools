@@ -9,7 +9,7 @@ from .physicsWorld.mc2.setups.mesh_cloth.delta_output import ensure_delta_output
 from .physicsWorld.mc2.setups.mesh_cloth.delta_output import write_world_delta_attribute as _write_world_delta_attribute
 from ..OmniDebug import OmniDebug
 from ..FunctionNodeCore import omni
-from . import _Color
+from ..config import colors as _Color
 
 import bpy
 import hashlib

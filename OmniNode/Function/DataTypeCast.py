@@ -5,7 +5,7 @@ import bpy
 from typing import Any
 import mathutils
 import fnmatch
-from . import _Color
+from ..config import colors as _Color
 import re
 
 

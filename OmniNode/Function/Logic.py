@@ -4,7 +4,7 @@ from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
 import mathutils
-from . import _Color
+from ..config import colors as _Color
 
 
 @omni(enable=True,

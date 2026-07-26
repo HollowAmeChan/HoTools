@@ -9,7 +9,7 @@ import bpy
 import mathutils
 
 from ....FunctionNodeCore import omni
-from ... import _Color
+from ....config import colors as _Color
 from .names import (
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_BODY_SLOT_KIND,

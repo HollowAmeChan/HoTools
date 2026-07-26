@@ -1,7 +1,7 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniFloatCurve, _OmniColorCurve
 from ...PropertyCurve import sample_color_curve, sample_float_curve
 from ..FunctionNodeCore import omni
-from . import _Color
+from ..config import colors as _Color
 
 from bpy.types import NodeSocketVector, NodeSocketColor
 import ast

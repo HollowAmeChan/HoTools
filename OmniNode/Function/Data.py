@@ -6,7 +6,7 @@ import bpy
 from datetime import datetime
 from typing import Any
 import mathutils
-from . import _Color
+from ..config import colors as _Color
 
 
 def _parse_custom_property_token(token: str):

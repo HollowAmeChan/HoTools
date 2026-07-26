@@ -8,7 +8,7 @@ import mathutils
 from ....FunctionNodeCore import omni
 from ....OmniTiming import OmniNodeTiming
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
-from ... import _Color
+from ....config import colors as _Color
 from ..types import PhysicsWorldCache
 from .names import (
     MC2_SETUP_BONE_CLOTH,

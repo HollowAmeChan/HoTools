@@ -1,6 +1,6 @@
 from ..OmniNodeSocketMapping import _OmniCache
 from ..FunctionNodeCore import omni
-from . import _Color
+from ..config import colors as _Color
 
 import math
 import bpy

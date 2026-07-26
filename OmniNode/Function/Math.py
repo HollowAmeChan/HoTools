@@ -3,7 +3,7 @@ from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketColor
 import math
 import mathutils
-from . import _Color
+from ..config import colors as _Color
 
 
 def _to_vector(value) -> mathutils.Vector:

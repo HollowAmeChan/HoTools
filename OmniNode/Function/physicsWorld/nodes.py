@@ -19,7 +19,7 @@ import bpy
 
 from ...FunctionNodeCore import omni
 from ...OmniNodeSocketMapping import _OmniCache
-from .. import _Color
+from ...config import colors as _Color
 
 from .types import PhysicsObjectScope, PhysicsWorldCache
 from .scope import (
