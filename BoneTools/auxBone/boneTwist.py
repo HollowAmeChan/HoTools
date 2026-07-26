@@ -10,7 +10,7 @@ from bpy_extras import view3d_utils
 import blf
 
 from Utils import bone_utils
-from .auxUtils import AuxPreviewUtils
+from ..previewUtils import AuxPreviewUtils
 
 
 EPS = 1e-6

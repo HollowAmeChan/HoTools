@@ -15,10 +15,7 @@ from .module_base import (
     whole_arm_pipeline_definitions,
 )
 
-try:
-    from ..previewUtils import AuxPreviewUtils
-except ImportError:
-    from previewUtils import AuxPreviewUtils
+from ..previewUtils import AuxPreviewUtils
 
 
 Color = tuple[float, float, float, float]

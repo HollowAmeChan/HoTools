@@ -5,7 +5,7 @@ from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
 from Utils import bone_utils
-from .auxUtils import AuxPreviewUtils
+from ..previewUtils import AuxPreviewUtils
 import gpu
 from bpy_extras import view3d_utils
 import blf
