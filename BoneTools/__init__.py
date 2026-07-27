@@ -55,6 +55,7 @@ class VIEW3D_MT_armature_context_menu_hotools(Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator(boneOperators.OP_AddSelectMirroredBones.bl_idname)
         layout.operator(boneOperators.OP_SelectAllChildBones.bl_idname)
         layout.operator(boneOperators.OP_RelaxBoneChain.bl_idname)
         layout.operator(boneOperators.OP_AddEndBone.bl_idname)
@@ -70,11 +71,21 @@ class VIEW3D_MT_pose_context_menu_hotools(Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator(boneOperators.OP_AddSelectMirroredBones.bl_idname)
         layout.operator(boneOperators.OP_SelectTransformedPoseBones.bl_idname)
         layout.operator(boneOperators.OP_SelectAllChildBones.bl_idname)
         layout.operator(boneOperators.OP_SelectBoneBy_by_GenerateMCH.bl_idname)
         layout.operator(boneOperators.OP_SelectBone_by_Nochild.bl_idname)
         layout.operator(boneOperators.OP_SelectBone_by_endBone.bl_idname)
+        layout.separator()
+        row = layout.row(align=True)
+        row.operator("pose.copy", text="复制姿态", icon='COPYDOWN')
+        row.operator("pose.paste", text="粘贴姿态", icon='PASTEDOWN')
+        layout.operator(
+            boneOperators.OP_DeleteSelectedBoneCurrentFrameKeyframes.bl_idname,
+            icon='KEY_DEHLT',
+        )
+        layout.separator()
         if context.active_object and context.active_object.type == 'ARMATURE':
             layout.operator(boneOperators.OP_ApplyRestPose.bl_idname)
         layout.operator(boneOperators.OP_FastCreatPoseAsset.bl_idname)

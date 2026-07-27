@@ -400,6 +400,55 @@ class OP_SelectAllChildBones(Operator):
         return {'FINISHED'}
 
 
+class OP_AddSelectMirroredBones(Operator):
+    bl_idname = "ho.add_select_mirrored_bones"
+    bl_label = "加选镜像骨"
+    bl_description = "根据当前选中骨骼的名称查找另一侧骨骼并加入选择"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'ARMATURE'
+            and context.mode in {'EDIT_ARMATURE', 'POSE'}
+            and bool(bone_utils.selected_bone_names(context, obj))
+        )
+
+    def execute(self, context):
+        armature = context.active_object
+        selected_names = bone_utils.selected_bone_names(context, armature)
+        selected_set = set(selected_names)
+        bones = (
+            armature.data.edit_bones
+            if armature.mode == 'EDIT'
+            else armature.data.bones
+        )
+
+        mirrored_names = []
+        seen = set()
+        for bone_name in selected_names:
+            mirrored_name = bpy.utils.flip_name(bone_name)
+            if (
+                mirrored_name == bone_name
+                or mirrored_name in selected_set
+                or mirrored_name in seen
+                or bones.get(mirrored_name) is None
+            ):
+                continue
+            seen.add(mirrored_name)
+            mirrored_names.append(mirrored_name)
+
+        if not mirrored_names:
+            self.report({'WARNING'}, "没有找到可加选的镜像骨")
+            return {'CANCELLED'}
+
+        bone_utils.select_bones(armature, mirrored_names, extend=True)
+        self.report({'INFO'}, f"已加选 {len(mirrored_names)} 根镜像骨")
+        return {'FINISHED'}
+
+
 def _pose_bone_has_transform(pose_bone):
     if any(value != 0.0 for value in pose_bone.location):
         return True
@@ -646,6 +695,121 @@ class OP_FastCreatPoseAsset(Operator):
         if 'FINISHED' not in result:
             return {'CANCELLED'}
         return {'FINISHED'}
+
+
+def _active_action_curve_owners(animation_data):
+    action = getattr(animation_data, "action", None)
+    if action is None:
+        return []
+
+    owners = []
+    seen = set()
+    slot = getattr(animation_data, "action_slot", None)
+    if slot is not None:
+        for layer in action.layers:
+            for strip in layer.strips:
+                if strip.type != 'KEYFRAME':
+                    continue
+                channelbag = strip.channelbag(slot)
+                if channelbag is None:
+                    continue
+                pointer = channelbag.as_pointer()
+                if pointer not in seen:
+                    seen.add(pointer)
+                    owners.append(channelbag)
+
+    if not owners and getattr(action, "is_action_legacy", False):
+        owners.append(action)
+    return owners
+
+
+def _bone_name_for_curve(data_path, bone_roots):
+    for root, bone_name in bone_roots:
+        if (
+            data_path == root
+            or data_path.startswith(root + ".")
+            or data_path.startswith(root + "[")
+        ):
+            return bone_name
+    return None
+
+
+class OP_DeleteSelectedBoneCurrentFrameKeyframes(Operator):
+    bl_idname = "ho.delete_selected_bone_current_frame_keyframes"
+    bl_label = "删除选中骨骼当前帧关键帧"
+    bl_description = "删除选中骨骼在当前帧上的全部姿态关键帧，并清理空动画曲线"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        animation_data = getattr(obj, "animation_data", None) if obj else None
+        return (
+            obj is not None
+            and obj.type == 'ARMATURE'
+            and context.mode == 'POSE'
+            and bool(bone_utils.selected_bone_names(context, obj))
+            and animation_data is not None
+            and animation_data.action is not None
+        )
+
+    def execute(self, context):
+        armature = context.active_object
+        current_frame = context.scene.frame_current_final
+        selected_names = set(bone_utils.selected_bone_names(context, armature))
+        bone_roots = [
+            (pose_bone.path_from_id(), pose_bone.name)
+            for pose_bone in armature.pose.bones
+            if pose_bone.name in selected_names
+        ]
+
+        removed_keys = 0
+        removed_curves = 0
+        affected_bones = set()
+        for owner in _active_action_curve_owners(armature.animation_data):
+            group_names = set()
+            for fcurve in list(owner.fcurves):
+                bone_name = _bone_name_for_curve(fcurve.data_path, bone_roots)
+                if bone_name is None:
+                    continue
+
+                keys_at_frame = [
+                    key
+                    for key in fcurve.keyframe_points
+                    if abs(key.co.x - current_frame) <= 1e-4
+                ]
+                if not keys_at_frame:
+                    continue
+
+                affected_bones.add(bone_name)
+                removed_keys += len(keys_at_frame)
+                for key in keys_at_frame:
+                    fcurve.keyframe_points.remove(key, fast=True)
+
+                if not fcurve.keyframe_points and not fcurve.sampled_points:
+                    if fcurve.group is not None:
+                        group_names.add(fcurve.group.name)
+                    owner.fcurves.remove(fcurve)
+                    removed_curves += 1
+                else:
+                    fcurve.update()
+
+            for group_name in group_names:
+                group = owner.groups.get(group_name)
+                if group is not None and not group.channels:
+                    owner.groups.remove(group)
+
+        if removed_keys == 0:
+            self.report({'WARNING'}, "选中骨骼在当前帧没有姿态关键帧")
+            return {'CANCELLED'}
+
+        self.report(
+            {'INFO'},
+            f"已删除 {len(affected_bones)} 根骨骼当前帧的 {removed_keys} 个关键帧，"
+            f"并清理 {removed_curves} 条空曲线",
+        )
+        return {'FINISHED'}
+
 
 def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool, bone_filter=None) -> tuple[int, int]:
     """把活动骨架内姿态骨的约束 mute 设为 mute。返回 (受影响约束数, 受影响骨数)。
@@ -1656,12 +1820,14 @@ cls = [
     OP_SelectBoneBy_by_GenerateMCH,
     OP_SelectBone_by_Nochild,
     OP_SelectAllChildBones,
+    OP_AddSelectMirroredBones,
     OP_SelectTransformedPoseBones,
     OP_AddEndBone,
     OP_SelectBone_by_endBone,
     OP_Fix_EmptyRotate_Bone,
     OP_RelaxBoneChain,
     OP_FastCreatPoseAsset,
+    OP_DeleteSelectedBoneCurrentFrameKeyframes,
     OP_DisableAllBoneConstraints,
     OP_EnableAllBoneConstraints,
     OP_DisableHumanoidBoneConstraints,
