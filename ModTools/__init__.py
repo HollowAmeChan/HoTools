@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Panel
 
-from . import texpacker, weight
+from . import shapekey_to_bone, texpacker, weight
 
 def reg_props():
     bpy.types.Scene.ho_ModToolsPanel_Mod = bpy.props.EnumProperty(
@@ -36,6 +36,8 @@ class ModTools(Panel):
             texpacker.drawTexPackerPanel(self.layout, context)
         if context.scene.ho_ModToolsPanel_Mod == "PANEL_MODTOOLS_WEIGHT":
             weight.drawWeightPanel(self.layout, context)
+            self.layout.separator()
+            shapekey_to_bone.drawShapeKeyToBonePanel(self.layout, context)
 
 
 
@@ -44,6 +46,7 @@ cls = [ModTools]
 def register():
     texpacker.register()
     weight.register()
+    shapekey_to_bone.register()
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
@@ -53,5 +56,6 @@ def unregister():
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
     ureg_props()
+    shapekey_to_bone.unregister()
     weight.unregister()
     texpacker.unregister()

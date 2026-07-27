@@ -399,6 +399,49 @@ class OP_SelectAllChildBones(Operator):
         bone_utils.select_bones(armature, descendant_names, extend=True)
         return {'FINISHED'}
 
+
+def _pose_bone_has_transform(pose_bone):
+    if any(value != 0.0 for value in pose_bone.location):
+        return True
+    if any(value != 1.0 for value in pose_bone.scale):
+        return True
+
+    if pose_bone.rotation_mode == 'QUATERNION':
+        return tuple(pose_bone.rotation_quaternion) != (1.0, 0.0, 0.0, 0.0)
+    if pose_bone.rotation_mode == 'AXIS_ANGLE':
+        return pose_bone.rotation_axis_angle[0] != 0.0
+    return any(value != 0.0 for value in pose_bone.rotation_euler)
+
+
+class OP_SelectTransformedPoseBones(Operator):
+    bl_idname = "ho.select_transformed_pose_bones"
+    bl_label = "选择所有存在姿态变换的骨骼"
+    bl_description = "选择所有位置、旋转或缩放不为默认值的姿态骨骼"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'ARMATURE'
+            and context.mode == 'POSE'
+        )
+
+    def execute(self, context):
+        armature = context.active_object
+        transformed_names = [
+            pose_bone.name
+            for pose_bone in armature.pose.bones
+            if _pose_bone_has_transform(pose_bone)
+        ]
+        bone_utils.select_bones(armature, transformed_names)
+
+        if not transformed_names:
+            self.report({'INFO'}, "未找到存在姿态变换的骨骼")
+        return {'FINISHED'}
+
+
 class OP_Fix_EmptyRotate_Bone(Operator):
     bl_idname = "ho.fix_empty_rotate_bone"
     bl_label = "修复空旋转的骨骼"
@@ -579,7 +622,8 @@ class OP_FastCreatPoseAsset(Operator):
         return (
             obj is not None and
             obj.type == 'ARMATURE' and
-            context.mode == 'POSE'
+            context.mode == 'POSE' and
+            bool(bone_utils.selected_bone_names(context, obj))
         )
     pose_name: StringProperty(name="姿态名称", default="New Pose") # type: ignore
 
@@ -591,7 +635,16 @@ class OP_FastCreatPoseAsset(Operator):
         return context.window_manager.invoke_props_dialog(self)
     
     def execute(self, context):
-        bpy.ops.poselib.create_pose_asset(pose_name = self.pose_name, activate_new_action=False)
+        try:
+            result = bpy.ops.poselib.create_pose_asset(
+                pose_name=self.pose_name,
+                asset_library_reference='LOCAL',
+            )
+        except RuntimeError as error:
+            self.report({'ERROR'}, f"创建姿态资产失败: {error}")
+            return {'CANCELLED'}
+        if 'FINISHED' not in result:
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool, bone_filter=None) -> tuple[int, int]:
@@ -1603,6 +1656,7 @@ cls = [
     OP_SelectBoneBy_by_GenerateMCH,
     OP_SelectBone_by_Nochild,
     OP_SelectAllChildBones,
+    OP_SelectTransformedPoseBones,
     OP_AddEndBone,
     OP_SelectBone_by_endBone,
     OP_Fix_EmptyRotate_Bone,

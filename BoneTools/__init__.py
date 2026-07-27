@@ -70,6 +70,7 @@ class VIEW3D_MT_pose_context_menu_hotools(Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator(boneOperators.OP_SelectTransformedPoseBones.bl_idname)
         layout.operator(boneOperators.OP_SelectAllChildBones.bl_idname)
         layout.operator(boneOperators.OP_SelectBoneBy_by_GenerateMCH.bl_idname)
         layout.operator(boneOperators.OP_SelectBone_by_Nochild.bl_idname)
