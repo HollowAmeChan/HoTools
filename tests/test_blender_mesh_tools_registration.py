@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,48 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                     mesh_tools.VIEW3D_MT_edit_mesh_hotools.__name__,
                     None,
                 )
+            )
+            self.assertTrue(
+                bpy.context.scene.hotools_mesh_keep_origin_transform
+            )
+
+            class RecordingLayout:
+                def __init__(self):
+                    self.menu_ids = []
+                    self.operator_ids = []
+
+                def menu(self, menu_id):
+                    self.menu_ids.append(menu_id)
+
+                def prop(self, *args, **kwargs):
+                    return None
+
+                def operator(self, operator_id, **kwargs):
+                    self.operator_ids.append(operator_id)
+                    return SimpleNamespace()
+
+            callback_layout = RecordingLayout()
+            mesh_tools.draw_in_VIEW3D_MT_edit_mesh_context_menu(
+                SimpleNamespace(layout=callback_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                callback_layout.menu_ids,
+                ["VIEW3D_MT_edit_mesh_hotools"],
+            )
+
+            menu_layout = RecordingLayout()
+            mesh_tools.VIEW3D_MT_edit_mesh_hotools.draw(
+                SimpleNamespace(layout=menu_layout),
+                bpy.context,
+            )
+            self.assertIn(
+                "ho.auto_place_object_bottom",
+                menu_layout.operator_ids,
+            )
+            self.assertIn(
+                "ho.placeobjectbottom",
+                menu_layout.operator_ids,
             )
         finally:
             mesh_tools.unregister()

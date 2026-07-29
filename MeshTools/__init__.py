@@ -1,29 +1,52 @@
 import bpy
 
 from . import boolean
-from .auto_placement import OP_AutoPlaceObjectBottom
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
-from .placement import OP_PlaceObjectBottom
+from .placement import OP_AutoPlaceObjectBottom, OP_PlaceObjectBottom
 from .view import OP_AlignViewToAvgNormal
 
 
 def reg_props():
-    return
+    bpy.types.Scene.hotools_mesh_keep_origin_transform = (
+        bpy.props.BoolProperty(
+            name="保持原点变换",
+            description="底面放置时保持物体原点的位置和旋转不变",
+            default=True,
+        )
+    )
 
 def ureg_props():
-    return
+    if hasattr(
+        bpy.types.Scene,
+        "hotools_mesh_keep_origin_transform",
+    ):
+        del bpy.types.Scene.hotools_mesh_keep_origin_transform
 
 
 class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
     """Mesh tools shown in the edit-mesh context menu."""
 
+    bl_idname = "VIEW3D_MT_edit_mesh_hotools"
     bl_label = "Hotools Mesh"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(OP_AutoPlaceObjectBottom.bl_idname, icon='SNAP_FACE')
-        layout.operator(OP_PlaceObjectBottom.bl_idname, icon='TRIA_DOWN')
+        keep_origin = context.scene.hotools_mesh_keep_origin_transform
+        layout.prop(
+            context.scene,
+            "hotools_mesh_keep_origin_transform",
+        )
+        auto_operator = layout.operator(
+            OP_AutoPlaceObjectBottom.bl_idname,
+            icon='SNAP_FACE',
+        )
+        auto_operator.keep_origin_transform = keep_origin
+        manual_operator = layout.operator(
+            OP_PlaceObjectBottom.bl_idname,
+            icon='TRIA_DOWN',
+        )
+        manual_operator.keep_origin_transform = keep_origin
         layout.operator(
             OP_AlignViewToAvgNormal.bl_idname,
             icon='RESTRICT_RENDER_OFF',
@@ -41,9 +64,17 @@ def draw_in_VIEW3D_MT_object_context_menu(self, context):
         context.active_object is not None and
         context.active_object.type == 'MESH'
     ):
-        self.layout.operator(
+        layout = self.layout
+        layout.prop(
+            context.scene,
+            "hotools_mesh_keep_origin_transform",
+        )
+        operator = layout.operator(
             OP_AutoPlaceObjectBottom.bl_idname,
             icon='SNAP_FACE',
+        )
+        operator.keep_origin_transform = (
+            context.scene.hotools_mesh_keep_origin_transform
         )
 
 

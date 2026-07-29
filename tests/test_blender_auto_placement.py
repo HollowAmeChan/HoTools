@@ -13,22 +13,19 @@ MESH_TOOLS = Path(__file__).resolve().parents[1] / "MeshTools"
 PACKAGE_NAME = "hotools_auto_placement_test"
 
 
-def load_modules():
+def load_placement():
     if PACKAGE_NAME not in sys.modules:
         package = types.ModuleType(PACKAGE_NAME)
         package.__path__ = [str(MESH_TOOLS)]
         sys.modules[PACKAGE_NAME] = package
-    auto_placement = importlib.import_module(
-        f"{PACKAGE_NAME}.auto_placement"
-    )
     placement = importlib.import_module(f"{PACKAGE_NAME}.placement")
-    return auto_placement, placement
+    return placement
 
 
 class AutoPlacementTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.auto_placement, cls.placement = load_modules()
+        cls.placement = load_placement()
 
     def setUp(self):
         if bpy.context.object and bpy.context.object.mode != 'OBJECT':
@@ -37,7 +34,7 @@ class AutoPlacementTests(unittest.TestCase):
         bpy.ops.object.delete(use_global=False)
 
     def _build_candidates(self, obj):
-        return self.auto_placement.build_candidates(
+        return self.placement.build_candidates(
             obj,
             bpy.context.evaluated_depsgraph_get(),
             math.radians(2.5),
@@ -56,7 +53,7 @@ class AutoPlacementTests(unittest.TestCase):
         candidates = self._build_candidates(obj)
         self.assertEqual(len(candidates), 6)
 
-    def test_place_candidate_preserves_mesh_and_origin_relationship(self):
+    def test_place_candidate_keeps_origin_transform(self):
         bpy.ops.mesh.primitive_cube_add(location=(2.0, -1.0, 4.0))
         obj = bpy.context.object
         obj.rotation_euler = Euler((0.62, -0.37, 0.91))
@@ -73,13 +70,29 @@ class AutoPlacementTests(unittest.TestCase):
             obj,
             candidate.points,
             candidate.normal,
-            bpy.context.view_layer,
+            bpy.context,
+            True,
         )
 
-        for before, vertex in zip(local_vertices_before, obj.data.vertices):
-            self.assertLess((before - vertex.co).length, 1e-8)
+        self.assertLess(
+            sum(
+                abs(value)
+                for row in (obj.matrix_world - old_world_matrix)
+                for value in row
+            ),
+            1e-7,
+        )
+        self.assertTrue(any(
+            (before - vertex.co).length > 1e-5
+            for before, vertex in zip(local_vertices_before, obj.data.vertices)
+        ))
 
-        world_delta = obj.matrix_world @ old_world_matrix.inverted_safe()
+        target_world_matrix = self.placement.ground_alignment_matrix(
+            old_world_matrix,
+            candidate.points,
+            candidate.normal,
+        )
+        world_delta = target_world_matrix @ old_world_matrix.inverted_safe()
         placed_normal = (
             world_delta.to_3x3() @ candidate.normal
         ).normalized()
@@ -105,16 +118,16 @@ class AutoPlacementTests(unittest.TestCase):
         bpy.context.view_layer.update()
 
         world_vertices, patches, diagonal = (
-            self.auto_placement.evaluated_surface_data(
+            self.placement.evaluated_surface_data(
                 obj,
                 bpy.context.evaluated_depsgraph_get(),
             )
         )
-        raw_candidates = self.auto_placement.convex_hull_candidates(
+        raw_candidates = self.placement.convex_hull_candidates(
             world_vertices,
             math.radians(2.5),
         )
-        filtered = self.auto_placement.filter_hull_candidates(
+        filtered = self.placement.filter_hull_candidates(
             raw_candidates,
             patches,
             diagonal,
@@ -134,7 +147,7 @@ class AutoPlacementTests(unittest.TestCase):
         self.assertGreaterEqual(len(axis_aligned), 6)
 
     def test_ray_selects_nearest_candidate(self):
-        candidate_type = self.auto_placement.HullFaceCandidate
+        candidate_type = self.placement.HullFaceCandidate
         near = candidate_type(
             points=[
                 Vector((-1.0, -1.0, 1.0)),
@@ -155,7 +168,7 @@ class AutoPlacementTests(unittest.TestCase):
             normal=Vector((0.0, 0.0, 1.0)),
             area=4.0,
         )
-        hit_index = self.auto_placement.ray_hit_candidate(
+        hit_index = self.placement.ray_hit_candidate(
             [far, near],
             Vector((0.0, 0.0, 5.0)),
             Vector((0.0, 0.0, -1.0)),

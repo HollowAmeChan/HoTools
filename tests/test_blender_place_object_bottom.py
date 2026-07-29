@@ -20,7 +20,7 @@ def load_placement():
         return sys.modules[module_name]
 
     package = types.ModuleType(package_name)
-    package.__path__ = [str(ADDON_ROOT)]
+    package.__path__ = [str(ADDON_ROOT / "MeshTools")]
     sys.modules[package_name] = package
     spec = importlib.util.spec_from_file_location(
         module_name,
@@ -139,6 +139,166 @@ class PlaceObjectBottomTests(unittest.TestCase):
         result = bpy.ops.ho.placeobjectbottom()
         self.assertEqual(result, {'FINISHED'})
         self._assert_placed(obj)
+
+    def test_edit_mode_undo_restores_origin_preserving_placement(self):
+        obj = self._make_cube(
+            rotation=(0.51, -0.32, 0.74),
+            scale=(1.2, 0.8, 1.6),
+            location=(1.0, -2.0, 3.0),
+        )
+        world_matrix_before = obj.matrix_world.copy()
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        vertices_before = [vert.co.copy() for vert in bm.verts]
+        bpy.ops.ed.undo_push(message="before place object bottom")
+
+        result = bpy.ops.ho.placeobjectbottom(
+            keep_origin_transform=True,
+        )
+        self.assertEqual(result, {'FINISHED'})
+        self.assertEqual(bpy.context.mode, 'EDIT_MESH')
+        self.assertLess(
+            sum(
+                abs(value)
+                for row in (obj.matrix_world - world_matrix_before)
+                for value in row
+            ),
+            1e-7,
+        )
+
+        # Background operator calls do not get the window manager's automatic
+        # undo push, so emulate the UI event boundary explicitly.
+        bpy.ops.ed.undo_push(message="place object bottom")
+        self.assertEqual(bpy.ops.ed.undo(), {'FINISHED'})
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        for before, vert in zip(vertices_before, bm.verts):
+            self.assertLess((before - vert.co).length, 1e-6)
+
+    def test_origin_transform_can_move_when_disabled(self):
+        obj = self._make_cube(
+            rotation=(0.51, -0.32, 0.74),
+            scale=(1.2, 0.8, 1.6),
+            location=(1.0, -2.0, 3.0),
+        )
+        world_matrix_before = obj.matrix_world.copy()
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        vertices_before = [vert.co.copy() for vert in bm.verts]
+
+        result = bpy.ops.ho.placeobjectbottom(
+            keep_origin_transform=False,
+        )
+        self.assertEqual(result, {'FINISHED'})
+        self.assertEqual(bpy.context.mode, 'OBJECT')
+        self.assertGreater(
+            sum(
+                abs(value)
+                for row in (obj.matrix_world - world_matrix_before)
+                for value in row
+            ),
+            1e-4,
+        )
+        for before, vertex in zip(vertices_before, obj.data.vertices):
+            self.assertLess((before - vertex.co).length, 1e-7)
+
+        selected_face = next(
+            polygon
+            for polygon in obj.data.polygons
+            if polygon.select
+        )
+        for vertex_index in selected_face.vertices:
+            point = obj.matrix_world @ obj.data.vertices[vertex_index].co
+            self.assertAlmostEqual(point.z, 0.0, places=5)
+
+    def test_origin_preserving_placement_transforms_all_shape_keys(self):
+        bpy.ops.mesh.primitive_cube_add()
+        obj = bpy.context.object
+        basis = obj.shape_key_add(name="Basis")
+        expression = obj.shape_key_add(name="Expression")
+        expression.data[0].co.x += 0.35
+        obj.rotation_euler = (0.41, -0.28, 0.63)
+        obj.location = (1.0, 2.0, 3.0)
+        bpy.context.view_layer.update()
+        key_data_before = {
+            key_block.name: [
+                point.co.copy()
+                for point in key_block.data
+            ]
+            for key_block in (basis, expression)
+        }
+        world_matrix_before = obj.matrix_world.copy()
+
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='DESELECT')
+        bm = bmesh.from_edit_mesh(obj.data)
+        bottom_face = min(
+            bm.faces,
+            key=lambda face: sum(vert.co.z for vert in face.verts),
+        )
+        bottom_face.select = True
+        bmesh.update_edit_mesh(obj.data, destructive=False)
+
+        result = bpy.ops.ho.placeobjectbottom(
+            keep_origin_transform=True,
+        )
+        self.assertEqual(result, {'FINISHED'})
+        bpy.ops.object.mode_set(mode='OBJECT')
+        self.assertLess(
+            sum(
+                abs(value)
+                for row in (obj.matrix_world - world_matrix_before)
+                for value in row
+            ),
+            1e-7,
+        )
+        for key_block in obj.data.shape_keys.key_blocks:
+            self.assertTrue(
+                any(
+                    (before - point.co).length > 1e-5
+                    for before, point in zip(
+                        key_data_before[key_block.name],
+                        key_block.data,
+                    )
+                ),
+                key_block.name,
+            )
+
+    def test_origin_preserving_placement_makes_linked_mesh_single_user(self):
+        bpy.ops.mesh.primitive_cube_add()
+        obj = bpy.context.object
+        linked_obj = obj.copy()
+        linked_obj.data = obj.data
+        bpy.context.collection.objects.link(linked_obj)
+        linked_obj.location.x = 5.0
+        linked_vertices_before = [
+            vertex.co.copy()
+            for vertex in linked_obj.data.vertices
+        ]
+
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='DESELECT')
+        bm = bmesh.from_edit_mesh(obj.data)
+        bottom_face = min(
+            bm.faces,
+            key=lambda face: sum(vert.co.z for vert in face.verts),
+        )
+        bottom_face.select = True
+        bmesh.update_edit_mesh(obj.data, destructive=False)
+
+        result = bpy.ops.ho.placeobjectbottom(
+            keep_origin_transform=True,
+        )
+        self.assertEqual(result, {'FINISHED'})
+        self.assertIsNot(obj.data, linked_obj.data)
+        for before, vertex in zip(
+            linked_vertices_before,
+            linked_obj.data.vertices,
+        ):
+            self.assertLess((before - vertex.co).length, 1e-7)
 
 
 if __name__ == '__main__':
