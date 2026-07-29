@@ -21,7 +21,7 @@ from bpy.types import Operator, Panel, Menu
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty, FloatVectorProperty
 import bmesh
 
-from mathutils import Vector, Matrix, Euler
+from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
@@ -158,70 +158,117 @@ class OP_PlaceObjectBottom(Operator):
         )
 
     def execute(self, context):
-        bpy.ops.object.mode_set(mode='OBJECT')
         obj = context.active_object
-        mesh = obj.data
-        mat_world = obj.matrix_world
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        bm.normal_update()
 
-        # 计算选中面法线平均向量
-        normal_sum = Vector((0, 0, 0))
-        for poly in mesh.polygons:
-            if poly.select:
-                normal_sum += (mat_world.to_3x3() @ poly.normal)
-        if normal_sum.length == 0:
+        selected_faces = [
+            face for face in bm.faces
+            if face.select and not face.hide
+        ]
+        if not selected_faces:
             self.report({'ERROR'}, "未选择任何面")
             return {'CANCELLED'}
-        avg_normal = normal_sum.normalized()
 
-        target_normal = Vector((0, 0, -1))  # 目标朝下
+        world_matrix = obj.matrix_world.copy()
+        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
+        normal_sum = Vector((0.0, 0.0, 0.0))
+        selected_world_points = {}
 
-        axis = avg_normal.cross(target_normal)
-        angle = avg_normal.angle(target_normal)
+        for face in selected_faces:
+            world_points = []
+            for vert in face.verts:
+                point = world_matrix @ vert.co
+                world_points.append(point)
+                selected_world_points[vert] = point
 
-        if axis.length < 1e-6:
-            # 平行或反向
-            if avg_normal.dot(target_normal) < 0:
-                # 180度旋转，任选垂直轴
-                axis = Vector((1, 0, 0))
-                angle = math.pi
-            else:
-                axis = Vector((0, 0, 1))
-                angle = 0
-        else:
-            axis.normalize()
+            # Newell's method gives a stable world-space area for n-gons.
+            area_vector = Vector((0.0, 0.0, 0.0))
+            for index, point in enumerate(world_points):
+                next_point = world_points[(index + 1) % len(world_points)]
+                area_vector.x += (
+                    (point.y - next_point.y) * (point.z + next_point.z)
+                )
+                area_vector.y += (
+                    (point.z - next_point.z) * (point.x + next_point.x)
+                )
+                area_vector.z += (
+                    (point.x - next_point.x) * (point.y + next_point.y)
+                )
 
-        # 转换旋转到物体本地坐标系
-        local_axis = obj.matrix_world.to_3x3().inverted() @ axis
-        # 叠加到物体的欧拉旋转（先确保是欧拉旋转模式）
-        if obj.rotation_mode != 'XYZ':
-            obj.rotation_mode = 'XYZ'
+            world_normal = normal_matrix @ face.normal
+            if world_normal.length_squared <= 1e-16:
+                continue
 
-        # 通过轴角转换为欧拉角增量
-        delta_rot = Euler(local_axis * angle, 'XYZ')
+            world_area = area_vector.length * 0.5
+            if world_area <= 1e-12:
+                continue
+            normal_sum += world_normal.normalized() * world_area
 
-        # 叠加旋转（通过矩阵乘法）
-        rot_mat = obj.rotation_euler.to_matrix().to_4x4()
-        delta_mat = delta_rot.to_matrix().to_4x4()
-        new_rot_mat = delta_mat @ rot_mat
-        obj.rotation_euler = new_rot_mat.to_euler('XYZ')
-
-        # 刷新依赖，更新变换
-        context.view_layer.update()
-
-        # 重新计算选中面旋转后顶点的最低点Z
-        new_verts_z = []
-        for poly in mesh.polygons:
-            if poly.select:
-                for idx in poly.vertices:
-                    v_world = obj.matrix_world @ mesh.vertices[idx].co
-                    new_verts_z.append(v_world.z)
-
-        if not new_verts_z:
-            self.report({'ERROR'}, "旋转后无法计算高度")
+        if normal_sum.length_squared <= 1e-16:
+            self.report({'ERROR'}, "所选面退化或法线互相抵消，无法确定底面方向")
             return {'CANCELLED'}
 
-        min_z = min(new_verts_z)
-        obj.location.z -= min_z
+        avg_normal = normal_sum.normalized()
+        target_normal = Vector((0.0, 0.0, -1.0))
+        dot = max(-1.0, min(1.0, avg_normal.dot(target_normal)))
+
+        if dot >= 1.0 - 1e-10:
+            rotation = Matrix.Identity(4)
+        elif dot <= -1.0 + 1e-10:
+            reference = (
+                Vector((1.0, 0.0, 0.0))
+                if abs(avg_normal.x) < 0.9
+                else Vector((0.0, 1.0, 0.0))
+            )
+            axis = avg_normal.cross(reference).normalized()
+            rotation = Matrix.Rotation(math.pi, 4, axis)
+        else:
+            axis = avg_normal.cross(target_normal)
+            angle = math.atan2(axis.length, dot)
+            rotation = Matrix.Rotation(angle, 4, axis.normalized())
+
+        points = list(selected_world_points.values())
+        pivot = sum(points, Vector((0.0, 0.0, 0.0))) / len(points)
+        pivot_rotation = (
+            Matrix.Translation(pivot) @
+            rotation @
+            Matrix.Translation(-pivot)
+        )
+
+        rotated_points = [
+            pivot + rotation.to_3x3() @ (point - pivot)
+            for point in points
+        ]
+        ground_offset = -min(point.z for point in rotated_points)
+        ground_translation = Matrix.Translation(
+            Vector((0.0, 0.0, ground_offset))
+        )
+
+        # Pre-multiplying in world space also works for parented objects and
+        # preserves the object's existing rotation mode and local scale.
+        target_world_matrix = (
+            ground_translation @ pivot_rotation @ world_matrix
+        )
+        obj.matrix_world = target_world_matrix
+        context.view_layer.update()
+
+        if obj.parent is not None and not obj.constraints:
+            # A rotated, non-uniformly scaled parent can make the desired local
+            # matrix sheared. Blender drops that residual when decomposing
+            # matrix_world into location/rotation/scale, so keep it in the
+            # full matrix_parent_inverse instead.
+            actual_world_matrix = obj.matrix_world.copy()
+            basis_matrix = obj.matrix_basis.copy()
+            obj.matrix_parent_inverse = (
+                obj.matrix_parent_inverse @
+                basis_matrix @
+                actual_world_matrix.inverted_safe() @
+                target_world_matrix @
+                basis_matrix.inverted_safe()
+            )
+            context.view_layer.update()
 
         return {'FINISHED'}
 
