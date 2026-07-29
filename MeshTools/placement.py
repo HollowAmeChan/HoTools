@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import math
 
 import bmesh
+import blf
 import bpy
 import gpu
 from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty
@@ -231,8 +232,6 @@ class OP_PlaceObjectBottom(Operator):
 
 
 MAX_SURFACE_SAMPLES = 20000
-MAX_SUPPORT_CANDIDATES = 160
-MAX_DISPLAY_CANDIDATES = 48
 
 
 @dataclass
@@ -240,15 +239,19 @@ class HullFaceCandidate:
     points: list
     normal: Vector
     area: float
-    support_ratio: float = 0.0
-    score: float = 0.0
 
 
-def evaluated_surface_data(obj, depsgraph):
-    evaluated_obj = obj.evaluated_get(depsgraph)
-    mesh = evaluated_obj.to_mesh()
-    try:
+def evaluated_surface_data(obj, depsgraph, use_evaluated_mesh=True):
+    evaluated_obj = None
+    if use_evaluated_mesh:
+        evaluated_obj = obj.evaluated_get(depsgraph)
+        mesh = evaluated_obj.to_mesh()
         world_matrix = evaluated_obj.matrix_world
+    else:
+        mesh = obj.data
+        world_matrix = obj.matrix_world
+
+    try:
         world_vertices = [
             world_matrix @ vertex.co
             for vertex in mesh.vertices
@@ -298,7 +301,8 @@ def evaluated_surface_data(obj, depsgraph):
 
         return world_vertices, patches, diagonal
     finally:
-        evaluated_obj.to_mesh_clear()
+        if evaluated_obj is not None:
+            evaluated_obj.to_mesh_clear()
 
 
 def convex_hull_candidates(world_vertices, coplanar_angle):
@@ -419,114 +423,25 @@ def fallback_surface_candidates(surface_patches):
             points=[point.copy() for point in patch["points"]],
             normal=normal,
             area=patch["area"],
-            support_ratio=1.0,
-            score=1.0,
         ))
         if len(result) >= 12:
             break
     return result
 
 
-def filter_hull_candidates(
-    candidates,
-    surface_patches,
-    diagonal,
-    min_face_area_ratio,
-    support_angle,
-    support_distance_ratio,
-):
-    if not candidates:
-        return fallback_surface_candidates(surface_patches)
-
-    total_hull_area = sum(candidate.area for candidate in candidates)
-    max_area = max(candidate.area for candidate in candidates)
-    min_area = max(
-        total_hull_area * min_face_area_ratio,
-        max_area * 0.012,
-        diagonal * diagonal * 1e-8,
-    )
-    significant = [
-        candidate
-        for candidate in candidates
-        if candidate.area >= min_area
-    ]
-    if not significant:
-        significant = sorted(
-            candidates,
-            key=lambda candidate: candidate.area,
-            reverse=True,
-        )[:12]
-
-    support_pool = sorted(
-        significant,
-        key=lambda candidate: candidate.area,
-        reverse=True,
-    )[:MAX_SUPPORT_CANDIDATES]
-    normal_threshold = math.cos(support_angle)
-    distance_limit = max(diagonal * support_distance_ratio, 1e-7)
-
-    for candidate in support_pool:
-        plane_point = candidate.points[0]
-        support_area = 0.0
-        for patch in surface_patches:
-            if abs(candidate.normal.dot(patch["normal"])) < normal_threshold:
-                continue
-            plane_distance = abs(
-                (patch["center"] - plane_point).dot(candidate.normal)
-            )
-            if plane_distance <= distance_limit:
-                support_area += patch["area"]
-
-        candidate.support_ratio = support_area / max(candidate.area, 1e-12)
-        area_weight = math.pow(candidate.area / max_area, 0.35)
-        candidate.score = min(candidate.support_ratio, 4.0) * area_weight
-
-    supported = [
-        candidate
-        for candidate in support_pool
-        if candidate.support_ratio >= 0.10
-    ]
-    ranked = sorted(
-        supported or support_pool,
-        key=lambda candidate: (candidate.score, candidate.area),
-        reverse=True,
-    )
-
-    if len(ranked) < min(6, len(support_pool)):
-        for candidate in sorted(
-            support_pool,
-            key=lambda item: item.area,
-            reverse=True,
-        ):
-            if candidate not in ranked:
-                ranked.append(candidate)
-            if len(ranked) >= min(6, len(support_pool)):
-                break
-
-    return ranked[:MAX_DISPLAY_CANDIDATES]
-
-
 def build_candidates(
     obj,
     depsgraph,
     coplanar_angle,
-    min_face_area_ratio,
-    support_angle,
-    support_distance_ratio,
+    use_evaluated_mesh=True,
 ):
-    world_vertices, surface_patches, diagonal = evaluated_surface_data(
+    world_vertices, surface_patches, _diagonal = evaluated_surface_data(
         obj,
         depsgraph,
+        use_evaluated_mesh,
     )
     candidates = convex_hull_candidates(world_vertices, coplanar_angle)
-    return filter_hull_candidates(
-        candidates,
-        surface_patches,
-        diagonal,
-        min_face_area_ratio,
-        support_angle,
-        support_distance_ratio,
-    )
+    return candidates or fallback_surface_candidates(surface_patches)
 
 
 def ray_hit_candidate(candidates, ray_origin, ray_direction):
@@ -589,29 +504,15 @@ class OP_AutoPlaceObjectBottom(Operator):
         min=0.0,
         max=math.radians(15.0),
     )  # type: ignore
-    min_face_area_ratio: FloatProperty(
-        name="最小面面积比例",
-        description="排除无法代表稳定放置面的细小凸包面",
-        default=0.002,
-        min=0.0001,
-        max=0.05,
-        subtype='FACTOR',
+    merge_coplanar: BoolProperty(
+        name="合并近似共面",
+        description="合并凸包上法线接近的相邻面",
+        default=True,
     )  # type: ignore
-    support_angle: FloatProperty(
-        name="表面贴合角度",
-        description="原网格表面与凸包候选面的最大法线夹角",
-        subtype='ANGLE',
-        default=math.radians(12.0),
-        min=math.radians(1.0),
-        max=math.radians(45.0),
-    )  # type: ignore
-    support_distance_ratio: FloatProperty(
-        name="表面贴合距离",
-        description="按物体尺寸计算原网格对凸包平面的支持距离",
-        default=0.006,
-        min=0.0001,
-        max=0.05,
-        subtype='FACTOR',
+    use_evaluated_mesh: BoolProperty(
+        name="使用求值后网格",
+        description="使用包含可见修改器结果的网格生成凸包",
+        default=True,
     )  # type: ignore
 
     @classmethod
@@ -661,6 +562,9 @@ class OP_AutoPlaceObjectBottom(Operator):
             event.mouse_region_x,
             event.mouse_region_y,
         ))
+        self._update_hover_at(context)
+
+    def _update_hover_at(self, context):
         region = context.region
         region_3d = context.space_data.region_3d
         ray_origin = view3d_utils.region_2d_to_origin_3d(
@@ -679,6 +583,23 @@ class OP_AutoPlaceObjectBottom(Operator):
             ray_direction,
         )
 
+    def _rebuild_candidates(self, context):
+        merge_angle = self.coplanar_angle if self.merge_coplanar else 0.0
+        self.candidates = build_candidates(
+            self.obj,
+            context.evaluated_depsgraph_get(),
+            merge_angle,
+            self.use_evaluated_mesh,
+        )
+        self.hovered_index = -1
+        if self.candidates:
+            self._update_hover_at(context)
+        if context.area is not None:
+            context.area.header_text_set(
+                f"自动底面放置 | 候选面 {len(self.candidates)}"
+            )
+        self._tag_redraw(context)
+
     def draw_preview(self):
         if not self.candidates:
             return
@@ -695,7 +616,7 @@ class OP_AutoPlaceObjectBottom(Operator):
             )
 
         gpu.state.blend_set('ALPHA')
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         shader.bind()
 
@@ -709,7 +630,8 @@ class OP_AutoPlaceObjectBottom(Operator):
         )
 
         if active_polygons:
-            gpu.state.depth_test_set('NONE')
+            gpu.state.depth_test_set('LESS_EQUAL')
+            gpu.state.depth_mask_set(False)
             draw_polygons(
                 shader,
                 active_polygons,
@@ -720,11 +642,66 @@ class OP_AutoPlaceObjectBottom(Operator):
 
         restore_3d_state()
 
+    def draw_text(self):
+        font_id = 0
+        blf.size(font_id, 16)
+        x = self.mouse.x + 20
+        y = self.mouse.y + 20
+
+        blf.enable(font_id, blf.SHADOW)
+        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
+        blf.shadow_offset(font_id, 1, -1)
+
+        def draw_key_value(key_text, value_text, offset_y):
+            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+            blf.position(font_id, x, y + offset_y, 0)
+            blf.draw(font_id, key_text)
+            key_width, _height = blf.dimensions(font_id, key_text)
+            blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+            blf.position(font_id, x + key_width, y + offset_y, 0)
+            blf.draw(font_id, value_text)
+
+        draw_key_value(
+            "滚轮:",
+            f"共面角度 {math.degrees(self.coplanar_angle):.1f}°",
+            0,
+        )
+        draw_key_value(
+            "M键:",
+            f"合并近似共面 {'开' if self.merge_coplanar else '关'}",
+            22,
+        )
+        draw_key_value(
+            "E键:",
+            "求值后网格" if self.use_evaluated_mesh else "基础网格",
+            44,
+        )
+        draw_key_value(
+            "O键:",
+            f"保持原点变换 {'开' if self.keep_origin_transform else '关'}",
+            66,
+        )
+        draw_key_value(
+            "R键:",
+            "重建凸包",
+            88,
+        )
+        draw_key_value(
+            "候选面:",
+            str(len(self.candidates)),
+            110,
+        )
+        blf.disable(font_id, blf.SHADOW)
+
     def finish(self, context):
-        handle = getattr(self, "_draw_handle", None)
-        if handle is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(handle, 'WINDOW')
+        handle_3d = getattr(self, "_draw_handle", None)
+        handle_text = getattr(self, "_text_handle", None)
+        if handle_3d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(handle_3d, 'WINDOW')
             self._draw_handle = None
+        if handle_text is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(handle_text, 'WINDOW')
+            self._text_handle = None
         if context.area is not None:
             context.area.header_text_set(None)
         self._tag_redraw(context)
@@ -737,6 +714,43 @@ class OP_AutoPlaceObjectBottom(Operator):
         if event.type == 'MOUSEMOVE':
             self._update_hover(context, event)
             self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'WHEELUPMOUSE':
+            self.merge_coplanar = True
+            self.coplanar_angle = min(
+                math.radians(15.0),
+                self.coplanar_angle + math.radians(0.5),
+            )
+            self._rebuild_candidates(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'WHEELDOWNMOUSE':
+            self.merge_coplanar = True
+            self.coplanar_angle = max(
+                0.0,
+                self.coplanar_angle - math.radians(0.5),
+            )
+            self._rebuild_candidates(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'M' and event.value == 'PRESS':
+            self.merge_coplanar = not self.merge_coplanar
+            self._rebuild_candidates(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'E' and event.value == 'PRESS':
+            self.use_evaluated_mesh = not self.use_evaluated_mesh
+            self._rebuild_candidates(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'O' and event.value == 'PRESS':
+            self.keep_origin_transform = not self.keep_origin_transform
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'R' and event.value == 'PRESS':
+            self._rebuild_candidates(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -760,8 +774,6 @@ class OP_AutoPlaceObjectBottom(Operator):
 
         if event.type in {
             'MIDDLEMOUSE',
-            'WHEELUPMOUSE',
-            'WHEELDOWNMOUSE',
             'NUMPAD_1',
             'NUMPAD_2',
             'NUMPAD_3',
@@ -782,28 +794,28 @@ class OP_AutoPlaceObjectBottom(Operator):
         if context.mode == 'EDIT_MESH':
             bmesh.update_edit_mesh(self.obj.data, destructive=False)
 
-        self.candidates = build_candidates(
-            self.obj,
-            context.evaluated_depsgraph_get(),
-            self.coplanar_angle,
-            self.min_face_area_ratio,
-            self.support_angle,
-            self.support_distance_ratio,
-        )
+        self.mouse = Vector((
+            event.mouse_region_x,
+            event.mouse_region_y,
+        ))
+        self.candidates = []
+        self.hovered_index = -1
+        self._rebuild_candidates(context)
         if not self.candidates:
             self.report({'ERROR'}, "无法从当前网格生成有效的凸包放置面")
             return {'CANCELLED'}
 
-        self.hovered_index = -1
-        self._update_hover(context, event)
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             self.draw_preview,
             (),
             'WINDOW',
             'POST_VIEW',
         )
-        context.area.header_text_set(
-            f"自动底面放置 | 候选面 {len(self.candidates)}"
+        self._text_handle = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_text,
+            (),
+            'WINDOW',
+            'POST_PIXEL',
         )
         context.window_manager.modal_handler_add(self)
         self._tag_redraw(context)

@@ -39,9 +39,7 @@ class AutoPlacementTests(unittest.TestCase):
             obj,
             bpy.context.evaluated_depsgraph_get(),
             math.radians(2.5),
-            0.002,
-            math.radians(12.0),
-            0.006,
+            True,
         )
 
     def test_transformed_cube_produces_six_planes(self):
@@ -110,7 +108,7 @@ class AutoPlacementTests(unittest.TestCase):
             1e-5,
         )
 
-    def test_bevelled_cube_filters_small_hull_faces(self):
+    def test_bevelled_cube_keeps_every_hull_face(self):
         bpy.ops.mesh.primitive_cube_add()
         obj = bpy.context.object
         modifier = obj.modifiers.new("Bevel", 'BEVEL')
@@ -118,34 +116,55 @@ class AutoPlacementTests(unittest.TestCase):
         modifier.segments = 3
         bpy.context.view_layer.update()
 
-        world_vertices, patches, diagonal = (
+        world_vertices, _patches, _diagonal = (
             self.placement.evaluated_surface_data(
                 obj,
                 bpy.context.evaluated_depsgraph_get(),
+                True,
             )
         )
         raw_candidates = self.placement.convex_hull_candidates(
             world_vertices,
             math.radians(2.5),
         )
-        filtered = self.placement.filter_hull_candidates(
-            raw_candidates,
-            patches,
-            diagonal,
-            0.002,
-            math.radians(12.0),
-            0.006,
+        built_candidates = self.placement.build_candidates(
+            obj,
+            bpy.context.evaluated_depsgraph_get(),
+            math.radians(2.5),
+            True,
         )
 
         self.assertGreater(len(raw_candidates), 6)
-        self.assertGreaterEqual(len(filtered), 6)
-        self.assertLess(len(filtered), len(raw_candidates))
-        axis_aligned = [
-            candidate
-            for candidate in filtered
-            if max(abs(component) for component in candidate.normal) > 0.999
-        ]
-        self.assertGreaterEqual(len(axis_aligned), 6)
+        self.assertEqual(len(built_candidates), len(raw_candidates))
+        self.assertEqual(
+            sorted(round(candidate.area, 8) for candidate in built_candidates),
+            sorted(round(candidate.area, 8) for candidate in raw_candidates),
+        )
+
+    def test_candidate_source_can_ignore_modifiers(self):
+        bpy.ops.mesh.primitive_cube_add()
+        obj = bpy.context.object
+        modifier = obj.modifiers.new("Bevel", 'BEVEL')
+        modifier.width = 0.18
+        modifier.segments = 3
+        bpy.context.view_layer.update()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+
+        base_candidates = self.placement.build_candidates(
+            obj,
+            depsgraph,
+            math.radians(2.5),
+            False,
+        )
+        evaluated_candidates = self.placement.build_candidates(
+            obj,
+            depsgraph,
+            math.radians(2.5),
+            True,
+        )
+
+        self.assertEqual(len(base_candidates), 6)
+        self.assertGreater(len(evaluated_candidates), len(base_candidates))
 
     def test_ray_selects_nearest_candidate(self):
         candidate_type = self.placement.HullFaceCandidate
@@ -175,6 +194,60 @@ class AutoPlacementTests(unittest.TestCase):
             Vector((0.0, 0.0, -1.0)),
         )
         self.assertEqual(hit_index, 1)
+
+    def test_modal_shortcuts_update_hull_settings(self):
+        operator = types.SimpleNamespace(
+            merge_coplanar=True,
+            use_evaluated_mesh=True,
+            keep_origin_transform=True,
+            coplanar_angle=math.radians(2.5),
+            rebuild_count=0,
+        )
+
+        def rebuild(_context):
+            operator.rebuild_count += 1
+
+        operator._rebuild_candidates = rebuild
+        operator._tag_redraw = lambda _context: None
+        context = types.SimpleNamespace()
+
+        result = self.placement.OP_AutoPlaceObjectBottom.modal(
+            operator,
+            context,
+            types.SimpleNamespace(type='M', value='PRESS'),
+        )
+        self.assertEqual(result, {'RUNNING_MODAL'})
+        self.assertFalse(operator.merge_coplanar)
+        self.assertEqual(operator.rebuild_count, 1)
+
+        self.placement.OP_AutoPlaceObjectBottom.modal(
+            operator,
+            context,
+            types.SimpleNamespace(type='E', value='PRESS'),
+        )
+        self.assertFalse(operator.use_evaluated_mesh)
+        self.assertEqual(operator.rebuild_count, 2)
+
+        self.placement.OP_AutoPlaceObjectBottom.modal(
+            operator,
+            context,
+            types.SimpleNamespace(type='O', value='PRESS'),
+        )
+        self.assertFalse(operator.keep_origin_transform)
+        self.assertEqual(operator.rebuild_count, 2)
+
+        old_angle = operator.coplanar_angle
+        self.placement.OP_AutoPlaceObjectBottom.modal(
+            operator,
+            context,
+            types.SimpleNamespace(type='WHEELUPMOUSE', value='PRESS'),
+        )
+        self.assertTrue(operator.merge_coplanar)
+        self.assertAlmostEqual(
+            operator.coplanar_angle,
+            old_angle + math.radians(0.5),
+        )
+        self.assertEqual(operator.rebuild_count, 3)
 
     def test_modal_result_can_execute_from_stored_plane_parameters(self):
         bpy.ops.mesh.primitive_cube_add(location=(1.0, -2.0, 3.0))
