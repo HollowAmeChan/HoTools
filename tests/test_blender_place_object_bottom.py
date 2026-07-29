@@ -13,9 +13,9 @@ from mathutils import Euler, Vector
 ADDON_ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_fast_operators():
+def load_placement():
     package_name = "hotools_place_bottom_test"
-    module_name = f"{package_name}.FastOperators"
+    module_name = f"{package_name}.placement"
     if module_name in sys.modules:
         return sys.modules[module_name]
 
@@ -24,7 +24,7 @@ def load_fast_operators():
     sys.modules[package_name] = package
     spec = importlib.util.spec_from_file_location(
         module_name,
-        ADDON_ROOT / "FastOperators.py",
+        ADDON_ROOT / "MeshTools" / "placement.py",
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -35,12 +35,12 @@ def load_fast_operators():
 class PlaceObjectBottomTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fast_operators = load_fast_operators()
-        bpy.utils.register_class(cls.fast_operators.OP_PlaceObjectBottom)
+        cls.placement = load_placement()
+        bpy.utils.register_class(cls.placement.OP_PlaceObjectBottom)
 
     @classmethod
     def tearDownClass(cls):
-        bpy.utils.unregister_class(cls.fast_operators.OP_PlaceObjectBottom)
+        bpy.utils.unregister_class(cls.placement.OP_PlaceObjectBottom)
 
     def setUp(self):
         bpy.ops.object.mode_set(mode='OBJECT') if bpy.context.object else None
