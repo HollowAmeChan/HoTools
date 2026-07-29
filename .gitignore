@@ -40,3 +40,13 @@ _native/cmake-build-*/
 _native/out/
 _native/install/
 _native/.idea/
+
+# 探索工作区：保留可复现探针和说明；模型盘点结果/缓存不入库
+_research/*
+!_research/
+!_research/mmd/pmx_inventory.py
+!_research/MMD_EXTERNAL_RESEARCH_NOTES.md
+!_research/mmd/
+_research/mmd/*
+!_research/mmd/pmx_inventory.py
+_research/**/__pycache__/
