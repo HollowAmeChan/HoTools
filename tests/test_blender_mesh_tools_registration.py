@@ -37,7 +37,9 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             }
             self.assertEqual(registered_ids, {
                 "ho.auto_place_object_bottom",
+                "ho.auto_snap_face_orthogonal",
                 "ho.placeobjectbottom",
+                "ho.snap_selected_face_orthogonal",
                 "ho.align_to_avg_normal",
                 "ho.create_bone_chain_by_meshflow",
                 "ho.modal_fill_mesh_hole",
@@ -89,6 +91,14 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 "ho.placeobjectbottom",
                 menu_layout.operator_ids,
             )
+            self.assertIn(
+                "ho.auto_snap_face_orthogonal",
+                menu_layout.operator_ids,
+            )
+            self.assertIn(
+                "ho.snap_selected_face_orthogonal",
+                menu_layout.operator_ids,
+            )
             self.assertEqual(menu_layout.property_ids, [])
 
             operator_layout = RecordingLayout()
@@ -109,6 +119,24 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                 manual_operator_layout.property_ids,
                 ["keep_origin_transform"],
             )
+            auto_snap_layout = RecordingLayout()
+            mesh_tools.OP_AutoSnapFaceOrthogonal.draw(
+                SimpleNamespace(layout=auto_snap_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                auto_snap_layout.property_ids,
+                ["keep_origin_transform"],
+            )
+            selected_snap_layout = RecordingLayout()
+            mesh_tools.OP_SnapSelectedFaceOrthogonal.draw(
+                SimpleNamespace(layout=selected_snap_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                selected_snap_layout.property_ids,
+                ["keep_origin_transform"],
+            )
 
             poll_context = SimpleNamespace(
                 area=SimpleNamespace(type='VIEW_3D'),
@@ -118,9 +146,15 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertFalse(
                 mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
             )
+            self.assertFalse(
+                mesh_tools.OP_AutoSnapFaceOrthogonal.poll(poll_context)
+            )
             poll_context.mode = 'EDIT_MESH'
             self.assertTrue(
                 mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
+            )
+            self.assertTrue(
+                mesh_tools.OP_AutoSnapFaceOrthogonal.poll(poll_context)
             )
         finally:
             mesh_tools.unregister()

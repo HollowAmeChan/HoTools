@@ -27,25 +27,47 @@ def polygon_area_vector(points):
     return result
 
 
-def ground_alignment_matrix(world_matrix, plane_points, world_normal):
-    normal = world_normal.normalized()
-    target_normal = Vector((0.0, 0.0, -1.0))
-    dot = max(-1.0, min(1.0, normal.dot(target_normal)))
+def rotation_between_vectors(source, target):
+    source = source.normalized()
+    target = target.normalized()
+    dot = max(-1.0, min(1.0, source.dot(target)))
 
     if dot >= 1.0 - 1e-10:
-        rotation = Matrix.Identity(4)
-    elif dot <= -1.0 + 1e-10:
+        return Matrix.Identity(4)
+    if dot <= -1.0 + 1e-10:
         reference = (
             Vector((1.0, 0.0, 0.0))
-            if abs(normal.x) < 0.9
+            if abs(source.x) < 0.9
             else Vector((0.0, 1.0, 0.0))
         )
-        axis = normal.cross(reference).normalized()
-        rotation = Matrix.Rotation(math.pi, 4, axis)
-    else:
-        axis = normal.cross(target_normal)
-        angle = math.atan2(axis.length, dot)
-        rotation = Matrix.Rotation(angle, 4, axis.normalized())
+        axis = source.cross(reference).normalized()
+        return Matrix.Rotation(math.pi, 4, axis)
+
+    axis = source.cross(target)
+    angle = math.atan2(axis.length, dot)
+    return Matrix.Rotation(angle, 4, axis.normalized())
+
+
+def nearest_world_axis(world_normal):
+    normal = world_normal.normalized()
+    axis_index = max(range(3), key=lambda index: abs(normal[index]))
+    axis = Vector((0.0, 0.0, 0.0))
+    axis[axis_index] = 1.0 if normal[axis_index] >= 0.0 else -1.0
+    return axis
+
+
+def world_axis_label(axis):
+    axis_index = max(range(3), key=lambda index: abs(axis[index]))
+    sign = "+" if axis[axis_index] >= 0.0 else "-"
+    return f"{sign}{'XYZ'[axis_index]}"
+
+
+def ground_alignment_matrix(world_matrix, plane_points, world_normal):
+    normal = world_normal.normalized()
+    rotation = rotation_between_vectors(
+        normal,
+        Vector((0.0, 0.0, -1.0)),
+    )
 
     pivot = sum(plane_points, Vector((0.0, 0.0, 0.0))) / len(plane_points)
     pivot_rotation = (
@@ -61,6 +83,20 @@ def ground_alignment_matrix(world_matrix, plane_points, world_normal):
         Vector((0.0, 0.0, -min(point.z for point in rotated_points)))
     )
     return ground_translation @ pivot_rotation @ world_matrix
+
+
+def orthogonal_alignment_matrix(world_matrix, world_normal):
+    rotation = rotation_between_vectors(
+        world_normal,
+        nearest_world_axis(world_normal),
+    )
+    pivot = world_matrix.translation.copy()
+    return (
+        Matrix.Translation(pivot) @
+        rotation @
+        Matrix.Translation(-pivot) @
+        world_matrix
+    )
 
 
 def apply_world_matrix(obj, target_world_matrix, view_layer):
@@ -129,19 +165,13 @@ def apply_mesh_transform(obj, local_matrix, context):
     mesh.update()
 
 
-def place_object_on_ground(
+def apply_target_world_matrix(
     obj,
-    plane_points,
-    world_normal,
+    target_world_matrix,
     context,
     keep_origin_transform=True,
 ):
     original_world_matrix = obj.matrix_world.copy()
-    target_world_matrix = ground_alignment_matrix(
-        original_world_matrix,
-        plane_points,
-        world_normal,
-    )
     if keep_origin_transform:
         local_matrix = (
             original_world_matrix.inverted_safe() @
@@ -154,6 +184,91 @@ def place_object_on_ground(
     if context.mode == 'EDIT_MESH':
         bpy.ops.object.mode_set(mode='OBJECT')
     apply_world_matrix(obj, target_world_matrix, context.view_layer)
+
+
+def place_object_on_ground(
+    obj,
+    plane_points,
+    world_normal,
+    context,
+    keep_origin_transform=True,
+):
+    target_world_matrix = ground_alignment_matrix(
+        obj.matrix_world.copy(),
+        plane_points,
+        world_normal,
+    )
+    apply_target_world_matrix(
+        obj,
+        target_world_matrix,
+        context,
+        keep_origin_transform,
+    )
+
+
+def snap_object_rotation_to_axis(
+    obj,
+    world_normal,
+    context,
+    keep_origin_transform=True,
+):
+    target_world_matrix = orthogonal_alignment_matrix(
+        obj.matrix_world.copy(),
+        world_normal,
+    )
+    apply_target_world_matrix(
+        obj,
+        target_world_matrix,
+        context,
+        keep_origin_transform,
+    )
+
+
+def selected_face_world_geometry(obj):
+    bm = bmesh.from_edit_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    bm.normal_update()
+
+    selected_faces = [
+        face for face in bm.faces
+        if face.select and not face.hide
+    ]
+    if not selected_faces:
+        return None, None, "未选择任何面"
+
+    world_matrix = obj.matrix_world.copy()
+    normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
+    normal_sum = Vector((0.0, 0.0, 0.0))
+    selected_world_points = {}
+
+    for face in selected_faces:
+        world_points = []
+        for vert in face.verts:
+            point = world_matrix @ vert.co
+            world_points.append(point)
+            selected_world_points[vert] = point
+
+        world_normal = normal_matrix @ face.normal
+        if world_normal.length_squared <= 1e-16:
+            continue
+
+        world_area = polygon_area_vector(world_points).length
+        if world_area <= 1e-12:
+            continue
+        normal_sum += world_normal.normalized() * world_area
+
+    if normal_sum.length_squared <= 1e-16:
+        return (
+            None,
+            None,
+            "所选面退化或法线互相抵消，无法确定方向",
+        )
+
+    return (
+        list(selected_world_points.values()),
+        normal_sum.normalized(),
+        None,
+    )
 
 
 class OP_PlaceObjectBottom(Operator):
@@ -182,52 +297,59 @@ class OP_PlaceObjectBottom(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        bm = bmesh.from_edit_mesh(obj.data)
-        bm.faces.ensure_lookup_table()
-        bm.normal_update()
-
-        selected_faces = [
-            face for face in bm.faces
-            if face.select and not face.hide
-        ]
-        if not selected_faces:
-            self.report({'ERROR'}, "未选择任何面")
+        points, world_normal, error = selected_face_world_geometry(obj)
+        if error is not None:
+            self.report({'ERROR'}, error)
             return {'CANCELLED'}
 
-        world_matrix = obj.matrix_world.copy()
-        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
-        normal_sum = Vector((0.0, 0.0, 0.0))
-        selected_world_points = {}
-
-        for face in selected_faces:
-            world_points = []
-            for vert in face.verts:
-                point = world_matrix @ vert.co
-                world_points.append(point)
-                selected_world_points[vert] = point
-
-            world_normal = normal_matrix @ face.normal
-            if world_normal.length_squared <= 1e-16:
-                continue
-
-            world_area = polygon_area_vector(world_points).length
-            if world_area <= 1e-12:
-                continue
-            normal_sum += world_normal.normalized() * world_area
-
-        if normal_sum.length_squared <= 1e-16:
-            self.report({'ERROR'}, "所选面退化或法线互相抵消，无法确定底面方向")
-            return {'CANCELLED'}
-
-        points = list(selected_world_points.values())
         place_object_on_ground(
             obj,
             points,
-            normal_sum.normalized(),
+            world_normal,
             context,
             self.keep_origin_transform,
         )
 
+        return {'FINISHED'}
+
+
+class OP_SnapSelectedFaceOrthogonal(Operator):
+    bl_idname = "ho.snap_selected_face_orthogonal"
+    bl_label = "选择面吸附正交旋转"
+    bl_description = "将所选面的综合法向旋转到最接近的世界正交轴，不改变位置"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    keep_origin_transform: BoolProperty(
+        name="保持原点变换",
+        description="保持物体原点的位置和旋转不变，直接旋转网格数据",
+        default=True,
+    )  # type: ignore
+
+    def draw(self, context):
+        self.layout.prop(self, "keep_origin_transform")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        _points, world_normal, error = selected_face_world_geometry(obj)
+        if error is not None:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+
+        snap_object_rotation_to_axis(
+            obj,
+            world_normal,
+            context,
+            self.keep_origin_transform,
+        )
         return {'FINISHED'}
 
 
@@ -596,7 +718,7 @@ class OP_AutoPlaceObjectBottom(Operator):
             self._update_hover_at(context)
         if context.area is not None:
             context.area.header_text_set(
-                f"自动底面放置 | 候选面 {len(self.candidates)}"
+                f"{self.bl_label} | 候选面 {len(self.candidates)}"
             )
         self._tag_redraw(context)
 
@@ -691,6 +813,17 @@ class OP_AutoPlaceObjectBottom(Operator):
             str(len(self.candidates)),
             110,
         )
+        if getattr(self, "show_target_axis_hud", False):
+            target_axis = "-"
+            if 0 <= self.hovered_index < len(self.candidates):
+                target_axis = world_axis_label(nearest_world_axis(
+                    self.candidates[self.hovered_index].normal
+                ))
+            draw_key_value(
+                "目标轴:",
+                target_axis,
+                132,
+            )
         blf.disable(font_id, blf.SHADOW)
 
     def finish(self, context):
@@ -820,3 +953,91 @@ class OP_AutoPlaceObjectBottom(Operator):
         context.window_manager.modal_handler_add(self)
         self._tag_redraw(context)
         return {'RUNNING_MODAL'}
+
+
+class OP_AutoSnapFaceOrthogonal(Operator):
+    bl_idname = "ho.auto_snap_face_orthogonal"
+    bl_label = "自动面吸附正交旋转"
+    bl_description = "生成凸包并点击候选面，将其法向旋转到最接近的世界正交轴"
+    bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
+    show_target_axis_hud = True
+
+    keep_origin_transform: BoolProperty(
+        name="保持原点变换",
+        description="保持物体原点的位置和旋转不变，直接旋转网格数据",
+        default=True,
+    )  # type: ignore
+    placement_point_local: FloatVectorProperty(
+        name="目标平面点",
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    placement_normal_local: FloatVectorProperty(
+        name="目标平面法线",
+        size=3,
+        default=(0.0, 0.0, 1.0),
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    has_placement_plane: BoolProperty(
+        name="已有目标平面",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    coplanar_angle: FloatProperty(
+        name="共面合并角度",
+        description="合并凸包上近似共面的相邻面",
+        subtype='ANGLE',
+        default=math.radians(2.5),
+        min=0.0,
+        max=math.radians(15.0),
+    )  # type: ignore
+    merge_coplanar: BoolProperty(
+        name="合并近似共面",
+        description="合并凸包上法线接近的相邻面",
+        default=True,
+    )  # type: ignore
+    use_evaluated_mesh: BoolProperty(
+        name="使用求值后网格",
+        description="使用包含可见修改器结果的网格生成凸包",
+        default=True,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return OP_AutoPlaceObjectBottom.poll(context)
+
+    def draw(self, context):
+        self.layout.prop(self, "keep_origin_transform")
+
+    def execute(self, context):
+        obj = context.active_object
+        if (
+            not self.has_placement_plane or
+            obj is None or
+            obj.type != 'MESH'
+        ):
+            self.report({'ERROR'}, "没有可重用的凸包目标面")
+            return {'CANCELLED'}
+
+        world_matrix = obj.matrix_world.copy()
+        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
+        world_normal = (
+            normal_matrix @ Vector(self.placement_normal_local)
+        ).normalized()
+        snap_object_rotation_to_axis(
+            obj,
+            world_normal,
+            context,
+            self.keep_origin_transform,
+        )
+        return {'FINISHED'}
+
+    _tag_redraw = OP_AutoPlaceObjectBottom._tag_redraw
+    _update_hover = OP_AutoPlaceObjectBottom._update_hover
+    _update_hover_at = OP_AutoPlaceObjectBottom._update_hover_at
+    _rebuild_candidates = OP_AutoPlaceObjectBottom._rebuild_candidates
+    draw_preview = OP_AutoPlaceObjectBottom.draw_preview
+    draw_text = OP_AutoPlaceObjectBottom.draw_text
+    finish = OP_AutoPlaceObjectBottom.finish
+    modal = OP_AutoPlaceObjectBottom.modal
+    invoke = OP_AutoPlaceObjectBottom.invoke

@@ -3,7 +3,12 @@ import bpy
 from . import boolean
 from .bone_chain import OP_CreatBoneChainByMeshFlow
 from .hole_fill import OP_ModalFillMeshHole
-from .placement import OP_AutoPlaceObjectBottom, OP_PlaceObjectBottom
+from .placement import (
+    OP_AutoPlaceObjectBottom,
+    OP_AutoSnapFaceOrthogonal,
+    OP_PlaceObjectBottom,
+    OP_SnapSelectedFaceOrthogonal,
+)
 from .view import OP_AlignViewToAvgNormal
 
 
@@ -31,6 +36,14 @@ class VIEW3D_MT_edit_mesh_hotools(bpy.types.Menu):
             icon='TRIA_DOWN',
         )
         layout.operator(
+            OP_AutoSnapFaceOrthogonal.bl_idname,
+            icon='ORIENTATION_GLOBAL',
+        )
+        layout.operator(
+            OP_SnapSelectedFaceOrthogonal.bl_idname,
+            icon='ORIENTATION_GLOBAL',
+        )
+        layout.operator(
             OP_AlignViewToAvgNormal.bl_idname,
             icon='RESTRICT_RENDER_OFF',
         )
@@ -45,6 +58,8 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
 cls = [
     OP_AutoPlaceObjectBottom,
     OP_PlaceObjectBottom,
+    OP_AutoSnapFaceOrthogonal,
+    OP_SnapSelectedFaceOrthogonal,
     OP_AlignViewToAvgNormal,
     OP_CreatBoneChainByMeshFlow,
     OP_ModalFillMeshHole,
