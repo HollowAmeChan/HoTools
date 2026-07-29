@@ -2,6 +2,46 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 
 
+_FOREGROUND_COLOR_SHADER = None
+
+
+def foreground_uniform_color_shader():
+    global _FOREGROUND_COLOR_SHADER
+    if _FOREGROUND_COLOR_SHADER is not None:
+        return _FOREGROUND_COLOR_SHADER
+
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    shader_info.vertex_in(0, "VEC3", "pos")
+    shader_info.push_constant("MAT4", "view_projection")
+    shader_info.push_constant("FLOAT", "depth_scale")
+    shader_info.push_constant("VEC4", "color")
+    shader_info.fragment_out(0, "VEC4", "FragColor")
+    shader_info.vertex_source(
+        """
+void main()
+{
+    vec4 clip = view_projection * vec4(pos, 1.0);
+    float clip_w = abs(clip.w);
+    clip.z = -clip_w + (clip.z + clip_w) * depth_scale;
+    gl_Position = clip;
+}
+"""
+    )
+    shader_info.fragment_source(
+        """
+void main()
+{
+    FragColor = color;
+}
+"""
+    )
+    try:
+        _FOREGROUND_COLOR_SHADER = gpu.shader.create_from_info(shader_info)
+    except Exception:
+        return None
+    return _FOREGROUND_COLOR_SHADER
+
+
 def polygon_triangles(polygons):
     coords = []
     for polygon in polygons:

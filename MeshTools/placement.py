@@ -11,7 +11,11 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Vector
 from mathutils.geometry import intersect_ray_tri
 
-from .viewport_draw import draw_polygons, restore_3d_state
+from .viewport_draw import (
+    draw_polygons,
+    foreground_uniform_color_shader,
+    restore_3d_state,
+)
 
 
 def polygon_area_vector(points):
@@ -738,11 +742,24 @@ class OP_AutoPlaceObjectBottom(Operator):
             )
 
         gpu.state.blend_set('ALPHA')
-        gpu.state.depth_mask_set(True)
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        shader.bind()
+        shader = foreground_uniform_color_shader()
+        if shader is None:
+            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            shader.bind()
+            depth_test = 'NONE'
+            gpu.state.depth_mask_set(False)
+        else:
+            shader.bind()
+            shader.uniform_float(
+                "view_projection",
+                gpu.matrix.get_projection_matrix() @
+                gpu.matrix.get_model_view_matrix(),
+            )
+            shader.uniform_float("depth_scale", 0.01)
+            depth_test = 'LESS_EQUAL'
+            gpu.state.depth_mask_set(True)
 
-        gpu.state.depth_test_set('LESS_EQUAL')
+        gpu.state.depth_test_set(depth_test)
         draw_polygons(
             shader,
             inactive_polygons,
@@ -752,7 +769,7 @@ class OP_AutoPlaceObjectBottom(Operator):
         )
 
         if active_polygons:
-            gpu.state.depth_test_set('LESS_EQUAL')
+            gpu.state.depth_test_set(depth_test)
             gpu.state.depth_mask_set(False)
             draw_polygons(
                 shader,
