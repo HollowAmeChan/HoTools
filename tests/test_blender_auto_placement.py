@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import bpy
+import bmesh
 from mathutils import Euler, Vector
 
 
@@ -174,6 +175,56 @@ class AutoPlacementTests(unittest.TestCase):
             Vector((0.0, 0.0, -1.0)),
         )
         self.assertEqual(hit_index, 1)
+
+    def test_modal_result_can_execute_from_stored_plane_parameters(self):
+        bpy.ops.mesh.primitive_cube_add(location=(1.0, -2.0, 3.0))
+        obj = bpy.context.object
+        obj.rotation_euler = Euler((0.44, -0.31, 0.72))
+        bpy.context.view_layer.update()
+        world_matrix_before = obj.matrix_world.copy()
+        candidate = self._build_candidates(obj)[0]
+        face_center = sum(
+            candidate.points,
+            Vector((0.0, 0.0, 0.0)),
+        ) / len(candidate.points)
+        point_local = (
+            world_matrix_before.inverted_safe() @ face_center
+        )
+        normal_local = (
+            world_matrix_before.to_3x3().transposed() @ candidate.normal
+        ).normalized()
+
+        bpy.ops.object.mode_set(mode='EDIT')
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        vertices_before = [vert.co.copy() for vert in bm.verts]
+        operator = types.SimpleNamespace(
+            has_placement_plane=True,
+            placement_point_local=point_local,
+            placement_normal_local=normal_local,
+            keep_origin_transform=True,
+        )
+
+        result = self.placement.OP_AutoPlaceObjectBottom.execute(
+            operator,
+            bpy.context,
+        )
+        self.assertEqual(result, {'FINISHED'})
+        self.assertEqual(bpy.context.mode, 'EDIT_MESH')
+        self.assertLess(
+            sum(
+                abs(value)
+                for row in (obj.matrix_world - world_matrix_before)
+                for value in row
+            ),
+            1e-7,
+        )
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        self.assertTrue(any(
+            (before - vert.co).length > 1e-5
+            for before, vert in zip(vertices_before, bm.verts)
+        ))
 
 
 if __name__ == '__main__':

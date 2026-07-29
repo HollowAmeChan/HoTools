@@ -4,7 +4,7 @@ import math
 import bmesh
 import bpy
 import gpu
-from bpy.props import BoolProperty, FloatProperty
+from bpy.props import BoolProperty, FloatProperty, FloatVectorProperty
 from bpy.types import Operator
 from bpy_extras import view3d_utils
 from mathutils import Matrix, Vector
@@ -166,6 +166,9 @@ class OP_PlaceObjectBottom(Operator):
         description="保持物体原点的位置和旋转不变，直接变换网格数据",
         default=True,
     )  # type: ignore
+
+    def draw(self, context):
+        self.layout.prop(self, "keep_origin_transform")
 
     @classmethod
     def poll(cls, context):
@@ -561,6 +564,22 @@ class OP_AutoPlaceObjectBottom(Operator):
         description="保持物体原点的位置和旋转不变，直接变换网格数据",
         default=True,
     )  # type: ignore
+    placement_point_local: FloatVectorProperty(
+        name="放置平面点",
+        size=3,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    placement_normal_local: FloatVectorProperty(
+        name="放置平面法线",
+        size=3,
+        default=(0.0, 0.0, 1.0),
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    has_placement_plane: BoolProperty(
+        name="已有放置平面",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
 
     coplanar_angle: FloatProperty(
         name="共面合并角度",
@@ -602,8 +621,36 @@ class OP_AutoPlaceObjectBottom(Operator):
             context.area.type == 'VIEW_3D' and
             context.active_object is not None and
             context.active_object.type == 'MESH' and
-            context.mode in {'OBJECT', 'EDIT_MESH'}
+            context.mode == 'EDIT_MESH'
         )
+
+    def draw(self, context):
+        self.layout.prop(self, "keep_origin_transform")
+
+    def execute(self, context):
+        obj = context.active_object
+        if (
+            not self.has_placement_plane or
+            obj is None or
+            obj.type != 'MESH'
+        ):
+            self.report({'ERROR'}, "没有可重用的凸包放置面")
+            return {'CANCELLED'}
+
+        world_matrix = obj.matrix_world.copy()
+        plane_point = world_matrix @ Vector(self.placement_point_local)
+        normal_matrix = world_matrix.to_3x3().inverted_safe().transposed()
+        world_normal = (
+            normal_matrix @ Vector(self.placement_normal_local)
+        ).normalized()
+        place_object_on_ground(
+            obj,
+            [plane_point],
+            world_normal,
+            context,
+            self.keep_origin_transform,
+        )
+        return {'FINISHED'}
 
     def _tag_redraw(self, context):
         if context.area is not None:
@@ -696,15 +743,20 @@ class OP_AutoPlaceObjectBottom(Operator):
             if self.hovered_index < 0:
                 return {'RUNNING_MODAL'}
             candidate = self.candidates[self.hovered_index]
-            place_object_on_ground(
-                self.obj,
+            world_matrix = self.obj.matrix_world.copy()
+            face_center = sum(
                 candidate.points,
-                candidate.normal,
-                context,
-                self.keep_origin_transform,
+                Vector((0.0, 0.0, 0.0)),
+            ) / len(candidate.points)
+            self.placement_point_local = (
+                world_matrix.inverted_safe() @ face_center
             )
+            self.placement_normal_local = (
+                world_matrix.to_3x3().transposed() @ candidate.normal
+            ).normalized()
+            self.has_placement_plane = True
             self.finish(context)
-            return {'FINISHED'}
+            return self.execute(context)
 
         if event.type in {
             'MIDDLEMOUSE',
@@ -726,6 +778,7 @@ class OP_AutoPlaceObjectBottom(Operator):
 
     def invoke(self, context, event):
         self.obj = context.active_object
+        self.has_placement_plane = False
         if context.mode == 'EDIT_MESH':
             bmesh.update_edit_mesh(self.obj.data, destructive=False)
 

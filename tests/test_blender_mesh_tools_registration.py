@@ -49,19 +49,17 @@ class MeshToolsRegistrationTests(unittest.TestCase):
                     None,
                 )
             )
-            self.assertTrue(
-                bpy.context.scene.hotools_mesh_keep_origin_transform
-            )
-
             class RecordingLayout:
                 def __init__(self):
                     self.menu_ids = []
                     self.operator_ids = []
+                    self.property_ids = []
 
                 def menu(self, menu_id):
                     self.menu_ids.append(menu_id)
 
-                def prop(self, *args, **kwargs):
+                def prop(self, data, property_id, **kwargs):
+                    self.property_ids.append(property_id)
                     return None
 
                 def operator(self, operator_id, **kwargs):
@@ -90,6 +88,39 @@ class MeshToolsRegistrationTests(unittest.TestCase):
             self.assertIn(
                 "ho.placeobjectbottom",
                 menu_layout.operator_ids,
+            )
+            self.assertEqual(menu_layout.property_ids, [])
+
+            operator_layout = RecordingLayout()
+            mesh_tools.OP_AutoPlaceObjectBottom.draw(
+                SimpleNamespace(layout=operator_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                operator_layout.property_ids,
+                ["keep_origin_transform"],
+            )
+            manual_operator_layout = RecordingLayout()
+            mesh_tools.OP_PlaceObjectBottom.draw(
+                SimpleNamespace(layout=manual_operator_layout),
+                bpy.context,
+            )
+            self.assertEqual(
+                manual_operator_layout.property_ids,
+                ["keep_origin_transform"],
+            )
+
+            poll_context = SimpleNamespace(
+                area=SimpleNamespace(type='VIEW_3D'),
+                active_object=SimpleNamespace(type='MESH'),
+                mode='OBJECT',
+            )
+            self.assertFalse(
+                mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
+            )
+            poll_context.mode = 'EDIT_MESH'
+            self.assertTrue(
+                mesh_tools.OP_AutoPlaceObjectBottom.poll(poll_context)
             )
         finally:
             mesh_tools.unregister()
