@@ -557,23 +557,13 @@ class FBXExporter:
         return names
 
     @staticmethod
-    def force_clear_edit_bones_transform(edit_bones, bone_names):
-        """Use the normal full-disconnect clear flow for main MCH source bones."""
-        for bone_name in bone_names:
-            bone = edit_bones.get(bone_name)
-            if bone is None:
-                continue
-            for child in bone.children:
-                child.use_connect = False
-            original_length = (bone.tail - bone.head).length
-            if original_length <= 1e-8:
-                continue
-            bone.roll = 0
-            bone.tail = bone.head + Vector((0, 0, original_length))
+    def clear_edit_bones_local_rotation(edit_bones, bone_names):
+        """Clear each bone's rest rotation relative to its final export parent."""
+        return bone_utils.clear_edit_bone_local_rotations(edit_bones, bone_names)
 
     @staticmethod
     def build_mch_and_clear(ob):
-        """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨清零竖直。
+        """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨局部旋转清零。
 
         必须在 EDIT 模式下调用。返回 {原骨名: MCH骨名} 映射，供约束/驱动转移使用。
 
@@ -581,7 +571,8 @@ class FBXExporter:
         1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
            MCH 父级设为原骨、不形变、不相连；
         2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
-        3. 重新扫描 generateMCH 主骨，按“强制骨骼变换”的全打断方式把主骨清零竖直。
+        3. 重新扫描 generateMCH 主骨，使其绑定朝向与最终父骨一致，从而让 FBX/Unity
+           中的局部旋转为零；根骨没有父级时回退为世界 Z 轴竖直。
         """
         from Utils import bone_utils
 
@@ -641,37 +632,20 @@ class FBXExporter:
                 child.use_connect = False
                 child.parent = mch
 
-        # 3. MCH 已全部创建并接管子级后，再重新扫描主骨并走正常“全打断”清零。
+        # 3. MCH 已全部创建并接管子级后，再按最终父级清零主骨的局部旋转。
         mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
-        FBXExporter.force_clear_edit_bones_transform(edit_bones, mch_main_names)
+        FBXExporter.clear_edit_bones_local_rotation(edit_bones, mch_main_names)
 
         return name_map
     @staticmethod
     def clear_pose_bone_transform(pose_bone):
         """Reset one pose bone's local L/R/S and matrix basis to identity."""
-        pose_bone.location = (0.0, 0.0, 0.0)
-        pose_bone.scale = (1.0, 1.0, 1.0)
-        if pose_bone.rotation_mode == 'QUATERNION':
-            pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
-        elif pose_bone.rotation_mode == 'AXIS_ANGLE':
-            pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
-        else:
-            pose_bone.rotation_euler = (0.0, 0.0, 0.0)
-        pose_bone.matrix_basis = mathutils.Matrix.Identity(4)
+        bone_utils.clear_pose_bone_transform(pose_bone)
 
     @staticmethod
     def clear_pose_bone_transforms(ob, bone_names):
         """Clear pose transforms for the original main bones after EDIT changes."""
-        if ob.pose is None:
-            return 0
-        count = 0
-        for bone_name in bone_names:
-            pose_bone = ob.pose.bones.get(bone_name)
-            if pose_bone is None:
-                continue
-            FBXExporter.clear_pose_bone_transform(pose_bone)
-            count += 1
-        return count
+        return bone_utils.clear_pose_bone_transforms(ob, bone_names)
 
     @staticmethod
     def transfer_constraints_to_mch(ob, name_map):
@@ -959,7 +933,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清空相对父骨的局部旋转以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
@@ -1261,7 +1235,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清零竖直并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清空相对父骨的局部旋转并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore

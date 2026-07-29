@@ -199,7 +199,7 @@ class OP_ApplyRestPose(Operator):
 class OP_ForceClearBoneRotation(Operator):
     bl_idname = "ho.force_clear_bone_rotation"
     bl_label = "强制骨骼变换"
-    bl_description = "强制移除所选骨骼的变换,保证导出后旋转为0"
+    bl_description = "清空所选骨骼相对父骨的静置与姿态变换,保证导出后局部旋转为0"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -214,14 +214,25 @@ class OP_ForceClearBoneRotation(Operator):
             armature = obj.data
             armature.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
             selected_bones = bone_utils.selected_bones(context, obj)
+            selected_names = [bone.name for bone in selected_bones]
+            active_bone = armature.edit_bones.active
+            active_name = active_bone.name if active_bone is not None else None
 
-            for bone in selected_bones:
-                for cb in bone.children:#清空所有子骨的相连，防止影响子骨头部位置
-                    cb.use_connect = False
-                original_length = (bone.tail - bone.head).length
-                bone.roll = 0
-                new_tail = bone.head + Vector((0, 0, original_length))
-                bone.tail = new_tail
+            bone_utils.clear_edit_bone_local_rotations(
+                armature.edit_bones,
+                selected_names,
+            )
+
+            # Pose channels are a separate transform layer and must also be reset
+            # before a normal FBX export can produce zero local transforms.
+            bpy.ops.object.mode_set(mode='OBJECT')
+            try:
+                bone_utils.clear_pose_bone_transforms(obj, selected_names)
+            finally:
+                bpy.ops.object.mode_set(mode='EDIT')
+                bone_utils.select_bones(obj, selected_names)
+                if active_name and armature.edit_bones.get(active_name) is not None:
+                    armature.edit_bones.active = armature.edit_bones[active_name]
         return {'FINISHED'}
        
 class OP_AddEndBone(Operator):

@@ -1,13 +1,79 @@
 """HoTools 各骨骼模块共用的命名、对称与 Blender 状态工具。"""
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .bone_selection import select_bones, selected_bone_names, selected_mode_bones
 
 
 # 保留原有语义名，直接引用选择兼容层的函数对象，不再转发调用。
 selected_bones = selected_mode_bones
+
+
+def clear_edit_bone_local_rotations(edit_bones, bone_names) -> int:
+    """Make selected rest orientations match their final parents for FBX export."""
+    bones = [edit_bones.get(name) for name in bone_names]
+    bones = [bone for bone in bones if bone is not None]
+
+    def ancestor_depth(bone):
+        depth = 0
+        parent = bone.parent
+        while parent is not None:
+            depth += 1
+            parent = parent.parent
+        return depth
+
+    # A selected parent must reach its final orientation before its child copies it.
+    bones.sort(key=ancestor_depth)
+    changed = 0
+    for bone in bones:
+        for child in bone.children:
+            child.use_connect = False
+
+        original_length = bone.length
+        if original_length <= 1e-8:
+            continue
+
+        parent = bone.parent
+        parent_direction = parent.tail - parent.head if parent is not None else None
+        if parent_direction is not None and parent_direction.length > 1e-8:
+            # Equal armature-space orientations produce an identity parent-relative
+            # rest rotation, which is the local bone rotation serialized by FBX.
+            bone.tail = bone.head + parent_direction.normalized() * original_length
+            bone.roll = parent.roll
+        else:
+            # Preserve the established vertical convention for roots.
+            bone.tail = bone.head + Vector((0.0, 0.0, original_length))
+            bone.roll = 0.0
+        changed += 1
+    return changed
+
+
+def clear_pose_bone_transform(pose_bone) -> None:
+    """Reset one pose bone's local location, rotation, and scale."""
+    pose_bone.location = (0.0, 0.0, 0.0)
+    pose_bone.scale = (1.0, 1.0, 1.0)
+    if pose_bone.rotation_mode == 'QUATERNION':
+        pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+    elif pose_bone.rotation_mode == 'AXIS_ANGLE':
+        pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+    else:
+        pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+    pose_bone.matrix_basis = Matrix.Identity(4)
+
+
+def clear_pose_bone_transforms(armature, bone_names) -> int:
+    """Reset pose transforms by bone name and return the number changed."""
+    if armature.pose is None:
+        return 0
+    count = 0
+    for bone_name in bone_names:
+        pose_bone = armature.pose.bones.get(bone_name)
+        if pose_bone is None:
+            continue
+        clear_pose_bone_transform(pose_bone)
+        count += 1
+    return count
 
 
 _SIDE_SEPARATORS = "._-"
