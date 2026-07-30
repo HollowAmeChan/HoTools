@@ -3570,7 +3570,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_deleteUnusingShapeKeys.bl_idname,icon="X")
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
-    layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
+    layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="KEY_HLT")
     layout.operator(OP_ShapekeyTools_RebaseFBSF.bl_idname,icon="KEY_HLT")
     layout.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,icon="KEY_HLT")
     
