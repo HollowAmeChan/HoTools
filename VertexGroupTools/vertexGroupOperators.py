@@ -427,8 +427,9 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
     bl_description = "编辑模式下，对所选(全部)顶点，类似从形态键混合，将其他顶点组的所选顶点权重混合到当前组，可以指定模式"
     bl_options = {'REGISTER', 'UNDO'}
 
-    group_name: StringProperty()  # type: ignore
+    group_name: StringProperty(name="源顶点组")  # type: ignore
     mode: EnumProperty(
+        name="混合模式",
         items=[
             ('REPLACE', "替换", ""),
             ('ADD', "叠加", ""),
@@ -441,13 +442,42 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
         obj = context.active_object
         return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj.vertex_groups.active is None:
+            self.report({'WARNING'}, "请先选择目标顶点组")
+            return {'CANCELLED'}
+        if len(obj.vertex_groups) < 2:
+            self.report({'WARNING'}, "至少需要两个顶点组")
+            return {'CANCELLED'}
+
+        self.group_name = ""
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+        layout.label(text=f"目标顶点组: {obj.vertex_groups.active.name}")
+        layout.prop_search(self, "group_name", obj, "vertex_groups", text="源顶点组")
+        layout.prop(self, "mode")
+
     def execute(self, context):
         obj = context.active_object
 
         target = obj.vertex_groups.active
         source = obj.vertex_groups.get(self.group_name)
 
-        if not target or not source:
+        if target is None:
+            self.report({'WARNING'}, "请先选择目标顶点组")
+            return {'CANCELLED'}
+        if not self.group_name:
+            self.report({'WARNING'}, "请选择源顶点组")
+            return {'CANCELLED'}
+        if source is None:
+            self.report({'WARNING'}, f"找不到源顶点组: {self.group_name}")
+            return {'CANCELLED'}
+        if source == target:
+            self.report({'WARNING'}, "源顶点组不能与目标顶点组相同")
             return {'CANCELLED'}
         bm = bmesh.from_edit_mesh(obj.data)
         deform = bm.verts.layers.deform.verify()
@@ -2623,11 +2653,7 @@ def draw_in_MESH_MT_vertex_group_context_menu(self, context: Context):
     layout.operator(OP_SelectNonWeightVertices.bl_idname,text="选择无组顶点",icon="ERROR")
     layout.operator(OP_GenegateNoneMirroredGroup.bl_idname,text="生成镜像骨骼权重组",icon="MOD_MIRROR")
     layout.operator(OP_RemoveNoneWeightGroup.bl_idname,text="移除非骨骼权重组",icon="TRASH")
-
-def draw_in_VIEW3D_MT_vertex_group(self, context: Context):
-    """顶菜单，顶点-顶点组-(CtrlG展开菜单)"""
-    layout: bpy.types.UILayout = self.layout
-    layout.operator(OP_VertexGroupTools_BlendFromGroup.bl_idname)
+    layout.operator(OP_VertexGroupTools_BlendFromGroup.bl_idname,text="从组混合",icon="MOD_MESHDEFORM")
 
 
 cls = [
@@ -2656,9 +2682,7 @@ def register():
     bpy.types.DATA_PT_vertex_groups.append(draw_in_DATA_PT_vertex_groups)
     bpy.types.MESH_MT_vertex_group_context_menu.append(
         draw_in_MESH_MT_vertex_group_context_menu)
-    bpy.types.VIEW3D_MT_vertex_group.append(
-        draw_in_VIEW3D_MT_vertex_group)
-    
+
     # OP_Switch_VG_byCursor默认绑定 alt+ 右键
     km = bpy.context.window_manager.keyconfigs.addon.keymaps.new(name="Window", space_type="EMPTY", region_type="WINDOW")
     km.keymap_items.new(OP_VertexGroupTools_Switch_VG_byCursor.bl_idname,type='RIGHTMOUSE', value='PRESS', alt=True)
@@ -2671,7 +2695,5 @@ def unregister():
     bpy.types.DATA_PT_vertex_groups.remove(draw_in_DATA_PT_vertex_groups)
     bpy.types.MESH_MT_vertex_group_context_menu.remove(
         draw_in_MESH_MT_vertex_group_context_menu)
-    bpy.types.VIEW3D_MT_vertex_group.remove(
-        draw_in_VIEW3D_MT_vertex_group)
 
  # type: ignore
