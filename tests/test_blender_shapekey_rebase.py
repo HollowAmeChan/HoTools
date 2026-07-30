@@ -61,8 +61,49 @@ assert np.allclose(mask, (0.0, 0.25, 0.5, 0.5), atol=1e-6)
 binary_mask = module._shape_key_rebase_mask(delta, 0.5, 0.0, 1.0)
 assert np.allclose(binary_mask, (0.0, 0.0, 1.0, 1.0), atol=1e-6)
 
+# FBSF 自动权重按左右半脸分别比较目标表情与捏脸 delta。
+# 同向位移得到 1，正交位移得到 0；左右过渡只在分数确实不同时启用。
+fbsf_basis = np.array(
+    [(-1.0, 0.0, 0.0), (-0.05, 0.0, 0.0),
+     (0.05, 0.0, 0.0), (1.0, 0.0, 0.0)],
+    dtype=np.float32,
+)
+fbsf_edit = np.array([(0.0, 1.0, 0.0)] * 4, dtype=np.float32)
+fbsf_target = np.array(
+    [(0.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+     (0.0, 0.0, 1.0), (0.0, 0.0, 1.0)],
+    dtype=np.float32,
+)
+hard_weights, left_score, right_score, split_sides = module._fbsf_rebase_weights(
+    fbsf_target, fbsf_edit, fbsf_basis, 0.0, 1.0)
+assert left_score == 1.0
+assert right_score == 0.0
+assert split_sides
+assert np.allclose(hard_weights, (1.0, 1.0, 0.0, 0.0), atol=1e-6)
+
+smooth_weights, _left, _right, _split = module._fbsf_rebase_weights(
+    fbsf_target, fbsf_edit, fbsf_basis, 0.1, 1.0)
+assert np.allclose(smooth_weights, (1.0, 0.75, 0.25, 0.0), atol=1e-6)
+
+# 原实现把反向内积按一半强度计入相似度，这个看似特殊的行为也必须保持。
+opposite_weights, left_score, right_score, split_sides = module._fbsf_rebase_weights(
+    -fbsf_edit, fbsf_edit, fbsf_basis, 0.0, 1.0)
+assert left_score == 0.5
+assert right_score == 0.5
+assert not split_sides
+assert np.allclose(opposite_weights, 0.5, atol=1e-6)
+assert module._fbsf_threshold_map(0.05) == 0.0
+assert module._fbsf_threshold_map(0.95) == 1.0
+assert module.OP_ShapekeyTools_RebaseFBSF.bl_label == "全键局部变基-FBSF"
+assert module.OP_ShapekeyTools_RebasePreserveExpressions.bl_label == "全键局部变基-HO"
+assert (
+    module.OP_ShapekeyTools_RebasePreserveExpressions.bl_idname
+    == "ho.rebase_shapekeys_preserve_expressions"
+)
+
 registered = (
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
+    module.OP_ShapekeyTools_RebaseFBSF,
     module.OP_ShapekeyTools_RebasePreserveExpressions,
 )
 for operator in registered:
@@ -150,6 +191,54 @@ try:
     assert result == {'CANCELLED'}
     assert np.allclose(positions(guarded_basis), original_basis)
 
+    # FBSF 与 HO 是两个独立算子。左侧表情与捏脸同向，因此反向抵消；
+    # 右侧表情与捏脸正交，因此保持普通全局变基产生的整体位移。
+    fbsf = make_mesh("FBSFRebase", vertex_count=4)
+    x_positions = (-1.0, -0.5, 0.5, 1.0)
+    for index, x in enumerate(x_positions):
+        fbsf.data.vertices[index].co.x = x
+    fbsf_basis_key = fbsf.shape_key_add(name="Basis", from_mix=False)
+    fbsf_sculpt = fbsf.shape_key_add(name="FaceSculpt", from_mix=False)
+    for point in fbsf_sculpt.data:
+        point.co.y += 1.0
+
+    fbsf_expression = fbsf.shape_key_add(name="Expression", from_mix=False)
+    for index in (0, 1):
+        fbsf_expression.data[index].co.y += 1.0
+    for index in (2, 3):
+        fbsf_expression.data[index].co.z += 1.0
+
+    fbsf_child = fbsf.shape_key_add(name="RelativeToSculpt", from_mix=False)
+    fbsf_child.relative_key = fbsf_sculpt
+    for index, point in enumerate(fbsf_child.data):
+        point.co = fbsf_sculpt.data[index].co.copy()
+        point.co.z += 0.25
+
+    fbsf.active_shape_key_index = fbsf.data.shape_keys.key_blocks.find(
+        fbsf_sculpt.name)
+    result = bpy.ops.ho.rebase_shapekeys_fbsf(
+        "EXEC_DEFAULT",
+        factor=0.5,
+        correction_strength=1.0,
+        side_smooth_width=0.0,
+    )
+    assert result == {'FINISHED'}
+
+    fbsf_keys = fbsf.data.shape_keys.key_blocks
+    assert fbsf_keys.get("FaceSculpt") is None
+    fbsf_basis_key = fbsf_keys[0]
+    fbsf_expression = fbsf_keys["Expression"]
+    fbsf_child = fbsf_keys["RelativeToSculpt"]
+    assert fbsf_child.relative_key == fbsf_basis_key
+    for index, x in enumerate(x_positions):
+        assert_position(fbsf_basis_key, index, (x, 0.5, 0.0))
+    for index in (0, 1):
+        assert_position(fbsf_expression, index, (x_positions[index], 1.0, 0.0))
+    for index in (2, 3):
+        assert_position(fbsf_expression, index, (x_positions[index], 0.5, 1.0))
+    for index, x in enumerate(x_positions):
+        assert_position(fbsf_child, index, (x, 0.5, 0.25))
+
     # 原有全键变基算子保持独立并维持原行为。
     legacy = make_mesh("FullRebase", vertex_count=2)
     legacy_basis = legacy.shape_key_add(name="Basis", from_mix=False)
@@ -178,6 +267,7 @@ finally:
 module.register()
 try:
     assert hasattr(bpy.ops.ho, "apply_active_shapekey_to_basis")
+    assert hasattr(bpy.ops.ho, "rebase_shapekeys_fbsf")
     assert hasattr(bpy.ops.ho, "rebase_shapekeys_preserve_expressions")
 finally:
     module.unregister()

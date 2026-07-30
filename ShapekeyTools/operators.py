@@ -2273,6 +2273,63 @@ def _mix_rebased_shape_positions(
     return result, mask
 
 
+def _fbsf_threshold_map(value, lower=0.05, upper=0.95):
+    """复刻 FaceBlendShapeFix 对自动相似度权重的截断与舍入。"""
+    if value <= lower:
+        return 0.0
+    if value >= upper:
+        return 1.0
+    return round(float(value), 3)
+
+
+def _fbsf_side_similarity(target_delta, edit_delta, side_mask):
+    """按 FBSF 的内积启发式计算单侧反向修正权重。"""
+    side_target = target_delta[side_mask]
+    side_edit = edit_delta[side_mask]
+    if len(side_edit) == 0:
+        return 0.0
+
+    target_energy = np.einsum("ij,ij->i", side_target, side_target)
+    edit_vertex_energy = np.einsum("ij,ij->i", side_edit, side_edit)
+    active = (target_energy >= 1e-10) | (edit_vertex_energy >= 1e-10)
+    dot = np.einsum("ij,ij->i", side_target[active], side_edit[active])
+    # 原实现对反向位移保留一半相似度，而不是直接把负内积归零。
+    similarity_sum = float(np.sum(
+        np.where(dot > 0.0, dot, -0.5 * dot), dtype=np.float64))
+    edit_energy = float(np.sum(edit_vertex_energy[active], dtype=np.float64))
+    if edit_energy < 1e-10:
+        return 0.0
+    score = np.clip(similarity_sum / edit_energy, 0.0, 1.0)
+    return _fbsf_threshold_map(score)
+
+
+def _fbsf_rebase_weights(
+        target_delta, edit_delta, basis_positions,
+        smooth_width, correction_strength):
+    """返回 FBSF 左右相似度及其映射到每个顶点的修正权重。"""
+    left_mask = basis_positions[:, 0] < 0.0
+    right_mask = ~left_mask
+    left_score = _fbsf_side_similarity(target_delta, edit_delta, left_mask)
+    right_score = _fbsf_side_similarity(target_delta, edit_delta, right_mask)
+    split_sides = abs(left_score - right_score) > 0.1
+
+    if split_sides:
+        x = basis_positions[:, 0]
+        if smooth_width <= 0.0:
+            weights = np.where(left_mask, left_score, right_score)
+        else:
+            right_factor = np.clip(
+                (x + smooth_width) / (2.0 * smooth_width), 0.0, 1.0)
+            weights = left_score * (1.0 - right_factor) + right_score * right_factor
+    else:
+        weights = np.full(
+            len(target_delta), (left_score + right_score) * 0.5,
+            dtype=np.float32)
+
+    weights = np.asarray(weights, dtype=np.float32) * correction_strength
+    return weights, left_score, right_score, split_sides
+
+
 def _validate_shape_key_rebase_object(obj):
     if obj is None or obj.type != 'MESH':
         raise ShapeKeyRebaseError("活动对象不是网格")
@@ -2314,8 +2371,8 @@ def _validate_shape_key_rebase_object(obj):
     return shape_keys, basis, active_key
 
 
-def _rebase_shape_keys(
-        obj, factor, threshold, falloff_ratio, protection_strength):
+def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
+    """按相对键依赖顺序重写全部键，并统一完成改挂与删除捏脸键。"""
     shape_keys, basis, active_key = _validate_shape_key_rebase_object(obj)
     if factor <= 0.0:
         raise ShapeKeyRebaseError("变基权重必须大于 0")
@@ -2337,8 +2394,6 @@ def _rebase_shape_keys(
 
     cached_old = {}
     cached_new = {}
-    protected_pairs = 0
-    partial_pairs = 0
 
     for key in ordered_keys:
         relative = key.relative_key
@@ -2353,11 +2408,9 @@ def _rebase_shape_keys(
             new_relative = cached_new[relative.name]
 
         old_key = shapekey_utils.read_shape_key_positions(key)
-        new_key, mask = _mix_rebased_shape_positions(
-            old_key, old_relative, new_relative,
-            threshold, falloff_ratio, protection_strength)
-        protected_pairs += int(np.count_nonzero(mask >= 1.0 - 1e-6))
-        partial_pairs += int(np.count_nonzero((mask > 1e-6) & (mask < 1.0 - 1e-6)))
+        new_key = rewrite_key(
+            key, old_key, old_relative, new_relative,
+            old_basis, old_active, new_basis)
 
         if child_counts[key.name] > 0:
             cached_old[key.name] = old_key
@@ -2379,7 +2432,65 @@ def _rebase_shape_keys(
     obj.active_shape_key_index = 0
     obj.show_only_shape_key = False
     obj.data.update()
-    return active_name, len(ordered_keys), protected_pairs, partial_pairs
+    return active_name, len(ordered_keys)
+
+
+def _rebase_shape_keys(
+        obj, factor, threshold, falloff_ratio, protection_strength):
+    protected_pairs = 0
+    partial_pairs = 0
+
+    def rewrite_key(
+            _key, old_key, old_relative, new_relative,
+            _old_basis, _old_active, _new_basis):
+        nonlocal protected_pairs, partial_pairs
+        new_key, mask = _mix_rebased_shape_positions(
+            old_key, old_relative, new_relative,
+            threshold, falloff_ratio, protection_strength)
+        protected_pairs += int(np.count_nonzero(mask >= 1.0 - 1e-6))
+        partial_pairs += int(np.count_nonzero(
+            (mask > 1e-6) & (mask < 1.0 - 1e-6)))
+        return new_key
+
+    active_name, key_count = _rewrite_rebased_shape_key_tree(
+        obj, factor, rewrite_key)
+    return active_name, key_count, protected_pairs, partial_pairs
+
+
+def _rebase_shape_keys_fbsf(
+        obj, factor, correction_strength, side_smooth_width):
+    corrected_keys = 0
+    split_keys = 0
+    weight_sum = 0.0
+
+    def rewrite_key(
+            _key, old_key, old_relative, new_relative,
+            old_basis, old_active, _new_basis):
+        nonlocal corrected_keys, split_keys, weight_sum
+        target_delta = old_key - old_relative
+        edit_delta = old_active - old_basis
+        weights, left_score, right_score, split_sides = _fbsf_rebase_weights(
+            target_delta,
+            edit_delta,
+            old_basis,
+            side_smooth_width,
+            correction_strength,
+        )
+        relative_shift = new_relative - old_relative
+        global_rebase = old_key + relative_shift
+        new_key = global_rebase - relative_shift * weights[:, None]
+
+        if max(left_score, right_score) * correction_strength > 1e-6:
+            corrected_keys += 1
+            weight_sum += (left_score + right_score) * 0.5 * correction_strength
+            if split_sides:
+                split_keys += 1
+        return new_key
+
+    active_name, key_count = _rewrite_rebased_shape_key_tree(
+        obj, factor, rewrite_key)
+    average_weight = weight_sum / corrected_keys if corrected_keys else 0.0
+    return active_name, key_count, corrected_keys, split_keys, average_weight
 
 
 class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
@@ -2449,25 +2560,126 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    实测证明这不是调参问题：表情区域越大、活动度检测越准确，越会把这些顶点钉回
 #    旧脸，从而丢失捏脸后的整体位置。该方案不得以别名重新加入；当前局部遮罩仅保留
 #    为明确的旧绝对目标保护工具，不应被视为通用表情迁移算法。
-# 4. 下一种通用原型应以 G 为不可推翻的基线，从 R->R' 的相邻三角面估计逐顶点
+# 4. Tr1turbo/FaceBlendShapeFix 本身不修改 Basis：它克隆 Unity Mesh，再从目标
+#    BlendShape delta 中减去当前保持激活的改脸 BlendShape delta。自动权重按左右半脸
+#    分别用内积与改脸 delta 能量计算，0.05 以下清零、0.95 以上置一，中间保留三位；
+#    负内积按一半强度计入。FBSF 算子把该线性规则适配到“改脸键烘焙进 Basis”的场景：
+#    对直接相对 Basis 的键等价于 K'=G-w(R'-R)，嵌套相对键则沿依赖树抵消各层实际
+#    基线位移，避免重复减去改脸量。它是成熟的反向抵消基线，但仍不理解接触与语义。
+# 5. 下一种通用原型应以 G 为不可推翻的基线，从 R->R' 的相邻三角面估计逐顶点
 #    局部仿射变换 A_i，再计算 K'_i=R'_i+A_i(K_i-R_i)。它不猜测表情区域：零位移
 #    自然跟随新相对键，纯平移保持 G，局部旋转和尺度变化则转换原表情位移。
-# 5. “主动趋近”不能只保存为逐顶点标量。上下眼睑可能各自近似刚体移动，局部散度
+# 6. “主动趋近”不能只保存为逐顶点标量。上下眼睑可能各自近似刚体移动，局部散度
 #    和应变都接近零，但两个拓扑上分离的区域正在互相靠近。应先建立非邻接顶点/曲面
 #    间的趋近关系：旧相对位置向量、双方相对位移、距离缩短比例、目标方向和旧表情
 #    终点间距；逐顶点趋近指数只能由这张关系图汇总得到，不能替代目标对象和方向。
-# 6. 若以后增加闭合保持，它只能在 G 或局部仿射结果上施加高置信度的小范围残差：
+# 7. 若以后增加闭合保持，它只能在 G 或局部仿射结果上施加高置信度的小范围残差：
 #    保持接触对中心不变，只修正相对间距；要求相向运动、显著距离收缩、非局部拓扑
 #    关系和连续接触簇，并对过大修正、三角面翻转或异常拉伸逐区域回退。这样大位移后
 #    的整体位置仍由全局变基保证，眼睑或嘴唇闭合只是可验证、可回退的附加约束。
-# 7. 完整高级模式仍可实现 deformation transfer：把旧相对键到旧表情键的局部变换
+# 8. 完整高级模式仍可实现 deformation transfer：把旧相对键到旧表情键的局部变换
 #    施加到新相对键，以带固定自由度和可选接触约束的稀疏全局求解重建顶点，并处理
 #    退化三角形、非流形、分离部件、失败回退、预览和误差报告。
+class OP_ShapekeyTools_RebaseFBSF(Operator):
+    """按 FaceBlendShapeFix 的线性反向抵消规则重写全部形态键。"""
+    bl_idname = "ho.rebase_shapekeys_fbsf"
+    bl_label = "全键局部变基-FBSF"
+    bl_description = "按左右半脸的形态键相似度反向抵消捏脸位移，并删除活动捏脸键"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    factor: FloatProperty(
+        name="变基权重",
+        description="活动捏脸键混入基型的比例",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+    correction_strength: FloatProperty(
+        name="反向修正强度",
+        description="缩放 FBSF 自动计算的反向抵消权重；0 等同普通全局变基",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+    side_smooth_width: FloatProperty(
+        name="左右过渡宽度",
+        description="左右修正权重在局部 X=0 附近的混合宽度；0 为硬分界",
+        default=0.0,
+        min=0.0,
+        soft_max=0.1,
+        precision=4,
+        unit='LENGTH',
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and obj.active_shape_key_index > 0
+        )
+
+    def invoke(self, context, event):
+        try:
+            _shape_keys, _basis, active_key = _validate_shape_key_rebase_object(
+                context.object)
+        except ShapeKeyRebaseError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        if active_key.value > 1e-6:
+            self.factor = min(1.0, active_key.value)
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        active_key = obj.active_shape_key if obj else None
+
+        warning = layout.box()
+        warning.alert = True
+        warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
+        warning.label(text="FBSF 模式按左右相似度反向抵消捏脸位移")
+        if active_key is not None:
+            warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
+
+        layout.prop(self, "factor")
+        layout.prop(self, "correction_strength")
+        layout.prop(self, "side_smooth_width")
+
+    def execute(self, context):
+        obj = context.object
+        if obj is not None and obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        try:
+            active_name, key_count, corrected, split, average = (
+                _rebase_shape_keys_fbsf(
+                    obj,
+                    self.factor,
+                    self.correction_strength,
+                    self.side_smooth_width,
+                )
+            )
+        except ShapeKeyRebaseError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        except Exception as exc:
+            self.report({'ERROR'}, f"FBSF 变基失败：{exc}")
+            return {'CANCELLED'}
+
+        detail = f"，修正 {corrected}，左右拆分 {split}，平均权重 {average:.3f}"
+        self.report({'INFO'}, f"已用 {active_name} 变基并重写 {key_count} 个形态键{detail}")
+        return {'FINISHED'}
+
+
 class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
     """用活动捏脸键局部重建基型和其余相对形态键。"""
     bl_idname = "ho.rebase_shapekeys_preserve_expressions"
-    bl_label = "全键局部变基"
-    bl_description = "把活动捏脸键混入基型；表情动过的顶点保持绝对位置，未动顶点跟随新基型，并删除活动键"
+    bl_label = "全键局部变基-HO"
+    bl_description = "按 HO 局部遮罩保护表情绝对位置，并删除活动捏脸键"
     bl_options = {'REGISTER', 'UNDO'}
 
     factor: FloatProperty(
@@ -2722,8 +2934,10 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row = layout.row(align=True)
     row.scale_y = 2.0
     row.alert = True
+    row.operator(OP_ShapekeyTools_RebaseFBSF.bl_idname,
+                 text="全键局部变基-FBSF", icon="KEY_HLT")
     row.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,
-                 text="全键局部变基", icon="KEY_HLT")
+                 text="全键局部变基-HO", icon="KEY_HLT")
     row.alert = False
     
 
@@ -2792,6 +3006,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
+    layout.operator(OP_ShapekeyTools_RebaseFBSF.bl_idname,icon="KEY_HLT")
     layout.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,icon="KEY_HLT")
     
 
@@ -3024,6 +3239,7 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
+    OP_ShapekeyTools_RebaseFBSF,
     OP_ShapekeyTools_RebasePreserveExpressions,
     OP_ForceRemoveAll, OP_ForceApplyAll,
     OP_ShapekeyTools_GenerateHideShapeKey,
