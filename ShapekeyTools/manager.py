@@ -2,6 +2,7 @@ import bpy
 from bpy.types import PropertyGroup, UIList, Operator, Panel
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, IntProperty
+from Utils import shapekey_utils
 
 
 class PG_SKManager_SKCache(PropertyGroup):  # 存储目标骨骼和源骨骼的映射关系
@@ -307,34 +308,14 @@ class OP_ApplyOrderSKCacheItems(bpy.types.Operator):
             self.report({'WARNING'}, "形态键列表不一致！请确保两者的形态键一致。")
             return {'CANCELLED'}
 
-        # 重新排序形态键
-        self.reorder_shape_keys(obj, sk_cache_col)
+        # 重新排序形态键；公共函数会先完整校验名称，再执行任何移动。
+        try:
+            shapekey_utils.reorder_shape_keys(obj, cache_names)
+        except shapekey_utils.ShapeKeyUtilsError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
         
         return {'FINISHED'}
-
-    def reorder_shape_keys(self, obj, sk_cache_col):
-        shape_keys = obj.data.shape_keys.key_blocks
-        
-        # 创建一个按PG_SKManager_SKCache的顺序排列的形态键名称列表
-        new_order = [sk.key_name for sk in sk_cache_col if sk.key_name]
-
-        # 逐个形态键，移动到正确的位置
-        for target_index, target_name in enumerate(new_order):
-            # 查找当前形态键的位置
-            current_index = next((i for i, key in enumerate(shape_keys) if key.name == target_name), None)
-
-            # 确保找到了当前形态键
-            if current_index is not None and current_index != target_index:
-                # 设置目标形态键为活动形态键
-                bpy.context.object.active_shape_key_index = current_index
-                
-                # 判断方向并将其移到目标位置
-                while current_index < target_index:
-                    bpy.ops.object.shape_key_move(type='DOWN')
-                    current_index += 1
-                while current_index > target_index:
-                    bpy.ops.object.shape_key_move(type='UP')
-                    current_index -= 1
 
 
 def drawShapekeyManagerPanel(layout: UILayout, context: Context):

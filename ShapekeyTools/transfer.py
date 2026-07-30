@@ -8,6 +8,7 @@ import bmesh
 from collections import defaultdict
 from mathutils.kdtree import KDTree
 import math
+from Utils import shapekey_utils
 # region 变量
 
 
@@ -355,8 +356,7 @@ class ShapeKeyTransfer:
             self.dest_uv_avg = self.calculate_avg_uv(dest)
             self.build_uv_kdtree()
 
-        if not dest.data.shape_keys:
-            dest.shape_key_add(name="Basis")
+        shapekey_utils.ensure_basis_shape_key(dest)
 
         # 构建工作 key 列表
         work_keys = []
@@ -400,10 +400,10 @@ class ShapeKeyTransfer:
         # 批量写入
         for key_name in work_keys:
 
-            src_basis = src.data.shape_keys.key_blocks[0]
+            src_basis = src.data.shape_keys.reference_key
             src_key = src.data.shape_keys.key_blocks[key_name]
             dest_key = dest.data.shape_keys.key_blocks[key_name]
-            dest_basis = dest.data.shape_keys.key_blocks[0]
+            dest_basis = dest.data.shape_keys.reference_key
 
             for dest_idx, src_list in self.match_cache.items():
 

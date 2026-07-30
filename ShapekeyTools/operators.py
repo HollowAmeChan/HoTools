@@ -8,7 +8,7 @@ import json
 import math
 from mathutils import Vector
 from bpy.app.handlers import persistent
-from Utils import bone_utils
+from Utils import bone_utils, shapekey_utils
 
 
 SHAPE_KEY_RENAME_MAP = {
@@ -590,41 +590,6 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         self.report({'INFO'}, "已选择形态键所有顶点")
         return {'FINISHED'}
 
-def _move_shape_key_after_index(obj: Object, key_name: str, target_index: int):
-    """Move a shape key to target_index and keep it active."""
-    key_blocks = obj.data.shape_keys.key_blocks
-    current_index = key_blocks.find(key_name)
-    if current_index < 0:
-        return False
-
-    target_index = max(0, min(target_index, len(key_blocks) - 1))
-    with bpy.context.temp_override(object=obj, active_object=obj):
-        obj.active_shape_key_index = current_index
-        while obj.active_shape_key_index > target_index:
-            bpy.ops.object.shape_key_move(type='UP')
-        while obj.active_shape_key_index < target_index:
-            bpy.ops.object.shape_key_move(type='DOWN')
-    obj.active_shape_key_index = target_index
-    return True
-
-
-def _copy_shape_key_settings(source, target):
-    for attr in ("value", "slider_min", "slider_max", "mute", "lock_shape", "vertex_group"):
-        if hasattr(source, attr) and hasattr(target, attr):
-            try:
-                setattr(target, attr, getattr(source, attr))
-            except Exception:
-                pass
-    try:
-        target.interpolation = source.interpolation
-    except Exception:
-        pass
-    try:
-        target.relative_key = source.relative_key
-    except Exception:
-        pass
-
-
 class OP_ShapekeyTools_AddInPlace(Operator):
     """在活动形态键下方新建形态键"""
     bl_idname = "ho.shapekeytools_add_in_place"
@@ -645,14 +610,15 @@ class OP_ShapekeyTools_AddInPlace(Operator):
 
         try:
             if obj.data.shape_keys is None:
-                basis = obj.shape_key_add(name="Basis", from_mix=False)
+                basis = shapekey_utils.ensure_basis_shape_key(obj)
                 obj.active_shape_key_index = 0
                 self.report({'INFO'}, f"已新建 {basis.name}")
                 return {'FINISHED'}
 
             source_index = obj.active_shape_key_index
             new_key = obj.shape_key_add(name="Key", from_mix=False)
-            _move_shape_key_after_index(obj, new_key.name, source_index + 1)
+            shapekey_utils.move_shape_key_to_index(
+                obj, new_key.name, source_index + 1)
             self.report({'INFO'}, f"已在活动键下方新建 {obj.active_shape_key.name}")
             return {'FINISHED'}
         finally:
@@ -688,11 +654,11 @@ class OP_ShapekeyTools_DuplicateInPlace(Operator):
             source_key = obj.active_shape_key
             new_key = obj.shape_key_add(name=source_key.name, from_mix=False)
 
-            for i in range(len(source_key.data)):
-                new_key.data[i].co = source_key.data[i].co.copy()
-            _copy_shape_key_settings(source_key, new_key)
+            shapekey_utils.copy_shape_key_positions(source_key, new_key)
+            shapekey_utils.copy_shape_key_settings(source_key, new_key)
 
-            _move_shape_key_after_index(obj, new_key.name, source_index + 1)
+            shapekey_utils.move_shape_key_to_index(
+                obj, new_key.name, source_index + 1)
             self.report({'INFO'}, f"已在活动键下方复制 {obj.active_shape_key.name}")
             return {'FINISHED'}
         finally:
@@ -1647,7 +1613,7 @@ class OP_AddShapekeysByTemplate(Operator):
 
         # 确保对象有形态键数据
         if not obj.data.shape_keys:
-            obj.shape_key_add(name="Basis")
+            shapekey_utils.ensure_basis_shape_key(obj)
 
         # 根据用户选择的列表获取形态键名称
         if self.shapekey_list == 'ARKIT':
@@ -2253,9 +2219,7 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
             return {'CANCELLED'}
 
         for target in selected_objs:
-            if target.data.shape_keys is None:
-                target.shape_key_add(name="Basis")
-
+            shapekey_utils.ensure_basis_shape_key(target)
             target_sk = target.data.shape_keys
             target_basis = target_sk.reference_key
 
@@ -2270,45 +2234,16 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
             extra_keys = [k for k in current_keys if k not in source_keys]
             new_order = [target_basis.name] + source_keys + extra_keys
 
-            # 真正重排（使用 bpy.ops.object.shape_key_move）
-            self.reorder_shape_keys(target, new_order)
+            shapekey_utils.reorder_shape_keys(
+                target, new_order, active_key_name=target_basis.name)
 
 
         
         self.report({'INFO'}, f"已复制形态键顺序到 {len(selected_objs)} 个物体（跳过基型）")
         return {'FINISHED'}
     
-    def reorder_shape_keys(self, obj, new_order):
-        """按照 new_order 对 obj 的形态键顺序进行重排"""
-        shape_keys = obj.data.shape_keys.key_blocks
-        # 用临时上下文覆盖执行
-        with bpy.context.temp_override(object=obj, active_object=obj):
-            for target_index, target_name in enumerate(new_order):
-                current_index = next((i for i, key in enumerate(shape_keys) if key.name == target_name), None)
-                if current_index is None or current_index == target_index:
-                    continue
-                bpy.context.object.active_shape_key_index = current_index
-                # 按方向移动
-                while current_index < target_index:
-                    bpy.ops.object.shape_key_move(type='DOWN')
-                    current_index += 1
-                while current_index > target_index:
-                    bpy.ops.object.shape_key_move(type='UP')
-                    current_index -= 1
-        obj.active_shape_key_index = 0  # 选中基型
-
 class ShapeKeyRebaseError(RuntimeError):
     pass
-
-
-def _read_shape_key_positions(key_block):
-    positions = np.empty(len(key_block.data) * 3, dtype=np.float32)
-    key_block.data.foreach_get("co", positions)
-    return positions.reshape((-1, 3))
-
-
-def _write_shape_key_positions(key_block, positions):
-    key_block.data.foreach_set("co", np.asarray(positions, dtype=np.float32).reshape(-1))
 
 
 def _shape_key_rebase_mask(local_delta, threshold, falloff_ratio, strength):
@@ -2346,14 +2281,6 @@ def _normalize_shape_key_activity(values, active_mask):
     finite_values = np.nan_to_num(values, nan=0.0, posinf=scale, neginf=0.0)
     result[active_mask] = np.clip(finite_values[active_mask] / scale, 0.0, 1.0)
     return result
-
-
-def _mesh_triangle_indices(mesh):
-    mesh.calc_loop_triangles()
-    triangles = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
-    if len(triangles) > 0:
-        mesh.loop_triangles.foreach_get("vertices", triangles)
-    return triangles.reshape((-1, 3))
 
 
 def _shape_key_deformation_activity(
@@ -2552,41 +2479,15 @@ def _validate_shape_key_rebase_object(obj):
         suffix = "等" if len(nonzero_keys) > 4 else ""
         raise ShapeKeyRebaseError(f"请先把其他形态键权重归零：{preview}{suffix}")
 
-    vertex_count = len(basis.data)
+    try:
+        shapekey_utils.validate_shape_key_vertex_counts(
+            shape_keys, len(basis.data))
+    except shapekey_utils.ShapeKeyUtilsError as exc:
+        raise ShapeKeyRebaseError(str(exc)) from exc
     for key in shape_keys.key_blocks:
-        if len(key.data) != vertex_count:
-            raise ShapeKeyRebaseError(f"形态键 {key.name} 的顶点数量不一致")
         if key != basis and key.relative_key is None:
             raise ShapeKeyRebaseError(f"形态键 {key.name} 缺少相对键")
     return shape_keys, basis, active_key
-
-
-def _shape_key_rebase_order(shape_keys, basis, active_key):
-    keys_by_name = {key.name: key for key in shape_keys.key_blocks}
-    state = {}
-    result = []
-
-    def visit(key):
-        if key in {basis, active_key}:
-            return
-        current_state = state.get(key.name, 0)
-        if current_state == 2:
-            return
-        if current_state == 1:
-            raise ShapeKeyRebaseError(f"形态键相对关系存在循环：{key.name}")
-        state[key.name] = 1
-        relative = key.relative_key
-        if relative not in {basis, active_key}:
-            relative = keys_by_name.get(relative.name)
-            if relative is None:
-                raise ShapeKeyRebaseError(f"找不到 {key.name} 的相对键")
-            visit(relative)
-        state[key.name] = 2
-        result.append(key)
-
-    for key in shape_keys.key_blocks:
-        visit(key)
-    return result
 
 
 def _rebase_shape_keys(
@@ -2597,11 +2498,18 @@ def _rebase_shape_keys(
     if factor <= 0.0:
         raise ShapeKeyRebaseError("变基权重必须大于 0")
 
-    ordered_keys = _shape_key_rebase_order(shape_keys, basis, active_key)
-    old_basis = _read_shape_key_positions(basis)
-    old_active = _read_shape_key_positions(active_key)
+    try:
+        ordered_keys = shapekey_utils.relative_shape_key_order(
+            shape_keys, excluded=(active_key,))
+    except shapekey_utils.ShapeKeyDependencyError as exc:
+        raise ShapeKeyRebaseError(str(exc)) from exc
+    old_basis = shapekey_utils.read_shape_key_positions(basis)
+    old_active = shapekey_utils.read_shape_key_positions(active_key)
     new_basis = old_basis + (old_active - old_basis) * factor
-    triangles = _mesh_triangle_indices(obj.data) if use_gradient_rebase else None
+    triangles = (
+        shapekey_utils.mesh_triangle_indices(obj.data)
+        if use_gradient_rebase else None
+    )
 
     child_counts = {key.name: 0 for key in ordered_keys}
     for key in ordered_keys:
@@ -2626,7 +2534,7 @@ def _rebase_shape_keys(
             old_relative = cached_old[relative.name]
             new_relative = cached_new[relative.name]
 
-        old_key = _read_shape_key_positions(key)
+        old_key = shapekey_utils.read_shape_key_positions(key)
         new_key, mask = _mix_rebased_shape_positions(
             old_key, old_relative, new_relative,
             threshold, falloff_ratio, protection_strength,
@@ -2638,7 +2546,7 @@ def _rebase_shape_keys(
         if child_counts[key.name] > 0:
             cached_old[key.name] = old_key
             cached_new[key.name] = new_key
-        _write_shape_key_positions(key, new_key)
+        shapekey_utils.write_shape_key_positions(key, new_key)
 
         if relative not in {basis, active_key}:
             child_counts[relative.name] -= 1
@@ -2649,7 +2557,7 @@ def _rebase_shape_keys(
     for key in ordered_keys:
         if key.relative_key == active_key:
             key.relative_key = basis
-    _write_shape_key_positions(basis, new_basis)
+    shapekey_utils.write_shape_key_positions(basis, new_basis)
     active_name = active_key.name
     obj.shape_key_remove(active_key)
     obj.active_shape_key_index = 0
@@ -3236,7 +3144,7 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
 
         # === 确保存在形态键（无则先建 Basis）===
         if mesh.shape_keys is None:
-            obj.shape_key_add(name="Basis", from_mix=False)
+            shapekey_utils.ensure_basis_shape_key(obj)
 
         # === 基础位：参考形态键（Basis）的坐标，作为未加权顶点的还原基准 ===
         basis_kb = mesh.shape_keys.reference_key

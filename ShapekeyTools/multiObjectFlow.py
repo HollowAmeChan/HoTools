@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from mathutils.geometry import intersect_line_line_2d
 import json
+from Utils import shapekey_utils
 
 # region 变量
 def reg_props():
@@ -245,8 +246,11 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
                 src_shape_key = src_keys.key_blocks[key_name]
                 dst_shape_key = key_blocks[key_name]
 
-                for i in range(len(dst_shape_key.data)):
-                    dst_shape_key.data[i].co = src_shape_key.data[i].co.copy()
+                try:
+                    shapekey_utils.copy_shape_key_positions(
+                        src_shape_key, dst_shape_key)
+                except shapekey_utils.ShapeKeyUtilsError as exc:
+                    self.report({'WARNING'}, f"{obj.name} 刷新失败：{exc}")
 
         return {'FINISHED'}
 
