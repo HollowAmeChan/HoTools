@@ -1046,6 +1046,7 @@ class OP_GenerateMirroredShapekey(Operator):
     def execute(self, context):
         obj = context.active_object
         active_key = obj.active_shape_key
+        source_index = obj.active_shape_key_index
 
         # 生成目标形态键名称
         new_name = active_key.name
@@ -1066,6 +1067,8 @@ class OP_GenerateMirroredShapekey(Operator):
             target_key = obj.shape_key_add(from_mix=False, name=new_name)
             for i in range(len(active_key.data)):
                 target_key.data[i].co = active_key.data[i].co.copy()
+            shapekey_utils.move_shape_key_to_index(
+                obj, target_key.name, source_index + 1)
             msg = f"已创建: {target_key.name}"
 
         # 设置活动形态键
@@ -1121,6 +1124,7 @@ class OP_SplitShapekey(Operator):
     def execute(self, context):
         obj = context.active_object
         active_key = obj.active_shape_key
+        source_index = obj.active_shape_key_index
 
         # 获取形态键的名称
         key_name = active_key.name
@@ -1130,6 +1134,10 @@ class OP_SplitShapekey(Operator):
             name=key_name+self.suffix_viewLeft, from_mix=False)
         view_right_key = obj.shape_key_add(
             name=key_name+self.suffix_viewRight, from_mix=False)
+        shapekey_utils.move_shape_key_to_index(
+            obj, view_left_key.name, source_index + 1)
+        shapekey_utils.move_shape_key_to_index(
+            obj, view_right_key.name, source_index + 2)
 
         # 获取形态键的原始数据
         original_data = active_key.data
@@ -1166,7 +1174,9 @@ class OP_SplitShapekey(Operator):
                     view_left_key.data[idx].co = vert.co    # 左侧保持基础
 
         self.report(
-            {'INFO'}, f"形态键 '{key_name}' 已拆分为 '{key_name}_L' 和 '{key_name}_R'。")
+            {'INFO'},
+            f"形态键 '{key_name}' 已拆分为 "
+            f"'{view_left_key.name}' 和 '{view_right_key.name}'。")
         return {'FINISHED'}
 
 class OP_RemoveEmptyShapekeys(Operator):
