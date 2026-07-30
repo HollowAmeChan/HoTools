@@ -3495,15 +3495,6 @@ def _draw_sk_operators(layout: UILayout,context:Context):
                  text="全键归零", icon="FUND")
     row.operator(OP_SetBasisShapekeyActive.bl_idname,
                  text="选中基型", icon="FUND")
-
-    row = layout.row(align=True)
-    row.scale_y = 2.0
-    row.alert = True
-    row.operator(OP_ShapekeyTools_RebaseFBSF.bl_idname,
-                 text="全键局部变基-FBSF", icon="KEY_HLT")
-    row.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,
-                 text="全键局部变基-HO", icon="KEY_HLT")
-    row.alert = False
     
 
     # 形态键混合/清除
