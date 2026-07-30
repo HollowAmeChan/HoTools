@@ -127,6 +127,8 @@ assert module._fbsf_threshold_map(0.05) == 0.0
 assert module._fbsf_threshold_map(0.95) == 1.0
 assert module.OP_ShapekeyTools_RebaseFBSF.bl_label == "全键局部变基-FBSF"
 assert module.OP_ShapekeyTools_RebasePreserveExpressions.bl_label == "全键局部变基-HO"
+assert "eye_vertex_group" not in (
+    module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 assert (
     module.OP_ShapekeyTools_RebasePreserveExpressions.bl_idname
     == "ho.rebase_shapekeys_preserve_expressions"
@@ -159,6 +161,19 @@ _first, _second, local_targets, _weights = (
 assert np.allclose(local_targets[0], (0.0, 2.0, 0.0), atol=1e-6)
 assert np.allclose(local_targets[1], (-1.0, 0.0, 0.0), atol=1e-6)
 
+# 局部 FBSF 只能保留形状差分，不能把左右眼的整体捏脸平移拉回旧位置。
+uniform_shift = np.tile((0.0, 2.0, 0.0), (4, 1)).astype(np.float32)
+uniform_global = fbsf_basis + uniform_shift
+centered_baseline = module._ho_local_fbsf_baseline(
+    uniform_global,
+    uniform_shift,
+    np.ones(4, dtype=np.float32),
+    np.ones(4, dtype=np.float32),
+    fbsf_basis,
+    1.0,
+)
+assert np.allclose(centered_baseline, uniform_global, atol=1e-6)
+
 registered = (
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
     module.OP_ShapekeyTools_RebaseFBSF,
@@ -171,9 +186,6 @@ try:
     obj = make_eye_and_mouth_mesh("LocalRebase")
     basis, sculpt, expression, mouth_open = add_closure_shape_keys(obj)
 
-    eye_group = obj.vertex_groups.new(name="EyeRegion")
-    eye_group.add(list(range(12)), 1.0, 'REPLACE')
-
     nested = obj.shape_key_add(name="Nested", from_mix=False)
     nested.relative_key = expression
     for index, point in enumerate(nested.data):
@@ -185,30 +197,23 @@ try:
     old_mouth_open = positions(mouth_open)
     old_nested = positions(nested)
     topology = module._ho_rebase_topology(obj.data, old_basis)
-    eye_weights = module._ho_vertex_group_weights(obj, eye_group.name)
     default_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, eye_weights, 1.5, 0.35)
+        old_basis, old_expression, topology, 1.5, 0.35)
     wide_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, eye_weights, 6.0, 0.35)
-    automatic_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, None, 1.5, 0.35)
+        old_basis, old_expression, topology, 6.0, 0.35)
     assert len(default_pairs) == 3
-    assert len(automatic_pairs) == len(default_pairs)
     # 搜索半径只扩大闭眼参考的候选范围，不能反向排除已经找到的眼睑关系。
     assert len(wide_pairs) == len(default_pairs)
     automatic_weights = module._ho_automatic_eye_weights(
-        len(old_basis), automatic_pairs, topology, 2)
+        old_basis, old_expression, default_pairs, topology, 2)
     assert np.all(automatic_weights[:12] > 0.0)
     assert np.allclose(automatic_weights[12:], 0.0)
 
-    # 自动模式不能把正在移动的上眼睑与附近的静止表面误配；用户显式提供区域时
-    # 才允许单侧运动的闭合参考键。
+    # 单侧运动不能误配到另一个独立网格岛上的静止表面。
     one_sided = old_basis.copy()
     one_sided[3:6, 2] -= 0.9
     assert not module._ho_reference_pairs(
-        old_basis, one_sided, topology, None, 1.5, 0.35)
-    assert module._ho_reference_pairs(
-        old_basis, one_sided, topology, eye_weights, 1.5, 0.35)
+        old_basis, one_sided, topology, 1.5, 0.35)
 
     # 任一后续键求解失败时，规划阶段不得提前写入已经处理过的键。
     obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(sculpt.name)
@@ -241,7 +246,6 @@ try:
         "EXEC_DEFAULT",
         factor=0.5,
         blink_reference_key="Blink",
-        eye_vertex_group="EyeRegion",
         transfer_strength=1.0,
         closure_strength=1.0,
         contact_radius_factor=1.5,
@@ -272,7 +276,8 @@ try:
         )
         new_gap = abs(expression.data[upper].co.z - expression.data[lower].co.z)
         assert new_gap < global_gap * 0.75, (new_gap, global_gap)
-        assert new_gap < 0.2
+        old_gap = abs(old_expression[upper, 2] - old_expression[lower, 2])
+        assert new_gap <= old_gap + 1e-4, (new_gap, old_gap)
     for index in range(12):
         assert abs(expression.data[index].co.y - 1.0) < 1e-4
 
