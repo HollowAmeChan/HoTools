@@ -86,6 +86,11 @@ child.vertex_group = "Face"
 child.interpolation = 'KEY_LINEAR'
 child_positions = smile_positions + (0.1, -0.2, 0.3)
 shapekey_utils.write_shape_key_positions(child, child_positions)
+obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find("Child")
+assert shapekey_utils.active_relative_shape_key(obj) == smile
+obj.active_shape_key_index = 0
+assert shapekey_utils.active_relative_shape_key(obj) is None
+obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find("Child")
 
 duplicate = obj.shape_key_add(name="Duplicate", from_mix=False)
 assert shapekey_utils.copy_shape_key_positions(child, duplicate) == 4

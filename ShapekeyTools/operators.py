@@ -425,8 +425,6 @@ def reg_props():
     
     bpy.types.Scene.hoShapekeyTools_chooseVertexByIndex = IntProperty(
         default=0)  # 按照顶点索引选择顶点的UI参数
-    bpy.types.Scene.hoShapekeyTools_selectedBaseShapekey = StringProperty(
-        description="替换形态键时使用的来源形态键")  # 替换形态键数据时依赖的形态键,在UI中绘制
     bpy.types.Scene.hoShapekeyTools_mirrorAxis = bpy.props.EnumProperty(
         name="轴向",
         description="选择对称轴向",
@@ -501,7 +499,6 @@ def sk_load_handler(dummy):
 def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_open_menu
     del bpy.types.Scene.hoShapekeyTools_chooseVertexByIndex
-    del bpy.types.Scene.hoShapekeyTools_selectedBaseShapekey
     del bpy.types.Scene.hoShapekeyTools_mirrorAxis
     del bpy.types.Scene.hoShapekeyTools_mirrorTolerance
     del bpy.types.Scene.hoShapekeyTools_isMirrorRename
@@ -546,7 +543,7 @@ class OP_SelectVertexByIndex(Operator):
         return {'CANCELLED'}
 
 class OP_SelectShapekeyOffsetedVerticex(Operator):
-    """选择当前活动形态键中偏移量大于 0 的顶点"""
+    """选择当前活动形态键中相对其直接相对键发生位移的顶点。"""
     bl_idname = "ho.select_positive_offset_vertices"
     bl_label = "选择形态键偏移大于0的顶点"
     bl_options = {'REGISTER', 'UNDO'}
@@ -554,7 +551,12 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
     @classmethod
     def poll(cls, context):
         obj = context.object
-        return obj and obj.type == 'MESH' and obj.data.shape_keys
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and shapekey_utils.active_relative_shape_key(obj) is not None
+        )
 
     def execute(self, context):
         # 获取活动对象
@@ -570,16 +572,22 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         if active_key is None:
             self.report({'ERROR'}, "未找到活动形态键！")
             return {'CANCELLED'}
+        relative_key = shapekey_utils.active_relative_shape_key(obj)
+        if relative_key is None:
+            self.report({'WARNING'}, "请选择一个具有相对键的非基型形态键")
+            return {'CANCELLED'}
 
-        bpy.ops.object.mode_set(mode='EDIT')
+        if context.mode != 'EDIT_MESH':
+            bpy.ops.object.mode_set(mode='EDIT')
+        obj.update_from_editmode()
         mesh = bmesh.from_edit_mesh(obj.data)
         mesh.faces.ensure_lookup_table()  # 刷新索引表
         mesh.edges.ensure_lookup_table()
         mesh.verts.ensure_lookup_table() 
 
-        # 遍历形态键数据并选中对应顶点
+        # 嵌套形态键必须与自己的 relative_key 比较，而不是固定与 Basis 比较。
         for i, shape_vert in enumerate(active_key.data):
-            if shape_vert.co != obj.data.vertices[i].co:
+            if (shape_vert.co - relative_key.data[i].co).length_squared > 1e-12:
                 mesh.verts[i].select = True
 
         # 更新编辑网格以反映选择状态
@@ -587,7 +595,7 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         bpy.ops.mesh.select_mode(
             use_extend=False, use_expand=False, type='VERT')  # 强制进入顶点选择模式
         obj.update_from_editmode()  # 刷新顶点选择态
-        self.report({'INFO'}, "已选择形态键所有顶点")
+        self.report({'INFO'}, "已选择活动键的相对位移点")
         return {'FINISHED'}
 
 class OP_ShapekeyTools_AddInPlace(Operator):
@@ -670,32 +678,62 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
     """将活动形态键中选择的顶点替换为指定形态键的位置"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
     bl_label = "替换活动形态键中，选择的顶点的偏移"
+    bl_description = "选择一个来源形态键，用其位置替换活动键中的选中顶点"
     bl_options = {'REGISTER', 'UNDO'}
 
-    shape_key: bpy.props.StringProperty(name="形态键")  # type: ignore
+    shape_key: bpy.props.StringProperty(name="来源形态键")  # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.object
-        return obj and obj.type == 'MESH' and obj.data.shape_keys and context.mode == "EDIT_MESH"
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and context.mode == "EDIT_MESH"
+            and shapekey_utils.active_relative_shape_key(obj) is not None
+        )
+
+    def invoke(self, context, event):
+        obj = context.object
+        relative_key = shapekey_utils.active_relative_shape_key(obj)
+        if relative_key is None:
+            self.report({'WARNING'}, "请选择一个具有相对键的非基型形态键")
+            return {'CANCELLED'}
+        if not self.shape_key or obj.data.shape_keys.key_blocks.get(self.shape_key) is None:
+            self.shape_key = relative_key.name
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, context):
+        obj = context.object
+        if obj is not None and obj.data.shape_keys is not None:
+            self.layout.prop_search(
+                self,
+                "shape_key",
+                obj.data.shape_keys,
+                "key_blocks",
+                text="来源形态键",
+            )
 
     def execute(self, context):
-
         obj = context.object
-        # 检查形态键是否存在
-        if self.shape_key not in obj.data.shape_keys.key_blocks:
+        source_key = obj.data.shape_keys.key_blocks.get(self.shape_key)
+        if source_key is None:
             self.report(
                 {'WARNING'}, f"使用的形态键'{self.shape_key}'不存在,请选择")
+            return {'CANCELLED'}
+        if source_key == obj.active_shape_key:
+            self.report({'WARNING'}, "来源形态键不能是当前活动形态键")
             return {'CANCELLED'}
         bpy.ops.mesh.blend_from_shape(shape=self.shape_key, add=False)
 
         return {'FINISHED'}
 
 class OP_ClearSelectedVerticesInActiveShapekey(Operator):
-    """用基型清除活动形态键中，选择的顶点的偏移"""
+    """用活动键的直接相对键清除选中顶点的偏移。"""
     bl_idname = "ho.clear_selected_vertices_in_activeshapekey"
     bl_label = "清除活动形态键中，选择的顶点的偏移"
-    bl_description = "用基型替换活动形态键中选中顶点的偏移；按住 Shift 点击会清除当前活动形态键的全部偏移"
+    bl_description = "用活动键的相对键替换选中顶点；按住 Shift 点击会清除当前活动键的全部偏移"
     bl_options = {'REGISTER', 'UNDO'}
 
     clear_whole_key: bpy.props.BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
@@ -703,7 +741,13 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
     @classmethod
     def poll(cls, context):
         obj = context.object
-        return obj and obj.type == 'MESH' and obj.data.shape_keys and context.mode in {"EDIT_MESH", "OBJECT"}
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and context.mode in {"EDIT_MESH", "OBJECT"}
+            and shapekey_utils.active_relative_shape_key(obj) is not None
+        )
 
     def invoke(self, context, event):
         self.clear_whole_key = event.shift
@@ -711,14 +755,10 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
 
     def execute(self, context):
         obj = context.object
-        shape_keys = obj.data.shape_keys
         active_key = obj.active_shape_key
-        reference_key = shape_keys.reference_key
-        if not active_key or active_key == reference_key:
-            self.report({'WARNING'}, "请选择一个非基型的活动形态键")
-            return {'CANCELLED'}
-        if not reference_key:
-            self.report({'WARNING'}, "未找到基型")
+        relative_key = shapekey_utils.active_relative_shape_key(obj)
+        if not active_key or relative_key is None:
+            self.report({'WARNING'}, "请选择一个具有相对键的非基型形态键")
             return {'CANCELLED'}
 
         if self.clear_whole_key or context.mode != "EDIT_MESH":
@@ -726,13 +766,13 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
             if old_mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             for i in range(len(active_key.data)):
-                active_key.data[i].co = reference_key.data[i].co.copy()
+                active_key.data[i].co = relative_key.data[i].co.copy()
             if old_mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode=old_mode)
             self.report({'INFO'}, "已清除当前活动形态键的全部偏移")
             return {'FINISHED'}
 
-        bpy.ops.mesh.blend_from_shape(shape=reference_key.name, add=False)
+        bpy.ops.mesh.blend_from_shape(shape=relative_key.name, add=False)
         return {'FINISHED'}
 
 class OP_SmoothShapekey(Operator):
@@ -750,7 +790,7 @@ class OP_SmoothShapekey(Operator):
             return False
         if not obj.data.shape_keys or not obj.active_shape_key:
             return False
-        if obj.data.shape_keys.reference_key == obj.active_shape_key:
+        if shapekey_utils.active_relative_shape_key(obj) is None:
             return False
         return True
     
@@ -773,9 +813,11 @@ class OP_SmoothShapekey(Operator):
             
         return (max_co - min_co).length
 
-    def smooth_vertex(self, vert_index, offsets, basis_coords, kd, radius, smooth_factor):
+    def smooth_vertex(
+            self, vert_index, offsets, relative_coords,
+            kd, radius, smooth_factor):
         original_offset = offsets[vert_index]
-        co = basis_coords[vert_index]
+        co = relative_coords[vert_index]
         total_weight = 0.0
         weighted_sum = Vector((0.0, 0.0, 0.0))
 
@@ -794,16 +836,22 @@ class OP_SmoothShapekey(Operator):
         mesh = obj.data
         obj.update_from_editmode()
 
-        basis = mesh.shape_keys.reference_key
         active = obj.active_shape_key
+        relative = shapekey_utils.active_relative_shape_key(obj)
+        if relative is None:
+            self.report({'WARNING'}, "活动形态键没有可用的相对键")
+            return {'CANCELLED'}
 
         bm = bmesh.from_edit_mesh(mesh)
         bm.faces.ensure_lookup_table()  # 刷新索引表
         bm.edges.ensure_lookup_table()
         bm.verts.ensure_lookup_table() 
 
-        basis_co = [Vector(basis.data[v.index].co) for v in bm.verts]
-        offsets = [active.data[v.index].co - basis.data[v.index].co for v in bm.verts]
+        relative_co = [Vector(relative.data[v.index].co) for v in bm.verts]
+        offsets = [
+            active.data[v.index].co - relative.data[v.index].co
+            for v in bm.verts
+        ]
 
         max_dist = self.get_selected_bbox_diagonal(bm)
         if max_dist == 0:
@@ -815,20 +863,21 @@ class OP_SmoothShapekey(Operator):
         # 建立KDTree
         size = len(bm.verts)
         kd = KDTree(size)
-        for i, co in enumerate(basis_co):
+        for i, co in enumerate(relative_co):
             kd.insert(co, i)
         kd.balance()
 
         for _ in range(1):
             new_offsets = offsets.copy()
             for i in range(size):
-                new_offsets[i] = self.smooth_vertex(i, offsets, basis_co, kd, radius, smooth_factor)
+                new_offsets[i] = self.smooth_vertex(
+                    i, offsets, relative_co, kd, radius, smooth_factor)
             offsets = new_offsets
 
         # 写回偏移量
         for v in bm.verts:
             if v.select:
-                v.co = basis.data[v.index].co + offsets[v.index]
+                v.co = relative.data[v.index].co + offsets[v.index]
 
         bm.normal_update()
         bmesh.update_edit_mesh(mesh, loop_triangles=False)
@@ -3643,14 +3692,12 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row.scale_y = 2.0
     obj = context.object
     if obj and obj.type == 'MESH' and obj.data.shape_keys:
-        row.prop_search(context.scene, "hoShapekeyTools_selectedBaseShapekey", obj.data.shape_keys,
-                        "key_blocks", text="")
         row.operator(OP_SelectShapekeyOffsetedVerticex.bl_idname,
                      text="选择位移点")
         row.operator(OP_SmoothShapekey.bl_idname,text="平滑")
-        row.operator(
-            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text="替换").shape_key = context.scene.hoShapekeyTools_selectedBaseShapekey
         row.operator(OP_ClearSelectedVerticesInActiveShapekey.bl_idname, text="清除")
+        row.operator(
+            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text="替换")
     # 对称形态键
     row = layout.row(align=True)
     row.scale_y = 2.0

@@ -49,6 +49,20 @@ def ensure_basis_shape_key(obj, name: str = "Basis"):
     return basis
 
 
+def active_relative_shape_key(obj):
+    """返回活动形态键直接引用的相对键；Basis 或无效状态返回 ``None``。"""
+    if obj is None or getattr(obj, "type", None) != 'MESH':
+        return None
+    shape_keys = getattr(obj.data, "shape_keys", None)
+    active_key = getattr(obj, "active_shape_key", None)
+    if shape_keys is None or active_key is None:
+        return None
+    relative_key = getattr(active_key, "relative_key", None)
+    if relative_key is None or relative_key == active_key:
+        return None
+    return relative_key
+
+
 def read_shape_key_positions(key_block, dtype=np.float32) -> np.ndarray:
     """批量读取形态键坐标，返回独立的 ``(顶点数, 3)`` 数组。"""
     if key_block is None or not hasattr(key_block, "data"):
