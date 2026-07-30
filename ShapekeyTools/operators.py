@@ -2246,31 +2246,320 @@ class ShapeKeyRebaseError(RuntimeError):
     pass
 
 
-def _shape_key_rebase_mask(local_delta, threshold, falloff_ratio, strength):
-    vertex_count = len(local_delta)
-    lengths = np.linalg.norm(local_delta, axis=1)
-    if falloff_ratio <= 0.0:
-        mask = (lengths > threshold).astype(np.float32)
+def _ho_mesh_edges(mesh):
+    """批量读取网格边，供趋近检测、平滑和安全检查共用。"""
+    edges = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+    if len(edges) > 0:
+        mesh.edges.foreach_get("vertices", edges)
+    return edges.reshape((-1, 2))
+
+
+def _ho_rebase_topology(mesh, basis_positions):
+    """构建一次变基过程中所有表情键共用的拓扑缓存。"""
+    vertex_count = len(basis_positions)
+    edges = _ho_mesh_edges(mesh)
+    adjacency = [set() for _ in range(vertex_count)]
+    for first, second in edges:
+        first = int(first)
+        second = int(second)
+        adjacency[first].add(second)
+        adjacency[second].add(first)
+
+    if len(edges) > 0:
+        edge_vectors = basis_positions[edges[:, 1]] - basis_positions[edges[:, 0]]
+        edge_lengths = np.linalg.norm(edge_vectors, axis=1)
+        valid_lengths = edge_lengths[edge_lengths > 1e-8]
+        median_edge_length = (
+            float(np.median(valid_lengths)) if len(valid_lengths) else 0.0)
     else:
-        max_length = float(lengths.max(initial=0.0))
-        width = max_length * falloff_ratio
-        if width <= np.finfo(np.float32).eps:
-            mask = (lengths > threshold).astype(np.float32)
-        else:
-            t = np.clip((lengths - threshold) / width, 0.0, 1.0)
-            mask = (t * t * (3.0 - 2.0 * t)).astype(np.float32)
-    return mask * strength
+        median_edge_length = 0.0
+
+    triangles = shapekey_utils.mesh_triangle_indices(mesh)
+    degrees = np.zeros(vertex_count, dtype=np.float32)
+    if len(edges) > 0:
+        np.add.at(degrees, edges[:, 0], 1.0)
+        np.add.at(degrees, edges[:, 1], 1.0)
+    return {
+        "edges": edges,
+        "triangles": triangles,
+        "adjacency": adjacency,
+        "degrees": degrees,
+        "median_edge_length": median_edge_length,
+    }
 
 
-def _mix_rebased_shape_positions(
-        key_positions, old_relative_positions, new_relative_positions,
-        threshold, falloff_ratio, strength):
-    local_delta = key_positions - old_relative_positions
-    mask = _shape_key_rebase_mask(
-        local_delta, threshold, falloff_ratio, strength)
-    relative_shift = new_relative_positions - old_relative_positions
-    result = key_positions + relative_shift * (1.0 - mask[:, None])
-    return result, mask
+def _ho_is_near_topology(first, second, adjacency):
+    """排除自身以及两环以内的普通表面邻居。"""
+    if first == second or second in adjacency[first]:
+        return True
+    return any(second in adjacency[neighbor] for neighbor in adjacency[first])
+
+
+def _ho_convergence_pairs(
+        rest_positions, expression_positions, topology,
+        contact_radius_factor, max_gap_ratio):
+    """寻找旧表情中主动靠近的非局部一对一顶点关系。"""
+    vertex_count = len(rest_positions)
+    edge_length = topology["median_edge_length"]
+    if vertex_count < 2 or edge_length <= 1e-8:
+        return ()
+
+    search_radius = edge_length * contact_radius_factor
+    if search_radius <= 1e-8:
+        return ()
+
+    local_delta = expression_positions - rest_positions
+    moved = np.flatnonzero(
+        np.linalg.norm(local_delta, axis=1) > max(edge_length * 1e-4, 1e-7))
+    if len(moved) == 0:
+        return ()
+
+    tree = KDTree(vertex_count)
+    for index, position in enumerate(expression_positions):
+        tree.insert(Vector(position), index)
+    tree.balance()
+
+    adjacency = topology["adjacency"]
+    candidates = {}
+    minimum_rest_gap = search_radius * 1.1
+    for first in moved:
+        first = int(first)
+        for _position, second, final_gap in tree.find_range(
+                Vector(expression_positions[first]), search_radius):
+            second = int(second)
+            if _ho_is_near_topology(first, second, adjacency):
+                continue
+
+            pair = (first, second) if first < second else (second, first)
+            rest_vector = rest_positions[pair[1]] - rest_positions[pair[0]]
+            rest_gap = float(np.linalg.norm(rest_vector))
+            if rest_gap <= max(minimum_rest_gap, 1e-8):
+                continue
+
+            final_gap = float(final_gap)
+            gap_ratio = final_gap / rest_gap
+            if gap_ratio >= max_gap_ratio:
+                continue
+
+            relative_motion = (
+                expression_positions[pair[1]] - expression_positions[pair[0]]
+                - rest_vector)
+            motion_length = float(np.linalg.norm(relative_motion))
+            if motion_length <= 1e-8:
+                continue
+            alignment = float(np.clip(
+                -np.dot(rest_vector, relative_motion)
+                / (rest_gap * motion_length), 0.0, 1.0))
+            if alignment < 0.25:
+                continue
+
+            ratio_score = max(0.0, 1.0 - gap_ratio / max_gap_ratio)
+            distance_score = max(0.0, 1.0 - final_gap / search_radius)
+            confidence = float(
+                (alignment * ratio_score * distance_score) ** (1.0 / 3.0))
+            if confidence < 0.25:
+                continue
+
+            previous = candidates.get(pair)
+            if previous is None or confidence > previous[3]:
+                candidates[pair] = (
+                    pair[0], pair[1], gap_ratio, confidence, final_gap)
+
+    if not candidates:
+        return ()
+
+    best_partner = np.full(vertex_count, -1, dtype=np.int32)
+    best_score = np.full(vertex_count, -1.0, dtype=np.float32)
+    best_gap = np.full(vertex_count, np.inf, dtype=np.float32)
+    for first, second, _ratio, confidence, final_gap in candidates.values():
+        for vertex, partner in ((first, second), (second, first)):
+            if (
+                confidence > best_score[vertex] + 1e-6
+                or (
+                    abs(confidence - best_score[vertex]) <= 1e-6
+                    and final_gap < best_gap[vertex]
+                )
+            ):
+                best_partner[vertex] = partner
+                best_score[vertex] = confidence
+                best_gap[vertex] = final_gap
+
+    # 高分优先且每个顶点最多参与一对，防止接触线形成密集多对多拉扯。
+    selected = []
+    used = set()
+    ordered = sorted(candidates.values(), key=lambda item: (-item[3], item[4]))
+    for first, second, gap_ratio, confidence, _final_gap in ordered:
+        if first in used or second in used:
+            continue
+        if best_partner[first] != second and best_partner[second] != first:
+            continue
+        used.add(first)
+        used.add(second)
+        selected.append((first, second, gap_ratio, confidence))
+    return tuple(selected)
+
+
+def _ho_contact_seeds(
+        new_rest_positions, global_positions, pairs, correction_strength):
+    """保持点对中心不变，只生成恢复闭合比例所需的稀疏修正。"""
+    vertex_count = len(global_positions)
+    seed_sum = np.zeros((vertex_count, 3), dtype=np.float32)
+    seed_weight = np.zeros(vertex_count, dtype=np.float32)
+    applied_pairs = 0
+
+    for first, second, gap_ratio, confidence in pairs:
+        new_rest_gap = float(np.linalg.norm(
+            new_rest_positions[second] - new_rest_positions[first]))
+        current_vector = global_positions[second] - global_positions[first]
+        current_gap = float(np.linalg.norm(current_vector))
+        target_gap = new_rest_gap * gap_ratio
+        if current_gap <= target_gap + 1e-8 or current_gap <= 1e-8:
+            continue
+
+        radial_error = current_vector * (1.0 - target_gap / current_gap)
+        first_correction = radial_error * (0.5 * correction_strength)
+        second_correction = -first_correction
+        seed_sum[first] += first_correction * confidence
+        seed_sum[second] += second_correction * confidence
+        seed_weight[first] += confidence
+        seed_weight[second] += confidence
+        applied_pairs += 1
+
+    seeds = np.zeros_like(seed_sum)
+    constrained = seed_weight > 1e-8
+    seeds[constrained] = seed_sum[constrained] / seed_weight[constrained, None]
+    return seeds, seed_weight, applied_pairs
+
+
+def _ho_smooth_contact_correction(seeds, seed_weight, topology, smooth_rings):
+    """在有限拓扑邻域内求解带锚定项的均匀拉普拉斯修正场。"""
+    constrained = seed_weight > 1e-8
+    if not np.any(constrained):
+        return np.zeros_like(seeds), constrained
+
+    edges = topology["edges"]
+    if len(edges) == 0:
+        return seeds.copy(), constrained
+
+    region = constrained.copy()
+    for _iteration in range(smooth_rings):
+        expanded = region.copy()
+        expanded[edges[region[edges[:, 1]], 0]] = True
+        expanded[edges[region[edges[:, 0]], 1]] = True
+        if np.array_equal(expanded, region):
+            break
+        region = expanded
+
+    region_indices = np.flatnonzero(region)
+    global_to_local = np.full(len(seeds), -1, dtype=np.int32)
+    global_to_local[region_indices] = np.arange(len(region_indices), dtype=np.int32)
+    internal = region[edges[:, 0]] & region[edges[:, 1]]
+    local_first = global_to_local[edges[internal, 0]]
+    local_second = global_to_local[edges[internal, 1]]
+
+    local_seed = seeds[region_indices]
+    local_weight = seed_weight[region_indices] * 40.0
+    denominator = local_weight + 0.05 + topology["degrees"][region_indices]
+    correction = local_seed.copy()
+    for _iteration in range(24):
+        neighbor_sum = np.zeros_like(correction)
+        np.add.at(neighbor_sum, local_first, correction[local_second])
+        np.add.at(neighbor_sum, local_second, correction[local_first])
+        correction = (
+            local_weight[:, None] * local_seed + neighbor_sum
+        ) / denominator[:, None]
+
+    result = np.zeros_like(seeds)
+    result[region_indices] = correction
+    return result, region
+
+
+def _ho_correction_is_safe(global_positions, corrected_positions, topology, affected):
+    """拒绝明显的边长崩坏或三角面翻转。"""
+    edges = topology["edges"]
+    if len(edges) > 0:
+        checked_edges = edges[affected[edges[:, 0]] | affected[edges[:, 1]]]
+        if len(checked_edges) > 0:
+            old_lengths = np.linalg.norm(
+                global_positions[checked_edges[:, 1]]
+                - global_positions[checked_edges[:, 0]], axis=1)
+            new_lengths = np.linalg.norm(
+                corrected_positions[checked_edges[:, 1]]
+                - corrected_positions[checked_edges[:, 0]], axis=1)
+            valid = old_lengths > 1e-8
+            ratios = new_lengths[valid] / old_lengths[valid]
+            if np.any(ratios < 0.25) or np.any(ratios > 4.0):
+                return False
+
+    triangles = topology["triangles"]
+    if len(triangles) > 0:
+        checked = triangles[np.any(affected[triangles], axis=1)]
+        if len(checked) > 0:
+            old_cross = np.cross(
+                global_positions[checked[:, 1]] - global_positions[checked[:, 0]],
+                global_positions[checked[:, 2]] - global_positions[checked[:, 0]])
+            new_cross = np.cross(
+                corrected_positions[checked[:, 1]] - corrected_positions[checked[:, 0]],
+                corrected_positions[checked[:, 2]] - corrected_positions[checked[:, 0]])
+            old_area = np.linalg.norm(old_cross, axis=1)
+            valid = old_area > 1e-10
+            orientation = np.einsum(
+                "ij,ij->i", old_cross[valid], new_cross[valid])
+            if np.any(orientation <= 0.0):
+                return False
+    return True
+
+
+def _ho_contact_rebase_positions(
+        old_key, old_relative, new_relative, topology,
+        correction_strength, contact_radius_factor,
+        max_gap_ratio, smooth_rings):
+    """在全局变基结果上检测并平滑恢复主动趋近关系。"""
+    relative_shift = new_relative - old_relative
+    global_positions = old_key + relative_shift
+    if correction_strength <= 0.0:
+        return global_positions, 0, 0, 0, 0
+
+    pairs = _ho_convergence_pairs(
+        old_relative,
+        old_key,
+        topology,
+        contact_radius_factor,
+        max_gap_ratio,
+    )
+    if not pairs:
+        return global_positions, 0, 0, 0, 0
+
+    seeds, seed_weight, applied_pairs = _ho_contact_seeds(
+        new_relative, global_positions, pairs, correction_strength)
+    if applied_pairs == 0:
+        return global_positions, len(pairs), 0, 0, 0
+
+    correction, affected = _ho_smooth_contact_correction(
+        seeds, seed_weight, topology, smooth_rings)
+    rollback_steps = 0
+    scale = 1.0
+    corrected = global_positions + correction
+    while (
+        rollback_steps < 5
+        and not _ho_correction_is_safe(
+            global_positions, corrected, topology, affected)
+    ):
+        rollback_steps += 1
+        scale *= 0.5
+        corrected = global_positions + correction * scale
+
+    if not _ho_correction_is_safe(
+            global_positions, corrected, topology, affected):
+        corrected = global_positions
+        affected = np.zeros(len(global_positions), dtype=bool)
+    return (
+        corrected,
+        len(pairs),
+        applied_pairs,
+        int(np.count_nonzero(affected)),
+        rollback_steps,
+    )
 
 
 def _fbsf_threshold_map(value, lower=0.05, upper=0.95):
@@ -2436,25 +2725,49 @@ def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
 
 
 def _rebase_shape_keys(
-        obj, factor, threshold, falloff_ratio, protection_strength):
-    protected_pairs = 0
-    partial_pairs = 0
+        obj, factor, correction_strength, contact_radius_factor,
+        max_gap_ratio, smooth_rings):
+    _shape_keys, basis, _active_key = _validate_shape_key_rebase_object(obj)
+    basis_positions = shapekey_utils.read_shape_key_positions(basis)
+    topology = _ho_rebase_topology(obj.data, basis_positions)
+    detected_pairs = 0
+    applied_pairs = 0
+    corrected_vertices = 0
+    rollback_keys = 0
 
     def rewrite_key(
             _key, old_key, old_relative, new_relative,
             _old_basis, _old_active, _new_basis):
-        nonlocal protected_pairs, partial_pairs
-        new_key, mask = _mix_rebased_shape_positions(
-            old_key, old_relative, new_relative,
-            threshold, falloff_ratio, protection_strength)
-        protected_pairs += int(np.count_nonzero(mask >= 1.0 - 1e-6))
-        partial_pairs += int(np.count_nonzero(
-            (mask > 1e-6) & (mask < 1.0 - 1e-6)))
+        nonlocal detected_pairs, applied_pairs, corrected_vertices, rollback_keys
+        new_key, detected, applied, affected, rollback_steps = (
+            _ho_contact_rebase_positions(
+                old_key,
+                old_relative,
+                new_relative,
+                topology,
+                correction_strength,
+                contact_radius_factor,
+                max_gap_ratio,
+                smooth_rings,
+            )
+        )
+        detected_pairs += detected
+        applied_pairs += applied
+        corrected_vertices += affected
+        if rollback_steps > 0:
+            rollback_keys += 1
         return new_key
 
     active_name, key_count = _rewrite_rebased_shape_key_tree(
         obj, factor, rewrite_key)
-    return active_name, key_count, protected_pairs, partial_pairs
+    return (
+        active_name,
+        key_count,
+        detected_pairs,
+        applied_pairs,
+        corrected_vertices,
+        rollback_keys,
+    )
 
 
 def _rebase_shape_keys_fbsf(
@@ -2558,25 +2871,26 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    邻边位移差直接阈值化为可靠的逐顶点权重。
 # 3. 已删除的“梯度变基”实验把位移、旋转和应变活动度映射为旧绝对位置保护权重。
 #    实测证明这不是调参问题：表情区域越大、活动度检测越准确，越会把这些顶点钉回
-#    旧脸，从而丢失捏脸后的整体位置。该方案不得以别名重新加入；当前局部遮罩仅保留
-#    为明确的旧绝对目标保护工具，不应被视为通用表情迁移算法。
+#    旧脸，从而丢失捏脸后的整体位置。旧 HO 的逐顶点二值/幅度遮罩也已从默认算法中
+#    删除：相邻顶点跨过阈值时会产生不连续修正场，大位移下实测会引入额外褶纹。
 # 4. Tr1turbo/FaceBlendShapeFix 本身不修改 Basis：它克隆 Unity Mesh，再从目标
 #    BlendShape delta 中减去当前保持激活的改脸 BlendShape delta。自动权重按左右半脸
 #    分别用内积与改脸 delta 能量计算，0.05 以下清零、0.95 以上置一，中间保留三位；
 #    负内积按一半强度计入。FBSF 算子把该线性规则适配到“改脸键烘焙进 Basis”的场景：
 #    对直接相对 Basis 的键等价于 K'=G-w(R'-R)，嵌套相对键则沿依赖树抵消各层实际
 #    基线位移，避免重复减去改脸量。它是成熟的反向抵消基线，但仍不理解接触与语义。
-# 5. 下一种通用原型应以 G 为不可推翻的基线，从 R->R' 的相邻三角面估计逐顶点
-#    局部仿射变换 A_i，再计算 K'_i=R'_i+A_i(K_i-R_i)。它不猜测表情区域：零位移
-#    自然跟随新相对键，纯平移保持 G，局部旋转和尺度变化则转换原表情位移。
+# 5. 当前 HO 以 G 为不可推翻的基线，自动寻找旧表情终点中空间接近、原相对键中
+#    明显分离、沿形态键路径相向运动且拓扑两环以外的顶点对。它在新相对键上保持旧
+#    闭合比例，成对修正保持中心不变，再以有限邻域拉普拉斯场传播修正；边长异常或
+#    三角面翻转会触发逐级减半回退。该模式不依赖眼睛命名，也适用于嘴唇等闭合关系。
 # 6. “主动趋近”不能只保存为逐顶点标量。上下眼睑可能各自近似刚体移动，局部散度
 #    和应变都接近零，但两个拓扑上分离的区域正在互相靠近。应先建立非邻接顶点/曲面
 #    间的趋近关系：旧相对位置向量、双方相对位移、距离缩短比例、目标方向和旧表情
-#    终点间距；逐顶点趋近指数只能由这张关系图汇总得到，不能替代目标对象和方向。
-# 7. 若以后增加闭合保持，它只能在 G 或局部仿射结果上施加高置信度的小范围残差：
-#    保持接触对中心不变，只修正相对间距；要求相向运动、显著距离收缩、非局部拓扑
-#    关系和连续接触簇，并对过大修正、三角面翻转或异常拉伸逐区域回退。这样大位移后
-#    的整体位置仍由全局变基保证，眼睑或嘴唇闭合只是可验证、可回退的附加约束。
+#    终点间距；当前实现用一对一顶点关系作为保守近似，未来应升级为曲面片关系与
+#    连续接触簇，减少不同采样密度、错位顶点和多层网格造成的漏检。
+# 7. 下一层通用迁移应从 R->R' 的相邻三角面估计逐顶点局部仿射变换 A_i，再计算
+#    K'_i=R'_i+A_i(K_i-R_i)。纯平移保持 G，局部旋转和尺度变化则转换原表情位移；
+#    HO 的闭合残差可以叠加在该结果上，而不是重新回到旧绝对位置。
 # 8. 完整高级模式仍可实现 deformation transfer：把旧相对键到旧表情键的局部变换
 #    施加到新相对键，以带固定自由度和可选接触约束的稀疏全局求解重建顶点，并处理
 #    退化三角形、非流形、分离部件、失败回退、预览和误差报告。
@@ -2676,10 +2990,10 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
 
 
 class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
-    """用活动捏脸键局部重建基型和其余相对形态键。"""
+    """用主动趋近关系和平滑残差重建全部相对形态键。"""
     bl_idname = "ho.rebase_shapekeys_preserve_expressions"
     bl_label = "全键局部变基-HO"
-    bl_description = "按 HO 局部遮罩保护表情绝对位置，并删除活动捏脸键"
+    bl_description = "在全局变基上自动保持眨眼、嘴唇等非局部闭合关系，并删除活动捏脸键"
     bl_options = {'REGISTER', 'UNDO'}
 
     factor: FloatProperty(
@@ -2690,30 +3004,36 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         max=1.0,
         subtype='FACTOR',
     ) # type: ignore
-    movement_threshold: FloatProperty(
-        name="位移容差",
-        description="相对位移不超过此值的顶点视为未被表情修改",
-        default=0.00001,
-        min=0.0,
-        soft_max=0.01,
-        precision=6,
-        unit='LENGTH',
-    ) # type: ignore
-    falloff_ratio: FloatProperty(
-        name="边缘过渡",
-        description="按该表情最大位移的比例柔化保护边缘；0 为严格二值遮罩",
-        default=0.0,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-    protection_strength: FloatProperty(
-        name="保护强度",
-        description="1 保持表情目标的旧绝对位置；降低可让表情更多地跟随新基型",
+    correction_strength: FloatProperty(
+        name="闭合修正强度",
+        description="恢复主动趋近关系的强度；0 等同普通全局变基",
         default=1.0,
         min=0.0,
         max=1.0,
         subtype='FACTOR',
+    ) # type: ignore
+    contact_radius_factor: FloatProperty(
+        name="接触搜索半径",
+        description="以基型中位边长为单位搜索表情终点的接触伙伴",
+        default=0.75,
+        min=0.1,
+        max=3.0,
+        precision=2,
+    ) # type: ignore
+    max_gap_ratio: FloatProperty(
+        name="最大闭合比例",
+        description="表情终点距离与原距离之比低于该值才识别为主动趋近",
+        default=0.35,
+        min=0.05,
+        max=0.8,
+        subtype='FACTOR',
+    ) # type: ignore
+    smooth_rings: IntProperty(
+        name="平滑范围",
+        description="接触修正沿网格拓扑传播的环数",
+        default=4,
+        min=1,
+        max=12,
     ) # type: ignore
     @classmethod
     def poll(cls, context):
@@ -2743,26 +3063,30 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         warning = layout.box()
         warning.alert = True
         warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
-        warning.label(text="请先保存文件；其他形态键必须为 0 权重")
+        warning.label(text="HO 模式会自动检测并平滑保持非局部闭合关系")
         if active_key is not None:
             warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
 
         layout.prop(self, "factor")
-        layout.prop(self, "protection_strength")
-        layout.prop(self, "movement_threshold")
-        layout.prop(self, "falloff_ratio")
+        layout.prop(self, "correction_strength")
+        layout.prop(self, "contact_radius_factor")
+        layout.prop(self, "max_gap_ratio")
+        layout.prop(self, "smooth_rings")
 
     def execute(self, context):
         obj = context.object
         if obj is not None and obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         try:
-            active_name, key_count, protected, partial = _rebase_shape_keys(
-                obj,
-                self.factor,
-                self.movement_threshold,
-                self.falloff_ratio,
-                self.protection_strength,
+            active_name, key_count, detected, applied, affected, rollback = (
+                _rebase_shape_keys(
+                    obj,
+                    self.factor,
+                    self.correction_strength,
+                    self.contact_radius_factor,
+                    self.max_gap_ratio,
+                    self.smooth_rings,
+                )
             )
         except ShapeKeyRebaseError as exc:
             self.report({'WARNING'}, str(exc))
@@ -2771,7 +3095,10 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             self.report({'ERROR'}, f"变基失败：{exc}")
             return {'CANCELLED'}
 
-        detail = f"，完整保护 {protected}，混合保护 {partial}"
+        detail = (
+            f"，检测 {detected} 对，修正 {applied} 对，"
+            f"平滑影响 {affected} 顶点，安全回退 {rollback} 键"
+        )
         self.report({'INFO'}, f"已用 {active_name} 变基并重写 {key_count} 个形态键{detail}")
         return {'FINISHED'}
 

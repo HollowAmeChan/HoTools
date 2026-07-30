@@ -36,6 +36,34 @@ def make_mesh(name, vertex_count=5):
     return obj
 
 
+def make_closure_mesh(name):
+    # 两条拓扑上分离、空间上可接触的条带，模拟上下眼睑或上下唇。
+    vertices = [
+        (-1.0, 0.0, 0.5), (0.0, 0.0, 0.5), (1.0, 0.0, 0.5),
+        (-1.0, 0.0, -0.5), (0.0, 0.0, -0.5), (1.0, 0.0, -0.5),
+    ]
+    edges = [(0, 1), (1, 2), (3, 4), (4, 5)]
+    data = bpy.data.meshes.new(f"{name}Data")
+    data.from_pydata(vertices, edges, [])
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    activate(obj)
+    return obj
+
+
+def add_closure_shape_keys(obj):
+    basis = obj.shape_key_add(name="Basis", from_mix=False)
+    sculpt = obj.shape_key_add(name="FaceSculpt", from_mix=False)
+    for index, point in enumerate(sculpt.data):
+        point.co.y += 2.0
+        point.co.z += 0.3 if index < 3 else -0.1
+
+    expression = obj.shape_key_add(name="Blink", from_mix=False)
+    for index, point in enumerate(expression.data):
+        point.co.z += -0.45 if index < 3 else 0.45
+    return basis, sculpt, expression
+
+
 def positions(key):
     return np.array([point.co[:] for point in key.data], dtype=np.float32)
 
@@ -44,22 +72,6 @@ def assert_position(key, index, expected):
     actual = np.array(key.data[index].co[:], dtype=np.float32)
     assert np.allclose(actual, expected, atol=1e-6), (key.name, index, actual, expected)
 
-
-# 柔化遮罩先按位移幅度混合，再应用全局保护强度；过渡宽度为零时，
-# 仍然使用严格的移动/未移动二值遮罩。
-delta = np.array(
-    [
-        (0.0, 0.0, 0.0),
-        (0.5, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (2.0, 0.0, 0.0),
-    ],
-    dtype=np.float32,
-)
-mask = module._shape_key_rebase_mask(delta, 0.0, 0.5, 0.5)
-assert np.allclose(mask, (0.0, 0.25, 0.5, 0.5), atol=1e-6)
-binary_mask = module._shape_key_rebase_mask(delta, 0.5, 0.0, 1.0)
-assert np.allclose(binary_mask, (0.0, 0.0, 1.0, 1.0), atol=1e-6)
 
 # FBSF 自动权重按左右半脸分别比较目标表情与捏脸 delta。
 # 同向位移得到 1，正交位移得到 0；左右过渡只在分数确实不同时启用。
@@ -110,66 +122,54 @@ for operator in registered:
     bpy.utils.register_class(operator)
 
 try:
-    obj = make_mesh("LocalRebase")
-    basis = obj.shape_key_add(name="Basis", from_mix=False)
-    sculpt = obj.shape_key_add(name="FaceSculpt", from_mix=False)
-    for point in sculpt.data:
-        point.co.y += 1.0
-
-    expression = obj.shape_key_add(name="Expression", from_mix=False)
-    expression.data[0].co.z += 1.0
-    expression.data[2].co.z += 0.05
-    expression.data[3].co.z += 2.0
+    obj = make_closure_mesh("LocalRebase")
+    basis, sculpt, expression = add_closure_shape_keys(obj)
 
     nested = obj.shape_key_add(name="Nested", from_mix=False)
     nested.relative_key = expression
     for index, point in enumerate(nested.data):
         point.co = expression.data[index].co.copy()
-    nested.data[1].co.x += 0.5
-
-    active_child = obj.shape_key_add(name="RelativeToSculpt", from_mix=False)
-    active_child.relative_key = sculpt
-    for index, point in enumerate(active_child.data):
-        point.co = sculpt.data[index].co.copy()
-    active_child.data[4].co.z += 0.5
+        point.co.y += 0.2
 
     obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(sculpt.name)
     result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
         "EXEC_DEFAULT",
         factor=0.5,
-        movement_threshold=0.1,
-        falloff_ratio=0.0,
-        protection_strength=1.0,
+        correction_strength=1.0,
+        contact_radius_factor=0.75,
+        max_gap_ratio=0.35,
+        smooth_rings=2,
     )
     assert result == {'FINISHED'}
 
     keys = obj.data.shape_keys.key_blocks
     assert keys.get("FaceSculpt") is None
     basis = keys[0]
-    expression = keys["Expression"]
+    expression = keys["Blink"]
     nested = keys["Nested"]
-    active_child = keys["RelativeToSculpt"]
     assert nested.relative_key == expression
-    assert active_child.relative_key == basis
 
-    for index in range(5):
-        assert_position(basis, index, (float(index), 0.5, 0.0))
-
-    # 超过阈值的表情顶点保持原来的绝对目标位置。
-    assert_position(expression, 0, (0.0, 0.0, 1.0))
-    assert_position(expression, 1, (1.0, 0.5, 0.0))
-    assert_position(expression, 2, (2.0, 0.5, 0.05))
-    assert_position(expression, 3, (3.0, 0.0, 2.0))
-    assert_position(expression, 4, (4.0, 0.5, 0.0))
-
-    # 嵌套键在自身局部位移为零的位置跟随重写后的相对键。
-    assert_position(nested, 0, (0.0, 0.0, 1.0))
-    assert_position(nested, 1, (1.5, 0.0, 0.0))
-    assert_position(nested, 2, (2.0, 0.5, 0.05))
-
-    # 被删除捏脸键的子键会安全地改为相对新 Basis。
-    assert_position(active_child, 0, (0.0, 0.5, 0.0))
-    assert_position(active_child, 4, (4.0, 1.0, 0.5))
+    # 全局变基先保留整体 y 位移；HO 只把上下条带的相对闭合间距恢复为
+    # 原表情闭合比例，不把它们拉回旧绝对位置。
+    for index in range(3):
+        assert_position(basis, index, ((-1.0, 0.0, 1.0)[index], 1.0, 0.65))
+    for index in range(3, 6):
+        x = (-1.0, 0.0, 1.0)[index - 3]
+        assert_position(basis, index, (x, 1.0, -0.55))
+    for index in range(3):
+        assert abs(expression.data[index].co.z - expression.data[index + 3].co.z) < 0.16
+        assert abs(expression.data[index].co.y - 1.0) < 1e-4
+    # 同一条带的修正应保持连续，不能形成旧 HO 那种阈值褶纹。
+    assert abs((expression.data[1].co.z - expression.data[0].co.z)) < 1e-4
+    assert abs((expression.data[2].co.z - expression.data[1].co.z)) < 1e-4
+    assert abs((expression.data[4].co.z - expression.data[3].co.z)) < 1e-4
+    assert abs((expression.data[5].co.z - expression.data[4].co.z)) < 1e-4
+    for index in range(6):
+        assert_position(nested, index, (
+            expression.data[index].co.x,
+            expression.data[index].co.y + 0.2,
+            expression.data[index].co.z,
+        ))
 
     # 前置检查会拒绝不安全状态，并且不改变已经保存的坐标。
     guarded = make_mesh("GuardedRebase", vertex_count=2)
