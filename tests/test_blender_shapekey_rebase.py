@@ -131,6 +131,19 @@ try:
         point.co = expression.data[index].co.copy()
         point.co.y += 0.2
 
+    old_basis = positions(basis)
+    old_sculpt = positions(sculpt)
+    old_expression = positions(expression)
+    old_nested = positions(nested)
+    topology = module._ho_rebase_topology(obj.data, old_basis)
+    default_pairs = module._ho_convergence_pairs(
+        old_basis, old_expression, topology, 0.75, 0.35)
+    wide_pairs = module._ho_convergence_pairs(
+        old_basis, old_expression, topology, 3.0, 0.35)
+    assert len(default_pairs) == 3
+    # 搜索半径只能扩大候选范围，不能反过来提高旧基型间距门槛。
+    assert len(wide_pairs) == len(default_pairs)
+
     obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(sculpt.name)
     result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
         "EXEC_DEFAULT",
@@ -149,27 +162,36 @@ try:
     nested = keys["Nested"]
     assert nested.relative_key == expression
 
-    # 全局变基先保留整体 y 位移；HO 只把上下条带的相对闭合间距恢复为
-    # 原表情闭合比例，不把它们拉回旧绝对位置。
+    # HO 以 FBSF 为保底，并把上下条带恢复到原表情的绝对闭合间距；即使新眼眶
+    # 间距增大，旧闭眼缝也不能按比例被放大，同时整体仍处于捏脸后的 y 位置。
     for index in range(3):
         assert_position(basis, index, ((-1.0, 0.0, 1.0)[index], 1.0, 0.65))
     for index in range(3, 6):
         x = (-1.0, 0.0, 1.0)[index - 3]
         assert_position(basis, index, (x, 1.0, -0.55))
     for index in range(3):
-        assert abs(expression.data[index].co.z - expression.data[index + 3].co.z) < 0.16
+        old_gap = abs(old_expression[index, 2] - old_expression[index + 3, 2])
+        new_gap = abs(expression.data[index].co.z - expression.data[index + 3].co.z)
+        assert new_gap <= old_gap + 1e-5
         assert abs(expression.data[index].co.y - 1.0) < 1e-4
     # 同一条带的修正应保持连续，不能形成旧 HO 那种阈值褶纹。
     assert abs((expression.data[1].co.z - expression.data[0].co.z)) < 1e-4
     assert abs((expression.data[2].co.z - expression.data[1].co.z)) < 1e-4
     assert abs((expression.data[4].co.z - expression.data[3].co.z)) < 1e-4
     assert abs((expression.data[5].co.z - expression.data[4].co.z)) < 1e-4
-    for index in range(6):
-        assert_position(nested, index, (
-            expression.data[index].co.x,
-            expression.data[index].co.y + 0.2,
-            expression.data[index].co.z,
-        ))
+    nested_weights, _left, _right, _split = module._fbsf_rebase_weights(
+        old_nested - old_expression,
+        old_sculpt - old_basis,
+        old_basis,
+        0.0,
+        1.0,
+    )
+    expression_shift = positions(expression) - old_expression
+    expected_nested = (
+        old_nested + expression_shift
+        - expression_shift * nested_weights[:, None]
+    )
+    assert np.allclose(positions(nested), expected_nested, atol=1e-6)
 
     # 前置检查会拒绝不安全状态，并且不改变已经保存的坐标。
     guarded = make_mesh("GuardedRebase", vertex_count=2)

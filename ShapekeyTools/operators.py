@@ -2298,7 +2298,7 @@ def _ho_is_near_topology(first, second, adjacency):
 def _ho_convergence_pairs(
         rest_positions, expression_positions, topology,
         contact_radius_factor, max_gap_ratio):
-    """寻找旧表情中主动靠近的非局部一对一顶点关系。"""
+    """寻找旧表情中主动靠近的非局部顶点关系。"""
     vertex_count = len(rest_positions)
     edge_length = topology["median_edge_length"]
     if vertex_count < 2 or edge_length <= 1e-8:
@@ -2321,7 +2321,6 @@ def _ho_convergence_pairs(
 
     adjacency = topology["adjacency"]
     candidates = {}
-    minimum_rest_gap = search_radius * 1.1
     for first in moved:
         first = int(first)
         for _position, second, final_gap in tree.find_range(
@@ -2333,7 +2332,9 @@ def _ho_convergence_pairs(
             pair = (first, second) if first < second else (second, first)
             rest_vector = rest_positions[pair[1]] - rest_positions[pair[0]]
             rest_gap = float(np.linalg.norm(rest_vector))
-            if rest_gap <= max(minimum_rest_gap, 1e-8):
+            # 搜索半径只负责寻找旧表情终点附近的点，不能同时成为旧基型间距门槛。
+            # 否则半径越大，真正的上下眼睑反而越容易被排除。
+            if rest_gap <= max(final_gap + edge_length * 0.05, 1e-8):
                 continue
 
             final_gap = float(final_gap)
@@ -2368,51 +2369,51 @@ def _ho_convergence_pairs(
     if not candidates:
         return ()
 
-    best_partner = np.full(vertex_count, -1, dtype=np.int32)
-    best_score = np.full(vertex_count, -1.0, dtype=np.float32)
-    best_gap = np.full(vertex_count, np.inf, dtype=np.float32)
-    for first, second, _ratio, confidence, final_gap in candidates.values():
-        for vertex, partner in ((first, second), (second, first)):
+    # 上下眼睑通常不是逐顶点对齐的。严格的一对一贪心会让先选中的点占掉伙伴，
+    # 其余闭合线失去约束。改为每个顶点各自选择置信度最高的非局部伙伴，再对点对
+    # 去重；允许多个点投影到同一伙伴，后续锚点平均会消解这些重复约束。
+    best_for_vertex = {}
+    for candidate in candidates.values():
+        first, second, _ratio, confidence, final_gap = candidate
+        for vertex in (first, second):
+            previous = best_for_vertex.get(vertex)
             if (
-                confidence > best_score[vertex] + 1e-6
+                previous is None
+                or confidence > previous[3] + 1e-6
                 or (
-                    abs(confidence - best_score[vertex]) <= 1e-6
-                    and final_gap < best_gap[vertex]
+                    abs(confidence - previous[3]) <= 1e-6
+                    and final_gap < previous[4]
                 )
             ):
-                best_partner[vertex] = partner
-                best_score[vertex] = confidence
-                best_gap[vertex] = final_gap
+                best_for_vertex[vertex] = candidate
 
-    # 高分优先且每个顶点最多参与一对，防止接触线形成密集多对多拉扯。
-    selected = []
-    used = set()
-    ordered = sorted(candidates.values(), key=lambda item: (-item[3], item[4]))
-    for first, second, gap_ratio, confidence, _final_gap in ordered:
-        if first in used or second in used:
-            continue
-        if best_partner[first] != second and best_partner[second] != first:
-            continue
-        used.add(first)
-        used.add(second)
-        selected.append((first, second, gap_ratio, confidence))
-    return tuple(selected)
+    selected = {
+        (candidate[0], candidate[1]): candidate
+        for candidate in best_for_vertex.values()
+    }
+    return tuple(
+        (first, second, gap_ratio, confidence, final_gap)
+        for first, second, gap_ratio, confidence, final_gap
+        in sorted(selected.values(), key=lambda item: (-item[3], item[4]))
+    )
 
 
 def _ho_contact_seeds(
-        new_rest_positions, global_positions, pairs, correction_strength):
-    """保持点对中心不变，只生成恢复闭合比例所需的稀疏修正。"""
-    vertex_count = len(global_positions)
+        new_rest_positions, baseline_positions, pairs, correction_strength):
+    """保持点对中心不变，生成不放大旧表情缝隙的稀疏修正。"""
+    vertex_count = len(baseline_positions)
     seed_sum = np.zeros((vertex_count, 3), dtype=np.float32)
     seed_weight = np.zeros(vertex_count, dtype=np.float32)
     applied_pairs = 0
 
-    for first, second, gap_ratio, confidence in pairs:
+    for first, second, gap_ratio, confidence, old_expression_gap in pairs:
         new_rest_gap = float(np.linalg.norm(
             new_rest_positions[second] - new_rest_positions[first]))
-        current_vector = global_positions[second] - global_positions[first]
+        current_vector = baseline_positions[second] - baseline_positions[first]
         current_gap = float(np.linalg.norm(current_vector))
-        target_gap = new_rest_gap * gap_ratio
+        # 比例保持会在眼眶放大时同比放大闭眼缝隙。闭合关系更接近单侧约束：
+        # 新脸可以让旧缝隙更小，但不能仅因局部尺度变大就把它撑开。
+        target_gap = min(old_expression_gap, new_rest_gap * gap_ratio)
         if current_gap <= target_gap + 1e-8 or current_gap <= 1e-8:
             continue
 
@@ -2471,6 +2472,9 @@ def _ho_smooth_contact_correction(seeds, seed_weight, topology, smooth_rings):
 
     result = np.zeros_like(seeds)
     result[region_indices] = correction
+    # 接触锚点表达的是已经确认的闭合目标，不能再被邻域平均稀释；平滑只负责让
+    # 锚点外的修正逐渐衰减，避免重新引入逐顶点阈值造成的褶纹。
+    result[constrained] = seeds[constrained]
     return result, region
 
 
@@ -2511,14 +2515,12 @@ def _ho_correction_is_safe(global_positions, corrected_positions, topology, affe
 
 
 def _ho_contact_rebase_positions(
-        old_key, old_relative, new_relative, topology,
+        old_key, old_relative, new_relative, baseline_positions, topology,
         correction_strength, contact_radius_factor,
         max_gap_ratio, smooth_rings):
-    """在全局变基结果上检测并平滑恢复主动趋近关系。"""
-    relative_shift = new_relative - old_relative
-    global_positions = old_key + relative_shift
+    """在 FBSF 保底结果上检测并平滑恢复主动趋近关系。"""
     if correction_strength <= 0.0:
-        return global_positions, 0, 0, 0, 0
+        return baseline_positions, 0, 0, 0, 0
 
     pairs = _ho_convergence_pairs(
         old_relative,
@@ -2528,31 +2530,31 @@ def _ho_contact_rebase_positions(
         max_gap_ratio,
     )
     if not pairs:
-        return global_positions, 0, 0, 0, 0
+        return baseline_positions, 0, 0, 0, 0
 
     seeds, seed_weight, applied_pairs = _ho_contact_seeds(
-        new_relative, global_positions, pairs, correction_strength)
+        new_relative, baseline_positions, pairs, correction_strength)
     if applied_pairs == 0:
-        return global_positions, len(pairs), 0, 0, 0
+        return baseline_positions, len(pairs), 0, 0, 0
 
     correction, affected = _ho_smooth_contact_correction(
         seeds, seed_weight, topology, smooth_rings)
     rollback_steps = 0
     scale = 1.0
-    corrected = global_positions + correction
+    corrected = baseline_positions + correction
     while (
         rollback_steps < 5
         and not _ho_correction_is_safe(
-            global_positions, corrected, topology, affected)
+            baseline_positions, corrected, topology, affected)
     ):
         rollback_steps += 1
         scale *= 0.5
-        corrected = global_positions + correction * scale
+        corrected = baseline_positions + correction * scale
 
     if not _ho_correction_is_safe(
-            global_positions, corrected, topology, affected):
-        corrected = global_positions
-        affected = np.zeros(len(global_positions), dtype=bool)
+            baseline_positions, corrected, topology, affected):
+        corrected = baseline_positions
+        affected = np.zeros(len(baseline_positions), dtype=bool)
     return (
         corrected,
         len(pairs),
@@ -2737,13 +2739,24 @@ def _rebase_shape_keys(
 
     def rewrite_key(
             _key, old_key, old_relative, new_relative,
-            _old_basis, _old_active, _new_basis):
+            old_basis, old_active, _new_basis):
         nonlocal detected_pairs, applied_pairs, corrected_vertices, rollback_keys
+        # HO 先复用成熟的 FBSF 结果作为下界，再叠加接触残差。未识别到闭合关系时，
+        # 默认参数下的结果至少与独立 FBSF 一致，不会退回效果更差的普通全局变基。
+        target_delta = old_key - old_relative
+        edit_delta = old_active - old_basis
+        fbsf_weights, _left, _right, _split = _fbsf_rebase_weights(
+            target_delta, edit_delta, old_basis, 0.0, correction_strength)
+        relative_shift = new_relative - old_relative
+        global_rebase = old_key + relative_shift
+        baseline_positions = (
+            global_rebase - relative_shift * fbsf_weights[:, None])
         new_key, detected, applied, affected, rollback_steps = (
             _ho_contact_rebase_positions(
                 old_key,
                 old_relative,
                 new_relative,
+                baseline_positions,
                 topology,
                 correction_strength,
                 contact_radius_factor,
@@ -2879,10 +2892,12 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    负内积按一半强度计入。FBSF 算子把该线性规则适配到“改脸键烘焙进 Basis”的场景：
 #    对直接相对 Basis 的键等价于 K'=G-w(R'-R)，嵌套相对键则沿依赖树抵消各层实际
 #    基线位移，避免重复减去改脸量。它是成熟的反向抵消基线，但仍不理解接触与语义。
-# 5. 当前 HO 以 G 为不可推翻的基线，自动寻找旧表情终点中空间接近、原相对键中
-#    明显分离、沿形态键路径相向运动且拓扑两环以外的顶点对。它在新相对键上保持旧
-#    闭合比例，成对修正保持中心不变，再以有限邻域拉普拉斯场传播修正；边长异常或
-#    三角面翻转会触发逐级减半回退。该模式不依赖眼睛命名，也适用于嘴唇等闭合关系。
+# 5. 当前 HO 先计算同强度的 FBSF 结果作为保底，再寻找旧表情终点中空间接近、
+#    原相对键中明显分离、沿形态键路径相向运动且拓扑两环以外的顶点对。接触目标取
+#    “旧表情绝对间距”和“新相对键间距乘旧闭合比例”中的较小值，避免眼眶放大时
+#    同比放大闭眼缝隙。每个顶点保留最佳伙伴而不要求严格一对一，锚点保持硬约束，
+#    周围再用有限邻域拉普拉斯场传播；边长异常或三角面翻转触发逐级减半回退。
+#    未检测到接触时结果等于 FBSF；该模式不依赖眼睛命名，也适用于嘴唇等闭合关系。
 # 6. “主动趋近”不能只保存为逐顶点标量。上下眼睑可能各自近似刚体移动，局部散度
 #    和应变都接近零，但两个拓扑上分离的区域正在互相靠近。应先建立非邻接顶点/曲面
 #    间的趋近关系：旧相对位置向量、双方相对位移、距离缩短比例、目标方向和旧表情
@@ -2890,7 +2905,7 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    连续接触簇，减少不同采样密度、错位顶点和多层网格造成的漏检。
 # 7. 下一层通用迁移应从 R->R' 的相邻三角面估计逐顶点局部仿射变换 A_i，再计算
 #    K'_i=R'_i+A_i(K_i-R_i)。纯平移保持 G，局部旋转和尺度变化则转换原表情位移；
-#    HO 的闭合残差可以叠加在该结果上，而不是重新回到旧绝对位置。
+#    HO 的 FBSF 保底与闭合残差可以叠加在该结果上，而不是重新回到旧绝对位置。
 # 8. 完整高级模式仍可实现 deformation transfer：把旧相对键到旧表情键的局部变换
 #    施加到新相对键，以带固定自由度和可选接触约束的稀疏全局求解重建顶点，并处理
 #    退化三角形、非流形、分离部件、失败回退、预览和误差报告。
@@ -3005,8 +3020,8 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         subtype='FACTOR',
     ) # type: ignore
     correction_strength: FloatProperty(
-        name="闭合修正强度",
-        description="恢复主动趋近关系的强度；0 等同普通全局变基",
+        name="HO 修正强度",
+        description="FBSF 保底与主动趋近闭合修正的共同强度；0 等同普通全局变基",
         default=1.0,
         min=0.0,
         max=1.0,
@@ -3063,7 +3078,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         warning = layout.box()
         warning.alert = True
         warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
-        warning.label(text="HO 模式会自动检测并平滑保持非局部闭合关系")
+        warning.label(text="HO 模式以 FBSF 保底，并额外恢复非局部闭合关系")
         if active_key is not None:
             warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
 
