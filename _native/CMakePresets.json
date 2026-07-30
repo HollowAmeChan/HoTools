@@ -48,6 +48,17 @@
       }
     },
     {
+      "name": "vs2022-py311-boolean",
+      "displayName": "VS 2022 x64 / Python 3.11 / hotools_boolean only",
+      "inherits": "vs2022-py311",
+      "binaryDir": "${sourceDir}/build/vs2022-py311-boolean",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "OFF",
+        "HOTOOLS_BUILD_JOLT": "OFF",
+        "HOTOOLS_BUILD_BOOLEAN": "ON"
+      }
+    },
+    {
       "name": "vs2022-py313-native",
       "displayName": "VS 2022 x64 / Python 3.13 / hotools_native only",
       "inherits": "vs2022-py313",
@@ -65,6 +76,17 @@
       "cacheVariables": {
         "HOTOOLS_BUILD_NATIVE": "OFF",
         "HOTOOLS_BUILD_JOLT": "ON"
+      }
+    },
+    {
+      "name": "vs2022-py313-boolean",
+      "displayName": "VS 2022 x64 / Python 3.13 / hotools_boolean only",
+      "inherits": "vs2022-py313",
+      "binaryDir": "${sourceDir}/build/vs2022-py313-boolean",
+      "cacheVariables": {
+        "HOTOOLS_BUILD_NATIVE": "OFF",
+        "HOTOOLS_BUILD_JOLT": "OFF",
+        "HOTOOLS_BUILD_BOOLEAN": "ON"
       }
     }
   ],
@@ -90,6 +112,11 @@
       "configuration": "Release"
     },
     {
+      "name": "vs2022-py311-boolean-release",
+      "configurePreset": "vs2022-py311-boolean",
+      "configuration": "Release"
+    },
+    {
       "name": "vs2022-py313-native-release",
       "configurePreset": "vs2022-py313-native",
       "configuration": "Release"
@@ -97,6 +124,11 @@
     {
       "name": "vs2022-py313-jolt-release",
       "configurePreset": "vs2022-py313-jolt",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-boolean-release",
+      "configurePreset": "vs2022-py313-boolean",
       "configuration": "Release"
     }
   ]

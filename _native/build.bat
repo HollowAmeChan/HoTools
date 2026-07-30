@@ -14,6 +14,7 @@ rem   build.bat py313    Build Blender 5.x / Python 3.13
 rem   build.bat native   Build hotools_native for py311 and py313
 rem   build.bat 313 native  Build only hotools_native for Python 3.13
 rem   build.bat 313 jolt    Build only hotools_jolt for Python 3.13
+rem   build.bat 311 boolean Build only hotools_boolean for Python 3.11
 rem   build.bat 313 all     Build both modules for Python 3.13
 rem
 rem Optional override:
@@ -47,6 +48,7 @@ if /I "%TARGET%"=="py311" set "TARGET=311"
 if /I "%TARGET%"=="py313" set "TARGET=313"
 if /I "%MODULE%"=="hotools_native" set "MODULE=native"
 if /I "%MODULE%"=="hotools_jolt" set "MODULE=jolt"
+if /I "%MODULE%"=="hotools_boolean" set "MODULE=boolean"
 
 if not "%~3"=="" goto usage
 if /I "%TARGET%"=="help" (
@@ -70,6 +72,7 @@ goto usage
 if /I "%MODULE%"=="all" set "CMAKE_TARGET="
 if /I "%MODULE%"=="native" set "CMAKE_TARGET=hotools_native"
 if /I "%MODULE%"=="jolt" set "CMAKE_TARGET=hotools_jolt"
+if /I "%MODULE%"=="boolean" set "CMAKE_TARGET=hotools_boolean"
 if not defined CMAKE_TARGET if /I not "%MODULE%"=="all" goto usage
 
 set "CONFIG_PRESET_311=vs2022-py311"
@@ -93,6 +96,14 @@ if /I "%MODULE%"=="jolt" (
     set "CONFIG_PRESET_313=vs2022-py313-jolt"
     set "BUILD_PRESET_313=vs2022-py313-jolt-release"
     set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-jolt"
+)
+if /I "%MODULE%"=="boolean" (
+    set "CONFIG_PRESET_311=vs2022-py311-boolean"
+    set "BUILD_PRESET_311=vs2022-py311-boolean-release"
+    set "BUILD_DIR_311=%SOURCE_DIR%\build\vs2022-py311-boolean"
+    set "CONFIG_PRESET_313=vs2022-py313-boolean"
+    set "BUILD_PRESET_313=vs2022-py313-boolean-release"
+    set "BUILD_DIR_313=%SOURCE_DIR%\build\vs2022-py313-boolean"
 )
 
 pushd "%SOURCE_DIR%" >nul
@@ -224,6 +235,7 @@ if /I "%MODULE%"=="all" echo   _Lib\%~1\HotoolsPackage\hotools_native.%~2-win_am
 if /I "%MODULE%"=="native" echo   _Lib\%~1\HotoolsPackage\hotools_native.%~2-win_amd64.pyd
 if /I "%MODULE%"=="all" echo   _Lib\%~1\HotoolsPackage\hotools_jolt.%~2-win_amd64.pyd
 if /I "%MODULE%"=="jolt" echo   _Lib\%~1\HotoolsPackage\hotools_jolt.%~2-win_amd64.pyd
+if /I "%MODULE%"=="boolean" echo   _Lib\%~1\HotoolsPackage\hotools_boolean.%~2-win_amd64.pyd
 exit /b 0
 
 :fail
@@ -243,5 +255,7 @@ echo   build.bat native       Build only hotools_native for py311 and py313
 echo   build.bat jolt         Build only hotools_jolt for py311 and py313
 echo   build.bat 313 native   Build only hotools_native for Python 3.13
 echo   build.bat 313 jolt     Build only hotools_jolt for Python 3.13
+echo   build.bat 311 boolean  Build only hotools_boolean for Python 3.11
+echo   build.bat 313 boolean  Build only hotools_boolean for Python 3.13
 echo   build.bat 313 all      Build both modules for Python 3.13
 exit /b %USAGE_EXIT%

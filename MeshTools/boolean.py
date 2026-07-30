@@ -1,71 +1,156 @@
 import bpy
+import numpy as np
 from bpy.types import Operator
+
 
 def reg_props():
     return
 
+
 def ureg_props():
     return
+
+
+def _load_native_boolean():
+    try:
+        import hotools_boolean
+    except ImportError as exc:
+        raise RuntimeError(
+            "缺少 hotools_boolean 原生模块，请先运行 _native\\build.bat 311 boolean"
+        ) from exc
+    return hotools_boolean
+
+
+def _mesh_arrays(mesh):
+    mesh.calc_loop_triangles()
+    if not mesh.loop_triangles:
+        raise RuntimeError("网格没有可处理的面")
+
+    vertices = np.empty((len(mesh.vertices), 3), dtype=np.float64)
+    mesh.vertices.foreach_get("co", vertices.ravel())
+
+    triangles = np.empty((len(mesh.loop_triangles), 3), dtype=np.int32)
+    triangle_polygons = np.empty(len(mesh.loop_triangles), dtype=np.int32)
+    mesh.loop_triangles.foreach_get("vertices", triangles.ravel())
+    mesh.loop_triangles.foreach_get("polygon_index", triangle_polygons)
+
+    loop_vertices = np.empty(len(mesh.loops), dtype=np.int32)
+    polygon_starts = np.empty(len(mesh.polygons), dtype=np.int32)
+    polygon_totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", loop_vertices)
+    mesh.polygons.foreach_get("loop_start", polygon_starts)
+    mesh.polygons.foreach_get("loop_total", polygon_totals)
+
+    polygon_offsets = np.empty(len(mesh.polygons) + 1, dtype=np.int32)
+    polygon_offsets[0] = 0
+    np.cumsum(polygon_totals, out=polygon_offsets[1:])
+    if np.array_equal(polygon_starts, polygon_offsets[:-1]):
+        polygon_vertices = np.ascontiguousarray(loop_vertices)
+    else:
+        polygon_vertices = np.empty(polygon_offsets[-1], dtype=np.int32)
+        for polygon_index, (start, total) in enumerate(
+            zip(polygon_starts, polygon_totals)
+        ):
+            target = polygon_offsets[polygon_index]
+            polygon_vertices[target:target + total] = loop_vertices[start:start + total]
+
+    return (
+        vertices,
+        triangles,
+        triangle_polygons,
+        polygon_vertices,
+        polygon_offsets,
+    )
+
+
+def _build_mesh(source_mesh, result):
+    vertices = result["vertices"]
+    face_vertices = result["face_vertices"]
+    face_offsets = result["face_offsets"]
+    face_sources = result["face_sources"]
+    face_totals = np.diff(face_offsets).astype(np.int32, copy=False)
+
+    if len(vertices) == 0 or len(face_sources) == 0:
+        raise RuntimeError("外壳运算没有生成任何面，请检查网格是否闭合")
+
+    output = bpy.data.meshes.new(f"{source_mesh.name}_OuterHull")
+    output.vertices.add(len(vertices))
+    output.vertices.foreach_set("co", np.asarray(vertices).ravel())
+    output.loops.add(len(face_vertices))
+    output.loops.foreach_set("vertex_index", face_vertices)
+    output.polygons.add(len(face_sources))
+    output.polygons.foreach_set("loop_start", face_offsets[:-1])
+    output.polygons.foreach_set("loop_total", face_totals)
+
+    for material in source_mesh.materials:
+        output.materials.append(material)
+
+    source_materials = np.empty(len(source_mesh.polygons), dtype=np.int32)
+    source_smooth = np.empty(len(source_mesh.polygons), dtype=np.bool_)
+    source_mesh.polygons.foreach_get("material_index", source_materials)
+    source_mesh.polygons.foreach_get("use_smooth", source_smooth)
+    output.polygons.foreach_set("material_index", source_materials[face_sources])
+    output.polygons.foreach_set("use_smooth", source_smooth[face_sources])
+    output.update(calc_edges=True)
+    return output
+
 
 class OP_BooleanUnionReconstruction(Operator):
     bl_idname = "ho.boolean_union_reconstruction"
     bl_label = "布尔并集重构"
-    bl_description = "使用布尔并集，消除网格内的内部交叉区域，保留其他区域的布线"
+    bl_description = "删除内部相交面和封闭空腔，仅在布尔交线附近生成三角面"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         return context.object is not None and context.object.type == 'MESH'
+
     def execute(self, context):
         obj = context.object
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
 
-        # 创建一个空的 mesh 对象作为布尔对象
-        mesh_data = bpy.data.meshes.new(name="EmptyMesh")
-        bool_obj = bpy.data.objects.new("BooleanUnionHelper", mesh_data)
-        context.collection.objects.link(bool_obj)
+        source_mesh = obj.data
+        try:
+            native = _load_native_boolean()
+            result = native.outer_hull(*_mesh_arrays(source_mesh))
+            output_mesh = _build_mesh(source_mesh, result)
+        except Exception as exc:
+            self.report({'ERROR'}, f"布尔并集重构失败: {exc}")
+            return {'CANCELLED'}
 
-        # 设置布尔修改器
-        bool_mod = obj.modifiers.new(name="Boolean_Union_Reconstruct", type='BOOLEAN')
-        bool_mod.operation = 'UNION'
-        bool_mod.solver = 'EXACT'  # 使用准确模式
-        bool_mod.use_self = True   # 启用自身交集
-        bool_mod.object = bool_obj
+        source_name = source_mesh.name
+        obj.data = output_mesh
+        if source_mesh.users == 0:
+            bpy.data.meshes.remove(source_mesh)
+            output_mesh.name = source_name
 
-        # 切换到对象模式以应用修改器
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-        # 应用所有 viewport 中显示的修改器
-        for mod in [m for m in obj.modifiers if m.show_viewport]:
-            try:
-                bpy.ops.object.modifier_apply(modifier=mod.name)
-            except:
-                self.report({'WARNING'}, f"无法应用修改器: {mod.name}")
-
-        # 删除临时对象
-        bpy.data.objects.remove(bool_obj, do_unlink=True)
+        self.report(
+            {'INFO'},
+            "外壳重构完成: "
+            f"恢复 {result['restored_polygons']} 个原始多边形，"
+            f"交线区 {result['seam_triangles']} 个三角面",
+        )
         return {'FINISHED'}
 
 
 def draw_in_DATA_PT_remesh(self, context):
-    """重构网格面板添加"""
     layout: bpy.types.UILayout = self.layout
     layout.operator(OP_BooleanUnionReconstruction.bl_idname)
-    
 
 
 cls = [OP_BooleanUnionReconstruction]
 
-def register():
-    for i in cls:
-        bpy.utils.register_class(i)
 
+def register():
+    for item in cls:
+        bpy.utils.register_class(item)
     bpy.types.DATA_PT_remesh.append(draw_in_DATA_PT_remesh)
     reg_props()
 
 
 def unregister():
-    for i in cls:
-        bpy.utils.unregister_class(i)
-
+    for item in cls:
+        bpy.utils.unregister_class(item)
     bpy.types.DATA_PT_remesh.remove(draw_in_DATA_PT_remesh)
     ureg_props()

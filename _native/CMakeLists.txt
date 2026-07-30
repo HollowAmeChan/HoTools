@@ -4,8 +4,9 @@ project(hotools_native LANGUAGES CXX)
 
 option(HOTOOLS_BUILD_NATIVE "Build the hotools_native extension" ON)
 option(HOTOOLS_BUILD_JOLT "Build the hotools_jolt extension" ON)
-if(NOT HOTOOLS_BUILD_NATIVE AND NOT HOTOOLS_BUILD_JOLT)
-    message(FATAL_ERROR "At least one of HOTOOLS_BUILD_NATIVE or HOTOOLS_BUILD_JOLT must be ON")
+option(HOTOOLS_BUILD_BOOLEAN "Build the CGAL outer-hull extension" OFF)
+if(NOT HOTOOLS_BUILD_NATIVE AND NOT HOTOOLS_BUILD_JOLT AND NOT HOTOOLS_BUILD_BOOLEAN)
+    message(FATAL_ERROR "At least one native extension must be enabled")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -73,6 +74,46 @@ else()
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(nanobind)
+endif()
+
+# ---------------------------------------------------------------------------
+# Exact outer-hull boolean dependencies. libigl and CGAL are header-only for
+# this target, so only the templates reached by outer_hull() enter the module.
+# GMP is disabled: Boost.Multiprecision keeps the .pyd self-contained.
+# ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_BOOLEAN)
+    set(LIBIGL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_BUILD_TUTORIALS OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_INSTALL OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_USE_STATIC_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_COPYLEFT_CGAL ON CACHE BOOL "" FORCE)
+    set(LIBIGL_COPYLEFT_CORE OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_COPYLEFT_COMISO OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_COPYLEFT_TETGEN OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_RESTRICTED_MATLAB OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_RESTRICTED_MOSEK OFF CACHE BOOL "" FORCE)
+    set(LIBIGL_RESTRICTED_TRIANGLE OFF CACHE BOOL "" FORCE)
+    set(CGAL_CMAKE_EXACT_NT_BACKEND "BOOST_BACKEND" CACHE STRING "" FORCE)
+    set(CGAL_DISABLE_GMP ON CACHE BOOL "" FORCE)
+
+    set(_hotools_boost_archive
+        "${HOTOOLS_PLUGIN_ROOT}/_research/download/boost_1_86_0.tar.gz")
+    if(EXISTS "${_hotools_boost_archive}")
+        message(STATUS "[HoTools] Boost: using local research archive")
+        FetchContent_Declare(
+            Boost
+            URL "${_hotools_boost_archive}"
+            URL_HASH MD5=ac857d73bb754b718a039830b07b9624
+        )
+    endif()
+
+    FetchContent_Declare(
+        libigl
+        GIT_REPOSITORY https://github.com/libigl/libigl.git
+        GIT_TAG        v2.6.0
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(libigl)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -176,6 +217,46 @@ set_target_properties(hotools_native PROPERTIES
 
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(hotools_native PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${config} "${HOTOOLS_RUNTIME_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY_${config} "${HOTOOLS_RUNTIME_DIR}"
+        ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/lib"
+    )
+endforeach()
+endif()
+
+# ---------------------------------------------------------------------------
+# hotools_boolean: isolated CGAL/libigl outer-hull module
+# ---------------------------------------------------------------------------
+if(HOTOOLS_BUILD_BOOLEAN)
+nanobind_add_module(hotools_boolean
+    NB_STATIC
+    src/boolean_outer_hull.cpp
+)
+
+target_link_libraries(hotools_boolean PRIVATE igl_copyleft::cgal)
+target_compile_definitions(
+    hotools_boolean
+    PRIVATE
+        PY_SSIZE_T_CLEAN
+        $<$<CXX_COMPILER_ID:MSVC>:_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR>
+)
+
+if(MSVC)
+    target_compile_options(hotools_boolean PRIVATE /W4 /permissive- /utf-8 /bigobj)
+else()
+    target_compile_options(hotools_boolean PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+set_target_properties(hotools_boolean PROPERTIES
+    PREFIX ""
+    SUFFIX "${HOTOOLS_PYTHON_EXTENSION_SUFFIX}"
+    RUNTIME_OUTPUT_DIRECTORY "${HOTOOLS_RUNTIME_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${HOTOOLS_RUNTIME_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(hotools_boolean PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY_${config} "${HOTOOLS_RUNTIME_DIR}"
         LIBRARY_OUTPUT_DIRECTORY_${config} "${HOTOOLS_RUNTIME_DIR}"
         ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/lib"
