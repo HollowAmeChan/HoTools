@@ -2262,188 +2262,12 @@ def _shape_key_rebase_mask(local_delta, threshold, falloff_ratio, strength):
     return mask * strength
 
 
-def _normalize_shape_key_activity(values, active_mask):
-    """归一化单个形态键的活动度，同时限制离群值的影响。"""
-    values = np.asarray(values, dtype=np.float64)
-    active_mask = np.asarray(active_mask, dtype=bool)
-    result = np.zeros(len(values), dtype=np.float32)
-    sample_mask = active_mask & np.isfinite(values) & (values > 0.0)
-    if not np.any(sample_mask):
-        return result
-
-    samples = values[sample_mask]
-    scale = float(np.percentile(samples, 95.0))
-    if scale <= np.finfo(np.float64).eps:
-        scale = float(samples.max(initial=0.0))
-    if scale <= np.finfo(np.float64).eps:
-        return result
-
-    finite_values = np.nan_to_num(values, nan=0.0, posinf=scale, neginf=0.0)
-    result[active_mask] = np.clip(finite_values[active_mask] / scale, 0.0, 1.0)
-    return result
-
-
-def _shape_key_deformation_activity(
-        relative_positions, key_positions, triangles, movement_threshold):
-    """返回不受模型整体缩放影响的位移、旋转与应变活动度。"""
-    relative_positions = np.asarray(relative_positions, dtype=np.float64)
-    key_positions = np.asarray(key_positions, dtype=np.float64)
-    local_delta = key_positions - relative_positions
-    displacement = np.linalg.norm(local_delta, axis=1)
-    moved = displacement > movement_threshold
-    motion_activity = _normalize_shape_key_activity(displacement, moved)
-
-    triangles = np.asarray(triangles, dtype=np.int32).reshape((-1, 3))
-    if len(triangles) == 0 or not np.any(moved):
-        return motion_activity
-
-    reference_triangles = relative_positions[triangles]
-    key_triangles = key_positions[triangles]
-    reference_edge_1 = reference_triangles[:, 1] - reference_triangles[:, 0]
-    reference_edge_2 = reference_triangles[:, 2] - reference_triangles[:, 0]
-    key_edge_1 = key_triangles[:, 1] - key_triangles[:, 0]
-    key_edge_2 = key_triangles[:, 2] - key_triangles[:, 0]
-
-    reference_cross = np.cross(reference_edge_1, reference_edge_2)
-    double_area = np.linalg.norm(reference_cross, axis=1)
-    reference_edges = np.stack((
-        reference_edge_1,
-        reference_edge_2,
-        reference_edge_2 - reference_edge_1,
-    ), axis=1)
-    edge_length_squared = np.einsum(
-        'tij,tij->ti', reference_edges, reference_edges)
-    longest_edge_index = np.argmax(edge_length_squared, axis=1)
-    triangle_indices = np.arange(len(triangles))
-    longest_reference_edge = reference_edges[triangle_indices, longest_edge_index]
-    longest_edge_length = np.sqrt(
-        edge_length_squared[triangle_indices, longest_edge_index])
-
-    # 用面积与最长边平方的比例排除局部坐标系数值不稳定的三角形，
-    # 同时避免退化判定受模型整体缩放影响。
-    valid_reference = (
-        (longest_edge_length > np.finfo(np.float64).eps)
-        & (double_area > longest_edge_length * longest_edge_length * 1e-8)
-    )
-    active_face = np.any(moved[triangles], axis=1)
-    edge_change = np.maximum(
-        np.linalg.norm(key_edge_1 - reference_edge_1, axis=1),
-        np.linalg.norm(key_edge_2 - reference_edge_2, axis=1),
-    )
-    changed_frame = edge_change > longest_edge_length * 1e-7
-    candidate = valid_reference & active_face & changed_frame
-    if not np.any(candidate):
-        return motion_activity
-
-    reference_tangent_1 = np.zeros_like(longest_reference_edge)
-    reference_normal = np.zeros_like(reference_cross)
-    reference_tangent_1[valid_reference] = (
-        longest_reference_edge[valid_reference]
-        / longest_edge_length[valid_reference, None]
-    )
-    reference_normal[valid_reference] = (
-        reference_cross[valid_reference] / double_area[valid_reference, None]
-    )
-    reference_tangent_2 = np.cross(reference_normal, reference_tangent_1)
-
-    deformation_matrix = np.empty((len(triangles), 2, 2), dtype=np.float64)
-    deformation_matrix[:, 0, 0] = np.einsum(
-        'ij,ij->i', reference_edge_1, reference_tangent_1)
-    deformation_matrix[:, 1, 0] = np.einsum(
-        'ij,ij->i', reference_edge_1, reference_tangent_2)
-    deformation_matrix[:, 0, 1] = np.einsum(
-        'ij,ij->i', reference_edge_2, reference_tangent_1)
-    deformation_matrix[:, 1, 1] = np.einsum(
-        'ij,ij->i', reference_edge_2, reference_tangent_2)
-    deformed_edges = np.stack((key_edge_1, key_edge_2), axis=2)
-
-    candidate_indices = np.flatnonzero(candidate)
-    deformation_gradient = (
-        deformed_edges[candidate_indices]
-        @ np.linalg.inv(deformation_matrix[candidate_indices])
-    )
-    polar_tangent, singular_values, polar_axes = np.linalg.svd(
-        deformation_gradient, full_matrices=False)
-    polar_rotation = polar_tangent @ polar_axes
-    rotated_tangent_1 = polar_rotation[:, :, 0]
-    rotated_tangent_2 = polar_rotation[:, :, 1]
-    rotated_normal = np.cross(rotated_tangent_1, rotated_tangent_2)
-
-    rotation_trace = (
-        np.einsum(
-            'ij,ij->i', rotated_tangent_1,
-            reference_tangent_1[candidate_indices])
-        + np.einsum(
-            'ij,ij->i', rotated_tangent_2,
-            reference_tangent_2[candidate_indices])
-        + np.einsum(
-            'ij,ij->i', rotated_normal,
-            reference_normal[candidate_indices])
-    )
-    rotation_angle = np.arccos(np.clip((rotation_trace - 1.0) * 0.5, -1.0, 1.0))
-    log_stretch = np.log(np.clip(singular_values, 1e-8, 1e8))
-    strain = np.linalg.norm(log_stretch, axis=1)
-
-    face_activity = np.zeros(len(triangles), dtype=np.float64)
-    face_activity[candidate_indices] = np.hypot(rotation_angle, strain)
-    weighted_activity = np.zeros(len(relative_positions), dtype=np.float64)
-    vertex_area = np.zeros(len(relative_positions), dtype=np.float64)
-    valid_triangles = triangles[valid_reference]
-    valid_area = double_area[valid_reference]
-    np.add.at(
-        weighted_activity,
-        valid_triangles.reshape(-1),
-        np.repeat(face_activity[valid_reference] * valid_area, 3),
-    )
-    np.add.at(vertex_area, valid_triangles.reshape(-1), np.repeat(valid_area, 3))
-
-    gradient_activity = np.zeros(len(relative_positions), dtype=np.float64)
-    influenced = vertex_area > np.finfo(np.float64).eps
-    gradient_activity[influenced] = (
-        weighted_activity[influenced] / vertex_area[influenced]
-    )
-    gradient_activity = _normalize_shape_key_activity(
-        gradient_activity, gradient_activity > 0.0)
-    return np.maximum(motion_activity, gradient_activity)
-
-
-def _shape_key_gradient_rebase_mask(
-        relative_positions, key_positions, triangles, movement_threshold,
-        gradient_threshold, gradient_softness, strength):
-    activity = _shape_key_deformation_activity(
-        relative_positions, key_positions, triangles, movement_threshold)
-    if gradient_softness <= 0.0:
-        mask = (activity > gradient_threshold).astype(np.float32)
-    else:
-        upper = min(1.0, gradient_threshold + gradient_softness)
-        width = upper - gradient_threshold
-        if width <= np.finfo(np.float32).eps:
-            mask = (activity > gradient_threshold).astype(np.float32)
-        else:
-            t = np.clip((activity - gradient_threshold) / width, 0.0, 1.0)
-            mask = (t * t * (3.0 - 2.0 * t)).astype(np.float32)
-    return mask * strength
-
-
 def _mix_rebased_shape_positions(
         key_positions, old_relative_positions, new_relative_positions,
-        threshold, falloff_ratio, strength, triangles=None,
-        use_gradient_rebase=False, gradient_threshold=0.1,
-        gradient_softness=0.2):
+        threshold, falloff_ratio, strength):
     local_delta = key_positions - old_relative_positions
-    if use_gradient_rebase:
-        mask = _shape_key_gradient_rebase_mask(
-            old_relative_positions,
-            key_positions,
-            triangles,
-            threshold,
-            gradient_threshold,
-            gradient_softness,
-            strength,
-        )
-    else:
-        mask = _shape_key_rebase_mask(
-            local_delta, threshold, falloff_ratio, strength)
+    mask = _shape_key_rebase_mask(
+        local_delta, threshold, falloff_ratio, strength)
     relative_shift = new_relative_positions - old_relative_positions
     result = key_positions + relative_shift * (1.0 - mask[:, None])
     return result, mask
@@ -2491,9 +2315,7 @@ def _validate_shape_key_rebase_object(obj):
 
 
 def _rebase_shape_keys(
-        obj, factor, threshold, falloff_ratio, protection_strength,
-        use_gradient_rebase=False, gradient_threshold=0.1,
-        gradient_softness=0.2):
+        obj, factor, threshold, falloff_ratio, protection_strength):
     shape_keys, basis, active_key = _validate_shape_key_rebase_object(obj)
     if factor <= 0.0:
         raise ShapeKeyRebaseError("变基权重必须大于 0")
@@ -2506,10 +2328,6 @@ def _rebase_shape_keys(
     old_basis = shapekey_utils.read_shape_key_positions(basis)
     old_active = shapekey_utils.read_shape_key_positions(active_key)
     new_basis = old_basis + (old_active - old_basis) * factor
-    triangles = (
-        shapekey_utils.mesh_triangle_indices(obj.data)
-        if use_gradient_rebase else None
-    )
 
     child_counts = {key.name: 0 for key in ordered_keys}
     for key in ordered_keys:
@@ -2537,9 +2355,7 @@ def _rebase_shape_keys(
         old_key = shapekey_utils.read_shape_key_positions(key)
         new_key, mask = _mix_rebased_shape_positions(
             old_key, old_relative, new_relative,
-            threshold, falloff_ratio, protection_strength,
-            triangles, use_gradient_rebase,
-            gradient_threshold, gradient_softness)
+            threshold, falloff_ratio, protection_strength)
         protected_pairs += int(np.count_nonzero(mask >= 1.0 - 1e-6))
         partial_pairs += int(np.count_nonzero((mask > 1e-6) & (mask < 1.0 - 1e-6)))
 
@@ -2622,33 +2438,31 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 
 # TODO(高级变基 / 文献事实、当前选择与后续边界):
 #
-# 1. 形态键保存的是每个顶点的绝对坐标，而不是相对 Basis 的位移。Basis 改变后，
-#    直接保留其余键的坐标会改变相对位移；让全部坐标跟随新 Basis 又会移动原来的
-#    表情目标。因此局部变基本质上必须为“保持旧绝对位置”和“跟随新相对键”之间
-#    求一个逐顶点保护权重，不存在对所有表情都无条件正确的单一结果。
+# 1. 形态键保存的是每个顶点的绝对坐标，而不是相对 Basis 的位移。设旧相对键为 R、
+#    新相对键为 R'、旧表情键为 K，普通全局变基 G=R'+(K-R) 能完整保留捏脸后的
+#    大范围位置变化，但没有随 R->R' 的局部旋转、缩放和剪切变换表情位移。
 # 2. Sumner & Popovic 2004 的 Deformation Transfer 以每个三角面的局部仿射变换
 #    表示旋转、缩放和剪切，并用全局稀疏最小二乘恢复共享顶点；Sorkine & Alexa
 #    2007 的 ARAP 也先分离局部旋转，再度量非刚性变化。两类方法都没有把普通
 #    邻边位移差直接阈值化为可靠的逐顶点权重。
-# 3. 面部 Blendshape 迁移研究通常同时保留位移和变形梯度，因为梯度天然消除了
-#    平移，而只看应变又会漏掉下颌、眼睑等接近刚体旋转但仍应保护的区域。我们的
-#    网格前后拓扑完全相同，顶点对应已经确定，所以跨网格论文使用的标记点不是此
-#    操作的必要条件。
-# 4. 原始邻边差分会受短边、瘦长三角形、顶点度数和局部三角化影响，并把旋转与
-#    拉伸混为一谈。当前实验模式因此在每个三角面的切平面上计算变形梯度，做极分解，
-#    分别提取旋转角与对数主伸长；再用正的三角形面积权重汇总到顶点。位移活动度与
-#    梯度活动度分别按单个形态键的 95 百分位归一化后取最大值，保证纯平移和局部
-#    刚体旋转都不会被漏掉。位移容差仍是绝对噪声门槛，梯度阈值与柔化则作用于
-#    0..1 的相对活动度。默认关闭实验模式，旧的二值/位移柔化行为保持不变。
-# 5. 95 百分位和“位移、梯度取最大值”是为缺少训练数据时选取的保守工程策略，
-#    并非论文证明的最优权重。它可能在表情边界向相邻三角面扩张一圈，也会让同一
-#    阈值在极稀疏修正键与大范围表情键上具有不同的绝对含义。上线为稳定模式前应以
-#    Blink、JawOpen、Smile、Viseme 及平移/旋转/拉伸/剪切/弯曲/短边噪声合成案例
-#    建立回归集，对比旧绝对目标误差、边界连续性和不同三角化下的权重变化。
-# 6. 真正的高级模式仍应实现 deformation transfer：把旧相对键到旧表情键的局部
-#    变换施加到新相对键，以带固定自由度的稀疏全局求解重建顶点，并处理退化三角形、
-#    非流形、分离部件、失败回退、预览和误差报告。那是“重建表情”，而本次实验
-#    模式只是为现有局部变基估计保护遮罩，二者不能混称为同一种算法。
+# 3. 已删除的“梯度变基”实验把位移、旋转和应变活动度映射为旧绝对位置保护权重。
+#    实测证明这不是调参问题：表情区域越大、活动度检测越准确，越会把这些顶点钉回
+#    旧脸，从而丢失捏脸后的整体位置。该方案不得以别名重新加入；当前局部遮罩仅保留
+#    为明确的旧绝对目标保护工具，不应被视为通用表情迁移算法。
+# 4. 下一种通用原型应以 G 为不可推翻的基线，从 R->R' 的相邻三角面估计逐顶点
+#    局部仿射变换 A_i，再计算 K'_i=R'_i+A_i(K_i-R_i)。它不猜测表情区域：零位移
+#    自然跟随新相对键，纯平移保持 G，局部旋转和尺度变化则转换原表情位移。
+# 5. “主动趋近”不能只保存为逐顶点标量。上下眼睑可能各自近似刚体移动，局部散度
+#    和应变都接近零，但两个拓扑上分离的区域正在互相靠近。应先建立非邻接顶点/曲面
+#    间的趋近关系：旧相对位置向量、双方相对位移、距离缩短比例、目标方向和旧表情
+#    终点间距；逐顶点趋近指数只能由这张关系图汇总得到，不能替代目标对象和方向。
+# 6. 若以后增加闭合保持，它只能在 G 或局部仿射结果上施加高置信度的小范围残差：
+#    保持接触对中心不变，只修正相对间距；要求相向运动、显著距离收缩、非局部拓扑
+#    关系和连续接触簇，并对过大修正、三角面翻转或异常拉伸逐区域回退。这样大位移后
+#    的整体位置仍由全局变基保证，眼睑或嘴唇闭合只是可验证、可回退的附加约束。
+# 7. 完整高级模式仍可实现 deformation transfer：把旧相对键到旧表情键的局部变换
+#    施加到新相对键，以带固定自由度和可选接触约束的稀疏全局求解重建顶点，并处理
+#    退化三角形、非流形、分离部件、失败回退、预览和误差报告。
 class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
     """用活动捏脸键局部重建基型和其余相对形态键。"""
     bl_idname = "ho.rebase_shapekeys_preserve_expressions"
@@ -2689,28 +2503,6 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         max=1.0,
         subtype='FACTOR',
     ) # type: ignore
-    use_gradient_rebase: BoolProperty(
-        name="梯度变基（实验性）",
-        description="融合相对位移、局部旋转和拉伸/剪切，自动生成表情保护权重",
-        default=False,
-    ) # type: ignore
-    gradient_threshold: FloatProperty(
-        name="梯度变基阈值",
-        description="归一化活动度不超过此值的区域不保护；用于截断弱形变和噪声",
-        default=0.1,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-    gradient_softness: FloatProperty(
-        name="梯度变基柔化",
-        description="从阈值到完整保护的活动度过渡宽度；0 为严格二值遮罩",
-        default=0.2,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-
     @classmethod
     def poll(cls, context):
         obj = context.object
@@ -2746,14 +2538,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         layout.prop(self, "factor")
         layout.prop(self, "protection_strength")
         layout.prop(self, "movement_threshold")
-        layout.prop(self, "use_gradient_rebase")
-        if self.use_gradient_rebase:
-            gradient_box = layout.box()
-            gradient_box.label(text="融合位移、旋转与拉伸/剪切", icon='EXPERIMENTAL')
-            gradient_box.prop(self, "gradient_threshold")
-            gradient_box.prop(self, "gradient_softness")
-        else:
-            layout.prop(self, "falloff_ratio")
+        layout.prop(self, "falloff_ratio")
 
     def execute(self, context):
         obj = context.object
@@ -2766,9 +2551,6 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
                 self.movement_threshold,
                 self.falloff_ratio,
                 self.protection_strength,
-                self.use_gradient_rebase,
-                self.gradient_threshold,
-                self.gradient_softness,
             )
         except ShapeKeyRebaseError as exc:
             self.report({'WARNING'}, str(exc))

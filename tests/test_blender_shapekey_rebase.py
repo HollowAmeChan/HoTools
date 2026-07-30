@@ -36,19 +36,6 @@ def make_mesh(name, vertex_count=5):
     return obj
 
 
-def make_triangle_mesh(name):
-    data = bpy.data.meshes.new(f"{name}Data")
-    data.from_pydata(
-        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-        [],
-        [(0, 1, 2)],
-    )
-    obj = bpy.data.objects.new(name, data)
-    bpy.context.scene.collection.objects.link(obj)
-    activate(obj)
-    return obj
-
-
 def positions(key):
     return np.array([point.co[:] for point in key.data], dtype=np.float32)
 
@@ -73,56 +60,6 @@ mask = module._shape_key_rebase_mask(delta, 0.0, 0.5, 0.5)
 assert np.allclose(mask, (0.0, 0.25, 0.5, 0.5), atol=1e-6)
 binary_mask = module._shape_key_rebase_mask(delta, 0.5, 0.0, 1.0)
 assert np.allclose(binary_mask, (0.0, 0.0, 1.0, 1.0), atol=1e-6)
-
-# 梯度模式融合归一化位移与逐三角面的极分解。位移分量保留纯平移，
-# 旋转分量则通过相邻三角面保护没有产生位移的旋转枢轴顶点。
-triangle_positions = np.array(
-    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-    dtype=np.float32,
-)
-triangles = np.array([(0, 1, 2)], dtype=np.int32)
-translated_positions = triangle_positions + (2.0, -1.0, 0.5)
-translation_activity = module._shape_key_deformation_activity(
-    triangle_positions, translated_positions, triangles, 1e-6)
-assert np.allclose(translation_activity, 1.0, atol=1e-6)
-
-angle = np.deg2rad(30.0)
-rotation = np.array(
-    [
-        (np.cos(angle), -np.sin(angle), 0.0),
-        (np.sin(angle), np.cos(angle), 0.0),
-        (0.0, 0.0, 1.0),
-    ],
-    dtype=np.float32,
-)
-rotated_positions = triangle_positions @ rotation.T
-rotation_activity = module._shape_key_deformation_activity(
-    triangle_positions, rotated_positions, triangles, 1e-6)
-assert np.allclose(rotation_activity, 1.0, atol=1e-5)
-stretched_positions = triangle_positions.copy()
-stretched_positions[:, 0] *= 1.5
-stretch_activity = module._shape_key_deformation_activity(
-    triangle_positions, stretched_positions, triangles, 1e-6)
-assert np.allclose(stretch_activity, 1.0, atol=1e-5)
-scaled_rotation_activity = module._shape_key_deformation_activity(
-    triangle_positions * 100.0, rotated_positions * 100.0, triangles, 1e-4)
-assert np.allclose(rotation_activity, scaled_rotation_activity, atol=1e-5)
-
-unchanged_mask = module._shape_key_gradient_rebase_mask(
-    triangle_positions, triangle_positions, triangles,
-    1e-6, 0.1, 0.2, 1.0)
-assert np.allclose(unchanged_mask, 0.0, atol=1e-6)
-
-degenerate_positions = np.array(
-    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
-    dtype=np.float32,
-)
-degenerate_key = degenerate_positions.copy()
-degenerate_key[1, 1] = 0.5
-degenerate_activity = module._shape_key_deformation_activity(
-    degenerate_positions, degenerate_key, triangles, 1e-6)
-assert np.all(np.isfinite(degenerate_activity))
-
 
 registered = (
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
@@ -192,32 +129,6 @@ try:
     # 被删除捏脸键的子键会安全地改为相对新 Basis。
     assert_position(active_child, 0, (0.0, 0.5, 0.0))
     assert_position(active_child, 4, (4.0, 1.0, 0.5))
-
-    # 零位移的旋转枢轴由相邻面的极分解旋转识别并保护，
-    # 不会跟随抬高后的新 Basis。
-    gradient_obj = make_triangle_mesh("GradientLocalRebase")
-    gradient_basis = gradient_obj.shape_key_add(name="Basis", from_mix=False)
-    gradient_sculpt = gradient_obj.shape_key_add(name="FaceSculpt", from_mix=False)
-    for point in gradient_sculpt.data:
-        point.co.z += 1.0
-    gradient_expression = gradient_obj.shape_key_add(name="RotatedExpression", from_mix=False)
-    for index, point in enumerate(gradient_expression.data):
-        point.co = rotated_positions[index]
-
-    gradient_obj.active_shape_key_index = 1
-    result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
-        "EXEC_DEFAULT",
-        factor=1.0,
-        movement_threshold=1e-6,
-        protection_strength=1.0,
-        use_gradient_rebase=True,
-        gradient_threshold=0.1,
-        gradient_softness=0.2,
-    )
-    assert result == {'FINISHED'}
-    gradient_keys = gradient_obj.data.shape_keys.key_blocks
-    assert_position(gradient_keys[0], 0, (0.0, 0.0, 1.0))
-    assert_position(gradient_keys["RotatedExpression"], 0, (0.0, 0.0, 0.0))
 
     # 前置检查会拒绝不安全状态，并且不改变已经保存的坐标。
     guarded = make_mesh("GuardedRebase", vertex_count=2)
