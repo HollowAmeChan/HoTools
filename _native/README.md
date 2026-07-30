@@ -113,6 +113,7 @@ _native/
 ├── src/            # C++ 源码（hotools_native + hotools_jolt）
 ├── include/        # 对外 C++ 头文件
 ├── tests/          # 回归测试
+├── docs/           # Native 后端专题文档
 ├── extern/         # git submodule（nanobind / JoltPhysics，可选）
 │   └── archives/   # 可重新下载的大型依赖压缩包（不进 git）
 ├── .fetch-cache/   # FetchContent 源码缓存（不进 git）
@@ -147,6 +148,8 @@ _native/
 
 ## 相关文档
 
+- `_native/docs/BOOLEAN_OUTER_HULL.md`
+- `_native/docs/JOLT_BLENDER_COMPAT.md`
 - `OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`
 - `OmniNode/doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`
 - `OmniNode/doc/MC2_BLUEPRINT.md`

@@ -18,7 +18,7 @@
 - Python adapter：`OmniNode/PhysicsWorld/rigid/backends/jolt.py`。
 - HoTools 刚体属性：`PhysicsTools/physicsProperty.py`、`PhysicsTools/physicsPanel.py`。
 - 统一物理流程契约：`OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`。
-- Blender 兼容记录：`_native/JOLT_BLENDER_COMPAT.md`。
+- Blender 兼容记录：`_native/docs/JOLT_BLENDER_COMPAT.md`。
 - 语义测试设计：`OmniNode/PhysicsWorld/rigid/docs/JOLT_TEST_STRATEGY.md`。
 
 外部资料：
@@ -600,7 +600,7 @@ Native 侧当前特点：
 
 ### Blender 兼容约束
 
-`_native/JOLT_BLENDER_COMPAT.md` 记录了关键限制：
+`_native/docs/JOLT_BLENDER_COMPAT.md` 记录了关键限制：
 
 - Blender 进程里的 `tbbmalloc_proxy.dll` 会干扰 MSVCP140 STL mutex/TLS。
 - 本地 Jolt patch 用 Win32 `CRITICAL_SECTION` / `SRWLOCK` 替代部分 mutex。
