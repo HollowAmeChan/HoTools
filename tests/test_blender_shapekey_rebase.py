@@ -36,15 +36,23 @@ def make_mesh(name, vertex_count=5):
     return obj
 
 
-def make_closure_mesh(name):
-    # 两条拓扑上分离、空间上可接触的条带，模拟上下眼睑或上下唇。
+def make_eye_and_mouth_mesh(name):
+    # 两片有真实三角面的眼睑条带，加一个空间上分离的嘴部面片。
     vertices = [
+        (-1.0, 0.0, 0.8), (0.0, 0.0, 0.8), (1.0, 0.0, 0.8),
         (-1.0, 0.0, 0.5), (0.0, 0.0, 0.5), (1.0, 0.0, 0.5),
         (-1.0, 0.0, -0.5), (0.0, 0.0, -0.5), (1.0, 0.0, -0.5),
+        (-1.0, 0.0, -0.8), (0.0, 0.0, -0.8), (1.0, 0.0, -0.8),
+        (-0.5, -3.0, 0.25), (0.5, -3.0, 0.25),
+        (-0.5, -3.0, -0.25), (0.5, -3.0, -0.25),
     ]
-    edges = [(0, 1), (1, 2), (3, 4), (4, 5)]
+    faces = [
+        (0, 1, 4, 3), (1, 2, 5, 4),
+        (6, 7, 10, 9), (7, 8, 11, 10),
+        (12, 13, 15, 14),
+    ]
     data = bpy.data.meshes.new(f"{name}Data")
-    data.from_pydata(vertices, edges, [])
+    data.from_pydata(vertices, [], faces)
     obj = bpy.data.objects.new(name, data)
     bpy.context.scene.collection.objects.link(obj)
     activate(obj)
@@ -56,12 +64,23 @@ def add_closure_shape_keys(obj):
     sculpt = obj.shape_key_add(name="FaceSculpt", from_mix=False)
     for index, point in enumerate(sculpt.data):
         point.co.y += 2.0
-        point.co.z += 0.3 if index < 3 else -0.1
+        if index < 12:
+            point.co.z *= 1.4
 
-    expression = obj.shape_key_add(name="Blink", from_mix=False)
-    for index, point in enumerate(expression.data):
-        point.co.z += -0.45 if index < 3 else 0.45
-    return basis, sculpt, expression
+    blink = obj.shape_key_add(name="Blink", from_mix=False)
+    for index in (0, 1, 2):
+        blink.data[index].co.z -= 0.15
+    for index in (3, 4, 5):
+        blink.data[index].co.z -= 0.45
+    for index in (6, 7, 8):
+        blink.data[index].co.z += 0.45
+    for index in (9, 10, 11):
+        blink.data[index].co.z += 0.15
+
+    mouth_open = obj.shape_key_add(name="MouthOpen", from_mix=False)
+    for index in (14, 15):
+        mouth_open.data[index].co.z -= 0.4
+    return basis, sculpt, blink, mouth_open
 
 
 def positions(key):
@@ -113,6 +132,33 @@ assert (
     == "ho.rebase_shapekeys_preserve_expressions"
 )
 
+# 局部变形必须由新相对键的坐标架承载。旧表情沿局部 X 拉伸两倍；新眼眶旋转
+# 九十度后，目标边也必须沿旋转后的局部 X 拉伸，而不能继续指向旧世界 X。
+local_rest = np.array(
+    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+    dtype=np.float32,
+)
+local_key = np.array(
+    [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+    dtype=np.float32,
+)
+local_new = np.array(
+    [(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)],
+    dtype=np.float32,
+)
+_first, _second, local_targets, _weights = (
+    module._ho_triangle_transfer_constraints(
+        local_rest,
+        local_key,
+        local_new,
+        np.array([(0, 1, 2)], dtype=np.int32),
+        np.ones(3, dtype=np.float32),
+        1.0,
+    )
+)
+assert np.allclose(local_targets[0], (0.0, 2.0, 0.0), atol=1e-6)
+assert np.allclose(local_targets[1], (-1.0, 0.0, 0.0), atol=1e-6)
+
 registered = (
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
     module.OP_ShapekeyTools_RebaseFBSF,
@@ -122,8 +168,11 @@ for operator in registered:
     bpy.utils.register_class(operator)
 
 try:
-    obj = make_closure_mesh("LocalRebase")
-    basis, sculpt, expression = add_closure_shape_keys(obj)
+    obj = make_eye_and_mouth_mesh("LocalRebase")
+    basis, sculpt, expression, mouth_open = add_closure_shape_keys(obj)
+
+    eye_group = obj.vertex_groups.new(name="EyeRegion")
+    eye_group.add(list(range(12)), 1.0, 'REPLACE')
 
     nested = obj.shape_key_add(name="Nested", from_mix=False)
     nested.relative_key = expression
@@ -132,24 +181,70 @@ try:
         point.co.y += 0.2
 
     old_basis = positions(basis)
-    old_sculpt = positions(sculpt)
     old_expression = positions(expression)
+    old_mouth_open = positions(mouth_open)
     old_nested = positions(nested)
     topology = module._ho_rebase_topology(obj.data, old_basis)
-    default_pairs = module._ho_convergence_pairs(
-        old_basis, old_expression, topology, 0.75, 0.35)
-    wide_pairs = module._ho_convergence_pairs(
-        old_basis, old_expression, topology, 3.0, 0.35)
+    eye_weights = module._ho_vertex_group_weights(obj, eye_group.name)
+    default_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, eye_weights, 1.5, 0.35)
+    wide_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, eye_weights, 6.0, 0.35)
+    automatic_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, None, 1.5, 0.35)
     assert len(default_pairs) == 3
-    # 搜索半径只能扩大候选范围，不能反过来提高旧基型间距门槛。
+    assert len(automatic_pairs) == len(default_pairs)
+    # 搜索半径只扩大闭眼参考的候选范围，不能反向排除已经找到的眼睑关系。
     assert len(wide_pairs) == len(default_pairs)
+    automatic_weights = module._ho_automatic_eye_weights(
+        len(old_basis), automatic_pairs, topology, 2)
+    assert np.all(automatic_weights[:12] > 0.0)
+    assert np.allclose(automatic_weights[12:], 0.0)
+
+    # 自动模式不能把正在移动的上眼睑与附近的静止表面误配；用户显式提供区域时
+    # 才允许单侧运动的闭合参考键。
+    one_sided = old_basis.copy()
+    one_sided[3:6, 2] -= 0.9
+    assert not module._ho_reference_pairs(
+        old_basis, one_sided, topology, None, 1.5, 0.35)
+    assert module._ho_reference_pairs(
+        old_basis, one_sided, topology, eye_weights, 1.5, 0.35)
+
+    # 任一后续键求解失败时，规划阶段不得提前写入已经处理过的键。
+    obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(sculpt.name)
+    before_transaction = {
+        key.name: positions(key).copy()
+        for key in obj.data.shape_keys.key_blocks
+    }
+    calls = [0]
+
+    def fail_after_first(
+            _key, old_key, old_relative, new_relative,
+            _old_basis, _old_active, _new_basis):
+        calls[0] += 1
+        if calls[0] > 1:
+            raise RuntimeError("planned failure")
+        return old_key + (new_relative - old_relative)
+
+    try:
+        module._rewrite_rebased_shape_key_tree(obj, 0.5, fail_after_first)
+    except RuntimeError as exc:
+        assert str(exc) == "planned failure"
+    else:
+        raise AssertionError("规划阶段异常未向上传递")
+    for key in obj.data.shape_keys.key_blocks:
+        assert np.array_equal(positions(key), before_transaction[key.name])
+    assert obj.data.shape_keys.key_blocks.get("FaceSculpt") is not None
 
     obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(sculpt.name)
     result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
         "EXEC_DEFAULT",
         factor=0.5,
-        correction_strength=1.0,
-        contact_radius_factor=0.75,
+        blink_reference_key="Blink",
+        eye_vertex_group="EyeRegion",
+        transfer_strength=1.0,
+        closure_strength=1.0,
+        contact_radius_factor=1.5,
         max_gap_ratio=0.35,
         smooth_rings=2,
     )
@@ -159,39 +254,40 @@ try:
     assert keys.get("FaceSculpt") is None
     basis = keys[0]
     expression = keys["Blink"]
+    mouth_open = keys["MouthOpen"]
     nested = keys["Nested"]
     assert nested.relative_key == expression
 
-    # HO 以 FBSF 为保底，并把上下条带恢复到原表情的绝对闭合间距；即使新眼眶
-    # 间距增大，旧闭眼缝也不能按比例被放大，同时整体仍处于捏脸后的 y 位置。
-    for index in range(3):
-        assert_position(basis, index, ((-1.0, 0.0, 1.0)[index], 1.0, 0.65))
-    for index in range(3, 6):
-        x = (-1.0, 0.0, 1.0)[index - 3]
-        assert_position(basis, index, (x, 1.0, -0.55))
-    for index in range(3):
-        old_gap = abs(old_expression[index, 2] - old_expression[index + 3, 2])
-        new_gap = abs(expression.data[index].co.z - expression.data[index + 3].co.z)
-        assert new_gap <= old_gap + 1e-5
+    # Basis 完整采用捏脸结果；闭眼键不是旧坐标透传，而是在扩大后的新眼眶上
+    # 重新应用局部变形和跨眼睑闭合关系。
+    for index in range(12):
+        expected = old_basis[index].copy()
+        expected[1] += 1.0
+        expected[2] *= 1.2
+        assert_position(basis, index, expected)
+    for upper, lower in zip((3, 4, 5), (6, 7, 8)):
+        global_gap = abs(
+            (old_expression[upper, 2] + basis.data[upper].co.z - old_basis[upper, 2])
+            - (old_expression[lower, 2] + basis.data[lower].co.z - old_basis[lower, 2])
+        )
+        new_gap = abs(expression.data[upper].co.z - expression.data[lower].co.z)
+        assert new_gap < global_gap * 0.75, (new_gap, global_gap)
+        assert new_gap < 0.2
+    for index in range(12):
         assert abs(expression.data[index].co.y - 1.0) < 1e-4
-    # 同一条带的修正应保持连续，不能形成旧 HO 那种阈值褶纹。
-    assert abs((expression.data[1].co.z - expression.data[0].co.z)) < 1e-4
-    assert abs((expression.data[2].co.z - expression.data[1].co.z)) < 1e-4
-    assert abs((expression.data[4].co.z - expression.data[3].co.z)) < 1e-4
-    assert abs((expression.data[5].co.z - expression.data[4].co.z)) < 1e-4
-    nested_weights, _left, _right, _split = module._fbsf_rebase_weights(
-        old_nested - old_expression,
-        old_sculpt - old_basis,
-        old_basis,
-        0.0,
-        1.0,
-    )
-    expression_shift = positions(expression) - old_expression
-    expected_nested = (
-        old_nested + expression_shift
-        - expression_shift * nested_weights[:, None]
-    )
-    assert np.allclose(positions(nested), expected_nested, atol=1e-6)
+
+    # 眼部组之外必须逐顶点等于普通全局变基，张嘴不能再发生 FBSF 式回弹。
+    new_basis_positions = positions(basis)
+    expected_mouth = old_mouth_open + (new_basis_positions - old_basis)
+    assert np.allclose(positions(mouth_open)[12:], expected_mouth[12:], atol=1e-6)
+
+    # 嵌套键仍沿修正后的父键迁移，统一平移不会被眼部局部求解吞掉。
+    for index in range(len(old_nested)):
+        assert_position(nested, index, (
+            expression.data[index].co.x,
+            expression.data[index].co.y + 0.2,
+            expression.data[index].co.z,
+        ))
 
     # 前置检查会拒绝不安全状态，并且不改变已经保存的坐标。
     guarded = make_mesh("GuardedRebase", vertex_count=2)
@@ -212,6 +308,13 @@ try:
     result = bpy.ops.ho.rebase_shapekeys_preserve_expressions("EXEC_DEFAULT")
     assert result == {'CANCELLED'}
     assert np.allclose(positions(guarded_basis), original_basis)
+
+    guarded.data.shape_keys.use_relative = True
+    result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
+        "EXEC_DEFAULT", blink_reference_key="Missing")
+    assert result == {'CANCELLED'}
+    assert np.allclose(positions(guarded_basis), original_basis)
+    assert guarded.data.shape_keys.key_blocks.get("Sculpt") is not None
 
     # FBSF 与 HO 是两个独立算子。左侧表情与捏脸同向，因此反向抵消；
     # 右侧表情与捏脸正交，因此保持普通全局变基产生的整体位移。
