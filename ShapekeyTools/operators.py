@@ -1,5 +1,6 @@
 import bpy
 import bmesh
+import numpy as np
 from bpy.types import Operator, UILayout, Context, Object, UIList,PropertyGroup
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty
 from mathutils.kdtree import KDTree
@@ -2296,10 +2297,182 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
                     current_index -= 1
         obj.active_shape_key_index = 0  # 选中基型
 
+class ShapeKeyRebaseError(RuntimeError):
+    pass
+
+
+def _read_shape_key_positions(key_block):
+    positions = np.empty(len(key_block.data) * 3, dtype=np.float32)
+    key_block.data.foreach_get("co", positions)
+    return positions.reshape((-1, 3))
+
+
+def _write_shape_key_positions(key_block, positions):
+    key_block.data.foreach_set("co", np.asarray(positions, dtype=np.float32).reshape(-1))
+
+
+def _shape_key_rebase_mask(local_delta, threshold, falloff_ratio, strength):
+    vertex_count = len(local_delta)
+    lengths = np.linalg.norm(local_delta, axis=1)
+    if falloff_ratio <= 0.0:
+        mask = (lengths > threshold).astype(np.float32)
+    else:
+        max_length = float(lengths.max(initial=0.0))
+        width = max_length * falloff_ratio
+        if width <= np.finfo(np.float32).eps:
+            mask = (lengths > threshold).astype(np.float32)
+        else:
+            t = np.clip((lengths - threshold) / width, 0.0, 1.0)
+            mask = (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+    return mask * strength
+
+
+def _mix_rebased_shape_positions(
+        key_positions, old_relative_positions, new_relative_positions,
+        threshold, falloff_ratio, strength):
+    local_delta = key_positions - old_relative_positions
+    mask = _shape_key_rebase_mask(
+        local_delta, threshold, falloff_ratio, strength)
+    relative_shift = new_relative_positions - old_relative_positions
+    result = key_positions + relative_shift * (1.0 - mask[:, None])
+    return result, mask
+
+
+def _validate_shape_key_rebase_object(obj):
+    if obj is None or obj.type != 'MESH':
+        raise ShapeKeyRebaseError("活动对象不是网格")
+    if obj.data.library is not None:
+        raise ShapeKeyRebaseError("链接库网格不可直接变基，请先建立本地副本")
+    if obj.data.users > 1:
+        raise ShapeKeyRebaseError("网格数据被多个物体共享，请先转为单用户")
+
+    shape_keys = obj.data.shape_keys
+    if shape_keys is None or len(shape_keys.key_blocks) < 2:
+        raise ShapeKeyRebaseError("对象没有足够的形态键")
+    if not shape_keys.use_relative:
+        raise ShapeKeyRebaseError("只支持相对形态键；请先切换为相对模式")
+
+    basis = shape_keys.reference_key
+    active_key = obj.active_shape_key
+    if basis is None or active_key is None or active_key == basis:
+        raise ShapeKeyRebaseError("请选择一个作为新基型来源的非基型形态键")
+    if active_key.relative_key != basis:
+        raise ShapeKeyRebaseError("活动捏脸键必须直接相对于基型")
+
+    nonzero_keys = [
+        key.name for key in shape_keys.key_blocks
+        if key not in {basis, active_key} and abs(key.value) > 1e-6
+    ]
+    if nonzero_keys:
+        preview = "、".join(nonzero_keys[:4])
+        suffix = "等" if len(nonzero_keys) > 4 else ""
+        raise ShapeKeyRebaseError(f"请先把其他形态键权重归零：{preview}{suffix}")
+
+    vertex_count = len(basis.data)
+    for key in shape_keys.key_blocks:
+        if len(key.data) != vertex_count:
+            raise ShapeKeyRebaseError(f"形态键 {key.name} 的顶点数量不一致")
+        if key != basis and key.relative_key is None:
+            raise ShapeKeyRebaseError(f"形态键 {key.name} 缺少相对键")
+    return shape_keys, basis, active_key
+
+
+def _shape_key_rebase_order(shape_keys, basis, active_key):
+    keys_by_name = {key.name: key for key in shape_keys.key_blocks}
+    state = {}
+    result = []
+
+    def visit(key):
+        if key in {basis, active_key}:
+            return
+        current_state = state.get(key.name, 0)
+        if current_state == 2:
+            return
+        if current_state == 1:
+            raise ShapeKeyRebaseError(f"形态键相对关系存在循环：{key.name}")
+        state[key.name] = 1
+        relative = key.relative_key
+        if relative not in {basis, active_key}:
+            relative = keys_by_name.get(relative.name)
+            if relative is None:
+                raise ShapeKeyRebaseError(f"找不到 {key.name} 的相对键")
+            visit(relative)
+        state[key.name] = 2
+        result.append(key)
+
+    for key in shape_keys.key_blocks:
+        visit(key)
+    return result
+
+
+def _rebase_shape_keys(
+        obj, factor, threshold, falloff_ratio, protection_strength):
+    shape_keys, basis, active_key = _validate_shape_key_rebase_object(obj)
+    if factor <= 0.0:
+        raise ShapeKeyRebaseError("变基权重必须大于 0")
+
+    ordered_keys = _shape_key_rebase_order(shape_keys, basis, active_key)
+    old_basis = _read_shape_key_positions(basis)
+    old_active = _read_shape_key_positions(active_key)
+    new_basis = old_basis + (old_active - old_basis) * factor
+
+    child_counts = {key.name: 0 for key in ordered_keys}
+    for key in ordered_keys:
+        relative = key.relative_key
+        if relative not in {basis, active_key}:
+            child_counts[relative.name] += 1
+
+    cached_old = {}
+    cached_new = {}
+    protected_pairs = 0
+    partial_pairs = 0
+
+    for key in ordered_keys:
+        relative = key.relative_key
+        if relative == basis:
+            old_relative = old_basis
+            new_relative = new_basis
+        elif relative == active_key:
+            old_relative = old_active
+            new_relative = new_basis
+        else:
+            old_relative = cached_old[relative.name]
+            new_relative = cached_new[relative.name]
+
+        old_key = _read_shape_key_positions(key)
+        new_key, mask = _mix_rebased_shape_positions(
+            old_key, old_relative, new_relative,
+            threshold, falloff_ratio, protection_strength)
+        protected_pairs += int(np.count_nonzero(mask >= 1.0 - 1e-6))
+        partial_pairs += int(np.count_nonzero((mask > 1e-6) & (mask < 1.0 - 1e-6)))
+
+        if child_counts[key.name] > 0:
+            cached_old[key.name] = old_key
+            cached_new[key.name] = new_key
+        _write_shape_key_positions(key, new_key)
+
+        if relative not in {basis, active_key}:
+            child_counts[relative.name] -= 1
+            if child_counts[relative.name] == 0:
+                cached_old.pop(relative.name, None)
+                cached_new.pop(relative.name, None)
+
+    for key in ordered_keys:
+        if key.relative_key == active_key:
+            key.relative_key = basis
+    _write_shape_key_positions(basis, new_basis)
+    active_name = active_key.name
+    obj.shape_key_remove(active_key)
+    obj.active_shape_key_index = 0
+    obj.show_only_shape_key = False
+    obj.data.update()
+    return active_name, len(ordered_keys), protected_pairs, partial_pairs
+
+
 class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
-    """活动键到基型"""
+    """全键变基"""
     bl_idname = "ho.apply_active_shapekey_to_basis"
-    bl_label = "活动键到基型"
+    bl_label = "全键变基"
     bl_description = "根据活动键的权重混合到基型，会删除活动键"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -2347,6 +2520,112 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 
         # 删除活动键
         obj.shape_key_remove(active_key)
+        return {'FINISHED'}
+
+
+# TODO(高级变基): 增加基于 deformation transfer 的高质量模式。
+# 按三角形提取“旧 Basis -> 表情键”的局部变形梯度，将它们施加到新 Basis，
+# 再通过稀疏最小二乘重建顶点位置；需要同时设计标记点/固定顶点组约束、边界与
+# 退化三角形处理、求解失败时回退到当前局部遮罩方案，并提供结果预览与误差对比。
+class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
+    """用活动捏脸键局部重建基型和其余相对形态键。"""
+    bl_idname = "ho.rebase_shapekeys_preserve_expressions"
+    bl_label = "全键局部变基"
+    bl_description = "把活动捏脸键混入基型；表情动过的顶点保持绝对位置，未动顶点跟随新基型，并删除活动键"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    factor: FloatProperty(
+        name="变基权重",
+        description="活动捏脸键混入基型的比例",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+    movement_threshold: FloatProperty(
+        name="位移容差",
+        description="相对位移不超过此值的顶点视为未被表情修改",
+        default=0.00001,
+        min=0.0,
+        soft_max=0.01,
+        precision=6,
+        unit='LENGTH',
+    ) # type: ignore
+    falloff_ratio: FloatProperty(
+        name="边缘过渡",
+        description="按该表情最大位移的比例柔化保护边缘；0 为严格二值遮罩",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+    protection_strength: FloatProperty(
+        name="保护强度",
+        description="1 保持表情目标的旧绝对位置；降低可让表情更多地跟随新基型",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and obj.active_shape_key_index > 0
+        )
+
+    def invoke(self, context, event):
+        try:
+            _shape_keys, _basis, active_key = _validate_shape_key_rebase_object(context.object)
+        except ShapeKeyRebaseError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        if active_key.value > 1e-6:
+            self.factor = min(1.0, active_key.value)
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        active_key = obj.active_shape_key if obj else None
+
+        warning = layout.box()
+        warning.alert = True
+        warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
+        warning.label(text="请先保存文件；其他形态键必须为 0 权重")
+        if active_key is not None:
+            warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
+
+        layout.prop(self, "factor")
+        layout.prop(self, "protection_strength")
+        layout.prop(self, "movement_threshold")
+        layout.prop(self, "falloff_ratio")
+
+    def execute(self, context):
+        obj = context.object
+        if obj is not None and obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        try:
+            active_name, key_count, protected, partial = _rebase_shape_keys(
+                obj,
+                self.factor,
+                self.movement_threshold,
+                self.falloff_ratio,
+                self.protection_strength,
+            )
+        except ShapeKeyRebaseError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        except Exception as exc:
+            self.report({'ERROR'}, f"变基失败：{exc}")
+            return {'CANCELLED'}
+
+        detail = f"，完整保护 {protected}，混合保护 {partial}"
+        self.report({'INFO'}, f"已用 {active_name} 变基并重写 {key_count} 个形态键{detail}")
         return {'FINISHED'}
 
 class OP_ForceRemoveAll(Operator):
@@ -2504,6 +2783,13 @@ def _draw_sk_operators(layout: UILayout,context:Context):
                  text="全键归零", icon="FUND")
     row.operator(OP_SetBasisShapekeyActive.bl_idname,
                  text="选中基型", icon="FUND")
+
+    row = layout.row(align=True)
+    row.scale_y = 2.0
+    row.alert = True
+    row.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,
+                 text="全键局部变基", icon="KEY_HLT")
+    row.alert = False
     
 
     # 形态键混合/清除
@@ -2571,6 +2857,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
+    layout.operator(OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,icon="KEY_HLT")
     
 
 class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
@@ -2802,6 +3089,7 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
+    OP_ShapekeyTools_RebasePreserveExpressions,
     OP_ForceRemoveAll, OP_ForceApplyAll,
     OP_ShapekeyTools_GenerateHideShapeKey,
 ]
