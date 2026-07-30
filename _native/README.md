@@ -1,9 +1,10 @@
 # HoTools native 后端
 
-`_native` 是 HoTools 的原生加速层，提供两个 Python 扩展模块：
+`_native` 是 HoTools 的原生加速层，提供三个 Python 扩展模块：
 
 - **`hotools_native`**：CPython 扩展，MC2 风格布料/弹簧骨骼求解管线
 - **`hotools_jolt`**：nanobind 扩展，Jolt Physics 刚体/约束模拟后端
+- **`hotools_boolean`**：nanobind + CGAL/libigl 精确外壳/自身并集重构
 
 C++ 侧只处理数组、上下文、约束求解和碰撞内核，不直接碰 Blender 场景对象。Python 侧负责场景采集、缓存管理、节点状态同步和结果回写。
 
@@ -49,6 +50,9 @@ build.bat 313
 :: 只编译 py313 的 hotools_jolt
 build.bat 313 jolt
 
+:: 只编译 Blender 4.5 的精确外壳布尔模块
+build.bat 311 boolean
+
 :: 显式构建 py313 的两个模块
 build.bat 313 all
 ```
@@ -63,6 +67,7 @@ build.bat 313 all
 ```
 _Lib\py311\HotoolsPackage\hotools_jolt.cp311-win_amd64.pyd
 _Lib\py311\HotoolsPackage\hotools_native.cp311-win_amd64.pyd
+_Lib\py311\HotoolsPackage\hotools_boolean.cp311-win_amd64.pyd
 _Lib\py313\HotoolsPackage\hotools_jolt.cp313-win_amd64.pyd
 _Lib\py313\HotoolsPackage\hotools_native.cp313-win_amd64.pyd
 ```
@@ -89,7 +94,9 @@ $src   = '..\_native'   # 在 _native/ 同级目录时调整相对路径
 
 - **nanobind**：优先使用 `extern/nanobind/`（git submodule），无则 FetchContent 拉取并缓存至 `.fetch-cache/`
 - **JoltPhysics**：优先使用 `extern/JoltPhysics/`（git submodule），无则 FetchContent 缓存
-- `.fetch-cache/` 放在 `_native/` 下，独立于 `build/` 目录，清 build 不重新下载
+- **outer-hull**：CMake 固定 libigl v2.6.0；其配方固定 CGAL 6.0.1、Eigen 5.0.1、Boost 1.86.0
+- `.fetch-cache/` 强制放在 `_native/` 下，独立于 `build/` 目录，清 build 不重新下载
+- Boost 大包可先运行 `fetch_boolean_dependencies.ps1` 下载到 `extern/archives/` 并校验 MD5
 
 配置 git submodule（可选，提供稳定的本地源码路径）：
 
@@ -107,6 +114,7 @@ _native/
 ├── include/        # 对外 C++ 头文件
 ├── tests/          # 回归测试
 ├── extern/         # git submodule（nanobind / JoltPhysics，可选）
+│   └── archives/   # 可重新下载的大型依赖压缩包（不进 git）
 ├── .fetch-cache/   # FetchContent 源码缓存（不进 git）
 ├── build/
 │   ├── vs2022-py311-native/  # Blender 4.5 hotools_native
@@ -117,6 +125,7 @@ _native/
 │   └── vs2022-py313/         # 显式 all 组合构建
 ├── CMakeLists.txt
 ├── CMakePresets.json
+├── fetch_boolean_dependencies.ps1
 └── build.bat
 ```
 

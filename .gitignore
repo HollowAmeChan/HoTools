@@ -40,6 +40,9 @@ _native/cmake-build-*/
 _native/out/
 _native/install/
 _native/.idea/
+_native/.fetch-cache/
+_native/extern/archives/*
+!_native/extern/archives/README.md
 
 # 探索工作区：保留可复现探针和说明；模型盘点结果/缓存不入库
 _research/*

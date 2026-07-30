@@ -56,7 +56,23 @@ endif()
 # ---------------------------------------------------------------------------
 include(FetchContent)
 set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_LIST_DIR}/.fetch-cache"
-    CACHE PATH "FetchContent 源码缓存目录（build 目录无关）")
+    CACHE PATH "FetchContent 源码缓存目录（build 目录无关）" FORCE)
+
+# Reuse extracted dependency sources after build directories are cleaned or
+# caches are moved. FetchContent otherwise stores absolute paths in its
+# generated subbuild metadata, making that metadata non-portable.
+foreach(_hotools_dependency nanobind libigl cgal eigen boost)
+    string(TOUPPER "${_hotools_dependency}" _hotools_dependency_upper)
+    set(_hotools_dependency_source
+        "${FETCHCONTENT_BASE_DIR}/${_hotools_dependency}-src")
+    if(EXISTS "${_hotools_dependency_source}")
+        set(
+            FETCHCONTENT_SOURCE_DIR_${_hotools_dependency_upper}
+            "${_hotools_dependency_source}"
+            CACHE PATH "Local extracted ${_hotools_dependency} source" FORCE
+        )
+    endif()
+endforeach()
 
 # ---------------------------------------------------------------------------
 # nanobind：本地 extern/ 优先，无则 FetchContent
@@ -82,6 +98,12 @@ endif()
 # GMP is disabled: Boost.Multiprecision keeps the .pyd self-contained.
 # ---------------------------------------------------------------------------
 if(HOTOOLS_BUILD_BOOLEAN)
+    set(HOTOOLS_LIBIGL_VERSION "2.6.0" CACHE STRING
+        "Pinned libigl version for the exact outer-hull module")
+    set(HOTOOLS_BOOLEAN_BOOST_VERSION "1.86.0" CACHE STRING
+        "Boost archive version pinned by libigl v2.6.0")
+    set(HOTOOLS_BOOLEAN_BOOST_MD5 "ac857d73bb754b718a039830b07b9624"
+        CACHE STRING "Expected Boost source archive MD5")
     set(LIBIGL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(LIBIGL_BUILD_TUTORIALS OFF CACHE BOOL "" FORCE)
     set(LIBIGL_INSTALL OFF CACHE BOOL "" FORCE)
@@ -97,20 +119,20 @@ if(HOTOOLS_BUILD_BOOLEAN)
     set(CGAL_DISABLE_GMP ON CACHE BOOL "" FORCE)
 
     set(_hotools_boost_archive
-        "${HOTOOLS_PLUGIN_ROOT}/_research/download/boost_1_86_0.tar.gz")
+        "${CMAKE_CURRENT_LIST_DIR}/extern/archives/boost_1_86_0.tar.gz")
     if(EXISTS "${_hotools_boost_archive}")
-        message(STATUS "[HoTools] Boost: using local research archive")
+        message(STATUS "[HoTools] Boost: using checksum-verified local archive")
         FetchContent_Declare(
             Boost
             URL "${_hotools_boost_archive}"
-            URL_HASH MD5=ac857d73bb754b718a039830b07b9624
+            URL_HASH MD5=${HOTOOLS_BOOLEAN_BOOST_MD5}
         )
     endif()
 
     FetchContent_Declare(
         libigl
         GIT_REPOSITORY https://github.com/libigl/libigl.git
-        GIT_TAG        v2.6.0
+        GIT_TAG        v${HOTOOLS_LIBIGL_VERSION}
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(libigl)
