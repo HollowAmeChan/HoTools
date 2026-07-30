@@ -58,8 +58,8 @@ def assert_position(key, index, expected):
     assert np.allclose(actual, expected, atol=1e-6), (key.name, index, actual, expected)
 
 
-# The smooth mask blends by displacement magnitude, then applies the global
-# protection strength. A zero-width falloff remains a strict moved/unmoved mask.
+# 柔化遮罩先按位移幅度混合，再应用全局保护强度；过渡宽度为零时，
+# 仍然使用严格的移动/未移动二值遮罩。
 delta = np.array(
     [
         (0.0, 0.0, 0.0),
@@ -74,9 +74,8 @@ assert np.allclose(mask, (0.0, 0.25, 0.5, 0.5), atol=1e-6)
 binary_mask = module._shape_key_rebase_mask(delta, 0.5, 0.0, 1.0)
 assert np.allclose(binary_mask, (0.0, 0.0, 1.0, 1.0), atol=1e-6)
 
-# Gradient mode combines normalized motion with a per-triangle polar
-# decomposition. Pure translation is retained by motion, while rotation also
-# protects a stationary pivot vertex through its incident triangle.
+# 梯度模式融合归一化位移与逐三角面的极分解。位移分量保留纯平移，
+# 旋转分量则通过相邻三角面保护没有产生位移的旋转枢轴顶点。
 triangle_positions = np.array(
     [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
     dtype=np.float32,
@@ -178,24 +177,24 @@ try:
     for index in range(5):
         assert_position(basis, index, (float(index), 0.5, 0.0))
 
-    # Expression vertices above the threshold retain their old absolute target.
+    # 超过阈值的表情顶点保持原来的绝对目标位置。
     assert_position(expression, 0, (0.0, 0.0, 1.0))
     assert_position(expression, 1, (1.0, 0.5, 0.0))
     assert_position(expression, 2, (2.0, 0.5, 0.05))
     assert_position(expression, 3, (3.0, 0.0, 2.0))
     assert_position(expression, 4, (4.0, 0.5, 0.0))
 
-    # A nested key follows its rewritten relative key where its own local delta is zero.
+    # 嵌套键在自身局部位移为零的位置跟随重写后的相对键。
     assert_position(nested, 0, (0.0, 0.0, 1.0))
     assert_position(nested, 1, (1.5, 0.0, 0.0))
     assert_position(nested, 2, (2.0, 0.5, 0.05))
 
-    # Children of the removed sculpt key are safely re-parented to the new Basis.
+    # 被删除捏脸键的子键会安全地改为相对新 Basis。
     assert_position(active_child, 0, (0.0, 0.5, 0.0))
     assert_position(active_child, 4, (4.0, 1.0, 0.5))
 
-    # A zero-displacement rotation pivot is protected by the incident face's
-    # polar rotation instead of following the newly raised Basis.
+    # 零位移的旋转枢轴由相邻面的极分解旋转识别并保护，
+    # 不会跟随抬高后的新 Basis。
     gradient_obj = make_triangle_mesh("GradientLocalRebase")
     gradient_basis = gradient_obj.shape_key_add(name="Basis", from_mix=False)
     gradient_sculpt = gradient_obj.shape_key_add(name="FaceSculpt", from_mix=False)
@@ -220,7 +219,7 @@ try:
     assert_position(gradient_keys[0], 0, (0.0, 0.0, 1.0))
     assert_position(gradient_keys["RotatedExpression"], 0, (0.0, 0.0, 0.0))
 
-    # Preconditions reject unsafe state without changing stored coordinates.
+    # 前置检查会拒绝不安全状态，并且不改变已经保存的坐标。
     guarded = make_mesh("GuardedRebase", vertex_count=2)
     guarded_basis = guarded.shape_key_add(name="Basis", from_mix=False)
     guarded_sculpt = guarded.shape_key_add(name="Sculpt", from_mix=False)
@@ -240,7 +239,7 @@ try:
     assert result == {'CANCELLED'}
     assert np.allclose(positions(guarded_basis), original_basis)
 
-    # The pre-existing operator remains independent and keeps its original behavior.
+    # 原有全键变基算子保持独立并维持原行为。
     legacy = make_mesh("FullRebase", vertex_count=2)
     legacy_basis = legacy.shape_key_add(name="Basis", from_mix=False)
     legacy_source = legacy.shape_key_add(name="Source", from_mix=False)
@@ -264,8 +263,7 @@ finally:
         bpy.utils.unregister_class(operator)
 
 
-# Exercise the production registration list so both independently named operators
-# stay available through normal add-on registration.
+# 覆盖正式注册列表，确保两个独立命名的算子都能通过插件正常注册。
 module.register()
 try:
     assert hasattr(bpy.ops.ho, "apply_active_shapekey_to_basis")

@@ -2328,7 +2328,7 @@ def _shape_key_rebase_mask(local_delta, threshold, falloff_ratio, strength):
 
 
 def _normalize_shape_key_activity(values, active_mask):
-    """Normalize one key's activity while limiting the influence of outliers."""
+    """归一化单个形态键的活动度，同时限制离群值的影响。"""
     values = np.asarray(values, dtype=np.float64)
     active_mask = np.asarray(active_mask, dtype=bool)
     result = np.zeros(len(values), dtype=np.float32)
@@ -2358,7 +2358,7 @@ def _mesh_triangle_indices(mesh):
 
 def _shape_key_deformation_activity(
         relative_positions, key_positions, triangles, movement_threshold):
-    """Return a scale-independent displacement/rotation/strain activity field."""
+    """返回不受模型整体缩放影响的位移、旋转与应变活动度。"""
     relative_positions = np.asarray(relative_positions, dtype=np.float64)
     key_positions = np.asarray(key_positions, dtype=np.float64)
     local_delta = key_positions - relative_positions
@@ -2392,8 +2392,8 @@ def _shape_key_deformation_activity(
     longest_edge_length = np.sqrt(
         edge_length_squared[triangle_indices, longest_edge_index])
 
-    # Area relative to the longest edge rejects triangles whose local frame is
-    # numerically undefined without making the test depend on object scale.
+    # 用面积与最长边平方的比例排除局部坐标系数值不稳定的三角形，
+    # 同时避免退化判定受模型整体缩放影响。
     valid_reference = (
         (longest_edge_length > np.finfo(np.float64).eps)
         & (double_area > longest_edge_length * longest_edge_length * 1e-8)
