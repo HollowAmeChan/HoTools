@@ -81,13 +81,198 @@ assert module._fbsf_threshold_map(0.95) == 1.0
 assert module._fbsf_auto_function_tag("@vrc.blink.001") == 'BOTH_EYES'
 assert module._fbsf_auto_function_tag("eyeBlinkLeft") == 'LEFT_EYE'
 assert module._fbsf_auto_function_tag("eyeBlinkRight.001") == 'RIGHT_EYE'
-assert module._fbsf_auto_function_tag("眼眶Left") == 'LEFT_EYE'
-assert module._fbsf_auto_function_tag("眼眶Right") == 'RIGHT_EYE'
-assert module._fbsf_auto_function_tag("左眼眶") == 'LEFT_EYE'
-assert module._fbsf_auto_function_tag("右眼眶.001") == 'RIGHT_EYE'
+assert module._fbsf_auto_function_tag("眼眶Left") == 'OTHERS'
+assert module._fbsf_auto_function_tag("眼眶Right") == 'OTHERS'
+assert module._fbsf_auto_function_tag("左眼眶") == 'OTHERS'
+assert module._fbsf_auto_function_tag("右眼眶.001") == 'OTHERS'
 assert module._fbsf_auto_function_tag("vrc.v_aa") == 'MOUTH'
 assert module._fbsf_auto_function_tag("MouthOpen") == 'MOUTH'
 assert module._fbsf_auto_function_tag("CheekPuff") == 'OTHERS'
+
+# 标准精确词表必须覆盖完整列表；Left/Right 只按各标准的语法解释。
+for shape_name in module.ARKIT_SHAPEKEYS:
+    if shape_name.startswith(('jaw', 'mouth', 'tongue')):
+        expected = 'MOUTH'
+    elif shape_name.startswith('eye') or shape_name.startswith('cheekSquint'):
+        expected = 'LEFT_EYE' if shape_name.endswith('Left') else 'RIGHT_EYE'
+    else:
+        expected = 'OTHERS'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+
+for shape_name in module.UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS:
+    if shape_name.startswith(('Jaw', 'Lip', 'Mouth', 'Tongue')):
+        expected = 'MOUTH'
+    elif shape_name.startswith(('EyeLook', 'EyeClosed', 'EyeSquint', 'EyeWide')):
+        expected = 'LEFT_EYE' if shape_name.endswith('Left') else 'RIGHT_EYE'
+    elif shape_name.startswith('CheekSquint'):
+        expected = 'LEFT_EYE' if shape_name.endswith('Left') else 'RIGHT_EYE'
+    else:
+        expected = 'OTHERS'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+
+for shape_name in module.UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS:
+    if shape_name.startswith(('Lip', 'Mouth')):
+        expected = 'MOUTH'
+    elif shape_name in {'EyeClosed', 'EyeWide', 'EyeSquint', 'CheekSquint'}:
+        expected = 'BOTH_EYES'
+    else:
+        expected = 'OTHERS'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+
+meta_mouth_prefixes = (
+    'CHIN_', 'DIMPLER_', 'JAW_', 'LIP_', 'LIPS_', 'LOWER_LIP_',
+    'MOUTH_', 'TONGUE_', 'UPPER_LIP_',
+)
+for shape_name in module.QUEST_PRO_SHAPEKEYS:
+    if shape_name.startswith(meta_mouth_prefixes):
+        expected = 'MOUTH'
+    elif shape_name.startswith((
+            'EYES_CLOSED_', 'LID_TIGHTENER_', 'UPPER_LID_RAISER_')):
+        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+    elif shape_name.startswith('EYES_LOOK_'):
+        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+    elif shape_name.startswith('CHEEK_RAISER_'):
+        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+    else:
+        expected = 'OTHERS'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+assert len(module.QUEST_PRO_SHAPEKEYS) == 70
+assert len(module.QUEST_PRO_SHAPEKEYS) == len(set(module.QUEST_PRO_SHAPEKEYS))
+assert 'EYES_LOOK_LEFT_L' in module.QUEST_PRO_SHAPEKEYS
+assert 'EYES_LOOK_RIGHT_R' in module.QUEST_PRO_SHAPEKEYS
+assert 'LOWER_LIP_DEPRESSOR_L' in module.QUEST_PRO_SHAPEKEYS
+assert 'LOWER_LIP_DEPRESSER_L' not in module.QUEST_PRO_SHAPEKEYS
+for shape_name in (
+        'EYES_LOOK_IN_L', 'EYES_LOOK_OUT_R',
+        'EYES_SQUINT_L', 'EYES_WIDEN_R'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'OTHERS', shape_name
+
+vrm1_expected = {
+    'Aa': 'MOUTH', 'Ih': 'MOUTH', 'Ou': 'MOUTH',
+    'Ee': 'MOUTH', 'Oh': 'MOUTH',
+    'Blink': 'BOTH_EYES', 'BlinkLeft': 'LEFT_EYE',
+    'BlinkRight': 'RIGHT_EYE',
+    'LookUp': 'BOTH_EYES', 'LookDown': 'BOTH_EYES',
+    'LookLeft': 'BOTH_EYES', 'LookRight': 'BOTH_EYES',
+}
+for shape_name in module.VRM1_SHAPEKEYS:
+    assert module._fbsf_auto_function_tag(shape_name) == (
+        vrm1_expected.get(shape_name, 'OTHERS'))
+
+for shape_name in module.OCULUS_VISEME_SHAPEKEYS:
+    assert module._fbsf_auto_function_tag(shape_name) == 'MOUTH', shape_name
+
+for shape_name in module.VIVE_SRANIPAL_EYE_SHAPEKEYS:
+    if shape_name == 'Eye_Frown':
+        expected = 'BOTH_EYES'
+    else:
+        expected = 'LEFT_EYE' if '_Left_' in shape_name else 'RIGHT_EYE'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+for shape_name in module.VIVE_SRANIPAL_LIP_SHAPEKEYS:
+    expected = (
+        'OTHERS' if shape_name.startswith('Cheek_') else 'MOUTH')
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+
+for shape_name in module.VIVE_OPENXR_EYE_SHAPEKEYS:
+    expected = 'LEFT_EYE' if '_LEFT_' in shape_name else 'RIGHT_EYE'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+for shape_name in module.VIVE_OPENXR_LIP_SHAPEKEYS:
+    expected = 'OTHERS' if '_CHEEK_' in shape_name else 'MOUTH'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+
+assert {
+    'VRM1', 'META_VISEME', 'PICO', 'OCULUS_VISEME',
+    'VIVE_SRANIPAL', 'VIVE_OPENXR',
+}.issubset(module.SHAPEKEY_TEMPLATE_MAP)
+for template_name, shape_names in module.SHAPEKEY_TEMPLATE_MAP.items():
+    assert len(shape_names) == len(set(shape_names)), template_name
+
+for shape_name in module._FBSF_PICO_EYE_ANCHORS + module._FBSF_PICO_EYE_GAZE:
+    expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+for shape_name in module._FBSF_PICO_MOUTH:
+    assert module._fbsf_auto_function_tag(shape_name) == 'MOUTH', shape_name
+for shape_name in module._FBSF_PICO_OTHER:
+    if shape_name.startswith('CheekSquint_'):
+        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+    else:
+        expected = 'OTHERS'
+    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+assert len(module._FBSF_PICO_SHAPEKEYS) == 52
+assert len(module._FBSF_PICO_VISEMES) == 20
+assert len(module.PICO_SHAPEKEYS) == 72
+pico_context = module._FBSF_PICO_SHAPEKEYS + module._FBSF_PICO_VISEMES
+for shape_name in module._FBSF_PICO_VISEMES:
+    assert module._fbsf_auto_function_tag(
+        shape_name, pico_context) == 'MOUTH', shape_name
+
+# 323 个 PMX 的类别统计支持这些 MMD 眼皮和嘴部名称；眉毛、瞳孔保持其他。
+for shape_name in (
+        'まばたき', '笑い', 'なごみ', 'はぅ', 'びっくり', 'じと目', 'ジト目',
+        'ｷﾘｯ', 'はちゅ目'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'BOTH_EYES'
+for shape_name in ('ウィンク', 'ウィンク２'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'LEFT_EYE'
+for shape_name in ('ウィンク右', 'ウィンク２右', 'ｳｨﾝｸ２右.001'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'RIGHT_EYE'
+for shape_name in (
+        'あ', 'い', 'う', 'え', 'お', 'にやり', 'にっこり',
+        '口角上げ', '口横狭め', '口上', '口下'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'MOUTH'
+for shape_name in ('真面目', '困る', '怒り', 'にこり', '瞳小', '星目'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'OTHERS'
+
+directional_eye_names = ('eye_left', 'eye_right', 'eye_up', 'eye_down')
+for shape_name in directional_eye_names:
+    assert module._fbsf_auto_function_tag(
+        shape_name, directional_eye_names) == 'OTHERS'
+assert module._fbsf_auto_function_tag('eye_left') == 'OTHERS'
+assert module._fbsf_auto_function_tag('EyeLook_Left') == 'OTHERS'
+assert module._fbsf_auto_function_tag('eye_close_L') == 'OTHERS'
+assert module._fbsf_auto_function_tag('Eyelid_close_R') == 'OTHERS'
+assert module._fbsf_auto_function_tag('vrc.lowerlid_left') == 'OTHERS'
+for shape_name in (
+        'EyeMaterial', 'Eyebrow', '目線材質', 'MouthMask',
+        'EyeSculptLeft', 'Eyelid_Anger', 'mouth_morph_wide',
+        'EyeLook_Yori', 'Mouth_Smile'):
+    assert module._fbsf_auto_function_tag(shape_name) == 'OTHERS'
+
+vrm_context = ('A', 'I', 'U', 'E', 'O', 'Blink', 'LookLeft')
+for shape_name in ('A', 'I', 'U', 'E', 'O'):
+    assert module._fbsf_auto_function_tag(
+        shape_name, vrm_context) == 'MOUTH'
+assert module._fbsf_auto_function_tag('A') == 'OTHERS'
+meta_context = tuple(module.QUEST_PRO_SHAPEKEYS + module.META_VISEME_SHAPEKEYS)
+for shape_name in module.META_VISEME_SHAPEKEYS:
+    assert module._fbsf_auto_function_tag(
+        shape_name, meta_context) == 'MOUTH', shape_name
+assert module._fbsf_auto_function_tag('XX', meta_context) == 'OTHERS'
+
+assert module._fbsf_auto_preset('eyeLookUpLeft').reference_tag == 'OTHERS'
+assert module._fbsf_auto_preset('EyeDilationLeft').function_tag == 'OTHERS'
+assert module._fbsf_auto_preset('eyeBlinkLeft').reference_tag == 'LEFT_EYE'
+assert module._fbsf_auto_preset('Eyelid_Anger').function_tag == 'OTHERS'
+assert module._fbsf_auto_preset('Eyelid_Anger').reference_tag == 'OTHERS'
+assert module._fbsf_auto_preset('Eyelid_close').reference_tag == 'OTHERS'
+assert module._fbsf_auto_preset('mouth_morph_wide').function_tag == 'OTHERS'
+assert module._fbsf_auto_preset('mouth_morph_wide').reference_tag == 'OTHERS'
+assert module._fbsf_auto_preset('Mouth_Smile').reference_tag == 'OTHERS'
+assert 'eyeblinkleft' in module._fbsf_normalized_names(
+    '@eyeBlinkLeft.001.1000')
+
+negative_x_wink = np.zeros_like(fbsf_edit)
+negative_x_wink[:2, 1] = 1.0
+positive_x_wink = np.zeros_like(fbsf_edit)
+positive_x_wink[2:, 1] = 1.0
+assert module._fbsf_resolve_mmd_side_tag(
+    'ウィンク', 'LEFT_EYE', 'LEFT_EYE', negative_x_wink, fbsf_basis,
+) == ('RIGHT_EYE', 'RIGHT_EYE')
+assert module._fbsf_resolve_mmd_side_tag(
+    'ウィンク', 'LEFT_EYE', 'LEFT_EYE', positive_x_wink, fbsf_basis,
+) == ('LEFT_EYE', 'LEFT_EYE')
+assert module._fbsf_resolve_mmd_side_tag(
+    'eyeBlinkLeft', 'LEFT_EYE', 'LEFT_EYE', negative_x_wink, fbsf_basis,
+) == ('LEFT_EYE', 'LEFT_EYE')
 
 fbsf_references = (
     ('BOTH_EYES', fbsf_target),
@@ -120,10 +305,15 @@ assert (left_score, right_score, split_sides) == (0.0, 0.0, False)
 assert not np.any(other_weights)
 assert module.OP_ShapekeyTools_RebaseFBSF.bl_label == "全键局部变基-FBSF"
 assert "function_tag" in module.PG_ShapekeyTools_FBSFSource.__annotations__
+assert "auto_function_tag" in module.PG_ShapekeyTools_FBSFSource.__annotations__
+assert "reference_tag" in module.PG_ShapekeyTools_FBSFSource.__annotations__
 assert "merge" in module.PG_ShapekeyTools_FBSFSource.__annotations__
 assert "mergeable" in module.PG_ShapekeyTools_FBSFSource.__annotations__
 assert "enabled" not in module.PG_ShapekeyTools_FBSFSource.__annotations__
 assert 'SOURCE' not in module.FBSF_FUNCTION_TAGS
+assert {
+    'BOTH_EYES_MOUTH', 'LEFT_EYE_MOUTH', 'RIGHT_EYE_MOUTH',
+}.issubset(module.FBSF_FUNCTION_TAGS)
 assert "factor" not in module.OP_ShapekeyTools_RebaseFBSF.__annotations__
 assert {
     "sources", "source_index", "correction_strength", "side_smooth_width",
@@ -210,14 +400,15 @@ try:
 
     fbsf_sculpt.value = 0.5
     fbsf_sculpt_z.value = 0.25
-    fbsf.active_shape_key_index = fbsf.data.shape_keys.key_blocks.find(
-        fbsf_sculpt.name)
-    result = bpy.ops.ho.rebase_shapekeys_fbsf(
-        "EXEC_DEFAULT",
-        correction_strength=1.0,
-        side_smooth_width=0.0,
+    module._rebase_shape_keys_fbsf(
+        fbsf,
+        (
+            (fbsf_sculpt.name, 0.5, 'LEFT_EYE'),
+            (fbsf_sculpt_z.name, 0.25, 'RIGHT_EYE'),
+        ),
+        1.0,
+        0.0,
     )
-    assert result == {'FINISHED'}
 
     fbsf_keys = fbsf.data.shape_keys.key_blocks
     assert fbsf_keys.get("EyeSculptLeft") is None
@@ -273,6 +464,57 @@ try:
             index,
             (x, 1.0, 0.0),
         )
+
+    # 复合表情同时接受眼睛和嘴部来源修正，单区域目标仍只修正自己的通道。
+    compound = make_mesh("FBSFCompoundTag", vertex_count=2)
+    compound.data.vertices[0].co.x = -1.0
+    compound.data.vertices[1].co.x = 1.0
+    compound_basis = compound.shape_key_add(name="Basis", from_mix=False)
+    compound_eye = compound.shape_key_add(name="EyeSculpt", from_mix=False)
+    compound_mouth = compound.shape_key_add(name="MouthSculpt", from_mix=False)
+    compound_blink = compound.shape_key_add(name="Blink", from_mix=False)
+    compound_open = compound.shape_key_add(name="MouthOpen", from_mix=False)
+    compound_target = compound.shape_key_add(name="CombinedExpression", from_mix=False)
+    compound_other = compound.shape_key_add(name="Unrelated", from_mix=False)
+    for point in compound_eye.data:
+        point.co.y += 1.0
+    for point in compound_mouth.data:
+        point.co.z += 1.0
+    for point in compound_blink.data:
+        point.co.y += 1.0
+    for point in compound_open.data:
+        point.co.z += 1.0
+    for point in compound_target.data:
+        point.co.y += 1.0
+        point.co.z += 1.0
+    for point in compound_other.data:
+        point.co.x += 0.1
+    module._rebase_shape_keys_fbsf(
+        compound,
+        (
+            (compound_eye.name, 1.0, 'BOTH_EYES'),
+            (compound_mouth.name, 1.0, 'MOUTH'),
+        ),
+        1.0,
+        0.0,
+        (
+            (compound_blink.name, 'BOTH_EYES', 'BOTH_EYES'),
+            (compound_open.name, 'MOUTH', 'MOUTH'),
+            (compound_target.name, 'BOTH_EYES_MOUTH', 'OTHERS'),
+            (compound_other.name, 'OTHERS', 'OTHERS'),
+        ),
+    )
+    compound_keys = compound.data.shape_keys.key_blocks
+    assert compound_keys.get("EyeSculpt") is None
+    assert compound_keys.get("MouthSculpt") is None
+    for index, x in enumerate((-1.0, 1.0)):
+        assert_position(compound_keys[0], index, (x, 1.0, 1.0))
+        assert_position(compound_keys["Blink"], index, (x, 1.0, 1.0))
+        assert_position(compound_keys["MouthOpen"], index, (x, 1.0, 1.0))
+        assert_position(
+            compound_keys["CombinedExpression"], index, (x, 1.0, 1.0))
+        assert_position(
+            compound_keys["Unrelated"], index, (x + 0.1, 1.0, 1.0))
 
     # “合并”与“功能”相互独立：未选键必须保留；其他来源只做全局变基，
     # 即使它与眼睛目标位移完全同向，也不能触发 FBSF 回弹。
