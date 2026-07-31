@@ -10,6 +10,7 @@ import bpy
 from datetime import datetime
 from typing import Any
 import mathutils
+import random as _stdlib_random
 from ..config import nodeColors
 
 
@@ -201,6 +202,39 @@ def boolInput(v: bool) -> bool:
       base_color=nodeColors.colorCat["GetData"],)
 def stringInput(v: str) -> str:
     return v
+
+
+def _random_values(rng) -> tuple[bool, int, float, mathutils.Vector, mathutils.Color]:
+    return (
+        bool(rng.getrandbits(1)),
+        rng.randint(-(2 ** 31), 2 ** 31 - 1),
+        rng.random(),
+        mathutils.Vector((rng.random(), rng.random(), rng.random())),
+        mathutils.Color((rng.random(), rng.random(), rng.random())),
+    )
+
+
+@omni(enable=True,
+      bl_label="Random",
+      base_color=nodeColors.colorCat["GetData"],
+      omni_description="每次执行时输出一组新的随机值。",
+      always_run=True,
+      _OUTPUT_NAME=["布尔", "整数", "浮点数", "矢量", "颜色"],
+      )
+def random() -> tuple[bool, int, float, mathutils.Vector, mathutils.Color]:
+    return _random_values(_stdlib_random.SystemRandom())
+
+
+@omni(enable=True,
+      bl_label="Seeded Random",
+      base_color=nodeColors.colorCat["GetData"],
+      omni_description="根据整数种子输出可重复的随机值。",
+      _INPUT_NAME=["种子"],
+      _OUTPUT_NAME=["布尔", "整数", "浮点数", "矢量", "颜色"],
+      )
+def seededRandom(seed: int = 0) -> tuple[bool, int, float, mathutils.Vector, mathutils.Color]:
+    return _random_values(_stdlib_random.Random(seed))
+
 
 @omni(enable=True,
       bl_label="骨骼",
