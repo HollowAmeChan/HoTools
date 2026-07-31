@@ -7,7 +7,7 @@ from nodeitems_utils import NodeCategory, NodeItem, NodeItemCustom
 
 from . import FunctionNodeCore
 from .GraphNode import CLS_GRAPH
-from .OmniNodeFunctionRegistry import discover_function_modules
+from .OmniNodeFunctionRegistry import discover_node_modules
 from .OmniNodeTree import TREE_ID
 from .PhysicsWorld import nodes as physicsWorld
 from .PhysicsWorld import registry as physicsWorldRegistry
@@ -228,7 +228,7 @@ def _rebuild_registry():
     global node_categories
     global menu_classes
 
-    function_module_registrations = discover_function_modules()
+    function_module_registrations = discover_node_modules()
     function_nodes_by_module = {
         registration.relative_path: list(registration.node_classes)
         for registration in function_module_registrations

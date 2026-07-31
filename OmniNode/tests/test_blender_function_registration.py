@@ -13,7 +13,11 @@ import bpy
 
 
 HOTOOLS = Path(__file__).resolve().parents[2]
-FUNCTION_DIRECTORY = HOTOOLS / "OmniNode" / "Function"
+OMNINODE_DIRECTORY = HOTOOLS / "OmniNode"
+MODULE_DIRECTORIES = {
+    name: OMNINODE_DIRECTORY / name
+    for name in ("Function", "Custom")
+}
 sys.path.insert(0, str(HOTOOLS.parent))
 
 hotools_package = types.ModuleType("HoTools")
@@ -37,12 +41,14 @@ def assert_raises(exception_type, callback, text):
     raise AssertionError(f"expected {exception_type.__name__}: {text}")
 
 
-# Every Function source file is self-describing near the module header.
-function_paths = sorted(
-    path for path in FUNCTION_DIRECTORY.rglob("*.py")
+# Every built-in or user Function source is self-describing near the header.
+module_paths = sorted(
+    (directory_name, path)
+    for directory_name, directory in MODULE_DIRECTORIES.items()
+    for path in directory.rglob("*.py")
     if path.name != "__init__.py"
 )
-for path in function_paths:
+for _directory_name, path in module_paths:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     declaration_index = next(
         (
@@ -69,8 +75,8 @@ discovered_paths = {
     for registration in node_register.function_module_registrations
 }
 expected_paths = {
-    path.relative_to(FUNCTION_DIRECTORY).as_posix()
-    for path in function_paths
+    f"{directory_name}/{path.relative_to(MODULE_DIRECTORIES[directory_name]).as_posix()}"
+    for directory_name, path in module_paths
 }
 assert discovered_paths == expected_paths
 

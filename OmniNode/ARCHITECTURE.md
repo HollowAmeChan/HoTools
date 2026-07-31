@@ -52,7 +52,7 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 ### 1. 函数生成是默认节点模型
 
-OmniNode 的默认扩展点是 `Function/*.py` 中的 Python 函数和 `@omni(...)` 元数据。`FunctionNodeCore.py` 解析函数签名，生成 socket、默认值、multi input 标记和继承 `OmniNode` 的节点类。编译器看到这类节点时生成 `OpCall`，执行器只调用 `_func(*args)` 并把返回值写回寄存器。
+OmniNode 的默认扩展点是 `Function/*.py` 和 `Custom/*.py` 中的 Python 函数及 `@omni(...)` 元数据。`FunctionNodeCore.py` 解析函数签名，生成 socket、默认值、multi input 标记和继承 `OmniNode` 的节点类。编译器看到这类节点时生成 `OpCall`，执行器只调用 `_func(*args)` 并把返回值写回寄存器。
 
 维护时应把这个模型当作默认答案：
 
@@ -63,9 +63,9 @@ OmniNode 的默认扩展点是 `Function/*.py` 中的 Python 函数和 `@omni(..
 
 这个约束的目标是降低用户操作复杂度。用户应该通过少量语义明确的节点完成渐进式编辑和调参，而不是被迫维护庞大的节点网络。
 
-#### Function 模块自描述注册
+#### 函数节点模块自描述注册
 
-`OmniNodeRegister` 不维护 `Function` 模块白名单。注册时递归发现 `Function/**/*.py`（`__init__.py` 除外），每个文件必须在模块头声明 `OMNI_NODE_REGISTRATION`：
+`OmniNodeRegister` 不维护模块白名单。注册时分别递归发现内置节点目录 `Function/**/*.py` 和用户节点目录 `Custom/**/*.py`（`__init__.py` 除外），每个文件必须在模块头声明 `OMNI_NODE_REGISTRATION`：
 
 ```python
 OMNI_NODE_REGISTRATION = {
@@ -80,9 +80,9 @@ OMNI_NODE_REGISTRATION = {
 - 模块 `order` 决定它在集合或子菜单内的相对位置；相同顺序按完整模块名稳定排序。
 - 只作为 helper、明确不生成节点的文件也必须写头声明，使用 `{"enabled": False}`。
 - 缺少声明、声明字段非法、模块导入失败、分类合同冲突、没有启用节点或 `bl_idname` 重复时，注册整体失败并回滚，禁止留下部分注册状态。
-- `Function` 子目录按 Python package/namespace package 导入，目录名和文件名必须是合法 Python 标识符。
+- `Function` 与 `Custom` 子目录按 Python package/namespace package 导入，目录名和文件名必须是合法 Python 标识符。
 
-`Function/Custom/` 是用户自定义节点的约定入口。目录内保留可运行示例和独立说明；用户模块应使用 `CUSTOM` 分类或另行声明不会与内置分类冲突的 ID。更新插件可能覆盖内置示例，因此用户节点应保存在自己命名的文件中，并在升级前纳入版本控制或备份。
+`Custom/` 与 `Function/` 平级，是用户自定义节点的独立入口。目录内保留可运行示例和独立说明；用户模块应使用 `CUSTOM` 分类或另行声明不会与内置分类冲突的 ID。更新插件可能覆盖内置示例，因此用户节点应保存在自己命名的文件中，并在升级前纳入版本控制或备份。
 
 持久化兼容合同：自动发现、分类 ID 和 `menu_path` 只影响 Add 菜单，绝不能参与节点 `bl_idname`。已有函数节点继续使用 `HO_OmniNode_<函数名>`；移动分类或增加嵌套菜单不得改变旧工程保存的节点类型标识符。重命名已发布函数或显式覆盖其 `bl_idname` 属于工程迁移，必须另行提供兼容方案和旧 ID 回归测试。
 
@@ -1093,11 +1093,11 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### `OmniNodeRegister.py`
 
-节点注册和分类。负责注册 Graph 节点，消费自动发现的 Function 模块声明和 `@omni(enable=True)` 节点类，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。
+节点注册和分类。负责注册 Graph 节点，消费从 `Function/` 与 `Custom/` 自动发现的模块声明和 `@omni(enable=True)` 节点类，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。
 
 ### `OmniNodeFunctionRegistry.py`
 
-Function 模块发现与声明校验。递归映射文件路径到模块名，导入模块，规范化 `OMNI_NODE_REGISTRATION`，校验同名分类合同，并输出与 Blender UI 解耦的注册描述。
+函数节点模块发现与声明校验。分别递归映射 `Function/` 和 `Custom/` 文件路径到模块名，导入模块，规范化 `OMNI_NODE_REGISTRATION`，跨目录校验同名分类合同，并输出与 Blender UI 解耦的注册描述。
 
 ### `Function/*.py`
 
@@ -1110,6 +1110,10 @@ Function 模块发现与声明校验。递归映射文件路径到模块名，�
 - `input_init.description` 写入 Blender `NodeSocket.description` 后最多保留 64 个 UTF-8 字节；公开 socket 描述必须控制在 60 字节以内。枚举优先写短值映射，需要分行时使用显式换行，不得依赖 tooltip 自动换行。
 - 需要临时跨帧状态时，暴露 `_OmniCache` 输入/输出，并要求用户接 cache 读写/删除节点；函数内部不得保存隐藏跨帧状态。
 - 需要 C++ 加速时，保持一个公开节点语义，在内部替换热点实现；不要新增长期并存的 Python/CPP 平行产品入口。
+
+### `Custom/*.py`
+
+用户自定义函数节点库，与内置 `Function/` 平级并独立维护。注册合同、节点 ID 和菜单规则与 `Function/*.py` 相同；示例与用户说明由 `Custom/README.md` 维护。
 
 ## 新增功能的建议
 

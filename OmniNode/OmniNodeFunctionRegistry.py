@@ -132,10 +132,39 @@ def _module_name_for_path(path: Path, function_directory: Path, package: str) ->
     return ".".join((package, *parts))
 
 
+def _validate_and_sort_registrations(registrations):
+    category_contracts: dict[str, tuple[str, int, str]] = {}
+    for registration in registrations:
+        contract = (
+            registration.category_label,
+            registration.category_order,
+            registration.relative_path,
+        )
+        previous = category_contracts.get(registration.category_id)
+        if previous is not None and previous[:2] != contract[:2]:
+            raise ValueError(
+                f"{registration.relative_path}: category "
+                f"{registration.category_id!r} conflicts with {previous[2]} "
+                "(label/order must match)"
+            )
+        category_contracts[registration.category_id] = contract
+
+    return tuple(sorted(
+        registrations,
+        key=lambda entry: (
+            entry.category_order,
+            entry.category_id,
+            entry.order,
+            entry.module_name.casefold(),
+        ),
+    ))
+
+
 def discover_function_modules(
     *,
     function_directory: Path | None = None,
     package: str | None = None,
+    relative_prefix: str = "",
 ) -> tuple[FunctionModuleRegistration, ...]:
     function_directory = (
         Path(function_directory)
@@ -145,7 +174,7 @@ def discover_function_modules(
     package = package or f"{__package__}.Function"
     if not function_directory.is_dir():
         raise FileNotFoundError(
-            f"OmniNode Function directory does not exist: {function_directory}"
+            f"OmniNode module directory does not exist: {function_directory}"
         )
 
     paths = sorted(
@@ -158,46 +187,39 @@ def discover_function_modules(
     )
 
     registrations = []
-    category_contracts: dict[str, tuple[str, int, str]] = {}
     for path in paths:
         relative_path = path.relative_to(function_directory).as_posix()
+        source_path = (
+            f"{relative_prefix.strip('/')}/{relative_path}"
+            if relative_prefix.strip("/")
+            else relative_path
+        )
         module_name = _module_name_for_path(path, function_directory, package)
         try:
             module = importlib.import_module(module_name)
         except Exception as exc:
             raise RuntimeError(
-                f"failed to import OmniNode Function module {relative_path}: {exc}"
+                f"failed to import OmniNode function module {source_path}: {exc}"
             ) from exc
 
         registration = normalize_function_registration(
             module,
-            relative_path=relative_path,
+            relative_path=source_path,
         )
         if registration is None:
             continue
-
-        contract = (
-            registration.category_label,
-            registration.category_order,
-            registration.relative_path,
-        )
-        previous = category_contracts.get(registration.category_id)
-        if previous is not None and previous[:2] != contract[:2]:
-            raise ValueError(
-                f"{relative_path}: category {registration.category_id!r} conflicts "
-                f"with {previous[2]} (label/order must match)"
-            )
-        category_contracts[registration.category_id] = contract
         registrations.append(registration)
 
-    return tuple(
-        sorted(
-            registrations,
-            key=lambda entry: (
-                entry.category_order,
-                entry.category_id,
-                entry.order,
-                entry.module_name.casefold(),
-            ),
-        )
-    )
+    return _validate_and_sort_registrations(registrations)
+
+
+def discover_node_modules() -> tuple[FunctionModuleRegistration, ...]:
+    omni_node_directory = Path(__file__).resolve().parent
+    registrations = []
+    for directory_name in ("Function", "Custom"):
+        registrations.extend(discover_function_modules(
+            function_directory=omni_node_directory / directory_name,
+            package=f"{__package__}.{directory_name}",
+            relative_prefix=directory_name,
+        ))
+    return _validate_and_sort_registrations(registrations)

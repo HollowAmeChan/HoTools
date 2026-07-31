@@ -4,7 +4,7 @@ OMNI_NODE_REGISTRATION = {
     "order": 0,
 }
 
-from ...FunctionNodeCore import omni
+from ..FunctionNodeCore import omni
 
 
 @omni(
