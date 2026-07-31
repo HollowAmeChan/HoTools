@@ -3402,25 +3402,21 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
 
         warning = layout.box()
         warning.alert = True
-        warning.label(text="此操作会重写全部形态键并删除两个造型键", icon='ERROR')
-        warning.label(text="两个造型键必须直接相对 Basis，且当前权重都必须为 1")
-        warning.label(text="眼睛造型键的位移顶点直接定义眼区，不做区域扩张")
-
-        flow = layout.box()
-        flow.label(text="对称双键造型流程", icon='INFO')
-        flow.label(text="1. 使用普通造型键完成眼睛以外的造型，并保持权重为 1")
-        flow.label(text="2. 新建空白眼睛造型键，不要从混合创建")
-        flow.label(text="3. 两键同时保持为 1，只在眼睛造型键调整眼眶")
-        flow.label(text="本操作不检测左右对称，不对称结果由用户承担")
+        warning.label(text="此操作会重写全部形态键并删除两个捏脸键", icon='ERROR')
+        warning.label(text="两个捏脸用的键必须直接相对 Basis，且当前权重都必须为 1")
+        warning.label(text="眼睛捏脸键：只调整眼眶眉毛眼睛形状")
+        warning.label(text="普通捏脸键：调整脸型嘴巴鼻子等眼睛以外的区域")
+        warning.label(text="双目闭眼参考键：现有的一个双目闭眼的键作为参考键，不会删除他")
+        warning.label(text="捏脸流程：新建两个捏脸键权重全1，分别进行造型，之后使用本操作")
 
         shape_keys = obj.data.shape_keys if obj is not None else None
         if shape_keys is not None:
             layout.prop_search(
                 self, "ordinary_shape_key", shape_keys, "key_blocks",
-                text="普通造型键")
+                text="普通捏脸键")
             layout.prop_search(
                 self, "eye_shape_key", shape_keys, "key_blocks",
-                text="眼睛造型键")
+                text="眼睛捏脸键")
             layout.prop_search(
                 self, "blink_reference_key", shape_keys, "key_blocks",
                 text="双目闭眼参考键")
