@@ -987,6 +987,23 @@ def clean_filename_part(name):
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
 
 
+IMAGE_FILE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+
+
+def build_bake_export_path(filepath, suffix, image_format):
+    """Append a bake-type suffix before the image file extension."""
+    final_path = bpy.path.abspath(filepath)
+    root_path, current_ext = os.path.splitext(final_path)
+    if current_ext.lower() in IMAGE_FILE_EXTENSIONS:
+        final_path = root_path
+
+    if not final_path.lower().endswith(suffix.lower()):
+        final_path += suffix
+
+    extension = ".png" if image_format == 'PNG' else ".jpg"
+    return final_path + extension
+
+
 def rasterize_tb_flow_triangle(mask, flow_x, flow_y, pts, flows, island_ids=None,
                                island_id=1, max_bbox_pixels=32_000_000, chunk_rows=32):
     x0, y0 = pts[0]
@@ -1662,10 +1679,8 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
         # 保存图像
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_UVIsland", self.image_format)
         pil_img.save(final_path)
 
         self.report({'INFO'}, f"已导出ID图像:{final_path}")
@@ -1773,10 +1788,8 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
         # 保存图像
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_MeshIsland", self.image_format)
         pil_img.save(final_path)
 
         self.report({'INFO'}, f"已导出网格孤岛图像: {final_path}")
@@ -1934,10 +1947,8 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
         # 保存图像
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_FaceID", self.image_format)
         pil_img.save(final_path)
 
         self.report({'INFO'}, f"已导出ID图像:{final_path}")
@@ -2024,10 +2035,8 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         # 膨胀边缘颜色
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_ObjectID", self.image_format)
         pil_img.save(final_path)
 
         self.report({'INFO'}, f"已导出物体ID图像: {final_path}")
@@ -2140,10 +2149,8 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
 
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_MaterialID", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -2268,10 +2275,8 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_IslandUVMap", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -2519,10 +2524,8 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_WorldSpaceTBFlowMap", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -2700,10 +2703,8 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_GravityFieldMap", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -3151,10 +3152,8 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
         pil_img = apply_black_mask(pil_img, shrink_mask)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_IslandSDF", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -3315,10 +3314,8 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_UVChirality", self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -3493,10 +3490,9 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        suffix = "_Bitangent" if self.vector_mode == 'BITANGENT' else "_Tangent"
+        final_path = build_bake_export_path(
+            self.filepath, suffix, self.image_format)
         save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
         save_img.save(final_path)
 
@@ -3622,10 +3618,8 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
         # 保存图像
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_VertexColor", self.image_format)
         pil_img.save(final_path)
 
         self.report({'INFO'}, f"已导出顶点色贴图: {final_path}")
@@ -3729,10 +3723,8 @@ class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
         pil_img = Image.fromarray(img_arr, mode="RGBA")
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-        ext = ".png" if self.image_format == 'PNG' else ".jpg"
-        final_path = bpy.path.abspath(self.filepath)
-        if not final_path.lower().endswith(ext):
-            final_path += ext
+        final_path = build_bake_export_path(
+            self.filepath, "_VertexGroupWeight", self.image_format)
         pil_img.save(final_path)
 
         if skipped_objects:
@@ -3803,7 +3795,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         if self.export_UVIslandImage:
             result = bpy.ops.ho.uvtools_bakeuvisland_image(
                 'EXEC_DEFAULT',
-                filepath=base_path + "_UVIsland.png",
+                filepath=base_path,
                 image_width=width,
                 image_height=height,
                 background_alpha=alpha,
@@ -3819,7 +3811,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         if self.export_MeshIslandImage:
             result = bpy.ops.ho.uvtools_bakemeshisland_image(
                 'EXEC_DEFAULT',
-                filepath=base_path + "_MeshIsland.png",
+                filepath=base_path,
                 image_width=width,
                 image_height=height,
                 background_alpha=alpha,
@@ -3835,7 +3827,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         if self.export_FaceIDImage:
             result = bpy.ops.ho.uvtools_bakefaceid_image(
                 'EXEC_DEFAULT',
-                filepath=base_path + "_FaceID.png",
+                filepath=base_path,
                 image_width=width,
                 image_height=height,
                 background_alpha=alpha,
@@ -3851,7 +3843,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         if self.export_ObjectIDImage:
             result = bpy.ops.ho.uvtools_bake_objectid_image(
                 'EXEC_DEFAULT',
-                filepath=base_path + "_ObjectID.png",
+                filepath=base_path,
                 image_width=width,
                 image_height=height,
                 background_alpha=alpha,
@@ -3867,7 +3859,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         if self.export_MaterialIDImage:
             result = bpy.ops.ho.uvtools_bake_materialid_image(
                 'EXEC_DEFAULT',
-                filepath=base_path + "_MaterialID.png",
+                filepath=base_path,
                 image_width=width,
                 image_height=height,
                 background_alpha=alpha,
