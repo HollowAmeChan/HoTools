@@ -69,8 +69,8 @@ for _directory_name, path in module_paths:
     assert declaration_index <= 2, f"注册声明必须位于文件头：{path}"
 
 discovered_paths = {
-    registration.relative_path
-    for registration in node_register.function_module_registrations
+    module_spec.source_path
+    for module_spec in node_register._registry.function_modules
 }
 expected_paths = {
     f"{directory_name}/{path.relative_to(MODULE_DIRECTORIES[directory_name]).as_posix()}"
@@ -78,9 +78,9 @@ expected_paths = {
 }
 assert discovered_paths == expected_paths
 nested_example = next(
-    registration
-    for registration in node_register.function_module_registrations
-    if registration.relative_path == "Custom/NestedCategoryExample.py"
+    module_spec
+    for module_spec in node_register._registry.function_modules
+    if module_spec.source_path == "Custom/NestedCategoryExample.py"
 )
 assert nested_example.menu_path == ("示例", "嵌套分类", "数值工具")
 assert [node.bl_idname for node in nested_example.node_classes] == [
@@ -94,14 +94,17 @@ expected_categories = [
     "CUSTOM",
     "PHYSICS_WORLD", "PHYSICS_SOLVER", "PHYSICS_WORLD_DEBUG",
 ]
-assert [category.identifier for category in node_register.node_categories] == expected_categories
+assert [
+    category.identifier
+    for category in node_register._registry.node_categories
+] == expected_categories
 expected_category_labels = [
     "图结构", "数据", "骨架", "数据类型转换", "数学", "操作",
     "修改器", "材质", "UV", "顶点颜色", "顶点组", "图像",
     "绑定工具", "逻辑", "调试", "缓存", "物理", "自定义",
     "物理世界", "解算器", "物理世界调试",
 ]
-assert [category.name for category in node_register.node_categories] == (
+assert [category.name for category in node_register._registry.node_categories] == (
     expected_category_labels
 )
 
@@ -109,8 +112,8 @@ assert [category.name for category in node_register.node_categories] == (
 # 自动发现不得把分类或路径写入持久化节点 ID。
 function_node_classes = [
     node_class
-    for registration in node_register.function_module_registrations
-    for node_class in registration.node_classes
+    for module_spec in node_register._registry.function_modules
+    for node_class in module_spec.node_classes
 ]
 for node_class in function_node_classes:
     assert node_class.bl_idname == f"HO_OmniNode_{node_class._func.__name__}"
@@ -147,20 +150,23 @@ legacy_node_ids = {
     "HO_OmniNode_physicsMC2Step",
     "HO_OmniNode_customExampleScale",
 }
-current_node_ids = {node_class.bl_idname for node_class in node_register.cls}
+current_node_ids = {
+    node_class.bl_idname
+    for node_class in node_register._registry.node_classes
+}
 assert legacy_node_ids <= current_node_ids
-assert len(current_node_ids) == len(node_register.cls)
+assert len(current_node_ids) == len(node_register._registry.node_classes)
 
 
 # 禁用的辅助模块与非法声明必须有明确行为。
 disabled_module = types.ModuleType("test_disabled_function_module")
 disabled_module.OMNI_NODE_REGISTRATION = {"enabled": False}
-assert node_register.normalize_function_registration(disabled_module) is None
+assert node_register._normalize_function_module(disabled_module) is None
 
 missing_module = types.ModuleType("test_missing_function_module")
 assert_raises(
     ValueError,
-    lambda: node_register.normalize_function_registration(missing_module),
+    lambda: node_register._normalize_function_module(missing_module),
     "缺少 OMNI_NODE_REGISTRATION",
 )
 
@@ -171,9 +177,28 @@ invalid_path_module.OMNI_NODE_REGISTRATION = {
 }
 assert_raises(
     ValueError,
-    lambda: node_register.normalize_function_registration(invalid_path_module),
+    lambda: node_register._normalize_function_module(invalid_path_module),
     "menu_path 必须是列表或元组",
 )
+
+
+# 新快照完整构建成功前，不得替换当前可用注册表。
+registry_before_failure = node_register._registry
+classes_before_failure = registry_before_failure.node_classes
+original_snapshot_builder = node_register._build_registry_snapshot
+
+
+def fail_snapshot_build():
+    raise ValueError("预期的快照构建失败")
+
+
+node_register._build_registry_snapshot = fail_snapshot_build
+try:
+    assert_raises(ValueError, node_register._rebuild_registry, "预期的快照构建失败")
+finally:
+    node_register._build_registry_snapshot = original_snapshot_builder
+assert node_register._registry is registry_before_failure
+assert node_register._registry.node_classes is classes_before_failure
 
 
 # 只发现当前层文件；物理子目录不参与注册，UI 仍可任意嵌套。
@@ -206,13 +231,13 @@ def customEyes(value: float) -> float:
     temporary_package.__package__ = temporary_package_name
     sys.modules[temporary_package_name] = temporary_package
     try:
-        temporary_registrations = node_register.discover_function_modules(
+        temporary_registrations = node_register._discover_function_modules(
             function_directory=temporary_function_directory,
             package=temporary_package_name,
         )
         assert len(temporary_registrations) == 1
         temporary_registration = temporary_registrations[0]
-        assert temporary_registration.relative_path == "Eyes.py"
+        assert temporary_registration.source_path == "Eyes.py"
         assert temporary_registration.menu_path == ("角色", "面部", "眼睛")
         assert [node.bl_idname for node in temporary_registration.node_classes] == [
             "HO_OmniNode_customEyes"
@@ -234,7 +259,7 @@ def customConflict(value: float) -> float:
         )
         assert_raises(
             ValueError,
-            lambda: node_register.discover_function_modules(
+            lambda: node_register._discover_function_modules(
                 function_directory=temporary_function_directory,
                 package=temporary_package_name,
             ),
@@ -254,14 +279,14 @@ def fake_node_class(name):
 
 
 def fake_registration(module_name, menu_path, order, *node_names):
-    return node_register.FunctionModuleRegistration(
+    return node_register.FunctionModuleSpec(
         module_name=module_name,
-        relative_path=f"Custom/{module_name.rsplit('.', 1)[-1]}.py",
+        source_path=f"Custom/{module_name.rsplit('.', 1)[-1]}.py",
         category_id="CUSTOM",
         category_label="自定义",
         category_order=1000,
         menu_path=menu_path,
-        order=order,
+        module_order=order,
         node_classes=tuple(fake_node_class(name) for name in node_names),
     )
 
@@ -272,14 +297,16 @@ synthetic_registrations = (
     fake_registration("custom.mouth", ("角色", "面部", "嘴部"), 20, "Mouth"),
     fake_registration("custom.rig", ("角色", "绑定"), 30, "Rig"),
 )
-records = node_register._build_function_category_records(synthetic_registrations)
-assert len(records) == 1
-custom_root = records[0]["root"]
-assert [node.bl_idname for _key, node in custom_root["nodes"]] == ["HO_Test_Root"]
-characters = custom_root["children"]["角色"]
-face = characters["children"]["面部"]
-assert set(face["children"]) == {"眼睛", "嘴部"}
-assert "绑定" in characters["children"]
+category_specs = node_register._build_function_category_specs(
+    synthetic_registrations
+)
+assert len(category_specs) == 1
+custom_root = category_specs[0].root
+assert [node.bl_idname for _key, node in custom_root.nodes] == ["HO_Test_Root"]
+characters = custom_root.children["角色"]
+face = characters.children["面部"]
+assert set(face.children) == {"眼睛", "嘴部"}
+assert "绑定" in characters.children
 
 synthetic_categories, synthetic_menu_classes = (
     node_register._build_function_categories(synthetic_registrations)

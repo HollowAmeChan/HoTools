@@ -342,17 +342,17 @@ def test_solver_node_add_menu_uses_manifest_submenus():
         ("mc2", "MC2", "NODE_MT_OMNINODE_SOLVER_MC2"),
     )
     assert tuple(
-        (group["solver_id"], group["menu_name"], group["menu_id"])
-        for group in node_register.physics_world_solver_groups
+        (group.solver_id, group.menu_name, group.menu_id)
+        for group in node_register._registry.physics_solver_groups
     ) == expected
     assert tuple(
         (menu_class.bl_idname, menu_class.bl_label)
-        for menu_class in node_register.physics_world_solver_menu_classes
+        for menu_class in node_register._registry.physics_solver_menu_classes
     ) == tuple((menu_id, menu_name) for _solver, menu_name, menu_id in expected)
 
     solver_category = next(
         category
-        for category in node_register.node_categories
+        for category in node_register._registry.node_categories
         if category.identifier == "PHYSICS_SOLVER"
     )
     menu_calls = []

@@ -1,4 +1,4 @@
-"""Random data node regression checks."""
+"""随机数据节点回归测试。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ node_register = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")
 
 
 node_register._rebuild_registry()
-node_classes = {cls.bl_idname: cls for cls in node_register.cls}
+node_classes = {
+    node_class.bl_idname: node_class
+    for node_class in node_register._registry.node_classes
+}
 random_node = node_classes["HO_OmniNode_random"]
 seeded_node = node_classes["HO_OmniNode_seededRandom"]
 
@@ -96,4 +99,4 @@ finally:
         bpy.data.node_groups.remove(tree)
     OmniNode.unregister()
 
-print("OmniNode random data nodes: PASS")
+print("OmniNode 随机数据节点测试：通过")

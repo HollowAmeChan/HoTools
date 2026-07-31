@@ -162,11 +162,11 @@ try:
 
     physics_world_ids = {
         node_class.bl_idname
-        for node_class in OmniNodeRegister.node_cls_physics_world
+        for node_class in OmniNodeRegister._registry.physics_world_node_classes
     }
     physics_world_menu_ids = {
         node_class.bl_idname
-        for node_class in OmniNodeRegister._pw_lifecycle
+        for node_class in OmniNodeRegister._registry.physics_lifecycle_node_classes
     }
     bake_node_ids = {
         "HO_OmniNode_physicsBake",
