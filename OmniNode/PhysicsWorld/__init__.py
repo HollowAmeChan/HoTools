@@ -8,6 +8,7 @@
 #   registry.py     - 解算器子模块装载、回调汇总和运行入口
 #   declarations.py - 解算器声明注册表和迁移审查入口
 #   nodes.py        - 对外暴露的通用函数节点
+#   omninode_registration.py - 节点类、分类与嵌套菜单声明
 #   names.py        - 解算器 / 通道 / 后端 / 隐式对象全局名称常量
 #   utils/          - 新物理世界通用数学、身份、缓冲辅助函数
 #   rigid/          - 刚体 / Jolt 领域

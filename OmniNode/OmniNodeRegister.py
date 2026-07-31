@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 import hashlib
 import importlib
@@ -12,8 +14,6 @@ from nodeitems_utils import NodeCategory, NodeItem, NodeItemCustom
 from . import FunctionNodeCore
 from .GraphNode import CLS_GRAPH
 from .OmniNodeTree import TREE_ID
-from .PhysicsWorld import nodes as physics_world_nodes
-from .PhysicsWorld import registry as physics_world_registry
 
 
 # 函数节点模块声明与发现
@@ -231,6 +231,96 @@ def _discover_all_function_modules() -> tuple[FunctionModuleSpec, ...]:
     return _validate_and_sort_function_modules(module_specs)
 
 
+# 大型节点扩展声明与发现
+_EXTENSION_REGISTRATION_FILENAME = "omninode_registration.py"
+_EXTENSION_REGISTRATION_FACTORY = "build_omninode_registration"
+
+
+@dataclass(frozen=True)
+class OmniNodeMenuSpec:
+    identifier: str
+    label: str
+    items: tuple[type | OmniNodeMenuSpec, ...]
+
+
+@dataclass(frozen=True)
+class OmniNodeCategorySpec:
+    identifier: str
+    label: str
+    items: tuple[type | OmniNodeMenuSpec, ...]
+
+
+@dataclass(frozen=True)
+class OmniNodeExtensionSpec:
+    identifier: str
+    order: int
+    node_classes: tuple[type, ...]
+    categories: tuple[OmniNodeCategorySpec, ...]
+
+
+def _discover_omninode_extensions(
+    *,
+    omni_node_directory: Path | None = None,
+    package: str | None = None,
+) -> tuple[OmniNodeExtensionSpec, ...]:
+    omni_node_directory = (
+        Path(omni_node_directory)
+        if omni_node_directory is not None
+        else Path(__file__).resolve().parent
+    )
+    package = package or __package__
+    registration_files = sorted(
+        omni_node_directory.glob(f"*/{_EXTENSION_REGISTRATION_FILENAME}"),
+        key=lambda path: path.parent.name.casefold(),
+    )
+
+    extensions = []
+    extension_sources: dict[str, str] = {}
+    for path in registration_files:
+        directory_name = path.parent.name
+        if not directory_name.isidentifier():
+            raise ValueError(
+                f"{path}: 扩展目录名必须是合法的 Python 模块名"
+            )
+        module_name = f"{package}.{directory_name}.{path.stem}"
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            raise RuntimeError(f"导入 OmniNode 扩展 {module_name} 失败：{exc}") from exc
+
+        factory = getattr(module, _EXTENSION_REGISTRATION_FACTORY, None)
+        if not callable(factory):
+            raise ValueError(
+                f"{path}: 必须定义可调用的 {_EXTENSION_REGISTRATION_FACTORY}()"
+            )
+        extension = factory()
+        if not isinstance(extension, OmniNodeExtensionSpec):
+            raise TypeError(
+                f"{path}: {_EXTENSION_REGISTRATION_FACTORY}() "
+                "必须返回 OmniNodeExtensionSpec"
+            )
+        if (
+            not isinstance(extension.identifier, str)
+            or not extension.identifier.strip()
+        ):
+            raise ValueError(f"{path}: 扩展 identifier 不能为空")
+        _require_order(extension.order, "扩展 order", str(path))
+
+        previous_source = extension_sources.get(extension.identifier)
+        if previous_source is not None:
+            raise ValueError(
+                f"{path}: 扩展 identifier {extension.identifier!r} "
+                f"与 {previous_source} 重复"
+            )
+        extension_sources[extension.identifier] = str(path)
+        extensions.append(extension)
+
+    return tuple(sorted(
+        extensions,
+        key=lambda extension: (extension.order, extension.identifier.casefold()),
+    ))
+
+
 # 节点添加菜单构建
 class OmniNodeCategory(NodeCategory):
     @classmethod
@@ -255,20 +345,7 @@ class _FunctionCategorySpec:
     root: _MenuBranch = field(default_factory=_MenuBranch)
 
 
-_RESERVED_CATEGORY_IDS = {
-    "GRAPH",
-    "PHYSICS_WORLD",
-    "PHYSICS_SOLVER",
-    "PHYSICS_WORLD_DEBUG",
-}
-
-
-def _filter_nodes_by_label_prefix(node_classes, *prefixes):
-    return tuple(
-        node_class
-        for node_class in node_classes
-        if any(node_class.bl_label.startswith(prefix) for prefix in prefixes)
-    )
+_RESERVED_CATEGORY_IDS = {"GRAPH"}
 
 
 def _node_items(node_classes):
@@ -395,58 +472,109 @@ def _build_function_categories(
     return categories, menu_classes
 
 
-# PhysicsWorld 节点来源
-_PHYSICS_LIFECYCLE_LABEL_PREFIXES = (
-    "物理对象",
-    "物理世界-帧",
-    "物理写回",
-    "物理烘焙",
-    "清除物理Bake",
-)
-_PHYSICS_DEBUG_LABEL_PREFIXES = (
-    "物理世界-调试",
-    "物理世界-结果",
-    "物理世界-可视化",
-)
-
-
-@dataclass(frozen=True)
-class _PhysicsSolverGroup:
-    domain: str
-    solver_id: str
-    menu_name: str
-    menu_id: str
-    node_classes: tuple[type, ...]
-
-
-def _solver_menu_id(solver_id):
-    token = re.sub(r"[^A-Za-z0-9_]+", "_", str(solver_id)).strip("_").upper()
-    if not token:
-        raise ValueError("solver_id 不能生成空菜单标识符")
-    return f"NODE_MT_OMNINODE_SOLVER_{token}"
-
-
-def _load_physics_world_solver_groups() -> tuple[_PhysicsSolverGroup, ...]:
-    groups = []
-    menu_ids = set()
-    for entry in physics_world_registry.iter_solver_node_groups():
-        nodes = []
-        for module_entry in entry["modules"]:
-            nodes.extend(FunctionNodeCore.loadRegisterFuncNodes(module_entry["module"]))
-        if not nodes:
+def _build_extension_items(
+    extension: OmniNodeExtensionSpec,
+    items,
+    node_class_set: set[type],
+    menu_classes: list[type],
+    menu_ids: set[str],
+):
+    built_items = []
+    for item in items:
+        if isinstance(item, type):
+            if item not in node_class_set:
+                raise ValueError(
+                    f"扩展 {extension.identifier!r} 的分类引用了未声明节点 "
+                    f"{item.__module__}.{item.__name__}"
+                )
+            built_items.append(NodeItem(item.bl_idname))
             continue
-        menu_id = _solver_menu_id(entry["solver_id"])
-        if menu_id in menu_ids:
-            raise ValueError(f"解算器菜单标识符重复：{menu_id}")
-        menu_ids.add(menu_id)
-        groups.append(_PhysicsSolverGroup(
-            domain=entry["domain"],
-            solver_id=entry["solver_id"],
-            menu_name=entry["menu_name"],
-            menu_id=menu_id,
-            node_classes=tuple(nodes),
-        ))
-    return tuple(groups)
+
+        if not isinstance(item, OmniNodeMenuSpec):
+            raise TypeError(
+                f"扩展 {extension.identifier!r} 的分类项目必须是节点类或 "
+                "OmniNodeMenuSpec"
+            )
+        if (
+            not isinstance(item.identifier, str)
+            or not _CATEGORY_ID_PATTERN.fullmatch(item.identifier)
+        ):
+            raise ValueError(
+                f"扩展 {extension.identifier!r} 的菜单 ID "
+                f"{item.identifier!r} 无效"
+            )
+        if not isinstance(item.label, str) or not item.label.strip():
+            raise ValueError(f"扩展 {extension.identifier!r} 的菜单名称不能为空")
+        if item.identifier in menu_ids:
+            raise ValueError(f"OmniNode 菜单标识符重复：{item.identifier}")
+        menu_ids.add(item.identifier)
+
+        child_items = _build_extension_items(
+            extension,
+            item.items,
+            node_class_set,
+            menu_classes,
+            menu_ids,
+        )
+        menu_classes.append(
+            _make_menu_class(item.identifier, item.label, child_items)
+        )
+        built_items.append(_make_menu_item(item.identifier))
+    return built_items
+
+
+def _build_extension_categories(extension_specs):
+    node_classes = []
+    categories = []
+    menu_classes = []
+    menu_ids: set[str] = set()
+
+    for extension in extension_specs:
+        if any(
+            not isinstance(node_class, type)
+            for node_class in extension.node_classes
+        ):
+            raise TypeError(
+                f"扩展 {extension.identifier!r} 的 node_classes 必须全部是类"
+            )
+        node_class_set = set(extension.node_classes)
+        node_classes.extend(extension.node_classes)
+
+        for category in extension.categories:
+            if not isinstance(category, OmniNodeCategorySpec):
+                raise TypeError(
+                    f"扩展 {extension.identifier!r} 的 categories 必须全部是 "
+                    "OmniNodeCategorySpec"
+                )
+            if (
+                not isinstance(category.identifier, str)
+                or not _CATEGORY_ID_PATTERN.fullmatch(category.identifier)
+            ):
+                raise ValueError(
+                    f"扩展 {extension.identifier!r} 的分类 ID "
+                    f"{category.identifier!r} 无效"
+                )
+            if (
+                not isinstance(category.label, str)
+                or not category.label.strip()
+            ):
+                raise ValueError(
+                    f"扩展 {extension.identifier!r} 的分类名称不能为空"
+                )
+            items = _build_extension_items(
+                extension,
+                category.items,
+                node_class_set,
+                menu_classes,
+                menu_ids,
+            )
+            categories.append(OmniNodeCategory(
+                category.identifier,
+                category.label,
+                items=items,
+            ))
+
+    return tuple(node_classes), tuple(categories), tuple(menu_classes)
 
 
 def _validate_unique_node_ids(node_classes):
@@ -466,15 +594,31 @@ def _validate_unique_node_ids(node_classes):
         seen[node_id] = node_class
 
 
+def _validate_unique_category_ids(node_categories):
+    seen = set()
+    for category in node_categories:
+        if category.identifier in seen:
+            raise ValueError(
+                f"OmniNode 分类标识符重复：{category.identifier}"
+            )
+        seen.add(category.identifier)
+
+
+def _validate_unique_menu_ids(menu_classes):
+    seen = set()
+    for menu_class in menu_classes:
+        if menu_class.bl_idname in seen:
+            raise ValueError(
+                f"OmniNode 菜单标识符重复：{menu_class.bl_idname}"
+            )
+        seen.add(menu_class.bl_idname)
+
+
 # 注册快照与 Blender 生命周期
 @dataclass(frozen=True)
 class _RegistrySnapshot:
     function_modules: tuple[FunctionModuleSpec, ...] = ()
-    physics_world_node_classes: tuple[type, ...] = ()
-    physics_solver_groups: tuple[_PhysicsSolverGroup, ...] = ()
-    physics_solver_menu_classes: tuple[type, ...] = ()
-    physics_lifecycle_node_classes: tuple[type, ...] = ()
-    physics_debug_node_classes: tuple[type, ...] = ()
+    extensions: tuple[OmniNodeExtensionSpec, ...] = ()
     node_classes: tuple[type, ...] = ()
     node_categories: tuple[OmniNodeCategory, ...] = ()
     menu_classes: tuple[type, ...] = ()
@@ -494,45 +638,20 @@ def _build_registry_snapshot() -> _RegistrySnapshot:
         for node_class in module_spec.node_classes
     )
 
-    graph_node_classes = tuple(CLS_GRAPH)
-    physics_world_node_classes = tuple(
-        FunctionNodeCore.loadRegisterFuncNodes(physics_world_nodes)
-    )
-    physics_solver_groups = _load_physics_world_solver_groups()
-    physics_solver_node_classes = tuple(
-        node_class
-        for group in physics_solver_groups
-        for node_class in group.node_classes
-    )
-    physics_solver_menu_classes = tuple(
-        _make_menu_class(
-            group.menu_id,
-            group.menu_name,
-            _node_items(group.node_classes),
-        )
-        for group in physics_solver_groups
-    )
+    extensions = _discover_omninode_extensions()
+    (
+        extension_node_classes,
+        extension_categories,
+        extension_menu_classes,
+    ) = _build_extension_categories(extensions)
 
+    graph_node_classes = tuple(CLS_GRAPH)
     node_classes = (
         graph_node_classes
         + function_node_classes
-        + physics_world_node_classes
-        + physics_solver_node_classes
+        + extension_node_classes
     )
     _validate_unique_node_ids(node_classes)
-
-    physics_lifecycle_node_classes = _filter_nodes_by_label_prefix(
-        physics_world_node_classes,
-        *_PHYSICS_LIFECYCLE_LABEL_PREFIXES,
-    )
-    physics_debug_node_classes = _filter_nodes_by_label_prefix(
-        physics_world_node_classes,
-        *_PHYSICS_DEBUG_LABEL_PREFIXES,
-    )
-    solver_items = [
-        _make_menu_item(group.menu_id)
-        for group in physics_solver_groups
-    ]
 
     node_categories = (
         OmniNodeCategory(
@@ -541,29 +660,19 @@ def _build_registry_snapshot() -> _RegistrySnapshot:
             items=_node_items(graph_node_classes),
         ),
         *function_categories,
-        OmniNodeCategory(
-            "PHYSICS_WORLD",
-            "物理世界",
-            items=_node_items(physics_lifecycle_node_classes),
-        ),
-        OmniNodeCategory("PHYSICS_SOLVER", "解算器", items=solver_items),
-        OmniNodeCategory(
-            "PHYSICS_WORLD_DEBUG",
-            "物理世界调试",
-            items=_node_items(physics_debug_node_classes),
-        ),
+        *extension_categories,
     )
+    _validate_unique_category_ids(node_categories)
+
+    menu_classes = tuple(function_menu_classes) + extension_menu_classes
+    _validate_unique_menu_ids(menu_classes)
 
     return _RegistrySnapshot(
         function_modules=function_modules,
-        physics_world_node_classes=physics_world_node_classes,
-        physics_solver_groups=physics_solver_groups,
-        physics_solver_menu_classes=physics_solver_menu_classes,
-        physics_lifecycle_node_classes=physics_lifecycle_node_classes,
-        physics_debug_node_classes=physics_debug_node_classes,
+        extensions=extensions,
         node_classes=node_classes,
         node_categories=node_categories,
-        menu_classes=tuple(function_menu_classes) + physics_solver_menu_classes,
+        menu_classes=menu_classes,
     )
 
 

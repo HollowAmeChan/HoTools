@@ -341,13 +341,25 @@ def test_solver_node_add_menu_uses_manifest_submenus():
         ("rigid_jolt", "Jolt刚体", "NODE_MT_OMNINODE_SOLVER_RIGID_JOLT"),
         ("mc2", "MC2", "NODE_MT_OMNINODE_SOLVER_MC2"),
     )
+    physics_extension = next(
+        extension
+        for extension in node_register._registry.extensions
+        if extension.identifier == "PhysicsWorld"
+    )
+    solver_category_spec = next(
+        category
+        for category in physics_extension.categories
+        if category.identifier == "PHYSICS_SOLVER"
+    )
     assert tuple(
-        (group.solver_id, group.menu_name, group.menu_id)
-        for group in node_register._registry.physics_solver_groups
-    ) == expected
+        (menu.label, menu.identifier)
+        for menu in solver_category_spec.items
+    ) == tuple((menu_name, menu_id) for _solver, menu_name, menu_id in expected)
+    expected_menu_ids = {menu_id for _solver, _menu_name, menu_id in expected}
     assert tuple(
         (menu_class.bl_idname, menu_class.bl_label)
-        for menu_class in node_register._registry.physics_solver_menu_classes
+        for menu_class in node_register._registry.menu_classes
+        if menu_class.bl_idname in expected_menu_ids
     ) == tuple((menu_id, menu_name) for _solver, menu_name, menu_id in expected)
 
     solver_category = next(

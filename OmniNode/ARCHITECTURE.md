@@ -46,6 +46,7 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 物理世界遵循这一边界：
 
 - `PhysicsWorld/` 与 `Function/` 并列，拥有物理世界运行时、MC2、Rigid、Spring VRM、Bake、UI 和各自测试。
+- `PhysicsWorld/omninode_registration.py` 自行汇总物理节点、顶层分类和解算器嵌套菜单；中心注册器不认识任何物理分类规则。
 - `Function/` 中只保留适合由 `@omni(...)` 暴露的轻量节点函数；需要物理实现时直接导入 `PhysicsWorld` 的公开模块。
 - 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
 - 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
@@ -85,6 +86,45 @@ OMNI_NODE_REGISTRATION = {
 `Custom/` 与 `Function/` 平级，是用户自定义节点的独立入口。目录内保留可运行示例和独立说明；用户模块应使用 `CUSTOM` 分类或另行声明不会与内置分类冲突的 ID。更新插件可能覆盖内置示例，因此用户节点应保存在自己命名的文件中，并在升级前纳入版本控制或备份。
 
 持久化兼容合同：自动发现、分类 ID 和 `menu_path` 只影响 Add 菜单，绝不能参与节点 `bl_idname`。已有函数节点继续使用 `HO_OmniNode_<函数名>`；移动分类或增加嵌套菜单不得改变旧工程保存的节点类型标识符。重命名已发布函数或显式覆盖其 `bl_idname` 属于工程迁移，必须另行提供兼容方案和旧 ID 回归测试。
+
+#### 大型节点域自描述注册
+
+当一个一级业务包拥有自己的子模块、生命周期或多组节点时，在该包根目录增加固定文件 `omninode_registration.py`。`OmniNodeRegister` 只扫描 `OmniNode/*/omninode_registration.py` 这一层，不递归扫描业务包内部；注册文件通过 `build_omninode_registration()` 返回 `OmniNodeExtensionSpec`，自行决定节点来源、分类顺序和任意深度的菜单结构。
+
+```python
+from ..OmniNodeRegister import (
+    OmniNodeCategorySpec,
+    OmniNodeExtensionSpec,
+    OmniNodeMenuSpec,
+)
+
+
+def build_omninode_registration():
+    return OmniNodeExtensionSpec(
+        identifier="大型功能",
+        order=1000,
+        node_classes=(输入节点, 输出节点),
+        categories=(
+            OmniNodeCategorySpec(
+                identifier="LARGE_FEATURE",
+                label="大型功能",
+                items=(
+                    OmniNodeMenuSpec(
+                        identifier="NODE_MT_OMNI_LARGE_IO",
+                        label="输入输出",
+                        items=(输入节点, 输出节点),
+                    ),
+                ),
+            ),
+        ),
+    )
+```
+
+- `node_classes` 是该扩展要注册的完整节点类集合；分类和菜单只能引用其中的类。
+- `categories` 决定顶层 Add 菜单；`OmniNodeMenuSpec.items` 可以继续嵌套菜单。
+- 扩展、分类、菜单和节点标识符必须全局唯一，非法声明会让本次注册整体失败并回滚。
+- 分类与菜单只负责 UI，不能参与节点 `bl_idname`；大型扩展同样必须保持旧工程节点标识符不变。
+- 新增未来业务域时只增加自己的注册文件，不得在 `OmniNodeRegister.py` 中加入该业务域的导入、分类名称或节点筛选规则。
 
 ### 2. GraphNode 是 IR 级特殊节点
 
@@ -1093,7 +1133,11 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### `OmniNodeRegister.py`
 
-节点注册和分类的统一入口。负责扫描 `Function/` 与 `Custom/` 当前层的 Python 文件，校验并规范化 `OMNI_NODE_REGISTRATION`，消费 `@omni(enable=True)` 节点类，再合并 Graph 与 PhysicsWorld 节点来源，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。物理子目录不参与发现，UI 嵌套由 `menu_path` 单独描述。模块声明、菜单分支、分类和物理解算器组使用具名数据结构；所有来源先构建成完整的不可变注册快照，校验成功后才一次性替换当前快照，构建失败不得暴露半成品状态。
+节点注册协议和生命周期的统一入口。负责扫描 `Function/` 与 `Custom/` 当前层的 Python 文件，并发现各一级业务包的 `omninode_registration.py`；随后统一校验节点、分类和菜单标识符，生成 Blender Add 菜单并保证失败注册完整回滚。中心只消费通用扩展声明，不导入业务包，也不包含任何业务分类名称、节点筛选条件或业务子目录规则。所有来源先构建成完整的不可变注册快照，校验成功后才一次性替换当前快照，构建失败不得暴露半成品状态。
+
+### `PhysicsWorld/omninode_registration.py`
+
+物理世界自己的 OmniNode 对外声明。负责收集通用物理节点和各解算器节点，并定义“物理世界”“解算器”“物理世界调试”分类及解算器子菜单。新增解算器节点组时由物理世界注册表和本文件完成汇总，中心注册器不需要修改。
 
 ### `Function/*.py`
 

@@ -160,13 +160,24 @@ try:
         module.register()
         registered.append(module)
 
+    physics_extension = next(
+        extension
+        for extension in OmniNodeRegister._registry.extensions
+        if extension.identifier == "PhysicsWorld"
+    )
     physics_world_ids = {
         node_class.bl_idname
-        for node_class in OmniNodeRegister._registry.physics_world_node_classes
+        for node_class in physics_extension.node_classes
     }
+    lifecycle_category = next(
+        category
+        for category in physics_extension.categories
+        if category.identifier == "PHYSICS_WORLD"
+    )
     physics_world_menu_ids = {
         node_class.bl_idname
-        for node_class in OmniNodeRegister._registry.physics_lifecycle_node_classes
+        for node_class in lifecycle_category.items
+        if isinstance(node_class, type)
     }
     bake_node_ids = {
         "HO_OmniNode_physicsBake",

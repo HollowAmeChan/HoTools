@@ -107,6 +107,10 @@ expected_category_labels = [
 assert [category.name for category in node_register._registry.node_categories] == (
     expected_category_labels
 )
+assert [
+    extension.identifier
+    for extension in node_register._registry.extensions
+] == ["PhysicsWorld"]
 
 
 # 自动发现不得把分类或路径写入持久化节点 ID。
@@ -269,6 +273,98 @@ def customConflict(value: float) -> float:
         for module_name in tuple(sys.modules):
             if module_name == temporary_package_name or module_name.startswith(
                 temporary_package_name + "."
+            ):
+                del sys.modules[module_name]
+
+
+# 大型扩展只需在一级目录声明注册文件；详细分类与嵌套菜单由扩展自行提供。
+temporary_extension_package = "omninode_test_large_extensions"
+with tempfile.TemporaryDirectory() as temporary_directory:
+    temporary_omninode_directory = Path(temporary_directory)
+    extension_directory = temporary_omninode_directory / "LargeFeature"
+    extension_directory.mkdir()
+    ignored_directory = extension_directory / "Ignored"
+    ignored_directory.mkdir()
+    (ignored_directory / "omninode_registration.py").write_text(
+        "raise AssertionError('不应扫描扩展的子目录')\n",
+        encoding="utf-8",
+    )
+    (extension_directory / "omninode_registration.py").write_text(
+        """from HoTools.OmniNode.OmniNodeRegister import (
+    OmniNodeCategorySpec,
+    OmniNodeExtensionSpec,
+    OmniNodeMenuSpec,
+)
+
+class RootNode:
+    bl_idname = "HO_Test_LargeFeatureRoot"
+
+class NestedNode:
+    bl_idname = "HO_Test_LargeFeatureNested"
+
+def build_omninode_registration():
+    return OmniNodeExtensionSpec(
+        identifier="LargeFeature",
+        order=50,
+        node_classes=(RootNode, NestedNode),
+        categories=(
+            OmniNodeCategorySpec(
+                identifier="LARGE_FEATURE",
+                label="大型扩展",
+                items=(
+                    RootNode,
+                    OmniNodeMenuSpec(
+                        identifier="NODE_MT_OMNI_LARGE_TOOLS",
+                        label="工具",
+                        items=(
+                            OmniNodeMenuSpec(
+                                identifier="NODE_MT_OMNI_LARGE_NESTED",
+                                label="嵌套分类",
+                                items=(NestedNode,),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+""",
+        encoding="utf-8",
+    )
+    temporary_package = types.ModuleType(temporary_extension_package)
+    temporary_package.__path__ = [str(temporary_omninode_directory)]
+    temporary_package.__package__ = temporary_extension_package
+    sys.modules[temporary_extension_package] = temporary_package
+    try:
+        extensions = node_register._discover_omninode_extensions(
+            omni_node_directory=temporary_omninode_directory,
+            package=temporary_extension_package,
+        )
+        assert [extension.identifier for extension in extensions] == [
+            "LargeFeature"
+        ]
+        extension_nodes, extension_categories, extension_menus = (
+            node_register._build_extension_categories(extensions)
+        )
+        assert [node.bl_idname for node in extension_nodes] == [
+            "HO_Test_LargeFeatureRoot",
+            "HO_Test_LargeFeatureNested",
+        ]
+        assert [category.identifier for category in extension_categories] == [
+            "LARGE_FEATURE"
+        ]
+        assert [menu.bl_idname for menu in extension_menus] == [
+            "NODE_MT_OMNI_LARGE_NESTED",
+            "NODE_MT_OMNI_LARGE_TOOLS",
+        ]
+        assert not any(
+            module_name.endswith("Ignored.omninode_registration")
+            for module_name in sys.modules
+        )
+    finally:
+        for module_name in tuple(sys.modules):
+            if module_name == temporary_extension_package or module_name.startswith(
+                temporary_extension_package + "."
             ):
                 del sys.modules[module_name]
 
