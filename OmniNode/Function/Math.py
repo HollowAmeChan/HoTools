@@ -75,7 +75,7 @@ def floatDivide(a: float, b: float) -> float:
 
 
 @omni(enable=True,
-    bl_label="Clamp",
+    bl_label="钳制",
     base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值", "最小值", "最大值"],
     _OUTPUT_NAME=["结果"],
@@ -88,7 +88,7 @@ def clamp(x: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
 
 
 @omni(enable=True,
-    bl_label="Remap",
+    bl_label="重新映射",
     base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["值", "输入最小", "输入最大", "输出最小", "输出最大", "钳制结果"],
     _OUTPUT_NAME=["结果"],
@@ -264,10 +264,10 @@ def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
     )
 def vectorRemap(
     vec: mathutils.Vector,
-    in_min: mathutils.Vector,
-    in_max: mathutils.Vector,
-    out_min: mathutils.Vector,
-    out_max: mathutils.Vector,
+    in_min: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    in_max: mathutils.Vector = mathutils.Vector((1.0, 1.0, 1.0)),
+    out_min: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    out_max: mathutils.Vector = mathutils.Vector((1.0, 1.0, 1.0)),
     clamp_result: bool = False,
 ) -> mathutils.Vector:
     vec = _to_vector(vec).to_3d()
