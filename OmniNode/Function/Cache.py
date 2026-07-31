@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CACHE", "label": "Cache", "order": 150},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "CACHE", "label": "缓存", "order": 150},
 }
 
 from ..OmniNodeSocketMapping import _OmniCache

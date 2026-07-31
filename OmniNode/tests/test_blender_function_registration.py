@@ -1,4 +1,4 @@
-"""Regression coverage for self-describing Function module registration."""
+"""自描述函数模块注册的回归测试。"""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ function_registry = importlib.import_module(
     "HoTools.OmniNode.OmniNodeFunctionRegistry"
 )
 node_register = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")
+node_register._rebuild_registry()
 
 
 def assert_raises(exception_type, callback, text):
@@ -38,14 +39,14 @@ def assert_raises(exception_type, callback, text):
     except exception_type as exc:
         assert text in str(exc), str(exc)
         return
-    raise AssertionError(f"expected {exception_type.__name__}: {text}")
+    raise AssertionError(f"预期抛出 {exception_type.__name__}：{text}")
 
 
-# Every built-in or user Function source is self-describing near the header.
+# 每个内置或自定义函数模块都必须在文件头自描述。
 module_paths = sorted(
     (directory_name, path)
     for directory_name, directory in MODULE_DIRECTORIES.items()
-    for path in directory.rglob("*.py")
+    for path in directory.glob("*.py")
     if path.name != "__init__.py"
 )
 for _directory_name, path in module_paths:
@@ -68,7 +69,7 @@ for _directory_name, path in module_paths:
         None,
     )
     assert declaration_index is not None, path
-    assert declaration_index <= 2, f"registration marker must stay in header: {path}"
+    assert declaration_index <= 2, f"注册声明必须位于文件头：{path}"
 
 discovered_paths = {
     registration.relative_path
@@ -88,9 +89,18 @@ expected_categories = [
     "PHYSICS_WORLD", "PHYSICS_SOLVER", "PHYSICS_WORLD_DEBUG",
 ]
 assert [category.identifier for category in node_register.node_categories] == expected_categories
+expected_category_labels = [
+    "图结构", "数据", "骨架", "数据类型转换", "数学", "操作",
+    "修改器", "材质", "UV", "顶点颜色", "顶点组", "图像",
+    "绑定工具", "逻辑", "调试", "缓存", "物理", "自定义",
+    "物理世界", "解算器", "物理世界调试",
+]
+assert [category.name for category in node_register.node_categories] == (
+    expected_category_labels
+)
 
 
-# Function discovery must not add category or path data to persisted node IDs.
+# 自动发现不得把分类或路径写入持久化节点 ID。
 function_node_classes = [
     node_class
     for registration in node_register.function_module_registrations
@@ -136,7 +146,7 @@ assert legacy_node_ids <= current_node_ids
 assert len(current_node_ids) == len(node_register.cls)
 
 
-# Disabled helpers and malformed declarations have explicit behavior.
+# 禁用的辅助模块与非法声明必须有明确行为。
 disabled_module = types.ModuleType("test_disabled_function_module")
 disabled_module.OMNI_NODE_REGISTRATION = {"enabled": False}
 assert function_registry.normalize_function_registration(disabled_module) is None
@@ -145,37 +155,41 @@ missing_module = types.ModuleType("test_missing_function_module")
 assert_raises(
     ValueError,
     lambda: function_registry.normalize_function_registration(missing_module),
-    "missing OMNI_NODE_REGISTRATION",
+    "缺少 OMNI_NODE_REGISTRATION",
 )
 
 invalid_path_module = types.ModuleType("test_invalid_path_function_module")
 invalid_path_module.OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
-    "menu_path": "Characters/Face",
+    "category": {"id": "CUSTOM", "label": "自定义", "order": 1000},
+    "menu_path": "角色/面部",
 }
 assert_raises(
     ValueError,
     lambda: function_registry.normalize_function_registration(invalid_path_module),
-    "menu_path must be a list or tuple",
+    "menu_path 必须是列表或元组",
 )
 
 
-# A nested namespace-package module is found without editing a central registry.
+# 只发现当前层文件；物理子目录不参与注册，UI 仍可任意嵌套。
 temporary_package_name = "omninode_test_custom_functions"
 with tempfile.TemporaryDirectory() as temporary_directory:
     temporary_function_directory = Path(temporary_directory)
-    nested_directory = temporary_function_directory / "User" / "Face"
-    nested_directory.mkdir(parents=True)
-    (nested_directory / "Eyes.py").write_text(
+    nested_directory = temporary_function_directory / "Ignored"
+    nested_directory.mkdir()
+    (nested_directory / "Nested.py").write_text(
+        "raise AssertionError('不应导入子目录模块')\n",
+        encoding="utf-8",
+    )
+    (temporary_function_directory / "Eyes.py").write_text(
         """OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
-    "menu_path": ("Character", "Face", "Eyes"),
+    "category": {"id": "CUSTOM", "label": "自定义", "order": 1000},
+    "menu_path": ("角色", "面部", "眼睛"),
     "order": 10,
 }
 
 from HoTools.OmniNode.FunctionNodeCore import omni
 
-@omni(enable=True, bl_label="Custom Eyes")
+@omni(enable=True, bl_label="自定义眼睛")
 def customEyes(value: float) -> float:
     return value
 """,
@@ -192,16 +206,16 @@ def customEyes(value: float) -> float:
         )
         assert len(temporary_registrations) == 1
         temporary_registration = temporary_registrations[0]
-        assert temporary_registration.relative_path == "User/Face/Eyes.py"
-        assert temporary_registration.menu_path == ("Character", "Face", "Eyes")
+        assert temporary_registration.relative_path == "Eyes.py"
+        assert temporary_registration.menu_path == ("角色", "面部", "眼睛")
         assert [node.bl_idname for node in temporary_registration.node_classes] == [
             "HO_OmniNode_customEyes"
         ]
+        assert f"{temporary_package_name}.Ignored.Nested" not in sys.modules
 
-        (nested_directory / "Conflict.py").write_text(
+        (temporary_function_directory / "Conflict.py").write_text(
             """OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Conflicting", "order": 1000},
-    "menu_path": (),
+    "category": {"id": "CUSTOM", "label": "冲突分类", "order": 1000},
 }
 
 from HoTools.OmniNode.FunctionNodeCore import omni
@@ -218,7 +232,7 @@ def customConflict(value: float) -> float:
                 function_directory=temporary_function_directory,
                 package=temporary_package_name,
             ),
-            "label/order must match",
+            "label/order 必须一致",
         )
     finally:
         for module_name in tuple(sys.modules):
@@ -228,7 +242,7 @@ def customConflict(value: float) -> float:
                 del sys.modules[module_name]
 
 
-# Synthetic declarations cover mixed root nodes and arbitrary-depth nested menus.
+# 合成声明覆盖顶层节点与任意深度嵌套菜单的混排。
 def fake_node_class(name):
     return type(name, (), {"bl_idname": f"HO_Test_{name}"})
 
@@ -240,7 +254,7 @@ def fake_registration(module_name, menu_path, order, *node_names):
         module_name=module_name,
         relative_path=f"Custom/{module_name.rsplit('.', 1)[-1]}.py",
         category_id="CUSTOM",
-        category_label="Custom",
+        category_label="自定义",
         category_order=1000,
         menu_path=menu_path,
         order=order,
@@ -250,20 +264,20 @@ def fake_registration(module_name, menu_path, order, *node_names):
 
 synthetic_registrations = (
     fake_registration("custom.root", (), 0, "Root"),
-    fake_registration("custom.eyes", ("Characters", "Face", "Eyes"), 10, "Eyes"),
-    fake_registration("custom.mouth", ("Characters", "Face", "Mouth"), 20, "Mouth"),
-    fake_registration("custom.rig", ("Characters", "Rig"), 30, "Rig"),
+    fake_registration("custom.eyes", ("角色", "面部", "眼睛"), 10, "Eyes"),
+    fake_registration("custom.mouth", ("角色", "面部", "嘴部"), 20, "Mouth"),
+    fake_registration("custom.rig", ("角色", "绑定"), 30, "Rig"),
 )
 records = node_register._build_function_category_records(synthetic_registrations)
 assert len(records) == 1
 custom_root = records[0]["root"]
 assert [node.bl_idname for _key, node in custom_root["nodes"]] == ["HO_Test_Root"]
-characters = custom_root["children"]["Characters"]
-face = characters["children"]["Face"]
-assert set(face["children"]) == {"Eyes", "Mouth"}
-assert "Rig" in characters["children"]
+characters = custom_root["children"]["角色"]
+face = characters["children"]["面部"]
+assert set(face["children"]) == {"眼睛", "嘴部"}
+assert "绑定" in characters["children"]
 
-_records, synthetic_categories, synthetic_menu_classes = (
+synthetic_categories, synthetic_menu_classes = (
     node_register._build_function_categories(synthetic_registrations)
 )
 assert [category.identifier for category in synthetic_categories] == ["CUSTOM"]
@@ -279,7 +293,7 @@ duplicate_b = fake_node_class("Duplicate")
 assert_raises(
     ValueError,
     lambda: node_register._validate_unique_node_ids((duplicate_a, duplicate_b)),
-    "duplicate OmniNode bl_idname",
+    "OmniNode bl_idname 重复",
 )
 
 
@@ -297,4 +311,4 @@ for cycle in range(2):
     assert not node_register._registered_node_classes
     assert not node_register._registered_menu_classes
 
-print("OmniNode Function registration: PASS")
+print("OmniNode 函数模块注册测试：通过")

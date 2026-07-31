@@ -1,1 +1,1 @@
-"""User-owned OmniNode Function modules."""
+"""用户自定义 OmniNode 函数节点模块。"""

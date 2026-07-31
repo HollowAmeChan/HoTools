@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "ARMATURE", "label": "Armature", "order": 20},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "ARMATURE", "label": "骨架", "order": 20},
 }
 
 from ..FunctionNodeCore import omni

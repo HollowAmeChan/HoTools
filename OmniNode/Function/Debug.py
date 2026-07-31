@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "DEBUG", "label": "Debug", "order": 140},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "DEBUG", "label": "调试", "order": 140},
 }
 
 from typing import Any

@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "IMAGE", "label": "Image", "order": 110},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "IMAGE", "label": "图像", "order": 110},
 }
 
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA

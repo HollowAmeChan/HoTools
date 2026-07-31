@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "MODIFIER", "label": "Modifier", "order": 60},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "MODIFIER", "label": "修改器", "order": 60},
 }
 
 from ..OmniNodeSocketMapping import _OmniModifierType, _OmniModifier

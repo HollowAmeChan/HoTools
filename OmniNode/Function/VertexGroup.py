@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "VERTEXGROUP", "label": "VertexGroup", "order": 100},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "VERTEXGROUP", "label": "顶点组", "order": 100},
 }
 
 from ..OmniNodeSocketMapping import _OmniVertexGroup

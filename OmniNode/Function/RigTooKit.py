@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "RIGTOOLKIT", "label": "RigToolKit", "order": 120},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "RIGTOOLKIT", "label": "绑定工具", "order": 120},
 }
 
 import bpy

@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "MATERIAL", "label": "Material", "order": 70},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "MATERIAL", "label": "材质", "order": 70},
 }
 
 from ..OmniNodeSocketMapping import _OmniMaterialSlot

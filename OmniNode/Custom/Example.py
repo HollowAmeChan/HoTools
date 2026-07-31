@@ -1,7 +1,6 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
-    "menu_path": ("Examples", "Math"),
-    "order": 0,
+    "category": {"id": "CUSTOM", "label": "自定义", "order": 1000},
+    "menu_path": ("示例", "数学"),
 }
 
 from ..FunctionNodeCore import omni
@@ -9,9 +8,9 @@ from ..FunctionNodeCore import omni
 
 @omni(
     enable=True,
-    bl_label="Custom示例-数值缩放",
+    bl_label="自定义示例-数值缩放",
     base_color=(0.16, 0.32, 0.22),
-    omni_description="用户自定义 Function 节点示例：将输入数值乘以倍率。",
+    omni_description="用户自定义函数节点示例：将输入数值乘以倍率。",
     _INPUT_NAME=["数值", "倍率"],
     _OUTPUT_NAME=["结果"],
     mute_passthrough={"_OUTPUT0": "value"},

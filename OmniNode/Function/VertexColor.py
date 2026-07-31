@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "VERTEXCOLOR", "label": "VertexColor", "order": 90},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "VERTEXCOLOR", "label": "顶点颜色", "order": 90},
 }
 
 from ..OmniNodeSocketMapping import _OmniColorAttribute

@@ -335,6 +335,7 @@ def test_solver_node_add_menu_uses_manifest_submenus():
     node_register = importlib.import_module(
         "HoTools.OmniNode.OmniNodeRegister"
     )
+    node_register._rebuild_registry()
     expected = (
         ("spring_vrm", "VRM SpringBone", "NODE_MT_OMNINODE_SOLVER_SPRING_VRM"),
         ("rigid_jolt", "Jolt刚体", "NODE_MT_OMNINODE_SOLVER_RIGID_JOLT"),

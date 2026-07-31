@@ -80,8 +80,8 @@ def _build_function_category_records(registrations):
     for registration in registrations:
         if registration.category_id in _RESERVED_CATEGORY_IDS:
             raise ValueError(
-                f"{registration.relative_path}: category "
-                f"{registration.category_id!r} is reserved by OmniNode"
+                f"{registration.relative_path}: 分类 "
+                f"{registration.category_id!r} 是 OmniNode 保留分类"
             )
 
         category = categories.setdefault(registration.category_id, {
@@ -145,14 +145,14 @@ def _build_function_categories(registrations):
         ))
     menu_ids = [menu_class.bl_idname for menu_class in menu_classes]
     if len(menu_ids) != len(set(menu_ids)):
-        raise ValueError("nested Function menu identifiers must be unique")
-    return category_records, categories, menu_classes
+        raise ValueError("函数节点的嵌套菜单标识符必须唯一")
+    return categories, menu_classes
 
 
 def _solver_menu_id(solver_id):
     token = re.sub(r"[^A-Za-z0-9_]+", "_", str(solver_id)).strip("_").upper()
     if not token:
-        raise ValueError("solver_id cannot produce an empty menu identifier")
+        raise ValueError("solver_id 不能生成空菜单标识符")
     return f"NODE_MT_OMNINODE_SOLVER_{token}"
 
 
@@ -167,7 +167,7 @@ def _load_physics_world_solver_groups():
             continue
         menu_id = _solver_menu_id(entry["solver_id"])
         if menu_id in menu_ids:
-            raise ValueError(f"duplicate solver menu identifier: {menu_id}")
+            raise ValueError(f"解算器菜单标识符重复：{menu_id}")
         menu_ids.add(menu_id)
         groups.append({
             "domain": entry["domain"],
@@ -190,16 +190,13 @@ def _validate_unique_node_ids(node_classes):
             previous_source = getattr(previous_func, "__module__", previous.__module__)
             current_source = getattr(current_func, "__module__", node_class.__module__)
             raise ValueError(
-                f"duplicate OmniNode bl_idname {node_id!r}: "
-                f"{previous_source} and {current_source}"
+                f"OmniNode bl_idname 重复 {node_id!r}："
+                f"{previous_source} 与 {current_source}"
             )
         seen[node_id] = node_class
 
 
 function_module_registrations = ()
-function_nodes_by_module = {}
-function_category_records = ()
-function_menu_classes = []
 node_cls_graph = []
 node_cls_physics_world = []
 physics_world_solver_groups = []
@@ -214,9 +211,6 @@ menu_classes = []
 
 def _rebuild_registry():
     global function_module_registrations
-    global function_nodes_by_module
-    global function_category_records
-    global function_menu_classes
     global node_cls_graph
     global node_cls_physics_world
     global physics_world_solver_groups
@@ -229,16 +223,9 @@ def _rebuild_registry():
     global menu_classes
 
     function_module_registrations = discover_node_modules()
-    function_nodes_by_module = {
-        registration.relative_path: list(registration.node_classes)
-        for registration in function_module_registrations
-    }
-
-    (
-        function_category_records,
-        function_categories,
-        function_menu_classes,
-    ) = _build_function_categories(function_module_registrations)
+    function_categories, function_menu_classes = _build_function_categories(
+        function_module_registrations
+    )
 
     node_cls_graph = list(CLS_GRAPH)
     function_nodes = [
@@ -284,7 +271,7 @@ def _rebuild_registry():
     ]
 
     node_categories = [
-        OmniNodeCategory("GRAPH", "graph", items=[
+        OmniNodeCategory("GRAPH", "图结构", items=[
             NodeItem(node.bl_idname) for node in node_cls_graph
         ]),
         *function_categories,
@@ -301,7 +288,6 @@ def _rebuild_registry():
 
 _registered_node_classes = []
 _registered_menu_classes = []
-_registered_solver_menu_classes = _registered_menu_classes
 _node_categories_registered = False
 
 
@@ -339,6 +325,3 @@ def register():
 
 def unregister():
     _rollback_registration()
-
-
-_rebuild_registry()

@@ -1,12 +1,14 @@
-# OmniNode Custom Functions
+# OmniNode 自定义函数节点
 
-这个目录用于放置用户自定义的 Function 节点。新增模块后不需要修改
-`OmniNodeRegister.py`；重新启用 OmniNode 或重启 Blender 时会自动递归发现。
+这个目录用于放置用户自定义的函数节点。新增模块后不需要修改
+`OmniNodeRegister.py`；重新启用 OmniNode 或重启 Blender 时会自动发现。
+只扫描 `Custom/` 当前层的 `.py` 文件，不扫描子目录。UI 子菜单与文件布局无关，
+统一通过 `menu_path` 声明。
 
 ## 新建节点
 
 1. 复制 `Example.py`，并改成唯一的 Python 文件名，例如
-   `StudioCharacter.py`。文件名和子目录名只能使用合法 Python 标识符。
+   `StudioCharacter.py`。文件名必须是合法 Python 标识符。
 2. 修改 `OMNI_NODE_REGISTRATION`。同一个 `category.id` 下的 `label` 和
    `category.order` 必须完全一致；`menu_path` 可以声明任意深度的子菜单。
 3. 将示例函数替换为自己的函数，并用 `@omni(enable=True, ...)` 暴露节点。
@@ -17,8 +19,8 @@
 
 ```python
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
-    "menu_path": ("Character", "Face"),
+    "category": {"id": "CUSTOM", "label": "自定义", "order": 1000},
+    "menu_path": ("角色", "面部"),
     "order": 10,
 }
 
@@ -36,7 +38,7 @@ def studioUniqueNodeName(value: float = 0.0) -> float:
     return value
 ```
 
-只包含 helper、不应生成节点的 `.py` 文件也必须声明：
+只包含辅助函数、不应生成节点的 `.py` 文件也必须声明：
 
 ```python
 OMNI_NODE_REGISTRATION = {"enabled": False}

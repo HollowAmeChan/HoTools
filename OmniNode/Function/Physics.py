@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "PHYSICS", "label": "Physics", "order": 160},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "PHYSICS", "label": "物理", "order": 160},
 }
 
 from ..OmniNodeSocketMapping import (

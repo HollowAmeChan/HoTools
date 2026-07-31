@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "MATH", "label": "Math", "order": 40},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "MATH", "label": "数学", "order": 40},
 }
 
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob

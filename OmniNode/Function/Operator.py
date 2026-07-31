@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "OPERATOR", "label": "Operator", "order": 50},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "OPERATOR", "label": "操作", "order": 50},
 }
 
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniFloatCurve, _OmniColorCurve

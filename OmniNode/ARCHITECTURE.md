@@ -65,12 +65,12 @@ OmniNode 的默认扩展点是 `Function/*.py` 和 `Custom/*.py` 中的 Python �
 
 #### 函数节点模块自描述注册
 
-`OmniNodeRegister` 不维护模块白名单。注册时分别递归发现内置节点目录 `Function/**/*.py` 和用户节点目录 `Custom/**/*.py`（`__init__.py` 除外），每个文件必须在模块头声明 `OMNI_NODE_REGISTRATION`：
+`OmniNodeRegister` 不维护模块白名单。注册时只扫描内置节点目录 `Function/*.py` 和用户节点目录 `Custom/*.py` 的当前层（`__init__.py` 除外），不扫描子目录。每个文件必须在模块头声明 `OMNI_NODE_REGISTRATION`：
 
 ```python
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
-    "menu_path": ("Character", "Face", "Eyes"),
+    "category": {"id": "CUSTOM", "label": "自定义", "order": 1000},
+    "menu_path": ("角色", "面部", "眼睛"),
     "order": 20,
 }
 ```
@@ -80,7 +80,7 @@ OMNI_NODE_REGISTRATION = {
 - 模块 `order` 决定它在集合或子菜单内的相对位置；相同顺序按完整模块名稳定排序。
 - 只作为 helper、明确不生成节点的文件也必须写头声明，使用 `{"enabled": False}`。
 - 缺少声明、声明字段非法、模块导入失败、分类合同冲突、没有启用节点或 `bl_idname` 重复时，注册整体失败并回滚，禁止留下部分注册状态。
-- `Function` 与 `Custom` 子目录按 Python package/namespace package 导入，目录名和文件名必须是合法 Python 标识符。
+- UI 嵌套只由 `menu_path` 表达，不依赖物理子目录；文件名必须是合法 Python 模块名。
 
 `Custom/` 与 `Function/` 平级，是用户自定义节点的独立入口。目录内保留可运行示例和独立说明；用户模块应使用 `CUSTOM` 分类或另行声明不会与内置分类冲突的 ID。更新插件可能覆盖内置示例，因此用户节点应保存在自己命名的文件中，并在升级前纳入版本控制或备份。
 
@@ -1097,7 +1097,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### `OmniNodeFunctionRegistry.py`
 
-函数节点模块发现与声明校验。分别递归映射 `Function/` 和 `Custom/` 文件路径到模块名，导入模块，规范化 `OMNI_NODE_REGISTRATION`，跨目录校验同名分类合同，并输出与 Blender UI 解耦的注册描述。
+函数节点模块发现与声明校验。分别扫描 `Function/` 和 `Custom/` 当前层的 Python 文件，导入模块，规范化 `OMNI_NODE_REGISTRATION`，跨目录校验同名分类合同，并输出与 Blender UI 解耦的注册描述。物理子目录不参与发现，UI 嵌套由 `menu_path` 单独描述。
 
 ### `Function/*.py`
 

@@ -1,7 +1,5 @@
 OMNI_NODE_REGISTRATION = {
-    "category": {"id": "DATA_TYPECAST", "label": "DataTypeCast", "order": 30},
-    "menu_path": (),
-    "order": 0,
+    "category": {"id": "DATA_TYPECAST", "label": "数据类型转换", "order": 30},
 }
 
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniColorRGBA
