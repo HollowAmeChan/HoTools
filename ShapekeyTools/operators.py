@@ -2999,11 +2999,12 @@ def _fbsf_resolve_mmd_side_tag(
 
 
 def _fbsf_infer_left_is_positive(
-        tagged_deltas, basis_positions, fallback=True):
+        tagged_deltas, basis_positions, fallback=True, dominance=0.8):
     """用单眼键的位移能量推断角色左眼位于局部 X 的哪一侧。"""
     positive_mask = basis_positions[:, 0] > 0.0
     negative_mask = basis_positions[:, 0] < 0.0
-    evidence = []
+    minimum_bias = dominance * 2.0 - 1.0
+    evidence = set()
     for function_tag, delta in tagged_deltas:
         channels = _fbsf_tag_channels(function_tag)
         eye_channels = channels & {'LEFT_EYE', 'RIGHT_EYE'}
@@ -3017,38 +3018,42 @@ def _fbsf_infer_left_is_positive(
         if total_energy < 1e-10:
             continue
         direction = (positive_energy - negative_energy) / total_energy
-        evidence.append(
+        semantic_direction = (
             direction if 'LEFT_EYE' in eye_channels else -direction)
+        if abs(semantic_direction) + 1e-12 < minimum_bias:
+            continue
+        evidence.add(semantic_direction > 0.0)
 
-    # 证据缺失或左右冲突时由调用方决定是否继续尝试其他证据。
-    if not evidence or abs(float(np.mean(evidence))) < 0.25:
+    # Weak, missing, or conflicting sources must not override known standards.
+    if len(evidence) != 1:
         return fallback
-    return float(np.mean(evidence)) > 0.0
+    return evidence.pop()
 
 
 def _fbsf_resolve_target_side_tags(
         target_tags, source_orientation, basis_positions, context,
-        target_delta, resolve_mmd=True):
+        target_delta, resolve_mmd=True, orientation_override=None):
     """推断角色左右，并可在 UI 预处理阶段解析 MMD 单眼名称。"""
-    standard_orientation = []
-    for shape_name, (_function_tag, reference_tag) in target_tags.items():
-        reference_eye_channels = (
-            _fbsf_tag_channels(reference_tag)
-            & {'LEFT_EYE', 'RIGHT_EYE'}
-        )
-        if len(reference_eye_channels) != 1:
-            continue
-        preset = _fbsf_auto_preset(shape_name, context=context)
-        if preset.standards.isdisjoint(_FBSF_STRONG_SIDE_STANDARDS):
-            continue
-        standard_orientation.append(
-            (reference_tag, target_delta(shape_name)))
-
-    left_is_positive = _fbsf_infer_left_is_positive(
-        source_orientation, basis_positions, fallback=None)
+    left_is_positive = orientation_override
     if left_is_positive is None:
         left_is_positive = _fbsf_infer_left_is_positive(
-            standard_orientation, basis_positions, fallback=True)
+            source_orientation, basis_positions, fallback=None)
+        if left_is_positive is None:
+            standard_orientation = []
+            for shape_name, (_function_tag, reference_tag) in target_tags.items():
+                reference_eye_channels = (
+                    _fbsf_tag_channels(reference_tag)
+                    & {'LEFT_EYE', 'RIGHT_EYE'}
+                )
+                if len(reference_eye_channels) != 1:
+                    continue
+                preset = _fbsf_auto_preset(shape_name, context=context)
+                if preset.standards.isdisjoint(_FBSF_STRONG_SIDE_STANDARDS):
+                    continue
+                standard_orientation.append(
+                    (reference_tag, target_delta(shape_name)))
+            left_is_positive = _fbsf_infer_left_is_positive(
+                standard_orientation, basis_positions, fallback=True)
 
     resolved_tags = dict(target_tags)
     if not resolve_mmd:
@@ -3443,7 +3448,7 @@ def _resolve_fbsf_target_tags(shape_keys, basis, sources, target_specs):
 
 def _rebase_shape_keys_fbsf(
         obj, source_specs, correction_strength, side_smooth_width,
-        target_specs=None):
+        target_specs=None, orientation_override=None):
     resolve_automatic_sides = target_specs is None
     shape_keys, basis, tagged_sources = _resolve_fbsf_sources(
         obj, source_specs)
@@ -3462,10 +3467,6 @@ def _rebase_shape_keys_fbsf(
         for source, factor, function_tag in tagged_sources
     )
     source_set = {source for source, _factor, _tag in tagged_sources}
-    key_positions = {
-        key: shapekey_utils.read_shape_key_positions(key)
-        for key in shape_keys.key_blocks
-    }
     shape_names = tuple(
         key.name for key in shape_keys.key_blocks if key != basis)
     context = _fbsf_classification_context(shape_names)
@@ -3481,10 +3482,24 @@ def _rebase_shape_keys_fbsf(
         for key in shape_keys.key_blocks
         if key != basis and key not in source_set
     }
+    target_delta_cache = {}
 
     def target_delta(shape_name):
+        cached = target_delta_cache.get(shape_name)
+        if cached is not None:
+            return cached
         key = keys_by_name[shape_name]
-        return key_positions[key] - key_positions[key.relative_key]
+        relative_positions = (
+            old_basis
+            if key.relative_key == basis
+            else shapekey_utils.read_shape_key_positions(key.relative_key)
+        )
+        delta = (
+            shapekey_utils.read_shape_key_positions(key)
+            - relative_positions
+        )
+        target_delta_cache[shape_name] = delta
+        return delta
 
     left_is_positive, target_tags = _fbsf_resolve_target_side_tags(
         target_tags,
@@ -3493,11 +3508,12 @@ def _rebase_shape_keys_fbsf(
         context,
         target_delta,
         resolve_mmd=resolve_automatic_sides,
+        orientation_override=orientation_override,
     )
     references = tuple(
         (
             target_tags[key.name][1],
-            key_positions[key] - key_positions[key.relative_key],
+            target_delta(key.name),
         )
         for key in shape_keys.key_blocks
         if (
@@ -3522,6 +3538,9 @@ def _rebase_shape_keys_fbsf(
         )
         for source, factor, function_tag, source_delta in source_deltas
     )
+    # Definitions are scalar; release reference deltas before atomic planning.
+    del references
+    target_delta_cache.clear()
     corrected_keys = 0
     applied_links = 0
     split_links = 0
@@ -3706,6 +3725,12 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
 
     sources: CollectionProperty(type=PG_ShapekeyTools_FBSFSource) # type: ignore
     source_index: IntProperty(default=0, min=0) # type: ignore
+    side_orientation_snapshot: IntProperty(
+        default=0,
+        min=-1,
+        max=1,
+        options={'HIDDEN'},
+    ) # type: ignore
     correction_strength: FloatProperty(
         name="反向修正强度",
         description="缩放 FBSF 自动计算的反向抵消权重；0 等同普通全局变基",
@@ -3760,6 +3785,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         shape_names = tuple(
             key.name for key in shape_keys.key_blocks if key != basis)
         classification_context = _fbsf_classification_context(shape_names)
+        presets_by_name = {}
         for key in shape_keys.key_blocks:
             if key == basis:
                 continue
@@ -3770,6 +3796,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             item.merge = key.name in source_names and item.mergeable
             preset = _fbsf_auto_preset(
                 key.name, context=classification_context)
+            presets_by_name[key.name] = preset
             item.function_tag = preset.function_tag
             item.auto_function_tag = preset.function_tag
             item.reference_tag = preset.reference_tag
@@ -3802,6 +3829,8 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             for item in self.sources
             if (
                 item.merge
+                and 'MMD' not in presets_by_name[
+                    item.shape_key_name].standards
                 and len(
                     _fbsf_tag_channels(item.function_tag)
                     & {'LEFT_EYE', 'RIGHT_EYE'}) == 1
@@ -3810,7 +3839,6 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         target_tags = {
             item.shape_key_name: (item.function_tag, item.reference_tag)
             for item in self.sources
-            if not item.merge
         }
         delta_cache = {}
 
@@ -3825,7 +3853,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
                 delta_cache[shape_name] = delta
             return delta
 
-        _left_is_positive, resolved_tags = _fbsf_resolve_target_side_tags(
+        left_is_positive, resolved_tags = _fbsf_resolve_target_side_tags(
             target_tags,
             source_orientation,
             basis_positions,
@@ -3838,6 +3866,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             item.function_tag = function_tag
             item.auto_function_tag = function_tag
             item.reference_tag = reference_tag
+        self.side_orientation_snapshot = 1 if left_is_positive else -1
         self.source_index = 0
         return context.window_manager.invoke_props_dialog(self, width=620)
 
@@ -3897,6 +3926,10 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             for item in self.sources
             if not item.merge
         )
+        orientation_override = {
+            -1: False,
+            1: True,
+        }.get(self.side_orientation_snapshot)
         # 允许脚本直接 EXEC：此时没有经过 invoke，用当前非零键填充来源列表。
         if len(self.sources) == 0:
             try:
@@ -3905,6 +3938,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
                 self.report({'WARNING'}, str(exc))
                 return {'CANCELLED'}
             target_specs = None
+            orientation_override = None
         try:
             source_names, key_count, corrected, links, split, average = (
                 _rebase_shape_keys_fbsf(
@@ -3913,6 +3947,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
                     self.correction_strength,
                     self.side_smooth_width,
                     target_specs,
+                    orientation_override=orientation_override,
                 )
             )
         except ShapeKeyRebaseError as exc:

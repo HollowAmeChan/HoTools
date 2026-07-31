@@ -310,6 +310,55 @@ assert module._fbsf_infer_left_is_positive(
     fallback=None,
 ) is None
 
+weak_positive_wink = np.zeros_like(fbsf_edit)
+weak_positive_wink[:2, 1] = np.sqrt(3.0)
+weak_positive_wink[2:, 1] = np.sqrt(5.0)
+assert module._fbsf_infer_left_is_positive(
+    (('LEFT_EYE', weak_positive_wink),),
+    fbsf_basis,
+    fallback=None,
+) is None
+assert module._fbsf_infer_left_is_positive(
+    (
+        ('LEFT_EYE', positive_x_wink),
+        ('LEFT_EYE', positive_x_wink),
+        ('LEFT_EYE', negative_x_wink),
+    ),
+    fbsf_basis,
+    fallback=None,
+) is None
+assert module._fbsf_infer_left_is_positive(
+    (
+        ('LEFT_EYE', positive_x_wink),
+        ('RIGHT_EYE', negative_x_wink),
+    ),
+    fbsf_basis,
+)
+assert not module._fbsf_infer_left_is_positive(
+    (
+        ('LEFT_EYE', negative_x_wink),
+        ('RIGHT_EYE', positive_x_wink),
+    ),
+    fbsf_basis,
+)
+
+
+def unexpected_standard_delta(_shape_name):
+    raise AssertionError("standard delta should be lazy")
+
+
+left_is_positive, _resolved_side_tags = (
+    module._fbsf_resolve_target_side_tags(
+        {'eyeBlinkLeft': ('LEFT_EYE', 'LEFT_EYE')},
+        (('LEFT_EYE', positive_x_wink),),
+        fbsf_basis,
+        module._fbsf_classification_context(('eyeBlinkLeft',)),
+        unexpected_standard_delta,
+        resolve_mmd=False,
+    )
+)
+assert left_is_positive
+
 side_target_tags = {
     'eyeBlinkLeft': ('LEFT_EYE', 'LEFT_EYE'),
     'ウィンク': ('LEFT_EYE', 'LEFT_EYE'),
@@ -332,6 +381,30 @@ left_is_positive, resolved_side_tags = (
 assert not left_is_positive
 assert resolved_side_tags['ウィンク'] == ('LEFT_EYE', 'LEFT_EYE')
 
+left_is_positive, _resolved_side_tags = (
+    module._fbsf_resolve_target_side_tags(
+        side_target_tags,
+        (('LEFT_EYE', weak_positive_wink),),
+        fbsf_basis,
+        side_context,
+        negative_side_deltas.__getitem__,
+        resolve_mmd=True,
+    )
+)
+assert not left_is_positive
+
+left_is_positive, _resolved_side_tags = (
+    module._fbsf_resolve_target_side_tags(
+        side_target_tags,
+        (('LEFT_EYE', positive_x_wink),),
+        fbsf_basis,
+        side_context,
+        negative_side_deltas.__getitem__,
+        resolve_mmd=True,
+    )
+)
+assert left_is_positive
+
 mixed_side_deltas = {
     'eyeBlinkLeft': positive_x_wink,
     'ウィンク': negative_x_wink,
@@ -348,6 +421,19 @@ left_is_positive, automatic_side_tags = (
 )
 assert left_is_positive
 assert automatic_side_tags['ウィンク'] == ('RIGHT_EYE', 'RIGHT_EYE')
+snapshot_left_is_positive, snapshot_side_tags = (
+    module._fbsf_resolve_target_side_tags(
+        automatic_side_tags,
+        (('LEFT_EYE', negative_x_wink),),
+        fbsf_basis,
+        side_context,
+        mixed_side_deltas.__getitem__,
+        resolve_mmd=False,
+        orientation_override=left_is_positive,
+    )
+)
+assert snapshot_left_is_positive
+assert snapshot_side_tags == automatic_side_tags
 _left_is_positive, explicit_side_tags = (
     module._fbsf_resolve_target_side_tags(
         side_target_tags,
@@ -402,7 +488,8 @@ assert module.FBSF_FUNCTION_TAGS == {
 }
 assert "factor" not in module.OP_ShapekeyTools_RebaseFBSF.__annotations__
 assert {
-    "sources", "source_index", "correction_strength", "side_smooth_width",
+    "sources", "source_index", "side_orientation_snapshot",
+    "correction_strength", "side_smooth_width",
 }.issubset(module.OP_ShapekeyTools_RebaseFBSF.__annotations__)
 assert not hasattr(module, "OP_ShapekeyTools_RebasePreserveExpressions")
 
