@@ -2558,6 +2558,31 @@ class _FBSFShapePreset:
 
 
 _FBSF_BLENDER_SUFFIX = re.compile(r"\.\d{3,}$")
+_FBSF_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_FBSF_ASCII_NAME_TOKEN = re.compile(r"[A-Za-z]+|\d+")
+_FBSF_EYE_ACTION_COMPOUND = re.compile(
+    r"(?:eye|face|auto|vrc)?(blink|wink)(?:left|right|l|r|\d+)*$")
+_FBSF_KEYWORD_EYE_BLOCKED_TOKENS = frozenset({
+    'backup', 'bak', 'base', 'basis', 'bone', 'brow', 'control', 'ctrl',
+    'copy', 'correct', 'correction', 'corrective', 'debug', 'delete',
+    'disabled', 'driver', 'fix', 'for',
+    'frown', 'happy', 'helper', 'iris', 'jaw', 'joy', 'laugh', 'light',
+    'joint', 'lip', 'lips', 'mask', 'material', 'mouth', 'old', 'phoneme',
+    'proxy', 'rig',
+    'pupil', 'reference', 'ref', 'sculpt', 'separator', 'smile', 'temp',
+    'test', 'tex', 'texture', 'tmp', 'tongue', 'unused', 'viseme',
+})
+_FBSF_KEYWORD_EYE_BLOCKED_TEXT = (
+    'バックアップ', 'コピー', 'テスト', 'マウス', 'リップ', '修正',
+    '補助', '口', '舌', '笑',
+)
+_FBSF_KEYWORD_MIN_ACTIVE_VERTICES = 4
+_FBSF_KEYWORD_MIN_SIDE_VERTEX_COVERAGE = 0.7
+_FBSF_KEYWORD_MIN_SIDE_ENERGY_COVERAGE = 0.9
+_FBSF_KEYWORD_SIDE_COUNT_DOMINANCE = 0.75
+_FBSF_KEYWORD_SIDE_ENERGY_DOMINANCE = 0.95
+_FBSF_KEYWORD_BILATERAL_LOWER = 0.35
+_FBSF_KEYWORD_BILATERAL_UPPER = 0.65
 
 
 def _fbsf_normalized_names(shape_name):
@@ -2573,6 +2598,56 @@ def _fbsf_normalized_names(shape_name):
 
 def _fbsf_normalized_name(shape_name):
     return min(_fbsf_normalized_names(shape_name), key=len)
+
+
+def _fbsf_keyword_eye_name(shape_name):
+    """Return a conservative eye action kind and whether the name is sided."""
+    normalized = unicodedata.normalize('NFKC', shape_name)
+    normalized = normalized.strip().lstrip('@+').strip()
+    while _FBSF_BLENDER_SUFFIX.search(normalized):
+        normalized = _FBSF_BLENDER_SUFFIX.sub('', normalized)
+    split_name = _FBSF_CAMEL_BOUNDARY.sub(' ', normalized)
+    tokens = frozenset(
+        token.casefold()
+        for token in _FBSF_ASCII_NAME_TOKEN.findall(split_name)
+    )
+    if (
+            tokens & _FBSF_KEYWORD_EYE_BLOCKED_TOKENS
+            or any(text in normalized for text in _FBSF_KEYWORD_EYE_BLOCKED_TEXT)):
+        return None
+
+    action = None
+    if 'wink' in tokens:
+        action = 'WINK'
+    elif 'blink' in tokens:
+        action = 'BLINK'
+    else:
+        for token in tokens:
+            match = _FBSF_EYE_ACTION_COMPOUND.fullmatch(token)
+            if match is not None:
+                action = match.group(1).upper()
+                break
+    if action is None:
+        if 'ウィンク' in normalized or 'ウインク' in normalized:
+            action = 'WINK'
+        elif (
+                'まばたき' in normalized
+                or '眨眼' in normalized
+                or '闭眼' in normalized
+                or '閉眼' in normalized):
+            action = 'BLINK'
+    if action is None:
+        return None
+
+    sided = bool(tokens & {'left', 'right', 'l', 'r'})
+    sided = sided or any(
+        'left' in token
+        or 'right' in token
+        or re.search(r'(?:blink|wink)\d*[lr]\d*$', token) is not None
+        for token in tokens
+    )
+    sided = sided or '左' in normalized or '右' in normalized
+    return action, sided
 
 
 _FBSF_EXACT_PRESETS = {}
@@ -2977,6 +3052,104 @@ def _fbsf_dominant_eye_side_tag(
     return None
 
 
+def _fbsf_keyword_eye_geometry_tag(
+        delta, basis_positions, left_is_positive=True,
+        minimum_active_vertices=_FBSF_KEYWORD_MIN_ACTIVE_VERTICES):
+    """Classify a keyword candidate only when vertex count and energy agree."""
+    delta = np.asarray(delta)
+    basis_positions = np.asarray(basis_positions)
+    if (
+            delta.ndim != 2
+            or delta.shape[1:] != (3,)
+            or delta.shape != basis_positions.shape
+            or len(delta) == 0):
+        return None
+    vertex_energy = np.einsum('ij,ij->i', delta, delta)
+    if not np.all(np.isfinite(vertex_energy)):
+        return None
+    total_energy = float(np.sum(vertex_energy, dtype=np.float64))
+    if total_energy < 1e-10:
+        return None
+    active_threshold = max(
+        1e-12, float(np.max(vertex_energy)) * 1e-6)
+    active = vertex_energy >= active_threshold
+    active_count = int(np.count_nonzero(active))
+    if active_count < minimum_active_vertices:
+        return None
+
+    left_mask, right_mask = _fbsf_side_masks(
+        basis_positions, left_is_positive)
+    left_active = active & left_mask
+    right_active = active & right_mask
+    left_count = int(np.count_nonzero(left_active))
+    right_count = int(np.count_nonzero(right_active))
+    side_count = left_count + right_count
+    side_vertex_coverage = side_count / active_count
+    if (
+            side_count < minimum_active_vertices
+            or side_vertex_coverage < _FBSF_KEYWORD_MIN_SIDE_VERTEX_COVERAGE):
+        return None
+
+    left_energy = float(np.sum(
+        vertex_energy[left_active], dtype=np.float64))
+    right_energy = float(np.sum(
+        vertex_energy[right_active], dtype=np.float64))
+    side_energy = left_energy + right_energy
+    if side_energy / total_energy < _FBSF_KEYWORD_MIN_SIDE_ENERGY_COVERAGE:
+        return None
+
+    left_count_fraction = left_count / side_count
+    left_energy_fraction = left_energy / side_energy
+    right_count_limit = 1.0 - _FBSF_KEYWORD_SIDE_COUNT_DOMINANCE
+    right_energy_limit = 1.0 - _FBSF_KEYWORD_SIDE_ENERGY_DOMINANCE
+    if (
+            left_count_fraction >= _FBSF_KEYWORD_SIDE_COUNT_DOMINANCE
+            and left_energy_fraction >= _FBSF_KEYWORD_SIDE_ENERGY_DOMINANCE):
+        return 'LEFT_EYE'
+    if (
+            left_count_fraction <= right_count_limit
+            and left_energy_fraction <= right_energy_limit):
+        return 'RIGHT_EYE'
+    if (
+            _FBSF_KEYWORD_BILATERAL_LOWER
+            <= left_count_fraction
+            <= _FBSF_KEYWORD_BILATERAL_UPPER
+            and _FBSF_KEYWORD_BILATERAL_LOWER
+            <= left_energy_fraction
+            <= _FBSF_KEYWORD_BILATERAL_UPPER):
+        return 'BOTH_EYES'
+    return None
+
+
+def _fbsf_keyword_eye_preset(
+        shape_name, delta, basis_positions, left_is_positive=True,
+        context=None):
+    """Infer an unknown wink/blink key from its name and deformation geometry."""
+    exact = _fbsf_auto_preset(shape_name, context=context)
+    if (
+            exact.function_tag != 'OTHERS'
+            or exact.reference_tag != 'OTHERS'
+            or exact.standards):
+        return None
+    name_evidence = _fbsf_keyword_eye_name(shape_name)
+    if name_evidence is None:
+        return None
+    action, explicitly_sided = name_evidence
+    geometry_tag = _fbsf_keyword_eye_geometry_tag(
+        delta, basis_positions, left_is_positive)
+    if geometry_tag is None:
+        return None
+    if geometry_tag == 'BOTH_EYES' and (
+            action == 'WINK' or explicitly_sided):
+        return None
+    return _FBSFShapePreset(
+        geometry_tag,
+        geometry_tag,
+        frozenset({'KEYWORD_GEOMETRY'}),
+        'EYELID',
+    )
+
+
 def _fbsf_resolve_mmd_side_tag(
         shape_name, function_tag, reference_tag, delta, basis_positions,
         left_is_positive=True, context=None):
@@ -3077,6 +3250,35 @@ def _fbsf_resolve_target_side_tags(
             context,
         )
     return left_is_positive, resolved_tags
+
+
+def _fbsf_resolve_keyword_eye_tags(
+        target_tags, basis_positions, left_is_positive, context,
+        target_delta):
+    """Apply geometry-gated keyword presets without changing exact matches."""
+    resolved_tags = dict(target_tags)
+    for shape_name, (function_tag, reference_tag) in target_tags.items():
+        if (function_tag, reference_tag) != ('OTHERS', 'OTHERS'):
+            continue
+        if _fbsf_keyword_eye_name(shape_name) is None:
+            continue
+        exact = _fbsf_auto_preset(shape_name, context=context)
+        if exact.standards:
+            continue
+        preset = _fbsf_keyword_eye_preset(
+            shape_name,
+            target_delta(shape_name),
+            basis_positions,
+            left_is_positive,
+            context,
+        )
+        if preset is None:
+            continue
+        resolved_tags[shape_name] = (
+            preset.function_tag,
+            preset.reference_tag,
+        )
+    return resolved_tags
 
 
 def _fbsf_split_side_weights(
@@ -3510,6 +3712,14 @@ def _rebase_shape_keys_fbsf(
         resolve_mmd=resolve_automatic_sides,
         orientation_override=orientation_override,
     )
+    if resolve_automatic_sides:
+        target_tags = _fbsf_resolve_keyword_eye_tags(
+            target_tags,
+            old_basis,
+            left_is_positive,
+            context,
+            target_delta,
+        )
     references = tuple(
         (
             target_tags[key.name][1],
@@ -3860,6 +4070,13 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             classification_context,
             target_delta,
             resolve_mmd=True,
+        )
+        resolved_tags = _fbsf_resolve_keyword_eye_tags(
+            resolved_tags,
+            basis_positions,
+            left_is_positive,
+            classification_context,
+            target_delta,
         )
         for shape_name, (function_tag, reference_tag) in resolved_tags.items():
             item = items_by_name[shape_name]

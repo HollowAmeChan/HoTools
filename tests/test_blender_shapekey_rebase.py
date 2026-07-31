@@ -291,6 +291,104 @@ assert module._fbsf_auto_preset('Mouth_Smile').reference_tag == 'OTHERS'
 assert 'eyeblinkleft' in module._fbsf_normalized_names(
     '@eyeBlinkLeft.001.1000')
 
+keyword_basis = np.array(
+    [
+        (-4.0, 0.0, 0.0), (-3.0, 0.0, 0.0),
+        (-2.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0), (2.0, 0.0, 0.0),
+        (3.0, 0.0, 0.0), (4.0, 0.0, 0.0),
+    ],
+    dtype=np.float32,
+)
+keyword_left = np.zeros_like(keyword_basis)
+keyword_left[4:, 1] = 1.0
+keyword_right = np.zeros_like(keyword_basis)
+keyword_right[:4, 1] = 1.0
+keyword_both = keyword_left + keyword_right
+keyword_noisy_left = keyword_left.copy()
+keyword_noisy_left[0, 1] = 0.1
+keyword_noisy_right = keyword_right.copy()
+keyword_noisy_right[4, 1] = 0.1
+keyword_disagreement = np.zeros_like(keyword_basis)
+keyword_disagreement[:4, 1] = 1.0
+keyword_disagreement[4, 1] = 10.0
+
+assert module._fbsf_auto_function_tag('custom_wink') == 'OTHERS'
+assert module._fbsf_normalized_name(
+    'custom_wink') not in module._FBSF_EXACT_PRESETS
+assert module._fbsf_keyword_eye_name('FaceWinkLeft') == ('WINK', True)
+assert module._fbsf_keyword_eye_name('faceblinkleft') == ('BLINK', True)
+assert module._fbsf_keyword_eye_name('auto_blink') == ('BLINK', False)
+assert module._fbsf_keyword_eye_name('Twinkle') is None
+assert module._fbsf_keyword_eye_name('For_Blink_1') is None
+assert module._fbsf_keyword_eye_name('joy_wink') is None
+assert module._fbsf_keyword_eye_name('EyeMaterialBlink') is None
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_left, keyword_basis) == 'LEFT_EYE'
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_right, keyword_basis) == 'RIGHT_EYE'
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_both, keyword_basis) == 'BOTH_EYES'
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_noisy_left, keyword_basis) == 'LEFT_EYE'
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_noisy_right, keyword_basis) == 'RIGHT_EYE'
+assert module._fbsf_keyword_eye_geometry_tag(
+    keyword_disagreement, keyword_basis) is None
+assert module._fbsf_keyword_eye_geometry_tag(
+    np.empty((0, 3), dtype=np.float32),
+    np.empty((0, 3), dtype=np.float32),
+) is None
+
+for shape_name, delta, expected in (
+        ('custom_wink', keyword_left, 'LEFT_EYE'),
+        ('custom_wink.L', keyword_right, 'RIGHT_EYE'),
+        ('vrc.blink_left', keyword_left, 'LEFT_EYE'),
+        ('ウィンク.VRC', keyword_left, 'LEFT_EYE'),
+        ('まばたき.VRC', keyword_both, 'BOTH_EYES'),
+        ('角色眨眼', keyword_both, 'BOTH_EYES'),
+        ('auto_blink', keyword_both, 'BOTH_EYES')):
+    preset = module._fbsf_keyword_eye_preset(
+        shape_name, delta, keyword_basis)
+    assert preset is not None, shape_name
+    assert preset.function_tag == expected, shape_name
+    assert preset.reference_tag == expected, shape_name
+    assert preset.standards == frozenset({'KEYWORD_GEOMETRY'}), shape_name
+
+for shape_name, delta in (
+        ('custom_wink', keyword_both),
+        ('custom_blink_left', keyword_both),
+        ('custom_wink', np.zeros_like(keyword_basis)),
+        ('custom_wink', keyword_disagreement),
+        ('For_Blink_1', keyword_both),
+        ('joy_wink', keyword_right),
+        ('Blink', keyword_both)):
+    assert module._fbsf_keyword_eye_preset(
+        shape_name, delta, keyword_basis) is None, shape_name
+
+keyword_tags = {
+    'custom_wink': ('OTHERS', 'OTHERS'),
+    'auto_blink': ('OTHERS', 'OTHERS'),
+    'joy_wink': ('OTHERS', 'OTHERS'),
+}
+keyword_deltas = {
+    'custom_wink': keyword_left,
+    'auto_blink': keyword_both,
+    'joy_wink': keyword_right,
+}
+resolved_keyword_tags = module._fbsf_resolve_keyword_eye_tags(
+    keyword_tags,
+    keyword_basis,
+    True,
+    module._fbsf_classification_context(keyword_tags),
+    keyword_deltas.__getitem__,
+)
+assert resolved_keyword_tags == {
+    'custom_wink': ('LEFT_EYE', 'LEFT_EYE'),
+    'auto_blink': ('BOTH_EYES', 'BOTH_EYES'),
+    'joy_wink': ('OTHERS', 'OTHERS'),
+}
+
 negative_x_wink = np.zeros_like(fbsf_edit)
 negative_x_wink[:2, 1] = 1.0
 positive_x_wink = np.zeros_like(fbsf_edit)
@@ -637,6 +735,64 @@ try:
             index,
             (x, 1.0, 0.0),
         )
+
+    # 未命中的 wink 只在全自动预处理路径按名称和形变几何进入单眼流程。
+    keyword_auto = make_mesh("FBSFKeywordAuto", vertex_count=8)
+    for index, x in enumerate((-4.0, -3.0, -2.0, -1.0,
+                               1.0, 2.0, 3.0, 4.0)):
+        keyword_auto.data.vertices[index].co.x = x
+    keyword_auto_basis = keyword_auto.shape_key_add(
+        name="Basis", from_mix=False)
+    keyword_auto_source = keyword_auto.shape_key_add(
+        name="EyeSculpt", from_mix=False)
+    keyword_auto_wink = keyword_auto.shape_key_add(
+        name="custom_wink", from_mix=False)
+    for index in range(4, 8):
+        keyword_auto_source.data[index].co.z += 1.0
+        keyword_auto_wink.data[index].co.z += 1.0
+    module._rebase_shape_keys_fbsf(
+        keyword_auto,
+        ((keyword_auto_source.name, 1.0, 'LEFT_EYE'),),
+        1.0,
+        0.0,
+        target_specs=None,
+    )
+    keyword_auto_keys = keyword_auto.data.shape_keys.key_blocks
+    for index, x in enumerate((-4.0, -3.0, -2.0, -1.0)):
+        assert_position(keyword_auto_keys[0], index, (x, 0.0, 0.0))
+        assert_position(
+            keyword_auto_keys["custom_wink"], index, (x, 0.0, 0.0))
+    for index, x in enumerate((1.0, 2.0, 3.0, 4.0), start=4):
+        assert_position(keyword_auto_keys[0], index, (x, 0.0, 1.0))
+        assert_position(
+            keyword_auto_keys["custom_wink"], index, (x, 0.0, 1.0))
+
+    # 显式标签代表用户确认后的最终值，不能在执行时再次触发关键字推断。
+    keyword_manual = make_mesh("FBSFKeywordManual", vertex_count=8)
+    for index, x in enumerate((-4.0, -3.0, -2.0, -1.0,
+                               1.0, 2.0, 3.0, 4.0)):
+        keyword_manual.data.vertices[index].co.x = x
+    keyword_manual.shape_key_add(name="Basis", from_mix=False)
+    keyword_manual_source = keyword_manual.shape_key_add(
+        name="EyeSculpt", from_mix=False)
+    keyword_manual_wink = keyword_manual.shape_key_add(
+        name="custom_wink", from_mix=False)
+    for index in range(4, 8):
+        keyword_manual_source.data[index].co.z += 1.0
+        keyword_manual_wink.data[index].co.z += 1.0
+    module._rebase_shape_keys_fbsf(
+        keyword_manual,
+        ((keyword_manual_source.name, 1.0, 'LEFT_EYE'),),
+        1.0,
+        0.0,
+        ((keyword_manual_wink.name, 'OTHERS'),),
+        orientation_override=True,
+    )
+    keyword_manual_keys = keyword_manual.data.shape_keys.key_blocks
+    for index, x in enumerate((1.0, 2.0, 3.0, 4.0), start=4):
+        assert_position(keyword_manual_keys[0], index, (x, 0.0, 1.0))
+        assert_position(
+            keyword_manual_keys["custom_wink"], index, (x, 0.0, 2.0))
 
     # “合并”与“功能”相互独立：未选键必须保留；其他来源只做全局变基，
     # 即使它与眼睛目标位移完全同向，也不能触发 FBSF 回弹。
