@@ -129,7 +129,33 @@ assert not split_sides
 assert np.allclose(opposite_weights, 0.5, atol=1e-6)
 assert module._fbsf_threshold_map(0.05) == 0.0
 assert module._fbsf_threshold_map(0.95) == 1.0
+assert module._fbsf_auto_function_tag("@vrc.blink.001") == 'BOTH_EYES'
+assert module._fbsf_auto_function_tag("eyeBlinkLeft") == 'LEFT_EYE'
+assert module._fbsf_auto_function_tag("eyeBlinkRight.001") == 'RIGHT_EYE'
+assert module._fbsf_auto_function_tag("vrc.v_aa") == 'MOUTH'
+assert module._fbsf_auto_function_tag("MouthOpen") == 'MOUTH'
+assert module._fbsf_auto_function_tag("CheekPuff") == 'OTHERS'
+
+fbsf_references = (
+    ('BOTH_EYES', fbsf_target),
+    ('MOUTH', np.array([(0.0, 0.0, 1.0)] * 4, dtype=np.float32)),
+)
+eye_definition = module._fbsf_source_definition(
+    fbsf_edit, fbsf_references, fbsf_basis)
+assert eye_definition == (1.0, 0.0, 0.0)
+left_only_weights, left_score, right_score, split_sides = (
+    module._fbsf_definition_weights(
+        'LEFT_EYE', eye_definition, fbsf_basis, 0.0, 1.0))
+assert (left_score, right_score, split_sides) == (1.0, 0.0, True)
+assert np.allclose(left_only_weights, (1.0, 1.0, 0.0, 0.0))
+other_weights, left_score, right_score, split_sides = (
+    module._fbsf_definition_weights(
+        'OTHERS', eye_definition, fbsf_basis, 0.0, 1.0))
+assert (left_score, right_score, split_sides) == (0.0, 0.0, False)
+assert not np.any(other_weights)
 assert module.OP_ShapekeyTools_RebaseFBSF.bl_label == "全键局部变基-FBSF"
+assert "function_tag" in module.PG_ShapekeyTools_FBSFSource.__annotations__
+assert "enabled" not in module.PG_ShapekeyTools_FBSFSource.__annotations__
 assert "factor" not in module.OP_ShapekeyTools_RebaseFBSF.__annotations__
 assert {
     "sources", "source_index", "correction_strength", "side_smooth_width",
@@ -141,11 +167,11 @@ assert "factor" not in (
     module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 assert {
     "ordinary_shape_key", "eye_shape_key", "blink_reference_key",
-    "use_blink_contact", "closure_strength", "contact_radius_factor",
-    "max_gap_ratio",
+    "use_blink_contact",
 }.issubset(module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 for removed_property in (
-    "transfer_strength", "smooth_rings",
+    "transfer_strength", "smooth_rings", "closure_strength",
+    "contact_radius_factor", "max_gap_ratio",
 ):
     assert removed_property not in (
         module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
@@ -220,18 +246,11 @@ try:
     old_mouth_open = positions(mouth_open)
     old_nested = positions(nested)
     topology = module._ho_rebase_topology(obj.data, old_basis)
-    default_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, 1.5, 0.35)
-    wide_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, 6.0, 0.35)
-    strict_pairs = module._ho_reference_pairs(
-        old_basis, old_expression, topology, 1.5, 0.05)
-    assert len(default_pairs) == 3
-    # 搜索半径只扩大闭眼参考的候选范围，不能反向排除已经找到的眼睑关系。
-    assert len(wide_pairs) == len(default_pairs)
-    assert not strict_pairs
     eye_region = module._ho_eye_region_weights(
         old_basis, positions(eye_sculpt), topology)
+    default_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, eye_region)
+    assert len(default_pairs) == 3
     assert np.all(eye_region[:12] == 1.0)
     assert np.all(eye_region[12:] == 0.0)
 
@@ -242,13 +261,15 @@ try:
         old_basis, sparse_eye_shape, topology)
     assert np.array_equal(np.flatnonzero(sparse_region), (3, 4))
 
-    # Blink 候选只能在眼睛造型区域内生效，不能用误配反向扩大眼区。
-    false_pair = (0, 12, 0.1, 1.0, 0.01)
-    filtered_pairs = module._ho_filter_reference_pairs(
-        default_pairs + (false_pair,), eye_region)
-    assert filtered_pairs == default_pairs
+    # Blink 候选在构建 KDTree 前就受眼区限制，区域外顶点不会参与误配。
+    pair_region = np.zeros(len(old_basis), dtype=np.float32)
+    pair_region[[3, 6]] = 1.0
+    isolated_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, pair_region)
+    assert len(isolated_pairs) == 1
+    assert isolated_pairs[0][:2] == (3, 6)
 
-    # 闭合强度必须真实控制接触目标，而不是只保留一个无效的界面参数。
+    # 接触修正固定使用完整约束，界面不再暴露难以解释的数值参数。
     preview_basis = (
         old_basis
         + (positions(ordinary_sculpt) - old_basis)
@@ -264,33 +285,20 @@ try:
         eye_region,
         preview_matrices,
     )
-    disabled_constraints, disabled_count, _disabled_mix = (
-        module._ho_contact_vector_constraints(
-            old_basis, old_expression, preview_baseline, old_basis,
-            default_pairs, eye_region, preview_matrices, 0.0))
-    half_constraints, half_count, _half_mix = (
-        module._ho_contact_vector_constraints(
-            old_basis, old_expression, preview_baseline, old_basis,
-            default_pairs, eye_region, preview_matrices, 0.5))
     full_constraints, full_count, _full_mix = (
         module._ho_contact_vector_constraints(
             old_basis, old_expression, preview_baseline, old_basis,
-            default_pairs, eye_region, preview_matrices, 1.0))
-    assert not disabled_constraints and disabled_count == 0
-    assert half_count == full_count == len(default_pairs)
+            default_pairs, eye_region, preview_matrices))
+    assert full_count == len(default_pairs)
     first, second = full_constraints[:2]
     baseline_vectors = preview_baseline[second] - preview_baseline[first]
-    assert np.allclose(
-        half_constraints[2] - baseline_vectors,
-        (full_constraints[2] - baseline_vectors) * 0.5,
-        atol=1e-6,
-    )
+    assert np.linalg.norm(full_constraints[2] - baseline_vectors) > 1e-4
 
     # 单侧运动不能误配到另一个独立网格岛上的静止表面。
     one_sided = old_basis.copy()
     one_sided[3:6, 2] -= 0.9
     assert not module._ho_reference_pairs(
-        old_basis, one_sided, topology, 1.5, 0.35)
+        old_basis, one_sided, topology, eye_region)
 
     # 任一后续键求解失败时，规划阶段不得提前写入已经处理过的键。
     obj.active_shape_key_index = obj.data.shape_keys.key_blocks.find(
@@ -349,9 +357,6 @@ try:
         eye_shape_key="EyeSculpt",
         blink_reference_key="Blink",
         use_blink_contact=True,
-        closure_strength=1.0,
-        contact_radius_factor=1.5,
-        max_gap_ratio=0.35,
     )
     assert result == {'FINISHED'}
 
@@ -478,7 +483,7 @@ try:
         "EXEC_DEFAULT",
         ordinary_shape_key="OrdinarySculpt",
         eye_shape_key="EyeSculpt",
-        blink_reference_key="Blink",
+        blink_reference_key="Missing",
         use_blink_contact=False,
     )
     assert result == {'FINISHED'}
@@ -500,11 +505,19 @@ try:
     for point in fbsf_sculpt_z.data:
         point.co.z += 1.0
 
-    fbsf_expression = fbsf.shape_key_add(name="Expression", from_mix=False)
+    fbsf_expression = fbsf.shape_key_add(name="Blink", from_mix=False)
     for index in (0, 1):
         fbsf_expression.data[index].co.y += 1.0
     for index in (2, 3):
         fbsf_expression.data[index].co.z += 1.0
+
+    fbsf_mouth = fbsf.shape_key_add(name="MouthOpen", from_mix=False)
+    for point in fbsf_mouth.data:
+        point.co.z += 1.0
+
+    fbsf_other = fbsf.shape_key_add(name="CheekPuff", from_mix=False)
+    for point in fbsf_other.data:
+        point.co.x += 0.1
 
     fbsf_child = fbsf.shape_key_add(name="RelativeToSculpt", from_mix=False)
     fbsf_child.relative_key = fbsf_sculpt
@@ -527,7 +540,9 @@ try:
     assert fbsf_keys.get("FaceSculpt") is None
     assert fbsf_keys.get("DepthSculpt") is None
     fbsf_basis_key = fbsf_keys[0]
-    fbsf_expression = fbsf_keys["Expression"]
+    fbsf_expression = fbsf_keys["Blink"]
+    fbsf_mouth = fbsf_keys["MouthOpen"]
+    fbsf_other = fbsf_keys["CheekPuff"]
     fbsf_child = fbsf_keys["RelativeToSculpt"]
     assert fbsf_child.relative_key == fbsf_basis_key
     for index, x in enumerate(x_positions):
@@ -537,7 +552,35 @@ try:
     for index in (2, 3):
         assert_position(fbsf_expression, index, (x_positions[index], 0.5, 1.0))
     for index, x in enumerate(x_positions):
+        assert_position(fbsf_mouth, index, (x, 0.5, 1.0))
+        assert_position(fbsf_other, index, (x + 0.1, 0.5, 0.25))
+    for index, x in enumerate(x_positions):
         assert_position(fbsf_child, index, (x + 0.25, 0.5, 0.25))
+
+    # 未知名称可以通过弹窗的手工功能标签进入眼睛流程。
+    manual = make_mesh("FBSFManualTag", vertex_count=2)
+    manual.data.vertices[0].co.x = -1.0
+    manual.data.vertices[1].co.x = 1.0
+    manual_basis = manual.shape_key_add(name="Basis", from_mix=False)
+    manual_source = manual.shape_key_add(name="Sculpt", from_mix=False)
+    manual_target = manual.shape_key_add(name="CustomExpression", from_mix=False)
+    for point in manual_source.data:
+        point.co.y += 1.0
+    for point in manual_target.data:
+        point.co.y += 1.0
+    module._rebase_shape_keys_fbsf(
+        manual,
+        ((manual_source.name, 1.0),),
+        1.0,
+        0.0,
+        ((manual_target.name, 'BOTH_EYES'),),
+    )
+    for index, x in enumerate((-1.0, 1.0)):
+        assert_position(
+            manual.data.shape_keys.key_blocks["CustomExpression"],
+            index,
+            (x, 1.0, 0.0),
+        )
 
     # 原有全键变基算子保持独立并维持原行为。
     legacy = make_mesh("FullRebase", vertex_count=2)

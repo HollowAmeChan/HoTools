@@ -2305,8 +2305,8 @@ class ShapeKeyRebaseError(RuntimeError):
     pass
 
 
-_HO_CONTACT_RADIUS_FACTOR = 2.0
-_HO_MAX_GAP_RATIO = 0.85
+_HO_CONTACT_RADIUS_FACTOR = 1.5
+_HO_MAX_GAP_RATIO = 0.35
 
 
 def _ho_mesh_edges(mesh):
@@ -2382,9 +2382,8 @@ def _ho_is_near_topology(first, second, adjacency):
 
 
 def _ho_reference_pairs(
-        rest_positions, closed_positions, topology,
-        contact_radius_factor, max_gap_ratio):
-    """从用户指定的闭眼参考键提取上下眼睑的非局部对应关系。"""
+        rest_positions, closed_positions, topology, region_weights):
+    """只在眼睛造型键定义的区域内提取上下眼睑非局部对应关系。"""
     vertex_count = len(rest_positions)
     median_edge_length = topology["median_edge_length"]
     if vertex_count < 2 or median_edge_length <= 1e-8:
@@ -2392,17 +2391,23 @@ def _ho_reference_pairs(
 
     local_delta = closed_positions - rest_positions
     local_scale = topology["local_edge_length"]
+    region_mask = np.asarray(region_weights) > 1e-4
     moved = np.flatnonzero(
-        np.linalg.norm(local_delta, axis=1)
-        > np.maximum(local_scale * 1e-4, 1e-7))
+        region_mask
+        & (
+            np.linalg.norm(local_delta, axis=1)
+            > np.maximum(local_scale * 1e-4, 1e-7)
+        )
+    )
     if len(moved) == 0:
         return ()
     moved_mask = np.zeros(vertex_count, dtype=bool)
     moved_mask[moved] = True
 
-    tree = KDTree(vertex_count)
-    for index, position in enumerate(closed_positions):
-        tree.insert(Vector(position), index)
+    region_indices = np.flatnonzero(region_mask)
+    tree = KDTree(len(region_indices))
+    for index in region_indices:
+        tree.insert(Vector(closed_positions[index]), int(index))
     tree.balance()
 
     adjacency = topology["adjacency"]
@@ -2412,7 +2417,7 @@ def _ho_reference_pairs(
         first = int(first)
         search_radius = max(
             float(local_scale[first]), median_edge_length * 0.25
-        ) * contact_radius_factor
+        ) * _HO_CONTACT_RADIUS_FACTOR
         for _position, second, final_gap in tree.find_range(
                 Vector(closed_positions[first]), search_radius):
             second = int(second)
@@ -2439,7 +2444,7 @@ def _ho_reference_pairs(
 
             final_gap = float(final_gap)
             gap_ratio = final_gap / rest_gap
-            if gap_ratio >= max_gap_ratio:
+            if gap_ratio >= _HO_MAX_GAP_RATIO:
                 continue
 
             relative_motion = (
@@ -2454,7 +2459,8 @@ def _ho_reference_pairs(
             if alignment < 0.25:
                 continue
 
-            ratio_score = max(0.0, 1.0 - gap_ratio / max_gap_ratio)
+            ratio_score = max(
+                0.0, 1.0 - gap_ratio / _HO_MAX_GAP_RATIO)
             distance_score = max(0.0, 1.0 - final_gap / max(search_radius, 1e-8))
             confidence = float(
                 (alignment * ratio_score * distance_score) ** (1.0 / 3.0))
@@ -2503,17 +2509,6 @@ def _ho_eye_region_weights(
     weights = np.zeros(len(basis_positions), dtype=np.float32)
     weights[moved] = 1.0
     return weights
-
-
-def _ho_filter_reference_pairs(reference_pairs, region_weights):
-    """Blink 只提供眼区内部的接触语义，不能反向扩大眼区。"""
-    return tuple(
-        pair for pair in reference_pairs
-        if (
-            region_weights[int(pair[0])] > 1e-4
-            and region_weights[int(pair[1])] > 1e-4
-        )
-    )
 
 
 def _ho_weighted_affine_transform(source_positions, target_positions, weights):
@@ -2592,9 +2587,9 @@ def _ho_apply_eye_affine_delta(
 
 def _ho_contact_vector_constraints(
         old_relative, old_key, baseline_positions, basis_positions,
-        reference_pairs, region_weights, matrices, closure_strength):
+        reference_pairs, region_weights, matrices):
     """为接近闭眼参考的键生成完整三维眼睑间距，而非单轴距离。"""
-    if closure_strength <= 1e-8 or not reference_pairs:
+    if not reference_pairs:
         return (), 0, 0.0
 
     pair_data = np.asarray(reference_pairs, dtype=np.float64)
@@ -2640,7 +2635,7 @@ def _ho_contact_vector_constraints(
     preserved_vector = mapped_vector * scale[:, None]
 
     baseline_vector = baseline_positions[second] - baseline_positions[first]
-    mix = np.clip(activation * closure_strength, 0.0, 1.0)
+    mix = np.clip(activation, 0.0, 1.0)
     target_vector = baseline_vector + (
         preserved_vector - baseline_vector) * mix[:, None]
     return (
@@ -2719,7 +2714,7 @@ def _ho_correction_is_safe(global_positions, corrected_positions, topology, affe
 
 def _ho_transfer_eye_positions(
         old_key, old_relative, new_relative, old_basis, topology,
-        reference_pairs, region_weights, matrices, closure_strength):
+        reference_pairs, region_weights, matrices):
     """用眼眶键的确定性仿射映射传递表情，并保持闭眼接触。"""
     global_positions = old_key + (new_relative - old_relative)
     eye_delta = (old_key - old_relative) * region_weights[:, None]
@@ -2742,7 +2737,6 @@ def _ho_transfer_eye_positions(
         reference_pairs,
         region_weights,
         matrices,
-        closure_strength,
     )
     corrected = _ho_project_contact_vectors(
         baseline_positions, constraints, region_weights)
@@ -2779,7 +2773,75 @@ def _ho_transfer_eye_positions(
     )
 
 
-# FBSF 自动填充阶段沿用源仓库的左右内积相似度；执行阶段可累加多个显式来源键。
+# FBSF 的“区域”不是顶点遮罩，而是目标键的功能分类。每个捏脸来源先根据眼睛和嘴部
+# 参考键生成全局定义权重，之后由目标键标签决定取用左右眼、嘴部或零权重。
+FBSF_FUNCTION_ITEMS = (
+    ('SOURCE', "捏脸来源", "烘焙进 Basis，并作为反向修正来源"),
+    ('BOTH_EYES', "双眼", "使用该来源的左右眼定义权重"),
+    ('LEFT_EYE', "左眼", "只使用该来源的左眼定义权重"),
+    ('RIGHT_EYE', "右眼", "只使用该来源的右眼定义权重"),
+    ('MOUTH', "嘴部", "使用该来源的嘴部定义权重"),
+    ('OTHERS', "其他", "只做普通全局变基，不进行 FBSF 反向修正"),
+)
+
+_FBSF_BOTH_EYE_NAMES = {
+    "vrc.blink", "vrc.blink (3.0)", "blink", "まばたき", "笑い",
+    "なごみ", "はぅ", "じと目", "はちゅ目", "howawa", "> <", "o o",
+}
+_FBSF_LEFT_EYE_NAMES = {
+    "ウィンク", "ウィンク２", "wink", "wink-b", "blink_l", "blink.left",
+}
+_FBSF_RIGHT_EYE_NAMES = {
+    "ウィンク右", "ウィンク２右", "ｳｨﾝｸ２右", "wink-a", "wink-c",
+    "blink_r", "blink.right",
+}
+_FBSF_MOUTH_NAMES = {
+    "あ", "い", "う", "え", "お", "あ２", "ん", "▲", "∧", "ワ", "□",
+    "ω", "ω□", "えー", "はんっ！", "にやり", "にやり２", "にっこり",
+    "ぺろっ", "てへぺろ", "てへぺろ２", "口角上げ", "口角下げ", "口横広げ",
+    "歯無し上", "歯無し下", "a", "i", "u", "e", "o", "a 2", "n",
+    "mouse_1", "mouse_2", "wa", "omega", "niyari", "niyari2", "pero",
+}
+
+
+def _fbsf_normalized_names(shape_name):
+    """返回用于宽松自动分类的原名和去 Blender 数字后缀名。"""
+    normalized = shape_name.strip().casefold().lstrip('@+').strip()
+    names = {normalized}
+    head, separator, suffix = normalized.rpartition('.')
+    if separator and len(suffix) == 3 and suffix.isdigit():
+        names.add(head)
+    return names
+
+
+def _fbsf_auto_function_tag(shape_name):
+    """按 FBSF 内置别名和常见 ARKit 命名给目标键分配初始标签。"""
+    names = _fbsf_normalized_names(shape_name)
+    if names & _FBSF_BOTH_EYE_NAMES:
+        return 'BOTH_EYES'
+    if names & _FBSF_LEFT_EYE_NAMES:
+        return 'LEFT_EYE'
+    if names & _FBSF_RIGHT_EYE_NAMES:
+        return 'RIGHT_EYE'
+    if names & _FBSF_MOUTH_NAMES:
+        return 'MOUTH'
+
+    for name in names:
+        # 原仓库的 VRChat 分类库将 vrc.v_* 全部视为嘴部键。
+        if name.startswith("vrc.v_") or name.startswith("vrc.v."):
+            return 'MOUTH'
+        if name.startswith(("mouth", "jaw", "tongue")):
+            return 'MOUTH'
+        if name.startswith("eye"):
+            if name.endswith(("left", "_l", ".l")):
+                return 'LEFT_EYE'
+            if name.endswith(("right", "_r", ".r")):
+                return 'RIGHT_EYE'
+    if any(name.startswith("eye") for name in names):
+        return 'BOTH_EYES'
+    return 'OTHERS'
+
+
 def _fbsf_threshold_map(value, lower=0.05, upper=0.95):
     """截断本地近似算子计算出的相似度权重。"""
     if value <= lower:
@@ -2808,6 +2870,88 @@ def _fbsf_side_similarity(target_delta, edit_delta, side_mask):
         return 0.0
     score = np.clip(similarity_sum / edit_energy, 0.0, 1.0)
     return _fbsf_threshold_map(score)
+
+
+def _fbsf_similarity(target_delta, edit_delta):
+    """复刻源仓库嘴部定义使用的全网格内积相似度。"""
+    target_energy = np.einsum("ij,ij->i", target_delta, target_delta)
+    edit_vertex_energy = np.einsum("ij,ij->i", edit_delta, edit_delta)
+    active = (target_energy >= 1e-10) | (edit_vertex_energy >= 1e-10)
+    edit_energy = float(np.sum(edit_vertex_energy[active], dtype=np.float64))
+    if edit_energy < 1e-10:
+        return 0.0
+    dot_sum = float(np.sum(
+        np.einsum("ij,ij->i", target_delta[active], edit_delta[active]),
+        dtype=np.float64,
+    ))
+    return _fbsf_threshold_map(np.clip(dot_sum / edit_energy, 0.0, 1.0))
+
+
+def _fbsf_source_definition(source_delta, references, basis_positions):
+    """根据已标记参考键，生成一个捏脸来源的左右眼和嘴部定义。"""
+    left_mask = basis_positions[:, 0] < 0.0
+    right_mask = ~left_mask
+    left_eye = 0.0
+    right_eye = 0.0
+    mouth = 0.0
+    for function_tag, reference_delta in references:
+        if function_tag in {'BOTH_EYES', 'LEFT_EYE'}:
+            left_eye = max(
+                left_eye,
+                _fbsf_side_similarity(reference_delta, source_delta, left_mask),
+            )
+        if function_tag in {'BOTH_EYES', 'RIGHT_EYE'}:
+            right_eye = max(
+                right_eye,
+                _fbsf_side_similarity(reference_delta, source_delta, right_mask),
+            )
+        if function_tag == 'MOUTH':
+            mouth = max(mouth, _fbsf_similarity(reference_delta, source_delta))
+    return left_eye, right_eye, mouth
+
+
+def _fbsf_definition_weights(
+        function_tag, definition, basis_positions,
+        smooth_width, correction_strength):
+    """按目标键功能解析源仓库 ShapeType 对应的逐顶点修正权重。"""
+    left_eye, right_eye, mouth = definition
+    if function_tag == 'BOTH_EYES':
+        left_score, right_score = left_eye, right_eye
+        split_sides = abs(left_score - right_score) > 0.1
+    elif function_tag == 'LEFT_EYE':
+        left_score, right_score, split_sides = left_eye, 0.0, True
+    elif function_tag == 'RIGHT_EYE':
+        left_score, right_score, split_sides = 0.0, right_eye, True
+    elif function_tag == 'MOUTH':
+        weights = np.full(len(basis_positions), mouth, dtype=np.float32)
+        return weights * correction_strength, mouth, mouth, False
+    else:
+        return (
+            np.zeros(len(basis_positions), dtype=np.float32),
+            0.0,
+            0.0,
+            False,
+        )
+
+    if split_sides:
+        x = basis_positions[:, 0]
+        if smooth_width <= 0.0:
+            weights = np.where(x < 0.0, left_score, right_score)
+        else:
+            right_factor = np.clip(
+                (x + smooth_width) / (2.0 * smooth_width), 0.0, 1.0)
+            weights = left_score * (1.0 - right_factor) + right_score * right_factor
+    else:
+        weights = np.full(
+            len(basis_positions), (left_score + right_score) * 0.5,
+            dtype=np.float32,
+        )
+    return (
+        np.asarray(weights, dtype=np.float32) * correction_strength,
+        left_score,
+        right_score,
+        split_sides,
+    )
 
 
 def _fbsf_rebase_weights(
@@ -2887,32 +3031,39 @@ def _validate_shape_key_rebase_object(obj):
 
 
 def _validate_ho_dual_rebase_object(
-        obj, ordinary_shape_name, eye_shape_name, blink_reference_name):
+        obj, ordinary_shape_name, eye_shape_name, blink_reference_name,
+        use_blink_contact):
     """校验 HO 独立双键造型输入，不检测左右对称。"""
-    shape_keys, basis = _validate_shape_key_rebase_data(obj, minimum_keys=4)
+    shape_keys, basis = _validate_shape_key_rebase_data(obj, minimum_keys=3)
     if not ordinary_shape_name:
         raise ShapeKeyRebaseError("请选择普通造型键")
     if not eye_shape_name:
         raise ShapeKeyRebaseError("请选择眼睛造型键")
-    if not blink_reference_name:
+    if use_blink_contact and not blink_reference_name:
         raise ShapeKeyRebaseError("请选择一个双目闭眼参考形态键")
 
     ordinary_shape = shape_keys.key_blocks.get(ordinary_shape_name)
     eye_shape = shape_keys.key_blocks.get(eye_shape_name)
-    blink_reference = shape_keys.key_blocks.get(blink_reference_name)
+    blink_reference = (
+        shape_keys.key_blocks.get(blink_reference_name)
+        if use_blink_contact else None
+    )
     if ordinary_shape is None:
         raise ShapeKeyRebaseError(f"找不到普通造型键：{ordinary_shape_name}")
     if eye_shape is None:
         raise ShapeKeyRebaseError(f"找不到眼睛造型键：{eye_shape_name}")
-    if blink_reference is None:
+    if use_blink_contact and blink_reference is None:
         raise ShapeKeyRebaseError(f"找不到闭眼参考键：{blink_reference_name}")
-    if len({basis, ordinary_shape, eye_shape, blink_reference}) != 4:
-        raise ShapeKeyRebaseError("基型、两个造型键和闭眼参考键必须互不相同")
+    if len({basis, ordinary_shape, eye_shape}) != 3:
+        raise ShapeKeyRebaseError("基型和两个造型键必须互不相同")
+    if use_blink_contact and blink_reference in {
+            basis, ordinary_shape, eye_shape}:
+        raise ShapeKeyRebaseError("闭眼参考键不能与基型或造型键相同")
     if ordinary_shape.relative_key != basis:
         raise ShapeKeyRebaseError("普通造型键必须直接相对于基型")
     if eye_shape.relative_key != basis:
         raise ShapeKeyRebaseError("眼睛造型键必须直接相对于基型")
-    if blink_reference.relative_key != basis:
+    if use_blink_contact and blink_reference.relative_key != basis:
         raise ShapeKeyRebaseError("闭眼参考键必须直接相对于基型")
     for label, key in (("普通造型键", ordinary_shape), ("眼睛造型键", eye_shape)):
         if abs(key.value - 1.0) > 1e-6:
@@ -3052,16 +3203,19 @@ def _rewrite_ho_dual_shape_key_tree(
 
 def _rebase_shape_keys(
         obj, ordinary_shape_name, eye_shape_name, blink_reference_name,
-        use_blink_contact, closure_strength, contact_radius_factor,
-        max_gap_ratio):
+        use_blink_contact):
     (
         shape_keys, basis, ordinary_shape, eye_shape, blink_reference,
     ) = _validate_ho_dual_rebase_object(
-        obj, ordinary_shape_name, eye_shape_name, blink_reference_name)
+        obj,
+        ordinary_shape_name,
+        eye_shape_name,
+        blink_reference_name,
+        use_blink_contact,
+    )
 
     basis_positions = shapekey_utils.read_shape_key_positions(basis)
     eye_shape_positions = shapekey_utils.read_shape_key_positions(eye_shape)
-    reference_positions = shapekey_utils.read_shape_key_positions(blink_reference)
     topology = _ho_rebase_topology(obj.data, basis_positions)
     region_weights = _ho_eye_region_weights(
         basis_positions, eye_shape_positions, topology)
@@ -3070,15 +3224,14 @@ def _rebase_shape_keys(
 
     reference_pairs = ()
     if use_blink_contact:
-        candidate_pairs = _ho_reference_pairs(
+        reference_positions = shapekey_utils.read_shape_key_positions(
+            blink_reference)
+        reference_pairs = _ho_reference_pairs(
             basis_positions,
             reference_positions,
             topology,
-            contact_radius_factor,
-            max_gap_ratio,
+            region_weights,
         )
-        reference_pairs = _ho_filter_reference_pairs(
-            candidate_pairs, region_weights)
         if not reference_pairs:
             raise ShapeKeyRebaseError(
                 "闭眼参考键在眼睛造型区域内未找到有效的眼睑关系；"
@@ -3108,7 +3261,6 @@ def _rebase_shape_keys(
                 reference_pairs,
                 region_weights,
                 matrices,
-                closure_strength,
             )
         )
         if affected > 0:
@@ -3125,7 +3277,7 @@ def _rebase_shape_keys(
         source_names[0],
         source_names[1],
         key_count,
-        blink_reference_name,
+        blink_reference_name if use_blink_contact else "未启用",
         len(reference_pairs),
         corrected_keys,
         active_constraints,
@@ -3174,10 +3326,46 @@ def _fbsf_current_source_specs(obj):
     )
 
 
+def _fbsf_auto_target_specs(shape_keys, basis, source_names=()):
+    """给非来源键生成可由弹窗覆盖的初始功能分类。"""
+    source_names = set(source_names)
+    return tuple(
+        (key.name, _fbsf_auto_function_tag(key.name))
+        for key in shape_keys.key_blocks
+        if key != basis and key.name not in source_names
+    )
+
+
+def _resolve_fbsf_target_tags(shape_keys, basis, sources, target_specs):
+    """验证手工标签，并为脚本没有传入的目标键补自动分类。"""
+    source_names = {source.name for source, _factor in sources}
+    valid_tags = {
+        item[0] for item in FBSF_FUNCTION_ITEMS if item[0] != 'SOURCE'
+    }
+    target_tags = dict(
+        _fbsf_auto_target_specs(shape_keys, basis, source_names))
+    if target_specs is None:
+        return target_tags
+
+    for shape_name, function_tag in target_specs:
+        if not shape_name or shape_name in source_names:
+            continue
+        if shape_keys.key_blocks.get(shape_name) is None:
+            raise ShapeKeyRebaseError(f"找不到已分类的形态键：{shape_name}")
+        if function_tag not in valid_tags:
+            raise ShapeKeyRebaseError(
+                f"形态键 {shape_name} 的 FBSF 功能标签无效：{function_tag}")
+        target_tags[shape_name] = function_tag
+    return target_tags
+
+
 def _rebase_shape_keys_fbsf(
-        obj, source_specs, correction_strength, side_smooth_width):
+        obj, source_specs, correction_strength, side_smooth_width,
+        target_specs=None):
     shape_keys, basis, weighted_sources = _resolve_fbsf_sources(
         obj, source_specs)
+    target_tags = _resolve_fbsf_target_tags(
+        shape_keys, basis, weighted_sources, target_specs)
     old_basis = shapekey_utils.read_shape_key_positions(basis)
     source_deltas = tuple(
         (
@@ -3186,6 +3374,34 @@ def _rebase_shape_keys_fbsf(
             shapekey_utils.read_shape_key_positions(source) - old_basis,
         )
         for source, factor in weighted_sources
+    )
+    source_set = {source for source, _factor in weighted_sources}
+    key_positions = {
+        key: shapekey_utils.read_shape_key_positions(key)
+        for key in shape_keys.key_blocks
+    }
+    references = tuple(
+        (
+            target_tags[key.name],
+            key_positions[key] - key_positions[key.relative_key],
+        )
+        for key in shape_keys.key_blocks
+        if (
+            key != basis
+            and key not in source_set
+            and target_tags.get(key.name) in {
+                'BOTH_EYES', 'LEFT_EYE', 'RIGHT_EYE', 'MOUTH'
+            }
+        )
+    )
+    source_definitions = tuple(
+        (
+            source,
+            factor,
+            source_delta,
+            _fbsf_source_definition(source_delta, references, old_basis),
+        )
+        for source, factor, source_delta in source_deltas
     )
     corrected_keys = 0
     applied_links = 0
@@ -3196,16 +3412,16 @@ def _rebase_shape_keys_fbsf(
             _key, old_key, old_relative, new_relative,
             old_basis, _old_active, _new_basis):
         nonlocal corrected_keys, applied_links, split_links, weight_sum
-        target_delta = old_key - old_relative
         relative_shift = new_relative - old_relative
         global_rebase = old_key + relative_shift
         correction = np.zeros_like(global_rebase, dtype=np.float32)
         key_corrected = False
-        for _source, factor, source_delta in source_deltas:
+        function_tag = target_tags.get(_key.name, 'OTHERS')
+        for _source, factor, source_delta, definition in source_definitions:
             weights, left_score, right_score, split_sides = (
-                _fbsf_rebase_weights(
-                    target_delta,
-                    source_delta,
+                _fbsf_definition_weights(
+                    function_tag,
+                    definition,
                     old_basis,
                     side_smooth_width,
                     correction_strength,
@@ -3301,25 +3517,32 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 # TODO(变基算法迭代):
 #
 # 已尝试：普通全局变基能完整保留大位移，但眼睑接触会失效；局部保护和自动梯度容易
-# 引入回弹、褶皱或吞掉大面积位移；HO 因此改为“全局变基 + 眼睛造型键仿射传递 +
-# 可选 Blink 接触”，并在实测后删除了会稀释眼眶变换的区域扩张。
+# 引入回弹、褶皱或吞掉大面积位移。HO 因此采用“全局变基 + 眼睛造型键仿射传递 +
+# 可选 Blink 接触”：眼睛造型键移动过的顶点是唯一眼区，Blink 只能在眼区内提供
+# 上下眼睑配对，不能反向扩大区域。实测中 Blink 对非线性闭眼有正面作用，但区域推断
+# 容易引入假配对，因此接触参数固定为保守值，只保留总开关用于视觉 A/B。
 #
-# 当前 FBSF 已支持显式选择多个捏脸键，并按每个来源的权重逐目标计算左右相似度、累加
-# 反向 delta；这补齐了源仓库“多个活动 BlendData 一起参与”的主流程。自动相似度仍会
-# 把正交位移降权，这是 FBSF 本身的取舍，并非 HO 的确定性眼眶传递。
+# 当前 FBSF 已补齐源仓库的功能分类和全局定义流程：多个捏脸来源先与已标记的眼睛、
+# 嘴部参考集合比较，再把定义权重分发给同类目标键；“其他”保持普通全局变基。自动
+# 相似度仍会把正交位移降权，这是 FBSF 本身的取舍，并非 HO 的确定性眼眶传递。
 #
-# 后续方向：FBSF 继续补逐目标手工覆盖、追加映射和左右权重编辑；HO 可继续研究每眼
+# 后续方向：FBSF 可继续补逐来源定义权重预览、手工覆盖和追加映射；HO 可继续研究每眼
 # 多簇局部变换、眼睑到边/面的连续对应及残差预览。嘴部接触若要特殊处理，应使用独立
 # 参考和口部模型，不能把眼部规则直接扩散到全脸。
 
 
 class PG_ShapekeyTools_FBSFSource(PropertyGroup):
-    """FBSF 弹窗中的一个候选捏脸键。"""
+    """FBSF 弹窗中的一个形态键及其功能标签。"""
     shape_key_name: StringProperty(name="形态键") # type: ignore
-    enabled: BoolProperty(name="使用", default=False) # type: ignore
+    function_tag: EnumProperty(
+        name="功能",
+        description="该键在 FBSF 全局定义流程中的用途",
+        items=FBSF_FUNCTION_ITEMS,
+        default='OTHERS',
+    ) # type: ignore
     weight: FloatProperty(
         name="变基权重",
-        description="该捏脸键烘焙进 Basis 并参与反向修正的权重",
+        description="标签为捏脸来源时，烘焙进 Basis 并参与反向修正的权重",
         default=1.0,
         min=0.0,
         max=1.0,
@@ -3328,25 +3551,25 @@ class PG_ShapekeyTools_FBSFSource(PropertyGroup):
 
 
 class HO_UL_ShapekeyTools_FBSFSources(UIList):
-    """显示可直接烘焙的 FBSF 捏脸键列表。"""
+    """显示 FBSF 形态键功能分类列表。"""
     bl_idname = "HO_UL_ShapekeyTools_FBSFSources"
 
     def draw_item(
             self, context, layout, data, item, icon, active_data,
             active_property, index, flt_flag):
         row = layout.row(align=True)
-        row.prop(item, "enabled", text="")
         row.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
+        row.prop(item, "function_tag", text="")
         weight = row.row(align=True)
-        weight.enabled = item.enabled
+        weight.enabled = item.function_tag == 'SOURCE'
         weight.prop(item, "weight", text="")
 
 
 class OP_ShapekeyTools_RebaseFBSF(Operator):
-    """按 FBSF 规则累加多个捏脸键并重写全部形态键。"""
+    """按 FBSF 功能分类和全局定义重写全部形态键。"""
     bl_idname = "ho.rebase_shapekeys_fbsf"
     bl_label = "全键局部变基-FBSF"
-    bl_description = "按左右相似度反向抵消多个捏脸键，并把所选捏脸键烘焙进 Basis"
+    bl_description = "按眼睛、嘴部功能分类反向抵消多个捏脸来源，并将其烘焙进 Basis"
     bl_options = {'REGISTER', 'UNDO'}
 
     sources: CollectionProperty(type=PG_ShapekeyTools_FBSFSource) # type: ignore
@@ -3387,24 +3610,38 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             return {'CANCELLED'}
         self.sources.clear()
         active_key = context.object.active_shape_key
-        selected = 0
+        source_names = {
+            key.name
+            for key in shape_keys.key_blocks
+            if (
+                key != basis
+                and key.relative_key == basis
+                and key.value > 1e-6
+            )
+        }
+        if (
+                not source_names
+                and active_key is not None
+                and active_key != basis
+                and active_key.relative_key == basis):
+            source_names.add(active_key.name)
         for key in shape_keys.key_blocks:
-            if key == basis or key.relative_key != basis:
+            if key == basis:
                 continue
             item = self.sources.add()
             item.name = key.name
             item.shape_key_name = key.name
-            item.enabled = key.value > 1e-6
-            item.weight = min(1.0, float(key.value)) if item.enabled else 1.0
-            selected += int(item.enabled)
-        if selected == 0 and active_key is not None and active_key != basis:
-            for item in self.sources:
-                if item.shape_key_name == active_key.name:
-                    item.enabled = True
-                    item.weight = 1.0
-                    break
+            if key.name in source_names:
+                item.function_tag = 'SOURCE'
+                item.weight = (
+                    min(1.0, float(key.value))
+                    if key.value > 1e-6 else 1.0
+                )
+            else:
+                item.function_tag = _fbsf_auto_function_tag(key.name)
+                item.weight = 1.0
         if len(self.sources) == 0:
-            self.report({'WARNING'}, "没有直接相对 Basis 的候选捏脸键")
+            self.report({'WARNING'}, "没有可分类的非 Basis 形态键")
             return {'CANCELLED'}
         self.source_index = 0
         return context.window_manager.invoke_props_dialog(self, width=540)
@@ -3413,13 +3650,14 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         layout = self.layout
         warning = layout.box()
         warning.alert = True
-        warning.label(text="此操作会重写全部形态键并删除勾选的捏脸键", icon='ERROR')
-        warning.label(text="每个捏脸键会独立计算左右相似度，再累加反向修正")
+        warning.label(text="此操作会重写全部形态键并删除标为捏脸来源的键", icon='ERROR')
+        warning.label(text="当前非零且直接相对 Basis 的键会自动标为捏脸来源")
 
         source_box = layout.box()
-        source_box.label(text="捏脸键列表", icon='SHAPEKEY_DATA')
+        source_box.label(text="形态键功能分类", icon='SHAPEKEY_DATA')
         header = source_box.row(align=True)
         header.label(text="形态键")
+        header.label(text="功能")
         header.label(text="变基权重")
         source_box.template_list(
             HO_UL_ShapekeyTools_FBSFSources.bl_idname,
@@ -3428,7 +3666,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             "sources",
             self,
             "source_index",
-            rows=8,
+            rows=12,
         )
         layout.prop(self, "correction_strength")
         layout.prop(self, "side_smooth_width")
@@ -3440,7 +3678,12 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         source_specs = tuple(
             (item.shape_key_name, item.weight)
             for item in self.sources
-            if item.enabled
+            if item.function_tag == 'SOURCE'
+        )
+        target_specs = tuple(
+            (item.shape_key_name, item.function_tag)
+            for item in self.sources
+            if item.function_tag != 'SOURCE'
         )
         # 允许脚本直接 EXEC：此时没有经过 invoke，用当前非零键填充来源列表。
         if len(self.sources) == 0:
@@ -3449,6 +3692,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             except ShapeKeyRebaseError as exc:
                 self.report({'WARNING'}, str(exc))
                 return {'CANCELLED'}
+            target_specs = None
         try:
             source_names, key_count, corrected, links, split, average = (
                 _rebase_shape_keys_fbsf(
@@ -3456,6 +3700,7 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
                     source_specs,
                     self.correction_strength,
                     self.side_smooth_width,
+                    target_specs,
                 )
             )
         except ShapeKeyRebaseError as exc:
@@ -3478,10 +3723,10 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
 
 
 class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
-    """同时烘焙普通与眼睛造型键，用闭眼参考关系重建眼部表情。"""
+    """同时烘焙普通与眼睛造型键，可选用闭眼参考关系修正眼部表情。"""
     bl_idname = "ho.rebase_shapekeys_preserve_expressions"
     bl_label = "全键局部变基-HO"
-    bl_description = "烘焙独立的普通与眼睛造型键，并按闭眼参考键重建眼部表情"
+    bl_description = "烘焙独立的普通与眼睛造型键，并可选修正闭眼接触"
     bl_options = {'REGISTER', 'UNDO'}
 
     ordinary_shape_key: StringProperty(
@@ -3504,30 +3749,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         description="在眼睛造型区域内使用闭眼参考键保持上下眼睑接触",
         default=True,
     ) # type: ignore
-    closure_strength: FloatProperty(
-        name="闭合约束强度",
-        description="保持参考键上下眼睑完整三维接触向量的强度",
-        default=1.0,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-    contact_radius_factor: FloatProperty(
-        name="接触搜索半径",
-        description="以眼部局部边长为单位，在闭眼参考键中搜索对侧眼睑",
-        default=_HO_CONTACT_RADIUS_FACTOR,
-        min=0.1,
-        max=6.0,
-        precision=2,
-    ) # type: ignore
-    max_gap_ratio: FloatProperty(
-        name="最大闭合比例",
-        description="参考键中的间距低于原眼睑间距的该比例时建立闭合关系",
-        default=_HO_MAX_GAP_RATIO,
-        min=0.05,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
+
     @classmethod
     def poll(cls, context):
         obj = context.object
@@ -3535,7 +3757,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             obj is not None
             and obj.type == 'MESH'
             and obj.data.shape_keys is not None
-            and len(obj.data.shape_keys.key_blocks) >= 4
+            and len(obj.data.shape_keys.key_blocks) >= 3
         )
 
     def invoke(self, context, event):
@@ -3577,7 +3799,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         warning.label(text="两个捏脸用的键必须直接相对 Basis，且当前权重都必须为 1")
         warning.label(text="眼睛捏脸键：只调整眼眶眉毛眼睛形状")
         warning.label(text="普通捏脸键：调整脸型嘴巴鼻子等眼睛以外的区域")
-        warning.label(text="双目闭眼参考键：现有的一个双目闭眼的键作为参考键，不会删除他")
+        warning.label(text="闭眼接触修正可选；开启时需指定现有双目闭眼键，不会删除该键")
         warning.label(text="捏脸流程：新建两个捏脸键权重全1，分别进行造型，之后使用本操作")
 
         shape_keys = obj.data.shape_keys if obj is not None else None
@@ -3588,15 +3810,11 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             layout.prop_search(
                 self, "eye_shape_key", shape_keys, "key_blocks",
                 text="眼睛捏脸键")
+        layout.prop(self, "use_blink_contact")
+        if shape_keys is not None and self.use_blink_contact:
             layout.prop_search(
                 self, "blink_reference_key", shape_keys, "key_blocks",
                 text="双目闭眼参考键")
-        layout.prop(self, "use_blink_contact")
-        if self.use_blink_contact:
-            contact = layout.column(align=True)
-            contact.prop(self, "closure_strength")
-            contact.prop(self, "contact_radius_factor")
-            contact.prop(self, "max_gap_ratio")
 
     def execute(self, context):
         obj = context.object
@@ -3613,9 +3831,6 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
                     self.eye_shape_key,
                     self.blink_reference_key,
                     self.use_blink_contact,
-                    self.closure_strength,
-                    self.contact_radius_factor,
-                    self.max_gap_ratio,
                 )
             )
         except ShapeKeyRebaseError as exc:
