@@ -2305,6 +2305,10 @@ class ShapeKeyRebaseError(RuntimeError):
     pass
 
 
+_HO_CONTACT_RADIUS_FACTOR = 1.5
+_HO_MAX_GAP_RATIO = 0.35
+
+
 def _ho_mesh_edges(mesh):
     """批量读取网格边。"""
     edges = np.empty(len(mesh.edges) * 2, dtype=np.int32)
@@ -2489,34 +2493,27 @@ def _ho_reference_pairs(
     return tuple(sorted(selected.values(), key=lambda item: (-item[3], item[4])))
 
 
-def _ho_automatic_eye_weights(
-        rest_positions, closed_positions, pairs, topology, smooth_rings):
-    """把闭眼参考键的有效位移转成眼部核心，并沿拓扑生成柔和边界。"""
-    vertex_count = len(rest_positions)
-    weights = np.zeros(vertex_count, dtype=np.float32)
+def _ho_eye_region_weights(
+        basis_positions, eye_shape_positions, topology):
+    """只把眼睛造型键实际移动的顶点视为眼区，不做拓扑扩张。"""
     local_scale = topology["local_edge_length"]
     moved = np.flatnonzero(
-        np.linalg.norm(closed_positions - rest_positions, axis=1)
+        np.linalg.norm(eye_shape_positions - basis_positions, axis=1)
         > np.maximum(local_scale * 1e-4, 1e-7))
-    seeds = set(int(index) for index in moved)
-    seeds.update(int(index) for pair in pairs for index in pair[:2])
-    if not seeds:
-        return weights
-    frontier = set(seeds)
-    for index in seeds:
-        weights[index] = 1.0
-    for ring in range(1, smooth_rings + 1):
-        next_frontier = set()
-        for index in frontier:
-            next_frontier.update(topology["adjacency"][index])
-        next_frontier.difference_update(np.flatnonzero(weights > 0.0).tolist())
-        if not next_frontier:
-            break
-        value = 1.0 - ring / (smooth_rings + 1.0)
-        for index in next_frontier:
-            weights[index] = max(weights[index], value)
-        frontier = next_frontier
+    weights = np.zeros(len(basis_positions), dtype=np.float32)
+    weights[moved] = 1.0
     return weights
+
+
+def _ho_filter_reference_pairs(reference_pairs, region_weights):
+    """Blink 只提供眼区内部的接触语义，不能反向扩大眼区。"""
+    return tuple(
+        pair for pair in reference_pairs
+        if (
+            region_weights[int(pair[0])] > 1e-4
+            and region_weights[int(pair[1])] > 1e-4
+        )
+    )
 
 
 def _ho_weighted_affine_transform(source_positions, target_positions, weights):
@@ -2577,20 +2574,16 @@ def _ho_eye_affine_matrices(
 
 def _ho_apply_eye_affine_delta(
         old_key, old_relative, new_relative, basis_positions,
-        region_weights, matrices, transfer_strength):
+        region_weights, matrices):
     """在新相对键上承载经眼眶仿射变换后的旧表情 delta。"""
     global_positions = old_key + (new_relative - old_relative)
-    if transfer_strength <= 1e-8:
-        return np.asarray(global_positions, dtype=np.float32)
-
     old_delta = old_key - old_relative
     transformed_delta = np.empty_like(old_delta, dtype=np.float64)
     left_mask = basis_positions[:, 0] < 0.0
     for side, side_mask in enumerate((left_mask, ~left_mask)):
         transformed_delta[side_mask] = old_delta[side_mask] @ matrices[side]
     affine_positions = new_relative + transformed_delta
-    weights = np.clip(
-        region_weights * transfer_strength, 0.0, 1.0)[:, None]
+    weights = np.clip(region_weights, 0.0, 1.0)[:, None]
     return np.asarray(
         global_positions + (affine_positions - global_positions) * weights,
         dtype=np.float32,
@@ -2599,9 +2592,9 @@ def _ho_apply_eye_affine_delta(
 
 def _ho_contact_vector_constraints(
         old_relative, old_key, baseline_positions, basis_positions,
-        reference_pairs, region_weights, matrices, closure_strength):
+        reference_pairs, region_weights, matrices):
     """为接近闭眼参考的键生成完整三维眼睑间距，而非单轴距离。"""
-    if closure_strength <= 1e-8 or not reference_pairs:
+    if not reference_pairs:
         return (), 0, 0.0
 
     pair_data = np.asarray(reference_pairs, dtype=np.float64)
@@ -2647,7 +2640,7 @@ def _ho_contact_vector_constraints(
     preserved_vector = mapped_vector * scale[:, None]
 
     baseline_vector = baseline_positions[second] - baseline_positions[first]
-    mix = np.clip(activation * closure_strength, 0.0, 1.0)
+    mix = np.clip(activation, 0.0, 1.0)
     target_vector = baseline_vector + (
         preserved_vector - baseline_vector) * mix[:, None]
     return (
@@ -2726,8 +2719,7 @@ def _ho_correction_is_safe(global_positions, corrected_positions, topology, affe
 
 def _ho_transfer_eye_positions(
         old_key, old_relative, new_relative, old_basis, topology,
-        reference_pairs, region_weights, matrices,
-        transfer_strength, closure_strength):
+        reference_pairs, region_weights, matrices):
     """用眼眶键的确定性仿射映射传递表情，并保持闭眼接触。"""
     global_positions = old_key + (new_relative - old_relative)
     eye_delta = (old_key - old_relative) * region_weights[:, None]
@@ -2741,7 +2733,6 @@ def _ho_transfer_eye_positions(
         old_basis,
         region_weights,
         matrices,
-        transfer_strength,
     )
     constraints, active_cross, _closure_mix = _ho_contact_vector_constraints(
         old_relative,
@@ -2751,7 +2742,6 @@ def _ho_transfer_eye_positions(
         reference_pairs,
         region_weights,
         matrices,
-        closure_strength,
     )
     corrected = _ho_project_contact_vectors(
         baseline_positions, constraints, region_weights)
@@ -3060,37 +3050,37 @@ def _rewrite_ho_dual_shape_key_tree(
 
 def _rebase_shape_keys(
         obj, ordinary_shape_name, eye_shape_name, blink_reference_name,
-        transfer_strength, closure_strength, contact_radius_factor,
-        max_gap_ratio, smooth_rings):
+        use_blink_contact):
     (
         shape_keys, basis, ordinary_shape, eye_shape, blink_reference,
     ) = _validate_ho_dual_rebase_object(
         obj, ordinary_shape_name, eye_shape_name, blink_reference_name)
 
     basis_positions = shapekey_utils.read_shape_key_positions(basis)
+    eye_shape_positions = shapekey_utils.read_shape_key_positions(eye_shape)
     reference_positions = shapekey_utils.read_shape_key_positions(blink_reference)
     topology = _ho_rebase_topology(obj.data, basis_positions)
-    reference_pairs = _ho_reference_pairs(
-        basis_positions,
-        reference_positions,
-        topology,
-        contact_radius_factor,
-        max_gap_ratio,
-    )
-    if not reference_pairs:
-        raise ShapeKeyRebaseError(
-            "闭眼参考键中未找到有效的上下眼睑闭合关系；"
-            "请确认参考键确实让眼睑明显靠近")
-    region_weights = _ho_automatic_eye_weights(
-        basis_positions,
-        reference_positions,
-        reference_pairs,
-        topology,
-        smooth_rings,
-    )
+    region_weights = _ho_eye_region_weights(
+        basis_positions, eye_shape_positions, topology)
     if not np.any(region_weights > 1e-4):
-        raise ShapeKeyRebaseError("无法建立眼部影响区域")
-    eye_shape_positions = shapekey_utils.read_shape_key_positions(eye_shape)
+        raise ShapeKeyRebaseError("眼睛造型键没有可识别的顶点位移")
+
+    reference_pairs = ()
+    if use_blink_contact:
+        candidate_pairs = _ho_reference_pairs(
+            basis_positions,
+            reference_positions,
+            topology,
+            _HO_CONTACT_RADIUS_FACTOR,
+            _HO_MAX_GAP_RATIO,
+        )
+        reference_pairs = _ho_filter_reference_pairs(
+            candidate_pairs, region_weights)
+        if not reference_pairs:
+            raise ShapeKeyRebaseError(
+                "闭眼参考键在眼睛造型区域内未找到有效的眼睑关系；"
+                "请检查输入，或关闭闭眼接触修正")
+
     # 平移已经逐顶点进入新相对键；这里只用线性部分变换旧表情 delta。
     matrices = _ho_eye_affine_matrices(
         basis_positions, eye_shape_positions, region_weights)
@@ -3115,8 +3105,6 @@ def _rebase_shape_keys(
                 reference_pairs,
                 region_weights,
                 matrices,
-                transfer_strength,
-                closure_strength,
             )
         )
         if affected > 0:
@@ -3252,19 +3240,26 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    眼睛键只记录眼眶造型；两键执行时都必须为 1，其他键必须为 0。眼睛键从空白键
 #    开始，不从混合创建。算子不检测左右对称，错误输入的风险由用户承担。新 Basis 为
 #    B+(普通-B)+(眼睛-B)，规划完成后原子删除两个来源键并重接相对依赖。
-# 6. 双目闭眼参考键的有效位移与闭合顶点对构成眼部语义区域。HO 在左右半脸分别拟合
-#    B 到眼睛造型键的加权仿射矩阵 A；近平面的未约束轴通过单位阵正则稳定，奇异值限制
-#    在 [0.25, 4]，拒绝反射或非有限结果。眼睛键是用户的明确输入，因此 A 固定按 1
-#    使用，不再经过 FBSF 相似度、位移阈值或自动梯度降权。
-# 7. 对每个待重写键，先计算局部表情 delta D=K-R，再以 H=R'+A*D 重建眼部；区域外
+# 6. 眼部语义区域现在只由眼睛造型键相对 Basis 的非零位移确定，并使用严格二值权重。
+#    实测表明，把 Blink 的活动顶点当作区域种子并向外扩张会迅速稀释眼眶拟合：大面积
+#    相邻脸面进入最小二乘后，眼睛键的缩放和剪切被平均回单位阵，还会把修正带到眉额、
+#    鼻梁或独立表情区域。因此已删除拓扑扩张及其参数；Blink 不得反向定义或扩大眼区。
+# 7. HO 在左右半脸分别拟合 B 到眼睛造型键的加权仿射矩阵 A；近平面的未约束轴通过
+#    单位阵正则稳定，奇异值限制在 [0.25, 4]，拒绝反射或非有限结果。眼睛键是用户的
+#    明确输入，因此 A 固定按 1 使用，不再经过 FBSF 相似度、位移阈值或自动梯度降权。
+# 8. 对每个待重写键，先计算局部表情 delta D=K-R，再以 H=R'+A*D 重建眼部；区域外
 #    仍严格使用 G。眼睛键的整体平移已经包含在 R' 中，A 只负责旋转、缩放和剪切 D；
 #    普通造型只进入 R'，不会被眼部逆修正吞掉。该形式也能沿嵌套 relative_key 依赖树
 #    逐层传播，不会把来源键的造型重复应用到子键。
-# 8. 对接近闭眼参考的键，HO 将旧上下眼睑分离向量整体乘以同侧 A，同时把变换后的
-#    长度限制为不大于旧键已经达到的绝对间距；随后保持每对顶点中点不漂移，对完整
-#    三维向量迭代投影。它不再只压一个“眼眶法向”，因此切向错位也能参与闭合。安全
-#    回退仅减弱接触投影，不会撤销仿射表情传递或普通造型的全局位置。
-# 9. 当前仿射矩阵仍是每眼单簇模型，无法精确表达强烈的局部眼角拉伸；闭合对应仍是
+# 9. Blink 只在上述眼区内部提供上下眼睑对应与闭合比例。候选对的两个端点都必须属于
+#    眼睛造型区域，避免闭眼键误配同一连通面上的鼻梁、额头或其他近邻。接触搜索与判定
+#    阈值固定为经过消融测试的保守值，不再暴露会放大误配的调参项；用户可整体关闭闭眼
+#    接触修正，此时仍执行确定性的眼眶仿射传递和区域外全局变基。
+# 10. 对接近闭眼参考的键，HO 将旧上下眼睑分离向量整体乘以同侧 A，同时把变换后的
+#     长度限制为不大于旧键已经达到的绝对间距；随后保持每对顶点中点不漂移，对完整
+#     三维向量迭代投影。它不再只压一个“眼眶法向”，因此切向错位也能参与闭合。安全
+#     回退仅减弱接触投影，不会撤销仿射表情传递或普通造型的全局位置。
+# 11. 当前仿射矩阵仍是每眼单簇模型，无法精确表达强烈的局部眼角拉伸；闭合对应仍是
 #    顶点到顶点近似。后续可升级为多簇嵌入变形或 ARAP、顶点到对侧边/三角面的重心
 #    对应、连续轮廓虚拟三角带，并增加区域覆盖率、拟合残差与接触残差预览。嘴唇若要
 #    获得同等级处理，应使用独立闭嘴参考和口部变换，不能复用眼部规则扩散到全脸。
@@ -3385,44 +3380,10 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         description="用于建立上下眼睑关系的闭眼形态键；不会直接复制它的绝对坐标",
         default="",
     ) # type: ignore
-    transfer_strength: FloatProperty(
-        name="眼眶变换强度",
-        description="把眼睛造型键拟合出的旋转、缩放和剪切应用到眼部表情 delta",
-        default=1.0,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-    closure_strength: FloatProperty(
-        name="闭合约束强度",
-        description="保持参考键上下眼睑完整三维接触向量的强度",
-        default=1.0,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-    contact_radius_factor: FloatProperty(
-        name="接触搜索半径",
-        description="以眼部局部边长为单位，在闭眼参考键中搜索对侧眼睑",
-        default=1.5,
-        min=0.1,
-        max=6.0,
-        precision=2,
-    ) # type: ignore
-    max_gap_ratio: FloatProperty(
-        name="最大闭合比例",
-        description="参考键中的间距低于原眼睑间距的该比例时建立闭合关系",
-        default=0.35,
-        min=0.05,
-        max=0.8,
-        subtype='FACTOR',
-    ) # type: ignore
-    smooth_rings: IntProperty(
-        name="自动区域扩张",
-        description="闭眼参考键的活动区域向外扩张的拓扑环数",
-        default=4,
-        min=1,
-        max=12,
+    use_blink_contact: BoolProperty(
+        name="闭眼接触修正",
+        description="在眼睛造型区域内使用闭眼参考键保持上下眼睑接触",
+        default=True,
     ) # type: ignore
     @classmethod
     def poll(cls, context):
@@ -3471,7 +3432,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         warning.alert = True
         warning.label(text="此操作会重写全部形态键并删除两个造型键", icon='ERROR')
         warning.label(text="两个造型键必须直接相对 Basis，且当前权重都必须为 1")
-        warning.label(text="眼睛造型键固定按 1 参与眼眶变换，不使用相似度降权")
+        warning.label(text="眼睛造型键的位移顶点直接定义眼区，不做区域扩张")
 
         flow = layout.box()
         flow.label(text="对称双键造型流程", icon='INFO')
@@ -3491,11 +3452,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             layout.prop_search(
                 self, "blink_reference_key", shape_keys, "key_blocks",
                 text="双目闭眼参考键")
-        layout.prop(self, "transfer_strength")
-        layout.prop(self, "closure_strength")
-        layout.prop(self, "contact_radius_factor")
-        layout.prop(self, "max_gap_ratio")
-        layout.prop(self, "smooth_rings")
+        layout.prop(self, "use_blink_contact")
 
     def execute(self, context):
         obj = context.object
@@ -3511,11 +3468,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
                     self.ordinary_shape_key,
                     self.eye_shape_key,
                     self.blink_reference_key,
-                    self.transfer_strength,
-                    self.closure_strength,
-                    self.contact_radius_factor,
-                    self.max_gap_ratio,
-                    self.smooth_rings,
+                    self.use_blink_contact,
                 )
             )
         except ShapeKeyRebaseError as exc:

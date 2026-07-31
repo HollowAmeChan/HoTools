@@ -137,7 +137,14 @@ assert "factor" not in (
     module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 assert {
     "ordinary_shape_key", "eye_shape_key", "blink_reference_key",
+    "use_blink_contact",
 }.issubset(module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
+for removed_property in (
+    "transfer_strength", "closure_strength", "contact_radius_factor",
+    "max_gap_ratio", "smooth_rings",
+):
+    assert removed_property not in (
+        module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 assert (
     module.OP_ShapekeyTools_RebasePreserveExpressions.bl_idname
     == "ho.rebase_shapekeys_preserve_expressions"
@@ -214,10 +221,23 @@ try:
     assert len(default_pairs) == 3
     # 搜索半径只扩大闭眼参考的候选范围，不能反向排除已经找到的眼睑关系。
     assert len(wide_pairs) == len(default_pairs)
-    automatic_weights = module._ho_automatic_eye_weights(
-        old_basis, old_expression, default_pairs, topology, 2)
-    assert np.all(automatic_weights[:12] > 0.0)
-    assert np.allclose(automatic_weights[12:], 0.0)
+    eye_region = module._ho_eye_region_weights(
+        old_basis, positions(eye_sculpt), topology)
+    assert np.all(eye_region[:12] == 1.0)
+    assert np.all(eye_region[12:] == 0.0)
+
+    # 眼睛造型键移动哪些点，眼区就只有哪些点；相邻拓扑不能再被自动扩张进来。
+    sparse_eye_shape = old_basis.copy()
+    sparse_eye_shape[[3, 4], 2] += 0.2
+    sparse_region = module._ho_eye_region_weights(
+        old_basis, sparse_eye_shape, topology)
+    assert np.array_equal(np.flatnonzero(sparse_region), (3, 4))
+
+    # Blink 候选只能在眼睛造型区域内生效，不能用误配反向扩大眼区。
+    false_pair = (0, 12, 0.1, 1.0, 0.01)
+    filtered_pairs = module._ho_filter_reference_pairs(
+        default_pairs + (false_pair,), eye_region)
+    assert filtered_pairs == default_pairs
 
     # 单侧运动不能误配到另一个独立网格岛上的静止表面。
     one_sided = old_basis.copy()
@@ -281,11 +301,7 @@ try:
         ordinary_shape_key="OrdinarySculpt",
         eye_shape_key="EyeSculpt",
         blink_reference_key="Blink",
-        transfer_strength=1.0,
-        closure_strength=1.0,
-        contact_radius_factor=1.5,
-        max_gap_ratio=0.35,
-        smooth_rings=2,
+        use_blink_contact=True,
     )
     assert result == {'FINISHED'}
 
@@ -398,6 +414,26 @@ try:
     assert np.allclose(positions(guarded_basis), original_basis)
     assert guarded.data.shape_keys.key_blocks.get("Ordinary") is not None
     assert guarded.data.shape_keys.key_blocks.get("Eye") is not None
+
+    # 关闭接触修正后，Blink 即使没有闭合关系也不应阻止确定性的眼眶仿射变基。
+    affine_only = make_eye_and_mouth_mesh("AffineOnlyRebase")
+    (
+        affine_basis, affine_ordinary, affine_eye, affine_blink, _affine_mouth,
+    ) = add_closure_shape_keys(affine_only)
+    for index, point in enumerate(affine_blink.data):
+        point.co = affine_basis.data[index].co.copy()
+    affine_ordinary.value = 1.0
+    affine_eye.value = 1.0
+    result = bpy.ops.ho.rebase_shapekeys_preserve_expressions(
+        "EXEC_DEFAULT",
+        ordinary_shape_key="OrdinarySculpt",
+        eye_shape_key="EyeSculpt",
+        blink_reference_key="Blink",
+        use_blink_contact=False,
+    )
+    assert result == {'FINISHED'}
+    assert affine_only.data.shape_keys.key_blocks.get("OrdinarySculpt") is None
+    assert affine_only.data.shape_keys.key_blocks.get("EyeSculpt") is None
 
     # FBSF 与 HO 是两个独立算子。左侧表情与捏脸同向，因此反向抵消；
     # 右侧表情与捏脸正交，因此保持普通全局变基产生的整体位移。
