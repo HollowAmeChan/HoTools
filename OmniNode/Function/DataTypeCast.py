@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "DATA_TYPECAST", "label": "DataTypeCast", "order": 30},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniColorRGBA
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector

@@ -63,6 +63,29 @@ OmniNode 的默认扩展点是 `Function/*.py` 中的 Python 函数和 `@omni(..
 
 这个约束的目标是降低用户操作复杂度。用户应该通过少量语义明确的节点完成渐进式编辑和调参，而不是被迫维护庞大的节点网络。
 
+#### Function 模块自描述注册
+
+`OmniNodeRegister` 不维护 `Function` 模块白名单。注册时递归发现 `Function/**/*.py`（`__init__.py` 除外），每个文件必须在模块头声明 `OMNI_NODE_REGISTRATION`：
+
+```python
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "CUSTOM", "label": "Custom", "order": 1000},
+    "menu_path": ("Character", "Face", "Eyes"),
+    "order": 20,
+}
+```
+
+- `category.id` 是顶层 Add 菜单集合 ID；同一 ID 的所有文件必须声明相同的 `label` 和 `order`。
+- `menu_path` 是相对顶层集合的 UI 路径，允许为空，也允许任意深度嵌套。菜单类由完整路径生成稳定且无冲突的内部 ID。
+- 模块 `order` 决定它在集合或子菜单内的相对位置；相同顺序按完整模块名稳定排序。
+- 只作为 helper、明确不生成节点的文件也必须写头声明，使用 `{"enabled": False}`。
+- 缺少声明、声明字段非法、模块导入失败、分类合同冲突、没有启用节点或 `bl_idname` 重复时，注册整体失败并回滚，禁止留下部分注册状态。
+- `Function` 子目录按 Python package/namespace package 导入，目录名和文件名必须是合法 Python 标识符。
+
+`Function/Custom/` 是用户自定义节点的约定入口。目录内保留可运行示例和独立说明；用户模块应使用 `CUSTOM` 分类或另行声明不会与内置分类冲突的 ID。更新插件可能覆盖内置示例，因此用户节点应保存在自己命名的文件中，并在升级前纳入版本控制或备份。
+
+持久化兼容合同：自动发现、分类 ID 和 `menu_path` 只影响 Add 菜单，绝不能参与节点 `bl_idname`。已有函数节点继续使用 `HO_OmniNode_<函数名>`；移动分类或增加嵌套菜单不得改变旧工程保存的节点类型标识符。重命名已发布函数或显式覆盖其 `bl_idname` 属于工程迁移，必须另行提供兼容方案和旧 ID 回归测试。
+
 ### 2. GraphNode 是 IR 级特殊节点
 
 GraphNode 不是函数节点的替代写法，而是架构级例外。只有特殊需求会影响下面任一边界时，才应新增 GraphNode：
@@ -1070,7 +1093,11 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### `OmniNodeRegister.py`
 
-节点注册和分类。负责注册 Graph 节点，从 `Function/` 加载 `@omni(enable=True)` 函数并生成节点类，建立 Blender add node 菜单分类。
+节点注册和分类。负责注册 Graph 节点，消费自动发现的 Function 模块声明和 `@omni(enable=True)` 节点类，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。
+
+### `OmniNodeFunctionRegistry.py`
+
+Function 模块发现与声明校验。递归映射文件路径到模块名，导入模块，规范化 `OMNI_NODE_REGISTRATION`，校验同名分类合同，并输出与 Blender UI 解耦的注册描述。
 
 ### `Function/*.py`
 
@@ -1079,6 +1106,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 维护重点：
 
 - 普通函数节点应保持“输入参数 -> 返回值”的模型，复杂逻辑也应尽量在函数内部或 helper 中收敛。
+- 每个非 `__init__.py` 文件必须在模块头声明 `OMNI_NODE_REGISTRATION`；新增文件不再修改中心注册表。
 - `input_init.description` 写入 Blender `NodeSocket.description` 后最多保留 64 个 UTF-8 字节；公开 socket 描述必须控制在 60 字节以内。枚举优先写短值映射，需要分行时使用显式换行，不得依赖 tooltip 自动换行。
 - 需要临时跨帧状态时，暴露 `_OmniCache` 输入/输出，并要求用户接 cache 读写/删除节点；函数内部不得保存隐藏跨帧状态。
 - 需要 C++ 加速时，保持一个公开节点语义，在内部替换热点实现；不要新增长期并存的 Python/CPP 平行产品入口。

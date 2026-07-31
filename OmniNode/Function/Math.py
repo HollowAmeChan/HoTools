@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "MATH", "label": "Math", "order": 40},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketColor

@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "MODIFIER", "label": "Modifier", "order": 60},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniModifierType, _OmniModifier
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

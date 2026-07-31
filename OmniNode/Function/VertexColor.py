@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "VERTEXCOLOR", "label": "VertexColor", "order": 90},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniColorAttribute
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

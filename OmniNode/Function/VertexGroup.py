@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "VERTEXGROUP", "label": "VertexGroup", "order": 100},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniVertexGroup
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

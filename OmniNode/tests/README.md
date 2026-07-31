@@ -18,6 +18,7 @@ blender --background --factory-startup --python OmniNode/tests/test_blender_pack
 blender --background --factory-startup --python OmniNode/tests/test_blender_compile_cache_lifecycle.py
 blender --background --factory-startup --python OmniNode/tests/test_blender_mute_passthrough_contract.py
 blender --background --factory-startup --python OmniNode/tests/test_blender_reference_guard.py
+blender --background --factory-startup --python OmniNode/tests/test_blender_function_registration.py
 ```
 
 Tests must derive repository paths from `__file__`; machine-specific absolute

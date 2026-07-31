@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "RIGTOOLKIT", "label": "RigToolKit", "order": 120},
+    "menu_path": (),
+    "order": 0,
+}
+
 import bpy
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from ..FunctionNodeCore import omni

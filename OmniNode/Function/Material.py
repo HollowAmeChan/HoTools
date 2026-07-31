@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "MATERIAL", "label": "Material", "order": 70},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniMaterialSlot
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

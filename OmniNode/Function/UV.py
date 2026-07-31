@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "UV", "label": "UV", "order": 80},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniUVLayer
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

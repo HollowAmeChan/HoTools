@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "CACHE", "label": "Cache", "order": 150},
+    "menu_path": (),
+    "order": 0,
+}
+
 from ..OmniNodeSocketMapping import _OmniCache
 from ..FunctionNodeCore import omni
 from ..config import nodeColors

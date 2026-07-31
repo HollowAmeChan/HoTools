@@ -1,3 +1,9 @@
+OMNI_NODE_REGISTRATION = {
+    "category": {"id": "DEBUG", "label": "Debug", "order": 140},
+    "menu_path": (),
+    "order": 0,
+}
+
 from typing import Any
 
 from ..FunctionNodeCore import omni
