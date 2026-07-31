@@ -2779,7 +2779,7 @@ def _ho_transfer_eye_positions(
     )
 
 
-# 以下 FBSF 辅助函数是早期受其思路启发的单活动键近似，不是源仓库算法复刻。
+# FBSF 自动填充阶段沿用源仓库的左右内积相似度；执行阶段可累加多个显式来源键。
 def _fbsf_threshold_map(value, lower=0.05, upper=0.95):
     """截断本地近似算子计算出的相似度权重。"""
     if value <= lower:
@@ -3134,40 +3134,114 @@ def _rebase_shape_keys(
     )
 
 
+def _resolve_fbsf_sources(obj, source_specs):
+    """解析显式捏脸键列表，并限制来源键直接相对 Basis。"""
+    shape_keys, basis = _validate_shape_key_rebase_data(obj)
+    weighted_sources = []
+    seen = set()
+    for source_name, factor in source_specs:
+        if not source_name or source_name in seen:
+            continue
+        source = shape_keys.key_blocks.get(source_name)
+        if source is None:
+            raise ShapeKeyRebaseError(f"找不到捏脸键：{source_name}")
+        if source == basis:
+            raise ShapeKeyRebaseError("Basis 不能作为捏脸键来源")
+        if source.relative_key != basis:
+            raise ShapeKeyRebaseError(
+                f"捏脸键 {source.name} 必须直接相对于 Basis")
+        if not np.isfinite(factor) or factor <= 0.0:
+            raise ShapeKeyRebaseError(
+                f"捏脸键 {source.name} 的变基权重必须大于 0")
+        seen.add(source_name)
+        weighted_sources.append((source, float(factor)))
+    if not weighted_sources:
+        raise ShapeKeyRebaseError("请至少选择一个捏脸键")
+    return shape_keys, basis, tuple(weighted_sources)
+
+
+def _fbsf_current_source_specs(obj):
+    """为脚本直接执行和弹窗初始值收集当前非零捏脸键。"""
+    shape_keys, basis = _validate_shape_key_rebase_data(obj)
+    return tuple(
+        (key.name, float(key.value))
+        for key in shape_keys.key_blocks
+        if (
+            key != basis
+            and key.relative_key == basis
+            and key.value > 1e-6
+        )
+    )
+
+
 def _rebase_shape_keys_fbsf(
-        obj, factor, correction_strength, side_smooth_width):
+        obj, source_specs, correction_strength, side_smooth_width):
+    shape_keys, basis, weighted_sources = _resolve_fbsf_sources(
+        obj, source_specs)
+    old_basis = shapekey_utils.read_shape_key_positions(basis)
+    source_deltas = tuple(
+        (
+            source,
+            factor,
+            shapekey_utils.read_shape_key_positions(source) - old_basis,
+        )
+        for source, factor in weighted_sources
+    )
     corrected_keys = 0
-    split_keys = 0
+    applied_links = 0
+    split_links = 0
     weight_sum = 0.0
 
     def rewrite_key(
             _key, old_key, old_relative, new_relative,
-            old_basis, old_active, _new_basis):
-        nonlocal corrected_keys, split_keys, weight_sum
+            old_basis, _old_active, _new_basis):
+        nonlocal corrected_keys, applied_links, split_links, weight_sum
         target_delta = old_key - old_relative
-        edit_delta = old_active - old_basis
-        weights, left_score, right_score, split_sides = _fbsf_rebase_weights(
-            target_delta,
-            edit_delta,
-            old_basis,
-            side_smooth_width,
-            correction_strength,
-        )
         relative_shift = new_relative - old_relative
         global_rebase = old_key + relative_shift
-        new_key = global_rebase - relative_shift * weights[:, None]
-
-        if max(left_score, right_score) * correction_strength > 1e-6:
-            corrected_keys += 1
-            weight_sum += (left_score + right_score) * 0.5 * correction_strength
+        correction = np.zeros_like(global_rebase, dtype=np.float32)
+        key_corrected = False
+        for _source, factor, source_delta in source_deltas:
+            weights, left_score, right_score, split_sides = (
+                _fbsf_rebase_weights(
+                    target_delta,
+                    source_delta,
+                    old_basis,
+                    side_smooth_width,
+                    correction_strength,
+                )
+            )
+            mapping_weight = max(left_score, right_score) * correction_strength
+            if mapping_weight <= 1e-6:
+                continue
+            correction += source_delta * (factor * weights[:, None])
+            key_corrected = True
+            applied_links += 1
+            weight_sum += (
+                (left_score + right_score) * 0.5 * correction_strength)
             if split_sides:
-                split_keys += 1
-        return new_key
+                split_links += 1
+        if key_corrected:
+            corrected_keys += 1
+        return global_rebase - correction
 
-    active_name, key_count = _rewrite_rebased_shape_key_tree(
-        obj, factor, rewrite_key)
-    average_weight = weight_sum / corrected_keys if corrected_keys else 0.0
-    return active_name, key_count, corrected_keys, split_keys, average_weight
+    source_names, key_count = _rewrite_rebased_shape_key_sources(
+        obj,
+        shape_keys,
+        basis,
+        weighted_sources,
+        weighted_sources[0][0],
+        rewrite_key,
+    )
+    average_weight = weight_sum / applied_links if applied_links else 0.0
+    return (
+        source_names,
+        key_count,
+        corrected_keys,
+        applied_links,
+        split_links,
+        average_weight,
+    )
 
 
 class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
@@ -3230,29 +3304,53 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 # 引入回弹、褶皱或吞掉大面积位移；HO 因此改为“全局变基 + 眼睛造型键仿射传递 +
 # 可选 Blink 接触”，并在实测后删除了会稀释眼眶变换的区域扩张。
 #
-# 当前名为 FBSF 的算子只是早期单活动键近似，并未复刻 FaceBlendShapeFix@6ddac27。
-# 源仓库为每个目标表情显式配置多个反向/追加形态键，按这些键的当前权重及左右权重
-# 累加 delta；本地实现只比较目标表情与一个活动捏脸键的方向相似度。两者数据模型不同，
-# 正交位移还会被本地相似度降权，因此当前 FBSF 可能无法完整吃入捏脸键。
+# 当前 FBSF 已支持显式选择多个捏脸键，并按每个来源的权重逐目标计算左右相似度、累加
+# 反向 delta；这补齐了源仓库“多个活动 BlendData 一起参与”的主流程。自动相似度仍会
+# 把正交位移降权，这是 FBSF 本身的取舍，并非 HO 的确定性眼眶传递。
 #
-# 后续方向：单独补齐真正的 FBSF 配置流程，支持多捏脸键、逐目标反向/追加映射和左右
-# 权重；HO 可继续研究每眼多簇局部变换、眼睑到边/面的连续对应及残差预览。嘴部接触若
-# 要特殊处理，应使用独立参考和口部模型，不能把眼部规则直接扩散到全脸。
-class OP_ShapekeyTools_RebaseFBSF(Operator):
-    """用受 FaceBlendShapeFix 启发的单活动键近似重写全部形态键。"""
-    bl_idname = "ho.rebase_shapekeys_fbsf"
-    bl_label = "全键局部变基-FBSF"
-    bl_description = "按左右半脸的形态键相似度反向抵消捏脸位移，并删除活动捏脸键"
-    bl_options = {'REGISTER', 'UNDO'}
+# 后续方向：FBSF 继续补逐目标手工覆盖、追加映射和左右权重编辑；HO 可继续研究每眼
+# 多簇局部变换、眼睑到边/面的连续对应及残差预览。嘴部接触若要特殊处理，应使用独立
+# 参考和口部模型，不能把眼部规则直接扩散到全脸。
 
-    factor: FloatProperty(
+
+class PG_ShapekeyTools_FBSFSource(PropertyGroup):
+    """FBSF 弹窗中的一个候选捏脸键。"""
+    shape_key_name: StringProperty(name="形态键") # type: ignore
+    enabled: BoolProperty(name="使用", default=False) # type: ignore
+    weight: FloatProperty(
         name="变基权重",
-        description="活动捏脸键混入基型的比例",
+        description="该捏脸键烘焙进 Basis 并参与反向修正的权重",
         default=1.0,
         min=0.0,
         max=1.0,
         subtype='FACTOR',
     ) # type: ignore
+
+
+class HO_UL_ShapekeyTools_FBSFSources(UIList):
+    """显示可直接烘焙的 FBSF 捏脸键列表。"""
+    bl_idname = "HO_UL_ShapekeyTools_FBSFSources"
+
+    def draw_item(
+            self, context, layout, data, item, icon, active_data,
+            active_property, index, flt_flag):
+        row = layout.row(align=True)
+        row.prop(item, "enabled", text="")
+        row.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
+        weight = row.row(align=True)
+        weight.enabled = item.enabled
+        weight.prop(item, "weight", text="")
+
+
+class OP_ShapekeyTools_RebaseFBSF(Operator):
+    """按 FBSF 规则累加多个捏脸键并重写全部形态键。"""
+    bl_idname = "ho.rebase_shapekeys_fbsf"
+    bl_label = "全键局部变基-FBSF"
+    bl_description = "按左右相似度反向抵消多个捏脸键，并把所选捏脸键烘焙进 Basis"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    sources: CollectionProperty(type=PG_ShapekeyTools_FBSFSource) # type: ignore
+    source_index: IntProperty(default=0, min=0) # type: ignore
     correction_strength: FloatProperty(
         name="反向修正强度",
         description="缩放 FBSF 自动计算的反向抵消权重；0 等同普通全局变基",
@@ -3278,33 +3376,60 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             obj is not None
             and obj.type == 'MESH'
             and obj.data.shape_keys is not None
-            and obj.active_shape_key_index > 0
+            and len(obj.data.shape_keys.key_blocks) >= 2
         )
 
     def invoke(self, context, event):
         try:
-            _shape_keys, _basis, active_key = _validate_shape_key_rebase_object(
-                context.object)
+            shape_keys, basis = _validate_shape_key_rebase_data(context.object)
         except ShapeKeyRebaseError as exc:
             self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
-        if active_key.value > 1e-6:
-            self.factor = min(1.0, active_key.value)
-        return context.window_manager.invoke_props_dialog(self, width=440)
+        self.sources.clear()
+        active_key = context.object.active_shape_key
+        selected = 0
+        for key in shape_keys.key_blocks:
+            if key == basis or key.relative_key != basis:
+                continue
+            item = self.sources.add()
+            item.name = key.name
+            item.shape_key_name = key.name
+            item.enabled = key.value > 1e-6
+            item.weight = min(1.0, float(key.value)) if item.enabled else 1.0
+            selected += int(item.enabled)
+        if selected == 0 and active_key is not None and active_key != basis:
+            for item in self.sources:
+                if item.shape_key_name == active_key.name:
+                    item.enabled = True
+                    item.weight = 1.0
+                    break
+        if len(self.sources) == 0:
+            self.report({'WARNING'}, "没有直接相对 Basis 的候选捏脸键")
+            return {'CANCELLED'}
+        self.source_index = 0
+        return context.window_manager.invoke_props_dialog(self, width=540)
 
     def draw(self, context):
         layout = self.layout
-        obj = context.object
-        active_key = obj.active_shape_key if obj else None
-
         warning = layout.box()
         warning.alert = True
-        warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
-        warning.label(text="FBSF 模式按左右相似度反向抵消捏脸位移")
-        if active_key is not None:
-            warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
+        warning.label(text="此操作会重写全部形态键并删除勾选的捏脸键", icon='ERROR')
+        warning.label(text="每个捏脸键会独立计算左右相似度，再累加反向修正")
 
-        layout.prop(self, "factor")
+        source_box = layout.box()
+        source_box.label(text="捏脸键列表", icon='SHAPEKEY_DATA')
+        header = source_box.row(align=True)
+        header.label(text="形态键")
+        header.label(text="变基权重")
+        source_box.template_list(
+            HO_UL_ShapekeyTools_FBSFSources.bl_idname,
+            "",
+            self,
+            "sources",
+            self,
+            "source_index",
+            rows=8,
+        )
         layout.prop(self, "correction_strength")
         layout.prop(self, "side_smooth_width")
 
@@ -3312,11 +3437,23 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         obj = context.object
         if obj is not None and obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        source_specs = tuple(
+            (item.shape_key_name, item.weight)
+            for item in self.sources
+            if item.enabled
+        )
+        # 允许脚本直接 EXEC：此时没有经过 invoke，用当前非零键填充来源列表。
+        if len(self.sources) == 0:
+            try:
+                source_specs = _fbsf_current_source_specs(obj)
+            except ShapeKeyRebaseError as exc:
+                self.report({'WARNING'}, str(exc))
+                return {'CANCELLED'}
         try:
-            active_name, key_count, corrected, split, average = (
+            source_names, key_count, corrected, links, split, average = (
                 _rebase_shape_keys_fbsf(
                     obj,
-                    self.factor,
+                    source_specs,
                     self.correction_strength,
                     self.side_smooth_width,
                 )
@@ -3328,8 +3465,15 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
             self.report({'ERROR'}, f"FBSF 变基失败：{exc}")
             return {'CANCELLED'}
 
-        detail = f"，修正 {corrected}，左右拆分 {split}，平均权重 {average:.3f}"
-        self.report({'INFO'}, f"已用 {active_name} 变基并重写 {key_count} 个形态键{detail}")
+        preview = "、".join(source_names[:3])
+        if len(source_names) > 3:
+            preview += "等"
+        detail = (
+            f"，来源 {len(source_names)}，修正 {corrected} 键，"
+            f"有效映射 {links}，左右拆分 {split}，平均权重 {average:.3f}"
+        )
+        self.report(
+            {'INFO'}, f"已用 {preview} 变基并重写 {key_count} 个形态键{detail}")
         return {'FINISHED'}
 
 
@@ -3943,6 +4087,8 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
+    PG_ShapekeyTools_FBSFSource,
+    HO_UL_ShapekeyTools_FBSFSources,
     OP_ShapekeyTools_RebaseFBSF,
     OP_ShapekeyTools_RebasePreserveExpressions,
     OP_ForceRemoveAll, OP_ForceApplyAll,
@@ -3960,11 +4106,11 @@ def register():
 
 
 def unregister():
-    for i in cls:
-        bpy.utils.unregister_class(i)
-    ureg_props()
     bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
     bpy.types.MESH_MT_shape_key_context_menu.remove(
         draw_in_MESH_MT_shape_key_context_menu)
+    ureg_props()
+    for i in reversed(cls):
+        bpy.utils.unregister_class(i)
 
  # type: ignore

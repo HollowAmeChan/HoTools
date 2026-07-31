@@ -130,6 +130,10 @@ assert np.allclose(opposite_weights, 0.5, atol=1e-6)
 assert module._fbsf_threshold_map(0.05) == 0.0
 assert module._fbsf_threshold_map(0.95) == 1.0
 assert module.OP_ShapekeyTools_RebaseFBSF.bl_label == "全键局部变基-FBSF"
+assert "factor" not in module.OP_ShapekeyTools_RebaseFBSF.__annotations__
+assert {
+    "sources", "source_index", "correction_strength", "side_smooth_width",
+}.issubset(module.OP_ShapekeyTools_RebaseFBSF.__annotations__)
 assert module.OP_ShapekeyTools_RebasePreserveExpressions.bl_label == "全键局部变基-HO"
 assert "eye_vertex_group" not in (
     module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
@@ -185,6 +189,8 @@ assert np.allclose(
 assert np.allclose(np.mean(projected_contact, axis=0), contact_midpoint, atol=1e-6)
 
 registered = (
+    module.PG_ShapekeyTools_FBSFSource,
+    module.HO_UL_ShapekeyTools_FBSFSources,
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
     module.OP_ShapekeyTools_RebaseFBSF,
     module.OP_ShapekeyTools_RebasePreserveExpressions,
@@ -479,8 +485,8 @@ try:
     assert affine_only.data.shape_keys.key_blocks.get("OrdinarySculpt") is None
     assert affine_only.data.shape_keys.key_blocks.get("EyeSculpt") is None
 
-    # FBSF 与 HO 是两个独立算子。左侧表情与捏脸同向，因此反向抵消；
-    # 右侧表情与捏脸正交，因此保持普通全局变基产生的整体位移。
+    # FBSF 与 HO 是两个独立算子。两个非零捏脸键会作为来源列表一起烘焙，
+    # 每个来源只在与自身相似的半脸反向抵消，正交区域保持全局变基位置。
     fbsf = make_mesh("FBSFRebase", vertex_count=4)
     x_positions = (-1.0, -0.5, 0.5, 1.0)
     for index, x in enumerate(x_positions):
@@ -489,6 +495,10 @@ try:
     fbsf_sculpt = fbsf.shape_key_add(name="FaceSculpt", from_mix=False)
     for point in fbsf_sculpt.data:
         point.co.y += 1.0
+
+    fbsf_sculpt_z = fbsf.shape_key_add(name="DepthSculpt", from_mix=False)
+    for point in fbsf_sculpt_z.data:
+        point.co.z += 1.0
 
     fbsf_expression = fbsf.shape_key_add(name="Expression", from_mix=False)
     for index in (0, 1):
@@ -500,13 +510,14 @@ try:
     fbsf_child.relative_key = fbsf_sculpt
     for index, point in enumerate(fbsf_child.data):
         point.co = fbsf_sculpt.data[index].co.copy()
-        point.co.z += 0.25
+        point.co.x += 0.25
 
+    fbsf_sculpt.value = 0.5
+    fbsf_sculpt_z.value = 0.25
     fbsf.active_shape_key_index = fbsf.data.shape_keys.key_blocks.find(
         fbsf_sculpt.name)
     result = bpy.ops.ho.rebase_shapekeys_fbsf(
         "EXEC_DEFAULT",
-        factor=0.5,
         correction_strength=1.0,
         side_smooth_width=0.0,
     )
@@ -514,18 +525,19 @@ try:
 
     fbsf_keys = fbsf.data.shape_keys.key_blocks
     assert fbsf_keys.get("FaceSculpt") is None
+    assert fbsf_keys.get("DepthSculpt") is None
     fbsf_basis_key = fbsf_keys[0]
     fbsf_expression = fbsf_keys["Expression"]
     fbsf_child = fbsf_keys["RelativeToSculpt"]
     assert fbsf_child.relative_key == fbsf_basis_key
     for index, x in enumerate(x_positions):
-        assert_position(fbsf_basis_key, index, (x, 0.5, 0.0))
+        assert_position(fbsf_basis_key, index, (x, 0.5, 0.25))
     for index in (0, 1):
-        assert_position(fbsf_expression, index, (x_positions[index], 1.0, 0.0))
+        assert_position(fbsf_expression, index, (x_positions[index], 1.0, 0.25))
     for index in (2, 3):
         assert_position(fbsf_expression, index, (x_positions[index], 0.5, 1.0))
     for index, x in enumerate(x_positions):
-        assert_position(fbsf_child, index, (x, 0.5, 0.25))
+        assert_position(fbsf_child, index, (x + 0.25, 0.5, 0.25))
 
     # 原有全键变基算子保持独立并维持原行为。
     legacy = make_mesh("FullRebase", vertex_count=2)
