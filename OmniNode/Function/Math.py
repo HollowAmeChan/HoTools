@@ -255,6 +255,46 @@ def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
 
 
 @omni(enable=True,
+    bl_label="重新映射-向量",
+    base_color=nodeColors.colorCat["Math"],
+    omni_description="按 X、Y、Z 分量将向量从输入范围线性映射到输出范围。",
+    _INPUT_NAME=["值", "输入最小", "输入最大", "输出最小", "输出最大", "钳制结果"],
+    _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "vec"},
+    )
+def vectorRemap(
+    vec: mathutils.Vector,
+    in_min: mathutils.Vector,
+    in_max: mathutils.Vector,
+    out_min: mathutils.Vector,
+    out_max: mathutils.Vector,
+    clamp_result: bool = False,
+) -> mathutils.Vector:
+    vec = _to_vector(vec).to_3d()
+    in_min = _to_vector(in_min).to_3d()
+    in_max = _to_vector(in_max).to_3d()
+    out_min = _to_vector(out_min).to_3d()
+    out_max = _to_vector(out_max).to_3d()
+
+    zero_range_axes = [
+        axis
+        for axis, minimum, maximum in zip("XYZ", in_min, in_max)
+        if minimum == maximum
+    ]
+    if zero_range_axes:
+        raise ValueError(
+            f"向量输入范围不能为0：{', '.join(zero_range_axes)}"
+        )
+
+    return mathutils.Vector((
+        remap(value, source_min, source_max, target_min, target_max, clamp_result)
+        for value, source_min, source_max, target_min, target_max in zip(
+            vec, in_min, in_max, out_min, out_max
+        )
+    ))
+
+
+@omni(enable=True,
     bl_label="向量点乘",
     base_color=nodeColors.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
