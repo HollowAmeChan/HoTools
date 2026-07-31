@@ -2592,9 +2592,9 @@ def _ho_apply_eye_affine_delta(
 
 def _ho_contact_vector_constraints(
         old_relative, old_key, baseline_positions, basis_positions,
-        reference_pairs, region_weights, matrices):
+        reference_pairs, region_weights, matrices, closure_strength):
     """为接近闭眼参考的键生成完整三维眼睑间距，而非单轴距离。"""
-    if not reference_pairs:
+    if closure_strength <= 1e-8 or not reference_pairs:
         return (), 0, 0.0
 
     pair_data = np.asarray(reference_pairs, dtype=np.float64)
@@ -2640,7 +2640,7 @@ def _ho_contact_vector_constraints(
     preserved_vector = mapped_vector * scale[:, None]
 
     baseline_vector = baseline_positions[second] - baseline_positions[first]
-    mix = np.clip(activation, 0.0, 1.0)
+    mix = np.clip(activation * closure_strength, 0.0, 1.0)
     target_vector = baseline_vector + (
         preserved_vector - baseline_vector) * mix[:, None]
     return (
@@ -2719,7 +2719,7 @@ def _ho_correction_is_safe(global_positions, corrected_positions, topology, affe
 
 def _ho_transfer_eye_positions(
         old_key, old_relative, new_relative, old_basis, topology,
-        reference_pairs, region_weights, matrices):
+        reference_pairs, region_weights, matrices, closure_strength):
     """用眼眶键的确定性仿射映射传递表情，并保持闭眼接触。"""
     global_positions = old_key + (new_relative - old_relative)
     eye_delta = (old_key - old_relative) * region_weights[:, None]
@@ -2742,6 +2742,7 @@ def _ho_transfer_eye_positions(
         reference_pairs,
         region_weights,
         matrices,
+        closure_strength,
     )
     corrected = _ho_project_contact_vectors(
         baseline_positions, constraints, region_weights)
@@ -3051,7 +3052,8 @@ def _rewrite_ho_dual_shape_key_tree(
 
 def _rebase_shape_keys(
         obj, ordinary_shape_name, eye_shape_name, blink_reference_name,
-        use_blink_contact):
+        use_blink_contact, closure_strength, contact_radius_factor,
+        max_gap_ratio):
     (
         shape_keys, basis, ordinary_shape, eye_shape, blink_reference,
     ) = _validate_ho_dual_rebase_object(
@@ -3072,8 +3074,8 @@ def _rebase_shape_keys(
             basis_positions,
             reference_positions,
             topology,
-            _HO_CONTACT_RADIUS_FACTOR,
-            _HO_MAX_GAP_RATIO,
+            contact_radius_factor,
+            max_gap_ratio,
         )
         reference_pairs = _ho_filter_reference_pairs(
             candidate_pairs, region_weights)
@@ -3106,6 +3108,7 @@ def _rebase_shape_keys(
                 reference_pairs,
                 region_weights,
                 matrices,
+                closure_strength,
             )
         )
         if affected > 0:
@@ -3357,6 +3360,30 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         description="在眼睛造型区域内使用闭眼参考键保持上下眼睑接触",
         default=True,
     ) # type: ignore
+    closure_strength: FloatProperty(
+        name="闭合约束强度",
+        description="保持参考键上下眼睑完整三维接触向量的强度",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+    contact_radius_factor: FloatProperty(
+        name="接触搜索半径",
+        description="以眼部局部边长为单位，在闭眼参考键中搜索对侧眼睑",
+        default=_HO_CONTACT_RADIUS_FACTOR,
+        min=0.1,
+        max=6.0,
+        precision=2,
+    ) # type: ignore
+    max_gap_ratio: FloatProperty(
+        name="最大闭合比例",
+        description="参考键中的间距低于原眼睑间距的该比例时建立闭合关系",
+        default=_HO_MAX_GAP_RATIO,
+        min=0.05,
+        max=0.8,
+        subtype='FACTOR',
+    ) # type: ignore
     @classmethod
     def poll(cls, context):
         obj = context.object
@@ -3421,6 +3448,11 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
                 self, "blink_reference_key", shape_keys, "key_blocks",
                 text="双目闭眼参考键")
         layout.prop(self, "use_blink_contact")
+        if self.use_blink_contact:
+            contact = layout.column(align=True)
+            contact.prop(self, "closure_strength")
+            contact.prop(self, "contact_radius_factor")
+            contact.prop(self, "max_gap_ratio")
 
     def execute(self, context):
         obj = context.object
@@ -3437,6 +3469,9 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
                     self.eye_shape_key,
                     self.blink_reference_key,
                     self.use_blink_contact,
+                    self.closure_strength,
+                    self.contact_radius_factor,
+                    self.max_gap_ratio,
                 )
             )
         except ShapeKeyRebaseError as exc:

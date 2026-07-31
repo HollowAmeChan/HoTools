@@ -137,11 +137,11 @@ assert "factor" not in (
     module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 assert {
     "ordinary_shape_key", "eye_shape_key", "blink_reference_key",
-    "use_blink_contact",
+    "use_blink_contact", "closure_strength", "contact_radius_factor",
+    "max_gap_ratio",
 }.issubset(module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
 for removed_property in (
-    "transfer_strength", "closure_strength", "contact_radius_factor",
-    "max_gap_ratio", "smooth_rings",
+    "transfer_strength", "smooth_rings",
 ):
     assert removed_property not in (
         module.OP_ShapekeyTools_RebasePreserveExpressions.__annotations__)
@@ -218,9 +218,12 @@ try:
         old_basis, old_expression, topology, 1.5, 0.35)
     wide_pairs = module._ho_reference_pairs(
         old_basis, old_expression, topology, 6.0, 0.35)
+    strict_pairs = module._ho_reference_pairs(
+        old_basis, old_expression, topology, 1.5, 0.05)
     assert len(default_pairs) == 3
     # 搜索半径只扩大闭眼参考的候选范围，不能反向排除已经找到的眼睑关系。
     assert len(wide_pairs) == len(default_pairs)
+    assert not strict_pairs
     eye_region = module._ho_eye_region_weights(
         old_basis, positions(eye_sculpt), topology)
     assert np.all(eye_region[:12] == 1.0)
@@ -238,6 +241,44 @@ try:
     filtered_pairs = module._ho_filter_reference_pairs(
         default_pairs + (false_pair,), eye_region)
     assert filtered_pairs == default_pairs
+
+    # 闭合强度必须真实控制接触目标，而不是只保留一个无效的界面参数。
+    preview_basis = (
+        old_basis
+        + (positions(ordinary_sculpt) - old_basis)
+        + (positions(eye_sculpt) - old_basis)
+    )
+    preview_matrices = module._ho_eye_affine_matrices(
+        old_basis, positions(eye_sculpt), eye_region)
+    preview_baseline = module._ho_apply_eye_affine_delta(
+        old_expression,
+        old_basis,
+        preview_basis,
+        old_basis,
+        eye_region,
+        preview_matrices,
+    )
+    disabled_constraints, disabled_count, _disabled_mix = (
+        module._ho_contact_vector_constraints(
+            old_basis, old_expression, preview_baseline, old_basis,
+            default_pairs, eye_region, preview_matrices, 0.0))
+    half_constraints, half_count, _half_mix = (
+        module._ho_contact_vector_constraints(
+            old_basis, old_expression, preview_baseline, old_basis,
+            default_pairs, eye_region, preview_matrices, 0.5))
+    full_constraints, full_count, _full_mix = (
+        module._ho_contact_vector_constraints(
+            old_basis, old_expression, preview_baseline, old_basis,
+            default_pairs, eye_region, preview_matrices, 1.0))
+    assert not disabled_constraints and disabled_count == 0
+    assert half_count == full_count == len(default_pairs)
+    first, second = full_constraints[:2]
+    baseline_vectors = preview_baseline[second] - preview_baseline[first]
+    assert np.allclose(
+        half_constraints[2] - baseline_vectors,
+        (full_constraints[2] - baseline_vectors) * 0.5,
+        atol=1e-6,
+    )
 
     # 单侧运动不能误配到另一个独立网格岛上的静止表面。
     one_sided = old_basis.copy()
@@ -302,6 +343,9 @@ try:
         eye_shape_key="EyeSculpt",
         blink_reference_key="Blink",
         use_blink_contact=True,
+        closure_strength=1.0,
+        contact_radius_factor=1.5,
+        max_gap_ratio=0.35,
     )
     assert result == {'FINISHED'}
 
