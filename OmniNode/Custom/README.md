@@ -5,10 +5,14 @@
 只扫描 `Custom/` 当前层的 `.py` 文件，不扫描子目录。UI 子菜单与文件布局无关，
 统一通过 `menu_path` 声明。
 
+`NestedCategoryExample.py` 是三层 UI 分类示例，注册后位于
+“自定义 → 示例 → 嵌套分类 → 数值工具”。这些层级全部来自 `menu_path`，
+不需要也不允许用物理子目录表达。
+
 ## 新建节点
 
-1. 复制 `Example.py`，并改成唯一的 Python 文件名，例如
-   `StudioCharacter.py`。文件名必须是合法 Python 标识符。
+1. 复制 `Example.py` 或 `NestedCategoryExample.py`，并改成唯一的 Python
+   文件名，例如 `StudioCharacter.py`。文件名必须是合法 Python 标识符。
 2. 修改 `OMNI_NODE_REGISTRATION`。同一个 `category.id` 下的 `label` 和
    `category.order` 必须完全一致；`menu_path` 可以声明任意深度的子菜单。
 3. 将示例函数替换为自己的函数，并用 `@omni(enable=True, ...)` 暴露节点。

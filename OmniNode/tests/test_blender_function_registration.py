@@ -80,6 +80,15 @@ expected_paths = {
     for directory_name, path in module_paths
 }
 assert discovered_paths == expected_paths
+nested_example = next(
+    registration
+    for registration in node_register.function_module_registrations
+    if registration.relative_path == "Custom/NestedCategoryExample.py"
+)
+assert nested_example.menu_path == ("示例", "嵌套分类", "数值工具")
+assert [node.bl_idname for node in nested_example.node_classes] == [
+    "HO_OmniNode_customNestedCategoryOffset"
+]
 
 expected_categories = [
     "GRAPH", "DATA", "ARMATURE", "DATA_TYPECAST", "MATH", "OPERATOR",
