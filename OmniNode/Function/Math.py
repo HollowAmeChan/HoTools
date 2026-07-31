@@ -255,6 +255,23 @@ def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
 
 
 @omni(enable=True,
+    bl_label="向量乘法",
+    base_color=nodeColors.colorCat["Math"],
+    omni_description="将两个向量的 X、Y、Z 分量分别相乘。",
+    _INPUT_NAME=["向量A", "向量B"],
+    _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
+    )
+def vectorMultiply(
+    a: mathutils.Vector,
+    b: mathutils.Vector,
+) -> mathutils.Vector:
+    a = _to_vector(a).to_3d()
+    b = _to_vector(b).to_3d()
+    return mathutils.Vector((a[index] * b[index] for index in range(3)))
+
+
+@omni(enable=True,
     bl_label="重新映射-向量",
     base_color=nodeColors.colorCat["Math"],
     omni_description="按 X、Y、Z 分量将向量从输入范围线性映射到输出范围。",
