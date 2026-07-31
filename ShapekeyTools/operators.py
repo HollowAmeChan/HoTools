@@ -3871,19 +3871,6 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row.operator(OP_ShapekeyTools_GenerateHideShapeKey.bl_idname,
                  text="生成Hide形态键", icon="SHAPEKEY_DATA")
 
-    layout.separator()
-    flow = layout.column(align=True)
-    flow.label(text="HO 对称双键造型流程", icon="INFO")
-    flow.label(text="1. 普通键完成其他造型并保持为 1")
-    flow.label(text="2. 新建空白眼睛键，不从混合创建")
-    flow.label(text="3. 两键保持为 1，只在眼睛键调整眼眶")
-    flow.label(text="不检测左右对称，不对称结果由用户承担")
-    flow.operator(
-        OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,
-        text="全键局部变基-HO",
-        icon="KEY_HLT",
-    )
-
 def draw_in_MESH_MT_shape_key_context_menu(self, context):
     """形态键下拉菜单"""
     layout: bpy.types.UILayout = self.layout
