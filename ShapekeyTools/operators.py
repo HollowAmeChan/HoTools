@@ -114,6 +114,15 @@ MMD_SHAPEKEYS = [
     "真面目", "困る", "にこり",
     "怒り", "上", "下"
 ]
+MMD_EYE_SHAPEKEY_ALIASES = (
+    "ジト目",
+)
+MMD_MOUTH_SHAPEKEY_ALIASES = (
+    "えー", "はんっ！", "口横狭め", "口上", "口下",
+)
+MMD_SHAPEKEY_ALIASES = (
+    MMD_EYE_SHAPEKEY_ALIASES + MMD_MOUTH_SHAPEKEY_ALIASES
+)
 VRM_SHAPEKEYS = [
     "A", "I", "U", "E", "O",
     "Blink", "Joy", "Angry", "Sorrow", "Fun",
@@ -219,7 +228,11 @@ UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS = [
     "TongueSquish",
     "TongueFlat",
     "TongueTwistRight",
-    "TongueTwistLeft"
+    "TongueTwistLeft",
+    "SoftPalateClose",
+    "ThroatSwallow",
+    "NeckFlexRight",
+    "NeckFlexLeft",
 ]
 UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS =[
     "EyeClosed",
@@ -478,21 +491,71 @@ VIVE_OPENXR_SHAPEKEYS = (
 )
 # https://hub.vive.com/apidoc/api/VIVE.OpenXR.FacialTracking.html
 
+@dataclass(frozen=True)
+class ShapeKeyStandardSpec:
+    identifier: str
+    label: str
+    description: str
+    template_names: tuple
+    classifier_id: str
+    recognized_aliases: tuple = ()
+
+    @property
+    def recognized_names(self):
+        return self.template_names + self.recognized_aliases
+
+
+SHAPEKEY_STANDARD_SPECS = (
+    ShapeKeyStandardSpec(
+        'ARKIT', "ARKit", "ARKit 形态键列表",
+        tuple(ARKIT_SHAPEKEYS), 'ARKIT'),
+    ShapeKeyStandardSpec(
+        'VRCHAT', "VRChat", "VRChat 形态键列表",
+        tuple(VRCHAT_SHAPEKEYS), 'VRCHAT', tuple(VRCHAT_SHAPEKEY_ALIASES)),
+    ShapeKeyStandardSpec(
+        'MMD', "MMD", "MMD 形态键列表",
+        tuple(MMD_SHAPEKEYS), 'MMD', tuple(MMD_SHAPEKEY_ALIASES)),
+    ShapeKeyStandardSpec(
+        'VRM', "VRM 0.x", "VRM 0.x 形态键列表",
+        tuple(VRM_SHAPEKEYS), 'VRM'),
+    ShapeKeyStandardSpec(
+        'VRM1', "VRM 1.0", "VRM 1.0 表情预设列表",
+        tuple(VRM1_SHAPEKEYS), 'VRM1'),
+    ShapeKeyStandardSpec(
+        'QUEST_PRO', "Meta Movement", "Meta Movement 形态键列表",
+        tuple(QUEST_PRO_SHAPEKEYS), 'META'),
+    ShapeKeyStandardSpec(
+        'META_VISEME', "Meta Viseme", "Meta Movement 15 音素列表",
+        tuple(META_VISEME_SHAPEKEYS), 'META_VISEME'),
+    ShapeKeyStandardSpec(
+        'PICO', "PICO", "PICO 52 形态键和 20 音素列表",
+        tuple(PICO_SHAPEKEYS), 'PICO'),
+    ShapeKeyStandardSpec(
+        'OCULUS_VISEME', "Oculus Viseme", "Oculus/Meta 15 音素列表",
+        tuple(OCULUS_VISEME_SHAPEKEYS), 'OCULUS_VISEME'),
+    ShapeKeyStandardSpec(
+        'VIVE_SRANIPAL', "VIVE SRanipal", "VIVE SRanipal 眼部和唇部列表",
+        tuple(VIVE_SRANIPAL_SHAPEKEYS), 'VIVE_SRANIPAL'),
+    ShapeKeyStandardSpec(
+        'VIVE_OPENXR', "VIVE OpenXR", "XR_HTC_facial_tracking 表情列表",
+        tuple(VIVE_OPENXR_SHAPEKEYS), 'VIVE_OPENXR'),
+    ShapeKeyStandardSpec(
+        'UNIFIED_EXPRESSIONS_BASE', "Unified-base",
+        "Unified 基础形态键列表", tuple(UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS),
+        'UNIFIED_BASE'),
+    ShapeKeyStandardSpec(
+        'UNIFIED_EXPRESSIONS_BLEND', "Unified-blend",
+        "Unified 混合形态键列表", tuple(UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS),
+        'UNIFIED_BLEND'),
+)
 SHAPEKEY_TEMPLATE_MAP = {
-    'ARKIT': ARKIT_SHAPEKEYS,
-    'VRCHAT': VRCHAT_SHAPEKEYS,
-    'MMD': MMD_SHAPEKEYS,
-    'VRM': VRM_SHAPEKEYS,
-    'VRM1': VRM1_SHAPEKEYS,
-    'QUEST_PRO': QUEST_PRO_SHAPEKEYS,
-    'META_VISEME': META_VISEME_SHAPEKEYS,
-    'PICO': PICO_SHAPEKEYS,
-    'OCULUS_VISEME': OCULUS_VISEME_SHAPEKEYS,
-    'VIVE_SRANIPAL': VIVE_SRANIPAL_SHAPEKEYS,
-    'VIVE_OPENXR': VIVE_OPENXR_SHAPEKEYS,
-    'UNIFIED_EXPRESSIONS_BASE': UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS,
-    'UNIFIED_EXPRESSIONS_BLEND': UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS,
+    spec.identifier: spec.template_names
+    for spec in SHAPEKEY_STANDARD_SPECS
 }
+SHAPEKEY_TEMPLATE_ITEMS = tuple(
+    (spec.identifier, spec.label, spec.description)
+    for spec in SHAPEKEY_STANDARD_SPECS
+)
 
 
 # 监听器缓存
@@ -1814,21 +1877,7 @@ class OP_AddShapekeysByTemplate(Operator):
     shapekey_list: bpy.props.EnumProperty(
         name="预设",
         description="选择要添加的预设列表",
-        items=[
-            ('ARKIT', "ARKit", "ARKit 形态键列表"),
-            ('VRCHAT', "VRChat", "VRChat 形态键列表"),
-            ('MMD', "MMD", "MMD 形态键列表"),
-            ('VRM', "VRM 0.x", "VRM 0.x 形态键列表"),
-            ('VRM1', "VRM 1.0", "VRM 1.0 表情预设列表"),
-            ('QUEST_PRO', "Meta Movement", "Meta Movement 形态键列表"),
-            ('META_VISEME', "Meta Viseme", "Meta Movement 15 音素列表"),
-            ('PICO', "PICO", "PICO 52 形态键和 20 音素列表"),
-            ('OCULUS_VISEME', "Oculus Viseme", "Oculus/Meta 15 音素列表"),
-            ('VIVE_SRANIPAL', "VIVE SRanipal", "VIVE SRanipal 眼部和唇部列表"),
-            ('VIVE_OPENXR', "VIVE OpenXR", "XR_HTC_facial_tracking 表情列表"),
-            ('UNIFIED_EXPRESSIONS_BASE', "Unified-base", "Unified基础键，用于组装arkit、vive、meta以及自己本身（混合键）"),
-            ('UNIFIED_EXPRESSIONS_BLEND', "Unified-blend", "Unified混合键"),
-        ],
+        items=SHAPEKEY_TEMPLATE_ITEMS,
         default='ARKIT',
     )  # type: ignore
 
@@ -2470,9 +2519,6 @@ FBSF_FUNCTION_ITEMS = (
     ('LEFT_EYE', "左眼", "只参与左眼一侧的 FBSF 修正"),
     ('RIGHT_EYE', "右眼", "只参与右眼一侧的 FBSF 修正"),
     ('MOUTH', "嘴部", "只与嘴部键进行 FBSF 修正"),
-    ('BOTH_EYES_MOUTH', "双眼+嘴部", "同时接受双眼和嘴部修正"),
-    ('LEFT_EYE_MOUTH', "左眼+嘴部", "同时接受左眼和嘴部修正"),
-    ('RIGHT_EYE_MOUTH', "右眼+嘴部", "同时接受右眼和嘴部修正"),
     ('OTHERS', "其他", "跟随普通全局变基，不进行 FBSF 反向修正"),
 )
 FBSF_FUNCTION_TAGS = frozenset(item[0] for item in FBSF_FUNCTION_ITEMS)
@@ -2482,9 +2528,6 @@ _FBSF_TAG_CHANNELS = {
     'LEFT_EYE': frozenset({'LEFT_EYE'}),
     'RIGHT_EYE': frozenset({'RIGHT_EYE'}),
     'MOUTH': frozenset({'MOUTH'}),
-    'BOTH_EYES_MOUTH': frozenset({'LEFT_EYE', 'RIGHT_EYE', 'MOUTH'}),
-    'LEFT_EYE_MOUTH': frozenset({'LEFT_EYE', 'MOUTH'}),
-    'RIGHT_EYE_MOUTH': frozenset({'RIGHT_EYE', 'MOUTH'}),
     'OTHERS': frozenset(),
 }
 _FBSF_STRONG_SIDE_STANDARDS = frozenset({
@@ -2501,8 +2544,17 @@ def _fbsf_tag_channels(function_tag):
 class _FBSFShapePreset:
     function_tag: str = 'OTHERS'
     reference_tag: str = 'OTHERS'
-    standard: str = 'UNKNOWN'
+    standards: frozenset = frozenset()
     semantic: str = 'OTHER'
+
+    @property
+    def standard(self):
+        """兼容只读诊断；算法使用完整 standards 集合。"""
+        if not self.standards:
+            return 'UNKNOWN'
+        if len(self.standards) == 1:
+            return next(iter(self.standards))
+        return '|'.join(sorted(self.standards))
 
 
 _FBSF_BLENDER_SUFFIX = re.compile(r"\.\d{3,}$")
@@ -2529,48 +2581,51 @@ _FBSF_EXACT_PRESETS = {}
 def _fbsf_register_presets(
         names, function_tag, reference_tag='OTHERS',
         standard='GENERIC', semantic='OTHER'):
-    preset = _FBSFShapePreset(
-        function_tag, reference_tag, standard, semantic)
+    incoming_standards = frozenset({standard})
     for name in names:
         normalized = _fbsf_normalized_name(name)
         existing = _FBSF_EXACT_PRESETS.get(normalized)
+        standards = (
+            incoming_standards
+            if existing is None
+            else existing.standards | incoming_standards
+        )
         if existing is not None and existing.function_tag != 'OTHERS':
             if (
                     existing.function_tag != function_tag
-                    or existing.reference_tag != reference_tag):
+                    or existing.reference_tag != reference_tag
+                    or existing.semantic != semantic):
                 raise RuntimeError(
                     f"Conflicting FBSF preset for {name}: "
-                    f"{existing.function_tag}/{existing.reference_tag} vs "
-                    f"{function_tag}/{reference_tag}")
-            continue
-        _FBSF_EXACT_PRESETS[normalized] = preset
+                    f"{existing.function_tag}/{existing.reference_tag}/"
+                    f"{existing.semantic} vs "
+                    f"{function_tag}/{reference_tag}/{semantic}")
+        _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
+            function_tag, reference_tag, standards, semantic)
 
 
 def _fbsf_register_known(names, standard):
     for name in names:
         normalized = _fbsf_normalized_name(name)
-        _FBSF_EXACT_PRESETS.setdefault(
-            normalized, _FBSFShapePreset(standard=standard))
+        existing = _FBSF_EXACT_PRESETS.get(normalized)
+        if existing is None:
+            _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
+                standards=frozenset({standard}))
+            continue
+        _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
+            existing.function_tag,
+            existing.reference_tag,
+            existing.standards | frozenset({standard}),
+            existing.semantic,
+        )
 
 
-# 先登记完整标准表为已知 Other，再以明确的皮肤/口腔语义覆盖。这样眉毛、鼻子、
-# 瞳孔和材质键不会落入通用启发式，也不会成为来源定义锚点。
-for _names, _standard in (
-        (ARKIT_SHAPEKEYS, 'ARKIT'),
-        (VRCHAT_SHAPEKEYS, 'VRCHAT'),
-        (MMD_SHAPEKEYS, 'MMD'),
-        (VRM_SHAPEKEYS, 'VRM'),
-        (VRM1_SHAPEKEYS, 'VRM1'),
-        (UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS, 'UNIFIED_BASE'),
-        (UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS, 'UNIFIED_BLEND'),
-        (QUEST_PRO_SHAPEKEYS, 'META'),
-        (META_VISEME_SHAPEKEYS, 'META_VISEME'),
-        (PICO_EYE_SHAPEKEYS + PICO_MOUTH_SHAPEKEYS
-         + PICO_OTHER_SHAPEKEYS, 'PICO'),
-        (OCULUS_VISEME_SHAPEKEYS, 'OCULUS_VISEME'),
-        (VIVE_SRANIPAL_SHAPEKEYS, 'VIVE_SRANIPAL'),
-        (VIVE_OPENXR_SHAPEKEYS, 'VIVE_OPENXR')):
-    _fbsf_register_known(_names, _standard)
+# 先登记完整标准目录与识别别名为已知 Other，再以明确的皮肤/口腔语义覆盖。
+for _standard_spec in SHAPEKEY_STANDARD_SPECS:
+    _fbsf_register_known(
+        _standard_spec.recognized_names,
+        _standard_spec.classifier_id,
+    )
 
 for _side_name, _tag in (('Left', 'LEFT_EYE'), ('Right', 'RIGHT_EYE')):
     _fbsf_register_presets(
@@ -2595,7 +2650,7 @@ _fbsf_register_presets(
     'MOUTH', 'MOUTH', 'ARKIT', 'MOUTH')
 
 _fbsf_register_presets(
-    ('vrc.blink', 'vrc.blink (3.0)'),
+    ('vrc.blink',) + tuple(VRCHAT_SHAPEKEY_ALIASES),
     'BOTH_EYES', 'BOTH_EYES', 'VRCHAT', 'EYELID')
 _fbsf_register_presets(
     ('vrc.looking_up', 'vrc.looking_down'),
@@ -2605,8 +2660,9 @@ _fbsf_register_presets(
     'MOUTH', 'MOUTH', 'VRCHAT', 'VISEME')
 
 _fbsf_register_presets(
-    ('まばたき', '笑い', 'なごみ', 'はぅ', 'びっくり', 'じと目', 'ジト目',
-     'ｷﾘｯ', 'はちゅ目', '恐ろしい子！', '喜び', '悲しむ'),
+    ('まばたき', '笑い', 'なごみ', 'はぅ', 'びっくり', 'じと目',
+     'ｷﾘｯ', 'はちゅ目', '恐ろしい子！', '喜び', '悲しむ')
+    + MMD_EYE_SHAPEKEY_ALIASES,
     'BOTH_EYES', 'BOTH_EYES', 'MMD', 'EYELID')
 _fbsf_register_presets(
     ('ウィンク', 'ウィンク２'),
@@ -2616,9 +2672,10 @@ _fbsf_register_presets(
     'RIGHT_EYE', 'RIGHT_EYE', 'MMD', 'EYELID')
 _fbsf_register_presets(
     ('あ', 'い', 'う', 'え', 'お', 'あ２', 'ん', '▲', '∧', 'ワ', '□',
-     'ω', 'ω□', 'えー', 'はんっ！', 'にやり', 'にやり２', 'にっこり',
+     'ω', 'ω□', 'にやり', 'にやり２', 'にっこり',
      'ぺろっ', 'てへぺろ', 'てへぺろ２', '口角上げ', '口角下げ',
-     '口横広げ', '口横狭め', '口上', '口下', '歯無し上', '歯無し下'),
+     '口横広げ', '歯無し上', '歯無し下')
+    + MMD_MOUTH_SHAPEKEY_ALIASES,
     'MOUTH', 'MOUTH', 'MMD', 'MOUTH')
 
 _fbsf_register_presets(
@@ -2835,7 +2892,8 @@ def _fbsf_auto_preset(shape_name, shape_names=None, context=None):
         return exact
 
     if normalized in context['short_visemes']:
-        return _FBSFShapePreset('MOUTH', 'MOUTH', 'CONTEXT', 'VISEME')
+        return _FBSFShapePreset(
+            'MOUTH', 'MOUTH', frozenset({'CONTEXT'}), 'VISEME')
     return _FBSFShapePreset()
 
 
@@ -2925,7 +2983,7 @@ def _fbsf_resolve_mmd_side_tag(
     """Resolve MMD wink identity from geometry when exporter conventions differ."""
     preset = _fbsf_auto_preset(shape_name, context=context)
     if (
-            preset.standard != 'MMD'
+            'MMD' not in preset.standards
             or preset.semantic != 'EYELID'
             or function_tag not in {'LEFT_EYE', 'RIGHT_EYE'}
             or (function_tag, reference_tag)
@@ -2940,7 +2998,8 @@ def _fbsf_resolve_mmd_side_tag(
     return geometric_tag, reference_tag
 
 
-def _fbsf_infer_left_is_positive(tagged_deltas, basis_positions):
+def _fbsf_infer_left_is_positive(
+        tagged_deltas, basis_positions, fallback=True):
     """用单眼键的位移能量推断角色左眼位于局部 X 的哪一侧。"""
     positive_mask = basis_positions[:, 0] > 0.0
     negative_mask = basis_positions[:, 0] < 0.0
@@ -2961,10 +3020,58 @@ def _fbsf_infer_left_is_positive(tagged_deltas, basis_positions):
         evidence.append(
             direction if 'LEFT_EYE' in eye_channels else -direction)
 
-    # 单眼证据缺失或左右冲突时使用 Blender 角色模型的常规方向。
+    # 证据缺失或左右冲突时由调用方决定是否继续尝试其他证据。
     if not evidence or abs(float(np.mean(evidence))) < 0.25:
-        return True
+        return fallback
     return float(np.mean(evidence)) > 0.0
+
+
+def _fbsf_resolve_target_side_tags(
+        target_tags, source_orientation, basis_positions, context,
+        target_delta, resolve_mmd=True):
+    """推断角色左右，并可在 UI 预处理阶段解析 MMD 单眼名称。"""
+    standard_orientation = []
+    for shape_name, (_function_tag, reference_tag) in target_tags.items():
+        reference_eye_channels = (
+            _fbsf_tag_channels(reference_tag)
+            & {'LEFT_EYE', 'RIGHT_EYE'}
+        )
+        if len(reference_eye_channels) != 1:
+            continue
+        preset = _fbsf_auto_preset(shape_name, context=context)
+        if preset.standards.isdisjoint(_FBSF_STRONG_SIDE_STANDARDS):
+            continue
+        standard_orientation.append(
+            (reference_tag, target_delta(shape_name)))
+
+    left_is_positive = _fbsf_infer_left_is_positive(
+        source_orientation, basis_positions, fallback=None)
+    if left_is_positive is None:
+        left_is_positive = _fbsf_infer_left_is_positive(
+            standard_orientation, basis_positions, fallback=True)
+
+    resolved_tags = dict(target_tags)
+    if not resolve_mmd:
+        return left_is_positive, resolved_tags
+    for shape_name, (function_tag, reference_tag) in target_tags.items():
+        preset = _fbsf_auto_preset(shape_name, context=context)
+        if (
+                'MMD' not in preset.standards
+                or preset.semantic != 'EYELID'
+                or function_tag not in {'LEFT_EYE', 'RIGHT_EYE'}
+                or (function_tag, reference_tag)
+                != (preset.function_tag, preset.reference_tag)):
+            continue
+        resolved_tags[shape_name] = _fbsf_resolve_mmd_side_tag(
+            shape_name,
+            function_tag,
+            reference_tag,
+            target_delta(shape_name),
+            basis_positions,
+            left_is_positive,
+            context,
+        )
+    return left_is_positive, resolved_tags
 
 
 def _fbsf_split_side_weights(
@@ -3071,33 +3178,6 @@ def _fbsf_definition_weights(
         right_score,
         split_sides,
     )
-
-
-def _fbsf_rebase_weights(
-        target_delta, edit_delta, basis_positions,
-        smooth_width, correction_strength, left_is_positive=True):
-    """返回 FBSF 左右相似度及其映射到每个顶点的修正权重。"""
-    left_mask, right_mask = _fbsf_side_masks(
-        basis_positions, left_is_positive)
-    left_score = _fbsf_side_similarity(target_delta, edit_delta, left_mask)
-    right_score = _fbsf_side_similarity(target_delta, edit_delta, right_mask)
-    split_sides = abs(left_score - right_score) > 0.1
-
-    if split_sides:
-        weights = _fbsf_split_side_weights(
-            left_score,
-            right_score,
-            basis_positions,
-            smooth_width,
-            left_is_positive,
-        )
-    else:
-        weights = np.full(
-            len(target_delta), (left_score + right_score) * 0.5,
-            dtype=np.float32)
-
-    weights = np.asarray(weights, dtype=np.float32) * correction_strength
-    return weights, left_score, right_score, split_sides
 
 
 def _validate_shape_key_rebase_data(obj, minimum_keys=2):
@@ -3364,6 +3444,7 @@ def _resolve_fbsf_target_tags(shape_keys, basis, sources, target_specs):
 def _rebase_shape_keys_fbsf(
         obj, source_specs, correction_strength, side_smooth_width,
         target_specs=None):
+    resolve_automatic_sides = target_specs is None
     shape_keys, basis, tagged_sources = _resolve_fbsf_sources(
         obj, source_specs)
     target_tags = _resolve_fbsf_target_tags(
@@ -3395,41 +3476,24 @@ def _rebase_shape_keys_fbsf(
             _fbsf_tag_channels(function_tag)
             & {'LEFT_EYE', 'RIGHT_EYE'}) == 1
     )
-    standard_orientation = tuple(
-        (
-            target_tags[key.name][1],
-            key_positions[key] - key_positions[key.relative_key],
-        )
+    keys_by_name = {
+        key.name: key
         for key in shape_keys.key_blocks
-        if (
-            key != basis
-            and key not in source_set
-            and len(
-                _fbsf_tag_channels(
-                    target_tags.get(key.name, ('OTHERS', 'OTHERS'))[1])
-                & {'LEFT_EYE', 'RIGHT_EYE'}) == 1
-            and _fbsf_auto_preset(
-                key.name, context=context).standard
-            in _FBSF_STRONG_SIDE_STANDARDS
-        )
-    )
-    left_is_positive = _fbsf_infer_left_is_positive(
-        source_orientation or standard_orientation,
+        if key != basis and key not in source_set
+    }
+
+    def target_delta(shape_name):
+        key = keys_by_name[shape_name]
+        return key_positions[key] - key_positions[key.relative_key]
+
+    left_is_positive, target_tags = _fbsf_resolve_target_side_tags(
+        target_tags,
+        source_orientation,
         old_basis,
+        context,
+        target_delta,
+        resolve_mmd=resolve_automatic_sides,
     )
-    for key in shape_keys.key_blocks:
-        if key == basis or key in source_set or key.name not in target_tags:
-            continue
-        function_tag, reference_tag = target_tags[key.name]
-        target_tags[key.name] = _fbsf_resolve_mmd_side_tag(
-            key.name,
-            function_tag,
-            reference_tag,
-            key_positions[key] - key_positions[key.relative_key],
-            old_basis,
-            left_is_positive,
-            context,
-        )
     references = tuple(
         (
             target_tags[key.name][1],
@@ -3719,6 +3783,61 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
         if len(self.sources) == 0:
             self.report({'WARNING'}, "没有可分类的非 Basis 形态键")
             return {'CANCELLED'}
+
+        basis_positions = shapekey_utils.read_shape_key_positions(basis)
+        keys_by_name = {
+            key.name: key
+            for key in shape_keys.key_blocks
+            if key != basis
+        }
+        items_by_name = {
+            item.shape_key_name: item for item in self.sources
+        }
+        source_orientation = tuple(
+            (
+                item.function_tag,
+                shapekey_utils.read_shape_key_positions(
+                    keys_by_name[item.shape_key_name]) - basis_positions,
+            )
+            for item in self.sources
+            if (
+                item.merge
+                and len(
+                    _fbsf_tag_channels(item.function_tag)
+                    & {'LEFT_EYE', 'RIGHT_EYE'}) == 1
+            )
+        )
+        target_tags = {
+            item.shape_key_name: (item.function_tag, item.reference_tag)
+            for item in self.sources
+            if not item.merge
+        }
+        delta_cache = {}
+
+        def target_delta(shape_name):
+            delta = delta_cache.get(shape_name)
+            if delta is None:
+                key = keys_by_name[shape_name]
+                delta = (
+                    shapekey_utils.read_shape_key_positions(key)
+                    - shapekey_utils.read_shape_key_positions(key.relative_key)
+                )
+                delta_cache[shape_name] = delta
+            return delta
+
+        _left_is_positive, resolved_tags = _fbsf_resolve_target_side_tags(
+            target_tags,
+            source_orientation,
+            basis_positions,
+            classification_context,
+            target_delta,
+            resolve_mmd=True,
+        )
+        for shape_name, (function_tag, reference_tag) in resolved_tags.items():
+            item = items_by_name[shape_name]
+            item.function_tag = function_tag
+            item.auto_function_tag = function_tag
+            item.reference_tag = reference_tag
         self.source_index = 0
         return context.window_manager.invoke_props_dialog(self, width=620)
 
