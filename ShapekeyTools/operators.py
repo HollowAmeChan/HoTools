@@ -2305,8 +2305,8 @@ class ShapeKeyRebaseError(RuntimeError):
     pass
 
 
-_HO_CONTACT_RADIUS_FACTOR = 1.5
-_HO_MAX_GAP_RATIO = 0.35
+_HO_CONTACT_RADIUS_FACTOR = 2.0
+_HO_MAX_GAP_RATIO = 0.85
 
 
 def _ho_mesh_edges(mesh):
@@ -3381,7 +3381,7 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
         description="参考键中的间距低于原眼睑间距的该比例时建立闭合关系",
         default=_HO_MAX_GAP_RATIO,
         min=0.05,
-        max=0.8,
+        max=1.0,
         subtype='FACTOR',
     ) # type: ignore
     @classmethod
