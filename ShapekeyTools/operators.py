@@ -2785,11 +2785,11 @@ def _ho_correction_is_safe(global_positions, corrected_positions, topology, affe
 
 
 def _ho_local_fbsf_baseline(
-        global_positions, relative_shift, fbsf_weights,
+        global_positions, eye_shape_shift, fbsf_weights,
         region_weights, basis_positions, closure_mix):
     """只保留 FBSF 的眼部差分修正，并移除左右眼各自的平均平移。"""
     raw_correction = (
-        -relative_shift
+        -eye_shape_shift
         * (fbsf_weights * closure_mix)[:, None]
     )
     centered_correction = raw_correction.copy()
@@ -2810,11 +2810,12 @@ def _ho_local_fbsf_baseline(
 
 
 def _ho_transfer_eye_positions(
-        old_key, old_relative, new_relative, old_basis, old_active, topology,
+        old_key, old_relative, new_relative, old_basis, old_eye_shape, topology,
         reference_pairs, region_weights,
         transfer_strength, closure_strength):
-    """从全局变基出发，以局部 FBSF 下限和硬闭合关系重建眼部。"""
+    """完整保留普通造型，只用独立眼睛造型键重建眼部闭合关系。"""
     relative_shift = new_relative - old_relative
+    eye_shape_shift = old_eye_shape - old_basis
     global_positions = old_key + relative_shift
     eye_delta = (old_key - old_relative) * region_weights[:, None]
     if np.max(np.linalg.norm(eye_delta, axis=1), initial=0.0) <= 1e-8:
@@ -2836,14 +2837,14 @@ def _ho_transfer_eye_positions(
     if closure_mix > 1e-6:
         fbsf_weights, _left, _right, _split = _fbsf_rebase_weights(
             old_key - old_relative,
-            old_active - old_basis,
+            eye_shape_shift,
             old_basis,
             0.0,
             1.0,
         )
         baseline_positions = _ho_local_fbsf_baseline(
             global_positions,
-            relative_shift,
+            eye_shape_shift,
             fbsf_weights,
             region_weights,
             old_basis,
@@ -2969,7 +2970,8 @@ def _fbsf_rebase_weights(
     return weights, left_score, right_score, split_sides
 
 
-def _validate_shape_key_rebase_object(obj):
+def _validate_shape_key_rebase_data(obj, minimum_keys=2):
+    """校验所有破坏性变基流程共用的网格与相对键数据前置条件。"""
     if obj is None or obj.type != 'MESH':
         raise ShapeKeyRebaseError("活动对象不是网格")
     if obj.data.library is not None:
@@ -2978,12 +2980,27 @@ def _validate_shape_key_rebase_object(obj):
         raise ShapeKeyRebaseError("网格数据被多个物体共享，请先转为单用户")
 
     shape_keys = obj.data.shape_keys
-    if shape_keys is None or len(shape_keys.key_blocks) < 2:
+    if shape_keys is None or len(shape_keys.key_blocks) < minimum_keys:
         raise ShapeKeyRebaseError("对象没有足够的形态键")
     if not shape_keys.use_relative:
         raise ShapeKeyRebaseError("只支持相对形态键；请先切换为相对模式")
 
     basis = shape_keys.reference_key
+    if basis is None:
+        raise ShapeKeyRebaseError("形态键数据缺少基型")
+    try:
+        shapekey_utils.validate_shape_key_vertex_counts(
+            shape_keys, len(basis.data))
+    except shapekey_utils.ShapeKeyUtilsError as exc:
+        raise ShapeKeyRebaseError(str(exc)) from exc
+    for key in shape_keys.key_blocks:
+        if key != basis and key.relative_key is None:
+            raise ShapeKeyRebaseError(f"形态键 {key.name} 缺少相对键")
+    return shape_keys, basis
+
+
+def _validate_shape_key_rebase_object(obj):
+    shape_keys, basis = _validate_shape_key_rebase_data(obj)
     active_key = obj.active_shape_key
     if basis is None or active_key is None or active_key == basis:
         raise ShapeKeyRebaseError("请选择一个作为新基型来源的非基型形态键")
@@ -2999,49 +3016,96 @@ def _validate_shape_key_rebase_object(obj):
         suffix = "等" if len(nonzero_keys) > 4 else ""
         raise ShapeKeyRebaseError(f"请先把其他形态键权重归零：{preview}{suffix}")
 
-    try:
-        shapekey_utils.validate_shape_key_vertex_counts(
-            shape_keys, len(basis.data))
-    except shapekey_utils.ShapeKeyUtilsError as exc:
-        raise ShapeKeyRebaseError(str(exc)) from exc
-    for key in shape_keys.key_blocks:
-        if key != basis and key.relative_key is None:
-            raise ShapeKeyRebaseError(f"形态键 {key.name} 缺少相对键")
     return shape_keys, basis, active_key
 
 
-def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
-    """按相对键依赖顺序规划全部结果，校验成功后再统一写入。"""
-    shape_keys, basis, active_key = _validate_shape_key_rebase_object(obj)
-    if factor <= 0.0:
-        raise ShapeKeyRebaseError("变基权重必须大于 0")
+def _validate_ho_dual_rebase_object(
+        obj, ordinary_shape_name, eye_shape_name, blink_reference_name):
+    """校验 HO 独立双键造型输入，不检测左右对称。"""
+    shape_keys, basis = _validate_shape_key_rebase_data(obj, minimum_keys=4)
+    if not ordinary_shape_name:
+        raise ShapeKeyRebaseError("请选择普通造型键")
+    if not eye_shape_name:
+        raise ShapeKeyRebaseError("请选择眼睛造型键")
+    if not blink_reference_name:
+        raise ShapeKeyRebaseError("请选择一个双目闭眼参考形态键")
 
+    ordinary_shape = shape_keys.key_blocks.get(ordinary_shape_name)
+    eye_shape = shape_keys.key_blocks.get(eye_shape_name)
+    blink_reference = shape_keys.key_blocks.get(blink_reference_name)
+    if ordinary_shape is None:
+        raise ShapeKeyRebaseError(f"找不到普通造型键：{ordinary_shape_name}")
+    if eye_shape is None:
+        raise ShapeKeyRebaseError(f"找不到眼睛造型键：{eye_shape_name}")
+    if blink_reference is None:
+        raise ShapeKeyRebaseError(f"找不到闭眼参考键：{blink_reference_name}")
+    if len({basis, ordinary_shape, eye_shape, blink_reference}) != 4:
+        raise ShapeKeyRebaseError("基型、两个造型键和闭眼参考键必须互不相同")
+    if ordinary_shape.relative_key != basis:
+        raise ShapeKeyRebaseError("普通造型键必须直接相对于基型")
+    if eye_shape.relative_key != basis:
+        raise ShapeKeyRebaseError("眼睛造型键必须直接相对于基型")
+    if blink_reference.relative_key != basis:
+        raise ShapeKeyRebaseError("闭眼参考键必须直接相对于基型")
+    for label, key in (("普通造型键", ordinary_shape), ("眼睛造型键", eye_shape)):
+        if abs(key.value - 1.0) > 1e-6:
+            raise ShapeKeyRebaseError(f"{label} {key.name} 的权重必须为 1")
+
+    nonzero_keys = [
+        key.name for key in shape_keys.key_blocks
+        if key not in {basis, ordinary_shape, eye_shape}
+        and abs(key.value) > 1e-6
+    ]
+    if nonzero_keys:
+        preview = "、".join(nonzero_keys[:4])
+        suffix = "等" if len(nonzero_keys) > 4 else ""
+        raise ShapeKeyRebaseError(f"请先把其他形态键权重归零：{preview}{suffix}")
+
+    return shape_keys, basis, ordinary_shape, eye_shape, blink_reference
+
+
+def _rewrite_rebased_shape_key_sources(
+        obj, shape_keys, basis, weighted_sources, correction_source,
+        rewrite_key):
+    """原子烘焙一个或多个来源键，并按相对依赖树重写剩余形态键。"""
+    weighted_sources = tuple(weighted_sources)
+    sources = {source for source, _weight in weighted_sources}
+    if not weighted_sources or correction_source not in sources:
+        raise ShapeKeyRebaseError("变基来源键配置无效")
     try:
         ordered_keys = shapekey_utils.relative_shape_key_order(
-            shape_keys, excluded=(active_key,))
+            shape_keys, excluded=sources)
     except shapekey_utils.ShapeKeyDependencyError as exc:
         raise ShapeKeyRebaseError(str(exc)) from exc
+
     old_basis = shapekey_utils.read_shape_key_positions(basis)
-    old_active = shapekey_utils.read_shape_key_positions(active_key)
-    new_basis = old_basis + (old_active - old_basis) * factor
+    source_positions = {
+        source.name: shapekey_utils.read_shape_key_positions(source)
+        for source, _weight in weighted_sources
+    }
+    new_basis = old_basis.copy()
+    for source, weight in weighted_sources:
+        if not np.isfinite(weight) or weight <= 0.0:
+            raise ShapeKeyRebaseError(f"来源键 {source.name} 的变基权重无效")
+        new_basis += (source_positions[source.name] - old_basis) * weight
+    correction_positions = source_positions[correction_source.name]
 
     child_counts = {key.name: 0 for key in ordered_keys}
     for key in ordered_keys:
         relative = key.relative_key
-        if relative not in {basis, active_key}:
+        if relative != basis and relative not in sources:
             child_counts[relative.name] += 1
 
     cached_old = {}
     cached_new = {}
     planned_positions = []
-
     for key in ordered_keys:
         relative = key.relative_key
         if relative == basis:
             old_relative = old_basis
             new_relative = new_basis
-        elif relative == active_key:
-            old_relative = old_active
+        elif relative in sources:
+            old_relative = source_positions[relative.name]
             new_relative = new_basis
         else:
             old_relative = cached_old[relative.name]
@@ -3050,7 +3114,7 @@ def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
         old_key = shapekey_utils.read_shape_key_positions(key)
         new_key = rewrite_key(
             key, old_key, old_relative, new_relative,
-            old_basis, old_active, new_basis)
+            old_basis, correction_positions, new_basis)
         new_key = np.asarray(new_key, dtype=np.float32)
         if new_key.shape != old_key.shape:
             raise ShapeKeyRebaseError(
@@ -3063,44 +3127,70 @@ def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
         if child_counts[key.name] > 0:
             cached_old[key.name] = old_key
             cached_new[key.name] = new_key
-        if relative not in {basis, active_key}:
+        if relative != basis and relative not in sources:
             child_counts[relative.name] -= 1
             if child_counts[relative.name] == 0:
                 cached_old.pop(relative.name, None)
                 cached_new.pop(relative.name, None)
 
-    # 所有表情键均已成功求解并通过有限值校验，此前不会改动 Blender 数据。
     for key, new_key in planned_positions:
         shapekey_utils.write_shape_key_positions(key, new_key)
-
     for key in ordered_keys:
-        if key.relative_key == active_key:
+        if key.relative_key in sources:
             key.relative_key = basis
     shapekey_utils.write_shape_key_positions(basis, new_basis)
-    active_name = active_key.name
-    obj.shape_key_remove(active_key)
+
+    source_names = tuple(source.name for source, _weight in weighted_sources)
+    source_order = sorted(
+        sources,
+        key=lambda key: shape_keys.key_blocks.find(key.name),
+        reverse=True,
+    )
+    for source in source_order:
+        obj.shape_key_remove(source)
     obj.active_shape_key_index = 0
     obj.show_only_shape_key = False
     obj.data.update()
-    return active_name, len(ordered_keys)
+    return source_names, len(ordered_keys)
 
 
-def _rebase_shape_keys(
-        obj, factor, blink_reference_name,
-        transfer_strength, closure_strength, contact_radius_factor,
-        max_gap_ratio, smooth_rings):
+def _rewrite_rebased_shape_key_tree(obj, factor, rewrite_key):
+    """兼容单活动来源键的 FBSF 重写入口。"""
     shape_keys, basis, active_key = _validate_shape_key_rebase_object(obj)
     if factor <= 0.0:
         raise ShapeKeyRebaseError("变基权重必须大于 0")
-    if not blink_reference_name:
-        raise ShapeKeyRebaseError("请选择一个双目闭眼参考形态键")
-    blink_reference = shape_keys.key_blocks.get(blink_reference_name)
-    if blink_reference is None:
-        raise ShapeKeyRebaseError(f"找不到闭眼参考键：{blink_reference_name}")
-    if blink_reference in {basis, active_key}:
-        raise ShapeKeyRebaseError("闭眼参考键不能是基型或活动捏脸键")
-    if blink_reference.relative_key != basis:
-        raise ShapeKeyRebaseError("闭眼参考键必须直接相对于基型")
+    source_names, key_count = _rewrite_rebased_shape_key_sources(
+        obj,
+        shape_keys,
+        basis,
+        ((active_key, factor),),
+        active_key,
+        rewrite_key,
+    )
+    return source_names[0], key_count
+
+
+def _rewrite_ho_dual_shape_key_tree(
+        obj, shape_keys, basis, ordinary_shape, eye_shape, rewrite_key):
+    """把两个独立造型键同时烘焙进 Basis。"""
+    return _rewrite_rebased_shape_key_sources(
+        obj,
+        shape_keys,
+        basis,
+        ((ordinary_shape, 1.0), (eye_shape, 1.0)),
+        eye_shape,
+        rewrite_key,
+    )
+
+
+def _rebase_shape_keys(
+        obj, ordinary_shape_name, eye_shape_name, blink_reference_name,
+        transfer_strength, closure_strength, contact_radius_factor,
+        max_gap_ratio, smooth_rings):
+    (
+        shape_keys, basis, ordinary_shape, eye_shape, blink_reference,
+    ) = _validate_ho_dual_rebase_object(
+        obj, ordinary_shape_name, eye_shape_name, blink_reference_name)
 
     basis_positions = shapekey_utils.read_shape_key_positions(basis)
     reference_positions = shapekey_utils.read_shape_key_positions(blink_reference)
@@ -3134,7 +3224,7 @@ def _rebase_shape_keys(
 
     def rewrite_key(
             _key, old_key, old_relative, new_relative,
-            old_basis, old_active, _new_basis):
+            old_basis, old_eye, _new_basis):
         nonlocal corrected_keys, active_constraints, corrected_vertices, rollback_keys
         new_key, applied, affected, rollback_steps = (
             _ho_transfer_eye_positions(
@@ -3142,7 +3232,7 @@ def _rebase_shape_keys(
                 old_relative,
                 new_relative,
                 old_basis,
-                old_active,
+                old_eye,
                 topology,
                 reference_pairs,
                 region_weights,
@@ -3158,10 +3248,11 @@ def _rebase_shape_keys(
             rollback_keys += 1
         return new_key
 
-    active_name, key_count = _rewrite_rebased_shape_key_tree(
-        obj, factor, rewrite_key)
+    source_names, key_count = _rewrite_ho_dual_shape_key_tree(
+        obj, shape_keys, basis, ordinary_shape, eye_shape, rewrite_key)
     return (
-        active_name,
+        source_names[0],
+        source_names[1],
         key_count,
         blink_reference_name,
         len(reference_pairs),
@@ -3287,21 +3378,19 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
 #    分层，并指出固定轮廓对应会在复杂唇部运动中产生鼓包；AnaConDaR 2024 则在
 #    上下眼睑及眼眶边界之间加入 supplementary triangles，单独传递眼睛开合和眼眶
 #    特征。两者共同说明闭合是跨表面的关系，不是单个顶点的保护权重。
-# 6. 当前 HO 明确要求一个直接相对 Basis 的双目闭眼参考键。参考键中的全部有效位移
-#    顶点就是眼部语义核心，再沿真实拓扑扩张柔和边界，因此不再要求用户重复维护眼部
-#    顶点组。接触关系优先要求两端都主动移动；单侧眼睑运动时只允许匹配同一连通网格
-#    岛的静止对侧，借此排除独立眼球、睫毛和饰品。关系按每个待处理键的实际闭合程度
-#    启用，所以双眼闭合、单眼闭合和眯眼可分别工作，纯张嘴键不会进入眼部特殊流程。
-# 7. 实测表明单纯局部变形传递仍可能比 FBSF 留下更大眼缝，原因是三角形目标边、
-#    位置锚点和跨眼睑软约束只能得到折中，继续增大权重还会制造褶纹。现在先在已激活
-#    闭合关系的眼部范围内吸收 FBSF 的差分修正，但按左右眼分别移除平均平移，所以眼睛
-#    整体中心仍由普通全局变基 G 决定；范围外也逐顶点等于 G。随后以较弱的三角形局部
-#    变形恢复旋转、缩放和剪切，最后沿新眼眶法向执行硬投影。完整闭眼保留旧键已经达到
-#    的绝对缝隙，而不是随新眼眶比例放大；投影不改切向分量，因而比直接吸附旧坐标更少
-#    破坏眼角和眼眶整体位移。
-# 8. 局部 FBSF 只对检测到闭合活动的键启用，不能扩展成全脸保底：否则张嘴、鼓腮等
-#    本应跟随新 Basis 的区域仍会回弹。三角形传递也只是次级形状约束，不能再与闭合
-#    目标同权竞争；安全回退只减弱它和硬投影，至少保留去平移后的局部 FBSF 基线。
+# 6. 当前 HO 采用两个彼此独立、都直接相对 Basis 的造型键：普通造型键记录眼睛以外
+#    的脸型变化，眼睛造型键只记录眼眶变化；两键必须同时保持权重 1。用户先完成普通
+#    造型，再新建空白眼睛键，不从当前混合创建；随后保持两键开启，只编辑眼睛键。
+#    两键按对称造型契约使用，但算子不检测对称，错误输入的风险由用户承担。新 Basis
+#    等于 B+(普通-B)+(眼睛-B)，规划完成后同时删除两个来源键。
+# 7. 双目闭眼参考键中的全部有效位移顶点构成眼部语义核心，再沿真实拓扑扩张柔和边界。
+#    普通造型的完整位移始终保留在全局变基 G 中，只有独立眼睛造型 delta 参与局部 FBSF
+#    差分修正，从输入结构上阻止嘴巴、下颌等普通造型被眼部相似度拉回旧 Basis。接触
+#    关系按每个待处理键的实际闭合程度启用，纯张嘴键不会进入眼部特殊流程。
+# 8. 实测表明单纯局部变形传递仍可能比 FBSF 留下更大眼缝。HO 先吸收眼睛造型键的
+#    FBSF 差分，并按左右眼分别移除平均平移；随后用较弱的三角形约束恢复局部旋转、
+#    缩放和剪切，最后沿新眼眶法向执行硬投影。完整闭眼保留旧键已经达到的绝对缝隙，
+#    投影不改切向分量。安全回退只减弱局部求解和投影，不回退普通造型的全局位移。
 # 9. 当前参考关系仍是顶点到顶点的滑动近似，并非论文中的完整连续轮廓或物理模型。
 #    后续应升级为顶点到对侧边/三角面的重心对应、按拓扑连续性生成虚拟三角带，并
 #    使用矩阵无关共轭梯度替代固定次数 Jacobi；还需增加调试预览、区域覆盖率、左右眼
@@ -3403,19 +3492,21 @@ class OP_ShapekeyTools_RebaseFBSF(Operator):
 
 
 class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
-    """以全局变基为基线，用闭眼参考关系重建眼部表情。"""
+    """同时烘焙普通与眼睛造型键，用闭眼参考关系重建眼部表情。"""
     bl_idname = "ho.rebase_shapekeys_preserve_expressions"
     bl_label = "全键局部变基-HO"
-    bl_description = "保持全局变基，并按闭眼参考键把眼部表情迁移到新眼眶"
+    bl_description = "烘焙独立的普通与眼睛造型键，并按闭眼参考键重建眼部表情"
     bl_options = {'REGISTER', 'UNDO'}
 
-    factor: FloatProperty(
-        name="变基权重",
-        description="活动捏脸键混入基型的比例",
-        default=1.0,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
+    ordinary_shape_key: StringProperty(
+        name="普通造型键",
+        description="眼睛以外的普通脸型造型键，必须直接相对 Basis 且权重为 1",
+        default="",
+    ) # type: ignore
+    eye_shape_key: StringProperty(
+        name="眼睛造型键",
+        description="只记录眼眶与眼部造型的独立形态键，必须直接相对 Basis 且权重为 1",
+        default="",
     ) # type: ignore
     blink_reference_key: StringProperty(
         name="双目闭眼参考键",
@@ -3468,34 +3559,62 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             obj is not None
             and obj.type == 'MESH'
             and obj.data.shape_keys is not None
-            and obj.active_shape_key_index > 0
+            and len(obj.data.shape_keys.key_blocks) >= 4
         )
 
     def invoke(self, context, event):
-        try:
-            _shape_keys, _basis, active_key = _validate_shape_key_rebase_object(context.object)
-        except ShapeKeyRebaseError as exc:
-            self.report({'WARNING'}, str(exc))
+        obj = context.object
+        if obj is None or obj.type != 'MESH' or obj.data.shape_keys is None:
+            self.report({'WARNING'}, "活动对象没有可用的形态键")
             return {'CANCELLED'}
-        if active_key.value > 1e-6:
-            self.factor = min(1.0, active_key.value)
-        return context.window_manager.invoke_props_dialog(self, width=440)
+
+        shape_keys = obj.data.shape_keys
+        basis = shape_keys.reference_key
+        key_blocks = shape_keys.key_blocks
+        active_key = obj.active_shape_key
+        full_weight_keys = [
+            key for key in key_blocks
+            if key != basis and abs(key.value - 1.0) <= 1e-6
+        ]
+        if not self.eye_shape_key or key_blocks.get(self.eye_shape_key) is None:
+            if active_key in full_weight_keys:
+                self.eye_shape_key = active_key.name
+        if (
+            not self.ordinary_shape_key
+            or key_blocks.get(self.ordinary_shape_key) is None
+        ):
+            ordinary_candidates = [
+                key for key in full_weight_keys
+                if key.name != self.eye_shape_key
+            ]
+            if ordinary_candidates:
+                self.ordinary_shape_key = ordinary_candidates[0].name
+        return context.window_manager.invoke_props_dialog(self, width=500)
 
     def draw(self, context):
         layout = self.layout
         obj = context.object
-        active_key = obj.active_shape_key if obj else None
 
         warning = layout.box()
         warning.alert = True
-        warning.label(text="此操作会重写全部形态键并删除活动捏脸键", icon='ERROR')
-        warning.label(text="HO 保留全局变基，只重建闭眼参考所定义的眼部区域")
-        if active_key is not None:
-            warning.label(text=f"捏脸键：{active_key.name}", icon='SHAPEKEY_DATA')
+        warning.label(text="此操作会重写全部形态键并删除两个造型键", icon='ERROR')
+        warning.label(text="两个造型键必须直接相对 Basis，且当前权重都必须为 1")
 
-        layout.prop(self, "factor")
+        flow = layout.box()
+        flow.label(text="对称双键造型流程", icon='INFO')
+        flow.label(text="1. 使用普通造型键完成眼睛以外的造型，并保持权重为 1")
+        flow.label(text="2. 新建空白眼睛造型键，不要从混合创建")
+        flow.label(text="3. 两键同时保持为 1，只在眼睛造型键调整眼眶")
+        flow.label(text="本操作不检测左右对称，不对称结果由用户承担")
+
         shape_keys = obj.data.shape_keys if obj is not None else None
         if shape_keys is not None:
+            layout.prop_search(
+                self, "ordinary_shape_key", shape_keys, "key_blocks",
+                text="普通造型键")
+            layout.prop_search(
+                self, "eye_shape_key", shape_keys, "key_blocks",
+                text="眼睛造型键")
             layout.prop_search(
                 self, "blink_reference_key", shape_keys, "key_blocks",
                 text="双目闭眼参考键")
@@ -3511,12 +3630,13 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
         try:
             (
-                active_name, key_count, reference_name, detected,
+                ordinary_name, eye_name, key_count, reference_name, detected,
                 corrected, applied, affected, rollback,
             ) = (
                 _rebase_shape_keys(
                     obj,
-                    self.factor,
+                    self.ordinary_shape_key,
+                    self.eye_shape_key,
                     self.blink_reference_key,
                     self.transfer_strength,
                     self.closure_strength,
@@ -3533,11 +3653,12 @@ class OP_ShapekeyTools_RebasePreserveExpressions(Operator):
             return {'CANCELLED'}
 
         detail = (
-            f"，参考 {reference_name}，眼睑关系 {detected} 对，"
+            f"，普通造型 {ordinary_name}，眼睛造型 {eye_name}，"
+            f"参考 {reference_name}，眼睑关系 {detected} 对，"
             f"重建 {corrected} 键，闭合约束 {applied}，"
             f"影响 {affected} 顶点，安全回退 {rollback} 键"
         )
-        self.report({'INFO'}, f"已用 {active_name} 变基并重写 {key_count} 个形态键{detail}")
+        self.report({'INFO'}, f"已完成双键变基并重写 {key_count} 个形态键{detail}")
         return {'FINISHED'}
 
 class OP_ForceRemoveAll(Operator):
@@ -3749,6 +3870,19 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row.scale_y = 2.0
     row.operator(OP_ShapekeyTools_GenerateHideShapeKey.bl_idname,
                  text="生成Hide形态键", icon="SHAPEKEY_DATA")
+
+    layout.separator()
+    flow = layout.column(align=True)
+    flow.label(text="HO 对称双键造型流程", icon="INFO")
+    flow.label(text="1. 普通键完成其他造型并保持为 1")
+    flow.label(text="2. 新建空白眼睛键，不从混合创建")
+    flow.label(text="3. 两键保持为 1，只在眼睛键调整眼眶")
+    flow.label(text="不检测左右对称，不对称结果由用户承担")
+    flow.operator(
+        OP_ShapekeyTools_RebasePreserveExpressions.bl_idname,
+        text="全键局部变基-HO",
+        icon="KEY_HLT",
+    )
 
 def draw_in_MESH_MT_shape_key_context_menu(self, context):
     """形态键下拉菜单"""
