@@ -96,7 +96,7 @@ def assert_position(key, index, expected):
     assert np.allclose(actual, expected, atol=1e-6), (key.name, index, actual, expected)
 
 
-# FBSF 自动权重按左右半脸分别比较目标表情与捏脸 delta。
+# 本地 FBSF 近似权重按左右半脸分别比较目标表情与捏脸 delta。
 # 同向位移得到 1，正交位移得到 0；左右过渡只在分数确实不同时启用。
 fbsf_basis = np.array(
     [(-1.0, 0.0, 0.0), (-0.05, 0.0, 0.0),
@@ -120,7 +120,7 @@ smooth_weights, _left, _right, _split = module._fbsf_rebase_weights(
     fbsf_target, fbsf_edit, fbsf_basis, 0.1, 1.0)
 assert np.allclose(smooth_weights, (1.0, 0.75, 0.25, 0.0), atol=1e-6)
 
-# 原实现把反向内积按一半强度计入相似度，这个看似特殊的行为也必须保持。
+# 本地早期实现把反向内积按一半强度计入相似度，这个行为必须保持兼容。
 opposite_weights, left_score, right_score, split_sides = module._fbsf_rebase_weights(
     -fbsf_edit, fbsf_edit, fbsf_basis, 0.0, 1.0)
 assert left_score == 0.5
