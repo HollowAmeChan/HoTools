@@ -68,6 +68,7 @@ def add_closure_shape_keys(obj):
     eye_sculpt = obj.shape_key_add(name="EyeSculpt", from_mix=False)
     for index, point in enumerate(eye_sculpt.data):
         if index < 12:
+            point.co.x += 0.35
             point.co.z *= 1.4
 
     blink = obj.shape_key_add(name="Blink", from_mix=False)
@@ -142,45 +143,39 @@ assert (
     == "ho.rebase_shapekeys_preserve_expressions"
 )
 
-# 局部变形必须由新相对键的坐标架承载。旧表情沿局部 X 拉伸两倍；新眼眶旋转
-# 九十度后，目标边也必须沿旋转后的局部 X 拉伸，而不能继续指向旧世界 X。
-local_rest = np.array(
-    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+# 眼眶键是确定性变形来源：仿射拟合必须恢复平移、非均匀缩放和剪切。
+affine_source = np.array(
+    [(x, y, z) for x in (-1.0, 1.0)
+     for y in (-1.0, 1.0) for z in (-1.0, 1.0)],
     dtype=np.float32,
 )
-local_key = np.array(
-    [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-    dtype=np.float32,
+expected_matrix = np.array(
+    ((1.2, 0.1, 0.0), (0.0, 0.8, 0.15), (0.0, 0.0, 1.4)),
+    dtype=np.float64,
 )
-local_new = np.array(
-    [(0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)],
-    dtype=np.float32,
-)
-_first, _second, local_targets, _weights = (
-    module._ho_triangle_transfer_constraints(
-        local_rest,
-        local_key,
-        local_new,
-        np.array([(0, 1, 2)], dtype=np.int32),
-        np.ones(3, dtype=np.float32),
-        1.0,
-    )
-)
-assert np.allclose(local_targets[0], (0.0, 2.0, 0.0), atol=1e-6)
-assert np.allclose(local_targets[1], (-1.0, 0.0, 0.0), atol=1e-6)
+expected_translation = np.array((3.0, -2.0, 0.5), dtype=np.float64)
+affine_target = affine_source @ expected_matrix + expected_translation
+fitted_matrix, fitted_translation = module._ho_weighted_affine_transform(
+    affine_source, affine_target, np.ones(len(affine_source), dtype=np.float32))
+assert np.allclose(fitted_matrix, expected_matrix, atol=5e-4)
+assert np.allclose(fitted_translation, expected_translation, atol=5e-4)
 
-# 局部 FBSF 只能保留形状差分，不能把左右眼的整体捏脸平移拉回旧位置。
-uniform_shift = np.tile((0.0, 2.0, 0.0), (4, 1)).astype(np.float32)
-uniform_global = fbsf_basis + uniform_shift
-centered_baseline = module._ho_local_fbsf_baseline(
-    uniform_global,
-    uniform_shift,
-    np.ones(4, dtype=np.float32),
-    np.ones(4, dtype=np.float32),
-    fbsf_basis,
-    1.0,
+# 接触投影必须修正切向和法向错位，同时保持这一对顶点的中点位置。
+contact_positions = np.array(
+    ((-0.5, 0.4, 0.2), (0.7, -0.2, -0.1)), dtype=np.float32)
+contact_midpoint = np.mean(contact_positions, axis=0)
+contact_target = np.array(((0.0, 0.05, 0.0),), dtype=np.float64)
+contact_constraints = (
+    np.array((0,), dtype=np.int32),
+    np.array((1,), dtype=np.int32),
+    contact_target,
+    np.array((1.0,), dtype=np.float64),
 )
-assert np.allclose(centered_baseline, uniform_global, atol=1e-6)
+projected_contact = module._ho_project_contact_vectors(
+    contact_positions, contact_constraints, np.ones(2, dtype=np.float32))
+assert np.allclose(
+    projected_contact[1] - projected_contact[0], contact_target[0], atol=1e-6)
+assert np.allclose(np.mean(projected_contact, axis=0), contact_midpoint, atol=1e-6)
 
 registered = (
     module.OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
@@ -305,10 +300,10 @@ try:
     assert nested.relative_key == expression
     assert eye_child.relative_key == basis
 
-    # Basis 完整采用捏脸结果；闭眼键不是旧坐标透传，而是在扩大后的新眼眶上
-    # 重新应用局部变形和跨眼睑闭合关系。
+    # Basis 完整采用捏脸结果；眼眶键的大幅横移与眨眼方向正交，也必须被完整保留。
     for index in range(12):
         expected = old_basis[index].copy()
+        expected[0] += 0.35
         expected[1] += 2.0
         expected[2] *= 1.4
         assert_position(basis, index, expected)
@@ -322,7 +317,10 @@ try:
         old_gap = abs(old_expression[upper, 2] - old_expression[lower, 2])
         assert new_gap <= old_gap + 1e-4, (new_gap, old_gap)
     for index in range(12):
+        assert abs(expression.data[index].co.x - (old_expression[index, 0] + 0.35)) < 1e-4
         assert abs(expression.data[index].co.y - 2.0) < 1e-4
+    for index in (0, 1, 2, 9, 10, 11):
+        assert abs(expression.data[index].co.z - old_expression[index, 2] * 1.4) < 1e-3
 
     # 眼部组之外必须逐顶点等于普通全局变基，张嘴不能再发生 FBSF 式回弹。
     new_basis_positions = positions(basis)
