@@ -22,7 +22,7 @@ OMNI_NODE_REGISTRATION = {
     "order": 10,
 }
 
-from HoTools.OmniNode.FunctionNodeCore import omni
+from ...FunctionNodeCore import omni
 
 
 @omni(
