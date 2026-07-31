@@ -1093,11 +1093,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 
 ### `OmniNodeRegister.py`
 
-节点注册和分类。负责注册 Graph 节点，消费从 `Function/` 与 `Custom/` 自动发现的模块声明和 `@omni(enable=True)` 节点类，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。
-
-### `OmniNodeFunctionRegistry.py`
-
-函数节点模块发现与声明校验。分别扫描 `Function/` 和 `Custom/` 当前层的 Python 文件，导入模块，规范化 `OMNI_NODE_REGISTRATION`，跨目录校验同名分类合同，并输出与 Blender UI 解耦的注册描述。物理子目录不参与发现，UI 嵌套由 `menu_path` 单独描述。
+节点注册和分类的统一入口。负责扫描 `Function/` 与 `Custom/` 当前层的 Python 文件，校验并规范化 `OMNI_NODE_REGISTRATION`，消费 `@omni(enable=True)` 节点类，再合并 Graph 与 PhysicsWorld 节点来源，生成 Blender add node 顶层分类与嵌套菜单，并保证失败注册完整回滚。物理子目录不参与发现，UI 嵌套由 `menu_path` 单独描述。
 
 ### `Function/*.py`
 

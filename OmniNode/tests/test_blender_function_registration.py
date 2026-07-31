@@ -26,9 +26,6 @@ hotools_package.__package__ = "HoTools"
 sys.modules["HoTools"] = hotools_package
 
 OmniNode = importlib.import_module("HoTools.OmniNode")
-function_registry = importlib.import_module(
-    "HoTools.OmniNode.OmniNodeFunctionRegistry"
-)
 node_register = importlib.import_module("HoTools.OmniNode.OmniNodeRegister")
 node_register._rebuild_registry()
 
@@ -58,7 +55,7 @@ for _directory_name, path in module_paths:
             if isinstance(statement, (ast.Assign, ast.AnnAssign))
             and any(
                 isinstance(target, ast.Name)
-                and target.id == function_registry.REGISTRATION_ATTRIBUTE
+                and target.id == node_register.REGISTRATION_ATTRIBUTE
                 for target in (
                     statement.targets
                     if isinstance(statement, ast.Assign)
@@ -158,12 +155,12 @@ assert len(current_node_ids) == len(node_register.cls)
 # 禁用的辅助模块与非法声明必须有明确行为。
 disabled_module = types.ModuleType("test_disabled_function_module")
 disabled_module.OMNI_NODE_REGISTRATION = {"enabled": False}
-assert function_registry.normalize_function_registration(disabled_module) is None
+assert node_register.normalize_function_registration(disabled_module) is None
 
 missing_module = types.ModuleType("test_missing_function_module")
 assert_raises(
     ValueError,
-    lambda: function_registry.normalize_function_registration(missing_module),
+    lambda: node_register.normalize_function_registration(missing_module),
     "缺少 OMNI_NODE_REGISTRATION",
 )
 
@@ -174,7 +171,7 @@ invalid_path_module.OMNI_NODE_REGISTRATION = {
 }
 assert_raises(
     ValueError,
-    lambda: function_registry.normalize_function_registration(invalid_path_module),
+    lambda: node_register.normalize_function_registration(invalid_path_module),
     "menu_path 必须是列表或元组",
 )
 
@@ -209,7 +206,7 @@ def customEyes(value: float) -> float:
     temporary_package.__package__ = temporary_package_name
     sys.modules[temporary_package_name] = temporary_package
     try:
-        temporary_registrations = function_registry.discover_function_modules(
+        temporary_registrations = node_register.discover_function_modules(
             function_directory=temporary_function_directory,
             package=temporary_package_name,
         )
@@ -237,7 +234,7 @@ def customConflict(value: float) -> float:
         )
         assert_raises(
             ValueError,
-            lambda: function_registry.discover_function_modules(
+            lambda: node_register.discover_function_modules(
                 function_directory=temporary_function_directory,
                 package=temporary_package_name,
             ),
@@ -257,9 +254,7 @@ def fake_node_class(name):
 
 
 def fake_registration(module_name, menu_path, order, *node_names):
-    module = types.ModuleType(module_name)
-    return function_registry.FunctionModuleRegistration(
-        module=module,
+    return node_register.FunctionModuleRegistration(
         module_name=module_name,
         relative_path=f"Custom/{module_name.rsplit('.', 1)[-1]}.py",
         category_id="CUSTOM",
