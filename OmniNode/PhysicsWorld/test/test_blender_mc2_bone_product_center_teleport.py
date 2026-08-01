@@ -77,12 +77,16 @@ def _request(
             **task_values,
         )
     else:
-        requests, _report = nodes.physicsMC2BoneClothTask(
+        objects, _count = nodes.physicsMC2BoneClothCustomObject(
             [{"armature": armature, "bone": "Parent"}],
+        )
+        partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+            objects,
             profile=profile,
             connection_mode=0,
             **task_values,
         )
+        requests, _report = nodes.physicsMC2BoneCollector(partitions)
     assert len(requests) == 1
     return requests[0]
 

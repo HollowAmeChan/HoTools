@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import os
 import sys
@@ -29,11 +30,20 @@ for package_name, package_path in (
 authoring = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.authoring"
 )
+object_spec = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.object_spec"
+)
+source_spec = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.source_spec"
+)
 domain_collect = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.domain_collect"
 )
 parameters = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.parameters"
+)
+partition_specs = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.partition_specs"
 )
 request_module = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.product_request"
@@ -83,6 +93,18 @@ def _chain(armature, *names):
     }
 
 
+def _explicit_object(armature, *sources):
+    return object_spec.MC2BoneClothObjectSpec(
+        partition_source=source_spec.MC2BonePartitionSourceV1(
+            "bone_cloth",
+            armature,
+            tuple(source_spec.make_mc2_bone_chain_source(value) for value in sources),
+        ),
+        explicit_properties=object_spec.make_mc2_bone_cloth_explicit_properties(),
+        property_origin="socket",
+    )
+
+
 def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
     a2 = _Bone("A2")
     a1 = _Bone("A1", (a2,))
@@ -95,14 +117,18 @@ def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
         "Rig",
         (control_a, control_b, a1, a2, b1, b2),
     )
-    request = authoring.make_mc2_bone_cloth_product_request(
+    objects = object_spec.make_mc2_bone_cloth_custom_objects(
         [(armature, "ControlA"), (armature, "ControlB")],
+    )
+    partitions = authoring.make_mc2_bone_cloth_domain_partitions(
+        objects,
         setup_options=parameters.make_mc2_setup_options(
             "bone_cloth",
             connection_model="hotools_product",
             connection_mode=2,
         ),
     )
+    request = authoring.make_mc2_bone_cloth_product_requests(partitions)[0]
     assert isinstance(request, request_module.MC2ProductRequestV1)
     assert request.setup_type == "bone_cloth"
     assert len(request.plan.active_partitions) == 2
@@ -111,18 +137,140 @@ def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
         for partition in request.plan.active_partitions
     ) == ((('A1', 'A2'),), (('B1', 'B2'),))
     assert all(
-        isinstance(partition.source, authoring.MC2BonePartitionSourceV1)
+        isinstance(partition.source, source_spec.MC2BonePartitionSourceV1)
         for partition in request.plan.active_partitions
     )
     assert "融合 2 个分区" in request.report_text
 
 
+def test_bone_cloth_object_domain_collector_builds_complete_partitions():
+    a2 = _Bone("A2")
+    a1 = _Bone("A1", (a2,))
+    b2 = _Bone("B2")
+    b1 = _Bone("B1", (b2,))
+    control_a = _Bone("ControlA", (a1,))
+    control_b = _Bone("ControlB", (b1,))
+    armature = _Armature(
+        151,
+        "Rig",
+        (control_a, control_b, a1, a2, b1, b2),
+    )
+    objects = object_spec.make_mc2_bone_cloth_custom_objects(
+        [(armature, "ControlA"), (armature, "ControlB")],
+        primary_collision_group=3,
+        collided_by_groups=0b10000,
+    )
+    profile = parameters.make_mc2_particle_profile(
+        gravity=7.5,
+        self_collision_mode=2,
+    )
+    task = parameters.make_mc2_task_parameters(world_inertia=0.25)
+    partitions = authoring.make_mc2_bone_cloth_domain_partitions(
+        objects,
+        profile=profile,
+        task_parameters=task,
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_cloth",
+            connection_model="hotools_product",
+            connection_mode=2,
+        ),
+    )
+    assert len(partitions) == 2
+    assert all(partition.profile is profile for partition in partitions)
+    assert all(partition.task_parameters is task for partition in partitions)
+    assert all(partition.enabled is True for partition in partitions)
+    assert all(partition.collision_group == 0b100 for partition in partitions)
+    assert all(partition.collision_mask == 0b10100 for partition in partitions)
+    assert all(
+        partition.setup_options.collided_by_groups == 0b10000
+        for partition in partitions
+    )
+    requests = authoring.make_mc2_bone_cloth_product_requests(partitions)
+    assert len(requests) == 1
+    assert tuple(
+        partition.stable_id
+        for partition in requests[0].plan.active_partitions
+    ) == tuple(partition.stable_id for partition in partitions)
+    assert "Grouping: Armature Rig" in requests[0].report_text
+
+
+def test_bone_collector_groups_cross_armature_as_visible_requests():
+    left_root = _Bone("LeftRoot")
+    left_control = _Bone("Control", (left_root,))
+    right_root = _Bone("RightRoot")
+    right_control = _Bone("Control", (right_root,))
+    left = _Armature(171, "Left", (left_control, left_root))
+    right = _Armature(172, "Right", (right_control, right_root))
+    objects = object_spec.make_mc2_bone_cloth_custom_objects(
+        [(left, "Control"), (right, "Control")]
+    )
+    partitions = authoring.make_mc2_bone_cloth_domain_partitions(objects)
+    requests = authoring.make_mc2_bone_cloth_product_requests(partitions)
+    assert len(requests) == 2
+    assert tuple(
+        request.plan.active_partitions[0].source.armature
+        for request in requests
+    ) == (left, right)
+
+
+def test_bone_domain_and_collector_reject_unwrapped_or_incomplete_values():
+    root = _Bone("Root")
+    control = _Bone("Control", (root,))
+    armature = _Armature(181, "Rig", (control, root))
+    try:
+        authoring.make_mc2_bone_cloth_domain_partitions(
+            [(armature, "Control")]
+        )
+    except TypeError as exc:
+        assert "wrapped BoneCloth objects" in str(exc)
+    else:
+        raise AssertionError("raw Bone bypassed the object adapter")
+
+    objects = object_spec.make_mc2_bone_cloth_custom_objects(
+        [(armature, "Control")]
+    )
+    partition = authoring.make_mc2_bone_cloth_domain_partitions(objects)[0]
+    try:
+        authoring.make_mc2_bone_cloth_product_requests((partition, partition))
+    except ValueError as exc:
+        assert "duplicate stable id" in str(exc)
+    else:
+        raise AssertionError("duplicate Bone partition was accepted")
+
+    invalid_partitions = (
+        (replace(partition, origin="implicit"), "implicit partitions"),
+        (
+            replace(
+                partition,
+                source_properties=partition_specs.MC2_UNSET,
+            ),
+            "complete object properties",
+        ),
+        (
+            partition.with_patch(partition_specs.make_mc2_partition_patch(
+                task_values={"world_inertia": 0.5}
+            )),
+            "partition patches",
+        ),
+    )
+    for invalid, expected in invalid_partitions:
+        try:
+            authoring.make_mc2_bone_cloth_product_requests([invalid])
+        except (TypeError, ValueError) as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError(f"invalid Bone partition was accepted: {expected}")
+
+
 def test_explicit_bone_cloth_chains_share_one_partition_without_tasks():
     armature = _Armature(201, "Rig")
-    request = authoring.make_mc2_bone_cloth_product_request([
+    bone_object = _explicit_object(
+        armature,
         _chain(armature, "A1", "A2"),
         _chain(armature, "B1", "B2", "B3"),
-    ])
+    )
+    partitions = authoring.make_mc2_bone_cloth_domain_partitions([bone_object])
+    request = authoring.make_mc2_bone_cloth_product_requests(partitions)[0]
     assert len(request.plan.active_partitions) == 1
     source = request.plan.active_partitions[0].source
     assert source.task_sources == (
@@ -200,25 +348,17 @@ def test_bone_plan_builds_same_domain_draft_and_spring_filters_colliders():
     assert frame.collider_keys == ("sphere",)
 
 
-def test_require_fusion_rejects_cross_armature_without_hidden_split():
+def test_bone_spring_require_fusion_rejects_cross_armature():
     left = _Armature(401, "Left")
     right = _Armature(402, "Right")
-    for factory, sources in (
-        (
-            authoring.make_mc2_bone_cloth_product_request,
-            [_chain(left, "A"), _chain(right, "B")],
-        ),
-        (
-            authoring.make_mc2_bone_spring_product_request,
-            [_chain(left, "A"), _chain(right, "B")],
-        ),
-    ):
-        try:
-            factory(sources)
-        except ValueError as exc:
-            assert "多个显式 collector" in str(exc)
-        else:
-            raise AssertionError("跨 Armature 请求被静默拆分")
+    try:
+        authoring.make_mc2_bone_spring_product_request(
+            [_chain(left, "A"), _chain(right, "B")]
+        )
+    except ValueError as exc:
+        assert "多个显式 collector" in str(exc)
+    else:
+        raise AssertionError("跨 Armature BoneSpring 请求被静默拆分")
 
 
 if __name__ == "__main__":

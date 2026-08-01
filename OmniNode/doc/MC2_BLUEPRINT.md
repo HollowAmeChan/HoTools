@@ -203,7 +203,7 @@ Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有�
 | `粒子半径`、`半径曲线` | 定义粒子参与外部碰撞的厚度 | native按baseline depth采样；`M/C/S`有效。MeshCloth再乘对象面板的`radius_vertex_group`权重。 |
 | `碰撞模式` | `0:None`关闭，`1:Point`按粒子点碰撞，`2:Edge`按final proxy边连续碰撞 | 外部collider上传后由Point或Edge pass消费；Mesh triangle边和BoneCloth横向/三角补边都属于final proxy边。`M/C`可调，`S`固定Point。 |
 | `碰撞摩擦` | 碰撞接触后的切向速度衰减 | runtime同时写入dynamic/static friction，post用接触法线和速度处理；`M/C`可调，`S`固定为`0.5`。 |
-| `碰撞组` | 过滤允许参与普通外碰的Physics World collider | Mesh对象冻结的`collided_by_groups`原样进入外碰参数；`0`保持“不筛选”。whole-domain self另用`collision_mask = collided_by_groups | self_group_bit`，两者不得共用并入自身组后的mask。 |
+| `碰撞组` | 过滤允许参与普通外碰的Physics World collider | Mesh/BoneCloth对象冻结的`collided_by_groups`原样进入外碰参数；`0`保持“不筛选”。whole-domain self另用`collision_mask = collided_by_groups | self_group_bit`，两者不得共用并入自身组后的mask。 |
 | `碰撞限制距离`、`碰撞限制曲线` | 限制BoneSpring粒子被soft-sphere碰撞推离动画基准的最大距离 | BoneSpring Point collision使用animated base和深度曲线执行soft-sphere投影；仅`S`有效，cloth节点不公开且runtime置零。 |
 | `自碰撞` | 启用 partition primitive 的 FullMesh EE/PT 接触、grid broadphase 和 intersection history | bool 稳定转换为 `self_collision_mode=2`；`M/C` 有效，`S` 强制关闭。 |
 | `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；跨 partition 配对要求双方都显式开启，任一方关闭都在 broadphase 配对前拒绝。BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
@@ -239,11 +239,12 @@ Frame shift 每个 frame 只消费一次，其余 pass 按真实 substep 完整�
 
 ### Setup collector 与分域
 
-- MeshCloth 多 Object 输入先形成有序 partition entries，再由一个 Require-Fusion product request 编译为统一域；每个 source 保留自己的 BasePose、Center/Anchor/Teleport 和 output target。
-- BoneCloth/BoneSpring 按 Armature 建域；同 Armature 多链是显式 partition，跨 Armature 产生多个显式 request。同 Armature Bone 输出在结果层合并。
+- MeshCloth 多 Object 输入先经面板对象/自定义对象适配器形成有序完整 partition entries，再由一个 Require-Fusion product request 编译为统一域；每个 source 保留自己的 BasePose、Center/Anchor/Teleport 和 output target。
+- BoneCloth 使用同构的 `面板对象/自定义对象 -> BoneCloth域 -> Bone分区 -> Bone域收集` 链路。对象层冻结控制/根 Bone 的主碰撞组与被碰撞组；域层冻结 Profile、Center/Anchor/Teleport、连接与旋转参数；collector 只接受完整显式 BoneCloth 分区，拒绝 raw Bone、隐式分区、patch 和重复 stable id。
+- BoneCloth collector 按 Armature 建域：同 Armature 多 partition 融合为一个 request，跨 Armature 按首次出现顺序产生多个可见 request。同 Armature Bone 输出在结果层合并。BoneSpring 仍由专用域直接按 Armature 构建 request。
 - 结构约束只在 partition 内生成；跨 partition 交互只来自 whole-domain self，并由双方 group/mask、topology neighbor 与 owner 规则过滤。
 - BoneSpring 强制关闭 self、Bending、gravity 和 Motion/Backstop，外碰只接受 Sphere；这些是产品限制，不是待补 pass。
-- collector 不允许静默拆 hidden task，也不允许不兼容时回退为普通 aggregate。
+- collector 不允许静默拆 hidden task，也不允许不兼容时回退为普通 aggregate；BoneCloth 的跨 Armature 多 request 是 `MC2 Bone域收集` 的显式输出，不属于 hidden split。
 
 ### 请求驱动 debug
 

@@ -39,7 +39,7 @@ class _MC2BoneStaticIntentV1:
 
 def _partition_static_intent(partition) -> _MC2BoneStaticIntentV1:
     from ...partition_specs import MC2ResolvedPartitionSpec
-    from .authoring import MC2BonePartitionSourceV1
+    from .source_spec import MC2BonePartitionSourceV1
 
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition must be MC2ResolvedPartitionSpec")
@@ -198,6 +198,18 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
             str(payload.get("armature_name") or ""),
         ))
         records = tuple(payload.get("bones") or ())
+        terminal_names = tuple(
+            str(value or "") for value in payload.get("terminal_names", ())
+        )
+        terminal_positions = tuple(payload.get("terminal_positions") or ())
+        if records and not terminal_names:
+            terminal_names = (
+                f"{str(records[-1].get('name') or '').strip()}::__mc2_terminal__",
+            )
+        if records and not terminal_positions:
+            terminal_positions = (
+                tuple(records[-1].get("tail", records[-1].get("head", (0, 0, 0)))),
+            )
         offset = len(flattened)
         for record in records:
             copied = dict(record)
@@ -208,6 +220,33 @@ def _flatten_bone_records(topology: MC2TopologySpec) -> tuple[dict, ...]:
                 for child in copied.get("child_indices", ())
             )
             flattened.append(copied)
+        terminal_parent = offset + len(records) - 1 if records else -1
+        terminal_matrix = (
+            records[-1].get("matrix_local")
+            if records
+            else (
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            )
+        )
+        for terminal_index, terminal_name in enumerate(terminal_names):
+            position = (
+                terminal_positions[terminal_index]
+                if terminal_index < len(terminal_positions)
+                else records[-1].get("tail", records[-1].get("head", (0, 0, 0)))
+                if records
+                else (0, 0, 0)
+            )
+            flattened.append({
+                "name": terminal_name,
+                "parent_index": terminal_parent,
+                "child_indices": (),
+                "head": tuple(position),
+                "tail": tuple(position),
+                "matrix_local": terminal_matrix,
+            })
     if len(armatures) != 1:
         raise ValueError("BoneCloth task sources must belong to one Armature")
     if len(flattened) != topology.particle_count:
@@ -263,7 +302,11 @@ def _build_mc2_bone_static(
         and all(isinstance(item, MC2BoneRawSnapshot) for item in snapshots)
     )
     records = () if use_snapshots else _flatten_bone_records(topology)
-    record_count = sum(len(item.names) for item in snapshots) if use_snapshots else len(records)
+    record_count = (
+        sum(len(item.names) + len(item.terminal_names) for item in snapshots)
+        if use_snapshots
+        else len(records)
+    )
     if record_count != topology.particle_count:
         raise ValueError("BoneCloth topology record count mismatch")
     if use_snapshots:
@@ -280,15 +323,48 @@ def _build_mc2_bone_static(
         offset = 0
         for snapshot in snapshots:
             identities.extend(snapshot.names)
+            identities.extend(snapshot.terminal_names)
             local_parents = np.ascontiguousarray(snapshot.parents, dtype=np.int32)
-            parent_chunks.append(np.where(local_parents < 0, -1, local_parents + offset))
+            terminal_parent = len(snapshot.names) - 1
+            terminal_parents = np.full(
+                len(snapshot.terminal_names),
+                terminal_parent,
+                dtype=np.int32,
+            )
+            if terminal_parent < 0:
+                terminal_parents.fill(-1)
+            parent_chunks.append(np.concatenate((
+                np.where(local_parents < 0, -1, local_parents + offset),
+                np.where(terminal_parents < 0, -1, terminal_parents + offset),
+            )))
             position_chunks.append(
-                np.ascontiguousarray(snapshot.head_tail[:, :3], dtype=np.float64)
+                np.concatenate((
+                    np.ascontiguousarray(snapshot.head_tail[:, :3], dtype=np.float64),
+                    np.repeat(
+                        np.ascontiguousarray(
+                            snapshot.head_tail[-1:, 3:],
+                            dtype=np.float64,
+                        ),
+                        len(snapshot.terminal_names),
+                        axis=0,
+                    )
+                    if snapshot.terminal_names and snapshot.names
+                    else np.empty((0, 3), dtype=np.float64),
+                ), axis=0)
             )
             matrix_chunks.append(
-                np.ascontiguousarray(snapshot.matrices, dtype=np.float32)
+                np.concatenate((
+                    np.ascontiguousarray(snapshot.matrices, dtype=np.float32),
+                    np.repeat(
+                        np.ascontiguousarray(snapshot.matrices[-1:], dtype=np.float32),
+                        len(snapshot.terminal_names),
+                        axis=0,
+                    )
+                    if snapshot.terminal_names and snapshot.names
+                    else np.empty((0, 16), dtype=np.float32),
+                ), axis=0)
             )
-            offset += len(snapshot.names)
+            offset += len(snapshot.names) + len(snapshot.terminal_names)
         identities = tuple(identities)
         parents = np.concatenate(parent_chunks)
         positions = np.concatenate(position_chunks, axis=0)

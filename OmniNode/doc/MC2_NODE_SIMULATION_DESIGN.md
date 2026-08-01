@@ -54,16 +54,43 @@ Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh�
 
 接收一个或多个 collector 输出和 Physics World。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步。成员关系由连线表达，节点执行由 Blender mute 表达；对象、域、collector 和模拟步不提供重复的参与类 `enabled`。
 
-## Bone setup
+## BoneCloth 节点拓扑
 
-`MC2 BoneCloth域` 和 `MC2 BoneSpring域` 是统一产品域的 setup adapter，不是独立 solver。它们复用 `MC2ProductRequestV1`、compiled domain、DomainV1 owner、scheduler、Center history 和公共结果事务，只保留 source capture、静态拓扑、frame input 和 Bone output 的差异。
+`MC2 BoneCloth域` 和 `MC2 BoneSpring域` 是统一产品域的 setup adapter，不是独立 solver。它们复用 `MC2ProductRequestV1`、compiled domain、DomainV1 owner、scheduler、Center history 和公共结果事务，只保留 source capture、静态拓扑、frame input 和 Bone output 的差异。BoneCloth 采用与 MeshCloth 相同的强类型对象、完整分区和专用 collector 边界；BoneSpring 当前仍由自己的域节点直接生成 request。
+
+```text
+Bone socket / chain -> MC2 BoneCloth对象（读取控制/根 Bone 面板） ─┐
+                                                                  ├─> MC2 BoneCloth域
+Bone socket / chain -> MC2 BoneCloth自定义对象（socket完整属性） ───┘       -> Bone分区
+                                                                          -> MC2 Bone域收集
+                                                                          -> MC2模拟步.MC2域
+```
+
+### `MC2 BoneCloth对象`
+
+输入一个或多个控制 Bone 或显式 chain descriptor。每个输入先解析为同一 Armature 内的一组有序骨链，再从所选控制/根 Bone 的 `Bone.hotools_collision` 读取完整对象属性，输出 `MC2BoneClothObjectSpec`。对象 spec 冻结主碰撞组和被碰撞组，不创建 partition、request、slot 或 native owner。
+
+### `MC2 BoneCloth自定义对象`
+
+输入相同的 Bone source，并从 socket 完整定义主碰撞组和被碰撞组。它不读取或修改 `Bone.hotools_collision`，不是面板属性 patch。面板对象与自定义对象输出同一种严格类型；相同 source 和属性产生相同运行时签名，属性来源只用于诊断。
+
+### `MC2 BoneCloth域`
+
+只接受包装后的 `MC2BoneClothObjectSpec`，拒绝裸 Bone socket、二元组或 chain dict。域节点组合粒子 Profile、Anchor、Center/Teleport 参数、连接模式、旋转插值和根旋转，为每个对象生成完整 `MC2PartitionEntry`。对象级碰撞筛选从 object spec 冻结进 partition；域节点不再拥有 `被碰撞组` socket，也不直接输出 request。
+
+### `MC2 Bone域收集`
+
+只接受 `MC2 BoneCloth域` 输出的完整 BoneCloth 分区。collector 拒绝空输入、raw Bone、隐式分区、未解析字段、patch、重复 stable id 和其它 setup；它不读取 Physics World，也不补 Profile、Anchor、区域参数或碰撞默认值。同一 Armature 的分区按首次出现顺序融合为一个 Require-Fusion request；不同 Armature 按首次出现顺序产生多个可见 request，不在模拟步内部隐藏拆分。
+
+### BoneSpring
+
+BoneSpring 当前保持直接的 setup domain：
 
 ```text
 Bone socket / chain descriptor
-  -> setup-specific partition
-  -> collector plan
+  -> MC2 BoneSpring域
   -> MC2ProductRequestV1
-  -> setup-neutral compile / backend owner
+  -> MC2模拟步
   -> Bone output adapter
   -> BONE_TRANSFORM_CHANNEL 原子批次
 ```
@@ -78,15 +105,15 @@ Bone socket / chain descriptor
 
 ## 参数所有权
 
-MeshCloth 在进入域之前完成唯一解析：
+MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 
 ```text
 面板对象适配器 ─┐
-                 ├─> 完整 MC2MeshObjectSpec
+                 ├─> 完整 Mesh/BoneCloth object spec
 自定义对象适配器 ┘
                     + 粒子 Profile
                     + 区域参数 / Anchor
-                 -> 完整 Mesh partition
+                 -> 完整 Mesh/Bone partition
                  -> 纯 collector
                  -> compiled particle / constraint arrays
 ```
@@ -95,7 +122,8 @@ MeshCloth 在进入域之前完成唯一解析：
 |---|---|
 | domain/context | scheduler、substep、backend lifetime、统一 broadphase、generation 和结果事务。 |
 | partition | source/output identity、Object/Anchor frame、Center/Teleport history、区域参数和 logical index view。 |
-| object spec | BasePose、Pin/radius group、对象碰撞属性及其来源。 |
+| Mesh object spec | BasePose、Pin/radius group、对象碰撞属性及其来源。 |
+| BoneCloth object spec | 已解析的 Armature/骨链 source、主碰撞组、被碰撞组及其来源。 |
 | particle | depth、radius、mass/inverse mass、damping、gravity response、friction、Motion/Backstop 系数和 partition index。 |
 | constraint | 类型、端点、rest、stiffness/compliance、owner partition 和 batch/color。 |
 

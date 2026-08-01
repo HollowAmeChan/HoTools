@@ -80,12 +80,16 @@ def _profile():
 
 
 def _request(armature):
-    requests, _report = nodes.physicsMC2BoneClothTask(
+    objects, _count = nodes.physicsMC2BoneClothCustomObject(
         [{"armature": armature, "bone": "Parent"}],
+    )
+    partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+        objects,
         profile=_profile(),
         connection_mode=1,
         teleport_mode=0,
     )
+    requests, _report = nodes.physicsMC2BoneCollector(partitions)
     assert len(requests) == 1
     return requests[0]
 

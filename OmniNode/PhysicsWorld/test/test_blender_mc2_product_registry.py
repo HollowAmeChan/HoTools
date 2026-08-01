@@ -74,15 +74,35 @@ def test_mc2_product_registry_contract():
     assert "自碰交互质量" in mc2_nodes.physicsMC2MeshClothProfile.__meta["_INPUT_NAME"]
     assert "自碰交互质量" in mc2_nodes.physicsMC2BoneClothProfile.__meta["_INPUT_NAME"]
     assert "自碰交互质量" not in mc2_nodes.physicsMC2BoneSpringProfile.__meta["_INPUT_NAME"]
+    assert mc2_nodes.physicsMC2BoneClothObject.__meta["bl_label"] == (
+        "MC2 BoneCloth对象"
+    )
+    assert mc2_nodes.physicsMC2BoneClothCustomObject.__meta["bl_label"] == (
+        "MC2 BoneCloth自定义对象"
+    )
+    assert mc2_nodes.physicsMC2BoneCollector.__meta["bl_label"] == (
+        "MC2 Bone域收集"
+    )
+    assert mc2_nodes.physicsMC2BoneCollector.__meta["_INPUT_NAME"] == [
+        "Bone分区"
+    ]
     assert mc2_nodes.physicsMC2BoneClothTask.__meta["bl_label"] == "MC2 BoneCloth域"
     assert mc2_nodes.physicsMC2BoneSpringTask.__meta["bl_label"] == "MC2 BoneSpring域"
+    assert mc2_nodes.physicsMC2BoneClothTask.__meta["_OUTPUT_NAME"] == [
+        "Bone分区", "域标识"
+    ]
+    assert mc2_nodes.physicsMC2BoneClothTask.__meta["_INPUT_NAME"][0] == (
+        "BoneCloth对象"
+    )
+    assert "被碰撞组" not in mc2_nodes.physicsMC2BoneClothTask.__meta["_INPUT_NAME"]
+    assert mc2_nodes.physicsMC2BoneSpringTask.__meta["_OUTPUT_NAME"] == [
+        "MC2域", "域标识"
+    ]
     for domain_node in (
         mc2_nodes.physicsMC2MeshClothTask,
         mc2_nodes.physicsMC2BoneClothTask,
         mc2_nodes.physicsMC2BoneSpringTask,
     ):
-        if domain_node is not mc2_nodes.physicsMC2MeshClothTask:
-            assert domain_node.__meta["_OUTPUT_NAME"] == ["MC2域", "域标识"]
         assert "启用" not in domain_node.__meta["_INPUT_NAME"]
         assert "自碰交互质量" not in domain_node.__meta["_INPUT_NAME"]
     assert mc2_nodes.physicsMC2Step.__meta["_INPUT_NAME"][1] == "MC2域"

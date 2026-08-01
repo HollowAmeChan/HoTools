@@ -16,7 +16,7 @@ import re
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MC2_ROOT = REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
+MC2_ROOT = REPO_ROOT / "OmniNode" / "PhysicsWorld" / "mc2"
 NATIVE_ROOT = REPO_ROOT / "_native" / "src"
 NATIVE_FILES = (
     "hotools_native.cpp",
@@ -106,6 +106,12 @@ ALLOWED_FORWARDERS = {
     ("mc2.setups.mesh_cloth.object_spec", "source_identity"),
     ("mc2.setups.mesh_cloth.object_spec", "read_mc2_mesh_panel_objects"),
     ("mc2.setups.mesh_cloth.object_spec", "make_mc2_mesh_custom_objects"),
+    ("mc2.setups.bone_cloth.object_spec", "signature"),
+    ("mc2.setups.bone_cloth.object_spec", "source_identity"),
+    ("mc2.setups.bone_cloth.object_spec", "read_mc2_bone_cloth_panel_objects"),
+    ("mc2.setups.bone_cloth.object_spec", "make_mc2_bone_cloth_custom_objects"),
+    ("mc2.setups.bone_cloth.object_spec", "make_mc2_bone_cloth_explicit_properties"),
+    ("mc2.setups.bone_cloth.source_spec", "task_sources"),
     ("mc2.setups.mesh_cloth.static_fragment", "_matrix_columns"),
     ("mc2.setups.mesh_cloth.fragment_cache", "hit_count"),
     ("mc2.setups.mesh_cloth.fragment_cache", "build_count"),
@@ -125,7 +131,6 @@ ALLOWED_FORWARDERS = {
     ("mc2.partition_specs", "signature"),
     ("mc2.partition_specs", "make_mc2_partition_patch"),
     ("mc2.partition_specs", "active_partitions"),
-    ("mc2.setups.bone_cloth.authoring", "task_sources"),
     ("mc2.setups.bone_cloth.product", "world_gravity_directions"),
     ("mc2.product_slot", "_is_product_collection"),
     ("mc2.runtime_parameters", "_multiply_float32"),
@@ -215,6 +220,8 @@ E7S_PYTHON_RESPONSIBILITY_MODULES = {
         "mc2.presets",
         "mc2.source_observation_blender",
         "mc2.setups.bone_cloth.authoring",
+        "mc2.setups.bone_cloth.object_spec",
+        "mc2.setups.bone_cloth.source_spec",
         "mc2.setups.bone_cloth.product",
         "mc2.setups.bone_frame_input",
         "mc2.setups.mesh_cloth.authoring",
@@ -314,7 +321,9 @@ FORBIDDEN_PRODUCT_FUNCTIONS = {
 FORBIDDEN_SOLVER_SETTING_FIELDS = {"substeps", "iterations"}
 TASK_SOURCE_SOCKET_CONTRACTS = {
     "physicsMC2MeshClothTask": ("mesh_objects", "list[typing.Any]"),
-    "physicsMC2BoneClothTask": ("control_bones", "list[_OmniBone]"),
+    "physicsMC2BoneClothObject": ("control_bones", "list[_OmniBone]"),
+    "physicsMC2BoneClothCustomObject": ("control_bones", "list[_OmniBone]"),
+    "physicsMC2BoneClothTask": ("bone_objects", "list[typing.Any]"),
     "physicsMC2BoneSpringTask": ("root_bones", "list[_OmniBone]"),
 }
 PROFILE_NODE_PARAMETER_CONTRACTS = {
@@ -344,7 +353,7 @@ PROFILE_NODE_PARAMETER_CONTRACTS = {
     },
 }
 TASK_BITMASK_CONTRACTS = {
-    "physicsMC2BoneClothTask": "collided_by_groups",
+    "physicsMC2BoneClothCustomObject": "collided_by_groups",
     "physicsMC2BoneSpringTask": "collided_by_groups",
 }
 FORBIDDEN_MESH_RNA_FIELDS = {
@@ -355,9 +364,9 @@ FORBIDDEN_MESH_RNA_FIELDS = {
 }
 FORBIDDEN_WORLD_SCOPE_FIELD = "include_" "mesh_collision"
 WORLD_SCOPE_CONTRACT_FILES = (
-    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "nodes.py",
-    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "scope.py",
-    REPO_ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "types.py",
+    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "nodes.py",
+    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "scope.py",
+    REPO_ROOT / "OmniNode" / "PhysicsWorld" / "types.py",
 )
 E0_DOMAIN_MODULE_IMPORTS = {
     "mc2.domain_ir": frozenset((

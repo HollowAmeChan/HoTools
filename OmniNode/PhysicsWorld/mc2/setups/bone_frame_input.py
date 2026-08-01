@@ -113,7 +113,7 @@ def checkpoint_mc2_bone_frame_state(world) -> _MC2BoneFrameStateCheckpoint:
 
 def _partition_frame_intent(partition) -> _MC2BoneFrameIntentV1:
     from ..partition_specs import MC2ResolvedPartitionSpec
-    from .bone_cloth.authoring import MC2BonePartitionSourceV1
+    from .bone_cloth.source_spec import MC2BonePartitionSourceV1
 
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition must be MC2ResolvedPartitionSpec")
@@ -376,7 +376,11 @@ def _build_mc2_bone_frame_input(
                 str(record.get("name") or "")
                 for record in payload.get("bones", ())
             )
-        if len(names) != source_topology.particle_count:
+        payload = thaw_mc2_topology_payload(source_topology.payload)
+        terminal_names = tuple(
+            str(value or "") for value in payload.get("terminal_names", ())
+        )
+        if len(names) + len(terminal_names) != source_topology.particle_count:
             raise ValueError("bone frame topology record count mismatch")
         pose_bones = armature.pose.bones
         matrix_world = armature.matrix_world
@@ -424,6 +428,41 @@ def _build_mc2_bone_frame_input(
                 dtype=np.float32,
             ))
             positions.append((float(head.x), float(head.y), float(head.z)))
+
+        if terminal_names:
+            if not names:
+                raise ValueError("bone frame terminal requires a real bone")
+            terminal_name = names[-1]
+            terminal_pose_bone = pose_bones.get(terminal_name)
+            if terminal_pose_bone is None:
+                raise ValueError(
+                    f"bone frame pose is missing terminal parent bone {terminal_name!r}"
+                )
+            terminal_key = (armature_key, terminal_name)
+            terminal_pose_matrix = resolved_pose_matrices.get(
+                terminal_key,
+                terminal_pose_bone.matrix,
+            )
+            bone_rest = terminal_pose_bone.bone.matrix_local
+            tail_local = terminal_pose_bone.bone.tail_local
+            tail_pose = terminal_pose_matrix @ (
+                bone_rest.inverted() @ tail_local
+            )
+            tail_world = matrix_world @ tail_pose
+            terminal_rotation = np.asarray(
+                [
+                    [float(terminal_pose_matrix[row][column]) for column in range(3)]
+                    for row in range(3)
+                ],
+                dtype=np.float32,
+            )
+            for _terminal_name in terminal_names:
+                pose_matrices.append(terminal_rotation.copy())
+                positions.append((
+                    float(tail_world.x),
+                    float(tail_world.y),
+                    float(tail_world.z),
+                ))
 
     if len(positions) != topology.particle_count:
         raise ValueError("bone frame particle count mismatch")

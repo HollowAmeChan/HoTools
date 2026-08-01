@@ -415,6 +415,7 @@ debug_markers
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
 - 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
 - solver 可以选择强类型显式装配，也可以选择通用 implicit object registry。选择显式装配时，collector 不接 Physics World 或 implicit registry；选择 implicit registry 时，注册节点只处理声明过的通用 tag。具体 domain 的节点拓扑由其蓝本维护。
+- 强类型显式装配必须在 domain 前完成 source 与完整对象属性解析。以 MC2 BoneCloth 为例，生产链固定为 `面板对象/自定义对象 -> BoneCloth域 -> 完整Bone分区 -> Bone域收集 -> MC2模拟步`：domain 拒绝 raw Bone，collector 只校验和分组已完整解析的显式分区，不得读取 Bone 面板、补对象/域默认值或访问 Physics World；跨 Armature 时 collector 输出多个可见 request。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
 

@@ -58,9 +58,6 @@ world_types = importlib.import_module(
 writeback = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.writeback"
 )
-product_bone_authoring = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.authoring"
-)
 topology = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.topology"
 )
@@ -229,8 +226,12 @@ def _requests(
     self_collision_thickness: float = 0.008,
     cloth_mass: float = 0.4,
 ):
-    cloth_requests, _cloth_names = nodes.physicsMC2BoneClothTask(
+    cloth_objects, _cloth_count = nodes.physicsMC2BoneClothCustomObject(
         [{"armature": cloth, "bone": "Parent"}],
+        collided_by_groups=1,
+    )
+    cloth_partitions, _cloth_names = nodes.physicsMC2BoneClothTask(
+        cloth_objects,
         profile=_profile(
             bone_spring=False,
             hot=hot,
@@ -238,10 +239,12 @@ def _requests(
             cloth_mass=cloth_mass,
         ),
         connection_mode=1,
-        collided_by_groups=1,
         teleport_mode=2,
         teleport_distance=0.24 if hot else 0.5,
         teleport_rotation=35.0 if hot else 90.0,
+    )
+    cloth_requests, _cloth_report = nodes.physicsMC2BoneCollector(
+        cloth_partitions
     )
     spring_requests, _spring_names = nodes.physicsMC2BoneSpringTask(
         [{
@@ -463,11 +466,15 @@ def _run_self_scope_once(run_index: int):
     samples = []
     try:
         armature = _self_scope_armature(f"MC2ProductSelfScope{run_index}")
-        requests, _ = nodes.physicsMC2BoneClothTask(
+        objects, _object_count = nodes.physicsMC2BoneClothCustomObject(
             [
                 {"armature": armature, "bone": "Parent0"},
                 {"armature": armature, "bone": "Parent1"},
             ],
+            collided_by_groups=1,
+        )
+        partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+            objects,
             profile=_profile(
                 bone_spring=False,
                 self_collision_thickness=0.008,
@@ -475,11 +482,11 @@ def _run_self_scope_once(run_index: int):
                 cloth_mass=0.4,
             ),
             connection_mode=1,
-            collided_by_groups=1,
             teleport_mode=2,
             teleport_distance=0.5,
             teleport_rotation=90.0,
         )
+        requests, _report = nodes.physicsMC2BoneCollector(partitions)
         assert len(requests) == 1
         requests = tuple(requests)
         slot_ids = _slot_ids(requests)
@@ -609,17 +616,20 @@ def test_bone_product_frame_transform_contract() -> None:
             chain_length=1,
             x_offset=0.0,
         )
-        request = product_bone_authoring.make_mc2_bone_cloth_product_request(
+        objects, _object_count = nodes.physicsMC2BoneClothCustomObject(
             [{
                 "armature": armature,
                 "bones": ("Parent", "Chain0_0"),
-            }],
-            profile=_profile(bone_spring=False),
-            setup_options=parameters.make_mc2_setup_options(
-                "bone_cloth",
-                connection_mode=0,
-            ),
+            }]
         )
+        partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+            objects,
+            profile=_profile(bone_spring=False),
+            connection_mode=0,
+        )
+        requests, _report = nodes.physicsMC2BoneCollector(partitions)
+        assert len(requests) == 1
+        request = requests[0]
         partition = request.plan.active_partitions[0]
         fingerprint, snapshots = topology.prepare_static_inputs_for_partition(
             partition
@@ -742,8 +752,11 @@ def _run_bone_gravity_case(
             chain_length=6,
             x_offset=0.0,
         )
-        requests, _names = nodes.physicsMC2BoneClothTask(
+        objects, _object_count = nodes.physicsMC2BoneClothCustomObject(
             [{"armature": armature, "bone": "Parent"}],
+        )
+        partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+            objects,
             profile=_profile(
                 bone_spring=False,
                 gravity=4.0,
@@ -754,6 +767,7 @@ def _run_bone_gravity_case(
             normal_axis=2,
             teleport_mode=0,
         )
+        requests, _report = nodes.physicsMC2BoneCollector(partitions)
         assert len(requests) == 1
         request = requests[0]
         slot_id = product_slot.make_mc2_product_slot_id(

@@ -28,6 +28,9 @@ class MC2BoneStaticFragmentV1:
     static: MC2BoneClothStaticBuildResult
     radius_multipliers: np.ndarray
     source_elements: np.ndarray
+    output_bone_identities: tuple[str, ...]
+    output_source_elements: np.ndarray
+    output_endpoint_source_elements: np.ndarray
 
     def __post_init__(self) -> None:
         if not self.snapshot_signature or not self.partition_id or not self.output_target_id:
@@ -44,6 +47,18 @@ class MC2BoneStaticFragmentV1:
         for values, dtype, shape, name in (
             (self.radius_multipliers, np.float32, (count,), "radius_multipliers"),
             (self.source_elements, np.uint32, (count,), "source_elements"),
+            (
+                self.output_source_elements,
+                np.uint32,
+                (len(self.output_bone_identities),),
+                "output_source_elements",
+            ),
+            (
+                self.output_endpoint_source_elements,
+                np.uint32,
+                (len(self.output_bone_identities),),
+                "output_endpoint_source_elements",
+            ),
         ):
             if (
                 not isinstance(values, np.ndarray)
@@ -53,6 +68,34 @@ class MC2BoneStaticFragmentV1:
                 or not values.flags.c_contiguous
             ):
                 raise ValueError(f"{name} 必须是只读连续 {dtype.__name__}{shape}")
+
+        identities = tuple(str(value or "") for value in self.output_bone_identities)
+        if (
+            len(identities) != len(self.output_bone_identities)
+            or any(not value for value in identities)
+            or len(set(identities)) != len(identities)
+        ):
+            raise ValueError("output_bone_identities must be unique non-empty names")
+        if np.any(self.output_source_elements >= count):
+            raise ValueError("output_source_elements contains an invalid particle")
+        if np.any(self.output_endpoint_source_elements >= count):
+            raise ValueError(
+                "output_endpoint_source_elements contains an invalid particle"
+            )
+        if len(self.output_source_elements) and len(
+            np.unique(self.output_source_elements)
+        ) != len(self.output_source_elements):
+            raise ValueError("output_source_elements must be unique")
+        if tuple(
+            self.static.final_proxy.vertex_identities[int(index)]
+            for index in self.output_source_elements
+        ) != identities:
+            raise ValueError("output identities do not match particle mapping")
+        if np.any(
+            self.output_endpoint_source_elements
+            != self.output_source_elements + np.uint32(1)
+        ):
+            raise ValueError("Bone output endpoints must follow their head particles")
 
     @property
     def final_proxy(self):
@@ -106,6 +149,7 @@ class MC2BoneStaticFragmentV1:
             "partition_id": self.partition_id,
             "output_target_id": self.output_target_id,
             "particle_count": self.final_proxy.vertex_count,
+            "output_bone_count": len(self.output_bone_identities),
             "connection_mode": self.topology.connection_mode,
             "connection_model": self.topology.connection_model,
             "static": self.static.debug_dict(),
@@ -144,8 +188,33 @@ def build_mc2_bone_static_fragment(
     count = static.final_proxy.vertex_count
     radius = np.ones(count, dtype=np.float32)
     source_elements = np.arange(count, dtype=np.uint32)
+    output_bone_identities = []
+    output_source_elements = []
+    output_endpoint_source_elements = []
+    offset = 0
+    for snapshot in snapshots:
+        output_bone_identities.extend(snapshot.names)
+        output_source_elements.extend(
+            range(offset, offset + len(snapshot.names))
+        )
+        output_endpoint_source_elements.extend(
+            range(offset + 1, offset + len(snapshot.names) + 1)
+        )
+        offset += len(snapshot.names) + len(snapshot.terminal_names)
+    if offset != count:
+        raise ValueError("Bone fragment particle/source offset mismatch")
+    output_source_elements = np.asarray(
+        output_source_elements,
+        dtype=np.uint32,
+    )
+    output_endpoint_source_elements = np.asarray(
+        output_endpoint_source_elements,
+        dtype=np.uint32,
+    )
     radius.flags.writeable = False
     source_elements.flags.writeable = False
+    output_source_elements.flags.writeable = False
+    output_endpoint_source_elements.flags.writeable = False
     return MC2BoneStaticFragmentV1(
         snapshot_signature=fingerprint.overall,
         partition_id=partition.stable_id,
@@ -155,6 +224,9 @@ def build_mc2_bone_static_fragment(
         static=static,
         radius_multipliers=radius,
         source_elements=source_elements,
+        output_bone_identities=tuple(output_bone_identities),
+        output_source_elements=output_source_elements,
+        output_endpoint_source_elements=output_endpoint_source_elements,
     )
 
 

@@ -216,12 +216,16 @@ def _mesh_request(world, obj, profile):
 
 
 def _bone_request(armature, profile):
-    requests, _names = nodes.physicsMC2BoneClothTask(
+    objects, _count = nodes.physicsMC2BoneClothCustomObject(
         [{"armature": armature, "bone": "Parent"}],
-        profile=profile,
-        connection_mode=1,
         collided_by_groups=1,
     )
+    partitions, _names = nodes.physicsMC2BoneClothTask(
+        objects,
+        profile=profile,
+        connection_mode=1,
+    )
+    requests, _report = nodes.physicsMC2BoneCollector(partitions)
     assert len(requests) == 1
     return requests[0]
 

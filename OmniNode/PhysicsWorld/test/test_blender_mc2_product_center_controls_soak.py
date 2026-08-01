@@ -118,8 +118,11 @@ def _requests(
     mesh_requests, report = nodes.physicsMC2MeshCollector(entries)
     assert len(mesh_requests) == 1 and report
 
-    cloth_requests, _cloth_report = nodes.physicsMC2BoneClothTask(
+    cloth_objects, _cloth_count = nodes.physicsMC2BoneClothCustomObject(
         [{"armature": cloth, "bone": "Parent"}],
+    )
+    cloth_partitions, _cloth_domain_ids = nodes.physicsMC2BoneClothTask(
+        cloth_objects,
         profile=_profile(
             spring=False,
             stabilization_time_after_reset=stabilization_time_after_reset,
@@ -129,6 +132,9 @@ def _requests(
         anchor_object=anchor_object,
         connection_mode=0,
         **task_values,
+    )
+    cloth_requests, _cloth_report = nodes.physicsMC2BoneCollector(
+        cloth_partitions
     )
     spring_requests, _spring_report = nodes.physicsMC2BoneSpringTask(
         [{

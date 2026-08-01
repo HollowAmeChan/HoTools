@@ -33,8 +33,13 @@ from .setups.mesh_cloth.object_spec import (
 )
 from .product_request import MC2ProductRequestV1
 from .setups.bone_cloth.authoring import (
-    make_mc2_bone_cloth_product_request,
+    make_mc2_bone_cloth_domain_partitions,
+    make_mc2_bone_cloth_product_requests,
     make_mc2_bone_spring_product_request,
+)
+from .setups.bone_cloth.object_spec import (
+    make_mc2_bone_cloth_custom_objects,
+    read_mc2_bone_cloth_panel_objects,
 )
 from .product_slot import make_mc2_product_slot_id
 
@@ -703,16 +708,110 @@ def physicsMC2MeshClothTask(
 
 @omni(
     enable=True,
+    bl_label="MC2 BoneCloth对象",
+    base_color=nodeColors.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["中控骨"],
+    input_init={
+        "control_bones": {
+            "description": "读取控制骨面板的完整BoneCloth对象属性",
+        },
+    },
+    omni_description=(
+        "把一个或多个中控骨包装成BoneCloth对象；每个输入形成一个分区来源，"
+        "对象属性来自控制骨面板。"
+    ),
+    _OUTPUT_NAME=["BoneCloth对象", "对象数量"],
+    mute_passthrough=False,
+)
+def physicsMC2BoneClothObject(
+    control_bones: list[_OmniBone],
+) -> tuple[list[typing.Any], int]:
+    objects = read_mc2_bone_cloth_panel_objects(control_bones)
+    return list(objects), len(objects)
+
+
+@omni(
+    enable=True,
+    bl_label="MC2 BoneCloth自定义对象",
+    base_color=nodeColors.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["中控骨", "主碰撞组", "被碰撞组"],
+    input_init={
+        "control_bones": {
+            "description": "中控骨；不读取其BoneCloth面板属性",
+        },
+        "primary_collision_group": {
+            "min_value": 1,
+            "max_value": 16,
+            "description": "该Bone分区的主碰撞组，范围1..16",
+        },
+        "collided_by_groups": {
+            "mask_length": 16,
+            "description": "允许碰撞到该Bone分区的主碰撞组",
+        },
+    },
+    omni_description=(
+        "用socket完整定义BoneCloth对象属性；它与面板对象节点输出同一种类型，"
+        "且不会读取或修改骨骼面板。"
+    ),
+    _OUTPUT_NAME=["BoneCloth对象", "对象数量"],
+    mute_passthrough=False,
+)
+def physicsMC2BoneClothCustomObject(
+    control_bones: list[_OmniBone],
+    primary_collision_group: int = 1,
+    collided_by_groups: _OmniBitMask = 0,
+) -> tuple[list[typing.Any], int]:
+    objects = make_mc2_bone_cloth_custom_objects(
+        control_bones,
+        primary_collision_group=int(primary_collision_group),
+        collided_by_groups=int(collided_by_groups),
+    )
+    return list(objects), len(objects)
+
+
+@omni(
+    enable=True,
+    bl_label="MC2 Bone域收集",
+    base_color=nodeColors.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["Bone分区"],
+    input_init={
+        "bone_partitions": {
+            "description": "只接受MC2 BoneCloth域输出的完整分区",
+        },
+    },
+    omni_description=(
+        "收集BoneCloth完整分区；同Armature融合为一个域，"
+        "不同Armature生成多个显式域。"
+    ),
+    _OUTPUT_NAME=["MC2域", "装配报告"],
+    mute_passthrough=False,
+)
+def physicsMC2BoneCollector(
+    bone_partitions: list[typing.Any],
+) -> tuple[list[typing.Any], str]:
+    requests = make_mc2_bone_cloth_product_requests(bone_partitions)
+    return list(requests), "\n\n".join(
+        request.report_text for request in requests
+    )
+
+
+@omni(
+    enable=True,
     bl_label="MC2 BoneCloth域",
     base_color=nodeColors.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "中控骨", "粒子配置", "Anchor",
+        "BoneCloth对象", "粒子配置", "Anchor",
         *(_TASK_PARAMETER_LABELS[name] for name in _TASK_CLOTH_PARAMETER_FIELDS),
-        "连接模式", "旋转插值", "根旋转", "被碰撞组",
+        "连接模式", "旋转插值", "根旋转",
     ],
     input_init={
-        "control_bones": {"description": "直接子骨生成显式分区\n每个Armature一个统一域"},
+        "bone_objects": {
+            "description": "只接受BoneCloth对象或自定义对象节点输出",
+        },
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
         **_task_parameter_inputs(_TASK_CLOTH_PARAMETER_FIELDS),
@@ -731,17 +830,16 @@ def physicsMC2MeshClothTask(
             "max_value": 1.0,
             "description": "Fixed根骨方向比例\nTriangle会覆盖",
         },
-        "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
     omni_description=_task_long_description(
         "BoneCloth", _TASK_CLOTH_PARAMETER_FIELDS
     ),
-    _OUTPUT_NAME=["MC2域", "域标识"],
+    _OUTPUT_NAME=["Bone分区", "域标识"],
     mute_passthrough=False,
 )
 def physicsMC2BoneClothTask(
-    control_bones: list[_OmniBone],
+    bone_objects: list[typing.Any],
     profile: typing.Any = None,
     anchor_object: bpy.types.Object = None,
     normal_axis: int = 1,
@@ -760,7 +858,6 @@ def physicsMC2BoneClothTask(
     connection_mode: int = 1,
     rotational_interpolation: float = 0.5,
     root_rotation: float = 0.5,
-    collided_by_groups: _OmniBitMask = 0,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
     setup_options = make_mc2_setup_options(
@@ -770,19 +867,17 @@ def physicsMC2BoneClothTask(
         self_collision_radius_model="derived_radius",
         rotational_interpolation=rotational_interpolation,
         root_rotation=root_rotation,
-        collided_by_groups=collided_by_groups,
     )
-    requests = tuple(
-        make_mc2_bone_cloth_product_request(
-            list(group),
-            profile=profile,
-            task_parameters=task_parameters,
-            setup_options=setup_options,
-            anchor_object=anchor_object,
-        )
-        for group in _group_bone_product_sources(control_bones)
+    partitions = make_mc2_bone_cloth_domain_partitions(
+        bone_objects,
+        profile=profile,
+        task_parameters=task_parameters,
+        setup_options=setup_options,
+        anchor_object=anchor_object,
     )
-    return list(requests), _product_name_output(requests)
+    return list(partitions), "\n".join(
+        partition.stable_id for partition in partitions
+    )
 
 
 @omni(

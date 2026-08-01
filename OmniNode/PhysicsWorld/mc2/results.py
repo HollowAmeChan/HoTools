@@ -329,18 +329,31 @@ def make_mc2_bone_domain_results(
             program.output_target_index == target_index
         ).astype(np.uint32, copy=False)
         source_elements = program.output_source_element[logical_indices]
-        order = np.argsort(source_elements, kind="stable")
-        logical_indices = logical_indices[order]
-        source_elements = source_elements[order]
-        identities = tuple(fragment.final_proxy.vertex_identities)
-        if (
-            len(logical_indices) != len(identities)
-            or not np.array_equal(
-                source_elements,
-                np.arange(len(identities), dtype=np.uint32),
+        logical_by_source = {}
+        for logical_index, source_element in zip(logical_indices, source_elements):
+            source_element = int(source_element)
+            if source_element in logical_by_source:
+                raise ValueError("Bone compiled output map contains duplicate particles")
+            logical_by_source[source_element] = int(logical_index)
+        output_source_elements = np.asarray(
+            fragment.output_source_elements,
+            dtype=np.uint32,
+        )
+        try:
+            logical_indices = np.asarray(
+                tuple(
+                    logical_by_source[int(source_element)]
+                    for source_element in output_source_elements
+                ),
+                dtype=np.uint32,
             )
-        ):
-            raise ValueError("Bone compiled output map does not cover stable identities")
+        except KeyError as exc:
+            raise ValueError(
+                "Bone compiled output map is missing a writeback particle"
+            ) from exc
+        identities = tuple(fragment.output_bone_identities)
+        if len(logical_indices) != len(identities):
+            raise ValueError("Bone writeback identities do not match output particles")
         entries.append(_make_mc2_bone_result_values(
             setup_type=program.setup_type,
             task_id=static_input.partition.stable_id,

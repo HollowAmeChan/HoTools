@@ -41,6 +41,12 @@ static_build = importlib.import_module(
 product_authoring = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.authoring"
 )
+object_spec = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.object_spec"
+)
+source_spec = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.source_spec"
+)
 domain_collect = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.domain_collect"
 )
@@ -155,8 +161,19 @@ def _sources(armature):
 
 
 def _request(armature):
-    return product_authoring.make_mc2_bone_cloth_product_request(
-        _sources(armature),
+    chains = tuple(
+        source_spec.make_mc2_bone_chain_source(value)
+        for value in _sources(armature)
+    )
+    bone_object = object_spec.MC2BoneClothObjectSpec(
+        partition_source=source_spec.MC2BonePartitionSourceV1(
+            "bone_cloth", armature, chains
+        ),
+        explicit_properties=object_spec.make_mc2_bone_cloth_explicit_properties(),
+        property_origin="socket",
+    )
+    partitions = product_authoring.make_mc2_bone_cloth_domain_partitions(
+        [bone_object],
         profile=parameters.make_mc2_particle_profile(),
         setup_options=parameters.make_mc2_setup_options(
             "bone_cloth",
@@ -164,6 +181,18 @@ def _request(armature):
             connection_mode=1,
         ),
     )
+    return product_authoring.make_mc2_bone_cloth_product_requests(partitions)[0]
+
+
+def _control_request(armature, controls, *, setup_options):
+    objects = object_spec.make_mc2_bone_cloth_custom_objects(
+        [(armature, name) for name in controls]
+    )
+    partitions = product_authoring.make_mc2_bone_cloth_domain_partitions(
+        objects,
+        setup_options=setup_options,
+    )
+    return product_authoring.make_mc2_bone_cloth_product_requests(partitions)[0]
 
 
 def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
@@ -177,8 +206,14 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
     )
     assert built_topology.connection_model == "hotools_product"
     assert len(built_topology.sources) == 3
-    assert built_topology.particle_count == 9
-    assert {(0, 3), (1, 4), (2, 5), (3, 6), (4, 7), (5, 8)} <= set(
+    assert built_topology.particle_count == 12
+    assert {
+        (0, 4), (1, 5), (2, 6), (3, 7),
+        (4, 8), (5, 9), (6, 10), (7, 11),
+    } <= set(
+        built_topology.bone_connection.lines
+    )
+    assert {(2, 3), (6, 7), (10, 11)} <= set(
         built_topology.bone_connection.lines
     )
     assert built_topology.bone_connection.triangles
@@ -189,7 +224,7 @@ def test_product_task_builds_multi_chain_topology_and_static_bundle() -> None:
         raw_snapshots=snapshots,
     )
     assert built_static.connection_model == "hotools_product"
-    assert built_static.final_proxy.vertex_count == 9
+    assert built_static.final_proxy.vertex_count == 12
     assert {
         tuple(sorted(triangle))
         for triangle in built_static.final_proxy.triangles
@@ -207,16 +242,13 @@ def test_product_task_rejects_sources_from_multiple_armatures() -> None:
     replacement["armature"] = other
     mixed_sources[-1] = replacement
     try:
-        product_authoring.make_mc2_bone_cloth_product_request(
-            mixed_sources,
-            setup_options=parameters.make_mc2_setup_options(
-                "bone_cloth",
-                connection_model="hotools_product",
-                connection_mode=1,
-            ),
+        chains = tuple(
+            source_spec.make_mc2_bone_chain_source(value)
+            for value in mixed_sources
         )
+        source_spec.MC2BonePartitionSourceV1("bone_cloth", armature, chains)
     except ValueError as exc:
-        assert "一个 Armature" in str(exc)
+        assert "one Armature" in str(exc)
     else:
         raise AssertionError("multi-armature BoneCloth product was accepted")
 
@@ -234,11 +266,18 @@ def test_product_partition_capture_builds_complete_static_contract() -> None:
         static_input_snapshots=product_snapshots,
     )
     assert product.task_id == partition.stable_id
-    assert product.particle_count == 9
+    assert product.particle_count == 12
     assert product.connection_mode == 1
     assert product.connection_model == "hotools_product"
-    assert product.bone_connection.root_indices == (0, 0, 0, 1, 1, 1, 2, 2, 2)
-    assert {(0, 3), (1, 4), (2, 5), (3, 6), (4, 7), (5, 8)} <= set(
+    assert product.bone_connection.root_indices == (
+        0, 0, 0, 0,
+        1, 1, 1, 1,
+        2, 2, 2, 2,
+    )
+    assert {
+        (0, 4), (1, 5), (2, 6), (3, 7),
+        (4, 8), (5, 9), (6, 10), (7, 11),
+    } <= set(
         product.bone_connection.lines
     )
     assert product.bone_connection.triangles
@@ -250,7 +289,7 @@ def test_product_partition_capture_builds_complete_static_contract() -> None:
         product,
         raw_snapshots=product_snapshots,
     )
-    assert product_static.final_proxy.vertex_count == 9
+    assert product_static.final_proxy.vertex_count == 12
     assert product_static.final_proxy.edges
     assert product_static.final_proxy.triangles
     assert product_static.distance.distance_targets
@@ -272,8 +311,18 @@ def test_product_partition_capture_builds_complete_static_contract() -> None:
     assert compiled.program.partition_ids == (partition.stable_id,)
     assert compiled.program.output_targets[0].space_kind == "bone_pose"
     assert compiled.program.output_targets[0].target_id == fragment.output_target_id
-    assert compiled.program.particle_count == 9
-    assert compiled.program.particle_source_element.tolist() == list(range(9))
+    assert compiled.program.particle_count == 12
+    assert compiled.program.particle_source_element.tolist() == list(range(12))
+    assert fragment.output_bone_identities == (
+        "A0", "A1", "A2",
+        "B0", "B1", "B2",
+        "C0", "C1", "C2",
+    )
+    assert fragment.output_source_elements.tolist() == [
+        0, 1, 2,
+        4, 5, 6,
+        8, 9, 10,
+    ]
     assert {
         table.kind for table in compiled.program.constraint_tables
     } == {"distance", "tether", "bending"}
@@ -340,13 +389,18 @@ def test_bone_spring_partition_uses_the_same_domain_owner() -> None:
 
 def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
     armature = _armature()
-    request = product_authoring.make_mc2_bone_cloth_product_request(
-        [(armature, "A0"), (armature, "B0")],
-        setup_options=parameters.make_mc2_setup_options(
-            "bone_cloth",
-            connection_mode=0,
-        ),
+    request = product_authoring.make_mc2_bone_cloth_product_requests(
+        product_authoring.make_mc2_bone_cloth_domain_partitions(
+            object_spec.make_mc2_bone_cloth_custom_objects(
+                [(armature, "A0"), (armature, "B0")]
+            ),
+            setup_options=parameters.make_mc2_setup_options(
+                "bone_cloth",
+                connection_mode=0,
+            ),
+        )
     )
+    request = request[0]
     assert len(request.plan.active_partitions) == 2
     fragments = []
     for partition in request.plan.active_partitions:
@@ -366,7 +420,7 @@ def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
     draft = domain_collect.build_mc2_domain_draft(request.plan)
     compiled = domain_compile.compile_mc2_domain_draft(draft, tuple(fragments))
     assert compiled.program.partition_count == 2
-    assert compiled.program.particle_count == 4
+    assert compiled.program.particle_count == 6
     assert compiled.program.partition_ids == draft.partition_ids
     assert len({target.target_id for target in compiled.program.output_targets}) == 2
 
@@ -399,12 +453,12 @@ def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
         frame_inputs,
     )
     assert packet.frame == 12 and packet.generation == 3
-    assert packet.animated_base_world_positions.shape == (4, 3)
-    assert packet.animated_base_world_rotations.shape == (4, 4)
+    assert packet.animated_base_world_positions.shape == (6, 3)
+    assert packet.animated_base_world_rotations.shape == (6, 4)
     assert len(frame_snapshots) == 2
     np.testing.assert_allclose(
         np.linalg.norm(packet.animated_base_world_rotations, axis=1),
-        np.ones(4),
+        np.ones(6),
         rtol=1.0e-5,
         atol=1.0e-6,
     )
@@ -425,11 +479,11 @@ def test_same_armature_bone_cloth_partitions_compile_into_one_domain() -> None:
 
 def test_bone_product_collection_and_fragment_cache_are_transactional() -> None:
     armature = _armature()
-    request = product_authoring.make_mc2_bone_cloth_product_request(
-        [(armature, "A0"), (armature, "B0")],
+    request = _control_request(
+        armature,
+        ("A0", "B0"),
         setup_options=parameters.make_mc2_setup_options(
-            "bone_cloth",
-            connection_mode=0,
+            "bone_cloth", connection_mode=0
         ),
     )
     collection = product_bone_collect.collect_mc2_bone_product_plan(
@@ -520,14 +574,8 @@ def test_bone_product_slots_reuse_owner_and_allow_explicit_collectors() -> None:
         "bone_cloth",
         connection_mode=0,
     )
-    request_a = product_authoring.make_mc2_bone_cloth_product_request(
-        [(armature, "A0")],
-        setup_options=options,
-    )
-    request_b = product_authoring.make_mc2_bone_cloth_product_request(
-        [(armature, "B0")],
-        setup_options=options,
-    )
+    request_a = _control_request(armature, ("A0",), setup_options=options)
+    request_b = _control_request(armature, ("B0",), setup_options=options)
     collection_a = product_bone_collect.collect_mc2_bone_product_plan(
         object(), request_a.plan,
     )

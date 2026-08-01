@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 
 from ...names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from ...parameters import (
@@ -13,88 +13,21 @@ from ...parameters import (
     make_mc2_setup_options,
     make_mc2_task_parameters,
 )
-from ...partition_specs import collect_mc2_partition_entries, make_mc2_partition_entry
+from ...partition_specs import (
+    MC2PartitionEntry,
+    MC2_UNSET,
+    collect_mc2_partition_entries,
+    make_mc2_partition_entry,
+)
 from ...product_request import MC2_FUSION_REQUIRE, MC2ProductRequestV1
-from ...source_identity import mc2_source_token
-
-
-@dataclass(frozen=True)
-class MC2BoneChainSourceV1:
-    """一个 Armature 内有序且已解析的骨链引用。"""
-
-    armature: object
-    root_bone: str
-    bone_names: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        root = str(self.root_bone or "").strip()
-        names = tuple(str(name or "").strip() for name in self.bone_names)
-        if getattr(self.armature, "type", None) != "ARMATURE":
-            raise TypeError("Bone product chain 需要有效 Armature Object")
-        if not root or not names or any(not name for name in names):
-            raise ValueError("Bone product chain 的根骨和骨名不能为空")
-        if names[0] != root:
-            raise ValueError("Bone product chain 的第一根骨必须等于 root_bone")
-        if len(set(names)) != len(names):
-            raise ValueError("Bone product chain 不能重复包含同一根骨")
-        object.__setattr__(self, "root_bone", root)
-        object.__setattr__(self, "bone_names", names)
-
-    def task_source_dict(self) -> dict:
-        """仅供 setup capture 适配器读取，不创建 task。"""
-
-        return {
-            "armature": self.armature,
-            "root_bone": self.root_bone,
-            "bones": self.bone_names,
-        }
-
-    def token(self) -> dict:
-        return {
-            "root_bone": self.root_bone,
-            "bones": self.bone_names,
-        }
-
-
-@dataclass(frozen=True)
-class MC2BonePartitionSourceV1:
-    """一个 Bone partition 的同 Armature 多链 source。"""
-
-    setup_type: str
-    armature: object
-    chains: tuple[MC2BoneChainSourceV1, ...]
-
-    def __post_init__(self) -> None:
-        if self.setup_type not in (MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING):
-            raise ValueError("Bone partition setup_type 无效")
-        if getattr(self.armature, "type", None) != "ARMATURE":
-            raise TypeError("Bone partition 需要有效 Armature Object")
-        if not self.chains or any(
-            not isinstance(chain, MC2BoneChainSourceV1) for chain in self.chains
-        ):
-            raise TypeError("Bone partition 至少需要一个 MC2BoneChainSourceV1")
-        if any(chain.armature is not self.armature for chain in self.chains):
-            raise ValueError("Bone partition 的全部骨链必须属于同一 Armature")
-        roots = tuple(chain.root_bone for chain in self.chains)
-        if len(set(roots)) != len(roots):
-            raise ValueError("Bone partition 不能重复包含同一根链")
-        if self.setup_type == MC2_SETUP_BONE_SPRING and any(
-            not chain.bone_names for chain in self.chains
-        ):
-            raise ValueError("BoneSpring partition 包含空链")
-
-    @property
-    def task_sources(self) -> tuple[dict, ...]:
-        return tuple(chain.task_source_dict() for chain in self.chains)
-
-    def mc2_source_token(self) -> dict:
-        armature_token = mc2_source_token(self.armature)
-        return {
-            "kind": "bone_partition_v1",
-            "setup_type": self.setup_type,
-            "armature": armature_token,
-            "chains": tuple(chain.token() for chain in self.chains),
-        }
+from .object_spec import (
+    MC2BoneClothExplicitPropertiesSpec,
+    MC2BoneClothObjectSpec,
+)
+from .source_spec import (
+    MC2BonePartitionSourceV1,
+    make_mc2_bone_chain_source,
+)
 
 
 def _flatten(values) -> tuple[object, ...]:
@@ -109,64 +42,6 @@ def _flatten(values) -> tuple[object, ...]:
             continue
         result.append(value)
     return tuple(result)
-
-
-def _chain_names(root_bone) -> tuple[str, ...]:
-    names = []
-    current = root_bone
-    guard = 0
-    while current is not None and guard < 4096:
-        name = str(getattr(current, "name", "") or "").strip()
-        if name:
-            names.append(name)
-        children = tuple(getattr(current, "children", ()) or ())
-        current = children[0] if children else None
-        guard += 1
-    if current is not None:
-        raise ValueError("Bone product chain 超过 4096 根骨，疑似存在非法循环")
-    return tuple(names)
-
-
-def _chain_from_explicit_source(source) -> MC2BoneChainSourceV1:
-    if not isinstance(source, dict) or source.get("armature") is None:
-        raise TypeError("Bone product source 必须是 Bone socket 或显式 chain dict")
-    armature = source["armature"]
-    names = tuple(str(name) for name in (source.get("bones") or ()) if str(name))
-    root_name = str(source.get("root_bone") or source.get("bone") or "").strip()
-    if names:
-        root_name = root_name or names[0]
-    else:
-        pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
-        root = pose_bones.get(root_name) if pose_bones is not None else None
-        if root is None:
-            raise ValueError(f"Bone product root bone not found: {root_name!r}")
-        names = _chain_names(root)
-    return MC2BoneChainSourceV1(armature, root_name, names)
-
-
-def _expand_bone_cloth_control(value) -> tuple[MC2BoneChainSourceV1, ...]:
-    if isinstance(value, dict) and value.get("armature") is not None:
-        if value.get("bones"):
-            return (_chain_from_explicit_source(value),)
-        armature = value["armature"]
-        parent_name = str(value.get("bone") or value.get("root_bone") or "").strip()
-    elif isinstance(value, tuple) and len(value) == 2:
-        armature, parent_name = value
-        parent_name = str(parent_name or "").strip()
-    else:
-        raise TypeError("BoneCloth product source 必须是控制 Bone socket 或显式 chain")
-    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
-    parent = pose_bones.get(parent_name) if pose_bones is not None else None
-    if parent is None:
-        raise ValueError(f"BoneCloth control bone not found: {parent_name!r}")
-    children = tuple(getattr(parent, "children", ()) or ())
-    if not children:
-        raise ValueError(f"BoneCloth control bone has no child chains: {parent_name!r}")
-    return tuple(
-        MC2BoneChainSourceV1(armature, names[0], names)
-        for names in (_chain_names(child) for child in children)
-        if names
-    )
 
 
 def _one_armature(groups) -> object:
@@ -193,6 +68,184 @@ def _report_text(plan) -> str:
         f"骨架 1；策略 Require Fusion；后端 CPU DomainV1。\n"
         f"Domain签名：{report.domain_signature}"
     )
+
+
+def _flatten_bone_object_specs(values):
+    pending = [values]
+    result = []
+    while pending:
+        value = pending.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            pending[0:0] = list(value)
+            continue
+        if not isinstance(value, MC2BoneClothObjectSpec):
+            raise TypeError(
+                "MC2 BoneCloth domain only accepts wrapped BoneCloth objects"
+            )
+        result.append(value)
+    return tuple(result)
+
+
+def make_mc2_bone_cloth_domain_partitions(
+    bone_objects,
+    *,
+    profile: MC2ParticleProfileSpec | None = None,
+    task_parameters: MC2TaskParametersSpec | None = None,
+    setup_options: MC2SetupOptionsSpec | None = None,
+    anchor_object=None,
+    producer: str = "mc2.bone_cloth_domain",
+) -> tuple[MC2PartitionEntry, ...]:
+    """Combine wrapped objects and domain values into complete partitions."""
+
+    objects = _flatten_bone_object_specs(bone_objects)
+    if profile is None:
+        profile = make_mc2_particle_profile(spring_enabled=False)
+    if task_parameters is None:
+        task_parameters = make_mc2_task_parameters()
+    if setup_options is None:
+        setup_options = make_mc2_setup_options(
+            MC2_SETUP_BONE_CLOTH,
+            connection_model="hotools_product",
+            self_collision_radius_model="derived_radius",
+        )
+    if not isinstance(profile, MC2ParticleProfileSpec):
+        raise TypeError("MC2 BoneCloth domain particle profile type is invalid")
+    if not isinstance(task_parameters, MC2TaskParametersSpec):
+        raise TypeError("MC2 BoneCloth domain task parameter type is invalid")
+    if (
+        not isinstance(setup_options, MC2SetupOptionsSpec)
+        or setup_options.setup_type != MC2_SETUP_BONE_CLOTH
+    ):
+        raise TypeError("MC2 BoneCloth domain setup options are invalid")
+
+    result = []
+    for bone_object in objects:
+        properties = bone_object.explicit_properties
+        partition_options = replace(
+            setup_options,
+            collided_by_groups=properties.collided_by_groups,
+        )
+        result.append(make_mc2_partition_entry(
+            bone_object.partition_source,
+            setup_type=MC2_SETUP_BONE_CLOTH,
+            origin="explicit",
+            producer=str(producer or "mc2.bone_cloth_domain"),
+            source_properties=properties,
+            profile=profile,
+            task_parameters=task_parameters,
+            setup_options=partition_options,
+            anchor_object=anchor_object,
+            enabled=True,
+            collision_group=properties.self_group_bit,
+            collision_mask=properties.self_collision_groups,
+        ))
+    return tuple(result)
+
+
+def _flatten_bone_cloth_partitions(values) -> tuple[MC2PartitionEntry, ...]:
+    pending = [values]
+    result = []
+    while pending:
+        value = pending.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            pending[0:0] = list(value)
+            continue
+        if not isinstance(value, MC2PartitionEntry):
+            raise TypeError(
+                f"MC2 Bone domain collector only accepts Bone partitions, got "
+                f"{type(value).__name__}"
+            )
+        if value.setup_type != MC2_SETUP_BONE_CLOTH:
+            raise ValueError(
+                "MC2 Bone domain collector only accepts bone_cloth partitions"
+            )
+        result.append(value)
+    return tuple(result)
+
+
+def _validate_complete_bone_cloth_partition(entry: MC2PartitionEntry) -> None:
+    if entry.origin != "explicit":
+        raise ValueError("MC2 Bone domain collector rejects implicit partitions")
+    if not isinstance(entry.source, MC2BonePartitionSourceV1):
+        raise TypeError("MC2 BoneCloth partition source is invalid")
+    if not isinstance(
+        entry.source_properties, MC2BoneClothExplicitPropertiesSpec
+    ):
+        raise TypeError("MC2 BoneCloth partition lacks complete object properties")
+    for name in (
+        "profile",
+        "task_parameters",
+        "setup_options",
+        "anchor_object",
+        "enabled",
+        "collision_group",
+        "collision_mask",
+    ):
+        if getattr(entry, name) is MC2_UNSET:
+            raise ValueError(
+                f"MC2 BoneCloth partition field {name} was not resolved by the domain"
+            )
+    if entry.enabled is not True:
+        raise ValueError(
+            "MC2 BoneCloth participation is expressed by links, not enabled=False"
+        )
+    if entry.patches:
+        raise ValueError("MC2 Bone domain collector rejects partition patches")
+
+
+def _armature_key(entry: MC2PartitionEntry) -> tuple[int, int]:
+    armature = entry.source.armature
+    pointer = getattr(armature, "as_pointer", None)
+    data_pointer = getattr(getattr(armature, "data", None), "as_pointer", None)
+    owner = int(pointer()) if callable(pointer) else 0
+    data = int(data_pointer()) if callable(data_pointer) else 0
+    if owner <= 0 or data <= 0:
+        raise ValueError("MC2 BoneCloth Armature identity is invalid")
+    return owner, data
+
+
+def make_mc2_bone_cloth_product_requests(
+    entries,
+) -> tuple[MC2ProductRequestV1, ...]:
+    """Collect complete partitions into visible per-Armature requests."""
+
+    partitions = _flatten_bone_cloth_partitions(entries)
+    if not partitions:
+        raise ValueError("MC2 Bone domain collector has no input partitions")
+    grouped: dict[tuple[int, int], list[MC2PartitionEntry]] = {}
+    seen = set()
+    for entry in partitions:
+        _validate_complete_bone_cloth_partition(entry)
+        if entry.stable_id in seen:
+            raise ValueError(
+                f"MC2 Bone domain collector found duplicate stable id: "
+                f"{entry.stable_id}"
+            )
+        seen.add(entry.stable_id)
+        grouped.setdefault(_armature_key(entry), []).append(entry)
+
+    requests = []
+    for armature_partitions in grouped.values():
+        plan = collect_mc2_partition_entries(
+            setup_type=MC2_SETUP_BONE_CLOTH,
+            explicit_entries=tuple(armature_partitions),
+            implicit_entries=(),
+        )
+        armature = armature_partitions[0].source.armature
+        report = (
+            f"{_report_text(plan)}\n"
+            f"Grouping: Armature {getattr(armature, 'name_full', getattr(armature, 'name', ''))}"
+        )
+        requests.append(MC2ProductRequestV1(
+            plan=plan,
+            fusion_policy=MC2_FUSION_REQUIRE,
+            report_text=report,
+        ))
+    return tuple(requests)
 
 
 def _request_from_groups(
@@ -245,40 +298,6 @@ def _request_from_groups(
     )
 
 
-def make_mc2_bone_cloth_product_request(
-    control_bones,
-    *,
-    profile: MC2ParticleProfileSpec | None = None,
-    task_parameters: MC2TaskParametersSpec | None = None,
-    setup_options: MC2SetupOptionsSpec | None = None,
-    anchor_object=None,
-    enabled: bool = True,
-) -> MC2ProductRequestV1:
-    """每个控制骨形成一个 partition；显式链按首次出现位置合并。"""
-
-    groups: list[list[MC2BoneChainSourceV1]] = []
-    explicit_group_index = None
-    for value in _flatten(control_bones):
-        chains = _expand_bone_cloth_control(value)
-        explicit = isinstance(value, dict) and bool(value.get("bones"))
-        if explicit:
-            if explicit_group_index is None:
-                explicit_group_index = len(groups)
-                groups.append([])
-            groups[explicit_group_index].extend(chains)
-        else:
-            groups.append(list(chains))
-    return _request_from_groups(
-        MC2_SETUP_BONE_CLOTH,
-        groups,
-        profile=profile,
-        task_parameters=task_parameters,
-        setup_options=setup_options,
-        anchor_object=anchor_object,
-        enabled=enabled,
-    )
-
-
 def make_mc2_bone_spring_product_request(
     root_bones,
     *,
@@ -290,7 +309,7 @@ def make_mc2_bone_spring_product_request(
 ) -> MC2ProductRequestV1:
     """同 Armature 的全部 root chain 形成一个 Line partition。"""
 
-    chains = tuple(_chain_from_explicit_source(value) for value in _flatten(root_bones))
+    chains = tuple(make_mc2_bone_chain_source(value) for value in _flatten(root_bones))
     if setup_options is None:
         setup_options = make_mc2_setup_options(
             MC2_SETUP_BONE_SPRING,
@@ -312,8 +331,7 @@ def make_mc2_bone_spring_product_request(
 
 
 __all__ = [
-    "MC2BoneChainSourceV1",
-    "MC2BonePartitionSourceV1",
-    "make_mc2_bone_cloth_product_request",
+    "make_mc2_bone_cloth_domain_partitions",
+    "make_mc2_bone_cloth_product_requests",
     "make_mc2_bone_spring_product_request",
 ]

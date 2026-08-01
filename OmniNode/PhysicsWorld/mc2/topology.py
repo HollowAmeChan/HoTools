@@ -30,7 +30,7 @@ class _MC2TopologyIntentV1:
 
 def _partition_intent(partition) -> _MC2TopologyIntentV1:
     from .partition_specs import MC2ResolvedPartitionSpec
-    from .setups.bone_cloth.authoring import MC2BonePartitionSourceV1
+    from .setups.bone_cloth.source_spec import MC2BonePartitionSourceV1
 
     if not isinstance(partition, MC2ResolvedPartitionSpec):
         raise TypeError("partition 必须是 MC2ResolvedPartitionSpec")
@@ -167,6 +167,9 @@ class MC2BoneRawSnapshot:
     head_tail: np.ndarray
     matrices: np.ndarray
     resolved: bool
+    # BoneCloth simulates segment endpoints.  ``names`` remains the stable
+    # Blender PoseBone identity list; terminal names are solver-only points.
+    terminal_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -558,6 +561,10 @@ def _bone_children(bone) -> tuple:
         return ()
 
 
+def _bone_terminal_name(name: str) -> str:
+    return f"{str(name or '').strip()}::__mc2_terminal__"
+
+
 def _collect_bone_names(collection, requested: tuple[str, ...]) -> tuple[str, ...]:
     ordered: list[str] = []
     seen: set[str] = set()
@@ -684,6 +691,7 @@ def _read_bone_raw_snapshot(
         head_tail=head_tail,
         matrices=matrices,
         resolved=resolved,
+        terminal_names=(_bone_terminal_name(names[-1]),) if names else (),
     )
 
 
@@ -735,6 +743,9 @@ def _bone_payload(source) -> dict:
         "armature_pointer": _pointer(armature),
         "requested": requested,
         "bones": tuple(records),
+        "terminal_names": (
+            (_bone_terminal_name(records[-1]["name"]),) if records else ()
+        ),
     }
 
 
@@ -807,7 +818,7 @@ def _build_source_topology(source_kind: str, source, source_index: int) -> MC2So
         particle_count = len(payload["positions"])
         bone_names = ()
     else:
-        particle_count = len(payload["bones"])
+        particle_count = len(payload["bones"]) + len(payload.get("terminal_names", ()))
         bone_names = tuple(
             str(record.get("name") or "")
             for record in payload["bones"]
@@ -868,6 +879,11 @@ def _build_compact_bone_source_topology(
         "armature_name": snapshot.armature_name,
         "armature_pointer": snapshot.armature_pointer,
         "requested": snapshot.requested,
+        "terminal_names": snapshot.terminal_names,
+        "terminal_positions": tuple(
+            tuple(float(value) for value in snapshot.head_tail[-1, 3:])
+            for _terminal_name in snapshot.terminal_names
+        ) if snapshot.names else (),
     }
     return MC2SourceTopologySpec(
         source_index=source_index,
@@ -878,8 +894,9 @@ def _build_compact_bone_source_topology(
             snapshot.armature_name,
             snapshot.requested,
             snapshot.names,
+            snapshot.terminal_names,
         )),
-        particle_count=len(snapshot.names),
+        particle_count=len(snapshot.names) + len(snapshot.terminal_names),
         resolved=snapshot.resolved,
         payload=_freeze(payload),
         bone_names=snapshot.names,
@@ -967,6 +984,9 @@ def _build_mc2_topology_spec(
             product_chains.append(tuple(
                 source_offset + local_index
                 for local_index in range(len(snapshot.names))
+            ) + tuple(
+                source_offset + len(snapshot.names) + terminal_index
+                for terminal_index in range(len(snapshot.terminal_names))
             ))
             for local_index, name in enumerate(snapshot.names):
                 key = (snapshot.armature_pointer, name)
@@ -979,22 +999,56 @@ def _build_mc2_topology_spec(
                     parent_indices.append(-1)
                 else:
                     parent_indices.append(source_offset + local_parent)
-                child_indices.append(tuple(
+                children = tuple(
                     source_offset + child
                     for child, parent in enumerate(snapshot.parents)
                     if int(parent) == local_index
-                ))
+                )
+                if local_index == len(snapshot.names) - 1:
+                    children += tuple(
+                        source_offset + len(snapshot.names) + terminal_index
+                        for terminal_index in range(len(snapshot.terminal_names))
+                    )
+                child_indices.append(children)
                 positions.append(tuple(
                     float(value) for value in snapshot.head_tail[local_index, :3]
+                ))
+            terminal_positions = (
+                snapshot.head_tail[-1, 3:]
+                if snapshot.names
+                else np.empty((0, 3), dtype=np.float32)
+            )
+            for terminal_index, _terminal_name in enumerate(snapshot.terminal_names):
+                parent_indices.append(
+                    source_offset + len(snapshot.names) - 1
+                    if snapshot.names
+                    else -1
+                )
+                child_indices.append(())
+                positions.append(tuple(
+                    float(value) for value in terminal_positions
                 ))
         for source in (() if compact_bone_snapshots else sources):
             payload = thaw_mc2_topology_payload(source.payload)
             armature_pointer = int(payload.get("armature_pointer", 0) or 0)
             records = payload.get("bones", ())
+            terminal_names = tuple(
+                str(value or "") for value in payload.get("terminal_names", ())
+            )
+            terminal_positions = tuple(payload.get("terminal_positions", ()))
+            if records and not terminal_names:
+                terminal_names = (_bone_terminal_name(records[-1].get("name", "")),)
+            if records and not terminal_positions:
+                terminal_positions = (
+                    tuple(records[-1].get("tail", records[-1].get("head", (0, 0, 0)))),
+                )
             source_offset = len(positions)
             product_chains.append(tuple(
                 source_offset + local_index
                 for local_index in range(len(records))
+            ) + tuple(
+                source_offset + len(records) + terminal_index
+                for terminal_index in range(len(terminal_names))
             ))
             for local_index, record in enumerate(records):
                 key = (armature_pointer, str(record.get("name") or ""))
@@ -1009,11 +1063,30 @@ def _build_mc2_topology_spec(
                     parent_indices.append(-1)
                 else:
                     parent_indices.append(source_offset + local_parent)
-                child_indices.append(tuple(
+                children = tuple(
                     source_offset + int(child)
                     for child in record.get("child_indices", ())
-                ))
+                )
+                if local_index == len(records) - 1:
+                    children += tuple(
+                        source_offset + len(records) + terminal_index
+                        for terminal_index in range(len(terminal_names))
+                    )
+                child_indices.append(children)
                 positions.append(tuple(float(value) for value in record["head"]))
+            for terminal_index, _terminal_name in enumerate(terminal_names):
+                parent_indices.append(
+                    source_offset + len(records) - 1
+                    if records
+                    else -1
+                )
+                child_indices.append(())
+                position = (
+                    terminal_positions[terminal_index]
+                    if terminal_index < len(terminal_positions)
+                    else (0, 0, 0)
+                )
+                positions.append(tuple(float(value) for value in position))
         if positions and all(source.resolved for source in sources):
             if intent.setup_options.connection_model == "hotools_product":
                 bone_connection = build_hotools_bone_connection(
