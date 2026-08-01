@@ -64,6 +64,10 @@ try:
     assert items["EyeSculpt"].merge
     assert items["EyeSculpt"].weight == 0.75
     assert items["eyeBlinkLeft"].initialized
+    assert rebase._rebase_configuration_error(shape_keys) is None
+    assert [
+        item.shape_key_name for item in rebase._merge_rebase_items(shape_keys)
+    ] == ["EyeSculpt"]
 
     # 活动键配置行直接指向持久列表中的同一个条目。
     obj.active_shape_key_index = shape_keys.key_blocks.find("eyeBlinkLeft")

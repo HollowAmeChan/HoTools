@@ -336,6 +336,27 @@ def _current_item_names(shape_keys):
     }
 
 
+def _merge_rebase_items(shape_keys):
+    return tuple(
+        item for item in shape_keys.ho_rebase_items
+        if item.merge and item.mergeable
+    )
+
+
+def _rebase_configuration_error(shape_keys):
+    current_names = _current_item_names(shape_keys)
+    listed_names = {
+        item.shape_key_name for item in shape_keys.ho_rebase_items
+    }
+    if current_names != listed_names:
+        return "形态键已变化，请先刷新变基列表"
+    if any(not item.initialized for item in shape_keys.ho_rebase_items):
+        return "仍有未初始化的形态键，请先推断未知"
+    if not _merge_rebase_items(shape_keys):
+        return "请至少勾选一个可合并的来源键"
+    return None
+
+
 def _active_rebase_item(obj):
     shape_keys = _shape_key_data(obj)
     active_key = getattr(obj, "active_shape_key", None)
@@ -353,11 +374,11 @@ def _active_rebase_item(obj):
     )
 
 
-def _draw_rebase_item_controls(layout, item):
+def _draw_rebase_item_controls(layout:bpy.types.UILayout, item):
     row = layout.row(align=True)
     selected = row.row(align=True)
     selected.ui_units_x = 2.0
-    selected.prop(item, "selected", text="")
+    selected.prop(item, "selected", text="",toggle=True)
     name = row.row(align=True)
     name.ui_units_x = 9.0
     name.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
@@ -371,7 +392,7 @@ def _draw_rebase_item_controls(layout, item):
     merge = row.row(align=True)
     merge.ui_units_x = 2.0
     merge.enabled = item.mergeable
-    merge.prop(item, "merge", text="")
+    merge.prop(item, "merge", text="",toggle=True)
 
 
 def _draw_rebase_header(layout):
@@ -512,27 +533,58 @@ class OP_ShapekeyTools_RebaseApply(Operator):
         shape_keys = _shape_key_data(context.object)
         return shape_keys is not None and len(shape_keys.key_blocks) >= 2
 
+    def invoke(self, context, event):
+        shape_keys = _shape_key_data(context.object)
+        if shape_keys is None:
+            self.report({'ERROR'}, "当前对象没有形态键")
+            return {'CANCELLED'}
+        error = _rebase_configuration_error(shape_keys)
+        if error is not None:
+            self.report({'WARNING'}, error)
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(
+            self,
+            width=520,
+            title="确认应用 FBSF",
+            confirm_text="确认应用",
+            cancel_default=True,
+        )
+
+    def draw(self, context):
+        shape_keys = _shape_key_data(context.object)
+        layout = self.layout
+        if shape_keys is None:
+            layout.label(text="当前对象已经变化，请取消操作。", icon='ERROR')
+            return
+        merge_items = _merge_rebase_items(shape_keys)
+        layout.label(
+            text=f"以下 {len(merge_items)} 个修型键会烘焙进 Basis，并在成功后删除：",
+            icon='ERROR',
+        )
+        box = layout.box()
+        for item in merge_items:
+            row = box.row(align=True)
+            row.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
+            row.label(text=f"权重 {item.weight:.2f}")
+        layout.label(
+            text="其余形态键会按当前权能配置重写，但不会删除。",
+            icon='INFO',
+        )
+
     def execute(self, context):
         obj = context.object
         shape_keys = _shape_key_data(obj)
         if shape_keys is None:
             self.report({'ERROR'}, "当前对象没有形态键")
             return {'CANCELLED'}
-        current_names = _current_item_names(shape_keys)
-        listed_names = {
-            item.shape_key_name for item in shape_keys.ho_rebase_items
-        }
-        if current_names != listed_names:
-            self.report({'WARNING'}, "形态键已变化，请先刷新变基列表")
-            return {'CANCELLED'}
-        if any(not item.initialized for item in shape_keys.ho_rebase_items):
-            self.report({'WARNING'}, "仍有未初始化的形态键，请先推断未知")
+        error = _rebase_configuration_error(shape_keys)
+        if error is not None:
+            self.report({'WARNING'}, error)
             return {'CANCELLED'}
 
         source_specs = tuple(
             (item.shape_key_name, float(item.weight), item.function_tag)
-            for item in shape_keys.ho_rebase_items
-            if item.merge and item.mergeable
+            for item in _merge_rebase_items(shape_keys)
         )
         target_specs = tuple(
             (
@@ -543,9 +595,6 @@ class OP_ShapekeyTools_RebaseApply(Operator):
             for item in shape_keys.ho_rebase_items
             if not item.merge
         )
-        if not source_specs:
-            self.report({'WARNING'}, "请至少勾选一个可合并的来源键")
-            return {'CANCELLED'}
         orientation_override = {
             -1: False,
             1: True,
@@ -583,24 +632,11 @@ def drawRebasePanel(layout: UILayout, context: Context):
     toolbar.operator(OP_ShapekeyTools_RebaseInferUnknown.bl_idname, icon='VIEWZOOM', text="")
     apply = toolbar.row(align=True)
     apply.alert = True
+    apply.operator_context = 'INVOKE_DEFAULT'
     apply.operator(OP_ShapekeyTools_RebaseApply.bl_idname, icon='CHECKMARK', text="应用 FBSF")
     apply.alert = False
 
-    active_box = layout.box()
-    active_row = active_box.row(align=True)
-    active_label = active_row.row(align=True)
-    active_label.ui_units_x = 5.0
-    active_label.label(text="活动键", icon='RESTRICT_SELECT_OFF')
-    active_item = _active_rebase_item(obj)
-    if active_item is not None:
-        _draw_rebase_item_controls(active_row, active_item)
-    else:
-        active_key = obj.active_shape_key
-        active_row.label(
-            text=active_key.name if active_key is not None else "无",
-            icon='SHAPEKEY_DATA',
-        )
-
+    
     box = layout.box()
     batch = box.row(align=True)
     batch.label(text="批量")
@@ -620,6 +656,22 @@ def drawRebasePanel(layout: UILayout, context: Context):
         icon='CHECKMARK',
         text="应用",
     )
+
+    active_box = box.box()
+    active_row = active_box.row(align=True)
+    active_label = active_row.row(align=True)
+    active_label.ui_units_x = 5.0
+    active_item = _active_rebase_item(obj)
+    if active_item is not None:
+        _draw_rebase_item_controls(active_row, active_item)
+    else:
+        active_key = obj.active_shape_key
+        active_row.label(
+            text=active_key.name if active_key is not None else "无",
+            icon='SHAPEKEY_DATA',
+        )
+    
+
     box.separator()
     _draw_rebase_header(box)
     box.template_list(
