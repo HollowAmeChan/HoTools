@@ -30,6 +30,12 @@ for package_name, package_path in (
 object_spec = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.object_spec"
 )
+capabilities = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.capabilities"
+)
+declaration = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.declaration"
+)
 
 
 class _Pointer:
@@ -85,18 +91,27 @@ def _rig(pointer=101, *, group=3, collided=0b1010):
     return _Armature(pointer, f"Rig{pointer}", (control, root, tip))
 
 
-def test_panel_and_socket_objects_share_source_identity_and_values():
+def test_panel_and_socket_objects_share_source_identity_but_keep_radius_ownership():
     armature = _rig()
     source = (armature, "Control")
     panel = object_spec.read_mc2_bone_cloth_panel_object(source)
     custom = object_spec.make_mc2_bone_cloth_custom_object(
         source,
-        **panel.explicit_properties.debug_dict(),
+        primary_collision_group=panel.explicit_properties.primary_collision_group,
+        collided_by_groups=panel.explicit_properties.collided_by_groups,
     )
     assert panel.source_identity == custom.source_identity
-    assert panel.signature == custom.signature
+    assert panel.signature != custom.signature
     assert panel.property_origin == "panel"
     assert custom.property_origin == "socket"
+    assert (
+        panel.explicit_properties.particle_radius_source
+        == object_spec.MC2_BONE_PARTICLE_RADIUS_COLLISION
+    )
+    assert (
+        custom.explicit_properties.particle_radius_source
+        == object_spec.MC2_BONE_PARTICLE_RADIUS_PROFILE
+    )
     assert tuple(
         chain.bone_names for chain in panel.partition_source.chains
     ) == (("Root", "Tip"),)
@@ -111,6 +126,7 @@ def test_custom_object_does_not_read_panel_properties():
     assert properties.primary_collision_group == 1
     assert properties.collided_by_groups == 0
     assert properties.self_collision_groups == 1
+    assert properties.particle_radius_source == "profile_curve"
 
 
 def test_object_lists_apply_one_complete_socket_property_set():
@@ -151,6 +167,26 @@ def test_invalid_panel_source_and_collision_groups_fail_explicitly():
             pass
         else:
             raise AssertionError(f"invalid BoneCloth properties accepted: {values!r}")
+
+
+def test_bone_collision_radius_adapter_declares_exact_conversion_boundary():
+    adapter = capabilities.MC2_BONE_CLOTH_BONE_COLLISION_ADAPTER
+    assert declaration.MC2_SOLVER_DECLARATION["capability_adapters"] == [adapter]
+    assert adapter["activation"] == "panel_object_only"
+    assert adapter["consumes"]["radius"] == {
+        "target": "particle.radius",
+        "conversion": "absolute_blender_units",
+        "terminal_policy": "inherit_last_real_bone",
+        "update_policy": "static_fragment_rebuild",
+    }
+    assert adapter["not_consumed_as_particle_radius"] == (
+        "collision_type",
+        "length",
+        "offset",
+    )
+    assert adapter["custom_object_fallback"] == (
+        "MC2ParticleProfileSpec.radius_curve"
+    )
 
 
 if __name__ == "__main__":

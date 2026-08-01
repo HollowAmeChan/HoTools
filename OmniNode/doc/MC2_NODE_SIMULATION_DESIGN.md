@@ -123,7 +123,7 @@ MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 | domain/context | scheduler、substep、backend lifetime、统一 broadphase、generation 和结果事务。 |
 | partition | source/output identity、Object/Anchor frame、Center/Teleport history、区域参数和 logical index view。 |
 | Mesh object spec | BasePose、Pin/radius group、对象碰撞属性及其来源。 |
-| BoneCloth object spec | 已解析的 Armature/骨链 source、主碰撞组、被碰撞组及其来源。 |
+| BoneCloth object spec | 已解析的 Armature/骨链 source、主碰撞组、被碰撞组、粒子半径来源及其来源。 |
 | particle | depth、radius、mass/inverse mass、damping、gravity response、friction、Motion/Backstop 系数和 partition index。 |
 | constraint | 类型、端点、rest、stiffness/compliance、owner partition 和 batch/color。 |
 
@@ -136,6 +136,8 @@ MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 5. 时间、substep 和统一 broadphase 是 context 级策略，不能因局部参数差异隐式拆 domain。
 
 碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是对象主组，`collided_by_groups` 是允许碰撞到该对象的组。该 mask 使用严格位集语义：`0` 是空集合、不接受任何外部碰撞组，`0xFFFF` 接受全部 16 组，其它值只接受被置位的组；BoneCloth 自定义对象默认使用 `0`。外碰使用冻结的 `collided_by_groups`；whole-domain self 才把自身主组并入有效 mask，并继续执行共享粒子和一环拓扑过滤。
+
+BoneCloth 对共享 Bone 简单碰撞能力采用显式字段转换：普通面板对象把每根参与模拟的 `Bone.hotools_collision.radius` 冻结为对应粒子的绝对半径，链末端的 solver-only 粒子继承最后一根真实骨骼的半径；该值直接写入 compiled particle `radius`，不再采样 Profile radius 曲线。自定义对象不读取 Bone 面板，继续使用 Profile radius 曲线。`collision_type`、`length` 和 `offset` 当前只属于“骨骼作为外部碰撞体”语义，不参与 BoneCloth 模拟粒子半径转换；solver declaration 的 capability adapter 必须保持这一消费边界可观察。
 
 ## 四层运行对象
 

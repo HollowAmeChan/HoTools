@@ -167,6 +167,8 @@ class MC2BoneRawSnapshot:
     head_tail: np.ndarray
     matrices: np.ndarray
     resolved: bool
+    particle_radius_source: str
+    collision_radii: np.ndarray
     # BoneCloth simulates segment endpoints.  ``names`` remains the stable
     # Blender PoseBone identity list; terminal names are solver-only points.
     terminal_names: tuple[str, ...] = ()
@@ -326,6 +328,16 @@ def _mesh_input_fingerprint(
     ))
 
 
+def _partition_bone_particle_radius_source(partition) -> str:
+    if getattr(partition, "setup_type", None) != "bone_cloth":
+        return "profile_curve"
+    properties = getattr(partition, "source_properties", None)
+    return str(
+        getattr(properties, "particle_radius_source", "profile_curve")
+        or "profile_curve"
+    ).strip().lower()
+
+
 def read_mc2_partition_static_source_observation(partition, source):
     """从 resolved partition 读取一个 source，不创建旧 task spec。"""
 
@@ -335,7 +347,11 @@ def read_mc2_partition_static_source_observation(partition, source):
             source, getattr(partition, "source_properties", None)
         )
         return _mesh_input_fingerprint(source, snapshot), snapshot
-    return _read_mc2_static_source_observation(intent.setup_type, source)
+    snapshot = _read_bone_raw_snapshot(
+        source,
+        particle_radius_source=_partition_bone_particle_radius_source(partition),
+    )
+    return _bone_input_fingerprint(source, snapshot), snapshot
 
 
 def _read_mc2_static_source_observation(
@@ -441,16 +457,26 @@ def prepare_static_inputs_for_partition(partition):
     """读取一个 resolved partition 的静态输入。"""
 
     intent = _partition_intent(partition)
-    if intent.setup_type != "mesh_cloth":
-        return _prepare_static_inputs_for_intent(intent)
     source_fingerprints = []
     snapshots = []
-    for source in intent.sources:
-        fingerprint, snapshot = read_mc2_partition_static_source_observation(
-            partition, source
-        )
-        source_fingerprints.append(fingerprint)
-        snapshots.append(snapshot)
+    if intent.setup_type == "mesh_cloth":
+        for source in intent.sources:
+            fingerprint, snapshot = read_mc2_partition_static_source_observation(
+                partition, source
+            )
+            source_fingerprints.append(fingerprint)
+            snapshots.append(snapshot)
+    else:
+        radius_source = _partition_bone_particle_radius_source(partition)
+        armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
+        for source in intent.sources:
+            snapshot = _read_bone_raw_snapshot(
+                source,
+                armature_rest_snapshots,
+                particle_radius_source=radius_source,
+            )
+            source_fingerprints.append(_bone_input_fingerprint(source, snapshot))
+            snapshots.append(snapshot)
     return _compose_mc2_static_inputs(
         intent,
         source_fingerprints,
@@ -656,6 +682,8 @@ def _read_armature_rest_snapshot(collection) -> _MC2ArmatureRestSnapshot:
 def _read_bone_raw_snapshot(
     source,
     armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
+    *,
+    particle_radius_source: str = "profile_curve",
 ) -> MC2BoneRawSnapshot:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
@@ -680,6 +708,27 @@ def _read_bone_raw_snapshot(
         if explicit_chain
         else collection is not None and bool(names)
     )
+    if particle_radius_source == "bone_collision_radius":
+        radii = np.empty(len(names), dtype=np.float32)
+        for index, name in enumerate(names):
+            bone = _collection_get(collection, name)
+            properties = getattr(bone, "hotools_collision", None)
+            value = float(getattr(properties, "radius", 0.05))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"Bone collision radius must be finite and non-negative: {name!r}"
+                )
+            radii[index] = value
+    elif particle_radius_source == "profile_curve":
+        radii = np.empty((0,), dtype=np.float32)
+    else:
+        raise ValueError(
+            f"Unsupported Bone particle radius source: {particle_radius_source!r}"
+        )
+    radii = np.ascontiguousarray(radii, dtype=np.float32)
+    if not np.isfinite(radii).all():
+        raise ValueError("Bone collision radius overflows float32")
+    radii.flags.writeable = False
     return MC2BoneRawSnapshot(
         armature_pointer=armature_pointer,
         armature_name=str(
@@ -691,6 +740,8 @@ def _read_bone_raw_snapshot(
         head_tail=head_tail,
         matrices=matrices,
         resolved=resolved,
+        particle_radius_source=particle_radius_source,
+        collision_radii=radii,
         terminal_names=(_bone_terminal_name(names[-1]),) if names else (),
     )
 
@@ -703,7 +754,7 @@ def _bone_input_fingerprint(
         snapshot = _read_bone_raw_snapshot(source)
     from .native import native_module
 
-    return dict(native_module().mc2_bone_static_fingerprint_v1(
+    result = dict(native_module().mc2_bone_static_fingerprint_v1(
         snapshot.parents,
         snapshot.head_tail.reshape((-1,)),
         snapshot.matrices.reshape((-1,)),
@@ -713,6 +764,13 @@ def _bone_input_fingerprint(
         "\0".join(snapshot.names),
         snapshot.resolved,
     ))
+    result["surface"] = _compact_signature((
+        "mc2_bone_particle_radius_surface_v1",
+        result["surface"],
+        snapshot.particle_radius_source,
+        tuple(float(value) for value in snapshot.collision_radii),
+    ))
+    return result
 
 
 def _bone_payload(source) -> dict:
@@ -879,6 +937,8 @@ def _build_compact_bone_source_topology(
         "armature_name": snapshot.armature_name,
         "armature_pointer": snapshot.armature_pointer,
         "requested": snapshot.requested,
+        "particle_radius_source": snapshot.particle_radius_source,
+        "collision_radii": tuple(float(value) for value in snapshot.collision_radii),
         "terminal_names": snapshot.terminal_names,
         "terminal_positions": tuple(
             tuple(float(value) for value in snapshot.head_tail[-1, 3:])
@@ -895,6 +955,8 @@ def _build_compact_bone_source_topology(
             snapshot.requested,
             snapshot.names,
             snapshot.terminal_names,
+            snapshot.particle_radius_source,
+            tuple(float(value) for value in snapshot.collision_radii),
         )),
         particle_count=len(snapshot.names) + len(snapshot.terminal_names),
         resolved=snapshot.resolved,

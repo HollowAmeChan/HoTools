@@ -94,13 +94,21 @@ IDENTITY = (
 
 
 class Bone:
-    def __init__(self, name, head, tail):
+    def __init__(self, name, head, tail, *, radius=0.05):
         self.name = name
         self.head_local = head
         self.tail_local = tail
         self.matrix_local = IDENTITY
         self.parent = None
         self.children = []
+        self.hotools_collision = types.SimpleNamespace(
+            radius=float(radius),
+            collision_type="NONE",
+            length=0.2,
+            offset=(0.0, 0.0, 0.0),
+            primary_collision_group=1,
+            collided_by_groups=0,
+        )
 
 
 class Bones(list):
@@ -132,18 +140,19 @@ class Armature:
 
 
 def _armature():
-    bones = []
+    control = Bone("Control", (0.0, -1.0, 0.0), (0.0, -0.5, 0.0))
+    bones = [control]
     for chain_index, prefix in enumerate(("A", "B", "C")):
-        previous = None
+        previous = control
         for depth in range(3):
             bone = Bone(
                 f"{prefix}{depth}",
                 (float(chain_index), float(depth), 0.0),
                 (float(chain_index), float(depth + 1), 0.0),
+                radius=0.01 * (1 + chain_index * 3 + depth),
             )
             bone.parent = previous
-            if previous is not None:
-                previous.children.append(bone)
+            previous.children.append(bone)
             bones.append(bone)
             previous = bone
     return Armature(bones)
@@ -347,6 +356,91 @@ def test_product_partition_capture_builds_complete_static_contract() -> None:
         assert owner.inspect()["schema"] == "mc2_fused_cpu_owner_v1"
     finally:
         owner.dispose()
+
+
+def test_panel_bonecloth_compiles_chain_collision_radii_as_absolute_values() -> None:
+    armature = _armature()
+    objects = object_spec.read_mc2_bone_cloth_panel_objects(
+        [(armature, "Control")]
+    )
+    partitions = product_authoring.make_mc2_bone_cloth_domain_partitions(
+        objects,
+        profile=parameters.make_mc2_particle_profile(radius=0.75),
+        setup_options=parameters.make_mc2_setup_options(
+            "bone_cloth",
+            connection_model="hotools_product",
+            connection_mode=1,
+        ),
+    )
+    request = product_authoring.make_mc2_bone_cloth_product_requests(
+        partitions
+    )[0]
+    partition = request.plan.active_partitions[0]
+    fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+    assert tuple(snapshot.particle_radius_source for snapshot in snapshots) == (
+        "bone_collision_radius",
+    ) * 3
+    built_topology = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=snapshots,
+    )
+    fragment = bone_fragment.build_mc2_bone_static_fragment(
+        partition,
+        fingerprint,
+        built_topology,
+        snapshots,
+    )
+    expected = np.asarray(
+        (0.01, 0.02, 0.03, 0.03,
+         0.04, 0.05, 0.06, 0.06,
+         0.07, 0.08, 0.09, 0.09),
+        dtype=np.float32,
+    )
+    assert fragment.particle_radius_source == "bone_collision_radius"
+    np.testing.assert_allclose(fragment.absolute_particle_radii, expected)
+
+    draft = domain_collect.build_mc2_domain_draft(request.plan)
+    compiled = domain_compile.compile_mc2_domain_draft(draft, (fragment,))
+    fields = {
+        name: index
+        for index, name in enumerate(compiled.parameters.particle_parameters.fields)
+    }
+    values = compiled.parameters.particle_parameters.values
+    np.testing.assert_allclose(values[:, fields["radius"]], expected)
+    np.testing.assert_allclose(values[:, fields["radius_multiplier"]], 1.0)
+
+    armature.data.bones.get("A1").hotools_collision.radius = 0.125
+    radius_fingerprint, _radius_snapshots = (
+        topology.prepare_static_inputs_for_partition(partition)
+    )
+    assert radius_fingerprint.topology == fingerprint.topology
+    assert radius_fingerprint.geometry == fingerprint.geometry
+    assert radius_fingerprint.surface != fingerprint.surface
+    armature.data.bones.get("A1").hotools_collision.offset = (2.0, 3.0, 4.0)
+    ignored_fingerprint, _ignored_snapshots = (
+        topology.prepare_static_inputs_for_partition(partition)
+    )
+    assert ignored_fingerprint == radius_fingerprint
+
+
+def test_custom_bonecloth_keeps_profile_radius_curve() -> None:
+    request = _request(_armature())
+    partition = request.plan.active_partitions[0]
+    fingerprint, snapshots = topology.prepare_static_inputs_for_partition(partition)
+    built_topology = topology.build_mc2_partition_topology_spec(
+        partition,
+        static_input_fingerprint=fingerprint,
+        static_input_snapshots=snapshots,
+    )
+    fragment = bone_fragment.build_mc2_bone_static_fragment(
+        partition,
+        fingerprint,
+        built_topology,
+        snapshots,
+    )
+    assert fragment.particle_radius_source == "profile_curve"
+    assert fragment.absolute_particle_radii.shape == (0,)
 
 
 def test_bone_spring_partition_uses_the_same_domain_owner() -> None:
@@ -634,6 +728,14 @@ TESTS = (
     (
         "partition capture builds complete static contract",
         test_product_partition_capture_builds_complete_static_contract,
+    ),
+    (
+        "panel BoneCloth consumes absolute Bone collision radii",
+        test_panel_bonecloth_compiles_chain_collision_radii_as_absolute_values,
+    ),
+    (
+        "custom BoneCloth keeps Profile radius curve",
+        test_custom_bonecloth_keeps_profile_radius_curve,
     ),
     (
         "BoneSpring partition uses unified owner",

@@ -313,6 +313,7 @@ def _run_once(
         )
         slot_ids = _slot_ids(requests)
         expected_particles = None
+        expected_bones = None
 
         for frame in range(1, 901):
             phase = frame * 0.019
@@ -398,6 +399,12 @@ def _run_once(
                 expected_particles = sum(
                     owner.compiled.program.particle_count for owner in owners
                 )
+                expected_bones = sum(
+                    len(fragment.output_bone_identities)
+                    for owner in owners
+                    for fragment in owner.compiled.fragments
+                )
+                assert expected_particles > expected_bones
             else:
                 assert current_owners == owners
                 assert all(slot.data["last_sync"].native_domain_reused for slot in slots)
@@ -430,8 +437,8 @@ def _run_once(
 
             results = tuple(world.result_streams.get("bone_transform", ()))
             assert results
-            assert sum(int(result["bone_count"]) for result in results) == expected_particles
-            assert writeback.writeback_bone_transforms(world) == expected_particles
+            assert sum(int(result["bone_count"]) for result in results) == expected_bones
+            assert writeback.writeback_bone_transforms(world) == expected_bones
             bpy.context.view_layer.update()
             digest.update(np.asarray(frame, dtype=np.int32).tobytes())
 

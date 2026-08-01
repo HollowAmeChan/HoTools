@@ -14,6 +14,14 @@ from .source_spec import (
 )
 
 
+MC2_BONE_PARTICLE_RADIUS_PROFILE = "profile_curve"
+MC2_BONE_PARTICLE_RADIUS_COLLISION = "bone_collision_radius"
+_MC2_BONE_PARTICLE_RADIUS_SOURCES = frozenset((
+    MC2_BONE_PARTICLE_RADIUS_PROFILE,
+    MC2_BONE_PARTICLE_RADIUS_COLLISION,
+))
+
+
 def _signature(payload: dict) -> str:
     canonical = json.dumps(
         payload,
@@ -30,6 +38,7 @@ class MC2BoneClothExplicitPropertiesSpec:
 
     primary_collision_group: int = 1
     collided_by_groups: int = 0
+    particle_radius_source: str = MC2_BONE_PARTICLE_RADIUS_PROFILE
 
     def __post_init__(self) -> None:
         group = int(self.primary_collision_group)
@@ -42,6 +51,13 @@ class MC2BoneClothExplicitPropertiesSpec:
         if not 0 <= mask <= 0xFFFF:
             raise ValueError("BoneCloth collided_by_groups must be a 16-bit mask")
         object.__setattr__(self, "collided_by_groups", mask)
+        radius_source = str(self.particle_radius_source or "").strip().lower()
+        if radius_source not in _MC2_BONE_PARTICLE_RADIUS_SOURCES:
+            raise ValueError(
+                "BoneCloth particle_radius_source must be profile_curve or "
+                "bone_collision_radius"
+            )
+        object.__setattr__(self, "particle_radius_source", radius_source)
 
     @property
     def self_group_bit(self) -> int:
@@ -59,6 +75,7 @@ class MC2BoneClothExplicitPropertiesSpec:
         return {
             "primary_collision_group": self.primary_collision_group,
             "collided_by_groups": self.collided_by_groups,
+            "particle_radius_source": self.particle_radius_source,
         }
 
 
@@ -131,11 +148,10 @@ def _panel_properties(value) -> MC2BoneClothExplicitPropertiesSpec:
     properties = getattr(bone, "hotools_collision", None)
     if properties is None:
         raise ValueError("Bone has no registered hotools_collision properties")
-    return make_mc2_bone_cloth_explicit_properties(
-        primary_collision_group=getattr(
-            properties, "primary_collision_group", 1
-        ),
+    return MC2BoneClothExplicitPropertiesSpec(
+        primary_collision_group=getattr(properties, "primary_collision_group", 1),
         collided_by_groups=getattr(properties, "collided_by_groups", 0),
+        particle_radius_source=MC2_BONE_PARTICLE_RADIUS_COLLISION,
     )
 
 
@@ -199,6 +215,8 @@ def make_mc2_bone_cloth_custom_objects(
 
 
 __all__ = [
+    "MC2_BONE_PARTICLE_RADIUS_COLLISION",
+    "MC2_BONE_PARTICLE_RADIUS_PROFILE",
     "MC2BoneClothExplicitPropertiesSpec",
     "MC2BoneClothObjectSpec",
     "make_mc2_bone_cloth_custom_object",

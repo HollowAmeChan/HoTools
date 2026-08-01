@@ -27,6 +27,7 @@ class MC2BoneStaticFragmentV1:
     topology: MC2TopologySpec
     static: MC2BoneClothStaticBuildResult
     radius_multipliers: np.ndarray
+    absolute_particle_radii: np.ndarray
     source_elements: np.ndarray
     output_bone_identities: tuple[str, ...]
     output_source_elements: np.ndarray
@@ -68,6 +69,20 @@ class MC2BoneStaticFragmentV1:
                 or not values.flags.c_contiguous
             ):
                 raise ValueError(f"{name} 必须是只读连续 {dtype.__name__}{shape}")
+
+        if (
+            not isinstance(self.absolute_particle_radii, np.ndarray)
+            or self.absolute_particle_radii.dtype != np.float32
+            or self.absolute_particle_radii.shape not in ((0,), (count,))
+            or self.absolute_particle_radii.flags.writeable
+            or not self.absolute_particle_radii.flags.c_contiguous
+            or not np.isfinite(self.absolute_particle_radii).all()
+            or np.any(self.absolute_particle_radii < 0.0)
+        ):
+            raise ValueError(
+                "absolute_particle_radii must be read-only float32[0] or "
+                "finite non-negative float32[particle_count]"
+            )
 
         identities = tuple(str(value or "") for value in self.output_bone_identities)
         if (
@@ -133,6 +148,14 @@ class MC2BoneStaticFragmentV1:
         return "bone_pose"
 
     @property
+    def particle_radius_source(self) -> str:
+        return (
+            "bone_collision_radius"
+            if len(self.absolute_particle_radii)
+            else "profile_curve"
+        )
+
+    @property
     def vertex_to_transform_rotations(self) -> np.ndarray:
         values = np.ascontiguousarray(
             self.static.bone.vertex_to_transform_rotations,
@@ -150,6 +173,8 @@ class MC2BoneStaticFragmentV1:
             "output_target_id": self.output_target_id,
             "particle_count": self.final_proxy.vertex_count,
             "output_bone_count": len(self.output_bone_identities),
+            "particle_radius_source": self.particle_radius_source,
+            "absolute_particle_radii": self.absolute_particle_radii.tolist(),
             "connection_mode": self.topology.connection_mode,
             "connection_model": self.topology.connection_model,
             "static": self.static.debug_dict(),
@@ -191,6 +216,8 @@ def build_mc2_bone_static_fragment(
     output_bone_identities = []
     output_source_elements = []
     output_endpoint_source_elements = []
+    absolute_particle_radii = []
+    radius_override_states = []
     offset = 0
     for snapshot in snapshots:
         output_bone_identities.extend(snapshot.names)
@@ -200,9 +227,27 @@ def build_mc2_bone_static_fragment(
         output_endpoint_source_elements.extend(
             range(offset + 1, offset + len(snapshot.names) + 1)
         )
+        has_radius_overrides = len(snapshot.collision_radii) > 0
+        radius_override_states.append(has_radius_overrides)
+        if has_radius_overrides:
+            if snapshot.collision_radii.shape != (len(snapshot.names),):
+                raise ValueError("Bone collision radius count does not match Bone count")
+            absolute_particle_radii.extend(
+                float(value) for value in snapshot.collision_radii
+            )
+            absolute_particle_radii.extend(
+                float(snapshot.collision_radii[-1])
+                for _terminal_name in snapshot.terminal_names
+            )
         offset += len(snapshot.names) + len(snapshot.terminal_names)
     if offset != count:
         raise ValueError("Bone fragment particle/source offset mismatch")
+    if any(radius_override_states) and not all(radius_override_states):
+        raise ValueError("Bone fragment cannot mix particle radius sources")
+    absolute_particle_radii = np.ascontiguousarray(
+        absolute_particle_radii if all(radius_override_states) else (),
+        dtype=np.float32,
+    )
     output_source_elements = np.asarray(
         output_source_elements,
         dtype=np.uint32,
@@ -212,6 +257,7 @@ def build_mc2_bone_static_fragment(
         dtype=np.uint32,
     )
     radius.flags.writeable = False
+    absolute_particle_radii.flags.writeable = False
     source_elements.flags.writeable = False
     output_source_elements.flags.writeable = False
     output_endpoint_source_elements.flags.writeable = False
@@ -223,6 +269,7 @@ def build_mc2_bone_static_fragment(
         topology=topology,
         static=static,
         radius_multipliers=radius,
+        absolute_particle_radii=absolute_particle_radii,
         source_elements=source_elements,
         output_bone_identities=tuple(output_bone_identities),
         output_source_elements=output_source_elements,

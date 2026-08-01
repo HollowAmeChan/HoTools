@@ -28,7 +28,9 @@ sys.path[:] = [
     if os.path.normcase(os.path.abspath(value or os.curdir))
     != os.path.normcase(os.path.abspath(NATIVE_PACKAGE))
 ]
-sys.path.insert(0, NATIVE_PACKAGE)
+for path in (NATIVE_PACKAGE, HOTOOLS, os.path.dirname(HOTOOLS)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 for package_name, package_path in (
     ("HoTools", HOTOOLS),
@@ -59,6 +61,9 @@ product_slot = importlib.import_module(
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
 writeback = importlib.import_module("HoTools.OmniNode.PhysicsWorld.writeback")
 physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
+physics_blender = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.blender"
+)
 hotools_native = importlib.import_module("hotools_native")
 
 print(f"MC2_BONE_PRODUCT_SOURCE {product_solver.__file__}")
@@ -189,6 +194,10 @@ def test_bone_product_batch_writeback_rollback_contract() -> None:
     assert second.matrix_basis.value == "old-second"
 
 
+registered_here = not physics_blender.is_registered()
+if registered_here:
+    physics_blender.register()
+
 rig_multi = _armature("MC2ProductMultiPartition", 2, 2, 3)
 rig_a = _armature("MC2ProductCrossA", 1, 3, 3)
 rig_b = _armature("MC2ProductCrossB", 1, 2, 3)
@@ -197,6 +206,52 @@ rig_requests = _armature("MC2ProductMultiRequest", 2, 1, 3)
 worlds = []
 try:
     test_bone_product_batch_writeback_rollback_contract()
+    rig_multi.data.bones["Parent0"].hotools_collision.primary_collision_group = 4
+    rig_multi.data.bones["Parent0"].hotools_collision.collided_by_groups = 0
+    expected_panel_radii = []
+    for chain_index in range(2):
+        chain_radii = []
+        for depth in range(3):
+            radius = 0.01 * (1 + chain_index * 3 + depth)
+            rig_multi.data.bones[
+                f"Group0_Chain{chain_index}_{depth}"
+            ].hotools_collision.radius = radius
+            chain_radii.append(radius)
+        expected_panel_radii.extend((*chain_radii, chain_radii[-1]))
+    panel_objects, panel_object_count = nodes.physicsMC2BoneClothObject(
+        [{"armature": rig_multi, "bone": "Parent0"}]
+    )
+    assert panel_object_count == 1
+    assert (
+        panel_objects[0].explicit_properties.particle_radius_source
+        == "bone_collision_radius"
+    )
+    panel_partitions, _panel_names = nodes.physicsMC2BoneClothTask(
+        panel_objects,
+        profile=parameters.make_mc2_particle_profile(
+            radius=0.75,
+            collision_mode=0,
+        ),
+        connection_mode=1,
+    )
+    panel_requests, _panel_report = nodes.physicsMC2BoneCollector(
+        panel_partitions
+    )
+    panel_world = world_types.PhysicsWorldCache()
+    worlds.append(panel_world)
+    panel_slot = _run(panel_world, panel_requests, 1)[0]
+    particle_table = panel_slot.data["owner"].compiled.parameters.particle_parameters
+    radius_index = particle_table.fields.index("radius")
+    radius_multiplier_index = particle_table.fields.index("radius_multiplier")
+    np.testing.assert_allclose(
+        particle_table.values[:, radius_index],
+        np.asarray(expected_panel_radii, dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        particle_table.values[:, radius_multiplier_index],
+        1.0,
+    )
+
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity_direction=(1.0, 0.0, 0.0),
         wind_influence=0.0,
@@ -381,6 +436,8 @@ finally:
         world.omni_cache_dispose("mc2 bone product-only cleanup")
     for armature in (rig_multi, rig_a, rig_b, rig_spring, rig_requests):
         _remove_armature(armature)
+    if registered_here:
+        physics_blender.unregister()
 
 
 print("MC2 BoneCloth/BoneSpring product-only integration: PASS")

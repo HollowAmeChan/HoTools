@@ -378,10 +378,19 @@ def _parameter_packet_for_fragments(
     particle_blocks = []
     for fragment, (floats, _ints, curves) in zip(fragments, runtime_maps):
         depths = np.asarray(fragment.baseline.baseline.depths, dtype=np.float32)
+        absolute_radii = getattr(fragment, "absolute_particle_radii", None)
+        if absolute_radii is None or len(absolute_radii) == 0:
+            particle_radii = _sample_curve(curves["radius"], depths)
+        else:
+            particle_radii = np.asarray(absolute_radii, dtype=np.float32)
+            if particle_radii.shape != depths.shape:
+                raise ValueError(
+                    "absolute particle radius count does not match fragment particles"
+                )
         particle_blocks.append(np.column_stack((
             depths,
             fragment.radius_multipliers,
-            _sample_curve(curves["radius"], depths),
+            particle_radii,
             _sample_curve(curves["damping"], depths),
             _sample_curve(curves["distance_stiffness"], depths),
             _sample_curve(curves["angle_restoration_stiffness"], depths),
