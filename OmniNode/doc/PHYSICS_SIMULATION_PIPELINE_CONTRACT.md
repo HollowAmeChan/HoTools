@@ -6,13 +6,14 @@
 
 - **应该写**：所有solver共同遵守的阶段职责、数据所有权、生命周期、声明协议、dirty/update语义、exchange/result/writeback和native context公共约束。
 - **不应该写**：某个solver当前完成度、专属算法顺序/公式、fixture数量、产品输入限制、下一交付或迁移流水。
-- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
+- **内容路由**：domain当前阶段写`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`；Field/Volume/Wind 的产品与实施合同写`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`；MC2稳定产品合同写`MC2_BLUEPRINT.md`，GPU后端专项写`MC2_GPU_BACKEND_DESIGN.md`；基础 Mesh XPBD 的数值、冻结范围和迁移写`MESH_XPBD_BLUEPRINT.md`；通用Bake、关键帧与外部几何缓存写`PHYSICS_BAKE_NODE_BLUEPRINT.md`；OmniNode编译/IR/cache机制写`../ARCHITECTURE.md`；历史只留Git。
 - **准入原则**：一条规则只有被两个以上domain共享，或明确属于Physics World公共边界，才进入本文；solver私有规则留在该domain。
 
 ## 文档路由
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
+- **`PHYSICS_FIELD_VOLUME_BLUEPRINT.md`（Field/Volume 蓝本）**：公共 Field 的 Volume、Wind、采样、作用域、可视化、Blender 创作与阶段闸门；不承诺具体 solver 的消费实现。
 - **`MC2_BLUEPRINT.md`（MC2 实现蓝本）**：MC2当前产品决策、支持域、数据流、Python/C++职责、数值边界和debug的稳定入口；E6实现只路由到`MC2_GPU_BACKEND_DESIGN.md`。
 - **`MESH_XPBD_BLUEPRINT.md`（基础 Mesh XPBD 蓝本）**：独立基础网格 solver 的严格 XPBD 数值合同、冻结能力、native 边界、生产验收和旧路径删除顺序。
 - **`PHYSICS_BAKE_NODE_BLUEPRINT.md`（通用 Bake 蓝图）**：Physics World结果到Bone/Object关键帧、Mesh外部缓存、跳帧清理、播放代理和Finalize的产品与实施合同。
@@ -124,9 +125,10 @@ PropertyGroup 来补偿已经冻结的对象字段。缺失资源必须在对象
 职责：
 
 - 校验或创建 `PhysicsWorldCache`。
-- 更新 `PhysicsFrameContext`：frame、previous_frame、continuous、same_frame、restart_required、raw_dt、dt、time_scale、substeps、generation。`raw_dt` 是未缩放场景帧时长，`dt = raw_dt * time_scale`；需要在暂停帧移动坐标历史的 solver 不得从零 `dt` 反推帧时长。
+- 更新 `PhysicsFrameContext`：frame、previous_frame、continuous、same_frame、restart_required、raw_dt、dt、frame_step_dt、timeline_time_seconds、sample_time_seconds、time_scale、substeps、generation。`raw_dt` 是未缩放场景帧时长，`dt = raw_dt * time_scale`；需要在暂停帧移动坐标历史的 solver 不得从零 `dt` 反推帧时长。
 - 计算 object scope key，检测 scope 变化。
 - 构建公共 source / collider snapshot。
+- 按注册依赖先运行共享 component scope collector，再运行 solver scope collector。component 在同一轮事务中写公共快照或受管 implicit object；solver 只能读取这些公共结果并生成私有规格。
 - 清理上一帧异常残留的 write lock。
 - 根据 validity、reset、跳帧、倒放、scope 变化设置 `replace_required`。
 - 准备 frame exchange registry：`world.clear_exchange()` 会在 Begin 清理上一轮帧级 scratch。
@@ -147,14 +149,31 @@ Physics World 是节点图内唯一的基础时间生产者。Blender 输出设�
 scene_fps = Scene.render.fps / Scene.render.fps_base
 frame_context.raw_dt = 1 / scene_fps
 frame_context.dt = frame_context.raw_dt * frame_context.time_scale
+frame_context.timeline_time_seconds = max(frame - Scene.frame_start, 0) * raw_dt
 ```
 
-`raw_dt` 和 `dt` 的单位都是秒。`fps_base` 必须参与计算，因此 29.97/59.94 等非整数输出帧率不能退化为整数 fps。场景帧率无效或不可读取时由 Physics World 明确报错或采用公共层定义的降级；solver 不得各自选择 fallback。
+以上时间量的单位都是秒。`fps_base` 必须参与计算，因此 29.97/59.94 等非整数输出帧率不能退化为整数 fps。`physicsWorld/world_time.py` 是解释 `Scene.render` 的唯一公共入口；当前场景帧率无效或不可读取时统一降级到 24 fps，solver、Field 和 preview 不得各自选择 fallback。
+
+Physics World 同时维护两种用途不同、不可混用的时间：
+
+- `timeline_time_seconds` 是从 `Scene.frame_start` 映射出的未缩放时间轴坐标，供没有 world consumer 的确定性创作预览使用；它会随 Blender 时间轴跳转直接变化。
+- `sample_time_seconds` 是当前模拟帧起点的累计数值时间，只累计已经成功跨过的连续 world 帧。正式 Field consumer 和 solver 只从该时间及其子步时间采样，不能拿时间轴坐标绕过 pause/restart 合同。
+
+当前步的采样时间固定为：
+
+```text
+frame_step_dt = 本次允许推进的 world dt
+substep_time(i) = sample_time_seconds + frame_step_dt * i / substeps
+```
+
+首次求值、reset、跳帧、倒放或 scope restart 会把没有恢复点的 `sample_time_seconds` 置零，且不会用帧号差追赶。未来 seek/cache 可以恢复序列化的 sample time，但在恢复合同落地前不得根据目标帧号伪造已模拟历史。same-frame 求值不累计时间，并保留该帧第一次实际采用的 `frame_step_dt`，即使随后只修改了 `time_scale`。
 
 所有 solver 共同遵守：
 
 - `frame_context.raw_dt` 是 Blender 当前输出设置对应的未缩放帧时长，只有 Physics World Begin 可以从 Scene 生产它。
 - `frame_context.dt` 是应用世界级 `time_scale` 后的统一基础步长。Rigid、SpringBone、MC2 和未来 solver 都必须从同一个 world owner 消费该值，不得自行读取 `Scene.render`、重新计算 fps，或用固定 `1/24`、`1/30`、`1/60` 替代有效 world 时间。
+- `frame_context.frame_step_dt` 是当前帧真正用于采样/推进的基础步长。same-frame 时它保留第一次求值采用的值；solver 不得用随后重算的 `dt` 改写同一帧的采样相位。
+- `frame_context.substep_sample_time_seconds(i)` 是公开的子步起点时间；任何空间与时间叠加采样，包括 Wind turbulence，都必须使用它或同义的显式 sample time，禁止读取墙钟或模块级计时器。
 - solver 可以保留局部 `time_scale` 作为产品调参，但它只能是统一基础时间之上的乘数：`solver_dt = frame_context.dt * solver_time_scale`。默认值必须为 1；局部倍率不得反向改写 `frame_context`，也不得成为第二个场景时间源。
 - 固定频率 scheduler、substeps、iterations 和 catch-up 上限只决定怎样离散、累计或限制 `solver_dt`，不改变时间来源。它们不得隐式假设 Blender 是 60 fps。
 - `frame_context.time_scale == 0` 或 `frame_context.dt == 0` 表示统一暂停。solver 可以同步参数、拓扑、动画输入、命令和只读结果，但不得推进数值时间；不能以 fallback dt 偷跑一步。
@@ -181,7 +200,7 @@ Solver -> hard-coded fallback dt
 Solver-local time_scale -> rewrite world dt
 ```
 
-时间合同的最低验收矩阵必须覆盖 24、30、60、`fps_base != 1`、世界倍率 0/非1、局部倍率 0/非1、same-frame 和 restart；测试应比较各 solver 实际提交给 backend/scheduler 的累计秒数，而不只检查 UI socket 值。
+时间合同的最低验收矩阵必须覆盖 24、30、60、`fps_base != 1`、世界倍率 0/非1、局部倍率 0/非1、frame 0、same-frame、连续帧、跳帧、倒放、restart 和 substeps；测试应比较公共 sample time 以及各 solver 实际提交给 backend/scheduler 的累计秒数，而不只检查 UI socket 值。
 
 ### Physics Entity / Spec Build
 
@@ -209,6 +228,7 @@ BoneClothSpec
 GeneratedConstraintSpec
 TemporaryColliderSpec
 ImplicitPhysicsObjectSpec
+FieldSpec
 ```
 
 必须包含：
@@ -254,17 +274,20 @@ ImplicitPhysicsObjectSpec
 - 如果某个数组跨帧复用且重建昂贵，应放进 world runtime cache 或 solver slot，并声明 dirty policy。
 - **不应把 Frame Prepare 单独做成节点强加给用户**；用户只应感知 Scope、World Begin、Solver、Writeback、Commit 这几个语义清晰的节点。Frame Prepare 是实现细节，应内聚在 World Begin 或 solver 内部。
 
-### 通用力场（未来兼容区）
+### 通用 Field / 场
 
-通用力场是 Physics World 的未来公共输入域，不是某个 solver 的内置特效。`wind` 只是其中一种 `kind`；后续还可以扩展其他方向场、径向场或程序化场，而不要求各 solver 各自维护一套 Blender 扫描、对象身份和生命周期。
+Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`wind` 是当前首个生成 `air_velocity` 向量通道的场生成器，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。
 
-已冻结边界：
+F0/F1 已冻结边界：
 
-- 持久 authoring 数据应先进入 Physics World 管理的隐式对象或正式 spec；逐帧求值结果再由公共 Frame Prepare 整理成普通数值快照。
-- 公共层负责 stable identity、kind、scope、producer、lifetime、变换与参数快照；具体 channel、schema 和采样布局等到通用力场 vertical slice 落地时再冻结，本文当前不提前承诺 ABI。
-- solver 必须在 declaration/capability 中显式声明可消费的力场类型，并只把公共快照转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
-- 力场 authoring/topology/scope 变化与逐帧数值变化必须分开定义 dirty/update 频率，不能把每帧变化误判为 solver topology rebuild。
-- 在通用力场域落地前，solver 中已有的 `wind_*` 等字段只属于未来兼容参数面，不代表存在力场输入、采样、native 消费或已验收数值能力。
+- Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
+- `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 使用局部单位球和线性边界衰减；Box 使用局部单位盒和硬边界、无衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。
+- `air_velocity` 的公开采样输入是冻结快照、世界空间 `float64[N,3]` 位置、显式 sample time 和作用域上下文；输出是只读 `float32[N,3]`、稳定签名、命中 ID、统计与诊断。多个 Wind 按 stable ID 的规范顺序可加叠加。
+- turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。预览与正式 consumer 使用同一个公共 sampler；差别只在于预览显式允许 `PREVIEW_ONLY` 项，并使用 `timeline_time_seconds`，正式 consumer 使用 `PhysicsFrameContext` 的 sample/substep time。
+- 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是 Field 公共 API 的预览版，不是 native ABI 承诺；版本变化必须同步 golden、capability 与消费者适配器。
+- Field authoring/topology/scope 变化与逐帧采样必须分开定义 dirty/update 频率，不能把 turbulence 的时间变化误判为 solver topology rebuild。
+- solver 必须在 declaration/capability 中显式声明可消费的 Field channel，并只把公共快照/采样结果转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
+- 当前能力状态是 `PREVIEW_ONLY`：公共快照、采样和显式可视化已存在，但尚无 active solver consumer。任何 solver 中遗留的 `wind_*` 字段仍不代表已经接入 Field。
 
 ### Solver Prepare
 
@@ -734,6 +757,7 @@ PhysicsWorldCache / solver slot
 | `Bone.hotools_collision` | `physicsWorld.collision` 的 `bone_collision` capability | SpringBone、MC2 BoneCloth/BoneSpring、scope、UI/preview |
 | `Object.hotools_object_collision` | `physicsWorld.collision` 的 `object_collision` capability | collider snapshot、SpringBone、MC2、UI/preview |
 | `Object.hotools_mesh_collision` | `physicsWorld.simple_cloth` 的 `simple_cloth` capability | 简单布料面板、MC2 MeshCloth、Mesh XPBD、BasePose与共享GN offset；字段含enabled、BasePose、半径组、Pin与碰撞组 |
+| `Object.hotools_field` | `physicsWorld.field` 的 `field_air_velocity` capability | Field Empty 创作、scope collector、公共采样与 preview；当前无 active solver consumer |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
 | `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
@@ -761,6 +785,7 @@ PhysicsWorldCache / solver slot
 HoTools.register()
   -> physicsWorld.blender.register()
        -> collision component properties
+       -> field component properties/preview
        -> simple_cloth component properties/resources
        -> rigid solver properties
        -> physics UI classes/state/preview
