@@ -200,7 +200,8 @@ public:
         const std::uint32_t* partition_collision_modes,
         const std::uint32_t* partition_collided_by_groups,
         const float* particle_radii,
-        const float* particle_friction
+        const float* particle_friction,
+        const std::uint32_t* particle_collided_by_groups = nullptr
     );
     void step_compiled_external_collision(
         const std::int32_t* collider_types,
@@ -578,6 +579,7 @@ public:
     const std::vector<float>& external_debug_radii() const noexcept { return external_debug_radii_; }
     const std::vector<std::uint32_t>& compiled_external_modes() const noexcept { return compiled_external_modes_; }
     const std::vector<std::uint32_t>& compiled_external_masks() const noexcept { return compiled_external_masks_; }
+    const std::vector<std::uint32_t>& compiled_external_particle_masks() const noexcept { return compiled_external_particle_masks_; }
     const std::vector<float>& compiled_external_radii() const noexcept { return compiled_external_radii_; }
     const std::vector<float>& compiled_external_friction() const noexcept { return compiled_external_friction_; }
     const std::vector<std::int32_t>& compiled_external_edges() const noexcept { return compiled_external_edges_; }
@@ -791,6 +793,7 @@ private:
     std::vector<std::int32_t> compiled_external_edges_;
     std::vector<std::uint32_t> compiled_external_modes_;
     std::vector<std::uint32_t> compiled_external_masks_;
+    std::vector<std::uint32_t> compiled_external_particle_masks_;
     std::vector<float> compiled_external_radii_;
     std::vector<float> compiled_external_friction_;
     bool compiled_external_ready_ = false;

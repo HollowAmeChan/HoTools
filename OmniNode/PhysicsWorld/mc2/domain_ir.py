@@ -571,6 +571,7 @@ class MC2CompiledDomainProgramV1:
     output_target_index: np.ndarray
     output_source_element: np.ndarray
     required_capabilities: tuple[str, ...] = ()
+    particle_external_collision_mask_override: np.ndarray | None = None
     baseline_parent_indices: np.ndarray | None = None
     baseline_line_start: np.ndarray | None = None
     baseline_line_count: np.ndarray | None = None
@@ -666,6 +667,21 @@ class MC2CompiledDomainProgramV1:
             (particle_count,),
             "particle_attribute_flags",
         )
+        if self.particle_external_collision_mask_override is not None:
+            _validate_array(
+                self.particle_external_collision_mask_override,
+                np.uint32,
+                (particle_count,),
+                "particle_external_collision_mask_override",
+            )
+            overrides = self.particle_external_collision_mask_override
+            if np.any(
+                (overrides > 0xFFFF) & (overrides != np.uint32(0xFFFFFFFF))
+            ):
+                raise ValueError(
+                    "particle external collision mask override must fit 16 groups "
+                    "or use UINT32_MAX fallback"
+                )
         baseline_values = (
             self.baseline_parent_indices,
             self.baseline_line_start,
@@ -875,6 +891,11 @@ class MC2CompiledDomainProgramV1:
                 self.particle_bind_position,
                 self.particle_bind_rotation,
             ))
+            if self.particle_external_collision_mask_override is not None:
+                parts.extend((
+                    "particle_external_collision_mask_override",
+                    self.particle_external_collision_mask_override,
+                ))
         return tuple(parts)
 
     def debug_dict(self) -> dict:
@@ -890,6 +911,9 @@ class MC2CompiledDomainProgramV1:
             "primitive_tables": [table.debug_dict() for table in self.primitive_tables],
             "output_targets": [target.debug_dict() for target in self.output_targets],
             "required_capabilities": list(self.required_capabilities),
+            "particle_external_collision_mask_override": (
+                self.particle_external_collision_mask_override is not None
+            ),
             "baseline_lines_ready": self.baseline_parent_indices is not None,
             "baseline_pose_ready": self.baseline_vertex_local_position is not None,
         }
@@ -915,6 +939,7 @@ def make_mc2_compiled_domain_program(
     output_target_index,
     output_source_element,
     required_capabilities=(),
+    particle_external_collision_mask_override=None,
     baseline_parent_indices=None,
     baseline_line_start=None,
     baseline_line_count=None,
@@ -967,6 +992,15 @@ def make_mc2_compiled_domain_program(
             output_source_element, (particle_count,), "output_source_element"
         ),
         required_capabilities=tuple(required_capabilities),
+        particle_external_collision_mask_override=(
+            None
+            if particle_external_collision_mask_override is None
+            else _readonly_uint(
+                particle_external_collision_mask_override,
+                (particle_count,),
+                "particle_external_collision_mask_override",
+            )
+        ),
         baseline_parent_indices=(
             None if baseline_parent_indices is None else _readonly_array(
                 baseline_parent_indices, np.int32, (particle_count,), "baseline_parent_indices"

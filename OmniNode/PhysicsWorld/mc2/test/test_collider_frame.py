@@ -65,14 +65,15 @@ def test_zero_group_mask_returns_typed_empty_arrays():
     assert result.collider_radii.dtype == np.float32
 
 
-def test_bone_source_uses_explicit_group_mask_and_excludes_armature_owner():
+def test_bone_source_excludes_only_simulated_bones_on_its_armature():
     armature = _Object(30)
     external = _Object(40)
     world = SimpleNamespace(
         collider_snapshot={
             "frame": 4,
             "colliders": [
-                {"key": "self", "type": "SPHERE", "owner": armature, "primary_group": 2, "center": (0, 0, 0), "radius": 1},
+                {"key": "self", "type": "SPHERE", "owner": armature, "owner_type": "BONE", "bone": "Root", "primary_group": 2, "center": (0, 0, 0), "radius": 1},
+                {"key": "same-rig-static", "type": "SPHERE", "owner": armature, "owner_type": "BONE", "bone": "Body", "primary_group": 2, "center": (0.5, 0, 0), "radius": 1},
                 {"key": "other", "type": "SPHERE", "owner": external, "primary_group": 2, "center": (1, 0, 0), "radius": 1},
                 {"key": "capsule", "type": "CAPSULE", "owner": external, "primary_group": 2, "center": (2, 0, 0), "segment_a": (2, -1, 0), "segment_b": (2, 1, 0), "radius": 1},
             ],
@@ -81,15 +82,15 @@ def test_bone_source_uses_explicit_group_mask_and_excludes_armature_owner():
     )
     result = build_mc2_collider_frame(
         world,
-        {"armature": armature, "root_bone": "Root"},
+        {"armature": armature, "root_bone": "Root", "bones": ("Root",)},
         collided_by_groups=2,
         allowed_types=frozenset(("SPHERE",)),
     )
     assert result.collided_by_groups == 2
-    assert result.collider_count == 1
+    assert result.collider_count == 2
     assert result.source_pointer == 30
-    assert result.collider_keys == ("other",)
-    assert result.collider_group_bits.tolist() == [2]
+    assert result.collider_keys == ("same-rig-static", "other")
+    assert result.collider_group_bits.tolist() == [2, 2]
 
 
 def test_domain_frame_excludes_all_partition_owners_without_group_prefilter():
@@ -147,7 +148,7 @@ def test_domain_frame_owns_immutable_array_copies():
 if __name__ == "__main__":
     test_shared_snapshot_packing_and_previous_pose()
     test_zero_group_mask_returns_typed_empty_arrays()
-    test_bone_source_uses_explicit_group_mask_and_excludes_armature_owner()
+    test_bone_source_excludes_only_simulated_bones_on_its_armature()
     test_domain_frame_excludes_all_partition_owners_without_group_prefilter()
     test_domain_frame_owns_immutable_array_copies()
     print("PASS MC2 shared collider frame contract")

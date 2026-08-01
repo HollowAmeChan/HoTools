@@ -209,6 +209,7 @@ try:
     rig_multi.data.bones["Parent0"].hotools_collision.primary_collision_group = 4
     rig_multi.data.bones["Parent0"].hotools_collision.collided_by_groups = 0
     expected_panel_radii = []
+    expected_panel_masks = []
     for chain_index in range(2):
         chain_radii = []
         for depth in range(3):
@@ -216,8 +217,14 @@ try:
             rig_multi.data.bones[
                 f"Group0_Chain{chain_index}_{depth}"
             ].hotools_collision.radius = radius
+            mask = 1 << (1 + chain_index * 3 + depth)
+            rig_multi.data.bones[
+                f"Group0_Chain{chain_index}_{depth}"
+            ].hotools_collision.collided_by_groups = mask
             chain_radii.append(radius)
+            expected_panel_masks.append(mask)
         expected_panel_radii.extend((*chain_radii, chain_radii[-1]))
+        expected_panel_masks.append(expected_panel_masks[-1])
     panel_objects, panel_object_count = nodes.physicsMC2BoneClothObject(
         [{"armature": rig_multi, "bone": "Parent0"}]
     )
@@ -225,6 +232,11 @@ try:
     assert (
         panel_objects[0].explicit_properties.particle_radius_source
         == "bone_collision_radius"
+    )
+    assert panel_objects[0].explicit_properties.collided_by_groups == 0
+    assert (
+        panel_objects[0].explicit_properties.particle_collision_mask_source
+        == "bone_collision_mask"
     )
     panel_partitions, _panel_names = nodes.physicsMC2BoneClothTask(
         panel_objects,
@@ -250,6 +262,16 @@ try:
     np.testing.assert_allclose(
         particle_table.values[:, radius_multiplier_index],
         1.0,
+    )
+    np.testing.assert_array_equal(
+        panel_slot.data["owner"].compiled.fragments[
+            0
+        ].particle_external_collision_masks,
+        np.asarray(expected_panel_masks, dtype=np.uint32),
+    )
+    np.testing.assert_array_equal(
+        panel_slot.data["owner"].compiled.program.particle_external_collision_mask_override,
+        np.asarray(expected_panel_masks, dtype=np.uint32),
     )
 
     cloth_profile = parameters.make_mc2_particle_profile(

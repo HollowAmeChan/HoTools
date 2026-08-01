@@ -1569,7 +1569,8 @@ void apply_post_step_mc2(Mc2PostStepView& view) {
 void project_collisions_mc2(Mc2CollisionView& view) {
     const bool partitioned = view.particle_partition_index != nullptr &&
                              view.partition_collision_modes != nullptr &&
-                             view.partition_collided_by_groups != nullptr &&
+                             (view.partition_collided_by_groups != nullptr ||
+                              view.particle_collided_by_groups != nullptr) &&
                              view.partition_count > 0;
     if (view.vertex_count <= 0 || view.collider_count <= 0 || view.positions == nullptr ||
         view.base_positions == nullptr || view.inv_masses == nullptr || view.collision_radii == nullptr ||
@@ -1588,7 +1589,9 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 view.partition_collision_modes[partition] != 1u) {
                 continue;
             }
-            collision_mask = view.partition_collided_by_groups[partition];
+            collision_mask = view.particle_collided_by_groups != nullptr
+                ? view.particle_collided_by_groups[vertex]
+                : view.partition_collided_by_groups[partition];
         }
         if (collision_mask == 0u) {
             continue;
@@ -2268,7 +2271,8 @@ bool edge_box_detection(const Mc2EdgeCollisionView& view,
 void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
     const bool partitioned = view.particle_partition_index != nullptr &&
                              view.partition_collision_modes != nullptr &&
-                             view.partition_collided_by_groups != nullptr &&
+                             (view.partition_collided_by_groups != nullptr ||
+                              view.particle_collided_by_groups != nullptr) &&
                              view.partition_count > 0;
     if (view.vertex_count <= 0 || view.edge_count <= 0 || view.collider_count <= 0 || view.positions == nullptr ||
         view.edges == nullptr || view.attributes == nullptr || view.collision_radii == nullptr ||
@@ -2299,7 +2303,11 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
                 view.partition_collision_modes[partition0] != 2u) {
                 continue;
             }
-            collision_mask = view.partition_collided_by_groups[partition0];
+            // Compiled edges are ordered source segments.  Mesh particles share
+            // one partition mask; BoneCloth uses the segment's head Bone mask.
+            collision_mask = view.particle_collided_by_groups != nullptr
+                ? view.particle_collided_by_groups[v0]
+                : view.partition_collided_by_groups[partition0];
         }
         if (collision_mask == 0u) {
             continue;

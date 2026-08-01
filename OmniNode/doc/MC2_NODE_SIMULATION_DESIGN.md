@@ -68,7 +68,7 @@ Bone socket / chain -> MC2 BoneCloth自定义对象（socket完整属性） ─�
 
 ### `MC2 BoneCloth对象`
 
-输入一个或多个控制 Bone 或显式 chain descriptor。每个输入先解析为同一 Armature 内的一组有序骨链，再从所选控制/根 Bone 的 `Bone.hotools_collision` 读取完整对象属性，输出 `MC2BoneClothObjectSpec`。对象 spec 冻结主碰撞组和被碰撞组，不创建 partition、request、slot 或 native owner。
+输入一个或多个控制 Bone 或显式 chain descriptor。每个输入先解析为同一 Armature 内的一组有序骨链，再输出 `MC2BoneClothObjectSpec`。控制 Bone 只负责选择链，不把自己的碰撞组传播给链上 Bone；普通面板对象逐根读取实际模拟 Bone 的 `Bone.hotools_collision`，并把各自的被碰撞组保留到粒子编译阶段。对象 spec 不创建 partition、request、slot 或 native owner。
 
 ### `MC2 BoneCloth自定义对象`
 
@@ -76,7 +76,7 @@ Bone socket / chain -> MC2 BoneCloth自定义对象（socket完整属性） ─�
 
 ### `MC2 BoneCloth域`
 
-只接受包装后的 `MC2BoneClothObjectSpec`，拒绝裸 Bone socket、二元组或 chain dict。域节点组合粒子 Profile、Anchor、Center/Teleport 参数、连接模式、旋转插值和根旋转，为每个对象生成完整 `MC2PartitionEntry`。对象级碰撞筛选从 object spec 冻结进 partition；域节点不再拥有 `被碰撞组` socket，也不直接输出 request。
+只接受包装后的 `MC2BoneClothObjectSpec`，拒绝裸 Bone socket、二元组或 chain dict。域节点组合粒子 Profile、Anchor、Center/Teleport 参数、连接模式、旋转插值和根旋转，为每个对象生成完整 `MC2PartitionEntry`。自定义对象的碰撞筛选从 object spec 冻结进 partition；普通面板对象的逐骨筛选进入静态 fragment 和 compiled particle table。域节点不再拥有 `被碰撞组` socket，也不直接输出 request。
 
 ### `MC2 Bone域收集`
 
@@ -123,7 +123,7 @@ MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 | domain/context | scheduler、substep、backend lifetime、统一 broadphase、generation 和结果事务。 |
 | partition | source/output identity、Object/Anchor frame、Center/Teleport history、区域参数和 logical index view。 |
 | Mesh object spec | BasePose、Pin/radius group、对象碰撞属性及其来源。 |
-| BoneCloth object spec | 已解析的 Armature/骨链 source、主碰撞组、被碰撞组、粒子半径来源及其来源。 |
+| BoneCloth object spec | 已解析的 Armature/骨链 source、分区碰撞属性、粒子半径来源、粒子外碰掩码来源及其来源。 |
 | particle | depth、radius、mass/inverse mass、damping、gravity response、friction、Motion/Backstop 系数和 partition index。 |
 | constraint | 类型、端点、rest、stiffness/compliance、owner partition 和 batch/color。 |
 
@@ -135,9 +135,9 @@ MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 4. Center、Anchor 和 Teleport 是 partition 级有历史状态，不是逐粒子 float。
 5. 时间、substep 和统一 broadphase 是 context 级策略，不能因局部参数差异隐式拆 domain。
 
-碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是对象主组，`collided_by_groups` 是允许碰撞到该对象的组。该 mask 使用严格位集语义：`0` 是空集合、不接受任何外部碰撞组，`0xFFFF` 接受全部 16 组，其它值只接受被置位的组；BoneCloth 自定义对象默认使用 `0`。外碰使用冻结的 `collided_by_groups`；whole-domain self 才把自身主组并入有效 mask，并继续执行共享粒子和一环拓扑过滤。
+碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是碰撞体所属主组，`collided_by_groups` 是模拟粒子允许接收的碰撞组。该 mask 使用严格位集语义：`0` 是空集合、不接受任何外部碰撞组，`0xFFFF` 接受全部 16 组，其它值只接受被置位的组；BoneCloth 自定义对象默认使用 `0`，因此默认不与任何外部对象碰撞。普通 BoneCloth 面板对象逐根冻结模拟 Bone 自己的 `collided_by_groups`，控制 Bone 不参与；solver-only 末端粒子继承最后一根真实 Bone。外部 Bone collider 的 `primary_collision_group` 仍由 World 快照逐骨提供。同一 Armature 只排除当前参与模拟的 Bone collider，未参与模拟的静态 Bone 仍可作为外部碰撞体。whole-domain self 继续使用分区主组策略，并执行共享粒子和一环拓扑过滤。
 
-BoneCloth 对共享 Bone 简单碰撞能力采用显式字段转换：普通面板对象把每根参与模拟的 `Bone.hotools_collision.radius` 冻结为对应粒子的绝对半径，链末端的 solver-only 粒子继承最后一根真实骨骼的半径；该值直接写入 compiled particle `radius`，不再采样 Profile radius 曲线。自定义对象不读取 Bone 面板，继续使用 Profile radius 曲线。`collision_type`、`length` 和 `offset` 当前只属于“骨骼作为外部碰撞体”语义，不参与 BoneCloth 模拟粒子半径转换；solver declaration 的 capability adapter 必须保持这一消费边界可观察。
+BoneCloth 对共享 Bone 简单碰撞能力采用显式字段转换：普通面板对象把每根参与模拟的 `Bone.hotools_collision.radius` 和 `collided_by_groups` 分别冻结为对应粒子的绝对半径和外碰接受掩码，链末端的 solver-only 粒子继承最后一根真实骨骼的两项值；半径直接写入 compiled particle `radius`，不再采样 Profile radius 曲线。自定义对象不读取 Bone 面板，继续使用 Profile radius 曲线和对象 spec 的分区掩码。`collision_type`、`length` 和 `offset` 当前只属于“骨骼作为外部碰撞体”语义，不参与 BoneCloth 模拟粒子半径转换；solver declaration 的 capability adapter 必须保持这一消费边界可观察。
 
 ## 四层运行对象
 

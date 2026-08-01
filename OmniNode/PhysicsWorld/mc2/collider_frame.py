@@ -197,7 +197,43 @@ def _source_owner(source):
         return source.get("armature") or source.get("proxy_obj") or source.get("object")
     if isinstance(source, tuple) and source:
         return source[0]
+    for name in ("armature", "proxy_obj", "source_object", "object"):
+        owner = getattr(source, name, None)
+        if owner is not None:
+            return owner
     return source
+
+
+def _source_bone_names(source) -> frozenset[str]:
+    names = []
+    chains = getattr(source, "chains", None)
+    if chains is not None:
+        for chain in chains:
+            names.extend(getattr(chain, "bone_names", ()) or ())
+    elif isinstance(source, dict) and source.get("armature") is not None:
+        names.extend(source.get("bones") or ())
+        if not names:
+            name = source.get("root_bone") or source.get("bone")
+            if name:
+                names.append(name)
+    return frozenset(str(name or "").strip() for name in names if str(name or "").strip())
+
+
+def _source_exclusions(sources) -> tuple[frozenset[int], frozenset[tuple[int, str]]]:
+    owner_pointers = set()
+    bone_identities = set()
+    for source in sources:
+        owner_pointer = _pointer(_source_owner(source))
+        if owner_pointer <= 0:
+            continue
+        bone_names = _source_bone_names(source)
+        if bone_names:
+            bone_identities.update(
+                (owner_pointer, bone_name) for bone_name in bone_names
+            )
+        else:
+            owner_pointers.add(owner_pointer)
+    return frozenset(owner_pointers), frozenset(bone_identities)
 
 
 def _pack_colliders(
@@ -205,6 +241,7 @@ def _pack_colliders(
     previous: dict,
     *,
     excluded_pointers: frozenset[int],
+    excluded_bone_identities: frozenset[tuple[int, str]] = frozenset(),
     collided_by_groups: int | None,
     allowed_types: frozenset[str] | None,
 ):
@@ -221,7 +258,13 @@ def _pack_colliders(
     for collider in snapshot.get("colliders") or ():
         if not isinstance(collider, dict):
             continue
-        if _pointer(collider.get("owner")) in excluded_pointers:
+        owner_pointer = _pointer(collider.get("owner"))
+        if owner_pointer in excluded_pointers:
+            continue
+        bone_name = str(
+            collider.get("bone") or collider.get("bone_name") or ""
+        ).strip()
+        if (owner_pointer, bone_name) in excluded_bone_identities:
             continue
         collider_type = str(collider.get("type", "SPHERE") or "SPHERE").upper()
         if allowed_types is not None and collider_type not in allowed_types:
@@ -319,11 +362,13 @@ def build_mc2_collider_frame(
         collided_by_groups = getattr(properties, "collided_by_groups", 0)
     collided_by_groups = max(0, min(0xFFFF, int(collided_by_groups or 0)))
     source_pointer = _pointer(_source_owner(source_obj))
+    excluded_pointers, excluded_bones = _source_exclusions((source_obj,))
 
     keys, arrays = _pack_colliders(
         snapshot,
         previous,
-        excluded_pointers=frozenset((source_pointer,)),
+        excluded_pointers=excluded_pointers,
+        excluded_bone_identities=excluded_bones,
         collided_by_groups=collided_by_groups,
         allowed_types=allowed_types,
     )
@@ -359,15 +404,16 @@ def build_mc2_domain_collider_frame(
     previous = previous.get("colliders", {}) if isinstance(previous, dict) else {}
     previous = previous if isinstance(previous, dict) else {}
     sources = tuple(partition_sources)
-    source_pointers = tuple(sorted({
-        pointer
-        for source in sources
-        if (pointer := _pointer(_source_owner(source))) > 0
-    }))
+    excluded_pointers, excluded_bones = _source_exclusions(sources)
+    source_pointers = tuple(sorted(
+        set(excluded_pointers)
+        | {owner_pointer for owner_pointer, _bone_name in excluded_bones}
+    ))
     keys, arrays = _pack_colliders(
         snapshot,
         previous,
-        excluded_pointers=frozenset(source_pointers),
+        excluded_pointers=excluded_pointers,
+        excluded_bone_identities=excluded_bones,
         collided_by_groups=None,
         allowed_types=allowed_types,
     )

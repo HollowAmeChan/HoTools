@@ -39,6 +39,7 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_whole_domain_self_owned",
     "mc2_domain_cpu_v1_step_whole_domain_self_owned_timed",
     "mc2_domain_cpu_v1_configure_compiled_external_collision",
+    "mc2_domain_cpu_v1_configure_compiled_external_collision_particle_masks",
     "mc2_domain_cpu_v1_step_compiled_external_collision",
     "mc2_domain_cpu_v1_step_external_edge_collision",
     "mc2_domain_cpu_v1_configure_tether",
@@ -1597,6 +1598,7 @@ class MC2NativeCPUKernelV1:
                 "particle_partitions": np.asarray(external_raw["particle_partitions"], dtype=np.uint32).reshape((-1,)),
                 "partition_modes": np.asarray(external_raw["partition_modes"], dtype=np.uint32).reshape((-1,)),
                 "partition_masks": np.asarray(external_raw["partition_masks"], dtype=np.uint32).reshape((-1,)),
+                "particle_masks": np.asarray(external_raw["particle_masks"], dtype=np.uint32).reshape((-1,)),
                 "particle_radii": np.asarray(external_raw["particle_radii"], dtype=np.float32).reshape((-1,)),
                 "friction_before": np.asarray(external_raw["friction_before"], dtype=np.float32).reshape((-1,)),
                 "friction_after": np.asarray(external_raw["friction_after"], dtype=np.float32).reshape((-1,)),
@@ -2114,6 +2116,15 @@ class MC2NativeCPUKernelV1:
         masks = np.asarray(
             partition_values[:, partition_fields["collided_by_groups"]], dtype=np.uint32
         )
+        particle_masks = np.asarray(
+            masks[np.asarray(program.particle_partition_index, dtype=np.intp)],
+            dtype=np.uint32,
+        ).copy()
+        overrides = program.particle_external_collision_mask_override
+        if overrides is not None:
+            overrides = np.asarray(overrides, dtype=np.uint32)
+            selected = overrides != np.uint32(0xFFFFFFFF)
+            particle_masks[selected] = overrides[selected]
         particle_fields = {
             name: index for index, name in enumerate(parameters.particle_parameters.fields)
         }
@@ -2133,10 +2144,10 @@ class MC2NativeCPUKernelV1:
         friction = np.asarray(
             particle_values[:, particle_fields["collision_friction"]], dtype=np.float32
         )
-        for array in (edges, modes, masks, radii, friction):
+        for array in (edges, modes, masks, particle_masks, radii, friction):
             array.flags.writeable = False
-        self._module.mc2_domain_cpu_v1_configure_compiled_external_collision(
-            handle, edges, modes, masks, radii, friction
+        self._module.mc2_domain_cpu_v1_configure_compiled_external_collision_particle_masks(
+            handle, edges, modes, masks, radii, friction, particle_masks
         )
 
     def _configure_center(

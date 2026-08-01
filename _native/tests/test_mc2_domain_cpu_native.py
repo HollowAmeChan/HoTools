@@ -564,6 +564,50 @@ def test_domain_cpu_native_compiled_external_configuration_is_atomic():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
+def test_domain_cpu_native_compiled_external_honors_particle_masks():
+    positions = np.asarray(
+        ((-0.5, 0.5, 0.0), (0.5, 0.5, 0.0)) * 2, dtype=np.float32
+    )
+    normals = np.asarray(((0.0, 0.0, 1.0),) * 4, dtype=np.float32)
+    collider_vectors = np.asarray(((0.0, 0.0, 0.0),), dtype=np.float32)
+    handle = _create_compiled_external_case()
+    try:
+        _update_frame(
+            handle, positions, normals, frame=1, generation=1,
+            domain_signature="domain:external",
+            partition_positions=((0.0, 0.0, 0.0),) * 2,
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
+        )
+        hotools_native.mc2_domain_cpu_v1_configure_compiled_external_collision_particle_masks(
+            handle,
+            np.asarray(((0, 1), (2, 3)), dtype=np.int32),
+            np.asarray((1, 1), dtype=np.uint32),
+            np.asarray((0, 0), dtype=np.uint32),
+            np.full(4, 0.1, dtype=np.float32),
+            np.full(4, 0.25, dtype=np.float32),
+            np.asarray((1, 0, 0, 0), dtype=np.uint32),
+        )
+        hotools_native.mc2_domain_cpu_v1_step_compiled_external_collision(
+            handle,
+            np.asarray((0,), dtype=np.int32),
+            np.asarray((1,), dtype=np.int32),
+            collider_vectors,
+            collider_vectors,
+            collider_vectors,
+            collider_vectors,
+            collider_vectors,
+            collider_vectors,
+            np.asarray((1.0,), dtype=np.float32),
+        )
+        output = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
+        assert np.linalg.norm(output[0] - positions[0]) > 1.0e-6
+        np.testing.assert_array_equal(output[1:], positions[1:])
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+
+
 def test_domain_cpu_native_whole_domain_self_triangle_with_edges_moves():
     handle = _create_whole_domain_self_case()
     positions = np.asarray(

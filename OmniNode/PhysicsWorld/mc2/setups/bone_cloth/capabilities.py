@@ -15,6 +15,13 @@ MC2_BONE_CLOTH_BONE_COLLISION_ADAPTER = {
             "terminal_policy": "inherit_last_real_bone",
             "update_policy": "static_fragment_rebuild",
         },
+        "collided_by_groups": {
+            "target": "particle.external_collision_mask",
+            "conversion": "direct_16_bit_mask_per_simulated_bone",
+            "granularity": "particle",
+            "terminal_policy": "inherit_last_real_bone",
+            "update_policy": "static_fragment_rebuild",
+        },
     },
     "not_consumed_as_particle_radius": (
         "collision_type",

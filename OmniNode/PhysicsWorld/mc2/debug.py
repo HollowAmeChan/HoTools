@@ -859,6 +859,10 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
 def _product_collision_payload(collider_frame, external: dict) -> dict:
     modes = _readonly(external.get("partition_modes", ()), np.uint32).reshape((-1,))
     masks = _readonly(external.get("partition_masks", ()), np.uint32).reshape((-1,))
+    particle_masks = _readonly(
+        external.get("particle_masks", ()), np.uint32
+    ).reshape((-1,))
+    effective_masks = particle_masks if len(particle_masks) else masks
     active_modes = set(map(int, modes[modes != 0]))
     collision_mode = (
         0 if not active_modes
@@ -871,7 +875,7 @@ def _product_collision_payload(collider_frame, external: dict) -> dict:
             getattr(collider_frame, "source_pointers", ()) or ()
         ),
         "collided_by_groups": int(
-            np.bitwise_or.reduce(masks, initial=np.uint32(0))
+            np.bitwise_or.reduce(effective_masks, initial=np.uint32(0))
         ),
         "types": _readonly(collider_frame.collider_types, np.int32),
         "group_bits": _readonly(collider_frame.collider_group_bits, np.int32),
@@ -892,6 +896,7 @@ def _product_collision_payload(collider_frame, external: dict) -> dict:
         "collision_mode": collision_mode,
         "collision_modes": modes,
         "collision_masks": masks,
+        "particle_collision_masks": particle_masks,
         "particle_partitions": _readonly(
             external.get("particle_partitions", ()), np.uint32
         ),

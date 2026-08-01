@@ -9,16 +9,21 @@ import json
 from ...source_identity import mc2_source_token
 from .source_spec import (
     MC2BonePartitionSourceV1,
-    mc2_bone_cloth_property_owner,
     make_mc2_bone_cloth_partition_source,
 )
 
 
 MC2_BONE_PARTICLE_RADIUS_PROFILE = "profile_curve"
 MC2_BONE_PARTICLE_RADIUS_COLLISION = "bone_collision_radius"
+MC2_BONE_PARTICLE_MASK_PARTITION = "partition_mask"
+MC2_BONE_PARTICLE_MASK_COLLISION = "bone_collision_mask"
 _MC2_BONE_PARTICLE_RADIUS_SOURCES = frozenset((
     MC2_BONE_PARTICLE_RADIUS_PROFILE,
     MC2_BONE_PARTICLE_RADIUS_COLLISION,
+))
+_MC2_BONE_PARTICLE_MASK_SOURCES = frozenset((
+    MC2_BONE_PARTICLE_MASK_PARTITION,
+    MC2_BONE_PARTICLE_MASK_COLLISION,
 ))
 
 
@@ -39,6 +44,7 @@ class MC2BoneClothExplicitPropertiesSpec:
     primary_collision_group: int = 1
     collided_by_groups: int = 0
     particle_radius_source: str = MC2_BONE_PARTICLE_RADIUS_PROFILE
+    particle_collision_mask_source: str = MC2_BONE_PARTICLE_MASK_PARTITION
 
     def __post_init__(self) -> None:
         group = int(self.primary_collision_group)
@@ -58,6 +64,13 @@ class MC2BoneClothExplicitPropertiesSpec:
                 "bone_collision_radius"
             )
         object.__setattr__(self, "particle_radius_source", radius_source)
+        mask_source = str(self.particle_collision_mask_source or "").strip().lower()
+        if mask_source not in _MC2_BONE_PARTICLE_MASK_SOURCES:
+            raise ValueError(
+                "BoneCloth particle_collision_mask_source must be partition_mask "
+                "or bone_collision_mask"
+            )
+        object.__setattr__(self, "particle_collision_mask_source", mask_source)
 
     @property
     def self_group_bit(self) -> int:
@@ -76,6 +89,7 @@ class MC2BoneClothExplicitPropertiesSpec:
             "primary_collision_group": self.primary_collision_group,
             "collided_by_groups": self.collided_by_groups,
             "particle_radius_source": self.particle_radius_source,
+            "particle_collision_mask_source": self.particle_collision_mask_source,
         }
 
 
@@ -139,8 +153,11 @@ def make_mc2_bone_cloth_explicit_properties(
     )
 
 
-def _panel_properties(value) -> MC2BoneClothExplicitPropertiesSpec:
-    armature, bone_name = mc2_bone_cloth_property_owner(value)
+def _panel_properties(
+    partition_source: MC2BonePartitionSourceV1,
+) -> MC2BoneClothExplicitPropertiesSpec:
+    armature = partition_source.armature
+    bone_name = partition_source.chains[0].bone_names[0]
     bones = getattr(getattr(armature, "data", None), "bones", None)
     bone = bones.get(bone_name) if bones is not None else None
     if bone is None:
@@ -150,17 +167,19 @@ def _panel_properties(value) -> MC2BoneClothExplicitPropertiesSpec:
         raise ValueError("Bone has no registered hotools_collision properties")
     return MC2BoneClothExplicitPropertiesSpec(
         primary_collision_group=getattr(properties, "primary_collision_group", 1),
-        collided_by_groups=getattr(properties, "collided_by_groups", 0),
+        collided_by_groups=0,
         particle_radius_source=MC2_BONE_PARTICLE_RADIUS_COLLISION,
+        particle_collision_mask_source=MC2_BONE_PARTICLE_MASK_COLLISION,
     )
 
 
 def read_mc2_bone_cloth_panel_object(value) -> MC2BoneClothObjectSpec:
-    """Read the complete object property set from the control/root Bone panel."""
+    """Resolve chains while preserving each simulated Bone's collision mask."""
 
+    partition_source = make_mc2_bone_cloth_partition_source(value)
     return MC2BoneClothObjectSpec(
-        partition_source=make_mc2_bone_cloth_partition_source(value),
-        explicit_properties=_panel_properties(value),
+        partition_source=partition_source,
+        explicit_properties=_panel_properties(partition_source),
         property_origin="panel",
     )
 
@@ -215,6 +234,8 @@ def make_mc2_bone_cloth_custom_objects(
 
 
 __all__ = [
+    "MC2_BONE_PARTICLE_MASK_COLLISION",
+    "MC2_BONE_PARTICLE_MASK_PARTITION",
     "MC2_BONE_PARTICLE_RADIUS_COLLISION",
     "MC2_BONE_PARTICLE_RADIUS_PROFILE",
     "MC2BoneClothExplicitPropertiesSpec",

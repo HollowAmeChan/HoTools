@@ -945,6 +945,41 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the compiled whole-domain external collision pass."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_compiled_external_collision_particle_masks",
+        [](std::uint64_t handle,
+           ci32_2d edges,
+           cu32_1d partition_collision_modes,
+           cu32_1d partition_collided_by_groups,
+           cf32_1d particle_radii,
+           cf32_1d particle_friction,
+           cu32_1d particle_collided_by_groups) {
+            auto* domain = require_domain(handle);
+            if (edges.shape(1) != 2 ||
+                static_cast<std::size_t>(partition_collision_modes.shape(0)) !=
+                    domain->partition_count() ||
+                static_cast<std::size_t>(partition_collided_by_groups.shape(0)) !=
+                    domain->partition_count() ||
+                static_cast<std::size_t>(particle_radii.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(particle_friction.shape(0)) != domain->particle_count() ||
+                static_cast<std::size_t>(particle_collided_by_groups.shape(0)) !=
+                    domain->particle_count()) {
+                throw nb::value_error(
+                    "MC2 compiled external particle-mask arrays have incompatible shapes"
+                );
+            }
+            domain->configure_compiled_external_collision(
+                edges.data(), static_cast<std::size_t>(edges.shape(0)),
+                partition_collision_modes.data(), partition_collided_by_groups.data(),
+                particle_radii.data(), particle_friction.data(),
+                particle_collided_by_groups.data()
+            );
+        },
+        nb::arg("handle"), nb::arg("edges"), nb::arg("partition_collision_modes"),
+        nb::arg("partition_collided_by_groups"), nb::arg("particle_radii"),
+        nb::arg("particle_friction"), nb::arg("particle_collided_by_groups"),
+        "Configure compiled external collision with one 16-bit mask per particle."
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_compiled_external_collision",
         [](std::uint64_t handle,
            ci32_1d collider_types,
@@ -1573,6 +1608,7 @@ void bind_mc2_domain_cpu(nb::module_& module) {
                 external["particle_partitions"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->particle_partition_index()));
                 external["partition_modes"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->compiled_external_modes()));
                 external["partition_masks"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->compiled_external_masks()));
+                external["particle_masks"] = owned_array_1d<std::uint32_t>(std::vector<std::uint32_t>(domain->compiled_external_particle_masks()));
                 external["particle_radii"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_radii()));
                 external["friction_before"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_before()));
                 external["friction_after"] = owned_array_1d<float>(std::vector<float>(domain->external_debug_friction_after()));

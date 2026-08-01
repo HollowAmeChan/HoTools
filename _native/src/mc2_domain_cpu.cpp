@@ -315,6 +315,7 @@ void DomainV1::swap_parameter_configuration(DomainV1& staging) {
     swap(compiled_external_edges_, staging.compiled_external_edges_);
     swap(compiled_external_modes_, staging.compiled_external_modes_);
     swap(compiled_external_masks_, staging.compiled_external_masks_);
+    swap(compiled_external_particle_masks_, staging.compiled_external_particle_masks_);
     swap(compiled_external_radii_, staging.compiled_external_radii_);
     swap(compiled_external_friction_, staging.compiled_external_friction_);
     swap(compiled_external_ready_, staging.compiled_external_ready_);
@@ -2567,7 +2568,8 @@ void DomainV1::configure_compiled_external_collision(
     const std::uint32_t* partition_collision_modes,
     const std::uint32_t* partition_collided_by_groups,
     const float* particle_radii,
-    const float* particle_friction
+    const float* particle_friction,
+    const std::uint32_t* particle_collided_by_groups
 ) {
     ensure_live();
     if ((edge_count != 0 && edges == nullptr) || partition_collision_modes == nullptr ||
@@ -2584,6 +2586,12 @@ void DomainV1::configure_compiled_external_collision(
     for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
         if (particle_radii[vertex] < 0.0f || particle_friction[vertex] < 0.0f) {
             throw std::invalid_argument("MC2 compiled external particle values cannot be negative");
+        }
+        if (particle_collided_by_groups != nullptr &&
+            particle_collided_by_groups[vertex] > 0xFFFFu) {
+            throw std::invalid_argument(
+                "MC2 compiled external particle mask must fit 16 groups"
+            );
         }
     }
     for (std::size_t edge = 0; edge < edge_count; ++edge) {
@@ -2611,9 +2619,16 @@ void DomainV1::configure_compiled_external_collision(
     );
     std::vector<float> next_radii(particle_radii, particle_radii + particle_count_);
     std::vector<float> next_friction(particle_friction, particle_friction + particle_count_);
+    std::vector<std::uint32_t> next_particle_masks(particle_count_, 0u);
+    for (std::size_t vertex = 0; vertex < particle_count_; ++vertex) {
+        next_particle_masks[vertex] = particle_collided_by_groups != nullptr
+            ? particle_collided_by_groups[vertex]
+            : partition_collided_by_groups[particle_partition_index_[vertex]];
+    }
     compiled_external_edges_.swap(next_edges);
     compiled_external_modes_.swap(next_modes);
     compiled_external_masks_.swap(next_masks);
+    compiled_external_particle_masks_.swap(next_particle_masks);
     compiled_external_radii_.swap(next_radii);
     compiled_external_friction_.swap(next_friction);
     compiled_external_ready_ = true;
@@ -2720,6 +2735,7 @@ void DomainV1::step_compiled_external_collision(
     point_view.particle_partition_index = particle_partition_index_.data();
     point_view.partition_collision_modes = compiled_external_modes_.data();
     point_view.partition_collided_by_groups = compiled_external_masks_.data();
+    point_view.particle_collided_by_groups = compiled_external_particle_masks_.data();
     point_view.vertex_count = static_cast<std::int64_t>(particle_count_);
     point_view.collider_count = static_cast<std::int64_t>(collider_count);
     point_view.partition_count = static_cast<std::int64_t>(partition_count_);
@@ -2749,6 +2765,7 @@ void DomainV1::step_compiled_external_collision(
     edge_view.particle_partition_index = particle_partition_index_.data();
     edge_view.partition_collision_modes = compiled_external_modes_.data();
     edge_view.partition_collided_by_groups = compiled_external_masks_.data();
+    edge_view.particle_collided_by_groups = compiled_external_particle_masks_.data();
     edge_view.vertex_count = static_cast<std::int64_t>(particle_count_);
     edge_view.edge_count = static_cast<std::int64_t>(compiled_external_edges_.size() / 2);
     edge_view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -3295,6 +3312,7 @@ void DomainV1::dispose() noexcept {
     compiled_external_edges_.clear();
     compiled_external_modes_.clear();
     compiled_external_masks_.clear();
+    compiled_external_particle_masks_.clear();
     compiled_external_radii_.clear();
     compiled_external_friction_.clear();
     compiled_external_ready_ = false;

@@ -209,10 +209,7 @@ def build_mc2_domain_collider_frame_for_draft(
 
     return build_mc2_domain_collider_frame(
         world,
-        (
-            getattr(partition.source, "armature", partition.source)
-            for partition in draft.partitions
-        ),
+        (partition.source for partition in draft.partitions),
         allowed_types=(
             frozenset(("SPHERE",))
             if draft.setup_type == "bone_spring"

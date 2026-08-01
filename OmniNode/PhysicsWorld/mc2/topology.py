@@ -169,6 +169,8 @@ class MC2BoneRawSnapshot:
     resolved: bool
     particle_radius_source: str
     collision_radii: np.ndarray
+    particle_collision_mask_source: str
+    collision_masks: np.ndarray
     # BoneCloth simulates segment endpoints.  ``names`` remains the stable
     # Blender PoseBone identity list; terminal names are solver-only points.
     terminal_names: tuple[str, ...] = ()
@@ -338,6 +340,16 @@ def _partition_bone_particle_radius_source(partition) -> str:
     ).strip().lower()
 
 
+def _partition_bone_particle_collision_mask_source(partition) -> str:
+    if getattr(partition, "setup_type", None) != "bone_cloth":
+        return "partition_mask"
+    properties = getattr(partition, "source_properties", None)
+    return str(
+        getattr(properties, "particle_collision_mask_source", "partition_mask")
+        or "partition_mask"
+    ).strip().lower()
+
+
 def read_mc2_partition_static_source_observation(partition, source):
     """从 resolved partition 读取一个 source，不创建旧 task spec。"""
 
@@ -350,6 +362,9 @@ def read_mc2_partition_static_source_observation(partition, source):
     snapshot = _read_bone_raw_snapshot(
         source,
         particle_radius_source=_partition_bone_particle_radius_source(partition),
+        particle_collision_mask_source=(
+            _partition_bone_particle_collision_mask_source(partition)
+        ),
     )
     return _bone_input_fingerprint(source, snapshot), snapshot
 
@@ -468,12 +483,14 @@ def prepare_static_inputs_for_partition(partition):
             snapshots.append(snapshot)
     else:
         radius_source = _partition_bone_particle_radius_source(partition)
+        mask_source = _partition_bone_particle_collision_mask_source(partition)
         armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] = {}
         for source in intent.sources:
             snapshot = _read_bone_raw_snapshot(
                 source,
                 armature_rest_snapshots,
                 particle_radius_source=radius_source,
+                particle_collision_mask_source=mask_source,
             )
             source_fingerprints.append(_bone_input_fingerprint(source, snapshot))
             snapshots.append(snapshot)
@@ -684,6 +701,7 @@ def _read_bone_raw_snapshot(
     armature_rest_snapshots: dict[int, _MC2ArmatureRestSnapshot] | None = None,
     *,
     particle_radius_source: str = "profile_curve",
+    particle_collision_mask_source: str = "partition_mask",
 ) -> MC2BoneRawSnapshot:
     armature, collection, requested, explicit_chain, names = _bone_source_selection(source)
     name_to_index = {name: index for index, name in enumerate(names)}
@@ -729,6 +747,26 @@ def _read_bone_raw_snapshot(
     if not np.isfinite(radii).all():
         raise ValueError("Bone collision radius overflows float32")
     radii.flags.writeable = False
+    if particle_collision_mask_source == "bone_collision_mask":
+        masks = np.empty(len(names), dtype=np.uint32)
+        for index, name in enumerate(names):
+            bone = _collection_get(collection, name)
+            properties = getattr(bone, "hotools_collision", None)
+            value = int(getattr(properties, "collided_by_groups", 0) or 0)
+            if not 0 <= value <= 0xFFFF:
+                raise ValueError(
+                    f"Bone collision mask must fit 16 groups: {name!r}"
+                )
+            masks[index] = value
+    elif particle_collision_mask_source == "partition_mask":
+        masks = np.empty((0,), dtype=np.uint32)
+    else:
+        raise ValueError(
+            "Unsupported Bone particle collision mask source: "
+            f"{particle_collision_mask_source!r}"
+        )
+    masks = np.ascontiguousarray(masks, dtype=np.uint32)
+    masks.flags.writeable = False
     return MC2BoneRawSnapshot(
         armature_pointer=armature_pointer,
         armature_name=str(
@@ -742,6 +780,8 @@ def _read_bone_raw_snapshot(
         resolved=resolved,
         particle_radius_source=particle_radius_source,
         collision_radii=radii,
+        particle_collision_mask_source=particle_collision_mask_source,
+        collision_masks=masks,
         terminal_names=(_bone_terminal_name(names[-1]),) if names else (),
     )
 
@@ -765,10 +805,12 @@ def _bone_input_fingerprint(
         snapshot.resolved,
     ))
     result["surface"] = _compact_signature((
-        "mc2_bone_particle_radius_surface_v1",
+        "mc2_bone_particle_collision_surface_v2",
         result["surface"],
         snapshot.particle_radius_source,
         tuple(float(value) for value in snapshot.collision_radii),
+        snapshot.particle_collision_mask_source,
+        tuple(int(value) for value in snapshot.collision_masks),
     ))
     return result
 
@@ -939,6 +981,8 @@ def _build_compact_bone_source_topology(
         "requested": snapshot.requested,
         "particle_radius_source": snapshot.particle_radius_source,
         "collision_radii": tuple(float(value) for value in snapshot.collision_radii),
+        "particle_collision_mask_source": snapshot.particle_collision_mask_source,
+        "collision_masks": tuple(int(value) for value in snapshot.collision_masks),
         "terminal_names": snapshot.terminal_names,
         "terminal_positions": tuple(
             tuple(float(value) for value in snapshot.head_tail[-1, 3:])
@@ -957,6 +1001,8 @@ def _build_compact_bone_source_topology(
             snapshot.terminal_names,
             snapshot.particle_radius_source,
             tuple(float(value) for value in snapshot.collision_radii),
+            snapshot.particle_collision_mask_source,
+            tuple(int(value) for value in snapshot.collision_masks),
         )),
         particle_count=len(snapshot.names) + len(snapshot.terminal_names),
         resolved=snapshot.resolved,

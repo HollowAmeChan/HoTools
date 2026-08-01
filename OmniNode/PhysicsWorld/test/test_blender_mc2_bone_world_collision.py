@@ -82,6 +82,9 @@ def _make_armature():
         bone.parent = parent
         bone.use_connect = index > 0
         parent = bone
+    static = data.edit_bones.new("StaticCollider")
+    static.head = (0.03, 0.25, 0.2)
+    static.tail = (0.03, 0.45, 0.2)
     bpy.ops.object.mode_set(mode="OBJECT")
     armature.select_set(False)
     return armature
@@ -124,11 +127,31 @@ try:
     )
     assert default_count == 1
     assert default_objects[0].explicit_properties.collided_by_groups == 0
-    objects, count = mc2_nodes.physicsMC2BoneClothCustomObject(
+    custom_objects, count = mc2_nodes.physicsMC2BoneClothCustomObject(
         [{"armature": armature, "bone": "Control"}],
         collided_by_groups=1 << (7 - 1),
     )
     assert count == 1
+    assert custom_objects[0].explicit_properties.collided_by_groups == 64
+    for name in ("Chain0", "Chain1", "Chain2"):
+        props = armature.data.bones[name].hotools_collision
+        props.collision_type = "SPHERE"
+        props.radius = 0.025
+        props.primary_collision_group = 3
+        props.collided_by_groups = 64
+    static_props = armature.data.bones["StaticCollider"].hotools_collision
+    static_props.collision_type = "SPHERE"
+    static_props.radius = 0.08
+    static_props.primary_collision_group = 7
+    objects, count = mc2_nodes.physicsMC2BoneClothObject(
+        [{"armature": armature, "bone": "Control"}],
+    )
+    assert count == 1
+    assert objects[0].explicit_properties.collided_by_groups == 0
+    assert (
+        objects[0].explicit_properties.particle_collision_mask_source
+        == "bone_collision_mask"
+    )
     profile = parameters.make_mc2_particle_profile(
         gravity=0.0,
         damping=0.0,
@@ -147,7 +170,7 @@ try:
     )
     requests, _report = mc2_nodes.physicsMC2BoneCollector(partitions)
     request = requests[0]
-    assert request.plan.active_partitions[0].setup_options.collided_by_groups == 64
+    assert request.plan.active_partitions[0].setup_options.collided_by_groups == 0
 
     scene = bpy.context.scene
     scope = physics_nodes.physicsObjectScope(
@@ -163,9 +186,8 @@ try:
         scene,
         scope,
     )
-    assert frame == 1 and collider_count == 1
-    assert len(world.collider_snapshot["colliders"]) == 1
-    assert world.collider_snapshot["colliders"][0]["owner"] is collider
+    assert frame == 1 and collider_count == 5
+    assert len(world.collider_snapshot["colliders"]) == 5
     returned, ready, status = mc2_nodes.physicsMC2Step(
         world,
         requests,
@@ -179,8 +201,9 @@ try:
         request.domain_signature,
     )
     slot = world.solver_slots[slot_id]
-    assert slot.data["collection"].draft.external_collision_masks == (64,)
-    assert slot.data["collider_frame"].collider_count == 1
+    assert slot.data["collection"].draft.external_collision_masks == (0,)
+    assert slot.data["collider_frame"].collider_count == 2
+    assert slot.data["owner"].compiled.fragments[0].particle_external_collision_masks.tolist() == [64] * 4
     assert debug_draw.update_mc2_debug_draw_store(
         debug_uid,
         world,
@@ -196,7 +219,7 @@ try:
         scene,
         scope,
     )
-    assert frame == 2 and collider_count == 1
+    assert frame == 2 and collider_count == 5
     returned, ready, status = mc2_nodes.physicsMC2Step(
         world,
         requests,
@@ -210,11 +233,16 @@ try:
     snapshot = slot.data.get("_debug_draw_snapshot")
     assert isinstance(snapshot, dict), slot.data.get("_debug_capture_state")
     collision = snapshot["collision"]
-    assert collision["collision_masks"].tolist() == [64]
+    assert collision["collision_masks"].tolist() == [0]
+    assert collision["particle_collision_masks"].tolist() == [64] * 4
     assert collision["colliders"]["collided_by_groups"] == 64
-    assert collision["colliders"]["keys"] == (
+    assert set(collision["colliders"]["keys"]) == {
         f"obj:{int(collider.as_pointer())}:0",
-    )
+        (
+            f"bone:{int(armature.as_pointer())}:"
+            f"{int(armature.data.as_pointer())}:StaticCollider"
+        ),
+    }
     contacts = snapshot["native"]["external_contacts"]
     assert int(contacts["temporal"]["active_count"]) > 0
     normals = np.asarray(

@@ -946,6 +946,13 @@ def _append_point_collision_batches(
     partition_modes = np.asarray(
         _values(collision.get("collision_modes")), dtype=np.int32
     ).reshape((-1,))
+    particle_masks = np.asarray(
+        _values(collision.get("particle_collision_masks")), dtype=np.uint32
+    ).reshape((-1,))
+    collider_groups = np.asarray(
+        _values((collision.get("colliders") or {}).get("group_bits")),
+        dtype=np.uint32,
+    ).reshape((-1,))
     is_spring = setup_type == "bone_spring"
     mesh = _triangle_mesh(triangle_meshes, "point_collision_surface")
     count = min(len(positions), len(attributes), len(radii))
@@ -953,6 +960,11 @@ def _append_point_collision_batches(
     component_ids = _collision_component_ids(count, edges)
     candidates = []
     for index in range(count):
+        if len(particle_masks) == count and (
+            int(particle_masks[index]) == 0
+            or not any(int(particle_masks[index]) & int(group) for group in collider_groups)
+        ):
+            continue
         if len(particle_partitions) == count and len(partition_modes):
             partition = int(particle_partitions[index])
             if (
@@ -999,6 +1011,13 @@ def _append_edge_collision_batches(
     partition_modes = np.asarray(
         _values(collision.get("collision_modes")), dtype=np.int32
     ).reshape((-1,))
+    particle_masks = np.asarray(
+        _values(collision.get("particle_collision_masks")), dtype=np.uint32
+    ).reshape((-1,))
+    collider_groups = np.asarray(
+        _values((collision.get("colliders") or {}).get("group_bits")),
+        dtype=np.uint32,
+    ).reshape((-1,))
     mesh = _triangle_mesh(triangle_meshes, "edge_collision_surface")
     centers = []
     vertex_count = min(len(positions), len(attributes), len(radii))
@@ -1018,6 +1037,11 @@ def _append_edge_collision_batches(
                 or int(partition_modes[partition]) != 2
             ):
                 continue
+        if len(particle_masks) == vertex_count and (
+            int(particle_masks[left]) == 0
+            or not any(int(particle_masks[left]) & int(group) for group in collider_groups)
+        ):
+            continue
         if not (int(attributes[left]) & 0x02 or int(attributes[right]) & 0x02):
             continue
         radius_left = max(float(radii[left]), 0.0)

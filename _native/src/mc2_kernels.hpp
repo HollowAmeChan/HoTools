@@ -187,6 +187,7 @@ struct Mc2CollisionView {
     const std::uint32_t* particle_partition_index = nullptr;
     const std::uint32_t* partition_collision_modes = nullptr;
     const std::uint32_t* partition_collided_by_groups = nullptr;
+    const std::uint32_t* particle_collided_by_groups = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t collider_count = 0;
     std::int64_t partition_count = 0;
@@ -215,6 +216,7 @@ struct Mc2EdgeCollisionView {
     const std::uint32_t* particle_partition_index = nullptr;
     const std::uint32_t* partition_collision_modes = nullptr;
     const std::uint32_t* partition_collided_by_groups = nullptr;
+    const std::uint32_t* particle_collided_by_groups = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t edge_count = 0;
     std::int64_t collider_count = 0;

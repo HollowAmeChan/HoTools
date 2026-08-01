@@ -79,9 +79,19 @@ class _Armature(_Pointer):
         self.pose = SimpleNamespace(bones=collection)
 
 
-def _rig(pointer=101, *, group=3, collided=0b1010):
-    tip = _Bone("Tip")
-    root = _Bone("Root", (tip,))
+def _rig(
+    pointer=101,
+    *,
+    group=3,
+    collided=0b1010,
+    root_group=1,
+    root_collided=0,
+    tip_collided=0,
+):
+    tip = _Bone("Tip", collided=tip_collided)
+    root = _Bone(
+        "Root", (tip,), group=root_group, collided=root_collided
+    )
     control = _Bone(
         "Control",
         (root,),
@@ -92,7 +102,7 @@ def _rig(pointer=101, *, group=3, collided=0b1010):
 
 
 def test_panel_and_socket_objects_share_source_identity_but_keep_radius_ownership():
-    armature = _rig()
+    armature = _rig(root_group=4, root_collided=0b0010, tip_collided=0b1000)
     source = (armature, "Control")
     panel = object_spec.read_mc2_bone_cloth_panel_object(source)
     custom = object_spec.make_mc2_bone_cloth_custom_object(
@@ -112,6 +122,16 @@ def test_panel_and_socket_objects_share_source_identity_but_keep_radius_ownershi
         custom.explicit_properties.particle_radius_source
         == object_spec.MC2_BONE_PARTICLE_RADIUS_PROFILE
     )
+    assert panel.explicit_properties.primary_collision_group == 4
+    assert panel.explicit_properties.collided_by_groups == 0
+    assert (
+        panel.explicit_properties.particle_collision_mask_source
+        == object_spec.MC2_BONE_PARTICLE_MASK_COLLISION
+    )
+    assert (
+        custom.explicit_properties.particle_collision_mask_source
+        == object_spec.MC2_BONE_PARTICLE_MASK_PARTITION
+    )
     assert tuple(
         chain.bone_names for chain in panel.partition_source.chains
     ) == (("Root", "Tip"),)
@@ -127,6 +147,7 @@ def test_custom_object_does_not_read_panel_properties():
     assert properties.collided_by_groups == 0
     assert properties.self_collision_groups == 1
     assert properties.particle_radius_source == "profile_curve"
+    assert properties.particle_collision_mask_source == "partition_mask"
 
 
 def test_object_lists_apply_one_complete_socket_property_set():
@@ -176,6 +197,13 @@ def test_bone_collision_radius_adapter_declares_exact_conversion_boundary():
     assert adapter["consumes"]["radius"] == {
         "target": "particle.radius",
         "conversion": "absolute_blender_units",
+        "terminal_policy": "inherit_last_real_bone",
+        "update_policy": "static_fragment_rebuild",
+    }
+    assert adapter["consumes"]["collided_by_groups"] == {
+        "target": "particle.external_collision_mask",
+        "conversion": "direct_16_bit_mask_per_simulated_bone",
+        "granularity": "particle",
         "terminal_policy": "inherit_last_real_bone",
         "update_policy": "static_fragment_rebuild",
     }

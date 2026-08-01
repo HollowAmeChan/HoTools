@@ -415,7 +415,7 @@ debug_markers
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。
 - 直接任务 socket 与隐式对象 registry 是两种不同产品合同。需要在一个模拟步内显式组合、随图输入立即增删的组件可直接输入 task list；需要跨帧持久存在、由注册/规则节点懒更新的程序化实体才进入 `implicit_objects`。同一类输入不得同时保留两条生产路径。
 - solver 可以选择强类型显式装配，也可以选择通用 implicit object registry。选择显式装配时，collector 不接 Physics World 或 implicit registry；选择 implicit registry 时，注册节点只处理声明过的通用 tag。具体 domain 的节点拓扑由其蓝本维护。
-- 强类型显式装配必须在 domain 前完成 source 与完整对象属性解析。以 MC2 BoneCloth 为例，生产链固定为 `面板对象/自定义对象 -> BoneCloth域 -> 完整Bone分区 -> Bone域收集 -> MC2模拟步`：domain 拒绝 raw Bone，collector 只校验和分组已完整解析的显式分区，不得读取 Bone 面板、补对象/域默认值或访问 Physics World；跨 Armature 时 collector 输出多个可见 request。
+- 强类型显式装配必须在 domain 前完成 source 与完整对象属性解析。以 MC2 BoneCloth 为例，生产链固定为 `面板对象/自定义对象 -> BoneCloth域 -> 完整Bone分区 -> Bone域收集 -> MC2模拟步`：domain 拒绝 raw Bone，collector 只校验和分组已完整解析的显式分区，不得读取 Bone 面板、补对象/域默认值或访问 Physics World；跨 Armature 时 collector 输出多个可见 request。普通面板对象的控制 Bone 只选择骨链，链上每根模拟 Bone 自己持有的半径和外碰接受掩码必须保留到 compiled particle；自定义对象则使用显式分区属性，默认空掩码。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
 
@@ -719,7 +719,7 @@ PhysicsWorldCache / solver slot
 
 所有权规则：
 
-- 被多个 solver 消费、或在 World Begin/scope 阶段解析的语义进入共享 component，例如 Object/Bone collider 和碰撞组。
+- 被多个 solver 消费、或在 World Begin/scope 阶段解析的语义进入共享 component，例如 Object/Bone collider 和碰撞组。共享组件保留 collider 自己的 owner、Bone identity 和主组；solver adapter 负责把模拟端逐 Bone 的接受掩码转换为本后端的逐粒子筛选，不得用控制 Bone 或整个 Armature 覆盖它。
 - 只影响单个 solver/setup 的拓扑、参数或后端同步策略的字段留在所属 domain。
 - UI 展开、过滤和叠加层状态属于 `physicsWorld.ui`，不进入 solver capability 或 world generation。
 - Operator 自身参数只服务单次命令，不进入持久 property registry。

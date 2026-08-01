@@ -28,6 +28,7 @@ class MC2BoneStaticFragmentV1:
     static: MC2BoneClothStaticBuildResult
     radius_multipliers: np.ndarray
     absolute_particle_radii: np.ndarray
+    particle_external_collision_masks: np.ndarray
     source_elements: np.ndarray
     output_bone_identities: tuple[str, ...]
     output_source_elements: np.ndarray
@@ -82,6 +83,19 @@ class MC2BoneStaticFragmentV1:
             raise ValueError(
                 "absolute_particle_radii must be read-only float32[0] or "
                 "finite non-negative float32[particle_count]"
+            )
+
+        if (
+            not isinstance(self.particle_external_collision_masks, np.ndarray)
+            or self.particle_external_collision_masks.dtype != np.uint32
+            or self.particle_external_collision_masks.shape not in ((0,), (count,))
+            or self.particle_external_collision_masks.flags.writeable
+            or not self.particle_external_collision_masks.flags.c_contiguous
+            or np.any(self.particle_external_collision_masks > 0xFFFF)
+        ):
+            raise ValueError(
+                "particle_external_collision_masks must be read-only uint32[0] "
+                "or 16-bit uint32[particle_count]"
             )
 
         identities = tuple(str(value or "") for value in self.output_bone_identities)
@@ -175,6 +189,9 @@ class MC2BoneStaticFragmentV1:
             "output_bone_count": len(self.output_bone_identities),
             "particle_radius_source": self.particle_radius_source,
             "absolute_particle_radii": self.absolute_particle_radii.tolist(),
+            "particle_external_collision_masks": (
+                self.particle_external_collision_masks.tolist()
+            ),
             "connection_mode": self.topology.connection_mode,
             "connection_model": self.topology.connection_model,
             "static": self.static.debug_dict(),
@@ -218,6 +235,8 @@ def build_mc2_bone_static_fragment(
     output_endpoint_source_elements = []
     absolute_particle_radii = []
     radius_override_states = []
+    particle_external_collision_masks = []
+    mask_override_states = []
     offset = 0
     for snapshot in snapshots:
         output_bone_identities.extend(snapshot.names)
@@ -239,14 +258,32 @@ def build_mc2_bone_static_fragment(
                 float(snapshot.collision_radii[-1])
                 for _terminal_name in snapshot.terminal_names
             )
+        has_mask_overrides = len(snapshot.collision_masks) > 0
+        mask_override_states.append(has_mask_overrides)
+        if has_mask_overrides:
+            if snapshot.collision_masks.shape != (len(snapshot.names),):
+                raise ValueError("Bone collision mask count does not match Bone count")
+            particle_external_collision_masks.extend(
+                int(value) for value in snapshot.collision_masks
+            )
+            particle_external_collision_masks.extend(
+                int(snapshot.collision_masks[-1])
+                for _terminal_name in snapshot.terminal_names
+            )
         offset += len(snapshot.names) + len(snapshot.terminal_names)
     if offset != count:
         raise ValueError("Bone fragment particle/source offset mismatch")
     if any(radius_override_states) and not all(radius_override_states):
         raise ValueError("Bone fragment cannot mix particle radius sources")
+    if any(mask_override_states) and not all(mask_override_states):
+        raise ValueError("Bone fragment cannot mix particle collision mask sources")
     absolute_particle_radii = np.ascontiguousarray(
         absolute_particle_radii if all(radius_override_states) else (),
         dtype=np.float32,
+    )
+    particle_external_collision_masks = np.ascontiguousarray(
+        particle_external_collision_masks if all(mask_override_states) else (),
+        dtype=np.uint32,
     )
     output_source_elements = np.asarray(
         output_source_elements,
@@ -258,6 +295,7 @@ def build_mc2_bone_static_fragment(
     )
     radius.flags.writeable = False
     absolute_particle_radii.flags.writeable = False
+    particle_external_collision_masks.flags.writeable = False
     source_elements.flags.writeable = False
     output_source_elements.flags.writeable = False
     output_endpoint_source_elements.flags.writeable = False
@@ -270,6 +308,7 @@ def build_mc2_bone_static_fragment(
         static=static,
         radius_multipliers=radius,
         absolute_particle_radii=absolute_particle_radii,
+        particle_external_collision_masks=particle_external_collision_masks,
         source_elements=source_elements,
         output_bone_identities=tuple(output_bone_identities),
         output_source_elements=output_source_elements,

@@ -298,6 +298,22 @@ def _program_for_fragments(
         )
         for partition_index, (fragment, count) in enumerate(zip(fragments, counts))
     )
+    particle_mask_blocks = []
+    has_particle_mask_override = False
+    for fragment, count in zip(fragments, counts):
+        values = getattr(fragment, "particle_external_collision_masks", None)
+        if values is not None and len(values):
+            values = np.asarray(values, dtype=np.uint32)
+            if values.shape != (count,):
+                raise ValueError(
+                    "particle external collision masks must match fragment particles"
+                )
+            particle_mask_blocks.append(values)
+            has_particle_mask_override = True
+        else:
+            particle_mask_blocks.append(
+                np.full(count, np.uint32(0xFFFFFFFF), dtype=np.uint32)
+            )
     return make_mc2_compiled_domain_program(
         domain_id=domain_id,
         setup_type=fragments[0].setup_type,
@@ -327,6 +343,11 @@ def _program_for_fragments(
         )),
         output_source_element=source_elements,
         required_capabilities=tuple(required_capabilities),
+        particle_external_collision_mask_override=(
+            np.concatenate(tuple(particle_mask_blocks))
+            if has_particle_mask_override
+            else None
+        ),
         baseline_parent_indices=np.asarray(baseline_parents, dtype=np.int32),
         baseline_line_start=np.asarray(baseline_starts, dtype=np.int32),
         baseline_line_count=np.asarray(baseline_counts, dtype=np.int32),
