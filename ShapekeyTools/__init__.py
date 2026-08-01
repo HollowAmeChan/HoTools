@@ -2,7 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Panel
 
-from . import operators, transfer, manager,multiObjectFlow
+from . import operators, transfer, manager, multiObjectFlow, rebase
 
 
 def reg_props():
@@ -10,6 +10,7 @@ def reg_props():
     enum_items = [
         ('PANEL_SHAPEKEYTOOLS_MANAGER', "管理", ""),
         ('PANEL_SHAPEKEYTOOLS_TRANSFER', "传递", ""),
+        ('PANEL_SHAPEKEYTOOLS_REBASE', "变基", ""),
     ]
     bpy.types.Scene.ho_ShapekeyToolsPanel_Mod = bpy.props.EnumProperty(
         name="ShapekeyToolsPanelMod", items=enum_items)
@@ -41,6 +42,8 @@ class ShapekeyTools(Panel):
             transfer.drawShapekeyTransferPanel(self.layout, context)
         if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_MANAGER":
             manager.drawShapekeyManagerPanel(self.layout, context)
+        if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_REBASE":
+            rebase.drawRebasePanel(self.layout, context)
 
 cls = [ShapekeyTools]
 # endregion
@@ -73,6 +76,7 @@ def register():
     operators.register()
     manager.register()
     multiObjectFlow.register()
+    rebase.register()
 
     for i in cls:
         bpy.utils.register_class(i)
@@ -81,12 +85,13 @@ def register():
 
 
 def unregister():
-    transfer.unregister()
-    operators.unregister()
-    manager.unregister()
-    multiObjectFlow.unregister()
-
-    for i in cls:
-        bpy.utils.unregister_class(i)
-    ureg_props()
     bpy.types.DATA_PT_shape_keys.remove(draw_in_DATA_PT_shape_keys)
+    ureg_props()
+    for i in reversed(cls):
+        bpy.utils.unregister_class(i)
+
+    rebase.unregister()
+    multiObjectFlow.unregister()
+    manager.unregister()
+    operators.unregister()
+    transfer.unregister()
