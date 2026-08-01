@@ -4,6 +4,7 @@
 
 #include "hotools_property_curve.hpp"
 #include "mc2_bindings.hpp"
+#include "mesh_xpbd_bindings.hpp"
 
 PyObject* spring_vrm_create_context(PyObject*, PyObject*);
 PyObject* free_spring_vrm_context(PyObject*, PyObject*);
@@ -166,4 +167,5 @@ NB_MODULE(hotools_native, module) {
 
     hotools::bind_mc2(module);
     hotools::bind_mc2_domain_cpu(module);
+    hotools::bind_mesh_xpbd(module);
 }

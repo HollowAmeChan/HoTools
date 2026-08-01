@@ -193,6 +193,9 @@ nanobind_add_module(hotools_native
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     src/mc2_domain_cpu.hpp
+    src/mesh_xpbd.cpp
+    src/mesh_xpbd_bindings.cpp
+    src/mesh_xpbd_bindings.hpp
     src/mc2_frame_orientations.hpp
     src/mc2_kernels.hpp
     src/mc2_whole_domain_self.hpp
@@ -227,6 +230,19 @@ if(MSVC)
     target_compile_options(hotools_native PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(hotools_native PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(hotools_mesh_xpbd_core_test EXCLUDE_FROM_ALL
+    tests/test_mesh_xpbd_core.cpp
+    src/mesh_xpbd.cpp
+)
+target_include_directories(hotools_mesh_xpbd_core_test PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/include"
+)
+if(MSVC)
+    target_compile_options(hotools_mesh_xpbd_core_test PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(hotools_mesh_xpbd_core_test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 set_target_properties(hotools_native PROPERTIES
