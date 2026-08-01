@@ -34,7 +34,7 @@ MESH_COLLISION_RNA_FIELDS = (
     {
         "name": "collided_by_groups",
         "property": "int",
-        "kwargs": {"name": "被碰撞组", "description": "允许哪些主碰撞组碰撞到这个网格的逐顶点碰撞球", "default": 0, "min": 0, "max": 65535},
+        "kwargs": {"name": "被碰撞组", "description": "允许哪些主碰撞组碰撞到这个网格的逐顶点碰撞球；0表示不接受任何组", "default": 0, "min": 0, "max": 65535},
     },
 )
 

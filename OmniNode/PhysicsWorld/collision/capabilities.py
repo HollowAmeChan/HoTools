@@ -120,7 +120,7 @@ BONE_COLLISION_CAPABILITY = {
             "explicit_property": "Bone.hotools_collision.collided_by_groups",
             "rna": {
                 "name": "被碰撞组",
-                "description": "允许哪些主碰撞组碰撞到这根碰撞体的位掩码",
+                "description": "允许哪些主碰撞组碰撞到这根碰撞体的位掩码；0表示不接受任何组",
                 "min": 0,
                 "max": ALL_COLLISION_GROUPS_MASK,
             },

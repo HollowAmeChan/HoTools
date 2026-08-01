@@ -599,7 +599,7 @@ def physicsMC2MeshObject(
         },
         "collided_by_groups": {
             "mask_length": 16,
-            "description": "允许碰撞到该Mesh的主碰撞组；域内自碰会自动包含自身组",
+            "description": "允许碰撞到该Mesh的主碰撞组；域内自碰会自动包含自身组\n0:不与任何外部组碰撞",
         },
     },
     omni_description=(
@@ -748,7 +748,7 @@ def physicsMC2BoneClothObject(
         },
         "collided_by_groups": {
             "mask_length": 16,
-            "description": "允许碰撞到该Bone分区的主碰撞组\n0:不筛选（全部组）",
+            "description": "允许碰撞到该Bone分区的主碰撞组\n0:不与任何组碰撞",
         },
     },
     omni_description=(
@@ -897,7 +897,7 @@ def physicsMC2BoneClothTask(
         **_task_parameter_inputs(_TASK_SPRING_PARAMETER_FIELDS),
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0, "description": "Move父骨方向比例\n仅影响骨骼旋转"},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0, "description": "Fixed根骨方向比例\n仅影响骨骼旋转"},
-        "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不筛选"},
+        "collided_by_groups": {"mask_length": 16, "description": "被碰撞组Mask\n0:不与任何组碰撞"},
     },
     omni_presets=_task_parameter_presets(_TASK_SPRING_PARAMETER_FIELDS),
     omni_description=_task_long_description(

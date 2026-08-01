@@ -119,9 +119,14 @@ if registered_here:
 try:
     armature = _make_armature()
     collider = _make_simple_collider()
+    default_objects, default_count = mc2_nodes.physicsMC2BoneClothCustomObject(
+        [{"armature": armature, "bone": "Control"}],
+    )
+    assert default_count == 1
+    assert default_objects[0].explicit_properties.collided_by_groups == 0
     objects, count = mc2_nodes.physicsMC2BoneClothCustomObject(
         [{"armature": armature, "bone": "Control"}],
-        collided_by_groups=0,
+        collided_by_groups=1 << (7 - 1),
     )
     assert count == 1
     profile = parameters.make_mc2_particle_profile(
@@ -142,7 +147,7 @@ try:
     )
     requests, _report = mc2_nodes.physicsMC2BoneCollector(partitions)
     request = requests[0]
-    assert request.plan.active_partitions[0].setup_options.collided_by_groups == 0
+    assert request.plan.active_partitions[0].setup_options.collided_by_groups == 64
 
     scene = bpy.context.scene
     scope = physics_nodes.physicsObjectScope(
@@ -174,7 +179,7 @@ try:
         request.domain_signature,
     )
     slot = world.solver_slots[slot_id]
-    assert slot.data["collection"].draft.external_collision_masks == (0xFFFF,)
+    assert slot.data["collection"].draft.external_collision_masks == (64,)
     assert slot.data["collider_frame"].collider_count == 1
     assert debug_draw.update_mc2_debug_draw_store(
         debug_uid,
@@ -205,10 +210,8 @@ try:
     snapshot = slot.data.get("_debug_draw_snapshot")
     assert isinstance(snapshot, dict), slot.data.get("_debug_capture_state")
     collision = snapshot["collision"]
-    assert collision["authored_collision_masks"].tolist() == [0]
-    assert collision["collision_masks"].tolist() == [0xFFFF]
-    assert collision["zero_mask_policy"] == "all_groups"
-    assert collision["colliders"]["collided_by_groups"] == 0xFFFF
+    assert collision["collision_masks"].tolist() == [64]
+    assert collision["colliders"]["collided_by_groups"] == 64
     assert collision["colliders"]["keys"] == (
         f"obj:{int(collider.as_pointer())}:0",
     )

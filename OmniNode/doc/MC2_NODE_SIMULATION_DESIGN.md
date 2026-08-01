@@ -135,7 +135,7 @@ MeshCloth 和 BoneCloth 都在进入域之前完成唯一解析：
 4. Center、Anchor 和 Teleport 是 partition 级有历史状态，不是逐粒子 float。
 5. 时间、substep 和统一 broadphase 是 context 级策略，不能因局部参数差异隐式拆 domain。
 
-碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是对象主组，`collided_by_groups` 是允许碰撞到该对象的组。外碰使用冻结的 `collided_by_groups`；whole-domain self 才把自身主组并入有效 mask，并继续执行共享粒子和一环拓扑过滤。
+碰撞只公开面板已有的 16 组合同：`primary_collision_group` 是对象主组，`collided_by_groups` 是允许碰撞到该对象的组。该 mask 使用严格位集语义：`0` 是空集合、不接受任何外部碰撞组，`0xFFFF` 接受全部 16 组，其它值只接受被置位的组；BoneCloth 自定义对象默认使用 `0`。外碰使用冻结的 `collided_by_groups`；whole-domain self 才把自身主组并入有效 mask，并继续执行共享粒子和一环拓扑过滤。
 
 ## 四层运行对象
 

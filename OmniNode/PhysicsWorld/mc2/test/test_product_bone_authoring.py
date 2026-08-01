@@ -120,6 +120,10 @@ def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
     objects = object_spec.make_mc2_bone_cloth_custom_objects(
         [(armature, "ControlA"), (armature, "ControlB")],
     )
+    assert all(
+        item.explicit_properties.collided_by_groups == 0
+        for item in objects
+    )
     partitions = authoring.make_mc2_bone_cloth_domain_partitions(
         objects,
         setup_options=parameters.make_mc2_setup_options(
@@ -132,6 +136,10 @@ def test_bone_cloth_control_groups_become_ordered_partitions_in_one_domain():
     assert isinstance(request, request_module.MC2ProductRequestV1)
     assert request.setup_type == "bone_cloth"
     assert len(request.plan.active_partitions) == 2
+    assert all(
+        partition.setup_options.collided_by_groups == 0
+        for partition in request.plan.active_partitions
+    )
     assert tuple(
         tuple(chain.bone_names for chain in partition.source.chains)
         for partition in request.plan.active_partitions

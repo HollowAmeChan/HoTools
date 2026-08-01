@@ -856,19 +856,9 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
     }
 
 
-def _product_collision_payload(
-    collider_frame,
-    external: dict,
-    *,
-    authored_masks=(),
-) -> dict:
+def _product_collision_payload(collider_frame, external: dict) -> dict:
     modes = _readonly(external.get("partition_modes", ()), np.uint32).reshape((-1,))
     masks = _readonly(external.get("partition_masks", ()), np.uint32).reshape((-1,))
-    authored_masks = _readonly(authored_masks, np.uint32).reshape((-1,))
-    if len(authored_masks) not in (0, len(masks)):
-        raise ValueError(
-            "MC2 authored external collision masks must match effective masks"
-        )
     active_modes = set(map(int, modes[modes != 0]))
     collision_mode = (
         0 if not active_modes
@@ -902,8 +892,6 @@ def _product_collision_payload(
         "collision_mode": collision_mode,
         "collision_modes": modes,
         "collision_masks": masks,
-        "authored_collision_masks": authored_masks,
-        "zero_mask_policy": "all_groups",
         "particle_partitions": _readonly(
             external.get("particle_partitions", ()), np.uint32
         ),
@@ -1122,16 +1110,9 @@ def capture_requested_mc2_product_debug(world, slots) -> int:
                     raise RuntimeError(
                         "产品外碰调试缺少原生 external collision 记录"
                     )
-                collection = slot.data.get("collection")
-                draft = getattr(collection, "draft", None)
-                authored_masks = tuple(
-                    int(partition.setup_options.collided_by_groups)
-                    for partition in getattr(draft, "partitions", ())
-                )
                 collision = _product_collision_payload(
                     collider_frame,
                     external_contacts,
-                    authored_masks=authored_masks,
                 )
                 if filters.get("show_collision_contacts", False):
                     native["external_contacts"] = external_contacts

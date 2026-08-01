@@ -241,7 +241,7 @@ def test_product_collector_uses_frozen_unified_collision_masks():
             _entry(fallback, primary_collision_group=3, collided_by_groups=0),
         ),
     )
-    assert result.draft.external_collision_masks == (0xFFFF, 4, 0xFFFF)
+    assert result.draft.external_collision_masks == (0, 4, 0)
     assert result.draft.collision_groups == (1, 2, 4)
     assert result.draft.collision_masks == (1, 6, 4)
 

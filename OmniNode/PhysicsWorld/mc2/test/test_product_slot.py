@@ -863,10 +863,8 @@ def test_slot_native_executes_complete_compiled_frame():
         assert collision["collision_masks"].shape == (
             owner.compiled.program.partition_count,
         )
-        assert collision["authored_collision_masks"].shape == (
-            owner.compiled.program.partition_count,
-        )
-        assert collision["zero_mask_policy"] == "all_groups"
+        assert collision["collision_masks"].tolist() == [0, 0]
+        assert collision["colliders"]["collided_by_groups"] == 0
         assert collision["friction_before"].flags.writeable is False
         assert collision["friction_after"].flags.writeable is False
         self_collision = snapshot["self_collision"]

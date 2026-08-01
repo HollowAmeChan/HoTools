@@ -114,7 +114,7 @@ def test_domain_draft_resolves_effectives_filters_and_provenance() -> None:
     assert draft.partition_ids == ("sleeve", "coat")
     assert draft.collision_groups == (1, 8)
     assert draft.collision_masks == (9, 8)
-    assert draft.external_collision_masks == (0xFFFF, 0xFFFF)
+    assert draft.external_collision_masks == (0, 0)
     first = draft.effectives[0].debug_dict()
     second = draft.effectives[1].debug_dict()
     assert first["float_values"]["gravity"] == 3.0
@@ -151,13 +151,11 @@ def test_domain_draft_external_collision_masks_are_parameter_state() -> None:
     assert first.draft_signature != changed.draft_signature
 
 
-def test_domain_draft_zero_external_mask_means_all_world_groups() -> None:
+def test_domain_draft_zero_external_mask_means_no_world_groups() -> None:
     draft = collect.build_mc2_domain_draft(
         _plan(), external_collision_masks=(0, 0),
     )
-    assert draft.external_collision_masks == (0xFFFF, 0xFFFF)
-    assert collect.resolve_mc2_external_collision_mask(0) == 0xFFFF
-    assert collect.resolve_mc2_external_collision_mask(0b1010) == 0b1010
+    assert draft.external_collision_masks == (0, 0)
 
 
 def test_domain_draft_rejects_no_active_partitions() -> None:
