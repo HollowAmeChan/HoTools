@@ -877,8 +877,8 @@ def physicsMC2BoneClothTask(
     teleport_distance: float = 0.5,
     teleport_rotation: float = 90.0,
     connection_mode: int = 1,
-    rotational_interpolation: float = 0.5,
-    root_rotation: float = 0.5,
+    rotational_interpolation: float = 1.0,
+    root_rotation: float = 1.0,
 ) -> tuple[list[typing.Any], str]:
     task_parameters = _make_task_parameters(locals())
     setup_options = make_mc2_setup_options(

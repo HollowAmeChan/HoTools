@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import types
@@ -87,6 +88,9 @@ def test_mc2_product_registry_contract():
         "Bone分区"
     ]
     assert mc2_nodes.physicsMC2BoneClothTask.__meta["bl_label"] == "MC2 BoneCloth域"
+    bone_cloth_signature = inspect.signature(mc2_nodes.physicsMC2BoneClothTask)
+    assert bone_cloth_signature.parameters["rotational_interpolation"].default == 1.0
+    assert bone_cloth_signature.parameters["root_rotation"].default == 1.0
     assert mc2_nodes.physicsMC2BoneSpringTask.__meta["bl_label"] == "MC2 BoneSpring域"
     assert mc2_nodes.physicsMC2BoneClothTask.__meta["_OUTPUT_NAME"] == [
         "Bone分区", "域标识"
