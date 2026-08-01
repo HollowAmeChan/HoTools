@@ -17,6 +17,9 @@ from .runtime_parameters import (
 )
 
 
+MC2_ALL_EXTERNAL_COLLISION_GROUPS = 0xFFFF
+
+
 def _signature(payload: object) -> str:
     canonical = json.dumps(
         payload,
@@ -52,6 +55,16 @@ def _resolved_collision_groups(
             cursor += 1
         result.append(int(value))
     return tuple(result)
+
+
+def resolve_mc2_external_collision_mask(value) -> int:
+    """Resolve the public zero-mask sentinel to all Physics World groups."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("MC2 external collision mask must be an integer")
+    if not 0 <= value <= MC2_ALL_EXTERNAL_COLLISION_GROUPS:
+        raise ValueError("MC2 external collision mask must fit 16 groups")
+    return MC2_ALL_EXTERNAL_COLLISION_GROUPS if value == 0 else value
 
 
 @dataclass(frozen=True)
@@ -151,20 +164,24 @@ def build_mc2_domain_draft(
     )
     groups = _resolved_collision_groups(partitions)
     masks = tuple(int(partition.collision_mask) for partition in partitions)
-    external_masks = (
+    authored_external_masks = (
         tuple(int(partition.setup_options.collided_by_groups) for partition in partitions)
         if external_collision_masks is None
         else tuple(external_collision_masks)
     )
-    if len(external_masks) != len(partitions):
+    if len(authored_external_masks) != len(partitions):
         raise ValueError("MC2 external collision masks must match active partitions")
     if any(
         isinstance(value, bool)
         or not isinstance(value, int)
         or not 0 <= value <= 0xFFFF
-        for value in external_masks
+        for value in authored_external_masks
     ):
         raise ValueError("MC2 external collision masks must fit 16 groups")
+    external_masks = tuple(
+        resolve_mc2_external_collision_mask(value)
+        for value in authored_external_masks
+    )
     resolved_domain_id = str(
         domain_id or f"mc2.domain:{plan.report.domain_signature[:24]}"
     ).strip()
@@ -222,7 +239,9 @@ def build_mc2_domain_collider_frame_for_draft(
 
 
 __all__ = [
+    "MC2_ALL_EXTERNAL_COLLISION_GROUPS",
     "MC2DomainDraftV1",
     "build_mc2_domain_draft",
     "build_mc2_domain_collider_frame_for_draft",
+    "resolve_mc2_external_collision_mask",
 ]

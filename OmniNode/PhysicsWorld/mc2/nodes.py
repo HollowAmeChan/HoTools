@@ -748,7 +748,7 @@ def physicsMC2BoneClothObject(
         },
         "collided_by_groups": {
             "mask_length": 16,
-            "description": "允许碰撞到该Bone分区的主碰撞组",
+            "description": "允许碰撞到该Bone分区的主碰撞组\n0:不筛选（全部组）",
         },
     },
     omni_description=(

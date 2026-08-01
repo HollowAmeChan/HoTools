@@ -263,7 +263,11 @@ def _run_case(*, spring: bool, accepted: bool, run_index: int):
                             max_debug_batches,
                             int(draw_state["batch_count"]),
                         )
-            assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
+            expected_writeback = sum(
+                int(item["bone_count"])
+                for item in world.result_streams.get("bone_transform", ())
+            )
+            assert writeback.writeback_bone_transforms(world) == expected_writeback
             bpy.context.view_layer.update()
 
         kernel = owner.inspect()["domain"]["kernel"]
@@ -371,7 +375,11 @@ def _run_friction_case(friction: float, run_index: int):
                     lags.append(lag)
                 normals = np.asarray(owner.read_debug_state()["world_normals"])
                 max_normal = max(max_normal, float(np.max(np.linalg.norm(normals, axis=1))))
-            assert writeback.writeback_bone_transforms(world) == output.world_positions.shape[0]
+            expected_writeback = sum(
+                int(item["bone_count"])
+                for item in world.result_streams.get("bone_transform", ())
+            )
+            assert writeback.writeback_bone_transforms(world) == expected_writeback
             bpy.context.view_layer.update()
         kernel = owner.inspect()["domain"]["kernel"]
         assert kernel["compiled_external_step_count"] >= 500, kernel
