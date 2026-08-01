@@ -13,24 +13,22 @@ from bpy.props import (
 )
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 
-from Utils import shapekey_utils
-
 try:
-    from . import rebase_core as _core
+    from . import rebase_core as _core, rebase_inference as _inference
 except ImportError:  # 兼容旧工具直接导入脚本
     import rebase_core as _core
+    import rebase_inference as _inference
 
 
 ShapeKeyRebaseError = _core.ShapeKeyRebaseError
 FBSF_FUNCTION_ITEMS = _core.FBSF_FUNCTION_ITEMS
 FBSF_FUNCTION_TAGS = _core.FBSF_FUNCTION_TAGS
 
-_fbsf_tag_channels = _core._fbsf_tag_channels
 _fbsf_auto_preset = _core._fbsf_auto_preset
 _fbsf_classification_context = _core._fbsf_classification_context
-_fbsf_resolve_target_side_tags = _core._fbsf_resolve_target_side_tags
-_fbsf_resolve_keyword_eye_tags = _core._fbsf_resolve_keyword_eye_tags
 _rebase_shape_keys_fbsf = _core._rebase_shape_keys_fbsf
+_infer_uninitialized = _inference.infer_uninitialized
+_infer_selected = _inference.infer_selected
 
 
 REBASE_SCHEMA_VERSION = 1
@@ -210,86 +208,6 @@ def _effective_reference_tag(item):
     )
 
 
-def _infer_uninitialized(obj, *, report=None):
-    """只推断上次刷新后新增、尚未初始化的列表行。"""
-    shape_keys = _shape_key_data(obj)
-    if shape_keys is None:
-        return 0
-    basis = shape_keys.reference_key
-    if basis is None:
-        return 0
-    pending = [item for item in shape_keys.ho_rebase_items if not item.initialized]
-    if not pending:
-        return 0
-
-    shape_names = tuple(
-        key.name for key in shape_keys.key_blocks if key != basis)
-    classification_context = _fbsf_classification_context(shape_names)
-    basis_positions = shapekey_utils.read_shape_key_positions(basis)
-    keys_by_name = {
-        key.name: key for key in shape_keys.key_blocks if key != basis
-    }
-    delta_cache = {}
-
-    def target_delta(shape_name):
-        delta = delta_cache.get(shape_name)
-        if delta is None:
-            key = keys_by_name[shape_name]
-            relative = shapekey_utils.read_shape_key_positions(key.relative_key)
-            delta = shapekey_utils.read_shape_key_positions(key) - relative
-            delta_cache[shape_name] = delta
-        return delta
-
-    source_orientation = []
-    for item in shape_keys.ho_rebase_items:
-        if not item.merge or not item.mergeable:
-            continue
-        preset = _fbsf_auto_preset(
-            item.shape_key_name, context=classification_context)
-        channels = _fbsf_tag_channels(item.function_tag)
-        if (
-                'MMD' not in preset.standards
-                and len(channels & {'LEFT_EYE', 'RIGHT_EYE'}) == 1):
-            source_orientation.append(
-                (item.function_tag, target_delta(item.shape_key_name)))
-
-    target_tags = {
-        item.shape_key_name: (
-            item.function_tag,
-            _effective_reference_tag(item),
-        )
-        for item in shape_keys.ho_rebase_items
-        if item.shape_key_name in keys_by_name
-    }
-    left_is_positive, resolved = _fbsf_resolve_target_side_tags(
-        target_tags,
-        tuple(source_orientation),
-        basis_positions,
-        classification_context,
-        target_delta,
-        resolve_mmd=True,
-    )
-    resolved = _fbsf_resolve_keyword_eye_tags(
-        resolved,
-        basis_positions,
-        left_is_positive,
-        classification_context,
-        target_delta,
-    )
-    for item in pending:
-        resolved_tag = resolved.get(
-            item.shape_key_name,
-            (item.function_tag, item.reference_tag),
-        )
-        item.function_tag, item.reference_tag = resolved_tag
-        item.auto_function_tag, item.auto_reference_tag = resolved_tag
-        item.initialized = True
-    shape_keys.ho_rebase_left_is_positive = 1 if left_is_positive else -1
-    if report is not None:
-        report(len(pending))
-    return len(pending)
-
-
 def sync_rebase_items(obj, *, infer=True):
     """同步持久列表；同名旧行原样保留，只初始化新增形态键。"""
     shape_keys = _shape_key_data(obj)
@@ -351,7 +269,7 @@ def _rebase_configuration_error(shape_keys):
     if current_names != listed_names:
         return "形态键已变化，请先刷新变基列表"
     if any(not item.initialized for item in shape_keys.ho_rebase_items):
-        return "仍有未初始化的形态键，请先推断未知"
+        return "仍有未完成保守推断的形态键，请先刷新变基列表"
     if not _merge_rebase_items(shape_keys):
         return "请至少勾选一个可合并的来源键"
     return None
@@ -442,23 +360,30 @@ class OP_ShapekeyTools_RebaseRefresh(Operator):
         return {'FINISHED'}
 
 
-class OP_ShapekeyTools_RebaseInferUnknown(Operator):
-    bl_idname = "ho.rebase_fbsf_infer_unknown"
-    bl_label = "推断未知"
-    bl_description = "只对尚未初始化的行进行保守名称和几何推断"
+class OP_ShapekeyTools_RebaseInferSelected(Operator):
+    bl_idname = "ho.rebase_fbsf_infer_selected"
+    bl_label = "推断选中"
+    bl_description = "更积极地重新推断选中行的权能；未选中行保持不变"
+    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         shape_keys = _shape_key_data(context.object)
-        return shape_keys is not None and len(shape_keys.ho_rebase_items) > 0
+        return (
+            shape_keys is not None
+            and any(item.selected for item in shape_keys.ho_rebase_items)
+        )
 
     def execute(self, context):
         try:
-            count = _infer_uninitialized(context.object)
+            count, classified_count = _infer_selected(context.object)
         except (ShapeKeyRebaseError, KeyError, ValueError) as exc:
             self.report({'ERROR'}, f"形态键推断失败：{exc}")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"已推断 {count} 个未知形态键；已有标签未被覆盖")
+        self.report(
+            {'INFO'},
+            f"已推断 {count} 个选中形态键，其中 {classified_count} 个识别为功能键",
+        )
         return {'FINISHED'}
 
 
@@ -629,7 +554,6 @@ def drawRebasePanel(layout: UILayout, context: Context):
         return
     toolbar = layout.row(align=True)
     toolbar.operator(OP_ShapekeyTools_RebaseRefresh.bl_idname, icon='FILE_REFRESH', text="")
-    toolbar.operator(OP_ShapekeyTools_RebaseInferUnknown.bl_idname, icon='VIEWZOOM', text="")
     apply = toolbar.row(align=True)
     apply.alert = True
     apply.operator_context = 'INVOKE_DEFAULT'
@@ -649,6 +573,11 @@ def drawRebasePanel(layout: UILayout, context: Context):
         OP_ShapekeyTools_RebaseDeselectAll.bl_idname,
         icon='CHECKBOX_DEHLT',
         text="",
+    )
+    batch.operator(
+        OP_ShapekeyTools_RebaseInferSelected.bl_idname,
+        icon='VIEWZOOM',
+        text="推断",
     )
     batch.prop(shape_keys, "ho_rebase_batch_function_tag", text="")
     batch.operator(
@@ -692,7 +621,7 @@ cls = [
     PG_ShapekeyTools_RebaseItem,
     HO_UL_ShapekeyTools_RebaseItems,
     OP_ShapekeyTools_RebaseRefresh,
-    OP_ShapekeyTools_RebaseInferUnknown,
+    OP_ShapekeyTools_RebaseInferSelected,
     OP_ShapekeyTools_RebaseSelectAll,
     OP_ShapekeyTools_RebaseDeselectAll,
     OP_ShapekeyTools_RebaseApplyBatchFunction,
@@ -716,7 +645,7 @@ __all__ = (
     "PG_ShapekeyTools_RebaseItem",
     "HO_UL_ShapekeyTools_RebaseItems",
     "OP_ShapekeyTools_RebaseRefresh",
-    "OP_ShapekeyTools_RebaseInferUnknown",
+    "OP_ShapekeyTools_RebaseInferSelected",
     "OP_ShapekeyTools_RebaseSelectAll",
     "OP_ShapekeyTools_RebaseDeselectAll",
     "OP_ShapekeyTools_RebaseApplyBatchFunction",

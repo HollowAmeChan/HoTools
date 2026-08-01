@@ -49,13 +49,16 @@ try:
     basis = obj.shape_key_add(name="Basis", from_mix=False)
     source = obj.shape_key_add(name="EyeSculpt", from_mix=False)
     blink = obj.shape_key_add(name="eyeBlinkLeft", from_mix=False)
+    surprised = obj.shape_key_add(name="eye_surprised_L", from_mix=False)
     source.value = 0.75
     for point in source.data:
         point.co.y += 1.0
     for point in blink.data[2:]:
         point.co.y += 1.0
+    for point in surprised.data[2:]:
+        point.co.z += 1.0
 
-    assert rebase.sync_rebase_items(obj) == 2
+    assert rebase.sync_rebase_items(obj) == 3
     shape_keys = obj.data.shape_keys
     assert shape_keys.ho_rebase_schema == rebase.REBASE_SCHEMA_VERSION
     items = {
@@ -64,10 +67,21 @@ try:
     assert items["EyeSculpt"].merge
     assert items["EyeSculpt"].weight == 0.75
     assert items["eyeBlinkLeft"].initialized
+    assert items["eye_surprised_L"].initialized
+    assert items["eye_surprised_L"].function_tag == 'OTHERS'
     assert rebase._rebase_configuration_error(shape_keys) is None
     assert [
         item.shape_key_name for item in rebase._merge_rebase_items(shape_keys)
     ] == ["EyeSculpt"]
+
+    # 刷新使用保守推断；显式推断只覆盖选中行，并允许更积极的名称和几何判断。
+    items["EyeSculpt"].function_tag = 'MOUTH'
+    items["eye_surprised_L"].selected = True
+    assert bpy.ops.ho.rebase_fbsf_infer_selected(
+        "EXEC_DEFAULT") == {'FINISHED'}
+    assert items["eye_surprised_L"].function_tag == 'LEFT_EYE'
+    assert items["EyeSculpt"].function_tag == 'MOUTH'
+    items["eye_surprised_L"].selected = False
 
     # 活动键配置行直接指向持久列表中的同一个条目。
     obj.active_shape_key_index = shape_keys.key_blocks.find("eyeBlinkLeft")
@@ -96,7 +110,7 @@ try:
     assert items["EyeSculpt"].function_tag == 'MOUTH'
     assert items["eyeBlinkLeft"].function_tag == 'RIGHT_EYE'
 
-    # 刷新只同步列表；用户最终确认的值始终具有最高优先级。
+    # 刷新只保守推断新增行；用户最终确认的旧值始终具有最高优先级。
     items["EyeSculpt"].function_tag = 'BOTH_EYES'
     items["EyeSculpt"].weight = 0.4
     items["eyeBlinkLeft"].function_tag = 'RIGHT_EYE'
