@@ -20,7 +20,7 @@ _LAZY_EXPORTS = {
     "MESH_XPBD_SOLVER_ID": ".names",
     "MESH_XPBD_STATS_CHANNEL": ".names",
     "MESH_XPBD_STEP_WRITER_ID": ".names",
-    "MESH_XPBD_LEGACY_SURFACES": ".declaration",
+    "MESH_XPBD_REMOVED_SURFACES": ".declaration",
     "MESH_XPBD_SOLVER_DECLARATION": ".declaration",
     "MeshXpbdObjectPropertiesSpec": ".object_spec",
     "MeshXpbdObjectSpec": ".object_spec",

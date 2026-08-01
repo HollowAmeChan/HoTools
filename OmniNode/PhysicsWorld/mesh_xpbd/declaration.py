@@ -15,8 +15,8 @@ from .names import (
 MESH_XPBD_SOLVER_DECLARATION = {
     "solver_id": MESH_XPBD_SOLVER_ID,
     "slot_kind": MESH_XPBD_SLOT_KIND,
-    "stage": "physics_world_vertical_slice",
-    "runtime_status": "available",
+    "stage": "frozen_baseline",
+    "runtime_status": "available_frozen",
     "native_strategy": "stateful_nanobind_context_only_no_python_numeric_backend",
     "native_layout_version": MESH_XPBD_NATIVE_LAYOUT_VERSION,
     "nodes": [
@@ -102,11 +102,11 @@ MESH_XPBD_SOLVER_DECLARATION = {
         "production acceptance 后冻结基础 solver 的产品语义；自碰撞、体积软体、"
         "撕裂、塑性、高级弯曲、CCD 或 GPU 改良必须使用新 solver id"
     ),
-    "legacy_policy": "remove_after_new_vertical_slice_acceptance_no_runtime_compatibility",
+    "legacy_policy": "removed_no_runtime_compatibility",
 }
 
 
-MESH_XPBD_LEGACY_SURFACES = {
+MESH_XPBD_REMOVED_SURFACES = {
     "python_runtime": (
         "_MeshPhysics",
         "_MeshPhysicsCppBackend",
@@ -121,7 +121,7 @@ MESH_XPBD_LEGACY_SURFACES = {
         "xpbd_delta",
     ),
     "private_cache": ("mesh_xpbd legacy _OmniCache payload",),
-    "dangling_native_abi": (
+    "removed_native_planning_names": (
         "hotools_native.solve_mesh_delta_xpbd",
         "hotools_native.solve_mesh_shape_key_xpbd",
     ),
@@ -131,5 +131,5 @@ MESH_XPBD_LEGACY_SURFACES = {
 def mesh_xpbd_declaration_debug_dict() -> dict:
     return {
         "declaration": dict(MESH_XPBD_SOLVER_DECLARATION),
-        "legacy_surfaces": dict(MESH_XPBD_LEGACY_SURFACES),
+        "removed_surfaces": dict(MESH_XPBD_REMOVED_SURFACES),
     }

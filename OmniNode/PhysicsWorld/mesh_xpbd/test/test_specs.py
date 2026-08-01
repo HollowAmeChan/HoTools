@@ -126,7 +126,7 @@ def test_registry_discovers_active_object_task_runtime_contract():
     descriptor = registry.all_solver_module_descriptors()["mesh_xpbd"]
     resolved = registry.resolve_solver_declaration("mesh_xpbd")
     assert descriptor["nodes"] == (".nodes",)
-    assert resolved["runtime_status"] == "available"
+    assert resolved["runtime_status"] == "available_frozen"
     assert resolved["nodes"] == [
         "XPBD网格对象",
         "XPBD网格自定义对象",
@@ -139,7 +139,8 @@ def test_registry_discovers_active_object_task_runtime_contract():
     assert resolved["collision"]["default_collided_by_groups"] == 0
     assert resolved["writeback"]["solver_inline_writeback"] is False
     assert len(resolved["produces"]) == 2
-    assert "meshPhysicsXPBDCpp" in declaration.MESH_XPBD_LEGACY_SURFACES["python_nodes"]
+    assert "meshPhysicsXPBDCpp" in declaration.MESH_XPBD_REMOVED_SURFACES["python_nodes"]
+    assert "hotools_native.solve_mesh_delta_xpbd" in declaration.MESH_XPBD_REMOVED_SURFACES["removed_native_planning_names"]
     assert mesh_xpbd.SOLVER_MODULE["solver_id"] == "mesh_xpbd"
 
 

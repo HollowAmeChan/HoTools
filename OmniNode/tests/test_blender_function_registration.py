@@ -122,7 +122,7 @@ function_node_classes = [
 for node_class in function_node_classes:
     assert node_class.bl_idname == f"HO_OmniNode_{node_class._func.__name__}"
 
-legacy_node_ids = {
+required_node_ids = {
     "HO_OmniNode_GroupNode",
     "HO_OmniNode_GroupNode_Inputs",
     "HO_OmniNode_GroupNode_Outputs",
@@ -146,19 +146,24 @@ legacy_node_ids = {
     "HO_OmniNode_switch",
     "HO_OmniNode_debug_print_any",
     "HO_OmniNode_floating",
-    "HO_OmniNode_meshPhysicsXPBD",
     "HO_OmniNode_physicsWorldBegin",
     "HO_OmniNode_physicsWorldCommit",
     "HO_OmniNode_physicsSpringVRMSolver",
     "HO_OmniNode_physicsRigidSolver",
     "HO_OmniNode_physicsMC2Step",
+    "HO_OmniNode_physicsMeshXpbdObject",
+    "HO_OmniNode_physicsMeshXpbdCustomObject",
+    "HO_OmniNode_physicsMeshXpbdTask",
+    "HO_OmniNode_physicsMeshXpbdSolver",
     "HO_OmniNode_customExampleScale",
 }
 current_node_ids = {
     node_class.bl_idname
     for node_class in node_register._registry.node_classes
 }
-assert legacy_node_ids <= current_node_ids
+assert required_node_ids <= current_node_ids
+assert "HO_OmniNode_meshPhysicsXPBD" not in current_node_ids
+assert "HO_OmniNode_meshPhysicsXPBDCpp" not in current_node_ids
 assert len(current_node_ids) == len(node_register._registry.node_classes)
 
 
@@ -430,7 +435,7 @@ for cycle in range(2):
         f"OmniNodeFunctionRegistration{cycle}",
         "OmniNodeTree",
     )
-    for node_id in sorted(legacy_node_ids):
+    for node_id in sorted(required_node_ids):
         node = tree.nodes.new(node_id)
         assert node.bl_idname == node_id
     bpy.data.node_groups.remove(tree)

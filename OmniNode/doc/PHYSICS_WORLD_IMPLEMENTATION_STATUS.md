@@ -66,7 +66,7 @@ physicsWorld/
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
 | MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
-| Mesh XPBD | World vertical slice 与生产 soak 通过，待旧路径删除后冻结 | 面板对象/自定义对象输入独立任务，source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；不建立无运行语义的融合域 | 删除旧双节点/私有 cache/writeback 与悬空 ABI，完成 native 消费审计并记录冻结矩阵；见 `MESH_XPBD_BLUEPRINT.md` |
+| Mesh XPBD | World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 面板对象/自定义对象输入独立任务，source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；旧双节点、私有 cache/writeback 与悬空 ABI 已移除；不建立无运行语义的融合域 | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
 
 通用力场当前没有 active 能力。任何 solver 中遗留的 wind 名称不代表公共场输入已经存在。
 
@@ -77,7 +77,7 @@ physicsWorld/
 3. GPU 成功必须以产品整帧、上传/同步/readback、工作量等价、设备失败和规模曲线判断，不能只报告 kernel 时间。
 4. Rigid/Jolt 优先清除私自 dt fallback，并继续补公共时间合同。
 5. Bake 与通用力场继续按公共能力推进，不进入 MC2 或其它 solver 私有 owner。
-6. Mesh XPBD 按 `MESH_XPBD_BLUEPRINT.md` 以独立 solver 重写；新 vertical slice 验收前不删除旧路径，也不把合同注册误报为运行可用。
+6. Mesh XPBD 已按 `MESH_XPBD_BLUEPRINT.md` 以独立 solver 重写；生产验收和旧路径删除审计完成，最终冻结前只保留合同矩阵与性能基线记录。
 
 ## 公共验收门槛
 

@@ -151,3 +151,5 @@ Context.dispose()
 dirty/lifecycle 回归同时覆盖：孤立顶点导致的 particle-count topology replacement、Basis/reference 静态 reset、纯数值参数热更新、矩阵参考系更新保留惯性、generation replacement、task prune 和 world dispose。阶段 5 完成前仍不得标记为冻结。
 
 完成 XPBD 删除后，再审计 `_native` 中未被现有 Physics World solver 消费的旧规划。SpringBone VRM 与 MC2 仍在使用的 raw `PyObject*` bridge 只能列入后续 nanobind 迁移，不能因“旧”而误删。
+
+旧路径删除审计（2026-08-01）已完成：`Function/Physics.py` 中的 `_MeshPhysics`、`_MeshPhysicsCppBackend`、`_run_mesh_xpbd_node`、`meshPhysicsXPBD`、`meshPhysicsXPBDCpp`、`XPBDDelta`、`xpbd_delta` 和私有 `_OmniCache` 写回均已移除；函数注册回归确认旧两个节点不存在，新对象/自定义对象/任务/模拟步四节点存在。双 ABI 的实际 `hotools_native` 导出均只提供 `MeshXpbdContextV1` 与 `mesh_xpbd_create_context_v1`，旧 `solve_mesh_delta_xpbd` / `solve_mesh_shape_key_xpbd` 没有定义或导出。共享 MC2、SpringBone VRM、Jolt 和 property-curve native 单元未触碰。
