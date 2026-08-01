@@ -30,9 +30,10 @@ physicsWorld/
   blender.py                 # 物理 RNA/UI 根生命周期
   blender_registry.py        # domain 注册、依赖与失败回滚
   registry.py                # component/solver 发现与装卸
-  gn_offset.py               # 共享 GN 顶点最终 offset
+  gn_offset.py               # simple_cloth.output 的底层共享 GN 实现
   bake/                      # 通用 Bake 后端与 session
   collision/                 # Object/Bone collider 共享 capability
+  simple_cloth/              # 简单布料RNA、BasePose/Scene归属与GN资源owner
   spring_vrm/                # VRM SpringBone
   rigid/                     # Rigid/Jolt
   mc2/                       # 一个 solver，三种 setup
@@ -48,7 +49,7 @@ physicsWorld/
 |---|---|
 | `Bone.hotools_collision` | `physicsWorld.collision` |
 | `Object.hotools_object_collision` | `physicsWorld.collision` |
-| `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` |
+| `Object.hotools_mesh_collision` | `physicsWorld.simple_cloth` |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` |
 | `Scene.ho_*` 物理 UI 字段 | `physicsWorld.ui` |
@@ -62,11 +63,12 @@ physicsWorld/
 | World core | 可用 | 统一时间、Begin/Commit、scope、slot/resource/result/exchange、writeback、dispose、debug snapshot | 补齐全部 solver 的统一时间矩阵；建立真实跨 solver 交互闭环 |
 | Physics Bake | Bone + PC2 Mesh + Clear vertical slice 可用 | 公共 Bake 节点、Action/PC2、manifest、播放和清理 | 见 `PHYSICS_BAKE_NODE_BLUEPRINT.md` |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、公共 snapshot 与 capability | 继续消除 solver 私有重复 resolver |
+| Simple Cloth | 可用 | 公共RNA/capability、面板/自定义对象资源准备、按Scene独立HoPhysicsCache、Outliner可追踪且视口隐藏的BasePose、共享GN output；MC2/XPBD step不创建Blender资源 | 继续把新增Mesh solver统一接到该对象边界，不复制资源生命周期 |
 | 通用力场 | 未来兼容区 | ownership 固定归 Physics World，solver 只消费公共数值快照 | channel/schema/采样布局和首个 active vertical slice 未冻结 |
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
-| MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
-| Mesh XPBD | World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 面板对象/自定义对象输入独立任务，source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；可视化 draw store/handler 已接入注册表驱动的 world owner 销毁链，跳帧替换与 runtime clear 不留残影；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；旧双节点、私有 cache/writeback 与悬空 ABI 已移除；不建立无运行语义的融合域 | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
+| MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 消费公共 simple_cloth 对象/BasePose/GN资源，solver step不创建Blender数据；MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
+| Mesh XPBD | World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 面板/自定义对象适配器消费公共simple_cloth对象并在solver前准备GN资源；source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；可视化 draw store/handler 已接入注册表驱动的 world owner 销毁链，跳帧替换与 runtime clear 不留残影；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；旧双节点、私有 cache/writeback 与悬空 ABI 已移除；不建立无运行语义的融合域 | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
 
 通用力场当前没有 active 能力。任何 solver 中遗留的 wind 名称不代表公共场输入已经存在。
 

@@ -68,13 +68,13 @@ rigid_capabilities = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.rigid.capabilities"
 )
 mesh_property = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.properties"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.properties"
 )
 mesh_schema = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.schema"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.schema"
 )
 mesh_capabilities = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.capabilities"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.capabilities"
 )
 collision_groups = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.collision.groups"
@@ -246,15 +246,23 @@ def test_persistent_property_contracts_are_frozen():
 
 def test_components_own_shared_and_solver_adapter_capabilities():
     capabilities = solver_registry.all_component_capabilities()
-    assert tuple(capabilities) == ("bone_collision", "object_collision", "mesh_collision")
+    assert tuple(capabilities)[:2] == ("bone_collision", "object_collision")
     assert capabilities["bone_collision"]["explicit_storage"] == "Bone.hotools_collision"
     assert capabilities["object_collision"]["explicit_storage"] == "Object.hotools_object_collision"
-    assert capabilities["mesh_collision"]["explicit_storage"] == "Object.hotools_mesh_collision"
+    assert "mesh_collision" not in capabilities
+    assert capabilities["simple_cloth"]["explicit_storage"] == "Object.hotools_mesh_collision"
+    assert capabilities["simple_cloth"]["semantic_owner"] == "physicsWorld.simple_cloth"
 
     spring = solver_registry.resolve_solver_declaration("spring_vrm")
     assert spring is not None
     assert spring.get("capabilities") == {}
     assert spring.get("consumes_capabilities") == ["bone_collision"]
+    assert "simple_cloth" in solver_registry.resolve_solver_declaration(
+        "mc2"
+    )["consumes_capabilities"]
+    assert solver_registry.resolve_solver_declaration(
+        "mesh_xpbd"
+    )["consumes_capabilities"] == ["simple_cloth"]
     assert rigid_property.PG_Hotools_RigidBody.__module__.endswith("PhysicsWorld.rigid.properties")
     assert rigid_property.PG_Hotools_RigidConstraint.__module__.endswith("PhysicsWorld.rigid.properties")
     assert physics_utils._COLLISION_GROUP_COUNT == collision_groups.COLLISION_GROUP_COUNT
@@ -562,14 +570,17 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.unregister_solver_blender_properties()
 
     binding_count = solver_registry.register_physics_world_blender_properties()
-    assert binding_count == 5, {
+    assert binding_count >= 5, {
         "binding_count": binding_count,
         "registry": blender_registry.blender_property_registry_snapshot(),
     }
     assert hasattr(bpy.types.Bone, "hotools_collision")
     assert hasattr(bpy.types.Object, "hotools_object_collision")
-    assert blender_registry.registered_blender_property_domains() == ("collision", "mc2", "rigid")
-    assert solver_registry.register_physics_world_blender_properties() == 5
+    registered_domains = blender_registry.registered_blender_property_domains()
+    assert registered_domains[0] == "collision"
+    assert registered_domains[-2:] == ("simple_cloth", "rigid")
+    assert "mc2" not in registered_domains
+    assert solver_registry.register_physics_world_blender_properties() == binding_count
 
     class PG_PhysicsWorldDynamicSolverTest(bpy.types.PropertyGroup):
         enabled: bpy.props.BoolProperty(default=False)  # type: ignore
@@ -590,7 +601,8 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.register_solver_module("test_dynamic_solver", descriptor)
     assert hasattr(bpy.types.Object, "hotools_test_dynamic_solver_temp")
     assert blender_registry.registered_blender_property_domains() == (
-        "collision", "mc2", "rigid", "test_dynamic_solver",
+        *registered_domains,
+        "test_dynamic_solver",
     )
 
     solver_registry.unregister_solver_module("test_dynamic_solver")
@@ -603,7 +615,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     assert not hasattr(bpy.types.Object, "hotools_object_collision")
     assert blender_registry.registered_blender_property_domains() == ()
 
-    assert solver_registry.register_physics_world_blender_properties() == 5
+    assert solver_registry.register_physics_world_blender_properties() == binding_count
     solver_registry.unregister_physics_world_blender_properties()
     assert blender_registry.registered_blender_property_domains() == ()
 

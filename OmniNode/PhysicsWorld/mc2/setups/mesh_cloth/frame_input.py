@@ -9,7 +9,7 @@ from mathutils import Matrix
 import numpy as np
 
 from ....utils.math3d import matrix4_to_numpy_f32
-from .base_pose import validate_base_pose_proxy
+from ....simple_cloth.base_pose import validate_base_pose_proxy
 
 
 _FRAME_CACHE_PREFIX = "mc2_mesh_base_pose_frame"

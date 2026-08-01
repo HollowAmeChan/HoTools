@@ -10,6 +10,10 @@ from ...FunctionNodeCore import omni
 from ...OmniNodeSocketMapping import _OmniBitMask
 from ...config import nodeColors
 from ..types import PhysicsWorldCache
+from ..simple_cloth.authoring import (
+    prepare_simple_cloth_custom_objects,
+    prepare_simple_cloth_panel_objects,
+)
 from .authoring import make_mesh_xpbd_tasks
 from .object_spec import (
     make_mesh_xpbd_custom_objects,
@@ -31,7 +35,7 @@ from .solver import step_mesh_xpbd
     },
     omni_description=(
         "把一个或多个已启用简单布料的Mesh物体包装成XPBD模拟对象。对象字段来自物体面板；"
-        "解算参数在下游XPBD网格任务中统一设置。"
+        "公共简单布料层会在solver前准备共享GN输出，解算参数在下游XPBD网格任务中统一设置。"
     ),
     _OUTPUT_NAME=["XPBD网格对象", "对象数量"],
     mute_passthrough=False,
@@ -39,7 +43,10 @@ from .solver import step_mesh_xpbd
 def physicsMeshXpbdObject(
     mesh_objects: list[bpy.types.Object],
 ) -> tuple[list[typing.Any], int]:
-    objects = read_mesh_xpbd_panel_objects(mesh_objects)
+    resources = prepare_simple_cloth_panel_objects(mesh_objects)
+    objects = read_mesh_xpbd_panel_objects(
+        [resource.source_object for resource in resources]
+    )
     return list(objects), len(objects)
 
 
@@ -68,7 +75,7 @@ def physicsMeshXpbdObject(
     },
     omni_description=(
         "用socket完整定义XPBD对象字段；与面板对象节点输出同一种类型，"
-        "且不会读取或修改物体面板。默认被碰撞组为0。"
+        "且不会读取或修改物体面板。公共简单布料层只准备共享GN资源；默认被碰撞组为0。"
     ),
     _OUTPUT_NAME=["XPBD网格对象", "对象数量"],
     mute_passthrough=False,
@@ -80,8 +87,9 @@ def physicsMeshXpbdCustomObject(
     pin_vertex_group: str = "",
     collided_by_groups: _OmniBitMask = 0,
 ) -> tuple[list[typing.Any], int]:
+    resources = prepare_simple_cloth_custom_objects(mesh_objects)
     objects = make_mesh_xpbd_custom_objects(
-        mesh_objects,
+        [resource.source_object for resource in resources],
         radius_vertex_group=radius_vertex_group,
         pin_enabled=bool(pin_enabled),
         pin_vertex_group=pin_vertex_group,

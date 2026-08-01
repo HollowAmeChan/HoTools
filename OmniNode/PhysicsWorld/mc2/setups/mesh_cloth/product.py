@@ -10,7 +10,7 @@ from ...domain_collect import build_mc2_domain_draft
 from ...domain_ir import MC2MeshPartitionStaticSnapshotV1
 from ...domain_output import MC2MeshWritebackBatchV1
 from ...names import MC2_SETUP_MESH_CLOTH
-from ...mesh_topology_identity import mesh_topology_signature_from_arrays
+from ....simple_cloth.topology_identity import mesh_topology_signature_from_arrays
 from ...partition_specs import MC2PartitionCollectorPlan
 from ...source_identity import mc2_source_token
 from .source_capture import (

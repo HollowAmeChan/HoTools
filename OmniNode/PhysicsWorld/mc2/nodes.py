@@ -10,6 +10,10 @@ from ...OmniTiming import OmniNodeTiming
 from ...OmniNodeSocketMapping import _OmniBitMask, _OmniBone, _OmniFloatCurve
 from ...config import nodeColors
 from ..types import PhysicsWorldCache
+from ..simple_cloth.authoring import (
+    prepare_simple_cloth_custom_objects,
+    prepare_simple_cloth_panel_objects,
+)
 from .names import (
     MC2_SETUP_BONE_CLOTH,
     MC2_SETUP_BONE_SPRING,
@@ -28,7 +32,7 @@ from .setups.mesh_cloth.authoring import (
     make_mc2_mesh_product_request,
 )
 from .setups.mesh_cloth.object_spec import (
-    make_mc2_mesh_custom_objects,
+    make_mc2_mesh_custom_object,
     read_mc2_mesh_panel_objects,
 )
 from .product_request import MC2ProductRequestV1
@@ -566,6 +570,7 @@ _BONE_CLOTH_CHAIN_AUTHORING_NOTICE = (
     },
     omni_description=(
         "把一个或多个已启用简单布料的Mesh物体包装成MeshCloth对象；对象属性来自物体面板。"
+        "公共简单布料层会先准备共享GN输出并创建或刷新BasePose，MC2 solver不创建Blender资源。"
     ),
     _OUTPUT_NAME=["MeshCloth对象", "对象数量"],
     mute_passthrough=False,
@@ -573,7 +578,13 @@ _BONE_CLOTH_CHAIN_AUTHORING_NOTICE = (
 def physicsMC2MeshObject(
     mesh_objects: list[bpy.types.Object],
 ) -> tuple[list[typing.Any], int]:
-    objects = read_mc2_mesh_panel_objects(mesh_objects)
+    resources = prepare_simple_cloth_panel_objects(
+        mesh_objects,
+        require_base_pose=True,
+    )
+    objects = read_mc2_mesh_panel_objects(
+        [resource.source_object for resource in resources]
+    )
     return list(objects), len(objects)
 
 
@@ -591,7 +602,7 @@ def physicsMC2MeshObject(
             "description": "一个或多个Mesh物体；不读取它们的MeshCloth面板",
         },
         "mc2_base_pose_proxy": {
-            "description": "每帧只读的Mesh基础姿态对象",
+            "description": "每帧只读的Mesh基础姿态对象\n留空时由公共简单布料层自动创建且不写回物体面板",
         },
         "radius_vertex_group": {
             "description": "逐顶点缩放碰撞半径的顶点组",
@@ -612,7 +623,7 @@ def physicsMC2MeshObject(
     },
     omni_description=(
         "用socket完整定义MeshCloth对象属性；它与面板对象节点输出同一种类型，"
-        "且不会读取或修改物体面板。"
+        "且不会读取或修改物体面板。共享GN输出和缺失BasePose由公共简单布料层管理。"
     ),
     _OUTPUT_NAME=["MeshCloth对象", "对象数量"],
     mute_passthrough=False,
@@ -626,14 +637,22 @@ def physicsMC2MeshCustomObject(
     primary_collision_group: int = 1,
     collided_by_groups: _OmniBitMask = 0,
 ) -> tuple[list[typing.Any], int]:
-    objects = make_mc2_mesh_custom_objects(
+    resources = prepare_simple_cloth_custom_objects(
         mesh_objects,
-        mc2_base_pose_proxy=mc2_base_pose_proxy,
-        radius_vertex_group=radius_vertex_group,
-        pin_enabled=bool(pin_enabled),
-        pin_vertex_group=pin_vertex_group,
-        primary_collision_group=int(primary_collision_group),
-        collided_by_groups=int(collided_by_groups),
+        require_base_pose=True,
+        base_pose_proxy=mc2_base_pose_proxy,
+    )
+    objects = tuple(
+        make_mc2_mesh_custom_object(
+            resource.source_object,
+            mc2_base_pose_proxy=resource.base_pose_proxy,
+            radius_vertex_group=radius_vertex_group,
+            pin_enabled=bool(pin_enabled),
+            pin_vertex_group=pin_vertex_group,
+            primary_collision_group=int(primary_collision_group),
+            collided_by_groups=int(collided_by_groups),
+        )
+        for resource in resources
     )
     return list(objects), len(objects)
 

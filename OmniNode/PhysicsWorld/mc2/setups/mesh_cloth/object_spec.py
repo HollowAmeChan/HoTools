@@ -7,12 +7,12 @@ import hashlib
 import json
 
 from ...source_identity import mc2_source_token
-from .schema import MESH_COLLISION_RNA_FIELDS
+from ....simple_cloth.schema import SIMPLE_CLOTH_RNA_FIELDS
 
 
 MC2_MESH_EXPLICIT_PROPERTY_FIELDS = tuple(
     str(field["name"])
-    for field in MESH_COLLISION_RNA_FIELDS
+    for field in SIMPLE_CLOTH_RNA_FIELDS
     if str(field["name"]) != "enabled"
 )
 
@@ -20,7 +20,7 @@ MC2_MESH_EXPLICIT_PROPERTY_FIELDS = tuple(
 def _schema_defaults() -> dict[str, object]:
     return {
         str(field["name"]): (field.get("kwargs") or {}).get("default")
-        for field in MESH_COLLISION_RNA_FIELDS
+        for field in SIMPLE_CLOTH_RNA_FIELDS
         if str(field["name"]) in MC2_MESH_EXPLICIT_PROPERTY_FIELDS
     }
 

@@ -25,7 +25,7 @@ import numpy as np
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
-from .gn_offset import (
+from .simple_cloth.output import (
     clear_gn_local_offsets,
     ensure_gn_offset_output,
     normalize_local_offsets,

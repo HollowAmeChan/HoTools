@@ -25,7 +25,7 @@ XPBD网格对象 / XPBD网格自定义对象
   -> Physics World Commit
 ```
 
-普通对象节点只接收统一物理面板中已开启“简单布料”的对象，并读取 `Object.hotools_mesh_collision` 中 XPBD 声明消费的 Pin、半径顶点组和外碰接受掩码；面板 `enabled` 只作 authoring 过滤，不进入 task/spec 签名。自定义对象节点只读取 socket，不受该面板开关影响，默认掩码为 `0`。对象层不携带数值 solver 参数，任务层为一个或多个对象统一附加粒子半径、碰撞开关、顺从度、迭代、阻尼和重力。
+普通对象节点只接收统一物理面板中已开启“简单布料”的对象，先调用公共 `physicsWorld.simple_cloth` 对象层准备共享GN输出，再读取 `Object.hotools_mesh_collision` 中 XPBD 声明消费的 Pin、半径顶点组和外碰接受掩码；面板 `enabled` 只作 authoring 过滤，不进入 task/spec 签名。自定义对象节点只读取 socket，不受该面板开关影响，默认掩码为 `0`，但仍通过同一公共层准备写回资源。对象层不携带数值 solver 参数，任务层为一个或多个对象统一附加粒子半径、碰撞开关、顺从度、迭代、阻尼和重力；XPBD solver step只发布公共结果，不创建GN属性、修改器或其它Blender数据。
 
 第一版仍不建立 MC2 式融合域和域收集。基础 XPBD 不做网格之间的融合、自碰或共享约束，因此对象与任务分层是必要的 authoring 一致性，而 domain/collector 会制造没有运行语义的空抽象。
 

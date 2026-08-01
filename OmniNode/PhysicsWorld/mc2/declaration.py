@@ -13,7 +13,7 @@ from ..collision.capabilities import (
     OBJECT_COLLISION_CAPABILITY_ID,
 )
 from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
-from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
+from ..simple_cloth.capabilities import SIMPLE_CLOTH_CAPABILITY_ID
 from .setups.bone_cloth.capabilities import (
     MC2_BONE_CLOTH_BONE_COLLISION_ADAPTER,
 )
@@ -102,7 +102,7 @@ MC2_SOLVER_DECLARATION = {
     "consumes_capabilities": [
         OBJECT_COLLISION_CAPABILITY_ID,
         BONE_COLLISION_CAPABILITY_ID,
-        MESH_COLLISION_CAPABILITY_ID,
+        SIMPLE_CLOTH_CAPABILITY_ID,
     ],
     "capability_adapters": [MC2_BONE_CLOTH_BONE_COLLISION_ADAPTER],
     "update_frequency_table": MC2_UPDATE_FREQUENCY_TABLE,

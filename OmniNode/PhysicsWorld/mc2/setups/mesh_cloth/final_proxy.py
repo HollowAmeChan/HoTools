@@ -387,7 +387,10 @@ def build_blender_mesh_final_proxy(
     expected_mesh_topology_signature: str | None = None,
     raw_snapshot=None,
 ) -> MC2MeshFinalProxyBuildResult:
-    from .base_pose import mesh_topology_signature, mesh_topology_signature_from_arrays
+    from ....simple_cloth.base_pose import (
+        mesh_topology_signature,
+        mesh_topology_signature_from_arrays,
+    )
 
     if obj is None or getattr(obj, "type", None) != "MESH" or obj.data is None:
         raise ValueError("MeshCloth final proxy target must be a Mesh object")

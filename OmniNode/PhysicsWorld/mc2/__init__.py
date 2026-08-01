@@ -4,15 +4,6 @@
 """
 
 
-COMPONENT_MODULE = {
-    "component_id": "mc2",
-    "kind": "solver_adapter",
-    "depends_on": ("collision",),
-    "capabilities": ".setups.mesh_cloth.capabilities:MESH_CLOTH_CAPABILITIES",
-    "blender_properties": ".setups.mesh_cloth.properties:MESH_CLOTH_BLENDER_PROPERTIES",
-}
-
-
 SOLVER_MODULE = {
     "domain": "mc2",
     "solver_id": "mc2",
@@ -28,4 +19,4 @@ SOLVER_MODULE = {
 }
 
 
-__all__ = ["COMPONENT_MODULE", "SOLVER_MODULE"]
+__all__ = ["SOLVER_MODULE"]

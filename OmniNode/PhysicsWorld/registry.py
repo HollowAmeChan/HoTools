@@ -15,7 +15,7 @@ from typing import Callable
 
 
 _BUILTIN_SOLVER_DOMAINS = ("spring_vrm", "rigid", "mc2", "mesh_xpbd")
-_BUILTIN_COMPONENT_DOMAINS = ("collision", "mc2")
+_BUILTIN_COMPONENT_DOMAINS = ("collision", "simple_cloth")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
 _REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []
 _REGISTERED_SOLVER_PROPERTY_DOMAINS: list[str] = []

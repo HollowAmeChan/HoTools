@@ -42,10 +42,10 @@ mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.nodes"
 )
 mesh_schema = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.schema"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.schema"
 )
 mesh_property = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.properties"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.properties"
 )
 mesh_object_spec = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.object_spec"

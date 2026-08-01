@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..names import GN_ATTRIBUTE_CHANNEL
+from ..simple_cloth.capabilities import SIMPLE_CLOTH_CAPABILITY_ID
 from .names import (
     MESH_XPBD_NATIVE_LAYOUT_VERSION,
     MESH_XPBD_SLOT_KIND,
@@ -29,10 +30,11 @@ MESH_XPBD_SOLVER_DECLARATION = {
     "planned_nodes": [],
     "writers": [MESH_XPBD_STEP_WRITER_ID],
     "planned_writers": [],
+    "consumes_capabilities": [SIMPLE_CLOTH_CAPABILITY_ID],
     "consumes": [
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
-        "Object.hotools_mesh_collision XPBD field subset",
+        "simple_cloth公共对象快照中的XPBD字段子集",
         "XPBD网格对象.object_specs",
         "XPBD网格任务.task_specs",
     ],
@@ -77,7 +79,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
         "self_collision": False,
     },
     "writeback": {
-        "owner": "physicsWorld.writeback",
+        "owner": "physicsWorld.simple_cloth + physicsWorld.writeback",
         "target": "GN mesh vertex offset",
         "channel": GN_ATTRIBUTE_CHANNEL,
         "solver_inline_writeback": False,

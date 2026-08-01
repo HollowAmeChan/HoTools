@@ -100,6 +100,25 @@ Cache Read
 - object scope 不是 participant schema。
 - object scope 不承诺限制 Blender depsgraph 求值范围，只限制 OmniNode 自己的枚举、打包和物理输入范围。
 
+### Simple Cloth Object
+
+简单布料与简单碰撞一样是 Physics World 公共 component，不属于 MC2 或 XPBD
+任一 solver。稳定 owner 是 `physicsWorld.simple_cloth`，持久入口继续使用
+`Object.hotools_mesh_collision` 以保持 `.blend` 兼容。
+
+公共对象层负责：
+
+- 在面板对象或自定义对象节点产出 solver spec 之前，校验真实 Mesh owner 和单用户写回目标。
+- 按消费声明准备 BasePose 只读对象；决定创建、拓扑失效刷新和手工替换语义。
+- 保证自动 BasePose 位于 Source 所属 Scene 的 `HoPhysicsCache` 集合，并真实进入目标 View Layer；代理用 View Layer 级隐藏保持视口不可见，但不能通过 exclude 或错误 Scene 从 Outliner 消失。
+- 准备共享 `hotools_physics_offset` 属性、受管 GN node group 和栈末端修改器；统一 writeback 只提交该公共资源上的最终 offset。
+- 多 Scene 使用各自的逻辑 `HoPhysicsCache` 集合，禁止按全局 Collection 名复用后把其它 Scene 的代理一起带入。
+
+MC2/XPBD 对象适配器只把公共对象快照转换为 solver 私有 spec。solver prepare/step
+不得创建、移动、隐藏、刷新 BasePose，不得创建 GN 属性或修改器，也不得回读 live
+PropertyGroup 来补偿已经冻结的对象字段。缺失资源必须在对象节点边界失败，不能在 step
+阶段静默修补。
+
 ### Physics World Begin
 
 职责：
@@ -540,7 +559,7 @@ Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”�
 }
 ```
 
-- 写回层只维护一个共享 `hotools_physics_offset` 点域 `FLOAT_VECTOR` 属性和一个
+- `physicsWorld.simple_cloth` 维护一个共享 `hotools_physics_offset` 点域 `FLOAT_VECTOR` 属性和一个
   topology-preserving 栈底 Geometry Nodes 后置修改器；完整 PC2 播放时只允许受管
   Mesh Cache modifier 位于其后覆盖显示。result 不允许指定 attribute name、modifier、
   blend mode 或 solver 私有槽名。
@@ -714,7 +733,7 @@ PhysicsWorldCache / solver slot
 |---|---|---|
 | `Bone.hotools_collision` | `physicsWorld.collision` 的 `bone_collision` capability | SpringBone、MC2 BoneCloth/BoneSpring、scope、UI/preview |
 | `Object.hotools_object_collision` | `physicsWorld.collision` 的 `object_collision` capability | collider snapshot、SpringBone、MC2、UI/preview |
-| `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` 的 `mesh_collision` capability | 简单布料面板、MC2 MeshCloth、BasePose、mesh delta；字段含enabled、BasePose、半径组、Pin与碰撞组 |
+| `Object.hotools_mesh_collision` | `physicsWorld.simple_cloth` 的 `simple_cloth` capability | 简单布料面板、MC2 MeshCloth、Mesh XPBD、BasePose与共享GN offset；字段含enabled、BasePose、半径组、Pin与碰撞组 |
 | `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
 | `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
 | `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
@@ -742,7 +761,7 @@ PhysicsWorldCache / solver slot
 HoTools.register()
   -> physicsWorld.blender.register()
        -> collision component properties
-       -> mc2 MeshCloth adapter properties
+       -> simple_cloth component properties/resources
        -> rigid solver properties
        -> physics UI classes/state/preview
   -> OmniNode.register()                 # 仅节点功能开关启用时

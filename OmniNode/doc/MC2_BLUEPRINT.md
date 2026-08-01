@@ -355,7 +355,7 @@ Source/write object
   -> POINT object-local offset attribute
 ```
 
-新Mesh source不要求用户预先执行手工刷新：第一次进入active automatic MC2 frame时隐式创建缺失的BasePose缓存，首帧即可完成static/frame构建。手工创建/刷新operator只用于显式修复或替换已分配代理，不属于正常逐帧路径。生成后的BasePose是独立只读对象，它自己的`matrix_world`不得成为组件运动来源；否则Source平移/旋转后animated base仍停留在创建位置，Keep会被后续Tether/Distance拉回，Reset也会在错误世界坐标上清理。
+新Mesh source不要求用户预先执行手工刷新：公共`physicsWorld.simple_cloth`对象层在MC2对象节点冻结对象属性前创建或刷新缺失的BasePose和共享GN输出，首帧static/frame构建只消费已经完整的对象快照。MC2 product solver不得创建Blender对象或修改已冻结字段。自动创建必须从Source实际归属Scene解析`HoPhysicsCache` owner，不得盲用`bpy.context.scene`，也不得把另一个Scene的全局同名Collection直接复用后造成代理串场；缓存集合与线框只读代理必须真实进入目标View Layer并能在Outliner追踪，代理本身通过View Layer级隐藏保持视口不可见。成员资格以`ViewLayer.objects`和LayerCollection公共语义验证，集合链接或成员建立失败必须明确报错。手工创建/刷新operator只用于显式修复或替换已分配代理。生成后的BasePose是独立只读对象，它自己的`matrix_world`不得成为组件运动来源；否则Source平移/旋转后animated base仍停留在创建位置，Keep会被后续Tether/Distance拉回，Reset也会在错误世界坐标上清理。
 
 不得用逐帧Shape Key写回、单对象modifier开关/重排或单对象双阶段读取替代。Mesh source observation由MC2拥有，token包含原始source/data identity、MC2 depsgraph revision、相关RNA轻量签名和world generation；普通热帧复用只读snapshot/fingerprint。观察器不得调用`mesh.update()`，update由真实写入owner提交。GN offset写回通过通用成功receipt在下一安全depsgraph批次排除自身更新；同批authoring歧义由默认低频或显式强制全扫审计检测。Bone在Armature/Pose revision矩阵成立前继续保守全扫。
 

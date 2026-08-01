@@ -30,7 +30,7 @@ Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh�
 
 ### `MC2 MeshCloth对象`
 
-输入一个或多个 Mesh Object，只接收统一物理面板中已开启“简单布料”的对象，再读取 `Object.hotools_mesh_collision` 的模拟属性并输出 `MC2MeshObjectSpec`。`enabled` 只是面板型对象的 authoring opt-in/filter，不复制进 spec，也不参与运行时签名；spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一 16 组碰撞属性。节点不创建 partition、request、slot 或 native owner。
+输入一个或多个 Mesh Object，只接收统一物理面板中已开启“简单布料”的对象。节点先调用公共 `physicsWorld.simple_cloth` 对象层准备共享GN输出并创建/刷新BasePose，再把公共对象快照适配为 `MC2MeshObjectSpec`。`enabled` 只是面板型对象的 authoring opt-in/filter，不复制进 spec，也不参与运行时签名；spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一 16 组碰撞属性。节点不创建 partition、request、slot 或 native owner，MC2 solver step也不得创建或刷新Blender资源。
 
 ### `MC2 MeshCloth自定义对象`
 

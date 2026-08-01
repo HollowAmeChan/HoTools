@@ -29,8 +29,8 @@ for package_name, package_path in (
 authoring = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.authoring"
 )
-object_spec = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.object_spec"
+nodes = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.nodes"
 )
 results = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.results"
@@ -78,13 +78,16 @@ def test_native_solver_publishes_and_common_writeback_applies_offsets():
     try:
         pin = source.vertex_groups.new(name="Pin")
         pin.add((0,), 1.0, "REPLACE")
-        xpbd_object = object_spec.make_mesh_xpbd_custom_object(
-            source,
+        xpbd_objects, object_count = nodes.physicsMeshXpbdCustomObject(
+            [source],
             pin_enabled=True,
             pin_vertex_group=pin.name,
         )
+        assert object_count == 1
+        assert source.data.attributes.get(world_names.GN_OFFSET_ATTRIBUTE_NAME) is not None
+        assert source.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME) is not None
         tasks = authoring.make_mesh_xpbd_tasks(
-            [xpbd_object],
+            xpbd_objects,
             gravity_power=9.8,
             damping=0.0,
             iterations=8,

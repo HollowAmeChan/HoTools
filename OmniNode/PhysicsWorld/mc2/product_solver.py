@@ -58,16 +58,6 @@ def _same_frame_product_reuse(world, slot) -> bool:
     )
 
 
-def _initialize_product_base_poses(request: MC2ProductRequestV1) -> int:
-    from .setups.mesh_cloth.base_pose import initialize_base_pose_proxy_if_missing
-
-    created_count = 0
-    for partition in request.plan.active_partitions:
-        _base_pose, created = initialize_base_pose_proxy_if_missing(partition.source)
-        created_count += int(created)
-    return created_count
-
-
 def _finish_single_timing(
     timing,
     *,
@@ -138,7 +128,6 @@ def _step_mc2_mesh_product(
     if int(world.generation) <= 0:
         return world, False, "MC2 Mesh统一域等待Physics World Begin"
 
-    created_base_poses = _initialize_product_base_poses(request)
     if timing is not None:
         timing.checkpoint("统一域输入")
     slot_id = make_mc2_product_slot_id(
@@ -184,7 +173,6 @@ def _step_mc2_mesh_product(
         slot.data["product_enabled"] = True
         slot.data["collector_request"] = request
         slot.data["collector_report"] = request.report_text
-        slot.data["created_base_poses"] = created_base_poses
         _finish_single_timing(
             timing,
             world=world,
@@ -228,7 +216,6 @@ def _step_mc2_mesh_product(
     slot.data["product_enabled"] = True
     slot.data["collector_request"] = request
     slot.data["collector_report"] = request.report_text
-    slot.data["created_base_poses"] = created_base_poses
     _finish_single_timing(
         timing,
         world=world,
@@ -245,7 +232,7 @@ def _step_mc2_mesh_product(
         f"MC2 Mesh统一域就绪：分区 {len(collection.draft.partitions)}，"
         f"粒子 {slot.data['owner'].compiled.program.particle_count}，"
         f"子步 {frame.update_count}，目标 {len(public_results)}，"
-        f"BasePose新建 {created_base_poses}，owner {sync.owner_report.action}"
+        f"owner {sync.owner_report.action}"
     )
     return world, True, status
 

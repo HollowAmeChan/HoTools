@@ -27,7 +27,10 @@ gn_offset = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.gn_offset"
 )
 base_pose = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.base_pose"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.base_pose"
+)
+blender_scene = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.utils.blender_scene"
 )
 frame_input = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.frame_input"
@@ -99,6 +102,159 @@ def _set_frame(world, frame: int) -> None:
     world.collider_snapshot = {"frame": frame, "colliders": []}
 
 
+def test_automatic_base_pose_uses_source_scene() -> None:
+    physics_blender.register()
+    context_scene = bpy.context.scene
+    context_cache = base_pose.ensure_cache_collection(context_scene)
+    source_scene = bpy.data.scenes.new("MC2AutoBasePoseSourceScene")
+    source_scene.view_layers.new("MC2AutoBasePoseSecondaryLayer")
+    source = base_proxy = source_cache = None
+    try:
+        mesh = bpy.data.meshes.new("MC2AutoBasePoseSourceMesh")
+        mesh.from_pydata(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            (),
+            ((0, 1, 2),),
+        )
+        mesh.update()
+        source = bpy.data.objects.new("MC2AutoBasePoseSource", mesh)
+        source_scene.collection.objects.link(source)
+        source.hotools_mesh_collision.enabled = True
+
+        objects, count = nodes.physicsMC2MeshObject([source])
+        assert count == 1 and objects[0].source_object == source
+        base_proxy = source.hotools_mesh_collision.mc2_base_pose_proxy
+        source_cache = base_pose.ensure_cache_collection(source_scene)
+        assert source_cache != context_cache
+        assert source_cache in tuple(source_scene.collection.children)
+        assert source_cache not in tuple(context_scene.collection.children)
+        assert source_scene.objects.get(base_proxy.name) == base_proxy
+        assert context_scene.objects.get(base_proxy.name) is None
+        for view_layer in source_scene.view_layers:
+            layer_collection = view_layer.layer_collection.children.get(
+                source_cache.name
+            )
+            assert layer_collection is not None
+            assert layer_collection.exclude is False
+            assert layer_collection.hide_viewport is False
+            assert blender_scene.view_layer_contains_collection(
+                view_layer, source_cache
+            )
+            assert blender_scene.view_layer_contains_object(
+                view_layer, base_proxy
+            )
+            assert view_layer.objects.get(base_proxy.name_full) == base_proxy
+            assert base_proxy.hide_get(view_layer=view_layer) is True
+            assert base_proxy.visible_get(view_layer=view_layer) is False
+        assert base_proxy.hide_viewport is False
+        print("PASS test_automatic_base_pose_uses_source_scene")
+    finally:
+        _remove_object(base_proxy)
+        _remove_object(source)
+        bpy.data.scenes.remove(source_scene)
+        if source_cache is not None and not source_cache.objects:
+            bpy.data.collections.remove(source_cache)
+        if context_cache is not None and not context_cache.objects:
+            bpy.data.collections.remove(context_cache)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+
+
+def test_custom_object_reuses_public_resources_without_panel_mutation() -> None:
+    physics_blender.register()
+    source = base_proxy = None
+    cache_collection = cache_parent = None
+    try:
+        mesh = bpy.data.meshes.new("MC2CustomBasePoseResourceMesh")
+        mesh.from_pydata(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            (),
+            ((0, 1, 2),),
+        )
+        mesh.update()
+        source = bpy.data.objects.new("MC2CustomBasePoseResource", mesh)
+        bpy.context.scene.collection.objects.link(source)
+        assert source.hotools_mesh_collision.mc2_base_pose_proxy is None
+
+        first, first_count = nodes.physicsMC2MeshCustomObject([source])
+        second, second_count = nodes.physicsMC2MeshCustomObject([source])
+        assert first_count == second_count == 1
+        base_proxy = first[0].explicit_properties.mc2_base_pose_proxy
+        assert base_proxy is second[0].explicit_properties.mc2_base_pose_proxy
+        source.name = "MC2CustomBasePoseResourceRenamed"
+        renamed, renamed_count = nodes.physicsMC2MeshCustomObject([source])
+        assert renamed_count == 1
+        assert renamed[0].explicit_properties.mc2_base_pose_proxy is base_proxy
+        assert source.hotools_mesh_collision.mc2_base_pose_proxy is None
+        assert source.data.attributes.get(
+            world_names.GN_OFFSET_ATTRIBUTE_NAME
+        ) is not None
+        assert source.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME) is not None
+
+        cache_collection = base_pose.ensure_cache_collection(bpy.context.scene)
+        generated = tuple(
+            item
+            for item in cache_collection.objects
+            if bool(item.get(base_pose.CACHE_OBJECT_FLAG, False))
+            and item.get(base_pose.CACHE_SOURCE_KEY) == base_proxy.get(
+                base_pose.CACHE_SOURCE_KEY
+            )
+        )
+        assert generated == (base_proxy,)
+        cache_parent = bpy.data.collections.new("MC2CustomBasePoseCacheParent")
+        bpy.context.scene.collection.children.link(cache_parent)
+        bpy.context.scene.collection.children.unlink(cache_collection)
+        cache_parent.children.link(cache_collection)
+        nested, nested_count = nodes.physicsMC2MeshCustomObject([source])
+        assert nested_count == 1
+        assert nested[0].explicit_properties.mc2_base_pose_proxy is base_proxy
+        assert base_pose.ensure_cache_collection(
+            bpy.context.scene
+        ) is cache_collection
+        assert blender_scene.view_layer_contains_object(
+            bpy.context.view_layer, base_proxy
+        )
+        assert base_proxy.visible_get(view_layer=bpy.context.view_layer) is False
+
+        old_proxy = base_proxy
+        source.data.clear_geometry()
+        source.data.from_pydata(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+            ),
+            (),
+            ((0, 1, 2), (0, 2, 3)),
+        )
+        source.data.update()
+        refreshed, refreshed_count = nodes.physicsMC2MeshCustomObject([source])
+        assert refreshed_count == 1
+        base_proxy = refreshed[0].explicit_properties.mc2_base_pose_proxy
+        assert base_proxy is not old_proxy
+        assert len(base_proxy.data.vertices) == 4
+        generated = tuple(
+            item
+            for item in cache_collection.objects
+            if bool(item.get(base_pose.CACHE_OBJECT_FLAG, False))
+            and item.get(base_pose.CACHE_SOURCE_KEY) == base_proxy.get(
+                base_pose.CACHE_SOURCE_KEY
+            )
+        )
+        assert generated == (base_proxy,)
+        print("PASS test_custom_object_reuses_public_resources_without_panel_mutation")
+    finally:
+        _remove_object(base_proxy)
+        _remove_object(source)
+        if cache_collection is not None and not cache_collection.objects:
+            bpy.data.collections.remove(cache_collection)
+        if cache_parent is not None:
+            bpy.data.collections.remove(cache_parent)
+        if physics_blender.is_registered():
+            physics_blender.unregister()
+
+
 def test_mesh_product_base_pose_contract() -> None:
     physics_blender.register()
     armature = source = base_proxy = None
@@ -111,12 +267,38 @@ def test_mesh_product_base_pose_contract() -> None:
         )
         assert source.modifiers[-1].name == world_names.GN_OFFSET_MODIFIER_NAME
         assert source.hotools_mesh_collision.mc2_base_pose_proxy is None
+        source.hotools_mesh_collision.enabled = True
+
+        cache_collection = base_pose.ensure_cache_collection(bpy.context.scene)
+        layer_collection = bpy.context.view_layer.layer_collection.children.get(
+            cache_collection.name
+        )
+        assert layer_collection is not None
+        cache_collection.hide_viewport = True
+        layer_collection.hide_viewport = True
+        layer_collection.exclude = True
 
         topology_signature = base_pose.mesh_topology_signature(source)
-        base_proxy = base_pose.ensure_base_pose_proxy(
+        panel_objects, panel_count = nodes.physicsMC2MeshObject([source])
+        assert panel_count == 1 and panel_objects[0].source_object == source
+        base_proxy = source.hotools_mesh_collision.mc2_base_pose_proxy
+        assert cache_collection.hide_viewport is False
+        assert layer_collection.hide_viewport is False
+        assert layer_collection.exclude is False
+        assert base_proxy.hide_viewport is False
+        assert blender_scene.view_layer_contains_collection(
+            bpy.context.view_layer, cache_collection
+        )
+        assert blender_scene.view_layer_contains_object(
+            bpy.context.view_layer, base_proxy
+        )
+        assert bpy.context.view_layer.objects.get(base_proxy.name_full) == base_proxy
+        assert base_proxy.hide_get(view_layer=bpy.context.view_layer) is True
+        assert base_proxy.visible_get(view_layer=bpy.context.view_layer) is False
+        assert base_pose.ensure_base_pose_proxy(
             source,
             expected_mesh_topology_signature=topology_signature,
-        )
+        ) == base_proxy
         assert base_proxy is not source
         assert base_proxy.data is not source.data
         assert base_proxy.modifiers.get("Armature") is not None
@@ -212,4 +394,6 @@ def test_mesh_product_base_pose_contract() -> None:
 
 
 if __name__ == "__main__":
+    test_automatic_base_pose_uses_source_scene()
+    test_custom_object_reuses_public_resources_without_panel_mutation()
     test_mesh_product_base_pose_contract()
