@@ -27,6 +27,42 @@ for package_name, package_path in (
 
 registry = importlib.import_module("HoTools.OmniNode.PhysicsWorld.registry")
 nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mesh_xpbd.nodes")
+node_core = importlib.import_module("HoTools.OmniNode.FunctionNodeCore")
+
+
+def test_node_socket_annotations_are_resolved():
+    _, object_inputs, object_outputs, _, object_multi, _ = node_core.CheckMetaInfo(
+        nodes.physicsMeshXpbdObject
+    )
+    assert object_inputs["mesh_objects"]["type"] == "NodeSocketObject"
+    assert object_inputs["mesh_objects"]["use_multi_input"] is True
+    assert object_outputs["_OUTPUT0"]["type"] == "OmniNodeSocketAny"
+    assert object_multi["_OUTPUT0"] is True
+    assert object_outputs["_OUTPUT1"]["type"] == "NodeSocketInt"
+
+    _, task_inputs, task_outputs, _, task_multi, _ = node_core.CheckMetaInfo(
+        nodes.physicsMeshXpbdTask
+    )
+    assert task_inputs["mesh_objects"]["type"] == "OmniNodeSocketAny"
+    assert task_inputs["mesh_objects"]["use_multi_input"] is True
+    assert task_inputs["collision_enabled"]["type"] == "NodeSocketBool"
+    assert task_inputs["collision_radius"]["type"] == "NodeSocketFloat"
+    assert task_inputs["iterations"]["type"] == "NodeSocketInt"
+    assert task_inputs["gravity_direction"]["type"] == "NodeSocketVector"
+    assert task_outputs["_OUTPUT0"]["type"] == "OmniNodeSocketAny"
+    assert task_multi["_OUTPUT0"] is True
+
+    _, solver_inputs, solver_outputs, _, solver_multi, _ = node_core.CheckMetaInfo(
+        nodes.physicsMeshXpbdSolver
+    )
+    assert solver_inputs["world"]["type"] == "OmniNodeSocketAny"
+    assert solver_inputs["mesh_tasks"]["type"] == "OmniNodeSocketAny"
+    assert solver_inputs["mesh_tasks"]["use_multi_input"] is True
+    assert solver_inputs["debug_capture"]["type"] == "NodeSocketBool"
+    assert solver_outputs["_OUTPUT0"]["type"] == "OmniNodeSocketAny"
+    assert solver_outputs["_OUTPUT1"]["type"] == "NodeSocketInt"
+    assert solver_outputs["_OUTPUT2"]["type"] == "NodeSocketFloat"
+    assert solver_multi["mesh_tasks"] is True
 
 
 def test_real_blender_panel_custom_and_task_nodes():
@@ -78,5 +114,7 @@ def test_real_blender_panel_custom_and_task_nodes():
 
 
 if __name__ == "__main__":
+    test_node_socket_annotations_are_resolved()
     test_real_blender_panel_custom_and_task_nodes()
+    print("PASS test_node_socket_annotations_are_resolved")
     print("PASS test_real_blender_panel_custom_and_task_nodes")

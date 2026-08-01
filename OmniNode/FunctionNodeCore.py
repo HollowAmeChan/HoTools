@@ -51,6 +51,14 @@ def resolve_socket(annotation):
 
     return socket_cls, is_multi
 
+
+def _resolve_function_type_hints(func):
+    """Resolve postponed annotations without making node discovery fragile."""
+    try:
+        return typing.get_type_hints(func)
+    except (NameError, TypeError):
+        return {}
+
 def get_socket_type_name(socket_cls):
     # 自定义 socket（有 bl_idname）
     if hasattr(socket_cls, "bl_idname"):
@@ -122,7 +130,8 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
     # -------------------------
     signature = inspect.signature(func)
     params = signature.parameters
-    outputs = signature.return_annotation
+    type_hints = _resolve_function_type_hints(func)
+    outputs = type_hints.get("return", signature.return_annotation)
 
     inputParamsPair = list(params.values())
     outputParamsType = resolve_socket(outputs)
@@ -142,7 +151,8 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
             else identifier
         )
 
-        socket_cls, is_multi = resolve_socket(param.annotation)
+        annotation = type_hints.get(identifier, param.annotation)
+        socket_cls, is_multi = resolve_socket(annotation)
 
         SocketIsMulti[identifier] = is_multi
 
