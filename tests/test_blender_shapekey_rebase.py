@@ -200,6 +200,32 @@ assert tuple(item[0] for item in module.SHAPEKEY_TEMPLATE_ITEMS) == tuple(
     module.SHAPEKEY_TEMPLATE_MAP)
 for template_name, shape_names in module.SHAPEKEY_TEMPLATE_MAP.items():
     assert len(shape_names) == len(set(shape_names)), template_name
+assert tuple(module.SHAPEKEY_STANDARDS) == tuple(
+    module.SHAPEKEY_TEMPLATE_MAP)
+assert set(module._FBSF_EXACT_PRESETS) == set(module.SHAPEKEY_CATALOG)
+eye_side_tags = {
+    'BOTH': 'BOTH_EYES',
+    'LEFT': 'LEFT_EYE',
+    'RIGHT': 'RIGHT_EYE',
+}
+for normalized, entry in module.SHAPEKEY_CATALOG.items():
+    preset = module._FBSF_EXACT_PRESETS[normalized]
+    if entry.region == 'MOUTH':
+        expected_function = expected_reference = 'MOUTH'
+    elif entry.region == 'EYE':
+        expected_function = eye_side_tags[entry.side]
+        expected_reference = (
+            expected_function if entry.semantic == 'EYELID' else 'OTHERS')
+    else:
+        expected_function = expected_reference = 'OTHERS'
+    assert preset.function_tag == expected_function, normalized
+    assert preset.reference_tag == expected_reference, normalized
+    assert preset.standards == entry.standards, normalized
+    assert preset.semantic == entry.semantic, normalized
+assert module._FBSF_STRONG_SIDE_STANDARDS == frozenset({
+    'ARKIT', 'META', 'PICO', 'UNIFIED_BASE', 'VRM', 'VRM1',
+    'VIVE_SRANIPAL', 'VIVE_OPENXR',
+})
 recognized_normalized_names = {
     module._fbsf_normalized_name(shape_name)
     for spec in module.SHAPEKEY_STANDARD_SPECS
@@ -858,6 +884,15 @@ try:
     assert hasattr(bpy.ops.ho, "apply_active_shapekey_to_basis")
     assert hasattr(bpy.ops.ho, "rebase_shapekeys_fbsf")
     assert "rebase_shapekeys_preserve_expressions" not in dir(bpy.ops.ho)
+
+    template_obj = make_mesh("CatalogTemplate", vertex_count=2)
+    result = bpy.ops.ho.add_shapekeys_by_template(
+        "EXEC_DEFAULT", shapekey_list='VRCHAT')
+    assert result == {'FINISHED'}
+    template_keys = template_obj.data.shape_keys.key_blocks
+    for shape_name in module.SHAPEKEY_TEMPLATE_MAP['VRCHAT']:
+        assert template_keys.get(shape_name) is not None, shape_name
+    assert template_keys.get('vrc.blink (3.0)') is None
 finally:
     module.unregister()
 

@@ -9,9 +9,11 @@ import numpy as np
 from Utils import shapekey_utils
 
 try:
-    from .rebase_presets import *
+    from . import shapekey_catalog as _shape_key_catalog
+    from .shapekey_catalog import *
 except ImportError:  # 兼容直接导入脚本
-    from rebase_presets import *
+    import shapekey_catalog as _shape_key_catalog
+    from shapekey_catalog import *
 
 
 class ShapeKeyRebaseError(RuntimeError):
@@ -36,10 +38,11 @@ _FBSF_TAG_CHANNELS = {
     'MOUTH': frozenset({'MOUTH'}),
     'OTHERS': frozenset(),
 }
-_FBSF_STRONG_SIDE_STANDARDS = frozenset({
-    'ARKIT', 'META', 'PICO', 'UNIFIED_BASE', 'VRM', 'VRM1',
-    'VIVE_SRANIPAL', 'VIVE_OPENXR',
-})
+_FBSF_STRONG_SIDE_STANDARDS = frozenset(
+    spec.classifier_id
+    for spec in SHAPEKEY_STANDARD_SPECS
+    if spec.reliable_side
+)
 
 
 def _fbsf_tag_channels(function_tag):
@@ -93,17 +96,11 @@ _FBSF_KEYWORD_BILATERAL_UPPER = 0.65
 
 def _fbsf_normalized_names(shape_name):
     """返回 NFKC 规范名，以及反复去掉 Blender 数字后缀的候选。"""
-    normalized = unicodedata.normalize('NFKC', shape_name)
-    normalized = normalized.strip().lstrip('@+').strip().casefold()
-    names = {normalized}
-    while _FBSF_BLENDER_SUFFIX.search(normalized):
-        normalized = _FBSF_BLENDER_SUFFIX.sub('', normalized)
-        names.add(normalized)
-    return names
+    return _shape_key_catalog.normalized_shape_key_names(shape_name)
 
 
 def _fbsf_normalized_name(shape_name):
-    return min(_fbsf_normalized_names(shape_name), key=len)
+    return _shape_key_catalog.normalize_shape_key_name(shape_name)
 
 
 def _fbsf_keyword_eye_name(shape_name):
@@ -156,189 +153,35 @@ def _fbsf_keyword_eye_name(shape_name):
     return action, sided
 
 
-_FBSF_EXACT_PRESETS = {}
+_FBSF_EYE_SIDE_TAGS = {
+    'BOTH': 'BOTH_EYES',
+    'LEFT': 'LEFT_EYE',
+    'RIGHT': 'RIGHT_EYE',
+}
 
 
-def _fbsf_register_presets(
-        names, function_tag, reference_tag='OTHERS',
-        standard='GENERIC', semantic='OTHER'):
-    incoming_standards = frozenset({standard})
-    for name in names:
-        normalized = _fbsf_normalized_name(name)
-        existing = _FBSF_EXACT_PRESETS.get(normalized)
-        standards = (
-            incoming_standards
-            if existing is None
-            else existing.standards | incoming_standards
-        )
-        if existing is not None and existing.function_tag != 'OTHERS':
-            if (
-                    existing.function_tag != function_tag
-                    or existing.reference_tag != reference_tag
-                    or existing.semantic != semantic):
-                raise RuntimeError(
-                    f"Conflicting FBSF preset for {name}: "
-                    f"{existing.function_tag}/{existing.reference_tag}/"
-                    f"{existing.semantic} vs "
-                    f"{function_tag}/{reference_tag}/{semantic}")
-        _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
-            function_tag, reference_tag, standards, semantic)
-
-
-def _fbsf_register_known(names, standard):
-    for name in names:
-        normalized = _fbsf_normalized_name(name)
-        existing = _FBSF_EXACT_PRESETS.get(normalized)
-        if existing is None:
-            _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
-                standards=frozenset({standard}))
-            continue
-        _FBSF_EXACT_PRESETS[normalized] = _FBSFShapePreset(
-            existing.function_tag,
-            existing.reference_tag,
-            existing.standards | frozenset({standard}),
-            existing.semantic,
-        )
-
-
-# 先登记完整标准目录与识别别名为已知 Other，再以明确的皮肤/口腔语义覆盖。
-for _standard_spec in SHAPEKEY_STANDARD_SPECS:
-    _fbsf_register_known(
-        _standard_spec.recognized_names,
-        _standard_spec.classifier_id,
+def _fbsf_catalog_entry_to_preset(entry):
+    """把通用目录语义适配为 FBSF 的权能和参考权能。"""
+    if entry.region == 'MOUTH':
+        function_tag = reference_tag = 'MOUTH'
+    elif entry.region == 'EYE':
+        function_tag = _FBSF_EYE_SIDE_TAGS.get(entry.side, 'OTHERS')
+        reference_tag = (
+            function_tag if entry.semantic == 'EYELID' else 'OTHERS')
+    else:
+        function_tag = reference_tag = 'OTHERS'
+    return _FBSFShapePreset(
+        function_tag,
+        reference_tag,
+        entry.standards,
+        entry.semantic,
     )
 
-for _side_name, _tag in (('Left', 'LEFT_EYE'), ('Right', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        (f"eyeBlink{_side_name}", f"eyeSquint{_side_name}",
-         f"eyeWide{_side_name}"),
-        _tag, _tag, 'ARKIT', 'EYELID')
-    _fbsf_register_presets(
-        tuple(
-            f"eyeLook{direction}{_side_name}"
-            for direction in ('Up', 'Down', 'In', 'Out')
-        ),
-        _tag, 'OTHERS', 'ARKIT', 'EYE_GAZE')
-    _fbsf_register_presets(
-        (f"cheekSquint{_side_name}",),
-        _tag, 'OTHERS', 'ARKIT', 'EYE_ORBIT')
 
-_fbsf_register_presets(
-    tuple(
-        name for name in ARKIT_SHAPEKEYS
-        if name.startswith(('jaw', 'mouth', 'tongue'))
-    ),
-    'MOUTH', 'MOUTH', 'ARKIT', 'MOUTH')
-
-_fbsf_register_presets(
-    ('vrc.blink',) + tuple(VRCHAT_SHAPEKEY_ALIASES),
-    'BOTH_EYES', 'BOTH_EYES', 'VRCHAT', 'EYELID')
-_fbsf_register_presets(
-    ('vrc.looking_up', 'vrc.looking_down'),
-    'BOTH_EYES', 'OTHERS', 'VRCHAT', 'EYE_GAZE')
-_fbsf_register_presets(
-    tuple(name for name in VRCHAT_SHAPEKEYS if name.startswith('vrc.v_')),
-    'MOUTH', 'MOUTH', 'VRCHAT', 'VISEME')
-
-_fbsf_register_presets(
-    ('まばたき', '笑い', 'なごみ', 'はぅ', 'びっくり', 'じと目',
-     'ｷﾘｯ', 'はちゅ目', '恐ろしい子！', '喜び', '悲しむ')
-    + MMD_EYE_SHAPEKEY_ALIASES,
-    'BOTH_EYES', 'BOTH_EYES', 'MMD', 'EYELID')
-_fbsf_register_presets(
-    ('ウィンク', 'ウィンク２'),
-    'LEFT_EYE', 'LEFT_EYE', 'MMD', 'EYELID')
-_fbsf_register_presets(
-    ('ウィンク右', 'ウィンク２右', 'ｳｨﾝｸ２右'),
-    'RIGHT_EYE', 'RIGHT_EYE', 'MMD', 'EYELID')
-_fbsf_register_presets(
-    ('あ', 'い', 'う', 'え', 'お', 'あ２', 'ん', '▲', '∧', 'ワ', '□',
-     'ω', 'ω□', 'にやり', 'にやり２', 'にっこり',
-     'ぺろっ', 'てへぺろ', 'てへぺろ２', '口角上げ', '口角下げ',
-     '口横広げ', '歯無し上', '歯無し下')
-    + MMD_MOUTH_SHAPEKEY_ALIASES,
-    'MOUTH', 'MOUTH', 'MMD', 'MOUTH')
-
-_fbsf_register_presets(
-    ('blink',), 'BOTH_EYES', 'BOTH_EYES', 'VRM', 'EYELID')
-_fbsf_register_presets(
-    ('blink_l',), 'LEFT_EYE', 'LEFT_EYE', 'VRM', 'EYELID')
-_fbsf_register_presets(
-    ('blink_r',), 'RIGHT_EYE', 'RIGHT_EYE', 'VRM', 'EYELID')
-_fbsf_register_presets(
-    ('lookup', 'lookdown', 'lookleft', 'lookright'),
-    'BOTH_EYES', 'OTHERS', 'VRM', 'EYE_GAZE')
-_fbsf_register_presets(
-    ('BlinkLeft',), 'LEFT_EYE', 'LEFT_EYE', 'VRM1', 'EYELID')
-_fbsf_register_presets(
-    ('BlinkRight',), 'RIGHT_EYE', 'RIGHT_EYE', 'VRM1', 'EYELID')
-_fbsf_register_presets(
-    ('Aa', 'Ih', 'Ou', 'Ee', 'Oh'),
-    'MOUTH', 'MOUTH', 'VRM1', 'VISEME')
-
-for _side_name, _tag in (('Left', 'LEFT_EYE'), ('Right', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        (f"EyeClosed{_side_name}", f"EyeSquint{_side_name}",
-         f"EyeWide{_side_name}"),
-        _tag, _tag, 'UNIFIED_BASE', 'EYELID')
-    _fbsf_register_presets(
-        tuple(
-            f"EyeLook{direction}{_side_name}"
-            for direction in ('Out', 'In', 'Up', 'Down')
-        ),
-        _tag, 'OTHERS', 'UNIFIED_BASE', 'EYE_GAZE')
-    _fbsf_register_presets(
-        (f"CheekSquint{_side_name}",),
-        _tag, 'OTHERS', 'UNIFIED_BASE', 'EYE_ORBIT')
-
-_fbsf_register_presets(
-    tuple(
-        name for name in UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS
-        if name.startswith(('Jaw', 'Lip', 'Mouth', 'Tongue'))
-    ) + ('SoftPalateClose',),
-    'MOUTH', 'MOUTH', 'UNIFIED_BASE', 'MOUTH')
-_fbsf_register_presets(
-    ('EyeClosed', 'EyeWide', 'EyeSquint'),
-    'BOTH_EYES', 'BOTH_EYES', 'UNIFIED_BLEND', 'EYELID')
-_fbsf_register_presets(
-    ('CheekSquint',),
-    'BOTH_EYES', 'OTHERS', 'UNIFIED_BLEND', 'EYE_ORBIT')
-_fbsf_register_presets(
-    tuple(
-        name for name in UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS
-        if name.startswith(('Lip', 'Mouth'))
-    ),
-    'MOUTH', 'MOUTH', 'UNIFIED_BLEND', 'MOUTH')
-
-for _suffix, _tag in (('_L', 'LEFT_EYE'), ('_R', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        tuple(
-            name for name in QUEST_PRO_SHAPEKEYS
-            if name.endswith(_suffix) and name.startswith((
-                'EYES_CLOSED_', 'LID_TIGHTENER_',
-                'UPPER_LID_RAISER_',
-            ))
-        ),
-        _tag, _tag, 'META', 'EYELID')
-    _fbsf_register_presets(
-        tuple(
-            name for name in QUEST_PRO_SHAPEKEYS
-            if name.endswith(_suffix) and name.startswith('EYES_LOOK_')
-        ),
-        _tag, 'OTHERS', 'META', 'EYE_GAZE')
-    _fbsf_register_presets(
-        (f"CHEEK_RAISER{_suffix}",),
-        _tag, 'OTHERS', 'META', 'EYE_ORBIT')
-
-_fbsf_register_presets(
-    tuple(
-        name for name in QUEST_PRO_SHAPEKEYS
-        if name.startswith((
-            'CHIN_', 'DIMPLER_', 'JAW_', 'LIP_', 'LIPS_', 'LOWER_LIP_',
-            'MOUTH_', 'TONGUE_', 'UPPER_LIP_',
-        ))
-    ),
-    'MOUTH', 'MOUTH', 'META', 'MOUTH')
+_FBSF_EXACT_PRESETS = {
+    normalized: _fbsf_catalog_entry_to_preset(entry)
+    for normalized, entry in SHAPEKEY_CATALOG.items()
+}
 
 _FBSF_PICO_EYE_ANCHORS = tuple(
     name for name in PICO_EYE_SHAPEKEYS
@@ -357,69 +200,6 @@ _FBSF_PICO_LONG_NAMES = frozenset(
     _fbsf_normalized_name(name)
     for name in _FBSF_PICO_SHAPEKEYS
 )
-for _side, _tag in (('L', 'LEFT_EYE'), ('R', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        tuple(name for name in _FBSF_PICO_EYE_ANCHORS if name.endswith('_' + _side)),
-        _tag, _tag, 'PICO', 'EYELID')
-    _fbsf_register_presets(
-        tuple(name for name in _FBSF_PICO_EYE_GAZE if name.endswith('_' + _side)),
-        _tag, 'OTHERS', 'PICO', 'EYE_GAZE')
-    _fbsf_register_presets(
-        (f"CheekSquint_{_side}",),
-        _tag, 'OTHERS', 'PICO', 'EYE_ORBIT')
-_fbsf_register_presets(
-    _FBSF_PICO_MOUTH, 'MOUTH', 'MOUTH', 'PICO', 'MOUTH')
-
-_fbsf_register_presets(
-    OCULUS_VISEME_SHAPEKEYS,
-    'MOUTH', 'MOUTH', 'OCULUS_VISEME', 'VISEME')
-
-for _side_name, _tag in (('Left', 'LEFT_EYE'), ('Right', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        tuple(
-            name for name in VIVE_SRANIPAL_EYE_SHAPEKEYS
-            if name.startswith(f'Eye_{_side_name}_')
-            and name.endswith(('Blink', 'Wide', 'Squeeze'))
-        ),
-        _tag, _tag, 'VIVE_SRANIPAL', 'EYELID')
-    _fbsf_register_presets(
-        tuple(
-            name for name in VIVE_SRANIPAL_EYE_SHAPEKEYS
-            if name.startswith(f'Eye_{_side_name}_')
-            and not name.endswith(('Blink', 'Wide', 'Squeeze'))
-        ),
-        _tag, 'OTHERS', 'VIVE_SRANIPAL', 'EYE_GAZE')
-_fbsf_register_presets(
-    ('Eye_Frown',),
-    'BOTH_EYES', 'OTHERS', 'VIVE_SRANIPAL', 'EYE_ORBIT')
-_fbsf_register_presets(
-    tuple(
-        name for name in VIVE_SRANIPAL_LIP_SHAPEKEYS
-        if name.startswith(('Jaw_', 'Mouth_', 'Tongue_'))
-    ),
-    'MOUTH', 'MOUTH', 'VIVE_SRANIPAL', 'MOUTH')
-
-for _side_name, _tag in (('LEFT', 'LEFT_EYE'), ('RIGHT', 'RIGHT_EYE')):
-    _fbsf_register_presets(
-        tuple(
-            name for name in VIVE_OPENXR_EYE_SHAPEKEYS
-            if f'_{_side_name}_' in name
-            and any(token in name for token in ('_BLINK_', '_SQUEEZE_', '_WIDE_'))
-        ),
-        _tag, _tag, 'VIVE_OPENXR', 'EYELID')
-    _fbsf_register_presets(
-        tuple(
-            name for name in VIVE_OPENXR_EYE_SHAPEKEYS
-            if f'_{_side_name}_' in name
-            and not any(token in name for token in ('_BLINK_', '_SQUEEZE_', '_WIDE_'))
-        ),
-        _tag, 'OTHERS', 'VIVE_OPENXR', 'EYE_GAZE')
-_fbsf_register_presets(
-    tuple(
-        name for name in VIVE_OPENXR_LIP_SHAPEKEYS
-        if '_CHEEK_' not in name
-    ),
-    'MOUTH', 'MOUTH', 'VIVE_OPENXR', 'MOUTH')
 
 _FBSF_VRM0_CONTEXT_VISEMES = frozenset({'a', 'i', 'u', 'e', 'o'})
 _FBSF_PICO_CONTEXT_VISEMES = frozenset(

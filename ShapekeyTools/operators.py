@@ -22,9 +22,9 @@ SHAPE_KEY_RENAME_MAP = {
     '.L': '.R'
 }  # 用于OP_GenerateMirroredShapekey，镜像并修改名称
 try:
-    from .rebase_presets import *
+    from .shapekey_catalog import *
 except ImportError:  # 兼容直接导入脚本
-    from rebase_presets import *
+    from shapekey_catalog import *
 
 
 # 监听器缓存
@@ -1363,13 +1363,8 @@ class OP_AddShapekeysByTemplate(Operator):
         if not obj.data.shape_keys:
             shapekey_utils.ensure_basis_shape_key(obj)
 
-        # 标准形态键目录和 FBSF 分类共用顶部的同一份清单。
         # 一键添加和变基分类共同引用同一份标准目录。
-        try:
-            from .rebase_presets import SHAPEKEY_TEMPLATE_MAP as template_map
-        except ImportError:  # 兼容直接导入脚本
-            from rebase_presets import SHAPEKEY_TEMPLATE_MAP as template_map
-        shapekey_names = template_map.get(self.shapekey_list)
+        shapekey_names = SHAPEKEY_TEMPLATE_MAP.get(self.shapekey_list)
         if shapekey_names is None:
             self.report({'ERROR'}, "无效的形态键列表")
             return {'CANCELLED'}
