@@ -18,13 +18,16 @@ Mesh XPBD 保留，但只保留为一个干净、可读、可扩展 Physics Worl
 最终节点链路固定为：
 
 ```text
-XPBD网格任务
+XPBD网格对象 / XPBD网格自定义对象
+  -> XPBD网格任务
   -> XPBD模拟步 + Physics World
   -> Physics Writeback
   -> Physics World Commit
 ```
 
-第一版任务列表直接输入 solver，不建立 MC2 式对象/域/域收集。基础 XPBD 不做网格之间的融合、自碰或共享约束，因此引入 domain 只会制造空抽象。
+普通对象节点读取 `Object.hotools_mesh_collision` 中 XPBD 声明消费的 Pin、半径顶点组和外碰接受掩码；自定义对象节点只读取 socket，默认掩码为 `0`。对象层不携带数值 solver 参数，任务层为一个或多个对象统一附加粒子半径、碰撞开关、顺从度、迭代、阻尼和重力。
+
+第一版仍不建立 MC2 式融合域和域收集。基础 XPBD 不做网格之间的融合、自碰或共享约束，因此对象与任务分层是必要的 authoring 一致性，而 domain/collector 会制造没有运行语义的空抽象。
 
 ## 冻结能力范围
 

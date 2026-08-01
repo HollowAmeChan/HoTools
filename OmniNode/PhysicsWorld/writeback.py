@@ -810,12 +810,12 @@ def writeback_gn_attributes(world) -> int:
         elif transaction_id:
             sizes = {int(result.get("transaction_size", -1)) for result in transaction_results}
             indices = [int(result.get("transaction_index", -1)) for result in transaction_results]
-            writers = {str(result.get("writer_id") or "") for result in transaction_results}
+            solvers = {str(result.get("solver") or "") for result in transaction_results}
             if (
                 len(sizes) != 1
                 or next(iter(sizes), -1) != len(transaction_results)
                 or sorted(indices) != list(range(len(transaction_results)))
-                or len(writers) != 1
+                or len(solvers) != 1
             ):
                 error = "GN 多目标事务不完整或批次元数据不一致"
             else:

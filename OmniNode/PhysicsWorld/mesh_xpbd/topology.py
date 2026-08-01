@@ -221,6 +221,11 @@ def build_mesh_xpbd_topology(spec: MeshXpbdTaskSpec) -> MeshXpbdTopology:
     if not isinstance(spec, MeshXpbdTaskSpec):
         raise TypeError("build_mesh_xpbd_topology 需要 MeshXpbdTaskSpec")
     mesh = getattr(spec.source_object, "data", None)
+    mesh_users = int(getattr(mesh, "users", 0) or 0)
+    if mesh_users > 1:
+        raise ValueError(
+            "Mesh XPBD source Mesh 必须是 single-user；公共 GN offset 不能为共享 Mesh 数据保存对象级结果"
+        )
     rest_positions = _reference_local_positions(mesh)
     particle_count = int(rest_positions.shape[0])
     if particle_count <= 0:

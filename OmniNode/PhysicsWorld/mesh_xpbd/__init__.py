@@ -10,8 +10,7 @@ SOLVER_MODULE = {
     "solver_id": "mesh_xpbd",
     "menu_name": "Mesh XPBD",
     "declaration": ".declaration:MESH_XPBD_SOLVER_DECLARATION",
-    # 当前阶段只注册合同。运行节点在 vertical slice 完成后一次接入。
-    "nodes": (),
+    "nodes": (".nodes",),
 }
 
 
@@ -23,6 +22,13 @@ _LAZY_EXPORTS = {
     "MESH_XPBD_STEP_WRITER_ID": ".names",
     "MESH_XPBD_LEGACY_SURFACES": ".declaration",
     "MESH_XPBD_SOLVER_DECLARATION": ".declaration",
+    "MeshXpbdObjectPropertiesSpec": ".object_spec",
+    "MeshXpbdObjectSpec": ".object_spec",
+    "make_mesh_xpbd_custom_object": ".object_spec",
+    "make_mesh_xpbd_custom_objects": ".object_spec",
+    "read_mesh_xpbd_panel_object": ".object_spec",
+    "read_mesh_xpbd_panel_objects": ".object_spec",
+    "make_mesh_xpbd_tasks": ".authoring",
     "MeshXpbdTaskSpec": ".specs",
     "build_mesh_xpbd_task_specs": ".specs",
     "make_mesh_xpbd_slot_id": ".specs",
@@ -33,6 +39,8 @@ _LAZY_EXPORTS = {
     "MeshXpbdColliderFrame": ".colliders",
     "build_mesh_xpbd_collider_frame": ".colliders",
     "MeshXpbdNativeContext": ".native",
+    "step_mesh_xpbd": ".solver",
+    "get_mesh_xpbd_stats_result": ".results",
 }
 
 

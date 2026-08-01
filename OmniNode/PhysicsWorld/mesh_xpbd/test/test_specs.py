@@ -121,18 +121,24 @@ def test_non_mesh_and_invalid_identity_are_rejected():
         raise AssertionError("非法 Mesh XPBD source 被接受")
 
 
-def test_registry_discovers_contract_without_exposing_runtime_nodes():
+def test_registry_discovers_active_object_task_runtime_contract():
     assert "mesh_xpbd" in registry.builtin_solver_domains()
     descriptor = registry.all_solver_module_descriptors()["mesh_xpbd"]
     resolved = registry.resolve_solver_declaration("mesh_xpbd")
-    assert descriptor["nodes"] == ()
-    assert resolved["runtime_status"].startswith("not_available")
-    assert resolved["writers"] == []
-    assert resolved["planned_writers"] == ["mesh_xpbd.step"]
+    assert descriptor["nodes"] == (".nodes",)
+    assert resolved["runtime_status"] == "available"
+    assert resolved["nodes"] == [
+        "XPBD网格对象",
+        "XPBD网格自定义对象",
+        "XPBD网格任务",
+        "XPBD模拟步",
+    ]
+    assert resolved["writers"] == ["mesh_xpbd.step"]
+    assert resolved["planned_writers"] == []
     assert resolved["same_frame_policy"] == "republish_cached_result_without_time_step"
     assert resolved["collision"]["default_collided_by_groups"] == 0
     assert resolved["writeback"]["solver_inline_writeback"] is False
-    assert resolved["produces"] == []
+    assert len(resolved["produces"]) == 2
     assert "meshPhysicsXPBDCpp" in declaration.MESH_XPBD_LEGACY_SURFACES["python_nodes"]
     assert mesh_xpbd.SOLVER_MODULE["solver_id"] == "mesh_xpbd"
 
