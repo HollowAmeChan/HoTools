@@ -2,9 +2,9 @@
 
 from .registry import (
     register_physics_world_blender_properties,
-    register_solver_blender_lifecycles,
+    register_physics_world_blender_lifecycles,
     unregister_physics_world_blender_properties,
-    unregister_solver_blender_lifecycles,
+    unregister_physics_world_blender_lifecycles,
 )
 
 
@@ -19,10 +19,10 @@ def register() -> None:
 
     register_physics_world_blender_properties()
     try:
-        register_solver_blender_lifecycles()
+        register_physics_world_blender_lifecycles()
         register_ui()
     except Exception:
-        unregister_solver_blender_lifecycles()
+        unregister_physics_world_blender_lifecycles()
         unregister_physics_world_blender_properties()
         raise
     _ACTIVE = True
@@ -37,7 +37,7 @@ def unregister() -> None:
 
     shutdown_geometry_bake_runtime()
     unregister_ui()
-    unregister_solver_blender_lifecycles()
+    unregister_physics_world_blender_lifecycles()
     unregister_physics_world_blender_properties()
     _ACTIVE = False
 

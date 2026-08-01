@@ -65,6 +65,7 @@ from .scope import (
     collect_physics_sources,
 )
 from .utils.geometry import matrix_scale_radius
+from .world_time import scene_raw_dt_seconds, scene_timeline_time_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -81,17 +82,6 @@ def _scene_key(scene) -> str:
         return f"scene:{int(scene.as_pointer())}"
     except Exception:
         return f"scene:{id(scene)}"
-
-
-def _scene_delta_time(scene) -> float:
-    """从场景 render 设置读取帧间隔（秒）。"""
-    try:
-        render = scene.render
-        fps_base = float(render.fps_base) if render.fps_base else 1.0
-        fps = float(render.fps) / fps_base
-        return 1.0 / fps if fps > _EPSILON else 0.0
-    except Exception:
-        return 1.0 / 24.0
 
 
 def _vector3(value, fallback: mathutils.Vector) -> mathutils.Vector:
@@ -410,11 +400,17 @@ def physicsWorldBegin(
 
     fc = world.frame_context
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
-    previous_frame = fc.frame if fc.previous_frame is not None or fc.frame != 0 else None
+    previous_frame = fc.frame if fc.initialized else None
+    previous_sample_time = float(getattr(fc, "sample_time_seconds", 0.0) or 0.0)
+    previous_frame_step_dt = float(
+        getattr(fc, "frame_step_dt", getattr(fc, "dt", 0.0)) or 0.0
+    )
 
     # 计算 dt
-    raw_dt = _scene_delta_time(scene)
-    effective_dt = raw_dt * max(float(time_scale), 0.0)
+    raw_dt = scene_raw_dt_seconds(scene)
+    world_time_scale = max(float(time_scale), 0.0)
+    effective_dt = raw_dt * world_time_scale
+    timeline_time_seconds = scene_timeline_time_seconds(scene, frame=current_frame)
 
     # 判断帧连续性
     continuous = (previous_frame is not None) and (current_frame == previous_frame + 1)
@@ -464,7 +460,18 @@ def physicsWorldBegin(
     if restart_required:
         _run_scope_restart_handlers(world, object_scope)
 
+    # Blender 输出 fps/fps_base 是唯一基础时钟。sample_time 只累计已经跨过的
+    # 连续 world 帧；same-frame 即使参数变化也不能篡改上一帧实际采用的步长。
+    if restart_required:
+        sample_time_seconds = 0.0
+    elif continuous:
+        sample_time_seconds = previous_sample_time + max(previous_frame_step_dt, 0.0)
+    else:
+        sample_time_seconds = previous_sample_time
+    frame_step_dt = previous_frame_step_dt if same_frame and not reset else effective_dt
+
     # 更新 FrameContext
+    fc.initialized = True
     fc.scene_key = _scene_key(scene)
     fc.frame = current_frame
     fc.previous_frame = previous_frame
@@ -474,7 +481,10 @@ def physicsWorldBegin(
     fc.restart_required = restart_required
     fc.raw_dt = raw_dt
     fc.dt = effective_dt
-    fc.time_scale = float(time_scale)
+    fc.frame_step_dt = frame_step_dt
+    fc.timeline_time_seconds = timeline_time_seconds
+    fc.sample_time_seconds = sample_time_seconds
+    fc.time_scale = world_time_scale
     fc.substeps = max(1, int(substeps))
     fc.generation = world.generation
 
@@ -494,9 +504,8 @@ def physicsWorldBegin(
 
     collider_count = len(new_snapshot.get("colliders") or [])
 
-    # 允许已装载解算器从对象作用域正式收集自己的规格和槽输入。
-    # 物理世界 Begin 不直接知道刚体、弹簧、布料等解算器的私有脏标记策略。
-    _collect_scope_solver_specs(world, object_scope)
+    # 公共 component 先解析逐帧属性，solver 随后读取公共快照并收集私有规格。
+    _collect_scope_physics_specs(world, object_scope)
 
     if debug_output:
         print(
@@ -523,14 +532,14 @@ def _run_scope_restart_handlers(world: PhysicsWorldCache, scope: PhysicsObjectSc
     run_scope_restart_handlers(world, scope)
 
 
-def _collect_scope_solver_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
-    """运行解算器模块声明的对象作用域收集器。"""
+def _collect_scope_physics_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
+    """先运行公共 component，再运行 solver 的对象作用域收集器。"""
     try:
-        from .registry import collect_scope_solver_specs
+        from .registry import collect_scope_physics_specs
     except Exception:
         return
 
-    collect_scope_solver_specs(world, scope)
+    collect_scope_physics_specs(world, scope)
 
 
 # ---------------------------------------------------------------------------

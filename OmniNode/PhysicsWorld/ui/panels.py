@@ -10,6 +10,7 @@ physicsPanel.py — HoTools 统一物理属性面板
   PT_Hotools_Physics_MeshCollision   — 简单布料子面板（仅 MESH）
   PT_Hotools_Physics_RigidBody       — 刚体子面板
   PT_Hotools_Physics_RigidConstraint — 刚体约束子面板（仅 EMPTY）
+  PT_Hotools_Physics_Field           — Field 子面板（仅 EMPTY）
 """
 
 from bpy.types import Panel
@@ -17,6 +18,8 @@ from bpy.types import Panel
 from .operators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
+    OP_Hotools_Field_CreateWind,
+    OP_Hotools_Field_RegenerateId,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
 from ..simple_cloth.base_pose import mesh_light_key
@@ -136,6 +139,13 @@ class PT_Hotools_PhysicsPanel(Panel):
         mesh_col   = getattr(obj, "hotools_mesh_collision", None)
         rigid      = getattr(obj, "hotools_rigid_body", None)
         constraint = getattr(obj, "hotools_rigid_constraint", None)
+        field_props = getattr(obj, "hotools_field", None)
+
+        layout.operator(
+            OP_Hotools_Field_CreateWind.bl_idname,
+            text="创建风场",
+            icon="FORCE_WIND",
+        )
 
         grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
 
@@ -154,6 +164,103 @@ class PT_Hotools_PhysicsPanel(Panel):
         if obj.type == "EMPTY" and constraint is not None:
             grid.prop(constraint, "enabled", text="刚体约束",
                       icon="RIGID_BODY_CONSTRAINT", toggle=True)
+
+        if obj.type == "EMPTY" and field_props is not None:
+            grid.prop(
+                field_props,
+                "enabled",
+                text="Field",
+                icon="FORCE_WIND",
+                toggle=True,
+            )
+
+
+# ---------------------------------------------------------------------------
+# 子面板：Field（仅 EMPTY）
+# ---------------------------------------------------------------------------
+
+class PT_Hotools_Physics_Field(Panel):
+    bl_idname = "OBJECT_PT_Hotools_Physics_Field"
+    bl_label = "Field"
+    bl_parent_id = _PARENT
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj is None or obj.type != "EMPTY":
+            return False
+        props = getattr(obj, "hotools_field", None)
+        return props is not None and bool(getattr(props, "enabled", False))
+
+    def draw(self, context):
+        obj = context.object
+        props = obj.hotools_field
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        status_row = layout.row(align=True)
+        status_row.label(
+            text="状态：仅预览" if props.status == "PREVIEW_ONLY" else f"状态：{props.status}"
+        )
+        status_row.operator(
+            OP_Hotools_Field_RegenerateId.bl_idname,
+            text="",
+            icon="FILE_REFRESH",
+        )
+        layout.label(text=f"ID：{props.field_id or '未分配'}")
+
+        layout.separator()
+        layout.label(text="Volume", icon="MESH_UVSPHERE")
+        layout.prop(props, "shape", text="形状")
+        if props.shape == "SPHERE":
+            scale = obj.matrix_world.to_scale()
+            if max(scale) - min(scale) > 1.0e-5:
+                layout.label(text="球形 Volume 需要均匀缩放", icon="ERROR")
+            layout.label(text="衰减：线性（V0）")
+        else:
+            layout.label(text="衰减：无（硬边界）")
+
+        layout.separator()
+        layout.label(text="Wind", icon="FORCE_WIND")
+        layout.prop(props, "speed_mps")
+        layout.prop(props, "turbulence")
+        advanced = layout.column(align=True)
+        advanced.enabled = props.turbulence > 0.0
+        advanced.prop(props, "spatial_scale_m")
+        advanced.prop(props, "temporal_frequency_hz")
+        advanced.prop(props, "octaves")
+        advanced.prop(props, "lacunarity")
+        advanced.prop(props, "gain")
+        advanced.prop(props, "seed_u32")
+
+        layout.separator()
+        layout.label(text="合成", icon="NODETREE")
+        layout.prop(props, "blend_weight")
+        layout.prop(props, "priority")
+
+        layout.separator()
+        layout.label(text="Scope", icon="FILTER")
+        layout.prop(props, "scope_solver_ids")
+        layout.prop(props, "scope_collection_ids")
+        layout.prop(props, "scope_include_ids")
+        layout.prop(props, "scope_exclude_ids")
+        layout.prop(props, "scope_collision_groups")
+
+        scene = context.scene
+        if hasattr(scene, "ho_field_overlay_show"):
+            layout.separator()
+            layout.label(text="可视化", icon="HIDE_OFF")
+            layout.prop(scene, "ho_field_overlay_show")
+            visual = layout.column(align=True)
+            visual.enabled = bool(scene.ho_field_overlay_show)
+            visual.prop(scene, "ho_field_overlay_mode")
+            visual.prop(scene, "ho_field_overlay_show_bounds")
+            visual.prop(scene, "ho_field_overlay_density")
+            visual.prop(scene, "ho_field_overlay_glyph_scale")
 
 
 # ---------------------------------------------------------------------------

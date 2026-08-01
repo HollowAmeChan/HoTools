@@ -10,7 +10,9 @@
 #   nodes.py        - 对外暴露的通用函数节点
 #   omninode_registration.py - 节点类、分类与嵌套菜单声明
 #   names.py        - 解算器 / 通道 / 后端 / 隐式对象全局名称常量
+#   world_time.py   - Blender 输出帧率与统一秒数换算
 #   utils/          - 新物理世界通用数学、身份、缓冲辅助函数
+#   field/          - 公共 Field/Volume、Wind sampler 与 Blender 创作边界
 #   rigid/          - 刚体 / Jolt 领域
 #   spring_vrm/     - VRM SpringBone 重写领域
 
@@ -37,6 +39,12 @@ from .world import (
     physicsWorldCommit,
     build_collider_snapshot,
 )
+from .world_time import (
+    DEFAULT_OUTPUT_FPS,
+    scene_output_fps,
+    scene_raw_dt_seconds,
+    scene_timeline_time_seconds,
+)
 from .debug import (
     snapshot_to_text,
     result_items_to_text,
@@ -49,12 +57,14 @@ from .registry import (
     all_solver_module_descriptors,
     builtin_component_domains,
     builtin_solver_domains,
+    collect_scope_physics_specs,
     collect_scope_solver_specs,
     iter_scope_collectors,
     iter_scope_restart_handlers,
     iter_world_dispose_handlers,
     iter_solver_declarations,
     register_physics_world_blender_properties,
+    register_physics_world_blender_lifecycles,
     register_solver_module,
     register_solver_blender_properties,
     resolve_solver_declaration,
@@ -62,6 +72,7 @@ from .registry import (
     run_scope_restart_handlers,
     run_world_dispose_handlers,
     unregister_physics_world_blender_properties,
+    unregister_physics_world_blender_lifecycles,
     unregister_solver_module,
     unregister_solver_blender_properties,
 )
@@ -167,6 +178,10 @@ __all__ = [
     "physicsWorldBegin",
     "physicsWorldCommit",
     "build_collider_snapshot",
+    "DEFAULT_OUTPUT_FPS",
+    "scene_output_fps",
+    "scene_raw_dt_seconds",
+    "scene_timeline_time_seconds",
     # debug
     "snapshot_to_text",
     "result_items_to_text",
@@ -178,12 +193,14 @@ __all__ = [
     "all_solver_module_descriptors",
     "builtin_component_domains",
     "builtin_solver_domains",
+    "collect_scope_physics_specs",
     "collect_scope_solver_specs",
     "iter_scope_collectors",
     "iter_scope_restart_handlers",
     "iter_world_dispose_handlers",
     "iter_solver_declarations",
     "register_physics_world_blender_properties",
+    "register_physics_world_blender_lifecycles",
     "register_solver_module",
     "register_solver_blender_properties",
     "resolve_solver_declaration",
@@ -191,6 +208,7 @@ __all__ = [
     "run_scope_restart_handlers",
     "run_world_dispose_handlers",
     "unregister_physics_world_blender_properties",
+    "unregister_physics_world_blender_lifecycles",
     "unregister_solver_module",
     "unregister_solver_blender_properties",
     # Blender property component lifecycle

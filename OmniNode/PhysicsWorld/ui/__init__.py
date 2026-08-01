@@ -14,6 +14,8 @@ from .operators import (
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
+    OP_Hotools_Field_CreateWind,
+    OP_Hotools_Field_RegenerateId,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
     OP_Hotools_MeshCollision_SetPrimaryGroup,
     OP_Hotools_MeshCollision_ToggleCollidedByGroup,
@@ -25,15 +27,22 @@ from .panels import (
     PT_Hotools_Bone_CollisionSubPanel,
     PT_Hotools_Bone_PhysicsPanel,
     PT_Hotools_Physics_MeshCollision,
+    PT_Hotools_Physics_Field,
     PT_Hotools_Physics_ObjectCollision,
     PT_Hotools_Physics_RigidBody,
     PT_Hotools_Physics_RigidConstraint,
     PT_Hotools_PhysicsPanel,
 )
 from .properties import PHYSICS_UI_BLENDER_PROPERTIES
+from ..field.visualization import (
+    register as register_field_visualization,
+    unregister as unregister_field_visualization,
+)
 
 
 PHYSICS_UI_CLASSES = (
+    OP_Hotools_Field_CreateWind,
+    OP_Hotools_Field_RegenerateId,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
@@ -46,6 +55,7 @@ PHYSICS_UI_CLASSES = (
     OP_Hotools_BoneCollision_GradientRadius,
     PT_Hotools_CollisionOverlayPopover,
     PT_Hotools_PhysicsPanel,
+    PT_Hotools_Physics_Field,
     PT_Hotools_Physics_ObjectCollision,
     PT_Hotools_Physics_MeshCollision,
     PT_Hotools_Physics_RigidBody,
@@ -69,11 +79,13 @@ def register() -> None:
         register_blender_property_domain(
             "physics_ui",
             PHYSICS_UI_BLENDER_PROPERTIES,
-            dependencies=("collision", "simple_cloth", "rigid"),
+            dependencies=("collision", "field", "simple_cloth", "rigid"),
         )
+        register_field_visualization()
         _ensure_draw_handler()
         bpy.types.VIEW3D_HT_header.append(draw_collision_overlay_header)
     except Exception:
+        unregister_field_visualization()
         unregister_blender_property_domain("physics_ui", force=True)
         _remove_draw_handler()
         for cls in reversed(registered_classes):
@@ -91,6 +103,7 @@ def unregister() -> None:
     except Exception:
         pass
     _remove_draw_handler()
+    unregister_field_visualization()
     unregister_blender_property_domain("physics_ui", force=True)
     for cls in reversed(PHYSICS_UI_CLASSES):
         bpy.utils.unregister_class(cls)

@@ -1,3 +1,6 @@
+import uuid
+
+import bpy
 import mathutils
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
 from bpy.types import Operator
@@ -21,6 +24,76 @@ from .utils import (
     _tag_view3d_redraw,
 )
 from ..simple_cloth.base_pose import ensure_base_pose_proxy
+
+
+def _mark_field_visualization_dirty() -> None:
+    try:
+        from ..field.visualization import mark_field_visualization_dirty
+
+        mark_field_visualization_dirty()
+    except Exception:
+        pass
+
+
+class OP_Hotools_Field_CreateWind(Operator):
+    bl_idname = "ho.field_create_wind"
+    bl_label = "创建风场"
+    bl_description = "创建一个由 Empty 变换定义范围和方向的 Wind Field"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def execute(self, context):
+        scene = context.scene
+        collection = context.collection or scene.collection
+        obj = bpy.data.objects.new("风场", None)
+        try:
+            collection.objects.link(obj)
+            obj.location = scene.cursor.location
+            obj.empty_display_type = "SPHERE"
+            obj.empty_display_size = 1.0
+            props = getattr(obj, "hotools_field", None)
+            if props is None:
+                raise RuntimeError("Field RNA 尚未注册")
+            props.field_id = str(uuid.uuid4())
+            props.status = "PREVIEW_ONLY"
+            props.shape = "SPHERE"
+            props.enabled = True
+
+            for selected in tuple(getattr(context, "selected_objects", ()) or ()):
+                selected.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+        except Exception as exc:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            self.report({"ERROR"}, f"创建风场失败：{exc}")
+            return {"CANCELLED"}
+
+        _mark_field_visualization_dirty()
+        return {"FINISHED"}
+
+
+class OP_Hotools_Field_RegenerateId(Operator):
+    bl_idname = "ho.field_regenerate_id"
+    bl_label = "重签 Field ID"
+    bl_description = "为当前 Field 生成新的持久身份，用于修复复制产生的重复 ID"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        props = getattr(obj, "hotools_field", None) if obj is not None else None
+        return obj is not None and obj.type == "EMPTY" and props is not None
+
+    def execute(self, context):
+        props = context.object.hotools_field
+        props.field_id = str(uuid.uuid4())
+        props.status = "PREVIEW_ONLY"
+        _mark_field_visualization_dirty()
+        self.report({"INFO"}, "已生成新的 Field ID")
+        return {"FINISHED"}
 
 
 class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):

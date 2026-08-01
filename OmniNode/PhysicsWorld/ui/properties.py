@@ -2,6 +2,7 @@
 
 from .collision_preview import COLLISION_OVERLAY_PREVIEW_MODE_ITEMS
 from .utils import _overlay_show_update
+from ..field.visualization import field_overlay_update
 
 
 PHYSICS_UI_BLENDER_PROPERTIES = {
@@ -15,6 +16,11 @@ PHYSICS_UI_BLENDER_PROPERTIES = {
         {"owner": "Scene", "name": "ho_collision_overlay_show_object", "property": "bool", "kwargs": {"name": "物体碰撞体", "default": True, "update": _overlay_show_update}},
         {"owner": "Scene", "name": "ho_bone_collision_show_info_section", "property": "bool", "kwargs": {"name": "信息", "default": True}},
         {"owner": "Scene", "name": "ho_bone_collision_show_roots_section", "property": "bool", "kwargs": {"name": "活动骨碰撞", "default": True}},
+        {"owner": "Scene", "name": "ho_field_overlay_show", "property": "bool", "kwargs": {"name": "显示 Field", "description": "显示 Field Volume 和公共 sampler 的空气速度", "default": False, "update": field_overlay_update}},
+        {"owner": "Scene", "name": "ho_field_overlay_mode", "property": "enum", "kwargs": {"name": "预览模式", "items": [("SELECTED", "选中 Field", "只采样当前活动 Field"), ("COMBINED", "合成 Field", "按公共规则叠加场景中的全部 Field")], "default": "SELECTED", "update": field_overlay_update}},
+        {"owner": "Scene", "name": "ho_field_overlay_show_bounds", "property": "bool", "kwargs": {"name": "显示 Volume 边界", "default": True, "update": field_overlay_update}},
+        {"owner": "Scene", "name": "ho_field_overlay_density", "property": "int", "kwargs": {"name": "采样密度", "default": 3, "min": 2, "max": 7, "update": field_overlay_update}},
+        {"owner": "Scene", "name": "ho_field_overlay_glyph_scale", "property": "float", "kwargs": {"name": "箭头比例", "default": 0.15, "min": 0.001, "soft_max": 1.0, "update": field_overlay_update}},
     ),
 }
 

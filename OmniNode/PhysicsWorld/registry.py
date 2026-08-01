@@ -1,7 +1,7 @@
-"""统一物理世界的解算器模块注册表。
+"""统一物理世界的公共 component 与 solver 模块注册表。
 
 这里是公共物理世界生命周期与各解算器领域之间的轻量装载边界。
-物理世界核心只调用这里汇总出的通用回调；具体解算器包自行声明要提供哪些回调。
+物理世界核心只调用这里汇总出的通用回调；具体领域包自行声明要提供哪些回调。
 """
 
 from __future__ import annotations
@@ -15,14 +15,16 @@ from typing import Callable
 
 
 _BUILTIN_SOLVER_DOMAINS = ("spring_vrm", "rigid", "mc2", "mesh_xpbd")
-_BUILTIN_COMPONENT_DOMAINS = ("collision", "simple_cloth")
+_BUILTIN_COMPONENT_DOMAINS = ("collision", "field", "simple_cloth")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
 _REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []
 _REGISTERED_SOLVER_PROPERTY_DOMAINS: list[str] = []
 _REGISTERED_SOLVER_BLENDER_LIFECYCLES: list[tuple[str, object]] = []
+_REGISTERED_COMPONENT_BLENDER_LIFECYCLES: list[tuple[str, object]] = []
 _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE = False
 _SOLVER_BLENDER_PROPERTIES_ACTIVE = False
 _SOLVER_BLENDER_LIFECYCLES_ACTIVE = False
+_COMPONENT_BLENDER_LIFECYCLES_ACTIVE = False
 
 
 def builtin_solver_domains() -> tuple[str, ...]:
@@ -42,6 +44,10 @@ def _component_descriptor(domain: str) -> dict:
         "depends_on": (),
         "capabilities": None,
         "blender_properties": None,
+        "scope_collectors": (),
+        "scope_restart_handlers": (),
+        "world_dispose_handlers": (),
+        "blender_lifecycle": None,
     }
     if isinstance(declared, dict):
         data.update(declared)
@@ -256,7 +262,7 @@ def _descriptor_solver_id(domain: str, descriptor: dict) -> str:
     return solver_id or str(domain)
 
 
-def _iter_hooks(hook_key: str) -> list[dict]:
+def _iter_solver_hooks(hook_key: str) -> list[dict]:
     hooks: list[dict] = []
     for domain, descriptor in all_solver_module_descriptors().items():
         for hook_ref in _as_tuple(descriptor.get(hook_key)):
@@ -268,6 +274,30 @@ def _iter_hooks(hook_key: str) -> list[dict]:
                 "hook": hook,
                 "hook_ref": hook_ref,
             })
+    return hooks
+
+
+def _iter_component_hooks(hook_key: str) -> list[dict]:
+    hooks: list[dict] = []
+    for domain, descriptor in all_component_descriptors().items():
+        for hook_ref in _as_tuple(descriptor.get(hook_key)):
+            hook = _resolve_hook(domain, hook_ref)
+            if hook is None:
+                continue
+            hooks.append({
+                "domain": domain,
+                "kind": "component",
+                "hook": hook,
+                "hook_ref": hook_ref,
+            })
+    return hooks
+
+
+def _iter_hooks(hook_key: str) -> list[dict]:
+    hooks = _iter_component_hooks(hook_key)
+    for entry in _iter_solver_hooks(hook_key):
+        entry["kind"] = "solver"
+        hooks.append(entry)
     return hooks
 
 
@@ -369,6 +399,48 @@ def register_solver_blender_lifecycles() -> None:
     _SOLVER_BLENDER_LIFECYCLES_ACTIVE = True
 
 
+def register_component_blender_lifecycles() -> None:
+    """激活共享 component 声明的 Blender handler 生命周期。"""
+    global _COMPONENT_BLENDER_LIFECYCLES_ACTIVE
+    if _COMPONENT_BLENDER_LIFECYCLES_ACTIVE:
+        return
+    try:
+        for domain, descriptor in all_component_descriptors().items():
+            key = str(domain)
+            if any(item[0] == key for item in _REGISTERED_COMPONENT_BLENDER_LIFECYCLES):
+                continue
+            lifecycle_ref = descriptor.get("blender_lifecycle")
+            module = (
+                _resolve_module_ref(key, lifecycle_ref)
+                if isinstance(lifecycle_ref, str)
+                else lifecycle_ref
+            )
+            if module is None:
+                continue
+            register_callback = getattr(module, "register", None)
+            unregister_callback = getattr(module, "unregister", None)
+            if not callable(register_callback) or not callable(unregister_callback):
+                raise RuntimeError(
+                    f"component {key} Blender lifecycle 必须定义 register/unregister"
+                )
+            register_callback()
+            _REGISTERED_COMPONENT_BLENDER_LIFECYCLES.append((key, module))
+    except Exception:
+        unregister_component_blender_lifecycles()
+        raise
+    _COMPONENT_BLENDER_LIFECYCLES_ACTIVE = True
+
+
+def register_physics_world_blender_lifecycles() -> None:
+    """按 component -> solver 顺序激活全部物理 Blender 生命周期。"""
+    register_component_blender_lifecycles()
+    try:
+        register_solver_blender_lifecycles()
+    except Exception:
+        unregister_component_blender_lifecycles()
+        raise
+
+
 def _register_solver_blender_lifecycle(domain: str, descriptor: dict) -> None:
     key = str(domain)
     if any(item[0] == key for item in _REGISTERED_SOLVER_BLENDER_LIFECYCLES):
@@ -415,6 +487,41 @@ def unregister_solver_blender_lifecycles() -> None:
     if errors:
         raise RuntimeError(
             "solver Blender lifecycle cleanup failed: "
+            + "; ".join(str(error) for error in errors)
+        )
+
+
+def unregister_component_blender_lifecycles() -> None:
+    global _COMPONENT_BLENDER_LIFECYCLES_ACTIVE
+    _COMPONENT_BLENDER_LIFECYCLES_ACTIVE = False
+    errors = []
+    while _REGISTERED_COMPONENT_BLENDER_LIFECYCLES:
+        _domain, module = _REGISTERED_COMPONENT_BLENDER_LIFECYCLES.pop()
+        try:
+            module.unregister()
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise RuntimeError(
+            "component Blender lifecycle cleanup failed: "
+            + "; ".join(str(error) for error in errors)
+        )
+
+
+def unregister_physics_world_blender_lifecycles() -> None:
+    """按 solver -> component 逆序释放全部物理 Blender 生命周期。"""
+    errors = []
+    for callback in (
+        unregister_solver_blender_lifecycles,
+        unregister_component_blender_lifecycles,
+    ):
+        try:
+            callback()
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise RuntimeError(
+            "Physics World lifecycle cleanup failed: "
             + "; ".join(str(error) for error in errors)
         )
 
@@ -699,6 +806,11 @@ def run_scope_restart_handlers(world, scope) -> int:
 
 
 def collect_scope_solver_specs(world, scope) -> int:
+    """兼容入口：依次收集公共 component 与 solver 的逐帧规格。"""
+    return collect_scope_physics_specs(world, scope)
+
+
+def collect_scope_physics_specs(world, scope) -> int:
     count = 0
     for entry in iter_scope_collectors():
         try:
@@ -710,16 +822,13 @@ def collect_scope_solver_specs(world, scope) -> int:
 
 
 def run_world_dispose_handlers(world, reason: str) -> int:
-    """Release solver-owned resources that live outside the world owner."""
+    """释放 component/solver 在 world owner 之外持有的资源。"""
     count = 0
-    for domain, descriptor in all_solver_module_descriptors().items():
-        for hook_ref in _as_tuple(descriptor.get("world_dispose_handlers")):
-            try:
-                hook = _resolve_hook(domain, hook_ref)
-                if hook is None:
-                    continue
-                hook(world, str(reason or "dispose"))
-                count += 1
-            except Exception as exc:
-                _record_hook_error(world, domain, "world_dispose_handlers", exc)
+    for entry in iter_world_dispose_handlers():
+        domain = str(entry.get("domain") or "")
+        try:
+            entry["hook"](world, str(reason or "dispose"))
+            count += 1
+        except Exception as exc:
+            _record_hook_error(world, domain, "world_dispose_handlers", exc)
     return count
