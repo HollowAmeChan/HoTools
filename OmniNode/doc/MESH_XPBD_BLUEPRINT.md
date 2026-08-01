@@ -146,4 +146,8 @@ Context.dispose()
 5. **旧路径删除**：一次删除 `_MeshPhysics`、`_MeshPhysicsCppBackend`、两个旧节点、私有 `_OmniCache` payload、`XPBDDelta`/`xpbd_delta` 和悬空 native 名称；不保留运行兼容层。
 6. **冻结**：记录最终参数默认值、ABI/layout version、能力矩阵和性能基线。此后只修 bug、兼容性和确定性，不扩张产品范围。
 
+截至 2026-08-01，阶段 1 到 4 已完成。生产验收使用 Blender 4.5.8 只读加载 `OMNI测试.blend`，在其中真实 8 顶点 `Cube` 上连续运行 180 帧：177 次 native step、2 次有意 reset、公共平面碰撞、逐帧 GN 写回、同帧重发布、零 dt 暂停、world restart、参数热更新和 `matrix_world` 动画均保持单一 slot/context；最终最大局部 offset 约 `0.5881`，全程有限。对应回归脚本为 `mesh_xpbd/test/test_blender_production_soak.py`。
+
+dirty/lifecycle 回归同时覆盖：孤立顶点导致的 particle-count topology replacement、Basis/reference 静态 reset、纯数值参数热更新、矩阵参考系更新保留惯性、generation replacement、task prune 和 world dispose。阶段 5 完成前仍不得标记为冻结。
+
 完成 XPBD 删除后，再审计 `_native` 中未被现有 Physics World solver 消费的旧规划。SpringBone VRM 与 MC2 仍在使用的 raw `PyObject*` bridge 只能列入后续 nanobind 迁移，不能因“旧”而误删。

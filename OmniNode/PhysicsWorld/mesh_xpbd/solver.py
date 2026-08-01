@@ -82,7 +82,6 @@ def _prepare_tasks(world, specs) -> list[_PreparedTask]:
                 staged = MeshXpbdNativeContext()
                 current_staged = staged
                 staged.rebuild(topology, reference, spec)
-                staged.reset(reference)
             prepared.append(_PreparedTask(
                 spec,
                 topology,

@@ -120,6 +120,15 @@ def test_topology_includes_basis_edges_triangulation_and_bend_pair():
     changed = topology_module.build_mesh_xpbd_topology(task)
     assert changed.topology_signature != topology.topology_signature
 
+    source.data.loop_triangles = _Collection([
+        _Value(vertices=(0, 1, 2)),
+        _Value(vertices=(0, 2, 3)),
+    ])
+    source.data.vertices.append(_Value(co=(2, 2, 0), groups=[]))
+    isolated_vertex = topology_module.build_mesh_xpbd_topology(task)
+    assert isolated_vertex.particle_count == 5
+    assert isolated_vertex.topology_signature != topology.topology_signature
+
 
 def test_pin_and_radius_groups_are_resolved_into_static_arrays():
     source = _Object()

@@ -244,7 +244,7 @@ def build_mesh_xpbd_topology(spec: MeshXpbdTaskSpec) -> MeshXpbdTopology:
     topology_signature = _digest_arrays(
         "mesh_xpbd_topology_v1",
         (edges, triangles),
-        (spec.source_object_ptr, spec.source_data_ptr),
+        (spec.source_object_ptr, spec.source_data_ptr, particle_count),
     )
     static_signature = _digest_arrays(
         "mesh_xpbd_static_v1",

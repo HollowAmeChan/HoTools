@@ -88,6 +88,7 @@ def test_restart_step_same_frame_and_pause_have_distinct_native_decisions():
     assert count == 1
     slot = _slot(world, task)
     assert slot.data["native_context"].stats()["step_count"] == 0
+    assert slot.data["native_context"].stats()["reset_count"] == 1
     np.testing.assert_allclose(_writebacks(world)[0]["local_offsets"], 0.0)
     assert results.get_mesh_xpbd_stats_result(world)["reset_slot_count"] == 1
 
@@ -178,6 +179,61 @@ def test_static_change_resets_while_parameter_change_hot_updates():
     assert slot.data["native_context"].stats()["step_count"] == 1
     assert slot.debug_snapshot()["summary"]["decision"] == "reset"
     np.testing.assert_allclose(_writebacks(world)[0]["local_offsets"], 0.0)
+
+
+def test_particle_count_and_generation_changes_replace_native_context():
+    source = adapter_test._Object(pointer=141, data=adapter_test._Data(241))
+    task = _task(source)
+    world = _world()
+    solver.step_mesh_xpbd(world, [task])
+    first_owner = _slot(world, task).data["native_context"]
+
+    source.data.vertices.append(adapter_test._Value(co=(2, 2, 0), groups=[]))
+    _advance(world, frame=2)
+    solver.step_mesh_xpbd(world, [task])
+    slot = _slot(world, task)
+    second_owner = slot.data["native_context"]
+    assert second_owner is not first_owner
+    assert first_owner.ready is False
+    assert slot.data["topology"].particle_count == 5
+    assert slot.debug_snapshot()["summary"]["decision"] == "reset"
+
+    world.generation += 1
+    _advance(world, frame=3)
+    solver.step_mesh_xpbd(world, [task])
+    third_owner = _slot(world, task).data["native_context"]
+    assert third_owner is not second_owner
+    assert second_owner.ready is False
+
+    world.omni_cache_dispose("lifecycle_test")
+    assert third_owner.ready is False
+    assert world.solver_slots == {}
+    assert world.result_streams == {}
+
+
+def test_matrix_reference_animation_preserves_context_and_inertia():
+    source = adapter_test._Object(pointer=151, data=adapter_test._Data(251))
+    task = _task(source)
+    world = _world()
+    solver.step_mesh_xpbd(world, [task])
+    _advance(world, frame=2)
+    solver.step_mesh_xpbd(world, [task])
+    slot = _slot(world, task)
+    owner = slot.data["native_context"]
+    before_reset_count = owner.stats()["reset_count"]
+
+    source.matrix_world = np.asarray((
+        (1, 0, 0, 0.25),
+        (0, 1, 0, -0.5),
+        (0, 0, 1, 0.75),
+        (0, 0, 0, 1),
+    ), dtype=np.float32)
+    _advance(world, frame=3)
+    solver.step_mesh_xpbd(world, [task])
+    assert _slot(world, task).data["native_context"] is owner
+    assert owner.stats()["step_count"] == 2
+    assert owner.stats()["reset_count"] == before_reset_count
+    assert slot.debug_snapshot()["summary"]["decision"] == "step"
 
 
 if __name__ == "__main__":
