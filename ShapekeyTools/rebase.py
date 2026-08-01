@@ -41,6 +41,11 @@ class PG_ShapekeyTools_RebaseItem(PropertyGroup):
 
     shape_key_name: StringProperty(name="形态键")  # type: ignore
     key_index: IntProperty(name="索引", default=-1, options={'HIDDEN'})  # type: ignore
+    selected: BoolProperty(
+        name="选中",
+        description="加入批量权能编辑范围",
+        default=False,
+    )  # type: ignore
     merge: BoolProperty(
         name="合并",
         description="烘焙进 Basis，并在成功后删除该来源键",
@@ -98,10 +103,70 @@ def _shape_key_data(obj):
     return getattr(getattr(obj, "data", None), "shape_keys", None)
 
 
+# region 属性更新回调
+
+def _activate_selected_rebase_item(shape_keys, context):
+    obj = getattr(context, "object", None)
+    if _shape_key_data(obj) != shape_keys:
+        return
+    item_index = shape_keys.ho_rebase_item_index
+    if not 0 <= item_index < len(shape_keys.ho_rebase_items):
+        return
+    item = shape_keys.ho_rebase_items[item_index]
+    key_index = shape_keys.key_blocks.find(item.shape_key_name)
+    if key_index >= 0:
+        obj.active_shape_key_index = key_index
+
+
+# endregion
+
+
+# region 属性注册
+
+def reg_props():
+    bpy.types.Key.ho_rebase_items = CollectionProperty(
+        type=PG_ShapekeyTools_RebaseItem)
+    bpy.types.Key.ho_rebase_item_index = IntProperty(
+        default=0,
+        min=0,
+        update=_activate_selected_rebase_item,
+    )
+    bpy.types.Key.ho_rebase_schema = IntProperty(
+        default=REBASE_SCHEMA_VERSION, options={'HIDDEN'})
+    bpy.types.Key.ho_rebase_left_is_positive = IntProperty(
+        default=1, min=-1, max=1, options={'HIDDEN'})
+    bpy.types.Key.ho_rebase_batch_function_tag = EnumProperty(
+        name="批量权能",
+        description="准备应用到选中形态键的权能类型",
+        items=FBSF_FUNCTION_ITEMS,
+        default='OTHERS',
+    )
+    bpy.types.Key.ho_rebase_correction_strength = FloatProperty(
+        name="反向修正强度", default=1.0, min=0.0, max=1.0,
+        subtype='FACTOR')
+    bpy.types.Key.ho_rebase_side_smooth_width = FloatProperty(
+        name="左右过渡宽度", default=0.0, min=0.0, soft_max=0.1,
+        precision=4, unit='LENGTH')
+
+
+def ureg_props():
+    del bpy.types.Key.ho_rebase_items
+    del bpy.types.Key.ho_rebase_item_index
+    del bpy.types.Key.ho_rebase_schema
+    del bpy.types.Key.ho_rebase_left_is_positive
+    del bpy.types.Key.ho_rebase_batch_function_tag
+    del bpy.types.Key.ho_rebase_correction_strength
+    del bpy.types.Key.ho_rebase_side_smooth_width
+
+
+# endregion
+
+
 def _item_snapshot(item):
     return {
         "shape_key_name": item.shape_key_name,
         "key_index": item.key_index,
+        "selected": item.selected,
         "merge": item.merge,
         "mergeable": item.mergeable,
         "function_tag": item.function_tag,
@@ -271,26 +336,70 @@ def _current_item_names(shape_keys):
     }
 
 
+def _active_rebase_item(obj):
+    shape_keys = _shape_key_data(obj)
+    active_key = getattr(obj, "active_shape_key", None)
+    if (
+            shape_keys is None
+            or active_key is None
+            or active_key == shape_keys.reference_key):
+        return None
+    return next(
+        (
+            item for item in shape_keys.ho_rebase_items
+            if item.shape_key_name == active_key.name
+        ),
+        None,
+    )
+
+
+def _draw_rebase_item_controls(layout, item):
+    row = layout.row(align=True)
+    selected = row.row(align=True)
+    selected.ui_units_x = 2.0
+    selected.prop(item, "selected", text="")
+    name = row.row(align=True)
+    name.ui_units_x = 9.0
+    name.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
+    function = row.row(align=True)
+    function.ui_units_x = 8.0
+    function.prop(item, "function_tag", text="")
+    weight = row.row(align=True)
+    weight.ui_units_x = 4.0
+    weight.enabled = item.merge and item.mergeable
+    weight.prop(item, "weight", text="")
+    merge = row.row(align=True)
+    merge.ui_units_x = 2.0
+    merge.enabled = item.mergeable
+    merge.prop(item, "merge", text="")
+
+
+def _draw_rebase_header(layout):
+    row = layout.row(align=True)
+    selected = row.row(align=True)
+    selected.ui_units_x = 2.0
+    selected.label(text="选中")
+    name = row.row(align=True)
+    name.ui_units_x = 9.0
+    name.label(text="形态键")
+    function = row.row(align=True)
+    function.ui_units_x = 8.0
+    function.label(text="权能")
+    weight = row.row(align=True)
+    weight.ui_units_x = 4.0
+    weight.label(text="权重")
+    merge = row.row(align=True)
+    merge.ui_units_x = 2.0
+    merge.label(text="合并")
+
+
 class HO_UL_ShapekeyTools_RebaseItems(UIList):
     bl_idname = "HO_UL_ShapekeyTools_RebaseItems"
 
     def draw_item(
             self, context, layout, data, item, icon, active_data,
             active_property, index, flt_flag):
-        row = layout.row(align=True)
-        merge = row.row(align=True)
-        merge.enabled = item.mergeable
-        merge.prop(item, "merge", text="")
-        name = row.row(align=True)
-        name.ui_units_x = 9.0
-        name.label(text=item.shape_key_name, icon='SHAPEKEY_DATA')
-        function = row.row(align=True)
-        function.ui_units_x = 8.0
-        function.prop(item, "function_tag", text="")
-        weight = row.row(align=True)
-        weight.ui_units_x = 4.0
-        weight.enabled = item.merge and item.mergeable
-        weight.prop(item, "weight", text="")
+        _draw_rebase_item_controls(layout, item)
 
 
 class OP_ShapekeyTools_RebaseRefresh(Operator):
@@ -329,6 +438,66 @@ class OP_ShapekeyTools_RebaseInferUnknown(Operator):
             self.report({'ERROR'}, f"形态键推断失败：{exc}")
             return {'CANCELLED'}
         self.report({'INFO'}, f"已推断 {count} 个未知形态键；已有标签未被覆盖")
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_RebaseSelectAll(Operator):
+    bl_idname = "ho.rebase_fbsf_select_all"
+    bl_label = "全选"
+    bl_description = "选中全部形态键配置行"
+
+    @classmethod
+    def poll(cls, context):
+        shape_keys = _shape_key_data(context.object)
+        return shape_keys is not None and len(shape_keys.ho_rebase_items) > 0
+
+    def execute(self, context):
+        shape_keys = context.object.data.shape_keys
+        for item in shape_keys.ho_rebase_items:
+            item.selected = True
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_RebaseDeselectAll(Operator):
+    bl_idname = "ho.rebase_fbsf_deselect_all"
+    bl_label = "全弃"
+    bl_description = "取消选中全部形态键配置行"
+
+    @classmethod
+    def poll(cls, context):
+        shape_keys = _shape_key_data(context.object)
+        return shape_keys is not None and len(shape_keys.ho_rebase_items) > 0
+
+    def execute(self, context):
+        shape_keys = context.object.data.shape_keys
+        for item in shape_keys.ho_rebase_items:
+            item.selected = False
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_RebaseApplyBatchFunction(Operator):
+    bl_idname = "ho.rebase_fbsf_apply_batch_function"
+    bl_label = "应用权能"
+    bl_description = "将指定权能应用到全部选中行"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        shape_keys = _shape_key_data(context.object)
+        return shape_keys is not None and len(shape_keys.ho_rebase_items) > 0
+
+    def execute(self, context):
+        shape_keys = context.object.data.shape_keys
+        function_tag = shape_keys.ho_rebase_batch_function_tag
+        selected_items = [
+            item for item in shape_keys.ho_rebase_items if item.selected
+        ]
+        if not selected_items:
+            self.report({'WARNING'}, "没有选中的形态键配置")
+            return {'CANCELLED'}
+        for item in selected_items:
+            item.function_tag = function_tag
+        self.report({'INFO'}, f"已批量设置 {len(selected_items)} 个形态键的权能")
         return {'FINISHED'}
 
 
@@ -417,12 +586,42 @@ def drawRebasePanel(layout: UILayout, context: Context):
     apply.operator(OP_ShapekeyTools_RebaseApply.bl_idname, icon='CHECKMARK', text="应用 FBSF")
     apply.alert = False
 
+    active_box = layout.box()
+    active_row = active_box.row(align=True)
+    active_label = active_row.row(align=True)
+    active_label.ui_units_x = 5.0
+    active_label.label(text="活动键", icon='RESTRICT_SELECT_OFF')
+    active_item = _active_rebase_item(obj)
+    if active_item is not None:
+        _draw_rebase_item_controls(active_row, active_item)
+    else:
+        active_key = obj.active_shape_key
+        active_row.label(
+            text=active_key.name if active_key is not None else "无",
+            icon='SHAPEKEY_DATA',
+        )
+
     box = layout.box()
-    header = box.row(align=True)
-    header.label(text="合并")
-    header.label(text="形态键")
-    header.label(text="权能")
-    header.label(text="权重")
+    batch = box.row(align=True)
+    batch.label(text="批量")
+    batch.operator(
+        OP_ShapekeyTools_RebaseSelectAll.bl_idname,
+        icon='CHECKBOX_HLT',
+        text="",
+    )
+    batch.operator(
+        OP_ShapekeyTools_RebaseDeselectAll.bl_idname,
+        icon='CHECKBOX_DEHLT',
+        text="",
+    )
+    batch.prop(shape_keys, "ho_rebase_batch_function_tag", text="")
+    batch.operator(
+        OP_ShapekeyTools_RebaseApplyBatchFunction.bl_idname,
+        icon='CHECKMARK',
+        text="应用",
+    )
+    box.separator()
+    _draw_rebase_header(box)
     box.template_list(
         HO_UL_ShapekeyTools_RebaseItems.bl_idname,
         "",
@@ -437,49 +636,28 @@ def drawRebasePanel(layout: UILayout, context: Context):
     settings.prop(shape_keys, "ho_rebase_side_smooth_width")
 
 
-_KEY_PROPERTIES = (
-    "ho_rebase_items",
-    "ho_rebase_item_index",
-    "ho_rebase_schema",
-    "ho_rebase_left_is_positive",
-    "ho_rebase_correction_strength",
-    "ho_rebase_side_smooth_width",
-)
+cls = [
+    PG_ShapekeyTools_RebaseItem,
+    HO_UL_ShapekeyTools_RebaseItems,
+    OP_ShapekeyTools_RebaseRefresh,
+    OP_ShapekeyTools_RebaseInferUnknown,
+    OP_ShapekeyTools_RebaseSelectAll,
+    OP_ShapekeyTools_RebaseDeselectAll,
+    OP_ShapekeyTools_RebaseApplyBatchFunction,
+    OP_ShapekeyTools_RebaseApply,
+]
 
 
 def register():
-    for cls in (
-            PG_ShapekeyTools_RebaseItem,
-            HO_UL_ShapekeyTools_RebaseItems,
-            OP_ShapekeyTools_RebaseRefresh,
-            OP_ShapekeyTools_RebaseInferUnknown,
-            OP_ShapekeyTools_RebaseApply):
-        bpy.utils.register_class(cls)
-    bpy.types.Key.ho_rebase_items = CollectionProperty(
-        type=PG_ShapekeyTools_RebaseItem)
-    bpy.types.Key.ho_rebase_item_index = IntProperty(default=0, min=0)
-    bpy.types.Key.ho_rebase_schema = IntProperty(
-        default=REBASE_SCHEMA_VERSION, options={'HIDDEN'})
-    bpy.types.Key.ho_rebase_left_is_positive = IntProperty(
-        default=1, min=-1, max=1, options={'HIDDEN'})
-    bpy.types.Key.ho_rebase_correction_strength = FloatProperty(
-        name="反向修正强度", default=1.0, min=0.0, max=1.0, subtype='FACTOR')
-    bpy.types.Key.ho_rebase_side_smooth_width = FloatProperty(
-        name="左右过渡宽度", default=0.0, min=0.0, soft_max=0.1,
-        precision=4, unit='LENGTH')
+    for i in cls:
+        bpy.utils.register_class(i)
+    reg_props()
 
 
 def unregister():
-    for prop in reversed(_KEY_PROPERTIES):
-        if hasattr(bpy.types.Key, prop):
-            delattr(bpy.types.Key, prop)
-    for cls in reversed((
-            PG_ShapekeyTools_RebaseItem,
-            HO_UL_ShapekeyTools_RebaseItems,
-            OP_ShapekeyTools_RebaseRefresh,
-            OP_ShapekeyTools_RebaseInferUnknown,
-            OP_ShapekeyTools_RebaseApply)):
-        bpy.utils.unregister_class(cls)
+    ureg_props()
+    for i in reversed(cls):
+        bpy.utils.unregister_class(i)
 
 
 __all__ = (
@@ -487,6 +665,9 @@ __all__ = (
     "HO_UL_ShapekeyTools_RebaseItems",
     "OP_ShapekeyTools_RebaseRefresh",
     "OP_ShapekeyTools_RebaseInferUnknown",
+    "OP_ShapekeyTools_RebaseSelectAll",
+    "OP_ShapekeyTools_RebaseDeselectAll",
+    "OP_ShapekeyTools_RebaseApplyBatchFunction",
     "OP_ShapekeyTools_RebaseApply",
     "sync_rebase_items",
     "drawRebasePanel",

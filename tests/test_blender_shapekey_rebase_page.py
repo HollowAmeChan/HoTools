@@ -65,6 +65,33 @@ try:
     assert items["EyeSculpt"].weight == 0.75
     assert items["eyeBlinkLeft"].initialized
 
+    # 活动键配置行直接指向持久列表中的同一个条目。
+    obj.active_shape_key_index = shape_keys.key_blocks.find("eyeBlinkLeft")
+    active_item = rebase._active_rebase_item(obj)
+    assert active_item is not None
+    assert active_item.shape_key_name == "eyeBlinkLeft"
+    active_item.function_tag = 'RIGHT_EYE'
+    assert items["eyeBlinkLeft"].function_tag == 'RIGHT_EYE'
+    obj.active_shape_key_index = 0
+    assert rebase._active_rebase_item(obj) is None
+
+    # 点击持久列表行时，活动索引回调同步 Blender 的活动形态键。
+    shape_keys.ho_rebase_item_index = 1
+    assert obj.active_shape_key == blink
+    assert rebase._active_rebase_item(obj).shape_key_name == "eyeBlinkLeft"
+
+    # 批量选择与批量权能只修改选中行。
+    assert bpy.ops.ho.rebase_fbsf_select_all("EXEC_DEFAULT") == {'FINISHED'}
+    assert all(item.selected for item in shape_keys.ho_rebase_items)
+    assert bpy.ops.ho.rebase_fbsf_deselect_all("EXEC_DEFAULT") == {'FINISHED'}
+    assert not any(item.selected for item in shape_keys.ho_rebase_items)
+    items["EyeSculpt"].selected = True
+    shape_keys.ho_rebase_batch_function_tag = 'MOUTH'
+    assert bpy.ops.ho.rebase_fbsf_apply_batch_function(
+        "EXEC_DEFAULT") == {'FINISHED'}
+    assert items["EyeSculpt"].function_tag == 'MOUTH'
+    assert items["eyeBlinkLeft"].function_tag == 'RIGHT_EYE'
+
     # 刷新只同步列表；用户最终确认的值始终具有最高优先级。
     items["EyeSculpt"].function_tag = 'BOTH_EYES'
     items["EyeSculpt"].weight = 0.4
