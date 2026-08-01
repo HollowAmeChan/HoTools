@@ -164,6 +164,23 @@ def _active_field_id(scene) -> str:
         return ""
 
 
+def _scene_overlay_enabled(scene) -> bool:
+    """RNA may be temporarily unreadable during add-on reload or file replacement."""
+    if scene is None:
+        return False
+    try:
+        return bool(getattr(scene, "ho_field_overlay_show", False))
+    except Exception:
+        return False
+
+
+def _scenes_snapshot() -> tuple:
+    try:
+        return tuple(bpy.data.scenes)
+    except Exception:
+        return ()
+
+
 def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
     """在 draw callback 之外解析 Scene，并原子替换冻结绘制批次。"""
     global _DIRTY, _REFRESHING
@@ -173,7 +190,7 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
     if scene is None:
         return {}
     key = _scene_key(scene)
-    if not bool(getattr(scene, "ho_field_overlay_show", False)):
+    if not _scene_overlay_enabled(scene):
         _DRAW_STORE.pop(key, None)
         _DIRTY = False
         return {}
@@ -230,7 +247,7 @@ def field_visualization_snapshot(scene=None) -> dict:
 
 def _draw_field_visualization() -> None:
     scene = getattr(bpy.context, "scene", None)
-    if scene is None or not bool(getattr(scene, "ho_field_overlay_show", False)):
+    if not _scene_overlay_enabled(scene):
         return
     frozen = _DRAW_STORE.get(_scene_key(scene), {})
     draw_line_batches(frozen.get("batches", ()))
@@ -258,7 +275,7 @@ def _remove_draw_handler() -> None:
 
 
 def _sync_draw_handler() -> None:
-    if any(bool(getattr(scene, "ho_field_overlay_show", False)) for scene in bpy.data.scenes):
+    if any(_scene_overlay_enabled(scene) for scene in _scenes_snapshot()):
         _ensure_draw_handler()
     else:
         _remove_draw_handler()
@@ -278,14 +295,14 @@ def field_overlay_update(_owner=None, context=None) -> None:
 
 @persistent
 def _field_depsgraph_update(scene, depsgraph) -> None:
-    if bool(getattr(scene, "ho_field_overlay_show", False)):
+    if _scene_overlay_enabled(scene):
         mark_field_visualization_dirty()
         refresh_field_visualization(scene, depsgraph)
 
 
 @persistent
 def _field_frame_change(scene, depsgraph=None) -> None:
-    if bool(getattr(scene, "ho_field_overlay_show", False)):
+    if _scene_overlay_enabled(scene):
         mark_field_visualization_dirty()
         refresh_field_visualization(scene, depsgraph)
 
@@ -295,8 +312,8 @@ def _field_file_state_change(_dummy=None) -> None:
     _DRAW_STORE.clear()
     mark_field_visualization_dirty()
     _sync_draw_handler()
-    for scene in tuple(bpy.data.scenes):
-        if bool(getattr(scene, "ho_field_overlay_show", False)):
+    for scene in _scenes_snapshot():
+        if _scene_overlay_enabled(scene):
             refresh_field_visualization(scene)
 
 
@@ -314,8 +331,8 @@ def register() -> None:
         if callback not in handlers:
             handlers.append(callback)
     _sync_draw_handler()
-    for scene in tuple(bpy.data.scenes):
-        if bool(getattr(scene, "ho_field_overlay_show", False)):
+    for scene in _scenes_snapshot():
+        if _scene_overlay_enabled(scene):
             refresh_field_visualization(scene)
 
 

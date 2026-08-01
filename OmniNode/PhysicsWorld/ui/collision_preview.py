@@ -395,7 +395,7 @@ def _remove_draw_handler():
 
 class PT_Hotools_CollisionOverlayPopover(Panel):
     bl_idname = "VIEW3D_PT_Hotools_CollisionOverlayPopover"
-    bl_label = "HoTools碰撞预览"
+    bl_label = "HoTools物理预览"
     bl_space_type = "VIEW_3D"
     bl_region_type = "HEADER"
     bl_ui_units_x = 12
@@ -405,6 +405,7 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         scene = context.scene
         preview_group = _collision_overlay_preview_mode_group(scene.ho_collision_overlay_preview_mode)
 
+        layout.label(text="碰撞预览", icon="MESH_UVSPHERE")
         layout.prop(scene, "ho_collision_overlay_show", text="显示碰撞预览")
 
         col = layout.column(align=True)
@@ -419,6 +420,18 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         col.separator()
         col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
         col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
+
+        layout.separator()
+        layout.label(text="域预览", icon="FORCE_WIND")
+        layout.prop(scene, "ho_field_overlay_show", text="显示域预览")
+        field_col = layout.column(align=True)
+        field_col.enabled = bool(scene.ho_field_overlay_show)
+        field_col.prop(scene, "ho_field_overlay_mode", text="预览模式")
+        field_col.prop(scene, "ho_field_overlay_show_bounds", text="Volume边界")
+        field_col.prop(scene, "ho_field_overlay_density", text="采样密度")
+        field_col.prop(scene, "ho_field_overlay_glyph_scale", text="箭头比例")
+
+
 def draw_collision_overlay_header(self, context):
     scene = context.scene
     if scene is None:

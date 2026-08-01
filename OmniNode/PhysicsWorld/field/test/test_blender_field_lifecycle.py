@@ -47,11 +47,17 @@ field_visualization = importlib.import_module(
 
 
 def _assert_registered() -> None:
+    class UnreadableScene:
+        def __getattribute__(self, _name):
+            raise SystemError("unreadable RNA")
+
     domains = blender_registry.registered_blender_property_domains()
     assert domains[:2] == ("collision", "field")
     assert domains[-1] == "physics_ui"
     assert hasattr(bpy.types.Object, "hotools_field")
     assert hasattr(bpy.types.Scene, "ho_field_overlay_show")
+    assert bpy.context.scene.ho_field_overlay_show is False
+    assert field_visualization._scene_overlay_enabled(UnreadableScene()) is False
     assert "field_air_velocity" in physics_registry.all_component_capabilities()
 
     component_collectors = tuple(

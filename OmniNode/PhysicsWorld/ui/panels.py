@@ -250,19 +250,6 @@ class PT_Hotools_Physics_Field(Panel):
         layout.prop(props, "scope_exclude_ids")
         layout.prop(props, "scope_collision_groups")
 
-        scene = context.scene
-        if hasattr(scene, "ho_field_overlay_show"):
-            layout.separator()
-            layout.label(text="可视化", icon="HIDE_OFF")
-            layout.prop(scene, "ho_field_overlay_show")
-            visual = layout.column(align=True)
-            visual.enabled = bool(scene.ho_field_overlay_show)
-            visual.prop(scene, "ho_field_overlay_mode")
-            visual.prop(scene, "ho_field_overlay_show_bounds")
-            visual.prop(scene, "ho_field_overlay_density")
-            visual.prop(scene, "ho_field_overlay_glyph_scale")
-
-
 # ---------------------------------------------------------------------------
 # 子面板：简单碰撞
 # ---------------------------------------------------------------------------
