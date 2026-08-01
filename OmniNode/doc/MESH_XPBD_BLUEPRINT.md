@@ -25,7 +25,7 @@ XPBD网格对象 / XPBD网格自定义对象
   -> Physics World Commit
 ```
 
-普通对象节点读取 `Object.hotools_mesh_collision` 中 XPBD 声明消费的 Pin、半径顶点组和外碰接受掩码；自定义对象节点只读取 socket，默认掩码为 `0`。对象层不携带数值 solver 参数，任务层为一个或多个对象统一附加粒子半径、碰撞开关、顺从度、迭代、阻尼和重力。
+普通对象节点只接收统一物理面板中已开启“简单布料”的对象，并读取 `Object.hotools_mesh_collision` 中 XPBD 声明消费的 Pin、半径顶点组和外碰接受掩码；面板 `enabled` 只作 authoring 过滤，不进入 task/spec 签名。自定义对象节点只读取 socket，不受该面板开关影响，默认掩码为 `0`。对象层不携带数值 solver 参数，任务层为一个或多个对象统一附加粒子半径、碰撞开关、顺从度、迭代、阻尼和重力。
 
 第一版仍不建立 MC2 式融合域和域收集。基础 XPBD 不做网格之间的融合、自碰或共享约束，因此对象与任务分层是必要的 authoring 一致性，而 domain/collector 会制造没有运行语义的空抽象。
 
@@ -136,6 +136,9 @@ Context.dispose()
 - stats/debug 是请求驱动；关闭时不额外复制 topology、particle 或 collider 数组。
 - debug 至少公开 frame decision、slot status、particle/stretch/bend/collider counts、step time、non-finite guard 和 native context generation。
 - debug 观察 production pass，不另跑一遍 shadow solver。
+- `XPBD可视化调试` 独立位于模拟步下游；任一视图开启后才请求下一次 solver 捕获，全部关闭时清除快照并移除视口 draw handler。
+- 可视化覆盖 Move/Pin 粒子、当前三角面、Stretch/Bend 相对 rest 误差、rest 偏移、表面法线、任务重力、逐粒子半径、实际消费的四类公共碰撞体，以及最终位置的接触接近/残余穿透审计。
+- 任务筛选、每类显示上限、约束误差阈值、接触边距和显示缩放只影响调试读取与绘制，不进入 solver 参数或 dirty key。
 
 ## 分阶段验收与删除
 
@@ -152,4 +155,4 @@ dirty/lifecycle 回归同时覆盖：孤立顶点导致的 particle-count topolo
 
 完成 XPBD 删除后，再审计 `_native` 中未被现有 Physics World solver 消费的旧规划。SpringBone VRM 与 MC2 仍在使用的 raw `PyObject*` bridge 只能列入后续 nanobind 迁移，不能因“旧”而误删。
 
-旧路径删除审计（2026-08-01）已完成：`Function/Physics.py` 中的 `_MeshPhysics`、`_MeshPhysicsCppBackend`、`_run_mesh_xpbd_node`、`meshPhysicsXPBD`、`meshPhysicsXPBDCpp`、`XPBDDelta`、`xpbd_delta` 和私有 `_OmniCache` 写回均已移除；函数注册回归确认旧两个节点不存在，新对象/自定义对象/任务/模拟步四节点存在。双 ABI 的实际 `hotools_native` 导出均只提供 `MeshXpbdContextV1` 与 `mesh_xpbd_create_context_v1`，旧 `solve_mesh_delta_xpbd` / `solve_mesh_shape_key_xpbd` 没有定义或导出。共享 MC2、SpringBone VRM、Jolt 和 property-curve native 单元未触碰。
+旧路径删除审计（2026-08-01）已完成：`Function/Physics.py` 中的 `_MeshPhysics`、`_MeshPhysicsCppBackend`、`_run_mesh_xpbd_node`、`meshPhysicsXPBD`、`meshPhysicsXPBDCpp`、`XPBDDelta`、`xpbd_delta` 和私有 `_OmniCache` 写回均已移除；函数注册回归确认旧两个节点不存在，新对象/自定义对象/任务/模拟步/可视化调试五节点存在。双 ABI 的实际 `hotools_native` 导出均只提供 `MeshXpbdContextV1` 与 `mesh_xpbd_create_context_v1`，旧 `solve_mesh_delta_xpbd` / `solve_mesh_shape_key_xpbd` 没有定义或导出。共享 MC2、SpringBone VRM、Jolt 和 property-curve native 单元未触碰。

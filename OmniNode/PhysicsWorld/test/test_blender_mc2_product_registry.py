@@ -47,6 +47,9 @@ mesh_schema = importlib.import_module(
 mesh_property = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.properties"
 )
+mesh_object_spec = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.object_spec"
+)
 
 
 def test_mc2_product_registry_contract():
@@ -58,8 +61,9 @@ def test_mc2_product_registry_contract():
 
     schema_names = tuple(str(field["name"]) for field in mesh_schema.MESH_COLLISION_RNA_FIELDS)
     assert tuple(mesh_property.PG_Hotools_MeshCollision.__annotations__) == schema_names
-    assert len(schema_names) == 6
-    assert "enabled" not in schema_names
+    assert len(schema_names) == 7
+    assert "enabled" in schema_names
+    assert "enabled" not in mesh_object_spec.MC2_MESH_EXPLICIT_PROPERTY_FIELDS
     assert mc2_nodes.physicsMC2MeshObject.__meta["bl_label"] == "MC2 MeshCloth对象"
     assert mc2_nodes.physicsMC2MeshCustomObject.__meta["bl_label"] == (
         "MC2 MeshCloth自定义对象"

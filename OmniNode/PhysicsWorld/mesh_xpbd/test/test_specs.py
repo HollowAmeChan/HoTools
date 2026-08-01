@@ -132,6 +132,7 @@ def test_registry_discovers_active_object_task_runtime_contract():
         "XPBD网格自定义对象",
         "XPBD网格任务",
         "XPBD模拟步",
+        "XPBD可视化调试",
     ]
     assert resolved["writers"] == ["mesh_xpbd.step"]
     assert resolved["planned_writers"] == []

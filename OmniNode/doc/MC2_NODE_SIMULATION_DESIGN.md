@@ -30,11 +30,11 @@ Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh�
 
 ### `MC2 MeshCloth对象`
 
-输入一个或多个 Mesh Object，完整读取 `Object.hotools_mesh_collision`，输出 `MC2MeshObjectSpec`。spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一 16 组碰撞属性。节点不创建 partition、request、slot 或 native owner。
+输入一个或多个 Mesh Object，只接收统一物理面板中已开启“简单布料”的对象，再读取 `Object.hotools_mesh_collision` 的模拟属性并输出 `MC2MeshObjectSpec`。`enabled` 只是面板型对象的 authoring opt-in/filter，不复制进 spec，也不参与运行时签名；spec 保留真实 Object 作为 capture/writeback owner，并冻结 BasePose、Pin、半径顶点组和统一 16 组碰撞属性。节点不创建 partition、request、slot 或 native owner。
 
 ### `MC2 MeshCloth自定义对象`
 
-输入同样的 Mesh Object，并把同一组对象属性完整暴露为 socket。未连接字段使用 schema 默认值，但节点不读取或修改对象面板。选择该节点表示由 socket 完整定义对象属性；它不是 sparse patch，也不存在与面板的覆盖优先级。
+输入同样的 Mesh Object，并把同一组模拟属性完整暴露为 socket。未连接字段使用 schema 默认值，但节点不读取或修改对象面板，也不消费面板的“简单布料”开关。选择该节点表示由 socket 完整定义对象属性；它不是 sparse patch，也不存在与面板的覆盖优先级。
 
 两个对象节点输出同一种严格类型。相同 Object 与相同属性形成相同 source identity 和签名；面板来源或 socket 来源只用于诊断，不形成运行时分支。
 
@@ -52,7 +52,7 @@ Object -> MC2 MeshCloth自定义对象（socket完整属性）┘       -> Mesh�
 
 ### `MC2模拟步`
 
-接收一个或多个 collector 输出和 Physics World。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步。成员关系由连线表达，节点执行由 Blender mute 表达；对象、域、collector 和模拟步不提供重复的参与类 `enabled`。
+接收一个或多个 collector 输出和 Physics World。时间缩放、模拟频率和每帧最大模拟次数只属于模拟步。成员关系由连线表达，节点执行由 Blender mute 表达；域、collector 和模拟步不提供重复的参与类 `enabled`。统一物理面板的“简单布料”开关只控制普通面板对象是否进入对象适配器，不是 domain 或 solver 的运行开关。
 
 ## BoneCloth 节点拓扑
 

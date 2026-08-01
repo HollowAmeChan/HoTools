@@ -13,6 +13,7 @@ from .schema import MESH_COLLISION_RNA_FIELDS
 MC2_MESH_EXPLICIT_PROPERTY_FIELDS = tuple(
     str(field["name"])
     for field in MESH_COLLISION_RNA_FIELDS
+    if str(field["name"]) != "enabled"
 )
 
 
@@ -20,6 +21,7 @@ def _schema_defaults() -> dict[str, object]:
     return {
         str(field["name"]): (field.get("kwargs") or {}).get("default")
         for field in MESH_COLLISION_RNA_FIELDS
+        if str(field["name"]) in MC2_MESH_EXPLICIT_PROPERTY_FIELDS
     }
 
 
@@ -145,13 +147,15 @@ def make_mc2_mesh_explicit_properties(**values) -> MC2MeshExplicitPropertiesSpec
 
 
 def read_mc2_mesh_panel_object(source_object) -> MC2MeshObjectSpec:
-    """完整读取面板属性；不把旧参与 enabled 带入对象合同。"""
+    """读取已启用的面板属性；参与开关不进入对象值合同。"""
 
     if getattr(source_object, "type", None) != "MESH":
         raise TypeError("MC2 MeshCloth对象只接受 Mesh Object")
     properties = getattr(source_object, "hotools_mesh_collision", None)
     if properties is None:
         raise ValueError("Mesh Object 没有注册 hotools_mesh_collision 属性")
+    if not bool(getattr(properties, "enabled", False)):
+        raise ValueError("Mesh Object 没有启用简单布料")
     values = {
         name: getattr(properties, name)
         for name in MC2_MESH_EXPLICIT_PROPERTY_FIELDS
@@ -191,10 +195,16 @@ def _flatten_mesh_objects(values) -> tuple[object, ...]:
 
 
 def read_mc2_mesh_panel_objects(values) -> tuple[MC2MeshObjectSpec, ...]:
-    return tuple(
-        read_mc2_mesh_panel_object(source)
-        for source in _flatten_mesh_objects(values)
-    )
+    result = []
+    for source in _flatten_mesh_objects(values):
+        if getattr(source, "type", None) != "MESH":
+            raise TypeError("MC2 MeshCloth对象只接受 Mesh Object")
+        properties = getattr(source, "hotools_mesh_collision", None)
+        if properties is None:
+            raise ValueError("Mesh Object 没有注册 hotools_mesh_collision 属性")
+        if bool(getattr(properties, "enabled", False)):
+            result.append(read_mc2_mesh_panel_object(source))
+    return tuple(result)
 
 
 def make_mc2_mesh_custom_objects(

@@ -36,6 +36,7 @@ xpbd_names = importlib.import_module(
 results = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.results"
 )
+debug = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mesh_xpbd.debug")
 solver = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mesh_xpbd.solver")
 specs = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mesh_xpbd.specs")
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
@@ -117,6 +118,62 @@ def test_restart_step_same_frame_and_pause_have_distinct_native_decisions():
     assert task.slot_id not in world.solver_slots
     assert owner.ready is False
     assert _writebacks(world) == []
+
+
+def test_debug_draw_request_captures_next_step_and_survives_context_rebuild():
+    source = adapter_test._Object(pointer=105, data=adapter_test._Data(205))
+    task = _task(source, collision_enabled=True, collision_radius=0.1)
+    world = _world()
+    solver.step_mesh_xpbd(world, [task])
+    slot = _slot(world, task)
+    assert "debug_capture" not in slot.data
+
+    assert debug.request_mesh_xpbd_debug_capture(
+        world,
+        enabled=True,
+        filters={"show_particles": True},
+    ) == 1
+    _advance(world, frame=2)
+    solver.step_mesh_xpbd(world, [task])
+    capture = slot.data["debug_capture"]
+    assert capture["world_positions"].shape == (4, 3)
+    assert capture["rest_world_positions"].shape == (4, 3)
+    assert capture["loop_triangles"].shape == (2, 3)
+    assert capture["inverse_masses"].shape == (4,)
+    assert capture["world_collision_radii"].shape == (4,)
+    assert capture["task"]["source_name"] == task.source_name
+    for name in (
+        "world_positions",
+        "rest_world_positions",
+        "local_offsets",
+        "stretch_indices",
+        "loop_triangles",
+        "bend_indices",
+        "inverse_masses",
+        "world_collision_radii",
+    ):
+        assert capture[name].flags.writeable is False
+
+    source.data.vertices.append(adapter_test._Value(co=(2, 2, 0), groups=[]))
+    _advance(world, frame=3)
+    solver.step_mesh_xpbd(world, [task])
+    rebuilt_slot = _slot(world, task)
+    assert debug.mesh_xpbd_debug_capture_requested(rebuilt_slot) is True
+    assert rebuilt_slot.data["debug_capture"]["world_positions"].shape == (5, 3)
+
+    debug.request_mesh_xpbd_debug_capture(world, enabled=False)
+    assert debug.mesh_xpbd_debug_capture_requested(rebuilt_slot) is False
+    assert "debug_capture" not in rebuilt_slot.data
+
+    _advance(world, frame=4)
+    solver.step_mesh_xpbd(world, [task], debug_capture=True)
+    manual_capture = rebuilt_slot.data["debug_capture"]
+    assert (
+        rebuilt_slot.data[debug.MESH_XPBD_DEBUG_CAPTURE_SOURCE_KEY]
+        == "solver"
+    )
+    debug.request_mesh_xpbd_debug_capture(world, enabled=False)
+    assert rebuilt_slot.data["debug_capture"] is manual_capture
 
 
 def test_multi_task_results_form_one_transaction_with_distinct_slots():

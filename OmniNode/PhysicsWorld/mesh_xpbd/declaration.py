@@ -24,6 +24,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
         "XPBD网格自定义对象",
         "XPBD网格任务",
         "XPBD模拟步",
+        "XPBD可视化调试",
     ],
     "planned_nodes": [],
     "writers": [MESH_XPBD_STEP_WRITER_ID],
@@ -45,6 +46,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
         "slot.data.native_context",
         "slot.data.last_result",
         "slot.data.writeback_plan",
+        "slot.data.debug_capture (request-driven, transient)",
     ],
     "dirty_keys": [
         "world.generation",

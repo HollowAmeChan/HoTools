@@ -47,6 +47,7 @@ class _Object:
         self.type = "MESH"
         self.name = self.name_full = name
         self.hotools_mesh_collision = types.SimpleNamespace(
+            enabled=True,
             radius_vertex_group="PanelRadius",
             pin_enabled=True,
             pin_vertex_group="PanelPin",
@@ -69,6 +70,15 @@ def test_panel_object_snapshots_only_declared_xpbd_fields():
     assert result.properties.collided_by_groups == 0x0005
     assert "primary_collision_group" not in result.properties.debug_dict()
     assert "mc2_base_pose_proxy" not in result.properties.debug_dict()
+    disabled = _Object(109, 209, "Disabled")
+    disabled.hotools_mesh_collision.enabled = False
+    assert object_spec.read_mesh_xpbd_panel_objects([source, disabled]) == (result,)
+    try:
+        object_spec.read_mesh_xpbd_panel_object(disabled)
+    except ValueError as exc:
+        assert "没有启用简单布料" in str(exc)
+    else:
+        raise AssertionError("disabled panel XPBD object was accepted")
     source.hotools_mesh_collision.collided_by_groups = 0
     assert result.properties.collided_by_groups == 0x0005
 

@@ -24,7 +24,13 @@ def _capability_fields() -> list[dict]:
             "default": kwargs.get("default"),
             "explicit_property": f"Object.hotools_mesh_collision.{name}",
             "rna": kwargs,
-            "update_policy": "restart_only" if name in {"pin_enabled", "pin_vertex_group"} else "solver_spec_or_live_snapshot",
+            "update_policy": (
+                "authoring_filter"
+                if name == "enabled"
+                else "restart_only"
+                if name in {"pin_enabled", "pin_vertex_group"}
+                else "solver_spec_or_live_snapshot"
+            ),
         })
     return result
 

@@ -65,6 +65,7 @@ def _mesh_object(name: str):
     bpy.context.scene.collection.objects.link(obj)
     pin = obj.vertex_groups.new(name="MC2Pin")
     pin.add((0, 1, 2, 3), 1.0, "REPLACE")
+    obj.hotools_mesh_collision.enabled = True
     obj.hotools_mesh_collision.pin_enabled = True
     obj.hotools_mesh_collision.pin_vertex_group = pin.name
     obj.hotools_mesh_collision.collided_by_groups = 1
@@ -229,10 +230,13 @@ def _run_once(run_index: int):
                     "bone_cloth",
                     "bone_spring",
                 )
+                # BoneCloth chains include solver-only tail particles.  Only
+                # fragment output identities represent real PoseBone targets.
                 expected_bones = sum(
-                    owner.compiled.program.particle_count
+                    len(fragment.output_bone_identities)
                     for request, owner in zip(requests, owners)
                     if request.setup_type != "mesh_cloth"
+                    for fragment in owner.compiled.fragments
                 )
             else:
                 assert current_owners == owners

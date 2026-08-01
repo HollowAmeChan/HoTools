@@ -411,6 +411,7 @@ def _teleport_equivalence_grid(name: str, size: int = 30):
     modifier.object = armature
     pin = obj.vertex_groups.new(name="MC2Pin")
     pin.add(tuple(range(size)), 1.0, "REPLACE")
+    obj.hotools_mesh_collision.enabled = True
     obj.hotools_mesh_collision.pin_enabled = True
     obj.hotools_mesh_collision.pin_vertex_group = pin.name
     obj.hotools_mesh_collision.collided_by_groups = 1

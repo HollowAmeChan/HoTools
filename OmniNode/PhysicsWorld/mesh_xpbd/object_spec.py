@@ -139,6 +139,8 @@ def read_mesh_xpbd_panel_object(source_object) -> MeshXpbdObjectSpec:
     panel = getattr(source_object, "hotools_mesh_collision", None)
     if panel is None:
         raise ValueError("Mesh Object 没有注册 hotools_mesh_collision 属性")
+    if not bool(getattr(panel, "enabled", False)):
+        raise ValueError("Mesh Object 没有启用简单布料")
     return MeshXpbdObjectSpec(
         source_object=source_object,
         properties=MeshXpbdObjectPropertiesSpec(
@@ -152,7 +154,16 @@ def read_mesh_xpbd_panel_object(source_object) -> MeshXpbdObjectSpec:
 
 
 def read_mesh_xpbd_panel_objects(values) -> tuple[MeshXpbdObjectSpec, ...]:
-    return tuple(read_mesh_xpbd_panel_object(value) for value in _flatten_objects(values))
+    result = []
+    for value in _flatten_objects(values):
+        if getattr(value, "type", None) != "MESH":
+            raise TypeError("Mesh XPBD 对象只接受 Mesh Object")
+        panel = getattr(value, "hotools_mesh_collision", None)
+        if panel is None:
+            raise ValueError("Mesh Object 没有注册 hotools_mesh_collision 属性")
+        if bool(getattr(panel, "enabled", False)):
+            result.append(read_mesh_xpbd_panel_object(value))
+    return tuple(result)
 
 
 def make_mesh_xpbd_custom_object(

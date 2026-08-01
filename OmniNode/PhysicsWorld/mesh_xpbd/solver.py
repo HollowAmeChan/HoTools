@@ -9,7 +9,9 @@ import time
 from ..types import PhysicsWorldCache
 from .colliders import build_mesh_xpbd_collider_frame
 from .debug import (
+    MESH_XPBD_DEBUG_REQUEST_KEY,
     install_mesh_xpbd_slot_debug_snapshot,
+    mesh_xpbd_debug_capture_requested,
     update_mesh_xpbd_slot_debug,
 )
 from .declaration import MESH_XPBD_SOLVER_DECLARATION
@@ -117,10 +119,13 @@ def _install_slot_lifecycle(slot) -> None:
 def _adopt_prepared_context(world, item: _PreparedTask):
     slot = world.ensure_solver_slot(item.spec.slot_id, MESH_XPBD_SLOT_KIND)
     if item.staged_context is not None:
+        debug_request = slot.data.get(MESH_XPBD_DEBUG_REQUEST_KEY)
         previous = slot.data.get("native_context")
         if isinstance(previous, MeshXpbdNativeContext):
             previous.dispose()
         slot.data.clear()
+        if isinstance(debug_request, dict):
+            slot.data[MESH_XPBD_DEBUG_REQUEST_KEY] = debug_request
         slot.data["native_context"] = item.staged_context
         item.staged_context = None
         world.replace_required = True
@@ -203,6 +208,12 @@ def step_mesh_xpbd(
 
         for item in prepared:
             slot = _adopt_prepared_context(world, item)
+            draw_capture_requested = mesh_xpbd_debug_capture_requested(slot)
+            capture_source = (
+                "solver" if debug_capture
+                else "draw" if draw_capture_requested
+                else ""
+            )
             owner = slot.data["native_context"]
             static_dirty = (
                 slot.data.get("static_signature") != item.topology.static_signature
@@ -289,13 +300,16 @@ def step_mesh_xpbd(
             update_mesh_xpbd_slot_debug(
                 slot,
                 topology=item.topology,
+                reference=item.reference,
+                task=item.spec,
                 colliders=item.colliders,
                 decision=decision,
                 frame=frame,
                 generation=generation,
                 elapsed_ms=elapsed_ms,
                 native_stats=slot.data["native_context"].stats(),
-                capture=bool(debug_capture),
+                capture=bool(capture_source),
+                capture_source=capture_source,
                 world_positions=positions,
                 local_offsets=offsets,
             )

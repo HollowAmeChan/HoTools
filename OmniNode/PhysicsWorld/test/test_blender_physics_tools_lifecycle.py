@@ -93,6 +93,9 @@ def main() -> None:
         bpy.context.scene.collection.objects.link(source)
         mesh_props = source.hotools_mesh_collision
         assert mesh_props.enabled is False
+        assert physics_panels.PT_Hotools_Physics_MeshCollision.poll(
+            types.SimpleNamespace(object=source)
+        ) is False
         mesh_props.enabled = True
         pin_group = source.vertex_groups.new(name="Pinned")
         pin_group.add((0,), 1.0, "REPLACE")

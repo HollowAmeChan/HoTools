@@ -143,6 +143,10 @@ class PT_Hotools_PhysicsPanel(Panel):
             grid.prop(obj_col, "enabled", text="简单碰撞",
                       icon="MOD_PHYSICS", toggle=True)
 
+        if obj.type == "MESH" and mesh_col is not None:
+            grid.prop(mesh_col, "enabled", text="简单布料",
+                      icon="MOD_CLOTH", toggle=True)
+
         if rigid is not None:
             grid.prop(rigid, "enabled", text="刚体",
                       icon="RIGID_BODY", toggle=True)
@@ -198,7 +202,8 @@ class PT_Hotools_Physics_MeshCollision(Panel):
         obj = context.object
         if obj is None or obj.type != "MESH":
             return False
-        return getattr(obj, "hotools_mesh_collision", None) is not None
+        props = getattr(obj, "hotools_mesh_collision", None)
+        return props is not None and bool(getattr(props, "enabled", False))
 
     def draw(self, context):
         obj = context.object

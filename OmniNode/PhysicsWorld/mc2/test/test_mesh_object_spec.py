@@ -37,6 +37,7 @@ MC2_MESH_EXPLICIT_PROPERTY_FIELDS = (
 make_mc2_mesh_custom_object = object_spec.make_mc2_mesh_custom_object
 make_mc2_mesh_custom_objects = object_spec.make_mc2_mesh_custom_objects
 read_mc2_mesh_panel_object = object_spec.read_mc2_mesh_panel_object
+read_mc2_mesh_panel_objects = object_spec.read_mc2_mesh_panel_objects
 
 
 class _Pointer:
@@ -52,7 +53,7 @@ class _Pointer:
 
 def _mesh(pointer=101, **panel_values):
     defaults = {
-        "enabled": False,
+        "enabled": True,
         "mc2_base_pose_proxy": None,
         "radius_vertex_group": "Radius",
         "pin_enabled": True,
@@ -92,6 +93,15 @@ def test_participation_enabled_is_not_an_explicit_property():
     source = _mesh(enabled=True)
     spec = read_mc2_mesh_panel_object(source)
     assert "enabled" not in spec.explicit_properties.debug_dict()
+
+    disabled = _mesh(102, enabled=False)
+    assert read_mc2_mesh_panel_objects([source, disabled]) == (spec,)
+    try:
+        read_mc2_mesh_panel_object(disabled)
+    except ValueError as exc:
+        assert "没有启用简单布料" in str(exc)
+    else:
+        raise AssertionError("disabled panel MeshCloth was accepted")
 
 
 def test_custom_object_list_applies_one_complete_property_set():

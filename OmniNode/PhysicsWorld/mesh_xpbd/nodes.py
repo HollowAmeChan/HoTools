@@ -26,11 +26,11 @@ from .solver import step_mesh_xpbd
     _INPUT_NAME=["物体"],
     input_init={
         "mesh_objects": {
-            "description": "读取每个Mesh物体面板中XPBD实际消费的Pin、半径组和被碰撞组",
+            "description": "只读取已启用简单布料的Mesh物体面板；关闭的物体会被跳过",
         },
     },
     omni_description=(
-        "把一个或多个Mesh物体包装成XPBD模拟对象。对象字段来自物体面板；"
+        "把一个或多个已启用简单布料的Mesh物体包装成XPBD模拟对象。对象字段来自物体面板；"
         "解算参数在下游XPBD网格任务中统一设置。"
     ),
     _OUTPUT_NAME=["XPBD网格对象", "对象数量"],
@@ -191,3 +191,102 @@ def physicsMeshXpbdSolver(
         debug_capture=bool(debug_capture),
     )
     return world, int(writeback_count), float(elapsed_ms)
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="XPBD可视化调试",
+    base_color=nodeColors.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "物理世界", "任务筛选", "最大显示项", "模拟粒子", "模拟表面",
+        "Stretch误差", "Bend误差", "Rest偏移", "表面法线", "重力",
+        "粒子半径", "外部碰撞体", "碰撞接近/穿透", "约束误差阈值",
+        "接触边距", "向量缩放", "法线长度", "平面显示尺寸",
+    ],
+    input_init={
+        "task_filter": {
+            "description": "按对象名或slot id筛选；换行或逗号分隔，留空显示全部",
+        },
+        "max_items": {
+            "min_value": 1,
+            "max_value": 100000,
+            "description": "每种视图最多绘制的粒子、约束、三角形或碰撞体数量",
+        },
+        "show_particles": {"description": "绿色=Move，红色大点=Pin/Fixed"},
+        "show_surface": {"description": "半透明显示当前模拟三角表面"},
+        "show_stretch": {"description": "绿色=阈值内，红色=拉伸，蓝色=压缩"},
+        "show_bend": {
+            "description": "显示当前基础XPBD使用的共享边对顶点distance bending",
+        },
+        "show_offsets": {"description": "灰点=rest，青色箭头=rest到当前模拟位置"},
+        "show_normals": {"description": "按当前模拟三角形计算表面法线"},
+        "show_gravity": {"description": "每个任务中心显示任务实际重力方向与相对强度"},
+        "show_radii": {"description": "显示逐粒子世界空间碰撞半径"},
+        "show_colliders": {
+            "description": "显示XPBD实际通过组掩码消费的Sphere/Capsule/Plane/Box",
+        },
+        "show_contacts": {
+            "description": "黄色=接近接触，红色箭头=最终位置仍存在的穿透修正",
+        },
+        "constraint_tolerance": {"min_value": 0.0, "max_value": 1.0},
+        "contact_margin": {"min_value": 0.0},
+        "vector_scale": {"min_value": 0.0},
+        "normal_scale": {"min_value": 0.0},
+        "plane_scale": {"min_value": 0.001},
+    },
+    _OUTPUT_NAME=["物理世界", "调试状态"],
+    mute_passthrough={"_OUTPUT0": "world"},
+    omni_description=(
+        "从Mesh XPBD solver slot的只读快照绘制真实中间状态，不修改模拟。所有视图默认关闭；"
+        "开启任一视图后按需请求下一次solver执行捕获，因此首次启用可能显示等待状态。"
+        "关闭全部视图会立即撤销请求、释放快照并移除视口绘制处理器。Stretch/Bend颜色按当前长度"
+        "相对rest长度的误差分类；碰撞接触由最终粒子位置与本任务实际消费的公共碰撞体重新审计。"
+    ),
+)
+def physicsMeshXpbdDebugDraw(
+    world: object,
+    task_filter: str = "",
+    max_items: int = 10000,
+    show_particles: bool = False,
+    show_surface: bool = False,
+    show_stretch: bool = False,
+    show_bend: bool = False,
+    show_offsets: bool = False,
+    show_normals: bool = False,
+    show_gravity: bool = False,
+    show_radii: bool = False,
+    show_colliders: bool = False,
+    show_contacts: bool = False,
+    constraint_tolerance: float = 0.01,
+    contact_margin: float = 0.002,
+    vector_scale: float = 1.0,
+    normal_scale: float = 0.05,
+    plane_scale: float = 1.0,
+) -> tuple[object, str]:
+    from .debug_draw import update_mesh_xpbd_debug_draw_store
+
+    status = update_mesh_xpbd_debug_draw_store(
+        str(id(world)),
+        world,
+        True,
+        task_filter=task_filter,
+        max_items=max_items,
+        show_particles=show_particles,
+        show_surface=show_surface,
+        show_stretch=show_stretch,
+        show_bend=show_bend,
+        show_offsets=show_offsets,
+        show_normals=show_normals,
+        show_gravity=show_gravity,
+        show_radii=show_radii,
+        show_colliders=show_colliders,
+        show_contacts=show_contacts,
+        constraint_tolerance=constraint_tolerance,
+        contact_margin=contact_margin,
+        vector_scale=vector_scale,
+        normal_scale=normal_scale,
+        plane_scale=plane_scale,
+    )
+    return world, status

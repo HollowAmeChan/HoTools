@@ -561,11 +561,11 @@ _BONE_CLOTH_CHAIN_AUTHORING_NOTICE = (
     _INPUT_NAME=["物体"],
     input_init={
         "mesh_objects": {
-            "description": "读取每个Mesh物体面板上的完整MeshCloth对象属性",
+            "description": "只读取已启用简单布料的Mesh物体面板属性；关闭的物体会被跳过",
         },
     },
     omni_description=(
-        "把一个或多个Mesh物体包装成MeshCloth对象；对象属性来自物体面板。"
+        "把一个或多个已启用简单布料的Mesh物体包装成MeshCloth对象；对象属性来自物体面板。"
     ),
     _OUTPUT_NAME=["MeshCloth对象", "对象数量"],
     mute_passthrough=False,

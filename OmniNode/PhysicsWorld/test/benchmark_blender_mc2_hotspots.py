@@ -131,6 +131,7 @@ def _mesh_object(name: str, width: int):
     bpy.context.scene.collection.objects.link(obj)
     pin = obj.vertex_groups.new(name="MC2Pin")
     pin.add(tuple(range(width)), 1.0, "REPLACE")
+    obj.hotools_mesh_collision.enabled = True
     obj.hotools_mesh_collision.pin_enabled = True
     obj.hotools_mesh_collision.pin_vertex_group = pin.name
     obj.hotools_mesh_collision.collided_by_groups = 1

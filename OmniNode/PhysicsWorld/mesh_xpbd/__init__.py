@@ -41,6 +41,10 @@ _LAZY_EXPORTS = {
     "MeshXpbdNativeContext": ".native",
     "step_mesh_xpbd": ".solver",
     "get_mesh_xpbd_stats_result": ".results",
+    "request_mesh_xpbd_debug_capture": ".debug",
+    "clear_mesh_xpbd_debug_draw_store": ".debug_draw",
+    "mesh_xpbd_debug_draw_store_snapshot": ".debug_draw",
+    "update_mesh_xpbd_debug_draw_store": ".debug_draw",
 }
 
 
