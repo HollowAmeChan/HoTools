@@ -242,6 +242,8 @@ Teleport是external collision之前完成的partition历史事务。MeshCloth以
 
 backend 只产生 logical output。host 根据 output map 构造 GN object-local offset 或 Bone transform command；全部 target、element count、generation 和有限值在发布前验证。任一 request 或 target 失败时，本批结果零部分发布。
 
+BoneCloth作者应让参与模拟的链骨尽量关闭`Bone > Relations > Connected`。断连骨使用`position_rotation`写回，可以保留对应粒子的独立位置；连接骨受Blender固定骨长和父尾子头关系约束，只能使用`rotation_only_connected`，因此真实PoseBone位置可能无法与模拟粒子位置完全重合。这是故意保留的兼容语义，solver和writeback都不得自动断开骨骼；对象、自定义对象和域节点必须直接向用户暴露该限制。
+
 GPU 初期可以回读统一 logical buffer 后由 host 拆分；成熟实现可以在 device 生成按 target 排列的 output，但必须进入同一个 command envelope 和事务。
 
 ## 后端中立数据合同

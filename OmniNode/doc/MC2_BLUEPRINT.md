@@ -203,13 +203,13 @@ Bone输出先执行Line方向写回：`rotational_interpolation`直接调节有�
 | `粒子半径`、`半径曲线` | 定义粒子参与外部碰撞的厚度 | native按baseline depth采样；`M/C/S`有效。MeshCloth再乘对象面板的`radius_vertex_group`权重。 |
 | `碰撞模式` | `0:None`关闭，`1:Point`按粒子点碰撞，`2:Edge`按final proxy边连续碰撞 | 外部collider上传后由Point或Edge pass消费；Mesh triangle边和BoneCloth横向/三角补边都属于final proxy边。`M/C`可调，`S`固定Point。 |
 | `碰撞摩擦` | 碰撞接触后的切向速度衰减 | runtime同时写入dynamic/static friction，post用接触法线和速度处理；`M/C`可调，`S`固定为`0.5`。 |
-| `碰撞组` | 过滤允许参与普通外碰的Physics World collider | Mesh/BoneCloth对象冻结的`collided_by_groups`原样进入外碰参数；`0`保持“不筛选”。whole-domain self另用`collision_mask = collided_by_groups | self_group_bit`，两者不得共用并入自身组后的mask。 |
+| `碰撞组` | 过滤允许参与普通外碰的Physics World collider | Mesh与BoneCloth自定义对象把`collided_by_groups`原样冻结为分区外碰参数；BoneCloth面板对象则逐模拟Bone冻结为粒子外碰参数。mask使用严格位集语义，`0`是不接受任何外部组，`0xFFFF`是接受全部16组。whole-domain self另用分区主组策略，两者不得共用已并入自身组的mask。 |
 | `碰撞限制距离`、`碰撞限制曲线` | 限制BoneSpring粒子被soft-sphere碰撞推离动画基准的最大距离 | BoneSpring Point collision使用animated base和深度曲线执行soft-sphere投影；仅`S`有效，cloth节点不公开且runtime置零。 |
 | `自碰撞` | 启用 partition primitive 的 FullMesh EE/PT 接触、grid broadphase 和 intersection history | bool 稳定转换为 `self_collision_mode=2`；`M/C` 有效，`S` 强制关闭。 |
 | `跨物体自碰撞` | 允许同一 MeshCloth domain 的不同 Object partition 互碰 | Mesh collector 将开关编译为 whole-domain filter；跨 partition 配对要求双方都显式开启，任一方关闭都在 broadphase 配对前拒绝。BoneCloth 不公开 Mesh 专用跨 Object authoring，但同 Armature 多 partition 仍由域内 self 合同处理。 |
 | `自碰交互质量` | 改变 self primitive 的粒子相对修正权重 | 由粒子Profile持有；`cloth_mass` 在 primitive 构建时进入 inverse-mass，`M/C` 的同/跨 partition contact 使用同一权重规则，BoneSpring不公开且不消费。 |
 
-MeshCloth与BoneCloth产品只公开一个半径模型：`particle_radius = profile.radius(depth) * object_radius_weight`，self thickness统一由profile radius按`0.25`派生。对象顶点组仍只调制实际particle radius，不另外创造self厚度输入；BoneSpring强制关闭自碰并拒绝派生模型。独立`self_collision_thickness`仍只属于source oracle，不得重新暴露第二套用户半径。
+MeshCloth与BoneCloth自定义对象使用`particle_radius = profile.radius(depth) * object_radius_weight`；BoneCloth面板对象直接消费每根模拟Bone的`hotools_collision.radius`，solver-only末端继承末骨半径。self thickness统一由最终particle radius按`0.25`派生。对象顶点组仍只调制实际particle radius，不另外创造self厚度输入；BoneSpring强制关闭自碰并拒绝派生模型。独立`self_collision_thickness`仍只属于source oracle，不得重新暴露第二套用户半径。
 
 人工验收曾发现：无拓扑交叉、无非流形的单层Mesh中，红色self contact大量聚集并伴随持续微动。完成一环过滤与final intersection debug纠正后，实际模型中的洋红几何穿插完全消失；红色contact只剩在代理本身真实拥挤的区域，布料和接触区域均完全收敛且不再运动。该结果确认一环误碰是原扰动的主要根因，并完成D-04人工验收。红箭头表示有效接触法线，不等于非零持续修正；同一world-space曲面的密度分档、contact churn和RMS速度继续作为未来自动回归，不再作为当前发布阻断。
 
@@ -240,7 +240,7 @@ Frame shift 每个 frame 只消费一次，其余 pass 按真实 substep 完整�
 ### Setup collector 与分域
 
 - MeshCloth 多 Object 输入先经面板对象/自定义对象适配器形成有序完整 partition entries，再由一个 Require-Fusion product request 编译为统一域；每个 source 保留自己的 BasePose、Center/Anchor/Teleport 和 output target。
-- BoneCloth 使用同构的 `面板对象/自定义对象 -> BoneCloth域 -> Bone分区 -> Bone域收集` 链路。对象层冻结控制/根 Bone 的主碰撞组与被碰撞组；域层冻结 Profile、Center/Anchor/Teleport、连接与旋转参数；collector 只接受完整显式 BoneCloth 分区，拒绝 raw Bone、隐式分区、patch 和重复 stable id。
+- BoneCloth 使用同构的 `面板对象/自定义对象 -> BoneCloth域 -> Bone分区 -> Bone域收集` 链路。控制 Bone 只选择骨链；面板对象逐模拟 Bone 冻结半径与外碰接受掩码，自定义对象冻结完整socket属性；域层冻结 Profile、Center/Anchor/Teleport、连接与旋转参数；collector 只接受完整显式 BoneCloth 分区，拒绝 raw Bone、隐式分区、patch 和重复 stable id。
 - BoneCloth collector 按 Armature 建域：同 Armature 多 partition 融合为一个 request，跨 Armature 按首次出现顺序产生多个可见 request。同 Armature Bone 输出在结果层合并。BoneSpring 仍由专用域直接按 Armature 构建 request。
 - 结构约束只在 partition 内生成；跨 partition 交互只来自 whole-domain self，并由双方 group/mask、topology neighbor 与 owner 规则过滤。
 - BoneSpring 强制关闭 self、Bending、gravity 和 Motion/Backstop，外碰只接受 Sphere；这些是产品限制，不是待补 pass。
@@ -365,6 +365,8 @@ MC2源码的BoneCloth帧顺序是`RestoreTransform -> Animator更新 -> ReadTran
 Unity蒙皮骨是`SkinnedMeshRenderer`引用的普通`Transform`，父子关系不包含Blender式的连接约束。MC2源码先把代理粒子的world position/rotation写入TransformData，再为Move粒子计算相对父级的`localPosition`和`localRotation`，最终同时写回这两项；它不写`localScale`。因此MC2允许父子关节原点间距随Distance等约束发生有限伸缩，但这不是缩放单根骨，也不是无限制解除距离约束。
 
 Blender Bone结果适配器固定遵守以下产品合同：
+
+BoneCloth的推荐作者语义是让参与模拟的链骨尽量关闭`Bone > Relations > Connected`。断连骨可以写回独立位置与旋转，使PoseBone原点尽量对齐对应粒子；连接骨受Blender固定骨长和父尾子头关系约束，只能使用rotation-only写回，因此真实Bone位置不能保证与独立粒子位置完全重合。保留连接骨是有意提供的兼容模式，不是solver误差；runtime绝不擅自修改骨架连接关系。该限制必须进入BoneCloth对象、自定义对象和域节点的`omni_description`及关键输入tooltip，不能只留在蓝本。
 
 - `use_connect=True`的子骨使用`rotation_only_connected`。结果plan在进入统一writeback前显式把`matrix_basis`平移归零，子骨head继续由父骨tail决定；禁止依赖Blender写入时静默丢弃平移。
 - `use_connect=False`的骨使用`position_rotation`。粒子位置映射保留在`matrix_basis`平移中，允许父子骨原点间距变化；视觉上可能出现父骨tail与子骨head分离，蒙皮连续性由权重决定。

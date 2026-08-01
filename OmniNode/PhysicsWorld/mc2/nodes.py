@@ -545,6 +545,14 @@ def _task_long_description(setup_label: str, fields: tuple[str, ...]) -> str:
     )
 
 
+_BONE_CLOTH_CHAIN_AUTHORING_NOTICE = (
+    "重要建模语义：建议让BoneCloth模拟链尽量关闭Bone > Relations > Connected。"
+    "Connected骨在Blender中不能接收粒子的独立局部平移，只能按固定骨长和父尾子头关系写回旋转，"
+    "因此真实PoseBone位置可能无法与模拟粒子位置完全重合。"
+    "这是故意保留的rotation-only兼容模式；solver不会自动断开骨骼。"
+)
+
+
 @omni(
     enable=True,
     bl_label="MC2 MeshCloth对象",
@@ -714,12 +722,16 @@ def physicsMC2MeshClothTask(
     _INPUT_NAME=["中控骨"],
     input_init={
         "control_bones": {
-            "description": "读取控制骨面板的完整BoneCloth对象属性",
+            "description": (
+                "中控骨只用于选择其子骨链；逐骨碰撞属性来自实际模拟骨\n"
+                + _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
+            ),
         },
     },
     omni_description=(
         "把一个或多个中控骨包装成BoneCloth对象；每个输入形成一个分区来源，"
-        "对象属性来自控制骨面板。"
+        "控制骨只负责选链，半径与外碰接受组由每根实际模拟骨持有。\n\n"
+        + _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
     ),
     _OUTPUT_NAME=["BoneCloth对象", "对象数量"],
     mute_passthrough=False,
@@ -739,7 +751,10 @@ def physicsMC2BoneClothObject(
     _INPUT_NAME=["中控骨", "主碰撞组", "被碰撞组"],
     input_init={
         "control_bones": {
-            "description": "中控骨；不读取其BoneCloth面板属性",
+            "description": (
+                "中控骨只用于选择其子骨链；不读取其BoneCloth面板属性\n"
+                + _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
+            ),
         },
         "primary_collision_group": {
             "min_value": 1,
@@ -753,7 +768,8 @@ def physicsMC2BoneClothObject(
     },
     omni_description=(
         "用socket完整定义BoneCloth对象属性；它与面板对象节点输出同一种类型，"
-        "且不会读取或修改骨骼面板。"
+        "且不会读取或修改骨骼面板。\n\n"
+        + _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
     ),
     _OUTPUT_NAME=["BoneCloth对象", "对象数量"],
     mute_passthrough=False,
@@ -810,7 +826,10 @@ def physicsMC2BoneCollector(
     ],
     input_init={
         "bone_objects": {
-            "description": "只接受BoneCloth对象或自定义对象节点输出",
+            "description": (
+                "只接受BoneCloth对象或自定义对象节点输出\n"
+                + _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
+            ),
         },
         "anchor_object": {"description": "消除平台等非物理运动\n留空则不使用"},
         "profile": {"description": "MC2 BoneCloth配置\n留空使用默认值"},
@@ -832,8 +851,10 @@ def physicsMC2BoneCollector(
         },
     },
     omni_presets=_task_parameter_presets(_TASK_CLOTH_PARAMETER_FIELDS),
-    omni_description=_task_long_description(
-        "BoneCloth", _TASK_CLOTH_PARAMETER_FIELDS
+    omni_description=(
+        _BONE_CLOTH_CHAIN_AUTHORING_NOTICE
+        + "\n\n"
+        + _task_long_description("BoneCloth", _TASK_CLOTH_PARAMETER_FIELDS)
     ),
     _OUTPUT_NAME=["Bone分区", "域标识"],
     mute_passthrough=False,

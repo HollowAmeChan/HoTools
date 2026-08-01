@@ -94,6 +94,23 @@ def test_mc2_product_registry_contract():
     assert mc2_nodes.physicsMC2BoneClothTask.__meta["_INPUT_NAME"][0] == (
         "BoneCloth对象"
     )
+    for node in (
+        mc2_nodes.physicsMC2BoneClothObject,
+        mc2_nodes.physicsMC2BoneClothCustomObject,
+        mc2_nodes.physicsMC2BoneClothTask,
+    ):
+        description = node.__meta["omni_description"]
+        assert "尽量关闭Bone > Relations > Connected" in description
+        assert "rotation-only兼容模式" in description
+        assert "solver不会自动断开骨骼" in description
+    assert "逐骨碰撞属性来自实际模拟骨" in (
+        mc2_nodes.physicsMC2BoneClothObject.__meta["input_init"]
+        ["control_bones"]["description"]
+    )
+    assert "Connected骨在Blender中不能接收粒子的独立局部平移" in (
+        mc2_nodes.physicsMC2BoneClothTask.__meta["input_init"]
+        ["bone_objects"]["description"]
+    )
     assert "被碰撞组" not in mc2_nodes.physicsMC2BoneClothTask.__meta["_INPUT_NAME"]
     assert mc2_nodes.physicsMC2BoneSpringTask.__meta["_OUTPUT_NAME"] == [
         "MC2域", "域标识"
