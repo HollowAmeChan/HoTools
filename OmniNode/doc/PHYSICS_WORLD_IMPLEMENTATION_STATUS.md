@@ -40,6 +40,7 @@ physicsWorld/
       mesh_cloth/
       bone_cloth/
       bone_spring/
+  mesh_xpbd/                 # 独立基础纯 Mesh XPBD
   ui/
 ```
 
@@ -65,7 +66,7 @@ physicsWorld/
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
 | MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
-| Mesh XPBD | 旧路径 | 简单布料参考 | 决定迁移或删除，不维持第二套布料语义 |
+| Mesh XPBD | 重写合同已建立；运行时尚未接通 | 独立基础纯 Mesh solver、严格 XPBD、纯 nanobind context、公共碰撞/GN 写回边界见 `MESH_XPBD_BLUEPRINT.md` | 完成 native 数值核和 World vertical slice 后做生产验收，再删除旧双节点/私有 cache 与写回 |
 
 通用力场当前没有 active 能力。任何 solver 中遗留的 wind 名称不代表公共场输入已经存在。
 
@@ -76,6 +77,7 @@ physicsWorld/
 3. GPU 成功必须以产品整帧、上传/同步/readback、工作量等价、设备失败和规模曲线判断，不能只报告 kernel 时间。
 4. Rigid/Jolt 优先清除私自 dt fallback，并继续补公共时间合同。
 5. Bake 与通用力场继续按公共能力推进，不进入 MC2 或其它 solver 私有 owner。
+6. Mesh XPBD 按 `MESH_XPBD_BLUEPRINT.md` 以独立 solver 重写；新 vertical slice 验收前不删除旧路径，也不把合同注册误报为运行可用。
 
 ## 公共验收门槛
 
