@@ -14,10 +14,15 @@ from bpy.props import (
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 
 try:
-    from . import rebase_core as _core, rebase_inference as _inference
+    from . import (
+        rebase_core as _core,
+        rebase_inference as _inference,
+        shapekey_catalog as _catalog,
+    )
 except ImportError:  # 兼容旧工具直接导入脚本
     import rebase_core as _core
     import rebase_inference as _inference
+    import shapekey_catalog as _catalog
 
 
 ShapeKeyRebaseError = _core.ShapeKeyRebaseError
@@ -344,7 +349,7 @@ class HO_UL_ShapekeyTools_RebaseItems(UIList):
 class OP_ShapekeyTools_RebaseRefresh(Operator):
     bl_idname = "ho.rebase_fbsf_refresh"
     bl_label = "刷新"
-    bl_description = "同步当前形态键并只初始化新增配置"
+    bl_description = "重载形态键 CSV，同步当前形态键并只初始化新增配置"
 
     @classmethod
     def poll(cls, context):
@@ -352,11 +357,20 @@ class OP_ShapekeyTools_RebaseRefresh(Operator):
 
     def execute(self, context):
         try:
+            _catalog.reload_catalog()
             count = sync_rebase_items(context.object, infer=True)
-        except (ShapeKeyRebaseError, KeyError, ValueError) as exc:
+        except (
+                ShapeKeyRebaseError,
+                _catalog.ShapeKeyCatalogError,
+                KeyError,
+                ValueError,
+        ) as exc:
             self.report({'ERROR'}, f"变基列表刷新失败：{exc}")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"已同步 {count} 个形态键；已有手调标签保持不变")
+        self.report(
+            {'INFO'},
+            f"已重载目录并同步 {count} 个形态键；已有手调标签保持不变",
+        )
         return {'FINISHED'}
 
 

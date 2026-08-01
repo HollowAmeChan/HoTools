@@ -91,6 +91,7 @@ def validate_inputs(repo_root: Path, abi: str, files: list[Path]) -> None:
     native_tag = SUPPORTED_ABIS[abi]
     required_files = {
         PurePosixPath("__init__.py"),
+        PurePosixPath("ShapekeyTools/shapekey_catalog.csv"),
         PurePosixPath(f"_Lib/{abi}/PIL/__init__.py"),
         PurePosixPath(f"_Lib/{abi}/cffi/__init__.py"),
         PurePosixPath(f"_Lib/{abi}/pyoidn/__init__.py"),

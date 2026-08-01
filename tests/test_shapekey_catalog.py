@@ -1,5 +1,6 @@
-import ast
+import csv
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -8,13 +9,9 @@ SHAPEKEY_TOOLS_DIR = ADDON_DIR / "ShapekeyTools"
 if str(SHAPEKEY_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(SHAPEKEY_TOOLS_DIR))
 
-import rebase_presets as legacy_catalog
 import shapekey_catalog as catalog
 
 
-# 旧入口仅转发同一组查询函数，不再维护第二份目录。
-assert legacy_catalog.get_template_names is catalog.get_template_names
-assert legacy_catalog.classify_shape_key is catalog.classify_shape_key
 assert not any(name.startswith('_') for name in catalog.__all__)
 assert 'SHAPE_KEY_SPECS' not in catalog.__all__
 assert 'STANDARD_INFOS' not in catalog.__all__
@@ -35,40 +32,28 @@ record_count = sum(
 )
 assert record_count == 585
 
-# 扁平事实必须让人能直接阅读：每个键独立声明，字段只写字面量。
-data_source = (SHAPEKEY_TOOLS_DIR / 'shapekey_catalog_data.py').read_text(
-    encoding='utf-8')
-data_tree = ast.parse(data_source)
-spec_assignment = next(
-    node for node in data_tree.body
-    if isinstance(node, ast.Assign)
-    and any(
-        isinstance(target, ast.Name)
-        and target.id == 'SHAPE_KEY_SPECS'
-        for target in node.targets
+# 扁平事实直接保存在 Excel 友好的 UTF-8 BOM CSV 中。
+catalog_path = SHAPEKEY_TOOLS_DIR / 'shapekey_catalog.csv'
+assert catalog.get_catalog_path() == catalog_path
+assert catalog_path.read_bytes().startswith(b'\xef\xbb\xbf')
+with catalog_path.open('r', encoding='utf-8-sig', newline='') as stream:
+    csv_reader = csv.DictReader(stream, strict=True)
+    catalog_fields = tuple(csv_reader.fieldnames)
+    assert catalog_fields == (
+        'standard', 'name', 'role', 'region', 'side', 'semantic',
+        'canonical', 'context', 'tags', 'note',
     )
-)
-assert isinstance(spec_assignment.value, ast.Tuple)
-assert len(spec_assignment.value.elts) == record_count
-
-
-def is_literal(node):
-    if isinstance(node, ast.Constant):
-        return True
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return all(is_literal(item) for item in node.elts)
-    return False
-
-
-for record_node in spec_assignment.value.elts:
-    assert isinstance(record_node, ast.Call)
-    assert isinstance(record_node.func, ast.Name)
-    assert record_node.func.id == '_key'
-    assert all(is_literal(argument) for argument in record_node.args)
+    csv_rows = list(csv_reader)
+assert len(csv_rows) == record_count
+for csv_row in csv_rows:
+    assert None not in csv_row
     assert all(
-        keyword.arg is not None and is_literal(keyword.value)
-        for keyword in record_node.keywords
+        csv_row[field]
+        for field in ('standard', 'name', 'role', 'region', 'side', 'semantic')
     )
+
+assert not (SHAPEKEY_TOOLS_DIR / 'shapekey_catalog_data.py').exists()
+assert not (SHAPEKEY_TOOLS_DIR / 'rebase_presets.py').exists()
 
 # 模板保留原始顺序和大小写；别名是独立记录，不进入模板。
 pico_names = catalog.get_template_names('PICO')
@@ -193,5 +178,50 @@ assert catalog.find_shape_keys(
     'ｷﾘｯ.001', 'MMD') == catalog.find_shape_keys('キリッ', 'MMD')
 assert catalog.normalize_shape_key_name('Blink.01') == 'blink.01'
 assert catalog.find_shape_keys('Blink.01') == ()
+
+# CSV 可以显式重载；非法表不会破坏上一份有效索引。
+probe_row = {
+    'standard': 'ARKIT',
+    'name': 'CsvReloadProbe',
+    'role': 'ALIAS',
+    'region': 'EYE',
+    'side': 'BOTH',
+    'semantic': 'EYELID',
+    'canonical': 'eye.csv_probe',
+    'context': '',
+    'tags': 'CSV_TEST|SECOND_TAG',
+    'note': '逗号, "引号"\n换行',
+}
+with tempfile.TemporaryDirectory(prefix='hotools_catalog_') as temp_dir:
+    temp_path = Path(temp_dir)
+    valid_path = temp_path / 'valid.csv'
+    invalid_path = temp_path / 'invalid.csv'
+    with valid_path.open('w', encoding='utf-8', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=catalog_fields)
+        writer.writeheader()
+        writer.writerow(probe_row)
+    with invalid_path.open('w', encoding='utf-8', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=catalog_fields)
+        writer.writeheader()
+        writer.writerow({**probe_row, 'note': ''})
+        writer.writerow({**probe_row, 'note': ''})
+
+    try:
+        assert catalog.reload_catalog(valid_path) == 1
+        probe = catalog.find_shape_keys('CsvReloadProbe', 'ARKIT')[0]
+        assert probe.note == probe_row['note']
+        assert {'CSV_TEST', 'SECOND_TAG'}.issubset(probe.tags)
+
+        try:
+            catalog.reload_catalog(invalid_path)
+        except catalog.ShapeKeyCatalogError as exc:
+            message = str(exc)
+            assert '第 3 行' in message and '重复名称' in message
+        else:
+            raise AssertionError('重复 CSV 记录没有触发校验错误')
+        assert catalog.find_shape_keys(
+            'CsvReloadProbe', 'ARKIT')[0] == probe
+    finally:
+        assert catalog.reload_catalog() == 585
 
 print('shape key catalog tests passed')

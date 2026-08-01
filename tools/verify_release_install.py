@@ -34,6 +34,7 @@ def verify(zip_path: Path, abi: str) -> None:
         raise RuntimeError(f"Addon enable failed: {result}")
 
     import HoTools
+    from HoTools.ShapekeyTools import shapekey_catalog
     import cffi
     from PIL import Image
     import hotools_jolt
@@ -44,6 +45,15 @@ def verify(zip_path: Path, abi: str) -> None:
     other_abi = "py313" if abi == "py311" else "py311"
     if (addon_root / "_Lib" / other_abi).exists():
         raise RuntimeError(f"Installed ZIP leaked {other_abi}")
+
+    catalog_count = sum(
+        len(shapekey_catalog.get_standard_specs(info.identifier))
+        for info in shapekey_catalog.list_standards()
+    )
+    if catalog_count != 585:
+        raise RuntimeError(
+            f"Installed shape key catalog has {catalog_count} rows, expected 585"
+        )
 
     device = pyoidn.Device()
     device.commit()
@@ -56,6 +66,7 @@ def verify(zip_path: Path, abi: str) -> None:
         type(device).__name__,
         hotools_jolt.__name__,
         hotools_native.__name__,
+        catalog_count,
     )
     bpy.ops.wm.quit_blender()
 
