@@ -50,9 +50,6 @@ debug = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.debug")
 bone_frame_input = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_frame_input"
 )
-product_authoring = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.bone_cloth.authoring"
-)
 product_solver = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.product_solver"
 )
@@ -61,6 +58,7 @@ product_slot = importlib.import_module(
 )
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
 writeback = importlib.import_module("HoTools.OmniNode.PhysicsWorld.writeback")
+physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
 hotools_native = importlib.import_module("hotools_native")
 
 print(f"MC2_BONE_PRODUCT_SOURCE {product_solver.__file__}")
@@ -209,18 +207,24 @@ try:
         angle_limit_enabled=True,
         angle_limit=30.0,
     )
-    requests, names = nodes.physicsMC2BoneClothTask(
+    objects, object_count = nodes.physicsMC2BoneClothCustomObject(
         [
             {"armature": rig_multi, "bone": "Parent0"},
             {"armature": rig_multi, "bone": "Parent1"},
         ],
+    )
+    assert object_count == 2
+    partitions, names = nodes.physicsMC2BoneClothTask(
+        objects,
         profile=cloth_profile,
         connection_mode=1,
     )
+    requests, report = nodes.physicsMC2BoneCollector(partitions)
     assert len(requests) == 1
     request = requests[0]
     assert len(request.plan.active_partitions) == 2
-    assert names == _slot_id(request)
+    assert names.splitlines() == [item.stable_id for item in partitions]
+    assert "Grouping: Armature" in report
     assert all(
         partition.setup_options.connection_model == "hotools_product"
         and partition.setup_options.self_collision_radius_model == "derived_radius"
@@ -231,7 +235,7 @@ try:
     cloth_slot = _run(cloth_world, requests, 1)[0]
     cloth_owner = cloth_slot.data["owner"]
     assert cloth_owner.compiled.program.partition_count == 2
-    assert cloth_owner.compiled.program.particle_count == 12
+    assert cloth_owner.compiled.program.particle_count == 16
     assert cloth_owner.inspect()["fragment_cache"]["schema"] == "mc2_bone_fragment_cache_v1"
     result = cloth_world.result_streams["bone_transform"][0]
     assert result["bone_count"] == 12 and result["component_count"] == 2
@@ -261,27 +265,59 @@ try:
     assert _run(cloth_world, requests, 2, dt=1.0 / 30.0)[0] is cloth_slot
     assert cloth_slot.data["owner"] is cloth_owner
     assert cloth_slot.data["last_sync"].native_domain_reused
+    assert "_debug_draw_snapshot" in cloth_slot.data, cloth_slot.data.get(
+        "_debug_capture_state"
+    )
     snapshot = cloth_slot.data["_debug_draw_snapshot"]
     output = snapshot["output"]
     translation = np.asarray(output["translation_applied"], dtype=np.uint8)
-    assert np.count_nonzero(translation == 0) == 8
+    assert np.count_nonzero(translation == 0) == 12
     assert np.count_nonzero(translation == 1) == 4
-    assert snapshot["topology"]["baseline_root_indices"].shape == (12,)
-    assert snapshot["motion"]["step_basic_positions"].shape == (12, 3)
+    assert snapshot["topology"]["baseline_root_indices"].shape == (16,)
+    assert snapshot["motion"]["step_basic_positions"].shape == (16, 3)
     for name in ("distance", "tether", "bending", "angle_restoration", "angle_limit"):
         records = snapshot["constraint_records"][name]
         assert len(records["states"]) > 0
-    assert writeback.writeback_bone_transforms(cloth_world) == 12
+    planned_pose_bones = tuple(
+        record["pose_bone"]
+        for batch in cloth_slot.data["writeback_plan"]["batches"]
+        for record in batch["records"]
+    )
+    before_basis = tuple(
+        np.asarray(pose_bone.matrix_basis, dtype=np.float64).copy()
+        for pose_bone in planned_pose_bones
+    )
+    cloth_world.frame_context.same_frame = True
+    returned_world, written_count = physics_nodes.physicsWriteback(cloth_world)
+    assert returned_world is cloth_world and written_count == 12
+    after_basis = tuple(
+        np.asarray(pose_bone.matrix_basis, dtype=np.float64).copy()
+        for pose_bone in planned_pose_bones
+    )
+    assert any(
+        not np.allclose(before, after, rtol=1.0e-7, atol=1.0e-8)
+        for before, after in zip(before_basis, after_basis)
+    )
 
-    cross_requests, cross_names = nodes.physicsMC2BoneClothTask(
+    cross_objects, cross_count = nodes.physicsMC2BoneClothCustomObject(
         [
             {"armature": rig_a, "bone": "Parent0"},
             {"armature": rig_b, "bone": "Parent0"},
         ],
+    )
+    assert cross_count == 2
+    cross_partitions, cross_names = nodes.physicsMC2BoneClothTask(
+        cross_objects,
         connection_mode=1,
     )
+    cross_requests, cross_report = nodes.physicsMC2BoneCollector(
+        cross_partitions
+    )
     assert len(cross_requests) == 2
-    assert cross_names.splitlines() == [_slot_id(item) for item in cross_requests]
+    assert cross_names.splitlines() == [
+        item.stable_id for item in cross_partitions
+    ]
+    assert cross_report.count("Grouping: Armature") == 2
     cross_world = world_types.PhysicsWorldCache()
     worlds.append(cross_world)
     cross_slots = _run(cross_world, cross_requests, 1)
@@ -310,15 +346,19 @@ try:
     assert spring_slot.data["writeback_plan"]["batches"][0]["source_kind"] == "bone_spring"
     assert writeback.writeback_bone_transforms(spring_world) == 3
 
-    multi_requests = tuple(
-        product_authoring.make_mc2_bone_cloth_product_request(
-            [{"armature": rig_requests, "bone": f"Parent{control_index}"}],
-            setup_options=parameters.make_mc2_setup_options(
-                "bone_cloth", connection_mode=1
-            ),
+    multi_requests = []
+    for control_index in range(2):
+        multi_objects, _count = nodes.physicsMC2BoneClothCustomObject(
+            [{"armature": rig_requests, "bone": f"Parent{control_index}"}]
         )
-        for control_index in range(2)
-    )
+        multi_partitions, _domain_ids = nodes.physicsMC2BoneClothTask(
+            multi_objects,
+            connection_mode=1,
+        )
+        collected, _report = nodes.physicsMC2BoneCollector(multi_partitions)
+        assert len(collected) == 1
+        multi_requests.extend(collected)
+    multi_requests = tuple(multi_requests)
     multi_world = world_types.PhysicsWorldCache()
     worlds.append(multi_world)
     _set_frame(multi_world, 1)

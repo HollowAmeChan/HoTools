@@ -787,29 +787,48 @@ def _product_output_payload(slot, compiled, frame_packet, output) -> dict:
             if not name or not mode or name in mode_by_name:
                 raise RuntimeError("Bone产品调试writeback plan包含缺项或重名")
             mode_by_name[name] = mode
+        applied.fill(0)
         logical_names = []
-        for partition, source in zip(
+        logical_indices = []
+        output_identity_maps = tuple(
+            {
+                int(source): str(name)
+                for source, name in zip(
+                    fragment.output_source_elements,
+                    fragment.output_bone_identities,
+                )
+            }
+            for fragment in compiled.fragments
+        )
+        for logical_index, (partition, source) in enumerate(zip(
             program.particle_partition_index,
             program.particle_source_element,
-        ):
+        )):
             fragment = compiled.fragments[int(partition)]
             identities = tuple(fragment.final_proxy.vertex_identities)
             source_index = int(source)
             if source_index >= len(identities):
                 raise RuntimeError("Bone产品调试output map越界")
-            logical_names.append(str(identities[source_index]))
+            name = output_identity_maps[int(partition)].get(source_index)
+            if name is None:
+                continue
+            logical_names.append(name)
+            logical_indices.append(logical_index)
         if set(logical_names) != set(mode_by_name):
             raise RuntimeError("Bone产品调试output map与writeback plan不一致")
         motion_modes = tuple((name, mode_by_name[name]) for name in logical_names)
-        for index, (_name, mode) in enumerate(motion_modes):
-            if mode == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED:
-                applied[index] = 0
+        for index, (_name, mode) in zip(logical_indices, motion_modes):
+            if mode != MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED:
+                applied[index] = 1
         target_positions = target_positions.copy()
         target_positions[applied == 0] = base_positions[applied == 0]
         targets = tuple(logical_names)
         target_kind = "bone"
-        rotation_only_count = int(np.count_nonzero(applied == 0))
-        position_rotation_count = int(np.count_nonzero(applied != 0))
+        rotation_only_count = sum(
+            mode == MC2_BONE_MOTION_ROTATION_ONLY_CONNECTED
+            for _name, mode in motion_modes
+        )
+        position_rotation_count = len(motion_modes) - rotation_only_count
         schemas = {
             str(plan.get("schema") or "") for plan in plans
             if str(plan.get("schema") or "")

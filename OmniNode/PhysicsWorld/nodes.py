@@ -595,10 +595,9 @@ def physicsWriteback(
     if fc is None:
         return world, 0
 
-    # same_frame（同帧重复求值）时跳过，避免冗余 bpy 操作
-    if bool(getattr(fc, "same_frame", False)):
-        return world, 0
-
+    # Begin clears the result stream on every graph evaluation. Solvers then
+    # republish either a stepped result or their same-frame cached result, so
+    # current results must always reach Blender, including same-frame updates.
     restart = bool(getattr(fc, "restart_required", False))
     total   = apply_all_writebacks(world, restart=restart)
     return world, total

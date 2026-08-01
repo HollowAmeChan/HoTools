@@ -35,6 +35,9 @@ for package_name, package_path in (
 bone_rotation = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.test.bone_rotation_reference"
 )
+mc2_native = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.mc2.native"
+)
 
 
 FIXTURE_DIRECTORY = os.path.join(os.path.dirname(__file__), "fixtures", "tier_a")
@@ -134,9 +137,59 @@ def test_bone_line_rotation_locks_stage_order() -> None:
     )
 
 
+def test_native_bone_line_output_matches_tier_a() -> None:
+    native = mc2_native.require_mc2_native_module()
+    for fixture in _fixtures().values():
+        values = fixture["input"]
+        count = len(values["positions"])
+        output = np.empty((count, 4), dtype=np.float32)
+        native.mc2_bone_line_output_v1(
+            np.ascontiguousarray(values["attributes"], dtype=np.uint8),
+            np.ascontiguousarray(values["positions"], dtype=np.float32),
+            np.ascontiguousarray(values["base_positions"], dtype=np.float32),
+            np.ascontiguousarray(values["base_rotations"], dtype=np.float32),
+            np.ascontiguousarray(values["child_ranges"], dtype=np.int32),
+            np.ascontiguousarray(values["child_data"], dtype=np.int32),
+            np.ascontiguousarray(((0, count),), dtype=np.int32),
+            np.ascontiguousarray(values["baseline_data"], dtype=np.int32),
+            np.ascontiguousarray(
+                values["vertex_local_positions"], dtype=np.float32
+            ),
+            np.ascontiguousarray(
+                values["vertex_local_rotations"], dtype=np.float32
+            ),
+            np.empty((0, 3), dtype=np.int32),
+            np.zeros((count, 2), dtype=np.float32),
+            np.zeros((count, 2), dtype=np.int32),
+            np.empty((0, 2), dtype=np.int32),
+            np.ascontiguousarray(
+                ((0.0, 0.0, 0.0, 1.0),) * count,
+                dtype=np.float32,
+            ),
+            np.ascontiguousarray(
+                values["vertex_to_transform_rotations"], dtype=np.float32
+            ),
+            np.ascontiguousarray((
+                values["rotational_interpolation"],
+                values["root_rotation"],
+                values["animation_pose_ratio"],
+                values["blend_weight"],
+            ), dtype=np.float32),
+            output,
+        )
+        np.testing.assert_allclose(
+            output,
+            np.asarray(fixture["expected"]["world_rotations"], dtype=np.float32),
+            rtol=2.0e-6,
+            atol=5.0e-7,
+            err_msg=f"{fixture['case_id']}:native world rotations",
+        )
+
+
 TESTS = (
     ("Tier A Bone Line rotation", test_bone_line_rotation_matches_tier_a),
     ("Bone Line rotation stage order", test_bone_line_rotation_locks_stage_order),
+    ("Native Bone Line output", test_native_bone_line_output_matches_tier_a),
 )
 
 

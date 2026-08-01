@@ -58,6 +58,106 @@ def _mc2_bone_motion_counts(records) -> tuple[int, int]:
     )
     return connected_count, len(records) - connected_count
 
+
+def _mc2_bone_line_output_rotations(
+    *,
+    compiled,
+    frame_packet,
+    output,
+    fragment,
+    logical_by_source,
+    partition_index: int,
+) -> np.ndarray:
+    from .native import native_module
+    from .static_data import (
+        pack_mc2_baseline_static,
+        pack_mc2_proxy_finalizer_static,
+        pack_mc2_proxy_static,
+    )
+
+    try:
+        logical_indices = np.asarray(
+            tuple(
+                logical_by_source[int(source_element)]
+                for source_element in fragment.source_elements
+            ),
+            dtype=np.uint32,
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "Bone compiled output map is missing a solver particle"
+        ) from exc
+    if len(logical_indices) != fragment.final_proxy.vertex_count:
+        raise ValueError("Bone Line output particle mapping is incomplete")
+
+    parameter_table = compiled.parameters.partition_parameters
+    field_indices = {
+        name: index for index, name in enumerate(parameter_table.fields)
+    }
+    parameter_names = (
+        "rotational_interpolation",
+        "root_rotation",
+        "animation_pose_ratio",
+        "blend_weight",
+    )
+    try:
+        rotation_parameters = np.ascontiguousarray(
+            tuple(
+                parameter_table.values[partition_index, field_indices[name]]
+                for name in parameter_names
+            ),
+            dtype=np.float32,
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"Bone Line output is missing runtime parameter {exc.args[0]!r}"
+        ) from exc
+
+    proxy = pack_mc2_proxy_static(fragment.final_proxy)
+    finalizer = pack_mc2_proxy_finalizer_static(fragment.finalizer)
+    baseline = pack_mc2_baseline_static(fragment.static.baseline)
+    rotations = np.empty((len(logical_indices), 4), dtype=np.float32)
+    native_module().mc2_bone_line_output_v1(
+        proxy["vertex_attributes"],
+        np.ascontiguousarray(
+            output.world_positions[logical_indices], dtype=np.float32
+        ),
+        np.ascontiguousarray(
+            frame_packet.animated_base_world_positions[logical_indices],
+            dtype=np.float32,
+        ),
+        np.ascontiguousarray(
+            frame_packet.animated_base_world_rotations[logical_indices],
+            dtype=np.float32,
+        ),
+        baseline["child_ranges"],
+        baseline["child_data"],
+        baseline["baseline_ranges"],
+        baseline["baseline_data"],
+        baseline["vertex_local_positions"],
+        baseline["vertex_local_rotations"],
+        proxy["triangles"],
+        proxy["uvs"],
+        finalizer["vertex_to_triangle_ranges"],
+        finalizer["vertex_to_triangle_data"],
+        np.ascontiguousarray(
+            fragment.static.bone.normal_adjustment_rotations,
+            dtype=np.float32,
+        ),
+        fragment.vertex_to_transform_rotations,
+        rotation_parameters,
+        rotations,
+    )
+    if not np.isfinite(rotations).all() or not np.allclose(
+        np.linalg.norm(rotations, axis=1),
+        1.0,
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    ):
+        raise ValueError("native Bone Line output returned invalid rotations")
+    rotations.flags.writeable = False
+    return rotations
+
 def make_mc2_mesh_domain_results(
     *,
     batch: MC2MeshWritebackBatchV1,
@@ -354,6 +454,14 @@ def make_mc2_bone_domain_results(
         identities = tuple(fragment.output_bone_identities)
         if len(logical_indices) != len(identities):
             raise ValueError("Bone writeback identities do not match output particles")
+        bone_output_rotations = _mc2_bone_line_output_rotations(
+            compiled=compiled,
+            frame_packet=frame_packet,
+            output=output,
+            fragment=fragment,
+            logical_by_source=logical_by_source,
+            partition_index=partition_index,
+        )
         entries.append(_make_mc2_bone_result_values(
             setup_type=program.setup_type,
             task_id=static_input.partition.stable_id,
@@ -363,7 +471,9 @@ def make_mc2_bone_domain_results(
             armature_data_ptr=collection.armature_data_pointer,
             identities=identities,
             world_positions=output.world_positions[logical_indices],
-            world_rotations_xyzw=output.world_rotations_xyzw[logical_indices],
+            world_rotations_xyzw=bone_output_rotations[
+                output_source_elements
+            ],
             component_world_rotation_xyzw=(
                 frame_packet.partition_world_rotation[partition_index]
             ),

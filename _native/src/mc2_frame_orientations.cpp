@@ -63,6 +63,103 @@ std::array<float, 4> quaternion_multiply(
     };
 }
 
+std::array<float, 4> quaternion_inverse(std::array<float, 4> value) {
+    normalize_quaternion(value);
+    return {-value[0], -value[1], -value[2], value[3]};
+}
+
+Vec3 rotate_vector(const std::array<float, 4>& raw_rotation, Vec3 value) {
+    auto rotation = raw_rotation;
+    normalize_quaternion(rotation);
+    const Vec3 axis {rotation[0], rotation[1], rotation[2]};
+    const Vec3 twice_cross = mul(cross(axis, value), 2.0f);
+    return add(add(value, mul(twice_cross, rotation[3])), cross(axis, twice_cross));
+}
+
+std::array<float, 4> quaternion_slerp(
+    std::array<float, 4> first,
+    std::array<float, 4> second,
+    float ratio
+) {
+    normalize_quaternion(first);
+    normalize_quaternion(second);
+    float cosine = 0.0f;
+    for (std::size_t component = 0; component < 4; ++component) {
+        cosine += first[component] * second[component];
+    }
+    if (cosine < 0.0f) {
+        for (float& component : second) component = -component;
+        cosine = -cosine;
+    }
+    cosine = std::clamp(cosine, -1.0f, 1.0f);
+    std::array<float, 4> result {};
+    if (cosine > 0.9995f) {
+        for (std::size_t component = 0; component < 4; ++component) {
+            result[component] = first[component] +
+                (second[component] - first[component]) * ratio;
+        }
+    } else {
+        const float angle = std::acos(cosine);
+        const float sine = std::sin(angle);
+        const float first_weight = std::sin((1.0f - ratio) * angle) / sine;
+        const float second_weight = std::sin(ratio * angle) / sine;
+        for (std::size_t component = 0; component < 4; ++component) {
+            result[component] = first[component] * first_weight +
+                second[component] * second_weight;
+        }
+    }
+    normalize_quaternion(result);
+    return result;
+}
+
+std::array<float, 4> quaternion_from_to(Vec3 first, Vec3 second, float ratio = 1.0f) {
+    first = normalize(first);
+    second = normalize(second);
+    const float cosine = std::clamp(dot(first, second), -1.0f, 1.0f);
+    if (std::abs(1.0f - cosine) < 1.0e-6f) {
+        return {0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    Vec3 axis = cross(first, second);
+    float angle = std::acos(cosine);
+    if (std::abs(1.0f + cosine) < 1.0e-6f) {
+        angle = 3.14159265358979323846f;
+        axis = first.x > first.y && first.x > first.z
+            ? cross(first, Vec3 {0.0f, 1.0f, 0.0f})
+            : cross(first, Vec3 {1.0f, 0.0f, 0.0f});
+    }
+    axis = normalize(axis);
+    const float half_angle = angle * ratio * 0.5f;
+    const float sine = std::sin(half_angle);
+    std::array<float, 4> result {
+        axis.x * sine,
+        axis.y * sine,
+        axis.z * sine,
+        std::cos(half_angle),
+    };
+    normalize_quaternion(result);
+    return result;
+}
+
+Vec3 load_vector3(const float* values, std::size_t index) {
+    const auto offset = index * 3;
+    return {values[offset], values[offset + 1], values[offset + 2]};
+}
+
+std::array<float, 4> load_quaternion(const float* values, std::size_t index) {
+    const auto offset = index * 4;
+    std::array<float, 4> result {
+        values[offset], values[offset + 1], values[offset + 2], values[offset + 3]
+    };
+    normalize_quaternion(result);
+    return result;
+}
+
+void store_quaternion(float* values, std::size_t index, std::array<float, 4> rotation) {
+    normalize_quaternion(rotation);
+    const auto offset = index * 4;
+    std::copy(rotation.begin(), rotation.end(), values + offset);
+}
+
 std::array<float, 4> quaternion_from_forward_up(Vec3 forward, Vec3 up) {
     const Vec3 z = normalize(forward);
     const Vec3 x = normalize(cross(up, z));
@@ -382,6 +479,193 @@ bool derive_bone_frame_orientations(
     return true;
 }
 
+bool derive_bone_line_output(
+    const std::uint8_t* attributes,
+    const float* positions,
+    const float* base_positions,
+    const float* base_rotations,
+    const std::int32_t* child_ranges,
+    const std::int32_t* child_data,
+    std::size_t child_data_count,
+    const std::int32_t* baseline_ranges,
+    std::size_t baseline_count,
+    const std::int32_t* baseline_data,
+    std::size_t baseline_data_count,
+    const float* vertex_local_positions,
+    const float* vertex_local_rotations,
+    const std::int32_t* triangles,
+    std::size_t triangle_count,
+    const float* uvs,
+    const std::int32_t* triangle_ranges,
+    const std::int32_t* triangle_data,
+    std::size_t triangle_record_count,
+    const float* normal_adjustment_rotations,
+    const float* vertex_to_transform_rotations,
+    std::size_t vertex_count,
+    float rotational_interpolation,
+    float root_rotation,
+    float animation_pose_ratio,
+    float blend_weight,
+    float* output_rotations
+) {
+    if (attributes == nullptr || positions == nullptr || base_positions == nullptr ||
+        base_rotations == nullptr || child_ranges == nullptr ||
+        baseline_ranges == nullptr || vertex_local_positions == nullptr ||
+        vertex_local_rotations == nullptr || uvs == nullptr ||
+        triangle_ranges == nullptr || normal_adjustment_rotations == nullptr ||
+        vertex_to_transform_rotations == nullptr || output_rotations == nullptr ||
+        (child_data_count != 0 && child_data == nullptr) ||
+        (baseline_data_count != 0 && baseline_data == nullptr) ||
+        (triangle_count != 0 && triangles == nullptr) ||
+        (triangle_record_count != 0 && triangle_data == nullptr)) {
+        return false;
+    }
+
+    std::vector<float> work_rotations(
+        base_rotations,
+        base_rotations + vertex_count * 4
+    );
+    for (std::size_t baseline = 0; baseline < baseline_count; ++baseline) {
+        const auto range_start = baseline_ranges[baseline * 2];
+        const auto range_length = baseline_ranges[baseline * 2 + 1];
+        if (range_start < 0 || range_length < 0 ||
+            static_cast<std::size_t>(range_start + range_length) > baseline_data_count) {
+            return false;
+        }
+        for (std::int32_t offset = 0; offset < range_length; ++offset) {
+            const auto raw_index = baseline_data[range_start + offset];
+            if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= vertex_count) {
+                return false;
+            }
+            const auto vertex = static_cast<std::size_t>(raw_index);
+            const Vec3 position = load_vector3(positions, vertex);
+            auto rotation = load_quaternion(work_rotations.data(), vertex);
+            const auto attribute = attributes[vertex];
+            const auto child_start = child_ranges[vertex * 2];
+            const auto child_count = child_ranges[vertex * 2 + 1];
+            if (child_start < 0 || child_count < 0 ||
+                static_cast<std::size_t>(child_start + child_count) > child_data_count) {
+                return false;
+            }
+            const Vec3 base_position = load_vector3(base_positions, vertex);
+            const auto base_rotation = load_quaternion(base_rotations, vertex);
+            const auto inverse_base_rotation = quaternion_inverse(base_rotation);
+
+            if (child_count > 0 && (attribute & 0x03u) != 0u) {
+                Vec3 original_sum {};
+                Vec3 current_sum {};
+                for (std::int32_t child_offset = 0;
+                     child_offset < child_count;
+                     ++child_offset) {
+                    const auto raw_child = child_data[child_start + child_offset];
+                    if (raw_child < 0 ||
+                        static_cast<std::size_t>(raw_child) >= vertex_count) {
+                        return false;
+                    }
+                    const auto child = static_cast<std::size_t>(raw_child);
+                    const auto child_attribute = attributes[child];
+                    const bool zero_distance = (child_attribute & 0x20u) != 0u;
+                    const Vec3 child_base_local_position = rotate_vector(
+                        inverse_base_rotation,
+                        sub(load_vector3(base_positions, child), base_position)
+                    );
+                    const auto child_base_local_rotation = quaternion_multiply(
+                        inverse_base_rotation,
+                        load_quaternion(base_rotations, child)
+                    );
+                    const Vec3 static_local_position = load_vector3(
+                        vertex_local_positions,
+                        child
+                    );
+                    const Vec3 child_local_position = add(
+                        mul(static_local_position, 1.0f - animation_pose_ratio),
+                        mul(child_base_local_position, animation_pose_ratio)
+                    );
+                    const auto child_local_rotation = quaternion_slerp(
+                        load_quaternion(vertex_local_rotations, child),
+                        child_base_local_rotation,
+                        animation_pose_ratio
+                    );
+                    const Vec3 original_vector = zero_distance
+                        ? Vec3 {}
+                        : rotate_vector(rotation, child_local_position);
+                    original_sum = add(original_sum, original_vector);
+                    if ((child_attribute & 0x02u) != 0u) {
+                        const Vec3 current_vector = sub(
+                            load_vector3(positions, child),
+                            position
+                        );
+                        current_sum = add(current_sum, current_vector);
+                        auto child_rotation = quaternion_multiply(
+                            rotation,
+                            child_local_rotation
+                        );
+                        if (!zero_distance &&
+                            length(original_vector) > kMc2Epsilon &&
+                            length(current_vector) > kMc2Epsilon) {
+                            child_rotation = quaternion_multiply(
+                                quaternion_from_to(original_vector, current_vector),
+                                child_rotation
+                            );
+                        }
+                        store_quaternion(
+                            work_rotations.data(),
+                            child,
+                            child_rotation
+                        );
+                    } else {
+                        current_sum = add(current_sum, original_vector);
+                    }
+                }
+                const float ratio = (attribute & 0x02u) != 0u
+                    ? rotational_interpolation
+                    : root_rotation;
+                const auto adjustment =
+                    length(original_sum) <= kMc2Epsilon ||
+                    length(current_sum) <= kMc2Epsilon
+                    ? std::array<float, 4> {0.0f, 0.0f, 0.0f, 1.0f}
+                    : quaternion_from_to(original_sum, current_sum, ratio);
+                rotation = quaternion_multiply(adjustment, rotation);
+            }
+            store_quaternion(
+                work_rotations.data(),
+                vertex,
+                quaternion_slerp(base_rotation, rotation, blend_weight)
+            );
+        }
+    }
+
+    const Mc2MeshFrameOrientationView triangle_view {
+        vertex_count,
+        positions,
+        triangles,
+        triangle_count,
+        uvs,
+        vertex_count * 2,
+        nullptr,
+        0,
+        triangle_ranges,
+        vertex_count * 2,
+        triangle_data,
+        triangle_record_count * 2,
+        normal_adjustment_rotations,
+        work_rotations.data(),
+    };
+    if (!derive_mesh_frame_orientations(triangle_view)) return false;
+
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        store_quaternion(
+            output_rotations,
+            vertex,
+            quaternion_multiply(
+                load_quaternion(work_rotations.data(), vertex),
+                load_quaternion(vertex_to_transform_rotations, vertex)
+            )
+        );
+    }
+    return true;
+}
+
 PyObject* mc2_mesh_frame_orientations_v1(PyObject*, PyObject* args) {
     using namespace py;
     if (PyTuple_GET_SIZE(args) != 6) {
@@ -592,6 +876,181 @@ PyObject* mc2_bone_frame_orientations_v1(PyObject*, PyObject* args) {
         staged_rotations.end(),
         static_cast<float*>(output.view.buf)
     );
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_bone_line_output_v1(PyObject*, PyObject* args) {
+    using namespace py;
+    constexpr Py_ssize_t kArgumentCount = 18;
+    if (PyTuple_GET_SIZE(args) != kArgumentCount) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_bone_line_output_v1 expects 18 arguments"
+        );
+        return nullptr;
+    }
+    Buffer attributes, positions, base_positions, base_rotations;
+    Buffer child_ranges, child_data, baseline_ranges, baseline_data;
+    Buffer local_positions, local_rotations, triangles, uvs;
+    Buffer triangle_ranges, triangle_data, normal_adjustments;
+    Buffer vertex_to_transform, parameters, output;
+    Buffer* buffers[] = {
+        &attributes, &positions, &base_positions, &base_rotations,
+        &child_ranges, &child_data, &baseline_ranges, &baseline_data,
+        &local_positions, &local_rotations, &triangles, &uvs,
+        &triangle_ranges, &triangle_data, &normal_adjustments,
+        &vertex_to_transform, &parameters, &output,
+    };
+    const char* names[] = {
+        "vertex_attributes", "world_positions", "base_positions",
+        "base_rotations", "child_ranges", "child_data",
+        "baseline_ranges", "baseline_data", "vertex_local_positions",
+        "vertex_local_rotations", "triangles", "uvs",
+        "vertex_to_triangle_ranges", "vertex_to_triangle_data",
+        "normal_adjustment_rotations", "vertex_to_transform_rotations",
+        "rotation_parameters", "out_rotations",
+    };
+    for (Py_ssize_t index = 0; index < kArgumentCount; ++index) {
+        int flags = PyBUF_FORMAT | PyBUF_ND;
+        if (index == kArgumentCount - 1) flags |= PyBUF_WRITABLE;
+        if (!buffers[index]->get(PyTuple_GET_ITEM(args, index), flags, names[index])) {
+            return nullptr;
+        }
+    }
+
+    Py_ssize_t vertex_count = 0;
+    Py_ssize_t count = 0;
+    Py_ssize_t child_range_count = 0;
+    Py_ssize_t baseline_count = 0;
+    Py_ssize_t triangle_count = 0;
+    Py_ssize_t triangle_range_count = 0;
+    Py_ssize_t triangle_record_count = 0;
+    if (!expect_vector3_array(positions, "world_positions", &vertex_count) ||
+        vertex_count <= 0 ||
+        !expect_uint8_scalar_array(attributes, "vertex_attributes") ||
+        attributes.view.shape[0] != vertex_count ||
+        !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
+        !expect_int32_pair_array(child_ranges, "child_ranges", &child_range_count) ||
+        child_range_count != vertex_count ||
+        !expect_int32_scalar_array(child_data, "child_data") ||
+        !validate_dense_ranges(child_ranges, child_data.view.shape[0], "child_ranges") ||
+        !expect_int32_pair_array(baseline_ranges, "baseline_ranges", &baseline_count) ||
+        baseline_count <= 0 ||
+        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
+        !validate_dense_ranges(
+            baseline_ranges, baseline_data.view.shape[0], "baseline_ranges"
+        ) ||
+        !expect_same_vertex_count(
+            local_positions, "vertex_local_positions", vertex_count
+        ) ||
+        !expect_same_quat_vertex_count(
+            local_rotations, "vertex_local_rotations", vertex_count
+        ) ||
+        !expect_int32_triple_array(triangles, "triangles", &triangle_count) ||
+        !expect_float32(uvs, "uvs") ||
+        !expect_2d(uvs, "uvs", vertex_count, 2) ||
+        !expect_int32_pair_array(
+            triangle_ranges, "vertex_to_triangle_ranges", &triangle_range_count
+        ) ||
+        triangle_range_count != vertex_count ||
+        !expect_int32_pair_array(
+            triangle_data, "vertex_to_triangle_data", &triangle_record_count
+        ) ||
+        !validate_dense_ranges(
+            triangle_ranges,
+            triangle_record_count,
+            "vertex_to_triangle_ranges"
+        ) ||
+        !expect_same_quat_vertex_count(
+            normal_adjustments, "normal_adjustment_rotations", vertex_count
+        ) ||
+        !expect_same_quat_vertex_count(
+            vertex_to_transform, "vertex_to_transform_rotations", vertex_count
+        ) ||
+        !expect_float32(parameters, "rotation_parameters") ||
+        !expect_1d_array(parameters, "rotation_parameters", 4) ||
+        !expect_vector4_array(output, "out_rotations", &count) ||
+        count != vertex_count ||
+        !finite_floats(positions, "world_positions") ||
+        !finite_floats(base_positions, "base_positions") ||
+        !finite_floats(base_rotations, "base_rotations") ||
+        !finite_floats(local_positions, "vertex_local_positions") ||
+        !finite_floats(local_rotations, "vertex_local_rotations") ||
+        !finite_floats(uvs, "uvs") ||
+        !finite_floats(normal_adjustments, "normal_adjustment_rotations") ||
+        !finite_floats(vertex_to_transform, "vertex_to_transform_rotations") ||
+        !finite_floats(parameters, "rotation_parameters") ||
+        !validate_quaternions(base_rotations, "base_rotations") ||
+        !validate_quaternions(local_rotations, "vertex_local_rotations") ||
+        !validate_quaternions(
+            normal_adjustments, "normal_adjustment_rotations"
+        ) ||
+        !validate_quaternions(
+            vertex_to_transform, "vertex_to_transform_rotations"
+        ) ||
+        !expect_indices_in_range(child_data, "child_data", vertex_count) ||
+        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count) ||
+        !expect_triple_indices_in_range(triangles, "triangles", vertex_count)) {
+        return nullptr;
+    }
+
+    const auto* triangle_records = static_cast<const std::int32_t*>(
+        triangle_data.view.buf
+    );
+    for (Py_ssize_t record = 0; record < triangle_record_count; ++record) {
+        const auto flip = triangle_records[record * 2];
+        const auto triangle = triangle_records[record * 2 + 1];
+        if (flip < 0 || flip > 0xFFF || triangle < 0 || triangle >= triangle_count) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "vertex_to_triangle_data contains an invalid record"
+            );
+            return nullptr;
+        }
+    }
+    const auto* parameter_values = static_cast<const float*>(parameters.view.buf);
+    for (std::size_t index = 0; index < 4; ++index) {
+        if (parameter_values[index] < 0.0f || parameter_values[index] > 1.0f) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "rotation_parameters must be in 0..1"
+            );
+            return nullptr;
+        }
+    }
+
+    if (!derive_bone_line_output(
+            static_cast<const std::uint8_t*>(attributes.view.buf),
+            static_cast<const float*>(positions.view.buf),
+            static_cast<const float*>(base_positions.view.buf),
+            static_cast<const float*>(base_rotations.view.buf),
+            static_cast<const std::int32_t*>(child_ranges.view.buf),
+            static_cast<const std::int32_t*>(child_data.view.buf),
+            static_cast<std::size_t>(child_data.view.shape[0]),
+            static_cast<const std::int32_t*>(baseline_ranges.view.buf),
+            static_cast<std::size_t>(baseline_count),
+            static_cast<const std::int32_t*>(baseline_data.view.buf),
+            static_cast<std::size_t>(baseline_data.view.shape[0]),
+            static_cast<const float*>(local_positions.view.buf),
+            static_cast<const float*>(local_rotations.view.buf),
+            static_cast<const std::int32_t*>(triangles.view.buf),
+            static_cast<std::size_t>(triangle_count),
+            static_cast<const float*>(uvs.view.buf),
+            static_cast<const std::int32_t*>(triangle_ranges.view.buf),
+            static_cast<const std::int32_t*>(triangle_data.view.buf),
+            static_cast<std::size_t>(triangle_record_count),
+            static_cast<const float*>(normal_adjustments.view.buf),
+            static_cast<const float*>(vertex_to_transform.view.buf),
+            static_cast<std::size_t>(vertex_count),
+            parameter_values[0],
+            parameter_values[1],
+            parameter_values[2],
+            parameter_values[3],
+            static_cast<float*>(output.view.buf))) {
+        PyErr_SetString(PyExc_RuntimeError, "Bone Line output producer failed");
+        return nullptr;
+    }
     Py_RETURN_NONE;
 }
 
