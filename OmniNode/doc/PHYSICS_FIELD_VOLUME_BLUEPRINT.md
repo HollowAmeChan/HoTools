@@ -1,9 +1,18 @@
 # Physics World Field / Volume 与风场契约
 
-> 状态：设计规划，尚未实现
+> 状态：F0/F1 预览 vertical slice 已实现，阶段闸门尚未全部关闭
 > 归属：`OmniNode/PhysicsWorld`
-> 当前主线：公共 Field/Volume、统一 Wind Field、MC2 消费契约
+> 当前主线：公共 Field/Volume、统一 Wind Field 与创作/可视化门禁
 > 核心命名：公开对象称为 **Field**，空间载体称为 **Volume**；不建立 `ForceField` 领域。
+
+当前实现快照（2026-08-01）：
+
+- 已有独立 `PhysicsWorld/field/` component、`FieldSpecV0`/`FieldSnapshotV0`、schema/capability 单一事实源和 `physics.field` manifest 对账；
+- 已有 Empty 创建与集中面板、sphere/box、统一 Wind、确定性四维 value noise、多 octave turbulence、reference/batch sampler 和 selected/combined vector overlay；
+- `Object.hotools_field` 当前状态固定为 `PREVIEW_ONLY`，没有 active solver consumer，不改变任何模拟结果；
+- 公共采样的 request/result signature 已覆盖位置、时间、scope、选择集、诊断和精确数值字节；
+- Blender 输出时间统一由 `PhysicsWorld/world_time.py` 解释，时间矩阵覆盖 24/30/60、30000/1001、暂停、同帧、reset、跳帧、倒放和子步；
+- 尚未关闭的门禁包括通用 scalar/SDF/reserved 可视化、完整 `.blend` 往返/undo/动画验收、seek/cache 时间恢复以及 consumer bridge。
 
 ## 1. 已确定的架构决策
 
@@ -361,10 +370,13 @@ V_wind(p, t) = m(p) * (s * d + delta(p, t))
 
 - P0 的 turbulence 坐标固定为世界空间，空间尺度使用米。
 - Volume mask 随 Empty transform 移动；噪声图案本身不因 Empty 非均匀缩放而变形。
-- 动画属性和 Empty transform 在 evaluated frame 收集；子步内的 turbulence 使用连续的 Physics World 时间求值。
+- Blender 输出设置是唯一基础时钟：`scene_fps = render.fps / render.fps_base`，`raw_dt = 1 / scene_fps`。`fps_base` 不得被忽略。
+- `timeline_time_seconds` 是从 `frame_start` 起按 Blender 输出帧率映射的未缩放时间；无 consumer 的创作预览只使用这个确定性时间，不读取 wall clock。
+- `sample_time_seconds` 是 Physics World 按实际 `frame_step_dt = raw_dt * world_time_scale` 连续累计的模拟时间；暂停不推进，same-frame 不重复累计，restart 不按帧差追赶。
+- 动画属性和 Empty transform 在 evaluated frame 收集；正式 consumer 的子步 turbulence 使用 `sample_time_seconds + frame_step_dt * substep_index / substeps`。
 - reset 后物理时间回到同一起点；相同 seed、参数、位置和时间必须返回相同向量。
 - 不读取 wall clock、随机全局状态或线程调度顺序。
-- frame seek、cache read 和 bake 必须恢复同一 `sample_time_seconds` 语义。
+- frame seek、cache read 和 bake 最终必须恢复同一 `sample_time_seconds` 语义；当前非连续 seek 只冷启动归零，不宣称已经完成 cache 恢复。
 
 ## 6. Volume 与多 Field 叠加
 

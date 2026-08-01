@@ -50,6 +50,8 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 - `Function/` 中只保留适合由 `@omni(...)` 暴露的轻量节点函数；需要物理实现时直接导入 `PhysicsWorld` 的公开模块。
 - 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
 - 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
+- `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume 规格、WindV0、公共 sampler、Empty 创作边界、隐式对象 manifest、诊断和可视化；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 sampler。
+- `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Field 预览和 Physics World Begin 不得各自维护另一套 fps fallback。
 
 ### 1. 函数生成是默认节点模型
 
