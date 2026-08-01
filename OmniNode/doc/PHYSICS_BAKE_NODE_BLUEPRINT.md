@@ -658,7 +658,7 @@ mesh_cloth/base_pose.py       BasePose read proxy，仅负责基础动画读取
 physicsWorld/bake/pc2.py      PC2 header/read/write/truncate、manifest与播放切换
 ```
 
-对 source/write object 确保两个相邻且固定名字的共享 GN modifier：
+对 Simple Cloth source/write object 确保两个相邻且固定名字的受管 GN modifier：
 
 ```text
 HoTools 物理后置位移
@@ -1045,7 +1045,7 @@ Live simulation
          -> WritebackReceiptV1
     -> Physics Bake
          -> dedicated Actions (Bone/Object)
-         -> shared GN Set Position modifier
+         -> Simple Cloth GN Set Position modifier
          -> current-frame evaluated final positions
          -> per-object PC2 + atomic manifest
          -> per-object enabled/disabled Mesh Cache modifier

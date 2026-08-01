@@ -538,7 +538,7 @@ channel。domain 自有 stats、event、query channel 仍应登记为独占。�
 - `gn_attribute` 表示每个 Mesh 的单一最终 offset；其中间分量仍先经 `world.exchange`
   归并，最终 writer 冲突策略见下节。
 
-#### 共享 GN 顶点 offset 契约
+#### Simple Cloth GN 顶点 offset 契约
 
 Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”，不是任意属性
 总线，也不是 solver 私有输出槽。公开结构固定为：
@@ -582,7 +582,7 @@ Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”�
 - 通用 Bake 只从当前 frame/generation 的真实 `gn_attribute` target 集合取样；第一版
   工作缓存为每对象独立 PC2。`use_mesh_cache` 只控制末端 Mesh Cache modifier 显隐，
   与 payload 留存完全分离；清理、截断和删除由独立 Clear 节点按 manifest ownership 执行。
-- 共享 GN 组是受管持久资源。原有 ensure 路径必须按当前 builder 自动生成的结构
+- Simple Cloth GN 组是受管持久资源。原有 ensure 路径必须按当前 builder 自动生成的结构
   contract 判断代码版本差异，不能只信任整数 schema；显式完整检查由受管 refresh helper
   执行。插件 register 阶段不得扫描旧场景资源。刷新必须保持 modifier 指向稳定组、修复播放层顺序并显式 tag 使用对象。
 

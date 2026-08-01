@@ -161,7 +161,7 @@ def move_to_cache_collection(
 
 
 def ensure_delta_output(obj: bpy.types.Object) -> None:
-    """保留旧 MC2 delta 资源的加载兼容；新写回使用共享 GN offset。"""
+    """保留旧 MC2 delta 资源的加载兼容；新写回使用 Simple Cloth GN offset。"""
     _ensure_delta_output(obj, MC2_DELTA_SPEC)
 
 

@@ -6,7 +6,7 @@ physicsWorld.writeback — 物理写回算法
 写回类型（对应三种偏移量语义，归零即复位）：
   1. rigid_body_delta  → Object.delta_location / delta_rotation_euler|quaternion
   2. bone_transform    → PoseBone.matrix_basis
-  3. gn_attribute      → 共享 mesh 顶点最终 offset
+  3. gn_attribute      → Simple Cloth 顶点最终 offset
 
 初始状态约定：
   delta_location / delta_rotation_euler 在 Blender 中默认为 (0,0,0)，
@@ -31,9 +31,10 @@ from .simple_cloth.output import (
     normalize_local_offsets,
     write_gn_local_offsets,
 )
+from .simple_cloth.results import iter_gn_offset_writebacks
 from .names import GN_OFFSET_ATTRIBUTE_NAME, GN_OFFSET_MODIFIER_NAME
 from .utils.values import matrix_from_16
-from .writeback_commands import iter_bone_transform_writebacks, iter_gn_offset_writebacks
+from .writeback_commands import iter_bone_transform_writebacks
 
 
 # ---------------------------------------------------------------------------

@@ -132,7 +132,7 @@ Context.dispose()
 ## Result、Writeback 与 Debug
 
 - 每个成功 task 发布一条 `GN_ATTRIBUTE_CHANNEL` 公共 mesh vertex offset command。
-- command 使用公共 `make_gn_offset_writeback`，目标 identity、vertex count 和 offset shape 在任何 Blender mutation 前完整校验。
+- command 使用 `simple_cloth.results.make_gn_offset_writeback`，目标 identity、vertex count 和 offset shape 在任何 Blender mutation 前完整校验。
 - 多 task 任一失败时，本轮不得产生部分 Blender 写回。
 - stats/debug 是请求驱动；关闭时不额外复制 topology、particle 或 collider 数组。
 - debug 至少公开 frame decision、slot status、particle/stretch/bend/collider counts、step time、non-finite guard 和 native context generation。

@@ -14,7 +14,7 @@ import numpy as np
 
 from ..names import PC2_CACHE_MODIFIER_NAME
 from ..types import PhysicsWorldCache
-from ..writeback_commands import iter_gn_offset_writebacks
+from ..simple_cloth.results import iter_gn_offset_writebacks
 from .session import (
     MANIFEST_SCHEMA,
     TARGET_UUID_KEY,

@@ -52,8 +52,8 @@ world_types = importlib.import_module(
 writeback = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.writeback"
 )
-writeback_commands = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.writeback_commands"
+simple_cloth_results = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.results"
 )
 topology = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.topology"
@@ -183,7 +183,7 @@ def main() -> None:
         assert transformed.statuses == ("hit",)
         assert transformed.snapshots[0] is first.snapshots[0]
 
-        writeback_commands.publish_gn_offset_writeback(
+        simple_cloth_results.publish_gn_offset_writeback(
             world,
             solver="mc2",
             slot_id=task.slot_id,
@@ -200,7 +200,7 @@ def main() -> None:
         assert internal.snapshots[0] is first.snapshots[0]
 
         world.frame_context.frame += 1
-        writeback_commands.publish_gn_offset_writeback(
+        simple_cloth_results.publish_gn_offset_writeback(
             world,
             solver="mc2",
             slot_id=task.slot_id,
@@ -305,7 +305,7 @@ def main() -> None:
             receipt_slot_id=product_slot_id,
         )
         world.frame_context.frame += 1
-        writeback_commands.publish_gn_offset_writeback(
+        simple_cloth_results.publish_gn_offset_writeback(
             world,
             solver="mc2",
             slot_id=product_slot_id,

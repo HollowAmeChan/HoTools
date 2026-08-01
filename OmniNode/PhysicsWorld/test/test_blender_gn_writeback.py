@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""共享 GN 最终 offset 写回契约测试。
+"""Simple Cloth GN 最终 offset 写回契约测试。
 
 用法：blender.exe --factory-startup --background --python test_blender_gn_writeback.py
 """
@@ -53,14 +53,14 @@ world_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.names"
 )
 commands = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.writeback_commands"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.results"
 )
 writeback = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.writeback"
 )
 print("GN_WRITEBACK_SOURCE", writeback.__file__)
 gn_offset = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.gn_offset"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.output"
 )
 
 
@@ -240,39 +240,15 @@ def test_shared_gn_final_offset_contract():
         assert modifier.node_group == managed_group
         bpy.data.node_groups.remove(wrong_group)
 
-        # 构造已提交版本的 schema 2 组合组，迁移必须保留 Bake node/bake_id。
-        legacy_group = modifier.node_group
-        set_position = next(
-            node for node in legacy_group.nodes
-            if node.bl_idname == "GeometryNodeSetPosition"
-        )
-        output_node = next(
-            node for node in legacy_group.nodes
-            if node.bl_idname == "NodeGroupOutput"
-        )
-        for link in tuple(output_node.inputs["Geometry"].links):
-            legacy_group.links.remove(link)
-        bake_node = legacy_group.nodes.new("GeometryNodeBake")
-        if not bake_node.inputs.get("Geometry"):
-            bake_node.bake_items.new("GEOMETRY", "Geometry")
-        bake_node.name = "HoTools Physics Bake"
-        legacy_group.links.new(set_position.outputs["Geometry"], bake_node.inputs["Geometry"])
-        legacy_group.links.new(bake_node.outputs["Geometry"], output_node.inputs["Geometry"])
-        legacy_group["hotools_physics_offset_schema"] = 2
-        legacy_entry = gn_offset.get_gn_offset_bake_entry(modifier)
-        original_bake_pointer = int(bake_node.as_pointer())
-        original_bake_id = int(legacy_entry.bake_id)
-
-        migrated_group = gn_offset.ensure_gn_offset_node_group()
+        cache_modifier = gn_offset.ensure_gn_cache_modifier(obj)
         live_modifier = obj.modifiers.get(world_names.GN_OFFSET_MODIFIER_NAME)
-        cache_modifier = obj.modifiers.get(world_names.GN_CACHE_MODIFIER_NAME)
-        assert migrated_group == live_modifier.node_group
-        assert cache_modifier == modifier
-        assert obj.modifiers.find(live_modifier.name) + 1 == obj.modifiers.find(cache_modifier.name)
+        assert obj.modifiers.find(live_modifier.name) + 1 == obj.modifiers.find(
+            cache_modifier.name
+        )
         bake_node = gn_offset.get_gn_offset_bake_node(cache_modifier.node_group)
-        migrated_entry = gn_offset.get_gn_offset_bake_entry(cache_modifier)
-        assert int(bake_node.as_pointer()) == original_bake_pointer
-        assert int(migrated_entry.bake_id) == original_bake_id
+        bake_entry = gn_offset.get_gn_offset_bake_entry(cache_modifier)
+        original_bake_pointer = int(bake_node.as_pointer())
+        original_bake_id = int(bake_entry.bake_id)
 
         cache_group = cache_modifier.node_group
         cache_group.nodes.new("GeometryNodeJoinGeometry")
@@ -387,7 +363,10 @@ def test_shared_gn_final_offset_contract():
         assert modifier is not None and modifier.node_group is not None
         assert modifier.type == "NODES"
         assert modifier.node_group.name == world_names.GN_OFFSET_NODE_GROUP_NAME
-        assert modifier.node_group["hotools_physics_offset_owner"] == "physicsWorld.writeback"
+        assert (
+            modifier.node_group["hotools_physics_offset_owner"]
+            == "physicsWorld.simple_cloth"
+        )
         assert any(node.bl_idname == "GeometryNodeSetPosition" for node in modifier.node_group.nodes)
         assert not any(node.bl_idname == "GeometryNodeBake" for node in modifier.node_group.nodes)
         assert gn_offset.is_gn_offset_cache_enabled(foreign_obj) is False
@@ -535,7 +514,7 @@ def test_multi_target_gn_transaction_is_all_or_nothing():
 def main():
     test_shared_gn_final_offset_contract()
     test_multi_target_gn_transaction_is_all_or_nothing()
-    print("Physics World shared GN final offset writeback: PASS")
+    print("Simple Cloth GN final offset writeback: PASS")
 
 
 if __name__ == "__main__":

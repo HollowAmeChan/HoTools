@@ -52,7 +52,7 @@ for package_name, package_path in (
     sys.modules[package_name] = module
 
 gn_offset = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.gn_offset"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.output"
 )
 
 

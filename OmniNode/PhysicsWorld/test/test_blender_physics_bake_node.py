@@ -44,10 +44,10 @@ world_types = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.types"
 )
 commands = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.writeback_commands"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.results"
 )
 gn_offset = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.gn_offset"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.output"
 )
 physics_bake = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.bake"

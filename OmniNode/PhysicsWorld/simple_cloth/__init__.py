@@ -22,8 +22,13 @@ _EXPORTS = {
     "SIMPLE_CLOTH_CAPABILITY_ID": ".capabilities",
     "SIMPLE_CLOTH_RNA_FIELDS": ".schema",
     "SimpleClothRuntimeResources": ".authoring",
+    "clear_gn_local_offsets": ".output",
     "ensure_simple_cloth_resources": ".authoring",
+    "ensure_gn_offset_output": ".output",
+    "iter_gn_offset_writebacks": ".results",
+    "make_gn_offset_writeback": ".results",
     "prepare_simple_cloth_panel_objects": ".authoring",
+    "publish_gn_offset_writeback": ".results",
 }
 
 

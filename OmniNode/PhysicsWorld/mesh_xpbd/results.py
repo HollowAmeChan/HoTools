@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..names import GN_ATTRIBUTE_CHANNEL
-from ..writeback_commands import make_gn_offset_writeback
+from ..simple_cloth.results import make_gn_offset_writeback
 from .names import MESH_XPBD_SOLVER_ID, MESH_XPBD_STATS_CHANNEL
 
 

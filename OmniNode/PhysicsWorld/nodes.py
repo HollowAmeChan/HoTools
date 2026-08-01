@@ -562,7 +562,7 @@ def physicsWorldDebugText(
     写回类型（全部基于偏移量语义，归零即复位）：
       · 刚体：Object.delta_location / delta_rotation_euler（不修改原始 location）
       · 骨骼：PoseBone.matrix_basis（offset from rest pose）
-      · GN属性：共享 mesh 顶点最终 offset（OBJECT_LOCAL）
+      · GN属性：Simple Cloth 顶点最终 offset（OBJECT_LOCAL）
 
       GN 写回不为各 solver 创建私有属性。多个中间 offset 必须先在
       world.exchange 中归并，result stream 对每个 Mesh 只接受一个最终 writer。

@@ -6,13 +6,11 @@ from pathlib import Path
 
 import bpy
 
-from ..gn_offset import clear_gn_local_offsets
+from ..simple_cloth.output import clear_gn_local_offsets
+from ..simple_cloth.results import clear_gn_offset_writebacks
 from ..types import PhysicsWorldCache
 from ..writeback import clear_all_deltas
-from ..writeback_commands import (
-    clear_bone_transform_writebacks,
-    clear_gn_offset_writebacks,
-)
+from ..writeback_commands import clear_bone_transform_writebacks
 from .bones import (
     _ACTION_OWNER_KEY,
     _ACTION_OWNER,

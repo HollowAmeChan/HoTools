@@ -40,10 +40,10 @@ physics_blender = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.blender"
 )
 delta_output = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.delta_output"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.delta_output"
 )
 base_pose = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.base_pose"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.base_pose"
 )
 blender_registry = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.blender_registry"
@@ -64,9 +64,12 @@ def main() -> None:
     physics_blender.register()
     try:
         assert physics_blender.is_registered()
-        assert blender_registry.registered_blender_property_domains() == (
-            "collision", "mc2", "rigid", "physics_ui",
+        registered_domains = blender_registry.registered_blender_property_domains()
+        assert registered_domains[0] == "collision"
+        assert registered_domains[-3:] == (
+            "simple_cloth", "rigid", "physics_ui",
         )
+        assert "mc2" not in registered_domains
         assert hasattr(bpy.types.Bone, "hotools_collision")
         assert hasattr(bpy.types.Object, "hotools_object_collision")
         assert hasattr(bpy.types.Object, "hotools_mesh_collision")

@@ -24,7 +24,7 @@ world_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.names"
 )
 gn_offset = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.gn_offset"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.output"
 )
 base_pose = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.simple_cloth.base_pose"

@@ -6,11 +6,9 @@ from collections.abc import Iterable
 import numpy as np
 
 from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
+from ..simple_cloth.results import make_gn_offset_writeback
 from ..utils.writeback_pose import matrix_basis_from_pose_matrix
-from ..writeback_commands import (
-    make_bone_transform_batch_writeback,
-    make_gn_offset_writeback,
-)
+from ..writeback_commands import make_bone_transform_batch_writeback
 from .domain_output import MC2MeshWritebackBatchV1
 from .names import (
     MC2_SETUP_BONE_CLOTH,

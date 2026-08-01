@@ -29,10 +29,10 @@ physics_blender = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.blender"
 )
 base_pose = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.base_pose"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.base_pose"
 )
 gn_offset = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.gn_offset"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.output"
 )
 world_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.names"

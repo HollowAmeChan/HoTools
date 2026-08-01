@@ -30,10 +30,9 @@ physicsWorld/
   blender.py                 # 物理 RNA/UI 根生命周期
   blender_registry.py        # domain 注册、依赖与失败回滚
   registry.py                # component/solver 发现与装卸
-  gn_offset.py               # simple_cloth.output 的底层共享 GN 实现
   bake/                      # 通用 Bake 后端与 session
   collision/                 # Object/Bone collider 共享 capability
-  simple_cloth/              # 简单布料RNA、BasePose/Scene归属与GN资源owner
+  simple_cloth/              # 简单布料RNA、BasePose/Scene归属与独占GN输出owner
   spring_vrm/                # VRM SpringBone
   rigid/                     # Rigid/Jolt
   mc2/                       # 一个 solver，三种 setup

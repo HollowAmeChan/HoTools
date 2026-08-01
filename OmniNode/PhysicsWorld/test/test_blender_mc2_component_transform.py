@@ -38,7 +38,7 @@ frame_input = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.frame_input"
 )
 base_pose = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.setups.mesh_cloth.base_pose"
+    "HoTools.OmniNode.PhysicsWorld.simple_cloth.base_pose"
 )
 physics_blender = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.blender"
