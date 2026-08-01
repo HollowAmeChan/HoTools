@@ -26,6 +26,13 @@ _LAZY_EXPORTS = {
     "MeshXpbdTaskSpec": ".specs",
     "build_mesh_xpbd_task_specs": ".specs",
     "make_mesh_xpbd_slot_id": ".specs",
+    "MeshXpbdTopology": ".topology",
+    "MeshXpbdReferenceFrame": ".topology",
+    "build_mesh_xpbd_topology": ".topology",
+    "build_mesh_xpbd_reference_frame": ".topology",
+    "MeshXpbdColliderFrame": ".colliders",
+    "build_mesh_xpbd_collider_frame": ".colliders",
+    "MeshXpbdNativeContext": ".native",
 }
 
 

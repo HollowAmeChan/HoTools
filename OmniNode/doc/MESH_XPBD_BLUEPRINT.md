@@ -30,7 +30,7 @@ XPBD网格任务
 
 进入冻结里程碑前必须完成：
 
-- evaluated Mesh 静态拓扑与 Basis/reference rest position；
+- source Mesh 静态拓扑与 Basis/reference rest position；modifier 改变顶点身份不属于基础 solver；
 - Object `matrix_world` 动画与世界空间惯性；
 - 二值 Pin 顶点组；
 - 逐顶点外碰半径组；
@@ -83,7 +83,7 @@ x_i += w_i * grad_i(C) * delta_lambda
 - rest local position 来自 Basis/reference Mesh；solver 常驻 position/previous position 使用世界空间。
 - 写回只发布 `current_world - rest_world` 转换后的 object-local offset，不修改 mesh vertex、Basis 或 shape key。
 - object transform 变化时重新派生 rest world、约束长度和世界半径；动态粒子位置保持世界空间惯性。
-- topology signature 必须覆盖 vertex/edge、用于 bend 的 polygon triangulation、rest source identity，不能只比较数量或 edge hash。
+- topology signature 必须覆盖 source Mesh vertex/edge、用于 bend 的 loop triangulation、rest source identity，不能只比较数量或 edge hash。
 - Pin、radius vertex group 和 reference position 变化是静态数组 dirty；数值参数与碰撞掩码是 context 参数 dirty；拓扑变化使用 staged replacement。
 
 `MeshXpbdTaskSpec.topology_identity` 只表达 Object/Data 身份。完整 evaluated mesh 内容签名由后续 topology adapter 生成，不能用指针身份代替内容失效检测。

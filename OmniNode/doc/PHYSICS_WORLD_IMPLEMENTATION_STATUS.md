@@ -66,7 +66,7 @@ physicsWorld/
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
 | MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
-| Mesh XPBD | 严格 XPBD native context 与双 ABI 数值核可用；World runtime 尚未接通 | 独立基础纯 Mesh solver、累计 lambda、纯 nanobind RAII context、四类公共 collider 数值合同见 `MESH_XPBD_BLUEPRINT.md` | 完成 topology/slot/result/writeback vertical slice 后做生产验收，再删除旧双节点/私有 cache 与写回 |
+| Mesh XPBD | native context、source Mesh topology/reference/collider adapter 可用；World runtime 尚未接通 | 独立基础纯 Mesh solver、累计 lambda、纯 nanobind RAII context、四类公共 collider 数值合同见 `MESH_XPBD_BLUEPRINT.md` | 完成 slot/result/writeback vertical slice 后做生产验收，再删除旧双节点/私有 cache 与写回 |
 
 通用力场当前没有 active 能力。任何 solver 中遗留的 wind 名称不代表公共场输入已经存在。
 

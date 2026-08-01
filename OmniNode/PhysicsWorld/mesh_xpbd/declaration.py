@@ -15,7 +15,7 @@ from .names import (
 MESH_XPBD_SOLVER_DECLARATION = {
     "solver_id": MESH_XPBD_SOLVER_ID,
     "slot_kind": MESH_XPBD_SLOT_KIND,
-    "stage": "native_context_complete_world_runtime_not_connected",
+    "stage": "native_adapter_complete_world_runtime_not_connected",
     "runtime_status": "not_available_until_physics_world_vertical_slice",
     "native_strategy": "stateful_nanobind_context_only_no_python_numeric_backend",
     "native_layout_version": MESH_XPBD_NATIVE_LAYOUT_VERSION,
@@ -79,6 +79,7 @@ MESH_XPBD_SOLVER_DECLARATION = {
     "backend_contract": {
         "binding": "nanobind typed ndarray/context",
         "native_context_available": True,
+        "python_adapter_available": True,
         "python_solver_fallback": False,
         "blender_access": False,
         "global_mutable_state": False,
