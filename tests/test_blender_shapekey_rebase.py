@@ -18,6 +18,11 @@ shapekey_package.__path__ = [str(ADDON_DIR / "ShapekeyTools")]
 sys.modules.setdefault("HoTools.ShapekeyTools", shapekey_package)
 
 module = importlib.import_module("HoTools.ShapekeyTools.operators")
+catalog = importlib.import_module("HoTools.ShapekeyTools.shapekey_catalog")
+
+
+def template_names(standard_id):
+    return catalog.get_template_names(standard_id)
 
 
 def activate(obj):
@@ -93,8 +98,8 @@ assert module._fbsf_auto_function_tag("vrc.v_aa") == 'MOUTH'
 assert module._fbsf_auto_function_tag("MouthOpen") == 'MOUTH'
 assert module._fbsf_auto_function_tag("CheekPuff") == 'OTHERS'
 
-# 标准精确词表必须覆盖完整列表；Left/Right 只按各标准的语法解释。
-for shape_name in module.ARKIT_SHAPEKEYS:
+# 标准事实只通过查询函数读取；调用方不再依赖原始全局列表。
+for shape_name in template_names('ARKIT'):
     if shape_name.startswith(('jaw', 'mouth', 'tongue')):
         expected = 'MOUTH'
     elif shape_name.startswith('eye') or shape_name.startswith('cheekSquint'):
@@ -103,24 +108,25 @@ for shape_name in module.ARKIT_SHAPEKEYS:
         expected = 'OTHERS'
     assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
 
-for shape_name in module.UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS:
+unified_base_names = template_names('UNIFIED_EXPRESSIONS_BASE')
+for shape_name in unified_base_names:
     if (
             shape_name.startswith(('Jaw', 'Lip', 'Mouth', 'Tongue'))
             or shape_name == 'SoftPalateClose'):
         expected = 'MOUTH'
-    elif shape_name.startswith(('EyeLook', 'EyeClosed', 'EyeSquint', 'EyeWide')):
-        expected = 'LEFT_EYE' if shape_name.endswith('Left') else 'RIGHT_EYE'
-    elif shape_name.startswith('CheekSquint'):
+    elif shape_name.startswith((
+            'EyeLook', 'EyeClosed', 'EyeSquint', 'EyeWide',
+            'CheekSquint')):
         expected = 'LEFT_EYE' if shape_name.endswith('Left') else 'RIGHT_EYE'
     else:
         expected = 'OTHERS'
     assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-assert len(module.UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS) == 102
-assert module.UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS[-4:] == [
+assert len(unified_base_names) == 102
+assert unified_base_names[-4:] == (
     'SoftPalateClose', 'ThroatSwallow', 'NeckFlexRight', 'NeckFlexLeft',
-]
+)
 
-for shape_name in module.UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS:
+for shape_name in template_names('UNIFIED_EXPRESSIONS_BLEND'):
     if shape_name.startswith(('Lip', 'Mouth')):
         expected = 'MOUTH'
     elif shape_name in {'EyeClosed', 'EyeWide', 'EyeSquint', 'CheekSquint'}:
@@ -133,25 +139,23 @@ meta_mouth_prefixes = (
     'CHIN_', 'DIMPLER_', 'JAW_', 'LIP_', 'LIPS_', 'LOWER_LIP_',
     'MOUTH_', 'TONGUE_', 'UPPER_LIP_',
 )
-for shape_name in module.QUEST_PRO_SHAPEKEYS:
+quest_names = template_names('QUEST_PRO')
+for shape_name in quest_names:
     if shape_name.startswith(meta_mouth_prefixes):
         expected = 'MOUTH'
     elif shape_name.startswith((
-            'EYES_CLOSED_', 'LID_TIGHTENER_', 'UPPER_LID_RAISER_')):
-        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
-    elif shape_name.startswith('EYES_LOOK_'):
-        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
-    elif shape_name.startswith('CHEEK_RAISER_'):
+            'EYES_CLOSED_', 'LID_TIGHTENER_', 'UPPER_LID_RAISER_',
+            'EYES_LOOK_', 'CHEEK_RAISER_')):
         expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
     else:
         expected = 'OTHERS'
     assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-assert len(module.QUEST_PRO_SHAPEKEYS) == 70
-assert len(module.QUEST_PRO_SHAPEKEYS) == len(set(module.QUEST_PRO_SHAPEKEYS))
-assert 'EYES_LOOK_LEFT_L' in module.QUEST_PRO_SHAPEKEYS
-assert 'EYES_LOOK_RIGHT_R' in module.QUEST_PRO_SHAPEKEYS
-assert 'LOWER_LIP_DEPRESSOR_L' in module.QUEST_PRO_SHAPEKEYS
-assert 'LOWER_LIP_DEPRESSER_L' not in module.QUEST_PRO_SHAPEKEYS
+assert len(quest_names) == 70
+assert len(quest_names) == len(set(quest_names))
+assert 'EYES_LOOK_LEFT_L' in quest_names
+assert 'EYES_LOOK_RIGHT_R' in quest_names
+assert 'LOWER_LIP_DEPRESSOR_L' in quest_names
+assert 'LOWER_LIP_DEPRESSER_L' not in quest_names
 for shape_name in (
         'EYES_LOOK_IN_L', 'EYES_LOOK_OUT_R',
         'EYES_SQUINT_L', 'EYES_WIDEN_R'):
@@ -165,103 +169,108 @@ vrm1_expected = {
     'LookUp': 'BOTH_EYES', 'LookDown': 'BOTH_EYES',
     'LookLeft': 'BOTH_EYES', 'LookRight': 'BOTH_EYES',
 }
-for shape_name in module.VRM1_SHAPEKEYS:
+for shape_name in template_names('VRM1'):
     assert module._fbsf_auto_function_tag(shape_name) == (
         vrm1_expected.get(shape_name, 'OTHERS'))
 
-for shape_name in module.OCULUS_VISEME_SHAPEKEYS:
+for shape_name in template_names('OCULUS_VISEME'):
     assert module._fbsf_auto_function_tag(shape_name) == 'MOUTH', shape_name
 
-for shape_name in module.VIVE_SRANIPAL_EYE_SHAPEKEYS:
-    if shape_name == 'Eye_Frown':
-        expected = 'BOTH_EYES'
+for spec in catalog.get_standard_specs(
+        'VIVE_SRANIPAL', templates_only=True):
+    if spec.name.startswith('Eye_'):
+        expected = (
+            'BOTH_EYES' if spec.name == 'Eye_Frown'
+            else 'LEFT_EYE' if '_Left_' in spec.name else 'RIGHT_EYE'
+        )
     else:
-        expected = 'LEFT_EYE' if '_Left_' in shape_name else 'RIGHT_EYE'
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-for shape_name in module.VIVE_SRANIPAL_LIP_SHAPEKEYS:
-    expected = (
-        'OTHERS' if shape_name.startswith('Cheek_') else 'MOUTH')
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+        expected = 'OTHERS' if spec.name.startswith('Cheek_') else 'MOUTH'
+    assert module._fbsf_auto_function_tag(spec.name) == expected, spec.name
 
-for shape_name in module.VIVE_OPENXR_EYE_SHAPEKEYS:
-    expected = 'LEFT_EYE' if '_LEFT_' in shape_name else 'RIGHT_EYE'
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-for shape_name in module.VIVE_OPENXR_LIP_SHAPEKEYS:
-    expected = 'OTHERS' if '_CHEEK_' in shape_name else 'MOUTH'
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
+for spec in catalog.get_standard_specs('VIVE_OPENXR', templates_only=True):
+    if spec.name.startswith('XR_EYE_'):
+        expected = 'LEFT_EYE' if '_LEFT_' in spec.name else 'RIGHT_EYE'
+    else:
+        expected = 'OTHERS' if '_CHEEK_' in spec.name else 'MOUTH'
+    assert module._fbsf_auto_function_tag(spec.name) == expected, spec.name
 
+standard_ids = tuple(info.identifier for info in catalog.list_standards())
 assert {
     'VRM1', 'META_VISEME', 'PICO', 'OCULUS_VISEME',
     'VIVE_SRANIPAL', 'VIVE_OPENXR',
-}.issubset(module.SHAPEKEY_TEMPLATE_MAP)
-assert tuple(module.SHAPEKEY_TEMPLATE_MAP) == tuple(
-    spec.identifier for spec in module.SHAPEKEY_STANDARD_SPECS)
-assert tuple(item[0] for item in module.SHAPEKEY_TEMPLATE_ITEMS) == tuple(
-    module.SHAPEKEY_TEMPLATE_MAP)
-for template_name, shape_names in module.SHAPEKEY_TEMPLATE_MAP.items():
-    assert len(shape_names) == len(set(shape_names)), template_name
-assert tuple(module.SHAPEKEY_STANDARDS) == tuple(
-    module.SHAPEKEY_TEMPLATE_MAP)
-assert set(module._FBSF_EXACT_PRESETS) == set(module.SHAPEKEY_CATALOG)
+}.issubset(standard_ids)
+assert tuple(item[0] for item in catalog.get_standard_items()) == standard_ids
+for standard_id in standard_ids:
+    names = template_names(standard_id)
+    assert len(names) == len(set(names)), standard_id
+
+assert catalog.find_shape_keys(
+    'vrc.blink (3.0)', 'VRCHAT')[0].role == 'ALIAS'
+assert catalog.find_shape_keys('ジト目', 'MMD')[0].role == 'ALIAS'
+assert catalog.find_shape_keys('口横狭め', 'MMD')[0].role == 'ALIAS'
+assert 'vrc.blink (3.0)' not in template_names('VRCHAT')
+assert 'ジト目' not in template_names('MMD')
+assert module._fbsf_auto_function_tag('vrc.blink (3.0)') == 'BOTH_EYES'
+assert module._fbsf_auto_function_tag('ジト目') == 'BOTH_EYES'
+assert module._fbsf_auto_function_tag('口横狭め') == 'MOUTH'
+
+# 大小写精确匹配保留每个标准自己的记录，不再提前折叠成一条。
+assert {
+    spec.standard for spec in catalog.find_shape_keys('eyeLookUpLeft')
+} == {'ARKIT'}
+assert {
+    spec.standard for spec in catalog.find_shape_keys('EyeLookUpLeft')
+} == {'UNIFIED_EXPRESSIONS_BASE'}
+assert {
+    spec.standard for spec in catalog.find_shape_keys('Aa')
+} == {'VRM1'}
+assert module._fbsf_auto_preset('eyeLookUpLeft').standards == frozenset({
+    'ARKIT',
+})
+assert module._fbsf_auto_preset('Aa').standards == frozenset({'VRM1'})
+assert module._fbsf_auto_preset('eyeBlinkLeft').side_reliable
+assert not module._fbsf_auto_preset('vrc.blink').side_reliable
+
 eye_side_tags = {
     'BOTH': 'BOTH_EYES',
     'LEFT': 'LEFT_EYE',
     'RIGHT': 'RIGHT_EYE',
 }
-for normalized, entry in module.SHAPEKEY_CATALOG.items():
-    preset = module._FBSF_EXACT_PRESETS[normalized]
-    if entry.region == 'MOUTH':
-        expected_function = expected_reference = 'MOUTH'
-    elif entry.region == 'EYE':
-        expected_function = eye_side_tags[entry.side]
-        expected_reference = (
-            expected_function if entry.semantic == 'EYELID' else 'OTHERS')
-    else:
-        expected_function = expected_reference = 'OTHERS'
-    assert preset.function_tag == expected_function, normalized
-    assert preset.reference_tag == expected_reference, normalized
-    assert preset.standards == entry.standards, normalized
-    assert preset.semantic == entry.semantic, normalized
-assert module._FBSF_STRONG_SIDE_STANDARDS == frozenset({
-    'ARKIT', 'META', 'PICO', 'UNIFIED_BASE', 'VRM', 'VRM1',
-    'VIVE_SRANIPAL', 'VIVE_OPENXR',
-})
-recognized_normalized_names = {
-    module._fbsf_normalized_name(shape_name)
-    for spec in module.SHAPEKEY_STANDARD_SPECS
-    for shape_name in spec.recognized_names
-}
-assert set(module._FBSF_EXACT_PRESETS) <= recognized_normalized_names
-assert 'vrc.blink (3.0)' not in module.SHAPEKEY_TEMPLATE_MAP['VRCHAT']
-assert 'ジト目' not in module.SHAPEKEY_TEMPLATE_MAP['MMD']
-assert module._fbsf_auto_function_tag('vrc.blink (3.0)') == 'BOTH_EYES'
-assert module._fbsf_auto_function_tag('ジト目') == 'BOTH_EYES'
-assert module._fbsf_auto_function_tag('口横狭め') == 'MOUTH'
-assert {
-    'ARKIT', 'UNIFIED_BASE',
-}.issubset(module._fbsf_auto_preset('eyeLookUpLeft').standards)
-assert {
-    'VRM1', 'META_VISEME', 'PICO',
-}.issubset(module._fbsf_auto_preset('Aa').standards)
+for standard_id in standard_ids:
+    for spec in catalog.get_standard_specs(standard_id):
+        if spec.context is not None:
+            continue
+        classification = catalog.classify_shape_key(spec.name)
+        if classification.region == 'MOUTH':
+            expected = 'MOUTH'
+        elif classification.region == 'EYE':
+            expected = eye_side_tags[classification.side]
+        else:
+            expected = 'OTHERS'
+        assert module._fbsf_auto_function_tag(spec.name) == expected, (
+            standard_id, spec.name)
 
-for shape_name in module._FBSF_PICO_EYE_ANCHORS + module._FBSF_PICO_EYE_GAZE:
-    expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-for shape_name in module._FBSF_PICO_MOUTH:
-    assert module._fbsf_auto_function_tag(shape_name) == 'MOUTH', shape_name
-for shape_name in module._FBSF_PICO_OTHER:
-    if shape_name.startswith('CheekSquint_'):
-        expected = 'LEFT_EYE' if shape_name.endswith('_L') else 'RIGHT_EYE'
+pico_specs = catalog.get_standard_specs('PICO', templates_only=True)
+pico_long = tuple(spec for spec in pico_specs if 'PICO_LONG' in spec.tags)
+pico_visemes = tuple(
+    spec for spec in pico_specs if spec.context == 'PICO_VISEME')
+assert len(pico_long) == 52
+assert len(pico_visemes) == 20
+assert len(pico_specs) == 72
+for spec in pico_long:
+    if spec.region == 'MOUTH':
+        expected = 'MOUTH'
+    elif spec.region == 'EYE':
+        expected = eye_side_tags[spec.side]
     else:
         expected = 'OTHERS'
-    assert module._fbsf_auto_function_tag(shape_name) == expected, shape_name
-assert len(module._FBSF_PICO_SHAPEKEYS) == 52
-assert len(module._FBSF_PICO_VISEMES) == 20
-assert len(module.PICO_SHAPEKEYS) == 72
-pico_context = module._FBSF_PICO_SHAPEKEYS + module._FBSF_PICO_VISEMES
-for shape_name in module._FBSF_PICO_VISEMES:
+    assert module._fbsf_auto_function_tag(spec.name) == expected, spec.name
+pico_context = tuple(spec.name for spec in pico_specs)
+for spec in pico_visemes:
     assert module._fbsf_auto_function_tag(
-        shape_name, pico_context) == 'MOUTH', shape_name
+        spec.name, pico_context) == 'MOUTH', spec.name
+
+
 
 # 323 个 PMX 的类别统计支持这些 MMD 眼皮和嘴部名称；眉毛、瞳孔保持其他。
 for shape_name in (
@@ -299,8 +308,9 @@ for shape_name in ('A', 'I', 'U', 'E', 'O'):
     assert module._fbsf_auto_function_tag(
         shape_name, vrm_context) == 'MOUTH'
 assert module._fbsf_auto_function_tag('A') == 'OTHERS'
-meta_context = tuple(module.QUEST_PRO_SHAPEKEYS + module.META_VISEME_SHAPEKEYS)
-for shape_name in module.META_VISEME_SHAPEKEYS:
+meta_visemes = template_names('META_VISEME')
+meta_context = quest_names + meta_visemes
+for shape_name in meta_visemes:
     assert module._fbsf_auto_function_tag(
         shape_name, meta_context) == 'MOUTH', shape_name
 assert module._fbsf_auto_function_tag('XX', meta_context) == 'OTHERS'
@@ -340,8 +350,7 @@ keyword_disagreement[:4, 1] = 1.0
 keyword_disagreement[4, 1] = 10.0
 
 assert module._fbsf_auto_function_tag('custom_wink') == 'OTHERS'
-assert module._fbsf_normalized_name(
-    'custom_wink') not in module._FBSF_EXACT_PRESETS
+assert not catalog.classify_shape_key('custom_wink').known
 assert module._fbsf_keyword_eye_name('FaceWinkLeft') == ('WINK', True)
 assert module._fbsf_keyword_eye_name('faceblinkleft') == ('BLINK', True)
 assert module._fbsf_keyword_eye_name('auto_blink') == ('BLINK', False)
@@ -890,7 +899,7 @@ try:
         "EXEC_DEFAULT", shapekey_list='VRCHAT')
     assert result == {'FINISHED'}
     template_keys = template_obj.data.shape_keys.key_blocks
-    for shape_name in module.SHAPEKEY_TEMPLATE_MAP['VRCHAT']:
+    for shape_name in catalog.get_template_names('VRCHAT'):
         assert template_keys.get(shape_name) is not None, shape_name
     assert template_keys.get('vrc.blink (3.0)') is None
 finally:

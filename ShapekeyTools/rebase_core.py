@@ -10,10 +10,8 @@ from Utils import shapekey_utils
 
 try:
     from . import shapekey_catalog as _shape_key_catalog
-    from .shapekey_catalog import *
 except ImportError:  # 兼容直接导入脚本
     import shapekey_catalog as _shape_key_catalog
-    from shapekey_catalog import *
 
 
 class ShapeKeyRebaseError(RuntimeError):
@@ -38,13 +36,6 @@ _FBSF_TAG_CHANNELS = {
     'MOUTH': frozenset({'MOUTH'}),
     'OTHERS': frozenset(),
 }
-_FBSF_STRONG_SIDE_STANDARDS = frozenset(
-    spec.classifier_id
-    for spec in SHAPEKEY_STANDARD_SPECS
-    if spec.reliable_side
-)
-
-
 def _fbsf_tag_channels(function_tag):
     return _FBSF_TAG_CHANNELS.get(function_tag, frozenset())
 
@@ -55,6 +46,7 @@ class _FBSFShapePreset:
     reference_tag: str = 'OTHERS'
     standards: frozenset = frozenset()
     semantic: str = 'OTHER'
+    side_reliable: bool = False
 
     @property
     def standard(self):
@@ -173,89 +165,24 @@ def _fbsf_catalog_entry_to_preset(entry):
     return _FBSFShapePreset(
         function_tag,
         reference_tag,
-        entry.standards,
+        entry.families,
         entry.semantic,
+        entry.side_reliable,
     )
 
 
-_FBSF_EXACT_PRESETS = {
-    normalized: _fbsf_catalog_entry_to_preset(entry)
-    for normalized, entry in SHAPEKEY_CATALOG.items()
-}
-
-_FBSF_PICO_EYE_ANCHORS = tuple(
-    name for name in PICO_EYE_SHAPEKEYS
-    if any(token in name for token in ('Blink', 'Squint', 'Wide'))
-)
-_FBSF_PICO_EYE_GAZE = tuple(
-    name for name in PICO_EYE_SHAPEKEYS if 'Look' in name
-)
-_FBSF_PICO_MOUTH = tuple(PICO_MOUTH_SHAPEKEYS)
-_FBSF_PICO_OTHER = tuple(PICO_OTHER_SHAPEKEYS)
-_FBSF_PICO_SHAPEKEYS = tuple(
-    PICO_EYE_SHAPEKEYS + PICO_MOUTH_SHAPEKEYS + PICO_OTHER_SHAPEKEYS
-)
-_FBSF_PICO_VISEMES = tuple(PICO_VISEME_SHAPEKEYS)
-_FBSF_PICO_LONG_NAMES = frozenset(
-    _fbsf_normalized_name(name)
-    for name in _FBSF_PICO_SHAPEKEYS
-)
-
-_FBSF_VRM0_CONTEXT_VISEMES = frozenset({'a', 'i', 'u', 'e', 'o'})
-_FBSF_PICO_CONTEXT_VISEMES = frozenset(
-    _fbsf_normalized_name(name) for name in PICO_VISEME_SHAPEKEYS
-)
-_FBSF_META_CONTEXT_VISEMES = frozenset(
-    _fbsf_normalized_name(name) for name in META_VISEME_SHAPEKEYS
-)
-
-
 def _fbsf_classification_context(shape_names):
-    normalized = {
-        _fbsf_normalized_name(name)
-        for name in (shape_names or ())
-    }
-    vrm_vowels = len(normalized & {'a', 'i', 'u', 'e', 'o'})
-    vrm_marker = bool(normalized & {
-        'blink', 'blink_l', 'blink_r', 'joy', 'angry', 'sorrow', 'fun',
-        'lookup', 'lookdown', 'lookleft', 'lookright',
-    })
-    meta_names = {
-        _fbsf_normalized_name(name)
-        for name in QUEST_PRO_SHAPEKEYS
-    }
-    short_visemes = set()
-    if vrm_vowels == 5 or (vrm_vowels >= 3 and vrm_marker):
-        short_visemes.update(_FBSF_VRM0_CONTEXT_VISEMES)
-    pico_count = len(normalized & _FBSF_PICO_CONTEXT_VISEMES)
-    if (
-            len(normalized & _FBSF_PICO_LONG_NAMES) >= 4
-            or ('xx' in normalized and pico_count >= 5)):
-        short_visemes.update(_FBSF_PICO_CONTEXT_VISEMES)
-    meta_count = len(normalized & _FBSF_META_CONTEXT_VISEMES)
-    if len(normalized & meta_names) >= 4 or meta_count >= 5:
-        short_visemes.update(_FBSF_META_CONTEXT_VISEMES)
-    return {
-        'normalized': normalized,
-        'short_visemes': frozenset(short_visemes),
-    }
+    return _shape_key_catalog.build_shape_key_context(shape_names)
 
 
 def _fbsf_auto_preset(shape_name, shape_names=None, context=None):
     """以精确标准语义优先，保守识别一个形态键的 FBSF 权能。"""
-    normalized = _fbsf_normalized_name(shape_name)
-    if context is None:
-        context = _fbsf_classification_context(shape_names)
-    exact = _FBSF_EXACT_PRESETS.get(normalized)
-    if exact is not None and not (
-            exact.function_tag == 'OTHERS'
-            and normalized in context['short_visemes']):
-        return exact
-
-    if normalized in context['short_visemes']:
-        return _FBSFShapePreset(
-            'MOUTH', 'MOUTH', frozenset({'CONTEXT'}), 'VISEME')
-    return _FBSFShapePreset()
+    classification = _shape_key_catalog.classify_shape_key(
+        shape_name,
+        shape_names,
+        context=context,
+    )
+    return _fbsf_catalog_entry_to_preset(classification)
 
 
 def _fbsf_auto_function_tag(shape_name, shape_names=None, context=None):
@@ -507,7 +434,7 @@ def _fbsf_resolve_target_side_tags(
                 if len(reference_eye_channels) != 1:
                     continue
                 preset = _fbsf_auto_preset(shape_name, context=context)
-                if preset.standards.isdisjoint(_FBSF_STRONG_SIDE_STANDARDS):
+                if not preset.side_reliable:
                     continue
                 standard_orientation.append(
                     (reference_tag, target_delta(shape_name)))

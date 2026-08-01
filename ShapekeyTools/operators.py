@@ -22,9 +22,17 @@ SHAPE_KEY_RENAME_MAP = {
     '.L': '.R'
 }  # 用于OP_GenerateMirroredShapekey，镜像并修改名称
 try:
-    from .shapekey_catalog import *
+    from .shapekey_catalog import (
+        get_standard,
+        get_standard_items,
+        get_template_names,
+    )
 except ImportError:  # 兼容直接导入脚本
-    from shapekey_catalog import *
+    from shapekey_catalog import (
+        get_standard,
+        get_standard_items,
+        get_template_names,
+    )
 
 
 # 监听器缓存
@@ -1346,7 +1354,7 @@ class OP_AddShapekeysByTemplate(Operator):
     shapekey_list: bpy.props.EnumProperty(
         name="预设",
         description="选择要添加的预设列表",
-        items=SHAPEKEY_TEMPLATE_ITEMS,
+        items=get_standard_items(),
         default='ARKIT',
     )  # type: ignore
 
@@ -1364,10 +1372,10 @@ class OP_AddShapekeysByTemplate(Operator):
             shapekey_utils.ensure_basis_shape_key(obj)
 
         # 一键添加和变基分类共同引用同一份标准目录。
-        shapekey_names = SHAPEKEY_TEMPLATE_MAP.get(self.shapekey_list)
-        if shapekey_names is None:
+        if get_standard(self.shapekey_list) is None:
             self.report({'ERROR'}, "无效的形态键列表")
             return {'CANCELLED'}
+        shapekey_names = get_template_names(self.shapekey_list)
 
         # 获取形态键数据
         shape_keys = obj.data.shape_keys.key_blocks

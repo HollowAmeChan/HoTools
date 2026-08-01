@@ -1,4 +1,4 @@
-"""旧预设模块兼容层；新代码请使用 :mod:`shapekey_catalog`。"""
+"""保留旧模块名的查询入口；新代码请使用 :mod:`shapekey_catalog`。"""
 
 try:
     from .shapekey_catalog import *
