@@ -84,6 +84,8 @@ Bone socket / chain -> MC2 BoneCloth自定义对象（socket完整属性） ─�
 
 ### BoneSpring
 
+> **退役边界（2026-08-01）**：BoneSpring 已退出长期产品路线。下述直接 setup domain 只记录删除前的 legacy 数据流；不再把它改造成 BoneCloth 式的对象、完整分区和 collector 链路，也不为它增加新的 Physics World 或 backend 能力。通用 MC2 骨链改用 BoneCloth Line，兼容性骨链改用 SpringBone VRM。公开节点、setup 分支、测试与文档应在退役清理中成套删除，不能只隐藏节点留下永久分支。
+
 BoneSpring 当前保持直接的 setup domain：
 
 ```text

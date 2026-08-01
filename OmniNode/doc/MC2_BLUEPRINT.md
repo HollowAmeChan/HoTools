@@ -22,6 +22,18 @@
 
 ## 当前定位
 
+### BoneSpring 退役决定（2026-08-01）
+
+MC2 BoneSpring 不再是 OmniNode 的长期产品 setup。当前代码中仍存在的 BoneSpring 节点、`bone_spring` setup、CPU 参数归一化和验收记录属于待退役 legacy surface，只用于描述删除前的真实状态，不构成继续补齐能力、节点域对称性或后端支持的承诺。
+
+- 不再为 BoneSpring 增加对象适配器、完整分区、专用 collector、新碰撞形状、自碰撞、GPU provider 或其他新功能；不得为了与 MeshCloth/BoneCloth 对称而重构它。
+- 通用 MC2 骨链模拟统一使用 BoneCloth Line 配置；需要 VRM 资产与运行时语义时使用独立 SpringBone VRM solver。
+- BoneSpring 相对 BoneCloth Line 仅保留固定参数裁剪和 `collision_limit_distance` soft-sphere 限制等局部差异。这些差异不足以维持第三套公开 setup；若未来出现经过验证的真实需求，应以独立 BoneCloth 可选能力重新设计，而不是恢复 BoneSpring 产品身份。
+- 上游 MC2 源码仍包含 BoneSpring 不能作为保留理由。只有明确的 MagicaCloth2 BoneSpring 资产导入/数值兼容需求才允许重新评估，而且必须作为新的兼容项目立项。
+- 删除时必须同步清理公开节点、setup/declaration、运行时分支、debug/capability、CPU/GPU 矩阵、测试和本文中的现状清单；不得只隐藏节点而永久保留跨层分支。
+
+因此，本文后续出现的 BoneSpring 表格和约束均是 legacy 行为清单，服务于退役审计，不是未来能力矩阵。
+
 MC2是统一Physics World中的布料/骨链solver vertical slice，支持：
 
 - MeshCloth、BoneCloth、BoneSpring三种setup。

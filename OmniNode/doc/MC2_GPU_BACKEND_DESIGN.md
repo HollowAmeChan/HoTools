@@ -6,6 +6,8 @@
 
 MC2 已有一个完整、可独立运行的 CPU DomainV1：三种 setup 共用统一 product request、compiled domain、固定 mixed pass、whole-domain self、logical output 和多目标事务。P6 已把逻辑 SoA、pass 依赖、dirty span、动态容量、单向 IO、请求式 debug 和数值 tolerance 固定为机器合同，但尚未创建 GPU runtime、GPU 资源或产品 backend 选择。
 
+其中 BoneSpring 是 CPU 代码中尚未删除的 legacy setup，不属于 E6 GPU 交付范围。GPU capability、provider、shader、fixture、shadow 对拍和验收矩阵只覆盖 MeshCloth 与 BoneCloth；不得为了复刻 BoneSpring 的固定参数裁剪或 soft-sphere limit 增加第三套 GPU 分支。需要 MC2 骨链时使用 BoneCloth Line，需要兼容性弹簧骨时使用 SpringBone VRM。本文后续提到三种 setup 共享 pass 或 BoneSpring 限制的段落只描述当前 CPU 输入事实，不能解释为 GPU 支持要求。
+
 E6 的任务是新增一个消费相同逻辑合同的 GPU backend。它不是把 CPU solver 改写成“CPU/GPU 共用内核”，也不是逐步用 GPU 分支侵入 `mc2_domain_cpu`。
 
 ## 第一原则：GPU 不得影响 CPU 解算器
