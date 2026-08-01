@@ -82,6 +82,7 @@ class PhysicsFrameContext:
     """
 
     __slots__ = (
+        "initialized",
         "scene_key",
         "frame",
         "previous_frame",
@@ -91,12 +92,16 @@ class PhysicsFrameContext:
         "restart_required",
         "raw_dt",
         "dt",
+        "frame_step_dt",
+        "timeline_time_seconds",
+        "sample_time_seconds",
         "time_scale",
         "substeps",
         "generation",
     )
 
     def __init__(self) -> None:
+        self.initialized: bool = False
         self.scene_key: str = ""
         self.frame: int = 0
         self.previous_frame: int | None = None
@@ -106,12 +111,16 @@ class PhysicsFrameContext:
         self.restart_required: bool = True
         self.raw_dt: float = 0.0
         self.dt: float = 0.0
+        self.frame_step_dt: float = 0.0
+        self.timeline_time_seconds: float = 0.0
+        self.sample_time_seconds: float = 0.0
         self.time_scale: float = 1.0
         self.substeps: int = 1
         self.generation: int = 0
 
     def to_debug_dict(self) -> dict:
         return {
+            "initialized": self.initialized,
             "scene_key": self.scene_key,
             "frame": self.frame,
             "previous_frame": self.previous_frame,
@@ -121,10 +130,22 @@ class PhysicsFrameContext:
             "restart_required": self.restart_required,
             "raw_dt": round(self.raw_dt, 6),
             "dt": round(self.dt, 6),
+            "frame_step_dt": round(self.frame_step_dt, 6),
+            "timeline_time_seconds": round(self.timeline_time_seconds, 9),
+            "sample_time_seconds": round(self.sample_time_seconds, 9),
             "time_scale": self.time_scale,
             "substeps": self.substeps,
             "generation": self.generation,
         }
+
+    def substep_sample_time_seconds(self, substep_index: int) -> float:
+        """返回当前物理步指定子步开始时的唯一采样时间。"""
+        index = int(substep_index)
+        if index < 0 or index >= self.substeps:
+            raise ValueError(
+                f"substep_index 必须位于 0..{self.substeps - 1}，收到 {index}"
+            )
+        return self.sample_time_seconds + self.frame_step_dt * index / self.substeps
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +670,9 @@ class PhysicsWorldCache:
             "same_frame": fc.same_frame,
             "restart_required": fc.restart_required,
             "dt": round(fc.dt, 6),
+            "frame_step_dt": round(fc.frame_step_dt, 6),
+            "timeline_time_seconds": round(fc.timeline_time_seconds, 9),
+            "sample_time_seconds": round(fc.sample_time_seconds, 9),
             "time_scale": fc.time_scale,
             "substeps": fc.substeps,
             "objects": self.collider_snapshot.get("object_count", 0),
