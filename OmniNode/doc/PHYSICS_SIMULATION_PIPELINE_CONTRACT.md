@@ -576,6 +576,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 - 需要backend中间态的solver debug采用隐式请求：debug节点自动发现world内所属slot，只登记scope/过滤器。substep中间态在下一次真实推进后冻结；若某层观察的是scheduler前的新帧判定（例如Teleport阈值/触发），domain必须显式声明其producer阶段，并允许在zero-substep新帧冻结。same-frame和没有到达声明生产阶段的调用不得伪造新快照。
 - 未登记请求时禁止执行中间态native readback和逐项viewport几何展开。持续显示由`always_run`调试节点逐帧重新登记一次性请求表达，不把调试成本永久塞进solver主循环。
 - renderer只消费冻结的只读数组/普通值与真实result stream，禁止读取当前RNA或从最终输出反推约束、碰撞、teleport等backend过程；world dispose必须清除对应draw store。
+- solver 持有的模块级 draw store、viewport handler 或其它 world 外资源，必须在 `SOLVER_MODULE.world_dispose_handlers` 中声明 `(world, reason)` hook。`PhysicsWorldCache.omni_cache_dispose()` 只经 `physicsWorld.registry` 调度这些 hook，不得导入或点名具体 solver；hook 按 world identity 清理自己的条目，最后一个条目移除后必须卸载宿主 handler。runtime owner 替换、Cache Delete、`clear_all()`、load/undo 与插件注销因此共享同一条释放路径。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
 - 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。空间查询必须在 domain adapter 内把 backend handle 转成 stable slot id 后再发布，例如 rigid/Jolt 的 `rigid_query_result`。
 

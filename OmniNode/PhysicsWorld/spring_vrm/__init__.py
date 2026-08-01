@@ -25,6 +25,9 @@ SOLVER_MODULE = {
     "nodes": (".nodes",),
     "capabilities": ".capabilities:SPRING_VRM_CAPABILITIES",
     "debug_draw_modes": ".debug:SPRING_VRM_DEBUG_DRAW_MODES",
+    "world_dispose_handlers": (
+        ".debug_draw:dispose_spring_vrm_debug_draw_for_world",
+    ),
 }
 
 

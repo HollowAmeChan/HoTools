@@ -51,6 +51,9 @@ blender_registry = importlib.import_module(
 solver_registry = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.registry"
 )
+world_types = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.types"
+)
 physics_panels = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.ui.panels"
 )
@@ -73,17 +76,36 @@ def main() -> None:
             mc2_source_observation._mc2_depsgraph_update_post
             in bpy.app.handlers.depsgraph_update_post
         )
+        assert {
+            entry["domain"]
+            for entry in solver_registry.iter_world_dispose_handlers()
+        } == {"spring_vrm", "rigid", "mc2", "mesh_xpbd"}
         lifecycle_events = []
+        dispose_events = []
         dynamic_lifecycle = types.SimpleNamespace(
             register=lambda: lifecycle_events.append("register"),
             unregister=lambda: lifecycle_events.append("unregister"),
         )
         solver_registry.register_solver_module(
             "test_blender_lifecycle",
-            {"blender_lifecycle": dynamic_lifecycle},
+            {
+                "blender_lifecycle": dynamic_lifecycle,
+                "world_dispose_handlers": (
+                    lambda world, reason: dispose_events.append(
+                        (str(id(world)), str(reason))
+                    ),
+                ),
+            },
         )
-        assert lifecycle_events == ["register"]
-        solver_registry.unregister_solver_module("test_blender_lifecycle")
+        try:
+            assert lifecycle_events == ["register"]
+            lifecycle_world = world_types.PhysicsWorldCache()
+            lifecycle_world.omni_cache_dispose("registry_lifecycle_test")
+            assert dispose_events == [
+                (str(id(lifecycle_world)), "registry_lifecycle_test")
+            ]
+        finally:
+            solver_registry.unregister_solver_module("test_blender_lifecycle")
         assert lifecycle_events == ["register", "unregister"]
         assert delta_output.PhysicsDeltaOutputSpec is type(base_pose.MC2_DELTA_SPEC)
 

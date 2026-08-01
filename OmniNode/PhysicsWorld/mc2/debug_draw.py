@@ -284,6 +284,10 @@ def clear_mc2_debug_draw_store(
     _tag_view3d_redraw()
 
 
+def dispose_mc2_debug_draw_for_world(world, _reason: str = "") -> None:
+    clear_mc2_debug_draw_store(world_id=str(id(world)))
+
+
 def mc2_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     item = _MC2_DRAW_STORE.get(str(node_uid))
     if item is None:
@@ -2605,6 +2609,7 @@ def _tag_view3d_redraw():
 
 __all__ = [
     "clear_mc2_debug_draw_store",
+    "dispose_mc2_debug_draw_for_world",
     "mc2_debug_draw_store_snapshot",
     "update_mc2_debug_draw_store",
 ]

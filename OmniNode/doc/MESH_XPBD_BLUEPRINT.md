@@ -102,6 +102,7 @@ x_i += w_i * grad_i(C) * delta_lambda
 - 默认 `collided_by_groups = 0` 是明确的 opt-in 外碰语义，不是“全部组”的哨兵值。
 - solver step 不写 Blender。真实 GN attribute/modifier 和 `update_tag` 由公共 writeback 管理。
 - Cache Delete、runtime clear、load/undo、插件注销和不兼容 native 版本必须 dispose native context。
+- `XPBD可视化调试` 的 draw store 与 viewport handler 通过 solver module 的 `world_dispose_handlers` 归属当前 world owner；跳帧产生的 cache replace、Cache Delete 和 `OmniRuntimeState.clear_all()` 必须按 world identity 清理旧条目，最后一个条目消失时移除 handler。
 
 ## Native 边界
 
@@ -137,6 +138,7 @@ Context.dispose()
 - debug 至少公开 frame decision、slot status、particle/stretch/bend/collider counts、step time、non-finite guard 和 native context generation。
 - debug 观察 production pass，不另跑一遍 shadow solver。
 - `XPBD可视化调试` 独立位于模拟步下游；任一视图开启后才请求下一次 solver 捕获，全部关闭时清除快照并移除视口 draw handler。
+- 调试节点不拥有第二套帧生命周期。world owner 被 runtime 替换或销毁时，即使节点本帧没有再次执行，注册表调度的 dispose hook 也必须清除其冻结快照和视口 handler。
 - 可视化覆盖 Move/Pin 粒子、当前三角面、Stretch/Bend 相对 rest 误差、rest 偏移、表面法线、任务重力、逐粒子半径、实际消费的四类公共碰撞体，以及最终位置的接触接近/残余穿透审计。
 - 任务筛选、每类显示上限、约束误差阈值、接触边距和显示缩放只影响调试读取与绘制，不进入 solver 参数或 dirty key。
 

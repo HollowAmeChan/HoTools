@@ -123,6 +123,7 @@ def _default_descriptor(domain: str) -> dict:
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
+        "world_dispose_handlers": (),
         "blender_lifecycle": None,
     }
 
@@ -276,6 +277,10 @@ def iter_scope_collectors() -> list[dict]:
 
 def iter_scope_restart_handlers() -> list[dict]:
     return _iter_hooks("scope_restart_handlers")
+
+
+def iter_world_dispose_handlers() -> list[dict]:
+    return _iter_hooks("world_dispose_handlers")
 
 
 def resolve_solver_declaration(domain: str):
@@ -701,4 +706,20 @@ def collect_scope_solver_specs(world, scope) -> int:
             count += 1
         except Exception as exc:
             _record_hook_error(world, entry.get("domain", ""), "scope_collectors", exc)
+    return count
+
+
+def run_world_dispose_handlers(world, reason: str) -> int:
+    """Release solver-owned resources that live outside the world owner."""
+    count = 0
+    for domain, descriptor in all_solver_module_descriptors().items():
+        for hook_ref in _as_tuple(descriptor.get("world_dispose_handlers")):
+            try:
+                hook = _resolve_hook(domain, hook_ref)
+                if hook is None:
+                    continue
+                hook(world, str(reason or "dispose"))
+                count += 1
+            except Exception as exc:
+                _record_hook_error(world, domain, "world_dispose_handlers", exc)
     return count

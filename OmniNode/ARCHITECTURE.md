@@ -255,6 +255,8 @@ def omni_cache_dispose(self, reason: str) -> None:
 
 dispose 必须幂等且不得抛异常。高封装节点或 domain owner 如果判定 cache 脏、输入不连续、结构变化或外部资源无效，可以先自行 dispose 并重建；后续 runtime cache 再遇到替换或清理时重复调用 dispose 不应出错。
 
+cache owner 还必须传递释放它所拥有的外部资源。业务模块若持有 viewport handler、模块级 draw store 等不能直接放进 cache 的资源，应通过该业务扩展注册表声明 owner dispose hook；公共 runtime/cache owner 只调度通用 hook，不得导入或点名具体业务模块。owner 被替换、删除或全局清理时，hook 必须按 owner identity 只清理对应资源，并在最后一个条目消失时卸载宿主 handler。
+
 Cache Write 节点的 socket 不暴露写入模式，编译器仍然只生成同一种 `CacheWriteCall`。写入模式是函数节点返回值上的内部意图：
 
 ```python

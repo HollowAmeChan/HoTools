@@ -22,6 +22,9 @@ SOLVER_MODULE = {
     "capabilities": ".capabilities:MC2_CAPABILITIES",
     "debug_draw_modes": ".debug:MC2_DEBUG_DRAW_MODES",
     "blender_lifecycle": ".source_observation_blender",
+    "world_dispose_handlers": (
+        ".debug_draw:dispose_mc2_debug_draw_for_world",
+    ),
 }
 
 

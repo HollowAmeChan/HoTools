@@ -21,6 +21,9 @@ SOLVER_MODULE = {
     "scope_collectors": (
         ".scope_sync:collect_rigid_specs_from_scope",
     ),
+    "world_dispose_handlers": (
+        ".debug_draw:dispose_rigid_debug_draw_for_world",
+    ),
 }
 
 

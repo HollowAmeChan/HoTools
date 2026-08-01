@@ -35,6 +35,18 @@ xpbd_debug = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mesh_xpbd.de
 xpbd_debug_draw = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mesh_xpbd.debug_draw"
 )
+runtime_state = importlib.import_module("HoTools.OmniNode.OmniRuntimeState")
+
+
+class _RuntimeTree:
+    def as_pointer(self):
+        return id(self)
+
+
+def _commit_runtime_world(tree, world) -> None:
+    context = runtime_state.begin_run(tree)
+    runtime_state.write_cache(context, "physics_world", world)
+    runtime_state.finish_run(context)
 
 
 def test_node_socket_annotations_are_resolved():
@@ -148,8 +160,51 @@ def test_debug_draw_node_builds_all_view_batches_and_clears_on_disable():
 
     nodes.physicsMeshXpbdDebugDraw(world)
     assert xpbd_debug_draw.mesh_xpbd_debug_draw_store_snapshot(str(id(world))) is None
+    assert xpbd_debug_draw._XPBD_DRAW_HANDLE is None
     assert xpbd_debug.mesh_xpbd_debug_capture_requested(slot) is False
     assert "debug_capture" not in slot.data
+
+
+def test_debug_draw_store_follows_runtime_world_lifecycle():
+    runtime_state.clear_all()
+    tree = _RuntimeTree()
+    old_world = world_types.PhysicsWorldCache()
+    new_world = world_types.PhysicsWorldCache()
+    try:
+        xpbd_debug_draw.update_mesh_xpbd_debug_draw_store(
+            str(id(old_world)),
+            old_world,
+            True,
+            show_particles=True,
+        )
+        _commit_runtime_world(tree, old_world)
+        assert xpbd_debug_draw.mesh_xpbd_debug_draw_store_snapshot(
+            str(id(old_world))
+        ) is not None
+
+        xpbd_debug_draw.update_mesh_xpbd_debug_draw_store(
+            str(id(new_world)),
+            new_world,
+            True,
+            show_particles=True,
+        )
+        _commit_runtime_world(tree, new_world)
+        assert xpbd_debug_draw.mesh_xpbd_debug_draw_store_snapshot(
+            str(id(old_world))
+        ) is None
+        assert xpbd_debug_draw.mesh_xpbd_debug_draw_store_snapshot(
+            str(id(new_world))
+        ) is not None
+        assert xpbd_debug_draw._XPBD_DRAW_HANDLE is not None
+
+        runtime_state.clear_all()
+        assert xpbd_debug_draw.mesh_xpbd_debug_draw_store_snapshot(
+            str(id(new_world))
+        ) is None
+        assert xpbd_debug_draw._XPBD_DRAW_HANDLE is None
+    finally:
+        runtime_state.clear_all()
+        xpbd_debug_draw.clear_mesh_xpbd_debug_draw_store()
 
 
 def test_real_blender_panel_custom_and_task_nodes():
@@ -207,7 +262,9 @@ def test_real_blender_panel_custom_and_task_nodes():
 if __name__ == "__main__":
     test_node_socket_annotations_are_resolved()
     test_debug_draw_node_builds_all_view_batches_and_clears_on_disable()
+    test_debug_draw_store_follows_runtime_world_lifecycle()
     test_real_blender_panel_custom_and_task_nodes()
     print("PASS test_node_socket_annotations_are_resolved")
     print("PASS test_debug_draw_node_builds_all_view_batches_and_clears_on_disable")
+    print("PASS test_debug_draw_store_follows_runtime_world_lifecycle")
     print("PASS test_real_blender_panel_custom_and_task_nodes")

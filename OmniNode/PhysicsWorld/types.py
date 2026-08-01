@@ -571,6 +571,14 @@ class PhysicsWorldCache:
         释放所有持有资源。由 OmniRuntimeState 在 cache 被替换或 clear_all 时调用。
         dispose 内不能抛出异常，否则会中断上层 dispose 链。
         """
+        # solver 拥有的模块级资源通过注册表释放；公共 world 不点名具体 domain。
+        try:
+            from .registry import run_world_dispose_handlers
+
+            run_world_dispose_handlers(self, reason)
+        except Exception:
+            pass
+
         # 释放所有 solver slot
         for slot in list(self.solver_slots.values()):
             try:
@@ -600,19 +608,6 @@ class PhysicsWorldCache:
         self.collider_snapshot = {"frame": None, "colliders": [], "source_count": 0}
         self.previous_collider_snapshot = None
         self.valid = False
-
-        # 同步清除各 solver 自有可视化调试绘制条目，避免缓存销毁后残影留在视口。
-        for module_name, function_name in (
-            (".rigid.debug_draw", "clear_rigid_debug_draw_store"),
-            (".spring_vrm.debug_draw", "clear_spring_vrm_debug_draw_store"),
-            (".mc2.debug_draw", "clear_mc2_debug_draw_store"),
-        ):
-            try:
-                from importlib import import_module
-                clear_fn = getattr(import_module(module_name, __package__), function_name)
-                clear_fn(world_id=str(id(self)))
-            except Exception:
-                pass
 
     # ---- omni_cache_debug_snapshot 协议 --------------------------------
 

@@ -131,6 +131,10 @@ def clear_spring_vrm_debug_draw_store(
     _tag_view3d_redraw()
 
 
+def dispose_spring_vrm_debug_draw_for_world(world, _reason: str = "") -> None:
+    clear_spring_vrm_debug_draw_store(world_id=str(id(world)))
+
+
 def _ensure_spring_vrm_draw_handler() -> None:
     global _SPRING_VRM_DRAW_HANDLE
     if _SPRING_VRM_DRAW_HANDLE is None:

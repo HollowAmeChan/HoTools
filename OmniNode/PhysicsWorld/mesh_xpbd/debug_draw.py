@@ -535,6 +535,10 @@ def clear_mesh_xpbd_debug_draw_store(
     _tag_view3d_redraw()
 
 
+def dispose_mesh_xpbd_debug_draw_for_world(world, _reason: str = "") -> None:
+    clear_mesh_xpbd_debug_draw_store(world_id=str(id(world)))
+
+
 def mesh_xpbd_debug_draw_store_snapshot(node_uid: str) -> dict | None:
     item = _XPBD_DRAW_STORE.get(str(node_uid))
     if item is None:
@@ -605,6 +609,7 @@ def _tag_view3d_redraw():
 
 __all__ = [
     "clear_mesh_xpbd_debug_draw_store",
+    "dispose_mesh_xpbd_debug_draw_for_world",
     "mesh_xpbd_debug_draw_store_snapshot",
     "update_mesh_xpbd_debug_draw_store",
 ]

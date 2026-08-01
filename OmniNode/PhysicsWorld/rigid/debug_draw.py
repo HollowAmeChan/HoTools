@@ -255,6 +255,10 @@ def clear_rigid_debug_draw_store(
         _remove_rigid_draw_handler()
 
 
+def dispose_rigid_debug_draw_for_world(world, _reason: str = "") -> None:
+    clear_rigid_debug_draw_store(world_id=str(id(world)))
+
+
 def _ensure_rigid_draw_handler() -> None:
     global _RIGID_DRAW_HANDLE
     if _RIGID_DRAW_HANDLE is None:
