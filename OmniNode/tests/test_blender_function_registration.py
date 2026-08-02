@@ -148,6 +148,7 @@ required_node_ids = {
     "HO_OmniNode_floating",
     "HO_OmniNode_physicsWorldBegin",
     "HO_OmniNode_physicsWorldCommit",
+    "HO_OmniNode_physicsFieldRuntimeDebugDraw",
     "HO_OmniNode_physicsSpringVRMSolver",
     "HO_OmniNode_physicsRigidSolver",
     "HO_OmniNode_physicsMC2Step",

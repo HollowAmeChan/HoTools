@@ -14,7 +14,6 @@ from ..utils.debug_draw import (
     draw_line_batches,
     draw_point_batches,
 )
-from ..world_time import scene_timeline_time_seconds
 from .channels import (
     VISUALIZATION_SDF_ZERO_CROSSING,
     field_channel_descriptor_v0,
@@ -25,6 +24,7 @@ from .names import (
     AIR_VELOCITY_CHANNEL_ID,
     FIELD_MATRIX_VISUALIZATION_RESERVED,
     FIELD_RESERVED_CHANNEL,
+    FIELD_STATUS_ACTIVE,
     VOLUME_SHAPE_BOX,
     VOLUME_SHAPE_SPHERE,
 )
@@ -75,9 +75,9 @@ def mark_field_visualization_dirty() -> None:
     _tag_view3d_redraw()
 
 
-def _timeline_preview_time_seconds(scene) -> float:
-    """仅用于无 World consumer 的确定性创作预览，不冒充 solver 时间。"""
-    return scene_timeline_time_seconds(scene)
+def _author_static_time_seconds(_scene=None) -> float:
+    """作者预览是静态注册视图，不跟随时间线或物理世界时间。"""
+    return 0.0
 
 
 def _world_lattice(spec, density: int) -> np.ndarray:
@@ -236,15 +236,16 @@ def build_field_channel_visualization_v0(
     return result
 
 
-def build_field_visualization_batches_v0(
+def _build_field_geometry_v0(
     snapshot,
     *,
     density: int = 3,
-    glyph_scale: float = 0.15,
     selected_field_ids=None,
     show_bounds: bool = True,
-) -> tuple[tuple, ...]:
-    """通过公共 sampler 构造只含纯 tuple 坐标的冻结绘制批次。"""
+    include_sample_positions: bool = True,
+    active_only: bool = False,
+) -> tuple[tuple, tuple, np.ndarray, tuple]:
+    """构造可冻结的 Volume 几何；不读取 Scene，也不执行任何 sampler。"""
     selected = (
         None
         if selected_field_ids is None
@@ -254,6 +255,7 @@ def build_field_visualization_batches_v0(
         spec
         for spec in snapshot.fields
         if selected is None or spec.field_id in selected
+        if not active_only or (spec.enabled and spec.status == FIELD_STATUS_ACTIVE)
     )
     bound_lines = []
     falloff_lines = []
@@ -272,9 +274,42 @@ def build_field_visualization_batches_v0(
             add_sphere_lines(falloff_lines, center, *normalized_axes, radius * 0.5)
         elif show_bounds and spec.volume.shape == VOLUME_SHAPE_BOX:
             add_box_lines(bound_lines, center, axis_x, axis_y, axis_z)
-        positions.extend(_world_lattice(spec, density))
+        if include_sample_positions:
+            positions.extend(_world_lattice(spec, density))
 
     sampled_positions = _dedupe_positions(positions)
+    return (
+        tuple(bound_lines),
+        tuple(falloff_lines),
+        sampled_positions,
+        visible_specs,
+    )
+
+
+def build_field_visualization_batches_v0(
+    snapshot,
+    *,
+    density: int = 3,
+    glyph_scale: float = 0.15,
+    selected_field_ids=None,
+    show_bounds: bool = True,
+) -> tuple[tuple, ...]:
+    """通过 Python 公共 sampler 构造作者侧静态预览批次。"""
+    bound_lines, falloff_lines, sampled_positions, _visible_specs = (
+        _build_field_geometry_v0(
+            snapshot,
+            density=density,
+            selected_field_ids=selected_field_ids,
+            show_bounds=show_bounds,
+            include_sample_positions=True,
+            active_only=False,
+        )
+    )
+    selected = (
+        None
+        if selected_field_ids is None
+        else {str(value) for value in selected_field_ids}
+    )
     vector_lines = []
     if len(sampled_positions):
         batch = sample_air_velocity_v0(
@@ -346,11 +381,11 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
     _REFRESHING = True
     try:
         stage = stage_field_sources_v0(tuple(scene.objects), depsgraph=depsgraph)
-        sample_time = _timeline_preview_time_seconds(scene)
+        sample_time = _author_static_time_seconds(scene)
         snapshot = build_field_snapshot_v0(
             stage.specs,
             generation=0,
-            frame=int(scene.frame_current),
+            frame=0,
             sample_time_seconds=sample_time,
             diagnostics=stage.diagnostics,
         )
@@ -369,7 +404,7 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
             "point_batches": (),
             "snapshot_signature": snapshot.signature,
             "sample_time_seconds": sample_time,
-            "time_source": "TIMELINE_PREVIEW",
+            "time_source": "AUTHOR_STATIC",
             "field_ids": tuple(spec.field_id for spec in snapshot.fields),
             "channel_reports": field_channel_reports_v0(),
             "diagnostics": tuple(item.debug_dict() for item in snapshot.diagnostics),
@@ -381,7 +416,8 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
         _DRAW_STORE[key] = {
             "batches": (),
             "point_batches": (),
-            "time_source": "TIMELINE_PREVIEW",
+            "sample_time_seconds": 0.0,
+            "time_source": "AUTHOR_STATIC",
             "channel_reports": field_channel_reports_v0(),
             "error": str(exc),
         }
@@ -454,13 +490,6 @@ def _field_depsgraph_update(scene, depsgraph) -> None:
 
 
 @persistent
-def _field_frame_change(scene, depsgraph=None) -> None:
-    if _scene_overlay_enabled(scene):
-        mark_field_visualization_dirty()
-        refresh_field_visualization(scene, depsgraph)
-
-
-@persistent
 def _field_file_state_change(_dummy=None) -> None:
     _DRAW_STORE.clear()
     mark_field_visualization_dirty()
@@ -472,7 +501,6 @@ def _field_file_state_change(_dummy=None) -> None:
 
 _HANDLERS = (
     (bpy.app.handlers.depsgraph_update_post, _field_depsgraph_update),
-    (bpy.app.handlers.frame_change_post, _field_frame_change),
     (bpy.app.handlers.load_post, _field_file_state_change),
     (bpy.app.handlers.undo_post, _field_file_state_change),
     (bpy.app.handlers.redo_post, _field_file_state_change),

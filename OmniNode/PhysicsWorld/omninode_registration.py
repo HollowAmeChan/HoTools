@@ -28,6 +28,7 @@ _DEBUG_FUNCTIONS = (
     nodes.physicsWorldDebugSnapshot,
     nodes.physicsWorldResultStream,
     nodes.physicsWorldDebugText,
+    nodes.physicsFieldRuntimeDebugDraw,
 )
 
 

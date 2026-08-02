@@ -13,6 +13,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
   physicsWorldDebugSnapshot    — 输出 PhysicsWorldCache debug snapshot dict
   physicsWorldResultStream     — 按 channel / solver 读取 world result stream
   physicsWorldDebugText        — 输出 PhysicsWorldCache debug 可读文本
+  physicsFieldRuntimeDebugDraw — 显示 World 实际持有的 native 场运行态
 """
 
 import bpy
@@ -542,6 +543,47 @@ def physicsWorldDebugText(
         print_world_summary(world)
 
     return world, text, problems
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="场-运行可视化调试",
+    base_color=nodeColors.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "Volume边界", "空气速度", "采样密度", "箭头比例"],
+    input_init={
+        "density": {"min_value": 2, "max_value": 7},
+        "glyph_scale": {"min_value": 0.0, "max_value": 10.0},
+    },
+    _OUTPUT_NAME=["物理世界", "调试状态"],
+    omni_description="""
+    显示 Physics World Begin 本帧实际提交的场运行态。
+
+    Volume 边界来自与 native runtime 严格同签名的 FieldSnapshot；空气速度只调用
+    NativeFieldRuntimeV1 采样，时间固定取 World FrameContext 的帧起点。两个显示项
+    默认关闭；全部关闭时不读取运行缓存、不执行采样，也不安装视口绘制处理器。
+    含 solver、对象、Collection、排除项或碰撞组过滤的场缺少明确消费上下文时只画边界。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsFieldRuntimeDebugDraw(
+    world: object,
+    show_bounds: bool = False,
+    show_air_velocity: bool = False,
+    density: int = 3,
+    glyph_scale: float = 0.15,
+) -> tuple[object, str]:
+    from .field.debug_draw import update_field_runtime_debug_draw_store
+
+    status = update_field_runtime_debug_draw_store(
+        world,
+        show_bounds=bool(show_bounds),
+        show_air_velocity=bool(show_air_velocity),
+        density=int(density),
+        glyph_scale=float(glyph_scale),
+    )
+    return world, status
 
 
 # ---------------------------------------------------------------------------

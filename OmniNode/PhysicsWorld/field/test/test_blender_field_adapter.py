@@ -164,6 +164,7 @@ def test_component_descriptor_exposes_rna_and_scope_collector() -> None:
     assert descriptor["blender_properties"] == ".properties:FIELD_BLENDER_PROPERTIES"
     assert descriptor["scope_collectors"] == (
         ".implicit_objects:collect_scope_field_specs",
+        ".debug_draw:begin_field_runtime_debug_evaluation",
     )
 
 

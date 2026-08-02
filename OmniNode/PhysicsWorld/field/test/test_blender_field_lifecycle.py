@@ -113,11 +113,14 @@ def _assert_registered() -> None:
     assert "field_air_velocity" in physics_registry.all_component_capabilities()
 
     component_collectors = tuple(
-        entry["domain"]
+        (entry["domain"], entry["hook_ref"])
         for entry in physics_registry.iter_scope_collectors()
         if entry.get("kind") == "component"
     )
-    assert component_collectors == ("field",)
+    assert component_collectors == (
+        ("field", ".implicit_objects:collect_scope_field_specs"),
+        ("field", ".debug_draw:begin_field_runtime_debug_evaluation"),
+    )
     for handlers, callback in field_visualization._HANDLERS:
         assert callback in handlers
 

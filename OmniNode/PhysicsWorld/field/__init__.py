@@ -11,7 +11,14 @@ COMPONENT_MODULE = {
     "depends_on": ("collision",),
     "capabilities": ".capabilities:FIELD_CAPABILITIES",
     "blender_properties": ".properties:FIELD_BLENDER_PROPERTIES",
-    "scope_collectors": (".implicit_objects:collect_scope_field_specs",),
+    "scope_collectors": (
+        ".implicit_objects:collect_scope_field_specs",
+        ".debug_draw:begin_field_runtime_debug_evaluation",
+    ),
+    "world_dispose_handlers": (
+        ".debug_draw:dispose_field_runtime_debug_draw_for_world",
+    ),
+    "blender_lifecycle": ".debug_draw",
 }
 
 
