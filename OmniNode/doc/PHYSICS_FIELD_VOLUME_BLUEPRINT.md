@@ -1,18 +1,19 @@
 # Physics World Field / Volume 与风场契约
 
-> 状态：Field/WindV0 已启用，`air_velocity` 已由 MC2 CPU product 消费
+> 状态：Field/WindV0 native runtime 已启用，`air_velocity` 已由 MC2 CPU Domain 直接消费
 > 归属：`OmniNode/PhysicsWorld`
 > 当前主线：公共 Field/Volume、统一 Wind Field、显式可视化与 MC2 响应
 > 核心命名：公开对象称为 **Field**，空间载体称为 **Volume**；不建立 `ForceField` 领域。
 
 当前实现快照（2026-08-02）：
 
-- 已有独立 `PhysicsWorld/field/` component、`FieldSpecV0`/`FieldSnapshotV0`、schema/capability 单一事实源和 `physics.field` manifest 对账；
+- 已有独立 `PhysicsWorld/field/` component、`FieldSpecV0`/`FieldSnapshotV0`、schema/capability 单一事实源和 `physics.field` manifest 对账；World Begin 同轮把有效场编译为公共 `NativeFieldRuntimeV1` 并原子提交到 world cache；
 - 已有 Field 类型层（V0 仅 Wind）、原生 Empty 挂载与集中面板、sphere/box、确定性四维 value noise、多 octave turbulence、reference/batch sampler、selected/combined vector overlay 及 vector/scalar/SDF/matrix channel 可视化注册表；
-- Blender Empty 启用后解析为 `ACTIVE` Field；`air_velocity` channel 状态为 `ACTIVE`，Field capability 状态为 `active_mc2_cpu_product_v0`，MC2 CPU product 是当前已注册 consumer；
-- 已有 `MC2FieldSamplePacketV0`、逐 partition 高级作用域映射、逐子步当前位置采样和 native 相对空气速度响应；响应 pass 位于 Center inertia 之后、Integration 之前；
+- Blender Empty 启用后解析为 `ACTIVE` Field；`air_velocity` channel 状态为 `ACTIVE`，MC2 CPU product 是当前已注册 consumer；
+- 已有公共 native registry、单调 `uint64` handle、标准 Field evaluator、调用方持有的输出/scratch 与显式 participation；MC2 Domain 静态持有 partition 作用域上下文，每个子步直接从自身当前位置在 C++ 内采样，Python/native 边界不传粒子数据；
+- MC2 子步 Python 只传 runtime handle 与 Physics World sample time 两个标量；native 采样发生在任何 solver mutation 前，响应 pass 位于 Center inertia 之后、Integration 之前；
 - MC2 创作侧只保留 `field_wind_enabled` 与 `field_wind_strength`。旧七个 MC2 wind 参数已从 preset/profile/runtime ABI/节点接口删除，不保留隐藏兼容路径；
-- 公共采样的 request/result signature 已覆盖位置、时间、scope、选择集、诊断和精确数值字节；
+- 作者预览固定为 `AUTHOR_STATIC`、`t=0`，只在属性/depsgraph/file-state 变化时重建，不按帧展示 turbulence；运行态由请求驱动的“场-运行可视化调试”节点读取 live native runtime 与 World FrameContext；
 - Blender 输出时间统一由 `PhysicsWorld/world_time.py` 解释，时间矩阵覆盖 24/30/60、30000/1001、暂停、同帧、reset、跳帧、倒放和子步；
 - `.blend` 往返、undo/redo、动画求值、禁用/删除 manifest 对账、reset/seek/substep 与确定性矩阵已有后台验收；reserved channel 没有显式 values 时只报告状态，不伪造 sampler 或数值 glyph。
 - seek/cache 的持久恢复属于公共 World cache 合同；当前非连续 seek 仍按现有 World 冷启动语义处理，不另造 Field 私有时间轴。
@@ -27,12 +28,12 @@
 4. Volume V0 只实现 sphere 和 box：
    - sphere 从中心到边界具有固定的简单衰减；
    - box 内部恒定、边界外归零，不做衰减。
-5. 衰减暂按 Volume 输出空间权重、FieldSampler 乘到最终 channel 的方式实现；这只是 V0 临时权能划分，尚未冻结成通用 Field 结论。
-6. MC2 不识别“定向”或“紊流”类型，只接收每个粒子在当前子步采样、合成后的 `air_velocity_world[N, 3]`。
+5. 衰减暂按 Volume 输出空间权重、Field evaluator 乘到最终 channel 的方式实现；这只是 V0 临时权能划分，尚未冻结成通用 Field 结论。
+6. MC2 不识别“定向”或“紊流”类型。它只借用公共 runtime handle，并在 native Domain 内为当前粒子采样合成后的 `air_velocity_world[N, 3]`。
 7. 旧 MC2 七个 wind 字段没有形成可用能力，现已被删除。公共 Field 拥有风源参数，MC2 只拥有“是否响应”与“响应强度”。
 8. HoTools Wind Field 的目标是成为 MC2 wind 的能力超集，而不是把其简化实现原样迁入公共层。
 9. Field 是 Physics World 的持久物理属性。Empty 是首版创作载体，属性进入现有集中物理面板，运行时通过 `world.implicit_objects` 注册。
-10. 可视化必须调用与 consumer 相同的 Field sampler。任何公开参数占位都必须显示自身 Volume、采样结果或明确的 `preview_only/reserved` 状态。
+10. 作者预览与运行调试是两个明确边界：作者预览固定 `AUTHOR_STATIC/t=0`；运行调试必须直接调用与 consumer 相同的 native evaluator，并以当前 World FrameContext 为时间真值。任何公开参数占位都必须显示自身 Volume、采样结果或明确的 `preview_only/reserved` 状态。
 11. Field 的契约、Volume、生成器、采样、注册、诊断和可视化共同组成独立领域，必须在 `PhysicsWorld/field/` 下单独成包。
 
 因此序列化、采样、可视化和 native ABI 中都只有一种 Wind Field。turbulence 只是它的一个连续参数。
@@ -80,13 +81,15 @@ Empty / Volume 上的 Field 属性
 world.implicit_objects["physics.field"]   # 持久注册
         |
         v
-FieldSpecV0 / FieldSnapshotV0             # 公共只读数据
+FieldSpecV0 / FieldSnapshotV0             # 公共只读编译输入/边界元数据
         |
         v
-FieldSampler                              # 标量或批量采样
+NativeFieldRuntimeV1                      # world cache 资源 owner
         |
-        +--> visualizer
-        +--> registered consumer adapter
+        +--> native consumer evaluator
+        +--> 请求驱动 runtime debug
+
+Python reference sampler                  # golden/differential/作者工具，不进 solver 热路径
 ~~~
 
 相关文档：
@@ -121,8 +124,9 @@ moving_wind
 
 ~~~text
 Physics World Field/WindV0
-  -> air_velocity world-space batch
-  -> MC2FieldSamplePacketV0
+  -> World Begin 编译 NativeFieldRuntimeV1
+  -> MC2 Domain 借用 runtime handle
+  -> native 从 Domain-owned positions 采样 air_velocity + participation
   -> field_wind_enabled * field_wind_strength
   -> native HoTools Wind Response V0
 ~~~
@@ -133,7 +137,7 @@ Physics World Field/WindV0
 |---|---|
 | 旧七字段是否仍存在？ | 否。preset、profile、runtime ABI 与节点接口都已删除。 |
 | 定向风与紊流是否使用两条 MC2 路径？ | 否。二者都是逐粒子 `air_velocity`；`turbulence` 只改变公共 Field 的采样结果。 |
-| 当前 Field 是否改变 MC2 模拟？ | 是。有效 packet 和非零响应强度会在 native Integration 前修改动态粒子的持久速度。 |
+| 当前 Field 是否改变 MC2 模拟？ | 是。native evaluator 报告参与且响应强度非零时，会在 Integration 前修改动态粒子的持久速度。 |
 | MC2 是否拥有风速、方向、Volume 或 turbulence 参数？ | 否。MC2 只拥有响应开关与 `0..20 1/s` 的响应强度。 |
 
 ### 3.3 MC2 原始风模型给出的启示
@@ -277,7 +281,7 @@ V0 注册表：
 - `active`：sampler、visualizer 和至少一个 consumer 契约都已完成；V0 的 `air_velocity` 已由 MC2 CPU product 消费。
 - `preview_only`：参数、sampler 和 visualizer 可用，但不宣称改变模拟。
 - `reserved`：只保证 schema/迁移；若没有可信采样器，不公开伪造的数值箭头。
-- reserved channel 没有显式 values 时只显示 reserved 状态与 Field 自身的 Volume 边界；表中的数值可视化模式只供未来真实 sampler 或显式调试采样包复用。
+- reserved channel 没有显式 values 时只显示 reserved 状态与 Field 自身的 Volume 边界；表中的数值可视化模式只供未来真实 evaluator 或显式运行调试节点复用。
 - 一个类型只有参数、却没有边界可视化和状态提示时，不得进入集中面板。
 - consumer 支持状态属于 Field 的诊断；创作属性本身不让用户伪装或覆盖能力状态。
 
@@ -359,9 +363,9 @@ V_wind(p, t) = m(p) * (s * d + delta(p, t))
 - V0 的 turbulence 坐标固定为世界空间，空间尺度使用米。
 - Volume mask 随 Empty transform 移动；噪声图案本身不因 Empty 非均匀缩放而变形。
 - Blender 输出设置是唯一基础时钟：`scene_fps = render.fps / render.fps_base`，`raw_dt = 1 / scene_fps`。`fps_base` 不得被忽略。
-- `timeline_time_seconds` 是从 `frame_start` 起按 Blender 输出帧率映射的未缩放时间；无 consumer 的创作预览只使用这个确定性时间，不读取 wall clock。
+- `timeline_time_seconds` 仍是 Physics World 对 Blender 时间线的公共描述，但 Field 作者预览不消费它。作者预览固定 `AUTHOR_STATIC`、`sample_time_seconds=0`，因此拖动帧、播放或改变输出 fps 都不会让 turbulence 预览逐帧变化。
 - `sample_time_seconds` 是 Physics World 按实际 `frame_step_dt = raw_dt * world_time_scale` 连续累计的模拟时间；暂停不推进，same-frame 不重复累计，restart 不按帧差追赶。
-- 动画属性和 Empty transform 在 evaluated frame 收集；MC2 对第 `update_index` 个固定子步使用以下唯一公式：
+- 动画属性和 Empty transform 在 World Begin 的 evaluated frame 收集并编译进 native runtime；MC2 对第 `update_index` 个固定子步使用以下唯一公式：
 
   ~~~text
   t = sample_time_seconds
@@ -475,44 +479,43 @@ Scene.ho_field_overlay_glyph_scale
 ~~~text
 FIELD_OBJECT_TAG = "physics.field"
 FIELD_SNAPSHOT_CACHE_KEY_V0 = "field_snapshot_v0"
+FIELD_NATIVE_RUNTIME_CACHE_KEY_V1 = "field_native_runtime_v1"
 FIELD_DIAGNOSTICS_CHANNEL = "physics.field.diagnostics"
 FIELD_STATS_CHANNEL = "physics.field.stats"
 ~~~
 
 这些常量进入公共 `PhysicsWorld/field/names.py`，不散落在 MC2 或其它 consumer 私有模块。
 
-### 7.2 Snapshot 与 Sample Batch
+### 7.2 Snapshot、native runtime 与标准 evaluator
 
-`FieldSnapshotV0` 是某个 evaluated frame 的只读 Field 集合，保存：
+`FieldSnapshotV0` 是 World Begin 编译边界和调试边界元数据，不是 solver 每子步的数据包。它保存按确定顺序排列的 FieldSpec、frame/generation/帧起始 sample time、config/value signature、已验证 transform/Volume/scope、诊断及算法版本。
 
-- 按确定顺序排列的 FieldSpec；
-- frame/generation/sample time；
-- config signature 和 value signature；
-- 每个 FieldSpec 内已验证的 world transform、Volume policy 与作用域；
-- resolver/manifest 收集产生的 Field diagnostics；
-- noise 与 attenuation policy versions。
-
-Snapshot 不预先保存所有 consumer 的粒子向量。consumer 在自己的子步位置上请求批量采样：
+同一次 component collector 事务把 Snapshot 编译为公共 `NativeFieldRuntimeV1`：
 
 ~~~text
-sample_batch(
-  snapshot,
-  channel_id="air_velocity",
-  positions_world_f32[N, 3],
-  sample_time_seconds
-)
-  -> values_world_f32[N, 3], diagnostics, stats
+World Begin collector
+  -> stage FieldSpecV0[]
+  -> build FieldSnapshotV0
+  -> compile FieldRuntimeV1
+  -> world.runtime_cache["field_native_runtime_v1"] = NativeFieldRuntimeV1
 ~~~
 
-标量 reference sampler 与批量 sampler 必须做 differential tests。visualizer 也调用同一接口，只是传入 viewport sample lattice。
+- native registry 使用进程内单调递增且不复用的 `uint64` handle；`0` 永远无效。consumer 只在一次 native 调用内借用 runtime，不保存指针或取得所有权。
+- config/value signature 相同的连续帧复用同一 runtime，只热更新 snapshot signature、generation、frame 与帧起始 sample time；任一配置或数值变化先创建 staged runtime，全部 world 提交成功后替换旧 owner，失败时回滚并释放 staged owner。
+- Cache Delete、world replacement、runtime clear 与插件注销都必须通过 `NativeFieldRuntimeV1.omni_cache_dispose()` 幂等释放 registry entry；不得留下模块级隐藏 owner。
+- native 标准 evaluator 接受只读位置 view、显式 sample time、粒子到 consumer context 的索引 view，以及调用方持有的输出和 `FieldSampleScratchV1`；输出至少包含 `air_velocity_world` 与独立 `participation`。MC2 可直接传 Domain-owned float32 positions，并在预热后复用 N 规模 scratch/buffer。
+- evaluator 先按 Field 固定顺序和 consumer scope 建表，再执行各 Field 自己的标准采样函数；Sphere linear 与 Box hard-boundary 属于版本化 Volume policy，Wind turbulence 属于版本化 generator。这个 evaluator/scratch/view 边界也是未来 SIMD/GPU 实现需要保持的 logical contract，GPU 可改变物理布局但不能改变 channel、scope、participation、顺序和时间语义。
+
+Python 标量/批量 sampler 继续用于 golden、differential tests、诊断和作者工具，不再进入 solver 热路径。运行态调试只通过公开 native owner 的 inspect/sample API 读取真实 runtime。
 
 ### 7.3 Dirty 与 cache
 
-- generator、shape、scope 或 channel 变化：Field registry/config dirty；
-- transform、速度、turbulence 参数或动画值变化：Field value dirty；
-- 时间推进：只使 time-dependent sample cache 失效，不触发 MC2 topology rebuild；
-- consumer 粒子数量/顺序变化：使该 consumer 的 sample buffer 失效；
-- cache/bake 签名必须包括 FieldSnapshot signature、sample cadence 和 noise algorithm version。
+- generator、shape、scope、channel、transform、速度或 turbulence 数值变化：重编译并 staged replacement `FieldRuntimeV1`；
+- 只有 generation/frame/帧起始时间变化且 config/value signature 相同：原 runtime 只更新帧元数据，不重新上传 Field 定义；
+- 时间在子步内推进：Python 只传新的 scalar sample time，native evaluator 直接使用；不触发 Field runtime 或 MC2 topology rebuild；
+- MC2 partition identity、对象/Collection/碰撞组上下文变化：Domain 静态同步 consumer contexts；Field runtime 不复制 consumer 粒子数据；
+- MC2 响应开关/强度变化：参数更新时同步 Domain response buffer；每子步不重复展开；
+- cache/bake 签名必须包括 FieldSnapshot signature、sample cadence、participation 语义和 noise algorithm version。
 
 ## 8. 集中面板与显式可视化
 
@@ -543,75 +546,71 @@ HoTools 物理
 
 用户自行创建 Blender Empty，再打开集中面板中的“场”开关；没有 Field 创建 operator。面板总是先显示类型，再显示该类型内部的体积和参数。方向由 Empty 旋转和 viewport 箭头表达，不再增加一个容易与 transform 冲突的 XYZ 方向属性。混合权重、优先级、consumer/Collection/对象/碰撞组过滤全部归入默认折叠的高级属性，不占用基础工作流。
 
-### 8.2 可视化契约
+### 8.2 作者预览与运行态调试
 
-可视化层至少提供：
+作者预览是创作注册状态的静态视图，固定规则为：
 
-- sphere/box 的真实 bounds；
-- sphere 的中心、外边界和实际线性权重变化；
-- box 的硬边界，并且不绘制不存在的 falloff；
-- Empty local +Z 的主方向箭头；
-- `air_velocity` 的采样箭头格；
-- `turbulence > 0` 时显示当前 Physics World 时间的实际采样；
-- selected Field 与 combined Field 两种预览；
-- glyph scale/density 控制只改变显示，不改变采样值；
-- active、preview_only、reserved、invalid 和 unsupported consumer 状态；
-- stale/no-snapshot 诊断，不用 RNA 属性猜测当前数值。
+- `time_source="AUTHOR_STATIC"`、`sample_time_seconds=0`；不注册 `frame_change` handler，不随播放或时间线位置逐帧展示 turbulence；
+- 属性、transform、depsgraph、load/undo/redo 或 overlay 设置变化时才重建冻结绘制批次；
+- 显示 sphere/box 真实 bounds、Sphere 线性权重层、Box 硬边界、Empty local +Z、selected/combined 的 `t=0` 箭头，以及 active/preview/reserved/invalid 状态；
+- glyph scale/density 只改变显示，不改变采样值。作者预览可以使用 Python reference sampler，但不能声称代表某个正在推进的 world 子步。
 
-验收原则：
+运行态由物理世界调试分类下的“场-运行可视化调试”节点负责：
 
-~~~text
-visualizer_sample(position, time)
-==
-consumer_field_sampler(position, time)
-~~~
+- 节点请求未打开 `Volume边界` 或 `空气速度` 时，不读 world cache、不采样、不安装 draw handler；
+- 打开后严格核对 `PhysicsWorldCache.generation`、`PhysicsFrameContext`、`FieldSnapshotV0` 签名和 native inspect；边界只借用与 runtime 同签名的 Snapshot，运行身份与数值真值来自 live `NativeFieldRuntimeV1`；
+- 空气速度调用 native evaluator，时间固定取本次 World FrameContext 的帧起始 `sample_time_seconds`，并按独立 participation 过滤箭头；不重新扫描 Scene、不读取 RNA 推算运行值；
+- 当前简洁节点不提供 Object/Collection/碰撞组 consumer context。存在这些高级 scope 的 Field 时只画边界并明确拒绝风箭头，不能伪造“全局 MC2 partition”；
+- World Begin 使旧批次失效；world dispose、cache clear、load 和插件注销必须移除对应 draw store/handler。
 
-允许显示层为了可读性裁剪箭头长度，但必须保留统一比例或图例，不能改变方向、相对幅值或 turbulence 相位。
+运行态调试的验收原则是：同一 runtime、位置、consumer context 和 sample time 下，调试 native sample 与 solver 调用的 evaluator 完全相同。显示层可为可读性裁剪箭头长度，但不能改变方向、相对幅值或 turbulence 相位。
+
+这个节点同时建立通用物理运行调试合同：凡是碰撞、约束、场或其它能力需要“裸读正在运行的真实状态”，都必须有请求驱动的专有调试节点，从所属 native/world owner 的 inspect/read API 读取 production truth；作者预览、RNA、重算近似或普通 world 文本摘要不能替代。目前只实现 Field，运行中碰撞等专有节点作为后续公共能力记录，不在本阶段伪造。
 
 ## 9. MC2 消费契约
 
-### 9.1 输入必须是每粒子向量
+### 9.1 MC2 只传 runtime 身份与时间
 
-紊流按空间变化，因此不能把风降级为每个 partition 一个 `[P, 3]` 向量。MC2 adapter 必须在 domain 的每个活动粒子世界位置采样：
+紊流按空间变化，因此数值仍然是逐粒子向量；但逐粒子位置和结果都留在 C++。生产 ABI 固定为：
 
 ~~~text
-MC2FieldSamplePacketV0
-  abi_version
-  field_snapshot_signature
-  sample_time_seconds
-  particle_count
-  air_velocity_world_f32[N, 3]
-  diagnostics[]
-  request_signatures[]
+Python per fixed substep
+  field_runtime = {
+    handle: uint64,
+    sample_time_seconds: float64,
+  }
+
+MC2 DomainV1 native
+  Domain-owned world_positions_f32[N,3]
+  + particle_partition_index[N]
+  + static FieldSampleContextV1[P]
+  + FieldRuntimeV1(handle)
+  -> reusable air_velocity_f32[N,3]
+  -> participation_u8[N]
 ~~~
 
 约束：
 
-- `N` 与 compiled domain 的粒子索引和数量完全一致；
-- 数据是 C-contiguous、只读 owned copy 的 world-space float32，单位 `m/s`；
-- 每个 MC2 simulation substep 在积分前采样子步入口处、上一成功子步已经提交的当前粒子世界位置；V0 不在同一事务中先推进 Center 再回调 Python sampler；
-- product slot 在采样前验证 Snapshot 的 `generation`、`frame` 和帧起始 `sample_time_seconds` 与当前 World/frame packet 完全一致；过期快照在 native mutation 前失败；
-- 采样时刻只由 Physics World 的 Blender 输出帧时间派生。若本帧 MC2 实际计划 `scheduled_frame.schedule.update_count` 个子步，则第 `update_index` 个子步使用 `sample_time_seconds + frame_step_dt * update_index / scheduled_frame.schedule.update_count`；不得把 MC2 固定频率时钟或墙钟当成 Field 时间；
-- 没有有效 `air_velocity` Field 是合法 absent，native 使用零贡献 fast path；
-- packet 存在但版本、数量、stride 或有限性错误时是 invalid，不能静默当作无风；
-- packet 属于 frame/substep value，不进入 topology key；
-- MC2 native 只看最终向量，不分支判断 generator/preset。
-
-`MC2FieldSamplePacketV0` 已作为独立子步值对象传入 compiled-domain settings，不把逐粒子数组塞进 per-partition parameter table。作用域需要分区时，各 partition 必须完整且不重叠地覆盖逻辑粒子；公共 sampler 分别使用对象、Collection 和碰撞组上下文，再按 logical index 合并回一个 packet。
-
-当前高级过滤映射为：Mesh 源使用 Blender 对象名，Bone 源使用 Armature 对象名，集合使用 `users_collection` 名称，MC2 单 bit 碰撞组转换为公共的 `1..16` 编号。这些都是创作侧名称语义，不写入 native，也不改变稳定 `field_id`。
+- Python/native 子步边界只接受 `handle` 与 `sample_time_seconds` 两个标量，不允许粒子位置、空气速度、signature bytes、request 列表或 Python callback 回流；
+- product slot 在 native step 前验证 runtime 的 `generation`、`frame` 和帧起始 `sample_time_seconds` 与当前 World/frame packet 完全一致；过期或已释放 handle 在 solver mutation 和 scheduler commit 前失败；
+- 每个 fixed 子步的 native prepare 直接读取上一成功子步已提交的 Domain-owned world positions，在任何 Teleport/Center/Integration mutation 前调用公共 evaluator；
+- 采样时刻只由 Physics World 的 Blender 输出帧时间派生：`sample_time_seconds + frame_step_dt * update_index / update_count`。不得使用 MC2 fixed 累加器、帧号、时间线作者预览或墙钟；
+- Domain 静态同步时一次上传每个 partition 的 consumer context。Mesh 使用源 Object 名，Bone 使用 Armature 名，Collection 使用 `users_collection` 名称，低 16 位碰撞组映射为公共组；粒子到 partition 的索引由 compiled program 持有；
+- 无 runtime、无有效 Field、全部 response 为零或全部未参与都是合法 fast path；响应全零时不得调用 evaluator，也不得产生 N 规模 Python/native 搬运；
+- MC2 native 只看最终 `air_velocity`、独立 participation 与自身 response strength，不分支判断 Field generator/preset；
+- runtime identity/time 属于 frame/substep value，不进入 MC2 topology key。consumer contexts 只随 Domain static identity 同步，response 只随 parameter update 同步。
 
 ### 9.2 native 接入边界
 
-MC2 接入分成两个职责：
+MC2 接入分成两个 native 职责：
 
 ~~~text
-Public FieldSampler
-  positions_world + time
-  -> air_velocity_world[N, 3]
+Public FieldRuntimeV1 evaluator
+  Domain position/context views + time + caller-owned scratch/output
+  -> air_velocity_world[N,3] + participation[N]
 
 HoTools MC2 Wind Response V0
-  air_velocity + particle velocity/normal + response strength
+  air_velocity + participation + particle velocity/normal + response strength
   -> MC2 integration contribution
 ~~~
 
@@ -636,15 +635,13 @@ cloth_state_velocity += alpha * coupled_velocity
 
 当前产品子步顺序已经冻结为：
 
-1. 从 native owner 读取当前 logical particle world positions；
-2. 用当前 Snapshot、固定子步时刻和 partition scope 构造 `MC2FieldSamplePacketV0`；
-3. reference settings 按 particle partition 展开 `field_wind_enabled * field_wind_strength`；
-4. 在任何 native mutation 前验证并冻结 Field 数组；
-5. `TaskReferenceTeleport -> CenterFrameShift -> Center -> CenterInertia`；
-6. 有有效风样本时执行 `FieldWindResponse`；
-7. 执行 `Integration`，再进入后续约束、碰撞和 post passes。
+1. Python 校验 World/runtime 身份并只提交 handle 与固定子步时间；
+2. native `prepare_field_wind` 在任何 solver mutation 前，从 Domain-owned positions 和静态 consumer contexts 调用公共 evaluator；
+3. `TaskReferenceTeleport -> CenterFrameShift -> Center -> CenterInertia`；
+4. 对 `participation != 0` 且 response 非零的粒子执行 `FieldWindResponse`；
+5. 执行 `Integration`，再进入后续约束、碰撞和 post passes。
 
-V0 packet 只有最终 `air_velocity`，没有单独的“Field 参与权重”。因此 host 暂把逐粒子精确零向量解释为“没有风样本”，并把该粒子的响应强度归零，避免 Volume 外部或无匹配 Field 时产生静止空气阻尼。这个规则也带来一个必须显式保留的限制：多个风场恰好抵消为零、以及有意表达“速度为零但应产生空气阻尼”的场，与“未参与”不可区分。后续若要区分这些语义，应增加独立、可版本化的 participation/weight channel，而不是用 epsilon 猜测。
+Field participation 与数值零已经分离。作用域不匹配、Volume 外或没有任何有效 Field 时 participation 为 0，MC2 把有效 response 置零；如果多个参与 Field 精确抵消出零向量，participation 仍为 1，可表达“空气速度为零但布料应向静止空气收敛”。禁止重新用 epsilon 或向量零值猜测参与状态。
 
 ### 9.3 旧七字段的删除结论
 
@@ -684,9 +681,11 @@ FIELD_CAPABILITY = {
     "sample_phase": "pre_substep",
     "value_space": "world",
     "response": "hotools_relative_air_velocity_v0",
-    "packet": "MC2FieldSamplePacketV0",
-    "packet_abi_version": 0,
-    "implementation_status": "cpu_product_v0",
+    "runtime": "PhysicsWorld.FieldRuntimeV1",
+    "runtime_abi_version": 1,
+    "solver_abi": "scalar_handle_and_world_time_only",
+    "particle_data_crossing_python_native": 0,
+    "implementation_status": "native_direct_cpu_product_v1",
 }
 ~~~
 
@@ -698,7 +697,7 @@ FIELD_UNSUPPORTED_SOURCE
 FIELD_UNSUPPORTED_SAMPLE_MODE
 FIELD_OUT_OF_SCOPE
 FIELD_INVALID_SPEC
-FIELD_INVALID_SAMPLE_PACKET
+FIELD_INVALID_RUNTIME
 FIELD_PREVIEW_ONLY
 FIELD_CONSUMER_NOT_REGISTERED
 FIELD_VOLUME_NON_UNIFORM_SPHERE
@@ -723,19 +722,22 @@ OmniNode/PhysicsWorld/field/
   volume.py
   wind.py
   sampling.py
+  native.py
   capabilities.py
   visualization.py
+  debug_draw.py
   test/
 ~~~
 
 现有公共 UI 目录只负责集中面板和 Field ID 修复；对象创建使用 Blender 原生 Empty，consumer adapter 只保留转换：
 
 ~~~text
-PhysicsWorld/field/*         # authoring-neutral Field ABI 与 sampler
+PhysicsWorld/field/*         # authoring-neutral Field ABI、native owner、reference sampler 与调试
 PhysicsWorld/ui/*            # 集中面板与 Field ID 修复入口
-PhysicsWorld/mc2/*           # MC2 sample packet 与 response mapping
+PhysicsWorld/mc2/*           # MC2 consumer context、runtime调度与response mapping
 PhysicsWorld/<consumer>/*    # 其它 consumer 的 capability 与 response mapping
-_native/src/*                # 只有性能或 MC2 integration 需要的批量 kernel
+_native/src/field_runtime.*  # 公共Field registry/evaluator/scratch
+_native/src/mc2_domain_cpu.* # MC2 Domain直接消费公共runtime
 ~~~
 
 依赖方向必须固定：
@@ -743,10 +745,10 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 1. `field/specs.py`、`field/volume.py`、`field/wind.py` 和 reference sampler 不依赖 `mc2` 或具体 solver。
 2. `field/properties.py` 和公共 UI adapter 负责 bpy 边界；纯 spec/sampler 不持有 bpy。
 3. consumer 只能通过 Field 公共导出读取 spec/sample，不能导入 Field UI 或修改 Field Asset。
-4. native 公共 sampler 如有必要也应形成独立 `field_*` ABI；MC2 native 只接收 Sample Batch。
+4. 公共 native evaluator 形成独立 `field_runtime_v1` ABI；MC2 只借用 handle 并传 Domain-owned views，不能复制 Field 算法或取得 runtime 所有权。
 5. 新目录、模块职责和注册顺序必须同步进入 [Architecture](../ARCHITECTURE.md) 及 Physics World 注册表文档。
 
-当前同时保留可读的标量 reference sampler 与批量路径，并逐样本做差分对比。只有性能数据证明必要时，才把公共 turbulence sampler 下沉到 native；下沉后 Python preview、batch sampler 和 native 必须共享 golden samples 与算法版本。
+当前同时保留可读的 Python 标量/batch reference 与生产 native evaluator，并逐样本做差分对比。Python 路径只服务 golden、诊断和作者工具；solver 热路径不得恢复 Python sampler。未来 CPU SIMD 或 GPU 版本必须共享 Field 定义、版本、scope、participation、固定遍历顺序和 golden，物理布局与 scratch owner 可以独立。
 
 ## 12. 当前实现状态与剩余闸门
 
@@ -755,7 +757,7 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 - `FieldSpecV0`、`FieldSnapshotV0`、channel registry、diagnostics 和确定性签名；
 - 独立 `PhysicsWorld/field/` 领域包与 `physics.field` implicit object manifest 对账；
 - 用户手建 Empty、集中面板、类型优先显示、持久 Field ID、save/load/undo/animation；
-- sphere 线性衰减、box 硬边界、作用域、加法合成与显式可视化；
+- sphere 线性衰减、box 硬边界、作用域、加法合成、`AUTHOR_STATIC/t=0` 作者预览与请求驱动运行可视化；
 - 有值的 `air_velocity` 为 `ACTIVE`，其余 channel 只做不伪造数值的 `RESERVED` 占位。
 
 ### 12.2 已落地：WindV0
@@ -768,11 +770,13 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 
 ### 12.3 已落地：MC2 CPU product consumer
 
-- `mc2_field_air_velocity` capability，状态为 `cpu_product_v0`；
-- `MC2FieldSamplePacketV0`、逐 logical particle/逐固定子步采样与 partition scope；
+- `mc2_field_air_velocity` capability，状态为 `native_direct_cpu_product_v1`；
+- World Begin 公共 `NativeFieldRuntimeV1`、单调 `uint64` handle、transactional replacement 与 world cache dispose；
+- Domain 静态 consumer contexts、参数热更新 response buffer、逐 logical particle/逐 fixed substep 的 native direct sample；
+- 子步 Python/native 只跨越 handle 与严格 World sample time，粒子位置、空气速度和 participation 全部留在 C++；
 - MC2 profile 只公开 `field_wind_enabled` 和 `field_wind_strength`；
 - native 相对空气速度响应、固定粒子跳过、退化法线回退和 Center inertia -> Field wind -> Integration 顺序；
-- 无 Field/关闭响应/精确零样本的 no-op 路径，以及 packet 结构和时序错误在 native mutation 前失败；
+- 无 Field/关闭响应/未参与的 no-op 路径，participation 与精确零向量分离，以及 runtime 身份/时序错误在 native mutation 前失败；
 - 三 setup 的600帧双轮产品矩阵已经验证有限性、确定性、响应关闭位级no-op、均匀风响应、精确作用域和Blender输出FPS派生的子步时间；`field_wind_response` capability 状态为`verified`；
 - 旧七个 MC2 wind 字段已删除，不存在兼容层或第二套公开风参数。
 
@@ -781,9 +785,9 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 - 公共 World cache 对非连续 seek/cache read 的持久时间恢复；
 - Blender scene unit 到米的正式公共所有权；V0 仍明确采用 `1 Blender unit = 1 m` 的 provisional policy；
 - attenuation、blend 与多 channel 权重的长期所有权；
-- exact-zero 与“参与但空气速度为零”的区分，是否引入显式 participation/weight channel；
-- 大粒子数下 sampler、packet copy 与 native wind pass 的分项性能，以及是否值得复用 buffer；
-- 若公共 noise 下沉 native，Python batch/reference/visualizer 与 native 的 golden sample 一致性。
+- participation 当前是 evaluator 的 `u8` 输出；若未来需要连续权重，必须决定它与 Volume attenuation/blend 的关系，而不是重新复用空气速度零值；
+- 大粒子数、不同 partition 数下 native evaluator、scratch 复用与 Field wind pass 的分项性能；Python/native 粒子数据穿越必须保持为零；
+- Python batch/reference 与 native evaluator 的 golden sample 一致性，以及未来 SIMD/GPU evaluator 的确定性/容差合同。
 
 ## 13. 测试矩阵
 
@@ -826,17 +830,33 @@ Volume：
 MC2：
 
 - 三 setup 的600帧双轮确定性、响应关闭位级no-op、均匀风与逐setup精确作用域；
-- absent Field 保持当前数值 parity；
-- invalid packet 被拒绝并诊断；
+- absent Field 保持当前数值 parity，全部 response 为零不调用 evaluator；
+- stale/invalid/disposed runtime handle 在任何 solver mutation 与 scheduler commit 前拒绝；
 - uniform wind 的方向和幅值；
 - turbulence 在同一 cloth 内产生逐粒子差异；
-- particle reorder/count mismatch；
+- Domain static consumer contexts 与 partition 粒子映射完整且稳定；
 - frame/substep 时间推进；
 - reset、seek、cache read；
 - 不同 partition 数量结果一致；
 - 旧七字段在 profile、preset、runtime ABI 和节点接口中均不存在；
-- 精确零样本不产生静止空气阻尼，并记录它与显式 participation 缺失的 V0 限制；
-- 2k/10k/50k 粒子的 sampler、上传和 native wind pass 分项耗时。
+- participation=0 不产生响应；participation=1 且合成空气速度精确为零时保留静止空气响应；
+- ABI 结构断言每子步 Python 只传 handle/time，且不存在位置 readback、Python sampler、逐粒子 packet 或 N 规模 response 展开；
+- 1k/16k/64k 粒子、1/8/32 partition 的 native sample/response 分项耗时、预热后分配与工作量计数。
+
+可重复基准入口为 `_native/tests/benchmark_field_runtime_native.py`。它直接创建
+MC2 Domain，先提交一帧 Domain-owned positions，之后热循环只调用
+`prepare_field_wind(handle, sample_time)` 与 `step_prepared_field_wind(dt)`；默认矩阵覆盖
+`disabled`、`scope-miss`、uniform、sphere、turbulence 与 sparse Volume。基准不得把
+位置读回或 Python sampler 纳入热循环；结果保存 JSON Lines 后再比较同一 ABI/机器的
+中位数、P95、sample/apply 计数和 `field_sample_buffer_valid`。
+
+可视化与调试：
+
+- 作者预览跨帧始终报告 `AUTHOR_STATIC/t=0`，没有 `frame_change` handler；
+- 运行调试关闭时 cache read、native sample 和 draw handler 均为零；
+- 开启后核对 native inspect、World FrameContext 与同签名边界快照；stale runtime 必须清空旧批次并报错；
+- 高级作用域没有 consumer context 时拒绝空气速度箭头；
+- World Begin、dispose、cache clear、load/unregister 清理对应 draw store。
 
 ## 14. 实现参考
 
@@ -858,15 +878,16 @@ MC2：
 
 1. `noise_algorithm_version=0` 使用确定性的四维 value noise、固定 hash、octave seed 递进和 float32 输出；reference 与 batch 路径必须保持 golden sample 一致。
 2. Wind source 输出 world-space `air_velocity`，MC2 response strength 为 `0..20 1/s`，法线/切向耦合固定为 `1.0/0.15`。
-3. MC2 子步在 Center inertia 后、Integration 前消费 packet；固定粒子不响应，全部输入在 native mutation 前校验。
-4. 旧七个 MC2 wind 字段已删除且不映射；Field 与 MC2 响应之间只有公共 sample packet。
-5. `MC2FieldSamplePacketV0` 当前拥有一份 C-contiguous、只读 float32 copy；packet 结构无效时失败，不降级为 absent。
+3. Field runtime 在任何 solver mutation 前从 MC2 Domain-owned positions 采样；响应在 Center inertia 后、Integration 前应用，固定粒子不响应。
+4. 旧七个 MC2 wind 字段、Python 位置 readback、Python 子步 sampler 和逐粒子桥接对象已删除且不映射；Field 与 MC2 子步之间只有 runtime handle 与严格 World sample time 两个标量。
+5. native evaluator 输出独立 `participation`，零向量不再兼任“未参与”；调用方持有输出与 scratch，生产路径不跨 Python/native 搬运 N 规模粒子数据。
+6. 作者预览固定 `AUTHOR_STATIC/t=0`；运行态调试必须请求驱动并读取 live native runtime + World FrameContext。
 
 仍需明确保留、不能被当前实现掩盖的质疑点：
 
 1. attenuation 最终由 Volume、generator 还是 channel mapping 拥有，以及它在 blend 前后的顺序。V0 暂用 `effective = volume_weight * raw`，不得据此提前扩展曲线 UI。
-2. V0 用精确零 `air_velocity` 表示“不参与响应”。这能避免 Volume 外静止空气阻尼，但无法区分多场抵消、显式静止空气和未参与；稳定 ABI 前必须决定是否增加 participation/weight channel。
+2. V1 已用离散 participation 区分未参与与精确零向量；仍未冻结的是是否需要连续 participation/weight、它与 attenuation/blend 的先后顺序，以及 MC2 是否只消费离散参与。
 3. scene unit scale 到米的公共入口尚未冻结；当前 `1 Blender unit = 1 m` 只能作为有诊断的 provisional policy。
-4. sample packet 的 copy 成本、对齐、复用、生命周期与 frame transaction 失败策略，需要用 2k/10k/50k 粒子数据决定，而不是先承诺零拷贝 ABI。
+4. native scratch/output 的容量增长、对齐、线程模型与未来 GPU staging 需要用规模/partition 矩阵决定；无论实现如何变化，Python/native 子步边界都不得恢复 N 规模粒子数据穿越。
 5. 非连续 seek/cache read 必须由公共 World cache 恢复同一 `sample_time_seconds`；Field 不建立私有补偿时钟。
 6. 高级作用域当前使用对象/Armature 名、Collection 名和公共碰撞组号。若以后需要抗重命名的资产引用，必须显式升级 scope schema，不能悄悄改变 V0 名称匹配语义。

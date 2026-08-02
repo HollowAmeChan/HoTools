@@ -69,7 +69,7 @@ Cache Read
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
 9. **物理属性由物理世界动态注册**：共享 component 或 solver capability 是字段、默认值、范围、RNA metadata 和 resolver 的单一事实源；`physicsWorld.registry` 按依赖注册/注销 Blender property，外部模块不得定义第二份 PropertyGroup 或 binding。
-10. **通用 Field 归 Physics World 所有**：Field 不预设一定表示力；`field_type=WIND` 是当前首个类型，不归 MC2 或任何单一 solver 私有。Field 的收集、稳定身份、作用域和逐帧求值由公共物理世界组织，solver 只消费声明过的公共快照。
+10. **通用 Field 归 Physics World 所有**：Field 不预设一定表示力；`field_type=WIND` 是当前首个类型，不归 MC2 或任何单一 solver 私有。Field 的收集、稳定身份、作用域、native runtime 与生命周期由公共物理世界组织；solver 只借用声明过的公共 runtime/capability，不复制 evaluator 或取得 owner。
 
 各 solver 对这些支柱的当前覆盖情况见实现状态文档。
 
@@ -156,7 +156,7 @@ frame_context.timeline_time_seconds = max(frame - Scene.frame_start, 0) * raw_dt
 
 Physics World 同时维护两种用途不同、不可混用的时间：
 
-- `timeline_time_seconds` 是从 `Scene.frame_start` 映射出的未缩放时间轴坐标，供没有 world consumer 的确定性创作预览使用；它会随 Blender 时间轴跳转直接变化。
+- `timeline_time_seconds` 是从 `Scene.frame_start` 映射出的未缩放时间轴坐标，可供明确声明为 timeline preview 的其它工具使用。Field 作者预览当前固定为 `AUTHOR_STATIC/t=0`，不消费它，也不随 Blender 时间轴逐帧变化。
 - `sample_time_seconds` 是当前模拟帧起点的累计数值时间，只累计已经成功跨过的连续 world 帧。正式 Field consumer 和 solver 只从该时间及其子步时间采样，不能拿时间轴坐标绕过 pause/restart 合同。
 
 当前步的采样时间固定为：
@@ -175,7 +175,7 @@ scheduled_substep_time(i, count) = sample_time_seconds + frame_step_dt * i / cou
 - `frame_context.dt` 是应用世界级 `time_scale` 后的统一基础步长。Rigid、SpringBone、MC2 和未来 solver 都必须从同一个 world owner 消费该值，不得自行读取 `Scene.render`、重新计算 fps，或用固定 `1/24`、`1/30`、`1/60` 替代有效 world 时间。
 - `frame_context.frame_step_dt` 是当前帧真正用于采样/推进的基础步长。same-frame 时它保留第一次求值采用的值；solver 不得用随后重算的 `dt` 改写同一帧的采样相位。
 - `frame_context.substep_sample_time_seconds(i)` 是使用公共 `frame_context.substeps` 时的子步起点时间。固定频率 solver 若本帧实际计划的 `update_count` 与公共 `substeps` 不同，必须用上式的 `scheduled_substep_time(i, update_count)`；任何空间与时间叠加采样，包括 Wind turbulence，都只能使用这两种同源显式 sample time，禁止读取墙钟、native 累加时钟或模块级计时器。
-- MC2 CPU 产品链使用自己的 fixed scheduler，因此第 `update_index` 个子步的 Field 采样时间必须精确为 `frame_context.sample_time_seconds + frame_context.frame_step_dt * update_index / scheduled_frame.schedule.update_count`。Field 快照保存的是当前模拟帧起点时间；每个子步从当前粒子位置重新采样，不能把帧起点值、Blender 时间轴时间或 native 内部时钟代入。
+- MC2 CPU 产品链使用自己的 fixed scheduler，因此第 `update_index` 个子步的 Field 采样时间必须精确为 `frame_context.sample_time_seconds + frame_context.frame_step_dt * update_index / scheduled_frame.schedule.update_count`。Field runtime 保存当前模拟帧起点元数据；每个子步由 native 从 Domain-owned 当前粒子位置重新采样，不能把帧起点值、Blender 时间轴时间或 native 私有累加时钟代入。
 - solver 可以保留局部 `time_scale` 作为产品调参，但它只能是统一基础时间之上的乘数：`solver_dt = frame_context.dt * solver_time_scale`。默认值必须为 1；局部倍率不得反向改写 `frame_context`，也不得成为第二个场景时间源。
 - 固定频率 scheduler、substeps、iterations 和 catch-up 上限只决定怎样离散、累计或限制 `solver_dt`，不改变时间来源。它们不得隐式假设 Blender 是 60 fps。
 - `frame_context.time_scale == 0` 或 `frame_context.dt == 0` 表示统一暂停。solver 可以同步参数、拓扑、动画输入、命令和只读结果，但不得推进数值时间；不能以 fallback dt 偷跑一步。
@@ -278,25 +278,27 @@ FieldSpec
 
 ### 通用 Field / 场
 
-Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`field_type=WIND` 选择 `analytic.wind.v0` 生成器和 `air_velocity` 向量通道，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。当前公共 Field 已由 MC2 CPU 产品链正式消费，但 Field 的 authoring、快照、采样和诊断所有权仍全部留在 Physics World。
+Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`field_type=WIND` 选择 `analytic.wind.v0` 生成器和 `air_velocity` 向量通道，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。当前公共 Field 已由 MC2 CPU 产品链正式消费；Field 的 authoring、快照、native runtime、evaluator、诊断与生命周期所有权全部留在 Physics World。
 
 当前公共与 MC2 CPU V0 边界：
 
 - Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
 - 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。作者侧不暴露 status 字段：有效且启用的 Empty 一律解析为 `ACTIVE`；`PREVIEW_ONLY` 只保留给程序化规格和显式创作预览，不是 Blender 作者需要管理的产品状态。
 - `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 在中心权重为 1，到局部单位球边界线性降至 0；Box 在局部单位盒内权重为 1、盒外为 0，没有内部衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。V0 直接用 Volume 权重缩放 `air_velocity`；未来是否拆出独立参与权重仍是未冻结的设计质疑点。
-- `air_velocity` 的公开采样输入是冻结快照、世界空间 `float64[N,3]` 位置、显式 sample time 和作用域上下文；输出是只读 `float32[N,3]`、稳定签名、命中 ID、统计与诊断。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。
-- turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。预览与正式 consumer 使用同一个公共 sampler；差别只在于预览可显式包含 `PREVIEW_ONLY` 项并使用 `timeline_time_seconds`，正式 consumer 只消费 `ACTIVE` 项并使用 `PhysicsFrameContext` 的 sample/substep time。
+- `air_velocity` 的生产采样入口是公共 `FieldRuntimeV1` evaluator：只读位置/context views、显式 sample time、调用方持有的输出和 scratch；输出 world-space `float32[N,3]` 与独立 `participation[N]`。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。Python reference sampler 只用于 golden、差分、诊断和作者工具，不进入 solver 热路径。
+- turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。作者预览固定为 `AUTHOR_STATIC/t=0`，只展示静态注册状态；正式 consumer 和运行态调试使用同一个 native evaluator，并使用 `PhysicsFrameContext` 的 sample/substep time。
 - 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是版本化的 Field 公共 API，不等于 native ABI；版本变化必须同步 golden、capability 与消费者适配器。
-- `collect_scope_field_specs` 在 World Begin 的 component collector 阶段发布当前 generation/frame/frame-start sample time 的 `FieldSnapshotV0` 到 `field_snapshot_v0` runtime cache，并把 resolver 诊断发布到 `physics.field.diagnostics`。快照、manifest 和诊断必须作为一次可回滚事务更新。
-- MC2 在 declaration 中显式消费 `field_air_velocity`。每个 fixed 子步先校验快照的 generation、frame 和帧起始 sample time，再轻量读取当前 logical particle positions，按完整且互斥的 partition 建立 `MC2FieldSamplePacketV0`；采样包固定为 ABI 0、只读 C-contiguous `float32[N,3]`，不会携带 Blender 对象或 native handle。
-- MC2 作用域上下文使用 consumer ID `mc2`、源 Object 名或 Armature 名、该源所属 Blender Collection 名，以及 MC2 单 bit 碰撞组换算后的公共组号 1..16。include/exclude、Collection 和碰撞组过滤均在公共 sampler 中执行；partition 必须无重叠且完整覆盖 logical particles，作用域外粒子保持零空气速度。
+- `collect_scope_field_specs` 在 World Begin 的 component collector 阶段发布当前 generation/frame/frame-start sample time 的 `FieldSnapshotV0`，并编译或热更新 `NativeFieldRuntimeV1` 到 `field_native_runtime_v1` runtime cache；resolver 诊断发布到 `physics.field.diagnostics`。snapshot、manifest、diagnostics 和 native owner 必须作为一次可回滚事务提交。config/value 不变时只热更新帧元数据；变化时 staged replacement，旧 owner 在新提交成功后释放。
+- native registry 使用进程内单调、不复用的 `uint64` handle。Python runtime owner 管理 create/update/inspect/dispose；consumer 在一次 native 调用中借用，不能长期保存裸指针或越过 world cache 生命周期。
+- MC2 在 declaration 中显式消费 `field_air_velocity`。Domain 静态同步时上传完整且互斥的 partition consumer contexts，参数更新时上传 `field_wind_enabled * field_wind_strength` 响应；每个 fixed 子步 Python 只传 runtime handle 与严格 World sample time 两个标量。
+- MC2 作用域上下文使用 consumer ID `mc2`、源 Object 名或 Armature 名、该源所属 Blender Collection 名，以及 MC2 单 bit 碰撞组的低 16 位公共 mask。include/exclude、Collection 和碰撞组过滤全部由 native Field evaluator 执行；作用域外粒子的 participation 为零。
 - MC2 作者参数只保留 `field_wind_enabled`（“响应场风”）和 `field_wind_strength`（“风响应强度”，0..20）。Field 持有速度、方向、turbulence、Volume、衰减、作用域与合成参数。旧 `wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`、`moving_wind` 已从 profile、runtime ABI 和节点输入删除，不提供隐藏字段、数据迁移或兼容映射。
-- MC2 native V0 在 Center inertia 之后、Integration 之前应用相对空气速度响应；响应率为 `field_wind_strength`，固定粒子不响应，法向响应 100%、切向响应 15%。精确零 `air_velocity` 在当前 packet ABI 中表示“该粒子没有有效场样本”，其有效响应强度归零，避免 Volume 外产生静止空气阻尼；这也意味着多个场精确抵消与未参与暂时不可区分，是未来独立参与权重通道需要解决的 V0 限制。
-- Field 快照或采样包校验失败必须发生在 native mutation 与 scheduler commit 前，并记录 MC2 slot 的 `last_step_failure`；成功子步可在 slot 的 `last_field_sample_packet` 检查最终采样签名、时间、诊断与 request signatures。公共 sampler 的 `FIELD_OUT_OF_SCOPE`、`FIELD_INVALID_SPEC`、重复/缺失 Field ID 等诊断不得被 solver 吞掉或改写成私有含义。
+- MC2 native `prepare_field_wind` 在任何 solver mutation 前，直接从 Domain-owned current positions、particle-to-partition view 和静态 contexts 调用公共 evaluator；不会把位置或采样结果读回 Python。响应在 Center inertia 之后、Integration 之前应用；固定粒子不响应，法向响应 100%、切向响应 15%。
+- participation 与空气速度数值分离：作用域/Volume 未参与为 0；参与后多个 Field 精确抵消仍为 1，可以表达静止空气响应。未来是否需要连续权重仍未冻结，但不得用 epsilon 或零向量重新猜测参与状态。
+- runtime generation/frame/帧起始时间、handle 和子步时间校验失败必须发生在 solver mutation 与 scheduler commit 前，并记录 MC2 slot 的 `last_step_failure`。无 Field、空 runtime 或全部响应为零走 native fast path；旧 Python 位置读回、sampler、逐粒子桥接数据和兼容 ABI 不得恢复。
 - reserved channel 只有拿到显式 values 时才可使用注册的 vector/scalar/SDF 可视化模式；没有数值时只报告 reserved 状态与 Volume 边界，禁止伪造 sampler 或数值 glyph。
 - Field authoring/topology/scope 变化与逐帧采样必须分开定义 dirty/update 频率，不能把 turbulence 的时间变化误判为 solver topology rebuild。
-- solver 必须在 declaration/capability 中显式声明可消费的 Field channel，并只把公共快照/采样结果转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
+- solver 必须在 declaration/capability 中显式声明可消费的 Field channel、runtime ABI、sample phase、单位和 participation 语义；不得扫描场景寻找私有 wind 对象，不得复制 evaluator，不得把 live Blender 对象塞进 native context。未来 SIMD/GPU evaluator 可以拥有不同布局，但必须保持标准 Field definition/view/scratch 的逻辑输入输出、固定遍历顺序、scope 和 Physics World 时间合同。
 
 ### Solver Prepare
 
@@ -869,7 +871,7 @@ solver slot 持有：
 - collider arrays。
 - solver outputs。
 - temporary constraints。
-- Field 快照派生的逐子步 sample packet。
+- solver-owned native Field evaluator scratch/output；Python 子步边界只保留 runtime handle 与 World sample time 标量。
 - debug markers。
 
 特点：

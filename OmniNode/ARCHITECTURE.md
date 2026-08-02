@@ -50,10 +50,12 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 - `Function/` 中只保留适合由 `@omni(...)` 暴露的轻量节点函数；需要物理实现时直接导入 `PhysicsWorld` 的公开模块。
 - 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
 - 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
-- `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume/WindV0 规格、`FieldSnapshotV0`、公共点/批量 sampler、Empty 创作边界、隐式对象 manifest、诊断和显式可视化；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 sampler。
-- consumer 适配留在各 solver 内。MC2 由 `PhysicsWorld/mc2/field_bridge.py` 把公共 `air_velocity` 采样结果冻结为 `MC2FieldSamplePacketV0`，Field 包不导入 MC2，也不拥有布料响应公式。MC2 authoring 只保留“响应场风”开关和响应强度；旧七个 wind 参数已经删除，profile、runtime、preset 和节点都没有兼容读取路径。
-- `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Physics World 正式采样使用累计 `sample_time_seconds` 与 `frame_step_dt`，MC2 第 `i` 个 fixed 子步固定采样 `sample_time_seconds + frame_step_dt * i / update_count`。Field 预览和 Physics World Begin 不得各自维护另一套 fps fallback。
-- WindV0 当前由 Volume 权重直接缩放最终 `air_velocity`：球形从中心到边界线性衰减，方形内部不衰减。该规则仍是有版本的 V0 策略，不代表 attenuation 永久归 Volume 所有；packet V0 也尚无独立参与权重，精确零向量同时表示未参与和多场精确抵消，consumer 不得把这两个状态伪装成已经可区分。
+- `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume/WindV0 规格、`FieldSnapshotV0`、公共 `NativeFieldRuntimeV1` owner、Python reference sampler、Empty 创作边界、隐式对象 manifest、诊断、作者预览和运行态调试；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 evaluator。
+- World Begin 的公共 component collector 把当前 Field 集合编译为 `FieldRuntimeV1`，以 `field_native_runtime_v1` 资源值存入 world runtime cache。相同配置和值只热更新 generation/frame/帧起始时间；配置或数值变化走 staged replacement。native registry 使用进程内单调 `uint64` handle，Python owner 只管理提交、替换与幂等 dispose，consumer 不取得所有权。
+- consumer 适配留在各 solver 内。MC2 在 Domain 静态同步时注册 partition consumer contexts，在参数更新时同步响应强度；每个 fixed 子步 Python 只传 `FieldRuntimeV1` handle 与严格 Physics World sample time 两个标量。C++ 直接从 Domain-owned positions 调用公共 Field evaluator，不再经过 Python 粒子位置读回、Python sampler 或逐粒子 packet。Field 包不导入 MC2，也不拥有布料响应公式。MC2 authoring 只保留“响应场风”开关和响应强度；旧七个 wind 参数和旧采样桥已删除，没有兼容读取路径。
+- `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Physics World 正式采样使用累计 `sample_time_seconds` 与 `frame_step_dt`，MC2 第 `i` 个 fixed 子步固定采样 `sample_time_seconds + frame_step_dt * i / update_count`。作者预览固定为 `AUTHOR_STATIC`、`t=0`，不跟随时间线；它与 Physics World 运行时间都不得维护私有 fps fallback。
+- WindV0 当前由 Volume 权重直接缩放最终 `air_velocity`：球形从中心到边界线性衰减，方形内部不衰减。该规则仍是有版本的 V0 策略，不代表 attenuation 永久归 Volume 所有。native evaluator 另外输出 participation，因此“作用域/Volume 未参与”和“参与后向量精确抵消”不再由零向量混为一谈。
+- 运行中需要裸读真实物理状态的能力必须有请求驱动的专用调试节点。当前 `场-运行可视化调试` 校验 World FrameContext、native inspect 与同签名边界快照，空气速度只从 live `NativeFieldRuntimeV1` 采样；缺少明确 consumer context 时拒绝为高级作用域画风箭头。未来碰撞等运行态也必须按相同合同提供专有节点，不能用作者预览或 RNA 推测替代。
 
 ### 1. 函数生成是默认节点模型
 
@@ -1217,7 +1219,7 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 - 编译缓存不会自动代表 runtime 状态，也不会替代 cache 节点。
 - 每帧运行依赖已编译 `CompiledGraph`；拓扑变化后需要重新编译或清理编译缓存。
 - 函数节点 socket identifier 与函数参数名绑定，改名会影响已有树。
-- C++ backend 不保存跨帧状态，跨帧状态仍由 Python runtime cache 管理。
+- C++ backend 可以保存跨帧数值状态，但必须由 `PhysicsWorldCache` 的 runtime resource 或 solver slot 中的显式 Python owner 管理其 handle、重建、inspect 与幂等 dispose；禁止隐藏 native 全局 owner。公共 registry 只用于按不复用的 opaque handle 定位 live owner，不能绕过 world cache 生命周期。
 
 ### 空物体挂载边界
 

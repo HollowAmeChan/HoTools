@@ -33,7 +33,7 @@ physicsWorld/
   world_time.py              # Blender 输出帧率到公共秒数的唯一换算入口
   bake/                      # 通用 Bake 后端与 session
   collision/                 # Object/Bone collider 共享 capability
-  field/                     # Volume、Wind、快照、采样、Empty创作、诊断与MC2公共输入
+  field/                     # Volume、Wind、快照、native runtime、Empty创作、诊断与公共输入
   simple_cloth/              # 简单布料RNA、BasePose/Scene归属与独占GN输出owner
   spring_vrm/                # VRM SpringBone
   rigid/                     # Rigid/Jolt
@@ -66,13 +66,15 @@ physicsWorld/
 | Physics Bake | Bone + PC2 Mesh + Clear vertical slice 可用 | 公共 Bake 节点、Action/PC2、manifest、播放和清理 | 见 `PHYSICS_BAKE_NODE_BLUEPRINT.md` |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、公共 snapshot 与 capability | 继续消除 solver 私有重复 resolver |
 | Simple Cloth | 可用 | 公共RNA/capability、面板/自定义对象资源准备、按Scene独立HoPhysicsCache、Outliner可追踪且视口隐藏的BasePose、共享GN output；MC2/XPBD step不创建Blender资源 | 继续把新增Mesh solver统一接到该对象边界，不复制资源生命周期 |
-| Field | 公共 authoring/preview 与 MC2 CPU 产品消费 active | 独立共享component；原生Empty启用工作流且作者侧有效源直接解析为`ACTIVE`，Field类型层V0仅Wind；Sphere中心到边界线性衰减、Box硬边界无内部衰减；统一Wind+turbulence；确定性公共`air_velocity`点/批量采样、签名与golden；scope/implicit manifest/`FieldSnapshotV0`/诊断事务；`.blend`往返、undo/redo、动画、禁用/删除和24/30/60及30000/1001时间矩阵验收；MC2三setup的600帧双轮确定性、开关no-op、均匀响应与精确作用域矩阵已验证 | `PREVIEW_ONLY`仅保留给程序化预览规格；Volume权重与参与权重是否拆分、Scene单位换算、seek/cache sample time恢复仍未冻结；见`PHYSICS_FIELD_VOLUME_BLUEPRINT.md` |
+| Field | 公共 authoring/静态预览、native runtime 与 MC2 CPU 产品消费 active | 独立共享component；原生Empty启用工作流且作者侧有效源直接解析为`ACTIVE`，Field类型层V0仅Wind；Sphere中心到边界线性衰减、Box硬边界无内部衰减；World Begin 将 `FieldSnapshotV0` 编译为 `NativeFieldRuntimeV1` 并登记到 world cache；统一Wind+turbulence、标准 C++ evaluator、显式 participation、单调 handle 与 staged lifecycle；作者预览固定 `AUTHOR_STATIC/t=0`，运行态由“场-运行可视化调试”节点直接读 live runtime；MC2 三 setup 的 native Domain-owned 采样、600帧双轮确定性、开关 no-op、均匀响应与精确作用域矩阵已验证 | `PREVIEW_ONLY`仅保留给程序化预览规格；Volume权重与参与权重是否拆分为连续权重、Scene单位换算、seek/cache sample time恢复仍未冻结；未来碰撞等运行态必须按专用调试节点合同补齐；见`PHYSICS_FIELD_VOLUME_BLUEPRINT.md` |
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
-| MC2 | 三 setup 统一域 CPU 产品可用；公共 Field 风产品链已接通；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 消费公共 simple_cloth 对象/BasePose/GN资源，solver step不创建Blender数据；三setup显式域分区；每个fixed子步从当前logical positions按公共作用域采样`MC2FieldSamplePacketV0`，时间严格使用World帧起点与Blender FPS派生的`frame_step_dt`；MC2只持有“响应场风”开关与0..20响应强度，旧七个wind参数已从profile/runtime/node删除且无兼容；native Field响应位于Center inertia后、Integration前；三setup公共Field风600帧产品矩阵已标记`verified`；终端粒子、双写回、DomainV1 mixed pass、whole-domain self、多目标事务、产品debug及Teleport/碰撞历史闭环；CPU是独立长期reference | Field packet V0以精确零向量同时表示未参与与精确抵消，待未来独立参与权重合同；GPU入口见`MC2_GPU_BACKEND_DESIGN.md` |
+| MC2 | 三 setup 统一域 CPU 产品可用；公共 Field native 风产品链已接通；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 消费公共 simple_cloth 对象/BasePose/GN资源，solver step不创建Blender数据；三setup显式域分区；Domain 静态同步注册 partition consumer contexts，参数更新上传逐粒子响应，fixed 子步 Python 只传 runtime handle 与 World sample time，native 从 Domain-owned positions 调用标准 evaluator 并在 Center inertia 后、Integration 前应用；MC2只持有“响应场风”开关与0..20响应强度，旧七个wind参数、位置读回、Python sampler、逐粒子 packet ABI 已删除且无兼容；native evaluator 输出独立 participation；三setup公共Field风600帧产品矩阵已标记`verified`；终端粒子、双写回、DomainV1 mixed pass、whole-domain self、多目标事务、产品debug及Teleport/碰撞历史闭环；CPU是独立长期reference | native scratch/output 的容量、线程与 GPU staging 尚未冻结；连续 participation/weight、attenuation 权责、GPU入口见`MC2_GPU_BACKEND_DESIGN.md` |
 | Mesh XPBD | World vertical slice、生产 soak 与旧路径删除审计通过，待冻结矩阵最终记录 | 面板/自定义对象适配器消费公共simple_cloth对象并在solver前准备GN资源；source Mesh topology/reference、累计 lambda nanobind context、四类公共 collider、slot/debug、事务化 GN result/writeback；可视化 draw store/handler 已接入注册表驱动的 world owner 销毁链，跳帧替换与 runtime clear 不留残影；时间矩阵、dirty、dispose 和 `OMNI测试.blend` 180 帧验收通过；旧双节点、私有 cache/writeback 与悬空 ABI 已移除；不建立无运行语义的融合域 | 记录最终 ABI/layout、能力矩阵与性能基线后冻结；见 `MESH_XPBD_BLUEPRINT.md` |
 
-Field -> MC2 CPU 产品链当前为 active：World Begin 发布当前 generation/frame/帧起始时间的 `FieldSnapshotV0`；MC2 fixed substep 以 `sample_time_seconds + frame_step_dt * update_index / update_count` 从当前粒子位置采样，作用域按 Object/Armature 名、Collection 名与公共碰撞组 1..16 分区；`MC2FieldSamplePacketV0` 再转换为逐粒子响应强度并在 Integration 前进入 native。旧七个 MC2 wind 参数已删除且没有兼容数据。
+Field -> MC2 CPU 产品链当前为 active：World Begin 发布 `FieldSnapshotV0` 并编译 `NativeFieldRuntimeV1` 到 world cache；MC2 Domain 静态同步作用域上下文与响应，fixed substep 只传 `handle + sample_time_seconds`，native 以 `sample_time_seconds + frame_step_dt * update_index / update_count` 从 Domain-owned 当前粒子位置采样，作用域按 Object/Armature 名、Collection 名与公共碰撞组低 16 位执行，并在 Center inertia 后应用响应。独立 participation 区分未参与和精确抵消；旧七个 MC2 wind 参数、Python 位置读回、sampler、packet 和兼容数据均已删除。
+
+运行态调试合同：只有明确请求的专用调试节点才可读取 live native 状态；当前“场-运行可视化调试”核对 World FrameContext、runtime inspect 与同签名 snapshot，关闭时不读 cache/不采样/不装 handler，高级 scope 缺少消费上下文时只画边界。碰撞、接触和其它裸读能力未来必须各自提供同类专用节点，不能由作者预览、Blender RNA 或通用快照猜测。
 
 ## 当前优先级
 

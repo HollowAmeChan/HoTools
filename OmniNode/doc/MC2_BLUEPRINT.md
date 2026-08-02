@@ -70,11 +70,12 @@ CPU DomainV1 是完整产品 backend 和长期数值 reference。E6 只能新增
 
 ```text
 Physics World Begin
-  -> 公共 Field component 发布当前帧 FieldSnapshotV0
+  -> 公共 Field component 编译并注册当前帧 NativeFieldRuntimeV1
   -> 三种 setup collector 生成显式 product requests
   -> request 预检、source capture、partition static fragment
   -> compiled domain/program/parameter/frame packet
-  -> 每个 fixed 子步从当前 logical positions 采样 MC2FieldSamplePacketV0
+  -> 每个 fixed 子步 Python 只传 runtime handle + World sample time
+  -> native Domain 从自身 positions 调用 Field evaluator，得到 air_velocity + participation
   -> DomainV1 按固定 mixed pass 求解
   -> logical outputs 与请求驱动 debug snapshot
   -> 一次多目标结果事务
@@ -88,7 +89,7 @@ product request
   -> setup/domain identity 与动态产品 slot
   -> capture plan + compiled DomainV1 program
   -> one native DomainV1 owner
-  -> current positions + FieldSnapshotV0 -> per-substep air velocity packet
+  -> runtime handle + sample time -> native evaluator(current Domain positions)
   -> logical output map
   -> GN offset / Bone transform / product debug envelope
   -> physicsWorld.writeback transaction
@@ -150,19 +151,22 @@ product request
 
 #### 公共 Field 风响应
 
-Field 源不归 MC2 所有。`PhysicsWorld/field/` 负责 Empty 创作、Field/Volume/WindV0、`FieldSnapshotV0`、公共 sampler、作用域、诊断和可视化；`mc2/field_bridge.py` 只把已经求值的公共 `air_velocity` 转成 MC2 子步输入：
+Field 源不归 MC2 所有。`PhysicsWorld/field/` 负责 Empty 创作、Field/Volume/WindV0、`FieldSnapshotV0`、`NativeFieldRuntimeV1`、标准 evaluator、作用域、诊断和可视化；MC2 只借用 world cache 中的 runtime，不再有 `field_bridge.py` 或逐粒子 packet：
 
 ```text
-MC2FieldSamplePacketV0
-  abi_version = 0
-  field_snapshot_signature
-  sample_time_seconds
-  particle_count
-  air_velocity_world_f32[N, 3]   # world-space, m/s, C contiguous, read-only
-  diagnostics / request_signatures
+NativeFieldRuntimeV1
+  monotonic_handle: uint64
+  snapshot/config/value signatures
+  generation / frame / frame-start sample time
+  Field definitions + Volume/scope/generator versions
+
+MC2 Domain native prepare
+  runtime_handle + sample_time_seconds  # Python/native scalar boundary
+  Domain-owned positions + partition context views
+  -> air_velocity_world[N,3] + participation[N]
 ```
 
-每个 fixed 子步在任何 native mutation 前读取当前 logical particle positions，并按完整且互不重叠的 partition 索引采样。作用域上下文来自 Mesh Object 名或 Bone Armature 名、对象所属 Collection 名，以及映射到公共`1..16`的单个碰撞组；packet 数量和顺序必须与 compiled domain 完全一致。快照 generation、frame、帧起始时间、数组形状、dtype、连续性和有限性错误都必须在 scheduler 提交及 native mutation 前失败，不能降级成无风。
+World Begin 原子提交 runtime；config/value 改变走 staged replacement，只有 generation/frame/帧起始时间变化且签名不变时才热更新 runtime metadata。MC2 Domain 静态同步完整 partition consumer contexts 与逐粒子响应强度，作用域上下文来自 Mesh Object 或 Bone Armature 名、Collection 名和公共低 16 位碰撞组 mask。每个 fixed 子步在任何 native mutation 前仅校验 handle、generation/frame、World 帧起始时间和显式子步时间，再由 C++ 从 Domain-owned positions 调用 evaluator；Python 不读取位置、不调用 sampler、不创建 packet。
 
 正式采样时间只来自 Physics World。`world_time.py` 以 Blender 输出设置计算`scene_fps = render.fps / render.fps_base`和`raw_dt = 1 / scene_fps`，World 再维护连续模拟的`sample_time_seconds`与`frame_step_dt`。本帧实际计划`update_count`个 fixed 子步时，第`i`个子步固定使用：
 
@@ -170,7 +174,7 @@ MC2FieldSamplePacketV0
 field_time(i) = sample_time_seconds + frame_step_dt * i / update_count
 ```
 
-不得改用 MC2 固定频率累加器、帧号、时间轴预览时间或墙钟。采样位置是上一成功子步已经提交的当前位置；当前 V0 不在同一次事务内先推进 Center 再回调 Python sampler。
+不得改用 MC2 固定频率累加器、帧号、时间轴预览时间或墙钟。采样位置是上一成功子步已经提交的当前位置；当前合同保证 prepare 在 solver mutation 前完成，响应在 Center inertia 后、Integration 前应用。全部 response 为零或 runtime 为空走 native fast path。
 
 native Wind Response V0 把空气速度当成目标速度而不是加速度：
 
@@ -186,7 +190,7 @@ cloth_velocity += alpha * coupled
 V0 仍有两个必须显式保留的边界问题：
 
 - Sphere 当前把中心到边界的线性 Volume 权重乘到基础风与紊流合成后的最终`air_velocity`，Box 内部权重恒为1。attenuation 最终应归 Volume、generator 还是 channel mapping，以及应在 blend 前还是后执行，尚未冻结；MC2 不得私自增加第二层衰减。
-- packet V0 没有独立 participation/weight 通道。host 当前把精确零空气速度对应的响应强度置0，以免 Volume 外部产生“静止空气阻尼”；因此“未参与”和“多个 Field 精确抵消为零”目前不可区分，真正的静止空气阻力也无法表达。未来若拆分参与权重，必须升级公共 Field/packet 合同，不能再往 MC2 节点堆二重参数。
+- runtime V1 输出独立 participation：作用域/Volume 外为0，参与后多场精确抵消仍为1，因此静止空气可保留为真实响应。连续 participation/weight 以及 attenuation/blend 归属仍是待冻结质疑点，不能借此往 MC2 节点添加第二套风参数。
 
 旧`wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`和`moving_wind`已经从 profile、runtime、preset 和节点删除。它们没有隐藏兼容数据、迁移映射、fallback 或与公共 Field 双算的路径；任何重新引入都必须作为新产品设计审查，不能借“MC2 对齐”恢复。
 
@@ -285,8 +289,9 @@ Profile/Task authoring
   -> request collect / source capture / domain compile
   -> task reference + Center/Anchor/Teleport frame transaction
   -> 每 substep:
-       当前 logical positions + FieldSnapshotV0
-       -> MC2FieldSamplePacketV0
+       runtime handle + World sample time
+       -> native evaluator(Domain-owned logical positions)
+       -> air_velocity + participation
        -> StepBasic
        -> Center evaluator -> Center inertia
        -> Field wind response -> Integration / prediction
@@ -358,7 +363,7 @@ Profile 数值、同布局参数热更新与 scheduler 值不改变 request/doma
 | raw snapshot | Mesh positions/normals/loop UV/Pin，Bone rest/pose，component/Anchor pose | Mesh observation cache 或短生命周期 Bone adapter |
 | compiled static | logical identity、topology、constraint/primitive tables、parameter layout、output map | frozen fragment/program |
 | frame packet | animated pose、component/Anchor/collider、dt、task reference | 每 frame immutable packet |
-| Field substep packet | 当前logical positions在固定物理时间采样得到的`air_velocity_world_f32[N,3]`、快照/请求签名与诊断 | `mc2/field_bridge.py`构造的每fixed子步immutable packet |
+| Field runtime consume | `runtime handle + strict World sample time`；Domain-owned positions、contexts、scratch/output 只在 native 内部存在 | `product_slot.py` 调度，`cpu_native_kernel.py` prepare/apply，`FieldRuntimeV1` evaluator |
 | native state | particle、Center/Teleport/scheduler history、constraint/self scratch | DomainV1 owner |
 | result/debug | logical output、事务 command、请求式冻结 snapshot | 产品 result/debug owner，只读 |
 
@@ -444,7 +449,7 @@ BoneCloth的推荐作者语义是让参与模拟的链骨尽量关闭`Bone > Rel
 
 ```text
 Center / inertia preparation
-  -> Field wind response（有有效packet时）
+  -> Field wind response（有有效 native sample 且 participation/strength 生效时）
   -> Integration / particle prediction
   -> Tether
   -> Distance phase A
@@ -461,7 +466,7 @@ Center / inertia preparation
 维护时必须保持：
 
 - float32舍入位置是语义的一部分，不能先用double合并后一次转换。
-- Field sampler在进入上述native顺序前从当前logical positions构造完整packet；Center inertia、Field响应和Integration之间不得插入第二次采样或重新解释时间。
+- Field evaluator在进入上述native顺序前从 Domain-owned current positions 采样；Center inertia、Field响应和Integration之间不得插入第二次采样或重新解释时间。
 - curve固定采样16点，位置`i/15`；disabled curve全部为基础值。
 - Distance velocity-reference attenuation固定`0.3`，Motion固定`0.95`。
 - Bending反向triangle bucket、ordered quad role、角度/volume门槛和first-wins marker顺序稳定。
@@ -493,7 +498,7 @@ Constraint、external 和 self 的 correction 记录必须按 production 相同�
 | 层 | 唯一职责 |
 |---|---|
 | authoring | `nodes.py`、`parameters.py`、`runtime_parameters.py` 定义公开字段、immutable 参数和 setup 有效值/固定值/禁用值；Field相关只拥有“响应场风”与响应强度。 |
-| Field输入 | 公共`../field/`拥有快照、采样和可视化；`field_bridge.py`把公共结果冻结为`MC2FieldSamplePacketV0`，`product_slot.py`负责每fixed子步的身份、时间与当前粒子顺序校验。 |
+| Field输入 | 公共`../field/`拥有 snapshot、native runtime、evaluator 和可视化；`product_slot.py`负责每fixed子步的 identity/time，`cpu_native_kernel.py`只接收 handle/time 并在 Domain 内采样。 |
 | collect/capture | `product_authoring.py`、`product_collect.py`、setup capture/static adapter 生成显式 request、partition snapshot 和 frozen fragment。 |
 | compile | `domain_ir.py`、`domain_collect.py`、`domain_compile.py` 拥有 logical identity、parameter SoA、constraint/primitive relocation 和 output map。 |
 | execute | `product_slot.py`、`product_frame.py`、`cpu_backend.py`、`cpu_native_kernel.py` 管理 DomainV1 lifecycle、frame packet、scheduler 和 staged state。 |
