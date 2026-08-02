@@ -36,6 +36,12 @@ field_names = importlib.import_module(
 )
 
 
+def test_blender_object_sources_refresh_every_evaluation() -> None:
+    """Blender 数据源必须主动感知场景对象的新增和删除。"""
+    assert physics_nodes.physicsObjectsFromCollection.__meta["always_run"] is True
+    assert physics_nodes.physicsObjectsFromScene.__meta["always_run"] is True
+
+
 def _mesh_request(mesh):
     mesh_objects, count = nodes.physicsMC2MeshObject([mesh])
     assert count == 1

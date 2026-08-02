@@ -50,6 +50,7 @@ from .bake import (
 
 @omni(
     enable=True,
+    always_run=True,
     bl_label="物理对象-从集合",
     base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
@@ -74,6 +75,7 @@ def physicsObjectsFromCollection(
 
 @omni(
     enable=True,
+    always_run=True,
     bl_label="物理对象-从场景",
     base_color=nodeColors.colorCat["GetData"],
     is_output_node=False,
