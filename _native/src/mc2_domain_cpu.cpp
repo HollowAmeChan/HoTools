@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace hotools::mc2_domain_cpu {
 namespace {
@@ -70,6 +71,9 @@ DomainV1::DomainV1(const ProgramViewV1& program)
       velocity_positions_(program.particle_count * 3, 0.0f),
       state_velocities_(program.particle_count * 3, 0.0f),
       real_velocities_(program.particle_count * 3, 0.0f),
+      field_air_velocity_world_(program.particle_count * 3, 0.0f),
+      field_participation_(program.particle_count, 0u),
+      field_effective_response_strength_values_(program.particle_count, 0.0f),
       static_friction_(program.particle_count, 0.0f),
       post_old_positions_(program.particle_count * 3, 0.0f),
       substep_old_positions_(program.particle_count * 3, 0.0f),
@@ -309,6 +313,9 @@ void DomainV1::swap_parameter_configuration(DomainV1& staging) {
     swap(constraint_friction_ready_, staging.constraint_friction_ready_);
     swap(integration_damping_values_, staging.integration_damping_values_);
     swap(integration_ready_, staging.integration_ready_);
+    swap(field_response_strength_values_, staging.field_response_strength_values_);
+    swap(field_response_ready_, staging.field_response_ready_);
+    swap(field_response_active_, staging.field_response_active_);
     swap(collision_friction_, staging.collision_friction_);
     swap(collision_state_ready_, staging.collision_state_ready_);
 
@@ -336,6 +343,8 @@ void DomainV1::swap_parameter_configuration(DomainV1& staging) {
     );
     swap(whole_domain_self_engine_, staging.whole_domain_self_engine_);
     swap(whole_domain_self_ready_, staging.whole_domain_self_ready_);
+    clear_prepared_field_wind();
+    staging.clear_prepared_field_wind();
 }
 
 void DomainV1::update_frame(const FrameViewV1& frame) {
@@ -614,6 +623,7 @@ void DomainV1::update_frame(const FrameViewV1& frame) {
     partition_keep_counts_.swap(next_keep_counts);
     frame_ = frame.frame;
     generation_ = frame.generation;
+    clear_prepared_field_wind();
 }
 
 void DomainV1::configure_center(
@@ -3068,6 +3078,167 @@ void DomainV1::configure_integration(const float* damping_values) {
     integration_ready_ = true;
 }
 
+void DomainV1::configure_field_wind_response(
+    const float* response_strength_values
+) {
+    ensure_live();
+    require_finite(
+        response_strength_values,
+        particle_count_,
+        "Field wind response strength"
+    );
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        if (
+            response_strength_values[index] < 0.0f ||
+            response_strength_values[index] > 20.0f
+        ) {
+            throw std::invalid_argument(
+                "MC2 Field wind response strength 必须位于 0..20"
+            );
+        }
+    }
+    std::vector<float> next(
+        response_strength_values,
+        response_strength_values + particle_count_
+    );
+    const bool next_active = std::any_of(
+        next.begin(),
+        next.end(),
+        [](float value) { return value > 0.0f; }
+    );
+    field_response_strength_values_.swap(next);
+    field_response_ready_ = true;
+    field_response_active_ = next_active;
+    clear_prepared_field_wind();
+}
+
+void DomainV1::configure_field_consumer_contexts(
+    std::vector<field_runtime::FieldSampleContextV1> contexts
+) {
+    ensure_live();
+    if (contexts.size() != partition_count_) {
+        throw std::invalid_argument(
+            "MC2 Field consumer context 必须与 partition 数量一致"
+        );
+    }
+    for (const auto& context : contexts) {
+        if (context.consumer_id != "mc2") {
+            throw std::invalid_argument(
+                "MC2 Field consumer_id 必须固定为 mc2"
+            );
+        }
+        if (
+            (context.collision_group_mask &
+             ~field_runtime::kCollisionGroupMaskV0) != 0
+        ) {
+            throw std::invalid_argument(
+                "MC2 Field collision group 超出公共 V0 范围"
+            );
+        }
+        std::unordered_set<std::string> collection_ids;
+        for (const auto& collection_id : context.collection_ids) {
+            if (collection_id.empty() || !collection_ids.insert(collection_id).second) {
+                throw std::invalid_argument(
+                    "MC2 Field Collection 标识不能为空或重复"
+                );
+            }
+        }
+    }
+    field_consumer_contexts_.swap(contexts);
+    field_contexts_ready_ = true;
+    clear_prepared_field_wind();
+}
+
+bool DomainV1::prepare_field_wind(
+    const field_runtime::FieldRuntimeV1& runtime,
+    std::uint64_t runtime_handle,
+    double sample_time_seconds
+) {
+    ensure_live();
+    clear_prepared_field_wind();
+    if (frame_ < 0 || generation_ < 0) {
+        throw std::logic_error("MC2 Field 预采样需要先 update_frame");
+    }
+    if (!field_response_ready_ || !field_contexts_ready_) {
+        throw std::logic_error("MC2 Field 预采样缺少响应或消费上下文配置");
+    }
+    if (
+        runtime.generation() != generation_ ||
+        runtime.frame() != frame_
+    ) {
+        throw std::runtime_error("MC2 拒绝消费跨帧或跨 generation 的 Field runtime");
+    }
+    if (
+        !std::isfinite(sample_time_seconds) ||
+        sample_time_seconds < runtime.sample_time_seconds()
+    ) {
+        throw std::invalid_argument("MC2 Field 子步采样时间早于 Physics World 帧起点");
+    }
+
+    field_runtime_handle_ = runtime_handle;
+    field_sample_time_seconds_ = sample_time_seconds;
+    if (!field_response_active_ || runtime.fields().empty()) {
+        return false;
+    }
+    if (!runtime.has_allowed_scope(
+        field_consumer_contexts_.data(),
+        field_consumer_contexts_.size()
+    )) {
+        return false;
+    }
+
+    field_sampled_field_count_ = runtime.sample_air_velocity_partitioned_into(
+        world_positions_.data(),
+        particle_count_,
+        sample_time_seconds,
+        particle_partition_index_.data(),
+        field_consumer_contexts_.data(),
+        field_consumer_contexts_.size(),
+        field_air_velocity_world_.data(),
+        field_participation_.data(),
+        field_sample_scratch_
+    );
+    field_sample_buffer_valid_ = true;
+    ++field_sample_count_;
+
+    bool active = false;
+    for (std::size_t index = 0; index < particle_count_; ++index) {
+        const float strength = field_participation_[index] != 0u
+            ? field_response_strength_values_[index]
+            : 0.0f;
+        field_effective_response_strength_values_[index] = strength;
+        active = active || strength > 0.0f;
+    }
+    field_prepared_active_ = active;
+    return active;
+}
+
+void DomainV1::cancel_prepared_field_wind() noexcept {
+    field_prepared_active_ = false;
+}
+
+void DomainV1::clear_prepared_field_wind() noexcept {
+    field_prepared_active_ = false;
+    field_sample_buffer_valid_ = false;
+    field_runtime_handle_ = 0;
+    field_sample_time_seconds_ = -1.0;
+    field_sampled_field_count_ = 0;
+}
+
+void DomainV1::step_prepared_field_wind(float dt) {
+    ensure_live();
+    if (!field_prepared_active_) {
+        throw std::logic_error("MC2 没有可应用的 Field wind 预采样");
+    }
+    step_wind_response(
+        field_air_velocity_world_.data(),
+        dt,
+        field_effective_response_strength_values_.data()
+    );
+    field_prepared_active_ = false;
+    ++field_apply_count_;
+}
+
 void DomainV1::step_wind_response(
     const float* air_velocity_world,
     float dt,
@@ -3324,6 +3495,16 @@ void DomainV1::dispose() noexcept {
     velocity_positions_.clear();
     state_velocities_.clear();
     real_velocities_.clear();
+    field_response_strength_values_.clear();
+    field_consumer_contexts_.clear();
+    field_air_velocity_world_.clear();
+    field_participation_.clear();
+    field_effective_response_strength_values_.clear();
+    field_sample_scratch_ = {};
+    field_response_ready_ = false;
+    field_contexts_ready_ = false;
+    field_response_active_ = false;
+    clear_prepared_field_wind();
     static_friction_.clear();
     post_old_positions_.clear();
     substep_old_positions_.clear();

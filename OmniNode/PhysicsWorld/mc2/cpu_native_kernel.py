@@ -57,13 +57,17 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_task_reference_teleport",
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
+    "mc2_domain_cpu_v1_configure_field_wind_response",
+    "mc2_domain_cpu_v1_configure_field_consumers",
+    "mc2_domain_cpu_v1_prepare_field_wind",
+    "mc2_domain_cpu_v1_cancel_prepared_field_wind",
+    "mc2_domain_cpu_v1_clear_field_wind",
+    "mc2_domain_cpu_v1_step_prepared_field_wind",
     "mc2_domain_cpu_v1_step_integration",
-    "mc2_domain_cpu_v1_step_wind_response",
     "mc2_domain_cpu_v1_step_integration_partitioned",
     "mc2_domain_cpu_v1_step_post",
     "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_step_post_owned_partitioned",
-    "mc2_domain_cpu_v1_read_positions",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_read_dynamics_debug",
     "mc2_domain_cpu_v1_begin_constraint_debug",
@@ -524,85 +528,74 @@ class MC2NativeCPUKernelV1:
             key, float(settings["dt"]), float(settings["simulation_power"])
         )
 
-    def step_wind_response(self, handle, settings: Mapping[str, object]) -> None:
-        """把公共空气速度转换为 HoTools MC2 V0 的速度响应。"""
+    def configure_field_consumers(self, handle, contexts) -> None:
+        """一次上传 partition 作用域；子步热路径不再处理字符串或索引。"""
 
         key = self._require_handle(handle)
-        required = {"air_velocity_world", "dt", "response_strength_values"}
-        if set(settings) != required:
-            raise ValueError("Field 风响应只接受空气速度、dt 与逐粒子强度")
+        contexts = tuple(contexts)
         program = self._programs[key]
-        air_velocity = np.ascontiguousarray(
-            settings["air_velocity_world"], dtype=np.float32
-        )
-        strengths = np.ascontiguousarray(
-            settings["response_strength_values"], dtype=np.float32
-        )
-        dt = float(settings["dt"])
-        if air_velocity.shape != (program.particle_count, 3):
-            raise ValueError("Field 空气速度必须是 [particle_count, 3]")
-        if strengths.shape != (program.particle_count,):
-            raise ValueError("Field 风响应强度必须匹配 particle_count")
-        if (
-            not np.isfinite(air_velocity).all()
-            or not np.isfinite(strengths).all()
-            or not np.isfinite(dt)
-            or dt <= 0.0
-        ):
-            raise ValueError("Field 风响应输入必须是有限值且 dt 为正")
-        if np.any(strengths < 0.0) or np.any(strengths > 20.0):
-            raise ValueError("Field 风响应强度必须位于 0..20")
-        air_velocity.flags.writeable = False
-        strengths.flags.writeable = False
-        self._module.mc2_domain_cpu_v1_step_wind_response(
-            key, air_velocity, dt, strengths
+        if len(contexts) != program.partition_count:
+            raise ValueError("Field consumer contexts 必须匹配 partition_count")
+        object_ids = []
+        collection_ids = []
+        collision_group_masks = []
+        for context in contexts:
+            if not isinstance(context, Mapping):
+                raise TypeError("Field consumer context 必须是 mapping")
+            required = {"object_id", "collection_ids", "collision_group_mask"}
+            if set(context) != required:
+                raise ValueError("Field consumer context 字段不完整")
+            object_ids.append(str(context["object_id"] or ""))
+            collections = tuple(
+                sorted({str(value).strip() for value in context["collection_ids"]})
+            )
+            if any(not value for value in collections):
+                raise ValueError("Field consumer Collection 标识不能为空")
+            collection_ids.append(collections)
+            mask = int(context["collision_group_mask"])
+            if mask < 0 or mask > 0xFFFF:
+                raise ValueError("Field consumer collision group 超出公共 V0 范围")
+            collision_group_masks.append(mask)
+        masks = np.ascontiguousarray(collision_group_masks, dtype=np.uint32)
+        masks.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_field_consumers(
+            key,
+            tuple(object_ids),
+            tuple(collection_ids),
+            masks,
         )
 
-    def _prepare_compiled_field_wind(self, key: int, value, dt: float):
-        """在任何 native mutation 前冻结并校验一次子步 Field 输入。"""
+    def _prepare_compiled_field_runtime(self, key: int, value, dt: float) -> bool:
+        """只传 runtime 句柄与严格 world time；粒子数据始终留在 C++。"""
 
+        dt = float(dt)
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError("compiled domain Field dt 必须是正有限值")
         if value is None:
-            return None
+            self._module.mc2_domain_cpu_v1_clear_field_wind(key)
+            return False
         if not isinstance(value, Mapping):
-            raise TypeError("compiled domain field_wind 必须是 mapping 或 None")
-        required = {"air_velocity_world", "response_strength_values"}
+            raise TypeError("compiled domain field_runtime 必须是 mapping 或 None")
+        required = {"handle", "sample_time_seconds"}
         if set(value) != required:
-            raise ValueError("compiled domain field_wind 需要精确的空气速度与强度")
-        program = self._programs[key]
-        air_velocity = np.ascontiguousarray(
-            value["air_velocity_world"], dtype=np.float32
-        )
-        strengths = np.ascontiguousarray(
-            value["response_strength_values"], dtype=np.float32
-        )
-        if air_velocity.shape != (program.particle_count, 3):
-            raise ValueError("compiled domain Field 空气速度形状无效")
-        if strengths.shape != (program.particle_count,):
-            raise ValueError("compiled domain Field 强度形状无效")
-        if (
-            not np.isfinite(air_velocity).all()
-            or not np.isfinite(strengths).all()
-            or not np.isfinite(float(dt))
-            or float(dt) <= 0.0
-        ):
-            raise ValueError("compiled domain Field 输入包含无效数值")
-        if np.any(strengths < 0.0) or np.any(strengths > 20.0):
-            raise ValueError("compiled domain Field 强度必须位于 0..20")
+            raise ValueError("compiled domain field_runtime 只接受 handle 与采样时间")
+        runtime_handle = int(value["handle"])
+        sample_time = float(value["sample_time_seconds"])
+        if runtime_handle <= 0:
+            raise ValueError("compiled domain Field runtime handle 无效")
+        if not np.isfinite(sample_time) or sample_time < 0.0:
+            raise ValueError("compiled domain Field 采样时间必须是非负有限值")
+        return bool(self._module.mc2_domain_cpu_v1_prepare_field_wind(
+            key,
+            runtime_handle,
+            sample_time,
+        ))
 
-        # Packet 只有 air_velocity；精确零向量表示该粒子没有风样本，不能产生静止空气阻尼。
-        active = np.any(air_velocity != np.float32(0.0), axis=1)
-        if not np.any(active & (strengths > np.float32(0.0))):
-            return None
-        effective_strengths = np.where(active, strengths, np.float32(0.0)).astype(
-            np.float32, copy=False
-        )
-        air_velocity.flags.writeable = False
-        effective_strengths = np.ascontiguousarray(effective_strengths)
-        effective_strengths.flags.writeable = False
-        return {
-            "air_velocity_world": air_velocity,
-            "response_strength_values": effective_strengths,
-        }
+    def _cancel_prepared_field_runtime(self, key: int) -> None:
+        self._module.mc2_domain_cpu_v1_cancel_prepared_field_wind(key)
+
+    def _step_prepared_field_runtime(self, key: int, dt: float) -> None:
+        self._module.mc2_domain_cpu_v1_step_prepared_field_wind(key, float(dt))
 
     def step_external_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -1225,9 +1218,9 @@ class MC2NativeCPUKernelV1:
     ) -> None:
         """Run the fixed E4 structural, external, self, and post order."""
         settings = dict(settings)
-        if "field_wind" not in settings:
-            raise ValueError("compiled domain pipeline requires field_wind")
-        field_wind = settings.pop("field_wind")
+        if "field_runtime" not in settings:
+            raise ValueError("compiled domain pipeline requires field_runtime")
+        field_runtime = settings.pop("field_runtime")
         if "external_collision" not in settings:
             raise ValueError("compiled domain pipeline requires external_collision")
         external_collision = settings.pop("external_collision")
@@ -1281,26 +1274,28 @@ class MC2NativeCPUKernelV1:
         }
         if set(settings) != required:
             raise ValueError("compiled domain pipeline requires exactly its structural inputs")
-        prepared_field_wind = self._prepare_compiled_field_wind(
-            key, field_wind, settings["dt"]
+        prepared_field_runtime = self._prepare_compiled_field_runtime(
+            key, field_runtime, settings["dt"]
         )
         has_distance = any(table.kind == "distance" for table in program.constraint_tables)
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
         has_angle = program.baseline_parent_indices is not None
 
-        self.step_task_reference_teleport(key)
-        self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
-        self.step_center(key, {
-            "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
-            "distance_weights": settings["distance_weights"],
-        })
-        self.step_center_inertia(key)
-        if prepared_field_wind is not None:
-            self.step_wind_response(key, {
-                **prepared_field_wind,
-                "dt": settings["dt"],
+        try:
+            self.step_task_reference_teleport(key)
+            self.step_center_frame_shift(key, settings["anchor_component_local_positions"])
+            self.step_center(key, {
+                "dt": settings["dt"], "frame_interpolation": settings["frame_interpolation"],
+                "distance_weights": settings["distance_weights"],
             })
+            self.step_center_inertia(key)
+            if prepared_field_runtime:
+                self._step_prepared_field_runtime(key, settings["dt"])
+        except Exception:
+            if prepared_field_runtime:
+                self._cancel_prepared_field_runtime(key)
+            raise
         self.step_integration_partitioned(key, {
             "dt": settings["dt"], "simulation_power": settings["simulation_power"],
         })
@@ -1365,9 +1360,9 @@ class MC2NativeCPUKernelV1:
         if not callable(native_checkpoint):
             raise TypeError("timed compiled domain pipeline requires a native checkpoint callback")
         settings = dict(settings)
-        if "field_wind" not in settings:
-            raise ValueError("compiled domain pipeline requires field_wind")
-        field_wind = settings.pop("field_wind")
+        if "field_runtime" not in settings:
+            raise ValueError("compiled domain pipeline requires field_runtime")
+        field_runtime = settings.pop("field_runtime")
         if "external_collision" not in settings:
             raise ValueError("compiled domain pipeline requires external_collision")
         external_collision = settings.pop("external_collision")
@@ -1424,8 +1419,8 @@ class MC2NativeCPUKernelV1:
         }
         if set(settings) != required:
             raise ValueError("compiled domain pipeline requires exactly its structural inputs")
-        prepared_field_wind = self._prepare_compiled_field_wind(
-            key, field_wind, settings["dt"]
+        prepared_field_runtime = self._prepare_compiled_field_runtime(
+            key, field_runtime, settings["dt"]
         )
         has_distance = any(
             table.kind == "distance" for table in program.constraint_tables
@@ -1439,27 +1434,29 @@ class MC2NativeCPUKernelV1:
         has_angle = program.baseline_parent_indices is not None
         checkpoint("CPU · 参数校验与碰撞体打包")
 
-        self.step_task_reference_teleport(key)
-        checkpoint("CPU · Teleport")
-        self.step_center_frame_shift(
-            key,
-            settings["anchor_component_local_positions"],
-        )
-        checkpoint("CPU · Center位移")
-        self.step_center(key, {
-            "dt": settings["dt"],
-            "frame_interpolation": settings["frame_interpolation"],
-            "distance_weights": settings["distance_weights"],
-        })
-        checkpoint("CPU · Center")
-        self.step_center_inertia(key)
-        checkpoint("CPU · Center惯性")
-        if prepared_field_wind is not None:
-            self.step_wind_response(key, {
-                **prepared_field_wind,
+        try:
+            self.step_task_reference_teleport(key)
+            checkpoint("CPU · Teleport")
+            self.step_center_frame_shift(
+                key,
+                settings["anchor_component_local_positions"],
+            )
+            checkpoint("CPU · Center位移")
+            self.step_center(key, {
                 "dt": settings["dt"],
+                "frame_interpolation": settings["frame_interpolation"],
+                "distance_weights": settings["distance_weights"],
             })
-            checkpoint("CPU · Field风响应")
+            checkpoint("CPU · Center")
+            self.step_center_inertia(key)
+            checkpoint("CPU · Center惯性")
+            if prepared_field_runtime:
+                self._step_prepared_field_runtime(key, settings["dt"])
+                checkpoint("CPU · Field风响应")
+        except Exception:
+            if prepared_field_runtime:
+                self._cancel_prepared_field_runtime(key)
+            raise
         self.step_integration_partitioned(key, {
             "dt": settings["dt"],
             "simulation_power": settings["simulation_power"],
@@ -1581,23 +1578,6 @@ class MC2NativeCPUKernelV1:
             int(settings["teleport_mode"]), float(settings["teleport_distance"]),
             float(settings["teleport_rotation"]),
         ))
-
-    def read_particle_positions(self, handle) -> np.ndarray:
-        """只读回当前逻辑粒子顺序的世界位置，不触发完整输出打包。"""
-
-        key = self._require_handle(handle)
-        program = self._programs[key]
-        positions = np.asarray(
-            self._module.mc2_domain_cpu_v1_read_positions(key)
-        )
-        if positions.dtype != np.float32:
-            raise TypeError("native MC2 当前粒子位置必须是 float32")
-        if positions.shape != (program.particle_count, 3):
-            raise ValueError("native MC2 当前粒子位置形状无效")
-        if not positions.flags.c_contiguous or not np.isfinite(positions).all():
-            raise ValueError("native MC2 当前粒子位置必须连续且仅含有限值")
-        positions.flags.writeable = False
-        return positions
 
     def read_output(self, handle):
         key = self._require_handle(handle)
@@ -1858,6 +1838,7 @@ class MC2NativeCPUKernelV1:
         self._configure_center(handle, parameters)
         self._configure_center_frame_shift(handle, parameters)
         self._configure_integration(handle, parameters)
+        self._configure_field_wind_response(handle, program, parameters)
 
     def _configure_distance(
         self,
@@ -2103,6 +2084,49 @@ class MC2NativeCPUKernelV1:
         damping = np.asarray(table.values[:, fields["damping"]], dtype=np.float32)
         damping.flags.writeable = False
         self._module.mc2_domain_cpu_v1_configure_integration(handle, damping)
+
+    def _configure_field_wind_response(
+        self,
+        handle: int,
+        program: MC2CompiledDomainProgramV1,
+        parameters: MC2DomainParameterPacketV1,
+    ) -> None:
+        float_table = parameters.partition_parameters
+        uint_table = parameters.partition_uint_parameters
+        float_fields = {
+            name: index for index, name in enumerate(float_table.fields)
+        }
+        uint_fields = {
+            name: index for index, name in enumerate(uint_table.fields)
+        }
+        if "field_wind_strength" not in float_fields:
+            raise ValueError("partition parameters 缺少 field_wind_strength")
+        if "field_wind_enabled" not in uint_fields:
+            raise ValueError("partition uint parameters 缺少 field_wind_enabled")
+        strengths_by_partition = np.asarray(
+            float_table.values[:, float_fields["field_wind_strength"]],
+            dtype=np.float32,
+        )
+        enabled_by_partition = np.asarray(
+            uint_table.values[:, uint_fields["field_wind_enabled"]],
+            dtype=np.uint32,
+        )
+        if (
+            strengths_by_partition.shape != (program.partition_count,)
+            or enabled_by_partition.shape != (program.partition_count,)
+        ):
+            raise ValueError("Field wind partition 参数形状无效")
+        owners = np.asarray(program.particle_partition_index, dtype=np.intp)
+        strengths = np.ascontiguousarray(
+            strengths_by_partition[owners]
+            * (enabled_by_partition[owners] != 0),
+            dtype=np.float32,
+        )
+        strengths.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_configure_field_wind_response(
+            handle,
+            strengths,
+        )
 
     def _configure_constraint_friction(
         self,

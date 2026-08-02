@@ -92,9 +92,11 @@ MC2_FIELD_AIR_VELOCITY_CAPABILITY = {
     "sample_mode": "per_particle",
     "sample_phase": "pre_substep",
     "response": "hotools_relative_air_velocity_v0",
-    "packet": "MC2FieldSamplePacketV0",
-    "packet_abi_version": 0,
-    "implementation_status": "cpu_product_v0",
+    "runtime": "PhysicsWorld.FieldRuntimeV1",
+    "runtime_abi_version": 1,
+    "solver_abi": "scalar_handle_and_world_time_only",
+    "particle_data_crossing_python_native": 0,
+    "implementation_status": "native_direct_cpu_product_v1",
 }
 
 MC2_CAPABILITIES = {
@@ -115,9 +117,10 @@ MC2_UPDATE_FREQUENCY_TABLE = {
     "setup_options": "topology_or_parameter_signature",
     "step_scheduler_settings": "step_settings_signature",
     "collider_snapshot": "lazy_by_source_key",
-    "field_snapshot": "frame",
-    "field_air_velocity": "fixed_update_from_current_particle_positions",
-    "field_wind_response": "fixed_update_before_integration",
+    "field_runtime": "world_begin_compile_or_metadata_update",
+    "field_consumer_scope": "domain_sync",
+    "field_air_velocity": "native_pre_substep_from_domain_owned_positions",
+    "field_wind_response": "native_center_inertia_before_integration",
 }
 
 

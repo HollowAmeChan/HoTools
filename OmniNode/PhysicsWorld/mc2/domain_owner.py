@@ -284,6 +284,11 @@ class MC2FusedCPUOwnerV1:
 
         self._require_domain().update_frame(frame_packet)
 
+    def configure_field_consumers(self, contexts) -> None:
+        """把静态作用域身份注册到当前 native Domain。"""
+
+        self._require_domain().configure_field_consumers(tuple(contexts))
+
     def step(self, settings) -> None:
         """Run the fixed E4 compiled pass order on the live native owner."""
 
@@ -316,11 +321,6 @@ class MC2FusedCPUOwnerV1:
         """Read one logical-order domain result from the live native owner."""
 
         return self._require_domain().read_output()
-
-    def read_particle_positions(self):
-        """只读取 Field 子步采样所需的当前逻辑粒子世界位置。"""
-
-        return self._require_domain().read_particle_positions()
 
     def read_debug_state(self):
         """Read explicit native dynamics through the product-owned domain."""

@@ -202,7 +202,9 @@ def _scenario_outputs(world, slot_ids) -> tuple[np.ndarray, ...]:
     return tuple(outputs)
 
 
-def _assert_field_time_and_uniform_packet(world, slot_ids, *, uniform: bool) -> None:
+def _assert_field_time_and_native_state(
+    world, slot_ids, *, uniform: bool, responsive_setups: frozenset[str]
+) -> None:
     frame_context = world.frame_context
     assert math.isclose(
         frame_context.raw_dt,
@@ -210,24 +212,41 @@ def _assert_field_time_and_uniform_packet(world, slot_ids, *, uniform: bool) -> 
         rel_tol=0.0,
         abs_tol=1.0e-12,
     )
-    for slot_id in slot_ids:
+    for setup_type, slot_id in zip(SETUPS, slot_ids, strict=True):
         slot = world.solver_slots[slot_id]
         scheduled = slot.data["scheduled_frame"]
         update_count = scheduled.schedule.update_count
         assert slot.data["frame_complete"] is True
+        state = slot.data["owner"].inspect()["domain"]["kernel"]
+        runtime = world.runtime_cache(
+            field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
+        )
         if update_count == 0:
-            assert "last_field_sample_packet" not in slot.data
+            assert state["field_prepared_active"] is False
             continue
-        packet = slot.data["last_field_sample_packet"]
+        if runtime is None:
+            assert state["field_runtime_handle"] == 0
+            continue
         expected_time = (
             frame_context.sample_time_seconds
             + frame_context.frame_step_dt * (update_count - 1) / update_count
         )
-        assert packet.sample_time_seconds == expected_time
+        assert state["field_runtime_handle"] == runtime.handle
+        assert state["field_sample_time_seconds"] == expected_time
+        assert state["field_prepared_active"] is False
+        responsive = setup_type in responsive_setups
+        if responsive:
+            assert state["field_sample_count"] > 0
+        else:
+            # Scope 未命中的 Domain 必须走 native O(1) 快路径，不做逐粒子采样。
+            assert state["field_sample_count"] == 0
+            assert state["field_apply_count"] == 0
         if uniform:
-            expected = np.zeros_like(packet.air_velocity_world_f32)
-            expected[:, 2] = np.float32(WIND_SPEED_MPS)
-            np.testing.assert_array_equal(packet.air_velocity_world_f32, expected)
+            air = state["field_air_velocity_world"]
+            expected = np.zeros_like(air)
+            if responsive:
+                expected[:, 2] = np.float32(WIND_SPEED_MPS)
+            np.testing.assert_array_equal(air, expected)
 
 
 def _run_field_wind_matrix(run_index: int):
@@ -304,10 +323,17 @@ def _run_field_wind_matrix(run_index: int):
                 outputs[scenario] = _scenario_outputs(
                     worlds[scenario], slot_ids
                 )
-                _assert_field_time_and_uniform_packet(
+                _assert_field_time_and_native_state(
                     worlds[scenario],
                     slot_ids,
                     uniform=scenario in {"profile_disabled", "uniform"},
+                    responsive_setups=(
+                        frozenset(SETUPS)
+                        if scenario == "uniform"
+                        else frozenset({scenario.removeprefix("scope_")})
+                        if scenario.startswith("scope_")
+                        else frozenset()
+                    ),
                 )
                 for positions in outputs[scenario]:
                     digest.update(positions.tobytes())

@@ -217,7 +217,7 @@ set_source_files_properties(
     src/mc2_domain_cpu.cpp
     src/mc2_domain_cpu_bindings.cpp
     PROPERTIES OBJECT_DEPENDS
-        "${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_frame_orientations.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/field_runtime.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_frame_orientations.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
 )
 
 set_source_files_properties(

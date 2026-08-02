@@ -48,9 +48,6 @@ runtime = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.runtime_par
 reference_step = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.mc2.reference_step"
 )
-field_bridge = importlib.import_module(
-    "HoTools.OmniNode.PhysicsWorld.mc2.field_bridge"
-)
 scheduler = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.scheduler")
 cpu_backend = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.cpu_backend")
 native_kernel = importlib.import_module(
@@ -192,20 +189,6 @@ def _compiled_settings_inputs(compiled, frame):
     }
 
 
-def _field_packet(particle_count, air_velocity=None):
-    if air_velocity is None:
-        air_velocity = np.arange(particle_count * 3, dtype=np.float32).reshape(
-            particle_count, 3
-        )
-    return field_bridge.MC2FieldSamplePacketV0(
-        abi_version=field_bridge.MC2_FIELD_SAMPLE_PACKET_ABI_VERSION,
-        field_snapshot_signature="field-snapshot-test",
-        sample_time_seconds=0.125,
-        particle_count=particle_count,
-        air_velocity_world_f32=air_velocity,
-    )
-
-
 def test_reference_settings_use_compiled_parameters_and_substep_plan() -> None:
     compiled = _compiled()
     frame = _frame(compiled)
@@ -320,7 +303,7 @@ def test_reference_settings_enter_native_full_pipeline_without_manual_defaults()
         domain.dispose()
 
 
-def test_compiled_settings_always_expose_field_wind_slot() -> None:
+def test_compiled_settings_always_expose_field_runtime_slot() -> None:
     compiled = _compiled()
     frame = _frame(compiled)
     plan, inputs = _compiled_settings_inputs(compiled, frame)
@@ -329,43 +312,33 @@ def test_compiled_settings_always_expose_field_wind_slot() -> None:
         compiled, frame, plan, **inputs
     )
 
-    assert "field_wind" in settings
-    assert settings["field_wind"] is None
+    assert "field_runtime" in settings
+    assert settings["field_runtime"] is None
 
 
-def test_compiled_settings_expand_field_wind_response_per_partition() -> None:
+def test_compiled_settings_forward_only_scalar_field_runtime_identity() -> None:
     compiled = _compiled_multi_field_wind()
     frame = _frame_multi(compiled)
     plan, inputs = _compiled_settings_inputs(compiled, frame)
-    packet = _field_packet(compiled.program.particle_count)
+    field_runtime = {"handle": 73, "sample_time_seconds": 0.125}
 
     settings = reference_step.make_mc2_compiled_domain_pipeline_settings(
         compiled,
         frame,
         plan,
-        field_sample_packet=packet,
+        field_runtime=field_runtime,
         **inputs,
     )
 
-    field_wind = settings["field_wind"]
-    assert field_wind is not None
-    air_velocity = field_wind["air_velocity_world"]
-    strengths = field_wind["response_strength_values"]
-    assert np.array_equal(air_velocity, packet.air_velocity_world_f32)
-    assert air_velocity.dtype == np.float32
-    assert air_velocity.flags.c_contiguous
-    assert not air_velocity.flags.writeable
-    assert strengths.dtype == np.float32
-    assert strengths.shape == (compiled.program.particle_count,)
-    assert strengths.flags.c_contiguous
-    assert not strengths.flags.writeable
-
-    owners = np.asarray(compiled.program.particle_partition_index, dtype=np.intp)
-    expected = np.where(owners == 0, np.float32(2.5), np.float32(0.0))
-    np.testing.assert_array_equal(strengths, expected.astype(np.float32))
+    assert settings["field_runtime"] == field_runtime
+    assert settings["field_runtime"] is not field_runtime
+    assert not any(
+        isinstance(value, np.ndarray)
+        for value in settings["field_runtime"].values()
+    )
 
 
-def test_compiled_settings_reject_invalid_field_packet_type() -> None:
+def test_compiled_settings_reject_invalid_field_runtime_type() -> None:
     compiled = _compiled()
     frame = _frame(compiled)
     plan, inputs = _compiled_settings_inputs(compiled, frame)
@@ -375,33 +348,13 @@ def test_compiled_settings_reject_invalid_field_packet_type() -> None:
             compiled,
             frame,
             plan,
-            field_sample_packet={"air_velocity_world": np.zeros((1, 3))},
+            field_runtime=(73, 0.125),
             **inputs,
         )
     except TypeError as exc:
-        assert "MC2FieldSamplePacketV0" in str(exc)
+        assert "field_runtime" in str(exc)
     else:
-        raise AssertionError("non-packet Field input must be rejected")
-
-
-def test_compiled_settings_reject_field_packet_particle_count_mismatch() -> None:
-    compiled = _compiled()
-    frame = _frame(compiled)
-    plan, inputs = _compiled_settings_inputs(compiled, frame)
-    packet = _field_packet(compiled.program.particle_count + 1)
-
-    try:
-        reference_step.make_mc2_compiled_domain_pipeline_settings(
-            compiled,
-            frame,
-            plan,
-            field_sample_packet=packet,
-            **inputs,
-        )
-    except ValueError as exc:
-        assert "particle_count" in str(exc)
-    else:
-        raise AssertionError("Field packet with wrong particle_count must be rejected")
+        raise AssertionError("non-mapping Field runtime input must be rejected")
 
 
 if __name__ == "__main__":

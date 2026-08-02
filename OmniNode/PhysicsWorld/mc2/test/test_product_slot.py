@@ -37,6 +37,7 @@ for package_name, package_path in (
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
 field_names = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field.names")
 field_specs = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field.specs")
+field_native = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field.native")
 ir = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.domain_ir")
 collector = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.domain_collect")
 parameters = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.parameters")
@@ -132,7 +133,7 @@ class _Kernel:
         self.poses = []
         self.full_steps = []
         self.timed_steps = []
-        self.position_reads = []
+        self.field_contexts = []
         self.fail_create = False
         self.fail_parameter_stage = False
         self.fail_update = False
@@ -173,6 +174,8 @@ class _Kernel:
         if self.fail_update:
             raise RuntimeError("injected frame update failure")
         self.frames.append((handle, frame))
+    def configure_field_consumers(self, handle, contexts):
+        self.field_contexts.append((handle, tuple(contexts)))
     def step_task_reference_teleport(self, handle):
         self.zero_frame_passes.append(("task_reference_teleport", handle))
     def step_center_frame_shift(self, handle, anchor_component_local_positions):
@@ -200,11 +203,6 @@ class _Kernel:
             "residual_stage": "CPU Self · 测试边界",
         })
     def step(self, handle, frame, settings, colliders): pass
-    def read_particle_positions(self, handle):
-        self.position_reads.append(handle)
-        return np.ascontiguousarray(
-            handle["program"].particle_bind_position, dtype=np.float32
-        )
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
     def dispose(self, handle): self.disposed.append(handle)
@@ -412,6 +410,16 @@ def _field_snapshot(*, frame, sample_time_seconds, include_ids=("Sleeve",)):
         generation=1,
         frame=frame,
         sample_time_seconds=sample_time_seconds,
+    )
+
+
+def _field_runtime(*, frame, sample_time_seconds, include_ids=("Sleeve",)):
+    return field_native.NativeFieldRuntimeV1.create(
+        _field_snapshot(
+            frame=frame,
+            sample_time_seconds=sample_time_seconds,
+            include_ids=include_ids,
+        )
     )
 
 
@@ -636,7 +644,7 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
         raise AssertionError("completed fused frame accepted an extra substep")
 
 
-def test_slot_samples_active_field_per_fixed_update_with_partition_scope():
+def test_slot_sends_only_field_runtime_identity_per_fixed_update():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
@@ -648,36 +656,32 @@ def test_slot_samples_active_field_per_fixed_update_with_partition_scope():
     world.frame_context.sample_time_seconds = 2.0
     world.frame_context.frame_step_dt = 0.1
     world.set_runtime_cache(
-        field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
-        _field_snapshot(frame=10, sample_time_seconds=2.0),
+        field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1,
+        _field_runtime(frame=10, sample_time_seconds=2.0),
     )
     slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(10),
     )
 
     first = slot_module.step_mc2_product_substep(world, slot)
-    first_packet = slot.data["last_field_sample_packet"]
-    field_wind = kernel.full_steps[-1][1]["field_wind"]
-    owners = np.asarray(program.particle_partition_index, dtype=np.intp)
-    expected = np.zeros((program.particle_count, 3), dtype=np.float32)
-    expected[owners == 0, 2] = np.float32(4.0)
-    np.testing.assert_array_equal(
-        field_wind["air_velocity_world"], expected
-    )
+    first_runtime = kernel.full_steps[-1][1]["field_runtime"]
     assert first.update_index == 0
-    assert first_packet.sample_time_seconds == 2.0
-    assert len(kernel.position_reads) == 1
+    assert first_runtime["sample_time_seconds"] == 2.0
+    assert first_runtime["handle"] > 0
+    assert not hasattr(kernel, "read_particle_positions")
 
     second = slot_module.step_mc2_product_substep(world, slot)
-    second_packet = slot.data["last_field_sample_packet"]
+    second_runtime = kernel.full_steps[-1][1]["field_runtime"]
     expected_time = 2.0 + 0.1 / scheduled.schedule.update_count
     assert second.update_index == 1
-    assert second_packet.sample_time_seconds == expected_time
-    assert first_packet.sample_time_seconds != second_packet.sample_time_seconds
-    assert len(kernel.position_reads) == 2
+    assert second_runtime["sample_time_seconds"] == expected_time
+    assert second_runtime["handle"] == first_runtime["handle"]
+    assert set(second_runtime) == {"handle", "sample_time_seconds"}
+    assert not hasattr(kernel, "read_particle_positions")
+    world.omni_cache_dispose("field_runtime_identity_test_complete")
 
 
-def test_stale_field_snapshot_fails_before_native_step_and_scheduler_commit():
+def test_stale_field_runtime_fails_before_native_step_and_scheduler_commit():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)
@@ -689,8 +693,8 @@ def test_stale_field_snapshot_fails_before_native_step_and_scheduler_commit():
     world.frame_context.sample_time_seconds = 3.0
     world.frame_context.frame_step_dt = 0.1
     world.set_runtime_cache(
-        field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
-        _field_snapshot(frame=10, sample_time_seconds=3.0),
+        field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1,
+        _field_runtime(frame=10, sample_time_seconds=3.0),
     )
     slot_module.publish_mc2_product_frame(
         world, slot, scheduled, _empty_collider_frame(11),
@@ -700,14 +704,15 @@ def test_stale_field_snapshot_fails_before_native_step_and_scheduler_commit():
     try:
         slot_module.step_mc2_product_substep(world, slot)
     except RuntimeError as exc:
-        assert "快照已过期" in str(exc)
+        assert "runtime 已过期" in str(exc)
     else:
-        raise AssertionError("stale Field snapshot was accepted")
-    assert kernel.position_reads == []
+        raise AssertionError("stale Field runtime was accepted")
+    assert not hasattr(kernel, "read_particle_positions")
     assert kernel.poses == [] and kernel.full_steps == []
     assert slot.data["scheduler_state"].revision == revision
     assert slot.data["completed_substeps"] == 0
-    assert "快照已过期" in slot.data["last_step_failure"]
+    assert "runtime 已过期" in slot.data["last_step_failure"]
+    world.omni_cache_dispose("stale_field_runtime_test_complete")
 
 
 def test_slot_uses_timed_pipeline_only_when_hotspot_timing_is_requested():
@@ -1140,8 +1145,8 @@ def test_slot_native_field_wind_changes_only_the_scoped_partition():
             frame_step_dt=0.1,
         )
         windy_world.set_runtime_cache(
-            field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
-            _field_snapshot(frame=14, sample_time_seconds=4.0),
+            field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1,
+            _field_runtime(frame=14, sample_time_seconds=4.0),
         )
         slot_module.publish_mc2_product_frame(
             calm_world, calm_slot, calm_scheduled, _empty_collider_frame(14),
@@ -1168,9 +1173,11 @@ def test_slot_native_field_wind_changes_only_the_scoped_partition():
             * (calm_scheduled.schedule.update_count - 1)
             / calm_scheduled.schedule.update_count
         )
-        assert windy_slot.data["last_field_sample_packet"].sample_time_seconds == (
-            expected_time
-        )
+        native_field = windy_owner.inspect()["domain"]["kernel"]
+        assert native_field["field_sample_time_seconds"] == expected_time
+        assert native_field["field_sample_count"] == calm_scheduled.schedule.update_count
+        assert native_field["field_apply_count"] == calm_scheduled.schedule.update_count
+        assert native_field["field_sampled_field_count"] == 1
     finally:
         calm_world.omni_cache_dispose("native_field_calm_test_complete")
         windy_world.omni_cache_dispose("native_field_windy_test_complete")

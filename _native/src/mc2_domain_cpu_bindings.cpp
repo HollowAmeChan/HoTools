@@ -5,12 +5,14 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace nb = nanobind;
@@ -54,24 +56,6 @@ nb::ndarray<nb::numpy, T> owned_array_2d(
         delete static_cast<std::vector<T>*>(pointer);
     });
     return nb::ndarray<nb::numpy, T>(
-        owner_data->data(), {rows, columns}, owner
-    );
-}
-
-template<typename T>
-nb::ndarray<nb::numpy, T, nb::ro> owned_readonly_array_2d(
-    std::vector<T>&& values,
-    std::size_t rows,
-    std::size_t columns
-) {
-    if (values.size() != rows * columns) {
-        throw nb::value_error("MC2 CPU output shape mismatch");
-    }
-    auto* owner_data = new std::vector<T>(std::move(values));
-    nb::capsule owner(owner_data, [](void* pointer) noexcept {
-        delete static_cast<std::vector<T>*>(pointer);
-    });
-    return nb::ndarray<nb::numpy, T, nb::ro>(
         owner_data->data(), {rows, columns}, owner
     );
 }
@@ -1291,6 +1275,109 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         "Configure the explicit E3 particle integration kernel slice."
     );
     module.def(
+        "mc2_domain_cpu_v1_configure_field_wind_response",
+        [](std::uint64_t handle, cf32_1d response_strength_values) {
+            auto* domain = require_domain(handle);
+            if (
+                static_cast<std::size_t>(response_strength_values.shape(0)) !=
+                domain->particle_count()
+            ) {
+                throw nb::value_error(
+                    "Field wind response_strength_values 必须匹配 particle_count"
+                );
+            }
+            domain->configure_field_wind_response(response_strength_values.data());
+        },
+        nb::arg("handle"),
+        nb::arg("response_strength_values"),
+        "一次性配置 MC2 对公共 Field wind 的逐粒子响应。"
+    );
+    module.def(
+        "mc2_domain_cpu_v1_configure_field_consumers",
+        [](
+            std::uint64_t handle,
+            std::vector<std::string> object_ids,
+            std::vector<std::vector<std::string>> collection_ids,
+            cu32_1d collision_group_masks
+        ) {
+            auto* domain = require_domain(handle);
+            const std::size_t partition_count = domain->partition_count();
+            if (
+                object_ids.size() != partition_count ||
+                collection_ids.size() != partition_count ||
+                static_cast<std::size_t>(collision_group_masks.shape(0)) !=
+                    partition_count
+            ) {
+                throw nb::value_error(
+                    "Field consumer arrays 必须匹配 partition_count"
+                );
+            }
+            std::vector<field_runtime::FieldSampleContextV1> contexts(
+                partition_count
+            );
+            for (std::size_t index = 0; index < partition_count; ++index) {
+                contexts[index].consumer_id = "mc2";
+                contexts[index].object_id = std::move(object_ids[index]);
+                contexts[index].collection_ids = std::move(collection_ids[index]);
+                contexts[index].collision_group_mask =
+                    collision_group_masks.data()[index];
+            }
+            domain->configure_field_consumer_contexts(std::move(contexts));
+        },
+        nb::arg("handle"),
+        nb::arg("object_ids"),
+        nb::arg("collection_ids"),
+        nb::arg("collision_group_masks"),
+        "一次性注册 MC2 partition 的公共 Field 消费上下文。"
+    );
+    module.def(
+        "mc2_domain_cpu_v1_prepare_field_wind",
+        [](
+            std::uint64_t handle,
+            std::uint64_t field_runtime_handle,
+            double sample_time_seconds
+        ) {
+            auto* domain = require_domain(handle);
+            auto& runtime = field_runtime::require_registered_runtime_v1(
+                field_runtime_handle
+            );
+            return domain->prepare_field_wind(
+                runtime,
+                field_runtime_handle,
+                sample_time_seconds
+            );
+        },
+        nb::arg("handle"),
+        nb::arg("field_runtime_handle"),
+        nb::arg("sample_time_seconds"),
+        "在任何 MC2 状态变更前，从 Domain 自有位置预采样公共 Field。"
+    );
+    module.def(
+        "mc2_domain_cpu_v1_cancel_prepared_field_wind",
+        [](std::uint64_t handle) {
+            require_domain(handle)->cancel_prepared_field_wind();
+        },
+        nb::arg("handle"),
+        "取消尚未应用的 Field wind，不抹除最后一次真实采样调试数据。"
+    );
+    module.def(
+        "mc2_domain_cpu_v1_clear_field_wind",
+        [](std::uint64_t handle) {
+            require_domain(handle)->clear_prepared_field_wind();
+        },
+        nb::arg("handle"),
+        "清除 MC2 Domain 当前 Field wind 样本与待应用状态。"
+    );
+    module.def(
+        "mc2_domain_cpu_v1_step_prepared_field_wind",
+        [](std::uint64_t handle, float dt) {
+            require_domain(handle)->step_prepared_field_wind(dt);
+        },
+        nb::arg("handle"),
+        nb::arg("dt"),
+        "在 Center inertia 后应用已经 native 预采样的 Field wind。"
+    );
+    module.def(
         "mc2_domain_cpu_v1_step_integration",
         [](std::uint64_t handle,
            float dt,
@@ -1310,32 +1397,6 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("velocity_weight"),
         nb::arg("gravity"),
         "Run the explicit particle integration slice using the shared native kernel."
-    );
-    module.def(
-        "mc2_domain_cpu_v1_step_wind_response",
-        [](std::uint64_t handle,
-           cf32_2d air_velocity_world,
-           float dt,
-           cf32_1d response_strength) {
-            auto* domain = require_domain(handle);
-            if (static_cast<std::size_t>(air_velocity_world.shape(0)) != domain->particle_count() ||
-                air_velocity_world.shape(1) != 3) {
-                throw nb::value_error(
-                    "MC2 CPU wind air_velocity_world must be [particle_count,3]"
-                );
-            }
-            if (static_cast<std::size_t>(response_strength.shape(0)) != domain->particle_count()) {
-                throw nb::value_error(
-                    "MC2 CPU wind response_strength must match particle_count"
-                );
-            }
-            domain->step_wind_response(
-                air_velocity_world.data(), dt, response_strength.data()
-            );
-        },
-        nb::arg("handle"), nb::arg("air_velocity_world"), nb::arg("dt"),
-        nb::arg("response_strength"),
-        "Apply the fixed V0 normal/tangent wind response to native particle velocities."
     );
     module.def(
         "mc2_domain_cpu_v1_step_integration_partitioned",
@@ -1411,17 +1472,6 @@ void bind_mc2_domain_cpu(nb::module_& module) {
         nb::arg("handle"), nb::arg("dt"), nb::arg("dynamic_friction_values"),
         nb::arg("static_friction_speed_values"), nb::arg("particle_speed_limit_values"),
         "Run owned post/history with per-particle partition parameters."
-    );
-    module.def(
-        "mc2_domain_cpu_v1_read_positions",
-        [](std::uint64_t handle) {
-            auto* domain = require_domain(handle);
-            return owned_readonly_array_2d<float>(
-                std::vector<float>(domain->world_positions()), domain->particle_count(), 3
-            );
-        },
-        nb::arg("handle"),
-        "Read an immutable owned copy of the current world positions as [N,3]."
     );
     module.def(
         "mc2_domain_cpu_v1_read",
@@ -1972,6 +2022,29 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             result["step_count"] = domain->step_count();
             result["angle_solve_count"] = domain->angle_solve_count();
             result["motion_solve_count"] = domain->motion_solve_count();
+            result["field_runtime_handle"] = domain->field_runtime_handle();
+            result["field_sample_time_seconds"] = domain->field_sample_time_seconds();
+            result["field_sampled_field_count"] = domain->field_sampled_field_count();
+            result["field_sample_count"] = domain->field_sample_count();
+            result["field_apply_count"] = domain->field_apply_count();
+            result["field_prepared_active"] = domain->field_prepared_active();
+            result["field_response_active"] = domain->field_response_active();
+            result["field_sample_buffer_valid"] =
+                domain->field_sample_buffer_valid();
+            auto air_velocity = domain->field_sample_buffer_valid()
+                ? std::vector<float>(domain->field_air_velocity_world())
+                : std::vector<float>(domain->particle_count() * 3, 0.0f);
+            auto participation = domain->field_sample_buffer_valid()
+                ? std::vector<std::uint8_t>(domain->field_participation())
+                : std::vector<std::uint8_t>(domain->particle_count(), 0u);
+            result["field_air_velocity_world"] = owned_array_2d<float>(
+                std::move(air_velocity),
+                domain->particle_count(),
+                3
+            );
+            result["field_participation"] = owned_array_1d<std::uint8_t>(
+                std::move(participation)
+            );
             result["constraint_debug_active_mask"] = domain->constraint_debug_active_mask();
             result["constraint_debug_captured_mask"] = domain->constraint_debug_captured_mask();
             result["disposed"] = domain->disposed();

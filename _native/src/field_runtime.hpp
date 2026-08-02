@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,14 @@ struct FieldSampleOutputV1 {
     std::size_t sampled_field_count = 0;
 };
 
+struct FieldSampleScratchV1 {
+    std::vector<std::array<double, 3>> positions;
+    std::vector<double> accumulated;
+    std::vector<float> weights;
+    std::vector<std::array<float, 3>> raw_values;
+    std::vector<std::uint8_t> scope_allowed;
+};
+
 class FieldRuntimeV1 final {
 public:
     FieldRuntimeV1(
@@ -95,6 +104,25 @@ public:
         const FieldSampleContextV1& context
     ) const;
 
+    // 调用方持有输出与 scratch；solver 热路径可在预热后避免 N 规模分配。
+    std::size_t sample_air_velocity_partitioned_into(
+        const float* positions_world,
+        std::size_t position_count,
+        double sample_time_seconds,
+        const std::uint32_t* particle_context_indices,
+        const FieldSampleContextV1* contexts,
+        std::size_t context_count,
+        float* air_velocity_world,
+        std::uint8_t* participation,
+        FieldSampleScratchV1& scratch
+    ) const;
+
+    // 在进入 N 粒子路径前判断至少一个 consumer context 是否能看到任一 Field。
+    bool has_allowed_scope(
+        const FieldSampleContextV1* contexts,
+        std::size_t context_count
+    ) const;
+
     // MC2 后续可直接传入其 float32 粒子位置，不需要经过 Python readback。
     FieldSampleOutputV1 sample_air_velocity(
         const float* positions_world,
@@ -122,5 +150,12 @@ private:
     double sample_time_seconds_ = 0.0;
     std::vector<FieldDefinitionV1> fields_;
 };
+
+// 进程内公共 registry 使用单调 ID；MC2 等 native consumer 只借用本次调用。
+std::uint64_t register_runtime_v1(std::unique_ptr<FieldRuntimeV1> runtime);
+FieldRuntimeV1& require_registered_runtime_v1(std::uint64_t handle);
+bool dispose_registered_runtime_v1(std::uint64_t handle) noexcept;
+std::size_t live_runtime_count_v1() noexcept;
+std::uint64_t next_runtime_handle_v1() noexcept;
 
 }  // namespace hotools::field_runtime

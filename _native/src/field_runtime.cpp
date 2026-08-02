@@ -319,6 +319,142 @@ std::array<float, 3> wind_raw_v0(
 }
 
 template<typename PositionScalar>
+std::size_t sample_impl_into(
+    const std::vector<FieldDefinitionV1>& fields,
+    const PositionScalar* positions_world,
+    std::size_t position_count,
+    double sample_time_seconds,
+    const std::uint32_t* particle_context_indices,
+    const FieldSampleContextV1* contexts,
+    std::size_t context_count,
+    float* air_velocity_world,
+    std::uint8_t* participation,
+    FieldSampleScratchV1& scratch
+) {
+    if (positions_world == nullptr && position_count != 0) {
+        throw std::invalid_argument("Field runtime positions_world 不能为空");
+    }
+    if (
+        (air_velocity_world == nullptr || participation == nullptr) &&
+        position_count != 0
+    ) {
+        throw std::invalid_argument("Field runtime 输出缓冲不能为空");
+    }
+    if (contexts == nullptr || context_count == 0) {
+        throw std::invalid_argument("Field runtime 至少需要一个采样上下文");
+    }
+    if (particle_context_indices == nullptr && context_count != 1) {
+        throw std::invalid_argument("多个 Field 上下文需要逐粒子 context index");
+    }
+    if (!std::isfinite(sample_time_seconds) || sample_time_seconds < 0.0) {
+        throw std::invalid_argument("Field runtime 采样时间必须是非负有限值");
+    }
+    for (std::size_t context_index = 0; context_index < context_count; ++context_index) {
+        const auto& context = contexts[context_index];
+        if ((context.collision_group_mask & ~kCollisionGroupMaskV0) != 0) {
+            throw std::invalid_argument(
+                "Field sample context collision group mask 超出 V0 范围"
+            );
+        }
+        require_scope_ids(
+            context.collection_ids,
+            "Field sample context collection_ids"
+        );
+    }
+
+    scratch.positions.resize(position_count);
+    scratch.accumulated.assign(position_count * 3, 0.0);
+    scratch.weights.resize(position_count);
+    scratch.raw_values.resize(position_count);
+    scratch.scope_allowed.resize(context_count);
+    if (position_count != 0) {
+        std::fill_n(participation, position_count, std::uint8_t {0});
+    }
+    for (std::size_t index = 0; index < position_count; ++index) {
+        const std::size_t context_index = particle_context_indices == nullptr
+            ? 0
+            : static_cast<std::size_t>(particle_context_indices[index]);
+        if (context_index >= context_count) {
+            throw std::invalid_argument("Field particle context index 超出范围");
+        }
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const double value = static_cast<double>(positions_world[index * 3 + axis]);
+            if (!std::isfinite(value)) {
+                throw std::invalid_argument("Field runtime positions_world 必须全为有限值");
+            }
+            scratch.positions[index][axis] = value;
+        }
+    }
+
+    std::size_t sampled_field_count = 0;
+
+    // 固定按 Field 顺序叠加；每个 Field 只做一次 scope 判定表。
+    for (const auto& field : fields) {
+        bool has_allowed_context = false;
+        for (std::size_t context_index = 0; context_index < context_count; ++context_index) {
+            const bool allowed = scope_allows(field.scope, contexts[context_index]);
+            scratch.scope_allowed[context_index] = allowed ? 1u : 0u;
+            has_allowed_context = has_allowed_context || allowed;
+        }
+        if (!has_allowed_context) continue;
+
+        bool has_positive_weight = false;
+        for (std::size_t index = 0; index < position_count; ++index) {
+            const std::size_t context_index = particle_context_indices == nullptr
+                ? 0
+                : static_cast<std::size_t>(particle_context_indices[index]);
+            const float weight = scratch.scope_allowed[context_index] != 0u
+                ? volume_weight_v0(field, scratch.positions[index])
+                : 0.0f;
+            scratch.weights[index] = weight;
+            has_positive_weight = has_positive_weight || weight > 0.0f;
+        }
+        if (!has_positive_weight) continue;
+
+        for (std::size_t index = 0; index < position_count; ++index) {
+            const std::size_t context_index = particle_context_indices == nullptr
+                ? 0
+                : static_cast<std::size_t>(particle_context_indices[index]);
+            // Volume 外的粒子贡献恒为零，尤其不能为它们执行昂贵的四维紊流采样。
+            if (
+                scratch.scope_allowed[context_index] != 0u &&
+                scratch.weights[index] > 0.0f
+            ) {
+                scratch.raw_values[index] = wind_raw_v0(
+                    field, scratch.positions[index], sample_time_seconds
+                );
+            } else {
+                scratch.raw_values[index] = {};
+            }
+        }
+        for (std::size_t index = 0; index < position_count; ++index) {
+            if (scratch.weights[index] > 0.0f && field.blend_weight > 0.0) {
+                participation[index] = 1;
+            }
+            for (std::size_t channel = 0; channel < 3; ++channel) {
+                const double contribution =
+                    static_cast<double>(scratch.raw_values[index][channel]) *
+                    static_cast<double>(scratch.weights[index]) *
+                    field.blend_weight;
+                if (!std::isfinite(contribution)) {
+                    throw std::overflow_error("Field runtime contribution 产生了非有限值");
+                }
+                scratch.accumulated[index * 3 + channel] += contribution;
+                if (!std::isfinite(scratch.accumulated[index * 3 + channel])) {
+                    throw std::overflow_error("Field runtime 空气速度叠加产生了非有限值");
+                }
+            }
+        }
+        ++sampled_field_count;
+    }
+
+    for (std::size_t index = 0; index < position_count * 3; ++index) {
+        air_velocity_world[index] = static_cast<float>(scratch.accumulated[index]);
+    }
+    return sampled_field_count;
+}
+
+template<typename PositionScalar>
 FieldSampleOutputV1 sample_impl(
     const std::vector<FieldDefinitionV1>& fields,
     const PositionScalar* positions_world,
@@ -326,72 +462,22 @@ FieldSampleOutputV1 sample_impl(
     double sample_time_seconds,
     const FieldSampleContextV1& context
 ) {
-    if (positions_world == nullptr && position_count != 0) {
-        throw std::invalid_argument("Field runtime positions_world 不能为空");
-    }
-    if (!std::isfinite(sample_time_seconds) || sample_time_seconds < 0.0) {
-        throw std::invalid_argument("Field runtime 采样时间必须是非负有限值");
-    }
-    if ((context.collision_group_mask & ~kCollisionGroupMaskV0) != 0) {
-        throw std::invalid_argument("Field sample context collision group mask 超出 V0 范围");
-    }
-    require_scope_ids(context.collection_ids, "Field sample context collection_ids");
-
-    std::vector<std::array<double, 3>> positions(position_count);
-    for (std::size_t index = 0; index < position_count; ++index) {
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            const double value = static_cast<double>(positions_world[index * 3 + axis]);
-            if (!std::isfinite(value)) {
-                throw std::invalid_argument("Field runtime positions_world 必须全为有限值");
-            }
-            positions[index][axis] = value;
-        }
-    }
-
-    std::vector<double> accumulated(position_count * 3, 0.0);
     FieldSampleOutputV1 output;
-    output.participation.assign(position_count, 0);
-
-    // 逐 Field 批量求权重和 raw wind，保持 Python V0 的固定叠加顺序与 float32 边界。
-    for (const auto& field : fields) {
-        if (!scope_allows(field.scope, context)) continue;
-        std::vector<float> weights(position_count, 0.0f);
-        bool has_positive_weight = false;
-        for (std::size_t index = 0; index < position_count; ++index) {
-            weights[index] = volume_weight_v0(field, positions[index]);
-            has_positive_weight = has_positive_weight || weights[index] > 0.0f;
-        }
-        if (!has_positive_weight) continue;
-
-        std::vector<std::array<float, 3>> raw(position_count);
-        for (std::size_t index = 0; index < position_count; ++index) {
-            raw[index] = wind_raw_v0(field, positions[index], sample_time_seconds);
-        }
-        for (std::size_t index = 0; index < position_count; ++index) {
-            if (weights[index] > 0.0f && field.blend_weight > 0.0) {
-                output.participation[index] = 1;
-            }
-            for (std::size_t channel = 0; channel < 3; ++channel) {
-                const double contribution =
-                    static_cast<double>(raw[index][channel]) *
-                    static_cast<double>(weights[index]) *
-                    field.blend_weight;
-                if (!std::isfinite(contribution)) {
-                    throw std::overflow_error("Field runtime contribution 产生了非有限值");
-                }
-                accumulated[index * 3 + channel] += contribution;
-                if (!std::isfinite(accumulated[index * 3 + channel])) {
-                    throw std::overflow_error("Field runtime 空气速度叠加产生了非有限值");
-                }
-            }
-        }
-        ++output.sampled_field_count;
-    }
-
     output.air_velocity_world.resize(position_count * 3);
-    for (std::size_t index = 0; index < output.air_velocity_world.size(); ++index) {
-        output.air_velocity_world[index] = static_cast<float>(accumulated[index]);
-    }
+    output.participation.resize(position_count);
+    FieldSampleScratchV1 scratch;
+    output.sampled_field_count = sample_impl_into(
+        fields,
+        positions_world,
+        position_count,
+        sample_time_seconds,
+        nullptr,
+        &context,
+        1,
+        output.air_velocity_world.data(),
+        output.participation.data(),
+        scratch
+    );
     return output;
 }
 
@@ -460,6 +546,46 @@ FieldSampleOutputV1 FieldRuntimeV1::sample_air_velocity(
     const FieldSampleContextV1& context
 ) const {
     return sample_impl(fields_, positions_world, position_count, sample_time_seconds, context);
+}
+
+std::size_t FieldRuntimeV1::sample_air_velocity_partitioned_into(
+    const float* positions_world,
+    std::size_t position_count,
+    double sample_time_seconds,
+    const std::uint32_t* particle_context_indices,
+    const FieldSampleContextV1* contexts,
+    std::size_t context_count,
+    float* air_velocity_world,
+    std::uint8_t* participation,
+    FieldSampleScratchV1& scratch
+) const {
+    return sample_impl_into(
+        fields_,
+        positions_world,
+        position_count,
+        sample_time_seconds,
+        particle_context_indices,
+        contexts,
+        context_count,
+        air_velocity_world,
+        participation,
+        scratch
+    );
+}
+
+bool FieldRuntimeV1::has_allowed_scope(
+    const FieldSampleContextV1* contexts,
+    std::size_t context_count
+) const {
+    if (contexts == nullptr || context_count == 0) {
+        throw std::invalid_argument("Field runtime 至少需要一个采样上下文");
+    }
+    for (std::size_t context_index = 0; context_index < context_count; ++context_index) {
+        for (const auto& field : fields_) {
+            if (scope_allows(field.scope, contexts[context_index])) return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace hotools::field_runtime

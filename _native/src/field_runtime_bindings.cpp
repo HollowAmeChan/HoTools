@@ -35,31 +35,6 @@ std::unordered_map<
 > live_field_runtimes;
 std::uint64_t next_field_runtime_handle = 1;
 
-field_runtime::FieldRuntimeV1* require_field_runtime(std::uint64_t handle) {
-    if (handle == 0) {
-        throw nb::value_error("Field runtime handle 不能为空");
-    }
-    const auto found = live_field_runtimes.find(handle);
-    if (found == live_field_runtimes.end()) {
-        throw std::runtime_error("Field runtime handle 已失效");
-    }
-    return found->second.get();
-}
-
-std::uint64_t register_field_runtime(
-    std::unique_ptr<field_runtime::FieldRuntimeV1> runtime
-) {
-    if (next_field_runtime_handle == 0) {
-        throw std::overflow_error("Field runtime handle 空间已耗尽");
-    }
-    const std::uint64_t handle = next_field_runtime_handle++;
-    const auto inserted = live_field_runtimes.emplace(handle, std::move(runtime));
-    if (!inserted.second) {
-        throw std::logic_error("Field runtime handle registry 冲突");
-    }
-    return handle;
-}
-
 template<typename T>
 nb::ndarray<nb::numpy, T, nb::ro> owned_readonly_array_1d(
     std::vector<T>&& values
@@ -98,6 +73,48 @@ void require_field_count(std::size_t actual, std::size_t expected, const char* l
 }
 
 }  // namespace
+
+namespace field_runtime {
+
+std::uint64_t register_runtime_v1(std::unique_ptr<FieldRuntimeV1> runtime) {
+    if (!runtime) {
+        throw std::invalid_argument("Field runtime registry 不能注册空 owner");
+    }
+    if (next_field_runtime_handle == 0) {
+        throw std::overflow_error("Field runtime handle 空间已耗尽");
+    }
+    const std::uint64_t handle = next_field_runtime_handle++;
+    const auto inserted = live_field_runtimes.emplace(handle, std::move(runtime));
+    if (!inserted.second) {
+        throw std::logic_error("Field runtime handle registry 冲突");
+    }
+    return handle;
+}
+
+FieldRuntimeV1& require_registered_runtime_v1(std::uint64_t handle) {
+    if (handle == 0) {
+        throw std::invalid_argument("Field runtime handle 不能为空");
+    }
+    const auto found = live_field_runtimes.find(handle);
+    if (found == live_field_runtimes.end()) {
+        throw std::runtime_error("Field runtime handle 已失效");
+    }
+    return *found->second;
+}
+
+bool dispose_registered_runtime_v1(std::uint64_t handle) noexcept {
+    return handle != 0 && live_field_runtimes.erase(handle) != 0;
+}
+
+std::size_t live_runtime_count_v1() noexcept {
+    return live_field_runtimes.size();
+}
+
+std::uint64_t next_runtime_handle_v1() noexcept {
+    return next_field_runtime_handle;
+}
+
+}  // namespace field_runtime
 
 void bind_field_runtime(nb::module_& module) {
     module.def(
@@ -225,7 +242,7 @@ void bind_field_runtime(nb::module_& module) {
                 sample_time_seconds,
                 std::move(fields)
             );
-            return register_field_runtime(std::move(runtime));
+            return field_runtime::register_runtime_v1(std::move(runtime));
         },
         nb::arg("abi_version"),
         nb::arg("snapshot_signature"),
@@ -259,7 +276,7 @@ void bind_field_runtime(nb::module_& module) {
             std::int64_t frame,
             double sample_time_seconds
         ) {
-            require_field_runtime(handle)->update_frame(
+            field_runtime::require_registered_runtime_v1(handle).update_frame(
                 snapshot_signature, generation, frame, sample_time_seconds
             );
         },
@@ -293,7 +310,7 @@ void bind_field_runtime(nb::module_& module) {
             const std::size_t position_count = static_cast<std::size_t>(
                 positions_world.shape(0)
             );
-            auto output = require_field_runtime(handle)->sample_air_velocity(
+            auto output = field_runtime::require_registered_runtime_v1(handle).sample_air_velocity(
                 positions_world.data(), position_count, sample_time_seconds, context
             );
             nb::dict result;
@@ -320,7 +337,7 @@ void bind_field_runtime(nb::module_& module) {
     module.def(
         "field_runtime_v1_inspect",
         [](std::uint64_t handle) {
-            const auto* runtime = require_field_runtime(handle);
+            const auto* runtime = &field_runtime::require_registered_runtime_v1(handle);
             std::size_t sphere_count = 0;
             std::size_t box_count = 0;
             std::size_t turbulent_count = 0;
@@ -363,7 +380,7 @@ void bind_field_runtime(nb::module_& module) {
         "field_runtime_v1_dispose",
         [](std::uint64_t handle) {
             if (handle == 0) return;
-            live_field_runtimes.erase(handle);
+            field_runtime::dispose_registered_runtime_v1(handle);
         },
         nb::arg("handle"),
         "幂等释放 Field runtime；已释放 handle 永远不会重新指向新 runtime。"
@@ -373,8 +390,8 @@ void bind_field_runtime(nb::module_& module) {
         "field_runtime_v1_stats",
         []() {
             nb::dict result;
-            result["live_runtime_count"] = live_field_runtimes.size();
-            result["next_handle"] = next_field_runtime_handle;
+            result["live_runtime_count"] = field_runtime::live_runtime_count_v1();
+            result["next_handle"] = field_runtime::next_runtime_handle_v1();
             result["registry_kind"] = "monotonic_uint64_v1";
             return result;
         },

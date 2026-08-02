@@ -179,6 +179,18 @@ class NativeFieldRuntimeV1:
         return self._value_signature
 
     @property
+    def generation(self) -> int:
+        return self._generation
+
+    @property
+    def frame(self) -> int:
+        return self._frame
+
+    @property
+    def sample_time_seconds(self) -> float:
+        return self._sample_time_seconds
+
+    @property
     def live(self) -> bool:
         return self._handle > 0
 

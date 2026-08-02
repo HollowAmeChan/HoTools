@@ -176,6 +176,57 @@ def _frame(offset=0.0):
     return positions, normals
 
 
+def _create_uniform_field_runtime(
+    *,
+    frame: int,
+    generation: int,
+    direction=(2.0, 0.0, 3.0),
+    speed_mps: float | None = None,
+    scope_solver: str = "mc2",
+):
+    direction = np.asarray((direction,), dtype=np.float64)
+    if speed_mps is None:
+        speed_mps = float(np.linalg.norm(direction[0]))
+    return hotools_native.field_runtime_v1_create(
+        1,
+        f"field-snapshot:{generation}:{frame}:{speed_mps}",
+        "field-config:test",
+        f"field-values:{speed_mps}",
+        generation,
+        frame,
+        0.0,
+        ("wind:test",),
+        np.asarray((0,), dtype=np.int32),
+        np.asarray((1,), dtype=np.int32),
+        np.asarray((np.eye(4, dtype=np.float64),), dtype=np.float64),
+        direction,
+        np.asarray(
+            ((speed_mps, 0.0, 1.0, 0.5, 2.0, 0.5, 1.0),),
+            dtype=np.float64,
+        ),
+        np.asarray((1,), dtype=np.uint32),
+        np.asarray((0,), dtype=np.uint32),
+        ((scope_solver,),),
+        ((),),
+        ((),),
+        ((),),
+        np.asarray((0,), dtype=np.uint32),
+    )
+
+
+def _configure_field_consumer(handle, response_strengths) -> None:
+    hotools_native.mc2_domain_cpu_v1_configure_field_wind_response(
+        handle,
+        np.asarray(response_strengths, dtype=np.float32),
+    )
+    hotools_native.mc2_domain_cpu_v1_configure_field_consumers(
+        handle,
+        ("cloth:test",),
+        ((),),
+        np.asarray((0,), dtype=np.uint32),
+    )
+
+
 def _update_frame(
     handle,
     positions,
@@ -1030,8 +1081,9 @@ def test_domain_cpu_native_integration_slice_uses_shared_kernel():
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
 
 
-def test_domain_cpu_native_wind_response_uses_relative_velocity_and_fixed_v0_coupling():
+def test_domain_cpu_native_field_runtime_wind_uses_relative_velocity_and_fixed_v0_coupling():
     handle = _create()
+    field_runtime = _create_uniform_field_runtime(frame=4, generation=1)
     try:
         positions, _ = _frame(0.0)
         normals = np.asarray(
@@ -1044,14 +1096,12 @@ def test_domain_cpu_native_wind_response_uses_relative_velocity_and_fixed_v0_cou
             np.zeros(3, dtype=np.float32),
             np.asarray((0.0, 1.0, 1.0), dtype=np.float32),
         )
-        air_velocity = np.asarray(
-            ((9.0, 0.0, 9.0), (2.0, 0.0, 3.0), (2.0, 0.0, 3.0)),
-            dtype=np.float32,
-        )
         strengths = np.asarray((20.0, 1.0, 2.0), dtype=np.float32)
-        hotools_native.mc2_domain_cpu_v1_step_wind_response(
-            handle, air_velocity, 0.5, strengths
-        )
+        _configure_field_consumer(handle, strengths)
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is True
+        hotools_native.mc2_domain_cpu_v1_step_prepared_field_wind(handle, 0.5)
         first = hotools_native.mc2_domain_cpu_v1_read_dynamics_debug(handle)[
             "velocities"
         ].copy()
@@ -1065,9 +1115,10 @@ def test_domain_cpu_native_wind_response_uses_relative_velocity_and_fixed_v0_cou
             first[2], alpha_degenerate * np.asarray((2.0, 0.0, 3.0)), atol=1e-6
         )
 
-        hotools_native.mc2_domain_cpu_v1_step_wind_response(
-            handle, air_velocity, 0.5, strengths
-        )
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is True
+        hotools_native.mc2_domain_cpu_v1_step_prepared_field_wind(handle, 0.5)
         second = hotools_native.mc2_domain_cpu_v1_read_dynamics_debug(handle)[
             "velocities"
         ]
@@ -1076,7 +1127,7 @@ def test_domain_cpu_native_wind_response_uses_relative_velocity_and_fixed_v0_cou
             dtype=np.float32,
         )
         expected_degenerate = first[2] + alpha_degenerate * (
-            air_velocity[2] - first[2]
+            np.asarray((2.0, 0.0, 3.0), dtype=np.float32) - first[2]
         )
         np.testing.assert_allclose(second[0], 0.0, atol=1e-7)
         np.testing.assert_allclose(second[1], expected_normal, atol=1e-6)
@@ -1088,120 +1139,124 @@ def test_domain_cpu_native_wind_response_uses_relative_velocity_and_fixed_v0_cou
         hotools_native.mc2_domain_cpu_v1_step_integration(
             handle, 0.25, 1.0, 1.0, np.zeros(3, dtype=np.float32)
         )
-        moved = hotools_native.mc2_domain_cpu_v1_read_positions(handle)
+        moved = hotools_native.mc2_domain_cpu_v1_read(handle)["world_positions"]
         np.testing.assert_allclose(moved[0], positions[0], atol=1e-7)
         np.testing.assert_allclose(
             moved[1:], positions[1:] + second[1:] * 0.25, atol=1e-6
         )
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
+        hotools_native.field_runtime_v1_dispose(field_runtime)
 
 
-def test_domain_cpu_native_wind_response_zero_input_is_a_noop():
+def test_domain_cpu_native_field_runtime_zero_air_and_zero_response_are_noops():
     handle = _create()
+    field_runtime = _create_uniform_field_runtime(
+        frame=5,
+        generation=1,
+        speed_mps=0.0,
+    )
     try:
         positions, normals = _frame(0.0)
         _update_frame(handle, positions, normals, frame=5, generation=1)
         hotools_native.mc2_domain_cpu_v1_configure_inertia(
             handle, np.zeros(3, dtype=np.float32), np.ones(3, dtype=np.float32)
         )
-        hotools_native.mc2_domain_cpu_v1_step_wind_response(
+        _configure_field_consumer(handle, np.full(3, 2.0, dtype=np.float32))
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is True
+        hotools_native.mc2_domain_cpu_v1_step_prepared_field_wind(handle, 0.25)
+        hotools_native.mc2_domain_cpu_v1_configure_field_wind_response(
             handle,
-            np.zeros((3, 3), dtype=np.float32),
-            0.25,
-            np.full(3, 2.0, dtype=np.float32),
-        )
-        hotools_native.mc2_domain_cpu_v1_step_wind_response(
-            handle,
-            np.ones((3, 3), dtype=np.float32),
-            0.25,
             np.zeros(3, dtype=np.float32),
         )
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is False
         velocities = hotools_native.mc2_domain_cpu_v1_read_dynamics_debug(handle)[
             "velocities"
         ]
         np.testing.assert_array_equal(velocities, np.zeros((3, 3), dtype=np.float32))
-        assert hotools_native.mc2_domain_cpu_v1_read(handle)["step_count"] == 2
+        state = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert hotools_native.mc2_domain_cpu_v1_read(handle)["step_count"] == 1
+        assert state["field_sample_count"] == 1
+        assert state["field_apply_count"] == 1
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
+        hotools_native.field_runtime_v1_dispose(field_runtime)
 
 
-def test_domain_cpu_native_wind_response_rejects_invalid_inputs_atomically():
+def test_domain_cpu_native_field_scope_miss_skips_particle_evaluator():
     handle = _create()
+    field_runtime = _create_uniform_field_runtime(
+        frame=7,
+        generation=1,
+        scope_solver="unmatched-solver",
+    )
+    try:
+        positions, normals = _frame(0.0)
+        _update_frame(handle, positions, normals, frame=7, generation=1)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(3, dtype=np.float32), np.ones(3, dtype=np.float32)
+        )
+        _configure_field_consumer(handle, np.ones(3, dtype=np.float32))
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is False
+        state = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert state["field_response_active"] is True
+        assert state["field_sample_count"] == 0
+        assert state["field_apply_count"] == 0
+        assert state["field_sample_buffer_valid"] is False
+        np.testing.assert_array_equal(
+            state["field_air_velocity_world"],
+            np.zeros((3, 3), dtype=np.float32),
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+        hotools_native.field_runtime_v1_dispose(field_runtime)
+
+
+def test_domain_cpu_native_field_response_config_rejects_invalid_inputs_atomically():
+    handle = _create()
+    field_runtime = _create_uniform_field_runtime(frame=6, generation=1)
     try:
         positions, normals = _frame(0.0)
         _update_frame(handle, positions, normals, frame=6, generation=1)
         hotools_native.mc2_domain_cpu_v1_configure_inertia(
             handle, np.zeros(3, dtype=np.float32), np.ones(3, dtype=np.float32)
         )
-        valid_air = np.ones((3, 3), dtype=np.float32)
-        valid_strength = np.ones(3, dtype=np.float32)
-        nan_air = valid_air.copy()
-        nan_air[1, 2] = np.nan
-        nan_strength = valid_strength.copy()
+        _configure_field_consumer(handle, np.zeros(3, dtype=np.float32))
+        nan_strength = np.ones(3, dtype=np.float32)
         nan_strength[1] = np.nan
-        invalid_calls = (
-            (np.ones((3, 2), dtype=np.float32), 0.1, valid_strength),
-            (np.ones((2, 3), dtype=np.float32), 0.1, valid_strength),
-            (valid_air, 0.1, np.ones(2, dtype=np.float32)),
-            (nan_air, 0.1, valid_strength),
-            (valid_air, 0.1, nan_strength),
-            (valid_air, 0.0, valid_strength),
-            (valid_air, np.nan, valid_strength),
-            (valid_air, 0.1, np.asarray((-0.01, 1.0, 1.0), dtype=np.float32)),
-            (valid_air, 0.1, np.asarray((20.01, 1.0, 1.0), dtype=np.float32)),
+        invalid_strengths = (
+            np.ones(2, dtype=np.float32),
+            nan_strength,
+            np.asarray((-0.01, 1.0, 1.0), dtype=np.float32),
+            np.asarray((20.01, 1.0, 1.0), dtype=np.float32),
         )
-        for air_velocity, dt, response_strength in invalid_calls:
+        for response_strength in invalid_strengths:
             try:
-                hotools_native.mc2_domain_cpu_v1_step_wind_response(
-                    handle, air_velocity, dt, response_strength
+                hotools_native.mc2_domain_cpu_v1_configure_field_wind_response(
+                    handle, response_strength
                 )
             except ValueError:
                 pass
             else:
-                raise AssertionError("invalid wind response input was accepted")
+                raise AssertionError("invalid Field response input was accepted")
+        assert hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+            handle, field_runtime, 0.0
+        ) is False
         velocities = hotools_native.mc2_domain_cpu_v1_read_dynamics_debug(handle)[
             "velocities"
         ]
         np.testing.assert_array_equal(velocities, np.zeros((3, 3), dtype=np.float32))
         assert hotools_native.mc2_domain_cpu_v1_read(handle)["step_count"] == 0
+        assert not hasattr(hotools_native, "mc2_domain_cpu_v1_step_wind_response")
     finally:
         hotools_native.mc2_domain_cpu_v1_dispose(handle)
-
-
-def test_domain_cpu_native_read_positions_returns_immutable_owned_copy():
-    handle = _create()
-    try:
-        positions, normals = _frame(0.0)
-        _update_frame(handle, positions, normals, frame=7, generation=1)
-        snapshot = hotools_native.mc2_domain_cpu_v1_read_positions(handle)
-        assert snapshot.shape == (3, 3)
-        assert snapshot.dtype == np.float32
-        assert snapshot.flags.writeable is False
-        np.testing.assert_array_equal(snapshot, positions)
-        try:
-            snapshot[0, 0] = 9.0
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("read_positions returned a writable array")
-
-        hotools_native.mc2_domain_cpu_v1_configure_inertia(
-            handle,
-            np.zeros(3, dtype=np.float32),
-            np.asarray((0.0, 1.0, 1.0), dtype=np.float32),
-        )
-        hotools_native.mc2_domain_cpu_v1_configure_integration(
-            handle, np.zeros(3, dtype=np.float32)
-        )
-        hotools_native.mc2_domain_cpu_v1_step_integration(
-            handle, 1.0, 1.0, 1.0, np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
-        )
-        current = hotools_native.mc2_domain_cpu_v1_read_positions(handle)
-        np.testing.assert_array_equal(snapshot, positions)
-        assert not np.array_equal(current, snapshot)
-    finally:
-        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+        hotools_native.field_runtime_v1_dispose(field_runtime)
 
 
 def test_domain_cpu_native_center_slice_uses_partition_history():

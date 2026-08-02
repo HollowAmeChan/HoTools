@@ -13,7 +13,6 @@ import numpy as np
 
 from .domain_compile import MC2CompiledDomainV1
 from .domain_ir import MC2DomainFramePacketV1
-from .field_bridge import MC2FieldSamplePacketV0
 from .scheduler import MC2SubstepPlan
 
 
@@ -252,7 +251,7 @@ def make_mc2_compiled_domain_pipeline_settings(
     step_basic_rotations,
     distance_weights,
     external_collision,
-    field_sample_packet=None,
+    field_runtime=None,
 ) -> dict[str, object]:
     """Compile one E4 whole-domain substep without collapsing partition values."""
 
@@ -262,10 +261,8 @@ def make_mc2_compiled_domain_pipeline_settings(
         raise TypeError("frame_packet must be MC2DomainFramePacketV1")
     if not isinstance(substep_plan, MC2SubstepPlan):
         raise TypeError("substep_plan must be MC2SubstepPlan")
-    if field_sample_packet is not None and not isinstance(
-        field_sample_packet, MC2FieldSamplePacketV0
-    ):
-        raise TypeError("field_sample_packet must be MC2FieldSamplePacketV0 or None")
+    if field_runtime is not None and not isinstance(field_runtime, Mapping):
+        raise TypeError("field_runtime must be a mapping or None")
     program = compiled.program
     if (
         frame_packet.domain_signature != program.domain_signature
@@ -273,13 +270,6 @@ def make_mc2_compiled_domain_pipeline_settings(
     ):
         raise ValueError("frame packet identity does not match compiled program")
     count = program.particle_count
-    if (
-        field_sample_packet is not None
-        and field_sample_packet.particle_count != count
-    ):
-        raise ValueError(
-            "field sample packet particle_count does not match compiled program"
-        )
     partitions = program.partition_count
     anchor = _validate_vector(
         anchor_component_local_positions,
@@ -312,18 +302,6 @@ def make_mc2_compiled_domain_pipeline_settings(
 
     motion_stiffness = partition_float("motion_stiffness")
     backstop_radii = partition_float("backstop_radius")
-    field_wind = None
-    if field_sample_packet is not None:
-        field_wind_strength = np.ascontiguousarray(
-            partition_float("field_wind_strength")
-            * (partition_uint_value("field_wind_enabled") != 0),
-            dtype=np.float32,
-        )
-        field_wind_strength.flags.writeable = False
-        field_wind = {
-            "air_velocity_world": field_sample_packet.air_velocity_world_f32,
-            "response_strength_values": field_wind_strength,
-        }
     settings = {
         "anchor_component_local_positions": anchor,
         "dt": float(substep_plan.simulation_delta_time),
@@ -370,7 +348,7 @@ def make_mc2_compiled_domain_pipeline_settings(
         "motion_max_distance_enabled_values": partition_uint_value("use_max_distance"),
         "motion_backstop_enabled_values": partition_uint_value("use_backstop"),
         "external_collision": external_collision,
-        "field_wind": field_wind,
+        "field_runtime": None if field_runtime is None else dict(field_runtime),
         "post_step": {
             "dt": float(substep_plan.simulation_delta_time),
             "dynamic_friction_values": partition_float("collision_dynamic_friction"),

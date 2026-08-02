@@ -59,7 +59,7 @@ MC2_SOLVER_DECLARATION = {
     "consumes": [
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
-        "PhysicsWorldCache field_snapshot_v0 and per-substep MC2FieldSamplePacketV0",
+        "PhysicsWorldCache field_native_runtime_v1 (native scalar handle/time ABI)",
         "one or more collected MC2ProductRequestV1 domains",
         "complete Mesh partitions with frozen object properties",
         "complete BoneCloth partitions with frozen object properties",

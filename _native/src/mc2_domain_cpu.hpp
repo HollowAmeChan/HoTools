@@ -1,5 +1,7 @@
 #pragma once
 
+#include "field_runtime.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -298,11 +300,18 @@ public:
         float depth_inertia
     );
     void configure_integration(const float* damping_values);
-    void step_wind_response(
-        const float* air_velocity_world,
-        float dt,
-        const float* response_strength_values
+    void configure_field_wind_response(const float* response_strength_values);
+    void configure_field_consumer_contexts(
+        std::vector<field_runtime::FieldSampleContextV1> contexts
     );
+    bool prepare_field_wind(
+        const field_runtime::FieldRuntimeV1& runtime,
+        std::uint64_t runtime_handle,
+        double sample_time_seconds
+    );
+    void cancel_prepared_field_wind() noexcept;
+    void clear_prepared_field_wind() noexcept;
+    void step_prepared_field_wind(float dt);
     void step_integration(
         float dt,
         float simulation_power,
@@ -354,6 +363,28 @@ public:
     const std::vector<float>& world_positions() const noexcept { return world_positions_; }
     const std::vector<float>& world_rotations() const noexcept { return world_rotations_; }
     const std::vector<float>& world_normals() const noexcept { return world_normals_; }
+    const std::vector<float>& field_air_velocity_world() const noexcept {
+        return field_air_velocity_world_;
+    }
+    const std::vector<std::uint8_t>& field_participation() const noexcept {
+        return field_participation_;
+    }
+    std::uint64_t field_runtime_handle() const noexcept {
+        return field_runtime_handle_;
+    }
+    double field_sample_time_seconds() const noexcept {
+        return field_sample_time_seconds_;
+    }
+    std::size_t field_sampled_field_count() const noexcept {
+        return field_sampled_field_count_;
+    }
+    std::int64_t field_sample_count() const noexcept { return field_sample_count_; }
+    std::int64_t field_apply_count() const noexcept { return field_apply_count_; }
+    bool field_prepared_active() const noexcept { return field_prepared_active_; }
+    bool field_response_active() const noexcept { return field_response_active_; }
+    bool field_sample_buffer_valid() const noexcept {
+        return field_sample_buffer_valid_;
+    }
     const std::vector<float>& velocity_positions() const noexcept { return velocity_positions_; }
     const std::vector<float>& state_velocities() const noexcept { return state_velocities_; }
     const std::vector<float>& real_velocities() const noexcept { return real_velocities_; }
@@ -591,6 +622,11 @@ public:
     const hotools::Mc2WholeDomainSelfDebugSnapshot& whole_domain_self_debug_snapshot() const;
 
 private:
+    void step_wind_response(
+        const float* air_velocity_world,
+        float dt,
+        const float* response_strength_values
+    );
     void ensure_live() const;
     void validate_identity(const char* domain_signature, const char* layout_signature) const;
     void invalidate_teleport_history(const std::vector<std::uint32_t>& flags);
@@ -623,6 +659,22 @@ private:
     std::vector<float> velocity_positions_;
     std::vector<float> state_velocities_;
     std::vector<float> real_velocities_;
+    std::vector<float> field_response_strength_values_;
+    std::vector<field_runtime::FieldSampleContextV1> field_consumer_contexts_;
+    std::vector<float> field_air_velocity_world_;
+    std::vector<std::uint8_t> field_participation_;
+    std::vector<float> field_effective_response_strength_values_;
+    field_runtime::FieldSampleScratchV1 field_sample_scratch_;
+    bool field_response_ready_ = false;
+    bool field_contexts_ready_ = false;
+    bool field_prepared_active_ = false;
+    bool field_response_active_ = false;
+    bool field_sample_buffer_valid_ = false;
+    std::uint64_t field_runtime_handle_ = 0;
+    double field_sample_time_seconds_ = -1.0;
+    std::size_t field_sampled_field_count_ = 0;
+    std::int64_t field_sample_count_ = 0;
+    std::int64_t field_apply_count_ = 0;
     std::vector<float> static_friction_;
     std::vector<float> post_old_positions_;
     std::vector<float> substep_old_positions_;
