@@ -37,6 +37,7 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
     preset_values = [
         "op.addLeafBones",
         "op.generateMCHBones",
+        "op.clearMCHMainBoneRotation",
         "op.cleanWeights",
         "op.fixObjectTransform",
         "op.removeHiddenModifiers",
@@ -73,6 +74,7 @@ class OP_AddFBXPreprocessPreset(AddPresetBase, Operator):
     preset_values = [
         "op.addLeafBones",
         "op.generateMCHBones",
+        "op.clearMCHMainBoneRotation",
         "op.cleanWeights",
         "op.fixObjectTransform",
         "op.ignoreGeometryNodes",
@@ -587,8 +589,8 @@ class FBXExporter:
         return bone_utils.clear_edit_bone_local_rotations(edit_bones, bone_names)
 
     @staticmethod
-    def build_mch_and_clear(ob):
-        """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨局部旋转清零。
+    def build_mch_and_clear(ob, clear_main_rotation=True):
+        """给 generateMCH=True 的骨建 MCH 副本，按需把原骨局部旋转清零。
 
         必须在 EDIT 模式下调用。返回 {原骨名: MCH骨名} 映射，供约束/驱动转移使用。
 
@@ -596,8 +598,9 @@ class FBXExporter:
         1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
            MCH 父级设为原骨、不形变、不相连；
         2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
-        3. 重新扫描 generateMCH 主骨，使其绑定朝向与最终父骨一致，从而让 FBX/Unity
-           中的局部旋转为零；根骨没有父级时回退为世界 Z 轴竖直。
+        3. 仅在 clear_main_rotation=True 时重新扫描 generateMCH 主骨，使其绑定朝向
+           与最终父骨一致，从而让 FBX/Unity 中的局部旋转为零；根骨没有父级时回退
+           为世界 Z 轴竖直。
         """
         from Utils import bone_utils
 
@@ -657,9 +660,10 @@ class FBXExporter:
                 child.use_connect = False
                 child.parent = mch
 
-        # 3. MCH 已全部创建并接管子级后，再按最终父级清零主骨的局部旋转。
-        mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
-        FBXExporter.clear_edit_bones_local_rotation(edit_bones, mch_main_names)
+        # 3. MCH 已全部创建并接管子级后，按选项清零主骨的局部旋转。
+        if clear_main_rotation:
+            mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
+            FBXExporter.clear_edit_bones_local_rotation(edit_bones, mch_main_names)
 
         return name_map
     @staticmethod
@@ -944,10 +948,16 @@ class FBXExporter:
             except ReferenceError:
                 pass
     @staticmethod
-    def clear_armatures_bone_rotation(armature_objects, selection, active_object):
-        """给各骨架建 MCH 并清零主骨，随后转移约束/驱动。返回 {骨架名: {原骨名: MCH骨名}}。
+    def clear_armatures_bone_rotation(
+        armature_objects,
+        selection,
+        active_object,
+        clear_main_rotation=True,
+    ):
+        """给各骨架建 MCH，按需清零主骨，随后转移约束/驱动。
+        返回 {骨架名: {原骨名: MCH骨名}}。
 
-        流程：EDIT 模式建 MCH + 清零静置朝向 → 回 OBJECT 模式清 pose 变换并转移约束/驱动。
+        流程：EDIT 模式建 MCH + 按需清零静置朝向 → 回 OBJECT 模式按需清 pose 变换并转移约束/驱动。
         返回的映射供后续约束 JSON 导出参考（约束 subtarget 已改指 MCH）。
         """
         view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
@@ -966,7 +976,10 @@ class FBXExporter:
             bpy.ops.object.mode_set(mode="EDIT")
             try:
                 for ob in view_layer_armatures:
-                    name_maps[ob.name] = FBXExporter.build_mch_and_clear(ob)
+                    name_maps[ob.name] = FBXExporter.build_mch_and_clear(
+                        ob,
+                        clear_main_rotation=clear_main_rotation,
+                    )
             finally:
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode="OBJECT")
@@ -974,7 +987,8 @@ class FBXExporter:
             # 回 OBJECT 模式后 pose bones 才刷新；先清主骨 pose 变换，再转移约束/驱动。
             for ob in view_layer_armatures:
                 name_map = name_maps.get(ob.name, {})
-                FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
+                if clear_main_rotation:
+                    FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
                 FBXExporter.transfer_constraints_to_mch(ob, name_map)
         finally:
             for state in reversed(visibility_states):
@@ -997,7 +1011,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清空相对父骨的局部旋转以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。是否清空主骨相对父骨的局部旋转由下方选项控制。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
+    clearMCHMainBoneRotation:BoolProperty(name="清除MCH主骨旋转",description="导出时清空勾选了generateMCH的主骨相对父骨的局部旋转并清除其姿态变换，以适配动捕/humanoid；默认关闭",default=False) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
@@ -1151,11 +1166,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     armature_objects, selection, active_object
                 )
 
-            # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；返回各骨架的 {原骨名: MCH名} 映射
+            # 生成 MCH 骨并按选项清零主骨；返回各骨架的 {原骨名: MCH名} 映射
             mch_name_maps = {}
             if self.generateMCHBones and armature_objects != []:
                 mch_name_maps = FBXExporter.clear_armatures_bone_rotation(
-                    armature_objects, selection, active_object
+                    armature_objects,
+                    selection,
+                    active_object,
+                    clear_main_rotation=self.clearMCHMainBoneRotation,
                 )
 
             # 修复物体旋转（所有顶级父级物体）
@@ -1314,6 +1332,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col = option_box.column(align=True, heading="")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
+        option_col.prop(self, "clearMCHMainBoneRotation")
         option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
@@ -1357,7 +1376,8 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清空相对父骨的局部旋转并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 副本保活原始朝向;是否清空主骨相对父骨的局部旋转由下方选项控制;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
+    clearMCHMainBoneRotation:BoolProperty(name="清除MCH主骨旋转",description="预处理时清空勾选了generateMCH的主骨相对父骨的局部旋转并清除其姿态变换，以适配动捕/humanoid；默认关闭",default=False) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
@@ -1417,9 +1437,14 @@ class OP_FinalFBXExport_only_preprocess(Operator):
             if self.addLeafBones and armature_objects != []:
                 FBXExporter.add_leaf_bones_to_armatures(armature_objects, selection, active_object)
 
-            # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；仅预处理模式不撤销，MCH 留在工程供检视
+            # 生成 MCH 骨并按选项清零主骨；仅预处理模式不撤销，MCH 留在工程供检视
             if self.generateMCHBones and armature_objects !=[]:
-                FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
+                FBXExporter.clear_armatures_bone_rotation(
+                    armature_objects,
+                    selection,
+                    active_object,
+                    clear_main_rotation=self.clearMCHMainBoneRotation,
+                )
 
 
             # 修复物体旋转（所有顶级父级物体）
@@ -1488,6 +1513,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_col = option_box.column(align=True)
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
+        option_col.prop(self, "clearMCHMainBoneRotation")
         option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")
