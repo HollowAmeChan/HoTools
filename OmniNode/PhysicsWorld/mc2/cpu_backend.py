@@ -51,6 +51,8 @@ class MC2CPUKernelV1(Protocol):
 
     def step(self, handle, frame_packet, scheduler_settings, collider_snapshot): ...
 
+    def read_particle_positions(self, handle) -> np.ndarray: ...
+
     def read_output(self, handle) -> MC2DomainFrameOutputV1: ...
 
     def inspect(self, handle) -> Mapping[str, object]: ...
@@ -487,6 +489,27 @@ class MC2CPUBackendDomainV1:
             raise RuntimeError("CPU kernel does not expose post step")
         run_post(self._handle, settings)
         self._step_count += 1
+
+    def read_particle_positions(self) -> np.ndarray:
+        """读取当前逻辑顺序位置；Field 子步采样不得退化为完整 read_output。"""
+
+        self._ensure_live()
+        if self._latest_frame is None:
+            raise RuntimeError("CPU backend 当前粒子位置需要先 update_frame")
+        read_positions = getattr(self._kernel, "read_particle_positions", None)
+        if not callable(read_positions):
+            raise RuntimeError("CPU kernel 未提供轻量当前粒子位置读取")
+        positions = np.asarray(read_positions(self._handle))
+        expected = (self._compiled.program.particle_count, 3)
+        if (
+            positions.dtype != np.float32
+            or positions.shape != expected
+            or not positions.flags.c_contiguous
+            or not np.isfinite(positions).all()
+        ):
+            raise ValueError("CPU kernel 返回了无效的当前粒子位置")
+        positions.flags.writeable = False
+        return positions
 
     def read_output(self) -> MC2DomainFrameOutputV1:
         self._ensure_live()

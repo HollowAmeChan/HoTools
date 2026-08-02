@@ -35,6 +35,8 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
+field_names = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field.names")
+field_specs = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field.specs")
 ir = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.domain_ir")
 collector = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.domain_collect")
 parameters = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.parameters")
@@ -73,6 +75,7 @@ class _Source:
         self._pointer = pointer
         self.data = _Data(pointer + 1000)
         self.name = self.name_full = name
+        self.users_collection = (types.SimpleNamespace(name_full="Cloth"),)
 
     def as_pointer(self):
         return self._pointer
@@ -129,6 +132,7 @@ class _Kernel:
         self.poses = []
         self.full_steps = []
         self.timed_steps = []
+        self.position_reads = []
         self.fail_create = False
         self.fail_parameter_stage = False
         self.fail_update = False
@@ -196,6 +200,11 @@ class _Kernel:
             "residual_stage": "CPU Self · 测试边界",
         })
     def step(self, handle, frame, settings, colliders): pass
+    def read_particle_positions(self, handle):
+        self.position_reads.append(handle)
+        return np.ascontiguousarray(
+            handle["program"].particle_bind_position, dtype=np.float32
+        )
     def read_output(self, handle): raise AssertionError("not used")
     def inspect(self, handle): return {"serial": handle["serial"]}
     def dispose(self, handle): self.disposed.append(handle)
@@ -373,6 +382,36 @@ def _scheduled(slot, frame, *, frame_delta_time=0.1, world_time_scale=1.0):
         parameters.make_mc2_solver_settings(),
         frame_delta_time=frame_delta_time,
         world_time_scale=world_time_scale,
+    )
+
+
+def _field_snapshot(*, frame, sample_time_seconds, include_ids=("Sleeve",)):
+    transform = (
+        (100.0, 0.0, 0.0, 0.0),
+        (0.0, 100.0, 0.0, 0.0),
+        (0.0, 0.0, 100.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
+    wind = field_specs.FieldSpecV0(
+        field_id="product-slot-wind",
+        source_id="test:product-slot-wind",
+        status=field_names.FIELD_STATUS_ACTIVE,
+        volume=field_specs.VolumeSpecV0(
+            shape=field_names.VOLUME_SHAPE_BOX,
+            world_transform=transform,
+        ),
+        wind=field_specs.WindPayloadV0(speed_mps=4.0, turbulence=0.0),
+        scope=field_specs.FieldScopeV0(
+            include_ids=include_ids,
+            collection_ids=("Cloth",),
+            collision_groups=(1,),
+        ),
+    )
+    return field_specs.build_field_snapshot_v0(
+        (wind,),
+        generation=1,
+        frame=frame,
+        sample_time_seconds=sample_time_seconds,
     )
 
 
@@ -595,6 +634,80 @@ def test_slot_executes_and_commits_compiled_substeps_sequentially():
         assert "no pending substeps" in str(exc)
     else:
         raise AssertionError("completed fused frame accepted an extra substep")
+
+
+def test_slot_samples_active_field_per_fixed_update_with_partition_scope():
+    world = _world()
+    kernel = _Kernel()
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(slot, _domain_frame(program, frame=10))
+    world.frame_context.frame = 10
+    world.frame_context.generation = 1
+    world.frame_context.sample_time_seconds = 2.0
+    world.frame_context.frame_step_dt = 0.1
+    world.set_runtime_cache(
+        field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
+        _field_snapshot(frame=10, sample_time_seconds=2.0),
+    )
+    slot_module.publish_mc2_product_frame(
+        world, slot, scheduled, _empty_collider_frame(10),
+    )
+
+    first = slot_module.step_mc2_product_substep(world, slot)
+    first_packet = slot.data["last_field_sample_packet"]
+    field_wind = kernel.full_steps[-1][1]["field_wind"]
+    owners = np.asarray(program.particle_partition_index, dtype=np.intp)
+    expected = np.zeros((program.particle_count, 3), dtype=np.float32)
+    expected[owners == 0, 2] = np.float32(4.0)
+    np.testing.assert_array_equal(
+        field_wind["air_velocity_world"], expected
+    )
+    assert first.update_index == 0
+    assert first_packet.sample_time_seconds == 2.0
+    assert len(kernel.position_reads) == 1
+
+    second = slot_module.step_mc2_product_substep(world, slot)
+    second_packet = slot.data["last_field_sample_packet"]
+    expected_time = 2.0 + 0.1 / scheduled.schedule.update_count
+    assert second.update_index == 1
+    assert second_packet.sample_time_seconds == expected_time
+    assert first_packet.sample_time_seconds != second_packet.sample_time_seconds
+    assert len(kernel.position_reads) == 2
+
+
+def test_stale_field_snapshot_fails_before_native_step_and_scheduler_commit():
+    world = _world()
+    kernel = _Kernel()
+    _sync_mesh_product_slot(world, _collection(), kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+    program = slot.data["owner"].compiled.program
+    scheduled = _scheduled(slot, _domain_frame(program, frame=11))
+    world.frame_context.frame = 11
+    world.frame_context.generation = 1
+    world.frame_context.sample_time_seconds = 3.0
+    world.frame_context.frame_step_dt = 0.1
+    world.set_runtime_cache(
+        field_names.FIELD_SNAPSHOT_CACHE_KEY_V0,
+        _field_snapshot(frame=10, sample_time_seconds=3.0),
+    )
+    slot_module.publish_mc2_product_frame(
+        world, slot, scheduled, _empty_collider_frame(11),
+    )
+    revision = slot.data["scheduler_state"].revision
+
+    try:
+        slot_module.step_mc2_product_substep(world, slot)
+    except RuntimeError as exc:
+        assert "快照已过期" in str(exc)
+    else:
+        raise AssertionError("stale Field snapshot was accepted")
+    assert kernel.position_reads == []
+    assert kernel.poses == [] and kernel.full_steps == []
+    assert slot.data["scheduler_state"].revision == revision
+    assert slot.data["completed_substeps"] == 0
+    assert "快照已过期" in slot.data["last_step_failure"]
 
 
 def test_slot_uses_timed_pipeline_only_when_hotspot_timing_is_requested():

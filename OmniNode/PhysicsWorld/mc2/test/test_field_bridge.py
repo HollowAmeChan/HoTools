@@ -370,6 +370,10 @@ def test_mc2_field_capability_is_declared_with_frozen_semantics():
     assert capability["sample_mode"] == "per_particle"
     assert capability["sample_phase"] == "pre_substep"
     assert capability["response"] == "hotools_relative_air_velocity_v0"
+    assert capability["implementation_status"] == "cpu_product_v0"
+    assert capabilities.MC2_UPDATE_FREQUENCY_TABLE["field_air_velocity"] == (
+        "fixed_update_from_current_particle_positions"
+    )
     assert capabilities.MC2_CAPABILITIES[capability["capability_id"]] is capability
 
 

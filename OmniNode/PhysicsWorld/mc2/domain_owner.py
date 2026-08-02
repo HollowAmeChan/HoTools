@@ -317,6 +317,11 @@ class MC2FusedCPUOwnerV1:
 
         return self._require_domain().read_output()
 
+    def read_particle_positions(self):
+        """只读取 Field 子步采样所需的当前逻辑粒子世界位置。"""
+
+        return self._require_domain().read_particle_positions()
+
     def read_debug_state(self):
         """Read explicit native dynamics through the product-owned domain."""
 

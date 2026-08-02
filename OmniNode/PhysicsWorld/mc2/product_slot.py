@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
+from ..field.names import FIELD_SNAPSHOT_CACHE_KEY_V0
+from ..field.specs import FieldSnapshotV0
 from ..types import PhysicsSolverSlot
 from ..types import PhysicsWorldCache
 from .collider_frame import MC2DomainColliderFrameSpec
@@ -15,6 +18,8 @@ from .domain_output import MC2MeshWritebackBatchV1
 from .domain_output import make_mc2_mesh_writeback_batch
 from .domain_owner import MC2FusedCPUOwnerSyncReportV1
 from .domain_owner import MC2FusedCPUOwnerV1
+from .field_bridge import MC2FieldConsumerPartitionV0
+from .field_bridge import build_mc2_field_sample_packet_v0
 from .names import MC2_FUSED_PRODUCT_SLOT_KIND
 from .names import MC2_SETUP_BONE_CLOTH, MC2_SETUP_BONE_SPRING
 from .names import MC2_SETUP_MESH_CLOTH
@@ -38,6 +43,122 @@ _MC2_CONSTRAINT_DEBUG_TETHER = 8
 _MC2_CONSTRAINT_DEBUG_BENDING = 16
 _MC2_CONSTRAINT_DEBUG_EXTERNAL_COLLISION = 32
 _MC2_CONSTRAINT_DEBUG_WHOLE_DOMAIN_SELF = 64
+
+
+def _field_source_object(partition):
+    """返回高级 Field 过滤使用的 Blender 对象，不把 bpy 引用写入采样包。"""
+
+    source = partition.source
+    armature = getattr(source, "armature", None)
+    return armature if armature is not None else source
+
+
+def _field_source_name(partition) -> str:
+    source = _field_source_object(partition)
+    for attribute in ("name_full", "name"):
+        try:
+            value = str(getattr(source, attribute, "") or "").strip()
+        except (AttributeError, ReferenceError):
+            value = ""
+        if value:
+            return value
+    return str(partition.stable_id)
+
+
+def _field_source_collection_names(partition) -> tuple[str, ...]:
+    source = _field_source_object(partition)
+    try:
+        collections = tuple(getattr(source, "users_collection", ()) or ())
+    except (AttributeError, ReferenceError):
+        collections = ()
+    names = []
+    for collection in collections:
+        try:
+            name = str(
+                getattr(collection, "name_full", None)
+                or getattr(collection, "name", "")
+                or ""
+            ).strip()
+        except (AttributeError, ReferenceError):
+            name = ""
+        if name:
+            names.append(name)
+    return tuple(sorted(set(names)))
+
+
+def _field_collision_group_number(group_bit: int) -> tuple[int, ...]:
+    value = int(group_bit)
+    if value <= 0 or value & (value - 1):
+        raise ValueError("MC2 partition collision_group 必须是单个正 bit")
+    group = value.bit_length()
+    # 公共 Physics World V0 只定义 1..16；更高 MC2 私有组不会命中组过滤。
+    return (group,) if group <= 16 else ()
+
+
+def _field_consumer_partitions(collection, program):
+    draft = collection.draft
+    if tuple(draft.partition_ids) != tuple(program.partition_ids):
+        raise ValueError("MC2 Field 作用域与当前 compiled partition 身份不一致")
+    if len(program.partition_particle_views) != len(draft.partitions):
+        raise ValueError("MC2 Field 作用域没有完整覆盖 compiled partitions")
+    return tuple(
+        MC2FieldConsumerPartitionV0(
+            particle_indices=view.resolved_indices(),
+            object_id=_field_source_name(partition),
+            collection_ids=_field_source_collection_names(partition),
+            collision_groups=_field_collision_group_number(group_bit),
+        )
+        for partition, group_bit, view in zip(
+            draft.partitions,
+            draft.collision_groups,
+            program.partition_particle_views,
+        )
+    )
+
+
+def _build_field_packet_for_substep(
+    world: PhysicsWorldCache,
+    owner: MC2FusedCPUOwnerV1,
+    collection,
+    scheduled_frame: MC2ProductScheduledFrameV1,
+    update_index: int,
+):
+    snapshot = world.runtime_cache(FIELD_SNAPSHOT_CACHE_KEY_V0)
+    if snapshot is None:
+        return None
+    if not isinstance(snapshot, FieldSnapshotV0):
+        raise TypeError("Physics World Field 快照类型无效")
+
+    frame_packet = scheduled_frame.frame_packet
+    frame_context = world.frame_context
+    if (
+        snapshot.generation != int(world.generation)
+        or snapshot.generation != int(frame_packet.generation)
+        or snapshot.frame != int(frame_context.frame)
+        or snapshot.frame != int(frame_packet.frame)
+    ):
+        raise RuntimeError("Physics World Field 快照已过期，拒绝跨帧或跨 generation 采样")
+    if snapshot.sample_time_seconds != float(frame_context.sample_time_seconds):
+        raise RuntimeError("Physics World Field 快照的帧起始时间与 world 不一致")
+
+    update_count = int(scheduled_frame.schedule.update_count)
+    index = int(update_index)
+    if update_count <= 0 or index < 0 or index >= update_count:
+        raise ValueError("MC2 Field 子步索引必须位于当前 fixed schedule 内")
+    frame_step_dt = float(frame_context.frame_step_dt)
+    if not math.isfinite(frame_step_dt) or frame_step_dt < 0.0:
+        raise ValueError("Physics World frame_step_dt 必须是非负有限值")
+    sample_time = (
+        float(frame_context.sample_time_seconds)
+        + frame_step_dt * index / update_count
+    )
+    positions = owner.read_particle_positions()
+    return build_mc2_field_sample_packet_v0(
+        snapshot,
+        positions,
+        sample_time,
+        _field_consumer_partitions(collection, owner.compiled.program),
+    )
 
 
 def _constraint_debug_mask(filters: dict) -> int:
@@ -289,6 +410,7 @@ def sync_mc2_product_slot(
                     "scheduled_frame",
                     "last_substep",
                     "last_step_failure",
+                    "last_field_sample_packet",
                     "output_batch",
                     "domain_output",
                     "output_results",
@@ -527,6 +649,7 @@ def publish_mc2_product_frame(
         slot.data["frame_complete"] = scheduled_frame.schedule.update_count == 0
         slot.data.pop("last_substep", None)
         slot.data.pop("last_step_failure", None)
+        slot.data.pop("last_field_sample_packet", None)
         slot.data.pop("output_batch", None)
         slot.data.pop("domain_output", None)
         slot.data.pop("output_results", None)
@@ -589,6 +712,19 @@ def step_mc2_product_substep(
             raise RuntimeError("product slot changed before its substep")
         update_index = int(slot.data.get("completed_substeps", 0))
         staged_substep = scheduler_state.stage_substep(update_index)
+        try:
+            field_packet = _build_field_packet_for_substep(
+                world,
+                owner,
+                slot.data["collection"],
+                scheduled_frame,
+                update_index,
+            )
+        except Exception as exc:
+            slot.data["last_step_failure"] = f"{type(exc).__name__}: {exc}"
+            raise
+        if timing is not None and field_packet is not None:
+            timing.detail_checkpoint("CPU · Field采样")
         pose = owner.prepare_step_basic_pose()
         if timing is not None:
             timing.detail_checkpoint("CPU · StepBasic准备")
@@ -610,6 +746,7 @@ def step_mc2_product_substep(
             step_basic_rotations=pose["rotations"],
             distance_weights=distance_weights,
             external_collision=collider_frame.native_mapping(),
+            field_sample_packet=field_packet,
         )
         if timing is not None:
             timing.detail_checkpoint("CPU · 子步参数构建")
@@ -696,6 +833,10 @@ def step_mc2_product_substep(
         slot.data["completed_substeps"] = completed
         slot.data["frame_complete"] = is_final
         slot.data["last_substep"] = result
+        if field_packet is None:
+            slot.data.pop("last_field_sample_packet", None)
+        else:
+            slot.data["last_field_sample_packet"] = field_packet
         slot.data.pop("last_step_failure", None)
         return result
     finally:

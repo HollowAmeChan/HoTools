@@ -1440,6 +1440,108 @@ def test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post():
         domain.dispose()
 
 
+def test_native_compiled_field_wind_reads_positions_and_runs_before_integration():
+    compiled = _compiled(profile_overrides={"self_collision_mode": 0})
+    kernel = native_kernel.MC2NativeCPUKernelV1()
+    calm = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    windy = cpu_backend.create_mc2_cpu_backend_domain(compiled, kernel)
+    frame = _frame(compiled.program)
+    count = compiled.program.particle_count
+    plan = scheduler.MC2SubstepPlan(
+        update_index=0,
+        simulation_delta_time=0.1,
+        frame_interpolation=1.0,
+        is_final_substep=True,
+        powers=scheduler.MC2SimulationPowers(
+            distance_bending=0.0, integration=1.0, angle=0.0
+        ),
+    )
+    settings = reference_step.make_mc2_compiled_domain_pipeline_settings(
+        compiled,
+        frame,
+        plan,
+        anchor_component_local_positions=np.zeros((1, 3), dtype=np.float32),
+        step_basic_positions=frame.animated_base_world_positions,
+        step_basic_rotations=frame.animated_base_world_rotations,
+        distance_weights=np.ones(1, dtype=np.float32),
+        external_collision=_empty_collider_table(),
+    )
+    try:
+        calm.update_frame(frame)
+        windy.update_frame(frame)
+        positions = windy.read_particle_positions()
+        np.testing.assert_array_equal(
+            positions, frame.animated_base_world_positions
+        )
+        assert positions.dtype == np.float32
+        assert positions.flags.c_contiguous
+        assert not positions.flags.writeable
+
+        invalid = dict(settings)
+        invalid["field_wind"] = {
+            "air_velocity_world": np.zeros((count - 1, 3), dtype=np.float32),
+            "response_strength_values": np.ones(count, dtype=np.float32),
+        }
+        before = windy.read_particle_positions().copy()
+        try:
+            windy.step_compiled_domain_pipeline_full(invalid)
+        except ValueError as exc:
+            assert "Field" in str(exc)
+        else:
+            raise AssertionError("compiled pipeline accepted invalid Field shape")
+        np.testing.assert_array_equal(windy.read_particle_positions(), before)
+        assert windy.inspect()["kernel"]["step_count"] == 0
+
+        air_velocity = np.zeros((count, 3), dtype=np.float32)
+        air_velocity[1:, 0] = np.float32(5.0)
+        windy_settings = dict(settings)
+        windy_settings["field_wind"] = {
+            "air_velocity_world": air_velocity,
+            "response_strength_values": np.full(count, 2.0, dtype=np.float32),
+        }
+        order = []
+        captured_strengths = []
+        for name in (
+            "step_center_inertia",
+            "step_wind_response",
+            "step_integration_partitioned",
+        ):
+            original = getattr(kernel, name)
+
+            def record(*args, _name=name, _original=original, **kwargs):
+                order.append(_name)
+                if _name == "step_wind_response":
+                    captured_strengths.append(
+                        np.asarray(args[1]["response_strength_values"]).copy()
+                    )
+                return _original(*args, **kwargs)
+
+            setattr(kernel, name, record)
+
+        calm.step_compiled_domain_pipeline_full(settings)
+        windy.step_compiled_domain_pipeline_full(windy_settings)
+        assert order == [
+            "step_center_inertia",
+            "step_integration_partitioned",
+            "step_center_inertia",
+            "step_wind_response",
+            "step_integration_partitioned",
+        ]
+        assert len(captured_strengths) == 1
+        assert captured_strengths[0][0] == 0.0
+        assert np.all(captured_strengths[0][1:] == np.float32(2.0))
+        calm_positions = calm.read_particle_positions()
+        windy_positions = windy.read_particle_positions()
+        movable = compiled.program.particle_attribute_flags & np.uint32(0x02) != 0
+        assert np.any(
+            np.abs(windy_positions[movable] - calm_positions[movable])
+            > np.float32(1.0e-6)
+        )
+    finally:
+        calm.dispose()
+        windy.dispose()
+
+
 def test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse():
     compiled = _compiled_multi(
         profile_overrides=(
@@ -1837,6 +1939,8 @@ if __name__ == "__main__":
     print("PASS test_native_cpu_reference_pipeline_full_accepts_explicit_collision_slots")
     test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post()
     print("PASS test_native_cpu_compiled_pipeline_runs_whole_domain_self_and_owned_post")
+    test_native_compiled_field_wind_reads_positions_and_runs_before_integration()
+    print("PASS test_native_compiled_field_wind_reads_positions_and_runs_before_integration")
     test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse()
     print("PASS test_compiled_pipeline_settings_expand_each_partition_without_scalar_collapse")
     test_native_cpu_compiled_external_collision_filters_each_partition()

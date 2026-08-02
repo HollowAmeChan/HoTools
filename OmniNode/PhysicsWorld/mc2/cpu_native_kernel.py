@@ -58,10 +58,12 @@ _NATIVE_SYMBOLS = (
     "mc2_domain_cpu_v1_step_center_frame_shift",
     "mc2_domain_cpu_v1_configure_integration",
     "mc2_domain_cpu_v1_step_integration",
+    "mc2_domain_cpu_v1_step_wind_response",
     "mc2_domain_cpu_v1_step_integration_partitioned",
     "mc2_domain_cpu_v1_step_post",
     "mc2_domain_cpu_v1_step_post_owned",
     "mc2_domain_cpu_v1_step_post_owned_partitioned",
+    "mc2_domain_cpu_v1_read_positions",
     "mc2_domain_cpu_v1_read",
     "mc2_domain_cpu_v1_read_dynamics_debug",
     "mc2_domain_cpu_v1_begin_constraint_debug",
@@ -521,6 +523,86 @@ class MC2NativeCPUKernelV1:
         self._module.mc2_domain_cpu_v1_step_integration_partitioned(
             key, float(settings["dt"]), float(settings["simulation_power"])
         )
+
+    def step_wind_response(self, handle, settings: Mapping[str, object]) -> None:
+        """把公共空气速度转换为 HoTools MC2 V0 的速度响应。"""
+
+        key = self._require_handle(handle)
+        required = {"air_velocity_world", "dt", "response_strength_values"}
+        if set(settings) != required:
+            raise ValueError("Field 风响应只接受空气速度、dt 与逐粒子强度")
+        program = self._programs[key]
+        air_velocity = np.ascontiguousarray(
+            settings["air_velocity_world"], dtype=np.float32
+        )
+        strengths = np.ascontiguousarray(
+            settings["response_strength_values"], dtype=np.float32
+        )
+        dt = float(settings["dt"])
+        if air_velocity.shape != (program.particle_count, 3):
+            raise ValueError("Field 空气速度必须是 [particle_count, 3]")
+        if strengths.shape != (program.particle_count,):
+            raise ValueError("Field 风响应强度必须匹配 particle_count")
+        if (
+            not np.isfinite(air_velocity).all()
+            or not np.isfinite(strengths).all()
+            or not np.isfinite(dt)
+            or dt <= 0.0
+        ):
+            raise ValueError("Field 风响应输入必须是有限值且 dt 为正")
+        if np.any(strengths < 0.0) or np.any(strengths > 20.0):
+            raise ValueError("Field 风响应强度必须位于 0..20")
+        air_velocity.flags.writeable = False
+        strengths.flags.writeable = False
+        self._module.mc2_domain_cpu_v1_step_wind_response(
+            key, air_velocity, dt, strengths
+        )
+
+    def _prepare_compiled_field_wind(self, key: int, value, dt: float):
+        """在任何 native mutation 前冻结并校验一次子步 Field 输入。"""
+
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise TypeError("compiled domain field_wind 必须是 mapping 或 None")
+        required = {"air_velocity_world", "response_strength_values"}
+        if set(value) != required:
+            raise ValueError("compiled domain field_wind 需要精确的空气速度与强度")
+        program = self._programs[key]
+        air_velocity = np.ascontiguousarray(
+            value["air_velocity_world"], dtype=np.float32
+        )
+        strengths = np.ascontiguousarray(
+            value["response_strength_values"], dtype=np.float32
+        )
+        if air_velocity.shape != (program.particle_count, 3):
+            raise ValueError("compiled domain Field 空气速度形状无效")
+        if strengths.shape != (program.particle_count,):
+            raise ValueError("compiled domain Field 强度形状无效")
+        if (
+            not np.isfinite(air_velocity).all()
+            or not np.isfinite(strengths).all()
+            or not np.isfinite(float(dt))
+            or float(dt) <= 0.0
+        ):
+            raise ValueError("compiled domain Field 输入包含无效数值")
+        if np.any(strengths < 0.0) or np.any(strengths > 20.0):
+            raise ValueError("compiled domain Field 强度必须位于 0..20")
+
+        # Packet 只有 air_velocity；精确零向量表示该粒子没有风样本，不能产生静止空气阻尼。
+        active = np.any(air_velocity != np.float32(0.0), axis=1)
+        if not np.any(active & (strengths > np.float32(0.0))):
+            return None
+        effective_strengths = np.where(active, strengths, np.float32(0.0)).astype(
+            np.float32, copy=False
+        )
+        air_velocity.flags.writeable = False
+        effective_strengths = np.ascontiguousarray(effective_strengths)
+        effective_strengths.flags.writeable = False
+        return {
+            "air_velocity_world": air_velocity,
+            "response_strength_values": effective_strengths,
+        }
 
     def step_external_collision(self, handle, settings: Mapping[str, object]) -> None:
         key = self._require_handle(handle)
@@ -1143,6 +1225,9 @@ class MC2NativeCPUKernelV1:
     ) -> None:
         """Run the fixed E4 structural, external, self, and post order."""
         settings = dict(settings)
+        if "field_wind" not in settings:
+            raise ValueError("compiled domain pipeline requires field_wind")
+        field_wind = settings.pop("field_wind")
         if "external_collision" not in settings:
             raise ValueError("compiled domain pipeline requires external_collision")
         external_collision = settings.pop("external_collision")
@@ -1196,6 +1281,9 @@ class MC2NativeCPUKernelV1:
         }
         if set(settings) != required:
             raise ValueError("compiled domain pipeline requires exactly its structural inputs")
+        prepared_field_wind = self._prepare_compiled_field_wind(
+            key, field_wind, settings["dt"]
+        )
         has_distance = any(table.kind == "distance" for table in program.constraint_tables)
         has_bending = any(table.kind == "bending" for table in program.constraint_tables)
         has_tether = any(table.kind == "tether" for table in program.constraint_tables)
@@ -1208,6 +1296,11 @@ class MC2NativeCPUKernelV1:
             "distance_weights": settings["distance_weights"],
         })
         self.step_center_inertia(key)
+        if prepared_field_wind is not None:
+            self.step_wind_response(key, {
+                **prepared_field_wind,
+                "dt": settings["dt"],
+            })
         self.step_integration_partitioned(key, {
             "dt": settings["dt"], "simulation_power": settings["simulation_power"],
         })
@@ -1272,6 +1365,9 @@ class MC2NativeCPUKernelV1:
         if not callable(native_checkpoint):
             raise TypeError("timed compiled domain pipeline requires a native checkpoint callback")
         settings = dict(settings)
+        if "field_wind" not in settings:
+            raise ValueError("compiled domain pipeline requires field_wind")
+        field_wind = settings.pop("field_wind")
         if "external_collision" not in settings:
             raise ValueError("compiled domain pipeline requires external_collision")
         external_collision = settings.pop("external_collision")
@@ -1328,6 +1424,9 @@ class MC2NativeCPUKernelV1:
         }
         if set(settings) != required:
             raise ValueError("compiled domain pipeline requires exactly its structural inputs")
+        prepared_field_wind = self._prepare_compiled_field_wind(
+            key, field_wind, settings["dt"]
+        )
         has_distance = any(
             table.kind == "distance" for table in program.constraint_tables
         )
@@ -1355,6 +1454,12 @@ class MC2NativeCPUKernelV1:
         checkpoint("CPU · Center")
         self.step_center_inertia(key)
         checkpoint("CPU · Center惯性")
+        if prepared_field_wind is not None:
+            self.step_wind_response(key, {
+                **prepared_field_wind,
+                "dt": settings["dt"],
+            })
+            checkpoint("CPU · Field风响应")
         self.step_integration_partitioned(key, {
             "dt": settings["dt"],
             "simulation_power": settings["simulation_power"],
@@ -1476,6 +1581,23 @@ class MC2NativeCPUKernelV1:
             int(settings["teleport_mode"]), float(settings["teleport_distance"]),
             float(settings["teleport_rotation"]),
         ))
+
+    def read_particle_positions(self, handle) -> np.ndarray:
+        """只读回当前逻辑粒子顺序的世界位置，不触发完整输出打包。"""
+
+        key = self._require_handle(handle)
+        program = self._programs[key]
+        positions = np.asarray(
+            self._module.mc2_domain_cpu_v1_read_positions(key)
+        )
+        if positions.dtype != np.float32:
+            raise TypeError("native MC2 当前粒子位置必须是 float32")
+        if positions.shape != (program.particle_count, 3):
+            raise ValueError("native MC2 当前粒子位置形状无效")
+        if not positions.flags.c_contiguous or not np.isfinite(positions).all():
+            raise ValueError("native MC2 当前粒子位置必须连续且仅含有限值")
+        positions.flags.writeable = False
+        return positions
 
     def read_output(self, handle):
         key = self._require_handle(handle)
