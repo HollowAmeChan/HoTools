@@ -85,6 +85,28 @@ assert default_field.field_type == names.FIELD_TYPE_WIND
 assert default_field.channel_id == names.AIR_VELOCITY_CHANNEL_ID
 assert default_field.generator_id == names.WIND_GENERATOR_ID
 
+# 新增类型判别字段不得改变已经发布的 V0 位置构造顺序。
+positional_v0 = specs.FieldSpecV0(
+    "field-positional",
+    "object-positional",
+    specs.VolumeSpecV0(shape=names.VOLUME_SHAPE_BOX),
+    specs.WindPayloadV0(speed_mps=2.0),
+    specs.FieldScopeV0(solver_ids=("mc2",)),
+    False,
+    names.FIELD_STATUS_RESERVED,
+    0.5,
+    7,
+    names.FIELD_ABI_VERSION,
+)
+assert positional_v0.field_type == names.FIELD_TYPE_WIND
+assert positional_v0.volume.shape == names.VOLUME_SHAPE_BOX
+assert positional_v0.wind.speed_mps == 2.0
+assert positional_v0.scope.solver_ids == ("mc2",)
+assert positional_v0.enabled is False
+assert positional_v0.status == names.FIELD_STATUS_RESERVED
+assert positional_v0.blend_weight == 0.5
+assert positional_v0.priority == 7
+
 faster_field = specs.FieldSpecV0(
     "field-a",
     "object-a",

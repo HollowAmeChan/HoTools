@@ -395,7 +395,6 @@ class WindPayloadV0:
 class FieldSpecV0:
     field_id: str
     source_id: str
-    field_type: str = FIELD_TYPE_WIND
     volume: VolumeSpecV0 = field(default_factory=VolumeSpecV0)
     wind: WindPayloadV0 = field(default_factory=WindPayloadV0)
     scope: FieldScopeV0 = field(default_factory=FieldScopeV0)
@@ -404,6 +403,7 @@ class FieldSpecV0:
     blend_weight: float = 1.0
     priority: int = 0
     abi_version: int = FIELD_ABI_VERSION
+    field_type: str = FIELD_TYPE_WIND
     channel_id: str = field(init=False)
     generator_id: str = field(init=False)
     config_signature: str = field(init=False)
