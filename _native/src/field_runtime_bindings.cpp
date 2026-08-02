@@ -27,11 +27,15 @@ using cf64_3d = nb::ndarray<const double, nb::ndim<3>, nb::c_contig, nb::device:
 using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using cu32_1d = nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
-// 所有 binding 都持有 GIL；registry 因而只在 GIL 串行区访问。
-// uint64 ID 永不复用，避免裸指针 handle 的 ABA 问题。
+// 所有当前 binding 都持有 GIL；registry 因而保持 GIL 串行访问。
+// handle 只用于查找当前可见 runtime；uint64 ID 永不复用，避免 ABA。
+// shared_ptr 是调用期租约：注销只摘除 map，不销毁已取得的 runtime。
+// 这里不能引入 std::mutex：Blender 的 tbbmalloc_proxy / MSVC CRT 组合
+// 已在 MC2 binding 中验证会触发 Mtx_trylock 访问冲突。未来 native worker
+// 接入时必须另行设计不依赖 MSVC mutex 的 registry 同步方案。
 std::unordered_map<
     std::uint64_t,
-    std::unique_ptr<field_runtime::FieldRuntimeV1>
+    std::shared_ptr<field_runtime::FieldRuntimeV1>
 > live_field_runtimes;
 std::uint64_t next_field_runtime_handle = 1;
 
@@ -84,14 +88,15 @@ std::uint64_t register_runtime_v1(std::unique_ptr<FieldRuntimeV1> runtime) {
         throw std::overflow_error("Field runtime handle 空间已耗尽");
     }
     const std::uint64_t handle = next_field_runtime_handle++;
-    const auto inserted = live_field_runtimes.emplace(handle, std::move(runtime));
+    const auto owner = std::shared_ptr<FieldRuntimeV1>(std::move(runtime));
+    const auto inserted = live_field_runtimes.emplace(handle, owner);
     if (!inserted.second) {
         throw std::logic_error("Field runtime handle registry 冲突");
     }
     return handle;
 }
 
-FieldRuntimeV1& require_registered_runtime_v1(std::uint64_t handle) {
+std::shared_ptr<FieldRuntimeV1> acquire_registered_runtime_v1(std::uint64_t handle) {
     if (handle == 0) {
         throw std::invalid_argument("Field runtime handle 不能为空");
     }
@@ -99,11 +104,14 @@ FieldRuntimeV1& require_registered_runtime_v1(std::uint64_t handle) {
     if (found == live_field_runtimes.end()) {
         throw std::runtime_error("Field runtime handle 已失效");
     }
-    return *found->second;
+    return found->second;
 }
 
 bool dispose_registered_runtime_v1(std::uint64_t handle) noexcept {
-    return handle != 0 && live_field_runtimes.erase(handle) != 0;
+    if (handle == 0) {
+        return false;
+    }
+    return live_field_runtimes.erase(handle) != 0;
 }
 
 std::size_t live_runtime_count_v1() noexcept {
@@ -276,7 +284,8 @@ void bind_field_runtime(nb::module_& module) {
             std::int64_t frame,
             double sample_time_seconds
         ) {
-            field_runtime::require_registered_runtime_v1(handle).update_frame(
+            auto runtime = field_runtime::acquire_registered_runtime_v1(handle);
+            runtime->update_frame(
                 snapshot_signature, generation, frame, sample_time_seconds
             );
         },
@@ -310,7 +319,8 @@ void bind_field_runtime(nb::module_& module) {
             const std::size_t position_count = static_cast<std::size_t>(
                 positions_world.shape(0)
             );
-            auto output = field_runtime::require_registered_runtime_v1(handle).sample_air_velocity(
+            auto runtime = field_runtime::acquire_registered_runtime_v1(handle);
+            auto output = runtime->sample_air_velocity(
                 positions_world.data(), position_count, sample_time_seconds, context
             );
             nb::dict result;
@@ -337,7 +347,7 @@ void bind_field_runtime(nb::module_& module) {
     module.def(
         "field_runtime_v1_inspect",
         [](std::uint64_t handle) {
-            const auto* runtime = &field_runtime::require_registered_runtime_v1(handle);
+            auto runtime = field_runtime::acquire_registered_runtime_v1(handle);
             std::size_t sphere_count = 0;
             std::size_t box_count = 0;
             std::size_t turbulent_count = 0;

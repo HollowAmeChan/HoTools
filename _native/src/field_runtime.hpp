@@ -152,9 +152,10 @@ private:
     std::vector<FieldDefinitionV1> fields_;
 };
 
-// 进程内公共 registry 使用单调 ID；MC2 等 native consumer 只借用本次调用。
+// 进程内公共 registry 使用单调 ID；native consumer 必须持有调用期租约。
+// 句柄注销只会阻止新的借用，不能销毁仍在执行中的采样对象。
 std::uint64_t register_runtime_v1(std::unique_ptr<FieldRuntimeV1> runtime);
-FieldRuntimeV1& require_registered_runtime_v1(std::uint64_t handle);
+std::shared_ptr<FieldRuntimeV1> acquire_registered_runtime_v1(std::uint64_t handle);
 bool dispose_registered_runtime_v1(std::uint64_t handle) noexcept;
 std::size_t live_runtime_count_v1() noexcept;
 std::uint64_t next_runtime_handle_v1() noexcept;

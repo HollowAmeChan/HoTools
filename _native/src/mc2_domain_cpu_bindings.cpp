@@ -1338,11 +1338,11 @@ void bind_mc2_domain_cpu(nb::module_& module) {
             double sample_time_seconds
         ) {
             auto* domain = require_domain(handle);
-            auto& runtime = field_runtime::require_registered_runtime_v1(
+            auto runtime = field_runtime::acquire_registered_runtime_v1(
                 field_runtime_handle
             );
             return domain->prepare_field_wind(
-                runtime,
+                *runtime,
                 field_runtime_handle,
                 sample_time_seconds
             );

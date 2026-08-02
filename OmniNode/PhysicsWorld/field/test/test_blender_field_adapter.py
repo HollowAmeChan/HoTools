@@ -465,6 +465,39 @@ def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> No
     world.omni_cache_dispose("deleted_field_runtime_test")
 
 
+def test_source_vanishing_between_identity_and_spec_becomes_diagnostic() -> None:
+    field_id = "0c9e7832-3650-4f37-ae22-b821399904da"
+
+    class _VanishingSource:
+        name_full = "Field_VanishingDuringStage"
+        type = "EMPTY"
+
+        def __init__(self):
+            self.read_count = 0
+
+        @property
+        def original(self):
+            return self
+
+        @property
+        def hotools_field(self):
+            self.read_count += 1
+            if self.read_count > 1:
+                raise ReferenceError("StructRNA of type Object has been removed")
+            return types.SimpleNamespace(field_id=field_id, enabled=True)
+
+    source = _VanishingSource()
+    stage = field_implicit.stage_field_sources_v0((source,))
+    assert stage.specs == ()
+    assert stage.source_count == 1
+    assert source.read_count == 2
+    assert any(
+        item.code == field_names.FIELD_INVALID_SPEC
+        and item.field_id == field_id
+        for item in stage.diagnostics
+    )
+
+
 def test_manifest_rejects_foreign_producer_without_mutation() -> None:
     obj = _new_empty("Field_ForeignProducer")
     field_id = field_properties.ensure_field_id_v0(obj)

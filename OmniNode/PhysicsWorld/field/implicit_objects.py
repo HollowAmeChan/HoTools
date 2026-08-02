@@ -168,9 +168,12 @@ def stage_field_sources_v0(objects, *, depsgraph=None) -> FieldSourceStageV0:
         if identity is None:
             continue
         field_id, enabled = identity
-        entry = (obj, enabled, label)
+        # 身份校验通过后把 field_id 一并带入暂存，后续不再回读可能已被
+        # Blender 删除的 RNA 对象；规格解析仍然只在当前对象有效时进行。
+        entry = (obj, enabled, label, field_id)
+        identity_entry = (obj, enabled, label)
         candidates.append(entry)
-        identities.setdefault(field_id, []).append(entry)
+        identities.setdefault(field_id, []).append(identity_entry)
 
     duplicate_ids = {
         field_id
@@ -188,23 +191,20 @@ def stage_field_sources_v0(objects, *, depsgraph=None) -> FieldSourceStageV0:
 
     specs = []
     disabled_ids = []
-    for obj, identity_enabled, label in candidates:
-        field_id = canonical_field_id_v0(
-            getattr(_authoring_object(obj).hotools_field, "field_id", "")
-        )
+    for obj, identity_enabled, label, field_id in candidates:
         if field_id in duplicate_ids:
             continue
-        evaluated_obj = evaluated_field_object_v0(obj, depsgraph)
         if not identity_enabled:
             disabled_ids.append(field_id)
             continue
+        evaluated_obj = evaluated_field_object_v0(obj, depsgraph)
         try:
             specs.append(resolve_field_spec_v0(
                 obj,
                 evaluated_object=evaluated_obj,
                 depsgraph=depsgraph,
             ))
-        except (TypeError, ValueError) as exc:
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as exc:
             diagnostics.append(FieldDiagnosticV0(
                 code=FIELD_INVALID_SPEC,
                 field_id=field_id,
