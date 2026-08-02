@@ -498,6 +498,79 @@ def test_source_vanishing_between_identity_and_spec_becomes_diagnostic() -> None
     )
 
 
+def test_candidate_property_group_vanishing_is_ignored() -> None:
+    class _VanishingProperties:
+        @property
+        def field_id(self):
+            raise ReferenceError("StructRNA of type HotoolsField has been removed")
+
+    class _VanishingCandidate:
+        name_full = "Field_VanishingCandidateProperties"
+
+        @property
+        def original(self):
+            return self
+
+        @property
+        def hotools_field(self):
+            return _VanishingProperties()
+
+    stage = field_implicit.stage_field_sources_v0((_VanishingCandidate(),))
+    assert stage.specs == ()
+    assert stage.source_count == 0
+
+
+def test_stage_keeps_frozen_identity_when_rna_id_changes() -> None:
+    frozen_id = "3620cc5e-eaef-4b1e-b341-4c61d83d9023"
+    changed_id = "16bc953a-e065-455f-8080-8742e879a490"
+
+    class _ChangingIdentitySource:
+        name_full = "Field_ChangingIdentityDuringStage"
+        type = "EMPTY"
+        matrix_world = Matrix.Identity(4)
+
+        def __init__(self):
+            self.read_count = 0
+
+        @property
+        def original(self):
+            return self
+
+        @property
+        def hotools_field(self):
+            self.read_count += 1
+            if self.read_count == 1:
+                return types.SimpleNamespace(field_id=frozen_id, enabled=True)
+            return types.SimpleNamespace(
+                field_id=changed_id,
+                enabled=True,
+                field_type=field_names.FIELD_TYPE_WIND,
+                shape=field_names.VOLUME_SHAPE_BOX,
+                speed_mps=2.0,
+                turbulence=0.0,
+                spatial_scale_m=1.0,
+                temporal_frequency_hz=1.0,
+                octaves=1,
+                lacunarity=2.0,
+                gain=0.5,
+                seed_u32=7,
+                blend_weight=1.0,
+                priority=0,
+                scope_solver_ids="",
+                scope_collection_ids="",
+                scope_include_ids="",
+                scope_exclude_ids="",
+                scope_collision_groups="",
+            )
+
+    source = _ChangingIdentitySource()
+    stage = field_implicit.stage_field_sources_v0((source,))
+    assert len(stage.specs) == 1
+    assert stage.specs[0].field_id == frozen_id
+    assert stage.specs[0].source_id == f"blender.field:{frozen_id}"
+    assert source.read_count == 2
+
+
 def test_manifest_rejects_foreign_producer_without_mutation() -> None:
     obj = _new_empty("Field_ForeignProducer")
     field_id = field_properties.ensure_field_id_v0(obj)

@@ -500,7 +500,7 @@ World Begin collector
   -> world.runtime_cache["field_native_runtime_v1"] = NativeFieldRuntimeV1
 ~~~
 
-- native registry 使用进程内单调递增且不复用的 `uint64` handle；`0` 永远无效。consumer 只在一次 native 调用内借用 runtime，不保存指针或取得所有权。MC2 Domain 的借用窗口严格限制在 `prepare_field_wind -> step/cancel`；no-op prepare、成功 step 与异常 cancel 后 inspect 必须报告 handle=0，确保 Field 被删除或 runtime 替换时没有 stale identity。V1 binding 当前依赖 CPython GIL 串行化 registry 的 create/update/sample/dispose；在释放 GIL、引入 native worker 或异步 GPU 消费之前，registry 必须升级为显式同步并让每次调用持有 `shared_ptr` lease，禁止继续返回可能被并发 dispose 的裸引用。
+- native registry 使用进程内单调递增且不复用的 `uint64` handle；`0` 永远无效。registry 以 `shared_ptr` 持有 owner，每次 native 调用取得覆盖完整调用的 lease；dispose 只摘除 handle，由最后一个在途 lease 延迟析构。consumer 不保存 runtime 指针或取得长期所有权。MC2 Domain 只在 `prepare_field_wind` 调用内持有 runtime lease；`prepare -> step/cancel` 窗口保留的只是调试身份 handle，no-op prepare、成功 step 与异常 cancel 后 inspect 必须报告 handle=0。V1 binding 当前依赖 CPython GIL 串行化 registry 的 create/update/sample/dispose；在释放 GIL、引入 native worker 或异步 GPU 消费之前，registry 仍必须升级为经过 Blender 进程验收且不使用 MSVC `std::mutex` 的显式同步，同时保留调用期 lease。
 - config/value signature 相同的连续帧复用同一 runtime，只热更新 snapshot signature、generation、frame 与帧起始 sample time；任一配置或数值变化先创建 staged runtime，全部 world 提交成功后替换旧 owner，失败时回滚并释放 staged owner。
 - Cache Delete、world replacement、runtime clear 与插件注销都必须通过 `NativeFieldRuntimeV1.omni_cache_dispose()` 幂等释放 registry entry；不得留下模块级隐藏 owner。
 - native 标准 evaluator 接受只读位置 view、显式 sample time、粒子到 consumer context 的索引 view，以及调用方持有的输出和 `FieldSampleScratchV1`；输出至少包含 `air_velocity_world` 与独立 `participation`。所有累加结果必须先整批验证为有限且可由 `float32` 表示，再一次写入调用方输出；任一元素失败时不得留下半批新值或把样本标记为有效。MC2 可直接传 Domain-owned float32 positions，并在预热后复用 N 规模 scratch/buffer。
@@ -771,7 +771,7 @@ _native/src/mc2_domain_cpu.* # MC2 Domain直接消费公共runtime
 ### 12.3 已落地：MC2 CPU product consumer
 
 - `mc2_field_air_velocity` capability，状态为 `native_direct_cpu_product_v1`；
-- World Begin 公共 `NativeFieldRuntimeV1`、单调 `uint64` handle、transactional replacement 与 world cache dispose；
+- World Begin 公共 `NativeFieldRuntimeV1`、单调 `uint64` handle、transactional replacement、`shared_ptr` 调用期 lease 与 world cache dispose；删除会立即摘除旧 handle，但不会销毁仍在执行中的 native 调用；
 - Domain 静态 consumer contexts、参数热更新 response buffer、逐 logical particle/逐 fixed substep 的 native direct sample；
 - 子步 Python/native 只跨越 handle 与严格 World sample time，粒子位置、空气速度和 participation 全部留在 C++；
 - MC2 profile 只公开 `field_wind_enabled` 和 `field_wind_strength`；
@@ -779,6 +779,7 @@ _native/src/mc2_domain_cpu.* # MC2 Domain直接消费公共runtime
 - 无 Field/关闭响应/未参与的 no-op 路径，participation 与精确零向量分离，以及 runtime 身份/时序错误在 native mutation 前失败；
 - 三 setup 的600帧双轮产品矩阵已经验证有限性、确定性、响应关闭位级no-op、均匀风响应、精确作用域和Blender输出FPS派生的子步时间；`field_wind_response` capability 状态为`verified`；
 - 旧七个 MC2 wind 字段已删除，不存在兼容层或第二套公开风参数。
+- 已验证 MC2 风实际采样后删除 Field Empty、旧 scope 保留 stale RNA 引用并继续多帧求值；collector 发布零场 runtime，MC2 无风继续运行且不残留旧 handle。
 
 ### 12.4 仍需保留的闸门
 
@@ -794,7 +795,7 @@ _native/src/mc2_domain_cpu.* # MC2 Domain直接消费公共runtime
 
 Field identity/lifecycle：
 
-- stable ID、rename、duplicate、delete、disable、undo、save/load；
+- stable ID、rename、duplicate、delete、disable、undo、save/load；身份暂存后规格解析不得从 RNA 二次回读 ID，其他规格值读取时源失效必须转为诊断；
 - implicit object manifest 对账；
 - config/value signature 分离；
 - scene reload、addon unregister/register；
@@ -832,7 +833,7 @@ MC2：
 
 - 三 setup 的600帧双轮确定性、响应关闭位级no-op、均匀风与逐setup精确作用域；
 - absent Field 保持当前数值 parity，全部 response 为零不调用 evaluator；
-- stale/invalid/disposed runtime handle 在任何 solver mutation 与 scheduler commit 前拒绝；
+- stale/invalid/disposed runtime handle 在任何 solver mutation 与 scheduler commit 前拒绝；运行中删除 Field 时旧 handle 对新调用立即失效，在途 native lease 可安全结束；
 - uniform wind 的方向和幅值；
 - turbulence 在同一 cloth 内产生逐粒子差异；
 - Domain static consumer contexts 与 partition 粒子映射完整且稳定；
@@ -890,6 +891,6 @@ MC2 Domain，先提交一帧 Domain-owned positions，之后热循环只调用
 1. attenuation 最终由 Volume、generator 还是 channel mapping 拥有，以及它在 blend 前后的顺序。V0 暂用 `effective = volume_weight * raw`，不得据此提前扩展曲线 UI。
 2. V1 已用离散 participation 区分未参与与精确零向量；仍未冻结的是是否需要连续 participation/weight、它与 attenuation/blend 的先后顺序，以及 MC2 是否只消费离散参与。
 3. scene unit scale 到米的公共入口尚未冻结；当前 `1 Blender unit = 1 m` 只能作为有诊断的 provisional policy。
-4. native scratch/output 的容量增长、对齐、线程模型与未来 GPU staging 需要用规模/partition 矩阵决定；当前 registry 的 GIL 串行假设不能延伸到释放 GIL、native worker 或异步 GPU，跨线程前必须采用显式同步与 `shared_ptr` 调用租约。无论实现如何变化，Python/native 子步边界都不得恢复 N 规模粒子数据穿越。
+4. native scratch/output 的容量增长、对齐、线程模型与未来 GPU staging 需要用规模/partition 矩阵决定；调用期 `shared_ptr` lease 已落地，但当前 registry 的 GIL 串行假设不能延伸到释放 GIL、native worker 或异步 GPU。跨线程前必须采用经过 Blender 进程验收的显式同步；已知 `tbbmalloc_proxy` / MSVC CRT 组合下不得直接引入 `std::mutex`。无论实现如何变化，Python/native 子步边界都不得恢复 N 规模粒子数据穿越。
 5. 非连续 seek/cache read 必须由公共 World cache 恢复同一 `sample_time_seconds`；Field 不建立私有补偿时钟。
 6. 高级作用域当前使用对象/Armature 名、Collection 名和公共碰撞组号。若以后需要抗重命名的资产引用，必须显式升级 scope schema，不能悄悄改变 V0 名称匹配语义。

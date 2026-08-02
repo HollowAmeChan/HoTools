@@ -79,12 +79,12 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
     old_fps = int(scene.render.fps)
     old_fps_base = float(scene.render.fps_base)
     world = None
-    mesh = field = None
+    mesh = proxy = field = None
     physics_blender.register()
     try:
         scene.render.fps = 60
         scene.render.fps_base = 1.0
-        mesh, _proxy = mixed._mesh_object("FieldDeleteRuntimeMesh")
+        mesh, proxy = mixed._mesh_object("FieldDeleteRuntimeMesh")
         field = field_soak._field_empty("FieldDeleteRuntimeField")
         field.hotools_field.scope_solver_ids = "mc2"
         scope = physics_nodes.physicsObjectScope(
@@ -139,6 +139,7 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         if field is not None and field.name in bpy.data.objects:
             bpy.data.objects.remove(field, do_unlink=True)
         _remove_mesh(mesh)
+        _remove_mesh(proxy)
         scene.render.fps = old_fps
         scene.render.fps_base = old_fps_base
         scene.frame_set(old_frame)

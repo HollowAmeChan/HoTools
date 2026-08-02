@@ -88,10 +88,10 @@ def _candidate_identity(obj):
     authoring_obj = _authoring_object(obj)
     try:
         props = authoring_obj.hotools_field
-    except (AttributeError, ReferenceError):
+        raw_id = str(getattr(props, "field_id", "") or "").strip()
+        enabled = bool(getattr(props, "enabled", False))
+    except (AttributeError, ReferenceError, RuntimeError, TypeError):
         return None
-    raw_id = str(getattr(props, "field_id", "") or "").strip()
-    enabled = bool(getattr(props, "enabled", False))
     if not raw_id and not enabled:
         return None
     if not raw_id:
@@ -203,6 +203,7 @@ def stage_field_sources_v0(objects, *, depsgraph=None) -> FieldSourceStageV0:
                 obj,
                 evaluated_object=evaluated_obj,
                 depsgraph=depsgraph,
+                frozen_field_id=field_id,
             ))
         except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError) as exc:
             diagnostics.append(FieldDiagnosticV0(

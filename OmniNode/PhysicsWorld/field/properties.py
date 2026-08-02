@@ -203,7 +203,13 @@ def evaluated_field_object_v0(obj, depsgraph=None):
     return obj
 
 
-def resolve_field_spec_v0(obj, *, evaluated_object=None, depsgraph=None) -> FieldSpecV0:
+def resolve_field_spec_v0(
+    obj,
+    *,
+    evaluated_object=None,
+    depsgraph=None,
+    frozen_field_id=None,
+) -> FieldSpecV0:
     """把一个原始或已求值 Empty 解析为不含 Blender 引用的纯规格。"""
     authoring_obj = _original_object(obj)
     evaluated_obj = evaluated_object or evaluated_field_object_v0(obj, depsgraph)
@@ -216,9 +222,12 @@ def resolve_field_spec_v0(obj, *, evaluated_object=None, depsgraph=None) -> Fiel
 
     # 自定义 PointerProperty 的 evaluated 副本可能在面板改值后短暂滞后；
     # 持久/动画 RNA 由 original datablock 拥有，只有约束后的矩阵读 evaluated。
-    identity_props = _field_properties(authoring_obj)
-    value_props = identity_props
-    field_id = canonical_field_id_v0(getattr(identity_props, "field_id", ""))
+    value_props = _field_properties(authoring_obj)
+    field_id = canonical_field_id_v0(
+        getattr(value_props, "field_id", "")
+        if frozen_field_id is None
+        else frozen_field_id
+    )
 
     scope = FieldScopeV0(
         solver_ids=_string_ids(value_props.scope_solver_ids),
