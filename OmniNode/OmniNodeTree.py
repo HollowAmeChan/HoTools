@@ -8,6 +8,13 @@ from .OmniExecutor import OmniExecutor
 from .OmniIR import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from .OmniTiming import OmniRuntimeTiming
+from .OmniHostEvaluation import (
+    frame_evaluation_scope,
+    is_rendering,
+    is_frame_evaluation_active,
+    refresh_frame_references,
+    set_rendering,
+)
 from . import OmniNodeDraw
 from . import OmniRuntimeState
 from .OmniNodeOperator import (
@@ -25,20 +32,6 @@ TREE_ID_NAME = "OmniNodeTree"
 
 # tree key -> CompiledGraph. Keeps compile artifacts for multiple OmniNodeTree datablocks.
 _COMPILED_TREE_CACHE = {}
-_FRAME_HANDLER_RUNNING = False
-_FRAME_HANDLER_DEPSGRAPH = None
-# 渲染期间为 True；frame_change_post 触发时据此决定是否强制刷新 bpy 引用
-_IS_RENDERING = False
-
-
-def is_frame_handler_running() -> bool:
-    """供 Blender 资源层判断当前是否禁止重入宿主 depsgraph。"""
-    return bool(_FRAME_HANDLER_RUNNING)
-
-
-def current_frame_depsgraph():
-    """返回 Blender 传给当前 frame_change_post 的已求值 depsgraph。"""
-    return _FRAME_HANDLER_DEPSGRAPH if _FRAME_HANDLER_RUNNING else None
 
 
 def _tree_cache_key(tree):
@@ -120,69 +113,52 @@ def _show_compile_flow_update(tree, context):
 
 @persistent
 def _omni_frame_change_post(scene, depsgraph=None):
-    global _FRAME_HANDLER_DEPSGRAPH, _FRAME_HANDLER_RUNNING
-    if _FRAME_HANDLER_RUNNING:
+    if is_frame_evaluation_active():
         return
 
-    _FRAME_HANDLER_RUNNING = True
-    _FRAME_HANDLER_DEPSGRAPH = depsgraph
-    try:
-        for tree in list(bpy.data.node_groups):
-            if not _is_omni_node_tree(tree):
-                continue
-            if not getattr(tree, "is_execution_enabled", True):
-                continue
-            if not getattr(tree, "is_frame_run_enabled", False):
-                continue
-            try:
-                # 渲染期间每帧触发前刷新持久 bpy 引用，避免上一帧释放
-                # 评估资源后留下悬空引用。
-                if _IS_RENDERING:
-                    _notify_reference_guard("render_frame_start")
-                tree.run_frame_cached()
-            except Exception as exc:
+    with frame_evaluation_scope(depsgraph):
+        try:
+            # 渲染期间每帧只刷新一次 committed owner 的 Blender 引用，
+            # 然后再让所有 OmniNode tree 共享本帧宿主求值上下文。
+            if is_rendering():
+                refresh_frame_references("render_frame_start")
+            for tree in list(bpy.data.node_groups):
+                if not _is_omni_node_tree(tree):
+                    continue
+                if not getattr(tree, "is_execution_enabled", True):
+                    continue
+                if not getattr(tree, "is_frame_run_enabled", False):
+                    continue
                 try:
-                    tree.is_frame_run_enabled = False
-                except Exception:
-                    pass
-                print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
-    finally:
-        _flush_runtime_timing()
-        _FRAME_HANDLER_DEPSGRAPH = None
-        _FRAME_HANDLER_RUNNING = False
-
-
-def _notify_reference_guard(reason):
-    """通知 OmniNode 持久引用门禁处理一个宿主生命周期边界。"""
-    try:
-        from .OmniReferenceGuard import refresh_persistent_references
-
-        refresh_persistent_references(reason)
-    except Exception:
-        pass
+                    tree.run_frame_cached()
+                except Exception as exc:
+                    try:
+                        tree.is_frame_run_enabled = False
+                    except Exception:
+                        pass
+                    print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
+        finally:
+            _flush_runtime_timing()
 
 
 @persistent
 def _omni_render_pre(scene):
-    """渲染开始前设置渲染标志并刷新持久 bpy 引用。"""
-    global _IS_RENDERING
-    _IS_RENDERING = True
-    _notify_reference_guard("render_pre")
+    """渲染开始前设置状态并刷新持久 bpy 引用。"""
+    set_rendering(True)
+    refresh_frame_references("render_pre")
 
 
 @persistent
 def _omni_render_complete(scene):
     """渲染正常结束：清除渲染标志。"""
-    global _IS_RENDERING
-    _IS_RENDERING = False
+    set_rendering(False)
 
 
 @persistent
 def _omni_render_cancel(scene):
     """渲染被取消时清除标志并执行最后一次引用门禁。"""
-    global _IS_RENDERING
-    _IS_RENDERING = False
-    _notify_reference_guard("render_cancel")
+    set_rendering(False)
+    refresh_frame_references("render_cancel")
 
 
 def _ensure_frame_handler():
@@ -408,7 +384,7 @@ class OmniNodeTree(NodeTree):
         try:
             return self._run_compiled_graph(compiled)
         finally:
-            if not _FRAME_HANDLER_RUNNING:
+            if not is_frame_evaluation_active():
                 _flush_runtime_timing()
 
     def run_frame_cached(self):

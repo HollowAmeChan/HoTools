@@ -23,7 +23,7 @@ from .properties import (
     resolve_field_spec_v0,
 )
 from .specs import FieldSpecV0, build_field_snapshot_v0
-from ..utils.blender_scene import evaluated_depsgraph_if_safe
+from ..utils.blender_scene import get_evaluated_depsgraph
 
 
 FIELD_IMPLICIT_SCHEMA_V1 = 1
@@ -379,7 +379,7 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
     # 本 collector 运行在 frame_change_post 的宿主求值回调内，只复用 handler
     # 收到的 depsgraph。主动 get/update 都会重入 Blender 的并行求值；对象删除时
     # 可能让 Base flags 任务读取已经失效的 ViewLayer base 数组并直接闪退。
-    depsgraph = evaluated_depsgraph_if_safe()
+    depsgraph = get_evaluated_depsgraph()
 
     staged_sources = stage_field_sources_v0(objects, depsgraph=depsgraph)
     stage = FieldSourceStageV0(
@@ -447,17 +447,14 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
         and previous_runtime is not None
         and previous_runtime is not staged_runtime
     ):
-        defer_dispose = getattr(world, "defer_runtime_dispose", None)
-        if callable(defer_dispose):
-            defer_dispose(previous_runtime, "field_runtime_replaced")
-        else:
-            # 兼容旧的 World owner；正式 PhysicsWorldCache 会走退休队列。
-            dispose = (
-                getattr(previous_runtime, "omni_cache_dispose", None)
-                or getattr(previous_runtime, "dispose", None)
-            )
-            if callable(dispose):
-                dispose("field_runtime_replaced")
+        dispose = (
+            getattr(previous_runtime, "omni_cache_dispose", None)
+            or getattr(previous_runtime, "dispose", None)
+        )
+        if callable(dispose):
+            # native registry 的 shared_ptr lease 会保护仍在途的调用；
+            # 不在 World 中积累已从当前提交移除的旧 runtime。
+            dispose("field_runtime_replaced")
     return report
 
 

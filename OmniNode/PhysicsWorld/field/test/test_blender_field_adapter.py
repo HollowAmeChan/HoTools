@@ -447,8 +447,8 @@ def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> No
         field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
     )
     assert active_runtime is not disabled_runtime
-    # 被替换的 runtime 进入 World 退休队列，避免当前帧仍持有旧 handle 时悬空。
-    assert disabled_runtime.live is True
+    # 旧 runtime 立即从 registry 摘除；native 调用期由 shared_ptr lease 保活。
+    assert disabled_runtime.live is False
     assert active_runtime.debug_snapshot()["field_count"] == 1
 
     stale_reference = obj
@@ -459,7 +459,7 @@ def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> No
     )
     empty_runtime = world.runtime_cache(field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1)
     assert deleted_report.removed_ids == (field_id,)
-    assert active_runtime.live is True
+    assert active_runtime.live is False
     assert empty_runtime.live is True
     assert empty_runtime.debug_snapshot()["field_count"] == 0
     assert world.implicit_objects == []

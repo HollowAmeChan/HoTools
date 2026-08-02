@@ -9,7 +9,7 @@ from mathutils import Matrix
 import numpy as np
 
 from ....utils.math3d import matrix4_to_numpy_f32
-from ....utils.blender_scene import evaluated_depsgraph_if_safe
+from ....utils.blender_scene import get_evaluated_depsgraph
 from ....simple_cloth.base_pose import validate_base_pose_proxy
 
 
@@ -209,7 +209,7 @@ def read_base_pose_frame_snapshot(
         if isinstance(cached, MC2MeshFrameSnapshot):
             return cached
 
-    depsgraph = depsgraph or evaluated_depsgraph_if_safe()
+    depsgraph = depsgraph or get_evaluated_depsgraph()
     if depsgraph is None:
         raise RuntimeError("MC2 Mesh frame 缺少可安全读取的已求值 depsgraph")
     evaluated_source = source_obj.evaluated_get(depsgraph)

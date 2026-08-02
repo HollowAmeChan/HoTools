@@ -11,7 +11,7 @@ import hashlib
 import bpy
 import numpy as np
 
-from ..utils.blender_scene import update_view_layer_if_safe
+from ..utils.blender_scene import update_view_layer_if_allowed
 from ..names import (
     GN_CACHE_MODIFIER_NAME,
     GN_CACHE_NODE_GROUP_NAME,
@@ -200,7 +200,7 @@ def _notify_group_refresh(group) -> None:
             obj.update_tag()
     view_layer = getattr(bpy.context, "view_layer", None)
     if view_layer is not None:
-        update_view_layer_if_safe(view_layer)
+        update_view_layer_if_allowed(view_layer)
 
 
 def _ensure_group_structure(
@@ -477,7 +477,7 @@ def set_gn_offset_cache_enabled(obj, enabled: bool):
     obj.update_tag()
     view_layer = getattr(bpy.context, "view_layer", None)
     if view_layer is not None:
-        update_view_layer_if_safe(view_layer)
+        update_view_layer_if_allowed(view_layer)
     return modifier
 
 
@@ -648,7 +648,7 @@ def refresh_managed_gn_node_groups() -> dict:
     if refreshed_modifiers:
         view_layer = getattr(bpy.context, "view_layer", None)
         if view_layer is not None:
-            update_view_layer_if_safe(view_layer)
+            update_view_layer_if_allowed(view_layer)
     live_group = bpy.data.node_groups.get(GN_OFFSET_NODE_GROUP_NAME)
     cache_group = bpy.data.node_groups.get(GN_CACHE_NODE_GROUP_NAME)
     return {

@@ -475,9 +475,9 @@ def field_overlay_update(_owner=None, context=None) -> None:
     _sync_draw_handler()
     scene = getattr(context, "scene", None) if context is not None else None
     if scene is not None:
-        from ..utils.blender_scene import evaluated_depsgraph_if_safe
+        from ..utils.blender_scene import get_evaluated_depsgraph
 
-        depsgraph = evaluated_depsgraph_if_safe(context)
+        depsgraph = get_evaluated_depsgraph(context)
         refresh_field_visualization(scene, depsgraph)
 
 

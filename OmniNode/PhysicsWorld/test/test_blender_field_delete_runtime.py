@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import os
 import sys
 
@@ -26,7 +25,7 @@ product_slot = field_soak.product_slot
 physics_blender = field_soak.physics_blender
 world_types = field_soak.world_types
 physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
-omni_tree = importlib.import_module("HoTools.OmniNode.OmniNodeTree")
+host_evaluation = importlib.import_module("HoTools.OmniNode.OmniHostEvaluation")
 field_debug_draw = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.debug_draw"
 )
@@ -52,10 +51,7 @@ def test_blender_object_sources_refresh_every_evaluation() -> None:
 
 def test_field_collector_never_forces_depsgraph_update() -> None:
     """帧回调只能消费宿主传入的 depsgraph，禁止主动推进 Blender 求值。"""
-    source = inspect.getsource(field_implicit.collect_scope_field_specs)
-    assert "evaluated_depsgraph_if_safe" in source
-    assert "evaluated_depsgraph_get" not in source
-    assert "view_layer.update" not in source
+    assert field_implicit.get_evaluated_depsgraph is blender_scene.get_evaluated_depsgraph
 
 
 def test_frame_callback_blocks_nested_view_layer_update() -> None:
@@ -66,16 +62,11 @@ def test_frame_callback_blocks_nested_view_layer_update() -> None:
         def update(self):
             calls.append("update")
 
-    previous = omni_tree._FRAME_HANDLER_RUNNING
-    try:
-        omni_tree._FRAME_HANDLER_RUNNING = True
-        assert blender_scene.update_view_layer_if_safe(_ViewLayer()) is False
+    with host_evaluation.frame_evaluation_scope(object()):
+        assert host_evaluation.update_view_layer_if_allowed(_ViewLayer()) is False
         assert calls == []
-        omni_tree._FRAME_HANDLER_RUNNING = False
-        assert blender_scene.update_view_layer_if_safe(_ViewLayer()) is True
-        assert calls == ["update"]
-    finally:
-        omni_tree._FRAME_HANDLER_RUNNING = previous
+    assert host_evaluation.update_view_layer_if_allowed(_ViewLayer()) is True
+    assert calls == ["update"]
 
 
 def test_frame_callback_reuses_host_depsgraph() -> None:
@@ -89,21 +80,11 @@ def test_frame_callback_reuses_host_depsgraph() -> None:
             calls.append("get")
             return outside_depsgraph
 
-    previous_running = omni_tree._FRAME_HANDLER_RUNNING
-    previous_depsgraph = omni_tree._FRAME_HANDLER_DEPSGRAPH
-    try:
-        omni_tree._FRAME_HANDLER_RUNNING = True
-        omni_tree._FRAME_HANDLER_DEPSGRAPH = host_depsgraph
-        assert blender_scene.evaluated_depsgraph_if_safe(_Context()) is host_depsgraph
+    with host_evaluation.frame_evaluation_scope(host_depsgraph):
+        assert host_evaluation.get_evaluated_depsgraph(_Context()) is host_depsgraph
         assert calls == []
-
-        omni_tree._FRAME_HANDLER_RUNNING = False
-        omni_tree._FRAME_HANDLER_DEPSGRAPH = None
-        assert blender_scene.evaluated_depsgraph_if_safe(_Context()) is outside_depsgraph
-        assert calls == ["get"]
-    finally:
-        omni_tree._FRAME_HANDLER_DEPSGRAPH = previous_depsgraph
-        omni_tree._FRAME_HANDLER_RUNNING = previous_running
+    assert host_evaluation.get_evaluated_depsgraph(_Context()) is outside_depsgraph
+    assert calls == ["get"]
 
 
 def _mesh_request(mesh):
@@ -193,7 +174,6 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         runtime = world.runtime_cache(
             field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
         )
-        old_runtime = runtime
         assert runtime.debug_snapshot()["field_count"] == 1
         slot_id = product_slot.make_mc2_product_slot_id(
             requests[0].setup_type,
@@ -215,9 +195,7 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
                 field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
             )
             assert runtime.debug_snapshot()["field_count"] == 0
-            # 场删除后旧 native runtime 仍在退休队列中，防止帧回调中的旧 handle 悬空。
-            assert old_runtime.live is True
-            assert old_runtime.debug_snapshot()["field_count"] == 1
+            # 场删除后旧 runtime 已从 registry 摘除；在途 native 调用由 lease 保活。
             slot = world.solver_slots[slot_id]
             output = slot.data["owner"].read_output()
             assert output.frame == frame

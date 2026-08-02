@@ -15,7 +15,7 @@ import numpy as np
 from ..names import PC2_CACHE_MODIFIER_NAME
 from ..types import PhysicsWorldCache
 from ..simple_cloth.results import iter_gn_offset_writebacks
-from ..utils.blender_scene import evaluated_depsgraph_if_safe
+from ..utils.blender_scene import get_evaluated_depsgraph
 from .session import (
     MANIFEST_SCHEMA,
     TARGET_UUID_KEY,
@@ -270,7 +270,7 @@ def truncate_pc2(path: Path, sample_count: int) -> bool:
 
 
 def _evaluated_positions(obj) -> np.ndarray:
-    depsgraph = evaluated_depsgraph_if_safe()
+    depsgraph = get_evaluated_depsgraph()
     if depsgraph is None:
         raise RuntimeError("PC2 采样缺少可安全读取的已求值 depsgraph")
     evaluated = obj.evaluated_get(depsgraph)
