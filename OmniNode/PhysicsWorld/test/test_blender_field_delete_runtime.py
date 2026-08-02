@@ -123,6 +123,7 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         runtime = world.runtime_cache(
             field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
         )
+        old_runtime = runtime
         assert runtime.debug_snapshot()["field_count"] == 1
         slot_id = product_slot.make_mc2_product_slot_id(
             requests[0].setup_type,
@@ -144,6 +145,9 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
                 field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
             )
             assert runtime.debug_snapshot()["field_count"] == 0
+            # 场删除后旧 native runtime 仍在退休队列中，防止帧回调中的旧 handle 悬空。
+            assert old_runtime.live is True
+            assert old_runtime.debug_snapshot()["field_count"] == 1
             slot = world.solver_slots[slot_id]
             output = slot.data["owner"].read_output()
             assert output.frame == frame

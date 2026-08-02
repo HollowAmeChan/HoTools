@@ -447,7 +447,8 @@ def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> No
         field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1
     )
     assert active_runtime is not disabled_runtime
-    assert disabled_runtime.live is False
+    # 被替换的 runtime 进入 World 退休队列，避免当前帧仍持有旧 handle 时悬空。
+    assert disabled_runtime.live is True
     assert active_runtime.debug_snapshot()["field_count"] == 1
 
     stale_reference = obj
@@ -458,11 +459,14 @@ def test_scope_toggle_and_deleted_live_source_publish_safe_empty_runtime() -> No
     )
     empty_runtime = world.runtime_cache(field_names.FIELD_NATIVE_RUNTIME_CACHE_KEY_V1)
     assert deleted_report.removed_ids == (field_id,)
-    assert active_runtime.live is False
+    assert active_runtime.live is True
     assert empty_runtime.live is True
     assert empty_runtime.debug_snapshot()["field_count"] == 0
     assert world.implicit_objects == []
     world.omni_cache_dispose("deleted_field_runtime_test")
+    assert disabled_runtime.live is False
+    assert active_runtime.live is False
+    assert empty_runtime.live is False
 
 
 def test_source_vanishing_between_identity_and_spec_becomes_diagnostic() -> None:

@@ -273,6 +273,9 @@ class PhysicsWorldCache:
         self.exchange: dict[str, list[dict]] = {}
         self.result_streams: dict[str, list[dict]] = {}
         self.runtime_caches: dict = {}
+        # 被替换的 native runtime 先退休，等整个 World 销毁时再释放。
+        # 这样帧回调或 solver 延迟持有旧 handle 时不会遇到悬空 runtime。
+        self._deferred_runtime_disposals: list[tuple[object, str]] = []
         self.backend_resources: dict = {}
         self.generation: int = 0
         self.replace_required: bool = True
@@ -331,6 +334,15 @@ class PhysicsWorldCache:
 
     def set_runtime_cache(self, name: str, value) -> None:
         self.runtime_caches[name] = value
+
+    def defer_runtime_dispose(self, resource, reason: str = "runtime_replaced") -> None:
+        """推迟 native runtime 的释放，直到 Physics World 生命周期结束。"""
+        if resource is None:
+            return
+        for existing, _existing_reason in self._deferred_runtime_disposals:
+            if existing is resource:
+                return
+        self._deferred_runtime_disposals.append((resource, str(reason or "runtime_replaced")))
 
     # ---- 隐式物理对象 --------------------------------------------------
 
@@ -634,6 +646,17 @@ class PhysicsWorldCache:
                     dispose_fn(reason)
                 except Exception:
                     pass
+        for resource, deferred_reason in list(self._deferred_runtime_disposals):
+            dispose_fn = (
+                getattr(resource, "omni_cache_dispose", None)
+                or getattr(resource, "dispose", None)
+            )
+            if callable(dispose_fn):
+                try:
+                    dispose_fn(f"{reason}:{deferred_reason}")
+                except Exception:
+                    pass
+        self._deferred_runtime_disposals.clear()
         self.runtime_caches.clear()
         self.implicit_objects.clear()
         self.exchange.clear()

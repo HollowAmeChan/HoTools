@@ -451,12 +451,17 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
         and previous_runtime is not None
         and previous_runtime is not staged_runtime
     ):
-        dispose = (
-            getattr(previous_runtime, "omni_cache_dispose", None)
-            or getattr(previous_runtime, "dispose", None)
-        )
-        if callable(dispose):
-            dispose("field_runtime_replaced")
+        defer_dispose = getattr(world, "defer_runtime_dispose", None)
+        if callable(defer_dispose):
+            defer_dispose(previous_runtime, "field_runtime_replaced")
+        else:
+            # 兼容旧的 World owner；正式 PhysicsWorldCache 会走退休队列。
+            dispose = (
+                getattr(previous_runtime, "omni_cache_dispose", None)
+                or getattr(previous_runtime, "dispose", None)
+            )
+            if callable(dispose):
+                dispose("field_runtime_replaced")
     return report
 
 
