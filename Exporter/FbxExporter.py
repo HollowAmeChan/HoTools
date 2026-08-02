@@ -1,14 +1,17 @@
 import bpy
 import os
+import json
 import mathutils
 import math
 import traceback
+from datetime import datetime, timezone
 from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from mathutils import Vector
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
 from bl_operators.presets import AddPresetBase
 from Utils import bone_utils
+from .HumanoidMappingExporter import HumanoidMappingExporter
 
 
 # ── 预设：主导出器 ─────────────────────────────────────────
@@ -43,6 +46,9 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
         "op.boneConstraintSuffix",
         "op.exportBoneCollection",
         "op.boneCollectionSuffix",
+        "op.exportHumanoidMapping",
+        "op.humanoidMappingSuffix",
+        "op.exportUnityMetadata",
     ]
 
 
@@ -715,6 +721,33 @@ class FBXExporter:
         json_path = f"{base}_{ob.name}{suffix}.json"
         BoneCollectionExporter.export_to_file(ob.data, json_path)
         return json_path
+
+    @staticmethod
+    def export_humanoid_mapping_json(mapping_data, fbx_filepath, suffix):
+        """Write authored Humanoid labels captured before the MCH rewrite."""
+        if not mapping_data:
+            return None
+
+        base, _ = os.path.splitext(fbx_filepath)
+        json_path = f"{base}{suffix}.json"
+        data = HumanoidMappingExporter.write_export_dict(mapping_data, json_path)
+        return json_path if data is not None else None
+
+    @staticmethod
+    def export_unity_metadata_manifest(fbx_filepath, entries):
+        """Write the sidecar index consumed by Unity asset post-processing."""
+        base, _ = os.path.splitext(fbx_filepath)
+        json_path = f"{base}_unity.json"
+        manifest = {
+            "version": "1.0",
+            "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "fbxFile": os.path.basename(fbx_filepath),
+            "files": entries,
+        }
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        return json_path
     @staticmethod
     def restore_selection(selection, active_object=None):
         bpy.ops.object.select_all(action='DESELECT')
@@ -941,6 +974,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,记录每个集合持有的骨骼名称,与FBX同目录",default=False) # type: ignore
     boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
+    exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
+    humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="Humanoid mapping JSON 的文件后缀",default="_humanoid") # type: ignore
+    exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成约束、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
@@ -1026,6 +1062,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         pose_position_state = []
         removed_hidden_modifiers = []
         exported_json = []
+        metadata_entries = []
+        selected_armature_objects = [
+            ob for ob in selection if ob.type == "ARMATURE"
+        ]
+        humanoid_mapping_data = None
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -1036,6 +1077,13 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
         try:
             pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+
+            # Capture authored labels while the original Blender hierarchy and
+            # bone properties are still intact.  MCH generation below changes
+            # only the temporary export scene, not this mapping data.
+            humanoid_mapping_data = HumanoidMappingExporter.build_export_dict(
+                selected_armature_objects
+            )
 
             if self.removeHiddenModifiers:
                 removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
@@ -1106,7 +1154,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             }
 
             # 导出约束 JSON（约束 target 已在上一步改指 MCH，targetPath 天然指向 MCH）
-            if self.exportBoneConstraint:
+            export_constraints = self.exportUnityMetadata or self.exportBoneConstraint
+            export_collections = self.exportUnityMetadata or self.exportBoneCollection
+            export_humanoid = self.exportUnityMetadata or self.exportHumanoidMapping
+
+            if export_constraints:
                 for ob in armature_objects:
                     if ob.name not in selected_armature_names:
                         continue
@@ -1117,9 +1169,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     )
                     if json_path:
                         exported_json.append(json_path)
+                        metadata_entries.append({
+                            "kind": "constraints",
+                            "armatureName": ob.name,
+                            "file": os.path.basename(json_path),
+                        })
 
             # 导出骨骼集合 JSON
-            if self.exportBoneCollection:
+            if export_collections:
                 for ob in armature_objects:
                     if ob.name not in selected_armature_names:
                         continue
@@ -1130,6 +1187,31 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     )
                     if json_path:
                         exported_json.append(json_path)
+                        metadata_entries.append({
+                            "kind": "collections",
+                            "armatureName": ob.name,
+                            "file": os.path.basename(json_path),
+                        })
+
+            if export_humanoid:
+                json_path = FBXExporter.export_humanoid_mapping_json(
+                    humanoid_mapping_data,
+                    self.filepath,
+                    self.humanoidMappingSuffix,
+                )
+                if json_path:
+                    exported_json.append(json_path)
+                    metadata_entries.append({
+                        "kind": "humanoid",
+                        "file": os.path.basename(json_path),
+                    })
+
+            if self.exportUnityMetadata:
+                manifest_path = FBXExporter.export_unity_metadata_manifest(
+                    self.filepath,
+                    metadata_entries,
+                )
+                exported_json.append(manifest_path)
 
             # 导出
             params = self.getParams(context)
@@ -1221,12 +1303,21 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         json_box = layout.box()
         json_box.label(text="附加导出 (JSON)", icon='FILE_TEXT')
         json_col = json_box.column(align=True)
-        json_col.prop(self, "exportBoneConstraint")
-        if self.exportBoneConstraint:
-            json_col.prop(self, "boneConstraintSuffix")
-        json_col.prop(self, "exportBoneCollection")
-        if self.exportBoneCollection:
-            json_col.prop(self, "boneCollectionSuffix")
+        json_col.prop(self, "exportUnityMetadata")
+        if self.exportUnityMetadata:
+            info = json_col.row()
+            info.enabled = False
+            info.label(text="将自动生成约束、集合和Humanoid映射 JSON", icon='INFO')
+        else:
+            json_col.prop(self, "exportBoneConstraint")
+            if self.exportBoneConstraint:
+                json_col.prop(self, "boneConstraintSuffix")
+            json_col.prop(self, "exportBoneCollection")
+            if self.exportBoneCollection:
+                json_col.prop(self, "boneCollectionSuffix")
+            json_col.prop(self, "exportHumanoidMapping")
+            if self.exportHumanoidMapping:
+                json_col.prop(self, "humanoidMappingSuffix")
 
 class OP_FinalFBXExport_only_preprocess(Operator):
     bl_idname = "ho.final_fbx_export_only_preprocess"
