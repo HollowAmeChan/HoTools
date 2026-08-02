@@ -9,9 +9,11 @@ from .names import (
     FIELD_ABI_VERSION,
     FIELD_DIAGNOSTICS_CHANNEL,
     FIELD_INVALID_SPEC,
+    FIELD_NATIVE_RUNTIME_CACHE_KEY_V1,
     FIELD_OBJECT_TAG,
     FIELD_SNAPSHOT_CACHE_KEY_V0,
 )
+from .native import NativeFieldRuntimeV1
 from .properties import (
     FIELD_BLENDER_UNIT_POLICY_V0,
     FIELD_BLENDER_UNIT_TO_METER_V0,
@@ -316,7 +318,7 @@ def reconcile_field_manifest_v0(
 
 
 def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
-    """从 Physics Object Scope 收集 Field，并发布纯快照与诊断。"""
+    """收集 Field，并把纯快照与公共 native runtime 一次性提交到 world。"""
     objects = getattr(scope, "objects", ())
     try:
         import bpy
@@ -344,6 +346,15 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
     if not callable(set_cache) or not isinstance(runtime_caches, dict):
         raise TypeError("world 必须提供 set_runtime_cache 和 runtime_caches 字典")
 
+    previous_runtime = runtime_caches.get(FIELD_NATIVE_RUNTIME_CACHE_KEY_V1)
+    reuse_runtime = (
+        isinstance(previous_runtime, NativeFieldRuntimeV1)
+        and previous_runtime.matches_values(snapshot)
+    )
+    staged_runtime = (
+        None if reuse_runtime else NativeFieldRuntimeV1.create(snapshot)
+    )
+
     writer_id = f"_{FIELD_IMPLICIT_PRODUCER_V0}:manifest"
     acquire = getattr(world, "acquire_write", None)
     release = getattr(world, "release_write", None)
@@ -360,14 +371,31 @@ def collect_scope_field_specs(world, scope) -> FieldManifestReportV0:
         )
         set_cache(FIELD_SNAPSHOT_CACHE_KEY_V0, snapshot)
         set_cache(FIELD_DIAGNOSTICS_CHANNEL, stage.diagnostics)
+        if reuse_runtime:
+            previous_runtime.update_frame(snapshot)
+        else:
+            set_cache(FIELD_NATIVE_RUNTIME_CACHE_KEY_V1, staged_runtime)
     except Exception:
         world.implicit_objects[:] = previous_objects
         runtime_caches.clear()
         runtime_caches.update(previous_caches)
+        if staged_runtime is not None:
+            staged_runtime.dispose("field_runtime_stage_rollback")
         raise
     finally:
         if callable(release):
             release(writer_id)
+    if (
+        not reuse_runtime
+        and previous_runtime is not None
+        and previous_runtime is not staged_runtime
+    ):
+        dispose = (
+            getattr(previous_runtime, "omni_cache_dispose", None)
+            or getattr(previous_runtime, "dispose", None)
+        )
+        if callable(dispose):
+            dispose("field_runtime_replaced")
     return report
 
 

@@ -619,7 +619,17 @@ class PhysicsWorldCache:
                     pass
         self.backend_resources.clear()
 
-        # 清理 runtime caches（Python 容器，GC 即可，但显式 clear 更安全）
+        # runtime cache 也可以拥有公共 native owner；统一先释放再清空。
+        for resource in list(self.runtime_caches.values()):
+            dispose_fn = (
+                getattr(resource, "omni_cache_dispose", None)
+                or getattr(resource, "dispose", None)
+            )
+            if callable(dispose_fn):
+                try:
+                    dispose_fn(reason)
+                except Exception:
+                    pass
         self.runtime_caches.clear()
         self.implicit_objects.clear()
         self.exchange.clear()
@@ -651,6 +661,21 @@ class PhysicsWorldCache:
                     backend_snapshots[name] = {"type": type(resource).__name__}
             except Exception as e:
                 backend_snapshots[name] = {"error": str(e)}
+
+        runtime_cache_snapshots = {}
+        for name, resource in self.runtime_caches.items():
+            try:
+                snapshot_fn = (
+                    getattr(resource, "debug_snapshot", None)
+                    or getattr(resource, "omni_cache_debug_snapshot", None)
+                )
+                runtime_cache_snapshots[name] = (
+                    snapshot_fn()
+                    if callable(snapshot_fn)
+                    else {"type": type(resource).__name__}
+                )
+            except Exception as e:
+                runtime_cache_snapshots[name] = {"error": str(e)}
 
         try:
             from .declarations import solver_declarations_debug_snapshot
@@ -688,6 +713,8 @@ class PhysicsWorldCache:
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),
             "backend_resource_details": backend_snapshots,
+            "runtime_caches": list(self.runtime_caches.keys()),
+            "runtime_cache_details": runtime_cache_snapshots,
         }
 
     def __repr__(self) -> str:

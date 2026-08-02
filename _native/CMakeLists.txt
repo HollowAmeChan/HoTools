@@ -183,6 +183,10 @@ if(HOTOOLS_BUILD_NATIVE)
 nanobind_add_module(hotools_native
     NB_STATIC
     src/hotools_native.cpp
+    src/field_runtime.cpp
+    src/field_runtime.hpp
+    src/field_runtime_bindings.cpp
+    src/field_runtime_bindings.hpp
     src/mc2_bindings.cpp
     src/mc2_fingerprint.cpp
     src/mc2_frame_orientations.cpp
@@ -214,6 +218,13 @@ set_source_files_properties(
     src/mc2_domain_cpu_bindings.cpp
     PROPERTIES OBJECT_DEPENDS
         "${CMAKE_CURRENT_LIST_DIR}/src/mc2_domain_cpu.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_frame_orientations.hpp;${CMAKE_CURRENT_LIST_DIR}/src/mc2_kernels.hpp"
+)
+
+set_source_files_properties(
+    src/field_runtime.cpp
+    src/field_runtime_bindings.cpp
+    PROPERTIES OBJECT_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/src/field_runtime.hpp;${CMAKE_CURRENT_LIST_DIR}/src/field_runtime_bindings.hpp"
 )
 
 target_include_directories(hotools_native PRIVATE

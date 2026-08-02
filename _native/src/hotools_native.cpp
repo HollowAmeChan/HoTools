@@ -2,6 +2,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "field_runtime_bindings.hpp"
 #include "hotools_property_curve.hpp"
 #include "mc2_bindings.hpp"
 #include "mesh_xpbd_bindings.hpp"
@@ -165,6 +166,7 @@ NB_MODULE(hotools_native, module) {
         "Copy SpringBone context debug/state arrays into pre-allocated output buffers."
     );
 
+    hotools::bind_field_runtime(module);
     hotools::bind_mc2(module);
     hotools::bind_mc2_domain_cpu(module);
     hotools::bind_mesh_xpbd(module);
