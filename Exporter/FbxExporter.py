@@ -770,7 +770,7 @@ class FBXExporter:
             f"{base_name}_unity.json",
         )
         manifest = {
-            "version": "1.0",
+            "version": "2.0",
             "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "fbxFile": os.path.basename(fbx_filepath),
             "files": entries,

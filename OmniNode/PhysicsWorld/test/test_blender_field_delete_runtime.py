@@ -28,6 +28,9 @@ physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
 field_debug_draw = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.debug_draw"
 )
+field_visualization = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.field.visualization"
+)
 field_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.names"
 )
@@ -90,12 +93,16 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
     old_frame = int(scene.frame_current)
     old_fps = int(scene.render.fps)
     old_fps_base = float(scene.render.fps_base)
+    old_overlay = bool(getattr(scene, "ho_field_overlay_show", False))
     world = None
     mesh = proxy = field = None
     physics_blender.register()
     try:
         scene.render.fps = 60
         scene.render.fps_base = 1.0
+        if hasattr(scene, "ho_field_overlay_show"):
+            scene.ho_field_overlay_show = True
+        field_visualization.register()
         mesh, proxy = mixed._mesh_object("FieldDeleteRuntimeMesh")
         field = field_soak._field_empty("FieldDeleteRuntimeField")
         scope = physics_nodes.physicsObjectScope(
@@ -146,6 +153,9 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
             assert state["field_prepared_active"] is False
     finally:
         field_debug_draw.shutdown_field_runtime_debug_draw()
+        field_visualization.unregister()
+        if hasattr(scene, "ho_field_overlay_show"):
+            scene.ho_field_overlay_show = old_overlay
         if isinstance(world, world_types.PhysicsWorldCache):
             world.omni_cache_dispose("field_delete_runtime_cleanup")
         if field is not None and field.name in bpy.data.objects:
