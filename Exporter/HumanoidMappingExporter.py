@@ -49,8 +49,8 @@ class HumanoidMappingExporter:
         if not value or value.lower() == "root":
             return ""
 
-        # The authored layout uses names such as upper_arm.L.  Also accept
-        # Unity names and common compact spellings for hand-authored labels.
+        # The authored humanoidMapping property uses labels such as
+        # upper_arm.L. No source-bone-name inference is performed here.
         side = ""
         lower = value.lower()
         if lower.endswith(".l") or lower.endswith("_l") or lower.endswith("-l"):
@@ -83,7 +83,9 @@ class HumanoidMappingExporter:
                 }:
                     if not side:
                         return ""
-                    return f"{side}{finger.capitalize()}{segment_name}"
+                    # Unity's HumanTrait uses spaces for finger slots, e.g.
+                    # "Right Thumb Proximal", while body slots stay compact.
+                    return f"{side} {finger.capitalize()} {segment_name}"
 
         # Unity's spelling is useful when a user entered a standard name
         # directly rather than one of HoTools' dotted layout names.
