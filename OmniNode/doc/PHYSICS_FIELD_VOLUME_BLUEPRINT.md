@@ -592,7 +592,8 @@ MC2FieldSamplePacketV0
 
 - `N` 与 compiled domain 的粒子索引和数量完全一致；
 - 数据是连续的 world-space float32，单位 `m/s`；
-- 每个 simulation substep 在积分前采样当前粒子位置；
+- 每个 MC2 simulation substep 在积分前采样子步入口处、上一成功子步已经提交的当前粒子世界位置；V0 不在同一事务中先推进 Center 再回调 Python sampler；
+- 采样时刻只由 Physics World 的 Blender 输出帧时间派生。若本帧 MC2 实际计划 `update_count` 个子步，则第 `i` 个子步使用 `sample_time_seconds + frame_step_dt * i / update_count`；不得把 MC2 固定频率时钟或墙钟当成 Field 时间；
 - 没有有效 `air_velocity` Field 是合法 absent，native 使用零贡献 fast path；
 - packet 存在但版本、数量、stride 或有限性错误时是 invalid，不能静默当作无风；
 - packet 属于 frame/substep value，不进入 topology key；
@@ -609,18 +610,35 @@ Public FieldSampler
   positions_world + time
   -> air_velocity_world[N, 3]
 
-MC2 Wind Response
-  air_velocity + particle velocity/normal/depth + cloth response
+HoTools MC2 Wind Response V0
+  air_velocity + particle velocity/normal + response strength
   -> MC2 integration contribution
 ~~~
 
-不能把 `air_velocity` 直接当作 acceleration 相加；它的单位和物理意义不同。MC2 native 需要独立 wind pass，并以 MC2 参考行为建立验收。当前 native domain 已拥有位置、世界法线和真实速度数据，但 integration view 尚未把它们接到 wind path。
+不能把 `air_velocity` 直接当作 acceleration 相加；它的单位和物理意义不同。本地 MC2 2.18.1 源码只用于核对接入阶段、旧字段和回归边界，不作为 HoTools 的 wind 数值模板。V0 使用独立、版本化的相对空气速度松弛模型：
+
+~~~text
+relative_velocity = air_velocity - cloth_state_velocity
+normal_part       = dot(relative_velocity, normal) * normal
+tangent_part      = relative_velocity - normal_part
+coupled_velocity  = normal_part + 0.15 * tangent_part
+alpha             = 1 - exp(-response_strength_per_second * dt)
+cloth_state_velocity += alpha * coupled_velocity
+~~~
+
+约束：
+
+- `response_strength_per_second` 非负，单位 `1/s`；`0` 表示没有响应；指数形式保证响应不会因 MC2 子步划分不同而改变目标速度或越过空气速度；
+- 法线耦合固定为 `1.0`，切向耦合固定为 `0.15`，V0 不为它们增加 UI；法线退化时回退为各向同性相对速度；
+- 固定粒子不响应；该 pass 修改积分使用的持久速度，并位于 Center inertia 后、Integration 前；
+- V0 不读取 collision friction、depth、`moving_wind` 或旧 MC2 turbulence 参数；公共 Field 已经负责方向、速度、Volume、衰减、turbulence 和多场合成；
+- MC2 创作面只公开 `field_wind_enabled` 开关和 `field_wind_strength` 强度。开关关闭时跳过 response pass，默认强度为 `1.0 1/s`；其余旧 wind 字段保持隐藏兼容数据，不能影响新路径。
 
 最小启用顺序：
 
 1. 扩展 frame ABI，验证 `[N, 3]` buffer 和 absent/invalid 行为。
 2. 增加无响应的 debug capture，确认粒子顺序、坐标和单位。
-3. 实现 MC2 wind response，先打通 `turbulence=0` 的 uniform wind。
+3. 实现 HoTools 相对空气速度 response，先打通 `turbulence=0` 的 uniform wind。
 4. 用同一 native path 输入 `turbulence>0` 的 spatial-temporal samples。
 5. 完成无风 parity、方向、幅值、逐粒子差异、reset/seek 和 partition-invariance 测试后，才解除 `wind_hidden`。
 
@@ -630,18 +648,18 @@ MC2 Wind Response
 
 | 现有字段 | MC2 原始意图 | 新架构归属 |
 |---|---|---|
-| `wind_influence` | 布料受风强度 | MC2 Consumer Response |
+| `wind_influence` | 旧 MC2 布料受风强度 | legacy 兼容；新路径只读取 `field_wind_strength` |
 | `wind_frequency` | 布料侧时间变化倍率 | legacy 兼容；新 Field 的频率由 `temporal_frequency_hz` 定义 |
 | `wind_turbulence` | 布料侧 turbulence 倍率 | legacy 兼容；新 Field 的源强度由公共 `turbulence` 定义 |
 | `wind_blend` | 规则波与噪声混合 | legacy 兼容；公共算法由 `noise_algorithm_version` 固定 |
 | `wind_synchronization` | 粒子/基线间相位协调 | MC2 专属兼容 sampling policy，不进入 Field source |
-| `wind_depth_weight` | 沿布料深度衰减 | MC2 Consumer Response |
+| `wind_depth_weight` | 沿布料深度衰减 | legacy 兼容；V0 HoTools response 不读取 |
 | `moving_wind` | 由布料/根节点移动产生的相对风 | MC2 内部响应，不是外部 Field |
 
 迁移原则：
 
 - 保留 preset/profile/runtime 字段，避免破坏已有资产；
-- 在对应 native 数值路径和测试完成前继续隐藏；
+- 七个旧字段继续隐藏且不接入新 response；
 - 不在 Field 面板复制这七个属性；
 - 新 Field workflow 不用七个标量反推方向、Volume 或 turbulence；
 - legacy 与 public Field 同时存在时必须有明确的合成和诊断，不能双重计算而不提示。
@@ -757,7 +775,7 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 
 交付：
 
-- MC2 capability declaration；
+- MC2 capability declaration，以及仅含开关/强度的 consumer authoring；
 - `MC2FieldSamplePacketV0` 及 frame ABI 版本升级；
 - 每粒子、每子步 `air_velocity_world[N,3]`；
 - native wind response；
@@ -851,7 +869,7 @@ MC2：
 1. attenuation 最终由 Volume、generator 还是 channel mapping 拥有，以及它在 blend 前后的顺序。V0 暂用 `effective=volume_weight*raw`，但不得据此提前扩展曲线 UI。
 2. `noise_algorithm_version=0` 的确切算法、hash、float 精度和 golden samples。
 3. scene unit scale 到米的统一入口，不能由 MC2 和 visualizer 各自换算。
-4. MC2 wind response 对 `wind_influence`、`wind_depth_weight` 和 legacy 字段的逐项映射。
+4. HoTools Wind Response V0 的开关、强度和固定法线/切向耦合；旧 MC2 wind 字段明确不映射到新路径。
 5. sample buffer 的所有权、对齐、stride、生命周期和 frame transaction 失败策略。
 6. turbulence 每子步采样的性能预算，以及 uniform Field 的预合并 fast path。
 

@@ -164,6 +164,7 @@ Physics World 同时维护两种用途不同、不可混用的时间：
 ```text
 frame_step_dt = 本次允许推进的 world dt
 substep_time(i) = sample_time_seconds + frame_step_dt * i / substeps
+scheduled_substep_time(i, count) = sample_time_seconds + frame_step_dt * i / count
 ```
 
 首次求值、reset、跳帧、倒放或 scope restart 会把没有恢复点的 `sample_time_seconds` 置零，且不会用帧号差追赶。未来 seek/cache 可以恢复序列化的 sample time，但在恢复合同落地前不得根据目标帧号伪造已模拟历史。same-frame 求值不累计时间，并保留该帧第一次实际采用的 `frame_step_dt`，即使随后只修改了 `time_scale`。
@@ -173,7 +174,7 @@ substep_time(i) = sample_time_seconds + frame_step_dt * i / substeps
 - `frame_context.raw_dt` 是 Blender 当前输出设置对应的未缩放帧时长，只有 Physics World Begin 可以从 Scene 生产它。
 - `frame_context.dt` 是应用世界级 `time_scale` 后的统一基础步长。Rigid、SpringBone、MC2 和未来 solver 都必须从同一个 world owner 消费该值，不得自行读取 `Scene.render`、重新计算 fps，或用固定 `1/24`、`1/30`、`1/60` 替代有效 world 时间。
 - `frame_context.frame_step_dt` 是当前帧真正用于采样/推进的基础步长。same-frame 时它保留第一次求值采用的值；solver 不得用随后重算的 `dt` 改写同一帧的采样相位。
-- `frame_context.substep_sample_time_seconds(i)` 是公开的子步起点时间；任何空间与时间叠加采样，包括 Wind turbulence，都必须使用它或同义的显式 sample time，禁止读取墙钟或模块级计时器。
+- `frame_context.substep_sample_time_seconds(i)` 是使用公共 `frame_context.substeps` 时的子步起点时间。固定频率 solver 若本帧实际计划的 `update_count` 与公共 `substeps` 不同，必须用上式的 `scheduled_substep_time(i, update_count)`；任何空间与时间叠加采样，包括 Wind turbulence，都只能使用这两种同源显式 sample time，禁止读取墙钟、native 累加时钟或模块级计时器。
 - solver 可以保留局部 `time_scale` 作为产品调参，但它只能是统一基础时间之上的乘数：`solver_dt = frame_context.dt * solver_time_scale`。默认值必须为 1；局部倍率不得反向改写 `frame_context`，也不得成为第二个场景时间源。
 - 固定频率 scheduler、substeps、iterations 和 catch-up 上限只决定怎样离散、累计或限制 `solver_dt`，不改变时间来源。它们不得隐式假设 Blender 是 60 fps。
 - `frame_context.time_scale == 0` 或 `frame_context.dt == 0` 表示统一暂停。solver 可以同步参数、拓扑、动画输入、命令和只读结果，但不得推进数值时间；不能以 fallback dt 偷跑一步。
