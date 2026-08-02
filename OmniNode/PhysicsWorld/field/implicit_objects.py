@@ -72,14 +72,14 @@ def _flatten_sources(values) -> tuple:
 def _source_label(obj) -> str:
     try:
         return str(obj.name_full)
-    except (AttributeError, ReferenceError):
+    except (AttributeError, ReferenceError, RuntimeError):
         return "<无效对象>"
 
 
 def _authoring_object(obj):
     try:
         original = obj.original
-    except (AttributeError, ReferenceError):
+    except (AttributeError, ReferenceError, RuntimeError):
         original = None
     return original if original is not None else obj
 
@@ -114,7 +114,7 @@ def repair_duplicate_field_ids_v0(objects) -> tuple[FieldDiagnosticV0, ...]:
             props = authoring_obj.hotools_field
             raw_id = str(getattr(props, "field_id", "") or "").strip()
             enabled = bool(getattr(props, "enabled", False))
-        except (AttributeError, ReferenceError, TypeError):
+        except (AttributeError, ReferenceError, RuntimeError, TypeError, ValueError):
             continue
         if not raw_id and not enabled:
             continue
