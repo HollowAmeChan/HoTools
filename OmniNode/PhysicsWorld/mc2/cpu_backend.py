@@ -121,7 +121,13 @@ class MC2CPUBackendDomainV1:
                 + ", ".join(report.blockers)
             )
         required_methods = (
-            "create_domain", "update_frame", "step", "read_output", "inspect", "dispose"
+            "create_domain",
+            "configure_field_consumers",
+            "update_frame",
+            "step",
+            "read_output",
+            "inspect",
+            "dispose",
         )
         if any(not callable(getattr(kernel, name, None)) for name in required_methods):
             raise TypeError("kernel does not implement MC2CPUKernelV1")

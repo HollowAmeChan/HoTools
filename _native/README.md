@@ -57,10 +57,12 @@ build.bat 311 boolean
 build.bat 313 all
 ```
 
-`native`、`jolt` 和组合模式使用独立的 CMake build 目录。重复执行同一
-命令会复用对应的 `CMakeCache.txt` 和对象文件，不执行 clean；切换模块也
-不会改写另一模块的 cache。显式的 `build.bat 313 native` 与
-`build.bat 313` 等价。
+`native`、`jolt` 和组合模式使用独立的 CMake build 目录。普通实现改动会复用
+对应的 `CMakeCache.txt` 和对象文件；切换模块也不会改写另一模块的 cache。
+`mc2_frame_orientations.hpp`、`mc2_domain_cpu.hpp` 或 `field_runtime.hpp` 比当前
+ABI 的布局戳更新时，`hotools_native` 会自动执行一次 `--clean-first`，防止嵌入
+`FieldSampleScratchV1` 等共享结构的对象文件新旧布局混用。显式的
+`build.bat 313 native` 与 `build.bat 313` 等价。
 
 ### 产物路径
 

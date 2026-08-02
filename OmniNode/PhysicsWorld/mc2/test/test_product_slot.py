@@ -82,14 +82,22 @@ class _Source:
         return self._pointer
 
 
-def _collection(*, gravity=5.0, constraints=False):
+def _collection(
+    *,
+    gravity=5.0,
+    constraints=False,
+    source_names=("Sleeve", "Coat"),
+):
     with open(FIXTURE, "r", encoding="utf-8") as handle:
         payloads = json.load(handle)["static_snapshots"]
     snapshots = tuple(
         ir.make_mc2_mesh_partition_static_snapshot(**payload)
         for payload in payloads
     )
-    sources = (_Source(1, "Sleeve"), _Source(2, "Coat"))
+    sources = tuple(
+        _Source(index + 1, name)
+        for index, name in enumerate(source_names)
+    )
     entries = tuple(
         partitions.make_mc2_partition_entry(
             source, setup_type="mesh_cloth", stable_id=snapshot.partition_id,
@@ -136,6 +144,7 @@ class _Kernel:
         self.field_contexts = []
         self.fail_create = False
         self.fail_parameter_stage = False
+        self.fail_field_contexts = False
         self.fail_update = False
         self.fail_step = False
 
@@ -175,6 +184,8 @@ class _Kernel:
             raise RuntimeError("injected frame update failure")
         self.frames.append((handle, frame))
     def configure_field_consumers(self, handle, contexts):
+        if self.fail_field_contexts:
+            raise RuntimeError("injected Field context failure")
         self.field_contexts.append((handle, tuple(contexts)))
     def step_task_reference_teleport(self, handle):
         self.zero_frame_passes.append(("task_reference_teleport", handle))
@@ -318,6 +329,49 @@ def test_same_generation_parameter_update_preserves_product_scheduler_state():
     assert updated.owner_report.action == "parameters_updated"
     assert updated.owner_report.native_domain_reused
     assert slot.data["scheduler_state"] is old_scheduler
+
+
+def test_field_context_change_is_staged_and_failure_preserves_live_slot():
+    world = _world()
+    kernel = _Kernel()
+    initial_collection = _collection()
+    _sync_mesh_product_slot(world, initial_collection, kernel=kernel)
+    slot = world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID]
+    owner = slot.data["owner"]
+    old_domain = owner.domain
+    old_compiled = owner.compiled
+    old_revision = owner.revision
+    old_scheduler = slot.data["scheduler_state"]
+    old_context_signature = slot.data["field_consumer_context_signature"]
+
+    renamed_collection = _collection(
+        source_names=("SleeveRenamed", "Coat")
+    )
+    kernel.fail_field_contexts = True
+    try:
+        _sync_mesh_product_slot(world, renamed_collection, kernel=kernel)
+    except RuntimeError as exc:
+        assert "injected Field context failure" in str(exc)
+    else:
+        raise AssertionError("Field context 配置失败被错误提交")
+
+    assert world.solver_slots[slot_module.MC2_MESH_PRODUCT_SLOT_ID] is slot
+    assert slot.data["owner"] is owner and owner.domain is old_domain
+    assert owner.compiled is old_compiled and owner.revision == old_revision
+    assert slot.data["collection"] is initial_collection
+    assert slot.data["scheduler_state"] is old_scheduler
+    assert slot.data["field_consumer_context_signature"] == old_context_signature
+    assert len(kernel.created) == 2
+    assert kernel.disposed == [kernel.created[1]]
+
+    kernel.fail_field_contexts = False
+    updated = _sync_mesh_product_slot(world, renamed_collection, kernel=kernel)
+    assert updated.owner_report.action == "replaced"
+    assert updated.owner_report.native_domain_reused is False
+    assert owner.domain is not old_domain
+    assert slot.data["collection"] is renamed_collection
+    assert slot.data["scheduler_state"] is not old_scheduler
+    assert slot.data["field_consumer_context_signature"] != old_context_signature
 
 
 def _empty_collider_frame(frame):
@@ -753,7 +807,7 @@ def test_slot_uses_timed_pipeline_only_when_hotspot_timing_is_requested():
     ]
 
 
-def test_slot_substep_failure_does_not_advance_scheduler_and_can_retry():
+def test_slot_failure_before_native_mutation_does_not_advance_scheduler_and_can_retry():
     world = _world()
     kernel = _Kernel()
     _sync_mesh_product_slot(world, _collection(), kernel=kernel)

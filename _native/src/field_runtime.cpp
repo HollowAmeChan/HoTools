@@ -364,12 +364,10 @@ std::size_t sample_impl_into(
 
     scratch.positions.resize(position_count);
     scratch.accumulated.assign(position_count * 3, 0.0);
+    scratch.participation.assign(position_count, std::uint8_t {0});
     scratch.weights.resize(position_count);
     scratch.raw_values.resize(position_count);
     scratch.scope_allowed.resize(context_count);
-    if (position_count != 0) {
-        std::fill_n(participation, position_count, std::uint8_t {0});
-    }
     for (std::size_t index = 0; index < position_count; ++index) {
         const std::size_t context_index = particle_context_indices == nullptr
             ? 0
@@ -429,7 +427,7 @@ std::size_t sample_impl_into(
         }
         for (std::size_t index = 0; index < position_count; ++index) {
             if (scratch.weights[index] > 0.0f && field.blend_weight > 0.0) {
-                participation[index] = 1;
+                scratch.participation[index] = 1;
             }
             for (std::size_t channel = 0; channel < 3; ++channel) {
                 const double contribution =
@@ -448,8 +446,22 @@ std::size_t sample_impl_into(
         ++sampled_field_count;
     }
 
+    const double max_float = static_cast<double>(
+        std::numeric_limits<float>::max()
+    );
+    for (double value : scratch.accumulated) {
+        if (!std::isfinite(value) || std::abs(value) > max_float) {
+            throw std::overflow_error(
+                "Field runtime 空气速度超出 float32 可表示范围"
+            );
+        }
+    }
+    // 整批通过后才写 caller buffer，异常不能留下半提交的采样结果。
     for (std::size_t index = 0; index < position_count * 3; ++index) {
         air_velocity_world[index] = static_cast<float>(scratch.accumulated[index]);
+    }
+    if (position_count != 0) {
+        std::copy_n(scratch.participation.data(), position_count, participation);
     }
     return sampled_field_count;
 }

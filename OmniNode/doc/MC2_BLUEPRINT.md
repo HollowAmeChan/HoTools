@@ -166,7 +166,7 @@ MC2 Domain native prepare
   -> air_velocity_world[N,3] + participation[N]
 ```
 
-World Begin 原子提交 runtime；config/value 改变走 staged replacement，只有 generation/frame/帧起始时间变化且签名不变时才热更新 runtime metadata。MC2 Domain 静态同步完整 partition consumer contexts 与逐粒子响应强度，作用域上下文来自 Mesh Object 或 Bone Armature 名、Collection 名和公共低 16 位碰撞组 mask。每个 fixed 子步在任何 native mutation 前仅校验 handle、generation/frame、World 帧起始时间和显式子步时间，再由 C++ 从 Domain-owned positions 调用 evaluator；Python 不读取位置、不调用 sampler、不创建 packet。
+World Begin 原子提交 runtime；config/value 改变走 staged replacement，只有 generation/frame/帧起始时间变化且签名不变时才热更新 runtime metadata。MC2 Domain 静态同步完整 partition consumer contexts 与逐粒子响应强度；context 配置属于 staged Domain 事务，上下文语义变化强制 replacement，失败时旧 owner/slot 保持不变。作用域上下文来自 Mesh Object 或 Bone Armature 名、Collection 名和公共低 16 位碰撞组 mask。每个 fixed 子步在任何 native mutation 前仅校验 handle、generation/frame、World 帧起始时间和显式子步时间，再由 C++ 从 Domain-owned positions 调用 evaluator；Python 不读取位置、不调用 sampler、不创建 packet。
 
 正式采样时间只来自 Physics World。`world_time.py` 以 Blender 输出设置计算`scene_fps = render.fps / render.fps_base`和`raw_dt = 1 / scene_fps`，World 再维护连续模拟的`sample_time_seconds`与`frame_step_dt`。本帧实际计划`update_count`个 fixed 子步时，第`i`个子步固定使用：
 
@@ -352,7 +352,7 @@ Profile 数值、同布局参数热更新与 scheduler 值不改变 request/doma
 3. 全部 request prepare 成功后 stage owner/slot；任一失败不裁剪旧 live 集合。
 4. 按 request 执行 DomainV1；每个 owner 内按 partition 使用独立 Center/Anchor/Teleport 与参数 SoA。
 5. 全部 output/feedback/writeback plan 验证成功后一次发布结果事务。
-6. 任一 request 或 target 失败时，本批 owner/result/feedback/PoseBone/GN 写回均不部分提交；同帧重试从批前状态开始。
+6. 任一 request 或本 step 内的 target/writeback plan 验证失败时，本批公共 result/feedback 不发布，PoseBone/GN 写回不执行。公开产品入口不回滚已经发生的 native mutation，而是从 world 摘除并 dispose 本批全部 attempted product slots，清除 MC2 结果并恢复 Bone 跨帧 feedback checkpoint；后续调用只能创建新 owner 并按初始化帧冷启动，同帧再次求值不等于从批前状态重试。`replace_required` 只表示后续 Cache Commit 应使用 replace intent，不等于 Physics World generation restart。
 7. 成功后 prune 本帧未再出现的产品 slot，并幂等 dispose。
 
 ## 数据层与所有权

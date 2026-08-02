@@ -170,6 +170,9 @@ class _FakeKernel:
     def update_frame(self, handle, frame_packet):
         self.frame = frame_packet
 
+    def configure_field_consumers(self, handle, contexts):
+        pass
+
     def step(self, handle, frame_packet, scheduler_settings, collider_snapshot):
         pass
 

@@ -451,6 +451,28 @@ def test_field_runtime_native_rejects_invalid_abi_shapes_values_and_samples():
         hotools_native.field_runtime_v1_dispose(handle)
 
 
+def test_field_runtime_native_rejects_float32_output_overflow_atomically():
+    snapshot = _snapshot((
+        _active_field(
+            "float32-overflow",
+            shape=field_names.VOLUME_SHAPE_BOX,
+            speed_mps=1.0e38,
+            blend_weight=10.0,
+        ),
+    ))
+    runtime = field_native.NativeFieldRuntimeV1.create(snapshot)
+    try:
+        _expect_error(
+            OverflowError,
+            lambda: runtime.sample_air_velocity(
+                np.asarray(((0.0, 0.0, 0.0),), dtype=np.float64)
+            ),
+        )
+        assert runtime.live is True
+    finally:
+        runtime.dispose("test_complete")
+
+
 def test_field_runtime_native_empty_runtime_and_empty_batch_are_typed():
     snapshot = _snapshot(())
     runtime = field_native.NativeFieldRuntimeV1.create(snapshot)

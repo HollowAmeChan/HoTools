@@ -92,23 +92,32 @@ def _field_collision_group_mask(group_bit: int) -> int:
     return value if value <= 0x8000 else 0
 
 
-def _field_consumer_contexts(collection, program):
+def _field_consumer_contexts(collection):
     draft = collection.draft
-    if tuple(draft.partition_ids) != tuple(program.partition_ids):
-        raise ValueError("MC2 Field 作用域与当前 compiled partition 身份不一致")
-    if len(program.partition_particle_views) != len(draft.partitions):
-        raise ValueError("MC2 Field 作用域没有完整覆盖 compiled partitions")
     return tuple(
         {
             "object_id": _field_source_name(partition),
             "collection_ids": _field_source_collection_names(partition),
             "collision_group_mask": _field_collision_group_mask(group_bit),
         }
-        for partition, group_bit, _view in zip(
+        for partition, group_bit in zip(
             draft.partitions,
             draft.collision_groups,
-            program.partition_particle_views,
+            strict=True,
         )
+    )
+
+
+def _field_consumer_context_signature(contexts) -> tuple:
+    """冻结会改变 Field Scope 语义的静态身份，供 staged replacement 判定。"""
+
+    return tuple(
+        (
+            str(context["object_id"]),
+            tuple(context["collection_ids"]),
+            int(context["collision_group_mask"]),
+        )
+        for context in contexts
     )
 
 
@@ -295,7 +304,15 @@ def _slot_debug_snapshot(slot: PhysicsSolverSlot) -> dict:
     }
 
 
-def _make_slot(world, owner, collection, report, *, slot_id: str) -> PhysicsSolverSlot:
+def _make_slot(
+    world,
+    owner,
+    collection,
+    report,
+    *,
+    slot_id: str,
+    field_consumer_context_signature: tuple,
+) -> PhysicsSolverSlot:
     slot = PhysicsSolverSlot(
         slot_id,
         MC2_FUSED_PRODUCT_SLOT_KIND,
@@ -305,6 +322,7 @@ def _make_slot(world, owner, collection, report, *, slot_id: str) -> PhysicsSolv
         "owner": owner,
         "collection": collection,
         "last_sync": report,
+        "field_consumer_context_signature": field_consumer_context_signature,
         "scheduler_state": MC2ProductSchedulerStateV1(
             owner.compiled.program.partition_ids
         ),
@@ -318,13 +336,23 @@ def _make_slot(world, owner, collection, report, *, slot_id: str) -> PhysicsSolv
     return slot
 
 
-def _sync_product_static(owner: MC2FusedCPUOwnerV1, collection):
-    frame_state_stage = None
+def _sync_product_static(
+    owner: MC2FusedCPUOwnerV1,
+    collection,
+    *,
+    field_consumer_contexts: tuple,
+    force_domain_replacement: bool,
+):
+    def configure_domain(domain) -> None:
+        domain.configure_field_consumers(field_consumer_contexts)
+
     if isinstance(collection, MC2MeshProductCollectionV1):
         report = owner.sync(
             collection.draft,
             collection.static_snapshots,
             world_gravity_directions=collection.world_gravity_directions,
+            configure_domain=configure_domain,
+            force_domain_replacement=force_domain_replacement,
         )
     elif isinstance(collection, MC2BoneProductCollectionV1):
         from .setups.bone_cloth.fragment_cache import MC2BoneFragmentCacheV1
@@ -340,12 +368,11 @@ def _sync_product_static(owner: MC2FusedCPUOwnerV1, collection):
             fragment_cache_hits=batch.hit_count,
             fragment_builds=batch.build_count,
             commit_static=lambda: cache.commit(batch),
+            configure_domain=configure_domain,
+            force_domain_replacement=force_domain_replacement,
         )
     else:
         raise TypeError("collection must be an MC2 product collection")
-    owner.configure_field_consumers(
-        _field_consumer_contexts(collection, owner.compiled.program)
-    )
     return report
 
 
@@ -379,6 +406,10 @@ def sync_mc2_product_slot(
     if not slot_id:
         raise ValueError("slot_id cannot be empty")
     generation = int(world.generation)
+    field_consumer_contexts = _field_consumer_contexts(collection)
+    field_consumer_context_signature = _field_consumer_context_signature(
+        field_consumer_contexts
+    )
     existing = world.solver_slots.get(slot_id)
     reusable = (
         existing is not None
@@ -391,9 +422,21 @@ def sync_mc2_product_slot(
     if reusable:
         world.acquire_write(_MC2_FUSED_PRODUCT_WRITER)
         try:
-            report = _sync_product_static(existing.data["owner"], collection)
+            force_domain_replacement = (
+                existing.data.get("field_consumer_context_signature")
+                != field_consumer_context_signature
+            )
+            report = _sync_product_static(
+                existing.data["owner"],
+                collection,
+                field_consumer_contexts=field_consumer_contexts,
+                force_domain_replacement=force_domain_replacement,
+            )
             existing.data["collection"] = collection
             existing.data["last_sync"] = report
+            existing.data["field_consumer_context_signature"] = (
+                field_consumer_context_signature
+            )
             if not report.native_domain_reused:
                 existing.data["scheduler_state"] = MC2ProductSchedulerStateV1(
                     existing.data["owner"].compiled.program.partition_ids
@@ -433,13 +476,19 @@ def sync_mc2_product_slot(
         kernel = MC2NativeCPUKernelV1()
     staged_owner = _make_product_owner(kernel, collection)
     try:
-        report = _sync_product_static(staged_owner, collection)
+        report = _sync_product_static(
+            staged_owner,
+            collection,
+            field_consumer_contexts=field_consumer_contexts,
+            force_domain_replacement=False,
+        )
         staged_slot = _make_slot(
             world,
             staged_owner,
             collection,
             report,
             slot_id=slot_id,
+            field_consumer_context_signature=field_consumer_context_signature,
         )
     except Exception:
         staged_owner.dispose()

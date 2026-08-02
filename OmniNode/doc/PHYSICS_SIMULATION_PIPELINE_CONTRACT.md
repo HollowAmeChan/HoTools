@@ -285,12 +285,12 @@ Field 是 Physics World 的共享 component，不是某个 solver 的内置特�
 - Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
 - 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。作者侧不暴露 status 字段：有效且启用的 Empty 一律解析为 `ACTIVE`；`PREVIEW_ONLY` 只保留给程序化规格和显式创作预览，不是 Blender 作者需要管理的产品状态。
 - `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 在中心权重为 1，到局部单位球边界线性降至 0；Box 在局部单位盒内权重为 1、盒外为 0，没有内部衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。V0 直接用 Volume 权重缩放 `air_velocity`；未来是否拆出独立参与权重仍是未冻结的设计质疑点。
-- `air_velocity` 的生产采样入口是公共 `FieldRuntimeV1` evaluator：只读位置/context views、显式 sample time、调用方持有的输出和 scratch；输出 world-space `float32[N,3]` 与独立 `participation[N]`。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。Python reference sampler 只用于 golden、差分、诊断和作者工具，不进入 solver 热路径。
+- `air_velocity` 的生产采样入口是公共 `FieldRuntimeV1` evaluator：只读位置/context views、显式 sample time、调用方持有的输出和 scratch；输出 world-space `float32[N,3]` 与独立 `participation[N]`。累加结果必须先整批验证为有限且可由 `float32` 表示，再原子写入输出；失败时不能暴露半批新值或有效样本。多个 Wind 按 priority、stable ID 的规范顺序加法叠加。Python reference sampler 只用于 golden、差分、诊断和作者工具，不进入 solver 热路径。
 - turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。作者预览固定为 `AUTHOR_STATIC/t=0`，只展示静态注册状态；正式 consumer 和运行态调试使用同一个 native evaluator，并使用 `PhysicsFrameContext` 的 sample/substep time。
 - 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是版本化的 Field 公共 API，不等于 native ABI；版本变化必须同步 golden、capability 与消费者适配器。
 - `collect_scope_field_specs` 在 World Begin 的 component collector 阶段发布当前 generation/frame/frame-start sample time 的 `FieldSnapshotV0`，并编译或热更新 `NativeFieldRuntimeV1` 到 `field_native_runtime_v1` runtime cache；resolver 诊断发布到 `physics.field.diagnostics`。snapshot、manifest、diagnostics 和 native owner 必须作为一次可回滚事务提交。config/value 不变时只热更新帧元数据；变化时 staged replacement，旧 owner 在新提交成功后释放。
-- native registry 使用进程内单调、不复用的 `uint64` handle。Python runtime owner 管理 create/update/inspect/dispose；consumer 在一次 native 调用中借用，不能长期保存裸指针或越过 world cache 生命周期。
-- MC2 在 declaration 中显式消费 `field_air_velocity`。Domain 静态同步时上传完整且互斥的 partition consumer contexts，参数更新时上传 `field_wind_enabled * field_wind_strength` 响应；每个 fixed 子步 Python 只传 runtime handle 与严格 World sample time 两个标量。
+- native registry 使用进程内单调、不复用的 `uint64` handle。Python runtime owner 管理 create/update/inspect/dispose；consumer 在一次 native 调用中借用，不能长期保存裸指针或越过 world cache 生命周期。当前 binding 仅在 CPython GIL 串行条件下成立；释放 GIL、native worker 或异步 GPU 接入前，必须改为显式同步并让调用持有 `shared_ptr` lease。
+- MC2 在 declaration 中显式消费 `field_air_velocity`。Domain 静态同步时把完整且互斥的 partition consumer contexts 纳入 staged Domain 事务；context 语义变化强制 staged replacement，配置失败不得替换旧 owner/slot。参数更新时上传 `field_wind_enabled * field_wind_strength` 响应；每个 fixed 子步 Python 只传 runtime handle 与严格 World sample time 两个标量。
 - MC2 作用域上下文使用 consumer ID `mc2`、源 Object 名或 Armature 名、该源所属 Blender Collection 名，以及 MC2 单 bit 碰撞组的低 16 位公共 mask。include/exclude、Collection 和碰撞组过滤全部由 native Field evaluator 执行；作用域外粒子的 participation 为零。
 - MC2 作者参数只保留 `field_wind_enabled`（“响应场风”）和 `field_wind_strength`（“风响应强度”，0..20）。Field 持有速度、方向、turbulence、Volume、衰减、作用域与合成参数。旧 `wind_influence`、`wind_frequency`、`wind_turbulence`、`wind_blend`、`wind_synchronization`、`wind_depth_weight`、`moving_wind` 已从 profile、runtime ABI 和节点输入删除，不提供隐藏字段、数据迁移或兼容映射。
 - MC2 native `prepare_field_wind` 在任何 solver mutation 前，直接从 Domain-owned current positions、particle-to-partition view 和静态 contexts 调用公共 evaluator；不会把位置或采样结果读回 Python。响应在 Center inertia 之后、Integration 之前应用；固定粒子不响应，法向响应 100%、切向响应 15%。
@@ -342,7 +342,7 @@ slot.data["frame_state"]
 - 不创建不可清理的 native 全局状态。
 - 一个solver step可以一次接收多个规范化task；公开step粒度不要求与对象、component或native context一一对应。具体component到task/spec的映射由domain声明并在专项验收中冻结。
 - 聚合多task时，必须先完成全部只读prepare和校验，再取得world写权限；持久状态仍由稳定task slot/context分别拥有，最后通过一次result transaction发布。任一prepare失败不得留下部分slot更新或部分结果。
-- 接收多个显式product request时，每个request必须对应可观察的domain identity和独立稳定slot；solver必须先完成全批预检、prepare、stage与求解，再一次发布结果事务。任一request失败必须丢弃本批全部尝试slot、partial result和跨帧反馈，不得用已成功的前缀替换live stream。
+- 接收多个显式 product request 时，每个 request 必须对应可观察的 domain identity 和独立稳定 slot；全部 request 求解及 output/feedback/writeback plan 校验成功后，才允许一次发布公共结果。这里的“事务”只覆盖公共发布，不承诺 solver/native state 的数值回滚。任一 request 失败时，domain 必须摘除并 dispose 本批全部 attempted slots，清除本 solver 的 partial result，并恢复本批已暂存的跨帧 feedback；未实现并验证 checkpoint/restore 的 domain 不得复用可能已经发生 mutation 的失败 owner，后续求值必须冷重建。
 - collector可以把同一输出owner的多个显式request留到结果层合并，但合并规则、顺序和冲突域必须由domain专项合同冻结；不得在solver内部把source列表静默展开为hidden task。
 - 同一solver内需要跨task约束时，solver必须先同步全部参与slot，再按substep锁步推进；跨task临时聚合资源放入`world.backend_resources`并遵循dispose协议。不得在Python中逐对象完成Post后再两两补碰撞，也不得把公开step退化为component/object逐个调用。
 

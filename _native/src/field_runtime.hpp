@@ -67,6 +67,7 @@ struct FieldSampleOutputV1 {
 struct FieldSampleScratchV1 {
     std::vector<std::array<double, 3>> positions;
     std::vector<double> accumulated;
+    std::vector<std::uint8_t> participation;
     std::vector<float> weights;
     std::vector<std::array<float, 3>> raw_values;
     std::vector<std::uint8_t> scope_allowed;

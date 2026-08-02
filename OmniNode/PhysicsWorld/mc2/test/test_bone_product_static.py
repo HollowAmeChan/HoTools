@@ -643,6 +643,9 @@ class _ProductKernel:
     def update_frame(self, handle, frame):
         raise AssertionError("not used")
 
+    def configure_field_consumers(self, handle, contexts):
+        pass
+
     def prepare_step_basic_pose(self, handle, ratios):
         raise AssertionError("not used")
 

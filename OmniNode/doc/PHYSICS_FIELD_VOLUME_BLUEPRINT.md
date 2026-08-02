@@ -500,10 +500,10 @@ World Begin collector
   -> world.runtime_cache["field_native_runtime_v1"] = NativeFieldRuntimeV1
 ~~~
 
-- native registry 使用进程内单调递增且不复用的 `uint64` handle；`0` 永远无效。consumer 只在一次 native 调用内借用 runtime，不保存指针或取得所有权。
+- native registry 使用进程内单调递增且不复用的 `uint64` handle；`0` 永远无效。consumer 只在一次 native 调用内借用 runtime，不保存指针或取得所有权。V1 binding 当前依赖 CPython GIL 串行化 registry 的 create/update/sample/dispose；在释放 GIL、引入 native worker 或异步 GPU 消费之前，registry 必须升级为显式同步并让每次调用持有 `shared_ptr` lease，禁止继续返回可能被并发 dispose 的裸引用。
 - config/value signature 相同的连续帧复用同一 runtime，只热更新 snapshot signature、generation、frame 与帧起始 sample time；任一配置或数值变化先创建 staged runtime，全部 world 提交成功后替换旧 owner，失败时回滚并释放 staged owner。
 - Cache Delete、world replacement、runtime clear 与插件注销都必须通过 `NativeFieldRuntimeV1.omni_cache_dispose()` 幂等释放 registry entry；不得留下模块级隐藏 owner。
-- native 标准 evaluator 接受只读位置 view、显式 sample time、粒子到 consumer context 的索引 view，以及调用方持有的输出和 `FieldSampleScratchV1`；输出至少包含 `air_velocity_world` 与独立 `participation`。MC2 可直接传 Domain-owned float32 positions，并在预热后复用 N 规模 scratch/buffer。
+- native 标准 evaluator 接受只读位置 view、显式 sample time、粒子到 consumer context 的索引 view，以及调用方持有的输出和 `FieldSampleScratchV1`；输出至少包含 `air_velocity_world` 与独立 `participation`。所有累加结果必须先整批验证为有限且可由 `float32` 表示，再一次写入调用方输出；任一元素失败时不得留下半批新值或把样本标记为有效。MC2 可直接传 Domain-owned float32 positions，并在预热后复用 N 规模 scratch/buffer。
 - evaluator 先按 Field 固定顺序和 consumer scope 建表，再执行各 Field 自己的标准采样函数；Sphere linear 与 Box hard-boundary 属于版本化 Volume policy，Wind turbulence 属于版本化 generator。这个 evaluator/scratch/view 边界也是未来 SIMD/GPU 实现需要保持的 logical contract，GPU 可改变物理布局但不能改变 channel、scope、participation、顺序和时间语义。
 
 Python 标量/批量 sampler 继续用于 golden、differential tests、诊断和作者工具，不再进入 solver 热路径。运行态调试只通过公开 native owner 的 inspect/sample API 读取真实 runtime。
@@ -513,7 +513,7 @@ Python 标量/批量 sampler 继续用于 golden、differential tests、诊断�
 - generator、shape、scope、channel、transform、速度或 turbulence 数值变化：重编译并 staged replacement `FieldRuntimeV1`；
 - 只有 generation/frame/帧起始时间变化且 config/value signature 相同：原 runtime 只更新帧元数据，不重新上传 Field 定义；
 - 时间在子步内推进：Python 只传新的 scalar sample time，native evaluator 直接使用；不触发 Field runtime 或 MC2 topology rebuild；
-- MC2 partition identity、对象/Collection/碰撞组上下文变化：Domain 静态同步 consumer contexts；Field runtime 不复制 consumer 粒子数据；
+- MC2 partition identity、对象/Collection/碰撞组上下文变化：consumer contexts 必须随 staged Domain 一起配置；上下文语义变化强制 staged replacement，配置失败释放新 Domain 并保持旧 owner/slot/调度状态不变；Field runtime 不复制 consumer 粒子数据；
 - MC2 响应开关/强度变化：参数更新时同步 Domain response buffer；每子步不重复展开；
 - cache/bake 签名必须包括 FieldSnapshot signature、sample cadence、participation 语义和 noise algorithm version。
 
@@ -595,7 +595,7 @@ MC2 DomainV1 native
 - product slot 在 native step 前验证 runtime 的 `generation`、`frame` 和帧起始 `sample_time_seconds` 与当前 World/frame packet 完全一致；过期或已释放 handle 在 solver mutation 和 scheduler commit 前失败；
 - 每个 fixed 子步的 native prepare 直接读取上一成功子步已提交的 Domain-owned world positions，在任何 Teleport/Center/Integration mutation 前调用公共 evaluator；
 - 采样时刻只由 Physics World 的 Blender 输出帧时间派生：`sample_time_seconds + frame_step_dt * update_index / update_count`。不得使用 MC2 fixed 累加器、帧号、时间线作者预览或墙钟；
-- Domain 静态同步时一次上传每个 partition 的 consumer context。Mesh 使用源 Object 名，Bone 使用 Armature 名，Collection 使用 `users_collection` 名称，低 16 位碰撞组映射为公共组；粒子到 partition 的索引由 compiled program 持有；
+- Domain 静态同步时一次上传每个 partition 的 consumer context。Mesh 使用源 Object 名，Bone 使用 Armature 名，Collection 使用 `users_collection` 名称，低 16 位碰撞组映射为公共组；粒子到 partition 的索引由 compiled program 持有。context 配置属于 Domain static staged transaction，不允许先替换 live owner 再补写；context 语义变化即使 compiled program 可复用，也必须创建并配置新 Domain，成功后才原子替换；
 - 无 runtime、无有效 Field、全部 response 为零或全部未参与都是合法 fast path；响应全零时不得调用 evaluator，也不得产生 N 规模 Python/native 搬运；
 - MC2 native 只看最终 `air_velocity`、独立 participation 与自身 response strength，不分支判断 Field generator/preset；
 - runtime identity/time 属于 frame/substep value，不进入 MC2 topology key。consumer contexts 只随 Domain static identity 同步，response 只随 parameter update 同步。
@@ -788,6 +788,7 @@ _native/src/mc2_domain_cpu.* # MC2 Domain直接消费公共runtime
 - participation 当前是 evaluator 的 `u8` 输出；若未来需要连续权重，必须决定它与 Volume attenuation/blend 的关系，而不是重新复用空气速度零值；
 - 大粒子数、不同 partition 数下 native evaluator、scratch 复用与 Field wind pass 的分项性能；Python/native 粒子数据穿越必须保持为零；
 - Python batch/reference 与 native evaluator 的 golden sample 一致性，以及未来 SIMD/GPU evaluator 的确定性/容差合同。
+- MC2 live Domain 的完整子步数值 rollback 尚未成立；Field prepare 与 runtime/time 校验只保证在首次 solver mutation 前失败。公开产品入口会 dispose 本批 attempted owners，恢复 feedback，并在后续调用冷建新 owner；但低层 `step_mc2_product_substep()` 仍没有失败状态或原地重试门禁，只有明确发生在 native mutation 前的失败才可安全重试。该门禁属于 MC2 通用事务，不由 Field 私自补丁。
 
 ## 13. 测试矩阵
 
@@ -840,6 +841,7 @@ MC2：
 - 不同 partition 数量结果一致；
 - 旧七字段在 profile、preset、runtime ABI 和节点接口中均不存在；
 - participation=0 不产生响应；participation=1 且合成空气速度精确为零时保留静止空气响应；
+- evaluator 输出超出 `float32` 或出现非有限值时整批拒绝，调用方输出与 MC2 sample-valid 状态不部分提交；
 - ABI 结构断言每子步 Python 只传 handle/time，且不存在位置 readback、Python sampler、逐粒子 packet 或 N 规模 response 展开；
 - 1k/16k/64k 粒子、1/8/32 partition 的 native sample/response 分项耗时、预热后分配与工作量计数。
 
@@ -888,6 +890,6 @@ MC2 Domain，先提交一帧 Domain-owned positions，之后热循环只调用
 1. attenuation 最终由 Volume、generator 还是 channel mapping 拥有，以及它在 blend 前后的顺序。V0 暂用 `effective = volume_weight * raw`，不得据此提前扩展曲线 UI。
 2. V1 已用离散 participation 区分未参与与精确零向量；仍未冻结的是是否需要连续 participation/weight、它与 attenuation/blend 的先后顺序，以及 MC2 是否只消费离散参与。
 3. scene unit scale 到米的公共入口尚未冻结；当前 `1 Blender unit = 1 m` 只能作为有诊断的 provisional policy。
-4. native scratch/output 的容量增长、对齐、线程模型与未来 GPU staging 需要用规模/partition 矩阵决定；无论实现如何变化，Python/native 子步边界都不得恢复 N 规模粒子数据穿越。
+4. native scratch/output 的容量增长、对齐、线程模型与未来 GPU staging 需要用规模/partition 矩阵决定；当前 registry 的 GIL 串行假设不能延伸到释放 GIL、native worker 或异步 GPU，跨线程前必须采用显式同步与 `shared_ptr` 调用租约。无论实现如何变化，Python/native 子步边界都不得恢复 N 规模粒子数据穿越。
 5. 非连续 seek/cache read 必须由公共 World cache 恢复同一 `sample_time_seconds`；Field 不建立私有补偿时钟。
 6. 高级作用域当前使用对象/Armature 名、Collection 名和公共碰撞组号。若以后需要抗重命名的资产引用，必须显式升级 scope schema，不能悄悄改变 V0 名称匹配语义。

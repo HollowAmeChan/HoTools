@@ -51,8 +51,8 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 - 运行时、测试和工具统一使用 `HoTools.OmniNode.PhysicsWorld`，不保留 `Function.physicsWorld` 转发包或导入别名。
 - 新增物理解算域时继续收敛到 `PhysicsWorld/` 内部，不把后端、注册表或生命周期实现重新塞回 `Function/`。
 - `PhysicsWorld/field/` 是共享 component，不是 solver。它拥有 Field/Volume/WindV0 规格、`FieldSnapshotV0`、公共 `NativeFieldRuntimeV1` owner、Python reference sampler、Empty 创作边界、隐式对象 manifest、诊断、作者预览和运行态调试；solver 只能声明消费公共 capability，不能扫描 Blender Field 对象或复制 evaluator。
-- World Begin 的公共 component collector 把当前 Field 集合编译为 `FieldRuntimeV1`，以 `field_native_runtime_v1` 资源值存入 world runtime cache。相同配置和值只热更新 generation/frame/帧起始时间；配置或数值变化走 staged replacement。native registry 使用进程内单调 `uint64` handle，Python owner 只管理提交、替换与幂等 dispose，consumer 不取得所有权。
-- consumer 适配留在各 solver 内。MC2 在 Domain 静态同步时注册 partition consumer contexts，在参数更新时同步响应强度；每个 fixed 子步 Python 只传 `FieldRuntimeV1` handle 与严格 Physics World sample time 两个标量。C++ 直接从 Domain-owned positions 调用公共 Field evaluator，不再经过 Python 粒子位置读回、Python sampler 或逐粒子 packet。Field 包不导入 MC2，也不拥有布料响应公式。MC2 authoring 只保留“响应场风”开关和响应强度；旧七个 wind 参数和旧采样桥已删除，没有兼容读取路径。
+- World Begin 的公共 component collector 把当前 Field 集合编译为 `FieldRuntimeV1`，以 `field_native_runtime_v1` 资源值存入 world runtime cache。相同配置和值只热更新 generation/frame/帧起始时间；配置或数值变化走 staged replacement。native registry 使用进程内单调 `uint64` handle，Python owner 只管理提交、替换与幂等 dispose，consumer 不取得所有权。当前 registry 借 CPython GIL 串行；释放 GIL、native worker 或异步 GPU 接入前必须升级为显式同步与 `shared_ptr` 调用租约。
+- consumer 适配留在各 solver 内。MC2 在 staged Domain 静态同步事务中注册 partition consumer contexts；上下文语义变化强制 replacement，配置失败保持旧 owner/slot 不变；参数更新时同步响应强度。每个 fixed 子步 Python 只传 `FieldRuntimeV1` handle 与严格 Physics World sample time 两个标量。C++ 直接从 Domain-owned positions 调用公共 Field evaluator，整批验证有限且可表示的 `float32` 输出后才同时提交速度与 participation，不再经过 Python 粒子位置读回、Python sampler 或逐粒子 packet。Field 包不导入 MC2，也不拥有布料响应公式。MC2 authoring 只保留“响应场风”开关和响应强度；旧七个 wind 参数和旧采样桥已删除，没有兼容读取路径。
 - `PhysicsWorld/world_time.py` 是 Blender 输出时间的唯一换算入口。`render.fps / render.fps_base` 产生 `raw_dt`；Physics World 正式采样使用累计 `sample_time_seconds` 与 `frame_step_dt`，MC2 第 `i` 个 fixed 子步固定采样 `sample_time_seconds + frame_step_dt * i / update_count`。作者预览固定为 `AUTHOR_STATIC`、`t=0`，不跟随时间线；它与 Physics World 运行时间都不得维护私有 fps fallback。
 - WindV0 当前由 Volume 权重直接缩放最终 `air_velocity`：球形从中心到边界线性衰减，方形内部不衰减。该规则仍是有版本的 V0 策略，不代表 attenuation 永久归 Volume 所有。native evaluator 另外输出 participation，因此“作用域/Volume 未参与”和“参与后向量精确抵消”不再由零向量混为一谈。
 - 运行中需要裸读真实物理状态的能力必须有请求驱动的专用调试节点。当前 `场-运行可视化调试` 校验 World FrameContext、native inspect 与同签名边界快照，空气速度只从 live `NativeFieldRuntimeV1` 采样；缺少明确 consumer context 时拒绝为高级作用域画风箭头。未来碰撞等运行态也必须按相同合同提供专有节点，不能用作者预览或 RNA 推测替代。
@@ -948,6 +948,7 @@ README.md
 - `_Lib/py311/HotoolsPackage` 放 Blender 4.1+ / Python 3.11 ABI 的 runtime 产物。
 - `_Lib/py313/HotoolsPackage` 放 Blender 5.1+ / Python 3.13 ABI 的 runtime 产物。
 - Python 侧通过 `import hotools_native` 加载 native 模块。
+- `FieldSampleScratchV1` 嵌入 MC2 Domain owner；修改 `field_runtime.hpp` 属于共享 native 布局变化。`build.bat` 必须把它与 MC2 布局头一起纳入每 ABI 的 clean-rebuild 布局戳，禁止链接新旧对象混合的模块。
 
 开发新 native 节点建议流程：
 

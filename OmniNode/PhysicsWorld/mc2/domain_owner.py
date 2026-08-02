@@ -115,6 +115,8 @@ class MC2FusedCPUOwnerV1:
         *,
         world_gravity_direction=(0.0, -1.0, 0.0),
         world_gravity_directions=None,
+        configure_domain=None,
+        force_domain_replacement: bool = False,
     ) -> MC2FusedCPUOwnerSyncReportV1:
         if not isinstance(draft, MC2DomainDraftV1):
             raise TypeError("draft must be MC2DomainDraftV1")
@@ -159,6 +161,8 @@ class MC2FusedCPUOwnerV1:
             fragment_cache_revision=self._fragment_cache.revision + 1,
             fragment_cache_hits=batch.hit_count,
             fragment_builds=batch.build_count,
+            configure_domain=configure_domain,
+            force_domain_replacement=force_domain_replacement,
         )
 
     def sync_fragments(
@@ -170,6 +174,8 @@ class MC2FusedCPUOwnerV1:
         fragment_cache_hits: int = 0,
         fragment_builds: int = 0,
         commit_static=None,
+        configure_domain=None,
+        force_domain_replacement: bool = False,
     ) -> MC2FusedCPUOwnerSyncReportV1:
         """提交任意 setup 的宿主 fragments，复用同一 native domain owner。"""
 
@@ -193,6 +199,8 @@ class MC2FusedCPUOwnerV1:
             fragment_cache_revision=int(fragment_cache_revision),
             fragment_cache_hits=int(fragment_cache_hits),
             fragment_builds=int(fragment_builds),
+            configure_domain=configure_domain,
+            force_domain_replacement=force_domain_replacement,
         )
 
     def _sync_compiled(
@@ -204,9 +212,19 @@ class MC2FusedCPUOwnerV1:
         fragment_cache_revision: int,
         fragment_cache_hits: int,
         fragment_builds: int,
+        configure_domain,
+        force_domain_replacement: bool,
     ) -> MC2FusedCPUOwnerSyncReportV1:
+        if configure_domain is not None and not callable(configure_domain):
+            raise TypeError("configure_domain must be callable or None")
+        if type(force_domain_replacement) is not bool:
+            raise TypeError("force_domain_replacement must be a boolean")
         cache_report = compare_mc2_domain_compile_cache(self._compiled, current)
-        if self._domain is not None and cache_report.exact_cache_hit:
+        if (
+            self._domain is not None
+            and cache_report.exact_cache_hit
+            and not force_domain_replacement
+        ):
             commit_static()
             self._compiled = current
             self._draft = draft
@@ -226,6 +244,7 @@ class MC2FusedCPUOwnerV1:
             and cache_report.program_cache_hit
             and cache_report.parameter_layout_cache_hit
             and not cache_report.parameter_value_cache_hit
+            and not force_domain_replacement
         ):
             self._domain.update_parameters(current, commit_host=commit_static)
             self._compiled = current
@@ -247,6 +266,8 @@ class MC2FusedCPUOwnerV1:
             capabilities=self._capabilities,
         )
         try:
+            if configure_domain is not None:
+                configure_domain(staged_domain)
             commit_static()
         except Exception:
             try:
@@ -283,11 +304,6 @@ class MC2FusedCPUOwnerV1:
         """Publish one validated whole-domain frame to the live native owner."""
 
         self._require_domain().update_frame(frame_packet)
-
-    def configure_field_consumers(self, contexts) -> None:
-        """把静态作用域身份注册到当前 native Domain。"""
-
-        self._require_domain().configure_field_consumers(tuple(contexts))
 
     def step(self, settings) -> None:
         """Run the fixed E4 compiled pass order on the live native owner."""

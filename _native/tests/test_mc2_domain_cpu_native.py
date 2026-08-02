@@ -182,6 +182,7 @@ def _create_uniform_field_runtime(
     generation: int,
     direction=(2.0, 0.0, 3.0),
     speed_mps: float | None = None,
+    blend_weight: float = 1.0,
     scope_solver: str = "mc2",
 ):
     direction = np.asarray((direction,), dtype=np.float64)
@@ -201,7 +202,7 @@ def _create_uniform_field_runtime(
         np.asarray((np.eye(4, dtype=np.float64),), dtype=np.float64),
         direction,
         np.asarray(
-            ((speed_mps, 0.0, 1.0, 0.5, 2.0, 0.5, 1.0),),
+            ((speed_mps, 0.0, 1.0, 0.5, 2.0, 0.5, blend_weight),),
             dtype=np.float64,
         ),
         np.asarray((1,), dtype=np.uint32),
@@ -1209,6 +1210,48 @@ def test_domain_cpu_native_field_scope_miss_skips_particle_evaluator():
         assert state["field_sample_count"] == 0
         assert state["field_apply_count"] == 0
         assert state["field_sample_buffer_valid"] is False
+        np.testing.assert_array_equal(
+            state["field_air_velocity_world"],
+            np.zeros((3, 3), dtype=np.float32),
+        )
+        np.testing.assert_array_equal(
+            state["field_participation"],
+            np.zeros(3, dtype=np.uint8),
+        )
+    finally:
+        hotools_native.mc2_domain_cpu_v1_dispose(handle)
+        hotools_native.field_runtime_v1_dispose(field_runtime)
+
+
+def test_domain_cpu_native_field_overflow_keeps_sample_buffer_invalid():
+    handle = _create()
+    field_runtime = _create_uniform_field_runtime(
+        frame=8,
+        generation=1,
+        direction=(0.0, 0.0, 1.0),
+        speed_mps=1.0e38,
+        blend_weight=10.0,
+    )
+    try:
+        positions, normals = _frame(0.0)
+        _update_frame(handle, positions, normals, frame=8, generation=1)
+        hotools_native.mc2_domain_cpu_v1_configure_inertia(
+            handle, np.zeros(3, dtype=np.float32), np.ones(3, dtype=np.float32)
+        )
+        _configure_field_consumer(handle, np.ones(3, dtype=np.float32))
+        try:
+            hotools_native.mc2_domain_cpu_v1_prepare_field_wind(
+                handle, field_runtime, 0.0
+            )
+        except OverflowError:
+            pass
+        else:
+            raise AssertionError("float32 overflow Field sample was accepted")
+        state = hotools_native.mc2_domain_cpu_v1_inspect(handle)
+        assert state["field_sample_buffer_valid"] is False
+        assert state["field_prepared_active"] is False
+        assert state["field_sample_count"] == 0
+        assert state["field_apply_count"] == 0
         np.testing.assert_array_equal(
             state["field_air_velocity_world"],
             np.zeros((3, 3), dtype=np.float32),

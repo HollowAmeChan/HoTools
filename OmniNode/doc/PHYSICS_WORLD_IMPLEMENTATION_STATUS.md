@@ -74,6 +74,10 @@ physicsWorld/
 
 Field -> MC2 CPU 产品链当前为 active：World Begin 发布 `FieldSnapshotV0` 并编译 `NativeFieldRuntimeV1` 到 world cache；MC2 Domain 静态同步作用域上下文与响应，fixed substep 只传 `handle + sample_time_seconds`，native 以 `sample_time_seconds + frame_step_dt * update_index / update_count` 从 Domain-owned 当前粒子位置采样，作用域按 Object/Armature 名、Collection 名与公共碰撞组低 16 位执行，并在 Center inertia 后应用响应。独立 participation 区分未参与和精确抵消；旧七个 MC2 wind 参数、Python 位置读回、sampler、packet 和兼容数据均已删除。
 
+Field/MC2 静态事务已经补强：consumer contexts 随 staged Domain 一起配置，上下文语义变化强制 replacement，配置失败保持旧 owner/slot/调度状态；evaluator 在整批结果有限且可由 `float32` 表示后才同时提交空气速度与 participation，失败时 MC2 sample buffer 继续无效。registry 当前依赖 CPython GIL 串行，未来释放 GIL、native worker 或异步 GPU 前必须升级为显式同步与 `shared_ptr` 调用租约。
+
+MC2 仍有独立于 Field 的低层事务缺口：live Domain 进入 mutating pass 后没有完整子步数值 rollback，后续 pass 异常时 scheduler 未提交不等于 native state 可原地重试。公开产品入口已经摘除并 dispose 本批 attempted slots、恢复 Bone feedback，后续调用冷建 owner；但低层 `step_mc2_product_substep()` 仍缺少失败状态与原地重试门禁，只有明确在 mutation 前失败才可安全重试。
+
 运行态调试合同：只有明确请求的专用调试节点才可读取 live native 状态；当前“场-运行可视化调试”核对 World FrameContext、runtime inspect 与同签名 snapshot，关闭时不读 cache/不采样/不装 handler，高级 scope 缺少消费上下文时只画边界。碰撞、接触和其它裸读能力未来必须各自提供同类专用节点，不能由作者预览、Blender RNA 或通用快照猜测。
 
 ## 当前优先级
