@@ -114,6 +114,25 @@ def reset_export_undo():
 
 
 class FBXExporter:
+    UNITY_METADATA_DIRECTORY = "HoFBX"
+
+    @staticmethod
+    def unity_metadata_directory(fbx_filepath):
+        """Return and create the folder that contains all HoFBX sidecar files."""
+        directory = os.path.join(
+            os.path.dirname(fbx_filepath),
+            FBXExporter.UNITY_METADATA_DIRECTORY,
+        )
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    @staticmethod
+    def unity_metadata_path(fbx_filepath, file_name):
+        return os.path.join(
+            FBXExporter.unity_metadata_directory(fbx_filepath),
+            file_name,
+        )
+
     @staticmethod
     def unhide_collections(col):
         global hidden_collections
@@ -700,8 +719,11 @@ class FBXExporter:
             return None
 
         json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list, twist_chains)
-        base, _ = os.path.splitext(fbx_filepath)
-        json_path = f"{base}_{ob.name}{suffix}.json"
+        base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
+        json_path = FBXExporter.unity_metadata_path(
+            fbx_filepath,
+            f"{base_name}_{ob.name}{suffix}.json",
+        )
         with open(json_path, "w", encoding="utf-8") as f:
             f.write(json_str)
         return json_path
@@ -717,8 +739,11 @@ class FBXExporter:
         if not collections_list:
             return None
 
-        base, _ = os.path.splitext(fbx_filepath)
-        json_path = f"{base}_{ob.name}{suffix}.json"
+        base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
+        json_path = FBXExporter.unity_metadata_path(
+            fbx_filepath,
+            f"{base_name}_{ob.name}{suffix}.json",
+        )
         BoneCollectionExporter.export_to_file(ob.data, json_path)
         return json_path
 
@@ -728,16 +753,22 @@ class FBXExporter:
         if not mapping_data:
             return None
 
-        base, _ = os.path.splitext(fbx_filepath)
-        json_path = f"{base}{suffix}.json"
+        base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
+        json_path = FBXExporter.unity_metadata_path(
+            fbx_filepath,
+            f"{base_name}{suffix}.json",
+        )
         data = HumanoidMappingExporter.write_export_dict(mapping_data, json_path)
         return json_path if data is not None else None
 
     @staticmethod
     def export_unity_metadata_manifest(fbx_filepath, entries):
         """Write the sidecar index consumed by Unity asset post-processing."""
-        base, _ = os.path.splitext(fbx_filepath)
-        json_path = f"{base}_unity.json"
+        base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
+        json_path = FBXExporter.unity_metadata_path(
+            fbx_filepath,
+            f"{base_name}_unity.json",
+        )
         manifest = {
             "version": "1.0",
             "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -970,12 +1001,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
-    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录。约束目标已随MCH转移",default=False) # type: ignore
-    boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
-    exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,记录每个集合持有的骨骼名称,与FBX同目录",default=False) # type: ignore
-    boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
+    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,统一写入FBX旁的HoFBX文件夹。约束目标已随MCH转移",default=False) # type: ignore
+    boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="HoFBX文件夹内的约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
+    exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,统一写入FBX旁的HoFBX文件夹",default=False) # type: ignore
+    boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="HoFBX文件夹内的集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     exportHumanoidMapping:BoolProperty(name="导出Humanoid映射(JSON)",description="导出 Blender 中已标记的 Humanoid mapping，让 Unity 导入时按准确的 boneName 配置 Avatar，避免 MCH 骨名猜测",default=True) # type: ignore
-    humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="Humanoid mapping JSON 的文件后缀",default="_humanoid") # type: ignore
+    humanoidMappingSuffix:bpy.props.StringProperty(name="Humanoid后缀",description="HoFBX文件夹内的Humanoid mapping JSON文件后缀",default="_humanoid") # type: ignore
     exportUnityMetadata:BoolProperty(name="自动导出Unity元数据",description="一次FBX导出自动生成约束、骨骼集合和Humanoid映射JSON；关闭后可用下面的细分开关选择性导出",default=True) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore

@@ -25,6 +25,9 @@ product_slot = field_soak.product_slot
 physics_blender = field_soak.physics_blender
 world_types = field_soak.world_types
 physics_nodes = importlib.import_module("HoTools.OmniNode.PhysicsWorld.nodes")
+field_debug_draw = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.field.debug_draw"
+)
 field_names = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.names"
 )
@@ -60,6 +63,15 @@ def _step(world, scene, scope, requests):
         max_simulation_count_per_frame=4,
     )
     assert returned is world and ready is True, status
+    debug_world, debug_status = physics_nodes.physicsFieldRuntimeDebugDraw(
+        world,
+        show_bounds=True,
+        show_air_velocity=True,
+        density=2,
+        glyph_scale=0.15,
+    )
+    assert debug_world is world, debug_status
+    assert "不可用" not in debug_status, debug_status
     assert frame == scene.frame_current
     return world
 
@@ -86,7 +98,6 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
         scene.render.fps_base = 1.0
         mesh, proxy = mixed._mesh_object("FieldDeleteRuntimeMesh")
         field = field_soak._field_empty("FieldDeleteRuntimeField")
-        field.hotools_field.scope_solver_ids = "mc2"
         scope = physics_nodes.physicsObjectScope(
             [mesh, field],
             include_passive_collision=False,
@@ -134,6 +145,7 @@ def test_delete_active_field_during_mc2_runtime_is_safe() -> None:
             assert state["field_runtime_handle"] == 0
             assert state["field_prepared_active"] is False
     finally:
+        field_debug_draw.shutdown_field_runtime_debug_draw()
         if isinstance(world, world_types.PhysicsWorldCache):
             world.omni_cache_dispose("field_delete_runtime_cleanup")
         if field is not None and field.name in bpy.data.objects:
