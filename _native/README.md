@@ -61,7 +61,8 @@ build.bat 313 all
 对应的 `CMakeCache.txt` 和对象文件；切换模块也不会改写另一模块的 cache。
 `mc2_frame_orientations.hpp`、`mc2_domain_cpu.hpp` 或 `field_runtime.hpp` 比当前
 ABI 的布局戳更新时，`hotools_native` 会自动执行一次 `--clean-first`，防止嵌入
-`FieldSampleScratchV1` 等共享结构的对象文件新旧布局混用。显式的
+`FieldSampleScratchV1` 等共享结构的对象文件新旧布局混用；组合 `all` 模式会对
+该 ABI 的全部模块执行 clean rebuild。显式的
 `build.bat 313 native` 与 `build.bat 313` 等价。
 
 ### 产物路径

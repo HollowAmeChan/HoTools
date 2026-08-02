@@ -179,6 +179,7 @@ set "DOMAIN_LAYOUT_HEADER=%SOURCE_DIR%\src\mc2_domain_cpu.hpp"
 set "FIELD_LAYOUT_HEADER=%SOURCE_DIR%\src\field_runtime.hpp"
 set "NATIVE_LAYOUT_STAMP=%BUILD_DIR%\.mc2_native_layout.stamp"
 set "REBUILD_NATIVE_LAYOUT=0"
+set "CHECK_NATIVE_LAYOUT=0"
 
 echo [%LABEL%] Configure preset: %CONFIG_PRESET%
 echo [%LABEL%] Build preset:     %BUILD_PRESET%
@@ -191,7 +192,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if /I "%BUILD_TARGET%"=="hotools_native" (
+if /I "%BUILD_TARGET%"=="hotools_native" set "CHECK_NATIVE_LAYOUT=1"
+if /I "%MODULE%"=="all" set "CHECK_NATIVE_LAYOUT=1"
+if "%CHECK_NATIVE_LAYOUT%"=="1" (
     for /f %%I in ('powershell.exe -NoProfile -Command "$h1=Get-Item -LiteralPath '%FRAME_LAYOUT_HEADER%'; $h2=Get-Item -LiteralPath '%DOMAIN_LAYOUT_HEADER%'; $h3=Get-Item -LiteralPath '%FIELD_LAYOUT_HEADER%'; $s=Get-Item -LiteralPath '%NATIVE_LAYOUT_STAMP%' -ErrorAction SilentlyContinue; if ($null -eq $s -or $h1.LastWriteTimeUtc -gt $s.LastWriteTimeUtc -or $h2.LastWriteTimeUtc -gt $s.LastWriteTimeUtc -or $h3.LastWriteTimeUtc -gt $s.LastWriteTimeUtc) { '1' } else { '0' }"') do set "REBUILD_NATIVE_LAYOUT=%%I"
 )
 
@@ -203,7 +206,12 @@ if defined BUILD_TARGET (
         "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --target "%BUILD_TARGET%" --parallel
     )
 ) else (
-    "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --parallel
+    if "%REBUILD_NATIVE_LAYOUT%"=="1" (
+        echo [%LABEL%] Shared Field/MC2 native layout changed; clean rebuilding all modules.
+        "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --clean-first --parallel
+    ) else (
+        "%CMAKE_EXE%" --build --preset "%BUILD_PRESET%" --parallel
+    )
 )
 if errorlevel 1 (
     echo [ERROR] %LABEL% build failed.

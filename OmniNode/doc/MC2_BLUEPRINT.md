@@ -348,10 +348,10 @@ Profile 数值、同布局参数热更新与 scheduler 值不改变 request/doma
 一次 step 固定为：
 
 1. 规范化、去重并验证全部显式 product requests。
-2. 对每个 request 完成 source observation、capture、fragment、compile 与 frame/collider prepare。
-3. 全部 request prepare 成功后 stage owner/slot；任一失败不裁剪旧 live 集合。
-4. 按 request 执行 DomainV1；每个 owner 内按 partition 使用独立 Center/Anchor/Teleport 与参数 SoA。
-5. 全部 output/feedback/writeback plan 验证成功后一次发布结果事务。
+2. 记录本次 request 集合之外的 stale slot；对含 Bone setup 的批次保存跨帧 feedback checkpoint，此时不发布结果。
+3. 按 request 顺序逐个完成 source observation、capture、fragment/compile、static slot 同步、frame/collider prepare、DomainV1 全部子步和私有 output 构造；每个 owner 内按 partition 使用独立 Center/Anchor/Teleport 与参数 SoA，dispatch 固定使用 `publish_results=False`。
+4. 全部 request 成功后才收集各 slot 的 output/writeback plan，执行请求式 debug 捕获，并合并 Bone 多目标结果。
+5. 全部 output/feedback/writeback plan 验证成功后一次发布公共结果事务，禁止发布已经成功的 request 前缀。
 6. 任一 request 或本 step 内的 target/writeback plan 验证失败时，本批公共 result/feedback 不发布，PoseBone/GN 写回不执行。公开产品入口不回滚已经发生的 native mutation，而是从 world 摘除并 dispose 本批全部 attempted product slots，清除 MC2 结果并恢复 Bone 跨帧 feedback checkpoint；后续调用只能创建新 owner 并按初始化帧冷启动，同帧再次求值不等于从批前状态重试。`replace_required` 只表示后续 Cache Commit 应使用 replace intent，不等于 Physics World generation restart。
 7. 成功后 prune 本帧未再出现的产品 slot，并幂等 dispose。
 

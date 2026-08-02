@@ -341,7 +341,7 @@ slot.data["frame_state"]
 - 不直接调用 Cache Write。
 - 不创建不可清理的 native 全局状态。
 - 一个solver step可以一次接收多个规范化task；公开step粒度不要求与对象、component或native context一一对应。具体component到task/spec的映射由domain声明并在专项验收中冻结。
-- 聚合多task时，必须先完成全部只读prepare和校验，再取得world写权限；持久状态仍由稳定task slot/context分别拥有，最后通过一次result transaction发布。任一prepare失败不得留下部分slot更新或部分结果。
+- 聚合多 task 时，domain 可以按已冻结的专项合同逐 request prepare/stage/solve，也可以先完成全批只读 prepare；持久状态仍由稳定 task slot/context 分别拥有。无论执行顺序如何，全部 request 的 output/feedback/writeback plan 验证成功前都不得发布公共结果，任一失败不得发布已经成功的前缀。
 - 接收多个显式 product request 时，每个 request 必须对应可观察的 domain identity 和独立稳定 slot；全部 request 求解及 output/feedback/writeback plan 校验成功后，才允许一次发布公共结果。这里的“事务”只覆盖公共发布，不承诺 solver/native state 的数值回滚。任一 request 失败时，domain 必须摘除并 dispose 本批全部 attempted slots，清除本 solver 的 partial result，并恢复本批已暂存的跨帧 feedback；未实现并验证 checkpoint/restore 的 domain 不得复用可能已经发生 mutation 的失败 owner，后续求值必须冷重建。
 - collector可以把同一输出owner的多个显式request留到结果层合并，但合并规则、顺序和冲突域必须由domain专项合同冻结；不得在solver内部把source列表静默展开为hidden task。
 - 同一solver内需要跨task约束时，solver必须先同步全部参与slot，再按substep锁步推进；跨task临时聚合资源放入`world.backend_resources`并遵循dispose协议。不得在Python中逐对象完成Post后再两两补碰撞，也不得把公开step退化为component/object逐个调用。
