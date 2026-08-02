@@ -7,6 +7,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -27,17 +28,34 @@ using cf64_3d = nb::ndarray<const double, nb::ndim<3>, nb::c_contig, nb::device:
 using ci32_1d = nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using cu32_1d = nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
-// 所有当前 binding 都持有 GIL；registry 因而保持 GIL 串行访问。
 // handle 只用于查找当前可见 runtime；uint64 ID 永不复用，避免 ABA。
 // shared_ptr 是调用期租约：注销只摘除 map，不销毁已取得的 runtime。
 // 这里不能引入 std::mutex：Blender 的 tbbmalloc_proxy / MSVC CRT 组合
-// 已在 MC2 binding 中验证会触发 Mtx_trylock 访问冲突。未来 native worker
-// 接入时必须另行设计不依赖 MSVC mutex 的 registry 同步方案。
+// 已在 MC2 binding 中验证会触发 Mtx_trylock 访问冲突。Blender 的 handler、
+// 定时器和 native 调用可能交错，因此 registry 使用标准 atomic_flag 短自旋，
+// 不触发 MSVC mutex/Thrd_yield；runtime 本身仍由 shared_ptr 保活。
 std::unordered_map<
     std::uint64_t,
     std::shared_ptr<field_runtime::FieldRuntimeV1>
 > live_field_runtimes;
+std::atomic_flag field_runtime_registry_lock = ATOMIC_FLAG_INIT;
 std::uint64_t next_field_runtime_handle = 1;
+
+class FieldRuntimeRegistryGuard {
+public:
+    FieldRuntimeRegistryGuard() noexcept {
+        while (field_runtime_registry_lock.test_and_set(std::memory_order_acquire)) {
+            // 不调用 std::this_thread::yield，避免再次进入 MSVC Thrd_yield 路径。
+        }
+    }
+
+    ~FieldRuntimeRegistryGuard() {
+        field_runtime_registry_lock.clear(std::memory_order_release);
+    }
+
+    FieldRuntimeRegistryGuard(const FieldRuntimeRegistryGuard&) = delete;
+    FieldRuntimeRegistryGuard& operator=(const FieldRuntimeRegistryGuard&) = delete;
+};
 
 template<typename T>
 nb::ndarray<nb::numpy, T, nb::ro> owned_readonly_array_1d(
@@ -84,6 +102,7 @@ std::uint64_t register_runtime_v1(std::unique_ptr<FieldRuntimeV1> runtime) {
     if (!runtime) {
         throw std::invalid_argument("Field runtime registry 不能注册空 owner");
     }
+    FieldRuntimeRegistryGuard guard;
     if (next_field_runtime_handle == 0) {
         throw std::overflow_error("Field runtime handle 空间已耗尽");
     }
@@ -100,6 +119,7 @@ std::shared_ptr<FieldRuntimeV1> acquire_registered_runtime_v1(std::uint64_t hand
     if (handle == 0) {
         throw std::invalid_argument("Field runtime handle 不能为空");
     }
+    FieldRuntimeRegistryGuard guard;
     const auto found = live_field_runtimes.find(handle);
     if (found == live_field_runtimes.end()) {
         throw std::runtime_error("Field runtime handle 已失效");
@@ -111,14 +131,17 @@ bool dispose_registered_runtime_v1(std::uint64_t handle) noexcept {
     if (handle == 0) {
         return false;
     }
+    FieldRuntimeRegistryGuard guard;
     return live_field_runtimes.erase(handle) != 0;
 }
 
 std::size_t live_runtime_count_v1() noexcept {
+    FieldRuntimeRegistryGuard guard;
     return live_field_runtimes.size();
 }
 
 std::uint64_t next_runtime_handle_v1() noexcept {
+    FieldRuntimeRegistryGuard guard;
     return next_field_runtime_handle;
 }
 

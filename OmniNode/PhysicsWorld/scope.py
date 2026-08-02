@@ -26,7 +26,7 @@ def _obj_is_valid(obj) -> bool:
         _ = obj.as_pointer()
         _ = obj.type
         return True
-    except (ReferenceError, AttributeError):
+    except (ReferenceError, AttributeError, RuntimeError):
         return False
 
 
