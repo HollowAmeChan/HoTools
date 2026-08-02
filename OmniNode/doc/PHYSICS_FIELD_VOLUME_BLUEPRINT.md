@@ -1,24 +1,25 @@
 # Physics World Field / Volume 与风场契约
 
-> 状态：F0/F1 预览 vertical slice 已实现，阶段闸门尚未全部关闭
+> 状态：F0/F1 预览阶段闸门已关闭；能力仍为 `PREVIEW_ONLY`
 > 归属：`OmniNode/PhysicsWorld`
 > 当前主线：公共 Field/Volume、统一 Wind Field 与创作/可视化门禁
 > 核心命名：公开对象称为 **Field**，空间载体称为 **Volume**；不建立 `ForceField` 领域。
 
-当前实现快照（2026-08-01）：
+当前实现快照（2026-08-02）：
 
 - 已有独立 `PhysicsWorld/field/` component、`FieldSpecV0`/`FieldSnapshotV0`、schema/capability 单一事实源和 `physics.field` manifest 对账；
-- 已有 Empty 创建与集中面板、sphere/box、统一 Wind、确定性四维 value noise、多 octave turbulence、reference/batch sampler 和 selected/combined vector overlay；
+- 已有 Field 类型层（V0 仅 Wind）、原生 Empty 挂载与集中面板、sphere/box、确定性四维 value noise、多 octave turbulence、reference/batch sampler、selected/combined vector overlay 及 vector/scalar/SDF/matrix channel 可视化注册表；
 - `Object.hotools_field` 当前状态固定为 `PREVIEW_ONLY`，没有 active solver consumer，不改变任何模拟结果；
 - 公共采样的 request/result signature 已覆盖位置、时间、scope、选择集、诊断和精确数值字节；
 - Blender 输出时间统一由 `PhysicsWorld/world_time.py` 解释，时间矩阵覆盖 24/30/60、30000/1001、暂停、同帧、reset、跳帧、倒放和子步；
-- 尚未关闭的门禁包括通用 scalar/SDF/reserved 可视化、完整 `.blend` 往返/undo/动画验收、seek/cache 时间恢复以及 consumer bridge。
+- `.blend` 往返、undo/redo、动画求值、禁用/删除 manifest 对账、reset/seek/substep 与确定性矩阵已有后台验收；reserved channel 没有显式 values 时只报告状态，不伪造 sampler 或数值 glyph。
+- seek/cache 的持久恢复属于后续公共 World cache 合同；当前没有 active consumer，因此 Field 不改变任何模拟结果。
 
 ## 1. 已确定的架构决策
 
 1. Field 是可按世界位置和物理时间采样的空间数据，不预设它一定表示力。
-2. 用户界面只提供一个 Wind Field，不建立“定向风”和“紊流风”类型、preset 或 mode 枚举。
-3. Wind Field 输出 `air_velocity` 向量通道，单位为 `m/s`。无量纲 `turbulence` 参数控制同一个基础风是否叠加空间与时间采样：
+2. 用户界面先选择 Field 类型；V0 只有 `WIND` 类型。Wind 类型内部不建立“定向风”和“紊流风”类型、preset 或 mode 枚举。
+3. Wind 类型输出 `air_velocity` 向量通道，单位为 `m/s`。无量纲 `turbulence` 参数控制同一个基础风是否叠加空间与时间采样：
    - `turbulence = 0`：纯定向风；
    - `turbulence > 0`：基础风上叠加确定性的时空扰动。
 4. Volume V0 只实现 sphere 和 box：
@@ -218,6 +219,7 @@ FieldSpecV0
   source_id
   enabled
   status                      # active / preview_only / reserved / invalid
+  field_type                  # Field 类型；V0 只有 WIND
 
   source
     storage_kind              # analytic / dense_grid_reserved / sparse_grid_reserved
@@ -273,16 +275,16 @@ FieldSpecV0
 
 首版注册表建议：
 
-| Channel | Rank | Unit | Field 状态 | 默认可视化 |
+| Channel | Rank | Unit | Field 状态 | 有显式采样值时的可视化模式 |
 |---|---|---|---|---|
-| `air_velocity` | vector | m/s | active 主线 | 箭头格、流线预览、Volume 边界 |
-| `acceleration` | vector | m/s² | preview_only | 箭头格、Volume 边界 |
-| `mask` | scalar | 0..1 | preview_only | 颜色/透明度切片 |
-| `density` | scalar | kg/m³ | preview_only | 颜色切片、等值预览 |
-| `temperature` | scalar | K | preview_only | 颜色切片 |
-| `pressure` | scalar | Pa | preview_only | 颜色切片 |
-| `sdf` | scalar | m | preview_only | 零等值面、正负颜色 |
-| `normal` | vector | unitless | preview_only | 表面向量 |
+| `air_velocity` | vector | m/s | preview_only | 箭头格、Volume 边界 |
+| `acceleration` | vector | m/s² | reserved | 箭头格、Volume 边界 |
+| `mask` | scalar | 0..1 | reserved | 颜色/透明度切片 |
+| `density` | scalar | kg/m³ | reserved | 颜色切片、等值预览 |
+| `temperature` | scalar | K | reserved | 颜色切片 |
+| `pressure` | scalar | Pa | reserved | 颜色切片 |
+| `sdf` | scalar | m | reserved | 零等值采样点、正负颜色 |
+| `normal` | vector | unitless | reserved | 表面向量 |
 | `tensor` | matrix | explicit | reserved | Volume 边界和 reserved 状态 |
 
 规则：
@@ -290,6 +292,7 @@ FieldSpecV0
 - `active`：sampler、visualizer 和至少一个 consumer 契约都已完成。
 - `preview_only`：参数、sampler 和 visualizer 可用，但不宣称改变模拟。
 - `reserved`：只保证 schema/迁移；若没有可信采样器，不公开伪造的数值箭头。
+- reserved channel 没有显式 values 时只显示 reserved 状态与 Field 自身的 Volume 边界；表中的数值可视化模式只供未来真实 sampler 或显式调试采样包复用。
 - 一个类型只有参数、却没有边界可视化和状态提示时，不得进入集中面板。
 - consumer 支持状态属于 Field 的诊断，不改变 Field 本身是否可以被创建和预览。
 
@@ -464,8 +467,8 @@ Scene.hotools_field_overlay
 
 首版规则：
 
-- Field 创建操作默认生成 Empty；
-- 属性存放在 Object PropertyGroup 中，支持 save/load/undo/animation；
+- 用户自行创建 Blender Empty，再在集中 Physics 面板启用 Field；Field 不提供创建对象 operator；
+- 属性存放在 Object PropertyGroup 中，支持 save/load/undo/animation；`field_type` 先于类型参数解析，V0 只有 `WIND`；
 - Field 注册节点或公共收集阶段把纯数据 payload 写入 `world.implicit_objects["physics.field"]`；
 - `field_id` 使用持久 UUID，对象改名不改变身份；
 - 删除、禁用或取消注册必须通过同 stable ID 的 manifest 对账移除；
@@ -520,26 +523,16 @@ sample_batch(
 
 继续使用 [ui/panels.py](../PhysicsWorld/ui/panels.py) 中的 `OBJECT_PT_Hotools_PhysicsPanel`，增加 Field toggle 和子面板，不建立独立顶层面板。
 
-建议创建入口：
-
-~~~text
-创建物理 Field
-  风场
-~~~
-
 建议面板结构：
 
 ~~~text
 HoTools 物理
   Field
-    Enabled / Status / Field ID
+    Enabled
+    Field Type: Wind
     Volume
       Shape: Sphere | Box
-      Size
-      Sphere Attenuation: Linear (V0, read-only)
-    Channel
-      air_velocity
-    Wind
+    Wind（仅当 Field Type = Wind）
       Speed
       Turbulence
       Advanced Turbulence Sampling
@@ -547,10 +540,10 @@ HoTools 物理
         Temporal Frequency
         Octaves
         Seed
-    Scope
-    Blend Weight / Priority
-    Visualization
-    Consumer Report
+    Advanced（默认折叠）
+      Status / Field ID
+      Scope
+      Blend Weight / Priority
 ~~~
 
 方向由 Empty 旋转和 viewport 箭头表达，不再增加一个容易与 transform 冲突的 XYZ 方向属性。
@@ -697,6 +690,7 @@ Field 已同时包含持久属性、公共 ABI、Volume、生成器、批量采�
 OmniNode/PhysicsWorld/field/
   __init__.py
   names.py
+  channels.py
   specs.py
   diagnostics.py
   properties.py
@@ -709,11 +703,11 @@ OmniNode/PhysicsWorld/field/
   test/
 ~~~
 
-现有公共 UI 目录负责面板和创建 operator；consumer adapter 只保留转换：
+现有公共 UI 目录只负责集中面板和 Field ID 修复；对象创建使用 Blender 原生 Empty，consumer adapter 只保留转换：
 
 ~~~text
 PhysicsWorld/field/*         # authoring-neutral Field ABI 与 sampler
-PhysicsWorld/ui/*            # 集中面板与创建入口
+PhysicsWorld/ui/*            # 集中面板与 Field ID 修复入口
 PhysicsWorld/mc2/*           # MC2 sample packet 与 response mapping
 PhysicsWorld/rigid/*         # Jolt capability 与 response mapping
 _native/src/*                # 只有性能或 MC2 integration 需要的批量 kernel
@@ -738,12 +732,12 @@ _native/src/*                # 只有性能或 MC2 integration 需要的批量 k
 - `FieldSpecV0`、`FieldSnapshotV0`、names 和 diagnostics；
 - 独立 `PhysicsWorld/field/` 领域包及清晰依赖边界；
 - `physics.field` implicit object 注册；
-- Empty PropertyGroup、单一 Wind Field 创建入口和集中面板；
+- Empty PropertyGroup、Field 类型选择和集中面板；用户使用原生 Empty 创建对象；
 - sphere linear attenuation、box hard boundary 和 scope；
-- vector/scalar/SDF 的公共 visualizer 框架；
+- vector/scalar/SDF/matrix 的公共 visualizer 框架与 reserved 状态；
 - active/preview_only/reserved/invalid 状态。
 
-闸门：不接任何 consumer，也能创建、保存、加载、撤销、动画、禁用、删除和可靠预览 Field。
+闸门：不接任何 consumer，也能创建、保存、加载、撤销、动画、禁用、删除和可靠预览 Field；类型参数和高级作用域/合成属性不能互相污染。
 
 ### F1：WindV0
 

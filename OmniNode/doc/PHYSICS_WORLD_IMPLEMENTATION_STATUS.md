@@ -66,7 +66,7 @@ physicsWorld/
 | Physics Bake | Bone + PC2 Mesh + Clear vertical slice 可用 | 公共 Bake 节点、Action/PC2、manifest、播放和清理 | 见 `PHYSICS_BAKE_NODE_BLUEPRINT.md` |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、公共 snapshot 与 capability | 继续消除 solver 私有重复 resolver |
 | Simple Cloth | 可用 | 公共RNA/capability、面板/自定义对象资源准备、按Scene独立HoPhysicsCache、Outliner可追踪且视口隐藏的BasePose、共享GN output；MC2/XPBD step不创建Blender资源 | 继续把新增Mesh solver统一接到该对象边界，不复制资源生命周期 |
-| Field | F0/F1 preview vertical slice 可用 | 独立共享component；Empty RNA与稳定ID；Sphere线性衰减/Box硬边界Volume；统一Wind+turbulence；确定性公共`air_velocity`点/批量采样、签名与golden；scope/implicit manifest事务；域预览与碰撞预览共用viewport popover且默认关闭；24/30/60及30000/1001时间矩阵 | 当前仍为`PREVIEW_ONLY`且无active solver consumer；补`.blend`往返/undo/动画矩阵、seek/cache时间恢复和预留通道可视化合同；见`PHYSICS_FIELD_VOLUME_BLUEPRINT.md` |
+| Field | F0/F1 preview 阶段闸门已关闭 | 独立共享component；原生Empty启用工作流、Field类型层（V0仅Wind）、RNA与稳定ID；Sphere线性衰减/Box硬边界Volume；统一Wind+turbulence；确定性公共`air_velocity`点/批量采样、签名与golden；vector/scalar/SDF/matrix通道可视化注册表；scope/implicit manifest事务；`.blend`往返、undo/redo、动画、禁用/删除和24/30/60及30000/1001时间矩阵验收 | 当前仍为`PREVIEW_ONLY`且无active solver consumer；seek/cache持久时间恢复仍属于公共World cache后续合同；见`PHYSICS_FIELD_VOLUME_BLUEPRINT.md` |
 | SpringBone VRM | world-aware vertical slice 可用 | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用 | body/constraint、scope、result/writeback、query/event/debug、dispose、soak 与 golden | 统一零 dt 行为；Path 和高级 shape/query |
 | MC2 | 三 setup 统一域 CPU 产品可用；BoneCloth 阶段里程碑完成；E6 GPU 设计已立项 | MeshCloth 消费公共 simple_cloth 对象/BasePose/GN资源，solver step不创建Blender数据；MeshCloth 与 BoneCloth 均采用面板/自定义对象、完整域分区和 setup collector；BoneCloth 面板对象逐 Bone 消费半径与外碰接受掩码，控制 Bone 仅选链；终端粒子、connected/disconnected 双写回、显式 product request、DomainV1 mixed pass、whole-domain self、多目标事务、产品 debug、Mesh/Bone writeback；Teleport粒子/自碰/外碰历史闭环；CPU 是独立长期 reference | 按 `MC2_GPU_BACKEND_DESIGN.md` 新增隔离 GPU provider，不改 CPU solver |
@@ -76,7 +76,7 @@ Field 已有公共预览能力，但当前没有 active solver consumer。任何
 
 ## 当前优先级
 
-1. 先关闭 Field F0/F1 的持久化、动画、生命周期和可视化验收门槛；在能力状态仍为 `PREVIEW_ONLY` 时不宣称 solver 已接入。
+1. Field F0/F1 的持久化、动画、生命周期和可视化门槛已关闭；在能力状态仍为 `PREVIEW_ONLY` 时不宣称 solver 已接入。
 2. MC2 E6 只允许新增独立 GPU backend。CPU DomainV1 的算法、状态、ABI、加载和性能是冻结基线，GPU 工作不能以任何理由造成 CPU 回归。
 3. E6 先建立可选 provider、CPU-only 加载隔离和固定 fixture 闭环，再实现 whole-domain self 与完整 mixed pass；不能从产品节点直接开始拼 GPU 分支。
 4. GPU 成功必须以产品整帧、上传/同步/readback、工作量等价、设备失败和规模曲线判断，不能只报告 kernel 时间。

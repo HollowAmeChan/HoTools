@@ -69,7 +69,7 @@ Cache Read
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
 9. **物理属性由物理世界动态注册**：共享 component 或 solver capability 是字段、默认值、范围、RNA metadata 和 resolver 的单一事实源；`physicsWorld.registry` 按依赖注册/注销 Blender property，外部模块不得定义第二份 PropertyGroup 或 binding。
-10. **通用力场归 Physics World 所有**：风只是未来通用力场的一种类型，不归 MC2 或任何单一 solver 私有；力场的收集、稳定身份、作用域和逐帧求值由公共物理世界组织，solver 只消费声明过的公共快照。
+10. **通用 Field 归 Physics World 所有**：Field 不预设一定表示力；`field_type=WIND` 是当前首个类型，不归 MC2 或任何单一 solver 私有。Field 的收集、稳定身份、作用域和逐帧求值由公共物理世界组织，solver 只消费声明过的公共快照。
 
 各 solver 对这些支柱的当前覆盖情况见实现状态文档。
 
@@ -276,15 +276,17 @@ FieldSpec
 
 ### 通用 Field / 场
 
-Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`wind` 是当前首个生成 `air_velocity` 向量通道的场生成器，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。
+Field 是 Physics World 的共享 component，不是某个 solver 的内置特效。Volume 是场的空间作用域；`field_type=WIND` 选择 `analytic.wind.v0` 生成器和 `air_velocity` 向量通道，turbulence 是同一个 Wind payload 上的空间/时间叠加参数，不创建第二种场对象。
 
 F0/F1 已冻结边界：
 
 - Empty 上的 `Object.hotools_field` 是持久 authoring 入口。公共 collector 把 RNA 与 evaluated transform 解析为纯值 `FieldSpecV0`，再原子协调 `world.implicit_objects` manifest 和 `FieldSnapshotV0`；禁用、删除、无效与重复 stable ID 都必须有显式移除或诊断，不能留下幽灵场。
+- 用户使用 Blender 原生 Empty，再在集中面板启用 Field；Physics World 不提供创建 Field 对象的 operator。面板先显示 `field_type`，只展开当前类型参数，过滤与合成权重默认折叠在高级属性中。
 - `VolumeSpecV0` 当前只接受 Sphere 和 Box。Sphere 使用局部单位球和线性边界衰减；Box 使用局部单位盒和硬边界、无衰减。Sphere 只接受均匀缩放，Box 接受非均匀缩放；shear、reflection 和奇异变换拒绝进入有效快照。
 - `air_velocity` 的公开采样输入是冻结快照、世界空间 `float64[N,3]` 位置、显式 sample time 和作用域上下文；输出是只读 `float32[N,3]`、稳定签名、命中 ID、统计与诊断。多个 Wind 按 stable ID 的规范顺序可加叠加。
 - turbulence 必须是版本化、seed 驱动且不依赖全局 RNG/墙钟的确定性函数。预览与正式 consumer 使用同一个公共 sampler；差别只在于预览显式允许 `PREVIEW_ONLY` 项，并使用 `timeline_time_seconds`，正式 consumer 使用 `PhysicsFrameContext` 的 sample/substep time。
 - 当前 `FIELD_ABI_VERSION=0`、channel 为 `air_velocity`、generator 为 `analytic.wind.v0`。这是 Field 公共 API 的预览版，不是 native ABI 承诺；版本变化必须同步 golden、capability 与消费者适配器。
+- reserved channel 只有拿到显式 values 时才可使用注册的 vector/scalar/SDF 可视化模式；没有数值时只报告 reserved 状态与 Volume 边界，禁止伪造 sampler 或数值 glyph。
 - Field authoring/topology/scope 变化与逐帧采样必须分开定义 dirty/update 频率，不能把 turbulence 的时间变化误判为 solver topology rebuild。
 - solver 必须在 declaration/capability 中显式声明可消费的 Field channel，并只把公共快照/采样结果转换为自己的 backend 输入；不得扫描场景寻找私有 wind 对象，不得把 live Blender 对象或 backend handle 塞进 native context。
 - 当前能力状态是 `PREVIEW_ONLY`：公共快照、采样和显式可视化已存在，但尚无 active solver consumer。任何 solver 中遗留的 `wind_*` 字段仍不代表已经接入 Field。
