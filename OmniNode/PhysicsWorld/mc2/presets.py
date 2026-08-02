@@ -178,7 +178,6 @@ def _convert_preset(label: str, source: dict) -> dict:
     collision_limit = _constraint(collider, "limitDistance")
     self_collision = _constraint(source, "selfCollisionConstraint")
     spring = _constraint(source, "springConstraint")
-    wind = _constraint(source, "wind")
 
     self_mode = _int(self_collision.get("selfMode"), 0)
     sync_mode = _int(self_collision.get("syncMode"), 0)
@@ -244,13 +243,8 @@ def _convert_preset(label: str, source: dict) -> dict:
         "spring_limit_distance": _float(spring.get("limitDistance"), 0.1),
         "spring_normal_limit_ratio": _float(spring.get("normalLimitRatio"), 1.0),
         "spring_noise": _float(spring.get("springNoise"), 0.0),
-        "wind_influence": _float(wind.get("influence"), 1.0),
-        "wind_frequency": _float(wind.get("frequency"), 1.0),
-        "wind_turbulence": _float(wind.get("turbulence"), 1.0),
-        "wind_blend": _float(wind.get("blend"), 0.7),
-        "wind_synchronization": _float(wind.get("synchronization"), 0.7),
-        "wind_depth_weight": _float(wind.get("depthWeight"), 0.0),
-        "moving_wind": _float(wind.get("movingWind"), 0.0),
+        "field_wind_enabled": True,
+        "field_wind_strength": 1.0,
     }
     return {
         "name": f"MC2 {label}",

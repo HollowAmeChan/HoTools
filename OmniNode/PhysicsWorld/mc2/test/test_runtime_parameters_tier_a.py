@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -31,11 +32,25 @@ for package_name, package_path in (
     module.__package__ = package_name
     sys.modules.setdefault(package_name, module)
 
+property_curve = types.ModuleType("HoTools.PropertyCurve")
+property_curve.float_curve_payload = lambda *args, **kwargs: None
+sys.modules.setdefault("HoTools.PropertyCurve", property_curve)
+
 names = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.names")
 parameters = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.parameters")
+presets = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.presets")
 runtime = importlib.import_module("HoTools.OmniNode.PhysicsWorld.mc2.runtime_parameters")
 
 FIXTURE_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a")
+LEGACY_WIND_FIELDS = frozenset({
+    "wind_influence",
+    "wind_frequency",
+    "wind_turbulence",
+    "wind_blend",
+    "wind_synchronization",
+    "wind_depth_weight",
+    "moving_wind",
+})
 
 
 def _field(spec, schema, name):
@@ -80,12 +95,84 @@ def _assert_matches_oracle(
     np.testing.assert_array_equal(packed["curve_values"], expected_curves)
 
 
+def test_field_wind_replaces_the_complete_legacy_wind_parameter_block() -> None:
+    profile = parameters.make_mc2_particle_profile(
+        field_wind_enabled=False,
+        field_wind_strength=7.5,
+    )
+    assert profile.field_wind_enabled is False
+    assert profile.field_wind_strength == 7.5
+    assert (
+        parameters.make_mc2_particle_profile(field_wind_strength=-1.0).field_wind_strength
+        == 0.0
+    )
+    assert (
+        parameters.make_mc2_particle_profile(field_wind_strength=21.0).field_wind_strength
+        == 20.0
+    )
+
+    profile_fields = set(profile.__dataclass_fields__)
+    factory_fields = set(inspect.signature(parameters.make_mc2_particle_profile).parameters)
+    runtime_fields = set(
+        runtime.MC2_RUNTIME_FLOAT_FIELDS
+        + runtime.MC2_RUNTIME_INT_FIELDS
+        + runtime.MC2_RUNTIME_CURVE_FIELDS
+    )
+    assert LEGACY_WIND_FIELDS.isdisjoint(profile_fields)
+    assert LEGACY_WIND_FIELDS.isdisjoint(factory_fields)
+    assert LEGACY_WIND_FIELDS.isdisjoint(runtime_fields)
+    for field_name in LEGACY_WIND_FIELDS:
+        try:
+            parameters.make_mc2_particle_profile(**{field_name: 0.0})
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(f"旧风参数仍可传入: {field_name}")
+
+    options = parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
+    effective = parameters.make_mc2_effective_parameters(profile, options).debug_dict()
+    assert effective["field_wind"] == {"enabled": False, "strength": 7.5}
+    assert "wind" not in effective
+    effective_json = json.dumps(effective, sort_keys=True)
+    assert all(field_name not in effective_json for field_name in LEGACY_WIND_FIELDS)
+
+    spec = runtime.make_mc2_runtime_parameters(profile, options)
+    assert _field(
+        spec.float_values, runtime.MC2_RUNTIME_FLOAT_FIELDS, "field_wind_strength"
+    ) == 7.5
+    assert _field(
+        spec.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "field_wind_enabled"
+    ) == 0
+
+    converted = presets._convert_preset("旧风数据", {
+        "wind": {
+            "influence": 0.1,
+            "frequency": 0.2,
+            "turbulence": 0.3,
+            "blend": 0.4,
+            "synchronization": 0.5,
+            "depthWeight": 0.6,
+            "movingWind": 0.7,
+        },
+    })
+    preset_values = converted["values"]
+    assert LEGACY_WIND_FIELDS.isdisjoint(preset_values)
+    assert preset_values["field_wind_enabled"] is True
+    assert preset_values["field_wind_strength"] == 1.0
+    assert presets.MC2_PARTICLE_PRESETS
+    for preset in presets.MC2_PARTICLE_PRESETS:
+        values = preset["values"]
+        assert LEGACY_WIND_FIELDS.isdisjoint(values)
+        assert values["field_wind_enabled"] is True
+        assert values["field_wind_strength"] == 1.0
+
+
 def test_default_mesh_runtime_matches_get_cloth_parameters_rules() -> None:
     profile = parameters.make_mc2_particle_profile()
     options = parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
     spec = runtime.make_mc2_runtime_parameters(profile, options)
 
-    assert runtime.MC2_RUNTIME_PARAMETERS_ABI == 0
+    assert runtime.MC2_RUNTIME_PARAMETERS_ABI == 1
     assert _field(spec.float_values, runtime.MC2_RUNTIME_FLOAT_FIELDS, "gravity") == 5.0
     assert _field(spec.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "bending_method") == 2
     assert _field(spec.int_values, runtime.MC2_RUNTIME_INT_FIELDS, "use_max_distance") == 0

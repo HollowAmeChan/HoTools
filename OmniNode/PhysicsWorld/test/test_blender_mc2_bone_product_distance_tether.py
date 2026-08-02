@@ -44,7 +44,6 @@ def _request(armature, *, spring: bool, distance_stiffness: float):
         self_collision_mode=0,
         cloth_mass=0.4,
         spring_enabled=False,
-        wind_influence=0.0,
     )
     if spring:
         requests, _report = nodes.physicsMC2BoneSpringTask(

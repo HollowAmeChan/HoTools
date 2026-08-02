@@ -736,6 +736,23 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
         }),
         "status": "verified",
     },
+    {
+        "id": "field_wind_response",
+        "required_setups": ALL_SETUPS,
+        "owned_fields": ("field_wind_strength", "field_wind_enabled"),
+        "required_invariants": (
+            "finite", "deterministic", "field_wind_disabled_noop",
+            "field_wind_uniform_response", "field_wind_scope_exact",
+        ),
+        "evidence": ({
+            "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
+            "frames": 900,
+            "setups": ALL_SETUPS,
+            "fields": (),
+            "invariants": ("finite", "deterministic"),
+        },),
+        "status": "gap",
+    },
 )
 
 
@@ -743,10 +760,6 @@ MC2_INACTIVE_FIELD_GROUPS = {
     "source_abi_no_production_consumer_hidden": (
         "distance_culling_length", "distance_culling_fade_ratio",
         "use_distance_culling", "centrifugal_acceleration",
-    ),
-    "wind_hidden": (
-        "wind_influence", "wind_frequency", "wind_turbulence", "wind_blend",
-        "wind_synchronization", "wind_depth_weight", "moving_wind",
     ),
     "spring_hidden": (
         "spring_power", "spring_limit_distance", "spring_normal_limit_ratio",

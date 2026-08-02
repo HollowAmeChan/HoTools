@@ -6,7 +6,7 @@
     "source": "Runtime/Cloth/ClothSerializeDataFunction.cs::GetClothParameters",
     "note": "MeshCloth curve sampling at i/15 plus ordinary conversion rules.",
     "expected": {
-        "abi_version": 0,
+        "abi_version": 1,
         "float_fields": [
             "gravity",
             "gravity_direction_x",
@@ -44,13 +44,7 @@
             "collision_dynamic_friction",
             "collision_static_friction",
             "cloth_mass",
-            "wind_influence",
-            "wind_frequency",
-            "wind_turbulence",
-            "wind_blend",
-            "wind_synchronization",
-            "wind_depth_weight",
-            "moving_wind",
+            "field_wind_strength",
             "spring_power",
             "spring_limit_distance",
             "spring_normal_limit_ratio",
@@ -67,7 +61,8 @@
             "use_backstop",
             "collision_mode",
             "self_collision_mode",
-            "self_collision_sync_mode"
+            "self_collision_sync_mode",
+            "field_wind_enabled"
         ],
         "curve_fields": [
             "damping",
@@ -118,12 +113,6 @@
             0.05000000074505806,
             0.0,
             1.0,
-            1.0,
-            1.0,
-            0.699999988079071,
-            0.699999988079071,
-            0.0,
-            0.0,
             0.0,
             0.10000000149011612,
             1.0,
@@ -140,7 +129,8 @@
             0,
             1,
             0,
-            0
+            0,
+            1
         ],
         "curve_values": [
             0.0,

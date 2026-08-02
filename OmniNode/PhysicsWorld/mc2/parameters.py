@@ -203,13 +203,8 @@ class MC2ParticleProfileSpec:
     spring_limit_distance: float = 0.1
     spring_normal_limit_ratio: float = 1.0
     spring_noise: float = 0.0
-    wind_influence: float = 1.0
-    wind_frequency: float = 1.0
-    wind_turbulence: float = 1.0
-    wind_blend: float = 0.7
-    wind_synchronization: float = 0.7
-    wind_depth_weight: float = 0.0
-    moving_wind: float = 0.0
+    field_wind_enabled: bool = True
+    field_wind_strength: float = 1.0
 
     def __post_init__(self) -> None:
         curve_fields = (
@@ -375,13 +370,8 @@ def make_mc2_particle_profile(
     spring_limit_distance=0.1,
     spring_normal_limit_ratio=1.0,
     spring_noise=0.0,
-    wind_influence=1.0,
-    wind_frequency=1.0,
-    wind_turbulence=1.0,
-    wind_blend=0.7,
-    wind_synchronization=0.7,
-    wind_depth_weight=0.0,
-    moving_wind=0.0,
+    field_wind_enabled=True,
+    field_wind_strength=1.0,
 ) -> MC2ParticleProfileSpec:
     collision_mode = int(collision_mode)
     if collision_mode not in (0, 1, 2):
@@ -433,13 +423,10 @@ def make_mc2_particle_profile(
         spring_limit_distance=_non_negative(spring_limit_distance, "spring_limit_distance"),
         spring_normal_limit_ratio=_clamp(spring_normal_limit_ratio, "spring_normal_limit_ratio", 0.0, 1.0),
         spring_noise=_clamp(spring_noise, "spring_noise", 0.0, 1.0),
-        wind_influence=_clamp(wind_influence, "wind_influence", 0.0, 2.0),
-        wind_frequency=_clamp(wind_frequency, "wind_frequency", 0.0, 2.0),
-        wind_turbulence=_clamp(wind_turbulence, "wind_turbulence", 0.0, 2.0),
-        wind_blend=_clamp(wind_blend, "wind_blend", 0.0, 1.0),
-        wind_synchronization=_clamp(wind_synchronization, "wind_synchronization", 0.0, 1.0),
-        wind_depth_weight=_clamp(wind_depth_weight, "wind_depth_weight", 0.0, 1.0),
-        moving_wind=_clamp(moving_wind, "moving_wind", 0.0, 10.0),
+        field_wind_enabled=bool(field_wind_enabled),
+        field_wind_strength=_clamp(
+            field_wind_strength, "field_wind_strength", 0.0, 20.0
+        ),
     )
 
 
@@ -739,14 +726,9 @@ def make_mc2_effective_parameters(
             "radius_model": setup_options.self_collision_radius_model,
             "cloth_mass": profile.cloth_mass,
         },
-        "wind": {
-            "influence": profile.wind_influence,
-            "frequency": profile.wind_frequency,
-            "turbulence": profile.wind_turbulence,
-            "blend": profile.wind_blend,
-            "synchronization": profile.wind_synchronization,
-            "depth_weight": profile.wind_depth_weight,
-            "moving_wind": profile.moving_wind,
+        "field_wind": {
+            "enabled": profile.field_wind_enabled,
+            "strength": profile.field_wind_strength,
         },
         "spring": {
             "power": profile.spring_power if is_spring and profile.spring_enabled else 0.0,

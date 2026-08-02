@@ -49,7 +49,6 @@ def _request(
         collision_mode=0,
         self_collision_mode=0,
         spring_enabled=False,
-        wind_influence=0.0,
     )
     task_values = {
         "anchor_object": anchor,

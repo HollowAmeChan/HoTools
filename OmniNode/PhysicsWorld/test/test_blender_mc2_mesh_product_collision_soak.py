@@ -55,7 +55,6 @@ def _request(
             collision_friction=friction,
             self_collision_mode=0,
             spring_enabled=False,
-            wind_influence=0.0,
         ),
     )
     assert len(entries) == 1

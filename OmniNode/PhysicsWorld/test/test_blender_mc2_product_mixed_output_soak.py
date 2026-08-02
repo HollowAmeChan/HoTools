@@ -125,7 +125,6 @@ def _mesh_request(world, mesh, *, hot: bool = False):
             self_collision_mode=2,
             self_collision_thickness=0.006,
             spring_enabled=False,
-            wind_influence=0.0,
         ),
     )
     assert len(entries) == 1

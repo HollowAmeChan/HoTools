@@ -213,7 +213,6 @@ def _profile(
         self_collision_thickness=self_collision_thickness,
         cloth_mass=cloth_mass,
         spring_enabled=False,
-        wind_influence=0.0,
     )
 
 

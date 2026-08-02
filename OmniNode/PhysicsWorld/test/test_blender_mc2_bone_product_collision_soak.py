@@ -58,7 +58,6 @@ def _request(
         backstop_enabled=False,
         self_collision_mode=0,
         spring_enabled=False,
-        wind_influence=0.0,
     )
     if spring:
         requests, _report = nodes.physicsMC2BoneSpringTask(

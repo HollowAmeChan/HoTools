@@ -276,7 +276,6 @@ try:
 
     cloth_profile = parameters.make_mc2_particle_profile(
         gravity_direction=(1.0, 0.0, 0.0),
-        wind_influence=0.0,
         max_distance_enabled=True,
         max_distance=0.03,
         backstop_enabled=True,

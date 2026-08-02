@@ -50,7 +50,6 @@ def _profile(*, hostile: bool):
         self_collision_sync_mode=2 if hostile else 0,
         self_collision_thickness=0.05 if hostile else 0.001,
         spring_enabled=False,
-        wind_influence=0.0,
     )
 
 

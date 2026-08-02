@@ -76,6 +76,49 @@ def test_long_run_matrix_separates_requirements_from_real_evidence():
     assert set(owners) == expected, sorted(expected.symmetric_difference(owners))
 
 
+def test_field_wind_runtime_fields_are_active_requirements_waiting_for_e2e():
+    assert "wind_hidden" not in MC2_INACTIVE_FIELD_GROUPS
+    assert "field_wind_hidden" not in MC2_INACTIVE_FIELD_GROUPS
+    assert "field_wind_pending_e2e" not in MC2_INACTIVE_FIELD_GROUPS
+    capability = next(
+        item
+        for item in MC2_LONG_RUN_CAPABILITY_MATRIX
+        if item["id"] == "field_wind_response"
+    )
+    assert capability["owned_fields"] == (
+        "field_wind_strength",
+        "field_wind_enabled",
+    )
+    assert capability["status"] == "gap"
+    gaps = capability_gaps(capability)
+    assert gaps["fields"]
+    assert gaps["invariants"]
+
+
+def test_three_particle_profile_nodes_expose_only_the_field_wind_controls():
+    path = MC2_ROOT / "nodes.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for function_name in (
+        "physicsMC2MeshClothProfile",
+        "physicsMC2BoneClothProfile",
+        "physicsMC2BoneSpringProfile",
+    ):
+        arguments = {argument.arg for argument in functions[function_name].args.args}
+        assert {name for name in arguments if "wind" in name} == {
+            "field_wind_enabled",
+            "field_wind_strength",
+        }
+    assert '"field_wind_enabled": "响应场风"' in source
+    assert '"field_wind_strength": "风响应强度"' in source
+    assert "wind兼容字段" not in source
+
+
 def test_debug_acceptance_layers_are_inventory_not_coverage_claims():
     assert (BLENDER_TEST_ROOT / MC2_DEBUG_ACCEPTANCE_RUNNER).is_file()
     assert len(MC2_DEBUG_ACCEPTANCE_LAYERS) == len(set(MC2_DEBUG_ACCEPTANCE_LAYERS))

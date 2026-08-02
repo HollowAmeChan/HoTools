@@ -32,7 +32,7 @@ from .parameters import (
 )
 
 
-MC2_RUNTIME_PARAMETERS_ABI = 0
+MC2_RUNTIME_PARAMETERS_ABI = 1
 MC2_CURVE_SAMPLE_COUNT = 16
 
 MC2_RUNTIME_FLOAT_FIELDS = (
@@ -51,8 +51,7 @@ MC2_RUNTIME_FLOAT_FIELDS = (
     "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
     "angle_limit_stiffness", "backstop_radius", "motion_stiffness",
     "collision_dynamic_friction", "collision_static_friction", "cloth_mass",
-    "wind_influence", "wind_frequency", "wind_turbulence", "wind_blend",
-    "wind_synchronization", "wind_depth_weight", "moving_wind",
+    "field_wind_strength",
     "spring_power", "spring_limit_distance", "spring_normal_limit_ratio", "spring_noise",
 )
 
@@ -60,6 +59,7 @@ MC2_RUNTIME_INT_FIELDS = (
     "normal_axis", "use_distance_culling", "teleport_mode", "bending_method",
     "use_angle_restoration", "use_angle_limit", "use_max_distance", "use_backstop",
     "collision_mode", "self_collision_mode", "self_collision_sync_mode",
+    "field_wind_enabled",
 )
 
 MC2_RUNTIME_CURVE_FIELDS = (
@@ -235,13 +235,7 @@ def make_mc2_runtime_parameters(
         "collision_dynamic_friction": friction,
         "collision_static_friction": friction,
         "cloth_mass": profile.cloth_mass,
-        "wind_influence": profile.wind_influence,
-        "wind_frequency": profile.wind_frequency,
-        "wind_turbulence": profile.wind_turbulence,
-        "wind_blend": profile.wind_blend,
-        "wind_synchronization": profile.wind_synchronization,
-        "wind_depth_weight": profile.wind_depth_weight,
-        "moving_wind": profile.moving_wind,
+        "field_wind_strength": profile.field_wind_strength,
         "spring_power": profile.spring_power if is_spring and profile.spring_enabled else 0.0,
         "spring_limit_distance": profile.spring_limit_distance,
         "spring_normal_limit_ratio": profile.spring_normal_limit_ratio,
@@ -259,6 +253,7 @@ def make_mc2_runtime_parameters(
         "collision_mode": 1 if is_spring else profile.collision_mode,
         "self_collision_mode": 0 if is_spring else profile.self_collision_mode,
         "self_collision_sync_mode": profile.self_collision_sync_mode if is_mesh else 0,
+        "field_wind_enabled": int(profile.field_wind_enabled),
     }
     zero_curve = MC2CurveSpec(0.0)
     curve_specs = {

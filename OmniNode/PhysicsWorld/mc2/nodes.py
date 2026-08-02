@@ -168,7 +168,8 @@ _PROFILE_LABELS = {
     "collision_friction": "碰撞摩擦", "collision_limit_distance": "碰撞限制距离",
     "collision_limit_curve": "碰撞限制曲线", "self_collision_enabled": "自碰撞",
     "self_collision_interaction": "跨物体自碰撞",
-    "cloth_mass": "自碰交互质量",
+    "cloth_mass": "自碰交互质量", "field_wind_enabled": "响应场风",
+    "field_wind_strength": "风响应强度",
 }
 
 _PROFILE_INPUT_INIT = {
@@ -215,6 +216,8 @@ _PROFILE_INPUT_INIT = {
     "self_collision_enabled": _profile_input("启用FullMesh自碰撞；内部转换为MC2模式2。"),
     "self_collision_interaction": _profile_input("跨任务自碰撞\n范围：同一Physics World"),
     "cloth_mass": _profile_input("自碰接触的粒子相对质量；影响双方修正比例。", min_value=0.0, max_value=1.0),
+    "field_wind_enabled": _profile_input("是否响应物理世界中的风场。"),
+    "field_wind_strength": _profile_input("响应场风的强度。", min_value=0.0, max_value=20.0),
 }
 
 _MESH_CLOTH_PROFILE_FIELDS = tuple(name for name in _PROFILE_LABELS if name not in {
@@ -323,6 +326,8 @@ def physicsMC2MeshClothProfile(
     self_collision_enabled: bool = False,
     self_collision_interaction: bool = False,
     cloth_mass: float = 0.0,
+    field_wind_enabled: bool = True,
+    field_wind_strength: float = 1.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_MESH_CLOTH)
@@ -370,6 +375,8 @@ def physicsMC2BoneClothProfile(
     collision_friction: float = 0.05,
     self_collision_enabled: bool = False,
     cloth_mass: float = 0.0,
+    field_wind_enabled: bool = True,
+    field_wind_strength: float = 1.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_BONE_CLOTH)
@@ -378,7 +385,7 @@ def physicsMC2BoneClothProfile(
 @omni(**_profile_meta(
     _SPRING_PROFILE_FIELDS,
     label="MC2 BoneSpring粒子配置",
-    description="只显示BoneSpring实际消费的字段；源码固定/关闭的cloth字段以及当前native未消费的Spring/wind兼容字段不公开。输出统一MC2ParticleProfileSpec。",
+    description="只显示BoneSpring实际可调字段；源码固定或关闭的cloth字段不公开。输出统一MC2ParticleProfileSpec。",
 ))
 def physicsMC2BoneSpringProfile(
     blend_weight: float = 1.0,
@@ -401,6 +408,8 @@ def physicsMC2BoneSpringProfile(
     motion_stiffness: float = 1.0,
     collision_limit_distance: float = 0.05,
     collision_limit_curve: _OmniFloatCurve = None,
+    field_wind_enabled: bool = True,
+    field_wind_strength: float = 1.0,
 ) -> typing.Any:
     profile_values = dict(locals())
     return _make_profile(profile_values, MC2_SETUP_BONE_SPRING)

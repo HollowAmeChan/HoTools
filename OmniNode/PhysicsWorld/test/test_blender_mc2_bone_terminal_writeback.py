@@ -111,7 +111,6 @@ try:
         profile=parameters.make_mc2_particle_profile(
             gravity_direction=(1.0, 0.0, 0.0),
             stabilization_time_after_reset=0.0,
-            wind_influence=0.0,
         ),
         connection_mode=0,
     )

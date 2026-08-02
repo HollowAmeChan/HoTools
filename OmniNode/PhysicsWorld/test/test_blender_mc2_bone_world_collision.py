@@ -160,7 +160,6 @@ try:
         collision_mode=1,
         collision_friction=0.0,
         self_collision_mode=0,
-        wind_influence=0.0,
     )
     partitions, _partition_ids = mc2_nodes.physicsMC2BoneClothTask(
         objects,

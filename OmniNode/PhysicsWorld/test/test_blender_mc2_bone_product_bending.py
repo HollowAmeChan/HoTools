@@ -44,7 +44,6 @@ def _profile(*, bending_stiffness: float):
         self_collision_mode=0,
         cloth_mass=0.4,
         spring_enabled=False,
-        wind_influence=0.0,
     )
 
 

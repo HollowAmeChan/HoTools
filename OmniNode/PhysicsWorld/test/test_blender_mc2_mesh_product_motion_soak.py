@@ -51,7 +51,6 @@ def _request(world, mesh, *, backstop: bool):
             collision_friction=0.0,
             self_collision_mode=0,
             spring_enabled=False,
-            wind_influence=0.0,
         ),
     )
     assert len(entries) == 1
