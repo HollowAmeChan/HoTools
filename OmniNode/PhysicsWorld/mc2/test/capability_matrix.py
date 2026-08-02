@@ -745,13 +745,19 @@ MC2_LONG_RUN_CAPABILITY_MATRIX = (
             "field_wind_uniform_response", "field_wind_scope_exact",
         ),
         "evidence": ({
-            "runner": "test_blender_mc2_product_mixed_output_soak.py::test_three_setup_product_mixed_output_900_frame_deterministic_soak",
-            "frames": 900,
+            "runner": (
+                "test_blender_mc2_product_field_wind_soak.py::"
+                "test_three_setup_field_wind_600_frame_deterministic_scope_matrix"
+            ),
+            "frames": 600,
             "setups": ALL_SETUPS,
-            "fields": (),
-            "invariants": ("finite", "deterministic"),
+            "fields": ("field_wind_strength", "field_wind_enabled"),
+            "invariants": (
+                "finite", "deterministic", "field_wind_disabled_noop",
+                "field_wind_uniform_response", "field_wind_scope_exact",
+            ),
         },),
-        "status": "gap",
+        "status": "verified",
     },
 )
 

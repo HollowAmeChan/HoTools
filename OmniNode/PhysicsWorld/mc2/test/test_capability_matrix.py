@@ -76,7 +76,7 @@ def test_long_run_matrix_separates_requirements_from_real_evidence():
     assert set(owners) == expected, sorted(expected.symmetric_difference(owners))
 
 
-def test_field_wind_runtime_fields_are_active_requirements_waiting_for_e2e():
+def test_field_wind_runtime_fields_are_verified_by_product_e2e():
     assert "wind_hidden" not in MC2_INACTIVE_FIELD_GROUPS
     assert "field_wind_hidden" not in MC2_INACTIVE_FIELD_GROUPS
     assert "field_wind_pending_e2e" not in MC2_INACTIVE_FIELD_GROUPS
@@ -89,10 +89,9 @@ def test_field_wind_runtime_fields_are_active_requirements_waiting_for_e2e():
         "field_wind_strength",
         "field_wind_enabled",
     )
-    assert capability["status"] == "gap"
+    assert capability["status"] == "verified"
     gaps = capability_gaps(capability)
-    assert gaps["fields"]
-    assert gaps["invariants"]
+    assert not any(gaps.values()), gaps
 
 
 def test_three_particle_profile_nodes_expose_only_the_field_wind_controls():
