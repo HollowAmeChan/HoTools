@@ -13,6 +13,8 @@ if str(ADDON_DIR) not in sys.path:
     sys.path.insert(0, str(ADDON_DIR))
 
 from Exporter.FbxExporter import FBXExporter
+from Exporter.UnityConstraintMapper import UnityConstraintMapper
+from Exporter.ConstraintAnalyzer import ConstraintAnalyzer
 from BoneTools.boneOperators import OP_ForceClearBoneRotation
 from io_scene_fbx import parse_fbx
 
@@ -53,6 +55,27 @@ def read_fbx_local_rotations(filepath, bone_names):
         )
         rotations[name] = tuple(float(value) for value in rotation.props[-3:])
     return rotations
+
+
+def read_fbx_bone_parents(filepath, bone_names):
+    root, _version = parse_fbx.parse(str(filepath))
+    objects = next(elem for elem in root.elems if elem.id == b"Objects")
+    models = {
+        model.props[0]: model.props[1].split(b"\x00", 1)[0].decode("utf-8")
+        for model in objects.elems
+        if model.id == b"Model"
+    }
+    connections = next(elem for elem in root.elems if elem.id == b"Connections")
+    parent_ids = {
+        connection.props[1]: connection.props[2]
+        for connection in connections.elems
+        if connection.id == b"C" and connection.props[0] == b"OO"
+    }
+    model_ids = {name: model_id for model_id, name in models.items()}
+    return {
+        name: models.get(parent_ids.get(model_ids[name]))
+        for name in bone_names
+    }
 
 
 bpy.utils.register_class(TestBoneProps)
@@ -113,18 +136,18 @@ mch_second = data.edit_bones["MCH_Second"]
 assert_matrix_close(mch_first.matrix, original_matrices["First"])
 assert_matrix_close(mch_second.matrix, original_matrices["Second"])
 
-# These parent-relative rest rotations are what FBX serializes for Unity.
+# Main bones keep their direct hierarchy and serialize zero local rotations.
 assert first.parent.name == "Root"
-assert second.parent.name == "MCH_First"
+assert second.parent.name == "First"
 assert_identity_local_rotation(first)
 assert_identity_local_rotation(second)
 assert abs(first.length - original_lengths["First"]) < 1e-5
 assert abs(second.length - original_lengths["Second"]) < 1e-5
 
-# Original descendants remain under the orientation-preserving MCH hierarchy.
-assert mch_first.parent.name == "First"
-assert mch_second.parent.name == "Second"
-assert data.edit_bones["Leaf"].parent.name == "MCH_Second"
+# MCH bones are sidecars; original descendants stay on the main-bone chain.
+assert mch_first.parent.name == "Root"
+assert mch_second.parent.name == "First"
+assert data.edit_bones["Leaf"].parent.name == "Second"
 
 bpy.ops.object.mode_set(mode="OBJECT")
 for bone_name in name_map:
@@ -135,6 +158,59 @@ for bone_name in name_map:
     pose_bone.scale = (1.2, 0.8, 1.1)
 
 assert FBXExporter.clear_pose_bone_transforms(armature, name_map) == 2
+bpy.context.view_layer.update()
+mch_bind_before_constraint = {
+    bone_name: armature.pose.bones[bone_name].matrix.copy()
+    for bone_name in name_map.values()
+}
+assert FBXExporter.add_mch_parent_constraints(armature, name_map) == 2
+bpy.context.view_layer.update()
+for bone_name, bind_matrix in mch_bind_before_constraint.items():
+    assert_matrix_close(armature.pose.bones[bone_name].matrix, bind_matrix)
+
+for source_name, mch_name in name_map.items():
+    constraint = armature.pose.bones[mch_name].constraints[
+        FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+    ]
+    assert constraint.type == "CHILD_OF"
+    assert constraint.target == armature
+    assert constraint.subtarget == source_name
+    assert abs(constraint.influence - 1.0) < 1e-6
+
+mch_before_follow = armature.pose.bones["MCH_First"].matrix.copy()
+armature.pose.bones["First"].rotation_mode = "XYZ"
+armature.pose.bones["First"].rotation_euler = (0.0, 0.0, 0.35)
+bpy.context.view_layer.update()
+mch_after_follow = armature.pose.bones["MCH_First"].matrix.copy()
+assert any(
+    abs(mch_after_follow[row][column] - mch_before_follow[row][column]) > 1e-5
+    for row in range(4)
+    for column in range(4)
+)
+assert FBXExporter.clear_pose_bone_transforms(armature, name_map) == 2
+bpy.context.view_layer.update()
+
+parent_constraints = ConstraintAnalyzer.analyze(armature)
+constraint_data = UnityConstraintMapper.export_to_dict(
+    armature.name,
+    parent_constraints,
+)
+constraint_map = {
+    item["boneName"]: item["constraints"]
+    for item in constraint_data["bones"]
+}
+assert constraint_map["MCH_First"] == [
+    {
+        "type": "Child",
+        "semantic": "parent",
+        "targetPath": "First",
+        "weight": 1.0,
+        "space": {"source": "world", "target": "world"},
+        "maintainOffset": True,
+    }
+]
+assert constraint_map["MCH_Second"][0]["targetPath"] == "Second"
+
 for bone_name in name_map:
     assert_matrix_close(
         armature.pose.bones[bone_name].matrix_basis,
@@ -163,6 +239,17 @@ with tempfile.TemporaryDirectory(prefix="hotools_fbx_mch_") as temp_dir:
     assert exported_rotations.keys() == {"First", "Second"}
     for rotation in exported_rotations.values():
         assert all(abs(value) < 1e-4 for value in rotation), rotation
+
+    exported_parents = read_fbx_bone_parents(
+        fbx_path,
+        {"Second", "Leaf", "MCH_First", "MCH_Second"},
+    )
+    assert exported_parents == {
+        "Second": "First",
+        "Leaf": "Second",
+        "MCH_First": "Root",
+        "MCH_Second": "First",
+    }
 
 
 # The manual command uses the same rest/pose clearing contract as MCH export.

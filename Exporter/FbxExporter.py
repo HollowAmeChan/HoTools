@@ -37,7 +37,6 @@ class OP_AddFBXExportPreset(AddPresetBase, Operator):
     preset_values = [
         "op.addLeafBones",
         "op.generateMCHBones",
-        "op.clearMCHMainBoneRotation",
         "op.cleanWeights",
         "op.fixObjectTransform",
         "op.removeHiddenModifiers",
@@ -74,7 +73,6 @@ class OP_AddFBXPreprocessPreset(AddPresetBase, Operator):
     preset_values = [
         "op.addLeafBones",
         "op.generateMCHBones",
-        "op.clearMCHMainBoneRotation",
         "op.cleanWeights",
         "op.fixObjectTransform",
         "op.ignoreGeometryNodes",
@@ -397,6 +395,7 @@ class FBXExporter:
             FBXExporter.restore_selection(selection, active_object)
 
     MCH_PREFIX = "MCH_"
+    MCH_PARENT_CONSTRAINT_NAME = "HoTools_MCH_Parent"
     @staticmethod
     def collect_mch_source_bones(armature_objects):
         """收集场景中勾了 generateMCH 的骨，按骨架分组返回 [(骨架名, [骨名,...]), ...]。
@@ -589,25 +588,23 @@ class FBXExporter:
         return bone_utils.clear_edit_bone_local_rotations(edit_bones, bone_names)
 
     @staticmethod
-    def build_mch_and_clear(ob, clear_main_rotation=True):
-        """给 generateMCH=True 的骨建 MCH 副本，按需把原骨局部旋转清零。
+    def build_mch_and_clear(ob):
+        """给 generateMCH=True 的骨建 MCH 副本，再把原骨局部旋转清零。
 
         必须在 EDIT 模式下调用。返回 {原骨名: MCH骨名} 映射，供约束/驱动转移使用。
 
         处理顺序（不可颠倒）：
-        1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
-           MCH 父级设为原骨、不形变、不相连；
-        2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
-        3. 仅在 clear_main_rotation=True 时重新扫描 generateMCH 主骨，使其绑定朝向
-           与最终父骨一致，从而让 FBX/Unity 中的局部旋转为零；根骨没有父级时回退
-           为世界 Z 轴竖直。
+        1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，
+           拷到的是原始朝向），MCH 父级设为原主骨的父级、不形变、不相连；
+        2. 原始子级保持直接挂在原骨下，MCH 与它们平行，不插入原有父子链；
+        3. 全部 MCH 创建完成后，清除 generateMCH 主骨相对原父骨的局部旋转。
         """
         from Utils import bone_utils
 
         arm = ob.data
         edit_bones = arm.edit_bones
 
-        # 读 data.bones 上的 generateMCH 属性（edit 模式下按名访问有效），确定待处理集合
+        # 读 data.bones 上的 generateMCH 属性（edit 模式下按名访问有效），确定待处理集合。
         mch_source_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
         if not mch_source_names:
             return {}
@@ -639,7 +636,9 @@ class FBXExporter:
             mch.tail = src.tail.copy()
             mch.roll = src.roll
             mch.use_deform = False
-            mch.parent = src
+            # Keep MCH outside the deform chain.  Its runtime relationship to
+            # the source bone is supplied by a Parent/Child Of constraint.
+            mch.parent = src.parent
             mch.use_connect = False
             # 归入 MCH 专属集合
             if mch_collection is not None:
@@ -649,21 +648,11 @@ class FBXExporter:
                     pass
             name_map[src_name] = mch_name
 
-        # 2. 把原始子级挂到 MCH 上（此时 src.children 含刚建的 MCH，需排除）
-        for src_name, mch_name in name_map.items():
-            src = edit_bones.get(src_name)
-            mch = edit_bones.get(mch_name)
-            if src is None or mch is None:
-                continue
-            original_children = [c for c in src.children if c.name != mch_name]
-            for child in original_children:
-                child.use_connect = False
-                child.parent = mch
+        # 2. 原始子级保持原父级，MCH 只作为主骨下的平行旁路骨。
 
-        # 3. MCH 已全部创建并接管子级后，按选项清零主骨的局部旋转。
-        if clear_main_rotation:
-            mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
-            FBXExporter.clear_edit_bones_local_rotation(edit_bones, mch_main_names)
+        # 3. MCH 全部创建后，沿原主骨链清除主骨的局部旋转。
+        mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
+        FBXExporter.clear_edit_bones_local_rotation(edit_bones, mch_main_names)
 
         return name_map
     @staticmethod
@@ -689,6 +678,8 @@ class FBXExporter:
         # 1. pose bone 约束：subtarget（及带极向目标的 pole_subtarget）
         for pbone in ob.pose.bones:
             for con in pbone.constraints:
+                if con.name == FBXExporter.MCH_PARENT_CONSTRAINT_NAME:
+                    continue
                 if getattr(con, "target", None) == ob:
                     sub = getattr(con, "subtarget", "")
                     if sub in name_map:
@@ -706,9 +697,83 @@ class FBXExporter:
                     for tgt in var.targets:
                         if getattr(tgt, "id", None) == ob and tgt.bone_target in name_map:
                             tgt.bone_target = name_map[tgt.bone_target]
+
+    @staticmethod
+    def add_mch_parent_constraints(ob, name_map):
+        """Bind each MCH sidecar to its source with a preserved bind offset."""
+        if not name_map:
+            return 0
+
+        count = 0
+        pending_inverse = []
+        for source_name, mch_name in name_map.items():
+            source = ob.pose.bones.get(source_name)
+            mch = ob.pose.bones.get(mch_name)
+            if source is None or mch is None:
+                continue
+
+            constraint = next(
+                (
+                    item
+                    for item in mch.constraints
+                    if item.name == FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+                ),
+                None,
+            )
+            if constraint is None or constraint.type != "CHILD_OF":
+                if constraint is not None:
+                    mch.constraints.remove(constraint)
+                constraint = mch.constraints.new("CHILD_OF")
+            constraint.name = FBXExporter.MCH_PARENT_CONSTRAINT_NAME
+            constraint.target = ob
+            constraint.subtarget = source_name
+            constraint.influence = 1.0
+            constraint.use_location_x = True
+            constraint.use_location_y = True
+            constraint.use_location_z = True
+            constraint.use_rotation_x = True
+            constraint.use_rotation_y = True
+            constraint.use_rotation_z = True
+            constraint.use_scale_x = False
+            constraint.use_scale_y = False
+            constraint.use_scale_z = False
+
+            pending_inverse.append((mch_name, constraint.name))
+            count += 1
+
+        if pending_inverse:
+            previous_active = bpy.context.view_layer.objects.active
+            ob.select_set(True)
+            bpy.context.view_layer.objects.active = ob
+            bpy.ops.object.mode_set(mode="POSE")
+            try:
+                for bone in ob.data.bones:
+                    bone.select = False
+                for mch_name, constraint_name in pending_inverse:
+                    active_bone = ob.data.bones.get(mch_name)
+                    if active_bone is None:
+                        continue
+                    active_bone.select = True
+                    ob.data.bones.active = active_bone
+                    result = bpy.ops.constraint.childof_set_inverse(
+                        constraint=constraint_name,
+                        owner="BONE",
+                    )
+                    if result != {"FINISHED"}:
+                        raise RuntimeError(
+                            f"Failed to preserve CHILD_OF offset for {mch_name}"
+                        )
+            finally:
+                bpy.ops.object.mode_set(mode="OBJECT")
+                if previous_active is not None:
+                    bpy.context.view_layer.objects.active = previous_active
+
+        bpy.context.view_layer.update()
+        return count
+
     @staticmethod
     def export_armature_constraints_json(ob, fbx_filepath, suffix):
-        """分析本骨架内的辅助骨约束并写出 Unity JSON。返回写出的文件路径，无约束则返回 None。
+        """分析本骨架内可导出的约束并写出 Unity JSON。返回写出的文件路径，无约束则返回 None。
 
         约束的 target 已在 transfer_constraints_to_mch 中改指 MCH，故 analyze 读到的
         targetPath 天然指向 MCH 骨（Unity 端 RotationConstraint 的 source 即 MCH）。
@@ -717,12 +782,11 @@ class FBXExporter:
         from .ConstraintAnalyzer import ConstraintAnalyzer
         from .UnityConstraintMapper import UnityConstraintMapper
 
-        constraints_list, twist_chains = ConstraintAnalyzer.analyze(ob)
-        total = len(constraints_list) + sum(len(c.twist_bones) for c in twist_chains)
-        if total == 0:
+        constraints_list = ConstraintAnalyzer.analyze(ob)
+        if not constraints_list:
             return None
 
-        json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list, twist_chains)
+        json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list)
         base_name = os.path.splitext(os.path.basename(fbx_filepath))[0]
         json_path = FBXExporter.unity_metadata_path(
             fbx_filepath,
@@ -948,16 +1012,11 @@ class FBXExporter:
             except ReferenceError:
                 pass
     @staticmethod
-    def clear_armatures_bone_rotation(
-        armature_objects,
-        selection,
-        active_object,
-        clear_main_rotation=True,
-    ):
-        """给各骨架建 MCH，按需清零主骨，随后转移约束/驱动。
+    def clear_armatures_bone_rotation(armature_objects, selection, active_object):
+        """给各骨架建 MCH 并清零主骨，随后转移约束/驱动。
         返回 {骨架名: {原骨名: MCH骨名}}。
 
-        流程：EDIT 模式建 MCH + 按需清零静置朝向 → 回 OBJECT 模式按需清 pose 变换并转移约束/驱动。
+        流程：EDIT 模式建 MCH + 清零静置朝向 → 回 OBJECT 模式清 pose 变换并转移约束/驱动。
         返回的映射供后续约束 JSON 导出参考（约束 subtarget 已改指 MCH）。
         """
         view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
@@ -976,10 +1035,7 @@ class FBXExporter:
             bpy.ops.object.mode_set(mode="EDIT")
             try:
                 for ob in view_layer_armatures:
-                    name_maps[ob.name] = FBXExporter.build_mch_and_clear(
-                        ob,
-                        clear_main_rotation=clear_main_rotation,
-                    )
+                    name_maps[ob.name] = FBXExporter.build_mch_and_clear(ob)
             finally:
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode="OBJECT")
@@ -987,8 +1043,8 @@ class FBXExporter:
             # 回 OBJECT 模式后 pose bones 才刷新；先清主骨 pose 变换，再转移约束/驱动。
             for ob in view_layer_armatures:
                 name_map = name_maps.get(ob.name, {})
-                if clear_main_rotation:
-                    FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
+                FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
+                FBXExporter.add_mch_parent_constraints(ob, name_map)
                 FBXExporter.transfer_constraints_to_mch(ob, name_map)
         finally:
             for state in reversed(visibility_states):
@@ -1011,12 +1067,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。是否清空主骨相对父骨的局部旋转由下方选项控制。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
-    clearMCHMainBoneRotation:BoolProperty(name="清除MCH主骨旋转",description="导出时清空勾选了generateMCH的主骨相对父骨的局部旋转并清除其姿态变换，以适配动捕/humanoid；默认关闭",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="为勾选了generateMCH的骨生成MCH_前缀同级旁路骨、清空主骨变换并写入Parent约束语义。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
-    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,统一写入FBX旁的HoFBX文件夹。约束目标已随MCH转移",default=False) # type: ignore
+    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内可识别的Parent、Fan、Twist约束为Unity可用的JSON,统一写入FBX旁的HoFBX文件夹。MCH Parent约束也在此文件中；约束目标已随MCH转移",default=False) # type: ignore
     boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="HoFBX文件夹内的约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,统一写入FBX旁的HoFBX文件夹",default=False) # type: ignore
     boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="HoFBX文件夹内的集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
@@ -1166,14 +1221,13 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     armature_objects, selection, active_object
                 )
 
-            # 生成 MCH 骨并按选项清零主骨；返回各骨架的 {原骨名: MCH名} 映射
+            # 生成 MCH 骨并清零主骨；返回各骨架的 {原骨名: MCH名} 映射
             mch_name_maps = {}
             if self.generateMCHBones and armature_objects != []:
                 mch_name_maps = FBXExporter.clear_armatures_bone_rotation(
                     armature_objects,
                     selection,
                     active_object,
-                    clear_main_rotation=self.clearMCHMainBoneRotation,
                 )
 
             # 修复物体旋转（所有顶级父级物体）
@@ -1332,7 +1386,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col = option_box.column(align=True, heading="")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
-        option_col.prop(self, "clearMCHMainBoneRotation")
         option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
@@ -1376,8 +1429,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 副本保活原始朝向;是否清空主骨相对父骨的局部旋转由下方选项控制;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
-    clearMCHMainBoneRotation:BoolProperty(name="清除MCH主骨旋转",description="预处理时清空勾选了generateMCH的主骨相对父骨的局部旋转并清除其姿态变换，以适配动捕/humanoid；默认关闭",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨",description="对 generateMCH=True 的骨生成 MCH_ 同级旁路骨、清空主骨变换并写入Parent约束;仅预处理模式不会自动撤销",default=False) # type: ignore
     cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
@@ -1437,13 +1489,12 @@ class OP_FinalFBXExport_only_preprocess(Operator):
             if self.addLeafBones and armature_objects != []:
                 FBXExporter.add_leaf_bones_to_armatures(armature_objects, selection, active_object)
 
-            # 生成 MCH 骨并按选项清零主骨；仅预处理模式不撤销，MCH 留在工程供检视
+            # 生成 MCH 骨并清零主骨；仅预处理模式不撤销，MCH 留在工程供检视
             if self.generateMCHBones and armature_objects !=[]:
                 FBXExporter.clear_armatures_bone_rotation(
                     armature_objects,
                     selection,
                     active_object,
-                    clear_main_rotation=self.clearMCHMainBoneRotation,
                 )
 
 
@@ -1513,7 +1564,6 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_col = option_box.column(align=True)
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
-        option_col.prop(self, "clearMCHMainBoneRotation")
         option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")

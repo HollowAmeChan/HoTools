@@ -1,111 +1,85 @@
-"""
-约束语义识别器 — 从 Blender armature 的 pose bone constraints 中提取语义约束。
-
-识别规则:
-1. 只识别约束到当前骨架内部骨的约束(target 是同一骨架);跨骨架约束全部过滤。
-2. 按约束名前缀 HoTools_<AUX>_<KIND> 识别辅助骨约束类型（依赖公共 bone_utils 命名规范）。
-3. Twist 链聚合:同源骨的多个 twist 骨识别为一个 TwistChainGroup。
-4. 通用约束当前不导出,接口预留。
-"""
+"""从 Blender 骨架约束提取 HoTools 导出语义。"""
 
 import bpy
+
 from .ConstraintSemantics import (
     SemanticConstraint,
     FanConstraint,
     TwistConstraint,
-    TwistChainGroup,
     GenericConstraint,
+    ParentConstraint,
 )
 
 
 class ConstraintAnalyzer:
-    """约束语义识别器。"""
+    """识别同一骨架内部的 Parent、Fan 和 Twist 约束。"""
 
-    # HoTools 辅助骨约束的统一前缀,与 bone_utils.AUX_CONSTRAINT_PREFIX 对齐
     AUX_PREFIX = "HoTools"
 
     @staticmethod
-    def analyze(armature: bpy.types.Object) -> tuple[list[SemanticConstraint], list[TwistChainGroup]]:
-        """分析骨架内所有约束,返回 (语义约束列表, twist链分组列表)。
-
-        只返回约束到骨架内部骨的约束;跨骨架约束被过滤。Twist 约束单独聚合成链。
-        """
+    def analyze(armature: bpy.types.Object) -> list[SemanticConstraint]:
+        """返回可导出的语义约束列表，不再引入无运行时用途的中间分组。"""
         if armature.type != "ARMATURE":
-            return [], []
+            return []
 
         constraints_list = []
-        twist_map = {}  # {源骨名: [(twist骨名, weight), ...]}
-
         for pose_bone in armature.pose.bones:
             for constraint in pose_bone.constraints:
-                # 过滤:只要约束到当前骨架内部骨的约束
                 if not ConstraintAnalyzer._is_internal_constraint(constraint, armature):
                     continue
 
                 semantic = ConstraintAnalyzer._identify_constraint(
-                    pose_bone.name, constraint, armature
+                    pose_bone.name,
+                    constraint,
+                    armature,
                 )
-                if semantic is None:
-                    continue
-
-                # Twist 约束单独聚合成链
-                if isinstance(semantic, TwistConstraint):
-                    source = semantic.source_bone
-                    if source not in twist_map:
-                        twist_map[source] = []
-                    # 目标骨用约束真正的 subtarget（通常是权重来源骨的子关节骨，如手骨），
-                    # 而非权重来源骨自身；source_bone（权重来源）在此恰好用作链分组的键。
-                    twist_map[source].append(
-                        (semantic.bone_name, semantic.weight, semantic.target_bone)
-                    )
-                else:
+                if semantic is not None:
                     constraints_list.append(semantic)
 
-        # 把 twist_map 转成 TwistChainGroup 列表
-        twist_chains = [
-            TwistChainGroup(source_bone=src, twist_bones=bones)
-            for src, bones in twist_map.items()
-        ]
-
-        return constraints_list, twist_chains
+        return constraints_list
 
     @staticmethod
     def _is_internal_constraint(constraint, armature: bpy.types.Object) -> bool:
-        """约束是否指向当前骨架内部骨(target 是同一骨架,subtarget 非空)。"""
-        if not hasattr(constraint, "target") or constraint.target is None:
+        """只导出 target 指向当前骨架且 subtarget 非空的约束。"""
+        if getattr(constraint, "target", None) != armature:
             return False
-        if constraint.target != armature:
-            return False
-        if not hasattr(constraint, "subtarget") or not constraint.subtarget:
-            return False
-        return True
+        return bool(getattr(constraint, "subtarget", ""))
 
     @staticmethod
     def _identify_constraint(
-        bone_name: str, constraint, armature: bpy.types.Object
+        bone_name: str,
+        constraint,
+        armature: bpy.types.Object,
     ) -> SemanticConstraint | None:
-        """识别单个约束的语义。返回 None 表示不支持/不导出。"""
-        # 按约束名前缀识别 HoTools 辅助骨约束
-        if constraint.name.startswith(ConstraintAnalyzer.AUX_PREFIX + "_"):
-            return ConstraintAnalyzer._identify_aux_constraint(bone_name, constraint, armature)
+        if constraint.type == "CHILD_OF":
+            return ParentConstraint(
+                bone_name=bone_name,
+                weight=getattr(constraint, "influence", 1.0),
+                target_bone=constraint.subtarget,
+            )
 
-        # 通用约束当前不导出,接口预留
-        # return ConstraintAnalyzer._identify_generic_constraint(bone_name, constraint)
+        if constraint.name.startswith(ConstraintAnalyzer.AUX_PREFIX + "_"):
+            return ConstraintAnalyzer._identify_aux_constraint(
+                bone_name,
+                constraint,
+                armature,
+            )
+
         return None
 
     @staticmethod
     def _identify_aux_constraint(
-        bone_name: str, constraint, armature: bpy.types.Object
+        bone_name: str,
+        constraint,
+        armature: bpy.types.Object,
     ) -> SemanticConstraint | None:
-        """识别 HoTools 辅助骨约束(名字格式 HoTools_<AUX>_<KIND>)。"""
         aux_type, kind = ConstraintAnalyzer._parse_aux_constraint_name(constraint.name)
         if aux_type is None or kind is None:
-            return None  # 格式不对,跳过
+            return None
 
         weight = getattr(constraint, "influence", 1.0)
         target_bone = constraint.subtarget
 
-        # Fan 系列约束:HoTools_FAN_CopyRotation / HoTools_FAN_SINGLE_CopyRotation / HoTools_FAN_SIDE_CopyRotation
         if aux_type in ("FAN", "FAN_SINGLE", "FAN_SIDE") and kind == "CopyRotation":
             if constraint.type != "COPY_ROTATION":
                 return None
@@ -116,18 +90,15 @@ class ConstraintAnalyzer:
                 target_bone=target_bone,
             )
 
-        # Twist 约束:HoTools_TWIST_CopyRotation(主约束) 或 HoTools_TWIST_StretchTo(辅助,抑制翻转)
-        # 只识别 CopyRotation,StretchTo 不单独导出(Unity 端由导出 axes 只冻结/约束 Y 轴)
         if aux_type == "TWIST" and kind == "CopyRotation":
             if constraint.type != "COPY_ROTATION":
                 return None
-            # 权重来源骨(辅助骨权重从这根骨拆分而来)从 auxBone.sourceBones 读取,
-            # 同一来源的 twist 骨聚合为一条链
-            source_bone = ConstraintAnalyzer._get_twist_source_bone(bone_name, armature)
+            source_bone = ConstraintAnalyzer._get_twist_source_bone(
+                bone_name,
+                armature,
+            )
             if source_bone is None:
                 return None
-            # 约束的实际目标 = COPY_ROTATION 的 subtarget(如 hand.L,主骨的子关节骨),
-            # twist 骨真正拷贝的是它的旋转;Unity 端约束必须指向这个骨,而非权重来源骨。
             return TwistConstraint(
                 bone_name=bone_name,
                 weight=weight,
@@ -139,37 +110,33 @@ class ConstraintAnalyzer:
 
     @staticmethod
     def _parse_aux_constraint_name(name: str) -> tuple[str | None, str | None]:
-        """Parse HoTools_<AUX_TYPE>_<KIND>, preserving aux types with underscores."""
+        """解析 HoTools_<AUX_TYPE>_<KIND> 约束名。"""
         prefix = ConstraintAnalyzer.AUX_PREFIX + "_"
         if not name.startswith(prefix):
             return None, None
-        body = name[len(prefix):]
-        aux_type, sep, kind = body.rpartition("_")
-        if not sep or not aux_type or not kind:
+        aux_type, separator, kind = name[len(prefix):].rpartition("_")
+        if not separator or not aux_type or not kind:
             return None, None
         return aux_type, kind
 
     @staticmethod
-    def _get_twist_source_bone(twist_bone_name: str, armature: bpy.types.Object) -> str | None:
-        """从 twist 骨的 auxBone.sourceBones 读取权重来源骨名(第一个)。
-
-        sourceBones 记录该辅助骨的蒙皮权重从哪根骨拆分而来(拆分/合并时保证权重 sum 不变)。
-        """
+    def _get_twist_source_bone(
+        twist_bone_name: str,
+        armature: bpy.types.Object,
+    ) -> str | None:
         bone = armature.data.bones.get(twist_bone_name)
         if bone is None:
             return None
         props = getattr(bone, "hotools_boneprops", None)
-        if props is None:
-            return None
-        aux = getattr(props, "auxBone", None)
-        if aux is None or not aux.isAuxBone:
-            return None
-        if not aux.sourceBones:
+        aux = getattr(props, "auxBone", None) if props else None
+        if aux is None or not aux.isAuxBone or not aux.sourceBones:
             return None
         return aux.sourceBones[0].name
 
     @staticmethod
-    def _identify_generic_constraint(bone_name: str, constraint) -> GenericConstraint | None:
-        """识别通用约束(非 HoTools 辅助骨约束)。当前版本不导出,接口预留。"""
-        # 后续扩展:解析 COPY_LOCATION / COPY_ROTATION / COPY_SCALE 等,保留完整参数
+    def _identify_generic_constraint(
+        bone_name: str,
+        constraint,
+    ) -> GenericConstraint | None:
+        """通用 COPY_* 约束的未来扩展入口。"""
         return None

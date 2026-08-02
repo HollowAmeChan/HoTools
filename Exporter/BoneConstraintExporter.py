@@ -47,12 +47,10 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
 
         try:
             # 1. 语义识别
-            constraints_list, twist_chains = ConstraintAnalyzer.analyze(armature)
+            constraints_list = ConstraintAnalyzer.analyze(armature)
 
             # 统计信息
-            total_constraints = len(constraints_list)
-            total_twist_bones = sum(len(chain.twist_bones) for chain in twist_chains)
-            total_exported = total_constraints + total_twist_bones
+            total_exported = len(constraints_list)
 
             if total_exported == 0:
                 self.report({'WARNING'}, "未找到可导出的约束(辅助骨约束必须约束到骨架内部骨)")
@@ -60,7 +58,7 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
 
             # 2. Unity 映射
             json_str = UnityConstraintMapper.export_to_json(
-                armature.name, constraints_list, twist_chains
+                armature.name, constraints_list
             )
 
             # 3. 写入文件
@@ -69,11 +67,11 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
 
             # 报告成功
             fan_count = sum(1 for c in constraints_list if hasattr(c, 'fan_type'))
-            twist_chain_count = len(twist_chains)
+            twist_count = sum(1 for c in constraints_list if hasattr(c, 'source_bone'))
             self.report(
                 {'INFO'},
                 f"成功导出 {total_exported} 个约束 "
-                f"(Fan: {fan_count}, Twist链: {twist_chain_count}共{total_twist_bones}骨)"
+                f"(Fan: {fan_count}, Twist: {twist_count})"
             )
 
         except Exception as e:
