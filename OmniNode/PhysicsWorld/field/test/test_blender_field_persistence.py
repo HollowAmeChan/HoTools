@@ -60,7 +60,6 @@ world_types = importlib.import_module("HoTools.OmniNode.PhysicsWorld.types")
 UNDO_FIELD_NAME = "PW_Field_UndoPersistence"
 ANIMATED_FIELDS = frozenset({
     "enabled",
-    "status",
     "field_type",
     "shape",
     "speed_mps",
@@ -156,7 +155,6 @@ def test_undo_redo_restores_identity_manifest_and_preview() -> str:
     props = obj.hotools_field
     props.field_id = str(uuid.uuid4())
     props.field_type = "WIND"
-    props.status = "PREVIEW_ONLY"
     props.enabled = True
     props.shape = "BOX"
     props.speed_mps = 4.25
@@ -202,7 +200,6 @@ def _set_persistent_field_values(obj, field_id: str) -> None:
     values = {
         "enabled": True,
         "field_id": field_id,
-        "status": "PREVIEW_ONLY",
         "field_type": "WIND",
         "shape": "BOX",
         "spatial_scale_m": 2.5,

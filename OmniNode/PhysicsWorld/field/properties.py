@@ -19,7 +19,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from .names import FIELD_STATUS_PREVIEW_ONLY
+from .names import FIELD_STATUS_ACTIVE
 from .schema import FIELD_RNA_FIELDS
 from .specs import FieldScopeV0, FieldSpecV0, VolumeSpecV0, WindPayloadV0
 
@@ -245,7 +245,7 @@ def resolve_field_spec_v0(obj, *, evaluated_object=None, depsgraph=None) -> Fiel
         field_id=field_id,
         source_id=f"blender.field:{field_id}",
         enabled=bool(value_props.enabled),
-        status=FIELD_STATUS_PREVIEW_ONLY,
+        status=FIELD_STATUS_ACTIVE,
         volume=volume,
         wind=wind,
         scope=scope,

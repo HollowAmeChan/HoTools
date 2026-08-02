@@ -116,7 +116,7 @@ def test_property_defaults_and_uuid_lifecycle() -> None:
     obj = _new_empty("Field_Defaults")
     props = obj.hotools_field
     assert props.enabled is False
-    assert props.status == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert not hasattr(props, "status")
     assert props.field_type == field_names.FIELD_TYPE_WIND
     assert props.shape == field_names.VOLUME_SHAPE_SPHERE
     assert props.turbulence == 0.0
@@ -143,7 +143,7 @@ def test_rna_and_capability_share_pure_schema() -> None:
 
     assert field_properties.FIELD_RNA_FIELDS is schema
     assert "bpy" not in field_schema.__dict__
-    assert len(schema) == 20
+    assert len(schema) == 19
     assert all("factory" not in item for item in schema)
     assert tuple(field_properties.PG_Hotools_Field.__annotations__) == names
     assert tuple(str(item["name"]) for item in fields) == names
@@ -189,7 +189,7 @@ def test_resolver_uses_evaluated_empty_and_keeps_one_to_one_unit_policy() -> Non
         evaluated_object=evaluated,
     )
     assert spec.source_id == f"blender.field:{spec.field_id}"
-    assert spec.status == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert spec.status == field_names.FIELD_STATUS_ACTIVE
     assert spec.field_type == field_names.FIELD_TYPE_WIND
     assert spec.volume.world_transform[0][3] == 2.0
     assert spec.volume.world_scale == (2.0, 3.0, 4.0)
@@ -271,7 +271,7 @@ def test_generic_channel_visualization_has_reserved_scalar_and_sdf_modes() -> No
         positions,
         ((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)),
     )
-    assert vector["status"] == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert vector["status"] == field_names.FIELD_STATUS_ACTIVE
     assert vector["line_batches"] and vector["point_batches"] == ()
 
     scalar = field_visualization.build_field_channel_visualization_v0(

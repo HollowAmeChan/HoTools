@@ -162,7 +162,7 @@ class PT_Hotools_PhysicsPanel(Panel):
             grid.prop(
                 field_props,
                 "enabled",
-                text="Field",
+                text="场",
                 icon="EMPTY_AXIS",
                 toggle=True,
             )
@@ -174,7 +174,7 @@ class PT_Hotools_PhysicsPanel(Panel):
 
 class PT_Hotools_Physics_Field(Panel):
     bl_idname = "OBJECT_PT_Hotools_Physics_Field"
-    bl_label = "Field"
+    bl_label = "场"
     bl_parent_id = _PARENT
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
@@ -199,7 +199,7 @@ class PT_Hotools_Physics_Field(Panel):
 
         if props.field_type == "WIND":
             layout.separator()
-            layout.label(text="Volume", icon="MESH_UVSPHERE")
+            layout.label(text="体积", icon="MESH_UVSPHERE")
             layout.prop(props, "shape", text="形状")
             if props.shape == "SPHERE":
                 scale = obj.matrix_world.to_scale()
@@ -207,7 +207,7 @@ class PT_Hotools_Physics_Field(Panel):
                     layout.label(text="球形 Volume 需要均匀缩放", icon="ERROR")
 
             layout.separator()
-            layout.label(text="Wind", icon="FORCE_WIND")
+            layout.label(text="风", icon="FORCE_WIND")
             layout.prop(props, "speed_mps")
             layout.prop(props, "turbulence")
             if props.turbulence > 0.0:
@@ -236,18 +236,13 @@ class PT_Hotools_Physics_Field(Panel):
         if body is not None:
             body.use_property_split = True
             body.use_property_decorate = False
-            status_row = body.row(align=True)
-            status_row.label(
-                text="状态：仅预览"
-                if props.status == "PREVIEW_ONLY"
-                else f"状态：{props.status}"
-            )
-            status_row.operator(
+            identity_row = body.row(align=True)
+            identity_row.label(text=f"场 ID：{props.field_id or '未分配'}")
+            identity_row.operator(
                 OP_Hotools_Field_RegenerateId.bl_idname,
                 text="",
                 icon="FILE_REFRESH",
             )
-            body.label(text=f"ID：{props.field_id or '未分配'}")
             body.prop(props, "blend_weight")
             body.prop(props, "priority")
             body.separator()

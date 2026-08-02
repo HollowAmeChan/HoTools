@@ -134,7 +134,7 @@ _expect_error(
 
 channel_reports = channels.field_channel_reports_v0()
 assert channel_reports[0]["channel_id"] == names.AIR_VELOCITY_CHANNEL_ID
-assert channel_reports[0]["status"] == names.FIELD_STATUS_PREVIEW_ONLY
+assert channel_reports[0]["status"] == names.FIELD_STATUS_ACTIVE
 assert channel_reports[0]["values_ready"] is True
 assert {item["channel_id"] for item in channel_reports} >= {
     "acceleration",

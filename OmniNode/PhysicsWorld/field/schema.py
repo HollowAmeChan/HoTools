@@ -1,7 +1,6 @@
 """公共 Field 持久 RNA 的纯数据 schema；不导入 bpy。"""
 
 from .names import (
-    FIELD_STATUS_PREVIEW_ONLY,
     FIELD_TYPE_WIND,
     VOLUME_SHAPE_BOX,
     VOLUME_SHAPE_SPHERE,
@@ -34,24 +33,6 @@ FIELD_RNA_FIELDS = (
         },
     },
     {
-        "name": "status",
-        "property": "enum",
-        "update": "visualization",
-        "update_policy": "公共能力状态",
-        "kwargs": {
-            "name": "状态",
-            "description": "当前公共场已有采样和预览，但尚未接通模拟消费者",
-            "items": (
-                (
-                    FIELD_STATUS_PREVIEW_ONLY,
-                    "仅预览",
-                    "可采样和可视化，但目前不会改变模拟结果",
-                ),
-            ),
-            "default": FIELD_STATUS_PREVIEW_ONLY,
-        },
-    },
-    {
         "name": "field_type",
         "property": "enum",
         "update": "visualization",
@@ -62,7 +43,7 @@ FIELD_RNA_FIELDS = (
             "items": (
                 (
                     FIELD_TYPE_WIND,
-                    "Wind",
+                    "风",
                     "由 Empty 局部 +Z 定义基础空气速度，并可叠加紊流",
                 ),
             ),
@@ -232,7 +213,7 @@ FIELD_RNA_FIELDS = (
         "update_policy": "场作用域签名",
         "kwargs": {
             "name": "集合范围",
-            "description": "逗号或换行分隔的稳定 Collection ID；留空表示不限制",
+            "description": "逗号或换行分隔的 Blender Collection 名称；留空表示不限制",
             "default": "",
         },
     },
@@ -243,7 +224,7 @@ FIELD_RNA_FIELDS = (
         "update_policy": "场作用域签名",
         "kwargs": {
             "name": "包含对象",
-            "description": "逗号或换行分隔的稳定对象 ID 白名单",
+            "description": "逗号或换行分隔的对象名称白名单；骨布料使用骨架对象名称",
             "default": "",
         },
     },
@@ -254,7 +235,7 @@ FIELD_RNA_FIELDS = (
         "update_policy": "场作用域签名",
         "kwargs": {
             "name": "排除对象",
-            "description": "逗号或换行分隔的稳定对象 ID 黑名单",
+            "description": "逗号或换行分隔的对象名称黑名单；骨布料使用骨架对象名称",
             "default": "",
         },
     },

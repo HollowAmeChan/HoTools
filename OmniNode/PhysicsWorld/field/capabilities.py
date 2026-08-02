@@ -70,8 +70,11 @@ FIELD_AIR_VELOCITY_CAPABILITY = {
     "volume_shapes": _enum_values("shape"),
     "sample_modes": ("point", "batch"),
     "sample_phase": "pre_substep",
-    "status": "preview_ready_no_active_consumer",
-    "attenuation_policy": "V0 临时由 Volume 权重乘到 raw wind；最终所有权待冻结",
+    "status": "active_mc2_cpu_product_v0",
+    "active_consumers": ("mc2",),
+    "attenuation_policy": (
+        "V0 由 Volume 权重缩放 air_velocity；是否另设参与权重仍是后续设计质疑点"
+    ),
     "fields": _schema_capability_fields(),
 }
 

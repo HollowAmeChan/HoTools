@@ -37,8 +37,8 @@ def _mark_field_visualization_dirty() -> None:
 
 class OP_Hotools_Field_RegenerateId(Operator):
     bl_idname = "ho.field_regenerate_id"
-    bl_label = "重签 Field ID"
-    bl_description = "为当前 Field 生成新的持久身份，用于修复复制产生的重复 ID"
+    bl_label = "重签场 ID"
+    bl_description = "为当前场生成新的持久身份，用于修复复制产生的重复 ID"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -50,9 +50,8 @@ class OP_Hotools_Field_RegenerateId(Operator):
     def execute(self, context):
         props = context.object.hotools_field
         props.field_id = str(uuid.uuid4())
-        props.status = "PREVIEW_ONLY"
         _mark_field_visualization_dirty()
-        self.report({"INFO"}, "已生成新的 Field ID")
+        self.report({"INFO"}, "已生成新的场 ID")
         return {"FINISHED"}
 
 
