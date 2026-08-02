@@ -6,8 +6,11 @@ from .names import (
     AIR_VELOCITY_CHANNEL_ID,
     FIELD_CAPABILITY_ID,
     FIELD_OBJECT_TAG,
+    FIELD_TYPE_WIND,
+    FIELD_TYPES_V0,
     WIND_GENERATOR_ID,
 )
+from .channels import field_channel_reports_v0
 from .schema import FIELD_RNA_FIELDS
 
 
@@ -61,6 +64,9 @@ FIELD_AIR_VELOCITY_CAPABILITY = {
     "value_space": "world",
     "source_kinds": ("analytic",),
     "generator_ids": (WIND_GENERATOR_ID,),
+    "field_type": FIELD_TYPE_WIND,
+    "field_types": FIELD_TYPES_V0,
+    "channel_registry": field_channel_reports_v0(),
     "volume_shapes": _enum_values("shape"),
     "sample_modes": ("point", "batch"),
     "sample_phase": "pre_substep",

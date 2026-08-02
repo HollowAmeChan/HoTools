@@ -2,6 +2,7 @@
 
 from .names import (
     FIELD_STATUS_PREVIEW_ONLY,
+    FIELD_TYPE_WIND,
     VOLUME_SHAPE_BOX,
     VOLUME_SHAPE_SPHERE,
 )
@@ -48,6 +49,24 @@ FIELD_RNA_FIELDS = (
                 ),
             ),
             "default": FIELD_STATUS_PREVIEW_ONLY,
+        },
+    },
+    {
+        "name": "field_type",
+        "property": "enum",
+        "update": "visualization",
+        "update_policy": "Field 类型与 generator 能力签名",
+        "kwargs": {
+            "name": "场类型",
+            "description": "先选择场类型，再显示该类型的参数；V0 仅提供 Wind",
+            "items": (
+                (
+                    FIELD_TYPE_WIND,
+                    "Wind",
+                    "由 Empty 局部 +Z 定义基础空气速度，并可叠加紊流",
+                ),
+            ),
+            "default": FIELD_TYPE_WIND,
         },
     },
     {

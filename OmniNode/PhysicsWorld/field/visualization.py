@@ -12,10 +12,22 @@ from ..utils.debug_draw import (
     add_box_lines,
     add_sphere_lines,
     draw_line_batches,
+    draw_point_batches,
 )
 from ..world_time import scene_timeline_time_seconds
+from .channels import (
+    VISUALIZATION_SDF_ZERO_CROSSING,
+    field_channel_descriptor_v0,
+    field_channel_reports_v0,
+)
 from .implicit_objects import stage_field_sources_v0
-from .names import VOLUME_SHAPE_BOX, VOLUME_SHAPE_SPHERE
+from .names import (
+    AIR_VELOCITY_CHANNEL_ID,
+    FIELD_MATRIX_VISUALIZATION_RESERVED,
+    FIELD_RESERVED_CHANNEL,
+    VOLUME_SHAPE_BOX,
+    VOLUME_SHAPE_SPHERE,
+)
 from .sampling import sample_air_velocity_v0
 from .specs import build_field_snapshot_v0
 
@@ -27,6 +39,18 @@ _DRAW_HANDLER = None
 _DRAW_STORE: dict[int, dict] = {}
 _DIRTY = True
 _REFRESHING = False
+_SCALAR_PALETTE = (
+    (0.10, 0.28, 0.85, 0.88),
+    (0.08, 0.62, 0.92, 0.88),
+    (0.05, 0.78, 0.70, 0.88),
+    (0.35, 0.82, 0.32, 0.88),
+    (0.92, 0.86, 0.18, 0.88),
+    (0.98, 0.56, 0.10, 0.88),
+    (0.88, 0.20, 0.10, 0.88),
+)
+_SDF_NEGATIVE_COLOR = (0.12, 0.36, 0.95, 0.9)
+_SDF_ZERO_COLOR = (1.0, 0.92, 0.12, 1.0)
+_SDF_POSITIVE_COLOR = (0.92, 0.22, 0.12, 0.9)
 
 
 def _scene_key(scene) -> int:
@@ -92,6 +116,126 @@ def _dedupe_positions(values) -> np.ndarray:
     return np.asarray(ordered, dtype=np.float64)
 
 
+def build_field_channel_visualization_v0(
+    channel_id,
+    positions_world,
+    values_world=None,
+    *,
+    glyph_scale: float = 0.15,
+    point_size: float = 6.0,
+    scalar_range=None,
+    sdf_zero_tolerance=None,
+) -> dict:
+    """为公共 channel 生成显式可视化批次，不为 reserved channel 伪造数值。"""
+    descriptor = field_channel_descriptor_v0(channel_id)
+    glyph_scale = float(glyph_scale)
+    point_size = float(point_size)
+    if not np.isfinite(glyph_scale) or glyph_scale < 0.0:
+        raise ValueError("glyph_scale 必须是有限非负数")
+    if not np.isfinite(point_size) or point_size <= 0.0:
+        raise ValueError("point_size 必须是有限正数")
+    positions = np.asarray(positions_world, dtype=np.float64)
+    if positions.size == 0:
+        positions = np.empty((0, 3), dtype=np.float64)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("可视化位置必须是 [N,3]")
+    if not np.all(np.isfinite(positions)):
+        raise ValueError("可视化位置不能包含 NaN 或 Inf")
+
+    result = {
+        "channel_id": descriptor.channel_id,
+        "rank": descriptor.rank,
+        "status": descriptor.status,
+        "visualization_mode": descriptor.visualization_mode,
+        "sample_count": int(len(positions)),
+        "line_batches": (),
+        "point_batches": (),
+        "values_supplied": values_world is not None,
+        "diagnostics": (),
+    }
+    if values_world is None:
+        if not descriptor.values_ready:
+            result["diagnostics"] = (FIELD_RESERVED_CHANNEL,)
+        return result
+
+    values = np.asarray(values_world, dtype=np.float64)
+    if descriptor.rank == "vector":
+        if values.size == 0:
+            values = np.empty((0, 3), dtype=np.float64)
+        if values.shape != positions.shape:
+            raise ValueError("vector channel 值必须是 [N,3]")
+        if not np.all(np.isfinite(values)):
+            raise ValueError("vector channel 值不能包含 NaN 或 Inf")
+        lines = []
+        for position, value in zip(positions, values):
+            add_arrow_lines(
+                lines,
+                position,
+                position + value * glyph_scale,
+            )
+        result["line_batches"] = ((tuple(lines), _VECTOR_COLOR, 1.5),)
+        return result
+
+    if descriptor.rank != "scalar":
+        result["diagnostics"] = (FIELD_MATRIX_VISUALIZATION_RESERVED,)
+        return result
+    values = values.reshape(-1)
+    if len(values) != len(positions):
+        raise ValueError("scalar channel 值必须是 [N]")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("scalar channel 值不能包含 NaN 或 Inf")
+
+    points = []
+    if descriptor.visualization_mode == VISUALIZATION_SDF_ZERO_CROSSING:
+        max_abs = float(np.max(np.abs(values))) if len(values) else 0.0
+        tolerance = (
+            float(sdf_zero_tolerance)
+            if sdf_zero_tolerance is not None
+            else max(1.0e-6, max_abs * 0.02)
+        )
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("sdf_zero_tolerance 必须是有限非负数")
+        negative = positions[values < -tolerance]
+        zero = positions[np.abs(values) <= tolerance]
+        positive = positions[values > tolerance]
+        for subset, color in (
+            (negative, _SDF_NEGATIVE_COLOR),
+            (zero, _SDF_ZERO_COLOR),
+            (positive, _SDF_POSITIVE_COLOR),
+        ):
+            points.append(
+                (
+                    tuple(tuple(float(v) for v in row) for row in subset),
+                    color,
+                    point_size,
+                )
+            )
+    else:
+        if scalar_range is None:
+            low = float(np.min(values)) if len(values) else 0.0
+            high = float(np.max(values)) if len(values) else 1.0
+        else:
+            low, high = (float(item) for item in scalar_range)
+        if not np.isfinite(low) or not np.isfinite(high) or high < low:
+            raise ValueError("scalar_range 必须是有限的 low<=high")
+        if high <= low:
+            high = low + 1.0
+        normalized = np.clip((values - low) / (high - low), 0.0, 1.0)
+        bin_count = len(_SCALAR_PALETTE)
+        bin_ids = np.minimum((normalized * bin_count).astype(np.int64), bin_count - 1)
+        for index, color in enumerate(_SCALAR_PALETTE):
+            subset = positions[bin_ids == index]
+            points.append(
+                (
+                    tuple(tuple(float(v) for v in row) for row in subset),
+                    color,
+                    point_size,
+                )
+            )
+    result["point_batches"] = tuple(points)
+    return result
+
+
 def build_field_visualization_batches_v0(
     snapshot,
     *,
@@ -139,10 +283,14 @@ def build_field_visualization_batches_v0(
             include_preview=True,
             selected_field_ids=None if selected is None else tuple(sorted(selected)),
         )
-        scale = max(float(glyph_scale), 0.0)
-        for position, value in zip(sampled_positions, batch.values_world_f32):
-            end = position + np.asarray(value, dtype=np.float64) * scale
-            add_arrow_lines(vector_lines, position, end)
+        channel_batches = build_field_channel_visualization_v0(
+            AIR_VELOCITY_CHANNEL_ID,
+            sampled_positions,
+            batch.values_world_f32,
+            glyph_scale=glyph_scale,
+        )
+        if channel_batches["line_batches"]:
+            vector_lines = list(channel_batches["line_batches"][0][0])
 
     return (
         (tuple(bound_lines), _BOUND_COLOR, 1.5),
@@ -218,10 +366,12 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
         )
         frozen = {
             "batches": batches,
+            "point_batches": (),
             "snapshot_signature": snapshot.signature,
             "sample_time_seconds": sample_time,
             "time_source": "TIMELINE_PREVIEW",
             "field_ids": tuple(spec.field_id for spec in snapshot.fields),
+            "channel_reports": field_channel_reports_v0(),
             "diagnostics": tuple(item.debug_dict() for item in snapshot.diagnostics),
         }
         _DRAW_STORE[key] = frozen
@@ -230,7 +380,9 @@ def refresh_field_visualization(scene=None, depsgraph=None) -> dict:
     except Exception as exc:
         _DRAW_STORE[key] = {
             "batches": (),
+            "point_batches": (),
             "time_source": "TIMELINE_PREVIEW",
+            "channel_reports": field_channel_reports_v0(),
             "error": str(exc),
         }
         _DIRTY = False
@@ -251,6 +403,7 @@ def _draw_field_visualization() -> None:
         return
     frozen = _DRAW_STORE.get(_scene_key(scene), {})
     draw_line_batches(frozen.get("batches", ()))
+    draw_point_batches(frozen.get("point_batches", ()))
 
 
 def _ensure_draw_handler() -> None:
@@ -346,6 +499,7 @@ def unregister() -> None:
 
 __all__ = [
     "build_field_visualization_batches_v0",
+    "build_field_channel_visualization_v0",
     "field_overlay_update",
     "field_visualization_snapshot",
     "mark_field_visualization_dirty",

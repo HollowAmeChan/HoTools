@@ -42,6 +42,9 @@ field_schema = importlib.import_module(
 field_capabilities = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.capabilities"
 )
+field_channels = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.field.channels"
+)
 field_package = importlib.import_module("HoTools.OmniNode.PhysicsWorld.field")
 field_implicit = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.implicit_objects"
@@ -114,6 +117,7 @@ def test_property_defaults_and_uuid_lifecycle() -> None:
     props = obj.hotools_field
     assert props.enabled is False
     assert props.status == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert props.field_type == field_names.FIELD_TYPE_WIND
     assert props.shape == field_names.VOLUME_SHAPE_SPHERE
     assert props.turbulence == 0.0
     assert props.field_id == ""
@@ -139,7 +143,7 @@ def test_rna_and_capability_share_pure_schema() -> None:
 
     assert field_properties.FIELD_RNA_FIELDS is schema
     assert "bpy" not in field_schema.__dict__
-    assert len(schema) == 19
+    assert len(schema) == 20
     assert all("factory" not in item for item in schema)
     assert tuple(field_properties.PG_Hotools_Field.__annotations__) == names
     assert tuple(str(item["name"]) for item in fields) == names
@@ -186,6 +190,7 @@ def test_resolver_uses_evaluated_empty_and_keeps_one_to_one_unit_policy() -> Non
     )
     assert spec.source_id == f"blender.field:{spec.field_id}"
     assert spec.status == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert spec.field_type == field_names.FIELD_TYPE_WIND
     assert spec.volume.world_transform[0][3] == 2.0
     assert spec.volume.world_scale == (2.0, 3.0, 4.0)
     assert spec.wind.speed_mps == 3.25
@@ -257,6 +262,79 @@ def test_visualization_uses_public_sampler_for_bounds_and_vectors() -> None:
     assert sphere_batches[0][0]
     assert sphere_batches[1][0]
     assert sphere_batches[2][0]
+
+
+def test_generic_channel_visualization_has_reserved_scalar_and_sdf_modes() -> None:
+    positions = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0))
+    vector = field_visualization.build_field_channel_visualization_v0(
+        field_names.AIR_VELOCITY_CHANNEL_ID,
+        positions,
+        ((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)),
+    )
+    assert vector["status"] == field_names.FIELD_STATUS_PREVIEW_ONLY
+    assert vector["line_batches"] and vector["point_batches"] == ()
+
+    scalar = field_visualization.build_field_channel_visualization_v0(
+        "mask",
+        positions,
+        (0.0, 0.5, 1.0),
+        scalar_range=(0.0, 1.0),
+    )
+    assert scalar["status"] == field_names.FIELD_STATUS_RESERVED
+    assert scalar["point_batches"]
+    assert sum(len(points) for points, _color, _size in scalar["point_batches"]) == 3
+
+    sdf = field_visualization.build_field_channel_visualization_v0(
+        "sdf",
+        positions,
+        (-1.0, 0.0, 1.0),
+    )
+    assert sdf["visualization_mode"] == field_channels.VISUALIZATION_SDF_ZERO_CROSSING
+    assert len(sdf["point_batches"]) == 3
+    assert sum(len(points) for points, _color, _size in sdf["point_batches"]) == 3
+
+    reserved = field_visualization.build_field_channel_visualization_v0(
+        "tensor",
+        positions,
+    )
+    assert reserved["diagnostics"] == ("FIELD_RESERVED_CHANNEL",)
+    assert reserved["line_batches"] == ()
+    assert reserved["point_batches"] == ()
+
+    empty_vector = field_visualization.build_field_channel_visualization_v0(
+        field_names.AIR_VELOCITY_CHANNEL_ID,
+        (),
+        (),
+    )
+    assert empty_vector["sample_count"] == 0
+
+    invalid_calls = (
+        lambda: field_visualization.build_field_channel_visualization_v0(
+            field_names.AIR_VELOCITY_CHANNEL_ID,
+            positions,
+            ((1.0, 0.0, 0.0),) * 3,
+            glyph_scale=float("nan"),
+        ),
+        lambda: field_visualization.build_field_channel_visualization_v0(
+            "mask",
+            positions,
+            (0.0, 0.5, 1.0),
+            point_size=0.0,
+        ),
+        lambda: field_visualization.build_field_channel_visualization_v0(
+            "sdf",
+            positions,
+            (-1.0, 0.0, 1.0),
+            sdf_zero_tolerance=float("inf"),
+        ),
+    )
+    for invalid_call in invalid_calls:
+        try:
+            invalid_call()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("无效可视化参数必须显式失败")
 
 
 def test_batch_resolver_rejects_duplicate_uuid_before_returning() -> None:

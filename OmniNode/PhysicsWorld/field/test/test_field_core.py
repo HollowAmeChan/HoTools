@@ -40,6 +40,10 @@ _load_module(
     PHYSICS_WORLD_ROOT / "collision" / "groups.py",
 )
 names = _load_module(f"{PACKAGE_ROOT}.field.names", FIELD_ROOT / "names.py")
+channels = _load_module(
+    f"{PACKAGE_ROOT}.field.channels",
+    FIELD_ROOT / "channels.py",
+)
 diagnostics = _load_module(
     f"{PACKAGE_ROOT}.field.diagnostics",
     FIELD_ROOT / "diagnostics.py",
@@ -77,6 +81,7 @@ ROTATE_Z_TO_X = _matrix(
 # Spec 的身份、值签名和失败边界。
 default_field = specs.FieldSpecV0("field-a", "object-a")
 assert default_field.status == names.FIELD_STATUS_PREVIEW_ONLY
+assert default_field.field_type == names.FIELD_TYPE_WIND
 assert default_field.channel_id == names.AIR_VELOCITY_CHANNEL_ID
 assert default_field.generator_id == names.WIND_GENERATOR_ID
 
@@ -100,6 +105,36 @@ _expect_error(ValueError, lambda: specs.WindPayloadV0(turbulence=-0.01))
 _expect_error(ValueError, lambda: specs.WindPayloadV0(turbulence=1.01))
 _expect_error(ValueError, lambda: specs.WindPayloadV0(seed_u32=2**32))
 _expect_error(ValueError, lambda: specs.WindPayloadV0(octaves=9))
+_expect_error(
+    ValueError,
+    lambda: specs.FieldSpecV0("field-unsupported", "object-unsupported", field_type="SCALAR"),
+)
+
+channel_reports = channels.field_channel_reports_v0()
+assert channel_reports[0]["channel_id"] == names.AIR_VELOCITY_CHANNEL_ID
+assert channel_reports[0]["status"] == names.FIELD_STATUS_PREVIEW_ONLY
+assert channel_reports[0]["values_ready"] is True
+assert {item["channel_id"] for item in channel_reports} >= {
+    "acceleration",
+    "mask",
+    "sdf",
+    "tensor",
+}
+assert all(
+    item["status"] == names.FIELD_STATUS_RESERVED
+    for item in channel_reports[1:]
+)
+_expect_error(
+    ValueError,
+    lambda: channels.FieldChannelDescriptorV0(
+        channel_id="invalid-vector",
+        display_name="非法向量",
+        rank=channels.CHANNEL_RANK_VECTOR,
+        unit="m/s",
+        status=names.FIELD_STATUS_RESERVED,
+        visualization_mode=channels.VISUALIZATION_SCALAR_SAMPLES,
+    ),
+)
 _expect_error(ValueError, lambda: specs.FieldScopeV0(collision_groups=(17,)))
 _expect_error(
     ValueError,
@@ -437,8 +472,8 @@ signature_same_semantics = _signature_request(
     include_preview=1,
     selected_field_ids=("field-z", " field-x ", "field-z"),
 )
-assert signature_base.request_signature == "5df1cabced643604"
-assert signature_base.sample_signature == "3b7d34d5492a02de"
+assert signature_base.request_signature == "47ffead39d06c6b8"
+assert signature_base.sample_signature == "2b609c49d9ba74a0"
 assert signature_same_semantics.request_signature == signature_base.request_signature
 assert signature_same_semantics.sample_signature == signature_base.sample_signature
 

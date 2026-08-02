@@ -19,9 +19,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 
-from .names import (
-    FIELD_STATUS_PREVIEW_ONLY,
-)
+from .names import FIELD_STATUS_PREVIEW_ONLY
 from .schema import FIELD_RNA_FIELDS
 from .specs import FieldScopeV0, FieldSpecV0, VolumeSpecV0, WindPayloadV0
 
@@ -253,6 +251,7 @@ def resolve_field_spec_v0(obj, *, evaluated_object=None, depsgraph=None) -> Fiel
         scope=scope,
         blend_weight=float(value_props.blend_weight),
         priority=int(value_props.priority),
+        field_type=str(value_props.field_type),
     )
 
 

@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import types
+import uuid
 
 import bpy
 
@@ -60,6 +61,7 @@ UNDO_FIELD_NAME = "PW_Field_UndoPersistence"
 ANIMATED_FIELDS = frozenset({
     "enabled",
     "status",
+    "field_type",
     "shape",
     "speed_mps",
     "turbulence",
@@ -147,11 +149,15 @@ def test_undo_redo_restores_identity_manifest_and_preview() -> str:
     scene.ho_field_overlay_mode = "COMBINED"
     assert bpy.ops.ed.undo_push(message="Field 空场景基线") == {"FINISHED"}
 
-    assert bpy.ops.ho.field_create_wind() == {"FINISHED"}
+    assert bpy.ops.object.empty_add(type="SPHERE") == {"FINISHED"}
     obj = bpy.context.view_layer.objects.active
     assert obj is not None and obj.type == "EMPTY"
     obj.name = UNDO_FIELD_NAME
     props = obj.hotools_field
+    props.field_id = str(uuid.uuid4())
+    props.field_type = "WIND"
+    props.status = "PREVIEW_ONLY"
+    props.enabled = True
     props.shape = "BOX"
     props.speed_mps = 4.25
     props.turbulence = 0.35
@@ -197,6 +203,7 @@ def _set_persistent_field_values(obj, field_id: str) -> None:
         "enabled": True,
         "field_id": field_id,
         "status": "PREVIEW_ONLY",
+        "field_type": "WIND",
         "shape": "BOX",
         "spatial_scale_m": 2.5,
         "temporal_frequency_hz": 1.25,

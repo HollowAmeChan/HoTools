@@ -17,6 +17,11 @@ COMPONENT_MODULE = {
 
 _EXPORTS = {
     "AIR_VELOCITY_CHANNEL_ID": ".names",
+    "FIELD_TYPE_WIND": ".names",
+    "FIELD_TYPES_V0": ".names",
+    "FIELD_CHANNELS_V0": ".channels",
+    "FIELD_CHANNEL_REGISTRY_V0": ".channels",
+    "FieldChannelDescriptorV0": ".channels",
     "FIELD_AIR_VELOCITY_CAPABILITY": ".capabilities",
     "FIELD_CAPABILITIES": ".capabilities",
     "FIELD_BLENDER_PROPERTIES": ".properties",
@@ -32,6 +37,7 @@ _EXPORTS = {
     "VolumeSpecV0": ".specs",
     "WindPayloadV0": ".specs",
     "build_field_snapshot_v0": ".specs",
+    "build_field_channel_visualization_v0": ".visualization",
     "collect_scope_field_specs": ".implicit_objects",
     "ensure_field_id_v0": ".properties",
     "sample_air_velocity_at_v0": ".sampling",
@@ -42,6 +48,8 @@ _EXPORTS = {
     "sample_volume_weights_v0": ".volume",
     "sample_wind_raw_v0": ".wind",
     "sample_wind_raw_reference_v0": ".wind",
+    "field_channel_descriptor_v0": ".channels",
+    "field_channel_reports_v0": ".channels",
     "vector_value_noise4_reference_v0": ".wind",
     "vector_value_noise4_v0": ".wind",
     "wind_direction_world_v0": ".volume",

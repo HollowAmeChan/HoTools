@@ -18,7 +18,6 @@ from bpy.types import Panel
 from .operators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
-    OP_Hotools_Field_CreateWind,
     OP_Hotools_Field_RegenerateId,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
@@ -141,12 +140,6 @@ class PT_Hotools_PhysicsPanel(Panel):
         constraint = getattr(obj, "hotools_rigid_constraint", None)
         field_props = getattr(obj, "hotools_field", None)
 
-        layout.operator(
-            OP_Hotools_Field_CreateWind.bl_idname,
-            text="创建风场",
-            icon="FORCE_WIND",
-        )
-
         grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
 
         if obj_col is not None:
@@ -170,7 +163,7 @@ class PT_Hotools_PhysicsPanel(Panel):
                 field_props,
                 "enabled",
                 text="Field",
-                icon="FORCE_WIND",
+                icon="EMPTY_AXIS",
                 toggle=True,
             )
 
@@ -202,53 +195,68 @@ class PT_Hotools_Physics_Field(Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        status_row = layout.row(align=True)
-        status_row.label(
-            text="状态：仅预览" if props.status == "PREVIEW_ONLY" else f"状态：{props.status}"
-        )
-        status_row.operator(
-            OP_Hotools_Field_RegenerateId.bl_idname,
-            text="",
-            icon="FILE_REFRESH",
-        )
-        layout.label(text=f"ID：{props.field_id or '未分配'}")
+        layout.prop(props, "field_type", text="类型")
 
-        layout.separator()
-        layout.label(text="Volume", icon="MESH_UVSPHERE")
-        layout.prop(props, "shape", text="形状")
-        if props.shape == "SPHERE":
-            scale = obj.matrix_world.to_scale()
-            if max(scale) - min(scale) > 1.0e-5:
-                layout.label(text="球形 Volume 需要均匀缩放", icon="ERROR")
-            layout.label(text="衰减：线性（V0）")
+        if props.field_type == "WIND":
+            layout.separator()
+            layout.label(text="Volume", icon="MESH_UVSPHERE")
+            layout.prop(props, "shape", text="形状")
+            if props.shape == "SPHERE":
+                scale = obj.matrix_world.to_scale()
+                if max(scale) - min(scale) > 1.0e-5:
+                    layout.label(text="球形 Volume 需要均匀缩放", icon="ERROR")
+
+            layout.separator()
+            layout.label(text="Wind", icon="FORCE_WIND")
+            layout.prop(props, "speed_mps")
+            layout.prop(props, "turbulence")
+            if props.turbulence > 0.0:
+                header, body = layout.panel(
+                    "hotools_field_turbulence_details",
+                    default_closed=True,
+                )
+                header.label(text="紊流细节")
+                if body is not None:
+                    body.use_property_split = True
+                    body.use_property_decorate = False
+                    body.prop(props, "spatial_scale_m")
+                    body.prop(props, "temporal_frequency_hz")
+                    body.prop(props, "octaves")
+                    body.prop(props, "lacunarity")
+                    body.prop(props, "gain")
+                    body.prop(props, "seed_u32")
         else:
-            layout.label(text="衰减：无（硬边界）")
+            layout.label(text="该 Field 类型尚未实现", icon="INFO")
 
-        layout.separator()
-        layout.label(text="Wind", icon="FORCE_WIND")
-        layout.prop(props, "speed_mps")
-        layout.prop(props, "turbulence")
-        advanced = layout.column(align=True)
-        advanced.enabled = props.turbulence > 0.0
-        advanced.prop(props, "spatial_scale_m")
-        advanced.prop(props, "temporal_frequency_hz")
-        advanced.prop(props, "octaves")
-        advanced.prop(props, "lacunarity")
-        advanced.prop(props, "gain")
-        advanced.prop(props, "seed_u32")
-
-        layout.separator()
-        layout.label(text="合成", icon="NODETREE")
-        layout.prop(props, "blend_weight")
-        layout.prop(props, "priority")
-
-        layout.separator()
-        layout.label(text="Scope", icon="FILTER")
-        layout.prop(props, "scope_solver_ids")
-        layout.prop(props, "scope_collection_ids")
-        layout.prop(props, "scope_include_ids")
-        layout.prop(props, "scope_exclude_ids")
-        layout.prop(props, "scope_collision_groups")
+        header, body = layout.panel(
+            "hotools_field_advanced",
+            default_closed=True,
+        )
+        header.label(text="高级属性")
+        if body is not None:
+            body.use_property_split = True
+            body.use_property_decorate = False
+            status_row = body.row(align=True)
+            status_row.label(
+                text="状态：仅预览"
+                if props.status == "PREVIEW_ONLY"
+                else f"状态：{props.status}"
+            )
+            status_row.operator(
+                OP_Hotools_Field_RegenerateId.bl_idname,
+                text="",
+                icon="FILE_REFRESH",
+            )
+            body.label(text=f"ID：{props.field_id or '未分配'}")
+            body.prop(props, "blend_weight")
+            body.prop(props, "priority")
+            body.separator()
+            body.label(text="作用域", icon="FILTER")
+            body.prop(props, "scope_solver_ids")
+            body.prop(props, "scope_collection_ids")
+            body.prop(props, "scope_include_ids")
+            body.prop(props, "scope_exclude_ids")
+            body.prop(props, "scope_collision_groups")
 
 # ---------------------------------------------------------------------------
 # 子面板：简单碰撞

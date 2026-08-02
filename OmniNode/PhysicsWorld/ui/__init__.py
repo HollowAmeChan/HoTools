@@ -14,7 +14,6 @@ from .operators import (
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
-    OP_Hotools_Field_CreateWind,
     OP_Hotools_Field_RegenerateId,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
     OP_Hotools_MeshCollision_SetPrimaryGroup,
@@ -41,7 +40,6 @@ from ..field.visualization import (
 
 
 PHYSICS_UI_CLASSES = (
-    OP_Hotools_Field_CreateWind,
     OP_Hotools_Field_RegenerateId,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,

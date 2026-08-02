@@ -35,46 +35,6 @@ def _mark_field_visualization_dirty() -> None:
         pass
 
 
-class OP_Hotools_Field_CreateWind(Operator):
-    bl_idname = "ho.field_create_wind"
-    bl_label = "创建风场"
-    bl_description = "创建一个由 Empty 变换定义范围和方向的 Wind Field"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene is not None
-
-    def execute(self, context):
-        scene = context.scene
-        collection = context.collection or scene.collection
-        obj = bpy.data.objects.new("风场", None)
-        try:
-            collection.objects.link(obj)
-            obj.location = scene.cursor.location
-            obj.empty_display_type = "SPHERE"
-            obj.empty_display_size = 1.0
-            props = getattr(obj, "hotools_field", None)
-            if props is None:
-                raise RuntimeError("Field RNA 尚未注册")
-            props.field_id = str(uuid.uuid4())
-            props.status = "PREVIEW_ONLY"
-            props.shape = "SPHERE"
-            props.enabled = True
-
-            for selected in tuple(getattr(context, "selected_objects", ()) or ()):
-                selected.select_set(False)
-            obj.select_set(True)
-            context.view_layer.objects.active = obj
-        except Exception as exc:
-            bpy.data.objects.remove(obj, do_unlink=True)
-            self.report({"ERROR"}, f"创建风场失败：{exc}")
-            return {"CANCELLED"}
-
-        _mark_field_visualization_dirty()
-        return {"FINISHED"}
-
-
 class OP_Hotools_Field_RegenerateId(Operator):
     bl_idname = "ho.field_regenerate_id"
     bl_label = "重签 Field ID"

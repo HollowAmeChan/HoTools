@@ -19,6 +19,8 @@ from .names import (
     FIELD_ABI_VERSION,
     FIELD_STATUSES,
     FIELD_STATUS_PREVIEW_ONLY,
+    FIELD_TYPE_WIND,
+    FIELD_TYPES_V0,
     SPHERE_ATTENUATION_POLICY_V0,
     VOLUME_ATTENUATION_POLICY_VERSION,
     VOLUME_SHAPES_V0,
@@ -393,6 +395,7 @@ class WindPayloadV0:
 class FieldSpecV0:
     field_id: str
     source_id: str
+    field_type: str = FIELD_TYPE_WIND
     volume: VolumeSpecV0 = field(default_factory=VolumeSpecV0)
     wind: WindPayloadV0 = field(default_factory=WindPayloadV0)
     scope: FieldScopeV0 = field(default_factory=FieldScopeV0)
@@ -401,8 +404,8 @@ class FieldSpecV0:
     blend_weight: float = 1.0
     priority: int = 0
     abi_version: int = FIELD_ABI_VERSION
-    channel_id: str = field(init=False, default=AIR_VELOCITY_CHANNEL_ID)
-    generator_id: str = field(init=False, default=WIND_GENERATOR_ID)
+    channel_id: str = field(init=False)
+    generator_id: str = field(init=False)
     config_signature: str = field(init=False)
     value_signature: str = field(init=False)
     signature: str = field(init=False)
@@ -414,6 +417,11 @@ class FieldSpecV0:
             raise ValueError("field_id 不能为空")
         if not source_id:
             raise ValueError("source_id 不能为空")
+        field_type = str(self.field_type or "").strip().upper()
+        if field_type not in FIELD_TYPES_V0:
+            raise ValueError(f"不支持的 Field 类型: {field_type!r}")
+        if field_type != FIELD_TYPE_WIND:
+            raise ValueError(f"Field 类型 {field_type!r} 尚未实现")
         if not isinstance(self.volume, VolumeSpecV0):
             raise TypeError("volume 必须是 VolumeSpecV0")
         if not isinstance(self.wind, WindPayloadV0):
@@ -439,6 +447,7 @@ class FieldSpecV0:
             "abi_version": abi_version,
             "field_id": field_id,
             "source_id": source_id,
+            "field_type": field_type,
             "channel_id": AIR_VELOCITY_CHANNEL_ID,
             "generator_id": WIND_GENERATOR_ID,
             "volume": self.volume.config_signature,
@@ -457,6 +466,9 @@ class FieldSpecV0:
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "enabled", bool(self.enabled))
         object.__setattr__(self, "status", status)
+        object.__setattr__(self, "field_type", field_type)
+        object.__setattr__(self, "channel_id", AIR_VELOCITY_CHANNEL_ID)
+        object.__setattr__(self, "generator_id", WIND_GENERATOR_ID)
         object.__setattr__(self, "blend_weight", blend_weight)
         object.__setattr__(self, "priority", priority)
         object.__setattr__(self, "abi_version", abi_version)
@@ -475,6 +487,7 @@ class FieldSpecV0:
             "source_id": self.source_id,
             "enabled": self.enabled,
             "status": self.status,
+            "field_type": self.field_type,
             "channel_id": self.channel_id,
             "generator_id": self.generator_id,
             "blend_weight": self.blend_weight,

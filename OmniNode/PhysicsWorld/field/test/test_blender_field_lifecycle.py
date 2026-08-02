@@ -41,9 +41,61 @@ blender_registry = importlib.import_module(
 physics_registry = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.registry"
 )
+physics_ui = importlib.import_module("HoTools.OmniNode.PhysicsWorld.ui")
+physics_panels = importlib.import_module(
+    "HoTools.OmniNode.PhysicsWorld.ui.panels"
+)
 field_visualization = importlib.import_module(
     "HoTools.OmniNode.PhysicsWorld.field.visualization"
 )
+
+
+class _RecordingLayout:
+    """记录 Panel.draw 的结构调用，不依赖可见窗口。"""
+
+    def __init__(self, events, path=()):
+        self.events = events
+        self.path = tuple(path)
+
+    def _child(self, name):
+        return _RecordingLayout(self.events, self.path + (str(name),))
+
+    def grid_flow(self, **_kwargs):
+        return self._child("grid")
+
+    def row(self, **_kwargs):
+        return self._child("row")
+
+    def column(self, **_kwargs):
+        return self._child("column")
+
+    def panel(self, panel_id, *, default_closed=False):
+        self.events.append(
+            ("panel", self.path, str(panel_id), bool(default_closed))
+        )
+        return self._child(f"{panel_id}:header"), self._child(panel_id)
+
+    def prop(self, _owner, name, **_kwargs):
+        self.events.append(("prop", self.path, str(name)))
+
+    def operator(self, operator_id, **_kwargs):
+        self.events.append(("operator", self.path, str(operator_id)))
+        return types.SimpleNamespace()
+
+    def label(self, **_kwargs):
+        return None
+
+    def separator(self):
+        return None
+
+
+def _draw_events(panel_class, context):
+    events = []
+    panel_class.draw(
+        types.SimpleNamespace(layout=_RecordingLayout(events)),
+        context,
+    )
+    return tuple(events)
 
 
 def _assert_registered() -> None:
@@ -70,19 +122,83 @@ def _assert_registered() -> None:
         assert callback in handlers
 
 
-def _assert_create_operator() -> None:
+def _assert_empty_authoring():
     before = set(bpy.context.scene.objects)
-    result = bpy.ops.ho.field_create_wind()
+    result = bpy.ops.object.empty_add(type="SPHERE")
     assert result == {"FINISHED"}
     created = tuple(obj for obj in bpy.context.scene.objects if obj not in before)
     assert len(created) == 1
     field_object = created[0]
     assert field_object.type == "EMPTY"
+    field_object.hotools_field.field_type = "WIND"
+    field_object.hotools_field.enabled = True
     assert field_object.hotools_field.enabled is True
     assert str(uuid.UUID(field_object.hotools_field.field_id)) == (
         field_object.hotools_field.field_id
     )
     assert bpy.context.view_layer.objects.active == field_object
+    return field_object
+
+
+def _assert_simple_field_ui(field_object) -> None:
+    class_ids = {
+        str(getattr(cls, "bl_idname", ""))
+        for cls in physics_ui.PHYSICS_UI_CLASSES
+    }
+    assert "ho.field_create" not in class_ids
+    assert "ho.field_create_wind" not in class_ids
+
+    parent_events = _draw_events(
+        physics_panels.PT_Hotools_PhysicsPanel,
+        bpy.context,
+    )
+    assert not any(
+        event[0] == "operator" and event[2].startswith("ho.field_create")
+        for event in parent_events
+    )
+
+    props = field_object.hotools_field
+    props.turbulence = 0.0
+    events = _draw_events(
+        physics_panels.PT_Hotools_Physics_Field,
+        bpy.context,
+    )
+    property_events = tuple(event for event in events if event[0] == "prop")
+    assert property_events[0][2] == "field_type"
+    panel_events = tuple(event for event in events if event[0] == "panel")
+    assert (
+        "panel",
+        (),
+        "hotools_field_advanced",
+        True,
+    ) in panel_events
+    assert not any(
+        event[2] == "hotools_field_turbulence_details"
+        for event in panel_events
+    )
+    for name in (
+        "blend_weight",
+        "priority",
+        "scope_solver_ids",
+        "scope_collection_ids",
+        "scope_include_ids",
+        "scope_exclude_ids",
+        "scope_collision_groups",
+    ):
+        event = next(item for item in property_events if item[2] == name)
+        assert "hotools_field_advanced" in event[1]
+
+    props.turbulence = 0.5
+    turbulent_events = _draw_events(
+        physics_panels.PT_Hotools_Physics_Field,
+        bpy.context,
+    )
+    assert (
+        "panel",
+        (),
+        "hotools_field_turbulence_details",
+        True,
+    ) in turbulent_events
 
 
 def _assert_unregistered() -> None:
@@ -97,7 +213,8 @@ def main() -> None:
     physics_blender.register()
     try:
         _assert_registered()
-        _assert_create_operator()
+        field_object = _assert_empty_authoring()
+        _assert_simple_field_ui(field_object)
     finally:
         if physics_blender.is_registered():
             physics_blender.unregister()
