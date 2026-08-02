@@ -12,6 +12,7 @@ from ..collision.capabilities import (
     BONE_COLLISION_CAPABILITY_ID,
     OBJECT_COLLISION_CAPABILITY_ID,
 )
+from ..field.names import FIELD_CAPABILITY_ID
 from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
 from ..simple_cloth.capabilities import SIMPLE_CLOTH_CAPABILITY_ID
 from .setups.bone_cloth.capabilities import (
@@ -58,6 +59,7 @@ MC2_SOLVER_DECLARATION = {
     "consumes": [
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
+        "PhysicsWorldCache field_snapshot_v0 and per-substep MC2FieldSamplePacketV0",
         "one or more collected MC2ProductRequestV1 domains",
         "complete Mesh partitions with frozen object properties",
         "complete BoneCloth partitions with frozen object properties",
@@ -103,6 +105,7 @@ MC2_SOLVER_DECLARATION = {
         OBJECT_COLLISION_CAPABILITY_ID,
         BONE_COLLISION_CAPABILITY_ID,
         SIMPLE_CLOTH_CAPABILITY_ID,
+        FIELD_CAPABILITY_ID,
     ],
     "capability_adapters": [MC2_BONE_CLOTH_BONE_COLLISION_ADAPTER],
     "update_frequency_table": MC2_UPDATE_FREQUENCY_TABLE,

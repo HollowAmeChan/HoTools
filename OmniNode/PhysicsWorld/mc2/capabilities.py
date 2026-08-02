@@ -1,9 +1,11 @@
-"""统一 MC2 solver 的参数与 setup capability。"""
+"""统一 MC2 solver 的参数、setup 与 Field consumer capability。"""
 
+from ..field.names import AIR_VELOCITY_CHANNEL_ID, FIELD_CAPABILITY_ID
 from .names import MC2_SETUP_TYPES
 
 
 MC2_SETUP_PROFILE_CAPABILITY_ID = "mc2_setup_profile"
+MC2_FIELD_AIR_VELOCITY_CAPABILITY_ID = "mc2_field_air_velocity"
 
 MC2_SETUP_PROFILE_CAPABILITY = {
     "capability_id": MC2_SETUP_PROFILE_CAPABILITY_ID,
@@ -77,8 +79,27 @@ MC2_SETUP_PROFILE_CAPABILITY = {
     "implementation_status": "domain_v1_product",
 }
 
+MC2_FIELD_AIR_VELOCITY_CAPABILITY = {
+    "capability_id": MC2_FIELD_AIR_VELOCITY_CAPABILITY_ID,
+    "identifier": MC2_FIELD_AIR_VELOCITY_CAPABILITY_ID,
+    "owner": "physicsWorld.mc2",
+    "source_capability_id": FIELD_CAPABILITY_ID,
+    "channel": AIR_VELOCITY_CHANNEL_ID,
+    "channel_id": AIR_VELOCITY_CHANNEL_ID,
+    "rank": "vector",
+    "unit": "m/s",
+    "value_space": "world",
+    "sample_mode": "per_particle",
+    "sample_phase": "pre_substep",
+    "response": "hotools_relative_air_velocity_v0",
+    "packet": "MC2FieldSamplePacketV0",
+    "packet_abi_version": 0,
+    "implementation_status": "sample_packet_v0_ready",
+}
+
 MC2_CAPABILITIES = {
     MC2_SETUP_PROFILE_CAPABILITY_ID: MC2_SETUP_PROFILE_CAPABILITY,
+    MC2_FIELD_AIR_VELOCITY_CAPABILITY_ID: MC2_FIELD_AIR_VELOCITY_CAPABILITY,
 }
 
 MC2_UPDATE_FREQUENCY_TABLE = {
@@ -95,3 +116,13 @@ MC2_UPDATE_FREQUENCY_TABLE = {
     "step_scheduler_settings": "step_settings_signature",
     "collider_snapshot": "lazy_by_source_key",
 }
+
+
+__all__ = [
+    "MC2_CAPABILITIES",
+    "MC2_FIELD_AIR_VELOCITY_CAPABILITY",
+    "MC2_FIELD_AIR_VELOCITY_CAPABILITY_ID",
+    "MC2_SETUP_PROFILE_CAPABILITY",
+    "MC2_SETUP_PROFILE_CAPABILITY_ID",
+    "MC2_UPDATE_FREQUENCY_TABLE",
+]
